@@ -181,7 +181,7 @@ function wallet(chain = CHAIN) {
 
 function guarded(
   sale: ManaSaleTerms,
-  opts: { chain?: number; chainId?: number; handOff?: (attempt: ManaHandOff) => boolean; current?: () => boolean; mayApprove?: () => boolean; exactNonce?: bigint } = {}
+  opts: { chain?: number; chainId?: number; handOff?: (attempt: ManaHandOff) => boolean; current?: () => boolean; mayApprove?: () => boolean } = {}
 ) {
   const w = wallet(opts.chain ?? opts.chainId)
   const handOff = vi.fn(opts.handOff ?? (() => true))
@@ -191,8 +191,7 @@ function guarded(
     sale,
     current: opts.current ?? (() => true),
     handOff,
-    mayApprove: opts.mayApprove ?? (() => true),
-    ...(opts.exactNonce !== undefined ? { exactNonce: opts.exactNonce } : {})
+    mayApprove: opts.mayApprove ?? (() => true)
   }
   return { w, handOff, intent, provider: manaGuardedProvider(w, intent) }
 }
@@ -238,14 +237,6 @@ describe('the MANA guard’s provider', () => {
     expect(reached(g.w, 'eth_signTypedData_v4')).toHaveLength(2)
   })
 
-  it('signs a retry only at the exact nonce it was confirmed for', async () => {
-    const g = guarded(listings(), { exactNonce: 5n })
-    const sale = (nonce: bigint) => JSON.stringify(typed(MARKET_DOMAIN, encodeMarketplaceCall([manaListing()], BUYER), BUYER, nonce))
-    await expect(g.provider.request({ method: 'eth_signTypedData_v4', params: [BUYER, sale(6n)] })).rejects.toThrow(WalletRefusal)
-    expect(g.handOff).not.toHaveBeenCalled()
-    await g.provider.request({ method: 'eth_signTypedData_v4', params: [BUYER, sale(5n)] })
-    expect(g.handOff).toHaveBeenCalledWith({ rail: 'relay', nonce: 5n, data: encodeMarketplaceCall([manaListing()], BUYER) })
-  })
 
   it('refuses a listing paid in more than one entry, even when the first is the price', () => {
     const two = manaListing({

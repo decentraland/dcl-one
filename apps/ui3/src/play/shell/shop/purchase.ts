@@ -55,15 +55,15 @@ import {
   createManaAttempt,
   manaDispatched,
   manaFingerprint,
-  manaFirstDispatch,
+  manaLastDispatch,
   manaHasRoom,
   manaSaleTerms,
   SEND_MS,
   storedManaTerms,
   type ManaAttemptRecord
 } from './manaPurchase'
-import { boundedReader, createManaEvidence, EVIDENCE_READ_MS, resolveMana, verifiedVenue, type ManaEvidence } from './manaEvidence'
-import { relayMetaTransaction } from '../../../shop/checkout/chain/metatx'
+import { boundedReader, createManaEvidence, deadline, EVIDENCE_READ_MS, resolveMana, verifiedVenue, type ManaEvidence } from './manaEvidence'
+import { readMetaTxNonce, relaySignedMetaTransaction } from '../../../shop/checkout/chain/metatx'
 import { checkoutSiteUrl } from '../../lib/baseDomain'
 import {
   parseBuyRequest,
@@ -476,11 +476,11 @@ const MANA_NOT_SENT = 'This purchase couldn’t go out. Nothing was bought and n
 const MANA_NOT_SENT_PART = 'one of its transactions couldn’t go out; no MANA was spent for it.'
 /** A MANA sale sent through the relay, not yet found on chain. */
 const MANA_CHECKING = 'Checking your purchase. You can close this window.'
-/** RETRY: the same sale, at the same nonce. */
+/** RETRY: the signed execution of the sale, sent again. */
 const MANA_RETRY = 'You can retry this same purchase fee-free. It can complete only once.'
 /** No room left for another send's evidence: no more retries, and the chain still decides. */
 const MANA_NO_MORE_RETRIES = "This purchase can't be retried again here. We're still checking it on chain, and it will show up here once it settles."
-/** How long after its first send a MANA sale not yet on chain may be retried. */
+/** How long after its latest send a MANA sale not yet on chain may be retried. */
 export const RETRY_AFTER_MS = 15 * 60_000
 const NOT_SENT_LATER = 'This purchase couldn’t go out. Nothing was bought. Try again later.'
 /**
@@ -669,8 +669,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     })
   /**
    * Purchase in progress. One paid in MANA is being checked on chain (CHECK AGAIN looks now). Once none of its sends is
-   * on its way and the first went RETRY_AFTER_MS ago with nothing on chain yet, this page (holding it) offers RETRY:
-   * the same sale, at the same nonce, so it can complete only once.
+   * on its way and the latest went RETRY_AFTER_MS ago with nothing on chain yet, this page (holding it) offers RETRY:
+   * the signed execution, sent again, so it can complete only once.
    */
   const showPending = (op: Operation): void => {
     if (!op.mana) {
@@ -689,8 +689,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   }
   /** What a MANA purchase's Purchase in progress offers now: RETRY once it may and the wait passed, else CHECK AGAIN. */
   const manaPendingKind = (op: Operation): 'check' | 'retry' | 'capped' => {
-    const first = op.mana ? manaFirstDispatch(op.mana) : null
-    if (!op.mana || !manaRetryable(op) || first == null || svc.now() - first < RETRY_AFTER_MS) return 'check'
+    const latest = op.mana ? manaLastDispatch(op.mana) : null
+    if (!op.mana || !manaRetryable(op) || latest == null || svc.now() - latest < RETRY_AFTER_MS) return 'check'
     return manaHasRoom(compactManaAttempt(op.mana)) ? 'retry' : 'capped'
   }
   /** Whether this page may retry the MANA purchase now: it holds it, nothing runs, and the chain read last allows it. */
@@ -1246,19 +1246,11 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
 
   /** The buyer's MANA on the chain the page settles on, or null when it can't be read in time: then MANA isn't offered. */
   const readManaInTime = (buyer: string): Promise<bigint | null> =>
-    new Promise((resolve) => {
-      const timer = setTimeout(() => resolve(null), MANA_BALANCE_TIMEOUT_MS)
-      Promise.resolve()
-        .then(() => svc.manaBalance(buyer, settlementChainId()))
-        .then(
-          (wei) => wei,
-          () => null
-        )
-        .then((wei) => {
-          clearTimeout(timer)
-          resolve(wei)
-        })
-    })
+    deadline(
+      Promise.resolve().then(() => svc.manaBalance(buyer, settlementChainId())),
+      MANA_BALANCE_TIMEOUT_MS,
+      'The MANA balance read'
+    ).catch(() => null)
 
   /**
    * Paying one item in MANA, or null where it can't be offered: no MANA price for it, a sale the chain and the server
@@ -1725,22 +1717,17 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     }
 
   /**
-   * RETRY: the same sale, sent again through the relay at the same nonce and with the same call, inside the same
-   * operation and its lock. The guard holds it to the kept terms and that nonce; if the chain no longer reads that
-   * nonce (the first send, or anything else, ran meanwhile), nothing is signed and the chain decides. A refused or
-   * lost retry ends only itself: the purchase is still followed to its end.
+   * RETRY: the signed execution of the sale, sent again through the relay, inside the same operation and its lock. No
+   * new signature and no wallet: only what the buyer signed goes, at the nonce it names, so it can complete only once.
+   * If the chain no longer reads that nonce (the first send, or anything else, ran meanwhile), nothing is sent and the
+   * chain decides. A refused or lost retry ends only itself: the purchase is still followed to its end.
    */
   const retryMana = async (op: Operation): Promise<void> => {
     const record = op.mana
-    const who = usable()
-    if (!record || !manaRetryable(op) || !op.buyer || !op.chainId || !record.nonce || !record.data) return
-    if (!who || who.buyer !== op.buyer || deps.wallet?.kind(op.buyer) !== 'web3') {
-      show(op, { step: 'pending', message: 'Sign in again with the same wallet to retry this purchase.', check: 'ready' }, { onClose: () => hide(op), onCheckAgain: () => void checkAgain(op, () => showPending(op)) })
-      return
-    }
-    const wallet = deps.wallet.provider(op.buyer)
-    if (!wallet) return
+    if (!record || !manaRetryable(op) || !op.buyer || !op.chainId || !record.nonce || !record.data || !record.signed) return
     const chainId = op.chainId
+    const buyer = op.buyer
+    const signed = record.signed
     const terms = storedManaTerms(record)
     const nonce = BigInt(record.nonce)
     /** The shop-wide hold, from RETRY until the retry is kept as gone (or ends). */
@@ -1774,48 +1761,32 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       console.warn('[shell/shop] could not retry the MANA purchase', e)
       return
     }
-    if (!venue.metaTx) return
-    attempt.retry()
-    const login = loginKey(who.login)
-    const intent: ManaPurchaseIntent = {
-      buyer: op.buyer,
-      chainId,
-      sale: terms,
-      exactNonce: nonce,
-      current: () => {
-        const now = signedIn()
-        return !!now && now.buyer === op.buyer && loginKey(now.login) === login && attempt.open()
-      },
-      handOff: (a) => attempt.handOff(a),
-      mayApprove: () => false
-    }
+    const metaTx = venue.metaTx
+    if (!metaTx) return
     const rail = svc.rail()
     running = true
     held = true
     op.manaSending = true
     show(op, { step: 'processing', balance: null, count: op.items.reduce((n, l) => n + l.quantity, 0) }, { onClose: () => {} })
     try {
-      const provider = svc.manaGuard(attempt.observe(wallet), intent)
-      await assertWalletAccount(wallet, op.buyer, true)
-      const { txHash } = await relayMetaTransaction({
-        provider,
-        reader: boundedReader(svc.reader(), svc.manaTimeouts().readMs),
-        target: { address: venue.address as `0x${string}`, chainId: chainId as Parameters<ChainReader['receipt']>[0], name: venue.name, version: venue.version, metaTx: venue.metaTx },
-        from: op.buyer,
-        functionData: record.data,
-        relayerUrl: rail.relayerUrl,
-        fetchImpl: attempt.relay(rail.fetchImpl ?? ((...a: Parameters<typeof fetch>) => fetch(...a))),
-        exactNonce: nonce
-      })
-      attempt.answered(txHash)
+      // Only while the chain still reads the sale's nonce: past it, the signed execution can never run.
+      const timeouts = svc.manaTimeouts()
+      const read = await deadline(readMetaTxNonce(svc.reader(), { address: venue.address as `0x${string}`, chainId: chainId as Parameters<ChainReader['receipt']>[0], metaTx }, buyer), timeouts.readMs)
+      if (read === nonce) {
+        attempt.retry()
+        if (attempt.handOff({ rail: 'relay', nonce, data: record.data })) {
+          const send = attempt.relay(rail.fetchImpl ?? ((...a: Parameters<typeof fetch>) => fetch(...a)))
+          attempt.answered(await relaySignedMetaTransaction({ from: buyer, to: venue.address, data: signed, relayerUrl: rail.relayerUrl, fetchImpl: send }))
+        }
+      }
     } catch (e) {
-      // The nonce moved, a refusal, a decline, a lost answer: each ends this send only, as kept; the chain decides.
+      // A nonce that couldn't be read, a refusal, a lost answer: each ends this send only, as kept; the chain decides.
       console.warn('[shell/shop] the MANA retry ended', e)
     } finally {
       op.manaSending = false
       release()
-      // A retry that ended before its request (its signature failed, or its dispatch couldn't be kept) left nothing that
-      // can be evidence: dropped, so the purchase may be retried again.
+      // A retry that ended before its request (its dispatch couldn't be kept) left nothing that can be evidence: dropped,
+      // so the purchase may be retried again.
       attempt.retire()
     }
     op.manaRetry = undefined

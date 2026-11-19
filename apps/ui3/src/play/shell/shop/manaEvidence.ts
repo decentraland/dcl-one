@@ -32,6 +32,8 @@ export interface ManaExecution {
   call: Hex
   txHash: Hex
   blockNumber: bigint
+  /** Its place among the block's logs. */
+  logIndex: number
 }
 
 /** The chain reads this needs, each through an explicit block where it matters. */
@@ -78,20 +80,23 @@ export function verifiedVenue(chainId: number, venue: string): boolean {
   return VERIFIED_VENUES[chainId]?.includes(venue.toLowerCase()) ?? false
 }
 
-type RawLog = { topics: Hex[]; data: Hex; transactionHash: Hex; blockNumber: Hex }
+type RawLog = { topics: Hex[]; data: Hex; transactionHash: Hex; blockNumber: Hex; logIndex: Hex }
 
 /**
  * One execution's log, in either layout the venues use: the marketplaces index the user and the relayer (three
  * topics), the CollectionStore keeps all three in its data (one topic).
  */
 export function decodeExecution(log: RawLog): ManaExecution {
+  // Its place orders it among the block's executions, so a log without one can't be read.
+  const place = typeof log.logIndex === 'string' && /^0x[0-9a-fA-F]+$/.test(log.logIndex) ? Number(log.logIndex) : NaN
+  if (!Number.isSafeInteger(place)) throw new Error('A MetaTransactionExecuted log without its place in the block')
   if (log.topics.length === 3) {
     const { args } = decodeEventLog({ abi: [EXECUTED], data: log.data, topics: log.topics as [Hex, Hex, Hex] })
-    return { user: args.userAddress.toLowerCase(), call: args.functionData, txHash: log.transactionHash, blockNumber: BigInt(log.blockNumber) }
+    return { user: args.userAddress.toLowerCase(), call: args.functionData, txHash: log.transactionHash, blockNumber: BigInt(log.blockNumber), logIndex: place }
   }
   if (log.topics.length !== 1) throw new Error('A MetaTransactionExecuted log in an unknown layout')
   const [user, , call] = decodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'bytes' }], log.data)
-  return { user: user.toLowerCase(), call, txHash: log.transactionHash, blockNumber: BigInt(log.blockNumber) }
+  return { user: user.toLowerCase(), call, txHash: log.transactionHash, blockNumber: BigInt(log.blockNumber), logIndex: place }
 }
 
 /** How long one chain read may take before it gives way: the watch reads again later. */
@@ -147,7 +152,11 @@ export function createManaEvidence(opts: { url?: (chainId: ChainId) => string | 
       body: JSON.stringify({ jsonrpc: '2.0', id: id++, method, params }),
       signal: AbortSignal.timeout(readMs)
     })
-    if (!res.ok) throw new Error(`RPC ${method} answered HTTP ${res.status}`)
+    if (!res.ok) {
+      // An error's body is let go, never left open: the watch reads again and again.
+      void res.body?.cancel().catch(() => undefined)
+      throw new Error(`RPC ${method} answered HTTP ${res.status}`)
+    }
     const body = (await res.json()) as { result?: T; error?: { message?: string } }
     if (body.error) throw new Error(body.error.message ?? `RPC ${method} failed`)
     return body.result as T
@@ -189,9 +198,18 @@ export type ManaResolution =
    */
   | { kind: 'waiting'; retry: boolean }
 
+/** Chain order: by block, then by place in the block. */
+const inChainOrder = (a: ManaExecution, b: ManaExecution): number => (a.blockNumber === b.blockNumber ? a.logIndex - b.logIndex : a.blockNumber < b.blockNumber ? -1 : 1)
+
 /**
  * How the attempt's sale ended, from the chain, or that it hasn't yet. `venue` is the registry's entry for the sale's
  * venue (its meta-transaction style decides how the nonce reads).
+ *
+ * At a verified venue each successful execution consumes its signer's nonce once and logs its call, and nothing else
+ * moves that nonce. So the buyer's executions over a range, in chain order, are their nonces in order, and the one at N
+ * is the execution that consumed N, whatever carried it to the venue (the relay itself, or a forwarder its upstream
+ * uses). A read holds all of them only when it counts exactly as many as the nonce moved across the range; a read that
+ * counts any other number decides nothing.
  */
 export async function resolveMana(
   attempt: ManaAttemptRecord,
@@ -203,29 +221,56 @@ export async function resolveMana(
   const { chainId, evidence } = ctx
   const buyer = ctx.buyer.toLowerCase()
   const venue = ctx.venue.address.toLowerCase()
+  const nonce = BigInt(attempt.nonce)
+  const call = keccak256(attempt.data)
+  const verified = verifiedVenue(chainId, venue)
   const finalized = await evidence.finalized(chainId)
-  /** A finalized, successful execution of a signed payload this page sent. */
-  const attributed = async (hash: string): Promise<boolean> => {
-    const [tx, receipt] = await Promise.all([evidence.transaction(chainId, hash), evidence.receipt(chainId, hash)])
-    return !!tx && !!receipt && receipt.status === 'success' && receipt.blockNumber <= finalized && tx.to?.toLowerCase() === venue && payloads.has(keccak256(tx.input))
+  /** The execution that consumed N, from a whole read of [from, to]; null when the read isn't whole or N isn't in it. */
+  const consumedN = async (from: bigint, to: bigint): Promise<ManaExecution | null> => {
+    const start = await evidence.nonceAt(chainId, ctx.venue, buyer, from - 1n)
+    const end = await evidence.nonceAt(chainId, ctx.venue, buyer, to)
+    if (nonce < start || nonce >= end) return null
+    // One entry per log, however the node repeats it: a repeat never stands in for a log it left out.
+    const logs = new Map((await evidence.executions(chainId, venue, from, to)).filter((e) => e.user === buyer).map((e) => [`${e.blockNumber}:${e.logIndex}`, e]))
+    const mine = [...logs.values()].sort(inChainOrder)
+    if (BigInt(mine.length) !== end - start) return null
+    return mine[Number(nonce - start)] ?? null
+  }
+  /**
+   * Whether `hash` is this sale, finalized and successful: a transaction whose input is exactly a signed execution this
+   * page sent (its signature names N), or, at a verified venue, the transaction of the execution that consumed N, with
+   * this call.
+   */
+  const ours = async (hash: string): Promise<boolean> => {
+    const receipt = await evidence.receipt(chainId, hash)
+    if (!receipt || receipt.status !== 'success' || receipt.blockNumber > finalized) return false
+    const tx = await evidence.transaction(chainId, hash)
+    if (tx && tx.to?.toLowerCase() === venue && payloads.has(keccak256(tx.input))) return true
+    if (!verified) return false
+    const at = await consumedN(receipt.blockNumber, receipt.blockNumber)
+    return !!at && at.txHash.toLowerCase() === hash.toLowerCase() && keccak256(at.call) === call
   }
   // The relay's own answers first: a hash it gave for one of these sends.
   for (const send of attempt.sends) {
-    if (send.hash && (await attributed(send.hash))) return { kind: 'succeeded', txHash: send.hash as Hex }
+    if (send.hash && (await ours(send.hash))) return { kind: 'succeeded', txHash: send.hash as Hex }
   }
   // A finalized block below the checkpoint (a lagging node) says nothing yet, neither about N nor about a retry.
   const fromBlock = BigInt(attempt.fromBlock)
   if (finalized < fromBlock) return { kind: 'waiting', retry: false }
-  const nonce = BigInt(attempt.nonce)
   const read = await evidence.nonceAt(chainId, ctx.venue, buyer, finalized)
   if (read === nonce) return { kind: 'waiting', retry: idle }
   if (read < nonce) return { kind: 'waiting', retry: false }
-  // N was consumed by F: the sale ran at N (one of these sends), or it never can.
-  const call = keccak256(attempt.data)
-  const matches = (await evidence.executions(chainId, venue, fromBlock, finalized)).filter((e) => e.user === buyer && keccak256(e.call) === call)
-  if (matches.length === 0) return verifiedVenue(chainId, venue) ? { kind: 'failed' } : { kind: 'waiting', retry: false }
-  for (const match of matches) {
-    if (await attributed(match.txHash)) return { kind: 'succeeded', txHash: match.txHash }
+  // N was consumed by F. At a verified venue, the execution that consumed it decides: this call is the sale, bought;
+  // any other means none of these sends can ever run.
+  if (verified) {
+    const at = await consumedN(fromBlock, finalized)
+    if (!at) return { kind: 'waiting', retry: false }
+    return keccak256(at.call) === call ? { kind: 'succeeded', txHash: at.txHash } : { kind: 'failed' }
+  }
+  // Elsewhere only a signed send of ours ends it, as bought.
+  const executions = await evidence.executions(chainId, venue, fromBlock, finalized)
+  for (const match of executions.filter((e) => e.user === buyer && keccak256(e.call) === call)) {
+    if (await ours(match.txHash)) return { kind: 'succeeded', txHash: match.txHash }
   }
   return { kind: 'waiting', retry: false }
 }

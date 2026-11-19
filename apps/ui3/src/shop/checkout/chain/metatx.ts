@@ -75,21 +75,6 @@ export class SignatureDeclinedError extends Error {
   readonly code = 4001;
 }
 
-/** The meta-transaction nonce on chain isn't the one a retry must sign (`exactNonce`): nothing was signed or sent. */
-export class NonceMovedError extends Error {
-  override name = "NonceMovedError";
-  constructor(
-    readonly expected: bigint,
-    readonly found: bigint,
-  ) {
-    super(`The meta-transaction nonce is ${found}, not ${expected}`);
-  }
-}
-
-export function isNonceMoved(e: unknown): e is NonceMovedError {
-  return e instanceof NonceMovedError || (e as { name?: string } | null)?.name === "NonceMovedError";
-}
-
 export const DOMAIN_TYPE = [
   { name: "name", type: "string" },
   { name: "version", type: "string" },
@@ -166,11 +151,6 @@ export type RelayOptions = {
   fetchImpl?: typeof fetch;
   /** A nonce already observed on chain: never sign against a staler one (load-balanced RPCs lag). */
   minNonce?: bigint;
-  /**
-   * Sign exactly this nonce, or nothing: a retry of a sale already signed at it, so the two can't both land. The chain
-   * reading another throws NonceMovedError before anything is signed.
-   */
-  exactNonce?: bigint;
   /** Fired once the buyer signed (the prompt is gone), before the relay is called. */
   onSigned?: () => void;
 };
@@ -183,8 +163,7 @@ export async function relayMetaTransaction(opts: RelayOptions): Promise<Relayed>
   if (code && code !== "0x") throw new GaslessUnavailableError("Contract accounts are not supported", "contract-account");
 
   const read = await readMetaTxNonce(reader, target, from);
-  if (opts.exactNonce !== undefined && read !== opts.exactNonce) throw new NonceMovedError(opts.exactNonce, read);
-  const nonce = opts.exactNonce ?? (opts.minNonce !== undefined && opts.minNonce > read ? opts.minNonce : read);
+  const nonce = opts.minNonce !== undefined && opts.minNonce > read ? opts.minNonce : read;
   const typed = metaTxTypedData(target, from, nonce, functionData);
 
   let signature: Hex;
@@ -198,6 +177,17 @@ export async function relayMetaTransaction(opts: RelayOptions): Promise<Relayed>
   opts.onSigned?.();
 
   const data = encodeExecuteMetaTransaction(target.metaTx, from, functionData, signature);
+  const txHash = await relaySignedMetaTransaction({ from, to: target.address, data, relayerUrl: opts.relayerUrl, fetchImpl: opts.fetchImpl });
+  return { txHash, nonce };
+}
+
+/**
+ * Sends an execution already signed (`encodeExecuteMetaTransaction`'s call data) through the relay: its hash, or a
+ * GaslessUnavailableError, "relayer-rejected" only when the relay says nothing was broadcast (refusedBeforeBroadcast).
+ * Sending the same signed execution again can run it at most once: its signature names one nonce.
+ */
+export async function relaySignedMetaTransaction(opts: { from: string; to: string; data: Hex; relayerUrl?: string; fetchImpl?: typeof fetch }): Promise<Hex> {
+  const { from, data } = opts;
   const base = (opts.relayerUrl ?? configuredRelayer()).replace(/\/$/, "");
   const fetchImpl = opts.fetchImpl ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
   type RelayerBody = { ok?: boolean; txHash?: string; message?: string; code?: unknown; error?: unknown; not_sent?: unknown };
@@ -207,7 +197,7 @@ export async function relayMetaTransaction(opts: RelayOptions): Promise<Relayed>
     const res = await fetchImpl(`${base}/transactions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ transactionData: { from, params: [target.address, data] } }),
+      body: JSON.stringify({ transactionData: { from, params: [opts.to, data] } }),
     });
     status = res.status;
     body = (await res.json().catch(() => null)) as RelayerBody | null;
@@ -215,7 +205,7 @@ export async function relayMetaTransaction(opts: RelayOptions): Promise<Relayed>
     throw new GaslessUnavailableError((e as Error)?.message ?? "relayer unreachable", "relayer-unreachable");
   }
   if (!body) throw new GaslessUnavailableError(`relayer answered ${status} with no body`, "relayer-unreachable");
-  if (body.ok !== false && body.txHash) return { txHash: body.txHash as Hex, nonce };
+  if (body.ok !== false && body.txHash) return body.txHash as Hex;
   const reason = refusedBeforeBroadcast(body) ? "relayer-rejected" : "relayer-unreachable";
   throw new GaslessUnavailableError(body.message ?? `relayer ${status}`, reason, relayRefusal(body));
 }

@@ -1,7 +1,7 @@
 // A MANA purchase's attempt (shell/shop/manaPurchase): when each send of the sale may go, and what its record keeps.
 import { describe, expect, it, vi } from 'vitest'
 import { keccak256, type Hex } from 'viem'
-import { compactManaAttempt, createManaAttempt, isManaAttempt, manaDispatched, manaFingerprint, manaFirstDispatch, manaHasRoom, MAX_SENDS, type ManaAttemptRecord } from '../shell/shop/manaPurchase'
+import { compactManaAttempt, createManaAttempt, isManaAttempt, manaDispatched, manaFingerprint, manaLastDispatch, manaHasRoom, MAX_SENDS, type ManaAttemptRecord } from '../shell/shop/manaPurchase'
 import type { ManaSaleTerms } from '../shell/shop/manaGuard'
 
 const STORE = '0x214ffc0f0103735728dc66b61a22e4f163e275ae'
@@ -45,7 +45,7 @@ describe('a MANA purchase’s attempt', () => {
     // The relay's hash for what went, kept after.
     expect(k.kept.at(-1)?.sends[0]).toMatchObject({ stage: 'dispatched', hash: HASH })
     expect(a.dispatched()).toBe(true)
-    expect(manaFirstDispatch(a.record)).toBe(5_000)
+    expect(manaLastDispatch(a.record)).toBe(5_000)
   })
 
   it('never sends the sale from the wallet', () => {
@@ -214,14 +214,29 @@ describe('a MANA purchase’s attempt', () => {
     const first = vi.fn(() => new Promise<Response>((r) => (answerFirst = r)))
     await expect(a.relay(first as unknown as typeof fetch)('https://relay/transactions', post(STORE, PAYLOAD))).rejects.toThrow(TypeError)
     expect(a.dispatched()).toBe(true)
-    // A retry goes and is answered; then the first one's late refusal comes back.
+    // A retry (the same signed execution) goes and is answered; then the first one's late refusal comes back.
     a.retry()
     a.handOff({ rail: 'relay', nonce: 3n, data: CALL })
-    const second = '0x0c53c51c' + 'ef'.repeat(40)
-    await a.relay(sent() as unknown as typeof fetch)('https://relay/transactions', post(STORE, second))
+    await a.relay(sent() as unknown as typeof fetch)('https://relay/transactions', post(STORE, PAYLOAD))
     answerFirst(new Response(JSON.stringify({ ok: false, not_sent: true }), { status: 400 }))
     await vi.waitFor(() => expect(a.record.sends[0]).toMatchObject({ stage: 'refused', payload: keccak256(PAYLOAD as Hex) }))
-    expect(a.record.sends[1]).toMatchObject({ stage: 'dispatched', payload: keccak256(second as Hex), hash: HASH })
+    expect(a.record.sends[1]).toMatchObject({ stage: 'dispatched', payload: keccak256(PAYLOAD as Hex), hash: HASH })
+  })
+
+  it('sends only the signed execution once the sale was signed: other bytes are answered as never sent', async () => {
+    const a = attempt()
+    a.handOff({ rail: 'relay', nonce: 3n, data: CALL })
+    await a.relay(sent() as unknown as typeof fetch)('https://relay/transactions', post(STORE, PAYLOAD))
+    expect(a.record.signed).toBe(PAYLOAD)
+    a.retry()
+    expect(a.handOff({ rail: 'relay', nonce: 3n, data: CALL })).toBe(true)
+    const relay = sent()
+    const res = await a.relay(relay as unknown as typeof fetch)('https://relay/transactions', post(STORE, '0x0c53c51c' + 'ef'.repeat(40)))
+    expect(await res.json()).toMatchObject({ ok: false, not_sent: true })
+    expect(relay).not.toHaveBeenCalled()
+    expect(a.record.sends.map((x) => x.stage)).toEqual(['dispatched', 'signing'])
+    expect(a.retire()).toBe(true)
+    expect(a.record.sends.map((x) => x.stage)).toEqual(['dispatched'])
   })
 
   it('keeps a retry and its hash when the first send’s late refusal comes back, even with the same signed bytes, through a reload', async () => {
@@ -305,12 +320,17 @@ describe('a MANA purchase’s attempt', () => {
       nonce: '3',
       data: CALL,
       fromBlock: '99',
+      signed: PAYLOAD as Hex,
       sends: [
         { id: 's16', stage: 'refused', payload: keccak256(PAYLOAD as Hex), at: 1 },
-        { id: 's17', stage: 'dispatched', payload: keccak256('0x01'), at: 2, hash: HASH }
+        { id: 's17', stage: 'dispatched', payload: keccak256(PAYLOAD as Hex), at: 2, hash: HASH }
       ]
     }
     expect(isManaAttempt(good)).toBe(true)
+    // Every send carried the one signed execution the record keeps.
+    expect(isManaAttempt({ ...good, signed: undefined })).toBe(false)
+    expect(isManaAttempt({ ...good, sends: [good.sends[0], { ...good.sends[1], payload: keccak256('0x01') }] })).toBe(false)
+    expect(isManaAttempt({ ...good, signed: '0x' })).toBe(false)
     expect(manaDispatched(good)).toBe(true)
     expect(isManaAttempt({ ...good, venue: 'nope' })).toBe(false)
     expect(isManaAttempt({ ...good, fingerprint: '0x12' })).toBe(false)

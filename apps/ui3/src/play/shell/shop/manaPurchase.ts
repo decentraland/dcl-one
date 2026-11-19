@@ -3,18 +3,19 @@
 // each send of the sale got, so that a reload never sends it twice and never ends one that may have gone.
 //
 // The sale goes only through the relay, as the venue's meta-transaction (the rails' `relayOnly`): never from the
-// buyer's wallet. Its signature names the buyer's meta-transaction nonce N at the venue, and every send of the sale (the
-// first, and any retry) signs that same N with the same call, so on-chain at most one of them can ever run. The record
-// keeps, from the first signature on:
+// buyer's wallet. Its signature names the buyer's meta-transaction nonce N at the venue. The buyer signs it once; a
+// retry sends that same signed execution again, never a new signature, so on-chain at most one send can ever run, and
+// a retry can only ever send what the buyer signed. The record keeps, from the signature on:
 //
 //  - the sale's terms, its nonce N and its exact call (`data`), before the wallet is asked to sign;
 //  - before the first relay request leaves, a block checkpoint at or before it (`fromBlock`, where the chain is read
-//    from), and for each send, right before its request, the digest of the signed execution it carries (`payload`)
-//    and when it went (`at`).
+//    from), and the signed execution itself (`signed`, what a retry sends);
+//  - for each send, right before its request, the digest of the signed execution it carries (`payload`) and when it
+//    went (`at`).
 //
-// A send is `signing` (kept before its signature), then `dispatched` (kept right before its relay request), and then
-// `refused` when the relay answers that it sent nothing, or `declined` when the buyer said no to its signature in the
-// wallet (EIP-1193 4001). Nothing leaves this page without its checkpoint held: a request whose checkpoint couldn't be
+// A send is `signing` (kept before its signature, or for a retry, before its request), then `dispatched` (kept right
+// before its relay request), and then `refused` when the relay answers that it sent nothing, or `declined` when the
+// buyer said no to its signature in the wallet (EIP-1193 4001). Nothing leaves this page without its checkpoint held: a request whose checkpoint couldn't be
 // kept is answered here as never sent, and nothing more is sent. So a record with no send `dispatched` provably sent
 // nothing. One with a send `dispatched` may have: the chain says how it ended (./manaEvidence), never a timer.
 //
@@ -36,7 +37,7 @@ import { deadline, DeadlineError } from './manaEvidence'
 
 type SendStage = 'signing' | 'dispatched' | 'refused' | 'declined'
 
-/** One send of the sale through the relay: the first, or a retry of it at the same nonce. */
+/** One send of the sale through the relay: the first, or a retry (the same signed execution, sent again). */
 interface ManaSend {
   /** This send's own name, kept with it from its signature on: two sends of the same sale can carry the same bytes. */
   id: string
@@ -68,6 +69,8 @@ export interface ManaAttemptRecord {
   data?: Hex
   /** A block at or before the first relay request: the chain is read from here. */
   fromBlock?: string
+  /** The signed execution (executeMetaTransaction's call data) every send carries: a retry sends exactly this. */
+  signed?: Hex
   /** Each send, in order: the first, then any retries. */
   sends: ManaSend[]
 }
@@ -121,13 +124,16 @@ export function isManaAttempt(v: unknown): v is ManaAttemptRecord {
     (v.nonce === undefined || (typeof v.nonce === 'string' && DECIMAL.test(v.nonce))) &&
     (v.data === undefined || (typeof v.data === 'string' && HEX.test(v.data))) &&
     (v.fromBlock === undefined || (typeof v.fromBlock === 'string' && DECIMAL.test(v.fromBlock))) &&
+    (v.signed === undefined || (typeof v.signed === 'string' && HEX.test(v.signed) && v.signed.length > 2)) &&
     Array.isArray(sends) &&
     sends.length <= MAX_SENDS &&
     sends.every(isSend) &&
     new Set(sends.map((x) => (x as ManaSend).id)).size === sends.length &&
     // A signature names a nonce and a call, and a dispatch has its checkpoint.
     (sends.length === 0 || (v.nonce !== undefined && v.data !== undefined)) &&
-    (!sends.some((s) => (s as ManaSend).stage === 'dispatched') || v.fromBlock !== undefined)
+    (!sends.some((s) => (s as ManaSend).stage === 'dispatched') || v.fromBlock !== undefined) &&
+    // Every send that carried something carried the one signed execution.
+    sends.every((s) => (s as ManaSend).payload === undefined || (typeof v.signed === 'string' && (s as ManaSend).payload === keccak256(v.signed as Hex)))
   )
 }
 
@@ -152,10 +158,10 @@ export function manaHasRoom(record: ManaAttemptRecord): boolean {
   return !record.sends.some((s) => s.stage === 'signing') && record.sends.filter((s) => s.stage === 'dispatched').length < MAX_SENDS
 }
 
-/** When the first send that went, went (ms), or null. */
-export function manaFirstDispatch(attempt: ManaAttemptRecord): number | null {
+/** When the latest send that went, went (ms), or null: a retry waits from there, not from the first. */
+export function manaLastDispatch(attempt: ManaAttemptRecord): number | null {
   const at = attempt.sends.flatMap((s) => (s.stage === 'dispatched' && s.at != null ? [s.at] : []))
-  return at.length > 0 ? Math.min(...at) : null
+  return at.length > 0 ? Math.max(...at) : null
 }
 
 /**
@@ -212,7 +218,7 @@ export interface ManaAttempt {
   authorize<T>(run: () => Promise<T>): Promise<T>
   /** Whether an approve may go now (ManaPurchaseIntent.mayApprove). */
   approving(): boolean
-  /** Lets one more send of the same sale, at the same nonce, be handed off: the buyer's RETRY. */
+  /** Lets the signed execution be sent once more (handed off at its nonce and call): the buyer's RETRY. */
   retry(): void
   /** Keeps the hash the relay answered for the latest send. */
   answered(hash: string): void
@@ -356,7 +362,8 @@ export function createManaAttempt(
         current = id
         return true
       }
-      // A retry: the buyer's own, of the same call at the same nonce, while no send is being signed and the record has room.
+      // A retry: the buyer's own, of the signed execution (its call, at its nonce), while no send is on its way to its
+      // request and the record has room.
       if (!retrying || !manaHasRoom(compactManaAttempt(now)) || now.sends.some((x) => x.stage === 'signing')) return false
       if (attempt.nonce.toString() !== now.nonce || attempt.data.toLowerCase() !== now.data?.toLowerCase()) return false
       retrying = false
@@ -378,6 +385,9 @@ export function createManaAttempt(
           blocked = true
           return notSent("This browser couldn't keep a record of the purchase, so it wasn't sent.")
         }
+        // Once signed, only that signed execution goes, however many times.
+        const signed = read().signed
+        if (signed != null && signed.toLowerCase() !== request.payload.toLowerCase()) return notSent('The Shop sends only this purchase as you signed it, so nothing was sent.')
         let fromBlock = read().fromBlock
         if (fromBlock == null) {
           try {
@@ -389,7 +399,7 @@ export function createManaAttempt(
         }
         const now = read()
         const at = now.sends.findIndex((x) => x.id === id)
-        if (at < 0 || !move({ ...now, fromBlock, sends: now.sends.map((x, i) => (i === at ? { ...x, stage: 'dispatched', payload: keccak256(request.payload), at: opts.now() } : x)) })) {
+        if (at < 0 || !move({ ...now, fromBlock, signed: request.payload, sends: now.sends.map((x, i) => (i === at ? { ...x, stage: 'dispatched', payload: keccak256(request.payload), at: opts.now() } : x)) })) {
           return notSent("This browser couldn't keep a record of the purchase, so it wasn't sent.")
         }
         current = null

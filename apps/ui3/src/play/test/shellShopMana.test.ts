@@ -5,7 +5,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, keccak256, maxUint256, parseAbi, type Hex } from 'viem'
 import { createFakeChain, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade } from '../../shop/checkout/fakes'
 import { ASSET_TYPE, encodeStoreBuy } from '../../shop/checkout/purchase/encoding'
+import { encodeExecuteMetaTransaction } from '../../shop/checkout/chain/metatx'
 import { manaFingerprint } from '../shell/shop/manaPurchase'
+import { createLedger } from '../shell/shop/ledger'
 import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
 import type { UsdCents } from '@shop/model/money'
 import type { PurchaseOffer } from '@shop/model/purchase'
@@ -103,9 +105,14 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
       txs.set(hash.toLowerCase(), { to, input: onChain.foreignHash ? ('0xdeadbeef' as Hex) : input })
     }
   })
-  /** The chain as the evidence reads it: the nonce the fake chain holds, the executions given, the relay's transactions. */
+  /**
+   * The chain as the evidence reads it: the nonce the fake chain holds now, the executions a log read returns, the
+   * relay's transactions. As at a verified venue, each execution moved its signer's nonce once, so the nonce at a block
+   * is today's less the executions after it (`unlogged` ones too: on chain, but left out of every log read).
+   */
   const onChain = {
     executions: [] as ManaExecution[],
+    unlogged: [] as ManaExecution[],
     fail: false,
     finalized: 1000n,
     latest: 1000n,
@@ -127,7 +134,11 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
       return onChain.finalized
     },
     latest: async () => onChain.latest,
-    nonceAt: async (_c, venue, user) => chain.nonces.get(`${venue.address.toLowerCase()}:${user.toLowerCase()}`) ?? 0n,
+    nonceAt: async (_c, venue, user, block) => {
+      const now = chain.nonces.get(`${venue.address.toLowerCase()}:${user.toLowerCase()}`) ?? 0n
+      const after = [...onChain.executions, ...onChain.unlogged].filter((e) => e.user === user.toLowerCase() && e.blockNumber > block)
+      return now - BigInt(after.length)
+    },
     // As eth_getLogs answers: only what lies in the range asked for.
     executions: async (_c, _venue, from, to) => {
       if (onChain.fail) throw new Error('range too large')
@@ -230,6 +241,12 @@ function page(
 
 const relayedTo = (w: World) => w.relay.posts.map((p) => String((p as { transactionData: { params: unknown[] } }).transactionData.params[0]).toLowerCase())
 const signatures = (w: World) => w.wallet.requests.filter((q) => q.method === 'eth_signTypedData_v4')
+/** The typed data's nonce of each sale signature the wallet was asked for. */
+const signedNonces = (w: World) =>
+  signatures(w)
+    .map((q) => JSON.parse(String(q.params?.[1])) as { domain: { verifyingContract: string }; message: { nonce: string } })
+    .filter((t) => t.domain.verifyingContract.toLowerCase() === STORE)
+    .map((t) => t.message.nonce)
 
 describe('the in-world purchase with MANA', () => {
   describe('when it is offered', () => {
@@ -577,12 +594,6 @@ describe('the in-world purchase with MANA', () => {
 
   describe('a sale whose answer was lost', () => {
     const NONCE_KEY = `${STORE}:${BUYER}`
-    /** The typed data's nonce of each sale signature the wallet was asked for. */
-    const signedNonces = (w: World) =>
-      signatures(w)
-        .map((q) => JSON.parse(String(q.params?.[1])) as { domain: { verifyingContract: string }; message: { nonce: string } })
-        .filter((t) => t.domain.verifyingContract.toLowerCase() === STORE)
-        .map((t) => t.message.nonce)
     /** The first send, lost; then CHECK AGAIN past RETRY_AFTER_MS: the page now offers RETRY. */
     const lost = async (w: World, p: ReturnType<typeof page>) => {
       w.relay.state.mode = 'down'
@@ -604,7 +615,7 @@ describe('the in-world purchase with MANA', () => {
       // The relay ran it at N after all: the nonce moved, and the venue logged our call from the transaction we signed.
       const [hash, tx] = [...w.txs.entries()][0]
       w.chain.nonces.set(NONCE_KEY, 1n)
-      w.onChain.executions = [{ user: BUYER, call: decodeCall(tx.input), txHash: hash as Hex, blockNumber: 1050n }]
+      w.onChain.executions = [{ user: BUYER, call: decodeCall(tx.input), txHash: hash as Hex, blockNumber: 1050n, logIndex: 0 }]
       w.onChain.finalized = 1100n
       pending.handlers.onCheckAgain?.()
       await p.until('success')
@@ -615,14 +626,16 @@ describe('the in-world purchase with MANA', () => {
       w2.relay.state.mode = 'down'
       await p2.payMana()
       const pending2 = await p2.until('pending')
-      // N went to something else, and the venue logged nothing of ours: it can never run.
+      // N went to another call by the buyer, and nothing of ours ran: it can never run.
       w2.chain.nonces.set(NONCE_KEY, 1n)
+      w2.onChain.executions = [{ user: BUYER, call: '0xbeef', txHash: ('0x' + 'cd'.repeat(32)) as Hex, blockNumber: 1050n, logIndex: 3 }]
+      w2.onChain.finalized = 1100n
       pending2.handlers.onCheckAgain?.()
       const failed = await p2.until('failed')
       expect(failed.view).toMatchObject({ message: "This purchase didn't go through. Nothing was bought and no MANA was spent." })
     })
 
-    it('keeps checking while the chain can’t say: a range it can’t read, the same call it can’t attribute', async () => {
+    it('keeps checking while the chain can’t say: a range it can’t read, a read that leaves an execution out', async () => {
       const w = world({ allowance: maxUint256 })
       const p = page(w)
       w.relay.state.mode = 'down'
@@ -632,9 +645,11 @@ describe('the in-world purchase with MANA', () => {
       w.onChain.fail = true
       pending.handlers.onCheckAgain?.()
       await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', check: 'ready' }))
-      // The same call by the buyer, at N+1, signed elsewhere: not ours, and no RETRY (N is gone).
+      // N went to another call, at 1055, but the node's log read leaves it out and returns only N+1: the read holds one
+      // execution where the nonce moved twice, so it decides nothing, and offers no RETRY (N is gone).
       w.onChain.fail = false
-      w.onChain.executions = [{ user: BUYER, call: decodeCall((w.relay.posts[0] as { transactionData: { params: [string, Hex] } }).transactionData.params[1]), txHash: ('0x' + 'ab'.repeat(32)) as Hex, blockNumber: 1060n }]
+      w.onChain.unlogged = [{ user: BUYER, call: '0xbeef', txHash: ('0x' + 'cd'.repeat(32)) as Hex, blockNumber: 1055n, logIndex: 0 }]
+      w.onChain.executions = [{ user: BUYER, call: '0xfeed', txHash: ('0x' + 'ab'.repeat(32)) as Hex, blockNumber: 1060n, logIndex: 0 }]
       w.onChain.finalized = 1100n
       w.clock.now += RETRY_AFTER_MS
       p.shown.at(-1)!.handlers.onCheckAgain?.()
@@ -659,11 +674,30 @@ describe('the in-world purchase with MANA', () => {
       const op = p.events.at(-1)!.operation
       p.shown.at(-1)!.handlers.onRetry?.()
       await p.until('success')
-      // Two signatures of the same sale, both at the first nonce; the second relayed; nothing from the wallet.
-      expect(signedNonces(w)).toEqual(['0', '0'])
+      // One signature, at the first nonce; the retry relayed exactly what it signed, with nothing asked of the wallet.
+      expect(signedNonces(w)).toEqual(['0'])
       expect(relayedTo(w)).toEqual([STORE, STORE])
+      expect(w.relay.posts[1]).toEqual(w.relay.posts[0])
       expect(w.wallet.sent).toHaveLength(0)
       expect(p.events.at(-1)).toMatchObject({ operation: op, state: 'succeeded' })
+    })
+
+    it('waits RETRY_AFTER_MS again after a retry that got no answer, from that retry', async () => {
+      const w = world({ allowance: maxUint256 })
+      const p = page(w)
+      const retry = await lost(w, p)
+      w.relay.state.mode = 'down'
+      retry.handlers.onRetry?.()
+      await vi.waitFor(() => expect(w.relay.posts).toHaveLength(2))
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view.step).toBe('pending'))
+      // Just short of the wait after the retry (the first send went long before): CHECK AGAIN offers no RETRY yet.
+      w.clock.now += RETRY_AFTER_MS - 1
+      p.shown.at(-1)!.handlers.onCheckAgain?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', check: 'ready' }))
+      expect(p.shown.at(-1)?.view).not.toHaveProperty('retry')
+      w.clock.now += 1
+      p.shown.at(-1)!.handlers.onCheckAgain?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', retry: true }))
     })
 
     it('signs nothing when the first send landed just before the retry, and ends bought by it', async () => {
@@ -676,7 +710,7 @@ describe('the in-world purchase with MANA', () => {
       w.txs.set(landed, { to: STORE, input: firstPayload })
       w.chain.receipts.set(landed, 'success')
       w.chain.nonces.set(NONCE_KEY, 1n)
-      w.onChain.executions = [{ user: BUYER, call: decodeCall(firstPayload), txHash: landed, blockNumber: 1050n }]
+      w.onChain.executions = [{ user: BUYER, call: decodeCall(firstPayload), txHash: landed, blockNumber: 1050n, logIndex: 0 }]
       w.onChain.finalized = 1100n
       retry.handlers.onRetry?.()
       await p.until('success')
@@ -701,7 +735,7 @@ describe('the in-world purchase with MANA', () => {
       w.txs.set(landed, { to: STORE, input: firstPayload })
       w.chain.receipts.set(landed, 'success')
       w.chain.nonces.set(NONCE_KEY, 1n)
-      w.onChain.executions = [{ user: BUYER, call: decodeCall(firstPayload), txHash: landed, blockNumber: 1050n }]
+      w.onChain.executions = [{ user: BUYER, call: decodeCall(firstPayload), txHash: landed, blockNumber: 1050n, logIndex: 0 }]
       w.onChain.finalized = 1100n
       await p.until('success')
       expect(p.events.at(-1)).toMatchObject({ state: 'succeeded', txHash: landed })
@@ -727,7 +761,9 @@ describe('the in-world purchase with MANA', () => {
       await vi.waitFor(() => expect(again.shown.at(-1)?.view).toMatchObject({ step: 'pending', retry: true }))
       again.shown.at(-1)!.handlers.onRetry?.()
       await again.until('success')
-      expect(signedNonces(w)).toEqual(['0', '0'])
+      // From what the record kept: the signed execution itself, sent again with no new signature.
+      expect(signedNonces(w)).toEqual(['0'])
+      expect(w.relay.posts[1]).toEqual(w.relay.posts[0])
     })
   })
 
@@ -780,7 +816,7 @@ describe('the in-world purchase with MANA', () => {
       w.onChain.receiptBlock = 1005n
       w.onChain.finalized = 1020n
       w.chain.nonces.set(NONCE_KEY, 1n)
-      w.onChain.executions = [{ user: BUYER, call: decodeCall(payload), txHash: landed, blockNumber: 1005n }]
+      w.onChain.executions = [{ user: BUYER, call: decodeCall(payload), txHash: landed, blockNumber: 1005n, logIndex: 0 }]
       pending.handlers.onCheckAgain?.()
       await p.until('success')
     })
@@ -865,7 +901,7 @@ describe('the in-world purchase with MANA', () => {
       p.shown.at(-1)!.handlers.onClose()
       const op = p.events.at(-1)!.operation
       expect(await p.open()).toMatchObject({ operation: op, state: 'pending' })
-      expect(signatures(w)).toHaveLength(2)
+      expect(signatures(w)).toHaveLength(1)
       expect(w.relay.posts).toHaveLength(2)
       release()
       await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ operation: op, state: 'succeeded' }))
@@ -898,12 +934,9 @@ describe('the in-world purchase with MANA', () => {
       await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', retry: true }))
       p.shown.at(-1)!.handlers.onRetry?.()
       await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'succeeded' }))
-      const nonces = signatures(w)
-        .map((q) => JSON.parse(String(q.params?.[1])) as { domain: { verifyingContract: string }; message: { nonce: string } })
-        .filter((t) => t.domain.verifyingContract.toLowerCase() === STORE)
-        .map((t) => t.message.nonce)
-      expect(nonces).toEqual(['0', '0'])
+      expect(signedNonces(w)).toEqual(['0'])
       expect(w.relay.posts).toHaveLength(2)
+      expect(w.relay.posts[1]).toEqual(w.relay.posts[0])
     })
 
     it('offers RETRY after a send whose answer’s body never ends, without closing it or reloading', async () => {
@@ -1142,10 +1175,13 @@ describe('the in-world purchase with MANA', () => {
   })
 
   describe('a retry that didn’t go', () => {
-    const FIRST = { id: 's1', stage: 'dispatched', payload: '0x' + 'c1'.repeat(32), at: 0 }
+    const CALL = encodeStoreBuy([{ collection: CONTRACT, itemId: String(ITEM), priceWei: PRICE }], BUYER)
+    /** The signed execution the first send carried, as the record keeps it. */
+    const SIGNED = encodeExecuteMetaTransaction('functionSignature', BUYER, CALL, `0x${'22'.repeat(64)}1c`)
+    const FIRST = { id: 's1', stage: 'dispatched', payload: keccak256(SIGNED), at: 0 }
     const seedRecord = (w: World, id: string, sends: Record<string, unknown>[]) =>
       w.storage.setItem(
-        `dcl-inworld-shop:record:v1:${BUYER}:${id}`,
+        `dcl-inworld-shop:record:mana-v1:${BUYER}:${id}`,
         JSON.stringify({
           id,
           buyer: BUYER,
@@ -1157,15 +1193,16 @@ describe('the in-world purchase with MANA', () => {
             terms: { kind: 'mints', venue: STORE, units: [{ contract: CONTRACT, itemId: String(ITEM) }], maxWei: PRICE },
             fingerprint: manaFingerprint({ kind: 'mints', venue: STORE, units: [{ contract: CONTRACT, itemId: String(ITEM) }], maxWei: BigInt(PRICE) }),
             nonce: '0',
-            data: encodeStoreBuy([{ collection: CONTRACT, itemId: String(ITEM), priceWei: PRICE }], BUYER),
+            data: CALL,
             fromBlock: '900',
+            signed: SIGNED,
             sends
           },
           createdAt: 1,
           updatedAt: 1
         })
       )
-    const stored = (w: World, id: string) => JSON.parse(w.storage.getItem(`dcl-inworld-shop:record:v1:${BUYER}:${id}`)!) as { mana: { sends: { stage: string }[] } }
+    const stored = (w: World, id: string) => JSON.parse(w.storage.getItem(`dcl-inworld-shop:record:mana-v1:${BUYER}:${id}`)!) as { mana: { sends: { stage: string }[] } }
 
     it('drops a retry left signing by a page that went, keeps the first send’s evidence, and offers RETRY again', async () => {
       const w = world({ allowance: maxUint256 })
@@ -1177,17 +1214,25 @@ describe('the in-world purchase with MANA', () => {
       expect(stored(w, '0000000b-0000-0000-0000-000000000001').mana.sends).toEqual([FIRST])
       p.shown.at(-1)!.handlers.onRetry?.()
       await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ operation: '0000000b-0000-0000-0000-000000000001', state: 'succeeded' }))
+      // What the record kept went again, as it was signed, and the wallet was asked nothing.
+      expect((w.relay.posts[0] as { transactionData: { params: [string, Hex] } }).transactionData.params).toEqual([STORE, SIGNED])
+      expect(w.wallet.requests).toHaveLength(0)
     })
 
-    it('offers RETRY again after a retry whose signature failed in the wallet before it was sent', async () => {
+    it('offers RETRY again after a retry that couldn’t read the nonce, with nothing sent', async () => {
       const w = world({ allowance: maxUint256 })
       w.clock.now = RETRY_AFTER_MS + 10
       seedRecord(w, '0000000b-0000-0000-0000-000000000002', [FIRST])
-      const p = page(w)
+      // The chain's reads fail while `failing` holds: the retry can't tell its nonce is still unused.
+      let failing = false
+      const reader = { ...w.chain, call: async (...a: Parameters<typeof w.chain.call>) => (failing ? Promise.reject(new Error('rate limited')) : w.chain.call(...a)) }
+      const p = page(w, { services: { reader: () => reader } })
       await p.open()
       await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', retry: true }))
-      w.wallet.next = 'fail'
+      failing = true
       p.shown.at(-1)!.handlers.onRetry?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view.step).toBe('pending'))
+      failing = false
       await vi.waitFor(() => expect(stored(w, '0000000b-0000-0000-0000-000000000002').mana.sends).toEqual([FIRST]))
       await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', retry: true }))
       expect(w.relay.posts).toHaveLength(0)
@@ -1198,7 +1243,7 @@ describe('the in-world purchase with MANA', () => {
     it('stops offering RETRY when the record holds as many sends as it keeps, and still checks the chain', async () => {
       const w = world({ allowance: maxUint256 })
       w.clock.now = RETRY_AFTER_MS + 10
-      const sends = Array.from({ length: 8 }, (_, i) => ({ id: `s${i}`, stage: 'dispatched', payload: '0x' + (i + 16).toString(16).repeat(32), at: 0 }))
+      const sends = Array.from({ length: 8 }, (_, i) => ({ id: `s${i}`, stage: 'dispatched', payload: keccak256(SIGNED), at: 0 }))
       seedRecord(w, '0000000b-0000-0000-0000-000000000003', sends)
       const p = page(w)
       await p.open()
@@ -1211,10 +1256,11 @@ describe('the in-world purchase with MANA', () => {
 
   describe('a reload', () => {
     const FINGERPRINT = '0x' + 'ab'.repeat(32)
+    const SIGNED = ('0x0c53c51c' + 'cd'.repeat(40)) as Hex
     /** A MANA purchase this browser kept mid-way, as a page that went would leave it. */
-    const seed = (w: World, id: string, sends: Record<string, unknown>[]) =>
+    const seed = (w: World, id: string, sends: Record<string, unknown>[], signed: Hex = SIGNED) =>
       w.storage.setItem(
-        `dcl-inworld-shop:record:v1:${BUYER}:${id}`,
+        `dcl-inworld-shop:record:mana-v1:${BUYER}:${id}`,
         JSON.stringify({
           id,
           buyer: BUYER,
@@ -1228,6 +1274,7 @@ describe('the in-world purchase with MANA', () => {
             nonce: '0',
             data: '0xa4fdc78a',
             fromBlock: '900',
+            ...(sends.some((x) => x.payload) ? { signed } : {}),
             sends
           },
           createdAt: 1,
@@ -1246,14 +1293,14 @@ describe('the in-world purchase with MANA', () => {
     it('ends a purchase whose only sent request the relay refused as failed, a retry left signing dropped on takeover', async () => {
       const w = world()
       seed(w, '0000000a-0000-0000-0000-000000000004', [
-        { id: 'a1', stage: 'refused', payload: '0x' + 'cd'.repeat(32), at: 1 },
+        { id: 'a1', stage: 'refused', payload: keccak256(SIGNED), at: 1 },
         { id: 'b1', stage: 'signing' }
       ])
       const p = page(w)
       await p.shell.request('shop.status', {})
       await vi.waitFor(() => expect(p.events.filter((e) => e.operation === '0000000a-0000-0000-0000-000000000004').at(-1)?.state).toBe('failed'))
       expect(p.events.filter((e) => e.operation === '0000000a-0000-0000-0000-000000000004').map((e) => e.state)).not.toContain('cancelled')
-      const kept = JSON.parse(w.storage.getItem(`dcl-inworld-shop:record:v1:${BUYER}:0000000a-0000-0000-0000-000000000004`)!) as { mana: { sends: { id: string }[] } }
+      const kept = JSON.parse(w.storage.getItem(`dcl-inworld-shop:record:mana-v1:${BUYER}:0000000a-0000-0000-0000-000000000004`)!) as { mana: { sends: { id: string }[] } }
       expect(kept.mana.sends.map((x) => x.id)).toEqual(['a1'])
     })
 
@@ -1264,7 +1311,7 @@ describe('the in-world purchase with MANA', () => {
       const w = world()
       const id = '0000000a-0000-0000-0000-000000000005'
       seed(w, id, [
-        { id: 'a1', stage: 'refused', payload: '0x' + 'cd'.repeat(32), at: 1 },
+        { id: 'a1', stage: 'refused', payload: keccak256(SIGNED), at: 1 },
         { id: 'b1', stage: 'signing' }
       ])
       let refused = 0
@@ -1303,10 +1350,15 @@ describe('the in-world purchase with MANA', () => {
       const hash = ('0x' + '9a'.repeat(32)) as Hex
       w.txs.set(hash, { to: STORE, input })
       w.chain.receipts.set(hash, 'success')
-      seed(w, id, [
-        { id: 'a1', stage: 'dispatched', payload: keccak256(input), at: 1, hash },
-        { id: 'b1', stage: 'signing' }
-      ])
+      seed(
+        w,
+        id,
+        [
+          { id: 'a1', stage: 'dispatched', payload: keccak256(input), at: 1, hash },
+          { id: 'b1', stage: 'signing' }
+        ],
+        input
+      )
       const storage = w.storage
       const stuck: Storage = {
         get length() {
@@ -1329,7 +1381,7 @@ describe('the in-world purchase with MANA', () => {
 
     it('keeps a dispatched purchase the chain can’t settle yet, and a BUY of its item shows it', async () => {
       const w = world()
-      seed(w, '0000000a-0000-0000-0000-000000000002', [{ id: 's5', stage: 'dispatched', payload: '0x' + 'cd'.repeat(32), at: w.clock.now }])
+      seed(w, '0000000a-0000-0000-0000-000000000002', [{ id: 's5', stage: 'dispatched', payload: keccak256(SIGNED), at: w.clock.now }])
       const p = page(w)
       const answer = await p.open()
       expect(answer).toMatchObject({ operation: '0000000a-0000-0000-0000-000000000002', state: 'processing' })
@@ -1337,6 +1389,41 @@ describe('the in-world purchase with MANA', () => {
       await new Promise((r) => setTimeout(r, 30))
       expect(p.events.some((e) => e.operation === '0000000a-0000-0000-0000-000000000002' && e.state !== 'processing')).toBe(false)
       expect(w.wallet.requests.some((q) => q.method === 'eth_signTypedData_v4' || q.method === 'eth_sendTransaction')).toBe(false)
+    })
+
+    it('keeps a MANA purchase under its own key, where a build that doesn’t know MANA never finds it', async () => {
+      const w = world({ allowance: maxUint256 })
+      w.relay.state.mode = 'down'
+      const p = page(w)
+      await p.payMana()
+      await p.until('pending')
+      const op = p.events.at(-1)!.operation
+      const keys = [...Array(w.storage.length).keys()].map((i) => w.storage.key(i)!)
+      expect(keys).toContain(`dcl-inworld-shop:record:mana-v1:${BUYER}:${op}`)
+      expect(keys.some((k) => k.startsWith(`dcl-inworld-shop:record:v1:${BUYER}:`) && k.endsWith(op))).toBe(false)
+    })
+
+    it('reads a record that moved between the two keys by its latest copy, and a MANA attempt only under its own', () => {
+      const w = world()
+      const id = '0000000a-0000-0000-0000-000000000009'
+      seed(w, id, [{ id: 's9', stage: 'dispatched', payload: keccak256(SIGNED), at: 1 }])
+      const manaRecord = JSON.parse(w.storage.getItem(`dcl-inworld-shop:record:mana-v1:${BUYER}:${id}`)!) as Record<string, unknown>
+      const credits = (updatedAt: number) => JSON.stringify({ ...manaRecord, mana: undefined, updatedAt })
+      const ledger = createLedger(() => w.storage)
+      // A copy left under the Credits key, older: the MANA one is the purchase.
+      w.storage.setItem(`dcl-inworld-shop:record:v1:${BUYER}:${id}`, credits(0))
+      expect(ledger.saved(BUYER, id)?.mana).toBeDefined()
+      expect(ledger.load(BUYER).filter((r) => r.id === id)).toHaveLength(1)
+      // Written later: that one is.
+      w.storage.setItem(`dcl-inworld-shop:record:v1:${BUYER}:${id}`, credits(5))
+      expect(ledger.saved(BUYER, id)?.mana).toBeUndefined()
+      // A save moves it, and leaves nothing under the other key.
+      expect(ledger.save(manaRecord as unknown as Parameters<typeof ledger.save>[0])).toBe(true)
+      expect(w.storage.getItem(`dcl-inworld-shop:record:v1:${BUYER}:${id}`)).toBeNull()
+      // A MANA attempt under the Credits key is never read.
+      w.storage.removeItem(`dcl-inworld-shop:record:mana-v1:${BUYER}:${id}`)
+      w.storage.setItem(`dcl-inworld-shop:record:v1:${BUYER}:${id}`, JSON.stringify(manaRecord))
+      expect(ledger.saved(BUYER, id)).toBeNull()
     })
 
     it('keeps reading a Credits purchase’s record, which has no MANA attempt, as before', async () => {

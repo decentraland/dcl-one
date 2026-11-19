@@ -21,12 +21,12 @@ import {
   chainIdSalt,
   encodeExecuteMetaTransaction,
   GaslessUnavailableError,
-  isNonceMoved,
   metaTxType,
   normalizeSignature,
   refusedBeforeBroadcast,
   relayMetaTransaction,
   relayRefusal,
+  relaySignedMetaTransaction,
   SignatureDeclinedError,
 } from "./metatx";
 import { createRpcReader, waitForReceipt, type ChainReader } from "./rpc";
@@ -258,23 +258,23 @@ describe("relaying a meta-transaction", () => {
     expect((decoded.args[2] as Hex).slice(-2)).toBe("1c");
   });
 
-  it("with an exact nonce, signs that nonce, or nothing at all when the chain reads another", async () => {
-    const signed: string[] = [];
-    const provider = {
-      request: async ({ params }: { method: string; params?: unknown[] }) => {
-        signed.push((params as string[])[1]!);
-        return `0x${"22".repeat(64)}01`;
-      },
-    };
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true, txHash: `0x${"ab".repeat(32)}` }), { status: 200 })) as unknown as typeof fetch;
-    // The chain reads 7 (fakeReader): an exact 7 signs 7, an exact 6 signs nothing and posts nothing.
-    await relayMetaTransaction({ provider, reader: fakeReader(), target, from, functionData: "0x1234", fetchImpl, exactNonce: 7n });
-    expect(JSON.parse(signed[0]!).message.nonce).toBe("7");
-    const moved = await relayMetaTransaction({ provider, reader: fakeReader(), target, from, functionData: "0x1234", fetchImpl, exactNonce: 6n }).catch((e: unknown) => e);
-    expect(isNonceMoved(moved)).toBe(true);
-    expect(moved).toMatchObject({ expected: 6n, found: 7n });
-    expect(signed).toHaveLength(1);
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  it("sends an execution already signed as the relay request it was, and tells a refusal from a lost answer", async () => {
+    const posts: unknown[] = [];
+    const answer = { body: { ok: true, txHash: `0x${"ab".repeat(32)}` } as unknown, status: 200 };
+    const fetchImpl = (async (url: string, init?: RequestInit) => {
+      posts.push({ url, body: JSON.parse(String(init?.body)) });
+      return new Response(JSON.stringify(answer.body), { status: answer.status });
+    }) as unknown as typeof fetch;
+    const data = encodeExecuteMetaTransaction("functionData", from, "0x1234", `0x${"22".repeat(64)}1c`);
+    const sent = { from, to: target.address, data, relayerUrl: "https://relay.example/v1/", fetchImpl };
+    expect(await relaySignedMetaTransaction(sent)).toBe(`0x${"ab".repeat(32)}`);
+    expect(posts[0]).toEqual({ url: "https://relay.example/v1/transactions", body: { transactionData: { from, params: [target.address, data] } } });
+    answer.body = { ok: false, not_sent: true, message: "quota" };
+    answer.status = 429;
+    await expect(relaySignedMetaTransaction(sent)).rejects.toMatchObject({ reason: "relayer-rejected" });
+    answer.body = { ok: false, message: "boom" };
+    answer.status = 500;
+    await expect(relaySignedMetaTransaction(sent)).rejects.toMatchObject({ reason: "relayer-unreachable" });
   });
 
   it("a declined prompt is a cancellation; a refusal and a dead relay are told apart", async () => {
@@ -442,5 +442,14 @@ describe("the RPC reader", () => {
       },
     });
     expect(await waitForReceipt(flaky, 137, "0x02", { sleep: async () => {} })).toMatchObject({ transactionHash: "0x02" });
+  });
+
+  it("lets an error answer's body go instead of leaving it open, so polling through errors leaks nothing", async () => {
+    let cancelled = false;
+    const body = new ReadableStream({ pull: () => new Promise<void>(() => {}), cancel: () => void (cancelled = true) });
+    const fetchImpl = (async () => new Response(body, { status: 502 })) as unknown as typeof fetch;
+    const reader = createRpcReader({ url: () => "https://rpc.example", fetchImpl });
+    await expect(reader.balance(137, "0x00")).rejects.toThrow(/HTTP 502/);
+    await vi.waitFor(() => expect(cancelled).toBe(true));
   });
 });

@@ -361,7 +361,10 @@ export function ShopPurchaseDialog({
           }
         >
           <h2 className={styles.title}>Purchase in progress</h2>
-          <p className={styles.note}>{view.message ?? 'Your purchase was sent and is still being confirmed. It will be in your Backpack once it is.'}</p>
+          {/* A status: what it says changes while the dialog stays up (RETRY opening, minutes later), and is announced. */}
+          <p className={styles.note} role="status">
+            {view.message ?? 'Your purchase was sent and is still being confirmed. It will be in your Backpack once it is.'}
+          </p>
           <ShopModalGap />
         </ShopModal>
       )

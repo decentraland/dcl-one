@@ -12,6 +12,7 @@ const SIGNED = ('0x0c53c51c' + 'ab'.repeat(40)) as Hex
 const OTHER_SIGNED = ('0x0c53c51c' + 'cd'.repeat(40)) as Hex
 const HASH = ('0x' + 'e1'.repeat(32)) as Hex
 const RELAY_HASH = ('0x' + 'f1'.repeat(32)) as Hex
+const OTHER_HASH = ('0x' + 'a2'.repeat(32)) as Hex
 const F = 500n
 
 const record = (over: Partial<ManaAttemptRecord> = {}): ManaAttemptRecord => ({
@@ -25,15 +26,22 @@ const record = (over: Partial<ManaAttemptRecord> = {}): ManaAttemptRecord => ({
   ...over
 })
 
-/** A chain: the nonce at F, the executions in range, and the transactions and receipts it knows. */
-function chain(opts: { nonce?: bigint; executions?: ManaExecution[] | Error; txs?: Record<string, { to: string; input: Hex }>; receipts?: Record<string, { status: 'success' | 'reverted'; blockNumber: bigint }> } = {}) {
+/**
+ * A chain: the buyer's nonce now, the executions a log read returns (only those in the range asked for), and the
+ * transactions and receipts it knows. As at a verified venue, each execution moved its signer's nonce once, so the nonce
+ * at a block is today's less the executions after it, `unlogged` ones included (on chain, left out of every log read).
+ */
+function chain(opts: { now?: bigint; executions?: ManaExecution[] | Error; unlogged?: ManaExecution[]; txs?: Record<string, { to: string; input: Hex }>; receipts?: Record<string, { status: 'success' | 'reverted'; blockNumber: bigint }> } = {}) {
+  const logged = opts.executions instanceof Error ? [] : (opts.executions ?? [])
+  // The chain holds each execution once, however a log read repeats it.
+  const all = [...new Map([...logged, ...(opts.unlogged ?? [])].map((e) => [`${e.blockNumber}:${e.logIndex}`, e])).values()]
   const evidence: ManaEvidence = {
     finalized: vi.fn(async () => F),
     latest: vi.fn(async () => F + 3n),
-    nonceAt: vi.fn(async () => opts.nonce ?? 7n),
-    executions: vi.fn(async () => {
+    nonceAt: vi.fn(async (_c, _v, user, block) => (opts.now ?? 7n) - BigInt(all.filter((e) => e.user === user && e.blockNumber > block).length)),
+    executions: vi.fn(async (_c, _v, from, to) => {
       if (opts.executions instanceof Error) throw opts.executions
-      return opts.executions ?? []
+      return logged.filter((e) => e.blockNumber >= from && e.blockNumber <= to)
     }),
     transaction: vi.fn(async (_c, hash) => opts.txs?.[hash] ?? null),
     receipt: vi.fn(async (_c, hash) => {
@@ -45,7 +53,7 @@ function chain(opts: { nonce?: bigint; executions?: ManaExecution[] | Error; txs
 }
 
 const resolve = (rec: ManaAttemptRecord, evidence: ManaEvidence) => resolveMana(rec, { chainId: 137, buyer: BUYER, venue: { address: STORE, metaTx: 'functionSignature' }, evidence })
-const execution = (over: Partial<ManaExecution> = {}): ManaExecution => ({ user: BUYER, call: CALL, txHash: HASH, blockNumber: 200n, ...over })
+const execution = (over: Partial<ManaExecution> = {}): ManaExecution => ({ user: BUYER, call: CALL, txHash: HASH, blockNumber: 200n, logIndex: 0, ...over })
 
 describe('a MANA sale on chain', () => {
   it('ends bought on the relay’s hash only when its transaction is a signed send of ours, finalized and successful', async () => {
@@ -58,41 +66,71 @@ describe('a MANA sale on chain', () => {
   })
 
   it('keeps waiting while the nonce isn’t consumed at the finalized block, open to RETRY unless a send is on its way', async () => {
-    expect(await resolve(record(), chain({ nonce: 7n }))).toEqual({ kind: 'waiting', retry: true })
-    expect(await resolve(record({ sends: [{ id: 's3', stage: 'dispatched', payload: keccak256(SIGNED), at: 1 }, { id: 's4', stage: 'signing' }] }), chain({ nonce: 7n }))).toEqual({ kind: 'waiting', retry: false })
+    expect(await resolve(record(), chain({ now: 7n }))).toEqual({ kind: 'waiting', retry: true })
+    expect(await resolve(record({ sends: [{ id: 's3', stage: 'dispatched', payload: keccak256(SIGNED), at: 1 }, { id: 's4', stage: 'signing' }] }), chain({ now: 7n }))).toEqual({ kind: 'waiting', retry: false })
   })
 
-  it('ends not bought when the nonce was consumed and no execution of this call by the buyer is in range', async () => {
-    const evidence = chain({ nonce: 8n, executions: [execution({ user: '0x' + '22'.repeat(20) }), execution({ call: '0xbeef' })] })
+  it('ends not bought when the execution that consumed the nonce is another call', async () => {
+    const evidence = chain({ now: 8n, executions: [execution({ user: '0x' + '22'.repeat(20) }), execution({ call: '0xbeef', logIndex: 1 })] })
     expect(await resolve(record(), evidence)).toEqual({ kind: 'failed' })
-    // Read from the first dispatch's checkpoint through the very block the nonce was read at.
+    // Read from the first dispatch's checkpoint through the very block the nonce was read at, and the nonce on both
+    // sides of that range.
     expect(evidence.executions).toHaveBeenCalledWith(137, STORE, 100n, F)
     expect(evidence.nonceAt).toHaveBeenCalledWith(137, { address: STORE, metaTx: 'functionSignature' }, BUYER, F)
+    expect(evidence.nonceAt).toHaveBeenCalledWith(137, { address: STORE, metaTx: 'functionSignature' }, BUYER, 99n)
   })
 
-  it('ends bought on a matching execution attributable to a signed send of ours', async () => {
-    const evidence = chain({ nonce: 8n, executions: [execution()], txs: { [HASH]: { to: STORE, input: SIGNED } }, receipts: { [HASH]: { status: 'success', blockNumber: 200n } } })
-    expect(await resolve(record(), evidence)).toEqual({ kind: 'succeeded', txHash: HASH })
+  it('ends bought on the execution that consumed the nonce, with this call, whatever transaction carried it', async () => {
+    // No hash from the relay, and the transaction isn't one this page signed (a forwarder's): the execution at N decides.
+    const evidence = chain({ now: 9n, executions: [execution({ call: '0xbeef', blockNumber: 150n }), execution({ txHash: RELAY_HASH, logIndex: 4 })] })
+    expect(await resolve(record({ nonce: '8' }), evidence)).toEqual({ kind: 'succeeded', txHash: RELAY_HASH })
+    // The same executions, the sale at the earlier nonce: there the other call ran, so it never can.
+    expect(await resolve(record({ nonce: '7' }), evidence)).toEqual({ kind: 'failed' })
   })
 
-  it('keeps waiting on the same call by the buyer that it can’t attribute (another signature, at another nonce)', async () => {
-    const evidence = chain({ nonce: 9n, executions: [execution()], txs: { [HASH]: { to: STORE, input: OTHER_SIGNED } }, receipts: { [HASH]: { status: 'success', blockNumber: 200n } } })
-    // And no RETRY: the nonce is gone, so a retry could never run.
-    expect(await resolve(record(), evidence)).toEqual({ kind: 'waiting', retry: false })
+  it('keeps waiting on a log read that doesn’t hold every execution the nonce moved by', async () => {
+    // N went to another call at 150, which the node leaves out: the read holds one execution where the nonce moved
+    // twice, so the one it shows (this call, at N+1) says nothing about N. And no RETRY: the nonce is gone.
+    const unlogged = [execution({ call: '0xbeef', blockNumber: 150n, txHash: OTHER_HASH })]
+    expect(await resolve(record(), chain({ now: 9n, executions: [execution()], unlogged }))).toEqual({ kind: 'waiting', retry: false })
+    // A log the node repeats never stands in for the one it left out.
+    expect(await resolve(record(), chain({ now: 9n, executions: [execution(), execution()], unlogged }))).toEqual({ kind: 'waiting', retry: false })
+  })
+
+  it('ends bought on the relay’s hash carried by a forwarder, when the execution that consumed N in its block is it', async () => {
+    const rec = record({ sends: [{ id: 's6', stage: 'dispatched', payload: keccak256(SIGNED), at: 1, hash: RELAY_HASH }] })
+    const forwarded = { [RELAY_HASH]: { to: '0x' + '99'.repeat(20), input: OTHER_SIGNED } }
+    const final = { [RELAY_HASH]: { status: 'success' as const, blockNumber: 300n } }
+    // Another of the buyer's executions in that block first (N−1), then ours (N). An execution at 150 the node leaves
+    // out keeps the range read from deciding, so only the receipt's block can.
+    const block = [execution({ call: '0xbeef', blockNumber: 300n, logIndex: 1, txHash: OTHER_HASH }), execution({ blockNumber: 300n, logIndex: 2, txHash: RELAY_HASH })]
+    const unlogged = [execution({ call: '0xbeef', blockNumber: 150n })]
+    expect(await resolve(rec, chain({ now: 8n, executions: block, unlogged, txs: forwarded, receipts: final }))).toEqual({ kind: 'succeeded', txHash: RELAY_HASH })
+    // At N, this call from another transaction (the relay's ran it at N−1); at N, another call; that block read missing
+    // one; reverted; at an unverified venue.
+    const earlier = [execution({ blockNumber: 300n, logIndex: 1, txHash: RELAY_HASH }), execution({ blockNumber: 300n, logIndex: 2, txHash: OTHER_HASH })]
+    expect(await resolve(rec, chain({ now: 8n, executions: earlier, unlogged, txs: forwarded, receipts: final }))).toMatchObject({ kind: 'waiting' })
+    const otherCall = [block[0], execution({ call: '0xbeef', blockNumber: 300n, logIndex: 2, txHash: RELAY_HASH })]
+    expect(await resolve(rec, chain({ now: 8n, executions: otherCall, unlogged, txs: forwarded, receipts: final }))).toMatchObject({ kind: 'waiting' })
+    expect(await resolve(rec, chain({ now: 8n, executions: [block[1]], unlogged: [...unlogged, block[0]], txs: forwarded, receipts: final }))).toMatchObject({ kind: 'waiting' })
+    expect(await resolve(rec, chain({ now: 8n, executions: block, unlogged, txs: forwarded, receipts: { [RELAY_HASH]: { status: 'reverted', blockNumber: 300n } } }))).toMatchObject({ kind: 'waiting' })
+    const other = '0x' + '77'.repeat(20)
+    const out = await resolveMana(record({ venue: other, sends: rec.sends }), { chainId: 137, buyer: BUYER, venue: { address: other, metaTx: 'functionData' }, evidence: chain({ now: 8n, executions: block, unlogged, txs: forwarded, receipts: final }) })
+    expect(out).toEqual({ kind: 'waiting', retry: false })
   })
 
   it('keeps waiting, with no RETRY, on a nonce read below the sale’s (a lagging node)', async () => {
-    expect(await resolve(record(), chain({ nonce: 6n }))).toEqual({ kind: 'waiting', retry: false })
+    expect(await resolve(record(), chain({ now: 6n }))).toEqual({ kind: 'waiting', retry: false })
   })
 
   it('keeps waiting on a range that would read backwards (the finalized block below the checkpoint)', async () => {
-    const evidence = chain({ nonce: 8n })
+    const evidence = chain({ now: 8n })
     expect(await resolve(record({ fromBlock: String(F + 1n) }), evidence)).toEqual({ kind: 'waiting', retry: false })
     expect(evidence.executions).not.toHaveBeenCalled()
   })
 
   it('offers no RETRY on a finalized block below the checkpoint, even with the nonce exactly the sale’s', async () => {
-    expect(await resolve(record({ fromBlock: String(F + 1n) }), chain({ nonce: 7n }))).toEqual({ kind: 'waiting', retry: false })
+    expect(await resolve(record({ fromBlock: String(F + 1n) }), chain({ now: 7n }))).toEqual({ kind: 'waiting', retry: false })
   })
 
   it('gives up on a chain read that stalls, so a later look can try again', async () => {
@@ -106,18 +144,18 @@ describe('a MANA sale on chain', () => {
 
   it('never ends a sale as not bought at a venue whose evidence isn’t verified', async () => {
     const other = '0x' + '77'.repeat(20)
-    const evidence = chain({ nonce: 8n })
+    const evidence = chain({ now: 8n, executions: [execution({ call: '0xbeef' })] })
     const out = await resolveMana(record({ venue: other }), { chainId: 137, buyer: BUYER, venue: { address: other, metaTx: 'functionData' }, evidence })
     expect(out).toEqual({ kind: 'waiting', retry: false })
   })
 
   it('throws on a log range it can’t read, so nothing settles on half a range', async () => {
-    await expect(resolve(record(), chain({ nonce: 8n, executions: new Error('range too large') }))).rejects.toThrow()
+    await expect(resolve(record(), chain({ now: 8n, executions: new Error('range too large'), unlogged: [execution({ call: '0xbeef' })] }))).rejects.toThrow(/range too large/)
   })
 
   it('keeps waiting for a record without what this needs, and for one that sent nothing', async () => {
-    expect(await resolve(record({ fromBlock: undefined }), chain({ nonce: 8n }))).toMatchObject({ kind: 'waiting' })
-    expect(await resolve(record({ sends: [{ id: 's5', stage: 'refused', payload: keccak256(SIGNED), at: 1 }] }), chain({ nonce: 8n }))).toMatchObject({ kind: 'waiting' })
+    expect(await resolve(record({ fromBlock: undefined }), chain({ now: 8n }))).toMatchObject({ kind: 'waiting' })
+    expect(await resolve(record({ sends: [{ id: 's5', stage: 'refused', payload: keccak256(SIGNED), at: 1 }] }), chain({ now: 8n }))).toMatchObject({ kind: 'waiting' })
   })
 
   it('reads an execution in both layouts the venues log it in', () => {
@@ -127,16 +165,30 @@ describe('a MANA sale on chain', () => {
       topics: encodeEventTopics({ abi: [event], eventName: 'MetaTransactionExecuted', args: { userAddress: BUYER as Hex, relayerAddress: relayer as Hex } }) as Hex[],
       data: encodeAbiParameters([{ type: 'bytes' }], [CALL]),
       transactionHash: HASH,
-      blockNumber: '0x10'
+      blockNumber: '0x10',
+      logIndex: '0x2'
     })
-    expect(indexed).toEqual({ user: BUYER, call: CALL, txHash: HASH, blockNumber: 16n })
+    expect(indexed).toEqual({ user: BUYER, call: CALL, txHash: HASH, blockNumber: 16n, logIndex: 2 })
     const flat = decodeExecution({
       topics: ['0x5845892132946850460bff5a0083f71031bc5bf9aadcd40f1de79423eac9b10b'],
       data: encodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'bytes' }], [BUYER as Hex, relayer as Hex, CALL]),
       transactionHash: HASH,
-      blockNumber: '0x11'
+      blockNumber: '0x11',
+      logIndex: '0x0'
     })
-    expect(flat).toEqual({ user: BUYER, call: CALL, txHash: HASH, blockNumber: 17n })
-    expect(() => decodeExecution({ topics: ['0x01', '0x02'], data: '0x', transactionHash: HASH, blockNumber: '0x1' })).toThrow()
+    expect(flat).toEqual({ user: BUYER, call: CALL, txHash: HASH, blockNumber: 17n, logIndex: 0 })
+    expect(() => decodeExecution({ topics: ['0x01', '0x02'], data: '0x', transactionHash: HASH, blockNumber: '0x1', logIndex: '0x0' })).toThrow()
+    // Without its place in the block it can't be ordered, so it can't be read.
+    expect(() => decodeExecution({ topics: ['0x5845892132946850460bff5a0083f71031bc5bf9aadcd40f1de79423eac9b10b'], data: '0x', transactionHash: HASH, blockNumber: '0x1' } as never)).toThrow(/place/)
+  })
+
+  it('lets an error answer’s body go instead of leaving it open', async () => {
+    let cancelled = false
+    const body = new ReadableStream({ pull: () => new Promise(() => {}), cancel: () => void (cancelled = true) })
+    const fetchImpl = async () => new Response(body, { status: 503 })
+    const reader = { call: async () => '0x' as Hex, receipt: async () => null, balance: async () => 0n, code: async () => '0x' as Hex }
+    const evidence = createManaEvidence({ url: () => 'https://rpc.test', fetchImpl: fetchImpl as unknown as typeof fetch, reader })
+    await expect(evidence.finalized(137)).rejects.toThrow(/HTTP 503/)
+    await vi.waitFor(() => expect(cancelled).toBe(true))
   })
 })

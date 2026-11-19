@@ -25,8 +25,7 @@
 // A sale is forwarded only once the host has kept its attempt (`handOff`, told the rail and, for a meta-transaction,
 // the nonce the checked signature names): the host holds one outstanding sale per confirmation, and an approve never
 // counts as one. An approve goes only while the host says its buyer is authorizing it (`mayApprove`): never on the
-// rails' own initiative, as when an allowance read fails or reads short again before the sale. A retry of a sale signed
-// before (`exactNonce`) signs that nonce or nothing, so the two can't both land. What reaches the wallet
+// rails' own initiative, as when an allowance read fails or reads short again before the sale. What reaches the wallet
 // is what was checked: a typed-data text parsed once and its checked data serialized again for the pinned buyer, or a
 // transaction snapshot built from the checked fields, its fees from the rails' own policy (amoyGasOverrides) and its
 // chain bound. Anything else is refused before it reaches the wallet.
@@ -77,8 +76,6 @@ export interface ManaPurchaseIntent {
   handOff(attempt: ManaHandOff): boolean
   /** Whether MANA's approve may go now: only while the buyer's own AUTHORIZE runs it, never on the rails' initiative. */
   mayApprove(): boolean
-  /** A retry of a sale signed before: its signature must name exactly this meta-transaction nonce. */
-  exactNonce?: bigint
 }
 
 /**
@@ -216,7 +213,7 @@ type Checked = { sale: boolean }
 export function checkMetaTransaction(
   from: unknown,
   data: unknown,
-  intent: Pick<ManaPurchaseIntent, 'buyer' | 'chainId' | 'sale' | 'exactNonce'>
+  intent: Pick<ManaPurchaseIntent, 'buyer' | 'chainId' | 'sale'>
 ): Checked & { typed: unknown; nonce: bigint; call: Hex } {
   if (lower(from) !== lower(intent.buyer)) refuse('The Shop signs only for the account you signed in with.')
   const { mana, venue } = registryFor(intent)
@@ -251,7 +248,6 @@ export function checkMetaTransaction(
     return { typed, sale: false, nonce, call }
   }
   checkSale(call, intent)
-  if (intent.exactNonce !== undefined && nonce !== intent.exactNonce) refuse('The purchase is not the one you confirmed.')
   return { typed, sale: true, nonce, call }
 }
 
@@ -319,8 +315,7 @@ export function manaGuardedProvider(provider: Eip1193Provider, source: ManaPurch
     sale: structuredClone(source.sale),
     current: () => source.current(),
     handOff: (attempt) => source.handOff(attempt),
-    mayApprove: () => source.mayApprove(),
-    ...(source.exactNonce !== undefined ? { exactNonce: source.exactNonce } : {})
+    mayApprove: () => source.mayApprove()
   }
   // The confirmed terms are checked once, before the wallet is asked anything.
   checkManaTerms(intent)

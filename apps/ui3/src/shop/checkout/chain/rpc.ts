@@ -51,7 +51,11 @@ export function createRpcReader(opts: { url?: (chainId: ChainId) => string | nul
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: nextId++, method, params }),
     });
-    if (!res.ok) throw new RpcError(`RPC ${method} answered HTTP ${res.status}`);
+    if (!res.ok) {
+      // An error's body is let go, never left open: a reader that polls would leak one stream per failed read.
+      void res.body?.cancel().catch(() => undefined);
+      throw new RpcError(`RPC ${method} answered HTTP ${res.status}`);
+    }
     const body = (await res.json()) as RpcResponse;
     if (body.error) throw new RpcError(body.error.message ?? `RPC ${method} failed`, body.error.code ?? null, body.error.data ?? null);
     return body.result as T;
