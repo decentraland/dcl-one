@@ -1583,6 +1583,13 @@ mod tests {
                 ),
             ] {
                 assert_eq!(status, StatusCode::NOT_FOUND, "{closing}: {what}: {body}");
+                if what == "accept" {
+                    assert_eq!(
+                        body["message"],
+                        format!("Community not found: {id}"),
+                        "{closing}: the client route's body"
+                    );
+                }
             }
             for hash in [
                 like.signature_hash(),
