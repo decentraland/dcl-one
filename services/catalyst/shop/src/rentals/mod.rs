@@ -37,7 +37,7 @@
 //!
 //! Not carried: the per-service `/ping`, `/health`, `/health/live` (the
 //! content server owns `/status` and `/health` at the root),
-//! `AUTH_EXPIRATION_SECONDS` (the shared verifier's window is five minutes
+//! `AUTH_EXPIRATION_SECONDS` (the shared verifier's window is 60 seconds
 //! for every surface), `DAPPS_PG_COMPONENT_PSQL_*` (no squid),
 //! `SIGNATURES_PG_CONNECTION_STRING` (the ONE pool), the `updates` table and
 //! the `update_type` enum (nothing read or wrote them).

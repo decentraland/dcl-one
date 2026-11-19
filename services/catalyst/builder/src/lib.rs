@@ -37,7 +37,7 @@
 //! is verified only; v2 never holds a signing key.
 //!
 //! Deviations from the old crate, all deliberate: the signed-fetch window is
-//! the shared verifier's 5 minutes (the old required path allowed 30); the
+//! the shared verifier's 60 seconds (the old required path allowed 30 minutes); the
 //! subgraph readers replace the squid side pool (503 on the address routes
 //! and empty curation listings without a collections subgraph, as the old
 //! node answered without its pool); `BUILDER_CONTENT_BUCKET_URL` is

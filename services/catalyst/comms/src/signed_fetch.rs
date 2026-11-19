@@ -25,9 +25,8 @@ use crate::worlds_envelope::ApiError;
 
 /// Upstream's `setupRouter` passes no `expiration` to `wellKnownComponents`, so every
 /// route on this surface runs on crypto-middleware's `DEFAULT_EXPIRATION` of `1000 * 60`
-/// (core-libs/libs/crypto-middleware/src/types.ts). The world-storage surface already
-/// reads the same default.
-pub const SIGNED_FETCH_EXPIRATION_SECS: i64 = 60;
+/// (core-libs/libs/crypto-middleware/src/types.ts), the window every signed route shares.
+pub const SIGNED_FETCH_EXPIRATION_SECS: i64 = crate::auth::signed_fetch::SIGNED_FETCH_WINDOW_SECS;
 
 /// The explorer comms handshakes. The js explorers still sign the folded payload with
 /// camelCase metadata while bevy-explorer mints the 6.x payload, so the fallback stays
