@@ -9,23 +9,17 @@ import {
 } from 'react'
 import { GeneralMana, GeneralPolygonMana } from '../../foundations/icons/general'
 import { ShopCredits } from '../../foundations/icons/shop'
+import { imageSource } from '../../link.helpers'
 import styles from './ShopCard.module.css'
 
 /** The router's link, passed in so the card opens its item under any router. */
 export type ShopCardLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }
 export type ShopCardLinkComponent = ComponentType<ShopCardLinkProps>
 
+const TINTED = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'exotic', 'mythic', 'unique'] as const
+
 /** The rarities the foundations colour; anything else is drawn as `base`. */
-export type ShopCardRarity =
-  | 'base'
-  | 'common'
-  | 'uncommon'
-  | 'rare'
-  | 'epic'
-  | 'legendary'
-  | 'exotic'
-  | 'mythic'
-  | 'unique'
+export type ShopCardRarity = 'base' | (typeof TINTED)[number]
 
 export type ShopCardCreator = {
   name: string
@@ -40,8 +34,11 @@ export type ShopCardProps = {
   image?: string
   /** A decorative glyph shown when there is no image or it fails to load, e.g. a NAME's. */
   placeholder?: ReactNode
-  /** Tints the thumbnail, the flap and the label. Without it the card is drawn as `base` and shows no label. */
-  rarity?: string
+  /**
+   * Tints the thumbnail, the flap and the label. Without it the card is drawn as `base` and shows no
+   * label; another value (a feed's own rarity) is drawn as `base` and shown as given.
+   */
+  rarity?: ShopCardRarity | (string & {})
   /** The glyph in the rarity's corner flap, e.g. the wearable category's. */
   categoryIcon?: ReactNode
   /** A tag over the thumbnail, e.g. "-20%". */
@@ -69,16 +66,7 @@ export type ShopCardProps = {
   headingLevel?: 2 | 3 | 4 | 5 | 6
 }
 
-const RARITIES = new Set<string>([
-  'common',
-  'uncommon',
-  'rare',
-  'epic',
-  'legendary',
-  'exotic',
-  'mythic',
-  'unique'
-])
+const RARITIES = new Set<string>(TINTED)
 
 /**
  * Whether the image failed. A server-rendered page can fail it before React attaches `onError`, so
@@ -118,7 +106,10 @@ export function ShopCard({
   variant = 'shop',
   headingLevel
 }: ShopCardProps) {
-  const { failed, ref, onError } = useFailedImage(image)
+  const thumbnail = imageSource(image)
+  const face = imageSource(creator?.picture)
+  const { failed, ref, onError } = useFailedImage(thumbnail)
+  const faceImage = useFailedImage(face)
   const tint = rarity && RARITIES.has(rarity) ? rarity : 'base'
   const classes = [
     styles.card,
@@ -128,30 +119,34 @@ export function ShopCard({
   ]
     .filter(Boolean)
     .join(' ')
-  const hit = href ? (
-    LinkComponent ? (
-      <LinkComponent href={href} className={styles.hit} aria-label={name} />
-    ) : (
-      <a href={href} className={styles.hit} aria-label={name} />
-    )
+  // The name is the card's control, so a heading leads to it. The full-card target behind the info is
+  // the same link or toggle for the pointer only: out of the tab order and the accessibility tree.
+  const Anchor = LinkComponent ?? 'a'
+  const control = href ? (
+    <Anchor href={href} className={styles.control}>
+      {name}
+    </Anchor>
   ) : onSelect ? (
-    <button
-      type="button"
-      className={styles.hit}
-      aria-label={name}
-      aria-pressed={selected}
-      onClick={onSelect}
-    />
+    <button type="button" className={styles.control} aria-pressed={selected} onClick={onSelect}>
+      {name}
+    </button>
+  ) : (
+    name
+  )
+  const hit = href ? (
+    <Anchor href={href} className={styles.hit} tabIndex={-1} aria-hidden="true" />
+  ) : onSelect ? (
+    <button type="button" className={styles.hit} tabIndex={-1} aria-hidden="true" onClick={onSelect} />
   ) : null
   return (
     <article className={classes} data-rarity={tint}>
       {hit}
       <span className={styles.thumb}>
-        {image && !failed ? (
+        {thumbnail && !failed ? (
           <img
             ref={ref}
             className={styles.image}
-            src={image}
+            src={thumbnail}
             alt=""
             loading="lazy"
             onError={onError}
@@ -169,20 +164,26 @@ export function ShopCard({
         )}
         {discount != null && <span className={styles.discount}>{discount}</span>}
       </span>
-      <span className={styles.info}>
+      <div className={styles.info}>
         {headingLevel ? (
           <Heading level={headingLevel} className={styles.name} title={name}>
-            {name}
+            {control}
           </Heading>
         ) : (
           <span className={styles.name} title={name}>
-            {name}
+            {control}
           </span>
         )}
         {creator != null && (
           <span className={styles.creator}>
-            {creator.picture ? (
-              <img className={styles.face} src={creator.picture} alt="" />
+            {face && !faceImage.failed ? (
+              <img
+                ref={faceImage.ref}
+                className={styles.face}
+                src={face}
+                alt=""
+                onError={faceImage.onError}
+              />
             ) : (
               <span className={styles.face} aria-hidden="true" />
             )}
@@ -202,7 +203,7 @@ export function ShopCard({
           {price != null && <span className={styles.price}>{price}</span>}
         </span>
         {actions != null && <span className={styles.actions}>{actions}</span>}
-      </span>
+      </div>
     </article>
   )
 }

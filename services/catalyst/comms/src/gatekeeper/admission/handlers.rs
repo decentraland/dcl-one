@@ -51,6 +51,8 @@ pub struct SceneAdapterResponse {
 fn signed_scene_target(metadata: &Value) -> Result<(String, String), ApiError> {
     let realm_name = scene::meta_str(metadata, "realmName")
         .ok_or_else(|| unauthorized("Access denied, invalid signed-fetch request, no realmName"))?;
+    let realm_name =
+        crate::world_identity::signed_realm_name(&realm_name, scene::signed_realm_url(metadata));
     let scene_id = scene::meta_str(metadata, "sceneId").ok_or_else(|| {
         ApiError::bad_request("Access denied, invalid signed-fetch request, no sceneId")
     })?;

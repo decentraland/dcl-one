@@ -37,6 +37,7 @@ wasm-bindgen-futures = { workspace = true }
 web-sys = { workspace = true, optional = true, features = [
   "HtmlMediaElement",
   "HtmlVideoElement",
+  "MediaError",
   "HtmlCollection",
   "Worker",
   "AudioContext",

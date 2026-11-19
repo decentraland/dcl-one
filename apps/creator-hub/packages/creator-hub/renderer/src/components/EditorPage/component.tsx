@@ -39,6 +39,7 @@ import { useConsoleSession } from '/@/hooks/useConsoleSession';
 import { useMobileDebugForwarding } from '/@/hooks/useMobileDebugForwarding';
 import { usePreviewCleanup } from '/@/hooks/usePreviewCleanup';
 import { ConnectionStatus } from '/@/lib/connection';
+import { getProjectWorldName } from '/@/lib/project-world';
 
 import EditorPng from '/assets/images/editor.png';
 
@@ -625,7 +626,14 @@ export function EditorPage() {
     if (!project) return;
     saveThumbnailIfSupported();
     try {
-      await publishScene({ targetContent: config.get('WORLDS_CONTENT_SERVER_URL') });
+      const worldName = getProjectWorldName(project);
+      await publishScene({
+        targetContent: config.get('WORLDS_CONTENT_SERVER_URL'),
+        // scene.json may have lost the world (see getProjectWorldName): deploy to it anyway.
+        ...(worldName && {
+          sceneUpdates: { worldConfiguration: { ...project.worldConfiguration, name: worldName } },
+        }),
+      });
       executeDeployment(project.path);
     } catch {
       openModal('publish', 'deploy');

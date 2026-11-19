@@ -11,6 +11,7 @@ import type { Project } from '/shared/types/projects';
 import { useAuth } from '/@/hooks/useAuth';
 import { useSelector } from '#store';
 import { coordsToId, RoleType } from '/@/lib/land';
+import FallbackThumbnail from '/assets/images/scene-thumbnail-fallback.png';
 import './styles.css';
 
 type Props = {
@@ -96,7 +97,10 @@ const ProjectStepWrapper: React.FC<Props> = ({ isWorld, name, project, children,
         <div className="info">
           <div
             className="thumbnail"
-            style={{ backgroundImage: `url(${addBase64ImagePrefix(project.thumbnail)})` }}
+            data-testid="publish-modal-project-thumbnail"
+            style={{
+              backgroundImage: `url(${project.thumbnail ? addBase64ImagePrefix(project.thumbnail) : FallbackThumbnail})`,
+            }}
           />
           <div className="text">
             <Text variant="h6">{project.title}</Text>

@@ -247,7 +247,6 @@ fn with_tangents(mut mesh: Mesh) -> Mesh {
     mesh
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn update_mesh(
     mut commands: Commands,
     pending_primitives: Query<PrimitiveData, With<PendingPrimitive>>,

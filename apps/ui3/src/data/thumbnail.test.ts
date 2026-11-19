@@ -1,7 +1,10 @@
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, test, vi } from "vitest";
 import { nodeMapImage, publicThumbnail, publicThumbnailSet } from "./thumbnail";
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
 
 test("SSR and hydrated thumbnails share the same public URL even with a different server API origin", () => {
   vi.stubEnv("CATALYST_URL", "https://catalyst.example.org");
@@ -55,6 +58,18 @@ test("unknown, credentialed and signed sources never get synthetic responsive va
   }
 });
 
+describe("when the event poster is a relative mounted upload", () => {
+  let source: string;
+
+  beforeEach(() => {
+    source = `/events-assets-099ac00/poster-vertical/${"ab".repeat(32)}.webp`;
+  });
+
+  it("should keep the mounted poster URL", () => {
+    expect(publicThumbnail(source, 320)).toBe(source);
+  });
+});
+
 test("the embedded player sends thumbnails through the site it stands in for", () => {
   vi.stubEnv("VITE_CATALYST_URL", "");
   const w = window as Window & { __DCL_PLAY_EMBEDDED__?: boolean; __SITE_BASE__?: string };
@@ -72,20 +87,20 @@ test("the embedded player sends thumbnails through the site it stands in for", (
 });
 
 
-test("production event posters get the same bounded derivatives during SSR and hydration", () => {
+test("legacy mirrored event posters get the same bounded derivatives during SSR and hydration", () => {
   vi.stubEnv("VITE_CATALYST_URL", "");
   for (const folder of ["poster", "poster-vertical"]) {
-    const source = `https://events-assets-099ac00.interconnected.online/${folder}/local-upload.webp`;
+    const source = `https://events-assets-099ac00.legacy.example/${folder}/local-upload.webp`;
     for (const ssr of [true, false]) {
       vi.stubEnv("SSR", ssr);
-      expect(publicThumbnail(source, 320)).toBe(`/media/convert?width=320&url=${encodeURIComponent(source)}`);
+      expect(publicThumbnail(source, 320)).toBe(`/media/convert?width=320&url=${encodeURIComponent(source.replace("legacy.example", "decentraland.org"))}`);
       expect(publicThumbnailSet(source, [320, 640])).toContain("width=640");
     }
   }
   for (const source of [
-    "https://events-assets-099ac00.interconnected.online/private/image.webp",
-    "https://events-assets-099ac00.interconnected.online/poster/image.gif",
-    "https://events-assets-099ac00.interconnected.online/poster/image.webp?signature=secret",
+    "https://events-assets-099ac00.legacy.example/private/image.webp",
+    "https://events-assets-099ac00.legacy.example/poster/image.gif",
+    "https://events-assets-099ac00.legacy.example/poster/image.webp?signature=secret",
   ]) {
     expect(publicThumbnail(source, 320)).toBe(source);
     expect(publicThumbnailSet(source, [320, 640])).toBeUndefined();
@@ -94,7 +109,7 @@ test("production event posters get the same bounded derivatives during SSR and h
 
 test("another node's poster copies are sized from the upstream bucket, its own uploads are not", () => {
   vi.stubEnv("VITE_CATALYST_URL", "");
-  for (const host of ["events-assets-099ac00.example.org", "events-assets-099ac00.interconnected.online.example"]) {
+  for (const host of ["events-assets-099ac00.example.org", "events-assets-099ac00.nested.example"]) {
     for (const folder of ["poster", "poster-vertical"]) {
       const upstream = `https://events-assets-099ac00.decentraland.org/${folder}/1ad0d5dd6a03ac29.jpg`;
       expect(publicThumbnail(`https://${host}/${folder}/1ad0d5dd6a03ac29.jpg`, 320)).toBe(`/media/convert?width=320&url=${encodeURIComponent(upstream)}`);
@@ -104,6 +119,108 @@ test("another node's poster copies are sized from the upstream bucket, its own u
     expect(publicThumbnailSet(upload, [320, 640])).toBeUndefined();
     for (const other of [`https://${host}/private/image.webp`, `https://${host}/poster/image.gif`]) expect(publicThumbnail(other, 320)).toBe(other);
   }
+});
+
+test("resizes posters served from paths on the node", () => {
+  vi.stubEnv("VITE_CATALYST_URL", "");
+  vi.stubGlobal("__CATALYST_BASE__", "https://node.example");
+  for (const folder of ["poster", "poster-vertical"]) {
+    const path = `/${folder}/1ad0d5dd6a03ac29.jpg`;
+    const source = `https://node.example/events-assets-099ac00${path}`;
+    const upstream = `https://events-assets-099ac00.decentraland.org${path}`;
+    expect(publicThumbnail(source, 320)).toBe(`https://node.example/media/convert?width=320&url=${encodeURIComponent(upstream)}`);
+  }
+});
+
+test("leaves unrecognized node poster paths, other origins, local uploads, signed and animated posters alone", () => {
+  vi.stubEnv("VITE_CATALYST_URL", "");
+  vi.stubGlobal("__CATALYST_BASE__", "https://node.example");
+  for (const url of [
+    "https://node.example/events-assets-099ac00/private/a.webp",
+    "https://node.example/events-assets-099ac00/poster/a.gif",
+    `https://node.example/events-assets-099ac00/poster/${"ab".repeat(32)}.webp`,
+    "https://other.example/events-assets-099ac00/poster/a.webp",
+    "https://node.example/events-assets-099ac00/poster/a.webp?signature=secret",
+  ]) {
+    expect(publicThumbnail(url)).toBe(url);
+    expect(publicThumbnailSet(url, [320, 640])).toBeUndefined();
+  }
+});
+
+describe("when a mounted poster uses the page's public base", () => {
+  let base: string;
+  let source: string;
+
+  beforeEach(() => {
+    vi.stubEnv("CATALYST_URL", "http://127.0.0.1:5210");
+    vi.stubEnv("VITE_CATALYST_URL", "");
+    base = "https://node.example";
+    source = `${base}/events-assets-099ac00/poster/copied.webp`;
+  });
+
+  describe("and the site has no explicit public base", () => {
+    beforeEach(() => {
+      vi.stubEnv("PUBLIC_CATALYST_URL", "");
+      vi.stubGlobal("window", { location: new URL(base) });
+    });
+
+    it("should leave the poster unchanged in both renders", () => {
+      for (const ssr of [true, false]) {
+        vi.stubEnv("SSR", ssr);
+        expect(publicThumbnail(source)).toBe(source);
+      }
+    });
+  });
+
+  describe("and the public base comes from the rendered page", () => {
+    let expected: string;
+
+    beforeEach(() => {
+      vi.stubEnv("PUBLIC_CATALYST_URL", "");
+      expected = `${base}/media/convert?width=640&url=` + encodeURIComponent("https://events-assets-099ac00.decentraland.org/poster/copied.webp");
+    });
+
+    it("should resize on both server and client with the same page base", () => {
+      for (const ssr of [true, false]) {
+        vi.stubEnv("SSR", ssr);
+        expect(publicThumbnail(source, 640, base)).toBe(expected);
+      }
+    });
+  });
+
+  describe("and the public base includes a prefix and port", () => {
+    let expected: string;
+
+    beforeEach(() => {
+      base = "https://node.example:8443/prefix";
+      source = `${base}/events-assets-099ac00/poster/copied.webp`;
+      expected = `${base}/media/convert?width=640&url=` + encodeURIComponent("https://events-assets-099ac00.decentraland.org/poster/copied.webp");
+      vi.stubEnv("PUBLIC_CATALYST_URL", base);
+      vi.stubGlobal("__CATALYST_BASE__", base);
+    });
+
+    it("should use the same prefixed converter path in both renders", () => {
+      for (const ssr of [true, false]) {
+        vi.stubEnv("SSR", ssr);
+        expect(publicThumbnail(source)).toBe(expected);
+      }
+    });
+  });
+});
+
+describe("when the media base is a relative mount", () => {
+  let source: string;
+  let expected: string;
+
+  beforeEach(() => {
+    vi.stubEnv("VITE_CATALYST_URL", "/mount");
+    source = "https://peer.decentraland.org/content/contents/example";
+    expected = "/mount/media/convert?width=320&url=" + encodeURIComponent(source);
+  });
+
+  it("should still resize an allowlisted upstream image", () => {
+    expect(publicThumbnail(source, 320)).toBe(expected);
+  });
 });
 
 test("a Foundation peer's collection thumbnail comes from the serving node's own derivative", () => {

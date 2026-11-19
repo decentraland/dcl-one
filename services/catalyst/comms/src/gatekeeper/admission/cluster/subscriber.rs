@@ -40,7 +40,6 @@ use crate::gatekeeper::bus::{NatsBus, NatsHandler, NatsSubscription};
 use crate::gatekeeper::livekit::Removal;
 use crate::rooms::island_room_name;
 
-const RECOVERY_DEADLINE: Duration = Duration::from_secs(10);
 #[cfg(test)]
 use super::safety::LIVEKIT_TOKEN_LEEWAY;
 use super::safety::TOKEN_EXPIRY_SAFETY;
@@ -892,7 +891,8 @@ impl ClusterSubscriber {
     async fn recover_guarded(&self, wallet: &str, session: &str, ticket: RecoveryTicket) {
         let guard = RecoveryGuard {
             ticket,
-            deadline: tokio::time::Instant::now() + RECOVERY_DEADLINE,
+            deadline: tokio::time::Instant::now()
+                + Duration::from_millis(self.config.recovery_deadline_ms),
             critical: AtomicBool::new(false),
         };
         let recovery = self.reconcile_with_guard(wallet, session, false, None, Some(&guard));

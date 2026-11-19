@@ -141,6 +141,9 @@ export interface HudHost {
   ownShopItemUrl(contract: string, item: string): string | null
   /** Whether this host runs the in-world Shop page (otherwise the Shop opens the web Shop). */
   IN_WORLD_SHOP: boolean
+  /** Whether this host's page can ask before the browser leaves it during a session (Settings offers
+   *  the question only there). */
+  CAN_ASK_BEFORE_LEAVING: boolean
   /** Donate, where this host can sign a tip; null where it can't (the Explorer's own HUD). */
   donations: HostDonations | null
   /** Gifting, where this host can sign a transfer; null where it can't (the Explorer's own HUD). */

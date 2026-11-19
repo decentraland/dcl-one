@@ -1,8 +1,12 @@
 // The place page's In-World Chat: joins the scene's room read-only and keeps the chat it hears.
 import { useEffect, useState } from "react";
-import type { SceneChat, SceneChatMessage } from "@ui/explorer/pages/PlaceDetail";
 
 import { decodeChatPacket, fetchSceneRoom, type SceneRoomCredentials, type SceneRoomTarget } from "@/data/lib/comms/scene-chat";
+
+/** A room message whose sender is a wallet address or a display name. */
+type SceneChatMessage = { sender: string; timestamp: number; message: string };
+
+export type SceneChat = { status: "loading" | "ready" | "unavailable"; messages: SceneChatMessage[] };
 
 const IDLE: SceneChat = { status: "loading", messages: [] };
 

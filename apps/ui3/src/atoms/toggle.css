@@ -19,3 +19,6 @@ html.theme-light .toggle { background: rgba(0, 0, 0, .22); }
   transition: transform .15s ease; box-shadow: 0 1px 2px rgba(0, 0, 0, .3);
 }
 .toggle.is-on .toggle__knob { transform: translateX(18px); }
+.toggle--small { --w: 34px; --h: 20px; }
+.toggle--small .toggle__knob { top: 2px; left: 2px; width: 16px; height: 16px; }
+.toggle--small.is-on .toggle__knob { transform: translateX(14px); }

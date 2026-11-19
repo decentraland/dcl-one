@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 #[cfg(feature = "explorer")]
 use std::path::PathBuf;
 use std::{collections::VecDeque, f32::consts::PI, time::Duration};
@@ -70,6 +72,7 @@ pub mod material_cache;
 pub mod nametag;
 #[cfg(feature = "explorer")]
 pub mod npc_dynamics;
+pub mod pause_hidden;
 pub mod point_at_ik;
 #[cfg(feature = "explorer")]
 pub mod point_at_marker;
@@ -221,6 +224,7 @@ impl Plugin for AvatarPlugin {
         app.add_plugins(debug_avatars::DebugAvatarsPlugin);
         app.add_plugins(PointAtIkPlugin);
         app.add_plugins(PointAtMarkerPlugin);
+        app.add_plugins(pause_hidden::PauseHiddenAvatarsPlugin);
         app.add_systems(
             Update,
             (
@@ -511,7 +515,6 @@ pub struct AvatarSelection {
 }
 
 // choose the avatar shape based on current scene of the player
-#[allow(clippy::type_complexity)]
 #[cfg(feature = "explorer")]
 fn select_avatar(
     mut commands: Commands,
@@ -764,7 +767,6 @@ fn retag_avatars_on_style_change(
 }
 
 // load wearables and create renderable avatar entity once all loaded
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn update_render_avatar(
     mut commands: Commands,
     query: Query<
@@ -1202,7 +1204,6 @@ pub struct AvatarProcessed;
 /// state of that entity (a grow-only set the scene reads in order): Loading once the look's
 /// files are being fetched, Finished once it renders, FinishedWithError when it never will.
 // instantiate avatar gltfs
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn spawn_scenes(
     mut commands: Commands,
     query: Query<
@@ -1387,7 +1388,6 @@ const AVATAR_EMISSIVE_MULTIPLIER: f32 = 4.0;
 const AVATAR_DITHER_BASE_OPACITY: f32 = 0.5;
 
 // update materials and hide base parts
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn process_avatar(
     mut commands: Commands,
     query: Query<
@@ -1695,9 +1695,9 @@ fn process_avatar(
                 ("feet_basemesh", WearableCategory::FEET),
                 // ("head", WearableCategory::HEAD),
                 // ("head_basemesh", WearableCategory::HEAD),
-                // ("mask_eyes", WearableCategory::HEAD),
-                // ("mask_eyebrows", WearableCategory::HEAD),
-                // ("mask_mouth", WearableCategory::HEAD),
+                ("mask_eyes", WearableCategory::HEAD),
+                ("mask_eyebrows", WearableCategory::HEAD),
+                ("mask_mouth", WearableCategory::HEAD),
             ];
 
             for (hidename, category) in hiders {
@@ -2094,7 +2094,6 @@ fn process_avatar(
 
 // derive the scene material for an avatar's gltf material, sharing the asset
 // with every other avatar that derives an identical material so they can batch
-#[allow(clippy::too_many_arguments)]
 fn derived_scene_material(
     mat: &StandardMaterial,
     h_mat: &MeshMaterial3d<StandardMaterial>,
@@ -2377,7 +2376,6 @@ fn set_avatar_visibility(
 #[command(name = "/debug_dump_avatar")]
 struct DebugDumpAvatar;
 
-#[allow(clippy::too_many_arguments)]
 #[cfg(feature = "explorer")]
 fn debug_dump_avatar(
     mut input: ConsoleCommand<DebugDumpAvatar>,

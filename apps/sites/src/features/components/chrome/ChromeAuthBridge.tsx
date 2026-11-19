@@ -60,8 +60,9 @@ export default function ChromeAuthBridge({ children }: { children: ReactNode }) 
       onSignIn: openSignIn,
       ...hubAccountActions(disconnect),
       fetchNotifications,
+      notificationsReady: mounted && isConnected,
     }),
-    [effSignedIn, effAddress, name, committee, avatarUrl, avatarColor, fetchNotifications, disconnect],
+    [mounted, isConnected, effSignedIn, effAddress, name, committee, avatarUrl, avatarColor, fetchNotifications, disconnect],
   );
 
   return <ChromeAuthContext.Provider value={value}>{children}</ChromeAuthContext.Provider>;

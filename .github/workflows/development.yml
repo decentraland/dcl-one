@@ -9,7 +9,7 @@ on:
       - 'infra/gateway/**'
       - 'infra/packages/**'
       - 'tooling/dev*'
-      - 'tooling/catalyst-test*.sh'
+      - 'tooling/catalyst-test*'
       - 'tooling/enet-provenance.py'
       - 'tooling/*.py'
       - 'tooling/tests/**'
@@ -25,6 +25,8 @@ on:
       - 'Makefile'
       - '.github/workflows/development.yml'
       - '.github/workflows/bevy-explorer-benchmark.yml'
+      # tooling/tests/test_dev_workflow.py reads its label logic
+      - '.github/workflows/creator-hub-ci.yml'
       - '!**/*.md'
       - '!docs/**'
       - '!services/catalyst/docs/**'
@@ -70,8 +72,8 @@ jobs:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:macos') && '["ubuntu-26.04"]' || '["ubuntu-26.04", "macos-15"]') }}
-        # Each shard compiles the tests and runs every third test executable. One shard also runs the
-        # provisioned Archipelago tests, which take a fixed time (CATALYST_TEST_PROVISIONED_SHARD).
+        # Each shard compiles the tests and runs a third of the test executables, cut by their recorded
+        # times. One shard also runs the provisioned Archipelago tests beside them (CATALYST_TEST_PROVISIONED_SHARD).
         shard: [1, 2, 3]
     runs-on: ${{ matrix.os == 'ubuntu-26.04' && (vars.RUNNER_LINUX_X86 || 'ubuntu-26.04')
       || matrix.os == 'macos-15' && (vars.RUNNER_MACOS || 'macos-15')
@@ -80,7 +82,7 @@ jobs:
     env:
       CATALYST_TEST_SHARD: ${{ matrix.shard }}/3
       CATALYST_TEST_PROVISIONED_SHARD: '1'
-      # The doc-tests run in the shard with the shortest run (tooling/catalyst-test.sh).
+      # The doc-tests run in one shard (tooling/catalyst-test.sh).
       CATALYST_TEST_DOC_SHARD: '2'
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_INCREMENTAL: '0'
@@ -146,6 +148,14 @@ jobs:
         run: |
           if [ -d services/catalyst/target/debug/deps ]; then restored=true; else restored=false; fi
           echo "restored=$restored" >> "$GITHUB_OUTPUT"
+          # The v8 build script copies the prebuilt library to target/debug/gn_out, which the
+          # dependency cache does not keep, while it keeps the script's fingerprint. When a
+          # changed Cargo.lock makes v8 itself recompile, the script counts as fresh and the
+          # link finds no rusty_v8; dropping its fingerprint makes it copy the library again.
+          # An exact cache hit has nothing to recompile, so it keeps the fingerprint.
+          if [ "$restored" = true ] && [ "${{ steps.deps.outputs.cache-hit }}" != true ] && ! compgen -G 'services/catalyst/target/debug/gn_out/obj/*rusty_v8*' > /dev/null; then
+            rm -rf services/catalyst/target/debug/build/v8-* services/catalyst/target/debug/.fingerprint/v8-*
+          fi
       # Optional: without the tool, or without its server, the tests compile as before.
       - name: Install the optional compiler cache
         id: compiler-cache
@@ -270,9 +280,6 @@ jobs:
           key: foundation-dev-pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/*/pnpm-lock.yaml') }}
           restore-keys: |
             foundation-dev-pnpm-${{ runner.os }}-${{ runner.arch }}-
-      - name: Check configuration and PostgreSQL lifecycle
-        timeout-minutes: 20
-        run: nix develop --command python3 -m unittest discover -s tooling/tests -v
       - name: Start the API and web app without upstream data
         run: nix develop --command bash tooling/dev-smoke.sh
       - name: Run Sites end-to-end tests against the development stack
@@ -319,6 +326,38 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: ${{ steps.rust-cache.outputs.cache-primary-key }}
+
+  # The tooling unit tests read only the source and the dev shell, whose binaries start the PostgreSQL
+  # clusters they test, so they run beside smoke.
+  tooling:
+    name: Tooling tests
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:macos') && '["ubuntu-26.04"]' || '["ubuntu-26.04", "macos-15"]') }}
+    runs-on: ${{ matrix.os == 'ubuntu-26.04' && (vars.RUNNER_LINUX_X86 || 'ubuntu-26.04')
+      || matrix.os == 'macos-15' && (vars.RUNNER_MACOS || 'macos-15')
+      || matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-store-${{ runner.os }}-${{ runner.arch }}-default-${{ hashFiles('flake.nix', 'flake.lock', 'services/catalyst/rust-toolchain.toml', 'infra/dev/**', 'infra/packages/**') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-${{ runner.arch }}-default-
+          save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          gc-max-store-size: 0
+      - name: Root the shell and the flake inputs
+        run: |
+          mkdir -p .cache/nix-roots
+          nix develop --profile .cache/nix-roots/env --command true
+          nix-store --add-root .cache/nix-roots/input -r $(nix flake archive --json | jq -r '.inputs | .. | .path? // empty') > /dev/null
+      - name: Check configuration and PostgreSQL lifecycle
+        timeout-minutes: 20
+        run: nix develop --command python3 -m unittest discover -s tooling/tests -v
 
   web:
     name: Web tests and contracts
@@ -399,25 +438,26 @@ jobs:
         with:
           path: ${{ env.PNPM_STORE }}
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
-  # The one check to mark required on main. It always reports: green when the Rust, smoke and web jobs passed or
-  # were skipped because nothing they test changed, red when one failed, was cancelled or is missing.
+  # The one check to mark required on main. It always reports: green when the Rust, smoke, tooling and web jobs
+  # passed or were skipped because nothing they test changed, red when one failed, was cancelled or is missing.
   gate:
     name: CI gate
-    # Smoke is needed for its workflow tests: they check that the Rust shards cover every test.
-    needs: [changes, rust, smoke, web]
+    # The tooling tests include the workflow tests: they check that the Rust shards cover every test.
+    needs: [changes, rust, smoke, tooling, web]
     if: ${{ always() }}
     runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     timeout-minutes: 5
     steps:
-      - name: Require the Rust, smoke and web jobs to pass or be skipped
+      - name: Require the Rust, smoke, tooling and web jobs to pass or be skipped
         env:
           CHANGES: ${{ needs.changes.result }}
           RUST: ${{ needs.rust.result }}
           SMOKE: ${{ needs.smoke.result }}
+          TOOLING: ${{ needs.tooling.result }}
           WEB: ${{ needs.web.result }}
         run: |
-          echo "changes=$CHANGES rust=$RUST smoke=$SMOKE web=$WEB"
-          for result in "$CHANGES" "$RUST" "$SMOKE" "$WEB"; do
+          echo "changes=$CHANGES rust=$RUST smoke=$SMOKE tooling=$TOOLING web=$WEB"
+          for result in "$CHANGES" "$RUST" "$SMOKE" "$TOOLING" "$WEB"; do
             case "$result" in
               success|skipped) ;;
               *) echo "::error::A required job ended as '$result'"; exit 1 ;;

@@ -562,7 +562,6 @@ type MaterialData = (
     Has<PendingPrimitive>,
 );
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn update_materials(
     mut commands: Commands,
     prepaid_materials: Query<MaterialData, With<MaterialPrepaid>>,
@@ -954,11 +953,9 @@ fn update_loading_materials(
     }
 }
 
-#[allow(clippy::type_complexity)]
 /// A normal map is drawn only on a mesh with tangents. A glTF mesh has none unless its own
 /// material has a normal map, so one given a bump texture by a scene gets them here. A mesh
 /// whose uvs span no area has none to give, and stays as it is.
-#[allow(clippy::type_complexity)]
 fn add_missing_tangents(
     drawn: Query<
         (&Mesh3d, &MeshMaterial3d<SceneMaterial>),

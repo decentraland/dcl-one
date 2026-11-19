@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use anyhow::Result;
 use bevy::{
     log::{
@@ -125,7 +127,10 @@ async fn scene_ipc_in(
 
     while let Ok(len) = stream.read_u64_le().await {
         let mut buffer = vec![0u8; len as usize];
-        stream.read_exact(&mut buffer).await.unwrap();
+        if let Err(e) = stream.read_exact(&mut buffer).await {
+            warn!("scene_ipc_in exit on truncated message: {e}");
+            break;
+        }
         let msg: EngineToScene = rmp_serde::from_slice(&buffer).unwrap();
 
         match msg {

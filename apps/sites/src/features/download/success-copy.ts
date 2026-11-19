@@ -1,3 +1,5 @@
+import type { SitesLocale } from "@ui/web/frames/sites-locale";
+
 // Copy from decentraland/sites; only the install page and its footer are included.
 export const successCopy = {
   en: {
@@ -567,5 +569,4 @@ export const successCopy = {
       },
     },
   },
-} as const;
-export type SuccessLocale = keyof typeof successCopy;
+} as const satisfies Record<SitesLocale, unknown>;

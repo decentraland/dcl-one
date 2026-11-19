@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 mod atmosphere_params;
 mod coast;
 mod day_night;
@@ -185,7 +187,6 @@ static TRANSITION_TIME: f32 = 1.0;
 /// The ground a reflection shows below the horizon, as a multiple of the fog colour.
 const GROUND_REFLECTION_SCALE: f32 = 2.0;
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn apply_global_light(
     mut commands: Commands,
     setting: Res<AppConfig>,

@@ -17,7 +17,6 @@ use crate::{
     initialize_scene::SuperUserScene, renderer_context::RendererSceneContext, SceneEntity,
 };
 
-#[allow(clippy::type_complexity)]
 pub fn write_ui_layout_feedback(
     // the root's UiLink goes when its UI is torn down; the context stays to clear the feedback
     mut scenes: Query<(Option<&UiLink>, &mut RendererSceneContext), Without<SuperUserScene>>,

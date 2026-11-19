@@ -399,7 +399,7 @@ mod tests {
         let server = std::thread::spawn(move || {
             let (mut stream, _) = fixture.accept().unwrap();
             let mut buf = [0; 2048];
-            stream.read(&mut buf).unwrap();
+            assert!(stream.read(&mut buf).unwrap() > 0);
             stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\nX-Private: secret-response-header\r\nConnection: close\r\n\r\nsecret-body").unwrap();
         });
         struct Granted;
@@ -493,7 +493,7 @@ mod tests {
         let server = std::thread::spawn(move || {
             let (mut stream, _) = cancelled_server.accept().unwrap();
             let mut request = [0; 1024];
-            stream.read(&mut request).unwrap();
+            assert!(stream.read(&mut request).unwrap() > 0);
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nb")
                 .unwrap();
@@ -549,7 +549,7 @@ mod tests {
         let server = std::thread::spawn(move || {
             let (mut stream, _) = json_server.accept().unwrap();
             let mut request = [0; 1024];
-            stream.read(&mut request).unwrap();
+            assert!(stream.read(&mut request).unwrap() > 0);
             let body = r#"{"value":"secret-json-body"}"#;
             write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nX-Private: secret-response-header\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
         });
@@ -588,7 +588,7 @@ mod tests {
             for redirected in [false, true] {
                 let (mut stream, _) = redirect_server.accept().unwrap();
                 let mut request = [0; 2048];
-                stream.read(&mut request).unwrap();
+                assert!(stream.read(&mut request).unwrap() > 0);
                 if redirected {
                     stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\nX-Private: secret-final-header\r\nConnection: close\r\n\r\nsecret-body").unwrap();
                 } else {
@@ -640,7 +640,7 @@ mod tests {
             let serving = std::thread::spawn(move || {
                 let (mut stream, _) = listener.accept().unwrap();
                 let mut buf = [0; 1024];
-                stream.read(&mut buf).unwrap();
+                assert!(stream.read(&mut buf).unwrap() > 0);
                 write!(stream, "HTTP/1.1 {status} Reply\r\nContent-Length: {declared}\r\nX-Private: secret-response-header\r\nConnection: close\r\n\r\n{body}").unwrap();
             });
             let failed = async_std::task::block_on(async_compat::Compat::new(async {

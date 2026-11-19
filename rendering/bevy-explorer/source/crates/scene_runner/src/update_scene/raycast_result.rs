@@ -341,7 +341,6 @@ enum Prepared {
 
 /// Marks a due request as run, resolves it into a job and flushes the colliders the job will cast
 /// against.
-#[allow(clippy::too_many_arguments)]
 fn prepare(
     e: Entity,
     raycast_requests: &mut RaycastRequests,
@@ -548,7 +547,6 @@ fn write_result(
     );
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_raycasts(
     mut raycast_requests: RaycastRequests,
     target_positions: Query<&GlobalTransform>,

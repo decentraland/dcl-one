@@ -5,10 +5,13 @@
 # is set (tooling/dev-test.sh sets 4, so in CI every binary runs 4). The socket groups
 # (sockets_*) keep wall-clock budgets: they run after the others, sharing one test thread per core.
 # An explicit RUST_TEST_THREADS caps every binary, groups included.
-# CATALYST_TEST_SHARD=i/n runs every n-th binary from the i-th; without it every binary runs.
+# CATALYST_TEST_SHARD=i/n runs the i-th of n shards, cut by the recorded times in
+# tooling/catalyst-test-durations.tsv; without it every binary runs. Each shard starts its longest
+# binaries first.
 # CATALYST_TEST_DOC_SHARD=j runs the doc-tests in shard j only; without it every shard runs them.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
+durations="$root/tooling/catalyst-test-durations.tsv"
 cd "$root/services/catalyst"
 receipts="$root/.cache/dev"
 logs="${CARGO_TARGET_DIR:-target}/test-logs"
@@ -54,7 +57,44 @@ doc="${CATALYST_TEST_DOC_SHARD:-$index}"
 # sort follows the locale, so the list is in byte order of the source file and kind of each target.
 same=$(cut -f1,2 "$logs/binaries" | LC_ALL=C sort | LC_ALL=C uniq -d)
 [ -z "$same" ] || { echo "catalyst-test: two test binaries have one source file and kind: $same" >&2; exit 1; }
-LC_ALL=C sort "$logs/binaries" | cut -f3- | awk -v i="$index" -v n="$total" 'NR % n == i % n' > "$logs/shard"
+# The cut reads only that list, the recorded times and n, never this machine. Longest first, each
+# binary goes to the shard it lengthens least: 4 binaries at once, then the socket ones in turn, the
+# node_* and sockets_* groups spread evenly. A binary without a time keeps the round-robin place
+# (every n-th from the i-th) and runs first, as it may be long.
+LC_ALL=C sort "$logs/binaries" | python3 -c '
+import heapq, re, sys
+index, total, recorded = int(sys.argv[1]), int(sys.argv[2]), {}
+for line in open(sys.argv[3], encoding="utf-8"):
+    if line.strip() and not line.startswith("#"):
+        source, kind, seconds = line.rstrip("\n").split("\t")
+        recorded[source, kind] = int(seconds)
+rows = [line.rstrip("\n").split("\t", 2) for line in sys.stdin]
+time = lambda row: recorded.get((row[0], row[1]))
+socket = lambda row: re.search("/sockets_[^/]*$", row[2]) is not None
+group = lambda row: re.match("tests/(node|sockets)_", row[0]) and row[0].split("_")[0]
+order = lambda shard: sorted(shard, key=lambda row: (time(row) is not None, -(time(row) or 0)))
+SLOTS = 4  # binaries at once on the 4-core Linux runners, which bound the job
+def cost(shard):
+    slots = [0] * SLOTS
+    for row in order(shard):
+        if not socket(row):
+            heapq.heappush(slots, heapq.heappop(slots) + (time(row) or 0))
+    return max(slots) + sum(time(row) or 0 for row in shard if socket(row))
+missing = sorted(row[0] for row in rows if time(row) is None)
+if missing:
+    print("catalyst-test: no recorded time, cut round-robin (refresh tooling/catalyst-test-durations.tsv): "
+          + " ".join(missing), file=sys.stderr)
+shards = [[] for _ in range(total)]
+for number, row in enumerate(rows):
+    if time(row) is None:
+        shards[number % total].append(row)
+for row in sorted((row for row in rows if time(row) is not None), key=lambda row: -time(row)):
+    taken = [sum(group(other) == group(row) for other in shard) if group(row) else 0 for shard in shards]
+    best = min((i for i in range(total) if taken[i] == min(taken)), key=lambda i: (cost(shards[i] + [row]), i))
+    shards[best].append(row)
+for row in order(shards[index - 1]):
+    print(row[2])
+' "$index" "$total" "$durations" > "$logs/shard"
 cores=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN)
 jobs="${CATALYST_TEST_JOBS:-$(( cores < 16 ? cores : 16 ))}"
 [ "$jobs" -ge 1 ] || { echo "catalyst-test: CATALYST_TEST_JOBS must be at least 1" >&2; exit 1; }

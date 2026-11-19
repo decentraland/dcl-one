@@ -113,7 +113,6 @@ pub struct IsahcFetchReturn {
 
 #[op2]
 #[serde]
-#[allow(clippy::too_many_arguments)]
 pub fn op_fetch<FP>(
     state: &mut OpState,
     #[string] method: String,
@@ -698,7 +697,6 @@ use core::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-#[allow(clippy::type_complexity)]
 pub struct ResourceToBodyAdapter(
     Rc<dyn Resource>,
     Option<Pin<Box<dyn Future<Output = Result<BufView, anyhow::Error>>>>>,

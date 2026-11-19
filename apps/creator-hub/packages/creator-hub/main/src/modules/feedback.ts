@@ -98,11 +98,17 @@ function captureAndAwaitDelivery(capture: () => string): Promise<FeedbackDeliver
     let eventId: string | undefined;
     const stop = client.on('afterSendEvent', (event, { statusCode }) => {
       if (event.event_id !== eventId) return;
-      if (statusCode === undefined) settle(() => resolve(unconfirmed()));
-      else if (statusCode >= 200 && statusCode < 300) settle(() => resolve('sent'));
+      if (statusCode === undefined) {
+        // Queued for a retry after a network error, dropped by a rate limit or a full buffer.
+        log.warn('[Feedback] Sentry gave no status for the report');
+        settle(() => resolve(unconfirmed()));
+      } else if (statusCode >= 200 && statusCode < 300) settle(() => resolve('sent'));
       else settle(() => reject(new Error(`Sentry responded with status ${statusCode}`)));
     });
-    const timeout = setTimeout(() => settle(() => resolve(unconfirmed())), DELIVERY_TIMEOUT_MS);
+    const timeout = setTimeout(() => {
+      log.warn('[Feedback] Sentry did not answer the report in time');
+      settle(() => resolve(unconfirmed()));
+    }, DELIVERY_TIMEOUT_MS);
     function settle(outcome: () => void) {
       clearTimeout(timeout);
       stop();

@@ -9,6 +9,7 @@ import { ANALYTICS_SESSION_PARAM, ANON_USER_ID_PARAM, dropAttributionParams } fr
 import { AUTH_RETURN_PARAM } from '@explorer-core/features/auth/sso'
 import { migratePrefs } from '@explorer-core/lib/prefs'
 import { currentLogin, request } from './login'
+import { framedByAnotherOrigin } from './framing'
 import { onInWorld } from '@explorer-core/shell/googleTag'
 import { PAGE_DIR } from '../lib/publicUrl'
 import { loadOnce } from '../lib/loadOnce'
@@ -35,9 +36,26 @@ export interface PlayShellOptions {
   shopWallet?: () => Promise<ShellShopWallet | null>
 }
 
+/** Shown instead of the app inside another site's frame: a link that opens /play in a tab of its own. */
+function refuseFramed(): void {
+  console.error('[shell] a page of another origin frames this one, so the app does not start')
+  const p = document.createElement('p')
+  p.append("Decentraland can't run inside another site. ")
+  const open = document.createElement('a')
+  open.href = location.href
+  open.target = '_blank'
+  open.rel = 'noopener noreferrer'
+  open.style.color = 'inherit'
+  open.textContent = 'Open it in a tab of its own.'
+  p.append(open)
+  document.body.appendChild(p)
+}
+
 export function mountPlayShell(options: PlayShellOptions = {}): void {
   if (shellMounted) return
   shellMounted = true
+  // In another site's frame nothing starts: no app, no sign-in, no service worker (framing.ts says why).
+  if (framedByAnotherOrigin()) return refuseFramed()
   // The service worker's scope is the package DIRECTORY, but the production entry URL has no
   // trailing slash, which puts this page outside it: the worker never sees the request, so the
   // host's COEP isolates this page, and a reload keeps it that way. Navigate to the directory form
@@ -55,8 +73,9 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
   // Set by the app's sign-out: the old app's URL sync must not write its place back before the reload.
   let signedOut = false
   // Back, a closed tab or a typed address would drop the session: while the app says one runs
-  // (bevy-shell:session), the browser asks first. The page's own exits (sign-in, the untrusted-link
-  // gate) go through leave().
+  // (bevy-shell:session, said only when the player turned Ask Before Leaving the Page on in
+  // Settings), the browser asks first. The page's own exits (sign-in, the untrusted-link gate) go
+  // through leave().
   let live = false
   let leaving = false
   function leave(go: () => void): void {

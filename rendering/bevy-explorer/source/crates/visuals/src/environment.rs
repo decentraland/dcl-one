@@ -209,7 +209,6 @@ fn load_sky_panoramas(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update_environment(
     mut skybox_source: RootComponentSource<Skybox>,
     mut fog_source: RootComponentSource<EnvironmentFog>,
