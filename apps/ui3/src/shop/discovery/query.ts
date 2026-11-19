@@ -70,7 +70,17 @@ export function prefetchShopQuery<T>(key: readonly unknown[], fetcher: (signal: 
   if ((cached && Date.now() - cached.at < DEFAULT_STALE_MS) || inflight.has(id)) return;
   // Held until it lands, so a page that mounts meanwhile joins it rather than asking again.
   const flight = join(id, fetcher);
-  flight.promise.then((data) => cache.set(id, { data, at: Date.now() }), () => {}).finally(flight.leave);
+  const own = inflight.get(id);
+  // Its answer is stored only while the read is still current: one invalidated meanwhile (its signal aborted) may
+  // still resolve, as a request already answered does, and must not replace what a later read stored.
+  flight.promise
+    .then(
+      (data) => {
+        if (own && !own.controller.signal.aborted) cache.set(id, { data, at: Date.now() });
+      },
+      () => {},
+    )
+    .finally(flight.leave);
 }
 
 export function peekShopQuery<T>(key: readonly unknown[], staleMs: number = DEFAULT_STALE_MS): T | undefined {
