@@ -1,4 +1,5 @@
 use bevy::ecs::system::RunSystemOnce;
+use common::structs::ServerConfiguration;
 
 use super::*;
 
@@ -460,9 +461,14 @@ fn empty_definition_is_kept_without_deferring_and_despawned_out_of_range() {
 /// an L of three parcels and one parcel apart from it: two connected regions
 const SPLIT_SCENE: [IVec2; 4] = [IVec2::ZERO, IVec2::X, IVec2::Y, IVec2::splat(5)];
 
-/// the height limit over each parcel of a scene with these parcels
-fn heights_over(parcels: &[IVec2], realm: &ServerConfiguration) -> Vec<f32> {
-    let regions = scene_bound_regions(&parcels.iter().copied().collect(), realm);
+/// the height limit over each parcel of a scene with these parcels, in a realm whose `about`
+/// carries this configuration
+fn heights_over(parcels: &[IVec2], config: &ServerConfiguration) -> Vec<f32> {
+    let realm = CurrentRealm {
+        config: config.clone(),
+        ..Default::default()
+    };
+    let regions = scene_bound_regions(&parcels.iter().copied().collect(), &realm);
     parcels
         .iter()
         .map(|parcel| {
@@ -490,12 +496,40 @@ fn a_world_scene_is_bounded_at_the_fixed_height() {
 }
 
 #[test]
+fn a_preview_scene_is_bounded_at_the_fixed_height() {
+    // a preview lists the project's parcels, whether or not it lists its scene
+    for preview in [
+        ServerConfiguration {
+            scenes_urn: Some(Vec::new()),
+            local_scene_parcels: Some(vec!["0,0".to_owned()]),
+            ..Default::default()
+        },
+        ServerConfiguration {
+            scenes_urn: Some(vec!["urn:decentraland:entity:preview-scene".to_owned()]),
+            local_scene_parcels: Some(vec!["0,0".to_owned()]),
+            ..Default::default()
+        },
+    ] {
+        assert_eq!(heights_over(&[IVec2::ZERO], &preview), [FIXED_SCENE_HEIGHT]);
+        assert_eq!(
+            heights_over(&SPLIT_SCENE, &preview),
+            [FIXED_SCENE_HEIGHT; 4]
+        );
+    }
+}
+
+#[test]
 fn a_city_scene_is_bounded_by_the_parcel_count_of_each_region() {
-    // a city realm lists no scenes: no list, or an empty one
+    // a city realm lists neither its scenes nor a project's parcels: no list, or an empty one
     for city in [
         ServerConfiguration::default(),
         ServerConfiguration {
             scenes_urn: Some(Vec::new()),
+            ..Default::default()
+        },
+        ServerConfiguration {
+            scenes_urn: Some(Vec::new()),
+            local_scene_parcels: Some(Vec::new()),
             ..Default::default()
         },
     ] {

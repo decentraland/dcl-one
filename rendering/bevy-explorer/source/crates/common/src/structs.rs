@@ -2199,8 +2199,8 @@ pub struct ServerConfiguration {
 }
 
 impl ServerConfiguration {
-    /// Whether the realm lists its scenes up front, as a World does. A city lists none and
-    /// resolves its scenes around the player.
+    /// Whether the realm lists its scenes up front: a World, and also some previews and the
+    /// editor's realm. A city lists none and resolves its scenes around the player.
     pub fn lists_scenes(&self) -> bool {
         self.scenes_urn
             .as_ref()

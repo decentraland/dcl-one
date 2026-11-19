@@ -24,7 +24,7 @@ use common::{
     structs::{
         server_mode, AppConfig, AppError, CurrentRealm, EditorMode, GlobalCrdtStateUpdate,
         IVec2Arg, NearbyVoiceDisabled, PreviewMode, PrimaryCamera, SceneJsFile, SceneLoadDistance,
-        SceneMeta, SceneTime, ServerConfiguration, StartupScenes, WorldHold,
+        SceneMeta, SceneTime, StartupScenes, WorldHold,
     },
     terrain::{Occupancy, TerrainChange, TerrainTargets, BORDER_PADDING},
     util::{TaskExt, TryPushChildrenEx},
@@ -372,7 +372,7 @@ pub(crate) fn load_scene_javascript(
         let bounds = if portable.is_some() {
             Vec::default()
         } else {
-            scene_bound_regions(&parcels, &realm.config)
+            scene_bound_regions(&parcels, &realm)
         };
 
         // get main.crdt
@@ -619,19 +619,19 @@ pub(crate) fn load_scene_javascript(
     }
 }
 
-/// The regions a scene is clipped and collided to. A World's scenes have no neighbours to build
-/// over, so they share one fixed height limit; a city scene's limit grows with each connected
-/// region's parcel count.
-fn scene_bound_regions(parcels: &HashSet<IVec2>, realm: &ServerConfiguration) -> Vec<BoundRegion> {
-    let world = realm.lists_scenes();
+/// The regions a scene is clipped and collided to. A city scene has neighbours it must not build
+/// over, so its limit grows with each connected region's parcel count; every other realm (a
+/// World, a preview, an editor) gives its scenes one fixed height limit.
+fn scene_bound_regions(parcels: &HashSet<IVec2>, realm: &CurrentRealm) -> Vec<BoundRegion> {
+    let city = !realm.config.lists_scenes() && !realm.is_local();
     scene_regions(parcels.iter().copied())
         .into_iter()
         .map(|region| {
             let bound = BoundRegion::new(region.min, region.max, region.count);
-            if world {
-                bound.with_height(FIXED_SCENE_HEIGHT)
-            } else {
+            if city {
                 bound
+            } else {
+                bound.with_height(FIXED_SCENE_HEIGHT)
             }
         })
         .collect()
