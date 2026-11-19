@@ -36,6 +36,7 @@ fn material_app() -> (App, Entity) {
                 init_cache,
                 remove_freed_cached_materials,
                 update_materials,
+                add_missing_tangents,
                 update_bias,
                 update_loading_materials,
             )
@@ -580,6 +581,40 @@ fn per_frame_cost_with_a_large_backlog() {
     }
 }
 
+#[test]
+fn a_mesh_drawn_with_a_normal_map_gets_tangents() {
+    let (mut app, _) = material_app();
+    let world = app.world_mut();
+    let mut drawn = |normal_map: bool| {
+        let mesh = world
+            .resource_mut::<Assets<Mesh>>()
+            .add(Mesh::from(Cuboid::default()));
+        let image = world.resource_mut::<Assets<Image>>().add(Image::default());
+        let material = world
+            .resource_mut::<Assets<SceneMaterial>>()
+            .add(SceneMaterial {
+                base: StandardMaterial {
+                    normal_map_texture: normal_map.then_some(image),
+                    ..Default::default()
+                },
+                extension: SceneBound::new_unbounded(),
+            });
+        world.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material)));
+        mesh
+    };
+    let (mapped, plain) = (drawn(true), drawn(false));
+    app.update();
+    let meshes = app.world().resource::<Assets<Mesh>>();
+    let has_tangents = |mesh: &Handle<Mesh>| {
+        meshes
+            .get(mesh)
+            .unwrap()
+            .contains_attribute(Mesh::ATTRIBUTE_TANGENT)
+    };
+    assert!(has_tangents(&mapped));
+    assert!(!has_tangents(&plain));
+}
+
 mod definition {
     use dcl_component::proto_components::{
         common::{texture_union::Tex, Color3, Color4, Texture, TextureUnion, Vector2},
@@ -753,6 +788,37 @@ mod definition {
             }),
             AlphaMode::Blend
         );
+    }
+
+    #[test]
+    fn alpha_test_and_blend_is_premultiplied() {
+        let definition = pbr(PbrMaterial {
+            transparency_mode: Some(MaterialTransparencyMode::MtmAlphaTestAndAlphaBlend as i32),
+            alpha_test: Some(0.3),
+            ..Default::default()
+        });
+        assert_eq!(definition.material.alpha_mode, AlphaMode::Premultiplied);
+    }
+
+    #[test]
+    fn only_an_unlit_material_carries_an_alpha_texture() {
+        let flat = unlit(UnlitMaterial {
+            alpha_texture: texture("alpha.png"),
+            ..Default::default()
+        });
+        assert!(flat.alpha_texture.is_some());
+        // an empty source is no texture
+        let empty = unlit(UnlitMaterial {
+            alpha_texture: texture(""),
+            ..Default::default()
+        });
+        assert!(empty.alpha_texture.is_none());
+        assert_eq!(empty.material.alpha_mode, AlphaMode::Opaque);
+        let lit = pbr(PbrMaterial {
+            alpha_texture: texture("alpha.png"),
+            ..Default::default()
+        });
+        assert!(lit.alpha_texture.is_none());
     }
 
     #[test]

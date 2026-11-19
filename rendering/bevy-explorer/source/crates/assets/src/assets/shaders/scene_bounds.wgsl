@@ -25,8 +25,11 @@ const SCENE_BOUNDED: u32 = 1u;
 const SCENE_FULL_RECT: u32 = 2u;
 // an avatar: dither as a whole, by the capsule at the mesh origin (bound_material_effect.wgsl)
 const SCENE_DITHER_CAPSULE: u32 = 4u;
-// an SDK material: its emissive colour is not multiplied by its albedo texture (bound_material.wgsl)
+// an SDK material: its emissive colour is not multiplied by its albedo texture, nor dimmed by its
+// alpha beyond the blend itself (bound_material.wgsl)
 const SCENE_PLAIN_EMISSIVE: u32 = 8u;
+// the material has an alpha texture (bound_material.wgsl)
+const SCENE_ALPHA_TEXTURE: u32 = 16u;
 
 @group(2) @binding(100)
 var<uniform> scene_bounds: SceneBoundData;

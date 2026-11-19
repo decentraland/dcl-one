@@ -15,7 +15,7 @@
 #import "embedded://shaders/bound_material_effect.wgsl"::{apply_outline, discard_dither, reveal_discard}
 #import "embedded://shaders/toon.wgsl"::toon_lighting
 #import "embedded://shaders/shadow_softening.wgsl"::soften_directional_shadow
-#import "embedded://shaders/scene_bounds.wgsl"::{scene_bounds, scene_outside_amount, SCENE_DITHER_CAPSULE, SCENE_PLAIN_EMISSIVE}
+#import "embedded://shaders/scene_bounds.wgsl"::{scene_bounds, scene_outside_amount, SCENE_DITHER_CAPSULE, SCENE_PLAIN_EMISSIVE, SCENE_ALPHA_TEXTURE}
 
 override fn shadows::fetch_directional_shadow(light_id: u32, frag_position: vec4<f32>, surface_normal: vec3<f32>, view_z: f32) -> f32 {
     let base = shadows::fetch_directional_shadow(light_id, frag_position, surface_normal, view_z);
@@ -46,6 +46,10 @@ override fn ambient::ambient_light(world_position: vec4<f32>, world_normal: vec3
     return vec3(0.0);
 }
 #endif
+// an unlit material's alpha texture (scene_material::SceneBound)
+@group(2) @binding(102) var scene_alpha_texture: texture_2d<f32>;
+@group(2) @binding(103) var scene_alpha_sampler: sampler;
+
 @fragment
 fn fragment(
     in: VertexOutput,
@@ -107,6 +111,16 @@ fn fragment(
     let sample_index = 0u;
 #endif
 
+#ifdef VERTEX_UVS
+    // the alpha texture scales the alpha by its brightness, not by its own alpha channel, and is
+    // read where the main texture is
+    if (scene_bounds.flags & SCENE_ALPHA_TEXTURE) != 0u {
+        let alpha_uv = (material.uv_transform * vec3(in.uv, 1.0)).xy;
+        let alpha_texel = textureSampleBias(scene_alpha_texture, scene_alpha_sampler, alpha_uv, view.mip_bias);
+        pbr_input.material.base_color.a *= saturate(length(alpha_texel.rgb));
+    }
+#endif
+
     // apply emmissive multiplier
     // dcl uses default 2.0 intensity. we also override bevy_pbr base emissive rules so that 
     // - if emissive texture is supplied but color is not, we use the texture (bevy by default multiplies emissive color and emissive texture, so color must be white to pass the texture through)
@@ -147,8 +161,9 @@ fn fragment(
         }
     }
 #endif
-    // scale up for lumens, use 0 for auto-exposure weight (alpha channel)
-    pbr_input.material.emissive = vec4(emissive * 10.0, 0.0);
+    // a glTF emissive factor of 1 is five times as bright as a white surface under a light of
+    // intensity 1; use 0 for auto-exposure weight (alpha channel)
+    pbr_input.material.emissive = vec4(emissive * 5.0, 0.0);
 
     let world_position = pbr_input.world_position.xyz;
     // check bounds
@@ -173,6 +188,18 @@ fn fragment(
 
     // alpha discard
     pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
+
+    if (scene_bounds.flags & SCENE_PLAIN_EMISSIVE) != 0u {
+        // the lighting scales the emissive light by the alpha, on top of the blend: an SDK
+        // material's is dimmed by the blend alone
+        let alpha = max(pbr_input.material.base_color.a, 0.0001);
+        pbr_input.material.emissive = vec4(pbr_input.material.emissive.rgb / alpha, 0.0);
+        // premultiplied (alpha test and blend): the alpha thins the surface's own colour and
+        // leaves its highlights and emissive light whole
+        if (material.flags & pbr_types::STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS) == pbr_types::STANDARD_MATERIAL_FLAGS_ALPHA_MODE_PREMULTIPLIED {
+            pbr_input.material.base_color = vec4(pbr_input.material.base_color.rgb * pbr_input.material.base_color.a, pbr_input.material.base_color.a);
+        }
+    }
 
 #ifdef ENVIRONMENT_MAP
     // a dark metal reflects the sky at grazing angles as a pale one does

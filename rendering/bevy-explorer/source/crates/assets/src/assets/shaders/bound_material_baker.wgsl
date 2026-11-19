@@ -70,8 +70,8 @@ fn fragment(
         }
     }
 #endif
-    // scale up for lumens
-    pbr_input.material.emissive = emissive * 10.0;
+    // as bound_material.wgsl
+    pbr_input.material.emissive = emissive * 5.0;
     pbr_input.material.emissive.a = min(pbr_input.material.emissive.a, 1.0);
 
     let world_position = pbr_input.world_position.xyz;

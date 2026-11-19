@@ -119,6 +119,11 @@ pub struct SceneBound {
     pub data: SceneBoundData,
     #[cfg_attr(not(feature = "webgl2"), storage(101, read_only, visibility(fragment)))]
     pub cells: Handle<ShaderStorageBuffer>,
+    /// The alpha texture of an unlit material (`SCENE_ALPHA_TEXTURE`): its brightness scales
+    /// the material's alpha.
+    #[texture(102)]
+    #[sampler(103)]
+    pub alpha_texture: Option<Handle<Image>>,
     /// Meshes that have 1 or 3 negative scale axis require special handling
     /// of the face culling
     pub inverted_scale: bool,
@@ -132,6 +137,7 @@ impl SceneBound {
                 ..bounds.data
             },
             cells: bounds.cells.clone(),
+            alpha_texture: None,
             inverted_scale: false,
         }
     }
@@ -154,14 +160,23 @@ impl SceneBound {
         self.data.flags |= SCENE_PLAIN_EMISSIVE;
         self
     }
+
+    pub fn with_alpha_texture(mut self, alpha_texture: Handle<Image>) -> Self {
+        self.data.flags |= SCENE_ALPHA_TEXTURE;
+        self.alpha_texture = Some(alpha_texture);
+        self
+    }
 }
 
 pub const SCENE_BOUNDED: u32 = 1;
 pub const SCENE_FULL_RECT: u32 = 2;
 /// an avatar: the camera-to-player dither fades it as a whole, by its capsule
 pub const SCENE_DITHER_CAPSULE: u32 = 4;
-/// an SDK material: its emissive colour is not multiplied by its albedo texture
+/// an SDK material: its emissive colour is not multiplied by its albedo texture, nor dimmed by
+/// its alpha beyond the blend itself
 pub const SCENE_PLAIN_EMISSIVE: u32 = 8;
+/// the material has an alpha texture
+pub const SCENE_ALPHA_TEXTURE: u32 = 16;
 /// scenes with a larger bounding box fall back to the bounding box itself
 const MAX_SCENE_CELLS: u64 = 1 << 20;
 /// empty cell table for unbounded and full-rect scenes, which never read it

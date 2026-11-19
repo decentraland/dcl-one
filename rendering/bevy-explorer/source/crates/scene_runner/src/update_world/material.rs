@@ -66,6 +66,8 @@ pub struct MaterialDefinition {
     pub base_color_texture: Option<TextureUnion>,
     pub emmissive_texture: Option<TextureUnion>,
     pub normal_map: Option<TextureUnion>,
+    /// An unlit material's alpha texture.
+    pub alpha_texture: Option<TextureUnion>,
 }
 
 #[derive(Component, Clone)]
@@ -93,9 +95,9 @@ fn tex_is_present(tex: &Option<TextureUnion>) -> bool {
     })
 }
 
-/// `bound_material.wgsl` multiplies every emissive by 10; an SDK emissive of 1 is as bright as a
+/// `bound_material.wgsl` multiplies every emissive by 5; an SDK emissive of 1 is as bright as a
 /// white surface under a light of intensity 1.
-const SDK_EMISSIVE_SCALE: f32 = 0.1;
+const SDK_EMISSIVE_SCALE: f32 = 0.2;
 
 /// The uv transform of a material, from its main texture's tiling and offset: `offset + uv *
 /// tiling` with the texture's origin at its bottom left. The meshes' v runs down from the top
@@ -132,13 +134,6 @@ impl MaterialDefinition {
             .material
         {
             Some(pb_material::Material::Unlit(unlit)) => {
-                if tex_is_present(&unlit.alpha_texture)
-                    && tex_is_present(&unlit.texture)
-                    && unlit.alpha_texture != unlit.texture
-                {
-                    debug!("separate alpha texture not supported");
-                }
-
                 let base_color = unlit
                     .diffuse_color
                     .map(Color4DclToBevy::convert_srgba)
@@ -183,12 +178,10 @@ impl MaterialDefinition {
                         AlphaMode::Mask(pbr.alpha_test.unwrap_or(0.5))
                     }
                     Some(MaterialTransparencyMode::MtmAlphaBlend) => AlphaMode::Blend,
+                    // blended without a cutoff, the alpha thinning the surface's colour but not
+                    // its highlights (bound_material.wgsl)
                     Some(MaterialTransparencyMode::MtmAlphaTestAndAlphaBlend) => {
-                        // TODO requires bevy patch or custom material or material extension tbd
-                        warn!(
-                            "MaterialTransparencyMode::MtmAlphaTestAndAlphaBlend not implemented!"
-                        );
-                        AlphaMode::Blend
+                        AlphaMode::Premultiplied
                     }
                     // the albedo alpha alone decides; `alpha_test` applies in the alpha-test
                     // mode only and the deprecated alpha texture never
@@ -249,9 +242,18 @@ impl MaterialDefinition {
             None => !base.unlit,
         };
 
+        let alpha_texture = match &pb_material.material {
+            Some(pb_material::Material::Unlit(unlit)) => unlit
+                .alpha_texture
+                .clone()
+                .filter(|_| tex_is_present(&unlit.alpha_texture)),
+            _ => None,
+        };
+
         Self {
             material,
             shadow_caster,
+            alpha_texture,
             plain_emissive: matches!(&pb_material.material, Some(pb_material::Material::Pbr(_))),
             base_color_texture,
             emmissive_texture,
@@ -273,6 +275,7 @@ impl Plugin for MaterialDefinitionPlugin {
                 init_cache,
                 remove_freed_cached_materials,
                 update_materials,
+                add_missing_tangents,
                 update_bias,
                 update_loading_materials,
             )
@@ -725,6 +728,7 @@ pub fn update_materials(
                     (&defn.base_color_texture, true),
                     (&defn.emmissive_texture, true),
                     (&defn.normal_map, false),
+                    (&defn.alpha_texture, true),
                 ]
                 .into_iter()
                 .map(
@@ -763,10 +767,8 @@ pub fn update_materials(
                     .filter_map(|t| t.source_entity)
                     .next();
 
-                let [mut base_color_texture, emissive_texture, normal_map_texture]: [Option<
-                    ResolvedTexture,
-                >;
-                    3] = textures.try_into().unwrap();
+                let [mut base_color_texture, emissive_texture, normal_map_texture, alpha_texture]: [Option<ResolvedTexture>; 4] =
+                    textures.try_into().unwrap();
 
                 let cursor = base_color_texture
                     .as_mut()
@@ -805,10 +807,15 @@ pub fn update_materials(
                         uv_transform: ui_uv_transform.unwrap_or(defn.material.uv_transform),
                         ..defn.material.clone()
                     },
-                    extension: if defn.plain_emissive {
-                        SceneBound::new(&bounds, config.graphics.oob).with_plain_emissive()
-                    } else {
-                        SceneBound::new(&bounds, config.graphics.oob)
+                    extension: {
+                        let mut extension = SceneBound::new(&bounds, config.graphics.oob);
+                        if defn.plain_emissive {
+                            extension = extension.with_plain_emissive();
+                        }
+                        if let Some(alpha_texture) = alpha_texture {
+                            extension = extension.with_alpha_texture(alpha_texture.image);
+                        }
+                        extension
                     },
                 });
 
@@ -948,6 +955,34 @@ fn update_loading_materials(
 }
 
 #[allow(clippy::type_complexity)]
+/// A normal map is drawn only on a mesh with tangents. A glTF mesh has none unless its own
+/// material has a normal map, so one given a bump texture by a scene gets them here. A mesh
+/// whose uvs span no area has none to give, and stays as it is.
+#[allow(clippy::type_complexity)]
+fn add_missing_tangents(
+    drawn: Query<
+        (&Mesh3d, &MeshMaterial3d<SceneMaterial>),
+        Or<(Changed<Mesh3d>, Changed<MeshMaterial3d<SceneMaterial>>)>,
+    >,
+    materials: Res<Assets<SceneMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    for (mesh, material) in &drawn {
+        let mapped = materials
+            .get(material)
+            .is_some_and(|material| material.base.normal_map_texture.is_some());
+        // read first: `get_mut` marks the mesh changed, which uploads it again
+        let bare = meshes
+            .get(mesh)
+            .is_some_and(|mesh| !mesh.contains_attribute(Mesh::ATTRIBUTE_TANGENT));
+        if mapped && bare {
+            if let Some(mesh) = meshes.get_mut(mesh) {
+                let _ = mesh.generate_tangents();
+            }
+        }
+    }
+}
+
 fn update_bias(
     mut materials: ResMut<Assets<SceneMaterial>>,
     query: Query<
@@ -1036,8 +1071,10 @@ pub fn dcl_material_from_standard_material(
             alpha_texture,
             emissive_texture: base.emissive_texture.as_ref().map(dcl_texture),
             bump_texture: base.normal_map_texture.as_ref().map(dcl_texture),
-            albedo_color: Some(base.base_color.convert_linear_rgba()),
-            emissive_color: Some(Color::LinearRgba(base.emissive * 0.5).convert_linear_rgb()),
+            // as an SDK material reads them back: the albedo sRGB, the emissive linear and
+            // scaled by its intensity
+            albedo_color: Some(base.base_color.convert_srgba()),
+            emissive_color: Some(Color::LinearRgba(base.emissive).convert_linear_rgb()),
             reflectivity_color: None,
             transparency_mode: Some(match base.alpha_mode() {
                 AlphaMode::Opaque => MaterialTransparencyMode::MtmOpaque,
@@ -1047,7 +1084,7 @@ pub fn dcl_material_from_standard_material(
             metallic: Some(base.metallic),
             roughness: Some(base.perceptual_roughness),
             specular_intensity: None,
-            emissive_intensity: None,
+            emissive_intensity: Some(1.0 / SDK_EMISSIVE_SCALE),
             direct_intensity: None,
         })
     }
