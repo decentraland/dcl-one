@@ -6,6 +6,7 @@ import {
   authApiUrlFor,
   completeDeepLinkSignIn,
   getAuthRequestId,
+  getDeepLinkTarget,
   getExplorerDeeplink,
   getSigninDeeplink,
   isBridgeOnlyEnabled,
@@ -77,6 +78,25 @@ describe("client deep links", () => {
     expect(getExplorerDeeplink("dcl-creator-hub://", true, "req-1")).toBe(
       "dcl-creator-hub://?bridgeOnly=true&authRequestId=req-1",
     );
+  });
+});
+
+describe("getDeepLinkTarget", () => {
+  it("hands a Creator Hub sign-in back to Creator Hub", () => {
+    const params = new URLSearchParams("targetConfigId=creator-hub&flow=deeplink");
+    expect(getDeepLinkTarget(params)).toEqual({
+      appName: "Creator Hub",
+      deepLink: "dcl-creator-hub://",
+    });
+  });
+
+  it("hands any other sign-in back to the Explorer", () => {
+    for (const query of ["", "targetConfigId=unknown", "targetConfigId=__proto__"]) {
+      expect(getDeepLinkTarget(new URLSearchParams(query)), query).toEqual({
+        appName: "Decentraland",
+        deepLink: "decentraland://",
+      });
+    }
   });
 });
 

@@ -168,6 +168,8 @@ const Metrics = withSdk<WithSdkProps>(({ sdk }) => {
     <div className="Metrics">
       <div className="Buttons">
         <Button
+          variant="secondary"
+          size="sm"
           className={cx({
             Active: showMetrics,
             Disabled: metricsUnavailable,

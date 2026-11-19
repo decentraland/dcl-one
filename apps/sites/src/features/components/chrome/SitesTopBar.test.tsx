@@ -257,7 +257,9 @@ describe("when a Sites page reports its area", () => {
     },
   );
   it("should select no section for an area outside the navigation", () => {
-    render(<Host pathname="/social/" children={<DclTopBar active="social" />} />);
+    render(
+      <Host pathname="/social/" children={<DclTopBar active="social" />} />,
+    );
     expect(document.querySelector('[aria-current="page"]')).toBeNull();
   });
 });
@@ -302,8 +304,72 @@ it("keeps cached notifications alongside a background refresh error", async () =
   fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
   await screen.findByRole("link", { name: /Cached notice/ });
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
-  fireEvent.click(screen.getByRole("button", { name: /^Notifications/ }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Notifications, 1 unread" }),
+  );
   await screen.findByRole("alert");
   expect(screen.getByRole("link", { name: /Cached notice/ })).toBeTruthy();
   expect(fetchNotifications).toHaveBeenCalledTimes(2);
+});
+
+describe("when a signed-in visitor has an unread notification", () => {
+  it("should show the unread count before opening notifications", async () => {
+    render(
+      <Host
+        pathname="/"
+        auth={{
+          ...baseAuth,
+          signedIn: true,
+          account: "0xa",
+          fetchNotifications: async () => ({
+            notifications: [
+              {
+                id: "unread",
+                type: "broadcast",
+                timestamp: Date.now(),
+                read: false,
+                metadata: { title: "Seeded notice" },
+              },
+              {
+                id: "read",
+                type: "broadcast",
+                timestamp: Date.now(),
+                read: true,
+                metadata: { title: "Read notice" },
+              },
+            ],
+          }),
+        }}
+      />,
+    );
+    const bell = await screen.findByRole("button", { name: /1 unread/ });
+    expect(bell.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(bell);
+    await screen.findByText("Seeded notice");
+  });
+});
+
+describe("when Home notifications are opened", () => {
+  it("should open a nonmodal inbox and restore focus on Escape", async () => {
+    render(
+      <Host
+        pathname="/"
+        auth={{
+          ...baseAuth,
+          signedIn: true,
+          account: "0xa",
+          fetchNotifications: async () => ({ notifications: [] }),
+        }}
+      />,
+    );
+    const bell = screen.getByRole("button", { name: "Notifications" });
+    fireEvent.click(bell);
+    const panel = screen.getByRole("dialog", { name: "Notifications" });
+    await screen.findByText("No notifications yet");
+    const close = within(panel).getByRole("button", { name: "Close" });
+    close.focus();
+    fireEvent.keyDown(close, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Notifications" })).toBeNull();
+    expect(document.activeElement).toBe(bell);
+  });
 });

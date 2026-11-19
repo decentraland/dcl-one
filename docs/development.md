@@ -51,7 +51,10 @@ and shows no other avatars:
   --webtransport-developer-mode --ignore-certificate-errors-spki-list=<hash from status>
 ```
 
-`/about` answers 503 while Pulse is down.
+`/about` answers 503 while Pulse is down. Pulse exits when it loses its generation lease (a PostgreSQL
+restart, or a keepalive slower than the lease after sleep or under load), and the supervisor starts it
+again with a fresh generation, without limit. A stack started before this policy keeps the old one until
+`foundation-dev down` and `up`.
 
 ## Data profiles
 
@@ -89,7 +92,7 @@ Status values:
 | Editor-scene realm `peer` (`/content`, `/lambdas`, `/bff`). The static realm JSON advertises them as `publicUrl`. Status: production (`/editor-scene/about`) | `apps/ui3/src/editor/editor-scene-realm.json`, `apps/sites/src/routes/routes/editor-scene.EditorScene.about.ts` | `@decentraland/web-applications` | No target yet. The node serves `/content` and `/lambdas` itself |
 | Places `places` (`/api/places`, `/api/worlds`). `PLACES_UPSTREAM_URL`, `WORLDS_UPSTREAM_URL`. Status: mirror | `services/catalyst/explore/src/places/mirror.rs` | `@decentraland/apis` | No target yet |
 | Events `events` (`/api/events`, `/api/events/{id}`). `EVENTS_UPSTREAM_URL`. Status: mirror | `explore/src/events/mirror.rs` | `@decentraland/apis` | `EVENTS_MIRROR_ADOPT` adopts the mirrored rows as local once the old service stops ([explore API parity ADR](adr/2026-11-05-explore-api-parity-contract.md)) |
-| Event posters `events-assets-099ac00` (`/poster/{file}`, `/poster-vertical/{file}`). `EVENTS_POSTER_UPSTREAM_URL`. Status: mirror | `explore/src/api/posters.rs` | `@decentraland/apis` | No target yet |
+| Event posters `events-assets-099ac00` (`/poster/{file}`, `/poster-vertical/{file}`). `EVENTS_POSTER_UPSTREAM_URL`. Status: mirror | `explore/src/api/posters.rs` | `@decentraland/apis` | With a rewrite domain, event records use the node's `/events-assets-099ac00/poster/{file}` and `/events-assets-099ac00/poster-vertical/{file}` paths. A cache miss reads the poster from the upstream bucket. |
 | Worlds content server `worlds-content-server` (`/index`, `/world/{name}/{about,scenes,permissions}`, content). `WORLDS_CONTENT_MIRROR_SOURCE`. Read-through only in dev. Status: mirror | `services/catalyst/worlds/src/mirror.rs`, `content/src/read_through.rs` | `@decentraland/apis` | No target yet |
 | Communities `social-api` (`/v1/communities`), thumbnails from `assets-cdn`. `COMMUNITIES_UPSTREAM_URL`, `COMMUNITIES_MIRROR_THUMBNAIL_URL`, and the `catalyst communities mirror` CLI defaults (`src/main.rs`). Off in dev. Status: mirror | `services/catalyst/social/src/communities/mirror.rs` | `@decentraland/apis` | No target yet |
 | Denylists `asset-bundle-registry` (`/denylist`, every 120 s) and `config` (`/denylist.json`). `DENYLIST_URLS`, `EXPLORER_DENYLIST_SOURCE_URL`, `DENY_LIST_URL` (comms; not set in dev). Status: mirror | `content/src/denylist.rs`, `explore/src/api/denylist.rs`, `comms/src/archipelago/mod.rs` | `@decentraland/apis` | No target yet |
@@ -109,7 +112,7 @@ Status values:
 | `/play` HUD services (realm provider, peer, places, events, map, marketplace, social, notifications and the rest). The HUD defaults to this deployment's gateway (`GATEWAY_PREFIXES`). It reaches `.org` or `.zone` only on a Decentraland origin, with the trusted `?baseDomain=`, or without `__DCL_PUBLIC__` (standalone). Status: inactive by default | `apps/ui3/src/play/lib/baseDomain.ts` | `@decentraland/web-applications` | Already served by the gateway prefixes; the exit is removing the `.org`/`.zone` fallback |
 | Scene editor host: `worlds-content-server`, comms gatekeeper, storage and multiplayer on `.org` or `.zone`, and `creators-data` (`/v2`). Offered only on loopback, or on Decentraland hosts with `editor-features=experimental`. Status: dev-only on dcl-one deployments | `apps/ui3/src/play/features/editorHost/source.ts`, `editorHost/config.ts` | `@decentraland/web-applications` | No target yet. The node has `/worlds-content-server`, `/comms-gatekeeper` and `/world-storage`, but no document moves the editor host to them |
 | `@dcl/sdk-commands`: `peer` and `peer.decentraland.zone` (`/lambdas/contracts/servers`, `/content/entities/active`, `POST /content/entities`), `quests`, `feature-flags.decentraland.zone`, `rpc/mainnet`. `DCL_CATALYST` (default `https://peer.decentraland.org`), others hardcoded. Status: production (creator CLI) | `library/js-sdk-toolchain/packages/@dcl/sdk-commands/src/` | `@decentraland/infra` | `apps/dcl-scene-cli` replaces the package; no per-endpoint target |
-| Bevy Explorer E2E against `decentraland.zone` and `peer.decentraland.zone`. `vars.DCL_E2E_BASE_DOMAIN`, `vars.DCL_E2E_REALM`. Runs on the `ci:e2e` label, after main CI, nightly or by hand. Status: CI-only | `.github/workflows/bevy-explorer-e2e.yml`, `apps/bevy-explorer/e2e/driver/target.ts` | `@decentraland/client` | No target yet |
+| Bevy Explorer E2E against `decentraland.zone` and `peer.decentraland.zone`. `vars.DCL_E2E_BASE_DOMAIN`, `vars.DCL_E2E_REALM`. Runs on the `ci:e2e` label, nightly or by hand. Status: CI-only | `.github/workflows/bevy-explorer-e2e.yml`, `apps/bevy-explorer/e2e/driver/target.ts` | `@decentraland/client` | No target yet |
 | Shop parity and trade journey harnesses: they record live traffic to the Shop's services and use `rpc` (`/mainnet`, `/amoy`, `/sepolia`). Run by hand; CI runs only their offline tests. Status: dev-only | `tooling/shop-parity/lib/services.mts`, `lib/session.mts`, `tooling/shop-trade-journey/lib/wallet.mts` | `@decentraland/web-applications` | No target yet |
 
 Not listed: human links, canonical and sitemap URLs, URLs written into responses that the node does not fetch, mocks and fixtures, and third-party services (CoinGecko, publicnode, thirdweb, Segment and others).
@@ -164,6 +167,10 @@ nix develop --command bash tooling/dev-test.sh [rust|e2e]   # rust: PostgreSQL o
 CI runs the Rust suites in `nix develop .#ci`: the toolchain, the services the tests
 start and the build tools, without the web and media tools.
 
+The `tooling/tests` suite runs in its own job, Tooling tests, beside smoke. It needs
+only the dev shell: its PostgreSQL tests start their own clusters with the shell's
+binaries. It includes the workflow tests, so the CI gate requires it.
+
 The Rust job sets `FOUNDATION_DEV_DISPOSABLE_POSTGRES=1`. A cluster that
 `foundation-dev` initializes with it set runs without durability (`fsync`,
 `synchronous_commit` and `full_page_writes` off, `wal_level=minimal`), because
@@ -177,9 +184,10 @@ that run the matching workflows' checks (images need Linux or
 The Rust tests run in three jobs that each compile the tests and run a third of
 the test executables; on PRs they run on Linux (`CATALYST_TEST_SHARD=i/n` for
 `tooling/catalyst-test.sh`). The provisioned Archipelago tests take a fixed
-time, so only the shard that `CATALYST_TEST_PROVISIONED_SHARD` names runs them;
-the other shards check that the tests are present. A run that sets neither
-variable runs them. The doc-tests run only in the shard that
+time, so only the shard that `CATALYST_TEST_PROVISIONED_SHARD` names runs them,
+beside its test executables, since they mostly wait on timers; the step fails
+when either fails. The other shards check that the tests are present. A run
+that sets neither variable runs them. The doc-tests run only in the shard that
 `CATALYST_TEST_DOC_SHARD` names, or in every shard without it. When the
 dependency cache restores anything, from its exact key or a partial match, the
 jobs compile through a compiler cache (`sccache` on the GitHub cache) that
@@ -191,36 +199,42 @@ notice to add the `ci:macos` label: Cargo manifests and lockfiles, build
 scripts, toolchain files, `.cargo`, `library/vendor/rusty_enet`, Nix,
 `infra/dev`, the Makefile, the dev tooling and
 `.github/workflows/development.yml` (`tooling/dev-ci.py`). On `main`,
-the Rust tests and smoke run on macOS, and a new push does not cancel a running
-Development run: it waits, replacing any run already waiting, so each completed
-run tests every earlier commit and a macOS-only failure shows up
-there. A PR labelled `ci:macos` runs both on macOS (label, then push or reopen;
-re-running a job does not pick up a new label). A PR runs the Rust tests only
-when it changes an input of the Rust job: a file on the `RUST_INPUTS` list in
-`tooling/dev-ci.py` (the backend crates and the scene CLI manifest, the library
-crates they compile, the schema, the protocol, the API contract, the toolchain,
-the dev shell and the test tooling) or a path that a Rust source names. A new
-input of the Rust job goes on that list and on the path list of
-`development.yml` in the change that adds it; pushes to `main` always run the
-Rust tests. The Rust tests run in three shards. Each shard sorts the test
-binaries by source file and kind, so the three take one list on any runner
-(`tooling/catalyst-test.sh`). Two more labels work the same way:
-`ci:desktop` builds the Creator Hub desktop app for macOS and Windows on a PR
-and attaches its test builds, and `ci:linux` does the same for Linux.
-`release:creator-hub` is read after the merge: the push to
-`main` publishes the Creator Hub installers as a pre-release only when its PR
-has the label. A draft PR does not run the Explorer test suite and the headless
-smoke test; they start when the PR is marked ready for review, or on the next
-push with the `ci:engine` label (`tooling/bevy-ci.py`). A draft still builds
-the web engine, because the smoke job and the images need it. The run that
-starts when a draft is marked ready waits for a run of the same PR that is
-still in progress, because the smoke job reads that run's web build. Until the
-new run ends, the PR shows the two held jobs of the earlier run as skipped, and
-the CI status comment says that a newer run of the commit has not ended: merge
-after it ends. The smoke job
-restores the newest `main` build of the API and gives each unchanged file the
-time it had in that build (`tooling/cargo-mtimes.py`), so Cargo compiles only
-the crates that a changed file reaches.
+the Rust tests, smoke and the tooling tests run on macOS, and a new push does
+not cancel a running Development run: it waits, replacing any run already
+waiting, so each completed run tests every earlier commit and a macOS-only
+failure shows up there. A PR labelled `ci:macos` runs them on macOS (label,
+then push or reopen; re-running a job does not pick up a new label). A PR runs
+the Rust tests only when it changes an input of the Rust job: a file on the
+`RUST_INPUTS` list in `tooling/dev-ci.py` (the backend crates and the scene CLI
+manifest, the library crates they compile, the schema, the protocol, the API
+contract, the toolchain, the dev shell and the test tooling) or a path that a
+Rust source names. A new input of the Rust job goes on that list and on the
+path list of `development.yml` in the change that adds it; pushes to `main`
+always run the Rust tests. The Rust tests run in three shards. Each shard sorts
+the test binaries by source file and kind and cuts that list by the times
+recorded in `tooling/catalyst-test-durations.tsv`, so the three take one list
+on any runner (`tooling/catalyst-test.sh`): longest first, each binary goes to
+the shard it lengthens least, with the `node_*` and `sockets_*` groups spread
+across the shards, and each shard starts its longest binaries first. A binary
+without a recorded time keeps its place in the byte-order cut (every third from
+the shard's own). Refresh the times from a recent `main` run (the `finished in`
+of each binary's summary line on Linux) when binaries are added or change much.
+Two more labels work the same way: `ci:desktop` builds the Creator Hub desktop
+app for macOS, Windows and Linux on a PR and attaches its test builds, and
+`ci:linux` builds Linux alone. `release:creator-hub` is read after the merge:
+the push to `main` publishes the Creator Hub installers as a pre-release only
+when its PR has the label. A draft PR does not run the Explorer test suite and
+the headless smoke test; they start when the PR is marked ready for review, or
+on the next push with the `ci:engine` label (`tooling/bevy-ci.py`). A draft
+still builds the web engine, because the smoke job and the images need it. The
+run that starts when a draft is marked ready waits for a run of the same PR
+that is still in progress, because the smoke job reads that run's web build.
+Until the new run ends, the PR shows the two held jobs of the earlier run as
+skipped, and the CI status comment says that a newer run of the commit has not
+ended: merge after it ends. The smoke job restores the newest `main` build of
+the API and gives each unchanged file the time it had in that build
+(`tooling/cargo-mtimes.py`), so Cargo compiles only the crates that a changed
+file reaches.
 
 Linux jobs run on `ubuntu-26.04` unless they compile the explorer or uuav natively or
 test what they compiled. Those run on `ubuntu-24.04`, the image the uuav binaries lock
@@ -275,11 +289,11 @@ policy (`library/ui/figma/test/workflows.test.ts`).
 | `RUNNER_LINUX_X86_UBUNTU_22_04_16CORE` | `ubuntu-22.04-16core` | 1 | bevy-explorer-ci |
 | `RUNNER_LINUX_X86_UBUNTU_24_04` | `ubuntu-24.04` | 5 | bevy-explorer-ci, bevy-explorer-scenes, creator-hub-e2e, uuav-native, uuav-verify |
 | `RUNNER_LINUX_X86_UBUNTU_24_04_16CORE` | `ubuntu-24.04-16core` | 3 | bevy-explorer-ci (3) |
-| `RUNNER_LINUX_X86` | `ubuntu-26.04` | 47 | apis-sites-compile (2), apis-sites-images (4), bevy-explorer-benchmark (2), bevy-explorer-ci (4), bevy-explorer-ci-status (3), bevy-explorer-e2e, bevy-explorer-headless, bevy-explorer-images (2), bevy-explorer-scenes, creator-hub-asset-packs (2), creator-hub-build, creator-hub-ci (2), creator-hub-inspector, creator-hub-lint, creator-hub-tests, creator-hub-typechecking, development (5), gateway-images, protocol, sdk (2), social-captures, social-voice-release, structure (2), ui-library (2), uuav-native (2), uuav-verify |
+| `RUNNER_LINUX_X86` | `ubuntu-26.04` | 48 | apis-sites-compile (2), apis-sites-images (4), bevy-explorer-benchmark (2), bevy-explorer-ci (4), bevy-explorer-ci-status (3), bevy-explorer-e2e, bevy-explorer-headless, bevy-explorer-images (2), bevy-explorer-scenes, creator-hub-asset-packs (2), creator-hub-build, creator-hub-ci (2), creator-hub-inspector, creator-hub-lint, creator-hub-tests, creator-hub-typechecking, development (6), gateway-images, protocol, sdk (2), social-captures, social-voice-release, structure (2), ui-library (2), uuav-native (2), uuav-verify |
 | `RUNNER_LINUX_ARM` | `ubuntu-26.04-arm` | 4 | apis-sites-compile, apis-sites-images, bevy-explorer-images, gateway-images |
 | `RUNNER_WINDOWS` | `windows-2025` | 3 | bevy-explorer-e2e, uuav-native, uuav-verify |
 | `RUNNER_WINDOWS_16CORE` | `windows-2025-16core` | 2 | bevy-explorer-ci, bevy-explorer-headless-build |
-| `RUNNER_MACOS` | `macos-15` | 4 | development (2), uuav-native, uuav-verify |
+| `RUNNER_MACOS` | `macos-15` | 5 | development (3), uuav-native, uuav-verify |
 | `RUNNER_MACOS_XLARGE` | `macos-15-xlarge` | 2 | bevy-explorer-ci, bevy-explorer-headless-build |
 
 A runner named by a variable with an Ubuntu version in its name must run that version: the

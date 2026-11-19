@@ -1,4 +1,4 @@
-{ pkgs, catalyst, sites, gateway, revision }:
+{ pkgs, catalyst, sites, gateway, nginx, revision }:
 let
   inherit (pkgs) lib;
   accounts = pkgs.runCommand "foundation-container-accounts" { } ''
@@ -77,7 +77,7 @@ in {
     Entrypoint = [ "${lib.getExe gateway}" ];
     Env = [
       "HOME=/data" "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
-      "PATH=${lib.makeBinPath [ pkgs.python3 pkgs.nginx ]}"
+      "PATH=${lib.makeBinPath [ pkgs.python3 nginx ]}"
     ];
     ExposedPorts."8080/tcp" = { };
     StopSignal = "SIGQUIT";

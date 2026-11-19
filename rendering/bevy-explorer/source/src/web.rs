@@ -9,9 +9,7 @@ use bevy::{
 };
 use bevy_console::ConsoleConfiguration;
 use common::{
-    perf::{
-        HudMainThreadCostDataPoint, LongAnimationFrameSums, ReactCommitSums, SamplingPausedReason,
-    },
+    perf::{HudMainThreadCostDataPoint, LongAnimationFrameSums, ReactCommitSums},
     rpc::RpcResultSender,
     structs::{
         AppConfig, CurrentRealm, EditorMode, PreviewMode, PrimaryUser, SessionGraphics,
@@ -645,12 +643,6 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
     app.add_systems(Update, update_winit_fps)
         .add_systems(Update, update_url_params)
         .add_systems(Update, update_text_focus)
-        .insert_resource(BrowserPageFocus::current())
-        .add_systems(
-            First,
-            update_browser_page_focus_system
-                .before(crate::perf::frame_inputs::collect_frame_inputs_system),
-        )
         .add_systems(Last, engine_heartbeat_system);
     if perf_output::stream::started() {
         app.add_systems(Update, perf_stream_drain)
@@ -833,40 +825,14 @@ fn engine_heartbeat_system(_js: JsThread) {
     engine_heartbeat();
 }
 
-/// The browser page's focus and the engine viewport's activity.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct BrowserPageFocus {
-    /// `document.hasFocus()`: the tab is the active tab of the focused browser window.
-    page_has_focus: bool,
-    /// `!document.hidden`, and the host has not deactivated the viewport.
-    viewport_active: bool,
+/// The value `engine_set_page_focus` last stored.
+pub(crate) fn page_has_focus() -> bool {
+    PAGE_HAS_FOCUS.load(Ordering::Relaxed)
 }
 
-impl BrowserPageFocus {
-    /// The values `engine_set_page_focus` and `engine_set_viewport_active` last stored.
-    fn current() -> Self {
-        Self {
-            page_has_focus: PAGE_HAS_FOCUS.load(Ordering::Relaxed),
-            viewport_active: VIEWPORT_ACTIVE.load(Ordering::Relaxed),
-        }
-    }
-
-    /// `ViewportInactive` while the viewport is inactive, else `WindowUnfocused` while the page
-    /// lacks focus, else `None`.
-    pub(crate) fn sampling_paused_reason(&self) -> Option<SamplingPausedReason> {
-        if !self.viewport_active {
-            Some(SamplingPausedReason::ViewportInactive)
-        } else if !self.page_has_focus {
-            Some(SamplingPausedReason::WindowUnfocused)
-        } else {
-            None
-        }
-    }
-}
-
-/// Copies the page's focus and the viewport's activity into [`BrowserPageFocus`].
-fn update_browser_page_focus_system(mut focus: ResMut<BrowserPageFocus>) {
-    focus.set_if_neq(BrowserPageFocus::current());
+/// The value `engine_set_viewport_active` last stored.
+pub(crate) fn viewport_active() -> bool {
+    VIEWPORT_ACTIVE.load(Ordering::Relaxed)
 }
 
 /// Takes the HUD cost windows the page stored since the last take, summed; `None` when none

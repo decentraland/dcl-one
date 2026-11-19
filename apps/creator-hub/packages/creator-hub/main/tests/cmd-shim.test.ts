@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { writeCmdShim } from '../src/modules/cmd-shim';
 
@@ -63,6 +63,25 @@ describe('writeCmdShim', () => {
       await writeCmdShim(program, shim);
 
       expect(fs.readFileSync(`${shim}.cmd`, 'utf8')).toContain('Creator Hub.exe');
+    });
+  });
+
+  describe('when the launcher and the program are on different volumes', () => {
+    beforeEach(async () => {
+      // path.relative has no relative answer across Windows drives and returns the target as is.
+      vi.spyOn(path, 'relative').mockReturnValue('/other-volume/Creator Hub.exe');
+      await writeCmdShim(program, shim);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('should start the program by its absolute path', () => {
+      const cmd = fs.readFileSync(`${shim}.cmd`, 'utf8');
+      expect(cmd).toContain('"\\other-volume\\Creator Hub.exe"');
+      expect(cmd).not.toContain('%dp0%\\\\other-volume');
+      expect(fs.readFileSync(shim, 'utf8')).toContain('exec "/other-volume/Creator Hub.exe"');
     });
   });
 

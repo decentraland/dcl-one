@@ -510,7 +510,11 @@ web shell; null here, so this HUD shows no Donate). The shared HUD names a place
   stays while the next scene is asked about; on the map a newly picked place hides it until answered.
 - **After a tip** the host's `onSent` plays the `money` base emote; a `tip_received` notification opens the
   tipper's passport (`notifications/summary.ts` `tipTarget`).
+- **SEND TIP waits:** the form opens with the first suggestion picked, so it is ready to send at once; SEND TIP
+  answers only `ARM_MS` (500 ms) after the form appears (`design/ArmedButton`), so a second click of the press that
+  opened it sends nothing.
 - Tests: `library/ui/apps/hud/test/donate.test.tsx` (gating, open, emote, notification),
+  `library/ui/apps/hud/test/hosted/donateSend.test.tsx` (SEND TIP's wait),
   `library/explorer-core/test/donatePlace.test.ts`; the shell's side in `apps/ui3/src/play/test/donateShell.test.ts`
   and `donateGuard.test.ts`. No visual baseline: the panel is drawn by the `/play` shell, not by `?mock=1`.
 
@@ -530,6 +534,9 @@ Expectations:
   search on the server. A pending gift doesn't count as a copy; an equipped single copy is covered and can't be
   picked; SEND GIFT sends the newest-transferred copy neither worn nor pending, and refuses an item that isn't a
   Polygon collection item with a toast.
+- **The shell's SEND GIFT waits:** on its confirm step (`GiftTransferPanel`) it answers only `ARM_MS` (500 ms) after
+  it appears (`design/ArmedButton`), so a second click of the picker's SEND GIFT sends nothing
+  (`test/hosted/giftTransferPanel.test.tsx`).
 - **A `transfer_received` notification** opens the gift-received popup (`features/gifting/GiftReceivedPopup.tsx`),
   on every host: the item comes from the notification's token URI.
 - Tests: `library/ui/apps/hud/test/hosted/gift*.test.tsx`, `library/explorer-core/test/gift*.test.ts`,

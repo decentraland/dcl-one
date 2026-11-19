@@ -270,8 +270,8 @@ export class RemoteRenderer implements IRenderer {
     this.transport.sendCommand({ kind: 'setSelection', entities });
   }
 
-  getPointerWorldPoint(): Promise<Vector3 | null> {
-    return this.transport.request({ kind: 'getPointerWorldPoint' });
+  getPointerWorldPoint(ndc?: { x: number; y: number }): Promise<Vector3 | null> {
+    return this.transport.request({ kind: 'getPointerWorldPoint', ...(ndc ? { ndc } : {}) });
   }
 
   getEntityAnimations(entity: Entity): Promise<RendererAnimation[]> {

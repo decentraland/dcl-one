@@ -4,8 +4,8 @@
 
 import type { NftResult } from "@catalyst-api/market/NftResult";
 import type { Order } from "@catalyst-api/market/Order";
-import { fetchUnified, fetchShopListingsRaw, shopListingToItem, type Opts, type UnifiedListing } from "../discovery/api";
-import { toGender, type CatalogItem, type Gender, type RawCollectionItem } from "../discovery/lib/catalogItem";
+import { fetchUnified, fetchShopListingsRaw, type Opts, type UnifiedListing } from "../discovery/api";
+import { toGender, type Gender, type RawCollectionItem } from "../discovery/lib/catalogItem";
 import { isResale } from "../market/access-rule";
 
 function o(opts: Opts) {
@@ -43,20 +43,6 @@ export function itemListingKey(contractAddress: string, itemId: string, scope: "
 export async function fetchPrimaryListingForItem(contractAddress: string, itemId: string, opts: Opts): Promise<UnifiedListing | null> {
   const { items } = await fetchUnified({ contractAddress, itemId, first: 5, listingType: "primary" }, opts);
   return items.find((l) => !isResale(l)) ?? null;
-}
-
-/** An item's creator listing, for buying the item itself (the in-world shell's BUY): primary sales only, never a resale. */
-export async function fetchShopListingForItem(contractAddress: string, itemId: string, opts: Opts): Promise<CatalogItem | null> {
-  const { listings } = await fetchShopListingsRaw({ contractAddress, itemId, first: 1, listingType: "primary" }, opts);
-  const row = listings[0] ? shopListingToItem(listings[0], opts.creatorSales()) : null;
-  return row && !isResale(row) ? row : null;
-}
-
-export async function fetchStoreMintState(contractAddress: string, itemId: string, opts: Opts): Promise<{ priceWei: string; available: number } | null> {
-  const { items } = await fetchUnified({ contractAddress, itemId, first: 1 }, opts);
-  const row = items[0];
-  if (!row || row.acquisition !== "store" || !row.manaWei) return null;
-  return { priceWei: row.manaWei, available: row.available ?? 0 };
 }
 
 export async function fetchItemResales(contractAddress: string, itemId: string, opts: Opts): Promise<UnifiedListing[]> {

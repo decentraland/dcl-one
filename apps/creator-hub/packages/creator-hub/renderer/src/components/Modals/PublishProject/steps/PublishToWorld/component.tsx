@@ -137,6 +137,11 @@ export function PublishToWorld(props: Props) {
     (worldName: string) => {
       dispatch(managementActions.fetchWorldSettings({ worldName }));
       dispatch(managementActions.fetchWorldScenes({ worldName }));
+      // The owner can deploy anywhere in the world, and the server answers 404 for an owner who
+      // is not also on the deploy allow-list, which read as a failed load.
+      const ownsWorld =
+        !!wallet && names[worldName]?.nftOwnerAddress?.toLowerCase() === wallet.toLowerCase();
+      if (ownsWorld) return;
       dispatch(
         managementActions.fetchParcelsPermission({
           worldName,
@@ -145,7 +150,7 @@ export function PublishToWorld(props: Props) {
         }),
       );
     },
-    [wallet],
+    [names, wallet],
   );
 
   const handleChangeName = useCallback(
@@ -199,9 +204,14 @@ export function PublishToWorld(props: Props) {
           ...(scene && { scene }),
         },
       })?.catch(() => undefined);
-      props.onStep('deploy', { deploymentMetadata: { isMultiScene: isMultiSceneEnabled } });
+      props.onStep('deploy', {
+        deploymentMetadata: {
+          isMultiScene: isMultiSceneEnabled,
+          worldName: worldConfiguration?.name || name || undefined,
+        },
+      });
     },
-    [isMultiSceneEnabled, props.onStep, publishScene, handleUpdateProject],
+    [isMultiSceneEnabled, name, props.onStep, publishScene, handleUpdateProject],
   );
 
   const handleSelectLocation = useCallback(
