@@ -239,6 +239,8 @@ fn page_entity_ids(page: &[serde_json::Value]) -> HashSet<String> {
 /// as this used to, let a later confirmed entity carry the cursor past an earlier one still in flight
 /// -- a crash in that window skipped it forever. The cursor a boundary confirms is the
 /// [`settled_cursor`], the overlap behind the high-water mark, and the next poll starts there.
+/// `settled_polls` counts the boundaries this run settled.
+#[allow(clippy::too_many_arguments)]
 pub async fn deploy_entities_from_pointer_changes<S>(
     client: &Client,
     server: &str,
@@ -246,6 +248,7 @@ pub async fn deploy_entities_from_pointer_changes<S>(
     target: ScheduleTarget<'_>,
     heartbeat_repo: Option<std::sync::Arc<LiveDeploymentRepository>>,
     progress: &std::sync::atomic::AtomicI64,
+    settled_polls: &std::sync::atomic::AtomicU64,
     should_stop: S,
 ) -> Result<Timestamp, SyncError>
 where
@@ -394,6 +397,7 @@ where
             let span_ms = Timestamp::try_from(span.as_millis()).unwrap_or(Timestamp::MAX);
             confirmed_timestamp = settled_cursor(confirmed_timestamp, greatest_timestamp, span_ms);
             progress.fetch_max(confirmed_timestamp, std::sync::atomic::Ordering::Relaxed);
+            settled_polls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if let Some(repo) = &heartbeat_repo
                 && confirmed_timestamp > last_persisted
             {
@@ -755,6 +759,7 @@ mod tests {
             },
             None,
             &progress,
+            &std::sync::atomic::AtomicU64::new(0),
             should_stop,
         )
         .await
