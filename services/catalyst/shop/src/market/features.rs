@@ -68,8 +68,8 @@ impl Default for Source {
 pub struct DappsFlags {
     snapshot: feature_flags::Snapshot,
     fetched: Mutex<Option<(Value, Instant)>>,
-    /// The local overrides as last read, applied while they cannot be read again.
-    overrides: Mutex<Vec<(String, bool)>>,
+    /// The local overrides as last read, applied while they cannot be read again; `None` until the first read.
+    overrides: Mutex<Option<Vec<(String, bool)>>>,
 }
 
 impl DappsFlags {
@@ -80,7 +80,7 @@ impl DappsFlags {
         Self {
             snapshot: feature_flags::Snapshot::from_document(document(on)),
             fetched: Mutex::new(None),
-            overrides: Mutex::new(Vec::new()),
+            overrides: Mutex::new(None),
         }
     }
 
@@ -138,7 +138,8 @@ impl MarketplaceState {
     /// Reads the service (when configured) and applies the local overrides on top. A failed read keeps the last
     /// document the service answered while it still stands (see the module doc); before any answer, and once it
     /// no longer does, only the overrides count. The overrides that cannot be read are the ones last read, and the
-    /// document is replaced either way, so an answer that no longer stands is dropped.
+    /// document is replaced either way, so an answer that no longer stands is dropped. Until the overrides have been
+    /// read once every flag is off, so a local `false` is never skipped.
     pub async fn refresh_feature_flags(&self) -> anyhow::Result<()> {
         if !self.flags_source.url.is_empty() {
             match self.fetch_feature_flags().await {
@@ -170,14 +171,16 @@ impl MarketplaceState {
         let read = feature_flags::local_overrides(&self.pool, APP).await;
         let overrides = match &read {
             Ok(overrides) => {
-                *self.dapps_flags.overrides.lock() = overrides.clone();
-                overrides.clone()
+                *self.dapps_flags.overrides.lock() = Some(overrides.clone());
+                Some(overrides.clone())
             }
             Err(_) => self.dapps_flags.overrides.lock().clone(),
         };
-        self.dapps_flags
-            .snapshot
-            .replace(feature_flags::apply_local_overrides(base, &overrides));
+        let doc = match overrides {
+            Some(overrides) => feature_flags::apply_local_overrides(base, &overrides),
+            None => document(false),
+        };
+        self.dapps_flags.snapshot.replace(doc);
         read.map(drop)
             .context("reading the dapps feature flag overrides")
     }
@@ -280,7 +283,7 @@ mod tests {
         let outfits = format!("{APP}-{OUTFIT_CREATORS}");
         let long_ago = Instant::now() - Duration::from_secs(3600);
         *state.dapps_flags.fetched.lock() = Some((document(true), long_ago));
-        *state.dapps_flags.overrides.lock() = vec![(outfits.clone(), true)];
+        *state.dapps_flags.overrides.lock() = Some(vec![(outfits.clone(), true)]);
         assert!(state.marketplace_features());
 
         assert!(state.refresh_feature_flags().await.is_err());
@@ -289,6 +292,32 @@ mod tests {
         assert!(
             state.dapps_flags.snapshot.enabled(APP, OUTFIT_CREATORS),
             "the overrides last read still apply"
+        );
+    }
+
+    /// Before the overrides have been read once, a held answer does not apply: a local `false` could be missing.
+    #[tokio::test]
+    async fn every_flag_stays_off_until_the_overrides_have_been_read_once() {
+        let unreachable = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(200))
+            .connect_lazy("postgres://postgres@127.0.0.1:1/postgres")
+            .unwrap();
+        let state = MarketplaceState::new(
+            unreachable,
+            crate::http::Outbound::for_tests(),
+            super::super::Settings::for_tests(),
+        );
+        *state.dapps_flags.fetched.lock() = Some((document(true), Instant::now()));
+        assert!(state.marketplace_features());
+
+        assert!(state.refresh_feature_flags().await.is_err());
+        assert!(
+            state.dapps_flags.fetched.lock().is_some(),
+            "the answer is still held"
+        );
+        assert!(
+            !state.marketplace_features(),
+            "no flag applies before the overrides are read"
         );
     }
 
