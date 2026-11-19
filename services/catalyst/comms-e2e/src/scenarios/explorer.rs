@@ -108,9 +108,10 @@ static TWO_DEVICES: Scenario = Scenario {
     name: "explorer-two-devices",
     tags: &["explorer", "races"],
     guards: &["dcl-one #1205", "dcl-one #201"],
-    summary: "A second explorer signs in with the wallet of the first: the second works, and the \
-              first is told it was replaced on Pulse and on the archipelago and stops for good, \
-              without dialling again.",
+    summary: "A second explorer signs in with the wallet and the signing key of the first (a \
+              seeded guest signs with its wallet key), which the servers see as the same device \
+              signing in again: the second works, and the first is told it was replaced on Pulse \
+              and on the archipelago and stops for good, without dialling again.",
     needs: NEEDS,
     hostile: false,
     default_repeat: 1,
@@ -949,7 +950,9 @@ async fn two_devices(ctx: Ctx) -> Result<()> {
     )
     .await?;
 
-    // the same wallet seed in another process: the same wallet on another machine
+    // The same wallet seed in another process. A seeded guest signs with its wallet key, so this
+    // is the same wallet and the same session key: to the servers, this device signing in again.
+    // Another device of the wallet (another session key) is `explorer-replaced-by-another-device`.
     let second = Explorer::start(
         &ctx,
         "second device",
@@ -1284,8 +1287,6 @@ async fn replaced_by_another_device(ctx: Ctx) -> Result<()> {
     );
     archipelago.finish(&ctx, &device).await?;
     archipelago.heartbeat(far);
-    let assignment = first_assignment(&ctx, &archipelago).await?;
-    ctx.note("the other device's island", &assignment.island);
 
     let pulse = PulseBot::dial(&ctx, "other device pulse", ConnectOptions::default()).await?;
     match pulse
@@ -1317,6 +1318,23 @@ async fn replaced_by_another_device(ctx: Ctx) -> Result<()> {
                 (state == "identity_conflict")
                     .then_some(())
                     .ok_or(format!("its realm room is {state}"))
+            },
+        )
+        .await?;
+        // The archipelago places a wallet where its freshest position says, and a position is
+        // fresh for seconds: the other device keeps sending its own, as a client does.
+        expect_async(
+            &ctx,
+            "the other device, sending its position every second, receives an island",
+            Duration::from_secs(40),
+            Duration::from_secs(1),
+            || async {
+                archipelago.heartbeat(far);
+                archipelago
+                    .assignments()
+                    .last()
+                    .map(|assignment| ctx.note("the other device's island", &assignment.island))
+                    .ok_or("none yet".to_owned())
             },
         )
         .await?;

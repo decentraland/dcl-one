@@ -10,7 +10,9 @@ use crate::archipelago::{
     ArchipelagoBot, ArchipelagoOptions, ArchipelagoOutcome, KICKED_NEW_SESSION, socket_url,
 };
 use crate::engine::holds_for_async;
-use crate::engine::{Ctx, Needs, Scenario, ScenarioFuture, expect_async, expect_or, together};
+use crate::engine::{
+    Ctx, Needs, Scenario, ScenarioFuture, expect_async, expect_or, holds_for, together,
+};
 use crate::fault::FaultLink;
 use crate::gatekeeper::Gatekeeper;
 use crate::pulse::{ConnectOptions, HandshakeOptions, HandshakeOutcome, PulseBot};
@@ -122,7 +124,7 @@ pub static SECOND_DEVICE_TAKEOVER: Scenario = Scenario {
     name: "second-device-takeover",
     tags: &["connections", "session", "race"],
     guards: &["dcl-one #1205", "Pulse #34", "Pulse #54"],
-    summary: "The same wallet on a second device, in three orders across archipelago and Pulse: the old device is kicked, the new one is welcomed and assigned, the wallet is one peer",
+    summary: "The same wallet on a second device, in three orders across archipelago and Pulse: Pulse ends the old device, the new one is welcomed and assigned, the wallet is one peer, and the old device's archipelago socket stays open and gets nothing more",
     needs: API,
     hostile: false,
     default_repeat: 6,
@@ -233,29 +235,38 @@ async fn second_device_takeover(ctx: Ctx) -> Result<()> {
         .alive()
         .map_err(|reason| anyhow!("the new archipelago socket: {reason}"))?;
 
-    // and the old device's archipelago socket is told it was replaced
-    expect_or(
+    // The archipelago keeps one socket per wallet and session key and replaces only the same key,
+    // so the old device's socket is left open and is sent nothing more: Pulse is what told it.
+    let held = old.archipelago.assignments().len();
+    holds_for(
         &ctx,
-        "the old archipelago socket is kicked with the new-session reason",
-        TAKEOVER_KICK_DEADLINE,
-        || match old.archipelago.view().kicked {
-            Some(reason) if reason == KICKED_NEW_SESSION => Ok(()),
-            Some(other) => Err(format!("fatal: it was kicked with reason {other}")),
-            None if old.archipelago.view().closed => {
-                Err("fatal: it was closed without a kick".to_owned())
+        "the old archipelago socket stays open and receives nothing more",
+        TAKEOVER_QUIET_WINDOW,
+        || {
+            let view = old.archipelago.view();
+            if let Some(reason) = view.kicked {
+                return Err(format!("it was kicked with reason {reason}"));
             }
-            None => Err(format!(
-                "its socket is still open and welcomed ({} assignment(s) held)",
-                old.archipelago.assignments().len()
-            )),
+            if view.closed {
+                return Err("it was closed".to_owned());
+            }
+            let now = old.archipelago.assignments().len();
+            if now != held {
+                return Err(format!(
+                    "it received {} more assignment(s)",
+                    now.saturating_sub(held)
+                ));
+            }
+            Ok(())
         },
     )
     .await?;
     Ok(())
 }
 
-/// How long the old device's archipelago socket may take to be kicked once the new one is welcomed.
-const TAKEOVER_KICK_DEADLINE: Duration = Duration::from_secs(20);
+/// How long the old device's archipelago socket is watched for a kick, a close or an assignment
+/// after the new device has its island.
+const TAKEOVER_QUIET_WINDOW: Duration = Duration::from_secs(10);
 
 pub static STALE_SOCKET_RECONNECT: Scenario = Scenario {
     name: "stale-socket-reconnect",
