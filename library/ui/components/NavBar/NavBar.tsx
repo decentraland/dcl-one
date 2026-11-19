@@ -20,12 +20,15 @@ import {
   GeneralCopy,
   GeneralDecentralandColor,
   GeneralDownArrow,
+  GeneralMana,
   GeneralManaColour,
   GeneralPolygonMana
 } from '../../foundations/icons/general'
+import { MenusCopy } from '../../foundations/icons/menus'
 import { ShopCredits } from '../../foundations/icons/shop'
 import { breakpoints } from '../../foundations/layout/layout'
 import styles from './NavBar.module.css'
+import profileStyles from './NavBar.profile.module.css'
 
 export type NavBarLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }
 
@@ -49,6 +52,8 @@ export type NavBarAccount = {
   name?: string
   /** The account's face image; the Decentraland mark is shown without one. */
   avatarUrl?: string
+  /** The full-body snapshot in the desktop profile panel. */
+  bodyUrl?: string
 }
 
 /** Balances are shown only when defined; nothing is shown for a missing value. */
@@ -58,7 +63,7 @@ export type NavBarBalances = {
   polygonMana?: number
 }
 
-export type NavBarAccountAction = { label: string; icon?: ReactNode } & (
+export type NavBarAccountAction = { label: string; icon?: ReactNode; separated?: boolean } & (
   { href: string; onSelect?: undefined } | { onSelect: () => void; href?: undefined }
 )
 
@@ -114,7 +119,10 @@ type NavBarCommonProps = {
   notifications?: NavBarNotifications
   /** Signed in: the account menu's entries, for example profile links and sign out. */
   accountActions?: readonly NavBarAccountAction[]
-  accountMenuAppearance?: 'default' | 'sites'
+  accountMenuAppearance?: 'default' | 'sites' | 'profile'
+  /** Optional balances and network control inside the profile panel. */
+  accountMenuBalances?: NavBarBalances
+  accountMenuNetwork?: ReactNode
   linkComponent?: NavBarLinkComponent
   labels?: Partial<NavBarLabels>
   /**
@@ -439,15 +447,22 @@ function Avatar({ account }: { account: NavBarAccount }) {
 function Balances({
   balances,
   labels,
-  format
+  format,
+  profile = false
 }: {
   balances: NavBarBalances
   labels: NavBarLabels
   format: Intl.NumberFormat
+  profile?: boolean
 }) {
   const entries = [
     { key: 'credits', value: balances.credits, label: labels.credits, Icon: ShopCredits },
-    { key: 'mana', value: balances.mana, label: labels.mana, Icon: GeneralManaColour },
+    {
+      key: 'mana',
+      value: balances.mana,
+      label: labels.mana,
+      Icon: profile ? GeneralMana : GeneralManaColour
+    },
     {
       key: 'polygonMana',
       value: balances.polygonMana,
@@ -508,21 +523,23 @@ function AccountActionList({
   actions,
   renderLink,
   onDone,
-  className
+  className,
+  itemClassName = styles.menuItem
 }: {
   actions: readonly NavBarAccountAction[]
   renderLink: LinkRenderer
   onDone: () => void
   className: string | undefined
+  itemClassName?: string
 }) {
   return (
     <ul className={className}>
       {actions.map((action, index) => (
-        <li key={index}>
+        <li key={index} data-separated={action.separated || undefined}>
           {action.href !== undefined ? (
             renderLink({
               href: action.href,
-              className: styles.menuItem,
+              className: itemClassName,
               onClick: onDone,
               children: (
                 <>
@@ -534,7 +551,7 @@ function AccountActionList({
           ) : (
             <button
               type="button"
-              className={styles.menuItem}
+              className={itemClassName}
               onClick={() => {
                 onDone()
                 action.onSelect()
@@ -556,7 +573,10 @@ function AccountMenu({
   labels,
   renderLink,
   onDone,
-  appearance
+  appearance,
+  balances,
+  network,
+  format
 }: {
   account: NavBarAccount
   actions: readonly NavBarAccountAction[]
@@ -564,13 +584,19 @@ function AccountMenu({
   renderLink: LinkRenderer
   onDone?: () => void
   appearance?: NavBarCommonProps['accountMenuAppearance']
+  balances?: NavBarBalances
+  network?: ReactNode
+  format: Intl.NumberFormat
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuId = useId()
   const { open, setOpen, toggle, onKeyDown, onBlur } = usePopup(rootRef, triggerRef)
   const displayName = account.name || shortAddress(account.address)
-  const sites = appearance === 'sites'
+  const profile = appearance === 'profile'
+  const sites = profile || appearance === 'sites'
+  const [failedBodyUrl, setFailedBodyUrl] = useState<string>()
+  const bodyUrl = account.bodyUrl === failedBodyUrl ? undefined : account.bodyUrl
   const [copyStatus, setCopyStatus] = useState('')
   const copyAddress = async () => {
     try {
@@ -583,7 +609,7 @@ function AccountMenu({
   return (
     <div
       ref={rootRef}
-      className={styles.account}
+      className={profile ? `${styles.account} ${profileStyles.account}` : styles.account}
       data-appearance={appearance}
       onKeyDown={onKeyDown}
       onBlur={onBlur}
@@ -602,49 +628,74 @@ function AccountMenu({
       >
         <Avatar account={account} />
       </button>
-      <div id={menuId} className={styles.accountMenu} hidden={!open} tabIndex={-1}>
-        <div className={styles.accountHeader}>
-          {sites ? (
-            <div className={styles.accountMenuAvatar}>
-              <Avatar account={account} />
-            </div>
-          ) : null}
-          <div className={styles.accountDetails}>
-            <p className={styles.accountName}>{displayName}</p>
-            {sites ? (
-              <div className={styles.accountIdentity}>
-                <span>{labels.userId}</span>
-                <span title={account.address}>{shortAddress(account.address)}</span>
-                <button
-                  type="button"
-                  aria-label={labels.copyUserId}
-                  className={styles.iconButton}
-                  onClick={() => void copyAddress()}
-                >
-                  <GeneralCopy size={16} aria-hidden="true" />
-                </button>
-                <span role="status" className={styles.visuallyHidden}>
-                  {copyStatus}
-                </span>
-              </div>
-            ) : account.name ? (
-              <p className={styles.accountAddress} title={account.address}>
-                {shortAddress(account.address)}
-              </p>
+      <div
+        id={menuId}
+        className={profile ? `${styles.accountMenu} ${profileStyles.panel}` : styles.accountMenu}
+        hidden={!open}
+        tabIndex={-1}
+      >
+        {profile && bodyUrl ? (
+          <div className={profileStyles.portrait}>
+            {open ? (
+              <img src={bodyUrl} alt="" loading="lazy" onError={() => setFailedBodyUrl(bodyUrl)} />
             ) : null}
           </div>
-        </div>
-        {actions.length > 0 ? (
-          <AccountActionList
-            actions={actions}
-            renderLink={renderLink}
-            onDone={() => {
-              setOpen(false)
-              onDone?.()
-            }}
-            className={styles.menuList}
-          />
         ) : null}
+        <div className={profile ? profileStyles.content : undefined}>
+          <div className={profile ? `${styles.accountHeader} ${profileStyles.header}` : styles.accountHeader}>
+            {sites ? (
+              <div className={profile ? profileStyles.face : styles.accountMenuAvatar}>
+                <Avatar account={account} />
+              </div>
+            ) : null}
+            <div className={styles.accountDetails}>
+              <p className={profile ? profileStyles.name : styles.accountName}>{displayName}</p>
+              {sites ? (
+                <div className={profile ? profileStyles.identity : styles.accountIdentity}>
+                  <span className={profile ? profileStyles.identityLabel : undefined}>{labels.userId}</span>
+                  <span title={account.address}>{shortAddress(account.address)}</span>
+                  <button
+                    type="button"
+                    aria-label={labels.copyUserId}
+                    className={styles.iconButton}
+                    onClick={() => void copyAddress()}
+                  >
+                    {profile ? (
+                      <MenusCopy size={16} aria-hidden="true" />
+                    ) : (
+                      <GeneralCopy size={16} aria-hidden="true" />
+                    )}
+                  </button>
+                  <span role="status" className={styles.visuallyHidden}>
+                    {copyStatus}
+                  </span>
+                </div>
+              ) : account.name ? (
+                <p className={styles.accountAddress} title={account.address}>
+                  {shortAddress(account.address)}
+                </p>
+              ) : null}
+              {profile && balances ? (
+                <div className={profileStyles.balances}>
+                  <Balances balances={balances} labels={labels} format={format} profile />
+                </div>
+              ) : null}
+              {profile && open && network ? <div className={profileStyles.network}>{network}</div> : null}
+            </div>
+          </div>
+          {actions.length > 0 ? (
+            <AccountActionList
+              actions={actions}
+              renderLink={renderLink}
+              onDone={() => {
+                setOpen(false)
+                onDone?.()
+              }}
+              className={profile ? profileStyles.actions : styles.menuList}
+              itemClassName={profile ? `${styles.menuItem} ${profileStyles.action}` : undefined}
+            />
+          ) : null}
+        </div>
       </div>
     </div>
   )
@@ -839,6 +890,8 @@ export function NavBar({
   notifications,
   accountActions = [],
   accountMenuAppearance,
+  accountMenuBalances,
+  accountMenuNetwork,
   linkComponent,
   labels: labelOverrides,
   locale = 'en-US',
@@ -1015,6 +1068,9 @@ export function NavBar({
               key={account.address}
               account={account}
               appearance={accountMenuAppearance}
+              balances={accountMenuBalances ?? balances}
+              network={accountMenuNetwork}
+              format={format}
               actions={accountActions}
               labels={labels}
               renderLink={renderLink}
