@@ -1,6 +1,6 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
-import { ai } from '#preload';
+import { ai, aiSharing } from '#preload';
 import type {
   AiAssetMention,
   AiAttachment,
@@ -10,6 +10,9 @@ import type {
 } from '/shared/types/ai';
 import { assetMentionKey } from '/shared/types/ai';
 import type { AiRevertResult } from '/shared/types/ipc';
+import type { AppState } from '/@/modules/store';
+// Types only: the slice itself is loaded on use (see `shareThisTurn`).
+import type * as SharingSlice from '/@/modules/store/aiSharing/slice';
 
 import { createAsyncThunk } from '/@/modules/store/thunk';
 import {
@@ -21,7 +24,7 @@ import {
   writeSessionIndex,
   writeSessionMessages,
 } from './persistence';
-import type { AiMessage, AiPromptData, AiSessionMeta, AiState } from './types';
+import type { AiMessage, AiPromptData, AiRating, AiSessionMeta, AiState } from './types';
 
 const initialState: AiState = {
   providers: [],
@@ -113,6 +116,15 @@ export const send = createAsyncThunk<void, { text: string; attachments?: AiAttac
     const context = editorContext(selection, assetMentions);
     dispatch(actions.clearAssetMentions());
     const apiKeyFromEnv = state.workspace.settings?.useApiKeyFromEnv ?? false;
+    const shareWallet = await shareThisTurn(getState());
+    const share = shareWallet
+      ? {
+          wallet: shareWallet,
+          turnIndex: state.ai.messages.filter(m => m.role === 'user').length,
+          selectedEntityCount: selection.length,
+          mentionedAssetCount: assetMentions.length,
+        }
+      : undefined;
     await ai.send(path, {
       provider,
       model,
@@ -121,9 +133,22 @@ export const send = createAsyncThunk<void, { text: string; attachments?: AiAttac
       attachments: files,
       apiKeyFromEnv,
       sessionId,
+      share,
     });
   },
 );
+
+// The wallet to share this turn for, or null. Loaded on use: the sharing slice imports the app
+// config module, which initialises from the preload `env` when imported, and this slice's tests
+// stub that preload. If it can't load, the turn is simply not shared.
+async function shareThisTurn(state: AppState): Promise<string | null> {
+  try {
+    const { currentWallet, shouldShareTurn } = await import('/@/modules/store/aiSharing/slice');
+    return shouldShareTurn(state) ? currentWallet() : null;
+  } catch {
+    return null;
+  }
+}
 
 // One line naming what the user has selected, or undefined when nothing is. Kept terse —
 // the assistant can call get_selection / scene_state for the full picture. Exported for tests.
@@ -162,8 +187,9 @@ function editorContext(
   return lines.length > 0 ? lines.join('\n') : undefined;
 }
 
-// Kill the in-flight turn. Main suppresses the `done` event on an intentional stop, so
-// the reducer finalizes the current bubble itself.
+// Kill the in-flight turn. Main ends it with a `done` event marked `cancelled`; `stopped` also
+// finalizes the bubble here, so the UI settles even if that event is missed (the editor was
+// left mid-turn).
 export const stop = createAsyncThunk('ai/stop', async (_: void, { dispatch }) => {
   await ai.stop();
   dispatch(actions.stopped());
@@ -276,6 +302,57 @@ export const deleteSession = createAsyncThunk<void, string>(
   },
 );
 
+// The sharing chip's per-conversation switch. Saved with the scene's session index, so the
+// choice holds when the conversation is reopened.
+export const setConversationShared = createAsyncThunk<void, boolean>(
+  'ai/setConversationShared',
+  (shared, { getState, dispatch }) => {
+    const { ai: aiState, editor } = getState();
+    const current = aiState.currentSessionId;
+    if (current === '') return;
+    const sessions = aiState.sessions.map(s =>
+      s.id === current ? { ...s, shareExcluded: shared ? undefined : true } : s,
+    );
+    dispatch(actions.setSessions({ sessions, currentSessionId: current }));
+    const path = editor.project?.path;
+    if (path !== undefined && path !== '') {
+      writeSessionIndex(path, { current, sessions: savedSessions(sessions) });
+    }
+    // Main drops the conversation's queued turns and any turn still running in it.
+    void aiSharing.setConversationShared(current, shared);
+    // What it already shared goes too.
+    const recordIds = aiState.messages.flatMap(m => (m.recordId !== undefined ? [m.recordId] : []));
+    if (!shared && recordIds.length > 0) {
+      void withSharingSlice(sharing =>
+        dispatch(sharing.actions.eraseConversation({ conversationId: current, recordIds })),
+      );
+    }
+  },
+);
+
+// A thumbs up or down (or `null`, neither) on a shared reply. Saved with the conversation, and
+// sent to the sharing service; a reply that wasn't shared has nothing to rate.
+export const rateTurn = createAsyncThunk<void, { id: string; rating: AiRating | null }>(
+  'ai/rateTurn',
+  ({ id, rating }, { getState, dispatch }) => {
+    const msg = getState().ai.messages.find(m => m.id === id);
+    if (msg?.role !== 'assistant' || msg.recordId === undefined) return;
+    const recordId = msg.recordId;
+    dispatch(actions.setRating({ id, rating }));
+    void dispatch(persistConversation());
+    void withSharingSlice(sharing => dispatch(sharing.actions.rateTurn({ recordId, rating })));
+  },
+);
+
+// The sharing slice, loaded on use for the reason `shareThisTurn` gives.
+async function withSharingSlice(use: (sharing: typeof SharingSlice) => unknown): Promise<void> {
+  try {
+    await use(await import('/@/modules/store/aiSharing/slice'));
+  } catch {
+    // Sharing is best-effort; the conversation carries on.
+  }
+}
+
 // Dismiss the "runs on your own account" billing hint for the open scene (#1505), and
 // remember it per-project so it stays gone across restarts.
 export const dismissBilling = createAsyncThunk(
@@ -298,10 +375,12 @@ export const persistConversation = createAsyncThunk(
     const current = aiState.currentSessionId;
     if (path === undefined || path === '' || current === '') return;
     writeSessionMessages(path, current, aiState.messages);
+    const existing = aiState.sessions.find(s => s.id === current);
     const meta: AiSessionMeta = {
       id: current,
-      title: aiState.sessions.find(s => s.id === current)?.title || sessionTitle(aiState.messages),
+      title: existing?.title || sessionTitle(aiState.messages),
       updatedAt: Date.now(),
+      ...(existing?.shareExcluded === true ? { shareExcluded: true } : {}),
     };
     const sessions = [meta, ...savedSessions(aiState.sessions).filter(s => s.id !== current)];
     writeSessionIndex(path, { current, sessions });
@@ -440,11 +519,16 @@ const slice = createSlice({
         }
         case 'done': {
           const msg = find();
+          // A stopped turn was finalized by `stopped`; its `done` can arrive after the next turn
+          // started (a shared turn's waits for its record), and must not end that one.
+          const finalizedAlready = msg?.done === true;
           if (msg !== undefined) {
             msg.done = true;
             msg.mutations = payload.mutations;
+            if (payload.cancelled === true) msg.cancelled = true;
+            if (payload.recordId !== undefined) msg.recordId = payload.recordId;
           }
-          state.busy = false;
+          if (!finalizedAlready) state.busy = false;
           break;
         }
         default: {
@@ -454,7 +538,14 @@ const slice = createSlice({
         }
       }
     },
-    // Finalize on an intentional stop (no `done` event follows a kill).
+    setRating: (state, { payload }: PayloadAction<{ id: string; rating: AiRating | null }>) => {
+      const msg = state.messages.find(m => m.id === payload.id);
+      if (msg === undefined) return;
+      if (payload.rating === null) delete msg.rating;
+      else msg.rating = payload.rating;
+    },
+    // Finalize on an intentional stop. Main also sends `done` (cancelled), which may arrive
+    // before or after this; both paths leave the same state.
     stopped: state => {
       state.busy = false;
       // A pending prompt can't be answered once the turn is dead (main already resolved its
@@ -614,6 +705,8 @@ export const actions = {
   loadConversation,
   persistConversation,
   dismissBilling,
+  setConversationShared,
+  rateTurn,
   switchSession,
   deleteSession,
 };

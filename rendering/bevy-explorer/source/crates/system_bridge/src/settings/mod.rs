@@ -48,6 +48,7 @@ use oob_setting::OobSetting;
 use player_settings::{JumpSetting, RunSpeedSetting, WalkSpeedSetting};
 use scene_threads::SceneThreadsSetting;
 use shadow_settings::{LightCountSetting, ShadowCasterCountSetting, ShadowDistanceSetting};
+use spring_bones_setting::SpringBonesSetting;
 use video_threads::VideoThreadsSetting;
 use volume_settings::{
     AvatarVolumeSetting, MasterVolumeSetting, SceneVolumeSetting, SystemVolumeSetting,
@@ -83,6 +84,7 @@ pub mod scene_threads;
 pub mod sensitivity;
 pub mod shadow_settings;
 pub mod sky_reflection_setting;
+pub mod spring_bones_setting;
 pub mod ssao_setting;
 pub mod video_threads;
 pub mod volume_settings;
@@ -200,6 +202,7 @@ impl Plugin for SettingBridgePlugin {
         add_enum_setting::<CelShadingSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AvatarOutlineSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AvatarGhostsSetting>(app, &mut settings, &mut schedule, &config);
+        add_enum_setting::<SpringBonesSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AaSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<AmbientSetting>(app, &mut settings, &mut schedule, &config);
         if is_fullscreen_available() {

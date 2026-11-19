@@ -42,6 +42,10 @@
       "@hud/*": ["../../library/ui/apps/hud/*"],
       "@explorer-core/*": ["../../library/explorer-core/*"],
       "@hud-host": ["../ui3/src/play/host.ts"],
+      // What /play supplies to the in-world Shop UI (library/ui/apps/shop).
+      "@shop-host": ["../ui3/src/play/shopHost.ts"],
+      // library/ui/apps/shop has no node_modules of its own: TanStack Query resolves to this app's copy.
+      "@tanstack/react-query": ["./node_modules/@tanstack/react-query"],
       // library/ui/apps/hud has no node_modules of its own: its packages resolve to this app's copy.
       "@noble/*": ["./node_modules/@noble/*"],
       // library/shop has no node_modules of its own: its packages resolve to this app's copy.

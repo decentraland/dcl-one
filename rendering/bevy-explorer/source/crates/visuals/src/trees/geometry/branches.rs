@@ -119,7 +119,7 @@ mod tests {
             let index = joint * 9 + 3;
             assert_eq!(geometry.indices.iter().filter(|&&i| i == index).count(), 6);
         }
-        for indices in geometry.indices.chunks_exact(3) {
+        for indices in geometry.indices.as_chunks::<3>().0 {
             let [a, b, c] =
                 [0, 1, 2].map(|i| Vec3::from_array(geometry.positions[indices[i] as usize]));
             let normal = Vec3::from_array(geometry.normals[indices[0] as usize]);

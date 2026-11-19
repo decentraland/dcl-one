@@ -72,9 +72,21 @@ pub async fn opt_out(state: &SharedState, address: &str) -> Result<(), ApiError>
     Ok(())
 }
 
+/// A goal credit's signature reaches its wallet when it is claimed (`read_credits` returns only
+/// claimed grants). While a credits trial is configured the program is off (`gate`), and that
+/// includes claiming a grant signed before the trial: it would become spendable on the trial's
+/// manager, where nothing settles or revokes it.
+fn refuse_during_a_trial(state: &SharedState) -> Result<(), ApiError> {
+    if state.settings.trial.is_some() {
+        return Err(ApiError::bad_request("Credits can't be claimed right now"));
+    }
+    Ok(())
+}
+
 /// Check source preconditions before consuming a captcha; claim repeats them
 /// under its monetary locks after the external captcha provider has answered.
 pub async fn claim_preflight(state: &SharedState, address: &str) -> Result<(), ApiError> {
+    refuse_during_a_trial(state)?;
     let now = super::super::store::now();
     let mut conn = state.credits.pool.acquire().await?;
     let season = current(&mut conn, now)
@@ -92,6 +104,7 @@ pub async fn claim_preflight(state: &SharedState, address: &str) -> Result<(), A
 }
 
 pub async fn claim(state: &SharedState, address: &str) -> Result<f64, ApiError> {
+    refuse_during_a_trial(state)?;
     let now = super::super::store::now();
     let mut tx = state.credits.pool.begin().await?;
     // All claims lock the season before their wallet. Photo processing never locks a season.

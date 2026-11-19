@@ -69,6 +69,7 @@ use bevy::asset::io::wasm::HttpWasmAssetReader;
 
 use bevy_console::{ConsoleCommand, PrintConsoleLine};
 use common::{
+    platform_ban::{PlatformBanStatus, REALM_CHANGE_BANNED},
     rpc::{RpcResultReceiver, RpcResultSender},
     sets::RealmLifecycle,
     structs::{
@@ -765,6 +766,15 @@ pub struct ChangeRealmEvent {
     pub report: bool,
 }
 
+/// The ids [`change_realm`] issues, and whether a platform ban was known on its last run.
+#[derive(Default)]
+pub struct RealmChangeIds {
+    issued: u64,
+    /// The latest request's id; a stand-down issues an id of its own.
+    latest_request: u64,
+    was_banned: bool,
+}
+
 /// A realm change being attempted, see [`change_realm`].
 pub struct InFlightRealmChange {
     id: u64,
@@ -783,19 +793,20 @@ pub fn change_realm(
     preview_mode: Res<PreviewMode>,
     mut target: ResMut<RealmInitialLocation>,
     mut in_flight: Local<Vec<InFlightRealmChange>>,
-    mut issued: Local<u64>,
-    // the latest issued change's id, watched by the earlier ones so they stand down
-    mut latest_issued: Local<Option<tokio::sync::watch::Sender<u64>>>,
+    mut ids: Local<RealmChangeIds>,
+    // the latest issued id and the refusal it carries
+    mut latest_issued: Local<Option<tokio::sync::watch::Sender<world_access::Issued>>>,
     world_hold: Option<Res<WorldHold>>,
     wallet: Option<Res<Wallet>>,
     prompter: Option<Res<WorldPasswordPrompter>>,
     mut world_secret: ResMut<WorldCommsSecret>,
+    platform_ban: Option<Res<PlatformBanStatus>>,
     mut commands: Commands,
 ) {
     // Polled before the realm watch: a change's result is sent after its realm config, so a
     // success seen here is applied below in this same run.
     let mut released = false;
-    let latest = *issued;
+    let latest = ids.latest_request;
     in_flight.retain_mut(|change| {
         let result = match change.result.poll_once() {
             Ok(None) => return true,
@@ -866,6 +877,20 @@ pub fn change_realm(
         commands.remove_resource::<WorldHold>();
     }
 
+    let platform_ban = platform_ban.filter(|status| status.ban().is_some());
+    let newly_banned = platform_ban.is_some() && !ids.was_banned;
+    ids.was_banned = platform_ban.is_some();
+    // a platform ban learnt while changes are in flight issues an id carrying the ban's refusal
+    if newly_banned && !in_flight.is_empty() {
+        ids.issued += 1;
+        if let Some(latest_issued) = latest_issued.as_ref() {
+            latest_issued.send_replace(world_access::Issued {
+                id: ids.issued,
+                refusal: REALM_CHANGE_BANNED,
+            });
+        }
+    }
+
     if !change_realm_requests.is_empty() {
         if preview_mode.is_preview {
             const DISABLED: &str = "Changing realm is disabled in preview mode.";
@@ -889,16 +914,30 @@ pub fn change_realm(
             let content_server_override = request.content_server_override.to_owned();
             let response = request.response.clone();
             let (sx, rx) = RpcResultSender::channel();
-            *issued += 1;
-            let latest_issued =
-                latest_issued.get_or_insert_with(|| tokio::sync::watch::channel(0).0);
-            latest_issued.send_replace(*issued);
+            ids.issued += 1;
+            ids.latest_request = ids.issued;
+            let latest_issued = latest_issued.get_or_insert_with(|| {
+                tokio::sync::watch::channel(world_access::Issued {
+                    id: 0,
+                    refusal: world_access::SUPERSEDED,
+                })
+                .0
+            });
+            // while banned, an earlier change this one supersedes still answers the ban
+            latest_issued.send_replace(world_access::Issued {
+                id: ids.issued,
+                refusal: if platform_ban.is_some() {
+                    REALM_CHANGE_BANNED
+                } else {
+                    world_access::SUPERSEDED
+                },
+            });
             let superseded = world_access::Superseded {
                 latest: latest_issued.subscribe(),
-                id: *issued,
+                id: ids.issued,
             };
             in_flight.push(InFlightRealmChange {
-                id: *issued,
+                id: ids.issued,
                 realm: request.new_realm.clone(),
                 report: request.report,
                 result: rx,
@@ -918,10 +957,15 @@ pub fn change_realm(
                 .and_then(|_| world_secret.0.clone());
             let prompter = prompter.as_deref().cloned();
             let client = ipfs.client();
+            let banned = platform_ban.is_some();
             IoTaskPool::get()
                 .spawn_compat(async move {
                     let mut superseded = superseded;
                     let result = async {
+                        // a known platform ban refuses the change before world access
+                        if banned {
+                            return Err(REALM_CHANGE_BANNED.to_owned());
+                        }
                         let secret = match &world {
                             Some((world, wallet)) => {
                                 world_access::check_world_access(
@@ -938,7 +982,7 @@ pub fn change_realm(
                             None => None,
                         };
                         if superseded.is_superseded() {
-                            return Err(world_access::SUPERSEDED.to_owned());
+                            return Err(superseded.refusal());
                         }
                         ipfs.set_realm(new_realm, content_server_override, secret)
                             .await
@@ -1489,8 +1533,7 @@ impl IpfsIo {
         self.default_fs_path.as_deref()
     }
 
-    /// The cached bytes under `key` (native only: on web the worker's cache is read through
-    /// `web_cache`).
+    /// The cached bytes under `key` on native. Web reads go through `web_cache`.
     async fn read_disk_cache(&self, key: &CacheKey) -> Result<Option<Vec<u8>>, std::io::Error> {
         let Some(cached) = self
             .cache_path()
@@ -1506,8 +1549,8 @@ impl IpfsIo {
         Ok(Some(buffer))
     }
 
-    /// Drops the cached bytes under `key`, if there are any, and says whether there were (native
-    /// only: on web the worker's cache entry goes through `web_cache`).
+    /// Drops the native cache entry under `key` and returns whether it existed. Web eviction
+    /// goes through `web_cache`.
     #[cfg(not(target_arch = "wasm32"))]
     async fn forget_disk_cache(&self, key: &CacheKey) -> Result<bool, std::io::Error> {
         let Some(cached) = self
@@ -1661,8 +1704,7 @@ impl IpfsIo {
     /// Poll the scene's content server until each of `file_paths` (resolved via the scene
     /// collection) is fetchable, sharing one `timeout` budget; returns whether all became available.
     /// Used after writing imported files to wait for the dev server to index them before the
-    /// renderer first tries to load them — otherwise that first load 404s and is never retried. On
-    /// web the successful GETs also warm the service-worker cache for the exact URLs the loader uses.
+    /// renderer first tries to load them.
     pub async fn await_contents_available(
         &self,
         file_paths: &[String],
@@ -2123,14 +2165,10 @@ impl IpfsIo {
             let cache_key =
                 cache_key.filter(|_| !url::Url::parse(&remote).is_ok_and(|url| url.is_loopback()));
 
-            // on web the service worker's cache (`web_cache`) is the content cache: anything with
-            // a cache key (content by hash, and urls by their digest) is looked up there once,
-            // here; the download that follows a miss does not ask the worker again
             #[cfg(target_arch = "wasm32")]
             let sw_caches = cache_key.is_some();
 
-            // the worker's cache is the disk cache here: read it directly, so a cached file
-            // doesn't wait on a request slot behind every download in the queue
+            // Read the web cache before acquiring a request slot so cache hits skip the download queue.
             #[cfg(target_arch = "wasm32")]
             if sw_caches {
                 if let Some(cached) = web_cache::read(&remote).await {
@@ -2141,8 +2179,8 @@ impl IpfsIo {
 
             // `data:` and `blob:` urls (files of an entity registered inline, such as an unpublished
             // item a page supplies) are the page's own: the http client refuses their schemes, the
-            // browser serves them without a request slot
-            #[cfg(target_arch = "wasm32")]
+            // browser serves them without a request slot. The avatar preview only (`avatar-preview`)
+            #[cfg(all(target_arch = "wasm32", feature = "avatar-preview"))]
             if remote.starts_with("data:") || remote.starts_with("blob:") {
                 return match web_cache::fetch_local(&remote).await {
                     Ok(bytes) => {
@@ -2452,6 +2490,13 @@ fn b64_split_at_key<'a>(decoded: &'a str, key: &str) -> Option<(&'a str, &'a str
     let marker = format!("/{key}-");
     let idx = normalized.rfind(&marker)?;
     Some((&decoded[..idx], &decoded[idx + marker.len()..]))
+}
+
+/// Follows the max downloads setting
+fn apply_max_downloads(config: Option<Res<common::structs::AppConfig>>, ipfs: Res<IpfsResource>) {
+    if let Some(config) = config.filter(|config| config.is_changed()) {
+        ipfs.set_concurrent_remote_count(config.max_concurrent_remotes);
+    }
 }
 
 #[cfg(test)]
@@ -2814,12 +2859,5 @@ mod tests {
         ] {
             assert_eq!(map.hash(src).as_deref(), Some(expected), "{src}");
         }
-    }
-}
-
-/// Follows the max downloads setting
-fn apply_max_downloads(config: Option<Res<common::structs::AppConfig>>, ipfs: Res<IpfsResource>) {
-    if let Some(config) = config.filter(|config| config.is_changed()) {
-        ipfs.set_concurrent_remote_count(config.max_concurrent_remotes);
     }
 }

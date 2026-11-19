@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 
+import { SAME_ORIGIN_FRAMES } from "../lib/play-framing";
 import type { Route } from "./+types/play_.app[.]html";
 
 // The web Explorer's app document (upstream app.html): the React HUD (apps/ui3/src/play) with the
@@ -27,6 +28,7 @@ export function headers(): Record<string, string> {
     "Cross-Origin-Opener-Policy": "same-origin",
     "Document-Isolation-Policy": "isolate-and-credentialless",
     "Cross-Origin-Resource-Policy": "cross-origin",
+    ...SAME_ORIGIN_FRAMES,
   };
 }
 

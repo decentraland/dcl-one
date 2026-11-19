@@ -47,12 +47,16 @@ export const TriggerEvent = ({
         <div className="RightContent">
           <MoreOptionsMenu className="TriggerEventMenu">
             <Button
+              variant="secondary"
+              size="sm"
               className="AddTriggerConditionButton"
               onClick={onAddNewTriggerCondition}
             >
               <ConditionalIcon /> Add Trigger Condition
             </Button>
             <Button
+              variant="secondary"
+              size="sm"
               className="RemoveButton"
               onClick={onRemoveTriggerEvent}
             >

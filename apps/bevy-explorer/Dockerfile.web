@@ -1,4 +1,4 @@
-FROM nginxinc/nginx-unprivileged:1.28-alpine@sha256:7377697a821c131a924a7105fafbe7414db4e9fcc77a6f08f776f33f141ec3f8
+FROM nginx:1.30.7-alpine@sha256:b24de00298eb7fb23839442d46c780991be7bc7ddb081b6c0876ac777012e352
 ARG VCS_REF
 LABEL org.opencontainers.image.title="bevy-explorer-web" \
       org.opencontainers.image.source="https://github.com/decentraland/dcl-one" \

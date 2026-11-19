@@ -24,6 +24,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   ambient, and the sky preset keeps the bands a scene leaves out. A scene's fog density is in the
   sky preset's units, so it goes through the same conversion to bevy's falloff, and it takes the
   place of the `/fog` density while the scene is active.
+- **Scene colour gradients are linear (#1293).** Sun, sky, fog and cloud gradients are read as
+  linear colours, as `gradient.proto` specifies for `ColorKey.color`, with values above 1
+  allowed. A Sun key above 1 is scaled back to 1 for the hue, and the light is multiplied by its
+  largest channel. Unity's environment profile at `0a8bafca9e62ced7f34ac182158b11edd0c842a4`
+  puts the Sun gradient straight into the light colour, which it decodes as sRGB: the same key
+  gives a darker, more saturated hue there, and a key of (2, 2, 2) lights the scene about 4.6
+  times rather than 2. We follow the protocol.
 - **A root light source replaces what it sets.** Point and spot light intensities are scaled to
   the sky preset's light unit (the default 16000 is 8 units). A `LightSource` on a scene's root
   entity replaces the sun's colour and, when it gives an intensity, the sun's intensity as lux,
@@ -98,17 +105,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Scene roots and avatars register their hashes through component hooks; the publisher writes
   the values in place. See the
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
+  The same key orders scene spawns, which come in loading waves of at most six
+  ([ADR](../../../../docs/adr/2026-11-09-explorer-scene-streaming.md)).
 - **Voice chat (private calls and community streams)** keeps the call statuses and guards, the
   3 × 2000 ms re-dial budget, the 1 s hang-up-before-join delay and the server's 60 s ring.
-  - Don't add hold-to-talk to the call mic: `T` opens the chat. The `Microphone` key (`V`) toggles
-    the call mic while a call is connected and the nearby mic otherwise. A community listener's
-    `V` does nothing, since a listener can't speak.
+  - Don't bind the mic to `T`: it opens the chat. The `Microphone` key (`V`) drives the call mic
+    while a call is connected and the nearby mic otherwise, as Unity's `T` does. Nearby, a press
+    opens the mic and its release closes it. In a call, a press shorter than 0.5 s leaves the mic
+    open and a longer one is push-to-talk. A press while the mic is open closes it on release. A
+    community listener's `V` does nothing, since a listener can't speak.
   - Don't start a call's mic from a stored setting. It goes up on the call's first connect for
     whoever may speak (both sides of a private call, a stream's speakers). Don't turn it back on
     after a re-dial: what the user chose since then stands.
   - Don't keep a muted mic's track published. Muting unpublishes it, so no audio leaves a muted
     user. In a stream `MuteSpeakerFromCommunityVoiceChat` is still sent, so every client shows the
-    same state.
+    same state (a focus pause is the exception, below).
   - Don't play calls at the nearby-voice volume. Calls and streams follow `Voice Chat Volume` and
     nearby players `Voice Volume`, both scaled by `Master`. Capture uses the system's default
     microphone; a device picker is next work.
@@ -170,6 +181,17 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     too: the platform ban-status poll (every 300 s) reads the ban but never admits the room
     again. unity-explorer suppresses on any 401 or 403 from the scene room and lifts it on the
     room's next connect or disconnect; its scene room asks again every 5 s while refused.
+- **The mic pauses while the Explorer lacks focus** (the primary window natively,
+  `document.hasFocus()` on the web), so it never captures while the player is in another app
+  or tab: it stops capturing and publishing for nearby voice and calls alike, and resumes when
+  focus returns. The mic setting does not change, and neither pause nor resume plays the mic
+  on/off sound. The HUD shows the paused mic off: the call panel at once, the nearby mic toggle
+  at its next mic state poll (up to 1 s).
+  - In a community stream no `MuteSpeakerFromCommunityVoiceChat` is sent for the pause, so
+    other clients keep showing the paused speaker unmuted while no audio arrives; the mute
+    entry above holds only for a mute the player chooses.
+  - unity-explorer pauses only the nearby mic and lets the player turn the pause off in
+    settings ("mute mic in background", on by default); the Explorer has no such setting.
 - **Blocked and scene-banned players are not heard nearby.** A player blocked in either
   direction, or banned by the connected scene room, carries `BlockedOrBanned`, and their nearby
   voice track is unsubscribed while it lasts; unity-explorer keeps the track and creates no audio
@@ -338,16 +360,44 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   not need), on sign-in, on a realm change, on `/ban_block_refresh` and, as a periodic chance to
   notice a ban while the client idles, every 300 s (unity-explorer checks at start-up only; no
   push reaches an idle client here, and the period promises no freshness, as a failed check
-  fails open, as there, and the state says so instead of guessing); a ban whose record the
+  fails open, as there, and the state says so instead of guessing; a failed check keeps a ban
+  already known, past its `expiresAt` too, since the local clock lifts no ban; once a known ban's
+  `expiresAt` passes it is checked again once, after any `Retry-After`); a ban whose record the
   gatekeeper withholds (a device match) is still a ban. The endpoint matches the address only,
   so a device ban shows only as a platform-scoped refusal of the scene adapter: that refusal
-  marks the platform ban, and the endpoint's "not banned" does not lift it while the refusal
-  stands. The local user's scene ban is the refusal of the
+  marks the platform ban. The endpoint's "not banned" does not lift it while the refusal stands:
+  it asks the gatekeeper for that scene's room again, and the gatekeeper's admission lifts it, so
+  a ban that expired or was lifted ends without a scene or realm change. Until then the notice
+  shows the refusal's ban, which carries no reason or period. The local user's scene
+  ban is the refusal of the
   scene adapter, read from its status and body (the gatekeeper's 403 for a platform or scene
   ban, the worlds server's 401 for a platform or world ban), where unity-explorer treats any 401
   or 403 as forbidden access. The player is not moved out of a scene that refused them, as
   there. Other players' scene bans and
   the admins come from the room's metadata and count only while the room is connected, as there.
+- **Realm entry refused during a platform ban.** The realm change reads `PlatformBanStatus`
+  (`common::platform_ban`) and, while a platform ban is known, refuses every request ("You are
+  banned from Decentraland"), so the lobby's pick, a link held for the
+  terms and an in-world realm change all stay where they are and nothing loads or connects. A ban
+  learnt while a change waits on world access (a world's password prompt) stops it with the same
+  answer; one learnt after the realm's own fetch has started does not stop that change. The
+  HUD reads the same ban from one stream: before the world it covers the lobby, welcome page,
+  picker or loader with a blocking notice that a sign-out or a "not banned" answer closes, and a
+  ban answered during the first entry keeps it open over the world (B1); a refused in-world
+  travel shows the same notice, dismissible, and the player stays put (B5). A ban learnt after the
+  first world entry opens nothing until a travel is refused, and an open notice words the period
+  again each minute. Differences from
+  unity-explorer, which checks once in its login flow and ends on a terminal blocked screen with
+  Exit and Support:
+  - Entering does not wait for the first check: an unknown or failed check lets the player in,
+    and a ban answered later refuses realm changes from then on. unity-explorer awaits the request.
+    The check starts at sign-in, before the lobby shows, so a ban is normally known before the
+    pick; a launch straight to a link's destination can enter first and the gatekeeper's own
+    refusal of the scene adapter then applies.
+  - In-world realm changes are refused too, which unity-explorer does not check.
+  - Sign Out instead of Exit: the web has no application to exit.
+  - The notice words the period as unity-explorer does (hours under a day, else days, rounded
+    up) and adds the ban's custom message.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.
@@ -504,6 +554,35 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   successful, failed and cancelled gifts and plays a sound with the sent and received popups; this
   port leaves both out for now. The shell's "Preparing Gift for" tile shows the
   marketplace index's item category (wearable or emote), so its corner glyph is the generic one.
+- **Media reopens on the web.** The web backend keeps unity-explorer's counts and delays: a
+  failed URL source is reopened up to 5 times, 2, 4, 8, 16 and 32 s after each failure, the count
+  restarts when the scene changes the source, and a source that gave up stays failed until the
+  source changes. It differs in five ways:
+  - *States between reopens.* unity-explorer reports `VsError` after every failed attempt; here a
+    scheduled reopen reports `VsLoading`, so `VsError` means the source gave up or is failed and
+    paused.
+  - *Failures during playback.* unity-explorer reopens only a source that failed to open; here an
+    element error at any time starts the schedule, and a live stream that ends (its feed dropped)
+    counts as a failure rather than a normal end, so a stream whose feed drops reconnects without a
+    scene reload. A reopened source that is not live resumes where it failed, or where the scene
+    seeked meanwhile.
+  - *Count restart.* unity-explorer clears the count as soon as a reopen opens; here it restarts
+    only after 5 s of playback since the last failure, so a source that keeps failing at the same
+    point gives up.
+  - *Pause.* unity-explorer reopens a failed source whether or not it plays; here a failed source is
+    reopened only while the scene plays it, so a paused screen requests nothing. A failure while
+    paused, or before the scene first plays the source, counts and reports `VsError`. The next play
+    reports `VsLoading` and reopens once the current delay has passed since the failure, so toggling
+    playback never reopens faster than the schedule, and a pause keeps the count. A pause during a
+    loading reopen lets it load, as a paused first open does. A live stream resumes at its live
+    edge, not at a saved position.
+  - *The screen.* unity-explorer renders black whenever a player is in `VsError` or `VsNone`; here
+    the image turns black when the source gives up or a non-looping source ends, and keeps the
+    last frame while a reopen is pending, so a short drop shows no black flash; the failed source
+    is detached meanwhile. A non-looping source that ends reports `VsNone`, as in unity-explorer.
+
+  Native (FFmpeg) has no reopen: its first error ends playback. A non-looping source that ends
+  there reports `VsPaused` and keeps its last frame, where the web reports `VsNone` and clears it.
 - **The map's markers are HUD elements, not a rendered scene.** unity-explorer draws its map and
   markers with a camera into a texture; here the atlas and every marker are elements of the HUD
   page, placed from the map camera's position and zoom. The seven zoom levels, the marker sizes at
@@ -512,23 +591,50 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   The sea around the city is one image, rendered once from unity-explorer's sea shader and placed
   under the satellite map like its tiles; its water stands still, where unity-explorer animates
   it every frame. Nothing on the map is drawn per frame.
-- **The map's layers are on the full map only, except the home pin.** unity-explorer draws live
-  events, points of interest, players, scene pins and the home pin on the minimap too, and the
-  Layers panel switches both. Here the minimap draws the home pin and keeps its own place markers
-  and settings, so the Layers panel changes the full map alone, and a route shows no pin on the
-  minimap's edge. The minimap has no favourite button for the place the player stands in.
-- **The map draws no scene map pins.** unity-explorer shows the `MapPin`s of every portable
-  experience, among them the quests' global one (`globalpx.dcl.eth`, loaded at startup from
-  `alfa-global-portable-experiences`), and of any scene under `alfa-map-pins`, with a Quest
-  Mini-Games layer to hide them. This explorer loads no global portable experience, so the map
-  reads no `MapPin` and has no such layer.
+- **The minimap draws the full map's layers.** As unity-explorer's, it shows live events,
+  points of interest, other players, the home pin and the route, and the full map's Layers panel
+  switches them on both, from one read the two maps share; the minimap has no category pins or
+  markers setting of its own. A destination's pin stands on the minimap's edge in its direction,
+  as unity-explorer's. unity-explorer's minimap doesn't zoom and moves the pin to the edge past a
+  fixed distance (about eight parcels); this one zooms, so the pin moves to the edge exactly when
+  the destination leaves the visible map. It is the full map's destination pin, and the minimap
+  being square, it runs along the square's edge rather than a circle. Scene map pins are on
+  both (below). The header's heart marks the place the player stands in as a favourite; in
+  a World, the World's scene there.
+- **Scene map pins come only from portable experiences.** The engine reads `MapPin` only from
+  scenes running as a portable (from the launch option or console, spawned by a scene, or a smart
+  wearable's) whose scene.json also declares `isPortableExperience: true`, and streams them to the
+  HUD (`getMapPinsStream`); every other scene's pins are ignored, and no flag turns them on for
+  other scenes. unity-explorer reads them from any scene that declares `isPortableExperience:
+  true`, however it was loaded, and from every scene under `alfa-map-pins`; here a parcel scene or
+  World that declares it can't put pins on its visitors' maps. The Layers panel's Quest Mini-Games
+  switch (on by default, for the session) shows or hides them on the full map and the minimap. A
+  pin stands on the centre of its parcel, its position rounded halves to even; it is never
+  clustered, its title and description are not drawn, and a click opens the place panel for its
+  parcel. It shows the scene's own icon, a content file of the scene, cut round on a white disc;
+  with no such file (another texture kind, a src that parses as a url, a missing file, or an image
+  that fails to load) it shows the default quest pin, so a scene can't make the HUD request a host
+  of its choosing. The icon resolves again only when its src changes, and a moved pin keeps its
+  icon. The title is cut to 100 characters. unity-explorer loads that icon only under
+  `alfa-map-pins-custom-icons`, and otherwise always shows its default pin. The pin doesn't pulse.
+  This explorer loads no global portable experience at startup: unity-explorer loads the quests'
+  one (`globalpx.dcl.eth`) from `alfa-global-portable-experiences`; here it is loaded with the
+  launch option (`--portables` or `?portables=`, e.g. `basiccontroller.dcl.eth;globalpx.dcl.eth`).
+- **Arrival is checked on every position report.** unity-explorer checks the route only after
+  the player's squared distance from the map's origin has changed by 300 map units, which can
+  skip the arrival spot when the player stops on it or reaches it sideways, so the route never
+  ends. The arrival rule itself is the same: within about 5.6 m of the destination parcel's
+  centre, then "You have arrived to your destination" and the pin goes.
 - **Home can be set, not cleared, and is one for the install.** unity-explorer's Set as Home also
   takes the home back, and it keeps one home per wallet. Here the engine keeps one home in its
-  config, parcel 0,0 of the default realm until one is set, and the place panel's button and the
-  minimap's switch only set it: the switch reads on where the player stands in their home, and
-  can't be turned off.
-- **Home is set from the map's place panel and the minimap's menu.** unity-explorer also sets it
-  from Places cards, which have no such control here. The minimap's menu is unity-explorer's: Set
+  config, parcel 0,0 of the default realm until one is set, and the place panel's and the place
+  detail's buttons and the minimap's switch only set it: the switch reads on where the player
+  stands in their home, and can't be turned off.
+- **Home is set from the map's place panel, the place detail and the minimap's menu.** The place
+  detail, opened from the lobby's cards and the Places page, saves the place's base parcel (a
+  World, its name) and offers start and exit navigation for a Genesis City place; a Jump in there
+  that goes ahead ends a route to that place, as the map's does. unity-explorer also sets home from
+  Places cards, which have no such control here. The minimap's menu is unity-explorer's: Set
   as Home, Copy Link and Reload Scene, then this HUD's own Minimap settings. As unity-explorer's,
   the minimap saves the parcel the player stands on, where the place panel saves the place's base
   parcel (a road's, the picked one), and it compares a World's name without case where the place
@@ -572,6 +678,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Events page: analytics.** unity-explorer reports `event_card_clicked` from calendar cards
   only and nothing for an open from the sidebar; here a day view's cards report it too, and the
   sidebar reports `events_section_opened` with `source: sidebar`.
+- **Place detail: no analytics for home or navigation.** unity-explorer reports
+  `place_set_as_home` and `place_navigation_started` from its place detail, and
+  `home_position_set` whenever home changes; this explorer reports none of them, from the place
+  detail or the map.
 - **Events page: no "error loading friends" or "My Communities" toast.** The friends list and
   the member-of list reach the HUD as snapshots with no failure signal, so there is nothing to
   report; cards show friends and community marks once the lists are there.
@@ -621,6 +731,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   wgpu validation. While MSAA is on, the camera has no depth of field and the stars draw before
   the transparent pass. Unity has no depth of field, so no preset combines them; the native
   Medium preset is MSAA 2x.
+- **No satellite floor.** unity-explorer lays the minimap's satellite images flat at 0.205 m under the
+  terrain in Genesis City; here the ground covers that plane everywhere, so the floor would never be
+  seen and is not shipped.
+- **Spring bones skip avatars the avatar limit hides.** Unity ranks every avatar in front of the
+  camera for its ten simulated places. Here an avatar hidden for being beyond the `max_avatars`
+  nearest to the player takes no place: its bones stay at rest and the place goes to the next
+  visible avatar, since a swing nobody sees would cost a place and its transform walks. Do not
+  rank hidden avatars to match.
 
 ## Deliberate choices that look like mistakes
 
@@ -648,13 +766,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   downloaded again in every session. An entry under a content hash is never dropped this way: it
   was checked against the hash before it was written, so a bad one is the asset processor's
   output or disk damage, which belong to the processor and the disk, not to a retry.
-- **Engine content downloads carry no `X-IPFS` header on web.** The engine reads
-  `ipfs-path-cache-v2` itself before it queues a download (`crates/ipfs/src/lib.rs`, the variants
-  client), so the worker passes the request to the network untouched; a lookup there could only
-  repeat that miss. The worker still answers requests that carry the header from that cache, and
-  only the engine writes it. A hit missed in between (the same hash finishing under another url,
-  another tab), or one that appears before a retry (the engine reads the cache only before the
-  first attempt), costs one more download of the same bytes.
+- **The service worker does not answer content requests from the content cache.** The engine
+  reads `ipfs-path-cache-v2` itself before it queues a download (`crates/ipfs/src/lib.rs`, the
+  variants client), so a lookup in the worker could only repeat that miss; the worker only trims
+  the cache. A hit missed in between (the same hash finishing under another url, another tab), or
+  one that appears before a retry (the engine reads the cache only before the first attempt),
+  costs one more download of the same bytes (#726).
 - **Web-only engine switches are page params**, not `LaunchOptions` fields.
 - **`CommsApi.consumeMessages` resolves to a bare array** of `{ sender, data }`, not the
   protocol's `{ messages }`, because unity-explorer, the client scenes are tested on, returns
@@ -669,6 +786,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Native HUD preferences are persisted by the engine** (`hud-prefs.json`), because CEF's
   `localStorage` does not survive.
 - **Web is Chrome only.**
+- **HLS plays natively on the web.** A media source is assigned to the element's `src` whatever
+  its format; there is no hls.js. Desktop Chrome plays TS and fMP4 HLS, live streams included,
+  through a plain `src` with `crossOrigin = "anonymous"`, and its frames copy into a
+  `VideoFrame`. HEVC in HLS and Chromium builds without proprietary codecs do not play; neither
+  is a target.
 - **The end-to-end tests use no Playwright.** They drive the client through its console on both
   shells, so one spec runs on the web and the standalone, and what they need from a browser (real
   input, pages outside the client such as sign-in, screenshots) the in-repo web driver does
@@ -683,14 +805,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Collectible cache retention must be generic** across wearables and emotes, and an emote's
   ownership is its membership of the avatar's animation graph. A pruning PR that special-cases
   emotes (#1323) is parked for that reason.
-- **A missing content file stays missing until restart.** When a server answers 400, 404, 405,
-  410, 414 or 451 to a read of a content hash, later reads of that url by content hash are
-  answered from memory for the rest of the session. Any other read of the same url (by url, or
-  from a loopback content server, which is never keyed by hash) is answered from memory for 10 s
-  after the failure and then asked for again; other failures are answered from memory for 10 s;
-  preview mode asks again on every read. A later failure of another kind does not shorten a
-  session entry, and a successful download of the url clears its entry. At most 4096 urls are
-  held.
+- **Definitive failures on hash-keyed content reads are remembered for the session.** Outside
+  preview, a definitive failure (404 and similar) is remembered for that URL when read by hash.
+  A catalyst only activates an entity once it holds all of its files, so the answer is final.
+  Other reads and failures keep the 10 s retry. Preview asks again on every read (#727).
 - **A content download that does not match its hash fails the read**, so bytes that are not the
   file the scene named never reach a loader. It is a failure like a dropped transfer, asked for
   again after 10 s, not a missing file. A name the check cannot verify is read as before, uncached.
@@ -735,8 +853,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   at a 30 FPS cap), takes real frame times with no 250 ms cap, and is sent once per 15 s sample,
   in world and focused only, instead of once per 1000 frames of virtual time through loading
   screens and unfocused windows. The old event's own sampling was removed rather than kept beside
-  the sampler. Dashboards comparing across this change see a step from the definitions; whether
-  the event gets a schema field or a fixed 50 ms count is the analytics owners' call.
+  the sampler. Dashboards comparing across this change see a step from the definitions.
+  The event records the applied threshold, raw hiccup counts and measured sample counts for CPU
+  and, when readings are available, GPU. These counts let dashboards compute session rates.
 - **Bevy stays on the 0.16 fork for now.** Security-relevant dependencies (V8 and deno,
   libwebrtc, ffmpeg, wgpu) get bumped inside it. Whether to ever move the bevy version is an
   open discussion, not a decision.
@@ -786,3 +905,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   HUD does not have and reads as a fault; the control appears when its function exists. The
   Portable experiences button follows the same rule and shows only while an experience is
   active.
+- **The embedded assets stay in plain git, not Git LFS.** `crates/assets/build.rs` embeds whatever
+  is on disk, so an LFS pointer would compile and be wrong at runtime, and an LFS checkout would
+  have to be pulled by every Explorer build and matched by every check that hashes the build's
+  inputs. The build fails on a file that is an LFS pointer. Revisit if the landscape folder
+  (`crates/assets/src/assets/landscape`) reaches tens of MB.

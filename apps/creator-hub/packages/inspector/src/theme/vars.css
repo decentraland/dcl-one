@@ -128,6 +128,28 @@
   /* Layer of the shared ui3 tooltip: above the menus and under the loading overlay. */
   --z-overlay: 1900;
 
+  /* ui3 bridge: the tokens ui3's Button reads that this theme lacks, set to the inspector's
+     button looks. The base values are the small button's; medium and large override in
+     components/Button/Button.css. See docs/DESIGN.md, "ui3 bridge (inspector)". */
+  --brand-cta: var(--primary-main);
+  --brand-hover: var(--palette-primary-light);
+  --on-brand: var(--text-on-primary);
+  --fill-4: var(--palette-whiteTransparent-subtle);
+  --fill-5: var(--palette-whiteTransparent-soft);
+  --ink-45: var(--white);
+  --ink-85: var(--white);
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+  --ctl-radius: var(--shape-borderRadius);
+  --ctl-weight: var(--type-h7-regular-weight);
+  --ctl-tracking: var(--type-h7-regular-letter-spacing);
+  --ctl-fs-sm: var(--type-h7-regular-size);
+  --ctl-fs-md: var(--type-h6-semi-caps-size);
+  --ctl-fs-lg: var(--type-h6-semi-caps-size);
+  --ctl-pad-sm: 6px 10px;
+  --ctl-pad-md: var(--s-2) var(--s-5);
+  --ctl-pad-lg: var(--s-3) var(--s-5);
+
   /* DCL Colors */
   --brand: #ff2d55;
   --primary-main: var(--brand);
@@ -276,8 +298,8 @@
   --ui-designer-control-empty-bg: rgba(255, 255, 255, 0.05); /* placeholder / unbound field fill */
   --ui-designer-control-selected-bg: rgba(255, 255, 255, 0.1); /* White 10 · menu rows */
   --ui-designer-control-hover-bg: rgba(255, 255, 255, 0.06);
-  --ui-designer-control-active-bg: var(--ui-designer-control-accent);
-  --ui-designer-control-active-fg: #35333b;
+  --ui-designer-control-active-bg: var(--palette-system-blueDark2);
+  --ui-designer-control-active-fg: var(--ui-designer-text);
   /* Panel surfaces, foreground and glyphs — the Figma's own Neutrals ramp
      (PropertiesFull 1492:1939). The panel frame reuses --base-19 rather than
      declaring the design's #25212a: the two differ by 1/255, and the group cards

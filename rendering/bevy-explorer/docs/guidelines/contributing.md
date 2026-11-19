@@ -130,8 +130,11 @@ this engine's design using its requirements and tests.
 ## Before pushing
 
 - Merge main first. CI tests the merge, not the branch.
-- `cargo fmt --all`, `cargo clippy --locked -- -D warnings`, `cargo test --all`. Clippy warnings
-  are errors in CI.
+- `cargo fmt --all`, `cargo clippy --locked --workspace --all-targets -- -D warnings`,
+  `cargo test --all`. Clippy warnings are errors in CI. `common`'s tests read the patched Bevy
+  tree: write it first, from the repository root, with
+  `python3 tooling/patched-sources.py materialise bevy`
+  ([bevy-fork](bevy-fork.md)).
 - The wasm build, only if the change has platform-sensitive code: `#[cfg]` branches,
   threading, atomics, blocking calls, timers, filesystem or network access, wasm-specific deps.
 - A change that limits per-frame work (a budget, slicing) is tried in the web build by hand,
@@ -153,6 +156,9 @@ this engine's design using its requirements and tests.
 - Hoist every third-party dependency to `[workspace.dependencies]` and use
   `{ workspace = true }` at the call site, even for a crate used in one place. Convert existing
   inline uses of the same crate in the same change.
+- Every package in the workspace declares `[lints] workspace = true`, so
+  `[workspace.lints]` reaches it; set a crate-specific level in the crate's source, not in
+  its manifest.
 - A change to bevy or to a forked crate is one more patch file under
   `rendering/bevy-explorer/patches/<name>/series` and a new `rev` in `source.toml` and both Cargo
   files. The tool writes all of them. Push the `rev` to your fork with `publish --remote`, and CI
@@ -197,7 +203,6 @@ Before adding a shared budget, identify the workload that needs it and measure t
 on unrelated callers. Give changes with independent consumers or failure modes their own
 PR and test evidence.
 
-For browser forwarding changes, run
+For service worker routing changes, run
 `pnpm exec vitest run src/test/serviceWorkerCache.test.ts src/test/previewRealm.test.ts` from
-`rendering/bevy-explorer/source/react-web`. Check abort propagation, streamed requests,
-referrer policy and disposal of unread response bodies.
+`rendering/bevy-explorer/source/react-web`.

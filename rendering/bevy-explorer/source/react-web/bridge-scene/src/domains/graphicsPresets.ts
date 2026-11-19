@@ -20,6 +20,7 @@ const PRESET_VALUES: Record<string, [PresetValue, PresetValue, PresetValue]> = {
   'Anti-aliasing': ['Off', ['MSAA 2x', 'FXAA (High)'], ['MSAA 8x', 'FXAA (High)']],
   Bloom: ['Off', 'High', 'High'],
   'Avatar Outline': ['Off', 'On', 'On'],
+  'Jiggle Bones': ['Off', 'On', 'On'],
   'Shadow settings': ['Off', 'Low', 'High'],
   'Shadow Distance': [40, 60, 100],
   'Light Count': [0, 6, 10],

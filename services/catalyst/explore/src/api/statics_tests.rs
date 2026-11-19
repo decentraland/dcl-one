@@ -716,7 +716,7 @@ async fn world_manifest_is_mirrored_verbatim_revalidated_and_never_replaced_by_a
 }
 
 #[tokio::test]
-async fn posters_read_through_once_keep_the_bucket_type_and_remember_misses() {
+async fn posters_read_through_once_detect_the_type_and_remember_misses() {
     let Some(db) = scratch_database().await else {
         return;
     };
@@ -748,8 +748,8 @@ async fn posters_read_through_once_keep_the_bucket_type_and_remember_misses() {
         assert_eq!(status, StatusCode::OK, "{path}");
         assert_eq!(body.as_ref(), jpeg.as_slice());
         assert_eq!(
-            headers["content-type"], "application/octet-stream",
-            "the bucket's type, as the old proxy passed it"
+            headers["content-type"], "image/jpeg",
+            "the bytes determine the type when the bucket declares a generic one"
         );
         assert_eq!(
             headers["cache-control"],
@@ -784,11 +784,7 @@ async fn posters_read_through_once_keep_the_bucket_type_and_remember_misses() {
     assert_eq!(
         rows,
         vec![
-            (
-                "poster".into(),
-                "application/octet-stream".into(),
-                "upstream".into()
-            ),
+            ("poster".into(), "image/jpeg".into(), "upstream".into()),
             (
                 "poster-vertical".into(),
                 "image/webp".into(),
@@ -843,6 +839,146 @@ async fn posters_read_through_once_keep_the_bucket_type_and_remember_misses() {
     );
     assert_eq!(stub.hits("/bucket/poster/other.jpg"), 0);
 
+    db.teardown().await;
+}
+
+#[tokio::test]
+async fn poster_read_through_validates_avif_brands_and_persists_detected_headers() {
+    use base64::Engine as _;
+
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    // A generated 16 by 16 JPEG.
+    let jpeg = base64::engine::general_purpose::STANDARD
+        .decode(concat!(
+            "/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjI4LjEwMAD/2wBDAAgEBAQEBAUFBQUF",
+            "BQYGBgYGBgYGBgYGBgYHBwcICAgHBwcGBgcHCAgICAkJCQgICAgJCQoKCgwMCwsODg4RERT/",
+            "xABMAAEBAAAAAAAAAAAAAAAAAAAABwEBAQAAAAAAAAAAAAAAAAAABQcQAQAAAAAAAAAAAAAA",
+            "AAAAAAARAQAAAAAAAAAAAAAAAAAAAAD/wAARCAAQABADASIAAhEAAxEA/9oADAMBAAIRAxEA",
+            "PwCOAL+Kf//Z",
+        ))
+        .unwrap();
+    let good: &[(&str, &[u8], &str, &str)] = &[
+        ("original.jpg", &jpeg, "image/jpeg", "image/jpeg"),
+        ("jpeg-as-png.png", &jpeg, "image/png", "image/jpeg"),
+        (
+            "png-as-jpeg.jpg",
+            b"\x89PNG\r\n\x1a\n....",
+            "image/jpeg",
+            "image/png",
+        ),
+        (
+            "webp-as-png.png",
+            b"RIFF\0\0\0\0WEBPVP8 ",
+            "image/png",
+            "image/webp",
+        ),
+        (
+            "wrong.jpg",
+            b"\0\0\0\x10ftypavif\0\0\0\0",
+            "image/jpeg",
+            "image/avif",
+        ),
+        (
+            "compatible.bin",
+            b"\0\0\0\x14ftypmif1\0\0\0\0avis",
+            "text/plain",
+            "image/avif",
+        ),
+        (
+            "extended.bin",
+            b"\0\0\0\x01ftyp\0\0\0\0\0\0\0\x18avif\0\0\0\0",
+            "application/octet-stream",
+            "image/avif",
+        ),
+    ];
+    let bad: &[(&str, &[u8])] = &[
+        ("heic", b"\0\0\0\x10ftypheic\0\0\0\0"),
+        ("mp4", b"\0\0\0\x10ftypmp42\0\0\0\0"),
+        ("isom", b"\0\0\0\x10ftypisom\0\0\0\0"),
+        ("short", b"\0\0\0\x0cftypavif"),
+        ("truncated", b"\0\0\0\x10ftypavif\0\0"),
+        ("overstated", b"\0\0\0\x20ftypavif\0\0\0\0"),
+        ("unaligned", b"\0\0\0\x11ftypavif\0\0\0\0x"),
+        ("misplaced", b"xxxx\0\0\0\x10ftypavif\0\0\0\0"),
+        ("minor-version", b"\0\0\0\x10ftypisomavif"),
+    ];
+    let stub = Arc::new(Stub::default());
+    for (name, bytes, declared, _) in good {
+        stub.posters.lock().insert(
+            format!("poster/{name}"),
+            (bytes.to_vec(), (*declared).into()),
+        );
+    }
+    for (name, bytes) in bad {
+        stub.posters.lock().insert(
+            format!("poster/{name}"),
+            (bytes.to_vec(), "image/avif".into()),
+        );
+    }
+    let addr = serve_stub(stub.clone()).await;
+    let dir = tmp_dir();
+    let app = router(node_at(settings_at(addr), db.pool.clone(), &dir.0).await);
+    let mut local_only = settings_at(addr);
+    local_only.poster_upstream = None;
+    let cached = router(node_at(local_only, db.pool.clone(), &dir.0).await);
+    for (name, bytes, _, expected_type) in good {
+        let path = format!("/events-assets-099ac00/poster/{name}");
+        let (first_status, first_headers, first_bytes) = call(&app, &path, &[]).await;
+        let (cached_status, cached_headers, cached_bytes) = call(&cached, &path, &[]).await;
+        assert_eq!(first_status, StatusCode::OK, "{name}");
+        assert_eq!(cached_status, StatusCode::OK, "{name}");
+        assert_eq!(first_bytes.as_ref(), *bytes);
+        assert_eq!(first_bytes, cached_bytes);
+        assert_eq!(
+            first_headers[header::CONTENT_TYPE],
+            *expected_type,
+            "{name}"
+        );
+        assert_eq!(
+            first_headers[header::CONTENT_LENGTH],
+            bytes.len().to_string()
+        );
+        assert_eq!(first_headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+        for header in [
+            header::CONTENT_TYPE,
+            header::CONTENT_LENGTH,
+            header::ETAG,
+            header::X_CONTENT_TYPE_OPTIONS,
+        ] {
+            assert_eq!(first_headers[&header], cached_headers[&header], "{name}");
+        }
+        let stored: (String, i64, String) = sqlx::query_as(
+            "SELECT content_type, byte_size, origin FROM explore.poster WHERE kind='poster' AND file=$1",
+        )
+        .bind(name)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            stored,
+            (
+                (*expected_type).into(),
+                bytes.len() as i64,
+                "upstream".into()
+            )
+        );
+        assert_eq!(stub.hits(&format!("/bucket/poster/{name}")), 1);
+    }
+    for (name, _) in bad {
+        let path = format!("/poster/{name}");
+        assert_eq!(
+            call(&app, &path, &[]).await.0,
+            StatusCode::BAD_GATEWAY,
+            "{name}"
+        );
+        assert_eq!(
+            call(&cached, &path, &[]).await.0,
+            StatusCode::NOT_FOUND,
+            "{name}"
+        );
+    }
     db.teardown().await;
 }
 

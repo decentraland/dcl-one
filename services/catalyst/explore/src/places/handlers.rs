@@ -1715,7 +1715,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let places = super::super::PlacesComponent::new(pool.clone(), "/content");
+        let places = super::super::PlacesComponent::new(pool.clone(), "/content", None);
         let found = places
             .find_world_by_id_for(&mixed, None)
             .await

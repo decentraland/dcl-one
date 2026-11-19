@@ -121,8 +121,8 @@ export function Slider({ assets, onSubmit, isNameAvailable, isImporting = false 
             isNameUnique={isNameUnique}
           />
           <Button
-            type="danger"
-            size="big"
+            variant="primary"
+            size="lg"
             onClick={handleConfirmImport}
             disabled={!allPreviewsReported || isImporting}
           >

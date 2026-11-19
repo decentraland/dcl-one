@@ -8,7 +8,7 @@ import { ConsoleError } from '../driver/console.ts'
 import { Explorer } from '../driver/explorer.ts'
 import { PACKAGE_ROOT } from '../driver/paths.ts'
 import { serveWebApp, type StaticServer } from '../driver/serve.ts'
-import { WebConsole, findChrome } from '../driver/web.ts'
+import { DocumentGoneError, WebConsole, findChrome } from '../driver/web.ts'
 
 const chrome = await findChrome()
 const required = process.env.DCL_E2E_REQUIRE_CHROME === '1'
@@ -42,6 +42,16 @@ describe('WebConsole', { skip: chrome ? false : 'no Chrome installed' }, () => {
       return true
     })
     await assert.rejects(web.run('/nope'), /Command not recognized/)
+  })
+
+  test('a command whose page loads again is a DocumentGoneError at once, and the next runs in the new page', async () => {
+    const started = Date.now()
+    await assert.rejects(web.run('/reload'), (error: unknown) => {
+      assert.ok(error instanceof DocumentGoneError)
+      return true
+    })
+    assert.ok(Date.now() - started < 10_000, `it waited ${Date.now() - started} ms`)
+    assert.equal(await web.run('player_position'), '(1, 2, 3)')
   })
 
   test('a HUD click is real input and changes the world state', async () => {

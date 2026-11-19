@@ -320,7 +320,7 @@ Each item gives the gap, the expected behaviour, the place to change it in dcl-o
 14. **LL-14: `description` when the data record has a null description.** Endpoint: `/users/:a/lands`. Status: MATCH, no work, on the reader path.
    - Expected: `null` (`decentraland/lamb2:src/logic/fetch-elements/fetch-lands.ts:67`).
    - dcl-one: the reader keeps a null description as `null` (`OwnedLand.description: Option<Option<String>>`, `services/catalyst/chain-index/src/graph.rs`, `parse_owned_lands`; pinned by `owned_lands_carry_the_old_row_columns`).
-   - Left open: the index path answers `""` for a data record without a description. `parse_land_data` (`services/catalyst/shop/src/market/nft_index.rs:320`) stores an empty field and a missing one alike (NULL), and which of the two the marketplace subgraph stores as `null` is not vendored. Telling them apart needs `shop.land_data` to keep the difference (a schema step and a re-fold of the `land_data` events) once a capture shows the subgraph's rule.
+   - Left open: the index path answers `""` for a data record without a description. `parse_land_data` (`services/catalyst/shop/src/market/nft_index.rs:318`) stores an empty field and a missing one alike (NULL), and which of the two the marketplace subgraph stores as `null` is not vendored. Telling them apart needs `shop.land_data` to keep the difference (a schema step and a re-fold of the `land_data` events) once a capture shows the subgraph's rule.
    - Severity: P2 (index path).
 15. **LL-15: The `/lands` index path reads the registries of `ETH_NETWORK`.** Status: MATCH, no work.
     - Expected: the registries of `ETH_NETWORK` (`decentraland/lamb2:src/ports/the-graph.ts:38`).

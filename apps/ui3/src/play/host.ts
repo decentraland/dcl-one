@@ -7,7 +7,7 @@ import { acceptedEntryParams, entryRealm, unrecognisedEntryParams } from './lib/
 import { untrustedLaunchParams } from './lib/launchGate'
 import { PAGE_DIR, publicUrl } from './lib/publicUrl'
 import { engineLaunch, seedBridgeSession } from './lib/engineLaunch'
-import { IN_WORLD_SHOP } from './features/shop/entry'
+import { IN_WORLD_SHOP } from '@dcl/one-ui/apps/shop/entry'
 import { donations } from './lib/donations'
 import { gifting } from './lib/gifting'
 
@@ -36,10 +36,13 @@ const BUILD_VERSION: string | null = (typeof __PLAY_BUILD__ !== 'undefined' && _
  *  carries. */
 const exitUrl = (): string => `${window.location.origin}/`
 
+/** The /play shell asks before the page goes while a session runs, when the player turns it on (shell/mount.ts). */
+const CAN_ASK_BEFORE_LEAVING = true
+
 const siteRevision: HudHost['siteRevision'] = () =>
   typeof window.__DCL_PUBLIC__ === 'object' ? window.__DCL_PUBLIC__.commitHash ?? '' : null
 
-export { acceptedEntryParams, BUILD_VERSION, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, donations, gifting, siteRevision, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+export { acceptedEntryParams, BUILD_VERSION, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, CAN_ASK_BEFORE_LEAVING, donations, gifting, siteRevision, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
 
-const host: HudHost = { acceptedEntryParams, BUILD_VERSION, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, donations, gifting, siteRevision, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+const host: HudHost = { acceptedEntryParams, BUILD_VERSION, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, CAN_ASK_BEFORE_LEAVING, donations, gifting, siteRevision, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
 void host

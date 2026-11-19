@@ -2563,11 +2563,15 @@
       "loose": false,
       "props": {
         "arch": {
-          "kind": "string",
+          "kind": "enum-string",
+          "values": [
+            "amd64",
+            "arm64"
+          ],
           "optional": false
         },
         "file_name": {
-          "kind": "string",
+          "kind": "unknown",
           "optional": false
         },
         "kind": {

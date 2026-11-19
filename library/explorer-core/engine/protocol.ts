@@ -12,6 +12,8 @@ import type {
   CommunityVoiceStatus,
   ConnectivitySnapshot,
   HomeScene,
+  MapPinInfo,
+  PlatformBanNotice,
   PortableInfo,
   SatelliteView,
   SceneLoadingUi,
@@ -1114,6 +1116,13 @@ export interface PortablesMessage {
   portables: PortableInfo[]
 }
 
+/** The map pins of portable experiences (scene → page, from getMapPinsStream): the whole list
+ *  on subscribe and on every change. */
+export interface MapPinsMessage {
+  kind: 'mapPins'
+  pins: MapPinInfo[]
+}
+
 /** The engine needs a password to enter the world the player is travelling to (scene → page).
  *  Shown as the password dialog; answered with worldPasswordResolve. Re-sent with an `error` when
  *  an answer was refused (wrong password, too many attempts). There is only ever one open prompt:
@@ -1124,6 +1133,16 @@ export interface WorldPasswordRequestMessage {
   world: string
   /** Why the previous answer was refused; absent on the first ask. */
   error?: string
+}
+
+/** A realm change's refusal for a known platform ban (the engine's `common::platform_ban::REALM_CHANGE_BANNED`). */
+export const PLATFORM_BANNED_REFUSAL = 'You are banned from Decentraland'
+
+/** The signed-in wallet's platform ban, whole on subscribe and on every change (scene → page).
+ *  `banned` is false while the check is unknown or failed. */
+export interface PlatformBanMessage {
+  kind: 'platformBan'
+  ban: PlatformBanNotice
 }
 
 /** The engine no longer needs the password prompt answered (its realm change is over). */
@@ -2134,8 +2153,8 @@ export interface PreviewFocusRequest {
 }
 
 /** The Shop's stage around the preview avatar: where the page draws its stage image on screen, in CSS
- *  pixels like engineViewport's rect. The scene draws the same image (its images/shop-stage.jpg, the HUD's
- *  assets/shop/stage.jpg) there behind the avatar, so the avatar's window shows no seam, and drops the
+ *  pixels like engineViewport's rect. The scene draws the same image (its images/shop-stage.jpg, the in-world Shop's
+ *  library/ui/apps/shop/assets/stage.jpg) there behind the avatar, so the avatar's window shows no seam, and drops the
  *  Backpack's podium: the stage's floor is in the image. `null` gives the preview its own backdrop back. */
 export interface PreviewStageRequest {
   kind: 'previewStage'
@@ -2555,8 +2574,10 @@ export type SceneToPage =
   | PermissionRulesMessage
   | WorldPasswordRequestMessage
   | WorldPasswordWithdrawnMessage
+  | PlatformBanMessage
   | EditorSceneResultMessage
   | PortablesMessage
+  | MapPinsMessage
 
 // ---- events ----------------------------------------------------------------
 
@@ -2698,12 +2719,14 @@ export interface DiscoverPlace {
 // each place carries the signed-in user's own like, dislike and favourite. Every request is
 // answered, a failed one with `failed`.
 
-/** The places covering these `x,y` parcels. */
+/** The places covering these `x,y` parcels: Genesis City's, or `world`'s scenes when given. */
 export interface GetPlacesAtRequest {
   kind: 'getPlacesAt'
   /** Echoed in the answer. */
   request: number
   positions: string[]
+  /** A World's name: its scenes, the ones covering `positions` first. */
+  world?: string
 }
 export interface PlacesAtMessage {
   kind: 'placesAt'

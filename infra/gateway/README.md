@@ -4,7 +4,7 @@ Nginx public entry for APIs and Sites (routing source).
 
 The exact `/places/place?position=...` and `/places/world?name=...` endpoints, including their trailing-slash forms, stay backend social cards; `/places/place/<position>`, `/places/world/<name>` and their `.data` requests go to Sites, and the JSON catalogue stays under `/places/api`.
 
-The exact `/events/assets/event-default.webp` path serves Catalyst's bundled event image. Event image links use the node's `PUBLIC_URL` plus the `/events` mount; `EVENTS_BASE_URL` remains the website URL used by sitemaps.
+The exact `/events/assets/event-default.webp` path serves Catalyst's bundled event image. Event uploads and mirrored posters use the node's `PUBLIC_URL` plus the `/events-assets-099ac00` mount. The bundled image uses the `/events` mount; `EVENTS_BASE_URL` remains the website URL used by sitemaps.
 
 Referral quotas, the `POST /entities` burst limit and daily quota, the
 `/auth-api` pending sign-in caps and the
@@ -31,7 +31,7 @@ one client (a trusted proxy's `X-Real-IP` or a public peer), its network. Behind
 an unlisted private gateway only the wallet limit applies, and fresh wallets cost
 nothing, so set `HTTP_TRUSTED_PROXY_CIDRS` to keep the per-network report limit.
 
-Set `PUBLIC_URL` to the externally reachable node base URL, including any deployment prefix. Without it, the node uses its bind address (for example `http://0.0.0.0:<port>`), which is only a local fallback and cannot provide public image or notification links. See [event client and deployment guidance](../../services/catalyst/docs/events.md).
+Set `PUBLIC_URL` to the externally reachable node base URL, including its port and any deployment prefix. Without it, the node uses its bind address (for example `http://0.0.0.0:<port>`), which is only a local fallback and cannot provide public image or notification links. See [event client and deployment guidance](../../services/catalyst/docs/events.md).
 
 ```sh
 nix build .#image-gateway --out-link .cache/gateway-image

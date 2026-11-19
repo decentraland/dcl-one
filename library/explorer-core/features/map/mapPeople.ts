@@ -3,7 +3,7 @@
 
 import type { MapPlayer } from '../../engine/protocol'
 
-function store<T>(initial: T): { subscribe: (listener: () => void) => () => void; getSnapshot: () => T; set: (value: T) => void } {
+export function store<T>(initial: T): { subscribe: (listener: () => void) => () => void; getSnapshot: () => T; set: (value: T) => void } {
   let value = initial
   const listeners = new Set<() => void>()
   return {
