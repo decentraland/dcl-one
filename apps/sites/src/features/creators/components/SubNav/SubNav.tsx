@@ -14,6 +14,10 @@ const CurationTab = lazy(() =>
   )
 )
 
+// Each creators page mounts its own tabs: once the first page went idle, later ones show the tab from their first render
+// instead of hiding it again until the next idle callback.
+let idleReached = false
+
 type Props = {
   /** On a page whose top bar overlays its content (the landing): the tabs take their place under it, on the section's violet field. */
   landing?: boolean
@@ -25,8 +29,14 @@ export function SubNav({ landing = false }: Props) {
   const current = (path: string, exact = false) =>
     pathname === path || (!exact && pathname.startsWith(`${path}/`)) ? 'page' : undefined
 
-  const [idle, setIdle] = useState(false)
-  useEffect(() => afterLoadIdle(() => setIdle(true)), [])
+  const [idle, setIdle] = useState(idleReached)
+  useEffect(() => {
+    if (idleReached) return
+    return afterLoadIdle(() => {
+      idleReached = true
+      setIdle(true)
+    })
+  }, [])
 
   const tabs = (
     <div className={styles.subnav} data-testid="subnav">
