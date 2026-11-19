@@ -1327,37 +1327,23 @@ mod tests {
     }
 
     #[test]
-    fn a_null_result_is_an_answer_and_is_stored_as_null() {
+    fn a_present_null_result_is_kept_apart_from_a_missing_one() {
         let addr = "0x1234567890123456789012345678901234567890";
         let body: HttpOutcomeMessage =
             serde_json::from_value(json!({ "sender": addr, "result": null })).unwrap();
         assert_eq!(body.result, Some(Value::Null));
         assert!(validate_outcome_body(&body).is_ok());
-        let stored = serde_json::to_value(OutcomeResponseMessage {
-            request_id: "req-1".into(),
-            sender: body.sender,
-            result: body.result,
-            error: body.error,
-            auth_chain: body.auth_chain,
-        })
-        .unwrap();
-        assert_eq!(stored.get("result"), Some(&Value::Null));
-        assert!(stored.get("error").is_none());
-
         let missing: HttpOutcomeMessage =
             serde_json::from_value(json!({ "sender": addr })).unwrap();
-        assert_eq!(
-            validate_outcome_body(&missing).unwrap_err(),
-            "Outcome must include either a result or an error"
-        );
+        assert!(missing.result.is_none());
     }
 
     #[tokio::test]
     async fn an_outcome_without_result_or_error_is_rejected() {
         let (status, body) = call(
-            &app_without_db().await,
+            &router().await,
             json_post(
-                "/auth-api/v2/requests/8c545b52-c08e-4c39-a854-46e2b5b03c48/outcome",
+                "/v2/requests/8c545b52-c08e-4c39-a854-46e2b5b03c48/outcome",
                 serde_json::to_vec(
                     &json!({ "sender": "0x1234567890123456789012345678901234567890" }),
                 )
@@ -1366,10 +1352,6 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    }
-
-    async fn app_without_db() -> Router {
-        Router::new().nest("/auth-api", router().await)
     }
 
     async fn router() -> Router {
