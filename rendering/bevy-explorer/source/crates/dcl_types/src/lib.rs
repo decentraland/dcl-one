@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use bevy::{platform::collections::HashSet, prelude::Entity};
 use common::rpc::{CompareSnapshot, RpcCall};
 

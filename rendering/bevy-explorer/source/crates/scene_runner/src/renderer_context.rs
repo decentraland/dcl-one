@@ -30,7 +30,8 @@ use crate::{
 // Bevy entities are only created on a PUT of a component we care about in the renderer,
 // or if they are required for hierarchy parenting
 // TODO - consider Vec<Option<page>>
-type LiveEntityTable = Vec<(u16, Option<Entity>)>;
+// one slot per u16 id, so indexing with an id is always in bounds
+type LiveEntityTable = Box<[(u16, Option<Entity>); SceneEntityId::LIVE_TABLE_LEN]>;
 
 // scene worker lifecycle. `Broken` consumes the thread handle, so marking a scene broken
 // structurally drops the renderer channel, which signals the scene host to terminate the
@@ -239,7 +240,11 @@ impl RendererSceneContext {
             death_row: Default::default(),
             outbound_born: Default::default(),
             outbound_died: Default::default(),
-            live_entities: vec![(0, None); SceneEntityId::LIVE_TABLE_LEN],
+            // through a Vec: the 1 MiB array is never built on the stack
+            live_entities: vec![(0, None); SceneEntityId::LIVE_TABLE_LEN]
+                .into_boxed_slice()
+                .try_into()
+                .unwrap(),
             unparented_entities: HashSet::new(),
             hierarchy_changed: false,
             last_sent: 0.0,
@@ -272,13 +277,11 @@ impl RendererSceneContext {
     }
 
     fn entity_entry(&self, id: u16) -> &(u16, Option<Entity>) {
-        // SAFETY: live_entities has LIVE_TABLE_LEN (u16::MAX + 1) entries, so any u16 index is in bounds
-        unsafe { self.live_entities.get_unchecked(id as usize) }
+        &self.live_entities[id as usize]
     }
 
     fn entity_entry_mut(&mut self, id: u16) -> &mut (u16, Option<Entity>) {
-        // SAFETY: live_entities has LIVE_TABLE_LEN (u16::MAX + 1) entries, so any u16 index is in bounds
-        unsafe { self.live_entities.get_unchecked_mut(id as usize) }
+        &mut self.live_entities[id as usize]
     }
 
     pub fn associate_bevy_entity(&mut self, scene_entity: SceneEntityId, bevy_entity: Entity) {
