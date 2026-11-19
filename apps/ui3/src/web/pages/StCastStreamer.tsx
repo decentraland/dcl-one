@@ -40,7 +40,14 @@ function CastAvatar({ name = "Streamer", size = 100 }: { name?: string; size?: n
 }
 
 type ToastAction = { label: string; onClick: () => void };
-export type Toast = { id: string; title: string; message: string; action?: ToastAction };
+/** `onDismiss`: without it the toast has no close button (it goes away on its own). */
+export type Toast = {
+  id: string;
+  title: string;
+  message: string;
+  action?: ToastAction;
+  onDismiss?: () => void;
+};
 
 function CastToast({
   title,
@@ -60,9 +67,11 @@ function CastToast({
           <div className="stcast__toasttitle">{title}</div>
           <div className="stcast__toastmsg">{message}</div>
         </div>
-        <button type="button" className="stcast__toastclose" aria-label="Dismiss" onClick={onDismiss}>
-          <CloseGlyph size={18} />
-        </button>
+        {onDismiss && (
+          <button type="button" className="stcast__toastclose" aria-label="Dismiss" onClick={onDismiss}>
+            <CloseGlyph size={18} />
+          </button>
+        )}
       </div>
       {action && (
         <button type="button" className="stcast__toastaction" onClick={action.onClick}>
@@ -73,25 +82,65 @@ function CastToast({
   );
 }
 
-function DeviceRow({ glyph, label, tooltip }: { glyph: ReactNode; label: string; tooltip?: string }) {
+/** A device the cast uses; it is a picker (a button with a chevron) only with `onPick`. */
+function DeviceRow({
+  glyph,
+  label,
+  tooltip,
+  onPick,
+}: {
+  glyph: ReactNode;
+  label: string;
+  tooltip?: string;
+  onPick?: () => void;
+}) {
   return (
     <div className="stcast__devrow u-tip">
       {glyph}
-      <button type="button" className="stcast__devbtn" title={tooltip} aria-label={tooltip}>
-        <span className="stcast__devlabel">{label}</span>
-        <ChevronGlyph size={18} fill="currentColor" />
-      </button>
+      {onPick ? (
+        <button type="button" className="stcast__devbtn" title={tooltip} aria-label={tooltip} onClick={onPick}>
+          <span className="stcast__devlabel">{label}</span>
+          <ChevronGlyph size={18} fill="currentColor" />
+        </button>
+      ) : (
+        <span className="stcast__devbtn stcast__devbtn--static" title={tooltip}>
+          <span className="stcast__devlabel">{label}</span>
+        </span>
+      )}
       {tooltip && <span className="u-tip__bubble">{tooltip}</span>}
     </div>
   );
 }
 
-function CircleControl({ glyph, label, withChevron }: { glyph: ReactNode; label: string; withChevron?: boolean }) {
+/** A live control. `on === false` draws it switched off; `onDevices` adds its device chevron. */
+function CircleControl({
+  glyph,
+  label,
+  on,
+  disabled,
+  onClick,
+  onDevices,
+}: {
+  glyph: ReactNode;
+  label: string;
+  on?: boolean;
+  disabled?: boolean;
+  onClick?: () => void;
+  onDevices?: () => void;
+}) {
   return (
     <div className="stcast__cwm">
-      <button type="button" className="stcast__circle" aria-label={label}>{glyph}</button>
-      {withChevron && (
-        <button type="button" className="stcast__chev" aria-label={`${label} devices`}>
+      <button
+        type="button"
+        className={"stcast__circle" + (on === false ? " stcast__circle--off" : "")}
+        aria-label={label}
+        disabled={disabled || !onClick}
+        onClick={onClick}
+      >
+        {glyph}
+      </button>
+      {onDevices && (
+        <button type="button" className="stcast__chev" aria-label={`${label} devices`} onClick={onDevices}>
           <ChevronGlyph size={20} fill="#fff" />
         </button>
       )}
@@ -120,6 +169,29 @@ type StCastStreamerProps = {
   stage?: ReactNode;
   /** Makes the onboarding name field controlled. */
   onNameChange?: (name: string) => void;
+  /** The onboarding JOIN NOW; inert without it. */
+  onJoin?: () => void;
+  /** The onboarding device rows; each is a picker only with `onPickDevice`. */
+  devices?: { mic: string; speaker: string; camera: string };
+  onPickDevice?: (kind: "mic" | "speaker" | "camera") => void;
+  /** Live: the microphone and camera, drawn off when `false`. */
+  micOn?: boolean;
+  cameraOn?: boolean;
+  onToggleMic?: () => void;
+  onToggleCamera?: () => void;
+  /** Live: the screen share; `shareBusy` while one is starting. */
+  sharing?: boolean;
+  shareBusy?: boolean;
+  onToggleShare?: () => void;
+  /** Blocks the microphone and camera while a toggle is under way. */
+  devicesBusy?: boolean;
+  /** Live: LEAVE STREAM. */
+  onLeaveStream?: () => void;
+  /** Live: mute the Cast's audio in this tab. */
+  onToggleTabMute?: () => void;
+  /** Live: the chat and people buttons; each is shown only with its handler. */
+  onOpenChat?: () => void;
+  onOpenPeople?: () => void;
 };
 
 export default function StCastStreamer({
@@ -133,13 +205,29 @@ export default function StCastStreamer({
   toasts = [],
   errorTitle = "Failed to rejoin cast",
   errorMessage = "Please use the link for this Cast to rejoin.",
-  onRetry = () => {},
-  onLeave = () => {},
+  onRetry,
+  onLeave,
   retryLabel = "Reconnect",
   leaveLabel = "Leave",
   stage,
   onNameChange,
+  onJoin,
+  devices = { mic: "Default - Microphone", speaker: "Default - Speakers", camera: "FaceTime HD Camera" },
+  onPickDevice,
+  micOn,
+  cameraOn,
+  onToggleMic,
+  onToggleCamera,
+  sharing = false,
+  shareBusy = false,
+  onToggleShare,
+  devicesBusy = false,
+  onLeaveStream,
+  onToggleTabMute,
+  onOpenChat,
+  onOpenPeople,
 }: StCastStreamerProps) {
+  const pick = (kind: "mic" | "speaker" | "camera") => (onPickDevice ? () => onPickDevice(kind) : undefined);
   return (
     <SitesChromeMaybe chrome={chrome} active="legal">
       <div className={"stcast stcast--" + state}>
@@ -167,12 +255,14 @@ export default function StCastStreamer({
               />
 
               <div className="stcast__devices">
-                <DeviceRow glyph={<MicGlyph size={20} fill="currentColor" />} label="Default - Microphone" tooltip="Microphone" />
-                <DeviceRow glyph={<VolumeGlyph size={20} fill="currentColor" />} label="Default - Speakers" tooltip="Speaker" />
-                <DeviceRow glyph={<VideocamGlyph size={20} fill="currentColor" />} label="FaceTime HD Camera" tooltip="Camera" />
+                <DeviceRow glyph={<MicGlyph size={20} fill="currentColor" />} label={devices.mic} tooltip="Microphone" onPick={pick("mic")} />
+                <DeviceRow glyph={<VolumeGlyph size={20} fill="currentColor" />} label={devices.speaker} tooltip="Speaker" onPick={pick("speaker")} />
+                <DeviceRow glyph={<VideocamGlyph size={20} fill="currentColor" />} label={devices.camera} tooltip="Camera" onPick={pick("camera")} />
               </div>
 
-              <button type="button" className="stcast__join">JOIN NOW</button>
+              <button type="button" className="stcast__join" disabled={!onJoin} onClick={onJoin}>
+                JOIN NOW
+              </button>
             </div>
           </div>
         )}
@@ -215,27 +305,61 @@ export default function StCastStreamer({
 
               <div className="stcast__controls">
                 <div className="stcast__center">
-                  <CircleControl glyph={<MicGlyph size={24} fill="#161518" />} label="Microphone" withChevron />
-                  <CircleControl glyph={<VideocamGlyph size={24} fill="#161518" />} label="Camera" withChevron />
-                  <CircleControl glyph={<ScreenShareGlyph size={24} fill="#161518" />} label="Share screen" withChevron />
-                  <button type="button" className="stcast__leave">
+                  <CircleControl
+                    glyph={<MicGlyph size={24} fill="currentColor" />}
+                    label={micOn === false ? "Unmute microphone" : "Mute microphone"}
+                    on={micOn}
+                    disabled={devicesBusy}
+                    onClick={onToggleMic}
+                  />
+                  <CircleControl
+                    glyph={<VideocamGlyph size={24} fill="currentColor" />}
+                    label={cameraOn === false ? "Turn camera on" : "Turn camera off"}
+                    on={cameraOn}
+                    disabled={devicesBusy}
+                    onClick={onToggleCamera}
+                  />
+                  <CircleControl
+                    glyph={<ScreenShareGlyph size={24} fill="currentColor" />}
+                    label={sharing ? "Stop sharing" : shareBusy ? "Starting share\u{2026}" : "Share screen"}
+                    on={sharing ? false : undefined}
+                    disabled={shareBusy}
+                    onClick={onToggleShare}
+                  />
+                  <button type="button" className="stcast__leave" aria-label="Leave stream" disabled={!onLeaveStream} onClick={onLeaveStream}>
                     <CallEndGlyph size={20} fill="#fff" />
                     LEAVE STREAM
                   </button>
                 </div>
 
                 <div className="stcast__right">
-                  <button type="button" className="stcast__iconbtn" aria-label={tabMuted ? "Unmute Cast audio" : "Mute Cast audio"}>
+                  <button
+                    type="button"
+                    className="stcast__iconbtn"
+                    aria-label={tabMuted ? "Unmute Cast audio" : "Mute Cast audio"}
+                    aria-pressed={tabMuted}
+                    disabled={!onToggleTabMute}
+                    onClick={onToggleTabMute}
+                  >
                     {tabMuted ? <VolumeOffGlyph /> : <VolumeGlyph />}
                   </button>
-                  <button type="button" className="stcast__iconbtn" aria-label="Chat">
-                    <ChatGlyph />
-                    {unreadMessages > 0 && <span className="stcast__badge">{unreadMessages}</span>}
-                  </button>
-                  <button type="button" className="stcast__iconbtn" aria-label="People">
-                    <PeopleGlyph />
-                    <span className="stcast__badge">{participants}</span>
-                  </button>
+                  {onOpenChat && (
+                    <button type="button" className="stcast__iconbtn" aria-label="Chat" onClick={onOpenChat}>
+                      <ChatGlyph />
+                      {unreadMessages > 0 && <span className="stcast__badge">{unreadMessages}</span>}
+                    </button>
+                  )}
+                  {onOpenPeople ? (
+                    <button type="button" className="stcast__iconbtn" aria-label="People" onClick={onOpenPeople}>
+                      <PeopleGlyph />
+                      <span className="stcast__badge">{participants}</span>
+                    </button>
+                  ) : (
+                    <span className="stcast__iconbtn stcast__iconbtn--static" role="status" aria-label={`${participants} in the Cast`}>
+                      <PeopleGlyph />
+                      <span className="stcast__badge">{participants}</span>
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -250,15 +374,21 @@ export default function StCastStreamer({
               </div>
               <div className="stcast__errtitle">{errorTitle}</div>
               <div className="stcast__errmsg">{errorMessage}</div>
-              <div className="stcast__erractions">
-                <button type="button" className="stcast__errbtn" onClick={onRetry}>
-                  <RefreshGlyph size={18} fill="#fff" />
-                  {retryLabel}
-                </button>
-                <button type="button" className="stcast__errbtn stcast__errbtn--ghost" onClick={onLeave}>
-                  {leaveLabel}
-                </button>
-              </div>
+              {(onRetry || onLeave) && (
+                <div className="stcast__erractions">
+                  {onRetry && (
+                    <button type="button" className="stcast__errbtn" onClick={onRetry}>
+                      <RefreshGlyph size={18} fill="#fff" />
+                      {retryLabel}
+                    </button>
+                  )}
+                  {onLeave && (
+                    <button type="button" className="stcast__errbtn stcast__errbtn--ghost" onClick={onLeave}>
+                      {leaveLabel}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -266,7 +396,7 @@ export default function StCastStreamer({
         {toasts.length > 0 && (
           <div className="stcast__stack">
             {toasts.map((t) => (
-              <CastToast key={t.id} title={t.title} message={t.message} action={t.action} onDismiss={() => {}} />
+              <CastToast key={t.id} title={t.title} message={t.message} action={t.action} onDismiss={t.onDismiss} />
             ))}
           </div>
         )}
