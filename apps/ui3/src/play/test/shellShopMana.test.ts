@@ -1243,6 +1243,20 @@ describe('the in-world purchase with MANA', () => {
       await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ operation: '0000000a-0000-0000-0000-000000000001', state: 'cancelled' }))
     })
 
+    it('ends a purchase whose only sent request the relay refused as failed, a retry left signing dropped on takeover', async () => {
+      const w = world()
+      seed(w, '0000000a-0000-0000-0000-000000000004', [
+        { id: 'a1', stage: 'refused', payload: '0x' + 'cd'.repeat(32), at: 1 },
+        { id: 'b1', stage: 'signing' }
+      ])
+      const p = page(w)
+      await p.shell.request('shop.status', {})
+      await vi.waitFor(() => expect(p.events.filter((e) => e.operation === '0000000a-0000-0000-0000-000000000004').at(-1)?.state).toBe('failed'))
+      expect(p.events.filter((e) => e.operation === '0000000a-0000-0000-0000-000000000004').map((e) => e.state)).not.toContain('cancelled')
+      const kept = JSON.parse(w.storage.getItem(`dcl-inworld-shop:record:v1:${BUYER}:0000000a-0000-0000-0000-000000000004`)!) as { mana: { sends: { id: string }[] } }
+      expect(kept.mana.sends.map((x) => x.id)).toEqual(['a1'])
+    })
+
     it('keeps a dispatched purchase the chain can’t settle yet, and a BUY of its item shows it', async () => {
       const w = world()
       seed(w, '0000000a-0000-0000-0000-000000000002', [{ id: 's5', stage: 'dispatched', payload: '0x' + 'cd'.repeat(32), at: w.clock.now }])

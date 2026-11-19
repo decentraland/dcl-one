@@ -828,9 +828,18 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     // Back to reviewing: its sale provably didn't go (a marked refusal), and the dialog up for it says so with TRY AGAIN.
     // That dialog ends it (failed, or a fresh attempt); the watch stops here.
     if (op.state === 'reviewing') return true
-    // The relay refused the only send that went, answering after the send's deadline: proven unsent, it ends failed (on
-    // the dialog still up for it, with TRY AGAIN; quietly when that was closed), not as a send that never left.
-    if (!op.manaSending && !manaDispatched(record) && record.sends.some((s) => s.stage === 'refused') && !record.sends.some((s) => s.stage === 'signing')) {
+    // Held here, with no send of it in flight on this page: a send left `signing` has no sender to finish it (the page
+    // that signed it went, or its retry ended before its request), so what can't be evidence is dropped first, and the
+    // record is judged as it then stands.
+    let attempt = record
+    if (op.release && !op.foreign && !op.manaSending) {
+      const kept = compactManaAttempt(record)
+      if (JSON.stringify(kept) !== JSON.stringify(record) && keeper(op)(kept)) attempt = kept
+      else if (JSON.stringify(kept) !== JSON.stringify(record)) return false
+    }
+    // The relay refused every send that went (answering, maybe, after the send's deadline): proven unsent, it ends
+    // failed (on the dialog still up for it, with TRY AGAIN; quietly when that was closed), not as one that never left.
+    if (!op.manaSending && !manaDispatched(attempt) && attempt.sends.some((s) => s.stage === 'refused') && !attempt.sends.some((s) => s.stage === 'signing')) {
       if (slot.holds(op)) {
         op.state = 'reviewing'
         publish(op)
@@ -839,15 +848,9 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       } else settled(op, 'failed', {}, MANA_NOT_SENT, MANA_NOT_SENT_PART)
       return true
     }
-    // Held here, with no send of it in flight on this page: a send left `signing` has no sender to finish it (the page
-    // that signed it went, or its retry ended before its request), so what can't be evidence is dropped.
-    let attempt = record
-    if (op.release && !op.foreign && !op.manaSending) {
-      const kept = compactManaAttempt(record)
-      if (JSON.stringify(kept) !== JSON.stringify(record) && keeper(op)(kept)) attempt = kept
-    }
     if (!manaDispatched(attempt)) {
-      if (op.manaSending) return false
+      // A send still `signing` here belongs to a live sender (this page's own), or to a page that holds it elsewhere.
+      if (op.manaSending || attempt.sends.some((s) => s.stage === 'signing')) return false
       settled(op, 'cancelled')
       return true
     }
