@@ -1,7 +1,10 @@
 //! The router's series, under upstream's names (`src/metrics.ts`), recorded through the
 //! `metrics` facade into the Prometheus exporter as `serve` and Pulse do:
 //!
-//! - `message_delivery_total{outcome}`: delivered, failed, rejected_oversized, rate_limited;
+//! - `message_delivery_total{outcome}`: upstream's delivered, failed, rejected_oversized and
+//!   rate_limited, and overloaded (admitted, but every routing slot was taken);
+//! - `message_batch_failures_total{reason}`: publishes of one batch that failed (`error`) or
+//!   did not answer within `routing::PUBLISH_TIMEOUT` (`timeout`);
 //! - `message_delivery_latency`: one routed packet, from decode to the last batch, in
 //!   milliseconds as upstream, over millisecond buckets;
 //! - `livekit_connection_status`: 1 while connected to the room, 0 otherwise.
@@ -20,6 +23,7 @@ use crate::routing::Outcome;
 
 pub const DELIVERY_TOTAL: &str = "message_delivery_total";
 pub const DELIVERY_LATENCY: &str = "message_delivery_latency";
+pub const BATCH_FAILURES: &str = "message_batch_failures_total";
 pub const CONNECTION_STATUS: &str = "livekit_connection_status";
 
 const LATENCY_BUCKETS_MS: [f64; 12] = [
@@ -28,6 +32,11 @@ const LATENCY_BUCKETS_MS: [f64; 12] = [
 
 pub fn outcome(outcome: Outcome) {
     metrics::counter!(DELIVERY_TOTAL, "outcome" => outcome.label()).increment(1);
+}
+
+/// One batch's publish failed: `reason` is `error` or `timeout`.
+pub fn batch_failed(reason: &'static str) {
+    metrics::counter!(BATCH_FAILURES, "reason" => reason).increment(1);
 }
 
 pub fn latency(elapsed: Duration) {
@@ -62,13 +71,11 @@ pub fn install() -> anyhow::Result<PrometheusHandle> {
     metrics::set_global_recorder(recorder)
         .map_err(|e| anyhow::anyhow!("installing the prometheus recorder: {e}"))?;
     // every outcome and the gauge are present from the first scrape
-    for each in [
-        Outcome::Delivered,
-        Outcome::Failed,
-        Outcome::RejectedOversized,
-        Outcome::RateLimited,
-    ] {
+    for each in Outcome::ALL {
         metrics::counter!(DELIVERY_TOTAL, "outcome" => each.label()).absolute(0);
+    }
+    for reason in ["error", "timeout"] {
+        metrics::counter!(BATCH_FAILURES, "reason" => reason).absolute(0);
     }
     metrics::gauge!(CONNECTION_STATUS).set(0.0);
     Ok(handle)
@@ -137,6 +144,8 @@ mod tests {
             outcome(Outcome::Delivered);
             outcome(Outcome::RateLimited);
             outcome(Outcome::RateLimited);
+            outcome(Outcome::Overloaded);
+            batch_failed("timeout");
             latency(Duration::from_millis(7));
             connection.set(true);
         });
@@ -163,6 +172,14 @@ mod tests {
         );
         assert!(
             text.contains(r#"message_delivery_total{outcome="rate_limited"} 2"#),
+            "{text}"
+        );
+        assert!(
+            text.contains(r#"message_delivery_total{outcome="overloaded"} 1"#),
+            "{text}"
+        );
+        assert!(
+            text.contains(r#"message_batch_failures_total{reason="timeout"} 1"#),
             "{text}"
         );
         assert!(

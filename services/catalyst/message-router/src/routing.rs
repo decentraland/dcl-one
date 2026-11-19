@@ -5,11 +5,18 @@
 //!    has no topic; counted `rejected_oversized` above the size cap and `rate_limited` when the
 //!    sender's bucket is empty;
 //! 2. [`route`]: decoded as an rfc4 `Packet`; only `chat` and `chat_reaction` go on. The room
-//!    must be connected and the sender a member of the community the topic names; the packet is
-//!    re-encoded with the sender stamped in and published, reliable, on `community:<id>` to the
-//!    other members of the active community, [`BATCH_SIZE`] destinations per publish. A failed
-//!    batch is logged and the next ones still go; the room dropping mid-way stops the rest.
-//!    Counted `delivered` once every batch was tried, `failed` otherwise.
+//!    must be connected and the sender a member of the community the topic names (one read,
+//!    [`Membership::audience`]); the packet is re-encoded with the sender stamped in and
+//!    published, reliable, on `community:<id>` to the other members of the active community,
+//!    [`BATCH_SIZE`] destinations per publish, each publish bounded by [`PUBLISH_TIMEOUT`]. A
+//!    failed or timed-out batch is logged and counted (`message_batch_failures_total`) and the
+//!    next ones still go; the room dropping mid-way stops the rest. Counted `delivered` once
+//!    every batch was tried and at least one was published, `failed` otherwise.
+//!
+//! The participant counts `overloaded` for an admitted packet that finds every routing slot
+//! taken: it drops the packet rather than stop reading the room's events.
+
+use std::time::Duration;
 
 use async_trait::async_trait;
 use prost::Message;
@@ -20,6 +27,9 @@ use crate::proto::rfc4;
 /// Destination identities per publish.
 pub const BATCH_SIZE: usize = 100;
 pub const TOPIC_PREFIX: &str = "community:";
+/// The longest one publish may take before its batch counts as failed and its routing slot
+/// moves on (a full reliable buffer or a reconnect in progress can hold it indefinitely).
+pub const PUBLISH_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The `outcome` label of `message_delivery_total`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,15 +38,26 @@ pub enum Outcome {
     Failed,
     RejectedOversized,
     RateLimited,
+    /// Admitted, but every routing slot was taken; dropped unrouted.
+    Overloaded,
 }
 
 impl Outcome {
+    pub const ALL: [Outcome; 5] = [
+        Self::Delivered,
+        Self::Failed,
+        Self::RejectedOversized,
+        Self::RateLimited,
+        Self::Overloaded,
+    ];
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Delivered => "delivered",
             Self::Failed => "failed",
             Self::RejectedOversized => "rejected_oversized",
             Self::RateLimited => "rate_limited",
+            Self::Overloaded => "overloaded",
         }
     }
 }
@@ -102,6 +123,8 @@ pub enum Failure {
     NoRecipients,
     #[error("membership read failed: {0}")]
     Store(String),
+    #[error("no batch was published")]
+    NothingPublished,
 }
 
 /// The packet with the sender stamped in, encoded: `Chat.forwarded_from` or
@@ -117,13 +140,13 @@ pub fn stamp(mut packet: rfc4::Packet, sender: &str) -> Result<Vec<u8>, Failure>
     Ok(packet.encode_to_vec())
 }
 
-/// The members' reads ([`crate::membership`]).
+/// The members' read ([`crate::membership`]).
 #[async_trait]
 pub trait Membership: Send + Sync {
-    async fn is_member(&self, community: Uuid, address: &str) -> Result<bool, String>;
-    /// The lowercase addresses of the members of `community` other than `sender`, when the
-    /// community is active; none otherwise.
-    async fn recipients(&self, community: Uuid, sender: &str) -> Result<Vec<String>, String>;
+    /// `None` when `sender` is not a member of `community`; otherwise the lowercase addresses of
+    /// the other members when the community is active and not suspended, none when it is not.
+    async fn audience(&self, community: Uuid, sender: &str)
+    -> Result<Option<Vec<String>>, String>;
 }
 
 /// The room, as routing uses it.
@@ -181,40 +204,55 @@ async fn try_route(
     if !room.connected() {
         return Err(Failure::NotConnected);
     }
-    if !members
-        .is_member(community, sender)
+    let recipients = members
+        .audience(community, sender)
         .await
         .map_err(Failure::Store)?
-    {
-        return Err(Failure::NotMember);
-    }
-    let recipients = members
-        .recipients(community, sender)
-        .await
-        .map_err(Failure::Store)?;
+        .ok_or(Failure::NotMember)?;
     if recipients.is_empty() {
         return Err(Failure::NoRecipients);
     }
     let encoded = stamp(packet, sender)?;
     let topic = topic_of(community);
     let batches = recipients.chunks(BATCH_SIZE).count();
+    let mut published = 0;
     for (index, batch) in recipients.chunks(BATCH_SIZE).enumerate() {
         // never publish on a room a reconnect is tearing down
         if !room.connected() {
             return Err(Failure::NotConnected);
         }
-        if let Err(error) = room.publish(encoded.clone(), &topic, batch.to_vec()).await {
-            tracing::error!(
-                %topic,
-                batch = index + 1,
-                batches,
-                recipients = batch.len(),
-                %error,
-                "failed to publish a batch"
-            );
-        }
+        let sent = tokio::time::timeout(
+            PUBLISH_TIMEOUT,
+            room.publish(encoded.clone(), &topic, batch.to_vec()),
+        )
+        .await;
+        let error = match sent {
+            Ok(Ok(())) => {
+                published += batch.len();
+                continue;
+            }
+            Ok(Err(error)) => {
+                crate::metrics::batch_failed("error");
+                error
+            }
+            Err(_) => {
+                crate::metrics::batch_failed("timeout");
+                format!("no answer within {PUBLISH_TIMEOUT:?}")
+            }
+        };
+        tracing::error!(
+            %topic,
+            batch = index + 1,
+            batches,
+            recipients = batch.len(),
+            %error,
+            "failed to publish a batch"
+        );
     }
-    Ok(recipients.len())
+    if published == 0 {
+        return Err(Failure::NothingPublished);
+    }
+    Ok(published)
 }
 
 #[cfg(test)]
@@ -262,17 +300,17 @@ mod tests {
 
     #[async_trait]
     impl Membership for Members {
-        async fn is_member(&self, community: Uuid, address: &str) -> Result<bool, String> {
+        async fn audience(
+            &self,
+            community: Uuid,
+            sender: &str,
+        ) -> Result<Option<Vec<String>>, String> {
             assert_eq!(community.to_string(), COMMUNITY);
-            assert_eq!(address, SENDER);
+            assert_eq!(sender, SENDER);
             if self.fail {
                 return Err("db down".into());
             }
-            Ok(self.member)
-        }
-        async fn recipients(&self, _: Uuid, sender: &str) -> Result<Vec<String>, String> {
-            assert_eq!(sender, SENDER);
-            Ok(self.recipients.clone())
+            Ok(self.member.then(|| self.recipients.clone()))
         }
     }
 
@@ -281,6 +319,10 @@ mod tests {
         down: AtomicBool,
         /// the publish with this index fails
         fail_publish: Option<usize>,
+        /// every publish fails
+        fail_all: bool,
+        /// the publish with this index never answers
+        hang_publish: Option<usize>,
         /// the room drops after this many publishes
         drop_after: Option<usize>,
         calls: AtomicUsize,
@@ -305,8 +347,11 @@ mod tests {
             if self.drop_after == Some(n + 1) {
                 self.down.store(true, Ordering::SeqCst);
             }
-            if self.fail_publish == Some(n) {
+            if self.fail_all || self.fail_publish == Some(n) {
                 return Err("sfu said no".into());
+            }
+            if self.hang_publish == Some(n) {
+                std::future::pending::<()>().await;
             }
             self.published
                 .lock()
@@ -470,6 +515,67 @@ mod tests {
         );
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn a_publish_that_never_answers_times_out_and_the_rest_still_go() {
+        let room = FakeRoom {
+            hang_publish: Some(0),
+            ..Default::default()
+        };
+        let started = tokio::time::Instant::now();
+        let outcome = route(
+            &room,
+            &members(150),
+            &chat(None).encode_to_vec(),
+            SENDER,
+            &topic(),
+        )
+        .await;
+        assert_eq!(outcome, Outcome::Delivered);
+        assert_eq!(started.elapsed(), PUBLISH_TIMEOUT);
+        assert_eq!(room.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            room.published
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|p| p.2.len())
+                .collect::<Vec<_>>(),
+            [50]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn nothing_published_is_not_delivered() {
+        let failing = FakeRoom {
+            fail_all: true,
+            ..Default::default()
+        };
+        let outcome = route(
+            &failing,
+            &members(250),
+            &chat(None).encode_to_vec(),
+            SENDER,
+            &topic(),
+        )
+        .await;
+        assert_eq!(outcome, Outcome::Failed);
+        assert_eq!(failing.calls.load(Ordering::SeqCst), 3);
+
+        let hanging = FakeRoom {
+            hang_publish: Some(0),
+            ..Default::default()
+        };
+        let outcome = route(
+            &hanging,
+            &members(100),
+            &chat(None).encode_to_vec(),
+            SENDER,
+            &topic(),
+        )
+        .await;
+        assert_eq!(outcome, Outcome::Failed);
+    }
+
     #[tokio::test]
     async fn the_room_dropping_mid_way_stops_the_rest_and_fails() {
         let room = FakeRoom {
@@ -566,16 +672,16 @@ mod tests {
     }
 
     #[test]
-    fn outcome_labels_are_upstream_s() {
+    fn outcome_labels_are_upstream_s_and_overloaded() {
         assert_eq!(
+            Outcome::ALL.map(Outcome::label),
             [
-                Outcome::Delivered,
-                Outcome::Failed,
-                Outcome::RejectedOversized,
-                Outcome::RateLimited
+                "delivered",
+                "failed",
+                "rejected_oversized",
+                "rate_limited",
+                "overloaded"
             ]
-            .map(Outcome::label),
-            ["delivered", "failed", "rejected_oversized", "rate_limited"]
         );
     }
 }

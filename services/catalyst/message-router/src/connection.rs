@@ -51,7 +51,8 @@ impl Reason {
 /// Whether to connect again (with a fresh token) after `reason`. No for a disconnect this
 /// process asked for, for another participant with this identity (a second replica holding the
 /// same identity would otherwise take turns evicting this one), for a deleted room and for the
-/// SIP reasons, which cannot happen here; yes for everything else.
+/// SIP reasons, which cannot happen here; yes for everything else. On a no the process exits
+/// non-zero, so a supervisor that restarts on exit starts it again (after its own back-off).
 pub fn reconnects(reason: Reason) -> bool {
     !matches!(
         reason,

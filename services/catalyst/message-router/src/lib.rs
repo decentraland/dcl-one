@@ -7,13 +7,14 @@
 //! active community, 100 destination identities per publish.
 //!
 //! - [`routing`]: what happens to one packet, from admission to the delivery outcome;
-//! - [`rate_limiter`]: the per-sender token bucket;
-//! - [`membership`]: the two reads of `social.community_members` and `social.communities`;
-//! - [`connection`]: when a disconnect reconnects;
+//! - [`membership`]: the one read of `social.community_members` and `social.communities`;
+//! - [`connection`]: when a disconnect reconnects, and when it ends the process;
+//! - [`in_flight`]: the packets routed at once, dropped `overloaded` beyond the limit;
 //! - [`token`]: the join token, asked of the gatekeeper (`shared::message_router`), so this
 //!   process holds no LiveKit secret;
 //! - [`metrics`]: the delivery counter, latency histogram and connection gauge;
-//! - [`config`]: the environment it reads;
+//! - [`config`]: the environment it reads, and the per-sender token bucket
+//!   (`shared::limits::RateLimiter`);
 //! - `participant` (feature `livekit`): the LiveKit room and its event loop.
 
 // The crates this one builds on, under their module names (AGENTS.md).
@@ -21,12 +22,12 @@ pub(crate) use catalyst_shared as shared;
 
 pub mod config;
 pub mod connection;
+pub mod in_flight;
 pub mod membership;
 pub mod metrics;
 #[cfg(feature = "livekit")]
 pub mod participant;
 pub mod proto;
-pub mod rate_limiter;
 pub mod routing;
 pub mod token;
 

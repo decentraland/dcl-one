@@ -2,8 +2,7 @@
 //! `lib.rs`). It reads the database, asks the gatekeeper for its token, and serves `/metrics`
 //! and `/health/*` on `MESSAGE_ROUTER_METRICS_BIND` until SIGINT or SIGTERM.
 
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::sync::Arc;
 
 use clap::Parser;
 
@@ -11,7 +10,6 @@ use catalyst_message_router::config::{Cli, key_from_env};
 use catalyst_message_router::membership::PgMembership;
 use catalyst_message_router::metrics::{self, Connection};
 use catalyst_message_router::participant::Router;
-use catalyst_message_router::rate_limiter::RateLimiter;
 use catalyst_message_router::token::{TokenClient, check_url};
 
 #[tokio::main]
@@ -54,26 +52,14 @@ async fn main() -> anyhow::Result<()> {
     .await?;
     catalyst_db::bootstrap(&pool).await?;
 
-    let limiter = Arc::new(Mutex::new(RateLimiter::new(cli.limits())));
-    tokio::spawn({
-        let limiter = limiter.clone();
-        let every = cli.cleanup_interval();
-        async move {
-            let mut tick = tokio::time::interval(every);
-            loop {
-                tick.tick().await;
-                limiter.lock().expect("rate limiter").sweep(Instant::now());
-            }
-        }
-    });
-
     let router = Arc::new(Router {
         tokens: TokenClient::new(token_url, key, cli.replica)?,
         livekit_url: cli.livekit_url.clone(),
         retry: cli.retry(),
         max_packet_size_bytes: cli.max_packet_size_bytes,
+        max_in_flight: cli.max_in_flight(),
         members: Arc::new(PgMembership::new(pool)),
-        limiter,
+        limiter: Arc::new(cli.rate_limiter()),
         connection,
     });
     router.run(shutdown_signal()).await

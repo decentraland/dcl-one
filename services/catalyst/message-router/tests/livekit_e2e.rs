@@ -1,12 +1,12 @@
 //! The router against a real `livekit-server` and the node's schema: a member's community
 //! message reaches the other member with the author stamped in, and a non-member's does not.
 //! Needs `MESSAGE_ROUTER_LIVEKIT_SERVER_BIN` (a `livekit-server` binary) and
-//! `CATALYST_TEST_DATABASE_URL`; skips without either. The gatekeeper's token route is stood in
+//! `CATALYST_TEST_DATABASE_URL`; skips without either, except under `CI=true`, where it fails. The gatekeeper's token route is stood in
 //! for by a server that checks the same signature and mints the same grant
 //! (`comms::gatekeeper::message_router` has its own tests).
 
 use std::net::TcpListener;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use catalyst_message_router::connection::Retry;
@@ -14,7 +14,6 @@ use catalyst_message_router::membership::PgMembership;
 use catalyst_message_router::metrics::Connection;
 use catalyst_message_router::participant::Router;
 use catalyst_message_router::proto::rfc4;
-use catalyst_message_router::rate_limiter::{Limits, RateLimiter};
 use catalyst_message_router::token::{TokenClient, check_url};
 use catalyst_shared::message_router::{self as contract, TOKEN_PATH, TokenRequest, TokenResponse};
 use dcl_livekit_token::{AccessToken, VideoGrants};
@@ -223,10 +222,14 @@ async fn next_chat(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_member_s_message_reaches_members_and_a_stranger_s_does_not() {
+    // CI (.github/workflows/message-router.yml) provides both; there a missing one fails
+    let ci = std::env::var("CI").is_ok_and(|v| v == "true");
     let Ok(binary) = std::env::var("MESSAGE_ROUTER_LIVEKIT_SERVER_BIN") else {
+        assert!(!ci, "MESSAGE_ROUTER_LIVEKIT_SERVER_BIN is unset");
         return;
     };
     let Some(pool) = catalyst_db::scratch::pool(2).await else {
+        assert!(!ci, "CATALYST_TEST_DATABASE_URL is unset");
         return;
     };
     let port = free_port();
@@ -246,8 +249,12 @@ async fn a_member_s_message_reaches_members_and_a_stranger_s_does_not() {
             delay: Duration::from_millis(500),
         },
         max_packet_size_bytes: 8192,
+        max_in_flight: 4,
         members: Arc::new(PgMembership::new(pool.clone())),
-        limiter: Arc::new(Mutex::new(RateLimiter::new(Limits::default()))),
+        limiter: Arc::new(catalyst_shared::limits::RateLimiter::new(
+            10,
+            Duration::from_secs(2),
+        )),
         connection: connection.clone(),
     });
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();

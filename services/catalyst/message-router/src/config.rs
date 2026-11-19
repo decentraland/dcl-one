@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use crate::connection::Retry;
-use crate::rate_limiter::Limits;
+use crate::shared::limits::RateLimiter;
 
 #[derive(clap::Parser, Debug, Clone)]
 #[command(
@@ -44,16 +44,12 @@ pub struct Cli {
     pub max_packet_size_bytes: usize,
 
     /// Each sender's burst of routed packets.
-    #[arg(long, env = "MESSAGE_ROUTER_RATE_LIMIT_MAX_TOKENS", default_value_t = 10.0, value_parser = positive)]
-    pub rate_limit_max_tokens: f64,
+    #[arg(long, env = "MESSAGE_ROUTER_RATE_LIMIT_MAX_TOKENS", default_value_t = 10, value_parser = clap::value_parser!(u32).range(1..))]
+    pub rate_limit_max_tokens: u32,
 
     /// Each sender's sustained routed packets per second.
     #[arg(long, env = "MESSAGE_ROUTER_RATE_LIMIT_REFILL_PER_SECOND", default_value_t = 5.0, value_parser = positive)]
     pub rate_limit_refill_per_second: f64,
-
-    /// How often idle rate limit buckets are dropped, in milliseconds.
-    #[arg(long, env = "MESSAGE_ROUTER_RATE_LIMIT_CLEANUP_INTERVAL_MS", default_value_t = 60_000, value_parser = clap::value_parser!(u64).range(1..))]
-    pub rate_limit_cleanup_interval_ms: u64,
 
     /// Attempts per connection (each with a fresh token).
     #[arg(long, env = "MESSAGE_ROUTER_CONNECT_ATTEMPTS", default_value_t = 5, value_parser = clap::value_parser!(u32).range(1..))]
@@ -71,7 +67,9 @@ pub struct Cli {
     )]
     pub metrics_bind: SocketAddr,
 
-    /// The router's database connections.
+    /// The router's database connections, and so the packets it routes at once: each routed
+    /// packet holds one connection for its one membership read, and a packet that finds every
+    /// slot taken is dropped and counted `overloaded`.
     #[arg(long, env = "MESSAGE_ROUTER_DB_MAX_CONNECTIONS", default_value_t = 4, value_parser = clap::value_parser!(u32).range(1..))]
     pub db_max_connections: u32,
 }
@@ -84,11 +82,22 @@ fn positive(raw: &str) -> Result<f64, String> {
 }
 
 impl Cli {
-    pub fn limits(&self) -> Limits {
-        Limits {
-            max_tokens: self.rate_limit_max_tokens,
-            refill_per_second: self.rate_limit_refill_per_second,
-        }
+    /// The per-sender token bucket (`shared::limits`): `rate_limit_max_tokens` at once, refilled
+    /// at `rate_limit_refill_per_second`.
+    pub fn rate_limiter(&self) -> RateLimiter {
+        RateLimiter::new(self.rate_limit_max_tokens, self.rate_limit_window())
+    }
+
+    /// How long an empty bucket takes to fill again.
+    pub fn rate_limit_window(&self) -> Duration {
+        Duration::from_secs_f64(
+            f64::from(self.rate_limit_max_tokens) / self.rate_limit_refill_per_second,
+        )
+    }
+
+    /// Packets routed at once: one per database connection.
+    pub fn max_in_flight(&self) -> usize {
+        self.db_max_connections as usize
     }
 
     pub fn retry(&self) -> Retry {
@@ -96,10 +105,6 @@ impl Cli {
             attempts: self.connect_attempts,
             delay: Duration::from_millis(self.connect_delay_ms),
         }
-    }
-
-    pub fn cleanup_interval(&self) -> Duration {
-        Duration::from_millis(self.rate_limit_cleanup_interval_ms)
     }
 
     /// Under `NODE_POSTURE` island or journey, the token and LiveKit URLs name loopback or this
@@ -151,18 +156,40 @@ mod tests {
         let cli = parse(&[]).unwrap();
         assert_eq!(cli.replica, 0);
         assert_eq!(cli.max_packet_size_bytes, 8192);
-        assert_eq!(cli.limits(), Limits::default());
-        assert_eq!(cli.cleanup_interval(), Duration::from_secs(60));
+        assert_eq!(
+            (cli.rate_limit_max_tokens, cli.rate_limit_refill_per_second),
+            (10, 5.0)
+        );
+        assert_eq!(cli.rate_limit_window(), Duration::from_secs(2));
+        assert_eq!(cli.max_in_flight(), 4);
         assert_eq!(cli.retry(), Retry::default());
         assert_eq!(cli.metrics_bind.to_string(), "127.0.0.1:5007");
     }
 
     #[test]
     fn limits_must_be_positive() {
-        for bad in ["0", "-1", "NaN", "inf", "x"] {
+        for bad in ["0", "-1", "1.5", "x"] {
             assert!(parse(&["--rate-limit-max-tokens", bad]).is_err(), "{bad}");
         }
+        for bad in ["0", "-1", "NaN", "inf", "x"] {
+            assert!(
+                parse(&["--rate-limit-refill-per-second", bad]).is_err(),
+                "{bad}"
+            );
+        }
         assert!(parse(&["--connect-attempts", "0"]).is_err());
+    }
+
+    /// Upstream's bucket: a burst of 10, then 5 per second.
+    #[test]
+    fn the_default_bucket_takes_a_burst_of_ten_per_sender() {
+        use crate::shared::limits::RateLimitDecision::{Allow, Deny};
+        let limiter = parse(&[]).unwrap().rate_limiter();
+        for _ in 0..10 {
+            assert_eq!(limiter.check("0xa"), Allow);
+        }
+        assert_eq!(limiter.check("0xa"), Deny);
+        assert_eq!(limiter.check("0xb"), Allow);
     }
 
     #[test]

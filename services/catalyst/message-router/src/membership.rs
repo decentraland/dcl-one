@@ -1,5 +1,6 @@
-//! The router's two reads of social's community tables, by shared SQL on its own small pool
-//! (DATABASE.md "Message router workload"; it never writes them):
+//! The router's one read of social's community tables per routed packet, by shared SQL on its
+//! own small pool (DATABASE.md "Message router workload"; it never writes them). One statement
+//! answers both questions:
 //!
 //! - is the sender a member: one primary-key probe of `social.community_members`
 //!   (`community_id`, `member_address`), whatever the community's state, as upstream;
@@ -23,40 +24,29 @@ impl PgMembership {
         Self { pool }
     }
 
-    pub async fn is_member(&self, community: Uuid, address: &str) -> sqlx::Result<bool> {
-        sqlx::query_scalar(
+    /// `None` when `sender` is not a member of `community`; otherwise the other members of the
+    /// community when it is active and not suspended, none when it is not.
+    pub async fn audience(&self, community: Uuid, sender: &str) -> sqlx::Result<Option<Vec<String>>> {
+        let (member, recipients): (bool, Vec<String>) = sqlx::query_as(
             "SELECT EXISTS (SELECT 1 FROM social.community_members \
-             WHERE community_id = $1 AND member_address = $2)",
-        )
-        .bind(community)
-        .bind(address.to_lowercase())
-        .fetch_one(&self.pool)
-        .await
-    }
-
-    pub async fn recipients(&self, community: Uuid, sender: &str) -> sqlx::Result<Vec<String>> {
-        sqlx::query_scalar(
-            "SELECT lower(cm.member_address) FROM social.communities c \
-             JOIN social.community_members cm ON cm.community_id = c.id \
-             WHERE c.id = $1 AND c.active AND NOT c.suspended AND cm.member_address <> $2",
+                            WHERE community_id = $1 AND member_address = $2), \
+                    ARRAY(SELECT lower(cm.member_address) FROM social.communities c \
+                          JOIN social.community_members cm ON cm.community_id = c.id \
+                          WHERE c.id = $1 AND c.active AND NOT c.suspended \
+                            AND cm.member_address <> $2)",
         )
         .bind(community)
         .bind(sender.to_lowercase())
-        .fetch_all(&self.pool)
-        .await
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(member.then_some(recipients))
     }
 }
 
 #[async_trait]
 impl crate::routing::Membership for PgMembership {
-    async fn is_member(&self, community: Uuid, address: &str) -> Result<bool, String> {
-        PgMembership::is_member(self, community, address)
-            .await
-            .map_err(|e| e.to_string())
-    }
-
-    async fn recipients(&self, community: Uuid, sender: &str) -> Result<Vec<String>, String> {
-        PgMembership::recipients(self, community, sender)
+    async fn audience(&self, community: Uuid, sender: &str) -> Result<Option<Vec<String>>, String> {
+        PgMembership::audience(self, community, sender)
             .await
             .map_err(|e| e.to_string())
     }
@@ -118,51 +108,23 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(members.is_member(active, MEMBER).await.unwrap());
+        let checksummed = MEMBER.to_uppercase().replace("0X", "0x");
+        let sorted = |found: Option<Vec<String>>| {
+            found.map(|mut recipients| {
+                recipients.sort();
+                recipients
+            })
+        };
+        let others = Some(vec![OWNER.to_owned(), OTHER.to_owned()]);
+        assert_eq!(sorted(members.audience(active, MEMBER).await.unwrap()), others);
         // the LiveKit identity may arrive checksummed
-        assert!(
-            members
-                .is_member(active, &MEMBER.to_uppercase().replace("0X", "0x"))
-                .await
-                .unwrap()
-        );
-        assert!(!members.is_member(active, STRANGER).await.unwrap());
-        // membership alone, as upstream: the recipients read is what checks the community
-        assert!(members.is_member(inactive, MEMBER).await.unwrap());
-        assert!(!members.is_member(Uuid::new_v4(), MEMBER).await.unwrap());
-
-        let mut recipients = members.recipients(active, MEMBER).await.unwrap();
-        recipients.sort();
-        assert_eq!(recipients, [OWNER, OTHER]);
-        let mut recipients = members
-            .recipients(active, &MEMBER.to_uppercase().replace("0X", "0x"))
-            .await
-            .unwrap();
-        recipients.sort();
-        assert_eq!(recipients, [OWNER, OTHER]);
-        assert!(
-            members
-                .recipients(inactive, MEMBER)
-                .await
-                .unwrap()
-                .is_empty()
-        );
-        assert!(members.is_member(suspended, MEMBER).await.unwrap());
-        assert!(
-            members
-                .recipients(suspended, MEMBER)
-                .await
-                .unwrap()
-                .is_empty()
-        );
-        assert!(
-            members
-                .recipients(Uuid::new_v4(), MEMBER)
-                .await
-                .unwrap()
-                .is_empty()
-        );
+        assert_eq!(sorted(members.audience(active, &checksummed).await.unwrap()), others);
+        assert_eq!(members.audience(active, STRANGER).await.unwrap(), None);
+        // a member of an inactive or suspended community has no one to send to, as upstream
+        assert_eq!(members.audience(inactive, MEMBER).await.unwrap(), Some(vec![]));
+        assert_eq!(members.audience(suspended, MEMBER).await.unwrap(), Some(vec![]));
+        assert_eq!(members.audience(Uuid::new_v4(), MEMBER).await.unwrap(), None);
         let lone = community(&pool, true, &[(OWNER, "owner")]).await;
-        assert!(members.recipients(lone, OWNER).await.unwrap().is_empty());
+        assert_eq!(members.audience(lone, OWNER).await.unwrap(), Some(vec![]));
     }
 }
