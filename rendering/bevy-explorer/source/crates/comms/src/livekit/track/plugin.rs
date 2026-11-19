@@ -565,7 +565,7 @@ fn audio_track_is_now_subscribed(
     };
     let sound = StreamingSoundData::from_decoder(decoder)
         .output_destination(destination)
-        .volume(multiplier.map_or(1.0, |volume| **volume) as f64);
+        .volume(super::transmitter_volume(multiplier.map(|volume| **volume)) as f64);
     let Ok(handle) = livekit_audio_manager.play(sound) else {
         error!("Failed to play track audio in LivekitAudioManager.");
         return;
@@ -858,7 +858,7 @@ fn update_track_volume(
     use kira::tween::Tween;
     for (mut audio_streaming_handle, multiplier, subscribed) in tracks.into_inner() {
         let volume = if subscribed {
-            multiplier.map_or(1.0, |volume| **volume)
+            super::transmitter_volume(multiplier.map(|volume| **volume))
         } else {
             0.0
         };
@@ -912,7 +912,9 @@ fn scene_track_volume(
     if proximity_microphone || voice_room {
         return None;
     }
-    Some(multiplier.unwrap_or(1.0) * scene_volume)
+    Some(super::finite_gain(
+        super::transmitter_volume(multiplier) * scene_volume,
+    ))
 }
 
 #[cfg(test)]
@@ -927,6 +929,22 @@ mod browser_volume_tests {
             scene_track_volume(false, false, Some(0.25), 0.5),
             Some(0.125)
         );
+    }
+
+    #[test]
+    fn scene_volume_is_finite_and_within_unit_range() {
+        assert_eq!(scene_track_volume(false, false, Some(4.0), 0.5), Some(0.5));
+        assert_eq!(scene_track_volume(false, false, Some(-1.0), 0.5), Some(0.0));
+        assert_eq!(
+            scene_track_volume(false, false, Some(f32::NAN), 0.5),
+            Some(0.0)
+        );
+        assert_eq!(
+            scene_track_volume(false, false, Some(f32::INFINITY), 0.5),
+            Some(0.0)
+        );
+        assert_eq!(scene_track_volume(false, false, None, f32::NAN), Some(0.0));
+        assert_eq!(scene_track_volume(false, false, None, 2.0), Some(1.0));
     }
 
     #[test]
