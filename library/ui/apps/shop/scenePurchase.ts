@@ -9,9 +9,11 @@
 // request until that purchase settles, with its view already closed.
 
 import { onShellMessage, shellRequest } from '@explorer-core/lib/shell'
+import type { ItemPurchaseState } from '@explorer-core/engine/generated'
 import { parseOperationEvent, SHOP_EVENT, SHOP_METHODS, SHOP_PROTOCOL, type ShopBuyRequest, type ShopOperation, type ShopOperationState } from './shopProtocol'
 
-export type SceneItemOutcome = 'purchased' | 'dismissed' | 'failed'
+/** What the scene is told, in the engine's own words for it. */
+export type SceneItemOutcome = Extract<ItemPurchaseState, 'purchased' | 'dismissed' | 'failed'>
 
 /** The shell loads its purchase code on the first shop request; give opening the dialog that long. */
 export const BUY_TIMEOUT_MS = 30_000

@@ -55,8 +55,10 @@ const USER_GESTURE_WINDOW_SECS: f64 = 1.0;
 
 /// Whether a player action reached the scene within the window.
 pub(crate) fn recent_user_gesture(context: &RendererSceneContext, time: &Time) -> bool {
-    context.last_action_event.unwrap_or_default()
-        >= time.elapsed_secs_f64() - USER_GESTURE_WINDOW_SECS
+    // no action at all is not an action at time zero
+    context
+        .last_action_event
+        .is_some_and(|at| at >= time.elapsed_secs_f64() - USER_GESTURE_WINDOW_SECS)
 }
 
 pub struct SceneOpen {

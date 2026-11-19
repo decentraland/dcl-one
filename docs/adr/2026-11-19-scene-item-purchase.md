@@ -52,8 +52,10 @@ The scene learns a verdict and nothing else: `Purchased`, `Dismissed` or `Failed
 The verdict and the `closed` event are different grow-only components, and a scene receives the
 components written in one tick in no set order. A scene that stops waiting on `closed`, as
 `openExplorerUiAndWait` does, would lose a verdict that arrived after it. So the engine writes the
-verdict when the purchase ends and `closed` two scene ticks later; the request's slot is free
-from the verdict on.
+verdict when the purchase ends and `closed` two scene ticks later. The owed `closed` is a
+component on the scene, gone with it when the scene unloads. Other scenes can ask from the
+verdict on; the scene itself is `WAS_ALREADY_OPEN` until its `closed` is written, so a new
+`opened` never reaches it ahead of the previous `closed`.
 
 ## Consequences
 

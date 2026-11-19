@@ -50,6 +50,7 @@ impl Plugin for ItemPurchasePlugin {
                 (
                     open_item_purchase,
                     track_item_purchase.after(open_item_purchase),
+                    write_owed_closed.after(track_item_purchase),
                 )
                     .in_set(SceneSets::RestrictedActions),
             )
@@ -74,13 +75,13 @@ impl Plugin for ItemPurchasePlugin {
     }
 }
 
-/// The collection item a scene's urn names: `urn:decentraland:{matic|amoy}:collections-v2:
-/// {contract}:{item id}`, and nothing else. A token id, a third-party collection or trailing
-/// text is refused, so what reaches the HUD is only ever a contract address and a number.
 /// 2^256 - 1, the largest item id a collection can hold.
 const UINT256_MAX: &str =
     "115792089237316195423570985008687907853269984665640564039457584007913129639935";
 
+/// The collection item a scene's urn names: `urn:decentraland:{matic|amoy}:collections-v2:
+/// {contract}:{item id}`, and nothing else. A token id, a third-party collection or trailing
+/// text is refused, so what reaches the HUD is only ever a contract address and a number.
 fn parse_item_urn(urn: &str) -> Option<ItemPurchaseItem> {
     let mut parts = urn.strip_prefix("urn:decentraland:")?.split(':');
     let (network, kind, contract, item_id) =
@@ -157,16 +158,15 @@ struct ItemPurchases {
     last_id: u32,
     active: Option<Active>,
     last: Option<Ended>,
-    /// verdicts written whose `closed` event is still owed
-    closing: Vec<Closing>,
 }
 
-/// A `closed` event owed to a scene whose verdict was written at `result_tick`. The two are
-/// different grow-only components, and a scene receives the components of one tick in no set
-/// order, so `closed` waits for a later tick: a scene that stops waiting on `closed` has the
-/// verdict by then.
-struct Closing {
-    scene: Entity,
+/// On a scene whose purchase verdict was written at `result_tick` and whose `closed` event is
+/// still owed. The two are different grow-only components, and a scene receives the components
+/// of one tick in no set order, so `closed` waits for a later tick: a scene that stops waiting
+/// on `closed` has the verdict by then. Until it is written the scene's next request is
+/// `WAS_ALREADY_OPEN`, so a new `opened` never lands ahead of the previous `closed`.
+#[derive(Component)]
+struct ItemPurchaseClosedOwed {
     request_id: u32,
     result_tick: u32,
 }
@@ -346,6 +346,7 @@ fn open_item_purchase(
     containing_scene: ContainingScene,
     player: Query<Entity, With<PrimaryUser>>,
     scenes: Query<&RendererSceneContext>,
+    closed_owed: Query<(), With<ItemPurchaseClosedOwed>>,
     mut purchases: ResMut<ItemPurchases>,
     time: Res<Time>,
 ) {
@@ -384,7 +385,10 @@ fn open_item_purchase(
         }
         // refused before any prompt: the player is not asked about a request that cannot open,
         // nor asked twice while an earlier request's prompt is still up
-        if purchases.active.is_some() || perms.iter_pending().next().is_some() {
+        if purchases.active.is_some()
+            || perms.iter_pending().next().is_some()
+            || closed_owed.contains(scene)
+        {
             response.send(OpenExplorerUiResult::WasAlreadyOpen);
             continue;
         }
@@ -420,6 +424,11 @@ fn open_item_purchase(
             response.send(OpenExplorerUiResult::RejectedNotCurrentScene);
             continue;
         }
+        // its previous purchase ended while the prompt was up, and that `closed` is still owed
+        if closed_owed.contains(request.scene) {
+            response.send(OpenExplorerUiResult::WasAlreadyOpen);
+            continue;
+        }
         // begin() refuses a request another one overtook while its prompt was up
         purchases.begin(request, response);
     }
@@ -430,6 +439,7 @@ fn open_item_purchase(
 }
 
 fn track_item_purchase(
+    mut commands: Commands,
     mut events: EventReader<SystemApi>,
     mut purchases: ResMut<ItemPurchases>,
     mut scenes: Query<&mut RendererSceneContext>,
@@ -441,7 +451,7 @@ fn track_item_purchase(
             }
             SystemApi::SetItemPurchaseState(SetItemPurchaseState { id, state }) => {
                 if let Some(change) = purchases.report(*id, *state) {
-                    apply(&mut scenes, &mut purchases.closing, change);
+                    apply(&mut commands, &mut scenes, change);
                 }
             }
             _ => (),
@@ -449,34 +459,32 @@ fn track_item_purchase(
     }
 
     if let Some(change) = purchases.hud_gone() {
-        apply(&mut scenes, &mut purchases.closing, change);
+        apply(&mut commands, &mut scenes, change);
     }
+}
 
-    purchases.closing.retain(|closing| {
-        // the scene may have unloaded since its verdict
-        let Ok(mut context) = scenes.get_mut(closing.scene) else {
-            return false;
-        };
-        if !closed_is_due(closing.result_tick, context.tick_number) {
-            return true;
+/// Writes each owed `closed` event once its scene has ticked past the verdict.
+fn write_owed_closed(
+    mut commands: Commands,
+    mut scenes: Query<(Entity, &ItemPurchaseClosedOwed, &mut RendererSceneContext)>,
+) {
+    for (scene, owed, mut context) in &mut scenes {
+        if !closed_is_due(owed.result_tick, context.tick_number) {
+            continue;
         }
         write_event(
             &mut context,
             ExplorerUi::EuItemPurchase as i32,
-            closing.request_id,
+            owed.request_id,
             UiEvent::Closed(UiClosed {}),
         );
-        false
-    });
+        commands.entity(scene).remove::<ItemPurchaseClosedOwed>();
+    }
 }
 
 /// Writes a transition's events to the requesting scene. A verdict's `closed` event is owed, not
-/// written: see [`Closing`].
-fn apply(
-    scenes: &mut Query<&mut RendererSceneContext>,
-    closing: &mut Vec<Closing>,
-    change: Change,
-) {
+/// written: see [`ItemPurchaseClosedOwed`].
+fn apply(commands: &mut Commands, scenes: &mut Query<&mut RendererSceneContext>, change: Change) {
     let ui = ExplorerUi::EuItemPurchase as i32;
     match change {
         Change::Opened(request) => {
@@ -513,11 +521,12 @@ fn apply(
                     }),
                 },
             );
-            closing.push(Closing {
-                scene: request.scene,
-                request_id: request.request_id,
-                result_tick: timestamp,
-            });
+            commands
+                .entity(request.scene)
+                .insert(ItemPurchaseClosedOwed {
+                    request_id: request.request_id,
+                    result_tick: timestamp,
+                });
         }
     }
 }
@@ -545,6 +554,7 @@ fn item_purchase_cancel(
     mut input: ConsoleCommand<ItemPurchaseCancelCommand>,
     mut purchases: ResMut<ItemPurchases>,
     mut scenes: Query<&mut RendererSceneContext>,
+    mut commands: Commands,
 ) {
     if let Some(Ok(_)) = input.take() {
         if purchases.active.is_none() {
@@ -552,7 +562,7 @@ fn item_purchase_cancel(
             return;
         }
         if let Some(change) = purchases.cancel() {
-            apply(&mut scenes, &mut purchases.closing, change);
+            apply(&mut commands, &mut scenes, change);
         }
         input.reply_ok("cancelled");
     }
@@ -795,5 +805,332 @@ mod tests {
             Some(Change::Closed(request(URN), ItemPurchaseState::Dismissed))
         );
         assert_eq!(purchases.cancel(), None);
+    }
+
+    /// The systems themselves, in an app: the gates, the HUD's reports and the owed `closed`,
+    /// against the events that can land while a purchase is under way.
+    mod systems {
+        use super::*;
+        use bevy::platform::collections::HashSet;
+        use common::structs::{
+            AppConfig, CurrentRealm, PermissionUsed, PermissionValue, PrimaryPlayerRes,
+        };
+        use dcl_types::SceneId;
+        use scene_runner::{
+            initialize_scene::{
+                LiveScenes, PortableKind, PortableScenes, PortableSource, ScenePointers,
+            },
+            permissions::PermissionManager,
+        };
+
+        const HASH: &str = "hash";
+
+        /// An app with a player standing in one scene that has just had a player action, and a
+        /// HUD listening.
+        fn app() -> (App, Entity, RpcStreamReceiver<ItemPurchaseRequest>) {
+            let mut app = App::new();
+            app.add_event::<RpcCallEvent>()
+                .add_event::<SystemApi>()
+                .add_event::<PermissionUsed>()
+                .init_resource::<ItemPurchases>()
+                .init_resource::<PermissionManager>()
+                .init_resource::<AppConfig>()
+                .init_resource::<CurrentRealm>()
+                .init_resource::<ScenePointers>()
+                .init_resource::<LiveScenes>()
+                .init_resource::<PortableScenes>()
+                .init_resource::<Time>()
+                .add_systems(
+                    Update,
+                    (
+                        open_item_purchase,
+                        track_item_purchase.after(open_item_purchase),
+                        write_owed_closed.after(track_item_purchase),
+                    ),
+                );
+            let player = app
+                .world_mut()
+                .spawn((PrimaryUser::default(), GlobalTransform::default()))
+                .id();
+            app.insert_resource(PrimaryPlayerRes(player));
+
+            let scene = app.world_mut().spawn_empty().id();
+            let mut context = RendererSceneContext::new(
+                SceneId::DUMMY,
+                HASH.to_owned(),
+                "storage_root".to_owned(),
+                false,
+                0,
+                "title".to_owned(),
+                IVec2::ZERO,
+                HashSet::from_iter([IVec2::ZERO]),
+                vec![],
+                Default::default(),
+                vec![],
+                scene,
+                0.0,
+                false,
+                "sdk_version",
+                false,
+                false,
+            );
+            context.last_action_event = Some(0.0);
+            app.world_mut().entity_mut(scene).insert(context);
+            enter(&mut app, scene);
+
+            let (sender, hud) = RpcStreamSender::channel();
+            app.world_mut()
+                .send_event(SystemApi::GetItemPurchaseRequestStream(sender));
+            app.update();
+            (app, scene, hud)
+        }
+
+        /// Puts the player in the scene. The containment lookup answers a live scene that is
+        /// either under the player's parcel or follows the player; the latter needs no parcel
+        /// grid, and the scene's own context still says it is not a portable.
+        fn enter(app: &mut App, scene: Entity) {
+            app.world_mut()
+                .resource_mut::<LiveScenes>()
+                .scenes
+                .insert(HASH.to_owned(), scene);
+            app.world_mut().resource_mut::<PortableScenes>().insert(
+                HASH.to_owned(),
+                PortableSource {
+                    pid: HASH.to_owned(),
+                    parent_scene: None,
+                    ens: None,
+                    super_user: false,
+                    kind: PortableKind::Startup,
+                },
+            );
+        }
+
+        fn leave(app: &mut App) {
+            app.world_mut().resource_mut::<LiveScenes>().scenes.clear();
+        }
+
+        fn ask(
+            app: &mut App,
+            scene: Entity,
+            request_id: u32,
+        ) -> RpcResultReceiver<OpenExplorerUiResult> {
+            let (response, receiver) = RpcResultSender::channel();
+            app.world_mut().send_event(RpcCallEvent {
+                origin: RpcOrigin::Scene {
+                    entity: scene,
+                    hash: HASH.into(),
+                },
+                call: RpcCall::OpenExplorerUi {
+                    ui: ExplorerUi::EuItemPurchase as i32,
+                    request_id,
+                    item_urn: Some(URN.to_owned()),
+                    response,
+                },
+            });
+            app.update();
+            receiver
+        }
+
+        fn report(app: &mut App, id: u32, state: ItemPurchaseState) {
+            app.world_mut()
+                .send_event(SystemApi::SetItemPurchaseState(SetItemPurchaseState {
+                    id,
+                    state,
+                }));
+            app.update();
+        }
+
+        fn context(app: &mut App, scene: Entity) -> Mut<'_, RendererSceneContext> {
+            app.world_mut()
+                .get_mut::<RendererSceneContext>(scene)
+                .unwrap()
+        }
+
+        /// A new player action in the scene, and `ticks` scene ticks.
+        fn act_and_tick(app: &mut App, scene: Entity, ticks: u32) {
+            let mut context = context(app, scene);
+            context.last_action_event = Some(0.0);
+            context.tick_number += ticks;
+            app.update();
+        }
+
+        fn written(app: &mut App, scene: Entity, component: SceneComponentId) -> usize {
+            context(app, scene)
+                .crdt_store
+                .go
+                .get(&component)
+                .and_then(|state| state.0.get(&SceneEntityId::ROOT))
+                .map_or(0, |entries| entries.len())
+        }
+
+        fn ui_events(app: &mut App, scene: Entity) -> usize {
+            written(app, scene, SceneComponentId::EXPLORER_UI_EVENTS_RESULT)
+        }
+
+        fn verdicts(app: &mut App, scene: Entity) -> usize {
+            written(app, scene, SceneComponentId::EXPLORER_ITEM_PURCHASE_RESULT)
+        }
+
+        /// A purchase the HUD accepted: the request id the HUD holds.
+        fn open(
+            app: &mut App,
+            scene: Entity,
+            hud: &mut RpcStreamReceiver<ItemPurchaseRequest>,
+        ) -> u32 {
+            let mut response = ask(app, scene, 9);
+            let id = hud.try_recv().unwrap().id;
+            report(app, id, ItemPurchaseState::Accepted);
+            assert_eq!(response.try_recv(), Ok(OpenExplorerUiResult::Opened));
+            id
+        }
+
+        fn ask_first(app: &mut App) {
+            app.world_mut()
+                .resource_mut::<AppConfig>()
+                .default_permissions
+                .insert(PermissionType::OpenExplorerUi, PermissionValue::Ask);
+        }
+
+        fn allow_prompt(app: &mut App) {
+            let prompt = app
+                .world_mut()
+                .resource_mut::<PermissionManager>()
+                .pending
+                .pop_front()
+                .unwrap();
+            prompt.sender.send(true);
+            app.update();
+        }
+
+        #[test]
+        fn verdict_is_written_at_once_and_closed_two_ticks_later() {
+            let (mut app, scene, mut hud) = app();
+            let id = open(&mut app, scene, &mut hud);
+            assert_eq!(
+                (ui_events(&mut app, scene), verdicts(&mut app, scene)),
+                (1, 0)
+            );
+
+            report(&mut app, id, ItemPurchaseState::Purchased);
+            assert_eq!(
+                (ui_events(&mut app, scene), verdicts(&mut app, scene)),
+                (1, 1)
+            );
+
+            act_and_tick(&mut app, scene, 1);
+            assert_eq!(ui_events(&mut app, scene), 1);
+            act_and_tick(&mut app, scene, 1);
+            assert_eq!(ui_events(&mut app, scene), 2);
+            app.update();
+            assert!(app.world().get::<ItemPurchaseClosedOwed>(scene).is_none());
+            assert_eq!(
+                (ui_events(&mut app, scene), verdicts(&mut app, scene)),
+                (2, 1)
+            );
+        }
+
+        #[test]
+        fn opening_spends_the_player_action() {
+            let (mut app, scene, mut hud) = app();
+            let mut response = ask(&mut app, scene, 9);
+            assert!(context(&mut app, scene).last_action_event.is_some());
+            let id = hud.try_recv().unwrap().id;
+            report(&mut app, id, ItemPurchaseState::Accepted);
+            assert_eq!(response.try_recv(), Ok(OpenExplorerUiResult::Opened));
+            assert!(context(&mut app, scene).last_action_event.is_none());
+
+            // so once it is dismissed and closed, the same click cannot open another
+            report(&mut app, id, ItemPurchaseState::Dismissed);
+            let mut context = context(&mut app, scene);
+            context.tick_number += 2;
+            app.update();
+            app.update();
+            let mut again = ask(&mut app, scene, 10);
+            assert_eq!(
+                again.try_recv(),
+                Ok(OpenExplorerUiResult::RejectedNoUserGesture)
+            );
+        }
+
+        #[test]
+        fn scene_with_closed_owed_is_busy_until_it_is_written() {
+            let (mut app, scene, mut hud) = app();
+            let id = open(&mut app, scene, &mut hud);
+            report(&mut app, id, ItemPurchaseState::Dismissed);
+
+            // a new click before `closed`: no new `opened` may land ahead of it
+            act_and_tick(&mut app, scene, 0);
+            let mut early = ask(&mut app, scene, 10);
+            assert_eq!(early.try_recv(), Ok(OpenExplorerUiResult::WasAlreadyOpen));
+            assert!(hud.try_recv().is_err());
+
+            act_and_tick(&mut app, scene, 2);
+            app.update();
+            assert_eq!(ui_events(&mut app, scene), 2);
+            let mut later = ask(&mut app, scene, 11);
+            assert!(later.try_recv().is_err());
+            assert!(hud.try_recv().is_ok());
+        }
+
+        #[test]
+        fn scene_unloading_with_the_confirmation_open_frees_the_slot_on_the_verdict() {
+            let (mut app, scene, mut hud) = app();
+            let id = open(&mut app, scene, &mut hud);
+
+            leave(&mut app);
+            app.world_mut().despawn(scene);
+            app.update();
+            // still in flight: the confirmation is on screen
+            assert!(app.world().resource::<ItemPurchases>().active.is_some());
+
+            report(&mut app, id, ItemPurchaseState::Purchased);
+            app.update();
+            assert!(app.world().resource::<ItemPurchases>().active.is_none());
+        }
+
+        #[test]
+        fn scene_unloading_with_closed_owed_owes_nothing() {
+            let (mut app, scene, mut hud) = app();
+            let id = open(&mut app, scene, &mut hud);
+            report(&mut app, id, ItemPurchaseState::Purchased);
+            assert!(app.world().get::<ItemPurchaseClosedOwed>(scene).is_some());
+
+            leave(&mut app);
+            app.world_mut().despawn(scene);
+            app.update();
+            app.update();
+            let mut owed = app.world_mut().query::<&ItemPurchaseClosedOwed>();
+            assert_eq!(owed.iter(app.world()).count(), 0);
+        }
+
+        #[test]
+        fn prompt_answered_after_the_player_left_is_refused() {
+            let (mut app, scene, mut hud) = app();
+            ask_first(&mut app);
+            let mut response = ask(&mut app, scene, 9);
+            assert!(response.try_recv().is_err());
+
+            leave(&mut app);
+            allow_prompt(&mut app);
+            assert_eq!(
+                response.try_recv(),
+                Ok(OpenExplorerUiResult::RejectedNotCurrentScene)
+            );
+            assert!(hud.try_recv().is_err());
+        }
+
+        #[test]
+        fn second_request_while_a_prompt_is_up_gets_no_prompt() {
+            let (mut app, scene, mut hud) = app();
+            ask_first(&mut app);
+            let mut first = ask(&mut app, scene, 9);
+            let mut second = ask(&mut app, scene, 10);
+            assert_eq!(second.try_recv(), Ok(OpenExplorerUiResult::WasAlreadyOpen));
+            assert_eq!(app.world().resource::<PermissionManager>().pending.len(), 1);
+
+            allow_prompt(&mut app);
+            assert!(first.try_recv().is_err());
+            assert_eq!(hud.try_recv().unwrap().item, parse_item_urn(URN));
+        }
     }
 }
