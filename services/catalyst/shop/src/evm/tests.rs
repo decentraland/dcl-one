@@ -934,6 +934,31 @@ async fn the_next_quota_opening_follows_a_released_reservation() {
     cleanup_user(&pool, &addr).await;
 }
 
+/// A refusal already decided keeps its 429 when its opening cannot be read: the lookup's error
+/// becomes no `retryAt`, never an error of its own, for either limit.
+#[tokio::test]
+async fn a_failed_opening_lookup_leaves_the_refusal_without_a_time() {
+    let Some(pool) = crate::db::scratch::isolated_pool(1).await else {
+        return;
+    };
+    pool.close().await;
+    let window_start = now() - chrono::Duration::seconds(super::QUOTA_WINDOW_SECS);
+    let address = unique_address();
+    assert!(
+        super::transaction::next_slot_at(&pool, Some(address.as_str()), window_start, 3)
+            .await
+            .is_err(),
+        "the closed pool fails the read itself"
+    );
+    for user_address in [Some(address.as_str()), None] {
+        assert_eq!(
+            super::transaction::retry_at(&pool, user_address, window_start, 3).await,
+            None,
+            "{user_address:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn concurrent_reservations_never_exceed_the_limit() {
     let Some(pool) = scratch_pool().await else {

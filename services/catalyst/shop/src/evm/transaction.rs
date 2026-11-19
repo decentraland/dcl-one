@@ -926,7 +926,7 @@ fn hex_to_bytes(s: &str) -> Option<Vec<u8>> {
 
 /// [`next_slot_at`] for a refusal already decided: a failed read is logged and leaves the 429
 /// without `retryAt` rather than turning it into a 500.
-async fn retry_at<'e>(
+pub(super) async fn retry_at<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     user_address: Option<&str>,
     window_start: NaiveDateTime,
@@ -946,7 +946,9 @@ async fn retry_at<'e>(
 /// is under the count), plus the window, as the first whole unix second past it (a row exactly a
 /// window old still counts). `None` with no cap above 0, or when fewer than `cap` rows are left
 /// by the time it is read (a released reservation). Run on the caller's connection, so a caller
-/// holding a lock reads without waiting for another.
+/// holding a lock reads without waiting for another. Only `created_at` is read, so rows tied on it
+/// give the same answer in any order, and the order needs no tiebreak (an index-only scan over
+/// `transactions_user_created_idx` or `transactions_free_created_idx`).
 pub(super) async fn next_slot_at<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     user_address: Option<&str>,
@@ -961,7 +963,7 @@ pub(super) async fn next_slot_at<'e>(
             sqlx::query_scalar(
                 "SELECT created_at FROM economy.transactions \
                  WHERE user_address = $1 AND created_at >= $2 \
-                 ORDER BY created_at DESC, id DESC OFFSET $3 LIMIT 1",
+                 ORDER BY created_at DESC OFFSET $3 LIMIT 1",
             )
             .bind(address)
             .bind(window_start)
@@ -973,7 +975,7 @@ pub(super) async fn next_slot_at<'e>(
             sqlx::query_scalar(
                 "SELECT created_at FROM economy.transactions \
                  WHERE free_call AND created_at >= $1 \
-                 ORDER BY created_at DESC, id DESC OFFSET $2 LIMIT 1",
+                 ORDER BY created_at DESC OFFSET $2 LIMIT 1",
             )
             .bind(window_start)
             .bind(cap - 1)
