@@ -46,7 +46,7 @@ class DevCiTest(unittest.TestCase):
                      'library/vendor/rusty_enet/src/lib.rs', '.cargo/config.toml', 'flake.lock', 'Makefile',
                      'infra/dev/shell-hook.sh', 'tooling/dev.py',
                      'tooling/dev-test.sh', 'tooling/dev-ci.py', 'tooling/enet-provenance.py',
-                     'tooling/catalyst-test.sh', 'tooling/catalyst-test-resources.sh',
+                     'tooling/catalyst-test.sh', 'tooling/catalyst-test-resources.sh', 'tooling/catalyst-test-targets.py',
                      'tooling/tests/test_catalyst_test_resources.py',
                      'tooling/tests/test_dev_regressions.py', 'tooling/tests/test_enet_provenance.py',
                      '.github/workflows/development.yml'):
