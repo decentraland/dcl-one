@@ -51,8 +51,9 @@ const ENROLLMENT: Enrollment = {
 
 const VERIFIED: Enrollment = { ...ENROLLMENT, email_verified_at: '2026-10-30T15:00:00Z' };
 
-const NO_ACTIVE_PLACE = 'You need to have 1 active place to set up your wallet.';
-const VERIFY_FIRST = 'Verify your email to set up your payout wallet.';
+const EMAIL_NEEDS_SCENE = 'You need to have a published scene to verify your email';
+const WALLET_NEEDS_SCENE = 'You need to have a published scene to set up your wallet.';
+const VERIFY_FIRST = 'Verify your email to set up your wallet.';
 
 const WALLET: PayoutWallet = {
   address: '0x000000000000000000000000000000000000dEaD',
@@ -894,7 +895,7 @@ describe('PayoutsTab', () => {
       expect(screen.getByTestId('payouts-wallet-card').hasAttribute('data-locked')).toBe(true);
       expect(add.getAttribute('aria-describedby')).toBe(lockHint(wallet, VERIFY_FIRST).id);
       expect(screen.queryByText('Unavailable')).toBeNull();
-      expect((await contactCard()).queryByText(NO_ACTIVE_PLACE)).toBeNull();
+      expect((await contactCard()).queryByText(EMAIL_NEEDS_SCENE)).toBeNull();
     });
 
     it('should keep a wallet set before the email was verified, with EDIT disabled', async () => {
@@ -917,9 +918,9 @@ describe('PayoutsTab', () => {
         .mockResolvedValue(ok(myPlaces([])));
       const dialog = await openVerify();
 
-      expect((await within(dialog).findByRole('alert')).textContent).toBe(NO_ACTIVE_PLACE);
+      expect((await within(dialog).findByRole('alert')).textContent).toBe(EMAIL_NEEDS_SCENE);
       const contact = await contactCard();
-      await waitFor(() => expect(lockHint(contact, NO_ACTIVE_PLACE)).toBeTruthy());
+      await waitFor(() => expect(lockHint(contact, EMAIL_NEEDS_SCENE)).toBeTruthy());
     });
 
     it('should keep Resend Code under an expired code and let it send a new one', async () => {
@@ -1058,7 +1059,17 @@ describe('PayoutsTab', () => {
       fireEvent.click(verify);
       expect(screen.queryByRole('dialog')).toBeNull();
       expect(api.postEmailVerification).not.toHaveBeenCalled();
-      expect(verify.getAttribute('aria-describedby')).toBe(lockHint(contact, NO_ACTIVE_PLACE).id);
+      expect(verify.getAttribute('aria-describedby')).toBe(lockHint(contact, EMAIL_NEEDS_SCENE).id);
+    });
+
+    it('should put the line in the title row after the title and VERIFY EMAIL, so it can fall under them', async () => {
+      await renderTab();
+      const contact = await contactCard();
+      const verify = await contact.findByRole('button', { name: 'Verify email' });
+      const title = contact.getByRole('heading', { name: 'Contact Information' });
+
+      expect(verify.previousElementSibling).toBe(title.parentElement);
+      expect(verify.nextElementSibling).toBe(lockHint(contact, EMAIL_NEEDS_SCENE));
     });
 
     it('should keep the payout wallet locked behind the email', async () => {
@@ -1067,17 +1078,48 @@ describe('PayoutsTab', () => {
       expect(lockHint(await walletCard(), VERIFY_FIRST)).toBeTruthy();
     });
 
-    it('should not lock an email that is already verified, nor the wallet', async () => {
-      vi.mocked(api.getEnrollment).mockResolvedValue(ok(VERIFIED));
-      await renderTab();
-      await walletCard();
+    describe('and the email is verified', () => {
+      beforeEach(() => {
+        vi.mocked(api.getEnrollment).mockResolvedValue(ok(VERIFIED));
+      });
 
-      expect(screen.queryByText(NO_ACTIVE_PLACE)).toBeNull();
-      expect(screen.queryByText(VERIFY_FIRST)).toBeNull();
+      it('should lock EDIT, keep the address, and say an active place is needed', async () => {
+        await renderTab();
+        const wallet = await walletCard();
+        const edit = await wallet.findByRole('button', { name: 'Edit' });
+
+        expect(edit.hasAttribute('disabled')).toBe(true);
+        expect(wallet.getByTitle(WALLET.address)).toBeTruthy();
+        expect(edit.getAttribute('aria-describedby')).toBe(lockHint(wallet, WALLET_NEEDS_SCENE).id);
+        expect(screen.queryByText(VERIFY_FIRST)).toBeNull();
+      });
+
+      it('should lock ADD WALLET when no wallet is set', async () => {
+        vi.mocked(api.getPayoutWallet).mockResolvedValue(fail(404));
+        await renderTab();
+        const wallet = await walletCard();
+        const add = await wallet.findByRole('button', { name: 'Add wallet' });
+
+        expect(add.hasAttribute('disabled')).toBe(true);
+        fireEvent.click(add);
+        expect(screen.queryByRole('dialog')).toBeNull();
+        expect(add.getAttribute('aria-describedby')).toBe(lockHint(wallet, WALLET_NEEDS_SCENE).id);
+      });
     });
   });
 
   describe('when the places fail to load', () => {
+    it('should leave the payout wallet of a verified email to the service', async () => {
+      vi.mocked(api.getPlaces).mockResolvedValue(fail(500));
+      await renderTab();
+      const wallet = await walletCard();
+
+      expect((await wallet.findByRole('button', { name: 'Edit' })).hasAttribute('disabled')).toBe(
+        false,
+      );
+      expect(wallet.queryByText(WALLET_NEEDS_SCENE)).toBeNull();
+    });
+
     it('should show the steps and leave VERIFY EMAIL to the service', async () => {
       vi.mocked(api.getEnrollment).mockResolvedValue(ok(ENROLLMENT));
       vi.mocked(api.getPlaces).mockResolvedValue(fail(500));
@@ -1087,7 +1129,7 @@ describe('PayoutsTab', () => {
       expect(
         (await contact.findByRole('button', { name: 'Verify email' })).hasAttribute('disabled'),
       ).toBe(false);
-      expect(contact.queryByText(NO_ACTIVE_PLACE)).toBeNull();
+      expect(contact.queryByText(EMAIL_NEEDS_SCENE)).toBeNull();
       expect(screen.queryByRole('alert')).toBeNull();
     });
   });
@@ -1174,6 +1216,23 @@ describe('PayoutsTab', () => {
       );
     });
 
+    it('should say an active place is needed when the service finds none, and lock the step', async () => {
+      vi.mocked(api.putPayoutWallet).mockResolvedValue({
+        ...fail(403),
+        body: { error: 'no_active_place' },
+      });
+      vi.mocked(api.getPlaces)
+        .mockResolvedValueOnce(ok(myPlaces([place('a')])))
+        .mockResolvedValue(ok(myPlaces([])));
+
+      await saveWallet('Edit', 'Change payout wallet', 'Save');
+
+      const dialog = screen.getByRole('dialog', { name: 'Change payout wallet' });
+      expect((await within(dialog).findByRole('alert')).textContent).toBe(WALLET_NEEDS_SCENE);
+      const wallet = await walletCard();
+      await waitFor(() => expect(lockHint(wallet, WALLET_NEEDS_SCENE)).toBeTruthy());
+    });
+
     it('should track a refused wallet as a save that failed', async () => {
       vi.mocked(api.putPayoutWallet).mockResolvedValue({
         ...fail(400),
@@ -1189,6 +1248,56 @@ describe('PayoutsTab', () => {
       );
       expectNoPrivateValuesTracked();
     });
+  });
+
+  describe('when a second notice comes while the first still shows', () => {
+    const SECOND_ADDRESS = '0x0000000000000000000000000000000000000003';
+
+    async function save(open: string, dialogName: string, submit: string, address: string) {
+      fireEvent.click(await (await walletCard()).findByRole('button', { name: open }));
+      const dialog = await screen.findByRole('dialog', { name: dialogName });
+      fireEvent.change(within(dialog).getByLabelText('Wallet address'), {
+        target: { value: address },
+      });
+      fireEvent.click(within(dialog).getByRole('button', { name: submit }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      vi.mocked(api.putPayoutWallet).mockImplementation(async ({ address }) =>
+        ok({ address, updated_at: '2026-11-04T10:00:00Z' }),
+      );
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it.each([
+      [
+        'a wallet is added, then changed',
+        fail(404),
+        ['Add wallet', 'Add payout wallet', 'Add wallet'],
+      ],
+      ['the wallet is changed twice', ok(WALLET), ['Edit', 'Change payout wallet', 'Save']],
+    ] as const)(
+      'should show the second for its full time when %s',
+      async (_case, firstWallet, [open, dialogName, submit]) => {
+        vi.mocked(api.getPayoutWallet).mockResolvedValue(firstWallet);
+        await renderTab();
+        const status = await screen.findByRole('status');
+
+        await save(open, dialogName, submit, NEW_ADDRESS);
+        act(() => vi.advanceTimersByTime(3_000));
+        await save('Edit', 'Change payout wallet', 'Save', SECOND_ADDRESS);
+        act(() => vi.advanceTimersByTime(4_000));
+
+        expect(status.textContent).toBe('Payout wallet updated');
+        act(() => vi.advanceTimersByTime(1_500));
+        expect(status.textContent).toBe('');
+      },
+    );
   });
 
   describe('when a paid transaction is opened', () => {

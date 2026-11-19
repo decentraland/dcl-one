@@ -1847,7 +1847,8 @@
           "copy": "Copy wallet address",
           "edit": "Edit",
           "add": "Add wallet",
-          "unavailable": "Verify your email to set up your payout wallet.",
+          "unavailable": "Verify your email to set up your wallet.",
+          "no_active_place": "You need to have a published scene to set up your wallet.",
           "notify_failed": "We couldn't email you about this change, so your wallet wasn't saved. Please try again."
         },
         "contact": {
@@ -1856,7 +1857,7 @@
           "email": "Email",
           "unverified": "Unverified",
           "verify": "Verify email",
-          "unavailable": "You need to have 1 active place to set up your wallet."
+          "unavailable": "You need to have a published scene to verify your email"
         },
         "table": {
           "label": "Payouts",

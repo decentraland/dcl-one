@@ -1847,7 +1847,8 @@
           "copy": "复制钱包地址",
           "edit": "编辑",
           "add": "添加钱包",
-          "unavailable": "请先验证邮箱，再设置收款钱包。",
+          "unavailable": "请先验证邮箱，再设置钱包。",
+          "no_active_place": "你需要有一个已发布的场景才能设置钱包。",
           "notify_failed": "我们无法就此更改向你发送邮件，因此钱包未保存。请重试。"
         },
         "contact": {
@@ -1856,7 +1857,7 @@
           "email": "电子邮箱",
           "unverified": "未验证",
           "verify": "验证邮箱",
-          "unavailable": "你需要有 1 个活跃地点才能设置钱包。"
+          "unavailable": "你需要有一个已发布的场景才能验证邮箱"
         },
         "table": {
           "label": "付款",

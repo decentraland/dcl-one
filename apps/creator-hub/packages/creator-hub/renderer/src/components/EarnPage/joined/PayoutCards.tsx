@@ -4,6 +4,7 @@ import Button from '@ui/atoms/Button';
 
 import type { Enrollment, PayoutWallet } from '/shared/types/creator-fund';
 
+import type { TranslationPath } from '/@/modules/store/translation/types';
 import { t } from '/@/modules/store/translation/utils';
 
 import { CopyToClipboard } from '../../CopyToClipboard';
@@ -38,27 +39,36 @@ function CardTitle({
   );
 }
 
+/** Why the payout wallet step is locked. */
+export type WalletLock = 'unverified_email' | 'no_active_place';
+
+const WALLET_LOCK_HINT: Record<WalletLock, TranslationPath> = {
+  unverified_email: 'earn.joined.payouts.wallet.unavailable',
+  no_active_place: 'earn.joined.payouts.wallet.no_active_place',
+};
+
 /**
  * The payout wallet, the second setup step: its short address as a chip that copies it, and EDIT; ADD WALLET when
- * none is set. Locked until the email is verified, since every change is emailed to it: the buttons are disabled and
- * a line beside them says why.
+ * none is set. While `lock` is set the buttons are disabled and a line beside them says why.
  * @param props.wallet - `undefined` while it loads.
+ * @param props.lock - why the step is locked, or `null` when it is open.
  */
 export function WalletCard({
   wallet,
-  locked,
+  lock,
   editRef,
   onAdd,
   onChange,
 }: {
   wallet: PayoutWallet | null | undefined;
-  locked: boolean;
+  lock: WalletLock | null;
   editRef?: React.Ref<HTMLButtonElement>;
   onAdd: () => void;
   onChange: () => void;
 }) {
   const titleId = useId();
   const hintId = useId();
+  const locked = lock !== null;
   const describedBy = locked ? hintId : undefined;
   return (
     <section
@@ -117,12 +127,12 @@ export function WalletCard({
               {t('earn.joined.payouts.wallet.add')}
             </Button>
           )}
-          {locked && (
+          {lock && (
             <p
               id={hintId}
               className={styles.setupHint}
             >
-              {t('earn.joined.payouts.wallet.unavailable')}
+              {t(WALLET_LOCK_HINT[lock])}
             </p>
           )}
         </div>
@@ -134,7 +144,7 @@ export function WalletCard({
 /**
  * The enrollment's name and read-only email, the first setup step, with VERIFY EMAIL until the email is verified.
  * Locked while none of the creator's places is in the program, since the service sends no code then: VERIFY EMAIL is
- * disabled and a line under the values says why.
+ * disabled and a line says why: beside it when the line fits there on one line, otherwise on its own row under it.
  */
 export function ContactCard({
   enrollment,
@@ -157,7 +167,7 @@ export function ContactCard({
       data-locked={locked || undefined}
       data-testid="payouts-contact-card"
     >
-      <div className={styles.cardTop}>
+      <div className={styles.contactTop}>
         <div className={styles.cardHeader}>
           <CardTitle
             id={titleId}
@@ -176,6 +186,14 @@ export function ContactCard({
           >
             {t('earn.joined.payouts.contact.verify')}
           </Button>
+        )}
+        {locked && (
+          <p
+            id={hintId}
+            className={styles.setupHint}
+          >
+            {t('earn.joined.payouts.contact.unavailable')}
+          </p>
         )}
       </div>
       {enrollment && (
@@ -201,14 +219,6 @@ export function ContactCard({
             <span className={styles.contactText}>{enrollment.email}</span>
           </div>
         </div>
-      )}
-      {locked && (
-        <p
-          id={hintId}
-          className={styles.setupHint}
-        >
-          {t('earn.joined.payouts.contact.unavailable')}
-        </p>
       )}
     </section>
   );

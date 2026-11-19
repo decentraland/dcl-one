@@ -44,7 +44,13 @@ const COPY: Record<
   },
 };
 
-type Submission = 'idle' | 'saving' | 'refused' | 'failed' | 'unnotified';
+type Submission = 'idle' | 'saving' | 'refused' | 'failed' | 'unnotified' | 'no_active_place';
+
+const FAILURE_LINE: Partial<Record<Submission, TranslationPath>> = {
+  failed: 'earn.errors.generic',
+  unnotified: 'earn.joined.payouts.wallet.notify_failed',
+  no_active_place: 'earn.joined.payouts.wallet.no_active_place',
+};
 
 /** The wallet address field, focused once it mounts inside the dialog; its error line is live. */
 function WalletField({
@@ -144,9 +150,16 @@ export function WalletModal({
       fieldRef.current?.focus();
       return;
     }
-    // The service emails every change and keeps the old wallet when that email can't go out.
-    setSubmission(result.payload?.body?.error === 'email_unavailable' ? 'unnotified' : 'failed');
+    const error = result.payload?.body?.error;
+    if (error === 'no_active_place') {
+      setSubmission('no_active_place');
+      void dispatch(actions.fetchHasActivePlace());
+      return;
+    }
+    setSubmission(error === 'email_unavailable' ? 'unnotified' : 'failed');
   };
+
+  const failureLine = FAILURE_LINE[submission];
 
   return (
     <EarnDialog
@@ -191,16 +204,12 @@ export function WalletModal({
           <WarningIcon />
           {t('earn.joined.payouts.erc20')}
         </div>
-        {(submission === 'failed' || submission === 'unnotified') && (
+        {failureLine && (
           <p
             className={styles.failureLine}
             role="alert"
           >
-            {t(
-              submission === 'unnotified'
-                ? 'earn.joined.payouts.wallet.notify_failed'
-                : 'earn.errors.generic',
-            )}
+            {t(failureLine)}
           </p>
         )}
         <div className={cx(modal.actions, styles.payoutActions)}>
