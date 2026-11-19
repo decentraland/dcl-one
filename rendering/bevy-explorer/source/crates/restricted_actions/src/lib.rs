@@ -629,9 +629,11 @@ pub fn move_camera(
 
         let (yaw, pitch, roll) = facing.to_euler(EulerRot::YXZ);
 
-        let Ok(mut camera) = camera.single_mut() else {
-            return;
-        };
+        #[allow(
+            clippy::unwrap_used,
+            reason = "PrimaryCamera is a mandatory singleton; a missing camera is an engine bug"
+        )]
+        let mut camera = camera.single_mut().unwrap();
         camera.yaw = yaw;
         camera.pitch = pitch;
         camera.roll = roll;

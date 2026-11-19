@@ -11,12 +11,20 @@ pub struct PrimaryEntities<'w, 's> {
 }
 
 impl PrimaryEntities<'_, '_> {
-    pub fn player(&self) -> Option<Entity> {
-        self.player.single().ok()
+    #[allow(
+        clippy::unwrap_used,
+        reason = "PrimaryUser is a mandatory singleton; a missing player is an engine bug"
+    )]
+    pub fn player(&self) -> Entity {
+        self.player.single().unwrap()
     }
 
-    pub fn camera(&self) -> Option<Entity> {
-        self.camera.single().ok()
+    #[allow(
+        clippy::unwrap_used,
+        reason = "PrimaryCamera is a mandatory singleton; a missing camera is an engine bug"
+    )]
+    pub fn camera(&self) -> Entity {
+        self.camera.single().unwrap()
     }
 
     pub fn primary_or_scene(
@@ -25,8 +33,8 @@ impl PrimaryEntities<'_, '_> {
         context: &RendererSceneContext,
     ) -> Option<Entity> {
         match id {
-            SceneEntityId::PLAYER => self.player(),
-            SceneEntityId::CAMERA => self.camera(),
+            SceneEntityId::PLAYER => Some(self.player()),
+            SceneEntityId::CAMERA => Some(self.camera()),
             _ => context.bevy_entity(id),
         }
     }

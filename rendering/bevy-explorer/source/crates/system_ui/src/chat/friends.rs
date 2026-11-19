@@ -423,9 +423,12 @@ pub fn update_conversations(
         *last_chat = Some(private_chat.address);
 
         conversation.clear(chatbox);
-        if let Ok(mut text_entry) = text_entry.single_mut() {
-            text_entry.enabled = true;
-        }
+        #[allow(
+            clippy::unwrap_used,
+            reason = "the chat template spawns the ChatInput with the chatbox; a missing input is a template bug"
+        )]
+        let mut text_entry = text_entry.single_mut().unwrap();
+        text_entry.enabled = true;
 
         if private_chat.wants_history_count == 0
             && !(private_chat.history_receiver.is_closed()

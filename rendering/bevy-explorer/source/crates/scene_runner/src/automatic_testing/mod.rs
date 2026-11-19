@@ -388,9 +388,11 @@ fn automatic_testing(
         return;
     }
 
-    let Ok((player_ent, oow)) = player.single() else {
-        return;
-    };
+    #[allow(
+        clippy::unwrap_used,
+        reason = "PrimaryUser is a mandatory singleton; a missing player is an engine bug"
+    )]
+    let (player_ent, oow) = player.single().unwrap();
 
     if oow.is_some() {
         return;
