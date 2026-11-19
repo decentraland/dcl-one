@@ -1150,3 +1150,43 @@ fn about_resource_check_is_off_unless_set() {
         assert!(on.node.about_resource_check, "{posture}");
     }
 }
+
+#[test]
+fn world_writes_need_the_names_reader_unless_chain_checks_are_skipped() {
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    let writes = ("WORLDS_WRITES_ENABLED", "true");
+    let reader = (
+        "MARKETPLACE_SUBGRAPH_URL",
+        "https://reader.example/subgraph",
+    );
+    let skip = ("IGNORE_BLOCKCHAIN_ACCESS_CHECKS", "true");
+    let run = |pairs: &[(&str, &str)]| {
+        let c = parsed(pairs);
+        let map = env(pairs);
+        (check(&c, &lookup(&map)), worlds_names_reader(&c))
+    };
+
+    let (checked, _) = run(&[db, writes]);
+    let err = checked.unwrap_err().to_string();
+    assert!(err.contains("MARKETPLACE_SUBGRAPH_URL"), "{err}");
+    let (checked, _) = run(&[db, writes, ("MARKETPLACE_SUBGRAPH_URL", " ")]);
+    assert!(checked.is_err(), "a blank reader is no reader");
+    let (checked, _) = run(&[db, (ENV, "island"), writes]);
+    assert!(checked.is_err(), "refused under a posture too");
+
+    let (checked, warning) = run(&[db, writes, skip]);
+    checked.unwrap();
+    assert!(
+        warning
+            .unwrap()
+            .unwrap()
+            .contains("MARKETPLACE_SUBGRAPH_URL"),
+        "no chain access: starts and warns"
+    );
+
+    for pairs in [&[db, writes, reader][..], &[db][..], &[db, skip][..]] {
+        let (checked, warning) = run(pairs);
+        checked.unwrap();
+        assert_eq!(warning.unwrap(), None, "{pairs:?}");
+    }
+}

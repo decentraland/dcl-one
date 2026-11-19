@@ -49,6 +49,16 @@ mod tests {
     /// as the old `CommsState::new` built them (no personal worlds, no
     /// marketplace).
     fn state_with(pool: PgPool, settings: Settings) -> SharedState {
+        state_reading(pool, settings, None)
+    }
+
+    /// [`state_with`] whose policy reads DCL NAME holders from `names`.
+    fn state_reading(
+        pool: PgPool,
+        settings: Settings,
+        names: Option<catalyst::chain_index::graph::test_support::Names>,
+    ) -> SharedState {
+        let market = names.map(catalyst::chain_index::graph::test_support::index_reading);
         Arc::new(CommsState::new(
             pool.clone(),
             Outbound::for_tests(),
@@ -58,7 +68,7 @@ mod tests {
             Arc::new(Policy::new(
                 pool.clone(),
                 PersonalWorldsPolicy::disabled(),
-                None,
+                market,
             )),
             Arc::new(SceneResolver::new(pool)),
             Arc::new(catalyst::comms::presence::Presence::new()),
@@ -907,19 +917,23 @@ mod tests {
     }
 
     /// Both ban listings take the authority the ban writes take: the world's
-    /// owner and an explicit scene admin read them, anyone else gets the
-    /// upstream 401 on both routes.
+    /// NAME holder and an explicit scene admin read them, anyone else gets
+    /// the upstream 401 on both routes. Without a names reader the stored
+    /// owner is not the holder.
     #[tokio::test]
     async fn listing_scene_bans_requires_the_scene_owner_or_an_admin() {
         use catalyst::shared::test_keys::random_key;
         let Some(pool) = scratch().await else { return };
-        let state = state_with(pool.clone(), Settings::for_tests());
+        let names = catalyst::chain_index::graph::test_support::Names::default();
+        let state = state_reading(pool.clone(), Settings::for_tests(), Some(names.clone()));
         let place_id = format!("BanListScene{}", tag());
-        let world = format!("banlist{}.dcl.eth", tag());
+        let label = format!("banlist{}", tag());
+        let world = format!("{label}.dcl.eth");
         seed_world_scene(&pool, &world, &place_id, &["10,20"]).await;
         let (owner_key, admin_key, stranger_key) = (random_key(), random_key(), random_key());
         let owner = Address::parse(&address_of(&owner_key)).unwrap();
         let admin = Address::parse(&address_of(&admin_key)).unwrap();
+        names.set(&owner, &label);
         sqlx::query("UPDATE worlds.worlds SET owner = $2 WHERE name = $1")
             .bind(&world)
             .bind(&owner)
@@ -1001,6 +1015,15 @@ mod tests {
             serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
             serde_json::json!({ "error": "User does not have permission to list scene bans" })
         );
+
+        let unread = state_with(pool.clone(), Settings::for_tests());
+        let headers = signed(&owner_key, "get", "/scene-bans", &metadata).await;
+        let refused =
+            moderation::handlers::list_bans(State(unread), at("/scene-bans"), headers, query())
+                .await
+                .map(|_| ())
+                .unwrap_err();
+        assert_eq!(refused.code, 401, "stored owner without a names reader");
     }
 }
 

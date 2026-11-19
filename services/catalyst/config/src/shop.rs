@@ -19,6 +19,8 @@ pub struct MarketUpstreamsConfig {
     /// L1 marketplace subgraph (names, and LAND before the indexes publish);
     /// `NODE_POSTURE=mirror` sets lamb2's default. Unset, `/lambdas` names
     /// and lands answer the 503 envelope; profiles and outfits claim no name.
+    /// It is also the DCL NAME world owner reader: `WORLDS_WRITES_ENABLED=true`
+    /// refuses to start without it unless `IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true`.
     #[arg(long, env = "MARKETPLACE_SUBGRAPH_URL")]
     pub marketplace_subgraph_url: Option<String>,
 

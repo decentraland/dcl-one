@@ -79,7 +79,15 @@ fn ser(v: &Value) -> String {
     serde_json::to_string(v).unwrap()
 }
 
+/// The NAME holders every [`state_with`] policy reads: [`seed_world`]'s owner
+/// holds the world's label.
+static NAMES: std::sync::LazyLock<crate::chain_index::graph::test_support::Names> =
+    std::sync::LazyLock::new(Default::default);
+
 async fn seed_world(pool: &PgPool, world: &WorldName, owner: Option<&Address>) {
+    if let Some(owner) = owner {
+        NAMES.set(owner, world.label());
+    }
     sqlx::query("INSERT INTO worlds.worlds (name, owner) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET owner = EXCLUDED.owner")
         .bind(world.key())
         .bind(owner)
@@ -209,7 +217,9 @@ fn state_with(pool: &PgPool, settings: Settings) -> SharedState {
     let policy = Arc::new(Policy::new(
         pool.clone(),
         PersonalWorldsPolicy::disabled(),
-        None,
+        Some(crate::chain_index::graph::test_support::index_reading(
+            NAMES.clone(),
+        )),
     ));
     Arc::new(StorageState::new(pool.clone(), policy, settings, None))
 }
