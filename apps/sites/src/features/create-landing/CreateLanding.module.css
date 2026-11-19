@@ -97,6 +97,7 @@
 .cta:hover::before { inset: -7.5px; opacity: 1; }
 .cta:focus-visible { outline: 2px solid var(--dcl-primary-primary); outline-offset: 2px; }
 .ctaLabel { display: flex; flex-direction: column; }
+.osIcon { margin-left: var(--dcl-space-8); }
 .ctaMobile { display: none; }
 .scroll {
   display: flex;

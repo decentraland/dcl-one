@@ -92,6 +92,9 @@ IMAGES_PACKAGING = (
     'flake.*', 'rust-toolchain*', 'infra/packages/**', 'infra/containers/**', '.cargo/**',
     'services/catalyst/rust-toolchain*', 'services/catalyst/Cargo.*', 'services/catalyst/**/Cargo.toml',
     'library/**/Cargo.toml', 'apps/dcl-scene-cli/Cargo.toml',
+    # cast-bot's lock, and the patched LiveKit SDK it builds from (infra/packages/cast-bot.nix).
+    'services/catalyst/cast-bot/Cargo.lock', 'rendering/bevy-explorer/patches/client-sdk-rust/**',
+    'tooling/patched-sources.py',
     'apps/sites/package.json', 'apps/sites/pnpm-lock.yaml', 'apps/sites/pnpm-workspace.yaml', 'apps/sites/.npmrc',
     'tooling/image-*', 'tooling/ci-publication.py', 'tooling/ci_paths.py', 'tooling/bevy-ci.py',
     'tooling/fetch-play.py', 'tooling/play-artifact.py', 'tooling/hud_shared_inputs.py',
@@ -326,8 +329,9 @@ def select(base, head):
             affected = ()
         elif path == PATCH_TOOL or path.startswith(PATCHES + '/bevy/'):
             # The Test Suite rebuilds the Bevy tree from its series with the tool and tests its crates
-            # on each system. Every build takes a patched source by the revision that Cargo.lock names.
-            affected = ('test', 'native-matrix')
+            # on each system; Clippy rebuilds it for a shader that `common`'s tests include. Every
+            # build takes a patched source by the revision that Cargo.lock names.
+            affected = ('test', 'clippy', 'native-matrix')
         elif path.startswith('infra/gateway/') or path in GATEWAY_HUD_INPUTS:
             # The Linux Test Suite compares Explorer and HUD routing with the nginx map.
             affected = ('test',)

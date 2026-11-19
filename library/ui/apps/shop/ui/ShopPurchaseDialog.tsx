@@ -2,7 +2,7 @@
 // and its modals sheet draw it: Buy Item, Buy N Items or Buy Name (the balance, what is bought and its
 // price), Insufficient Funds (what is missing, BUY CREDITS), Processing, Purchase successful, and the Error
 // modal ("Oops! Something went wrong": what happened, CANCEL and TRY AGAIN when it may be tried again, else
-// CLOSE). A NAME is one row whose tile is the NAME's art. Only its simulation is bought here, so a NAME's
+// CLOSE; or CANCEL and SWITCH TO <network> AND RETRY when the buyer's wallet has to send it from that network). A NAME is one row whose tile is the NAME's art. Only its simulation is bought here, so a NAME's
 // Purchase successful has no next step past CONTINUE SHOPPING.
 // A simulated NAME purchase (`simulation`, a testnet rehearsal that buys nothing) says so on every step it
 // shows, its failures included: a note that no Credits are spent and the NAME isn't registered or reserved,
@@ -15,9 +15,9 @@
 // scrolls, with the Shop's scroll thumb beside it, as the Cart flow draws it. Purchase successful shows
 // three of what was bought (the design draws three); more scroll sideways, with the same thumb below.
 
-import { useEffect, useRef, useState } from 'react'
+import { useRef } from 'react'
 import { formatCredits, formatCreditsFull } from '@shop/checkout/lib/currency'
-import { Button, ScrollThumb, Spinner } from '@hud/design'
+import { ArmedButton, Button, ScrollThumb, Spinner } from '@hud/design'
 import balanceIcon from '../assets/modal/balance-credit.svg'
 import badge0 from '../assets/modal/credits-badge-0.svg'
 import badge1 from '../assets/modal/credits-badge-1.svg'
@@ -66,7 +66,8 @@ export type ShopPurchaseStep =
   | ({ step: 'processing'; balance: number | null; count?: number; subject?: 'name' } & Simulated)
   | ({ step: 'success'; items: ShopPurchaseItem[] } & Simulated)
   | { step: 'pending' }
-  | ({ step: 'failed'; message: string; retry: boolean } & Simulated)
+  /** `switchTo`: the network the wallet must move to, named, for SWITCH TO … AND RETRY in place of TRY AGAIN. */
+  | ({ step: 'failed'; message: string; retry: boolean; switchTo?: string } & Simulated)
   | { step: 'signIn' }
 
 export interface ShopPurchaseDialogProps {
@@ -79,11 +80,11 @@ export interface ShopPurchaseDialogProps {
   /** A simulated NAME's PREVIEW ON AVATAR. */
   onPreview?: () => void
   onRetry?: () => void
+  /** SWITCH TO … AND RETRY: the wallet moved to the failed step's network, then the purchase tried again. */
+  onSwitchNetwork?: () => void
   onSignIn?: () => void
 }
 
-/** How long BUY ITEM is up before it answers. */
-export const ARM_MS = 500
 /** Rows the list shows before it scrolls, and tiles Purchase successful shows, as drawn. */
 const ROWS_SHOWN = 2
 const TILES_SHOWN = 3
@@ -101,24 +102,7 @@ const simulationDone = (items: readonly ShopPurchaseItem[]): string =>
 /** Whether a step's rows are a NAME. */
 const isName = (items: readonly ShopPurchaseItem[]): boolean => items.length === 1 && items[0].kind === 'name'
 
-/**
- * BUY ITEM, answering only once it has been up a moment: it appears where the loading step's disabled
- * button was, and a click meant for that, or for the card behind, must not spend a credit.
- */
-function ArmedButton({ onClick, children }: { onClick?: () => void; children: React.ReactNode }): React.JSX.Element {
-  const [armed, setArmed] = useState(false)
-  useEffect(() => {
-    const timer = setTimeout(() => setArmed(true), ARM_MS)
-    return () => clearTimeout(timer)
-  }, [])
-  return (
-    <Button size="modal" onClick={armed ? onClick : undefined} aria-disabled={armed ? undefined : true}>
-      {children}
-    </Button>
-  )
-}
-
-export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onBackpack, onPreview, onRetry, onSignIn }: ShopPurchaseDialogProps): React.JSX.Element {
+export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onBackpack, onPreview, onRetry, onSwitchNetwork, onSignIn }: ShopPurchaseDialogProps): React.JSX.Element {
   const cancel = (
     <Button variant="dark" size="modal" onClick={onClose}>
       Cancel
@@ -141,8 +125,20 @@ export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onB
     case 'confirm': {
       const count = view.items.length
       const name = isName(view.items)
+      // BUY ITEM answers only once it has been up a moment (ArmedButton): it appears where the loading step's
+      // disabled button was, and a click meant for that, or for the card behind, must not spend a credit.
       return (
-        <ShopModal label={buyTitle(count, name)} actions={<>{cancel}<ArmedButton onClick={onConfirm}>{buyLabel(count, name, view.simulation)}</ArmedButton></>}>
+        <ShopModal
+          label={buyTitle(count, name)}
+          actions={
+            <>
+              {cancel}
+              <ArmedButton size="modal" onClick={onConfirm}>
+                {buyLabel(count, name, view.simulation)}
+              </ArmedButton>
+            </>
+          }
+        >
           <h2 className={styles.title}>{buyTitle(count, name)}</h2>
           <Balance credits={view.balance} />
           <ShopModalGap count={2} />
@@ -247,12 +243,18 @@ export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onB
           actions={
             <>
               <Button variant="dark" size="modal" onClick={onClose}>
-                {view.retry ? 'Cancel' : 'Close'}
+                {view.retry || view.switchTo != null ? 'Cancel' : 'Close'}
               </Button>
-              {view.retry && (
-                <Button size="modal" onClick={onRetry}>
-                  Try again
+              {view.switchTo != null ? (
+                <Button size="modal" onClick={onSwitchNetwork}>
+                  Switch to {view.switchTo} and retry
                 </Button>
+              ) : (
+                view.retry && (
+                  <Button size="modal" onClick={onRetry}>
+                    Try again
+                  </Button>
+                )
               )}
             </>
           }

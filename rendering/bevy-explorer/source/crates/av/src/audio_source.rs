@@ -107,7 +107,7 @@ fn map_scene_audio_sources(
             playing: audio_source.0.playing(),
             playback_speed: audio_source.0.pitch.unwrap_or(1.0),
             r#loop: audio_source.0.r#loop(),
-            volume: audio_source.0.volume.unwrap_or(1.0),
+            volume: crate::scene_volume(audio_source.0.volume),
             global: audio_source.0.global(),
             seek_time,
             ty: AudioType::Scene,

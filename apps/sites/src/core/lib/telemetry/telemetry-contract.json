@@ -2575,7 +2575,11 @@
           "optional": false
         },
         "kind": {
-          "kind": "string",
+          "kind": "enum-string",
+          "values": [
+            "primary",
+            "secondary"
+          ],
           "optional": false
         },
         "os": {

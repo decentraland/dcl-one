@@ -56,6 +56,7 @@ use crate::global_crdt::{
     CrdtContexts, GlobalCrdtState, NetworkUpdate, PlayerMessage, PlayerUpdate, SceneRealms,
 };
 use crate::profile::CurrentUserProfile;
+use crate::room_connection::{FailureKind, RealmRoom, RoomRecovery};
 use crate::{NetworkMessage, Transport, TransportType};
 use bevy::platform::collections::{HashMap, HashSet};
 
@@ -167,6 +168,14 @@ pub(crate) struct PulseSession {
     /// The realm the pending or accepted handshake's initial state carried. The server holds the
     /// player there, so acceptance needs no teleport into it.
     initial_realm: Option<String>,
+    /// A teleport was skipped because the player stood outside the parcel grid: the server still
+    /// places them where the last one did, or nowhere. Sent from the player's position, in the
+    /// realm current then, once they are back inside ([`pulse_teleport_on_grid_reentry`]).
+    teleport_owed: bool,
+    /// The realm the server holds the player in on this connection, as far as we know: the
+    /// handshake's initial state, then each teleport offered. A teleport into another realm is
+    /// never owed: a realm the server never hears of would leave the avatar frozen in the old one.
+    placed_realm: Option<String>,
     state: Connection,
 }
 
@@ -583,7 +592,13 @@ impl Plugin for PulsePlugin {
                     .before(resolve_lsd_realm),
             );
         }
-        app.add_systems(Update, pulse_teleport_on_local_move);
+        app.add_systems(
+            Update,
+            (
+                pulse_teleport_on_local_move,
+                pulse_teleport_on_grid_reentry.after(pulse_teleport_on_local_move),
+            ),
+        );
     }
 }
 
@@ -727,6 +742,8 @@ fn connect_pulse(
         policy: ReconnectPolicy::default(),
         accepted: false,
         initial_realm: None,
+        teleport_owed: false,
+        placed_realm: None,
         state: Connection::Down { respawn_at: 0.0 },
     });
 
@@ -818,6 +835,8 @@ fn follow_realm(
     // flight, or as the bucket refills, it would put the player back there.
     if realm_changed {
         session.pacer.drop_waiting(FrameKind::Teleport);
+        // The dropped teleport may be the edge placement; the server never saw that realm.
+        session.placed_realm = None;
     }
     // Already up (a later realm) → re-teleport now, unless out of world (position provisional behind
     // the loading screen); the spawn `PlayerTeleported` re-announces realm + position. Otherwise the
@@ -905,7 +924,6 @@ fn release_paced(session: &mut PulseSession, now: f64) {
 }
 
 /// Drain status + inbound bytes each frame; advance the connection; decode and dispatch.
-#[allow(clippy::too_many_arguments)]
 fn pump_pulse(
     session: Option<ResMut<PulseSession>>,
     realm: Res<CurrentRealm>,
@@ -915,6 +933,7 @@ fn pump_pulse(
     profile: Option<Res<CurrentUserProfile>>,
     sinks: Query<&PulseSink>,
     world_hold: Option<Res<WorldHold>>,
+    mut realm_rooms: Query<&mut RoomRecovery, With<RealmRoom>>,
 ) {
     let Some(session) = session else {
         return;
@@ -930,7 +949,16 @@ fn pump_pulse(
         .and_then(|p| p.peer_profile().map(|p| p.version as i32))
         .unwrap_or(0);
 
-    drain_status(session, &sinks, now);
+    if drain_status(session, &sinks, now) && matches!(session.role, PulseRole::Player(_)) {
+        // Another device of this wallet signed in. The archipelago replaces only this device's
+        // own socket, so Pulse is what tells this one: the island ends too, in the identity
+        // conflict nothing retries, until a realm change replaces the realm's rooms as it ends
+        // this terminal stop. Their owners close what is still open.
+        warn!("pulse: another device of this wallet took the session over — ending the island");
+        for mut recovery in &mut realm_rooms {
+            recovery.failure = Some(FailureKind::IdentityConflict);
+        }
+    }
     drive_connection(
         session,
         &sinks,
@@ -1101,8 +1129,10 @@ fn forward_movement(
 /// `try_recv`, so the arms are free to mutate `session`. A `Disconnected`/`Failed` status is the
 /// driver signing off, handled as the teardown; a bare channel close means it vanished with no word
 /// (e.g. panicked) — the fallback teardown. Either way `lost_connection` nulls the link, ending the
-/// loop and making a status-then-close sequence idempotent.
-fn drain_status(session: &mut PulseSession, sinks: &Query<&PulseSink>, now: f64) {
+/// loop and making a status-then-close sequence idempotent. Returns whether the server ended the
+/// session for a newer one of the same wallet (`DuplicateSession`).
+fn drain_status(session: &mut PulseSession, sinks: &Query<&PulseSink>, now: f64) -> bool {
+    let mut taken_over = false;
     while let Some(status) = session.link.as_mut().map(|link| link.status.try_recv()) {
         match status {
             Ok(PulseStatus::Connecting) => debug!("pulse: connecting"),
@@ -1114,6 +1144,7 @@ fn drain_status(session: &mut PulseSession, sinks: &Query<&PulseSink>, now: f64)
             }
             Ok(PulseStatus::Disconnected(reason)) => {
                 warn!("pulse: disconnected ({reason:?})");
+                taken_over |= reason == transport::PulseDisconnect::DuplicateSession;
                 let accepted = session.accepted;
                 lost_connection(
                     session,
@@ -1135,13 +1166,13 @@ fn drain_status(session: &mut PulseSession, sinks: &Query<&PulseSink>, now: f64)
             }
         }
     }
+    taken_over
 }
 
 /// Advance the connection one step. `Down` (re)builds the driver; `Connecting` waits passively for
 /// the transport-up status; signing waits additionally for an identity (`PulseConfig` may be present
 /// before login). A connection carries one handshake: a sign error or a response timeout closes it,
 /// as a rejection does, and the next attempt is a new connection.
-#[allow(clippy::too_many_arguments)]
 fn drive_connection(
     session: &mut PulseSession,
     sinks: &Query<&PulseSink>,
@@ -1211,6 +1242,9 @@ fn drive_connection(
             }
             if let Announcement::Player { initial_state, .. } = &announcement {
                 session.initial_realm = initial_state.as_ref().map(|state| state.realm.clone());
+                // An initial state places the player afresh.
+                session.teleport_owed &= initial_state.is_none();
+                session.placed_realm = session.initial_realm.clone();
             }
             let wallet = wallet.clone();
             let server_id = session.server_id.clone();
@@ -1458,7 +1492,6 @@ fn lost_connection(
 /// `TeleportRequest` announcing our realm + position, so the server begins streaming same-realm
 /// peers (peers in different realms never see each other) — unless the handshake's initial state
 /// has put us in this realm already. Then announce the profile version, once there is one.
-#[allow(clippy::too_many_arguments)]
 fn on_handshake_response(
     session: &mut PulseSession,
     sinks: &Query<&PulseSink>,
@@ -1524,7 +1557,6 @@ fn is_local_realm(realm: &CurrentRealm) -> bool {
 /// Keep a listening server's routing in step with the scenes it hosts: which context owns each
 /// hosted parcel, a Pulse `Transport` per context, and the AoI the whole lot adds up to.
 /// Registered in server mode only — a client has no listener and no server contexts.
-#[allow(clippy::too_many_arguments)]
 fn update_listener_aoi(
     mut commands: Commands,
     session: Option<ResMut<PulseSession>>,
@@ -2009,9 +2041,28 @@ fn send_teleport_at(session: &mut PulseSession, realm: &CurrentRealm, world: Vec
     // Bevy render position → DCL world coords (the `-z` flip), then split into parcel + local —
     // exactly the inverse of how inbound state is decoded.
     let dcl = DclTranslation::from_bevy_translation(world).0;
-    let (parcel_index, local) = session
-        .grid
-        .encode_to_parcel(Vec3::new(dcl[0], dcl[1], dcl[2]));
+    let dcl = Vec3::new(dcl[0], dcl[1], dcl[2]);
+    // The server refuses an out-of-grid teleport for good. Within the realm it is owed until
+    // re-entry; into another realm it goes now from the nearest edge, and re-entry snaps again.
+    let encoded = match session.grid.encode_to_parcel(dcl) {
+        Some(encoded) => {
+            session.teleport_owed = false;
+            encoded
+        }
+        None => {
+            super::warn_out_of_grid(super::OutOfGrid::Teleport, dcl);
+            session.teleport_owed = true;
+            if session.placed_realm.as_deref() == Some(realm_name.as_str()) {
+                return;
+            }
+            let Some(edge) = session.grid.encode_clamped(dcl) else {
+                return;
+            };
+            edge
+        }
+    };
+    let (parcel_index, local) = encoded;
+    session.placed_realm = Some(realm_name.clone());
 
     let teleport = pulse::TeleportRequest {
         parcel_index,
@@ -2071,6 +2122,33 @@ fn pulse_teleport_on_local_move(
         return;
     };
     send_teleport_at(&mut session, &realm, position);
+}
+
+/// Send the teleport skipped outside the parcel grid once the player is back inside it.
+fn pulse_teleport_on_grid_reentry(
+    session: Option<ResMut<PulseSession>>,
+    realm: Res<CurrentRealm>,
+    player: Query<(&GlobalTransform, Has<OutOfWorld>), With<PrimaryUser>>,
+) {
+    let Some(mut session) = session else {
+        return;
+    };
+    if !session.teleport_owed {
+        return;
+    }
+    // Behind the loading screen the position is provisional; the spawn teleport announces it.
+    let Ok((transform, false)) = player.single() else {
+        return;
+    };
+    let world = transform.translation();
+    let dcl = DclTranslation::from_bevy_translation(world).0;
+    if session
+        .grid
+        .encode_to_parcel(Vec3::new(dcl[0], dcl[1], dcl[2]))
+        .is_some()
+    {
+        send_teleport_at(&mut session, &realm, world);
+    }
 }
 
 /// What a handshake says about where the player already is: the last pose built, the realm it is

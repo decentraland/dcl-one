@@ -114,7 +114,6 @@ fn setup_overlay(mut commands: Commands, mut overlay: ResMut<MarkerOverlay>) {
     overlay.root = Some(root);
 }
 
-#[allow(clippy::type_complexity)]
 fn sync_markers(
     mut commands: Commands,
     overlay: Res<MarkerOverlay>,

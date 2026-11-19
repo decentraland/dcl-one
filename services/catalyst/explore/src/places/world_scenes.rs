@@ -449,18 +449,12 @@ mod tests {
             .await
             .unwrap();
         let database = format!("dcl_scene_discovery_{}", uuid::Uuid::new_v4().simple());
-        sqlx::query(sqlx::AssertSqlSafe(format!(
-            "CREATE DATABASE \"{database}\""
-        )))
-        .execute(&admin)
-        .await
-        .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &database).await;
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(4)
             .connect_with(options.database(&database))
             .await
             .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         (admin, pool, database)
     }
 

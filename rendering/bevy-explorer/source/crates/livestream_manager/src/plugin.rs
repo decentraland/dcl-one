@@ -341,7 +341,6 @@ fn receiver_off(
     }
 }
 
-#[expect(clippy::type_complexity)]
 fn transmission_kind(
     livestream_manager: Single<
         (
@@ -376,7 +375,6 @@ fn transmission_kind(
     }
 }
 
-#[expect(clippy::type_complexity)]
 fn manage_casts(
     mut commands: Commands,
     livestream_manager: Single<(

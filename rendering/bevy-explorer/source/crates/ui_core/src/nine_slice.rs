@@ -69,7 +69,6 @@ fn whole_pixel_size(node: &ComputedNode) -> Vec2 {
     node.unrounded_size().round()
 }
 
-#[allow(clippy::type_complexity)]
 fn update_slices(
     mut commands: Commands,
     images: Res<Assets<Image>>,

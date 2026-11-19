@@ -78,7 +78,6 @@ struct SnapshotResult {
     camera: Entity,
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn automatic_testing(
     mut commands: Commands,
     mut testing_data: ResMut<TestingData>,
@@ -388,6 +387,10 @@ fn automatic_testing(
         return;
     }
 
+    #[allow(
+        clippy::unwrap_used,
+        reason = "PrimaryUser is a mandatory singleton; a missing player is an engine bug"
+    )]
     let (player_ent, oow) = player.single().unwrap();
 
     if oow.is_some() {

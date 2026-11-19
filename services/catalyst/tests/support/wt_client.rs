@@ -50,7 +50,8 @@ impl std::error::Error for ClientError {}
 /// An event drained from the client. There is a single session, so no peer id.
 #[derive(Debug, Clone)]
 pub enum ClientEvent {
-    /// The session ended (server closed, transport error, or local disconnect).
+    /// The session ended (server closed, transport error, or local disconnect). `reason` is the
+    /// server's close code, 0 when the session ended without one.
     Disconnected { reason: u32 },
     /// Raw bytes arrived on the reliable bidi stream (unframed).
     StreamData { data: Bytes },
@@ -192,6 +193,13 @@ async fn stream_writer(
 }
 
 async fn disconnect_monitor(session: Session, events_tx: Sender<ClientEvent>) {
-    let _ = session.closed().await;
-    let _ = events_tx.send(ClientEvent::Disconnected { reason: 0 });
+    // The code the server closed the session with; 0 when the session ended some other way
+    // (idle timeout, lost connection, local close).
+    let reason = match session.closed().await {
+        web_transport_quinn::SessionError::WebTransportError(
+            web_transport_quinn::WebTransportError::Closed(code, _),
+        ) => code,
+        _ => 0,
+    };
+    let _ = events_tx.send(ClientEvent::Disconnected { reason });
 }

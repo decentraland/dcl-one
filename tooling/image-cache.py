@@ -12,7 +12,8 @@ import subprocess
 PACKAGES = {
     'catalyst': ('catalyst-deps', 'catalyst-vendor'),
     'sites': ('sites-deps', 'sites-runtime-deps', 'sites-toolchain'),
-    'apis': ('catalyst',),
+    # The node and the cast-bot the APIs image carries beside it (CAST_BOT_BIN).
+    'apis': ('catalyst', 'cast-bot'),
     'sites-app': ('sites-app', 'sites-app-polygon-credits'),
 }
 # Compiled runtime closures restore under exact identities only; a stale entry

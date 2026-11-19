@@ -272,7 +272,7 @@ export function Showcase(): React.JSX.Element {
         </div>
       </Section>
 
-      <Section title="ArmedButton (a confirm that gives away what can't be taken back: SEND GIFT, SEND TIP)">
+      <Section title="ArmedButton (a confirm that spends or gives away what can't be taken back: SEND GIFT, SEND TIP, BUY ITEM)">
         <ArmedShowcase />
       </Section>
 
@@ -366,6 +366,9 @@ export function Showcase(): React.JSX.Element {
           </Tooltip>
           <Tooltip label={'A longer hint that wraps.\n\nParagraph breaks are kept, and it hangs from the left edge.'} side="bottom" multiline>
             <span style={{ padding: '8px 14px', borderRadius: 10, background: 'var(--fill-4)' }}>multiline</span>
+          </Tooltip>
+          <Tooltip label="End stream for everyone" side="bottom" align="end">
+            <span style={{ padding: '8px 14px', borderRadius: 10, background: 'var(--fill-4)' }}>bottom, end</span>
           </Tooltip>
         </div>
       </Section>

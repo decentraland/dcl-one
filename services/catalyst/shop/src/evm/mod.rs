@@ -103,7 +103,8 @@ pub struct Settings {
     pub max_transactions_per_day: i64,
     /// `MAX_RELAYED_TRANSACTIONS_PER_DAY` (20,000): free (non-sale, non-credits) calls relayed per day across every address; 0 is no limit.
     pub max_relayed_transactions_per_day: i64,
-    /// `CONTRACT_ADDRESSES_URL`: the dApps' contract-addresses JSON; unset, only the mirror admits.
+    /// `CONTRACT_ADDRESSES_URL`: the dApps' contract-addresses JSON; unset, the copy this node
+    /// serves (`contracts::ADDRESSES_JSON`). Either way the collections mirror admits too.
     pub contract_addresses_url: Option<String>,
     /// `CONTRACT_ADDRESSES_CHAIN_KEY` (matic): the key inside that JSON.
     pub contract_addresses_chain_key: String,
@@ -150,6 +151,9 @@ pub struct Settings {
     /// `NAMES_CHAIN_ID` (1), `ETH_RPC_URL` (`Config::eth_rpc_url()`), `NAMES_MAX_PRICE_WEI`.
     pub names_chain_id: u64,
     pub eth_rpc_url: Option<String>,
+    /// `NAMES_SIGNER_ENABLED` (true): whether the relayer key also signs on the NAMEs chain.
+    /// False keeps `ETH_RPC_URL` for its readers and builds no NAMEs chain signer.
+    pub names_signer_enabled: bool,
     pub names_max_price_wei: Option<U256>,
     /// `RECEIPT_POLL_INTERVAL_MS` (3000), `RECEIPT_TIMEOUT_MS` (180000), `BROKER_RECONCILE_INTERVAL_MS` (60000).
     pub receipt_poll_interval: Duration,
@@ -197,6 +201,7 @@ impl Settings {
             landiler_escrow_address: None,
             names_chain_id: 1,
             eth_rpc_url: None,
+            names_signer_enabled: true,
             names_max_price_wei: None,
             receipt_poll_interval: Duration::from_millis(3_000),
             receipt_timeout: Duration::from_millis(180_000),
@@ -219,6 +224,18 @@ impl Settings {
             data_writes_enabled: true,
             ops_writes_enabled: true,
             ..Self::defaults()
+        }
+    }
+
+    /// Why `State::eth_signer` is absent, in the order `State::new` decides it: the startup log and
+    /// the NAME routes' error name the setting to change.
+    pub fn names_signer_absence(&self) -> &'static str {
+        if self.trial_mode {
+            "off in a credits trial (CREDITS_TRIAL_MODE), where the relayer key signs on the collections chain alone"
+        } else if !self.names_signer_enabled {
+            "off (NAMES_SIGNER_ENABLED=false)"
+        } else {
+            "not provisioned (set META_TX_BROADCAST_ENABLED=true with RELAYER_PRIVATE_KEY_FILE + ETH_RPC_URL)"
         }
     }
 
@@ -429,7 +446,9 @@ impl State {
                 UpstreamForwarder::new(http.clone(), url, settings.transactions_upstream_timeout)
             });
         // A trial's relayer key signs on the collections chain alone: it is never reused as
-        // the NAMEs chain signer, whose ETH_RPC_URL a mirror always sets.
+        // the NAMEs chain signer, whose ETH_RPC_URL a mirror always sets. Nor is it with
+        // NAMES_SIGNER_ENABLED=false (the testnet development profile, whose ETH_RPC_URL is
+        // Sepolia's while NAMES_CHAIN_ID stays mainnet's).
         let eth_signer = match (
             settings
                 .eth_rpc_url
@@ -439,7 +458,7 @@ impl State {
             key,
             settings.meta_tx_broadcast_enabled,
         ) {
-            _ if settings.trial_mode => None,
+            _ if settings.trial_mode || !settings.names_signer_enabled => None,
             (Some(url), Some(_), true) => {
                 let eth_chain =
                     Arc::new(ChainComponent::new(http.clone(), url, DEFAULT_RPC_TIMEOUT));
@@ -472,7 +491,8 @@ impl State {
                 "economy: NAMEs chain signer enabled; ensure the relayer address holds ETH for gas and MANA on Ethereum"
             ),
             None => tracing::info!(
-                "economy: NAMEs chain signer not provisioned (ETH_RPC_URL + the key enable /v1/broker/names)"
+                "economy: NAMEs chain signer {}; /v1/broker/names broadcasts nothing",
+                settings.names_signer_absence()
             ),
         }
         let contracts = ContractsComponent::new(
