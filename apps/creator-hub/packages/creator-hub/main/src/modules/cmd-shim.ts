@@ -38,7 +38,8 @@ const PWSH_HEAD =
 /**
  * Makes the launchers that let Windows shells start the program `from` under the name `to`:
  * `to.cmd` for cmd, `to.ps1` for PowerShell and `to` for a POSIX shell. Each one starts
- * `from` by its path relative to the launcher and passes all the arguments on. The files are
+ * `from` by its path relative to the launcher (or its absolute path when the two are on different
+ * volumes, where no relative path exists) and passes all the arguments on. The files are
  * the ones that the npm `cmd-shim` package writes for a program that is not a script.
  */
 export async function writeCmdShim(from: string, to: string): Promise<void> {
@@ -48,8 +49,14 @@ export async function writeCmdShim(from: string, to: string): Promise<void> {
   await fs.mkdir(path.dirname(to), { recursive: true });
 
   const relative = path.relative(path.dirname(to), from);
-  const windowsTarget = `"%dp0%\\${relative.split('/').join('\\')}"`;
-  const posixTarget = `"$basedir/${relative.split('\\').join('/')}"`;
+  // Roaming AppData on another drive or a network share: `relative` is then absolute.
+  const absolute = path.isAbsolute(relative);
+  const windowsTarget = absolute
+    ? `"${relative.split('/').join('\\')}"`
+    : `"%dp0%\\${relative.split('/').join('\\')}"`;
+  const posixTarget = absolute
+    ? `"${relative.split('\\').join('/')}"`
+    : `"$basedir/${relative.split('\\').join('/')}"`;
 
   await Promise.all([
     fs.writeFile(to, `${SH_HEAD}exec ${posixTarget}   "$@"\n`),

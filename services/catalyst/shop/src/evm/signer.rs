@@ -396,6 +396,7 @@ impl DirectSigner {
         let raw = signed.raw.clone();
         record(signed).await?;
         if let Err(e) = self.send_raw(&raw).await {
+            log_an_unfunded_send(&tx_hash, &e);
             tracing::warn!(tx_hash = %tx_hash, error = %e, "recorded transaction's broadcast failed; a resume re-sends it");
             return Err(ApiError::RelayerTimeout(format!(
                 "transaction {tx_hash} is recorded but its broadcast failed ({e}); retry with the \
@@ -466,6 +467,7 @@ impl DirectSigner {
         match self.send_raw(raw_hex.trim()).await {
             Ok(_) => tracing::info!(tx_hash = %tx_hash, "re-sent recorded transaction"),
             Err(e) => {
+                log_an_unfunded_send(tx_hash, &e);
                 tracing::warn!(tx_hash = %tx_hash, error = %e, "re-send of recorded transaction refused; its receipt decides")
             }
         }
@@ -650,22 +652,31 @@ impl DirectSigner {
 /// buyer's quota slot is kept and a client follows the purchase instead of signing again. The
 /// refusals that prove nothing was sent come before this, from validation and gas estimation.
 fn send_failure(hash: &str, e: RpcError) -> ApiError {
-    if cannot_pay_for_gas(&e) {
+    log_an_unfunded_send(hash, &e);
+    ApiError::RelayerTimeout(format!(
+        "transaction {hash} may have been broadcast: eth_sendRawTransaction failed ({e})"
+    ))
+}
+
+/// Logs a send the relayer wallet could not fund (`cannot_pay_for_gas`) on its own, apart from a
+/// slow or unreachable node. Every path that sends a signed transaction calls it: a relayed call
+/// (`send_failure`), a recorded contract call, and the re-send of a recorded one. It changes no
+/// answer.
+fn log_an_unfunded_send(hash: &str, e: &RpcError) {
+    if cannot_pay_for_gas(e) {
         tracing::error!(
             tx_hash = %hash,
             error = %e,
             "economy: the relayer wallet could not fund this transaction's gas; check its balance"
         );
     }
-    ApiError::RelayerTimeout(format!(
-        "transaction {hash} may have been broadcast: eth_sendRawTransaction failed ({e})"
-    ))
 }
 
 /// Whether the node refused the send because the relayer's wallet held too little to pay for this
-/// transaction's gas. The answer is still a 504 that keeps the slot (`send_failure`); this only
-/// logs it on its own, apart from a slow or unreachable node, so a wallet running dry is seen.
-/// Matched on the error message nodes answer for it ("insufficient funds for gas * price + value").
+/// transaction's gas. A relayed call still answers a 504 that keeps the slot (`send_failure`);
+/// this only lets the send be logged on its own (`log_an_unfunded_send`), so a wallet running dry
+/// is seen. Matched on the error message nodes answer for it ("insufficient funds for gas * price
+/// + value").
 fn cannot_pay_for_gas(e: &RpcError) -> bool {
     matches!(e, RpcError::Response { message, .. } if message.to_ascii_lowercase().contains("insufficient funds"))
 }

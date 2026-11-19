@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -254,6 +255,20 @@ class ResolveTests(unittest.TestCase):
                 for key in ('GITHUB_EVENT_PATH', 'GH_REPO', 'GITHUB_OUTPUT'):
                     del os.environ[key]
             self.assertEqual(output_path.read_text(encoding='utf-8'), 'changed=true\n')
+
+
+class WorkflowTests(unittest.TestCase):
+    def test_the_scenarios_checkout_holds_the_suite_and_the_web_driver_it_loads(self):
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / '.github/workflows/bevy-explorer-e2e.yml').read_text(encoding='utf-8')
+        scenarios = workflow.split('\n  scenarios:\n', 1)[1].split('\n  comment:\n', 1)[0]
+        sparse = re.search(r'sparse-checkout: \|\n((?: {12}\S.*\n)+)', scenarios).group(1).split()
+        paths = (root / 'apps/bevy-explorer/e2e/driver/paths.ts').read_text(encoding='utf-8')
+        driver = re.search(r'WEB_DRIVER = path\.join\(REPO_ROOT, ([^)]*)\)', paths).group(1)
+        for needed in ('apps/bevy-explorer/e2e', '/'.join(re.findall(r"'([^']+)'", driver)[:-1])):
+            self.assertIn(needed, sparse)
+        for entry in sparse:
+            self.assertTrue((root / entry).is_dir(), entry)
 
 
 if __name__ == '__main__':

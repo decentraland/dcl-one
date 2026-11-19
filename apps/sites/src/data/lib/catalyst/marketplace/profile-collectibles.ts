@@ -205,17 +205,27 @@ async function creditPrices(rows: ParsedCreation[], signal?: AbortSignal): Promi
  * else "Untitled". The catalogue names an unnamed parcel or estate by its capitalized category
  * ("Parcel", "Estate"), so for those two that name counts as none.
  */
+function coordinate(value: unknown): string | null {
+  const text = typeof value === "number" || typeof value === "string" ? String(value).trim() : "";
+  return text ? text : null;
+}
+
 function assetName(category: string, name: string | null | undefined, data: Record<string, unknown> | null | undefined): string {
   if (category === "ens") {
     const subdomain = (data?.ens as { subdomain?: unknown } | undefined)?.subdomain;
-    const label = (name ?? "").replace(/\.dcl\.eth$/i, "").trim() || (typeof subdomain === "string" ? subdomain.trim() : "");
+    // The catalyst names an unnamed token by its capitalized category ("Ens"); a NAME's own name ends in .dcl.eth.
+    const given = name === "Ens" ? "" : (name ?? "");
+    const label = given.replace(/\.dcl\.eth$/i, "").trim() || (typeof subdomain === "string" ? subdomain.trim() : "");
     return label || "Untitled";
   }
   const given = (name ?? "").trim();
   const placeholder = (category === "parcel" || category === "estate") && given.toLowerCase() === category;
   if (given && !placeholder) return given;
   const parcel = data?.parcel as { x?: unknown; y?: unknown } | undefined;
-  if (category === "parcel" && parcel && parcel.x != null && parcel.y != null) return `Parcel ${String(parcel.x)},${String(parcel.y)}`;
+  // The catalyst sends a missing coordinate as "", not null.
+  const x = coordinate(parcel?.x);
+  const y = coordinate(parcel?.y);
+  if (category === "parcel" && x !== null && y !== null) return `Parcel ${x},${y}`;
   if (category === "estate") return "Estate";
   return "Untitled";
 }

@@ -327,7 +327,10 @@ pub async fn serve(
     }
     let explore_settings = explore::Settings {
         content_public_url: content.settings.content_public_url.clone(),
-        asset_rewrite_domain: explore::Settings::asset_rewrite_domain_for(
+        asset_rewrite_base: explore::Settings::asset_rewrite_base_for(
+            config.node.public_url.as_deref(),
+        ),
+        configured_public_base: explore::Settings::configured_public_base_for(
             config.node.public_url.as_deref(),
         ),
         events_admin_token: config.explore.catalyrst_events_admin_token.clone(),

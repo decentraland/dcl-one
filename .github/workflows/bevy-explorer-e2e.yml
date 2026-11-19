@@ -62,7 +62,7 @@ name: Bevy Explorer / E2E
         default: false
 permissions: {}
 # Per pull request, a push or the `ci:e2e` label supersedes the run in progress and other events
-# cancel nothing; per event and ref otherwise, where a dispatch waits instead of cancelling.
+# cancel nothing; per event and ref otherwise, where one dispatch waits (a newer one replaces it).
 concurrency:
   group: >-
     bevy-explorer-e2e-${{
@@ -242,12 +242,15 @@ jobs:
           $exe = Get-ChildItem -Path git-lfs -Filter git-lfs.exe -Recurse | Select-Object -First 1
           Add-Content -Path $env:GITHUB_PATH -Value $exe.DirectoryName
           & $exe.FullName version
-      # The suite and the scenes at the commit under test; the scenes' assets are in Git LFS.
+      # The suite and the web driver it loads (driver/paths.ts), at the commit under test.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.inputs.outputs.sha }}
           persist-credentials: false
           lfs: true
+          sparse-checkout: |
+            apps/bevy-explorer/e2e
+            rendering/bevy-explorer/source/local-harness/web-driver
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
