@@ -131,13 +131,11 @@ async fn scene_ipc_in(
             warn!("scene_ipc_in exit on truncated message: {e}");
             break;
         }
-        // the whole frame was read by its length prefix: dropping it leaves the stream at the
-        // next frame
         let msg: EngineToScene = match rmp_serde::from_slice(&buffer) {
             Ok(msg) => msg,
             Err(e) => {
-                error!("dropping undecodable engine message: {e}");
-                continue;
+                error!("scene_ipc_in exit on undecodable message: {e}");
+                break;
             }
         };
 

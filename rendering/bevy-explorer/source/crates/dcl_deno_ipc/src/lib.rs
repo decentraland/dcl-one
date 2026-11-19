@@ -334,13 +334,11 @@ pub async fn renderer_ipc_in(mut stream: RecvHalf) {
             warn!("renderer_ipc_in exit on truncated message: {e}");
             break;
         }
-        // the whole frame was read by its length prefix: dropping it leaves the stream at the
-        // next frame
         let msg: SceneToEngine = match rmp_serde::from_slice(&buffer) {
             Ok(msg) => msg,
             Err(e) => {
-                error!("dropping undecodable scene message: {e}");
-                continue;
+                error!("renderer_ipc_in exit on undecodable message: {e}");
+                break;
             }
         };
 
