@@ -84,11 +84,12 @@ export function ProfilePage({ address: rawAddress, tabSegment, ownOnServer, sid 
   }
 
   if (activeTab === "creations") {
-    return <ProfileCreationsScreen profile={profile} own={own} tabs={navigation.tabs} onTab={onTab} />;
+    // Keyed by address: another profile starts on its default category with no pending focus.
+    return <ProfileCreationsScreen key={profile.address} profile={profile} own={own} tabs={navigation.tabs} onTab={onTab} />;
   }
 
   if (activeTab === "assets") {
-    return <ProfileAssetsScreen profile={profile} own={own} tabs={navigation.tabs} onTab={onTab} />;
+    return <ProfileAssetsScreen key={profile.address} profile={profile} own={own} tabs={navigation.tabs} onTab={onTab} />;
   }
 
   if (activeTab === "photos") {

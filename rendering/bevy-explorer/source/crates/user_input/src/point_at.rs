@@ -42,7 +42,6 @@ impl Plugin for PointAtPlugin {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn capture_point_at(
     input_manager: InputManager,
     world_target: Res<WorldPointerTarget>,

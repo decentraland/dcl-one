@@ -1,4 +1,4 @@
-{ pkgs, catalyst, sites, gateway, nginx, revision }:
+{ pkgs, catalyst, cast-bot, sites, gateway, nginx, revision }:
 let
   inherit (pkgs) lib;
   accounts = pkgs.runCommand "foundation-container-accounts" { } ''
@@ -50,10 +50,13 @@ let
     ];
     ExposedPorts."5212/tcp" = { };
   };
+  # `serve` starts one `cast-bot` per Cast presentation (CAST_BOT_BIN); the image carries it beside
+  # the node, which never links it (docs/adr/2026-11-17-cast-presenter-bot-process.md).
   apis = build: build "foundation-apis" catalyst {
     Entrypoint = [ "${lib.getExe catalyst}" ];
     Cmd = [ "serve" ];
     Env = [
+      "CAST_BOT_BIN=${lib.getExe cast-bot}"
       "HOME=/data" "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
       "HTTP_SERVER_HOST=0.0.0.0" "HTTP_SERVER_PORT=5210"
       "STORAGE_ROOT_FOLDER=/data/content" "AB_CDN_CACHE_DIR=/data/ab-cdn"

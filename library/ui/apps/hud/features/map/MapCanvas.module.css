@@ -145,6 +145,12 @@ button.marker:focus-visible .clusterIcon {
   --w: 1.536;
   --h: 1.61;
 }
+/* The quest pin is round: it grows about its centre, not a tip. */
+.quest .scaler {
+  --w: 0.957;
+  --h: 0.972;
+  --pivot: 0;
+}
 .home .scaler {
   --w: 1.03;
   --h: 1.258;

@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod bake_scene;
 mod debug_panel;
 pub mod floor_imposter;

@@ -23,8 +23,8 @@ use common::{
     sets::RealmLifecycle,
     structs::{
         server_mode, AppConfig, AppError, CurrentRealm, EditorMode, GlobalCrdtStateUpdate,
-        IVec2Arg, NearbyVoiceDisabled, PreviewMode, PrimaryCamera, SceneJsFile, SceneLoadDistance,
-        SceneMeta, SceneTime, StartupScenes, WorldHold,
+        IVec2Arg, NearbyVoiceDisabled, PreviewMode, PrimaryCamera, ReadsMapPins, SceneJsFile,
+        SceneLoadDistance, SceneMeta, SceneTime, StartupScenes, WorldHold,
     },
     terrain::{Occupancy, TerrainChange, TerrainTargets, BORDER_PADDING},
     util::{TaskExt, TryPushChildrenEx},
@@ -279,7 +279,6 @@ pub(crate) fn load_scene_json(
 #[derive(Asset, Default, Clone, TypePath)]
 pub struct SerializedCrdtStore(pub Vec<u8>);
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn load_scene_javascript(
     mut commands: Commands,
     config: Res<AppConfig>,
@@ -336,6 +335,8 @@ pub(crate) fn load_scene_javascript(
         let portable = portable_scenes.get(&definition.id);
         let portable_experiences = meta.portable_experiences_toggle();
         let nearby_voice_chat_enabled = meta.nearby_voice_chat_enabled();
+        // scene.json alone doesn't make a parcel scene or World a portable
+        let reads_map_pins = portable.is_some() && meta.declares_portable_experience();
 
         let Some(base) = meta
             .scene
@@ -448,6 +449,10 @@ pub(crate) fn load_scene_javascript(
 
         if !nearby_voice_chat_enabled {
             commands.entity(root).try_insert(NearbyVoiceDisabled);
+        }
+
+        if reads_map_pins {
+            commands.entity(root).try_insert(ReadsMapPins);
         }
 
         info!("{root:?}: started scene (location: {base:?}, scene thread id: {scene_id:?}, is sdk7: {is_sdk7:?}), storage root: {storage_root}");
@@ -669,7 +674,6 @@ pub struct TestingData {
 #[derive(Component)]
 pub struct SuperUserScene;
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(crate) fn initialize_scene(
     mut commands: Commands,
     scene_updates: Res<SceneUpdates>,
@@ -1262,7 +1266,6 @@ pub fn process_realm_change(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn load_active_entities(
     current_realm: Res<CurrentRealm>,
     player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,
@@ -1694,7 +1697,6 @@ const WAVE_SLOT_TIMEOUT: Duration = Duration::from_secs(20);
 #[derive(Component)]
 pub struct WaveSlotSince(Duration);
 
-#[expect(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn process_scene_lifecycle(
     mut commands: Commands,
     portables: Res<PortableScenes>,
@@ -2019,7 +2021,6 @@ pub struct SceneHash(pub String);
 #[derive(Component)]
 pub struct LoadingQuad(bool);
 
-#[allow(clippy::too_many_arguments)]
 fn animate_ready_scene(
     mut q: Query<(
         Entity,

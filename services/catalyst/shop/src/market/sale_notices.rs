@@ -812,10 +812,7 @@ mod tests {
             "catalyst_test_salenotif_{}",
             &Uuid::new_v4().simple().to_string()[..12]
         );
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let mut url = url::Url::parse(&base_url).unwrap();
         url.set_path(&format!("/{name}"));
         let pool = crate::db::connect_pool(
@@ -827,7 +824,6 @@ mod tests {
         )
         .await
         .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         seed_assets(&pool).await;
         let links = Links {
             marketplace: "https://market.example".into(),

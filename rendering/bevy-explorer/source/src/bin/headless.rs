@@ -551,7 +551,6 @@ mod shutdown_signal {
 
 /// Liveness supervisor. Logs when the scene first ticks; exits non-zero on a
 /// broken scene or the optional wall-clock timeout, zero on graceful conditions.
-#[allow(clippy::too_many_arguments)]
 fn supervisor(
     time: Res<Time>,
     scenes: Query<&RendererSceneContext>,
@@ -750,7 +749,6 @@ fn dial_scene_room(
 /// Tear down scene rooms whose LiveKit room hit a terminal disconnect (DuplicateIdentity /
 /// kicked) or whose connect was refused: the token is spent, the parent re-adds the scene
 /// with a freshly minted adapter.
-#[allow(clippy::type_complexity)]
 fn reap_terminal_scene_rooms(
     mut commands: Commands,
     mut orch: ResMut<OrchestratedScenes>,
@@ -799,7 +797,6 @@ fn reap_terminal_scene_rooms(
 /// adapter's token has long expired, so the engine cannot re-dial it. The room is kept
 /// until the orchestrator either removes the scene or re-sends `add-scene` with a fresh
 /// adapter.
-#[allow(clippy::type_complexity)]
 fn report_disconnected_scene_rooms(
     mut commands: Commands,
     rooms: Query<
@@ -822,7 +819,6 @@ fn report_disconnected_scene_rooms(
 
 /// `ServerSceneRooms` is read in other crates (realm info, signed fetch): a projection of
 /// the scene rooms, rewritten when they change.
-#[allow(clippy::type_complexity)]
 fn project_server_scene_rooms(
     rooms: Query<(Entity, &comms::SceneRoom, &SceneRoomAdapter)>,
     changed: Query<(), Or<(Changed<comms::SceneRoom>, Changed<SceneRoomAdapter>)>>,
@@ -883,7 +879,6 @@ fn request_delegation_renewals(
 
 /// Gather: apply the orchestrator's commands to `OrchestratedScenes` and the per-scene
 /// resources. Rooms are not touched here; `reconcile_scene_rooms` does that.
-#[allow(clippy::too_many_arguments)]
 fn drain_control_commands(
     control: Res<ControlChannel>,
     mut orch: ResMut<OrchestratedScenes>,
@@ -1011,7 +1006,6 @@ fn drain_control_commands(
 /// wanted one is re-dialled on the same transport, so the messages it holds carry over
 /// and its players rejoin through it. A removed scene is torn down even if it is wanted
 /// again: its entry waits until the old room and scene entity are gone, then dials afresh.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn reconcile_scene_rooms(
     mut commands: Commands,
     mut orch: ResMut<OrchestratedScenes>,

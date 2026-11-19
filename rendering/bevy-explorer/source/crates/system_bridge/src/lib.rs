@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod agent_commands;
 pub mod settings;
 pub mod world_access;
@@ -115,6 +117,9 @@ pub enum SystemApi {
         response: RpcResultSender<Result<Vec<(String, String)>, String>>,
     },
     SetAvatar(SetAvatarData, RpcResultSender<Result<u32, String>>),
+    /// Signs and deploys the local player's `outfits` entity. The address is the account the
+    /// caller expects; the engine refuses when another one is signed in.
+    DeployOutfits(String, OutfitsData, RpcResultSender<Result<(), String>>),
     GetNativeInput(RpcResultSender<InputIdentifier>),
     GetBindings(RpcResultSender<BindingsData>),
     SetBindings(BindingsData, RpcResultSender<()>),
@@ -189,6 +194,8 @@ pub enum SystemApi {
     ),
     /// The portables the player can see and stop, sent on subscribe and on every change.
     GetPortablesStream(RpcStreamSender<Vec<PortableInfo>>),
+    /// The map pins of portable-experience scenes, sent on subscribe and on every change.
+    GetMapPinsStream(RpcStreamSender<Vec<MapPinInfo>>),
     /// Prompts for the password of a world being entered (see `ipfs::world_access`).
     GetWorldAccessStream(RpcStreamSender<WorldAccessEvent>),
     /// Answers the password prompt: the password, or `None` when the player gives up.

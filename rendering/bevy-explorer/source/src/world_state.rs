@@ -127,7 +127,6 @@ fn http_origin(value: &str) -> Option<String> {
 #[command(name = "/world_state")]
 struct WorldStateCommand;
 
-#[allow(clippy::too_many_arguments)]
 fn world_state_cmd(
     mut input: ConsoleCommand<WorldStateCommand>,
     ipfs: Option<Res<IpfsResource>>,

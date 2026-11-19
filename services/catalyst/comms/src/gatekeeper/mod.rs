@@ -35,7 +35,11 @@
 //! take the process down. The Pulse application relay's room authority
 //! (`admission::relay_authority`, `POST /internal/pulse/room-authority/v1`)
 //! answers over the same permission core with the frames and the claim and
-//! proof types of `protocol::room_authority`. `/scene-stream-access`
+//! proof types of `protocol::room_authority`. The community-chat message
+//! router (`catalyst-message-router`, its own process) fetches its join token
+//! from `message_router` (`POST /internal/message-router/token/v1`, contract
+//! in `shared::message_router`), so it never holds the LiveKit secret.
+//! `/scene-stream-access`
 //! mints a place's RTMP ingress credential (`streaming`); the Cast 2.0
 //! routes (`/cast/*`, `streaming::cast`) hand out stream links and the
 //! streamer, watcher and presentation-bot tokens over the same credential.
@@ -60,6 +64,7 @@ pub mod bus;
 pub mod errors;
 pub mod events;
 pub use crate::shared::livekit;
+pub mod message_router;
 pub mod moderation;
 pub(crate) mod removal;
 pub mod removed_places;
@@ -420,6 +425,8 @@ crate::shared::send_sync_once! {
         webhooks: webhook::WebhookCoordinator,
         /// The Pulse room authority, mounted when `PULSE_ROOM_AUTHORITY_KEY` is set.
         pub relay_authority: Option<Arc<admission::relay_authority::RelayAuthority>>,
+        /// The message router's token route, mounted when `MESSAGE_ROUTER_KEY` is set.
+        pub message_router: Option<Arc<message_router::MessageRouterAuthority>>,
         /// The world comms mints' throttle and capacity (`admission::world_mint`).
         pub world_mint: admission::world_mint::MintState,
         pub(crate) world_access_cursor: std::sync::Mutex<Option<String>>,
@@ -477,6 +484,7 @@ impl CommsState {
             room_event_store: None,
             webhooks: webhook::WebhookCoordinator::default(),
             relay_authority: None,
+            message_router: None,
             world_mint: admission::world_mint::MintState::default(),
             world_access_cursor: std::sync::Mutex::new(None),
             cluster: admission::cluster::ClusterConfig::default(),
@@ -588,6 +596,49 @@ impl CommsState {
     pub fn with_room_event_store(mut self, store: Arc<dyn events::RoomEventStore>) -> Self {
         self.room_event_store = Some(store);
         self
+    }
+
+    /// Mounts the message router's token route with `MESSAGE_ROUTER_KEY` (32 base64url bytes,
+    /// distinct from the LiveKit secret) for `<identity_prefix>-<replica>` on the private
+    /// messages room; `None` leaves the route unmounted and community chat unrouted. With a key,
+    /// `MESSAGE_ROUTER_IDENTITY_PREFIX` is required: the Explorer trusts a relayed author only
+    /// from the identity its network names, so a default could leave a node's community chat
+    /// silently undelivered.
+    pub fn with_message_router_key(
+        mut self,
+        encoded_key: Option<&str>,
+        identity_prefix: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        let Some(encoded) = encoded_key.map(str::trim).filter(|k| !k.is_empty()) else {
+            tracing::info!(
+                "MESSAGE_ROUTER_KEY unset; the message router's token route is not mounted (community chat is not routed)"
+            );
+            return Ok(self);
+        };
+        let identity_prefix = identity_prefix
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .ok_or_else(|| {
+                anyhow!(
+                    "MESSAGE_ROUTER_IDENTITY_PREFIX is required with MESSAGE_ROUTER_KEY: the identity \
+                     prefix the node's Explorers address (message-router-prd on decentraland.org, \
+                     message-router-dev elsewhere)"
+                )
+            })?;
+        let authority = message_router::MessageRouterAuthority::new(
+            encoded,
+            identity_prefix,
+            &self.settings.private_messages_room_id,
+            self.livekit.clone(),
+        )
+        .map_err(|e| anyhow!("MESSAGE_ROUTER_KEY: {e}"))?;
+        self.message_router = Some(Arc::new(authority));
+        tracing::info!(
+            endpoint = crate::shared::message_router::TOKEN_PATH,
+            identity_prefix,
+            "message router token route mounted"
+        );
+        Ok(self)
     }
 
     /// Mounts the Pulse room authority with `PULSE_ROOM_AUTHORITY_KEY` (32
@@ -1012,6 +1063,14 @@ pub fn room_authority_router<S: Clone + Send + Sync + 'static>(state: &CommsStat
         Some(authority) => admission::relay_authority::router(authority.clone()),
         None => Router::new(),
     }
+}
+
+/// The message router's token route alone (`POST /internal/message-router/token/v1`), empty
+/// when no `MESSAGE_ROUTER_KEY` is configured; `serve` merges it at the root.
+pub fn message_router_token_router<S: Clone + Send + Sync + 'static>(
+    state: &CommsState,
+) -> Router<S> {
+    message_router::router(state.message_router.clone())
 }
 
 #[cfg(test)]
