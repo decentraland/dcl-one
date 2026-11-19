@@ -91,6 +91,7 @@ fn list_filters(pairs: &[(String, String)]) -> Result<PlaceListFilters, ApiError
         positions: if names.is_empty() { positions } else { vec![] },
         categories,
         only_highlighted,
+        only_excluded_from_ranking: get("only_excluded_from_ranking").is_some_and(gatsby_bool),
         search: text("search"),
         creator_address: text("creator_address").map(|s| s.to_lowercase()),
         sdk: text("sdk"),
@@ -1854,6 +1855,12 @@ mod tests {
         assert_eq!((default.limit, default.offset), (100, 0));
         assert!(default.search.is_none() && default.sdk.is_none());
         assert!(!default.only_highlighted && default.only_places && default.order_desc);
+        assert!(!default.only_excluded_from_ranking);
+        assert!(
+            list_filters(&pairs(&[("only_excluded_from_ranking", "true")]))
+                .unwrap()
+                .only_excluded_from_ranking
+        );
         assert!(
             !list_filters(&pairs(&[("order", "asc")]))
                 .unwrap()
