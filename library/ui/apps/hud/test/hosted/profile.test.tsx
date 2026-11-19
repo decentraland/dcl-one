@@ -32,13 +32,59 @@ describe('profile domain', () => {
     const h = renderSession()
     await enterAsGuest(h)
     act(() => requestPassport('0xKURD'))
-    expect(h.driver.last('getUserProfile')).toEqual({ kind: 'getUserProfile', address: '0xkurd', extras: true })
+    const request = h.driver.last('getUserProfile')
+    expect(request).toEqual({ kind: 'getUserProfile', address: '0xkurd', extras: true, requestId: expect.any(Number) })
     h.driver.emit({
       kind: 'userProfile',
       address: '0xKURD',
+      requestId: request?.requestId,
       profile: { address: '0xkurd', name: 'kurd', hasClaimedName: true, isGuest: false, description: 'gm' }
     })
     expect(peekProfile('0xKURD')?.name).toBe('kurd')
+  })
+
+  it('keeps the latest passport read and both its badge replies for each address', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const address = '0xabc'
+    const passport = { ...profile, address, version: 3 }
+    act(() => requestPassport(address))
+    const oldRequest = h.driver.last('getUserProfile')?.requestId
+    h.driver.emit({ kind: 'userProfile', address, requestId: oldRequest, profile: passport })
+
+    act(() => requestPassport(address))
+    const currentId = h.driver.last('getUserProfile')?.requestId
+    act(() => requestPassport('0xdef'))
+    const reply = (requestId: number | undefined, picture: string, badgeName: string): void => {
+      h.driver.emit({
+        kind: 'userProfile',
+        address: '0xABC',
+        requestId,
+        profile: { ...passport, picture, badges: [{ id: 'badge', name: badgeName }] }
+      })
+    }
+
+    reply(currentId, 'current.png', 'Current badge')
+    reply(oldRequest, 'old.png', 'Old tier')
+    expect(peekProfile(address)).toMatchObject({ picture: 'current.png', badges: [{ name: 'Current badge' }] })
+    reply(currentId, 'current.png', 'Current tier')
+    expect(peekProfile(address)?.badges).toMatchObject([{ name: 'Current tier' }])
+  })
+
+  it('ignores a response after its unobserved profile was invalidated', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const address = '0xabc'
+    act(() => requestPassport(address))
+    const request = h.driver.last('getUserProfile')
+    h.driver.emit({ kind: 'profileChanged', address, version: 3 })
+    h.driver.emit({
+      kind: 'userProfile',
+      address,
+      requestId: request?.requestId,
+      profile: { ...profile, address, version: 3 }
+    })
+    expect(peekProfile(address)).toBeUndefined()
   })
 
   it('saves an edit optimistically, and reverts it when the engine rejects the deploy', async () => {
@@ -74,21 +120,25 @@ describe('profile domain', () => {
     const shown: (string | undefined)[] = []
     subscribeProfile('0xme', () => shown.push(peekProfile('0xme')?.description))
     act(() => requestPassport('0xme'))
-    h.driver.emit({ kind: 'userProfile', address: '0xme', profile: before })
+    const passportId = h.driver.last('getUserProfile')?.requestId
+    h.driver.emit({ kind: 'userProfile', address: '0xme', profile: before, requestId: passportId })
     shown.length = 0
 
     act(() => h.session().profile.save({ description: 'gm from the beach' }))
     // the engine applies the edit as version 4 and announces it; the store asks for that copy
     h.driver.emit({ kind: 'profileChanged', address: '0xme', version: 4 })
+    const editId = h.driver.last('getUserProfile')?.requestId
     // the deploy fails: the save is answered, and the engine puts version 3 back and announces it
     h.driver.emit({ kind: 'profileSaved', ok: false, error: 'failed to deploy to server.' })
     h.driver.emit({ kind: 'profileChanged', address: '0xme', version: 3 })
-    // the read of version 4 is answered only now, then the one made after the revert
-    h.driver.emit({ kind: 'userProfile', address: '0xme', profile: { ...before, version: 4, description: 'gm from the beach' } })
-    h.driver.emit({ kind: 'userProfile', address: '0xme', profile: before })
+    const revertId = h.driver.last('getUserProfile')?.requestId
+    // The rejected edit's reply arrives first, but only the revert's read should reach the passport.
+    h.driver.emit({
+      kind: 'userProfile', address: '0xme', requestId: editId,
+      profile: { ...before, version: 4, description: 'gm from the beach' }
+    })
+    h.driver.emit({ kind: 'userProfile', address: '0xme', profile: before, requestId: revertId })
 
-    // the order is the check: a store without the revert mark shows the late read of the edit again;
-    // the session's own copy goes back either way
     expect(shown).toEqual(['gm from the beach', 'hi', 'hi'])
     expect(h.session().profile.data?.description).toBe('hi')
   })
@@ -108,6 +158,25 @@ describe('profile domain', () => {
     await enterAsGuest(h)
     h.driver.emit({ kind: 'profile', profile: { ...profile, version: 3 } })
     expect(peekProfile('0xme')).toMatchObject({ version: 3, description: 'hi' })
+  })
+
+  it('ignores badge enrichment from a previous sign-in with the same account', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile })
+    act(() => requestPassport('0xme'))
+    const oldId = h.driver.last('getUserProfile')?.requestId
+    h.driver.emit({ kind: 'userProfile', address: '0xme', requestId: oldId, profile })
+
+    act(() => h.session().logout())
+    await waitFor(() => expect(h.session().phase).toBe('login'))
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile })
+    h.driver.emit({
+      kind: 'userProfile', address: '0xme', requestId: oldId,
+      profile: { ...profile, badges: [{ id: 'old', name: 'Old tier' }] }
+    })
+    expect(peekProfile('0xme')?.badges).toBeUndefined()
   })
 
   it('keeps a successful edit and holds no error', async () => {

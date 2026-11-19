@@ -5969,7 +5969,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/profile.ts",
-      "sha256": "67cc2e6f63d53cad69c9c69f9dbbab31f3be8743c0f2d96d274ebd1020bac994"
+      "sha256": "638e9603462e60efc67992c8e135c04384e38d24907c10041c3b87d3c3dfb07d"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/randomizer.ts",
@@ -6200,6 +6200,10 @@
       "sha256": "6445a90de94e25b7801cfabf86bce94022ae27551f7d99b09f80d255b1827040"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeProfileReads.test.ts",
+      "sha256": "c2ae94cf3ec5a099eb80f2a1b2a9e9eabab1ae9eea6ea50d35672ad4017bb860"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizer.test.ts",
       "sha256": "0aa0638ddd34ca4c07eb269dcc9691e5826fb9683554f6a73e33877bed95ba35"
     },
@@ -6353,7 +6357,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "4a0819b47fe59d74e624a3f904b4acf7fbddb7bc561c73b6091478fd414747df"
+      "sha256": "a5551a58354580d7e961bee44f8167c86c736c238eda6ce4ee05aa13e51517db"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -6410,6 +6414,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeNotifications.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeOutfits.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeProfileReads.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizer.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizerTokens.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRelay.test.ts",
@@ -6500,7 +6505,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "7bd5ec7d363aef8df713d284ebcdfb87a59fc15a7f627bd0327d1723a5934d92"
+      "sha256": "205d1cccfcac10152377bb62f031ac2c3ef820cdd5bd846d8c1eec2409b2d5e8"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -6540,7 +6545,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "387d9281537bea9a49bc932286dc3e43a46183902b769957146c1f9b30b7b2ae"
+      "sha256": "ffd4e3e5de502deba99a656ef644294ac50b73d22e86ee4e29962cde2cb1ae8f"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -10060,7 +10065,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/profileStore.ts",
-      "sha256": "7d323fa38448852b90426840e8afe0e9c7fa89d5cdbc198272ee7ca1dd46680c"
+      "sha256": "6ac2876121e74f8f1d010ef13dbdf185c467f6396d67e8f8bbb24c9fddf1d7ad"
     },
     {
       "path": "library/ui/apps/hud/features/session/useConnectivity.ts",
@@ -10068,7 +10073,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "fee3629c6ee5cb404da6c1bcb68fad20534e215a6fc14e716520cfe1fc08fba2"
+      "sha256": "7acf93b9b6f17bedd95e9c6807084375d07792ce2de0ce3d129bd69d3b6c710b"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10724,7 +10729,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
-      "sha256": "f231731a5b7dd6644ed0509d22037821b227d0a5f12bcde69cceb94110993190"
+      "sha256": "74954fd0f3761c120a041ce0bd2bfc1cfd38a3d634c4b20be3bf31dcef274790"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/permissions.test.tsx",
@@ -10764,7 +10769,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/profile.test.tsx",
-      "sha256": "bdb9612830db6dae84b7afefbd62778e2917445bf5ce049c70f9d56ef6d05f4b"
+      "sha256": "d05ce57b7c70e68d4ed2fea16a1c0895707672fd83cc3c38da5512f778c0987b"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/profileCardContainer.test.tsx",
@@ -10904,7 +10909,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/profileStore.test.ts",
-      "sha256": "3c06294140f2f875b2a339e28966156aa9615942936b7f95a691c355ab2ffb98"
+      "sha256": "a0cd6a9e1d84fe9421aef68ad825ca0fd0b1c22dde9af53e140b97e8d4324b83"
     },
     {
       "path": "library/ui/apps/hud/test/rail.test.tsx",

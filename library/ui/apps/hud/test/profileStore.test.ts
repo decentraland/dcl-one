@@ -38,7 +38,7 @@ describe('profile store', () => {
     const off1 = subscribeProfile('0xabc', vi.fn())
     const off2 = subscribeProfile('0xabc', vi.fn())
     expect(request).toHaveBeenCalledTimes(1)
-    expect(request).toHaveBeenCalledWith('0xabc', false)
+    expect(request).toHaveBeenCalledWith('0xabc', false, expect.any(Number))
     off1()
     off2()
   })
@@ -89,7 +89,7 @@ describe('profile store', () => {
   it('a passport request always goes out, with extras', () => {
     receiveProfile('0xabc', full())
     requestPassport('0xabc')
-    expect(request).toHaveBeenCalledWith('0xabc', true)
+    expect(request).toHaveBeenCalledWith('0xabc', true, expect.any(Number))
   })
 
   it('profileChanged re-reads a shown profile whatever version the engine reports', () => {
@@ -98,14 +98,14 @@ describe('profile store', () => {
     request.mockClear()
     // a lower version: the engine put an earlier profile back
     profileChanged('0xabc', 2)
-    expect(request).toHaveBeenCalledWith('0xabc', false)
+    expect(request).toHaveBeenCalledWith('0xabc', false, expect.any(Number))
     request.mockClear()
     // the same version: server-filled fields (the snapshots) may have landed
     profileChanged('0xabc', 3)
-    expect(request).toHaveBeenCalledWith('0xabc', false)
+    expect(request).toHaveBeenCalledWith('0xabc', false, expect.any(Number))
     request.mockClear()
     profileChanged('0xabc', 4)
-    expect(request).toHaveBeenCalledWith('0xabc', false)
+    expect(request).toHaveBeenCalledWith('0xabc', false, expect.any(Number))
     expect(peekProfile('0xabc')?.version).toBe(3) // the old copy stays up until the reply lands
   })
 
@@ -127,7 +127,7 @@ describe('profile store', () => {
 // A Backpack edit of your own profile whose deploy fails: the engine puts the profile from before it
 // back and announces that version, lower than the edit's. The passport and the profile card both
 // read useProfile; the passport also asks for the extras (the equipped set the Backpack changes).
-describe('profile store: your own edit rejected by the deploy', () => {
+describe('profile store: legacy replies after a rejected own edit', () => {
   const hat: Wearable = { urn: 'urn:test:hat', name: 'Hat', rarity: 'base', category: 'hat', equipped: true }
   const cap: Wearable = { urn: 'urn:test:cap', name: 'Cap', rarity: 'base', category: 'hat', equipped: true }
   const mine = (version: number, worn: Wearable): Profile => ({
@@ -156,7 +156,7 @@ describe('profile store: your own edit rejected by the deploy', () => {
     request.mockClear()
 
     act(() => profileChanged('0xme', 3))
-    expect(request).toHaveBeenCalledWith('0xme', true)
+    expect(request).toHaveBeenCalledWith('0xme', true, expect.any(Number))
     act(() => receiveProfile('0xme', mine(3, hat)))
     expect(result.current).toMatchObject({ version: 3, equippedWearables: [hat] })
   })

@@ -751,6 +751,8 @@ export interface GetUserProfileRequest {
   kind: 'getUserProfile'
   address: string
   extras?: boolean
+  /** Optional for older HUDs. All replies to this read echo the same ID. */
+  requestId?: number
 }
 
 /** A fetched user's passport (kept separate from the local `profile` message so it
@@ -758,6 +760,7 @@ export interface GetUserProfileRequest {
 export interface UserProfileMessage {
   kind: 'userProfile'
   address: string
+  requestId?: number
   profile: Profile | null
 }
 
