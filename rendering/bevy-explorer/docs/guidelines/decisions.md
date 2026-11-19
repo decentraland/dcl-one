@@ -957,3 +957,15 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   have to be pulled by every Explorer build and matched by every check that hashes the build's
   inputs. The build fails on a file that is an LFS pointer. Revisit if the landscape folder
   (`crates/assets/src/assets/landscape`) reaches tens of MB.
+- **Avatar processing has no frame budget.** `process_avatar` processes every avatar whose
+  parts are written, whole, in the frame it becomes ready, outside the instantiation slice. It
+  was measured before deciding (web build in Chrome, 60 fps target, 64 and 200 demo avatars in
+  base wearables spawned at once and then re-dressed three times). The scene spawner writes
+  avatar parts under the slice, so avatars become ready one or two a frame, at most five: the
+  longest frame of avatar processing took 1.7 ms against a slice of 4.17 ms, and an avatar
+  takes 0.35 ms at the median. A gate would have stopped nothing. The
+  `instantiation/avatar_processing` diagnostic and the Instantiation section of the debug panel
+  show what it takes each frame. Reopen with a measurement of a frame of avatar processing over
+  the slice, taken on an idle machine: with a compile running alongside, single avatars took up
+  to 43 ms in frames of 100 to 500 ms. Not measured: wearables much heavier than the base set,
+  a target above 60 fps (the slice is 1.7 ms at 144 fps), and the native client.

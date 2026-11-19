@@ -12,6 +12,8 @@ A per-frame time budget is a share of the target frame (`SceneUpdates::frame_tar
 frame of 60 fps when the frame rate is uncapped): a tenth for capped raycasts, a quarter for
 instantiation. A fixed duration is a different share at 30, 60 and 144 fps. Budget from the
 target, not the measured frame, so a slow frame does not raise the next frame's budget.
+Avatar processing (`process_avatar`) is measured and deliberately not budgeted: see
+[decisions](decisions.md#deliberate-choices-that-look-like-mistakes) before adding one.
 
 All set types live in `crates/common/src/sets.rs`; the chains are configured in
 `crates/scene_runner/src/lib.rs` (`SceneSets`, `SceneLoopSets`) and
@@ -145,6 +147,7 @@ well, or its writes land a frame late. `crates/avatar/src/point_at_marker.rs` is
     instances already in progress first, and reveals each when its last node is done;
   - `spawn_timing`'s `start_spawner` before the spawner, `finish_spawner` between the spawner and
     processing, and `finish_processing` after processing: they measure both into diagnostics.
+    The avatar crate measures `process_avatar`, which runs in `Update`, into a third.
 - **`Last`**: CEF command drain, livekit room close on app exit, the web engine heartbeat, the
   profiler's frame fold and the benchmark summary.
 - **`OnEnter`/`OnExit`**: a few states (transmitter, receiver, microphone, parcel grass).

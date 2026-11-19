@@ -449,7 +449,7 @@ pub(crate) fn app_with_avatar_scenes() -> App {
         .init_asset::<AnimationGraph>()
         .init_resource::<AssetCache<AvatarMatKey, SceneMaterial>>()
         .init_resource::<AssetCache<AvatarMaskKey, MaskMaterial>>()
-        .init_resource::<crate::processing_budget::AvatarProcessingBudget>();
+        .init_resource::<crate::processing_timing::AvatarProcessingRun>();
     app.finish();
     app.cleanup();
     app

@@ -76,7 +76,7 @@ pub mod pause_hidden;
 pub mod point_at_ik;
 #[cfg(feature = "explorer")]
 pub mod point_at_marker;
-pub mod processing_budget;
+pub mod processing_timing;
 pub mod spring_bones;
 mod two_bone_ik;
 
@@ -175,7 +175,7 @@ impl Plugin for AvatarRenderPlugin {
         app.add_event::<common::structs::EmoteLifecycleEvent>();
         // read by emote playback; the Explorer's input crate initialises it too
         app.init_resource::<common::structs::SceneDrivenAnimationFeedback>();
-        app.init_resource::<processing_budget::AvatarProcessingBudget>();
+        app.init_resource::<processing_timing::AvatarProcessingRun>();
         app.add_plugins(MaskMaterialPlugin);
         app.add_plugins(AvatarAnimationPlugin);
         app.add_plugins(spring_bones::SpringBonesPlugin);
@@ -227,7 +227,7 @@ impl Plugin for AvatarPlugin {
         app.add_plugins(PointAtIkPlugin);
         app.add_plugins(PointAtMarkerPlugin);
         app.add_plugins(pause_hidden::PauseHiddenAvatarsPlugin);
-        app.add_plugins(processing_budget::AvatarProcessingSlicePlugin);
+        app.add_plugins(processing_timing::AvatarProcessingTimingPlugin);
         app.add_systems(
             Update,
             (
@@ -1420,12 +1420,12 @@ fn process_avatar(
     mut meshes: ResMut<Assets<Mesh>>,
     gltfs: Res<Assets<Gltf>>,
     attach_points: Query<&AttachPoints>,
-    (config, inverse_bindposes, mut mat_cache, mut mask_cache, mut budget): (
+    (config, inverse_bindposes, mut mat_cache, mut mask_cache, mut run): (
         Res<AppConfig>,
         Res<Assets<SkinnedMeshInverseBindposes>>,
         ResMut<AssetCache<AvatarMatKey, SceneMaterial>>,
         ResMut<AssetCache<AvatarMaskKey, MaskMaterial>>,
-        ResMut<processing_budget::AvatarProcessingBudget>,
+        ResMut<processing_timing::AvatarProcessingRun>,
     ),
     mut emote_loader: CollectibleManager<Emote>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
@@ -2097,9 +2097,10 @@ fn process_avatar(
             state: LoadingState::Finished,
         });
     }
-    budget.spent = started.elapsed();
-    budget.processed = processed;
-    budget.stopped = false;
+    *run = processing_timing::AvatarProcessingRun {
+        spent: started.elapsed(),
+        processed,
+    };
 }
 
 // derive the scene material for an avatar's gltf material, sharing the asset

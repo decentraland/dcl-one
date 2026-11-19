@@ -4,7 +4,7 @@ use bevy::{ecs::system::RunSystemOnce, prelude::*};
 use collectibles::base_wearables;
 use dcl_component::proto_components::sdk::components::PbAvatarShape;
 
-use super::AvatarProcessingBudget;
+use super::AvatarProcessingRun;
 use crate::{
     process_avatar, spawn_scenes,
     tests::{app_with_avatar_scenes, avatar_build, register_test_body, usable_body_gltf},
@@ -66,8 +66,44 @@ fn a_run_reports_what_it_processed() {
 
     app.world_mut().run_system_once(process_avatar).unwrap();
 
-    let budget = app.world().resource::<AvatarProcessingBudget>();
-    assert_eq!((budget.processed, budget.stopped), (3, false));
-    assert!(budget.spent > Duration::ZERO);
+    let run = app.world().resource::<AvatarProcessingRun>();
+    assert_eq!(run.processed, 3);
+    assert!(run.spent > Duration::ZERO);
     assert_eq!(processed(&mut app, &owners), [true, true, true]);
+}
+
+#[test]
+fn a_run_with_nothing_ready_reports_no_avatars() {
+    let (mut app, _) = loaded_avatars(0);
+    app.world_mut().insert_resource(AvatarProcessingRun {
+        spent: Duration::from_millis(2),
+        processed: 3,
+    });
+
+    app.world_mut().run_system_once(process_avatar).unwrap();
+
+    assert_eq!(app.world().resource::<AvatarProcessingRun>().processed, 0);
+}
+
+#[cfg(feature = "explorer")]
+#[test]
+fn the_explorer_measures_the_run_into_the_diagnostic() {
+    use bevy::diagnostic::{Diagnostic, DiagnosticsStore};
+    use scene_runner::scene_spawn_slice::spawn_timing::AVATAR_PROCESSING;
+
+    let mut world = World::new();
+    let mut store = DiagnosticsStore::default();
+    store.add(Diagnostic::new(AVATAR_PROCESSING));
+    world.insert_resource(store);
+    world.insert_resource(AvatarProcessingRun {
+        spent: Duration::from_millis(2),
+        processed: 3,
+    });
+
+    world
+        .run_system_once(super::explorer::measure_avatar_processing)
+        .unwrap();
+
+    let store = world.resource::<DiagnosticsStore>();
+    assert_eq!(store.get(&AVATAR_PROCESSING).unwrap().value(), Some(2.0));
 }
