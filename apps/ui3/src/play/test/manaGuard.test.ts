@@ -179,10 +179,10 @@ function wallet(chain = CHAIN) {
   }
 }
 
-function guarded(sale: ManaSaleTerms, opts: { chain?: number; chainId?: number; handOff?: (attempt: ManaHandOff) => boolean; current?: () => boolean } = {}) {
+function guarded(sale: ManaSaleTerms, opts: { chain?: number; chainId?: number; handOff?: (attempt: ManaHandOff) => boolean; current?: () => boolean; mayApprove?: () => boolean } = {}) {
   const w = wallet(opts.chain ?? opts.chainId)
   const handOff = vi.fn(opts.handOff ?? (() => true))
-  const intent: ManaPurchaseIntent = { buyer: BUYER, chainId: opts.chainId ?? CHAIN, sale, current: opts.current ?? (() => true), handOff }
+  const intent: ManaPurchaseIntent = { buyer: BUYER, chainId: opts.chainId ?? CHAIN, sale, current: opts.current ?? (() => true), handOff, mayApprove: opts.mayApprove ?? (() => true) }
   return { w, handOff, intent, provider: manaGuardedProvider(w, intent) }
 }
 const reached = (w: ReturnType<typeof wallet>, method: string) => w.requests.filter((r) => r.method === method)
@@ -202,6 +202,31 @@ describe('the MANA guard’s provider', () => {
     expect(g.handOff).toHaveBeenCalledTimes(1)
     expect(g.handOff).toHaveBeenCalledWith({ rail: 'relay', nonce: 41n })
     expect(reached(g.w, 'eth_signTypedData_v4')).toHaveLength(2)
+  })
+
+  it('forwards MANA’s approve only while the host says the buyer is authorizing it; the sale needs no such word', async () => {
+    let authorizing = false
+    const g = guarded(listings(), { mayApprove: () => authorizing })
+    await expect(g.provider.request({ method: 'eth_signTypedData_v4', params: [BUYER, JSON.stringify(typed(MANA_DOMAIN, approve()))] })).rejects.toThrow(WalletRefusal)
+    await expect(g.provider.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: MANA, data: approve() }] })).rejects.toThrow(WalletRefusal)
+    expect(reached(g.w, 'eth_signTypedData_v4')).toHaveLength(0)
+    expect(reached(g.w, 'eth_sendTransaction')).toHaveLength(0)
+    authorizing = true
+    await g.provider.request({ method: 'eth_signTypedData_v4', params: [BUYER, JSON.stringify(typed(MANA_DOMAIN, approve()))] })
+    expect(reached(g.w, 'eth_signTypedData_v4')).toHaveLength(1)
+    authorizing = false
+    await g.provider.request({ method: 'eth_signTypedData_v4', params: [BUYER, JSON.stringify(typed(MARKET_DOMAIN, encodeMarketplaceCall([manaListing()], BUYER)))] })
+    expect(reached(g.w, 'eth_signTypedData_v4')).toHaveLength(2)
+  })
+
+  it('refuses a listing paid in more than one entry, even when the first is the price', () => {
+    const two = manaListing({
+      received: [
+        { assetType: ASSET_TYPE.ERC20, contractAddress: BOOK.mana, amount: PRICE.toString(), extra: '0x', beneficiary: BOOK.creator },
+        { assetType: ASSET_TYPE.ERC20, contractAddress: BOOK.mana, amount: '1', extra: '0x', beneficiary: BOOK.creator }
+      ]
+    })
+    expect(() => checkManaTerms({ buyer: BUYER, chainId: CHAIN, sale: listings(encodeMarketplaceCall([two], BUYER)) })).toThrow(WalletRefusal)
   })
 
   it('hands a sale sent from the wallet off as direct, its nonce the wallet’s to pick', async () => {

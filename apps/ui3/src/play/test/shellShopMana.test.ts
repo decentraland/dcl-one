@@ -58,11 +58,7 @@ const manaListingOffer = (session: Session): PurchaseOffer =>
     { asset: itemAsset(CHAIN.POLYGON, BOOK.collection, ITEM), kind: 'wearable', sale: 'primaryMint', price: { manaWei: storePrice('wearable') }, venues: { mana: BOOK.marketplace }, call: { kind: 'accept' }, available: 10 },
     session
   )
-const manaTrade = (signature?: string) =>
-  creatorTrade({
-    received: [{ assetType: ASSET_TYPE.ERC20, contractAddress: BOOK.mana, amount: PRICE, extra: '0x', beneficiary: BOOK.creator }],
-    ...(signature ? { signature } : {})
-  })
+const manaTrade = () => creatorTrade({ received: [{ assetType: ASSET_TYPE.ERC20, contractAddress: BOOK.mana, amount: PRICE, extra: '0x', beneficiary: BOOK.creator }] })
 
 /** A Storage in memory; `refuse` makes chosen writes throw, as a full or blocked storage does. */
 function memoryStorage(refuse: (key: string, value: string) => boolean = () => false): Storage {
@@ -89,13 +85,14 @@ afterEach(() => {
 type World = ReturnType<typeof world>
 
 /** The fakes a purchase runs against, shared by the pages (shells) made over them, as a reload shares them. */
-function world(opts: { gasless?: boolean; allowance?: bigint } = {}) {
+function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: number } = {}) {
   vi.stubEnv('VITE_SHOP_CHAIN_ID', '137')
   const chain = createFakeChain()
   if (opts.allowance != null) chain.allowances.set(`137:${BUYER}:${STORE}`, opts.allowance)
   const relay = createFakeRelay({ chain, confirm: 'success' })
   const shop = createFakeShop({})
   const wallet = createFakeWallet({
+    ...(opts.walletChain != null ? { chainId: opts.walletChain } : {}),
     account: BUYER,
     onSend: (tx) => {
       const hash = `0x${'e'.repeat(62)}${(wallet.sent.length + 16).toString(16)}` as Hex
@@ -119,6 +116,7 @@ function page(
     trade?: () => ReturnType<typeof creatorTrade> | null
     storage?: Storage
     services?: Partial<ShellShopServices>
+    creditsBalance?: () => Promise<{ balanceCents: UsdCents; credits: number }>
   } = {}
 ) {
   const shown: { view: ShellPurchaseView; handlers: ShellPurchaseHandlers }[] = []
@@ -137,7 +135,7 @@ function page(
       client: () => w.shop.client,
       fetchItem: async () => LISTING,
       offers: () => async (queries, session) => Object.fromEntries(queries.map((q) => [q.key, (opts.offer ?? storeMint)(session)])),
-      balance: async () => ({ balanceCents: cents as UsdCents, credits: cents / 10 }),
+      balance: opts.creditsBalance ?? (async () => ({ balanceCents: cents as UsdCents, credits: cents / 10 })),
       resolvers: () => ({ trade: async () => opts.trade?.() ?? null, store: async () => ({ priceWei: opts.priceWei?.() ?? PRICE, available: 10 }) }),
       reader: () => w.chain,
       primeFlags: async () => {},
@@ -241,6 +239,41 @@ describe('the in-world purchase with MANA', () => {
       expect(p.events.at(-1)).toMatchObject({ state: 'succeeded' })
     })
 
+    it('lets MANA pay when the Credits balance can’t be read, the Credits row unpickable with its balance unknown', async () => {
+      const w = world({ allowance: maxUint256 })
+      const p = page(w, { creditsBalance: async () => Promise.reject(new Error('credits down')) })
+      await p.open()
+      const { view, handlers } = await p.until('method')
+      expect(view).toMatchObject({ credits: { balance: null, pays: false }, mana: { pays: true } })
+      handlers.onConfirm?.()
+      handlers.onPay?.('credits')
+      expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
+      handlers.onPay?.('mana')
+      await p.until('success')
+    })
+
+    it('says the terms couldn’t be read when neither the Credits balance reads nor MANA pays', async () => {
+      const w = world()
+      const p = page(w, { manaBalance: WEI, creditsBalance: async () => Promise.reject(new Error('credits down')) })
+      await p.open()
+      const failed = await p.until('failed')
+      expect(failed.view).toMatchObject({ step: 'failed', retry: true, message: "We couldn't check this item's price. Try again in a moment." })
+    })
+
+    it('doesn’t offer MANA for a listing paid in more than one entry, even when the first is the price', async () => {
+      const w = world()
+      const two = creatorTrade({
+        received: [
+          { assetType: ASSET_TYPE.ERC20, contractAddress: BOOK.mana, amount: PRICE, extra: '0x', beneficiary: BOOK.creator },
+          { assetType: ASSET_TYPE.ERC20, contractAddress: BOOK.mana, amount: '1', extra: '0x', beneficiary: BOOK.creator }
+        ]
+      })
+      const p = page(w, { offer: manaListingOffer, trade: () => two })
+      await p.open()
+      await p.until('failed')
+      expect(p.shown.some((x) => x.view.step === 'method')).toBe(false)
+    })
+
     it('still buys with Credits when they are picked', async () => {
       const w = world()
       const p = page(w)
@@ -301,6 +334,64 @@ describe('the in-world purchase with MANA', () => {
       expect(w.wallet.sent).toHaveLength(0)
     })
 
+    it('moves on to processing once the allowance is set, and a late CANCEL from that step can’t end a sale on its way', async () => {
+      const w = world()
+      let release!: () => void
+      const held = new Promise<void>((r) => (release = r))
+      // The sale's relay request waits; its receipt never comes (the relay took it and nothing more is known).
+      w.relay.state.confirm = 'none'
+      const slow = (async (url: string, init?: RequestInit) => {
+        const target = String((JSON.parse(String(init?.body)) as { transactionData: { params: unknown[] } }).transactionData.params[0]).toLowerCase()
+        if (target === STORE) await held
+        return w.relay.fetchImpl(url, init)
+      }) as unknown as typeof fetch
+      const p = page(w, { services: { rail: () => ({ relayerUrl: 'https://node.test/transactions-api/v1', fetchImpl: slow, gasless: true, wait: { timeoutMs: 30, pollMs: 10 } }) } })
+      await p.payMana()
+      const auth = await p.until('authorize')
+      auth.handlers.onAuthorize?.()
+      // The approve relayed and the sale signed: its relay request is the one held.
+      await vi.waitFor(() => expect(signatures(w)).toHaveLength(2))
+      expect(relayedTo(w)).toEqual([MANA])
+      expect(p.shown.at(-1)?.view.step).toBe('processing')
+      // The step's own CANCEL, pressed late (a stale view): nothing.
+      auth.handlers.onClose()
+      release()
+      await p.until('pending')
+      expect(relayedTo(w)).toEqual([MANA, STORE])
+      expect(p.events.at(-1)).toMatchObject({ state: 'pending' })
+      const op = p.events.at(-1)!.operation
+      p.shown.at(-1)!.handlers.onClose()
+      expect(await p.open()).toMatchObject({ operation: op, state: 'pending' })
+      expect(signatures(w)).toHaveLength(2)
+    })
+
+    it.each([
+      ['the first allowance read fails', (calls: number) => (calls === 1 ? 'fail' : 0n)],
+      ['the allowance reads enough, then none', (calls: number) => (calls === 1 ? maxUint256 : 0n)]
+    ] as const)('never approves without the buyer’s AUTHORIZE when %s', async (_what, allowance) => {
+      const w = world()
+      const call = w.chain.call.bind(w.chain)
+      let reads = 0
+      w.chain.call = async (chainId, to, data) => {
+        if (data.startsWith('0xdd62ed3e')) {
+          const answer = allowance(++reads)
+          if (answer === 'fail') throw new Error('rpc down')
+          w.chain.allowances.set(`137:${BUYER}:${STORE}`, answer)
+        }
+        return call(chainId, to, data)
+      }
+      const p = page(w)
+      await p.payMana()
+      const failed = await p.until('failed')
+      expect(failed.view).toMatchObject({ step: 'failed', retry: true })
+      expect(p.shown.some((x) => x.view.step === 'authorize')).toBe(false)
+      // No approve reached the wallet: no signature of MANA's domain, no send to MANA; and nothing went to the relay.
+      const approveSigned = signatures(w).some((q) => String(q.params?.[1]).toLowerCase().includes(MANA))
+      expect(approveSigned).toBe(false)
+      expect(w.wallet.sent).toHaveLength(0)
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
     it('says a declined approval, and AUTHORIZE tries again', async () => {
       const w = world()
       const p = page(w)
@@ -322,6 +413,30 @@ describe('the in-world purchase with MANA', () => {
       await p.until('success')
       expect(relayedTo(w)).toEqual([STORE])
       expect(w.wallet.sent.map((t) => t.to.toLowerCase())).toEqual([STORE])
+    })
+
+    it('offers a funded wallet on another network the switch after the relay’s quota refusal, saying why', async () => {
+      const w = world({ allowance: maxUint256, walletChain: 1 })
+      Object.assign(w.relay.state, { mode: 'refuse', refuseStatus: 429, refuseBody: { error: 'quota_reached', quota: 30 } })
+      const p = page(w)
+      await p.payMana()
+      const failed = await p.until('failed')
+      expect(failed.view).toMatchObject({ step: 'failed', retry: true, switchTo: 'Polygon' })
+      expect((failed.view as { message: string }).message).toBe(
+        "You've used all 30 fee-free transactions this account gets in 24 hours. Try again later. You can switch to Polygon and pay the network fee with your wallet. Nothing was bought."
+      )
+      expect(w.wallet.sent).toHaveLength(0)
+    })
+
+    it('tells an unfunded wallet on another network the relay’s reason, with no talk of networks', async () => {
+      const w = world({ allowance: maxUint256, walletChain: 1 })
+      Object.assign(w.relay.state, { mode: 'refuse', refuseStatus: 429, refuseBody: { error: 'quota_reached', quota: 30 } })
+      w.chain.balance = async () => 10n ** 16n
+      const p = page(w)
+      await p.payMana()
+      const failed = await p.until('failed')
+      expect(failed.view).toMatchObject({ step: 'failed', retry: true, message: "You've used all 30 fee-free transactions this account gets in 24 hours. Try again later. Nothing was bought." })
+      expect(failed.view).not.toHaveProperty('switchTo')
     })
 
     it.each([
@@ -387,7 +502,9 @@ describe('the in-world purchase with MANA', () => {
     it('buys a creator’s listing priced in MANA, through the marketplace', async () => {
       const w = world()
       w.chain.allowances.set(`137:${BUYER}:${BOOK.marketplace.contract.toLowerCase()}`, maxUint256)
-      const p = page(w, { offer: manaListingOffer, trade: () => manaTrade() })
+      // One signed listing, read the same at the quote and at BUY (the fixture stamps its times when built).
+      const listing = manaTrade()
+      const p = page(w, { offer: manaListingOffer, trade: () => listing })
       await p.payMana()
       await p.until('success')
       expect(relayedTo(w)).toEqual([BOOK.marketplace.contract.toLowerCase()])
@@ -398,7 +515,9 @@ describe('the in-world purchase with MANA', () => {
       w.chain.allowances.set(`137:${BUYER}:${BOOK.marketplace.contract.toLowerCase()}`, maxUint256)
       let reads = 0
       // The same price, another signed listing: only the sale's own bytes tell them apart.
-      const p = page(w, { offer: manaListingOffer, trade: () => manaTrade(++reads === 1 ? undefined : `0x${'cd'.repeat(65)}`) })
+      const shown = manaTrade()
+      const other = { ...shown, signature: `0x${'cd'.repeat(65)}` }
+      const p = page(w, { offer: manaListingOffer, trade: () => (++reads === 1 ? shown : other) })
       await p.payMana()
       const failed = await p.until('failed')
       expect(failed.view).toMatchObject({ step: 'failed', retry: true, message: 'Its price or terms changed. Try again to see the new ones. No MANA was spent.' })

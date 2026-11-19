@@ -10,7 +10,8 @@
 //  - the sale:
 //    - listings: exactly the calldata built from the confirmed terms before any request, coupons and their data
 //      included. A seller's signature alone doesn't pin the price: a coupon is a separate argument, and part of it
-//      is unsigned. Only MANA-priced listings: a USD-priced one has no MANA ceiling the contract enforces;
+//      is unsigned. Only listings priced in MANA itself, in one payment entry: a USD-priced one has no MANA ceiling the
+//      contract enforces, and a second entry would be paid beyond the price the server quoted from the first;
 //    - mints: the CollectionStore's buy of exactly the confirmed units for the buyer, at most the confirmed total in
 //      wei;
 //    - as the venue's meta-transaction or sent from the buyer, with no value. A sale already allowed (an allowance
@@ -18,15 +19,16 @@
 //
 // Phase 1 buys with MANA on Polygon (and Amoy, its testnet) only.
 //
-// The intent is pinned when the guard is made: the buyer, the chain and a copy of the terms; only `current` and
-// `handOff` stay live. Before each signature or transaction it checks the login is still the one confirmed and the
-// wallet's selected account is the buyer's; a direct send reads the wallet's chain last, after every other await. A
-// sale is forwarded only once the host has kept its attempt (`handOff`, told the rail and, for a meta-transaction, the
-// nonce the checked signature names): the host holds one outstanding sale per confirmation, and an approve never
-// counts as one. What reaches the wallet is what was checked: a typed-data text
-// parsed once and its checked data serialized again for the pinned buyer, or a transaction snapshot built from the
-// checked fields, its fees from the rails' own policy (amoyGasOverrides) and its chain bound. Anything else is
-// refused before it reaches the wallet.
+// The intent is pinned when the guard is made: the buyer, the chain and a copy of the terms; only `current`, `handOff`
+// and `mayApprove` stay live. Before each signature or transaction it checks the login is still the one confirmed and
+// the wallet's selected account is the buyer's; a direct send reads the wallet's chain last, after every other await.
+// A sale is forwarded only once the host has kept its attempt (`handOff`, told the rail and, for a meta-transaction,
+// the nonce the checked signature names): the host holds one outstanding sale per confirmation, and an approve never
+// counts as one. An approve goes only while the host says its buyer is authorizing it (`mayApprove`): never on the
+// rails' own initiative, as when an allowance read fails or reads short again before the sale. What reaches the wallet
+// is what was checked: a typed-data text parsed once and its checked data serialized again for the pinned buyer, or a
+// transaction snapshot built from the checked fields, its fees from the rails' own policy (amoyGasOverrides) and its
+// chain bound. Anything else is refused before it reaches the wallet.
 
 import { decodeAbiParameters, decodeFunctionData, getAbiItem, maxUint256, toFunctionSelector, type Hex } from 'viem'
 import type { Eip1193Provider } from '../../../data/auth/wallet'
@@ -72,6 +74,8 @@ export interface ManaPurchaseIntent {
    * sent from the buyer's wallet (`direct`, whose nonce the wallet picks).
    */
   handOff(attempt: ManaHandOff): boolean
+  /** Whether MANA's approve may go now: only while the buyer's own AUTHORIZE runs it, never on the rails' initiative. */
+  mayApprove(): boolean
 }
 
 /** A sale's attempt, as the guard hands it off: what the host keeps before forwarding it. */
@@ -146,8 +150,9 @@ export function checkManaTerms(intent: Pick<ManaPurchaseIntent, 'buyer' | 'chain
       intent.sale.units
     )
   if (!ok) refuse('The purchase is not the confirmed item.')
-  // MANA itself only: a USD-priced listing's MANA is set at mining, with no ceiling the contract enforces.
-  if (!trades.every((t) => t.received.length > 0 && t.received.every((r) => r.assetType === BigInt(ASSET_TYPE.ERC20) && lower(r.contractAddress) === lower(mana.address)))) {
+  // MANA itself only, in one entry, as the server prices a listing (its first payment asset): a USD-priced listing's MANA
+  // is set at mining with no ceiling the contract enforces, and a second entry would be paid beyond the price shown.
+  if (!trades.every((t) => t.received.length === 1 && t.received[0].assetType === BigInt(ASSET_TYPE.ERC20) && lower(t.received[0].contractAddress) === lower(mana.address))) {
     refuse('This listing can’t be bought with MANA here.')
   }
 }
@@ -301,7 +306,8 @@ export function manaGuardedProvider(provider: Eip1193Provider, source: ManaPurch
     chainId: source.chainId,
     sale: structuredClone(source.sale),
     current: () => source.current(),
-    handOff: (attempt) => source.handOff(attempt)
+    handOff: (attempt) => source.handOff(attempt),
+    mayApprove: () => source.mayApprove()
   }
   // The confirmed terms are checked once, before the wallet is asked anything.
   checkManaTerms(intent)
@@ -317,6 +323,9 @@ export function manaGuardedProvider(provider: Eip1193Provider, source: ManaPurch
   }
   const handOff = (attempt: ManaHandOff): void => {
     if (!intent.handOff(attempt)) refuse("This purchase can't be sent right now: it couldn't be kept, or it is already on its way.")
+  }
+  const approving = (): void => {
+    if (!intent.mayApprove()) refuse('The Shop only lets the sale spend your MANA once you authorize it.')
   }
   return {
     async request({ method, params }) {
@@ -353,6 +362,7 @@ export function manaGuardedProvider(provider: Eip1193Provider, source: ManaPurch
           const signed = JSON.stringify(checked.typed)
           await session()
           if (checked.sale) handOff({ rail: 'relay', nonce: checked.nonce })
+          else approving()
           return provider.request({ method, params: [intent.buyer, signed] })
         }
         case 'eth_sendTransaction': {
@@ -364,6 +374,7 @@ export function manaGuardedProvider(provider: Eip1193Provider, source: ManaPurch
           if (lower(await provider.request({ method: 'eth_chainId' })) !== chainHex) refuse('Your wallet is on another network. Switch it to the Shop’s and try again.')
           stillCurrent()
           if (checked.sale) handOff({ rail: 'direct' })
+          else approving()
           return provider.request({ method, params: [checked.snapshot] })
         }
         default:

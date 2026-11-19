@@ -12,14 +12,16 @@
 //    sends at once, so its two checkpoints are one).
 //
 // Then `refused` when the relay answers that it sent nothing, and `declined` when the wallet answers that the buyer
-// said no to its send (EIP-1193 4001). Nothing leaves this page without its checkpoint held: a request whose
-// checkpoint couldn't be kept is answered here as never sent, and nothing more is sent for the purchase. So a record
-// with no rail `dispatched` provably sent nothing, and one with a rail `dispatched` may have: it stays pending until a
-// receipt for its own hash says how it ended. No timer, ownership read or nonce read ends it.
+// said no to the sale's signature or send (EIP-1193 4001); after a decline nothing more is sent for the purchase.
+// Nothing leaves this page without its checkpoint held: a request whose checkpoint couldn't be kept is answered here as
+// never sent, and nothing more is sent for the purchase. So a record with no rail `dispatched` provably sent nothing,
+// and one with a rail `dispatched` may have: it stays pending until a receipt for its own hash says how it ended. No
+// timer, ownership read or nonce read ends it.
 //
-// The approve (MANA's allowance for the venue) is not the sale: it goes through the same guard, needs no checkpoint,
-// and may be relayed or sent while the purchase is open. Once it is closed (the buyer cancelled), nothing more goes,
-// an approve included.
+// The approve (MANA's allowance for the venue) is not the sale: it needs no checkpoint, and goes only while the buyer's
+// own AUTHORIZE runs it (`authorize`): the guard asks `approving()`, and the relay transport takes a request for MANA
+// only then. Any other relay request (another contract, or one it can't read) is answered as never sent. Once the
+// purchase is closed (the buyer cancelled), nothing more goes, an approve included.
 
 import { encodeAbiParameters, keccak256, type Hex } from 'viem'
 import type { Eip1193Provider } from '../../../data/auth/wallet'
@@ -105,6 +107,8 @@ export function manaSaleTerms(group: CartGroup, lines: ResolvedLine[], buyer: st
   }
   const trades = targets.flatMap((t) => (t.kind === 'trade' ? [t.trade] : []))
   if (trades.length !== targets.length) throw new Error('A marketplace group holds only listings')
+  // One payment entry per listing, as the server prices it (from its first): a second would be paid beyond that price.
+  if (trades.some((t) => t.received.length !== 1)) throw new Error('A listing is paid in one asset')
   const coupons = targets.flatMap((t) => (t.kind === 'trade' && t.coupon ? [t.coupon] : []))
   return { kind: 'listings', venue, calldata: encodeMarketplaceCall(trades, buyer, coupons.length ? coupons : undefined), units: confirmed }
 }
@@ -121,8 +125,12 @@ export interface ManaAttempt {
   readonly record: ManaAttemptRecord
   /** The guard's hand-off (ManaPurchaseIntent.handOff): keeps the rail's checkpoint, or refuses it. */
   handOff(attempt: ManaHandOff): boolean
-  /** The rails' relay transport: the sale's request only with its checkpoint kept; nothing at all once closed. */
+  /** The rails' relay transport: the sale's request only with its checkpoint kept, MANA's approve only while authorizing. */
   relay(send: typeof fetch): typeof fetch
+  /** Runs the buyer's AUTHORIZE: the only time MANA's approve may go. */
+  authorize<T>(run: () => Promise<T>): Promise<T>
+  /** Whether an approve may go now (ManaPurchaseIntent.mayApprove). */
+  approving(): boolean
   /** The buyer's wallet, under the guard: a send of the sale the buyer declines there ends its rail as declined. */
   observe(wallet: Eip1193Provider): Eip1193Provider
   /** Whether the sale may have left this page. */
@@ -137,8 +145,14 @@ export interface ManaAttempt {
 const notSent = (message: string): Response =>
   new Response(JSON.stringify({ ok: false, not_sent: true, message }), { status: 409, headers: { 'content-type': 'application/json' } })
 
+/** The method of a request to the relay, whichever shape it is given in. */
+function methodOf(input: Parameters<typeof fetch>[0], init: RequestInit | undefined): string {
+  return (init?.method ?? (typeof Request !== 'undefined' && input instanceof Request ? input.method : 'GET')).toUpperCase()
+}
+
 /** The contract a relay request is for: `params[0]` of its transaction data, lowercase; null when it reads otherwise. */
-function relayTarget(init: RequestInit | undefined): string | null {
+function relayTarget(input: Parameters<typeof fetch>[0], init: RequestInit | undefined): string | null {
+  if (typeof Request !== 'undefined' && input instanceof Request) return null
   if (typeof init?.body !== 'string') return null
   try {
     const target = (JSON.parse(init.body) as { transactionData?: { params?: unknown[] } }).transactionData?.params?.[0]
@@ -152,13 +166,17 @@ const isDecline = (e: unknown): boolean => (e as { code?: unknown } | null)?.cod
 
 /**
  * A purchase's attempt at `terms`, with no rail yet. `keep` writes the record and reads it back from storage: true
- * only when what storage holds is the record given.
+ * only when what storage holds is the record given. `mana`: the chain's MANA token, whose approve the relay may carry
+ * while the buyer authorizes it.
  */
-export function createManaAttempt(terms: ManaSaleTerms, keep: (record: ManaAttemptRecord) => boolean): ManaAttempt {
+export function createManaAttempt(terms: ManaSaleTerms, keep: (record: ManaAttemptRecord) => boolean, opts: { mana: string }): ManaAttempt {
   const record: ManaAttemptRecord = { venue: terms.venue.toLowerCase(), fingerprint: manaFingerprint(terms), rails: [] }
-  /** Set once a checkpoint couldn't be kept: nothing more is sent for the purchase. */
+  const mana = opts.mana.toLowerCase()
+  /** Set once a checkpoint couldn't be kept, or the buyer declined the sale: nothing more is sent for the purchase. */
   let blocked = false
   let closed = false
+  /** The buyer's AUTHORIZE is running. */
+  let authorizing = 0
   /** Keeps `next` in place of the record's rails, or leaves them as they were and blocks the purchase. */
   const move = (next: ManaRail[]): boolean => {
     const before = record.rails
@@ -169,6 +187,21 @@ export function createManaAttempt(terms: ManaSaleTerms, keep: (record: ManaAttem
     return false
   }
   const last = (): ManaRail | undefined => record.rails[record.rails.length - 1]
+  /** A wallet request for the sale: its meta-transaction's signature (the venue's domain), or its send to the venue. */
+  const saleRequest = (args: { method: string; params?: unknown }): boolean => {
+    const params = Array.isArray(args.params) ? args.params : []
+    if (args.method === 'eth_sendTransaction') {
+      const to = (params[0] as { to?: unknown } | undefined)?.to
+      return typeof to === 'string' && to.toLowerCase() === record.venue
+    }
+    if (args.method !== 'eth_signTypedData_v4' || typeof params[1] !== 'string') return false
+    try {
+      const domain = (JSON.parse(params[1]) as { domain?: { verifyingContract?: unknown } }).domain
+      return typeof domain?.verifyingContract === 'string' && domain.verifyingContract.toLowerCase() === record.venue
+    } catch {
+      return false
+    }
+  }
   const restage = (stage: ManaRailStage): boolean => {
     const rail = last()
     return rail ? move([...record.rails.slice(0, -1), { ...rail, stage }]) : false
@@ -189,9 +222,11 @@ export function createManaAttempt(terms: ManaSaleTerms, keep: (record: ManaAttem
     },
     relay(send) {
       return (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-        if ((init?.method ?? 'GET').toUpperCase() !== 'POST') return send(input, init)
+        if (methodOf(input, init) !== 'POST') return send(input, init)
         if (closed) return notSent('This purchase was cancelled, so nothing more was sent for it.')
-        if (relayTarget(init) !== record.venue) return send(input, init)
+        const target = relayTarget(input, init)
+        if (target === mana) return authorizing > 0 ? send(input, init) : notSent('MANA is approved only when you authorize it, so nothing was sent.')
+        if (target !== record.venue) return notSent('The Shop sends only this purchase, so nothing was sent.')
         // The sale: its signature was kept (`signing`), and now its dispatch, before the request leaves.
         const rail = last()
         if (blocked || rail?.rail !== 'relay' || rail.stage !== 'signing' || !restage('dispatched')) {
@@ -214,12 +249,12 @@ export function createManaAttempt(terms: ManaSaleTerms, keep: (record: ManaAttem
           try {
             return await wallet.request(args)
           } catch (e) {
-            const tx = (Array.isArray(args.params) ? args.params[0] : null) as { to?: unknown } | null
             const rail = last()
-            const sale = args.method === 'eth_sendTransaction' && typeof tx?.to === 'string' && tx.to.toLowerCase() === record.venue
-            // Declined in the wallet: the wallet's answer that it sent nothing. Kept or not, nothing more goes after it.
-            if (sale && isDecline(e) && rail?.rail === 'direct' && rail.stage === 'dispatched') {
-              if (!restage('declined')) blocked = true
+            // Declined in the wallet: the buyer said no to the sale (its signature for the relay, or its send). Kept or
+            // not, nothing more goes after it.
+            if (isDecline(e) && saleRequest(args) && ((rail?.rail === 'relay' && rail.stage === 'signing') || (rail?.rail === 'direct' && rail.stage === 'dispatched'))) {
+              restage('declined')
+              blocked = true
             }
             throw e
           }
@@ -228,6 +263,15 @@ export function createManaAttempt(terms: ManaSaleTerms, keep: (record: ManaAttem
         ...(wallet.removeListener ? { removeListener: wallet.removeListener.bind(wallet) } : {})
       }
     },
+    async authorize(run) {
+      authorizing++
+      try {
+        return await run()
+      } finally {
+        authorizing--
+      }
+    },
+    approving: () => authorizing > 0 && !closed,
     dispatched: () => manaDispatched(record),
     open: () => !closed,
     close() {

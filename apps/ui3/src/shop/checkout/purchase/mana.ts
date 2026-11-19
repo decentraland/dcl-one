@@ -71,11 +71,12 @@ async function ensureManaAllowance(ctx: RailContext, chainId: ChainId, spender: 
  * Relay `data` to `target` when gasless is on; a declined prompt or a relayed-but-unconfirmed call
  * propagates (never re-submitted directly: that could run it twice). Otherwise the wallet sends it.
  * `onSigned` marks the hand-off: after the relayed signature (right before the relay is called), or
- * right before the wallet is asked to send. From then on the call may be broadcast.
+ * right before the wallet is asked to send. From then on the call may be broadcast. `onFallback` hears
+ * why the relay couldn't run it, when the wallet is about to send it instead.
  */
 async function relayOrSend(
   ctx: RailContext,
-  opts: { target: MetaTxTarget; data: Hex; onSigned?: () => void; onBroadcast?: (txHash: Hex) => void; what: string },
+  opts: { target: MetaTxTarget; data: Hex; onSigned?: () => void; onBroadcast?: (txHash: Hex) => void; onFallback?: (e: unknown) => void; what: string },
 ): Promise<Hex> {
   if (ctx.gasless ?? gaslessEnabled()) {
     try {
@@ -96,6 +97,7 @@ async function relayOrSend(
       if (isSignatureDeclined(e) || isMetaTxPending(e)) throw e;
       if (isGaslessUnavailable(e) && e.reason === "relayer-unreachable") throw e;
       if (!isGaslessUnavailable(e) || !canPayGasItself(ctx.walletKind)) throw e;
+      opts.onFallback?.(e);
     }
   }
   return sendAndConfirm({
@@ -115,7 +117,7 @@ async function relayOrSend(
 /** Listings on ONE marketplace (all discounted or none), paid in MANA. */
 export async function acceptPayingMana(
   ctx: RailContext,
-  opts: { trades: SignedTrade[]; coupons?: ListingCoupon[]; requiredManaWei?: bigint; onSigned?: () => void; onBroadcast?: (txHash: Hex) => void },
+  opts: { trades: SignedTrade[]; coupons?: ListingCoupon[]; requiredManaWei?: bigint; onSigned?: () => void; onBroadcast?: (txHash: Hex) => void; onFallback?: (e: unknown) => void },
 ): Promise<Hex> {
   const first = opts.trades[0];
   if (!first) throw new Error("No items to buy");
@@ -131,6 +133,7 @@ export async function acceptPayingMana(
     data,
     onSigned: opts.onSigned,
     onBroadcast: opts.onBroadcast,
+    onFallback: opts.onFallback,
     what: "The MANA purchase",
   });
 }
@@ -138,7 +141,7 @@ export async function acceptPayingMana(
 /** CollectionStore mints on one chain, paid in MANA. */
 export async function mintPayingMana(
   ctx: RailContext,
-  opts: { mints: MintToBuy[]; chainId: ChainId; requiredManaWei?: bigint; onSigned?: () => void; onBroadcast?: (txHash: Hex) => void },
+  opts: { mints: MintToBuy[]; chainId: ChainId; requiredManaWei?: bigint; onSigned?: () => void; onBroadcast?: (txHash: Hex) => void; onFallback?: (e: unknown) => void },
 ): Promise<Hex> {
   const store = requireContracts(opts.chainId).collectionStore;
   if (!store) throw new Error(`No CollectionStore on chain ${opts.chainId}`);
@@ -149,6 +152,7 @@ export async function mintPayingMana(
     data: encodeStoreBuy(opts.mints.map((m) => m.item), ctx.buyer),
     onSigned: opts.onSigned,
     onBroadcast: opts.onBroadcast,
+    onFallback: opts.onFallback,
     what: "The MANA purchase",
   });
 }
