@@ -29,8 +29,9 @@ parking_lot.workspace = true
 reqwest.workspace = true
 rusty_enet.workspace = true
 web-transport-quinn.workspace = true
-rustls.workspace = true
-tokio-tungstenite.workspace = true
+# `wss://` to an API served over https; `ring` is the process TLS provider it installs
+rustls = { workspace = true, features = ["ring"] }
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 # the expiry of a short mandate, in the form the servers parse
 chrono.workspace = true
 base64.workspace = true

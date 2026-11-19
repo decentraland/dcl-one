@@ -181,6 +181,12 @@ pub struct ArchipelagoBot {
     deadline: Duration,
 }
 
+/// Names the process's TLS provider for `wss://`: this build links more than one, and the
+/// WebSocket client asks for the process default. A provider installed before is kept.
+fn install_tls_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 /// The URL a bot dials for an API base: `http` becomes `ws`, `https` becomes `wss`, the path is
 /// `/ws`.
 pub fn socket_url(api: &Url) -> Result<Url> {
@@ -263,6 +269,7 @@ impl ArchipelagoBot {
             challenge: Mutex::new(None),
         });
         shared.record("dialing", dialled.as_str());
+        install_tls_provider();
         let (stream, _) = tokio::time::timeout(deadline, tokio_tungstenite::connect_async(request))
             .await
             .map_err(|_| {
@@ -669,6 +676,47 @@ mod tests {
         );
         let text = message(&no_room);
         assert!(text.contains("no room"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn a_wss_address_is_dialed_with_tls() {
+        // a port that takes the connection and closes it: the TLS handshake fails there
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                drop(socket);
+            }
+        });
+        let ctx = Ctx::new(
+            Arc::new(crate::stack::Stack::pulse_only(
+                "127.0.0.1:9".parse().unwrap(),
+            )),
+            "unit",
+            "archipelago-tls",
+            0,
+            1,
+            std::env::temp_dir().join("comms-e2e-unit"),
+        );
+        let url = Url::parse(&format!("wss://127.0.0.1:{port}/ws")).unwrap();
+        let options = ArchipelagoOptions {
+            deadline: Some(Duration::from_secs(10)),
+            ..Default::default()
+        };
+        let error = match ArchipelagoBot::begin(
+            &ctx,
+            "tls",
+            &url,
+            &crate::identity::Identity::derive("tls", 0),
+            options,
+        )
+        .await
+        {
+            Ok(_) => panic!("nothing speaks TLS there"),
+            Err(error) => format!("{error:#}"),
+        };
+        assert!(error.contains("dialing"), "{error}");
+        assert!(!error.contains("not compiled in"), "{error}");
     }
 
     #[test]
