@@ -80,3 +80,35 @@ class TargetPlanTests(unittest.TestCase):
             self.assertTrue(assigned and missing)
             extra = sorted(missing)[0]
             self.assertEqual(compile_inventory(extra), assigned | {extra})
+
+            for args in ([], ["--"], [str(inventory), "first"]):
+                with self.subTest(args=args):
+                    result = subprocess.run([tooling / "catalyst-test.sh", "--write-inventory", *args],
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn("usage: catalyst-test.sh --write-inventory", result.stderr)
+
+            examples = workspace / "examples"
+            examples.mkdir()
+            broken = examples / "broken.rs"
+            broken.write_text("fn main() {}")
+            compile_inventory()
+            self.assertTrue(any(unit.get("target", {}).get("kind") == ["example"]
+                                for unit in map(json.loads, inventory.read_text().splitlines())))
+            broken.write_text('compile_error!("example compiled"); fn main() {}')
+            with self.assertRaises(subprocess.CalledProcessError):
+                compile_inventory()
+            broken.unlink()
+
+            dependency = root / "dependency"
+            (dependency / "src").mkdir(parents=True)
+            (dependency / "src/lib.rs").touch()
+            (dependency / "Cargo.toml").write_text(
+                '[package]\nname="dependency"\nversion="0.1.0"\nedition="2024"\n[features]\ngate=[]\n'
+            )
+            with (workspace / "Cargo.toml").open("a") as manifest:
+                manifest.write('[dependencies]\ndependency={path="../../dependency",features=["gate"]}\n'
+                               '[[test]]\nname="gated"\npath="tests/gated.rs"\nrequired-features=["dependency/gate"]\n')
+            (workspace / "tests/gated.rs").touch()
+            subprocess.run(["cargo", "generate-lockfile", "--offline"], cwd=workspace, check=True)
+            self.assertEqual(compile_inventory(), {"first", "second", "third", "gated"})

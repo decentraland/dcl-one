@@ -42,12 +42,15 @@ trap report EXIT
 inventory=
 targets=(--lib --bins)
 if [ "${1:-}" = "--write-inventory" ]; then
+  usage='usage: catalyst-test.sh --write-inventory FILE [TEST ...] -- [CARGO_ARGS ...]'
+  [ -n "${2:-}" ] && [ "$2" != "--" ] || { echo "$usage" >&2; exit 2; }
   inventory="$2"
   shift 2
-  while [ "$1" != "--" ]; do
+  while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
     targets+=(--test "$1")
     shift
   done
+  [ "$#" -gt 0 ] || { echo "$usage" >&2; exit 2; }
   shift
 fi
 build_targets() {

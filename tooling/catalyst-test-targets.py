@@ -29,6 +29,11 @@ def candidates(arguments):
         if package["name"] not in active:
             continue
         for target in package["targets"]:
+            required = target.get("required-features", [])
+            # Cargo also compiles examples during an unfiltered test build. Its package
+            # feature list does not describe required features of dependencies.
+            if target["kind"] == ["example"] or any("/" in feature for feature in required):
+                return None
             if not target["test"]:
                 if target["kind"] in (["bin"], ["lib"]):
                     return None
@@ -36,7 +41,7 @@ def candidates(arguments):
             if len(target["kind"]) != 1:
                 return None
             kind, = target["kind"]
-            if set(target.get("required-features", [])) - active[package["name"]]:
+            if set(required) - active[package["name"]]:
                 continue
             if kind not in ("test", "lib", "bin"):
                 return None
