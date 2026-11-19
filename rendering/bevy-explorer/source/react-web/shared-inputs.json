@@ -6109,7 +6109,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/shell/login.ts",
-      "sha256": "4a2edd10afddab325089c4563026f8e96ed1356acb1cd49848df850f19e3bd43"
+      "sha256": "981434740fc38dbfc4cfa36fea453c2483944adfa63dc8183c54c70ab53b023d"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/shell/main.ts",
@@ -6556,7 +6556,7 @@
     },
     {
       "path": "library/explorer-core/features/auth/guest.ts",
-      "sha256": "b394cfd83b2ba1b227a3e257b9eecf6017d297195ad6f91aa6387891e1f51e23"
+      "sha256": "09fe9af4edaf7d4d8ed3ab2124b37de40bc8973b1d2e8bfde839f2df4a66e1ec"
     },
     {
       "path": "library/explorer-core/features/auth/guestWalletEvent.ts",
@@ -6564,7 +6564,7 @@
     },
     {
       "path": "library/explorer-core/features/auth/sso.ts",
-      "sha256": "7edc0bed269a2066d06e37a61b2c7280bcb3814f508d0b207297c3b4849b94ff"
+      "sha256": "33e2085e7fc3a56eff1b5f6650319ce06dc803054ba38c582fa5e4dbcae9e60e"
     },
     {
       "path": "library/explorer-core/features/auth/thirdweb.ts",
@@ -7028,7 +7028,7 @@
     },
     {
       "path": "library/explorer-core/test/guestIdentity.test.ts",
-      "sha256": "00c4c10909337439c1530fe6de9e3af57e7be36dcc0cde5920e6aa4d731b30d8"
+      "sha256": "8500b135e5f273c2e1db41bb83be119f6355eb6e369985fc34593f129cea6bc3"
     },
     {
       "path": "library/explorer-core/test/guestWalletEvent.test.ts",

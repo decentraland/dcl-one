@@ -49,9 +49,19 @@ export const localGuestBackend: GuestBackend = {
   sign: (token, message) => Promise.resolve(personalSign(token, message))
 }
 
-/** The guest wallet a web page on `hostname` can reach. */
-export function webGuestBackendFor(hostname: string): GuestBackend {
-  const thirdweb = THIRDWEB_DOMAINS.some((d) => hostname === d || hostname.endsWith(`.${d}`))
+/** `/play?guestWallet=thirdweb` asks for the thirdweb guest on a host outside THIRDWEB_DOMAINS whose
+ *  origin the thirdweb project allows too, so a test deployment's guests behave like Decentraland's. */
+export const THIRDWEB_GUEST_PARAM = 'guestWallet'
+
+/** The guest wallet a web page at `location` can reach: thirdweb on Decentraland's domains, when the
+ *  page asks for it, or when this browser already keeps a thirdweb guest session (so the guest comes
+ *  back on the same wallet without the parameter); a key made in this browser otherwise. */
+export function webGuestBackendFor(location: { hostname: string; search: string }): GuestBackend {
+  const { hostname, search } = location
+  const thirdweb =
+    THIRDWEB_DOMAINS.some((d) => hostname === d || hostname.endsWith(`.${d}`)) ||
+    new URLSearchParams(search).get(THIRDWEB_GUEST_PARAM) === 'thirdweb' ||
+    webGuestBackend.keptSessionId?.() != null
   return thirdweb ? webGuestBackend : localGuestBackend
 }
 

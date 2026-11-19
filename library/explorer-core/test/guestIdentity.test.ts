@@ -80,11 +80,29 @@ describe('guest identity', () => {
 
   it('uses thirdweb on Decentraland domains and a browser-held key everywhere else', () => {
     for (const host of ['decentraland.org', 'decentraland.zone', 'decentraland.today', 'play.decentraland.org']) {
-      expect(webGuestBackendFor(host)).toBe(webGuestBackend)
+      expect(webGuestBackendFor({ hostname: host, search: '' })).toBe(webGuestBackend)
     }
     for (const host of ['127.0.0.1', 'localhost', 'example.com', 'decentraland.org.example.com', 'notdecentraland.org']) {
-      expect(webGuestBackendFor(host)).toBe(localGuestBackend)
+      expect(webGuestBackendFor({ hostname: host, search: '' })).toBe(localGuestBackend)
     }
+  })
+
+  it('uses thirdweb on any host that asks for it with ?guestWallet=thirdweb', () => {
+    expect(webGuestBackendFor({ hostname: 'example.com', search: '?guestWallet=thirdweb' })).toBe(webGuestBackend)
+    expect(webGuestBackendFor({ hostname: 'example.com', search: '?realm=x&guestWallet=thirdweb' })).toBe(webGuestBackend)
+    expect(webGuestBackendFor({ hostname: 'example.com', search: '?guestWallet=local' })).toBe(localGuestBackend)
+  })
+
+  // the guard forgets a guest's sign-in a day before it expires; the kept thirdweb session brings the
+  // same wallet back even when the page was opened without the parameter
+  it('keeps using thirdweb once this browser holds a thirdweb guest session', () => {
+    localStorage.setItem(GUEST_SESSION_KEY, 'kept')
+    try {
+      expect(webGuestBackendFor({ hostname: 'example.com', search: '' })).toBe(webGuestBackend)
+    } finally {
+      localStorage.removeItem(GUEST_SESSION_KEY)
+    }
+    expect(webGuestBackendFor({ hostname: 'example.com', search: '' })).toBe(localGuestBackend)
   })
 
   it('a browser-held guest key signs its own identity', async () => {
