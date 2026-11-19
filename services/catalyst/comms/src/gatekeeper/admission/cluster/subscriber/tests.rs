@@ -1239,13 +1239,25 @@ async fn the_wallet_is_taken_from_the_subject_and_lower_cased() {
     assert_eq!(h.delivered()[0].wallet, mixed.to_lowercase());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn a_banned_wallet_is_skipped_entirely() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let series = recorder.handle();
+    let _recording = metrics::set_default_local_recorder(&recorder);
     let h = harness();
     h.gateway.denied.lock().unwrap().insert(WALLET.into());
     h.feed(WALLET, &change("c1", SESSION_A)).await;
     assert!(h.gateway.minted().is_empty());
     assert!(h.delivered().is_empty());
+    let rendered = series.render();
+    assert_eq!(
+        metric_value(&rendered, "comms_cluster_banned_skipped_total"),
+        Some(1.0)
+    );
+    assert_eq!(
+        metric_value(&rendered, "comms_cluster_access_check_failed_total"),
+        None
+    );
 }
 
 /// An undecided ban lookup defers the assignment; the next hint after the store recovers mints.

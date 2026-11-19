@@ -87,9 +87,8 @@ pub enum IslandOccupant {
 /// Everything the subscriber needs beyond the bus: the access gate and the three LiveKit
 /// server-API calls the handover rests on.
 ///
-/// Each call surfaces a plain result. The fail-open and fail-closed decisions are deliberately
-/// left to the call sites below, because the two call sites make opposite ones for opposite
-/// reasons.
+/// Each call surfaces a plain result and the call sites decide what a failure means. Every ban
+/// lookup fails closed: the island gate and the stamp check both admit only on `Ok(false)`.
 #[async_trait]
 pub trait ClusterGateway: Send + Sync {
     fn safety_store(&self) -> Option<super::safety::SafetyStore> {
