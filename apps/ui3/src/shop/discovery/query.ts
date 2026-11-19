@@ -25,7 +25,15 @@ export function invalidateShopQueries(prefix?: string): void {
   notify();
 }
 
-function join<T>(id: string, fetcher: (signal: AbortSignal) => Promise<T>): { promise: Promise<T>; leave(): void } {
+/**
+ * Stores a read's answer only while that read is still current: one invalidated (or left by every reader) meanwhile
+ * may still resolve, as a request already answered does, and must not replace what a later read stored.
+ */
+function store(id: string, signal: AbortSignal, data: unknown): void {
+  if (!signal.aborted) cache.set(id, { data, at: Date.now() });
+}
+
+function join<T>(id: string, fetcher: (signal: AbortSignal) => Promise<T>): { promise: Promise<T>; signal: AbortSignal; leave(): void } {
   let flight = inflight.get(id);
   if (!flight) {
     const controller = new AbortController();
@@ -42,6 +50,7 @@ function join<T>(id: string, fetcher: (signal: AbortSignal) => Promise<T>): { pr
   joined.refs++;
   return {
     promise: joined.promise as Promise<T>,
+    signal: joined.controller.signal,
     leave() {
       joined.refs--;
       if (joined.refs <= 0 && inflight.get(id) === joined) {
@@ -70,17 +79,7 @@ export function prefetchShopQuery<T>(key: readonly unknown[], fetcher: (signal: 
   if ((cached && Date.now() - cached.at < DEFAULT_STALE_MS) || inflight.has(id)) return;
   // Held until it lands, so a page that mounts meanwhile joins it rather than asking again.
   const flight = join(id, fetcher);
-  const own = inflight.get(id);
-  // Its answer is stored only while the read is still current: one invalidated meanwhile (its signal aborted) may
-  // still resolve, as a request already answered does, and must not replace what a later read stored.
-  flight.promise
-    .then(
-      (data) => {
-        if (own && !own.controller.signal.aborted) cache.set(id, { data, at: Date.now() });
-      },
-      () => {},
-    )
-    .finally(flight.leave);
+  flight.promise.then((data) => store(id, flight.signal, data), () => {}).finally(flight.leave);
 }
 
 export function peekShopQuery<T>(key: readonly unknown[], staleMs: number = DEFAULT_STALE_MS): T | undefined {
@@ -147,7 +146,7 @@ export function useShopQuery<T>(
     const flight = join(id, (signal) => fetcherRef.current(signal));
     flight.promise.then(
       (data) => {
-        cache.set(id, { data, at: Date.now() });
+        store(id, flight.signal, data);
         if (live) setState({ id, error: null, fetching: false });
       },
       (error) => {

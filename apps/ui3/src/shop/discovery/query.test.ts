@@ -1,8 +1,9 @@
 // The prefetch cache's ordering: an answer only lands while its read is still current.
 
+import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { invalidateShopQueries, peekShopQuery, prefetchShopQuery } from "./query";
+import { invalidateShopQueries, peekShopQuery, prefetchShopQuery, useShopQuery } from "./query";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -35,5 +36,25 @@ describe("prefetchShopQuery", () => {
     a.resolve("A");
     await settle();
     expect(peekShopQuery(["rail"])).toBe("B");
+  });
+
+  it("never lets the read a page joined replace the page's later read once invalidated", async () => {
+    const a = deferred<string>();
+    const b = deferred<string>();
+    prefetchShopQuery(["rail"], () => a.promise);
+    const { result, unmount } = renderHook(() => useShopQuery(["rail"], () => b.promise));
+    act(() => invalidateShopQueries());
+    await act(async () => {
+      b.resolve("B");
+      await settle();
+    });
+    expect(peekShopQuery(["rail"])).toBe("B");
+    await act(async () => {
+      a.resolve("A");
+      await settle();
+    });
+    expect(peekShopQuery(["rail"])).toBe("B");
+    expect(result.current.data).toBe("B");
+    unmount();
   });
 });

@@ -839,8 +839,9 @@ pub struct UnifiedItem {
     pub chain_id: ChainId,
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub created_at: i64,
-    /// The creator's profile on the browse and trending feeds: never set on the row itself, it is
-    /// added to each response's JSON (`with_creator_profiles`) under the content denylist as it stands.
+    // Never set on the row itself: `with_creator_profiles` adds it to each response's JSON, after
+    // the memo, under the content denylist as it stands.
+    /// The creator's profile on the item and trending feeds (`name_creators`).
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub creator_profile: Option<CreatorProfile>,
