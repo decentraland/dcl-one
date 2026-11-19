@@ -104,6 +104,11 @@ export type GroupFailure = {
   /** rejected: the wallet declined; refused: the server refused; reverted: the chain reverted; error: anything else before a broadcast. */
   kind: "rejected" | "refused" | "reverted" | "error";
   message: string;
+  /**
+   * The network the buyer's own wallet must be on to send the purchase: set when the relay refused it and
+   * the wallet's own transaction then found the wallet on another network.
+   */
+  switchTo?: number;
 };
 
 /** One confirmation group's progress inside a checkout. */

@@ -37,6 +37,9 @@ import { quoteNameCredits } from '@shop/names/api'
 import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
 import { primeRemoteFlags, readRemoteFlags } from '../../../shop/discovery/lib/remoteFlags'
 import { parseEvmAddress } from '@shop/model/address'
+import { chainLabel } from '@shop/model/chain'
+import { isRejection } from '../../../shop/checkout/lib/errors'
+import { requestChainSwitch } from '../../../shop/wallet/chain'
 import { itemAsset } from '@shop/model/asset'
 import { creditsCeil, creditsFloor, type UsdCents } from '@shop/model/money'
 import type { CartLine, GroupProgress, GroupStatus, PurchaseOffer, PurchaseState } from '@shop/model/purchase'
@@ -100,6 +103,8 @@ export interface ShellPurchaseHandlers {
   /** A simulated NAME's success: see it over the avatar. */
   onPreview?: () => void
   onRetry?: () => void
+  /** SWITCH TO … AND RETRY: move the wallet to the failed step's network, then try again. */
+  onSwitchNetwork?: () => void
   onSignIn?: () => void
 }
 
@@ -378,9 +383,10 @@ type PartOutcome =
   | { kind: 'pending' }
   /**
    * Nothing of the group was handed off, or its transaction reverted. `message` says it as a purchase of
-   * its own; `part`, as one transaction of a checkout. `retry`: how it may start again.
+   * its own; `part`, as one transaction of a checkout. `retry`: how it may start again. `switchTo`: the
+   * network the buyer's own wallet can send it from, once it is moved there.
    */
-  | { kind: 'failed'; message: string; part: string; retry: 'cancelled' | 'failed' | null; topUp?: number }
+  | { kind: 'failed'; message: string; part: string; retry: 'cancelled' | 'failed' | null; topUp?: number; switchTo?: number }
 
 const NOT_BOUGHT = "This purchase didn't go through. Nothing was bought."
 /** How a checkout says one of its transactions ended. */
@@ -390,6 +396,20 @@ const PART_FAILED = 'one of its transactions didn’t go through.'
 // checkout's own reverted failure says), so the copy never claims they were returned.
 const REVERTED_PART = 'one of its transactions failed on-chain; the Credits it held come back on their own.'
 const REVERTED_ALONE = 'The transaction failed on-chain. Nothing was bought; the Credits it held come back on their own.'
+/**
+ * The relay refused the purchase (provably unsent), so the buyer's own wallet would have to send it, and pay
+ * its network fee, from the purchase's network. A wallet that can is offered the switch with this; one that
+ * can't is told, without any talk of networks, that it didn't go out.
+ */
+const switchText = (chainId: number): string =>
+  `This time it couldn’t go out without a network fee, so your wallet has to send it on ${chainLabel(chainId)} and pay that fee. Nothing was bought.`
+const NOT_SENT_LATER = 'This time it couldn’t go out. Nothing was bought; try again in a few minutes.'
+/**
+ * The least of the network's own currency (0.05) a wallet holds for the switch to be offered, as the web Shop
+ * offers its gas-paying fallback: a wallet with less would switch, sign and fail on the fee. A fixed floor, not
+ * an estimate, which reverts for reasons that aren't the fee.
+ */
+const GAS_FLOOR_WEI = 50_000_000_000_000_000n
 
 /**
  * A confirmed purchase of several groups, as its dialog shows them together: still in progress while any
@@ -512,6 +532,31 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
 
   const fail = (op: Operation, message: string, retry?: () => void): void => {
     show(op, { step: 'failed', message, retry: retry != null }, { onClose: () => close(op, 'failed'), ...(retry ? { onRetry: retry } : {}) })
+  }
+  /**
+   * A failure the buyer's own wallet gets past from `chainId`: SWITCH TO … AND RETRY moves the wallet there,
+   * from the buyer's own click (a wallet refuses a switch it can't tie to one), then tries again as TRY AGAIN
+   * does. A declined switch leaves the offer standing; a switch that fails says so.
+   */
+  const failSwitching = (op: Operation, message: string, chainId: number, wallet: Eip1193Provider, again: () => void): void => {
+    let switching = false
+    show(op, { step: 'failed', message, retry: true, switchTo: chainLabel(chainId) }, {
+      onClose: () => close(op, 'failed'),
+      onSwitchNetwork: () => {
+        if (switching) return
+        switching = true
+        requestChainSwitch(wallet, chainId).then(
+          () => {
+            if (slot.holds(op)) again()
+          },
+          (e: unknown) => {
+            switching = false
+            if (!slot.holds(op) || isRejection(e)) return
+            fail(op, `Your wallet didn’t move to ${chainLabel(chainId)}. Switch it there yourself, then try again.`, again)
+          }
+        )
+      }
+    })
   }
   const showPending = (op: Operation): void => show(op, { step: 'pending' }, { onClose: () => hide(op) })
   /** The signed-in login that can buy here: its key held, and a wallet here that signs for its account. */
@@ -1107,6 +1152,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         }
         // Nothing of the checkout was handed off.
         if (outcome.topUp != null) present(op, req, { ...quote, balance: outcome.topUp })
+        else if (outcome.switchTo != null) failSwitching(op, outcome.message, outcome.switchTo, wallet, () => restart(op, req, 'failed'))
         else fail(op, outcome.message, outcome.retry === 'cancelled' ? again : outcome.retry === 'failed' ? () => restart(op, req, 'failed') : undefined)
         return
       }
@@ -1147,10 +1193,10 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     const manager = svc.manager(chainId)
     const call = group.key.call.kind
     if (!manager || call === 'one') return { kind: 'failed', message: "Buying with Credits isn't available here right now.", part: 'buying the rest with Credits isn’t available here right now.', retry: null }
-    const refused = (message: string, part: string, retry: 'cancelled' | 'failed' | null, topUp?: number): PartOutcome => {
+    const refused = (message: string, part: string, retry: 'cancelled' | 'failed' | null, topUp?: number, switchTo?: number): PartOutcome => {
       op.state = 'reviewing'
       publish(op)
-      return { kind: 'failed', message, part, retry, ...(topUp != null ? { topUp } : {}) }
+      return { kind: 'failed', message, part, retry, ...(topUp != null ? { topUp } : {}), ...(switchTo != null ? { switchTo } : {}) }
     }
     const intent: PurchaseIntent = {
       buyer: quote.buyer,
@@ -1229,11 +1275,27 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       case 'pending':
         move(op, 'pending', { txHash: result.txHash })
         return { kind: 'pending' }
-      case 'failed':
+      case 'failed': {
         // The balance fell short between the quote and the authorization: Insufficient Funds after all.
         if (result.topUp) return refused(result.failure.message, 'your Credits balance didn’t cover the rest of it.', null, creditsFloor(result.topUp.balanceCents as UsdCents))
+        // The relay refused it, and the wallet's own transaction found the wallet on another network. Only a
+        // wallet that can pay that network's fee is offered the switch; an unreadable balance counts as short.
+        const required = result.failure.switchTo
+        if (required != null) {
+          const funded = await svc
+            .reader()
+            .balance(required, quote.buyer)
+            .then(
+              (wei) => wei >= GAS_FLOOR_WEI,
+              () => false
+            )
+          return funded
+            ? refused(switchText(required), `the rest of it needs your wallet on ${chainLabel(required)} to pay the network fee.`, 'failed', undefined, required)
+            : refused(NOT_SENT_LATER, NEVER_WENT, 'failed')
+        }
         // A failed group handed nothing off, or its transaction reverted: either way this attempt is over.
         return refused(result.failure.message, result.failure.kind === 'reverted' ? REVERTED_PART : result.failure.message, result.failure.kind !== 'refused' ? 'failed' : null)
+      }
       case 'skipped':
         return refused("This purchase couldn't run. Nothing was charged.", 'the rest of it couldn’t run.', 'cancelled')
     }

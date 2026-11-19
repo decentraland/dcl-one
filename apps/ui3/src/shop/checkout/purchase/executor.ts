@@ -185,7 +185,10 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
     }
     if (txHash) return { status: "pending", txHash };
     const failure = handedOff ? { ...failureFor(e), kind: "rejected" as const } : failureFor(e);
-    if (isWrongNetworkError(e)) failure.message = friendlyError(e, FALLBACK);
+    if (isWrongNetworkError(e)) {
+      failure.message = friendlyError(e, FALLBACK);
+      failure.switchTo = e.required;
+    }
     dispatchSafe(store, keyId, { type: "failed", failure });
     return { status: "failed", failure, released: await release(deps, [creditId]) };
   }

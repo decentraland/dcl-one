@@ -61,7 +61,7 @@ afterEach(() => {
   vi.unstubAllEnvs()
 })
 
-function rails(opts: { trusted: string; kind: 'managed' | 'web3'; gasless?: boolean; storage?: Storage }) {
+function rails(opts: { trusted: string; kind: 'managed' | 'web3'; gasless?: boolean; storage?: Storage; walletChain?: number }) {
   // The deployment names its manager the way a build does, so the checkout's address book (which the rails
   // spend through) and the shell's trust agree on it.
   vi.stubEnv('VITE_SHOP_CHAIN_ID', '137')
@@ -77,6 +77,7 @@ function rails(opts: { trusted: string; kind: 'managed' | 'web3'; gasless?: bool
     reportCreditSubmission: () => ({ recorded: 1 })
   })
   const wallet = createFakeWallet({
+    ...(opts.walletChain != null ? { chainId: opts.walletChain } : {}),
     account: BUYER,
     onSend: () => {
       const hash = `0x${'e'.repeat(63)}1` as Hex
@@ -214,6 +215,68 @@ describe('the shell purchase on the real rails', () => {
     expect(web3.relay.posts).toHaveLength(1)
     expect(web3.wallet.sent).toHaveLength(1)
     expect(web3.shop.log.filter((q) => q.name === 'authorizeCreditBatch')).toHaveLength(1)
+  })
+
+  it('offers a funded web3 wallet on another network the switch, which moves it and buys on a fresh attempt', async () => {
+    // The relay refuses (not sent); the wallet's own transaction needs Polygon, and the wallet is on Ethereum.
+    const r = rails({ trusted: DEDICATED, kind: 'web3', walletChain: 1 })
+    r.relay.state.mode = 'refuse'
+    await r.buy()
+    const failed = await r.until('failed')
+    expect(failed.view).toMatchObject({ step: 'failed', retry: true, switchTo: 'Polygon' })
+    expect((failed.view as { message: string }).message).toContain('your wallet has to send it on Polygon and pay that fee')
+    expect(r.wallet.sent).toHaveLength(0)
+    expect(r.shop.log.find((q) => q.name === 'cancelCreditAuthorizations')?.body).toEqual({ salts: [`0x${'a1'.repeat(32)}`] })
+    // One click: the wallet moves to Polygon, then a fresh attempt reads the terms anew.
+    failed.handlers.onSwitchNetwork?.()
+    failed.handlers.onSwitchNetwork?.() // a second press while the wallet answers does nothing more
+    ;(await r.until('confirm')).handlers.onConfirm?.()
+    await r.until('success')
+    expect(r.wallet.requests.filter((q) => q.method === 'wallet_switchEthereumChain')).toEqual([{ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x89' }] }])
+    expect(r.wallet.chainId).toBe(137)
+    expect(r.wallet.sent).toHaveLength(1)
+    expect(r.shop.log.filter((q) => q.name === 'authorizeCreditBatch')).toHaveLength(2)
+    expect(r.events.at(-1)).toMatchObject({ state: 'succeeded' })
+  })
+
+  it('tells a web3 wallet without the fee money that it didn’t go out, with no talk of networks', async () => {
+    const r = rails({ trusted: DEDICATED, kind: 'web3', walletChain: 1 })
+    r.relay.state.mode = 'refuse'
+    r.chain.balance = async () => 10n ** 16n // 0.01, under the 0.05 floor
+    await r.buy()
+    const failed = await r.until('failed')
+    expect(failed.view).toMatchObject({ step: 'failed', retry: true, message: 'This time it couldn’t go out. Nothing was bought; try again in a few minutes.' })
+    expect(failed.view).not.toHaveProperty('switchTo')
+    expect(r.wallet.requests.some((q) => q.method === 'wallet_switchEthereumChain')).toBe(false)
+  })
+
+  it('leaves the switch on offer when the buyer declines it in the wallet, and says so when the switch fails', async () => {
+    const r = rails({ trusted: DEDICATED, kind: 'web3', walletChain: 1 })
+    r.relay.state.mode = 'refuse'
+    const ask = r.wallet.request.bind(r.wallet)
+    let answer: 'decline' | 'fail' = 'decline'
+    let switches = 0
+    r.wallet.request = async (args) => {
+      if (args.method === 'wallet_switchEthereumChain') {
+        switches++
+        throw answer === 'decline' ? Object.assign(new Error('User rejected the request.'), { code: 4001 }) : Object.assign(new Error('Internal error'), { code: -32603 })
+      }
+      return ask(args)
+    }
+    await r.buy()
+    const failed = await r.until('failed')
+    const shown = r.shown.length
+    failed.handlers.onSwitchNetwork?.()
+    await vi.waitFor(() => expect(switches).toBe(1))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(r.shown).toHaveLength(shown)
+    // Declined, the offer stands: pressing again asks the wallet again, and this time the switch fails.
+    answer = 'fail'
+    failed.handlers.onSwitchNetwork?.()
+    await vi.waitFor(() => expect(r.shown.length).toBeGreaterThan(shown))
+    expect(switches).toBe(2)
+    expect(r.shown.at(-1)!.view).toMatchObject({ step: 'failed', retry: true, message: 'Your wallet didn’t move to Polygon. Switch it there yourself, then try again.' })
+    expect(r.wallet.sent).toHaveLength(0)
   })
 
   it('relays nothing when the hand-off isn’t kept: the signed purchase never leaves the browser', async () => {

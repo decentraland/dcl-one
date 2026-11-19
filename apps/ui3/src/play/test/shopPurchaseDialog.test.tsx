@@ -10,7 +10,7 @@ const item = { name: 'Golden Armor', creator: 'Aurora', rarity: 'epic', credits:
 const name = { kind: 'name' as const, name: 'Mojito', creator: '', rarity: '', credits: 94 }
 
 function show(view: ShopPurchaseStep) {
-  const handlers = { onClose: vi.fn(), onConfirm: vi.fn(), onBuyCredits: vi.fn(), onBackpack: vi.fn(), onPreview: vi.fn(), onRetry: vi.fn(), onSignIn: vi.fn() }
+  const handlers = { onClose: vi.fn(), onConfirm: vi.fn(), onBuyCredits: vi.fn(), onBackpack: vi.fn(), onPreview: vi.fn(), onRetry: vi.fn(), onSwitchNetwork: vi.fn(), onSignIn: vi.fn() }
   render(<ShopPurchaseDialog view={view} {...handlers} />)
   return handlers
 }
@@ -72,6 +72,16 @@ describe('the purchase dialog', () => {
     show({ step: 'failed', message: 'The transaction failed on-chain. Nothing was bought.', retry: false })
     expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
+  it('the Error modal offers CANCEL and SWITCH TO … AND RETRY, in place of TRY AGAIN, when the wallet must move', () => {
+    const h = show({ step: 'failed', message: 'Your wallet has to send it on Polygon.', retry: true, switchTo: 'Polygon' })
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to Polygon and retry' }))
+    expect(h.onSwitchNetwork).toHaveBeenCalledTimes(1)
+    expect(h.onRetry).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(h.onClose).toHaveBeenCalled()
   })
 
   it('Buy N Items: every unit a row, counted in the title, the list scrolling past two', () => {
