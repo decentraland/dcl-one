@@ -196,14 +196,14 @@ pub struct Island {
     pub peers: Vec<Peer>,
 }
 
+/// A peer as the server's `PublicPeer` writes it. Every field is required, so a field the server
+/// renames is an error here, not a zero. A number that is not finite arrives as `null`.
 #[derive(Deserialize)]
 struct RawPeer {
     address: String,
-    #[serde(rename = "lastPing", default)]
+    #[serde(rename = "lastPing")]
     last_ping: i64,
-    #[serde(default)]
     parcel: [Option<f64>; 2],
-    #[serde(default)]
     position: [Option<f64>; 3],
 }
 
@@ -220,12 +220,12 @@ impl RawPeer {
     }
 }
 
+/// An island as the server's `Island` writes it; every field the tool reads is required.
 #[derive(Deserialize)]
 struct RawIsland {
     id: String,
-    #[serde(rename = "maxPeers", default)]
+    #[serde(rename = "maxPeers")]
     max_peers: u64,
-    #[serde(default)]
     peers: Vec<RawPeer>,
 }
 
@@ -393,5 +393,28 @@ latency_bucket{le="+Inf"} 12
     fn a_reply_that_is_not_the_documented_shape_is_an_error() {
         assert!(parse_islands("{\"ok\":true}").is_err());
         assert!(parse_peers("[]", &[]).is_err());
+    }
+
+    #[test]
+    fn a_field_the_server_renamed_is_an_error_not_a_zero() {
+        let peer = r#"{"id":"0xa","address":"0xa","lastPing":5,"parcel":[0,0],"position":[1,0,2]}"#;
+        let without = |field: &str| -> String {
+            let mut value: serde_json::Value = serde_json::from_str(peer).unwrap();
+            value.as_object_mut().unwrap().remove(field);
+            value.to_string()
+        };
+        for field in ["address", "lastPing", "parcel", "position"] {
+            let peers = format!(r#"{{"ok":true,"peers":[{}]}}"#, without(field));
+            assert!(parse_peers(&peers, &[]).is_err(), "a peer without {field}");
+        }
+        assert!(parse_peers(&format!(r#"{{"ok":true,"peers":[{peer}]}}"#), &[]).is_ok());
+        for island in [
+            format!(r#"{{"id":"I1","peers":[{peer}]}}"#),
+            r#"{"id":"I1","maxPeers":100}"#.to_owned(),
+            format!(r#"{{"maxPeers":100,"peers":[{peer}]}}"#),
+        ] {
+            let islands = format!(r#"{{"ok":true,"islands":[{island}]}}"#);
+            assert!(parse_islands(&islands).is_err(), "{island}");
+        }
     }
 }
