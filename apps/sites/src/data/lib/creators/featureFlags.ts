@@ -1,6 +1,5 @@
-// Decentraland feature flags, read from the same service every other dapp reads (ported from shop's
-// lib/featureFlags): a cached fetch behind an async accessor, keyed `${app}-${feature}`.
-import { config } from './config'
+// Decentraland feature flags, read through the site's `/internal/feature-flags` like the rest of Sites: a cached
+// fetch behind an async accessor, keyed `${app}-${feature}`.
 
 /** Flag names as they appear in the service, without their application prefix. */
 export enum FeatureFlag {
@@ -74,9 +73,9 @@ async function fetchSnapshot(application: string): Promise<Snapshot> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
   try {
-    // Read through this app: the flag service answers by the asking site, which only the server can name.
-    const query = new URLSearchParams({ app: application, env: config.getEnv() })
-    const response = await fetch(`/internal/creators-flags?${query}`, { signal: controller.signal })
+    // Read through this site: the flag service answers by the asking site, which only the server can name.
+    const query = new URLSearchParams({ app: application, variants: '1' })
+    const response = await fetch(`/internal/feature-flags?${query}`, { signal: controller.signal })
     if (!response.ok) {
       await response.body?.cancel()
       throw new Error(`feature flags request failed with ${response.status}`)

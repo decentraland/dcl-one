@@ -30,7 +30,7 @@ else playwright-core's own download.
   builder-server applies what an indexer would. A wallet off Polygon goes through the fake relayer.
 - The wearable preview iframe is a page that speaks its postMessage protocol (`helpers/preview.ts`).
 - Telemetry is read off the requests the page sends: `app.waitForEvent('bd_items_added', { collection_id })`.
-- Flags are off unless a spec passes `flags`, keyed `${application}-${flag}`; the site's `/internal/creators-flags`
+- Flags are off unless a spec passes `flags`, keyed `${application}-${flag}`; the site's `/internal/feature-flags`
   answers with them.
 - Model fixtures are in `fixtures/files` (`helpers/files.ts` says which pass the rule book); zips are built at run time.
 

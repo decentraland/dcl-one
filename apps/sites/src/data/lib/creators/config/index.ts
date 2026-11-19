@@ -18,11 +18,6 @@ const BY_ENV = {
 /** The page's environment: in the browser, the one its address names. */
 export const config = createEnvConfig(BY_ENV, resolveEnv(typeof window === 'undefined' ? undefined : window.location, fallback))
 
-/** The environment a request addresses, for server code, which serves every environment's pages. */
-export function configForRequest(url: URL) {
-  return createEnvConfig(BY_ENV, resolveEnv({ host: url.host, search: url.search }, fallback))
-}
-
 const search = typeof window === 'undefined' ? new URLSearchParams() : new URLSearchParams(window.location.search)
 
 /** `?unity=false` forces the Babylon preview renderer, a debugging escape hatch; any other value is ignored. */

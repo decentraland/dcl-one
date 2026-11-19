@@ -32,11 +32,14 @@ suite drives these pages with every service faked; see its README.
   another account is refused before anything is signed. A dismissed wallet prompt returns to the form, and a wallet
   on the wrong account or network gets the shared wallet message with a retry; neither is reported as an error.
 - **Raw errors never reach the user.** Failures show friendly copy and are logged with a `flow`, which the site
-  reports to its client-error endpoint; a retry is offered only when it can succeed. Curators are the exception: the approval flow
-  shows them the raw error with a Copy button for support.
+  reports to its client-error endpoint; a retry is offered only when it can succeed. Curators are the exception: the
+  approval flow shows them the raw error with a Copy button for support.
 - **Phones are viewers.** At 900px and below the collection management actions are hidden; at 768px and below the
   editor is preview-only. Curation actions are desktop-only.
 - **Telemetry** uses `bd_<area>_<action>` events, typed in the Sites catalogue, one story per page.
+- **Feature flags** are the `builder` and `dapps` flags the rest of Sites reads, through `/internal/feature-flags`:
+  decentraland.org's unless the server sets `FEATURE_FLAGS_URL` and `FEATURE_FLAGS_ORIGIN`. A local dev server
+  overrides one with `VITE_FEATURE_FLAG_OVERRIDES=blender-live-preview:true`; a flag that cannot be read is off.
 
 ## Collections list and status model
 

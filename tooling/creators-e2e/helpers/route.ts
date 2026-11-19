@@ -166,7 +166,7 @@ export function route(req: Req, ctx: RouteContext): Promise<void> {
     })
   }
   // The site reads the flag service on its server; the page only ever asks the site.
-  if (url.origin === ctx.appOrigin && pathname === '/internal/creators-flags') return json(req, { flags: ctx.flags })
+  if (url.origin === ctx.appOrigin && pathname === '/internal/feature-flags') return json(req, { flags: ctx.flags, variants: {} })
   if (url.origin === ctx.appOrigin && pathname === '/internal/client-error') return req.respond({ status: 204 })
   // The site's own chrome reads the signed-in account's profile and credits through its server: neither exists here.
   if (url.origin === ctx.appOrigin && /^\/(shop-api|lambdas)\//.test(pathname)) return json(req, {}, 404)

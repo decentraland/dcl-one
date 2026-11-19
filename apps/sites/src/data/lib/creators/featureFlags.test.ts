@@ -12,10 +12,10 @@ afterEach(() => fetchMock.mockReset())
 const flags = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
 
 describe('getIsFeatureEnabled', () => {
-  it('reads the dapps flags of the environment through this app and prefixes the flag name', async () => {
+  it('reads the dapps flags through the site and prefixes the flag name', async () => {
     fetchMock.mockResolvedValue(flags({ flags: { 'dapps-unity-wearable-preview': true } }))
     await expect(getIsFeatureEnabled(FeatureFlag.UNITY_WEARABLE_PREVIEW)).resolves.toBe(true)
-    expect(fetchMock.mock.calls[0][0]).toBe('/internal/creators-flags?app=dapps&env=dev')
+    expect(fetchMock.mock.calls[0][0]).toBe('/internal/feature-flags?app=dapps&variants=1')
   })
 
   it('is off when the flag is absent, the body is malformed or the service fails', async () => {
@@ -40,8 +40,8 @@ describe('getIsFeatureEnabled', () => {
     await expect(getIsFeatureEnabled(FeatureFlag.CAMPAIGN)).resolves.toBe(true)
     await expect(getIsFeatureEnabled(FeatureFlag.UNITY_WEARABLE_PREVIEW)).resolves.toBe(true)
     expect(fetchMock.mock.calls.map(call => call[0])).toEqual([
-      '/internal/creators-flags?app=builder&env=dev',
-      '/internal/creators-flags?app=dapps&env=dev'
+      '/internal/feature-flags?app=builder&variants=1',
+      '/internal/feature-flags?app=dapps&variants=1'
     ])
   })
 
