@@ -1,6 +1,6 @@
 import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
 import type { AuthIdentity } from "../../data/auth/identity";
 import type { Eip1193Provider } from "../../data/auth/wallet";
@@ -70,11 +70,13 @@ describe("the session seam", () => {
 
 describe("the network, read and changed only on request", () => {
   describe("when an injected wallet proxy cannot expose its event methods", () => {
+    let target: ReturnType<typeof fakeProvider>;
     let provider: Eip1193Provider;
     let onAccountsChanged: ReturnType<typeof vi.fn<(account: string | null) => void>>;
+    let warn: MockInstance<typeof console.warn>;
 
     beforeEach(() => {
-      const target = fakeProvider({ chainId: CHAIN.POLYGON, account: BOOK.buyer });
+      target = fakeProvider({ chainId: CHAIN.POLYGON, account: BOOK.buyer });
       Object.defineProperty(target, "on", { writable: false, configurable: false });
       provider = new Proxy(target, {
         get(target, key, receiver) {
@@ -83,11 +85,16 @@ describe("the network, read and changed only on request", () => {
         },
       });
       onAccountsChanged = vi.fn<(account: string | null) => void>();
+      warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     });
 
-    it("should skip the subscription without throwing during setup or cleanup", () => {
+    afterEach(() => warn.mockRestore());
+
+    it("should warn and skip the subscription without throwing", () => {
       expect(() => subscribeWallet(provider, { onAccountsChanged })()).not.toThrow();
+      target.emit("accountsChanged", [BOOK.reseller]);
       expect(onAccountsChanged).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith("[shop/wallet] provider event methods unreadable; skipping subscription");
     });
   });
 

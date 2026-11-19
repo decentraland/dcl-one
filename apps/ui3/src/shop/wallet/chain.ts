@@ -80,6 +80,7 @@ export function subscribeWallet(provider: Eip1193Provider | null, events: Wallet
     // Brave Android can throw from its injected proxy when reading an event method.
     ({ on, removeListener } = provider);
   } catch {
+    console.warn("[shop/wallet] provider event methods unreadable; skipping subscription");
     return () => {};
   }
   if (typeof on !== "function" || typeof removeListener !== "function") return () => {};
