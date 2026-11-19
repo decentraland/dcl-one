@@ -1,6 +1,6 @@
 import type { SaveDialogOptions } from 'electron';
 
-import type { DeploymentLogEntry } from '/shared/types/ipc';
+import type { DeploymentLogEntry, RendererErrorLogEntry } from '/shared/types/ipc';
 import { isUrl } from '/shared/utils';
 
 import { invoke } from '../services/ipc';
@@ -20,4 +20,8 @@ export async function copyToClipboard(text: string) {
 
 export async function logDeployment(entry: DeploymentLogEntry) {
   await invoke('electron.logDeployment', entry);
+}
+
+export async function logRendererError(entry: RendererErrorLogEntry) {
+  await invoke('electron.logRendererError', entry);
 }

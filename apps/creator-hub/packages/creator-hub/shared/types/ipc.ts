@@ -204,6 +204,7 @@ export interface Ipc {
   'landUnpublish.deploy': (request: EmptySceneDeploy) => Promise<void>;
   'electron.openExternal': (url: string) => Promise<void>;
   'electron.logDeployment': (entry: DeploymentLogEntry) => Promise<void>;
+  'electron.logRendererError': (entry: RendererErrorLogEntry) => Promise<void>;
   'electron.copyToClipboard': (text: string) => Promise<void>;
   'oxc.parse': (filename: string, source: string) => Promise<OxcParseResult>;
   'optimizer.scan': (path: string) => Promise<OptimizeScanResult>;
@@ -357,3 +358,12 @@ export type DeploymentLogEntry =
       baseParcel: string;
     }
   | { outcome: 'failed'; error: string };
+
+/** An error a screen crashed on, written to main.log so a user's log shows it. */
+export type RendererErrorLogEntry = {
+  /** The error boundary that caught it. */
+  boundary: string;
+  /** The error's stack, or its message when it has none. */
+  error: string;
+  componentStack?: string;
+};

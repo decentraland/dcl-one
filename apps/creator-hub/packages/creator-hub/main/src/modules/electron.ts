@@ -11,7 +11,7 @@ import {
 } from 'electron';
 import log from 'electron-log/main';
 import type { Env } from '/shared/types/env';
-import type { DeploymentLogEntry } from '/shared/types/ipc';
+import type { DeploymentLogEntry, RendererErrorLogEntry } from '/shared/types/ipc';
 
 // Store environment override from CLI arguments
 let envOverride: Env | null = null;
@@ -86,4 +86,12 @@ export async function logDeployment(entry: DeploymentLogEntry): Promise<void> {
   } else {
     log.warn(`[Deploy] Publish failed: ${entry.error}`);
   }
+}
+
+export async function logRendererError({
+  boundary,
+  error,
+  componentStack,
+}: RendererErrorLogEntry): Promise<void> {
+  log.error(`[ErrorBoundary:${boundary}] ${error}${componentStack ? `\n${componentStack}` : ''}`);
 }

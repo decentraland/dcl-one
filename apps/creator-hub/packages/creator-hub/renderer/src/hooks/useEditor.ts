@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { useStore } from 'react-redux';
 
 import type { PreviewOptions } from '/shared/types/settings';
 
@@ -11,10 +12,11 @@ import { useInspector } from '/@/hooks/useInspector';
 import { useAuth } from '/@/hooks/useAuth';
 import { stripBase64ImagePrefix } from '/@/modules/image';
 import { editor as editorApi } from '#preload';
-import { useDispatch, useSelector } from '#store';
+import { type AppState, useDispatch, useSelector } from '#store';
 
 export const useEditor = () => {
   const dispatch = useDispatch();
+  const store = useStore<AppState>();
   const { chainId, wallet } = useAuth();
   const { generateThumbnail } = useInspector();
   const editor = useSelector(state => state.editor);
@@ -60,25 +62,24 @@ export const useEditor = () => {
     }
   }, [editorApi.openCode, project]);
 
+  // The inspector RPC keeps the handler it got when the iframe loaded, so it reads the open
+  // project from the store: a copy captured then would undo every later change (the world and
+  // deployments a publish recorded) on the next scene.json write, such as a rename.
   const updateScene = useCallback(
     async (_: RPCInfo, { path, content }: Params[Method.WRITE_FILE]) => {
-      // INFO: scene files are already updated since rpc storage writes to them on every change,
-      // so no data is lost if we don't do anything here, only runtime state will be out of sync.
-      // Based on that, we could just update state for the project where needed, and let everything as is.
-      // Then on go-back we can re-fetch the project so we keep everything synced...
-      // TODO OPTIMIZATION: maybe we can debounce this?
-      if (project && path === 'scene.json') {
+      const current = store.getState().editor.project;
+      if (current && path === 'scene.json') {
         const scene = bufferToScene(content);
         dispatch(
           workspaceActions.updateProject({
-            ...project,
-            title: scene.display?.title || project.title,
+            ...current,
+            title: scene.display?.title || current.title,
             scene: scene.scene,
           }),
         );
       }
     },
-    [workspaceActions.updateProject, project],
+    [store],
   );
 
   const saveAndGetThumbnail = useCallback(async (rpcInfo: RPCInfo) => {
