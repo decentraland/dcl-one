@@ -26,10 +26,10 @@ pub async fn op_portable_exit(state: &WorkerContext) -> Result<bool, WasmError> 
 
 #[wasm_bindgen]
 pub async fn op_portable_list(state: &WorkerContext) -> Result<Vec<JsValue>, WasmError> {
-    Ok(dcl_js::portables::op_portable_list(state.rc())
+    dcl_js::portables::op_portable_list(state.rc())
         .await
         .map_err(WasmError::from)?
         .into_iter()
-        .map(|ev| serde_wasm_bindgen::to_value(&ev).unwrap())
-        .collect())
+        .map(|ev| serde_wasm_bindgen::to_value(&ev).map_err(WasmError::from))
+        .collect()
 }

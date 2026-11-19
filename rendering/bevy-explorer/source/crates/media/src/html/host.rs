@@ -16,7 +16,7 @@ use futures_lite::StreamExt;
 use js_sys::{Function, Reflect};
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{HtmlMediaElement, HtmlVideoElement, VideoFrame, Worker};
+use web_sys::{Document, HtmlMediaElement, HtmlVideoElement, VideoFrame, Worker};
 
 use super::{HOST, HostCommand, HostHandle, MediaEvent, MediaId};
 use crate::{
@@ -36,9 +36,9 @@ thread_local! {
     static PAGE: RefCell<Option<(UnboundedSender<MediaEvent>, Worker)>> = const { RefCell::new(None) };
 }
 
-/// Page entry: starts serving media commands, transferring video frames to `render_worker`.
-/// Call after the module is initialised on the page.
-pub fn media_host_main(render_worker: Worker) {
+/// Page entry: starts serving media commands, creating elements in `document` and transferring
+/// video frames to `render_worker`. Call after the module is initialised on the page.
+pub fn media_host_main(render_worker: Worker, document: Document) {
     let (commands_tx, mut commands_rx) = unbounded::<HostCommand>();
     let (events_tx, events_rx) = unbounded::<MediaEvent>();
     if HOST
@@ -53,7 +53,6 @@ pub fn media_host_main(render_worker: Worker) {
     PAGE.with(|page| *page.borrow_mut() = Some((events_tx.clone(), render_worker.clone())));
 
     // A `play()` the browser refused (no user gesture yet) is retried on the next gesture.
-    let document = web_sys::window().unwrap().document().unwrap();
     let on_gesture = Closure::<dyn FnMut()>::new(|| {
         let refused: Vec<_> = MEDIA.with(|media| {
             media
@@ -81,6 +80,7 @@ pub fn media_host_main(render_worker: Worker) {
             match command {
                 HostCommand::Create { id, url, has_video } => {
                     let media = HostMedia::new(
+                        &document,
                         id,
                         url,
                         has_video,
@@ -240,6 +240,15 @@ fn clear_screen(id: MediaId) {
     render_worker.post_message(&message).report();
 }
 
+/// A `VIDEO_FRAME` message carrying `frame` of media `id`.
+fn video_frame_message(id: MediaId, frame: &VideoFrame) -> Result<js_sys::Object, JsValue> {
+    let message = js_sys::Object::new();
+    Reflect::set(&message, &"type".into(), &"VIDEO_FRAME".into())?;
+    Reflect::set(&message, &"id".into(), &JsValue::from(id))?;
+    Reflect::set(&message, &"frame".into(), frame)?;
+    Ok(message)
+}
+
 /// Whether the browser refused the last `play()` (autoplay policy) since the last pause.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PlayRefusal {
@@ -320,13 +329,13 @@ struct HostMedia {
 
 impl HostMedia {
     fn new(
+        document: &Document,
         id: MediaId,
         url: Option<String>,
         has_video: bool,
         events: UnboundedSender<MediaEvent>,
         render_worker: Worker,
     ) -> (Self, MediaSourceCmd) {
-        let document = web_sys::window().unwrap().document().unwrap();
         let video = document
             .create_element("video")
             .unwrap()
@@ -344,7 +353,7 @@ impl HostMedia {
         events: UnboundedSender<MediaEvent>,
         render_worker: Worker,
     ) -> (Self, MediaSourceCmd) {
-        let media = video.clone().dyn_into::<HtmlMediaElement>().unwrap();
+        let media = HtmlMediaElement::from(video.clone());
         let reopen_policy = match url {
             Some(_) => MediaReopenPolicy::Reopen,
             None => MediaReopenPolicy::Never,
@@ -448,11 +457,13 @@ impl HostMedia {
         video.set_cross_origin(Some("anonymous"));
 
         // video frame callback - no wasm_bindgen for this!
-        let rvc_prop = Reflect::get(&video, &"requestVideoFrameCallback".into()).unwrap();
-        if rvc_prop.is_undefined() {
-            panic!("no requestVideoFrameCallback");
-        }
-        let rvc_fn = rvc_prop.dyn_into::<Function>().unwrap();
+        let Some(rvc_fn) = Reflect::get(&video, &"requestVideoFrameCallback".into())
+            .ok()
+            .and_then(|rvc| rvc.dyn_into::<Function>().ok())
+        else {
+            warn!("media {id}: no requestVideoFrameCallback; its frames are not shown");
+            return;
+        };
 
         let callback: RcClosure = Rc::new(RefCell::new(None));
         let callback_handle: Rc<RefCell<Option<u32>>> = Rc::new(RefCell::new(None));
@@ -472,13 +483,11 @@ impl HostMedia {
                         let visible_rect = frame.visible_rect().unwrap();
                         let (width, height) =
                             (visible_rect.width() as u32, visible_rect.height() as u32);
-                        let message = js_sys::Object::new();
-                        Reflect::set(&message, &"type".into(), &"VIDEO_FRAME".into()).unwrap();
-                        Reflect::set(&message, &"id".into(), &JsValue::from(id)).unwrap();
-                        Reflect::set(&message, &"frame".into(), &frame).unwrap();
                         let transfer = js_sys::Array::of1(&frame);
-                        if render_worker
-                            .post_message_with_transfer(&message, &transfer)
+                        if video_frame_message(id, &frame)
+                            .and_then(|message| {
+                                render_worker.post_message_with_transfer(&message, &transfer)
+                            })
                             .is_ok()
                         {
                             let _ = events.unbounded_send(MediaEvent::Frame {
@@ -521,11 +530,9 @@ impl Drop for HostMedia {
         debug!("shutdown");
         if let Some(handle) = self.frame_callback_handle.borrow_mut().take() {
             Reflect::get(&self.video, &"cancelVideoFrameCallback".into())
-                .unwrap()
-                .dyn_into::<Function>()
-                .unwrap()
-                .call1(&self.video, &JsValue::from(handle))
-                .unwrap();
+                .and_then(|cancel| cancel.dyn_into::<Function>())
+                .and_then(|cancel| cancel.call1(&self.video, &JsValue::from(handle)))
+                .report();
         }
         self.frame_closure.take();
         for (event, listener) in &self.listeners {

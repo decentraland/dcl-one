@@ -2,7 +2,11 @@
 //! graphs, driven by [`AudioCommand`]s from the engine worker (which has no WebAudio). Runs as a
 //! task on the page's event loop; nothing here may block.
 
-use bevy::{log::debug, platform::collections::HashMap, prelude::AssetId};
+use bevy::{
+    log::{debug, debug_once, warn},
+    platform::collections::HashMap,
+    prelude::AssetId,
+};
 use common::util::ReportErr;
 use futures_channel::mpsc::{unbounded, UnboundedSender};
 use futures_lite::StreamExt;
@@ -54,20 +58,26 @@ pub(crate) fn send(command: AudioCommand) {
         Some(host) => {
             let _ = host.unbounded_send(command);
         }
-        None => debug!("no audio host: dropping {command:?}"),
+        None => debug_once!("no audio host: dropping audio commands"),
     }
 }
 
 /// Page entry: starts serving audio commands. Call after the module is initialised on the page
 /// and before the engine worker starts (exported by the root crate's `web.rs`).
 pub fn audio_host_main() {
+    let context = match AudioContext::new() {
+        Ok(context) => context,
+        Err(e) => {
+            warn!("no AudioContext, scene audio is silent: {e:?}");
+            return;
+        }
+    };
     let (tx, mut rx) = unbounded::<AudioCommand>();
     if HOST.set(tx).is_err() {
         panic!("audio host already started");
     }
 
     wasm_bindgen_futures::spawn_local(async move {
-        let context = AudioContext::new().unwrap();
         let mut buffers: HashMap<AssetId<bevy_kira_audio::AudioSource>, AudioBuffer> =
             HashMap::default();
         let mut graphs: HashMap<InstanceId, Graph> = HashMap::default();
@@ -84,7 +94,10 @@ pub fn audio_host_main() {
                         .unwrap();
                     let js_array = Float32Array::new_with_length(frames.len() as u32);
                     js_array.copy_from(&frames);
-                    buffer.copy_to_channel_with_f32_array(&js_array, 0).unwrap();
+                    if let Err(e) = buffer.copy_to_channel_with_f32_array(&js_array, 0) {
+                        warn!("audio buffer {id:?} not loaded: {e:?}");
+                        continue;
+                    }
                     buffers.insert(id, buffer);
                 }
                 AudioCommand::DropBuffer { id } => {

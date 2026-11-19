@@ -295,11 +295,11 @@ pub fn report_pointer_lock(locked: bool) {
 // The page/worker entry points of the media hosts. Defined here rather than in their crates:
 // a `#[wasm_bindgen]` export in a dependency is only linked in if the root crate references it.
 
-/// Page: starts the html media host (scene video/audio elements), transferring video frames to
-/// `render_worker`. Before the engine worker starts.
+/// Page: starts the html media host (scene video/audio elements in `document`), transferring
+/// video frames to `render_worker`. Before the engine worker starts.
 #[wasm_bindgen]
-pub fn media_host_main(render_worker: web_sys::Worker) {
-    media::html::host::media_host_main(render_worker);
+pub fn media_host_main(render_worker: web_sys::Worker, document: web_sys::Document) {
+    media::html::host::media_host_main(render_worker, document);
 }
 
 /// Page: starts the WebAudio host for scene audio sources. Before the engine worker starts.

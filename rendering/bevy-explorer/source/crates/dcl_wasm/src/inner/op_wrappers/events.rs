@@ -1,4 +1,4 @@
-use crate::{WasmError, WorkerContext};
+use crate::{to_js_array, WasmError, WorkerContext};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -12,9 +12,8 @@ pub fn op_unsubscribe(state: &WorkerContext, id: &str) {
 }
 
 #[wasm_bindgen]
-pub fn op_send_batch(state: &WorkerContext) -> js_sys::Array {
-    dcl_js::events::op_send_batch(&mut *state.state.borrow_mut())
-        .into_iter()
-        .map(|ev| serde_wasm_bindgen::to_value(&ev).unwrap())
-        .collect()
+pub fn op_send_batch(state: &WorkerContext) -> Result<js_sys::Array, WasmError> {
+    to_js_array(dcl_js::events::op_send_batch(
+        &mut *state.state.borrow_mut(),
+    ))
 }

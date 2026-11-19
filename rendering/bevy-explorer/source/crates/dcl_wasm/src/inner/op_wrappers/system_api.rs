@@ -1,6 +1,5 @@
-use crate::{serde_parse, serde_result, WasmError, WorkerContext};
+use crate::{serde_parse, serde_result, to_js_array, to_json_value, WasmError, WorkerContext};
 use js_sys;
-use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -67,12 +66,8 @@ pub fn op_logout(state: &WorkerContext) {
 pub async fn op_settings(state: &WorkerContext) -> Result<js_sys::Array, WasmError> {
     dcl_js::system_api::op_settings(state.rc())
         .await
-        .map(|r| {
-            r.into_iter()
-                .map(|v| serde_wasm_bindgen::to_value(&v).unwrap())
-                .collect()
-        })
         .map_err(WasmError::from)
+        .and_then(to_js_array)
 }
 
 #[wasm_bindgen]
@@ -95,18 +90,13 @@ pub async fn op_kernel_fetch_headers(
 ) -> Result<js_sys::Array, WasmError> {
     dcl_js::system_api::op_kernel_fetch_headers(state.rc(), uri, method, meta)
         .await
-        .map(|r| {
-            r.into_iter()
-                .map(|v| serde_wasm_bindgen::to_value(&v).unwrap())
-                .collect()
-        })
         .map_err(WasmError::from)
+        .and_then(to_js_array)
 }
 
 #[wasm_bindgen]
 pub async fn op_set_avatar(state: &WorkerContext, avatar: JsValue) -> Result<u32, WasmError> {
-    // map_err rather than serde_parse!'s unwrap: with deny_unknown_fields a caller mistake
-    // must surface as a catchable JS error, not a worker panic.
+    // an unknown field (deny_unknown_fields) returns an error naming the op
     let avatar = serde_wasm_bindgen::from_value(avatar)
         .map_err(|e| WasmError::from(anyhow::anyhow!("setAvatar: {e}")))?;
     dcl_js::system_api::op_set_avatar(state.rc(), avatar)
@@ -161,12 +151,8 @@ pub async fn op_console_command(
 pub async fn op_live_scene_info(state: &WorkerContext) -> Result<js_sys::Array, WasmError> {
     dcl_js::system_api::op_live_scene_info(state.rc())
         .await
-        .map(|r| {
-            r.into_iter()
-                .map(|v| serde_wasm_bindgen::to_value(&v).unwrap())
-                .collect()
-        })
         .map_err(WasmError::from)
+        .and_then(to_js_array)
 }
 
 #[wasm_bindgen]
@@ -206,7 +192,7 @@ pub async fn op_get_satellite_view(state: &WorkerContext) -> Result<JsValue, Was
 
 #[wasm_bindgen]
 pub fn op_set_lobby_stage(state: &WorkerContext, stage: JsValue) -> Result<(), WasmError> {
-    // map_err rather than serde_parse!'s unwrap: a malformed stage throws in JS, as on Deno.
+    // a malformed stage returns an error naming the op
     let stage = serde_wasm_bindgen::from_value(stage)
         .map_err(|e| WasmError::from(anyhow::anyhow!("setLobbyStage: {e}")))?;
     dcl_js::system_api::op_set_lobby_stage(state.rc(), stage);
@@ -214,9 +200,14 @@ pub fn op_set_lobby_stage(state: &WorkerContext, stage: JsValue) -> Result<(), W
 }
 
 #[wasm_bindgen]
-pub fn op_set_home_scene(state: &WorkerContext, realm: String, parcel: JsValue) {
+pub fn op_set_home_scene(
+    state: &WorkerContext,
+    realm: String,
+    parcel: JsValue,
+) -> Result<(), WasmError> {
     serde_parse!(parcel);
     dcl_js::system_api::op_set_home_scene(state.rc(), realm, parcel);
+    Ok(())
 }
 
 #[wasm_bindgen]
@@ -284,11 +275,8 @@ pub async fn op_get_user_profile(
     let profile = dcl_js::system_api::op_get_user_profile(state.rc(), address).await;
     // use a specific serializer to convert to object here, as wasm_bindgen's conversion otherwise produces a Map
     profile
-        .map(|v| {
-            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
-                .unwrap()
-        })
         .map_err(WasmError::from)
+        .and_then(|v| to_json_value(&v))
 }
 
 #[wasm_bindgen]
@@ -300,11 +288,8 @@ pub async fn op_get_compact_profiles(
         .map_err(|e| WasmError::from(anyhow::anyhow!("getCompactProfiles: {e}")))?;
     let profiles = dcl_js::system_api::op_get_compact_profiles(state.rc(), addresses).await;
     profiles
-        .map(|v| {
-            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
-                .unwrap()
-        })
         .map_err(WasmError::from)
+        .and_then(|v| to_json_value(&v))
 }
 
 #[wasm_bindgen]
@@ -371,20 +356,13 @@ pub async fn op_get_permanent_permissions(
 ) -> Result<js_sys::Array, WasmError> {
     dcl_js::system_api::op_get_permanent_permissions(state.rc(), level, value)
         .await
-        .map(|r| {
-            r.into_iter()
-                .map(|v| serde_wasm_bindgen::to_value(&v).unwrap())
-                .collect()
-        })
         .map_err(WasmError::from)
+        .and_then(to_js_array)
 }
 
 #[wasm_bindgen]
-pub fn op_get_permission_types(_: &WorkerContext) -> js_sys::Array {
-    dcl_js::system_api::op_get_permission_types()
-        .into_iter()
-        .map(|v| serde_wasm_bindgen::to_value(&v).unwrap())
-        .collect()
+pub fn op_get_permission_types(_: &WorkerContext) -> Result<js_sys::Array, WasmError> {
+    to_js_array(dcl_js::system_api::op_get_permission_types())
 }
 
 #[wasm_bindgen]
@@ -452,11 +430,8 @@ pub async fn op_read_hover_stream(state: &WorkerContext, rid: u32) -> Result<JsV
     let hover_event = dcl_js::system_api::op_read_hover_stream(state.rc(), rid).await;
     // use a specific serializer to convert to object here, as wasm_bindgen's conversion otherwise produces a Map
     hover_event
-        .map(|v| {
-            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
-                .unwrap()
-        })
         .map_err(WasmError::from)
+        .and_then(|v| to_json_value(&v))
 }
 
 #[wasm_bindgen]
@@ -471,11 +446,8 @@ pub async fn op_read_world_access_stream(
 ) -> Result<JsValue, WasmError> {
     dcl_js::system_api::op_read_world_access_stream(state.rc(), rid)
         .await
-        .map(|v| {
-            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
-                .unwrap()
-        })
         .map_err(WasmError::from)
+        .and_then(|v| to_json_value(&v))
 }
 
 #[wasm_bindgen]
@@ -513,12 +485,8 @@ pub async fn op_read_connectivity_stream(
 ) -> Result<JsValue, WasmError> {
     dcl_js::system_api::op_read_connectivity_stream(state.rc(), rid)
         .await
-        .map(|value| {
-            value
-                .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
-                .unwrap()
-        })
         .map_err(WasmError::from)
+        .and_then(|value| to_json_value(&value))
 }
 
 #[wasm_bindgen]
@@ -538,11 +506,8 @@ pub async fn op_read_proximity_stream(
 ) -> Result<JsValue, WasmError> {
     let proximity_event = dcl_js::system_api::op_read_proximity_stream(state.rc(), rid).await;
     proximity_event
-        .map(|v| {
-            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
-                .unwrap()
-        })
         .map_err(WasmError::from)
+        .and_then(|v| to_json_value(&v))
 }
 
 #[wasm_bindgen]
@@ -557,11 +522,8 @@ pub async fn op_read_photo_mode_stream(
 ) -> Result<JsValue, WasmError> {
     let photo_mode = dcl_js::system_api::op_read_photo_mode_stream(state.rc(), rid).await;
     photo_mode
-        .map(|v| {
-            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
-                .unwrap()
-        })
         .map_err(WasmError::from)
+        .and_then(|v| to_json_value(&v))
 }
 
 #[wasm_bindgen]
@@ -576,11 +538,8 @@ pub async fn op_read_profile_changed_stream(
 ) -> Result<JsValue, WasmError> {
     let event = dcl_js::system_api::op_read_profile_changed_stream(state.rc(), rid).await;
     event
-        .map(|v| {
-            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
-                .unwrap()
-        })
         .map_err(WasmError::from)
+        .and_then(|v| to_json_value(&v))
 }
 
 #[wasm_bindgen]
@@ -596,11 +555,8 @@ pub async fn op_read_scene_loading_ui_stream(
     // json_compatible: a closed stream must end as null, not undefined, for the scene's loop
     dcl_js::system_api::op_read_scene_loading_ui_stream(state.rc(), rid)
         .await
-        .map(|v| {
-            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
-                .unwrap()
-        })
         .map_err(WasmError::from)
+        .and_then(|v| to_json_value(&v))
 }
 
 #[wasm_bindgen]
@@ -617,11 +573,8 @@ pub async fn op_read_analytics_event_stream(
     // scene as a Map, and a closed stream must end as null, not undefined
     dcl_js::system_api::op_read_analytics_event_stream(state.rc(), rid)
         .await
-        .map(|v| {
-            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
-                .unwrap()
-        })
         .map_err(WasmError::from)
+        .and_then(|v| to_json_value(&v))
 }
 
 #[wasm_bindgen]
@@ -637,23 +590,16 @@ pub async fn op_read_texture_optimization_stream(
     // json_compatible: a closed stream must end as null, not undefined, for the scene's loop
     dcl_js::system_api::op_read_texture_optimization_stream(state.rc(), rid)
         .await
-        .map(|v| {
-            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
-                .unwrap()
-        })
         .map_err(WasmError::from)
+        .and_then(|v| to_json_value(&v))
 }
 
 #[wasm_bindgen]
 pub async fn op_get_avatar_modifiers(state: &WorkerContext) -> Result<js_sys::Array, WasmError> {
     dcl_js::system_api::op_get_avatar_modifiers(state.rc())
         .await
-        .map(|r| {
-            r.into_iter()
-                .map(|v| serde_wasm_bindgen::to_value(&v).unwrap())
-                .collect()
-        })
         .map_err(WasmError::from)
+        .and_then(to_js_array)
 }
 
 // Social / Friends
@@ -849,8 +795,7 @@ pub fn op_close_community_voice_update_stream(state: &WorkerContext, rid: u32) {
 
 #[wasm_bindgen]
 pub fn op_voice_chat_action(state: &WorkerContext, action: JsValue) -> Result<(), WasmError> {
-    // map_err rather than serde_parse!'s unwrap: an action this engine does not know (a newer
-    // HUD) is a catchable JS error, not a worker panic
+    // an unknown action returns an error naming the op
     let action = serde_wasm_bindgen::from_value(action)
         .map_err(|e| WasmError::from(anyhow::anyhow!("voiceChatAction: {e}")))?;
     dcl_js::system_api::op_voice_chat_action(state.rc(), action).map_err(WasmError::from)

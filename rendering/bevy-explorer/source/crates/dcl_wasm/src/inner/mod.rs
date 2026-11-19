@@ -243,7 +243,8 @@ impl dcl_js::State for GothamState {
 #[macro_export]
 macro_rules! serde_parse {
     ($js_value: ident) => {
-        let $js_value = serde_wasm_bindgen::from_value($js_value).unwrap();
+        let $js_value =
+            serde_wasm_bindgen::from_value($js_value).map_err($crate::WasmError::from)?;
     };
 }
 
@@ -251,8 +252,8 @@ macro_rules! serde_parse {
 macro_rules! serde_result {
     ($code: expr) => {
         $code
-            .map(|v| serde_wasm_bindgen::to_value(&v).unwrap())
-            .map_err(WasmError::from)
+            .map_err($crate::WasmError::from)
+            .and_then(|v| serde_wasm_bindgen::to_value(&v).map_err($crate::WasmError::from))
     };
 }
 
@@ -262,6 +263,27 @@ impl From<anyhow::Error> for WasmError {
     fn from(value: anyhow::Error) -> Self {
         Self(value)
     }
+}
+
+impl From<serde_wasm_bindgen::Error> for WasmError {
+    fn from(value: serde_wasm_bindgen::Error) -> Self {
+        Self(anyhow::anyhow!("{value}"))
+    }
+}
+
+/// `value` as plain JS data: maps become objects and `None` becomes `null`.
+pub(crate) fn to_json_value<T: serde::Serialize + ?Sized>(value: &T) -> Result<JsValue, WasmError> {
+    Ok(value.serialize(&serde_wasm_bindgen::Serializer::json_compatible())?)
+}
+
+/// `items` as a JS array, each item converted by `serde_wasm_bindgen::to_value`.
+pub(crate) fn to_js_array<T: serde::Serialize>(
+    items: impl IntoIterator<Item = T>,
+) -> Result<js_sys::Array, WasmError> {
+    items
+        .into_iter()
+        .map(|item| serde_wasm_bindgen::to_value(&item).map_err(WasmError::from))
+        .collect()
 }
 
 impl From<WasmError> for JsValue {

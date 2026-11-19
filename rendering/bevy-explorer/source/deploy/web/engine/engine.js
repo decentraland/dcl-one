@@ -502,7 +502,7 @@ export function start(options = {}) {
   // Html media (scene video/audio) lives here on the page, the only thread with a DOM; the
   // engine drives it over channels and the page transfers decoded frames to the render worker
   // (crates/media/src/html).
-  media_host_main(renderWorker);
+  media_host_main(renderWorker, document);
   // Scene audio sources: the WebAudio graphs live here too (crates/av/src/audio_host_wasm.rs).
   audio_host_main();
   // Livekit rooms: the livekit-client objects (WebRTC) live here (crates/comms/src/livekit/web/host.rs).
