@@ -144,8 +144,9 @@ impl Database {
     }
     /// A copy of the imported capture: each import runs as one transaction
     /// holding about 3,000 object locks for seconds, so the process imports
-    /// each source once and clones it per test. The process's scratch sweep
-    /// drops the imported databases with the rest.
+    /// each source once and clones it per test. The imported databases stay
+    /// until a later test process's scratch sweep drops them, once this
+    /// process (the `<pid>` in their name) has exited.
     async fn new(source: Source) -> Option<Self> {
         static MAIN: tokio::sync::OnceCell<Option<String>> = tokio::sync::OnceCell::const_new();
         static PREPARED: tokio::sync::OnceCell<Option<String>> = tokio::sync::OnceCell::const_new();
