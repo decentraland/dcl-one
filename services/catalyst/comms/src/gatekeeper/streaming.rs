@@ -87,6 +87,7 @@ struct AccessRow {
     ingress_id: Option<String>,
     created_at: NaiveDateTime,
     expiration_time: Option<NaiveDateTime>,
+    streaming_state_version: i64,
 }
 
 impl AccessRow {
@@ -105,8 +106,7 @@ impl AccessRow {
     }
 }
 
-const ACCESS_COLUMNS: &str =
-    "id, room_id, streaming, streaming_url, streaming_key, ingress_id, created_at, expiration_time";
+const ACCESS_COLUMNS: &str = "id, room_id, streaming, streaming_url, streaming_key, ingress_id, created_at, expiration_time, streaming_state_version";
 
 pub async fn scene_stream_access(
     State(state): State<SharedState>,
@@ -207,7 +207,9 @@ pub async fn scene_stream_access(
 /// The place's active credential when it is still valid for `room`, else a
 /// new one: an idle credential for another room or past its expiry is
 /// replaced (its ingress cleanup is a durable intent), a streaming one is a
-/// 409. `POST /scene-stream-access` and `/cast/generate-stream-link` share it.
+/// 409 unless LiveKit reports its ingress is not publishing (a lost
+/// `ingress_ended` webhook). `POST /scene-stream-access` and
+/// `/cast/generate-stream-link` share it.
 async fn issue_access(
     state: &CommsState,
     ingress: &IngressClient<'_>,
@@ -218,23 +220,64 @@ async fn issue_access(
     if let Some(existing) = active_access(&state.pool, place_id).await? {
         match renewal(&existing, room, now_utc()) {
             Renewal::Reuse => return Ok(existing.response()),
-            Renewal::Conflict => return Err(renewal_conflict()),
-            Renewal::Replace => {
-                // The replacement's ingress first: a LiveKit failure keeps the old credential.
-                let info = mint_ingress(ingress, room).await?;
-                return replace_access(
-                    state,
-                    ingress,
-                    existing.id,
-                    jobs::CleanupCommand::IdleReplacement,
-                    (place_id, room, signer),
-                    info,
-                )
-                .await;
+            Renewal::Conflict => {
+                if !clear_stale_streaming(state, ingress, &existing, place_id).await? {
+                    return Err(renewal_conflict());
+                }
+            }
+            Renewal::Replace => {}
+        }
+        // The replacement's ingress first: a LiveKit failure keeps the old credential.
+        let info = mint_ingress(ingress, room).await?;
+        return replace_access(
+            state,
+            ingress,
+            existing.id,
+            jobs::CleanupCommand::IdleReplacement,
+            (place_id, room, signer),
+            info,
+        )
+        .await;
+    }
+    create_access(&state.pool, ingress, place_id, room, signer).await
+}
+
+/// Clears `row`'s `streaming` flag when LiveKit says its ingress is gone or
+/// not publishing, so a lost `ingress_ended` webhook cannot block the place's
+/// renewal. Only the RTMP ingress sets the flag (Cast WebRTC publishers never
+/// do). False keeps the 409: the ingress is live, its state is unknown,
+/// LiveKit is unreachable, or the row changed meanwhile.
+async fn clear_stale_streaming(
+    state: &CommsState,
+    ingress: &IngressClient<'_>,
+    row: &AccessRow,
+    place_id: &str,
+) -> Result<bool, ApiError> {
+    let ingress_id = row.ingress_id.as_deref().unwrap_or_default();
+    if !ingress_id.is_empty() {
+        match ingress.is_ingress_streaming(ingress_id).await {
+            Ok(Some(false)) => {}
+            Ok(_) => return Ok(false),
+            Err(error) => {
+                tracing::warn!(place_id, access_id = %row.id, %error, "ingress state unavailable; renewal refused");
+                return Ok(false);
             }
         }
     }
-    create_access(&state.pool, ingress, place_id, room, signer).await
+    let cleared = sqlx::query(
+        "UPDATE social.scene_stream_access SET streaming = false, streaming_start_time = NULL \
+         WHERE id = $1 AND active AND streaming AND streaming_state_version = $2",
+    )
+    .bind(row.id)
+    .bind(row.streaming_state_version)
+    .execute(&state.pool)
+    .await?
+    .rows_affected()
+        == 1;
+    if cleared {
+        tracing::info!(place_id, access_id = %row.id, ingress_id, "cleared a stale streaming flag: the ingress is not publishing");
+    }
+    Ok(cleared)
 }
 
 async fn refuse_if_platform_banned(
@@ -623,6 +666,7 @@ mod tests {
             ingress_id: None,
             created_at: now,
             expiration_time: None,
+            streaming_state_version: 0,
         };
         assert_eq!(renewal(&row, "room", now), Renewal::Reuse);
         assert_eq!(renewal(&row, "new-room", now), Renewal::Conflict);
