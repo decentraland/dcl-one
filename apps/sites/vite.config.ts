@@ -45,7 +45,6 @@ function watchUi3(ui3Src: string): Plugin {
     },
   };
 }
-const monaco = fileURLToPath(new URL("./node_modules/monaco-editor", import.meta.url));
 const three = fileURLToPath(new URL("./node_modules/three", import.meta.url));
 const qrcode = fileURLToPath(new URL("./node_modules/qrcode-generator", import.meta.url));
 const reactQuery = fileURLToPath(new URL("./node_modules/@tanstack/react-query", import.meta.url));
@@ -133,7 +132,18 @@ function nodeProxy(): Record<string, ProxyOptions> {
     "/comms-gatekeeper": to(),
     // Cast 2.0: the gateway's `^~ /cast/` alias to the gatekeeper, except the stream and watch
     // pages (/cast/s/, /cast/w/), which are this app's (infra/gateway/gateway.py).
-    "^/cast/(?!s/|w/)": to({ rewrite: (path) => `/comms-gatekeeper${path}` }),
+    // As the gateway, it forwards the path the browser signed (`x-original-path`): the node takes
+    // a signature over it, as the watcher token's signed fetch over `/cast/watcher-token` is.
+    "^/cast/(?!s/|w/)": to({
+      rewrite: (path) => `/comms-gatekeeper${path}`,
+      configure: (proxy) => {
+        proxy.on("proxyReq", (proxyReq, req) => {
+          // `req.url` is already rewritten here; connect keeps the browser's in `originalUrl`.
+          const original = (req as { originalUrl?: string }).originalUrl ?? req.url;
+          if (original) proxyReq.setHeader("x-original-path", original);
+        });
+      },
+    }),
     "/badges": to(),
     "/profile-images": to(),
     "/signatures-api": to(),
@@ -304,7 +314,6 @@ export default defineConfig({
         "@hud": hud,
         "@explorer-core": explorerCore,
         "@": src,
-        "monaco-editor": monaco,
         three,
         "qrcode-generator": qrcode,
         "@tanstack/react-query": reactQuery,
@@ -317,13 +326,9 @@ export default defineConfig({
     dedupe: ["viem", "react", "react-dom", "zod"],
   },
   optimizeDeps: {
-    include: ["monaco-editor", "@xstate/react", "xstate", "zod", "viem/accounts"],
+    include: ["@xstate/react", "xstate", "zod", "viem/accounts"],
     // The shared dev sandbox is also a public browsing surface. Compact vendor
     // code while keeping development React, named stacks and application HMR.
     rolldownOptions: { output: { minify: true, keepNames: true } },
-    exclude: [
-      "monaco-editor/esm/vs/editor/editor.worker?worker&url",
-      "monaco-editor/esm/vs/language/typescript/ts.worker?worker&url",
-    ],
   },
 });
