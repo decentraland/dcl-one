@@ -595,7 +595,6 @@ impl TransactionComponent {
     ) -> Result<MetaTxSender, ApiError> {
         self.check_function_selector(tx)?;
         check_nested_meta_tx(tx)?;
-        check_refused_method(settings, tx)?;
         let sender = MetaTxSender::from_meta_tx_calldata(&tx.from, &tx.params[1])?;
         // A trial's relayer pays gas for the trial's buyers only (unless it relays for every
         // wallet, CREDITS_TRIAL_RELAY_ALL_WALLETS), judged on the userAddress the meta-transaction
@@ -609,6 +608,7 @@ impl TransactionComponent {
             ));
         }
         self.check_self_relay(&sender)?;
+        check_refused_method(settings, tx)?;
         self.check_contract_address(contracts, tx).await?;
         check_sale_price(settings, tx)?;
         if self.chain.is_some() {
@@ -862,19 +862,20 @@ fn check_nested_meta_tx(tx: &TransactionData) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// The registered sale target a meta-transaction is aimed at and its calldata
+/// (empty when not hex); `None` for any other target.
+fn sale_target_call(settings: &Settings, tx: &TransactionData) -> Option<(abi::SaleKind, Vec<u8>)> {
+    let contract = tx.params[0].trim().parse::<Address>().ok()?;
+    let kind = abi::sale_target(settings.collections_chain_id, contract)?;
+    Some((kind, hex_to_bytes(&tx.params[1]).unwrap_or_default()))
+}
+
 /// Refuses a method a registered sale target never relays
 /// (`abi::refused_method`), before any simulation or quota.
-pub(super) fn check_refused_method(
-    settings: &Settings,
-    tx: &TransactionData,
-) -> Result<(), ApiError> {
-    let Ok(contract) = tx.params[0].trim().parse::<Address>() else {
+fn check_refused_method(settings: &Settings, tx: &TransactionData) -> Result<(), ApiError> {
+    let Some((kind, full_data)) = sale_target_call(settings, tx) else {
         return Ok(());
     };
-    let Some(kind) = abi::sale_target(settings.collections_chain_id, contract) else {
-        return Ok(());
-    };
-    let full_data = hex_to_bytes(&tx.params[1]).unwrap_or_default();
     match abi::refused_method(&full_data, kind) {
         Some(method) => Err(ApiError::InvalidTransaction(format!(
             "The meta-transaction method {method} is not allowed for contract {}.",
@@ -887,13 +888,9 @@ pub(super) fn check_refused_method(
 /// The minimum sale price, on every registered sale target of the relay's
 /// chain (`abi::sale_target`); a target outside them has nothing to price.
 fn check_sale_price(settings: &Settings, tx: &TransactionData) -> Result<(), ApiError> {
-    let Ok(contract_address) = tx.params[0].trim().parse::<Address>() else {
+    let Some((kind, full_data)) = sale_target_call(settings, tx) else {
         return Ok(());
     };
-    let Some(kind) = abi::sale_target(settings.collections_chain_id, contract_address) else {
-        return Ok(());
-    };
-    let full_data = hex_to_bytes(&tx.params[1]).unwrap_or_default();
     let Some(sale_price) = abi::get_sale_price(&full_data, settings.collections_chain_id, kind)
     else {
         return Ok(());
