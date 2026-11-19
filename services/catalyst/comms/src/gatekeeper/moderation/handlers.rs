@@ -229,7 +229,7 @@ pub async fn add_admin(
     let context = Context::resolve(&state, &sf.metadata).await?;
     context.check_selectors(&input)?;
     let place = &context.place;
-    scene::scene_owner_or_admin_decision(&state, place, &sf.signer)
+    scene::scene_manager_decision(&state, place, &sf.signer)
         .await
         .into_result()?;
     let admin = target_address(&state, &input, "admin", Some("name")).await?;
@@ -281,7 +281,7 @@ pub async fn remove_admin(
     let context = Context::resolve(&state, &sf.metadata).await?;
     context.check_selectors(&input)?;
     let place = &context.place;
-    scene::scene_owner_or_admin_decision(&state, place, &sf.signer)
+    scene::scene_manager_decision(&state, place, &sf.signer)
         .await
         .into_result()?;
     let admin = target_address(&state, &input, "admin", None).await?;
@@ -489,7 +489,7 @@ pub async fn ban_user(
     let context = Context::resolve(&state, &sf.metadata).await?;
     context.check_selectors(&input)?;
     let place = &context.place;
-    scene::scene_owner_or_admin_decision(&state, place, &sf.signer)
+    scene::scene_manager_decision(&state, place, &sf.signer)
         .await
         .into_result()?;
     let target = target_address(&state, &input, "banned_address", Some("banned_name")).await?;
@@ -532,7 +532,7 @@ pub async fn unban_user(
     let context = Context::resolve(&state, &sf.metadata).await?;
     context.check_selectors(&input)?;
     let place = &context.place;
-    scene::scene_owner_or_admin_decision(&state, place, &sf.signer)
+    scene::scene_manager_decision(&state, place, &sf.signer)
         .await
         .into_result()?;
     let target = target_address(&state, &input, "banned_address", Some("banned_name")).await?;

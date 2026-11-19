@@ -67,7 +67,12 @@ pub async fn private_messages_token(
         ))
     };
     let banned = banned.map_err(map_error)?;
-    let privacy = privacy.map_err(map_error)?;
+    // Upstream's token handler: an unreadable setting is shown as `all` and
+    // the token is still minted; only the ban read refuses.
+    let privacy = privacy.unwrap_or_else(|error| {
+        tracing::error!(%error, address = %identity, "private messages privacy unreadable; minting with the default");
+        "all".to_owned()
+    });
     if banned {
         return Err(forbidden(
             super::super::moderation::store::PLATFORM_BANNED_MSG,
@@ -86,8 +91,35 @@ pub struct PrivateMessagesPrivacyBody {
     pub private_messages_privacy: Option<String>,
 }
 
+/// Upstream's `livekit.updateParticipantMetadata(PRIVATE_MESSAGES_ROOM_ID,
+/// address, { private_messages_privacy })`: the wallet's participant in the
+/// private-messages room, when it is there, shows the new setting to its
+/// peers at once instead of on its next token. A wallet that is not in the
+/// room is left alone: its next token carries the stored value.
+pub(crate) async fn publish_private_messages_privacy(
+    state: &CommsState,
+    address: &str,
+    privacy: &str,
+) -> Result<(), crate::shared::livekit::RoomServiceError> {
+    if !state.livekit.configured {
+        return Ok(());
+    }
+    let mut patch = serde_json::Map::new();
+    patch.insert("private_messages_privacy".into(), privacy.into());
+    state
+        .room_service()
+        .merge_participant_metadata(
+            &state.settings.private_messages_room_id,
+            &address.to_lowercase(),
+            patch,
+        )
+        .await
+}
+
 /// PATCH /users/{address}/private-messages-privacy (service token): writes
-/// the ONE `social.user_settings` row the friends module reads too.
+/// the ONE `social.user_settings` row the friends module reads too, then
+/// shows the change in the private-messages room (a failure there is logged:
+/// the stored row is what the wallet's next token carries).
 pub async fn patch_private_messages_privacy(
     State(state): State<SharedState>,
     Path(address): Path<String>,
@@ -104,6 +136,9 @@ pub async fn patch_private_messages_privacy(
         .social
         .set_private_messages_privacy(&address, &privacy)
         .await?;
+    if let Err(error) = publish_private_messages_privacy(&state, address.as_str(), &privacy).await {
+        tracing::warn!(%error, %address, "private messages privacy not shown in the room");
+    }
     Ok(Json(
         serde_json::json!({ "address": address.as_str(), "private_messages_privacy": privacy }),
     ))

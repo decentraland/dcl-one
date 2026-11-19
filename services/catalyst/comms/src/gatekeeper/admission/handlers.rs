@@ -112,6 +112,11 @@ pub async fn get_scene_adapter(
         .as_ref()
         .ok_or_else(|| ApiError::internal("scene resolution returned a lobby"))?
         .as_str();
+    // Where the scene's bans are stored (a world scene's under its world and
+    // base parcel): upstream answers a scene ban 403 before any world access.
+    let ban_key = resolved.ban_key().unwrap_or_else(|| {
+        crate::access::SceneBanKey::scene(resolved.scene_id.as_ref().expect("checked above"))
+    });
     let device_id = device_identifier(&sf.metadata);
     let secret = scene::meta_str(&sf.metadata, "secret");
     let started = if let Some(world) = resolved.realm.world() {
@@ -138,7 +143,7 @@ pub async fn get_scene_adapter(
             // Record only an admitted connection: a refused one must not replace the recorded device.
             let gate = state
                 .moderation
-                .connection_gate(&identity, device_id.as_deref(), resolved_scene_id)
+                .connection_gate(&identity, device_id.as_deref(), ban_key.as_str())
                 .await;
             if record && gate.is_allowed() {
                 record_connection(&state, &identity, &headers, device_id.as_deref()).await;

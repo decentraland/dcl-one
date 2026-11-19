@@ -1208,14 +1208,60 @@ mod stream_access {
         .execute(&pool)
         .await
         .unwrap();
-        state
-            .moderation
-            .add_admin(&place_id, &admin, &admin)
-            .await
-            .unwrap();
         let scene_id = format!("bafkreistream{}", Uuid::new_v4().simple());
         deploy_scene(&pool, &scene_id, &parcel).await;
+        // Under the scene's entity id, where `/scene-admin` stores a grant; the
+        // catalogue place id keys the credential only.
+        state
+            .moderation
+            .add_admin(&scene_id, &admin, &admin)
+            .await
+            .unwrap();
         let metadata = serde_json::json!({ "signer": SCENE_SIGNER, "realmName": "main", "parcel": parcel, "sceneId": scene_id }).to_string();
+
+        // An admin granted through `POST /scene-admin` (the Admin Toolkit's
+        // route) reads the stream routes too, as upstream's `isSceneOwnerOrAdmin`.
+        let granted_key = random_key();
+        let grant_path = "/comms-gatekeeper/scene-admin";
+        let mut grant = Request::builder().method("POST").uri(grant_path);
+        for (k, v) in signed(&admin_key, "post", grant_path, &metadata)
+            .await
+            .iter()
+        {
+            grant = grant.header(k, v);
+        }
+        let granted = app
+            .clone()
+            .oneshot(
+                grant
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "admin": address_of(&granted_key) }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(granted.status(), StatusCode::NO_CONTENT);
+        let (status, body) = call(&app, &granted_key, "GET", &metadata).await;
+        assert_eq!(
+            (status, body["error"].as_str()),
+            (StatusCode::NOT_FOUND, Some(STREAM_ACCESS_NOT_FOUND_MSG)),
+            "a granted admin is authorized: no key yet, not a refusal"
+        );
+        let (status, body) = call_at(
+            &app,
+            &granted_key,
+            "GET",
+            "/cast/presenters",
+            &serde_json::json!({ "signer": SCENE_SIGNER, "realm": { "serverName": "main" }, "parcel": parcel, "sceneId": scene_id }).to_string(),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "a granted admin reaches the presenter lookup: no stream yet ({body})"
+        );
 
         let (status, body) = call(&app, &admin_key, "GET", &metadata).await;
         assert_eq!(

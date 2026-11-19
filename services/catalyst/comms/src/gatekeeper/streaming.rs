@@ -2,10 +2,12 @@
 //! ingress credential of a place's stream. The signer must own or
 //! administer the place the signed metadata stands on. List, add and reset
 //! require the signed scene to be the current deployment on its parcel and
-//! authorize against that deployment's footprint and the place based on its
-//! base parcel; remove needs only the place (a world by its realm name, a
-//! Genesis place by its parcel), so a key can still be revoked after a
-//! redeploy. List, add and reset are refused to
+//! authorize against that deployment: its footprint decides ownership and its
+//! entity id finds the explicit admins `/scene-admin` granted, while the
+//! credential is stored for the place based on its base parcel. Remove needs
+//! only the place (a world by its realm name, a Genesis place by its
+//! parcel), so a key can still be revoked after a redeploy, by the admins of
+//! the scene standing there now. List, add and reset are refused to
 //! a platform-banned wallet BEFORE that check, because LiveKit honours the
 //! key without re-checking the wallet, and remove stays ungated (upstream's
 //! `*-scene-stream-access-handler.ts`). One active row per place in
@@ -31,8 +33,9 @@ use super::livekit::IngressClient;
 use super::moderation::context::Context;
 use super::moderation::store::PLATFORM_BANNED_MSG;
 use super::{CommsState, SharedState};
+use crate::rooms::{ResolvedRoom, RoomRequest};
 use crate::shared::signed_fetch::SignedPath;
-use crate::world_identity::{WorldName, is_world_realm_name};
+use crate::world_identity::{Parcel, RealmId, WorldName, is_world_realm_name};
 use crate::{Address, AuthorityNotEstablished, PermissionDecision};
 
 #[path = "streaming_notifications.rs"]
@@ -54,6 +57,7 @@ pub(crate) async fn drain_cleanup_for_test(state: &CommsState) -> Result<(), Api
 pub const PATH: &str = "/scene-stream-access";
 pub const FOUR_DAYS_MS: i64 = 4 * 24 * 60 * 60 * 1000;
 pub const STREAM_ACCESS_NOT_FOUND_MSG: &str = "No active streaming access found for place";
+pub const STREAM_ACCESS_EXPIRED_MSG: &str = "Streaming access has expired";
 pub const STREAM_RESET_FAILED_MSG: &str = "Failed to reset scene stream access";
 pub const NOT_AUTHORIZED_TO_STREAM_MSG: &str = "you are not authorized to stream to this scene";
 
@@ -138,7 +142,7 @@ pub async fn scene_stream_access(
         }
     }
     let (place_id, place, room) = if method == Method::DELETE {
-        // Revocation needs no current deployment: the place row's own footprint authorizes it.
+        // Revocation needs no current deployment: the place is found by the signed parcel alone.
         let world = if is_world_realm_name(&realm_name) {
             Some(
                 WorldName::parse(&realm_name)
@@ -161,7 +165,12 @@ pub async fn scene_stream_access(
         )
         .await?
         .ok_or_else(|| ApiError::not_found("place not found for this scene"))?;
-        let place = PlaceLookup::new(&state, &place_id);
+        let realm = match &world {
+            Some(world) => RealmId::World(world.clone()),
+            None => RealmId::Shared(realm_name.clone()),
+        };
+        let place =
+            revocation_authority(&state, &sf.metadata, &realm, parcel.as_deref(), &place_id).await;
         (place_id, place, None)
     } else {
         // One resolution binds the signed scene to its parcel; the room and the
@@ -172,10 +181,12 @@ pub async fn scene_stream_access(
         let place_id = resolve_place_id(&state.pool, world, &base, true)
             .await?
             .ok_or_else(|| ApiError::not_found("place not found for this scene"))?;
-        let place = PlaceLookup::resolved(&state, &place_id, bound.footprint);
-        (place_id, place, Some(bound.room))
+        // The credential is stored under the catalogue place; the scene's
+        // explicit admins are stored under its entity id (`/scene-admin`),
+        // which `bound.place` carries with the deployment's footprint.
+        (place_id, bound.place, Some(bound.room))
     };
-    match scene::scene_owner_or_admin_decision(&state, &place, &sf.signer).await {
+    match scene::scene_manager_decision(&state, &place, &sf.signer).await {
         PermissionDecision::Allowed => {}
         PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
             return Err(forbidden(NOT_AUTHORIZED_TO_STREAM_MSG));
@@ -187,8 +198,13 @@ pub async fn scene_stream_access(
     match method {
         Method::GET => match active_access(&state.pool, &place_id).await? {
             Some(row) => {
-                let mut resp = row.response();
-                resp.ends_at = resp.created_at + FOUR_DAYS_MS;
+                // Upstream's list handler: the stored expiry is the one
+                // answered, and a credential past it that the expiry job has
+                // not retired yet is already gone.
+                let resp = row.response();
+                if resp.ends_at <= chrono::Utc::now().timestamp_millis() {
+                    return Err(ApiError::not_found(STREAM_ACCESS_EXPIRED_MSG));
+                }
                 Ok(Json(resp).into_response())
             }
             None => Err(ApiError::not_found(STREAM_ACCESS_NOT_FOUND_MSG)),
@@ -202,6 +218,68 @@ pub async fn scene_stream_access(
         Method::DELETE => remove_access(&state, &ingress, &place_id).await,
         _ => Ok(StatusCode::METHOD_NOT_ALLOWED.into_response()),
     }
+}
+
+/// The lookup an admin decision runs on for the scene behind `resolved`:
+/// `/scene-admin` stores a scene's explicit admins under its entity id, never
+/// under the catalogue place a stream credential is stored for. The footprint
+/// that decides ownership is the active deployment's, or `stored_place`'s row
+/// when the room names a scene this node did not resolve a deployment for.
+/// `None` when neither is known: the caller then asks the stored place alone,
+/// which admits its owner only.
+pub(super) async fn scene_authority<'a>(
+    state: &'a CommsState,
+    resolved: &ResolvedRoom,
+    stored_place: &str,
+) -> Option<PlaceLookup<'a>> {
+    if let Some(deployment) = resolved.deployment.as_ref() {
+        let info = scene::PlaceInfo {
+            world: resolved.realm.is_world(),
+            world_name: resolved.realm.world().map(|world| world.key().to_owned()),
+            positions: deployment.parcels.iter().map(Parcel::canonical).collect(),
+            base_position: Some(deployment.base.canonical()),
+        };
+        return Some(PlaceLookup::resolved(
+            state,
+            deployment.scene_id.as_str(),
+            info,
+        ));
+    }
+    let scene = resolved.scene_id.as_ref()?;
+    let info = scene::try_load_place_info(&state.pool, stored_place)
+        .await
+        .ok()??;
+    Some(PlaceLookup::resolved(state, scene.as_str(), info))
+}
+
+/// The lookup a revocation is authorized on. The signed scene when it is the
+/// current deployment, as for the other verbs; else the scene standing on the
+/// signed parcel now, with the catalogue place's footprint, so the admins of
+/// the scene that replaced it can still revoke the key; with neither, the
+/// place's owner alone.
+async fn revocation_authority<'a>(
+    state: &'a CommsState,
+    metadata: &serde_json::Value,
+    realm: &RealmId,
+    parcel: Option<&str>,
+    place_id: &str,
+) -> PlaceLookup<'a> {
+    if let Ok(bound) = Context::resolve(state, metadata).await {
+        return bound.place;
+    }
+    let current = match parcel.and_then(|raw| Parcel::parse(raw).ok()) {
+        Some(parcel) => state
+            .scenes
+            .resolve(RoomRequest::Parcel { realm, parcel })
+            .await
+            .ok(),
+        None => None,
+    };
+    match current {
+        Some(current) => scene_authority(state, &current, place_id).await,
+        None => None,
+    }
+    .unwrap_or_else(|| PlaceLookup::new(state, place_id))
 }
 
 /// The place's active credential when it is still valid for `room`, else a
@@ -527,6 +605,11 @@ async fn reset_access(
     }
     .await;
     result.map_err(|error: ApiError| {
+        // Upstream's reset answers its `StreamingAccessNotFoundError` as 404
+        // and any other failure of the swap as this 500.
+        if error.code == 404 {
+            return error;
+        }
         tracing::error!(place_id, error = %error, "scene stream access reset failed");
         ApiError::http(500, STREAM_RESET_FAILED_MSG)
     })

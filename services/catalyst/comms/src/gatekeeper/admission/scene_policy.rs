@@ -362,6 +362,38 @@ pub async fn scene_owner_or_admin_decision(
     }
 }
 
+/// Upstream's `isSceneOwnerOrAdmin`, the gate of every scene-signed write
+/// (admins, bans, the stream key, Cast): the owner-or-admin decision, or,
+/// failing that, an extended holder of the place (a world deployment or
+/// streaming grantee, a LAND operator or lease holder), the addresses
+/// `/scene-admin` lists beside the explicit admins. A source that cannot be
+/// read stays undetermined (503), never a refusal.
+pub async fn scene_manager_decision(
+    state: &CommsState,
+    place: &PlaceLookup<'_>,
+    signer: &Address,
+) -> PermissionDecision {
+    match scene_owner_or_admin_decision(state, place, signer).await {
+        PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {}
+        decided => return decided,
+    }
+    let undetermined = |store: &'static str, reason: String| {
+        PermissionDecision::Refused(AuthorityNotEstablished::UndeterminedStoreUnavailable {
+            store,
+            reason_for_operators: reason,
+        })
+    };
+    match place.get().await {
+        Ok(Some(row)) => match holds_extended_permission(state, row, signer).await {
+            Ok(true) => PermissionDecision::Allowed,
+            Ok(false) => PermissionDecision::refused(NOT_OWNER_OR_ADMIN_MSG),
+            Err(error) => undetermined("scene permission grants", error.to_string()),
+        },
+        Ok(None) => PermissionDecision::refused(NOT_OWNER_OR_ADMIN_MSG),
+        Err(error) => undetermined("explore.place", error.to_string()),
+    }
+}
+
 /// Owners, admins, extra addresses and lease holders cannot be banned. A
 /// protection surface that cannot be read is answered apart from a genuine
 /// "not protected": 503, never "nobody is protected".

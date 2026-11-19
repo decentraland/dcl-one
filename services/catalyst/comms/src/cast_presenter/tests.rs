@@ -509,7 +509,20 @@ fn commands_parse_as_upstream_reads_them() {
     assert_eq!(parse(json!({"type": "presentation:overlay:update"})), None);
     assert_eq!(
         parse(json!({"type": "presentation:video:play", "videoIndex": 0})),
-        Some(Command::Unsupported("presentation:video:play".into()))
+        Some(Command::VideoPlay(Some(0)))
+    );
+    assert_eq!(
+        parse(json!({"type": "presentation:video:pause"})),
+        Some(Command::Unsupported("presentation:video:pause".into()))
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&video_unavailable_message(Some(2))).unwrap(),
+        json!({
+            "type": "presentation:error",
+            "code": "video-playback-failed",
+            "message": "Video playback is not available on this server",
+            "videoIndex": 2
+        })
     );
     assert_eq!(parse(json!({"type": "presentation:unknown"})), None);
 }

@@ -692,6 +692,16 @@ async fn a_lookup_without_a_device_id_is_widened_to_the_recorded_device() {
         v["ban"].get("bannedDeviceId").is_none(),
         "the public status never carries the device id"
     );
+    assert_eq!(v["matchedOn"], "address");
+    assert_eq!(
+        serde_json::to_value(m.ban_status(&s.same_device).await.unwrap()).unwrap(),
+        serde_json::json!({ "isBanned": true, "matchedOn": "device" }),
+        "a ban of the recorded device is answered without the other wallet's record"
+    );
+    assert_eq!(
+        serde_json::to_value(m.ban_status(&s.clean).await.unwrap()).unwrap(),
+        serde_json::json!({ "isBanned": false })
+    );
 }
 
 #[tokio::test]

@@ -491,7 +491,7 @@ async fn mint(
     let world = WorldName::parse(world_name)
         .ok()
         .filter(|world| world.display() == world_name);
-    let admission = match &world {
+    let mut admission = match &world {
         Some(world) => Some(
             state
                 .policy
@@ -501,6 +501,25 @@ async fn mint(
         ),
         None => None,
     };
+    // A world published here advertises its `/about` realm name without
+    // `.dcl.eth` (`WORLDS_REALM_NAME_STRIP_ENS`), and an explorer builds the
+    // scene-room mint from that name: a bare label no world is stored under
+    // names the `.dcl.eth` world, as the gatekeeper's scene routes read it.
+    let mut world = world;
+    if matches!(admission, Some(WorldAdmission::Unknown))
+        && !crate::world_identity::is_world_realm_name(world_name)
+        && let Ok(suffixed) = WorldName::parse(&format!("{world_name}.dcl.eth"))
+    {
+        let found = state
+            .policy
+            .world_admission(&suffixed, now)
+            .await
+            .map_err(undetermined)?;
+        if !matches!(found, WorldAdmission::Unknown) {
+            world = Some(suffixed);
+            admission = Some(found);
+        }
+    }
     let ip = crate::shared::client_ip::client_ip(headers);
     let subject = if ip.is_empty() {
         identity.as_str().to_string()
@@ -622,7 +641,7 @@ async fn mint(
 
     let participants = state
         .presence
-        .admission_occupancy(state, world_name, scene_id.is_some())
+        .admission_occupancy(state, world.display(), scene_id.is_some())
         .await
         .map_err(undetermined)?;
     if participants >= state.world_mint.max_users_per_world {

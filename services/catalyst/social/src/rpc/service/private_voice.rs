@@ -78,6 +78,12 @@ pub(crate) async fn start_private_voice_chat(
     if !ctx.voice().is_configured() {
         return Err(Refusal::Internal(VOICE_RUNTIME_UNAVAILABLE.into()));
     }
+    // Upstream asks the gatekeeper about the callee before it writes anything,
+    // and its adapter refuses a callee that is not a wallet: no pending call
+    // is created for one, and the caller is not held busy by it.
+    if crate::shared::identity::Address::parse(callee).is_err() {
+        return Err(Refusal::Internal("Invalid Gatekeeper user address".into()));
+    }
     // Community-call presence is disclosed only once block and privacy allow the call.
     if pre.caller_in_community_voice {
         return Err(Refusal::Conflict(
