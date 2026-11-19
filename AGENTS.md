@@ -17,6 +17,10 @@ For formal verification of LiveKit or networking decisions, or maintenance of
 their proof evidence, use
 [verify-dcl-networking](.claude/skills/verify-dcl-networking/SKILL.md).
 
+To prove or reject a claim about multiplayer behaviour against a running stack
+(a pull request that fixes a connection problem, a decision record, a bug report), use
+[validate-multiplayer-claim](.claude/skills/validate-multiplayer-claim/SKILL.md).
+
 ## Design feasibility
 
 - Before planning or implementing runtime features, resource policies or architecture
