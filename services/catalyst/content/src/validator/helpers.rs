@@ -94,8 +94,8 @@ pub(super) fn validate_profile_emote_urns(
                         }
                     }
 
-                    if let Some(slot) = emote.get("slot").and_then(|s| s.as_i64())
-                        && !(0..=9).contains(&slot)
+                    if let Some(slot) = emote.get("slot").and_then(|s| s.as_f64())
+                        && !(0.0..=9.0).contains(&slot)
                     {
                         return Err(format!(
                             "The slot {slot} of the emote must be a number between \
@@ -107,6 +107,11 @@ pub(super) fn validate_profile_emote_urns(
         }
     }
     Ok(())
+}
+
+/// A slot's identity in a uniqueness set: `1`, `1.0` and `1e0` are one slot.
+pub(super) fn slot_key(slot: f64) -> u64 {
+    (slot + 0.0).to_bits()
 }
 
 /// Whether `avatar.snapshots` is truthy as the reference reads it

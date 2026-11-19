@@ -13,9 +13,24 @@ use super::types::*;
 #[serde(rename_all = "camelCase")]
 pub struct MerkleProof {
     pub proof: Vec<String>,
+    #[serde(deserialize_with = "integral_index")]
     pub index: u64,
     pub entity_hash: String,
     pub hashing_keys: Vec<String>,
+}
+
+/// A non-negative integer in any JSON number form (`1`, `1.0`, `1e0`).
+fn integral_index<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
+    let n = serde_json::Number::deserialize(deserializer)?;
+    if let Some(i) = n.as_u64() {
+        return Ok(i);
+    }
+    match n.as_f64() {
+        Some(f) if f >= 0.0 && f.fract() == 0.0 && f < u64::MAX as f64 => Ok(f as u64),
+        _ => Err(serde::de::Error::custom(format!(
+            "invalid merkle proof index {n}, expected a non-negative integer"
+        ))),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -353,6 +368,22 @@ mod tests {
         );
         assert_eq!(hex_to_bytes("deadbeef"), Some(vec![0xde, 0xad, 0xbe, 0xef]));
         assert_eq!(hex_to_bytes("0x"), Some(vec![]));
+    }
+
+    #[test]
+    fn merkle_proof_index_accepts_every_integral_json_number_form() {
+        let parse = |index: &str| {
+            serde_json::from_str::<MerkleProof>(&format!(
+                r#"{{"proof": [], "index": {index}, "entityHash": "", "hashingKeys": []}}"#
+            ))
+            .map(|p| p.index)
+        };
+        for (index, expected) in [("1", 1), ("1.0", 1), ("1e0", 1), ("0.0", 0), ("2e1", 20)] {
+            assert_eq!(parse(index).unwrap(), expected, "{index}");
+        }
+        for index in ["1.5", "-1", "-1.0", "\"1\""] {
+            assert!(parse(index).is_err(), "{index}");
+        }
     }
 
     #[test]
