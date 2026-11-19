@@ -19,6 +19,7 @@ import {
   draftsRoot,
   getDraft,
   listDrafts,
+  parseExpiration,
   verifyAuthChainRequest,
 } from "./scene-drafts.server";
 import { hashComposite, renameComposite } from "./scene-drafts";
@@ -269,6 +270,85 @@ describe("scene-drafts auth: ADR-44 AuthChain verification", () => {
     );
     const res = await verifyAuthChainRequest(new Request("http://localhost/create/drafts", { headers: s.headers }));
     expect(res).toEqual({ ok: false, status: 401, error: "malformed ephemeral payload" });
+  });
+
+  /** A signed GET whose delegation payload is `payload(ephemeralAddress)`, the owner signing `signed(payload)`. */
+  async function delegatedRequest(
+    payload: (ephemeralAddress: string) => string,
+    signed: (payload: string) => string = (text) => text,
+  ) {
+    const account = privateKeyToAccount(generatePrivateKey());
+    const ephemeral = generateEphemeralKey();
+    const message = payload(ephemeral.address);
+    const signer = account.address.toLowerCase();
+    const s = await signRequest(
+      {
+        signer,
+        ephemeral,
+        expiration: new Date(Date.now() + 60_000).toISOString(),
+        authChain: [
+          { type: "SIGNER", payload: signer, signature: "" },
+          { type: "ECDSA_EPHEMERAL", payload: message, signature: await account.signMessage({ message: signed(message) }) },
+        ],
+      },
+      "GET",
+      "/create/drafts",
+      {},
+    );
+    return verifyAuthChainRequest(new Request("http://localhost/create/drafts", { headers: s.headers }));
+  }
+
+  it("refuses an expiration it cannot read instead of treating it as never expiring", async () => {
+    for (const expiration of ["not a date", "2999-01-01", "Jan 1 2999", "32503680000000"]) {
+      const res = await delegatedRequest((address) => `Decentraland Login\nEphemeral address: ${address}\nExpiration: ${expiration}`);
+      expect(res, expiration).toEqual({ ok: false, status: 401, error: "malformed ephemeral payload" });
+    }
+  });
+
+  it("verifies the delegation signature over the payload without carriage returns", async () => {
+    const crlf = (address: string) =>
+      `Decentraland Login\r\nEphemeral address: ${address}\r\nExpiration: ${new Date(Date.now() + 60_000).toISOString()}`;
+    const stripped = (text: string) => text.replace(/\r/g, "");
+
+    expect((await delegatedRequest(crlf, stripped)).ok).toBe(true);
+    expect(await delegatedRequest(crlf)).toEqual({ ok: false, status: 401, error: "broken auth chain at link 1" });
+  });
+});
+
+describe("parseExpiration", () => {
+  it("reads the date shapes the shared verifier reads, and nothing else", () => {
+    const accepted: Array<[string, number]> = [
+      ["2100-01-01T00:00:00.000Z", 4102444800000],
+      ["2100-01-01T00:00:00.123456789Z", 4102444800123],
+      ["2100-01-01T00:00:00+03:00", 4102434000000],
+      ["2100-01-01T00:00:00", 4102444800000],
+      ["2100-01-01 00:00:00Z", 4102444800000],
+      ["  2100-01-01T00:00:00.000Z  ", 4102444800000],
+      ["Thu, 13 Feb 2020 15:31:10 GMT", 1581607870000],
+      ["Thu, 13 Feb 2020 15:31:10 +0300", 1581597070000],
+      ["Thu, 13 FEB 2020 15:31:10 est", 1581625870000],
+      ["Thu, 13 Feb 20 15:31:10 GMT", 1581607870000],
+      ["Thu Feb 13 2020 15:31:10 GMT-0300 (Argentina Standard Time)", 1581618670000],
+      ["Thu Feb 3 2020 15:31:10 GMT-0300", 1580754670000],
+      ["Thu Feb 13 2020 15:31:10 GMT-03:00", 1581618670000],
+      ["2100-01-01T00:00:60Z", 4102444860000],
+    ];
+    for (const [raw, millis] of accepted) expect(parseExpiration(raw), raw).toBe(millis);
+
+    for (const raw of [
+      "2100-01-01",
+      "2100-01-01 00:00:00",
+      "2100-01-01T00:00Z",
+      "2100-01-01T00:00:00-0300",
+      "2100-02-30T00:00:00Z",
+      "Thu, 3 Feb 2020 15:31:10 GMT",
+      "Thu, 13 Feb 2020 15:31:10 UTC",
+      "Feb 13 2020 15:31:10 GMT-0300",
+      "Thu Feb 13 2020 15:31:10 GMT-03",
+      "1700000000000",
+    ]) {
+      expect(parseExpiration(raw), raw).toBeNull();
+    }
   });
 });
 
