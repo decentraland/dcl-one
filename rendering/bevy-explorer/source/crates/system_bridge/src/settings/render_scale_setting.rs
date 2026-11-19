@@ -2,7 +2,7 @@ use common::structs::AppConfig;
 
 use super::{AppSetting, IntAppSetting, SettingCategory};
 
-/// Render resolution in tenths of the window's pixels, so the slider moves 10% per step.
+/// Render resolution in tenths of the window's width and height, so the slider moves 10% per step.
 #[derive(Debug, PartialEq, Eq)]
 pub struct RenderScaleSetting(i32);
 
@@ -87,11 +87,14 @@ mod tests {
     }
 
     #[test]
-    fn loads_an_off_step_value_at_the_nearest_step() {
-        let mut config = AppConfig::default();
-        config.graphics.render_scale = 0.97;
-        assert_eq!(RenderScaleSetting::load(&config), RenderScaleSetting(10));
-        config.graphics.render_scale = 0.3;
-        assert_eq!(RenderScaleSetting::load(&config), RenderScaleSetting(5));
+    fn shows_an_off_step_value_at_the_nearest_step_and_keeps_it_saved() {
+        for (saved, shown) in [(0.97, 100.0), (0.3, 50.0)] {
+            let mut config = AppConfig::default();
+            config.graphics.render_scale = saved;
+            let mut settings = Settings { settings: vec![] };
+            settings.add_int_setting::<RenderScaleSetting>(&config);
+            assert_eq!(render_resolution(&settings).value, shown);
+            assert_eq!(config.graphics.render_scale, saved);
+        }
     }
 }
