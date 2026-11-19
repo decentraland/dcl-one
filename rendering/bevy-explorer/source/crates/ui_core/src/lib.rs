@@ -168,7 +168,6 @@ impl Plugin for UiCorePlugin {
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn setup(
     asset_server: Res<AssetServer>,
     mut tracker: ResMut<StateTracker<State>>,

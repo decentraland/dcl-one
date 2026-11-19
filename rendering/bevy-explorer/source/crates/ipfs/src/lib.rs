@@ -783,7 +783,6 @@ pub struct InFlightRealmChange {
     result: RpcResultReceiver<Result<(), String>>,
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn change_realm(
     mut change_realm_requests: EventReader<ChangeRealmEvent>,
     ipfs: Res<IpfsResource>,

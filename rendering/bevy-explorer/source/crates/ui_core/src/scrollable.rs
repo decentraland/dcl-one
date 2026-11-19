@@ -211,7 +211,6 @@ struct Slider {
     position: f32,
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn update_scrollables(
     mut commands: Commands,
     window: Query<&Window, With<PrimaryWindow>>,

@@ -96,7 +96,6 @@ impl Plugin for AVPlayerPlugin {
     }
 }
 
-#[expect(clippy::type_complexity)]
 fn av_player_on_insert<T: AVPlayer>(
     trigger: Trigger<OnInsert, T>,
     mut commands: Commands,
@@ -212,7 +211,6 @@ fn av_player_on_remove<T: AVPlayer>(
     );
 }
 
-#[expect(clippy::type_complexity)]
 fn stream_on_add<T: AVPlayer>(
     trigger: Trigger<OnAdd, Stream>,
     mut commands: Commands,
@@ -253,7 +251,6 @@ fn video_texture_output_replaced(trigger: Trigger<OnReplace, VideoTextureOutput>
     debug!("VideoTextureOutput replaced into {}", entity);
 }
 
-#[expect(clippy::type_complexity)]
 fn should_be_playing_on_add<T: AVPlayer>(
     trigger: Trigger<OnAdd, ShouldBePlaying<T>>,
     mut commands: Commands,
@@ -316,7 +313,6 @@ fn should_be_playing_on_remove<T: AVPlayer>(
     );
 }
 
-#[expect(clippy::type_complexity)]
 fn av_player_is_in_scene(
     mut commands: Commands,
     av_players: Query<
@@ -344,7 +340,6 @@ fn av_player_is_in_scene(
     }
 }
 
-#[expect(clippy::type_complexity)]
 fn audio_stream_should_be_playing(
     mut commands: Commands,
     av_players: Query<(
@@ -401,7 +396,6 @@ impl Ord for ShouldBePlayingCandidate {
     }
 }
 
-#[expect(clippy::type_complexity, reason = "Queries are complex")]
 fn video_player_should_be_playing(
     mut commands: Commands,
     av_players: Query<(

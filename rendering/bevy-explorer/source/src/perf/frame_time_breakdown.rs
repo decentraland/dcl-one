@@ -175,7 +175,6 @@ fn mark_render_world_frame_end_system(
 /// Assembles [`FrameTimeBreakdown`] from the previous frame's timers and records
 /// the `perf/*` diagnostics. The bottleneck is classified from the diagnostics' smoothed values,
 /// so it does not flicker with one frame.
-#[allow(clippy::too_many_arguments)]
 pub fn publish_frame_time_breakdown_system(
     time: Res<Time<Real>>,
     main_timer: Res<MainWorldFrameTimer>,

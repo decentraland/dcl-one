@@ -441,7 +441,6 @@ fn make_log(commands: &mut Commands, log: SceneLogMessage) -> Entity {
         .id()
 }
 
-#[allow(clippy::too_many_arguments)]
 fn display_chat(
     mut commands: Commands,
     mut chatbox: Query<(Entity, &mut ChatBox, Option<&Children>)>,
@@ -544,7 +543,6 @@ pub struct ChatInput;
 #[derive(Event)]
 pub struct PrivateChatEntered(pub String);
 
-#[allow(clippy::too_many_arguments)]
 fn emit_user_chat(
     mut commands: Commands,
     mut chats: EventWriter<ChatEvent>,
@@ -682,7 +680,6 @@ pub fn broadcast_nearby_chats(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn select_chat_tab(
     In(tab): In<Option<&'static str>>,
     mut commands: Commands,
@@ -731,7 +728,6 @@ pub(crate) fn select_chat_tab(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn pipe_chats_to_scene(
     mut chat_events: EventReader<ChatEvent>,
     #[cfg(feature = "livekit")] mut dms: EventReader<comms::private_chat::PrivateChatReceived>,
@@ -1043,7 +1039,6 @@ fn react(mut input: ConsoleCommand<ReactCommand>, mut events: EventWriter<System
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn pipe_chats_from_scene(
     mut sender: EventWriter<ChatEvent>,
     primary_player: Res<PrimaryPlayerRes>,

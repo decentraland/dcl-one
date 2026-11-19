@@ -203,7 +203,6 @@ impl RendererSceneContext {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         scene_id: SceneId,
         hash: String,

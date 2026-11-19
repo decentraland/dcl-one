@@ -78,7 +78,6 @@ struct SnapshotResult {
     camera: Entity,
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn automatic_testing(
     mut commands: Commands,
     mut testing_data: ResMut<TestingData>,

@@ -64,7 +64,6 @@ enum LoginType {
     Cancel,
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn login(
     mut commands: Commands,
     wallet: Res<Wallet>,
@@ -262,7 +261,6 @@ fn login(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn update_profile_for_realm(
     realm: Res<CurrentRealm>,
     wallet: Res<Wallet>,
@@ -570,7 +568,6 @@ fn account_locked(wallet: &Wallet, world_hold: &Option<Res<WorldHold>>) -> bool 
     world_hold.is_none() && wallet.address().is_some()
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn process_login_bridge(
     mut e: EventReader<SystemApi>,
     ipfas: IpfsAssetServer,

@@ -3,7 +3,8 @@
 
 `[workspace.lints]` in rendering/bevy-explorer/source/Cargo.toml reaches only the packages
 whose manifest holds exactly `[lints] workspace = true`. Every workspace member must, so a lint
-added there applies to the whole workspace. Offline: reads the manifests, runs no cargo.
+added there applies to the whole Explorer, except the test tooling under `local-harness/`, which
+CI's Clippy job does not lint. Offline: reads the manifests, runs no cargo.
 """
 
 import glob
@@ -14,6 +15,7 @@ from pathlib import Path
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 SOURCE = REPOSITORY / "rendering/bevy-explorer/source"
+HARNESS = SOURCE / "local-harness"
 
 
 def normal(path):
@@ -73,7 +75,7 @@ def main():
     missing = [
         os.path.relpath(manifest, REPOSITORY)
         for manifest, document in member_manifests().items()
-        if document.get("lints") != {"workspace": True}
+        if not manifest.is_relative_to(HARNESS) and document.get("lints") != {"workspace": True}
     ]
     for manifest in missing:
         print(f"::error file={manifest}::"

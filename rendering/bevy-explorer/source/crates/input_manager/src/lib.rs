@@ -687,7 +687,6 @@ fn handle_pointer_motion(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn handle_native_input(
     mut events: EventReader<SystemApi>,
     mut active: Local<Option<CurrentNativeInputRequest>>,

@@ -96,7 +96,6 @@ pub fn update_profile_images(
 #[derive(Event, Clone)]
 pub struct ShowConversationEvent(pub Address);
 
-#[allow(clippy::too_many_arguments)]
 pub fn show_conversation(
     mut show_events: EventReader<ShowConversationEvent>,
     mut pending_event: Local<Option<Address>>,
@@ -227,7 +226,6 @@ pub fn show_conversation(
     tab_manager.set_selected_entity(tab, new_tab);
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn update_friends(
     mut commands: Commands,
     client: Res<SocialClient>,
@@ -377,7 +375,6 @@ pub fn update_friends(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn update_conversations(
     mut client: ResMut<SocialClient>,
     tab: Query<&TabSelection, With<ChatTab>>,

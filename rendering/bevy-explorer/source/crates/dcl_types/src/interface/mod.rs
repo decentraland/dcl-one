@@ -198,7 +198,6 @@ impl CrdtStore {
     }
 
     // handles a single message from the buffer
-    #[allow(clippy::too_many_arguments)]
     pub fn process_message(
         &mut self,
         writers: &CrdtComponentInterfaces,
