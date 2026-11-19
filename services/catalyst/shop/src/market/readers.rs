@@ -9,9 +9,9 @@
 //! unavailable envelope through [`require_collections`] /
 //! [`require_marketplace`], never an empty page.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
@@ -51,8 +51,18 @@ pub struct Caches {
     m5: TtlMap<String, Arc<Value>>,
     m10: TtlMap<String, Arc<Value>>,
     m15: TtlMap<String, Arc<Value>>,
-    /// The keys a background read is refreshing ([`Caches::begin_refresh`]).
-    refreshing: parking_lot::Mutex<HashSet<String>>,
+    /// The keys a background read is refreshing, or whose last refresh failed
+    /// ([`Caches::begin_refresh`]).
+    refreshing: parking_lot::Mutex<HashMap<String, Refresh>>,
+    /// The last good answer of the keys served while they refresh ([`Caches::keep`]), apart from
+    /// the bounded maps, whose eviction would drop an expired one first.
+    kept: parking_lot::Mutex<HashMap<String, (Instant, Arc<Value>)>>,
+}
+
+/// A key's background refresh: running, or failed at an instant.
+enum Refresh {
+    Running,
+    FailedAt(Instant),
 }
 
 impl Default for Caches {
@@ -64,6 +74,7 @@ impl Default for Caches {
             m10: TtlMap::bounded(Ttl::M10.duration(), MAX_ENTRIES),
             m15: TtlMap::bounded(Ttl::M15.duration(), MAX_ENTRIES),
             refreshing: parking_lot::Mutex::default(),
+            kept: parking_lot::Mutex::default(),
         }
     }
 }
@@ -84,19 +95,46 @@ impl Caches {
         self.map(ttl).get_fresh(&key.to_string())
     }
 
-    /// `key`'s last answer under `ttl`, expired or not, while it is younger than `max_age`.
-    pub fn within(&self, ttl: Ttl, key: &str, max_age: Duration) -> Option<Arc<Value>> {
-        self.map(ttl).get_within(&key.to_string(), max_age)
+    /// Keeps `value` as `key`'s last good answer, for [`Caches::kept_within`].
+    pub fn keep(&self, key: &str, value: Arc<Value>) {
+        self.kept
+            .lock()
+            .insert(key.to_string(), (Instant::now(), value));
     }
 
-    /// Claims `key`'s background refresh: true for the one caller that is to run it, until it
-    /// calls [`Caches::end_refresh`].
-    pub fn begin_refresh(&self, key: &str) -> bool {
-        self.refreshing.lock().insert(key.to_string())
+    /// `key`'s last good answer while it was kept less than `max_age` ago.
+    pub fn kept_within(&self, key: &str, max_age: Duration) -> Option<Arc<Value>> {
+        self.kept
+            .lock()
+            .get(key)
+            .filter(|(at, _)| at.elapsed() < max_age)
+            .map(|(_, value)| Arc::clone(value))
     }
 
-    pub fn end_refresh(&self, key: &str) {
-        self.refreshing.lock().remove(key);
+    /// Claims `key`'s background refresh: true for the one caller that is to run it and release
+    /// the claim with [`Caches::end_refresh`]. None while another runs, nor within `backoff` of a
+    /// failed one, so a failing source is retried at most once per `backoff`.
+    pub fn begin_refresh(&self, key: &str, backoff: Duration) -> bool {
+        let mut claims = self.refreshing.lock();
+        let blocked = match claims.get(key) {
+            Some(Refresh::Running) => true,
+            Some(Refresh::FailedAt(at)) => at.elapsed() < backoff,
+            None => false,
+        };
+        if !blocked {
+            claims.insert(key.to_string(), Refresh::Running);
+        }
+        !blocked
+    }
+
+    /// Releases `key`'s claim: cleared when the refresh succeeded, else marked failed now.
+    pub fn end_refresh(&self, key: &str, succeeded: bool) {
+        let mut claims = self.refreshing.lock();
+        if succeeded {
+            claims.remove(key);
+        } else {
+            claims.insert(key.to_string(), Refresh::FailedAt(Instant::now()));
+        }
     }
 
     /// Ages `key`'s answer under `ttl` by `by`.
@@ -116,6 +154,36 @@ impl Caches {
         for m in [&self.s30, &self.s60, &self.m5, &self.m10, &self.m15] {
             m.clear();
         }
+        self.refreshing.lock().clear();
+        self.kept.lock().clear();
+    }
+}
+
+/// A claimed refresh ([`Caches::begin_refresh`]), released when dropped however the refresh
+/// ended, a panic included: as failed unless [`RefreshClaim::succeeded`] was called.
+pub struct RefreshClaim {
+    state: super::SharedState,
+    key: &'static str,
+    succeeded: bool,
+}
+
+impl RefreshClaim {
+    pub fn new(state: super::SharedState, key: &'static str) -> Self {
+        Self {
+            state,
+            key,
+            succeeded: false,
+        }
+    }
+
+    pub fn succeeded(&mut self) {
+        self.succeeded = true;
+    }
+}
+
+impl Drop for RefreshClaim {
+    fn drop(&mut self) {
+        self.state.readers.end_refresh(self.key, self.succeeded);
     }
 }
 
@@ -764,4 +832,46 @@ pub fn reader_window(
 /// The unix milliseconds the readers compare an expiry against.
 pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
+}
+
+#[cfg(test)]
+mod refresh_tests {
+    use super::*;
+
+    /// One refresh runs at a time; a success clears its claim, a failure holds the next one off
+    /// for the backoff, and a refresh that panics still releases its claim, as failed.
+    #[tokio::test]
+    async fn a_refresh_claim_is_released_however_the_refresh_ends() {
+        let state = crate::market::tests::support::state_with_empty_readers(None).await;
+        let readers = &state.readers;
+        const KEY: &str = "refresh-claim";
+        let hour = Duration::from_secs(3600);
+        assert!(readers.begin_refresh(KEY, hour));
+        assert!(
+            !readers.begin_refresh(KEY, Duration::ZERO),
+            "one refresh at a time"
+        );
+        readers.end_refresh(KEY, true);
+        assert!(
+            readers.begin_refresh(KEY, hour),
+            "a success clears the claim"
+        );
+        readers.end_refresh(KEY, false);
+        assert!(
+            !readers.begin_refresh(KEY, hour),
+            "a failure holds the next one off"
+        );
+        assert!(readers.begin_refresh(KEY, Duration::ZERO));
+        let held = Arc::clone(&state);
+        let refresh = tokio::spawn(async move {
+            let _claim = RefreshClaim::new(held, KEY);
+            panic!("a row that does not decode");
+        });
+        assert!(refresh.await.is_err());
+        assert!(
+            !readers.begin_refresh(KEY, hour),
+            "released as failed, not held for good"
+        );
+        assert!(readers.begin_refresh(KEY, Duration::ZERO));
+    }
 }
