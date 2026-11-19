@@ -288,11 +288,17 @@ describe("relaying a meta-transaction", () => {
     // Each field only in its own shape: no code without a string, no time or count but a positive whole number.
     const odd = { ok: false, error: 7, retryAt: "soon", quota: -1, not_sent: true };
     await expect(relay(answering(429, odd))).rejects.toMatchObject({ refusal: {} });
-    expect(relayRefusal({ error: "", retryAt: 1.5, quota: 0 })).toEqual({});
+    expect(relayRefusal({ error: "", retryAt: 1.5, quota: -1 })).toEqual({});
+    // A quota of none is kept: the account gets no fee-free transactions.
+    expect(relayRefusal({ error: "quota_reached", quota: 0 })).toEqual({ error: "quota_reached", quota: 0 });
     // The code from `code` (upstream's, and dcl-one's relay too), else `error` (dcl-one's, before it answered `code`).
     expect(relayRefusal({ code: "quota_reached" })).toEqual({ error: "quota_reached" });
     expect(relayRefusal({ code: "quota_reached", error: "invalid_transaction" })).toEqual({ error: "quota_reached" });
     expect(relayRefusal({ code: "", error: "relay_budget_spent" })).toEqual({ error: "relay_budget_spent" });
+    // Marked as not sent, a code-only refusal (upstream's shape) is a refusal like any; unmarked, a forwarded 429
+    // proves nothing was sent no more than any other status does.
+    await expect(relay(answering(429, { ok: false, code: "quota_reached", message: "quota", not_sent: true }))).rejects.toMatchObject({ reason: "relayer-rejected", refusal: { error: "quota_reached" } });
+    await expect(relay(answering(429, { ok: false, code: "quota_reached", message: "quota" }))).rejects.toMatchObject({ reason: "relayer-unreachable" });
     expect(relayRefusal(null)).toEqual({});
   });
 

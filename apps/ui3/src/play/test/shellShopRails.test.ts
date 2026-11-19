@@ -370,7 +370,7 @@ describe('the shell purchase on the real rails', () => {
     expect(failed.view).toMatchObject({
       step: 'failed',
       retry: true,
-      message: "You've used all 30 of today's fee-free transactions for this account. You can buy fee-free again within 24 hours."
+      message: "You've used all 30 fee-free transactions this account gets in 24 hours. Try again later."
     })
     expect(failed.view).not.toHaveProperty('switchTo')
   })
@@ -385,7 +385,7 @@ describe('the shell purchase on the real rails', () => {
     expect(failed.view).toMatchObject({
       step: 'failed',
       switchTo: 'Polygon',
-      message: 'Fee-free checkout is paused for today. You can switch to Polygon and pay the network fee with your wallet. Nothing was bought.'
+      message: 'The shared fee-free limit for this operation has been reached. Try again later. You can switch to Polygon and pay the network fee with your wallet. Nothing was bought.'
     })
   })
 

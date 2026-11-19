@@ -46,12 +46,14 @@ export type RelayRefusal = { error?: string; retryAt?: number; quota?: number };
 export function relayRefusal(body: unknown): RelayRefusal {
   const answer = (body && typeof body === "object" ? body : {}) as { code?: unknown; error?: unknown; retryAt?: unknown; quota?: unknown };
   const positive = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n > 0;
+  // A quota of none is an answer too: the account gets no fee-free transactions at all.
+  const count = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
   const named = (v: unknown): v is string => typeof v === "string" && v !== "";
   const error = named(answer.code) ? answer.code : named(answer.error) ? answer.error : undefined;
   return {
     ...(error != null ? { error } : {}),
     ...(positive(answer.retryAt) ? { retryAt: answer.retryAt } : {}),
-    ...(positive(answer.quota) ? { quota: answer.quota } : {}),
+    ...(count(answer.quota) ? { quota: answer.quota } : {}),
   };
 }
 

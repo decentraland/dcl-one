@@ -241,7 +241,7 @@ type Harness = {
 };
 
 async function harness(
-  opts: { method?: "credits" | "mana"; handlers?: FakeHandlers; session?: Session; relay?: "ok" | "refuse" | "down" | "fail-after-send"; refuseStatus?: number; refuseEvidence?: boolean; failStatus?: number; failBody?: unknown; confirm?: "success" | "reverted" | "none" } = {},
+  opts: { method?: "credits" | "mana"; handlers?: FakeHandlers; session?: Session; relay?: "ok" | "refuse" | "down" | "fail-after-send"; refuseStatus?: number; refuseEvidence?: boolean; refuseBody?: Record<string, unknown>; failStatus?: number; failBody?: unknown; confirm?: "success" | "reverted" | "none" } = {},
 ): Promise<Harness> {
   const session = opts.session ?? web3();
   const offer = opts.method === "mana" ? wearableResale(session) : creatorOrder(session);
@@ -252,6 +252,7 @@ async function harness(
     mode: opts.relay ?? "ok",
     refuseStatus: opts.refuseStatus,
     refuseEvidence: opts.refuseEvidence,
+    refuseBody: opts.refuseBody,
     failStatus: opts.failStatus,
     failBody: opts.failBody,
     onRelay: (hash) => {
@@ -425,6 +426,32 @@ describe("process death between boundaries, then resume", () => {
     const results = await resumeCheckout(h.deps, state, [h.group], h.resolved);
     expect(results[h.group.keyId]).toMatchObject({ status: "pending" });
     expect(h.relay.posts).toHaveLength(before);
+  });
+});
+
+describe("a credits group the relay refuses for its limits", () => {
+  const released = (h: Harness) => h.shop.log.find((r) => r.name === "cancelCreditAuthorizations")?.body;
+
+  it("an in-app wallet's spent quota fails the group with the quota's copy and gives the credit back, whatever time it names", async () => {
+    // A time no date can hold must not stop the credit from being released.
+    const h = await harness({ session: web2(), relay: "refuse", refuseStatus: 429, refuseBody: { error: "quota_reached", message: "Quota: 30", quota: 30, retryAt: Number.MAX_SAFE_INTEGER } });
+    const result = await runGroup(h.deps, h.group, h.resolved);
+    expect(result).toMatchObject({ status: "failed", failure: { message: "You've used all 30 fee-free transactions this account gets in 24 hours. Try again later." } });
+    expect(released(h)).toEqual({ salts: [`0x${"a1".repeat(32)}`] });
+  });
+
+  it("reads a refusal marked as not sent by its code alone (upstream's shape)", async () => {
+    const h = await harness({ session: web2(), relay: "refuse", refuseStatus: 429, refuseBody: { error: undefined, code: "quota_reached", message: "Quota: 30", quota: 30 } });
+    const result = await runGroup(h.deps, h.group, h.resolved);
+    expect(result).toMatchObject({ status: "failed", failure: { message: "You've used all 30 fee-free transactions this account gets in 24 hours. Try again later." } });
+    expect(released(h)).toEqual({ salts: [`0x${"a1".repeat(32)}`] });
+  });
+
+  it("keeps the credit for a forwarded 429 not marked as not sent, whatever its code says", async () => {
+    const h = await harness({ session: web2(), relay: "refuse", refuseStatus: 429, refuseEvidence: false, refuseBody: { code: "quota_reached", message: "Quota: 30" } });
+    const result = await runGroup(h.deps, h.group, h.resolved);
+    expect(result).toMatchObject({ status: "pending" });
+    expect(released(h)).toBeUndefined();
   });
 });
 
