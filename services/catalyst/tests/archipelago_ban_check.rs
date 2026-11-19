@@ -123,6 +123,28 @@ async fn ban_checker_sees_a_ban_issued_after_a_clean_check() {
 }
 
 #[tokio::test]
+async fn ban_checker_sees_a_platform_ban_issued_after_a_clean_check() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let checker = archipelago::ban_checker(policy(scratch.pool.clone()));
+    assert!(!checker.is_banned(BANNED).await);
+    sqlx::query(
+        "INSERT INTO social.user_bans (banned_address, banned_by, reason) VALUES ($1, 'test', 'test')",
+    )
+    .bind(BANNED)
+    .execute(&scratch.pool)
+    .await
+    .unwrap();
+    assert!(
+        checker.is_banned(BANNED).await,
+        "the next handshake reads the platform ban just written"
+    );
+    scratch.teardown().await;
+}
+
+#[tokio::test]
 async fn deny_list_flags_listed_wallet_case_insensitively() {
     let (port, _c) = start_mock().await;
     let deny = DenyList::new(
