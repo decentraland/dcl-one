@@ -3431,5 +3431,20 @@ async fn committee_index_keeps_member_set_logs_of_both_contracts() {
             .await
             .unwrap();
     assert_eq!(members, vec![ALICE.to_string(), ALICE.to_string()]);
+
+    // The walk always rewinds below its start, so the partial case is
+    // checked on the index directly: rows at or below the target survive.
+    let mut conn = db.pool.acquire().await.unwrap();
+    CommitteeIndex
+        .rewind(&mut conn, (s + 1) as i64)
+        .await
+        .unwrap();
+    drop(conn);
+    let kept: Vec<(i64, bool)> =
+        sqlx::query_as("SELECT block_number, is_member FROM shop.committee_event")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(kept, vec![((s + 1) as i64, true)]);
     db.drop().await;
 }
