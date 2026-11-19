@@ -551,8 +551,10 @@ function Working({ label, size }: { label: string; size?: 'small' }): React.JSX.
 
 /**
  * Choose your payment method: the item, a row per way to pay (one picked at a time, native radios, so the arrow
- * keys move the pick), then CANCEL or BUY. The first pick is the buyer's earlier one while it pays, else the Credits
- * when they pay, else MANA; a pick that stops paying (a balance read again) falls back the same way.
+ * keys move the pick), then CANCEL or BUY. The step opens with a pick: the buyer's earlier one while it pays, else
+ * the Credits when they pay, else MANA. After that only the buyer picks. A pick that stops paying (a balance read
+ * again) is dropped, and BUY waits for the buyer to pick a row that pays: the same BUY never spends another way than
+ * the one picked, and a later read where the dropped row pays again doesn't pick it back.
  */
 function MethodStep({
   view,
@@ -568,7 +570,9 @@ function MethodStep({
   const pays = (method: ShopPaymentMethod): boolean => (method === 'credits' ? credits.pays : mana.pays)
   const first = (): ShopPaymentMethod | null => (view.initial && pays(view.initial) ? view.initial : credits.pays ? 'credits' : mana.pays ? 'mana' : null)
   const [picked, setPicked] = useState<ShopPaymentMethod | null>(first)
-  const method = picked && pays(picked) ? picked : first()
+  // Dropped as this render reads it (React renders again at once), so no later view sees the old pick come back.
+  if (picked && !pays(picked)) setPicked(null)
+  const method = picked && pays(picked) ? picked : null
   const count = view.items.length
   const creditsShort = !credits.pays && credits.price != null && credits.balance != null && credits.balance < credits.price
   return (

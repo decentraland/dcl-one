@@ -14,13 +14,16 @@ import styles from './dialogOverlay.module.css'
 const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
 
 /**
- * What Tab stops at, in order: a group of radios is one stop, its checked one (the browser's own Tab does the same;
- * the arrow keys move within the group).
+ * What Tab stops at, in order: a group of radios is one stop, as the browser's own Tab makes it: its checked radio,
+ * or its first one while none is checked. The arrow keys move within the group.
  */
 function tabStops(root: HTMLElement | null): HTMLElement[] {
   const all = [...(root?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])]
   const radio = (el: HTMLElement): el is HTMLInputElement => el instanceof HTMLInputElement && el.type === 'radio' && el.name !== ''
-  return all.filter((el) => !radio(el) || el.checked || !all.some((other) => other !== el && radio(other) && other.name === el.name && other.checked))
+  const stop = new Map<string, HTMLElement>()
+  // In order: a group's first radio, until its checked one (if any) replaces it.
+  for (const el of all) if (radio(el) && (el.checked || !stop.has(el.name))) stop.set(el.name, el)
+  return all.filter((el) => !radio(el) || stop.get(el.name) === el)
 }
 /** The buttons a step's first focus goes to (a scrolling row or a field may come before them, and is reached by Tab). */
 const BUTTONS = 'button:not([disabled])'

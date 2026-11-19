@@ -324,16 +324,40 @@ describe('the purchase dialog', () => {
       expect(radio(/^Credits/).checked).toBe(true)
     })
 
-    it('moves a pick that stopped paying to the way that still does', () => {
+    // A pick that stops paying is dropped, never moved: the same BUY must not spend another way than the buyer picked.
+    it.each([
+      { picked: 'credits' as const, other: 'mana' as const, picks: /^Credits/, otherRow: /^Polygon MANA/ },
+      { picked: 'mana' as const, other: 'credits' as const, picks: /^Polygon MANA/, otherRow: /^Credits/ }
+    ])('drops a $picked pick that stopped paying, with BUY armed, and spends only what the buyer picks next', ({ picked, other, picks, otherRow }) => {
       vi.useFakeTimers()
       const onPay = vi.fn()
-      const { rerender } = render(<ShopPurchaseDialog view={{ step: 'method', items: [item], credits, mana }} onClose={vi.fn()} onPay={onPay} />)
-      fireEvent.click(radio(/^Polygon MANA/))
-      rerender(<ShopPurchaseDialog view={{ step: 'method', items: [item], credits, mana: { ...mana, pays: false } }} onClose={vi.fn()} onPay={onPay} />)
-      expect(radio(/^Credits/).checked).toBe(true)
+      const view = (pays: boolean): ShopPurchaseStep => ({
+        step: 'method',
+        items: [item],
+        credits: { ...credits, pays: picked === 'credits' ? pays : true },
+        mana: { ...mana, pays: picked === 'mana' ? pays : true }
+      })
+      const { rerender } = render(<ShopPurchaseDialog view={view(true)} onClose={vi.fn()} onPay={onPay} />)
+      // Picked by the buyer, the other row first, so the pick is theirs and not the step's opening one.
+      fireEvent.click(radio(otherRow))
+      fireEvent.click(radio(picks))
       arm()
+      rerender(<ShopPurchaseDialog view={view(false)} onClose={vi.fn()} onPay={onPay} />)
+      expect(radio(/^Credits/).checked).toBe(false)
+      expect(radio(/^Polygon MANA/).checked).toBe(false)
+      expect(buy().disabled).toBe(true)
       fireEvent.click(buy())
-      expect(onPay).toHaveBeenCalledWith('credits')
+      expect(onPay).not.toHaveBeenCalled()
+      // Paying again later doesn't pick it back.
+      rerender(<ShopPurchaseDialog view={view(true)} onClose={vi.fn()} onPay={onPay} />)
+      expect(radio(picks).checked).toBe(false)
+      expect(buy().disabled).toBe(true)
+      fireEvent.click(buy())
+      expect(onPay).not.toHaveBeenCalled()
+      fireEvent.click(radio(otherRow))
+      fireEvent.click(buy())
+      expect(onPay).toHaveBeenCalledTimes(1)
+      expect(onPay).toHaveBeenCalledWith(other)
     })
   })
 
@@ -504,6 +528,29 @@ describe('the purchase dialog over the app', () => {
     expect(document.activeElement).toBe(cancel)
     fireEvent.keyDown(cancel, { key: 'Tab', shiftKey: true })
     expect(document.activeElement).toBe(mana)
+  })
+
+  it('stops Tab once at the ways to pay while none is picked, on the first that can be', async () => {
+    const ui = createShopOverlay(vi.fn())
+    const MANA = 10n ** 18n
+    const both = { step: 'method' as const, items: [item], credits: { price: 500, balance: 700, pays: true }, mana: { price: 12n * MANA, balance: 40n * MANA, pays: true } }
+    const handlers = { onClose: vi.fn(), onPay: vi.fn() }
+    await act(async () => ui.show(both, handlers))
+    // The Credits pick dropped (they stopped paying), then both pay again: nothing is picked.
+    await act(async () => ui.show({ ...both, credits: { ...both.credits, pays: false } }, handlers))
+    await act(async () => ui.show(both, handlers))
+    const credits = screen.getByRole('radio', { name: /^Credits/ }) as HTMLInputElement
+    const mana = screen.getByRole('radio', { name: /^Polygon MANA/ }) as HTMLInputElement
+    expect(credits.checked || mana.checked).toBe(false)
+    const cancel = screen.getByRole('button', { name: 'Cancel' })
+    cancel.focus()
+    const visited = new Set<Element | null>()
+    for (let i = 0; i < 3; i++) {
+      fireEvent.keyDown(document.activeElement!, { key: 'Tab' })
+      visited.add(document.activeElement)
+    }
+    // BUY is held (nothing picked), so the stops are CANCEL and the group's first radio.
+    expect(visited).toEqual(new Set([credits, cancel]))
   })
 
   it('lets Escape cancel Authorize MANA while it confirms', async () => {
