@@ -111,6 +111,8 @@ type FetchEventsParams = {
   world_names?: string;
   /** False keeps World events out of a Genesis City parcel lookup. */
   world?: boolean;
+  /** Only the events a community hosts. */
+  community_id?: string;
 };
 
 const EventListEnvelope = apiOkOf(
@@ -159,6 +161,7 @@ async function fetchEventRows(
       position: params.position,
       world_names: params.world_names,
       world: params.world,
+      community_id: params.community_id,
     },
   });
   const copy = readCopy(raw);

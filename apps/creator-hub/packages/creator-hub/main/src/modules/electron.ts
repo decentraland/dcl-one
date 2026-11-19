@@ -9,7 +9,9 @@ import {
   type SaveDialogOptions,
   shell,
 } from 'electron';
+import log from 'electron-log/main';
 import type { Env } from '/shared/types/env';
+import type { DeploymentLogEntry } from '/shared/types/ipc';
 
 // Store environment override from CLI arguments
 let envOverride: Env | null = null;
@@ -73,5 +75,15 @@ export async function getAppVersion() {
 }
 
 export async function copyToClipboard(text: string) {
-  clipboard.writeText(text);
+  await clipboard.writeText(text);
+}
+
+export async function logDeployment(entry: DeploymentLogEntry): Promise<void> {
+  if (entry.outcome === 'published') {
+    log.info(
+      `[Deploy] Published "${entry.title}" to ${entry.target} at ${entry.baseParcel}: ${entry.rootCID}`,
+    );
+  } else {
+    log.warn(`[Deploy] Publish failed: ${entry.error}`);
+  }
 }

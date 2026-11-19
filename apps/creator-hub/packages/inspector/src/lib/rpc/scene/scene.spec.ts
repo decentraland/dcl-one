@@ -11,6 +11,7 @@ import { BevySceneContext } from '../../renderer/bevy/BevySceneContext';
 import { onSceneBuildEvent, type SceneBuildEvent } from '../../logic/scene-build-events';
 import { SceneClient } from './client';
 import { SceneServer } from './server';
+import { getSceneClient } from './index';
 
 // Mock the catalog / data-layer / config modules the smart-item + catalog handlers use.
 // (vi.mock is hoisted above the imports by vitest regardless of position here.)
@@ -25,6 +26,7 @@ vi.mock('../../../redux/data-layer', () => ({
   refreshUndoRedoState: vi.fn(() => ({ type: 'data-layer/refreshUndoRedoState' })),
 }));
 vi.mock('../../../redux/store', () => ({ store: { dispatch: vi.fn() } }));
+vi.mock('./index', () => ({ getSceneClient: vi.fn() }));
 vi.mock('../../logic/config', async orig => ({
   ...(await (orig as () => Promise<Record<string, unknown>>)()),
   getConfig: () => ({ contentUrl: 'https://content.test' }),
@@ -72,6 +74,16 @@ describe('SceneClient RPC', () => {
       const result = await client.getFeatureFlags();
       expect(spy).toHaveBeenCalledWith('get_feature_flags', {});
       expect(result).toEqual({ flags: { 'creatorhub-inspector-scene-minimap': true } });
+      spy.mockRestore();
+    });
+  });
+
+  describe('when using the getSdkVersion method', () => {
+    it('should send the get_sdk_version request and return the version', async () => {
+      const spy = vi.spyOn(client, 'request').mockResolvedValueOnce({ version: '7.32.0' });
+      const result = await client.getSdkVersion();
+      expect(spy).toHaveBeenCalledWith('get_sdk_version', {});
+      expect(result).toEqual({ version: '7.32.0' });
       spy.mockRestore();
     });
   });
@@ -197,6 +209,52 @@ describe('SceneServer RPC', () => {
       expect(result).toBe(mockImage);
       expect(spy).toHaveBeenCalledWith(engine, camera, expect.objectContaining({ width, height }));
       spy.mockRestore();
+    });
+  });
+
+  describe('when the host asks for a screenshot', () => {
+    let host: RPC<string, any, any>;
+    let events: string[];
+    let screenshotSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      events = [];
+      const i2 = new InMemoryTransport();
+      const p2 = new InMemoryTransport();
+      i2.connect(p2);
+      p2.connect(i2);
+      new SceneServer(i2, store, renderer, undefined, undefined, undefined, undefined, () => {
+        events.push('hide');
+        return () => events.push('restore');
+      });
+      host = new RPC('SceneRpcInbound', p2);
+      screenshotSpy = vi
+        .spyOn(ScreenshotTools, 'CreateScreenshotAsync')
+        .mockImplementation(async () => {
+          events.push('capture');
+          return 'data:image/png;base64,AAAA';
+        });
+    });
+
+    afterEach(() => screenshotSpy.mockRestore());
+
+    it('should hide the editor helpers only while the picture is taken', async () => {
+      const shot = await host.request('take_screenshot', { width: 10, height: 10 });
+
+      expect(shot).toBe('data:image/png;base64,AAAA');
+      expect(events).toEqual(['hide', 'capture', 'restore']);
+    });
+
+    describe('and the capture fails', () => {
+      beforeEach(() => {
+        screenshotSpy.mockRejectedValueOnce(new Error('capture failed'));
+      });
+
+      it('should show the editor helpers again', async () => {
+        await expect(host.request('take_screenshot', { width: 10, height: 10 })).rejects.toThrow();
+
+        expect(events).toEqual(['hide', 'restore']);
+      });
     });
   });
 });
@@ -585,6 +643,29 @@ describe('SceneServer RPC catalog + script + smart item', () => {
     );
     expect(importAsset).not.toHaveBeenCalled();
     expect(ops.addAsset).not.toHaveBeenCalled();
+  });
+
+  it('place_smart_item: rejects an item that needs a newer SDK than the scene has', async () => {
+    vi.mocked(getAssetById).mockReturnValue({
+      id: 'skybox',
+      name: 'Skybox',
+      category: 'environment',
+      tags: [],
+      contents: { 'skybox.glb': 'hash1' },
+      composite: { version: 1, components: [{ name: 'core::GltfContainer', data: {} }] },
+      minSdkVersion: '7.32.0',
+    } as any);
+    vi.mocked(getSceneClient).mockReturnValue({
+      getSdkVersion: vi.fn().mockResolvedValue({ version: '7.29.0' }),
+    } as any);
+    const importAsset = vi.fn();
+    vi.mocked(getDataLayerInterface).mockReturnValue({ importAsset } as any);
+    await expect(host.request('place_smart_item', { assetId: 'skybox' })).rejects.toThrow(
+      'needs @dcl/sdk 7.32.0 or newer, and this scene has 7.29.0',
+    );
+    expect(importAsset).not.toHaveBeenCalled();
+    expect(ops.addAsset).not.toHaveBeenCalled();
+    vi.mocked(getSceneClient).mockReturnValue(undefined);
   });
 
   it('place_smart_item: rejects an unknown asset id', async () => {

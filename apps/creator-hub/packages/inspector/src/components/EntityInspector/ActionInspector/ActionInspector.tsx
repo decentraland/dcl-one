@@ -1311,6 +1311,13 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
         if (!scriptAction) return null;
 
         const paramTypes = scriptAction.action.params;
+        // The method's other params, for `@enabledIf` and `@actionsOf`.
+        const siblings = Object.fromEntries(
+          Object.entries(paramTypes).map(([name, param]) => [
+            name,
+            paramValues?.[name] ?? param.value,
+          ]),
+        );
 
         return (
           <div className="row params">
@@ -1319,6 +1326,7 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
                 key={name}
                 name={name}
                 param={{ ...param, value: paramValues?.[name] ?? param.value }}
+                siblings={siblings}
                 onUpdate={update => handleChangeScriptParam(idx, name, update, param.value)}
               />
             ))}
@@ -1383,6 +1391,8 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
             {renderAction(action, idx)}
             <MoreOptionsMenu className="ActionMenu">
               <Button
+                variant="secondary"
+                size="sm"
                 className="RemoveButton"
                 onClick={e => handleRemoveAction(e, idx)}
               >

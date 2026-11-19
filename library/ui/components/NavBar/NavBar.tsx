@@ -8,6 +8,7 @@ import {
   useState,
   type AnchorHTMLAttributes,
   type ComponentType,
+  type CSSProperties,
   type FocusEvent as ReactFocusEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
@@ -16,6 +17,7 @@ import {
 import {
   GeneralBell,
   GeneralClose,
+  GeneralCopy,
   GeneralDecentralandColor,
   GeneralDownArrow,
   GeneralManaColour,
@@ -56,9 +58,9 @@ export type NavBarBalances = {
   polygonMana?: number
 }
 
-export type NavBarAccountAction =
-  | { label: string; href: string; onSelect?: undefined }
-  | { label: string; onSelect: () => void; href?: undefined }
+export type NavBarAccountAction = { label: string; icon?: ReactNode } & (
+  { href: string; onSelect?: undefined } | { onSelect: () => void; href?: undefined }
+)
 
 /** The Sign in action: a link or a callback. */
 export type NavBarSignIn =
@@ -68,6 +70,8 @@ export type NavBarNotifications = {
   /** Unread notifications; the badge is hidden when 0, negative or not finite. */
   count?: number
   onSelect: () => void
+  panel?: ReactNode
+  expanded?: boolean
 }
 
 export type NavBarLabels = {
@@ -77,6 +81,10 @@ export type NavBarLabels = {
   notifications: string
   unreadNotifications: (count: number) => string
   account: (name: string) => string
+  userId: string
+  copyUserId: string
+  userIdCopied: string
+  copyUserIdError: string
   openMenu: string
   closeMenu: string
   menu: string
@@ -104,6 +112,7 @@ type NavBarCommonProps = {
   notifications?: NavBarNotifications
   /** Signed in: the account menu's entries, for example profile links and sign out. */
   accountActions?: readonly NavBarAccountAction[]
+  accountMenuAppearance?: 'default' | 'sites'
   linkComponent?: NavBarLinkComponent
   labels?: Partial<NavBarLabels>
   /**
@@ -111,6 +120,10 @@ type NavBarCommonProps = {
    * page's locale so server and client agree.
    */
   locale?: string
+  /** Shown after the home link, for example a wordmark. */
+  brand?: ReactNode
+  /** Replace the component's own marks: the home link's logo, the menu button's icon and the notifications bell. */
+  icons?: { logo?: ReactNode; menu?: ReactNode; notifications?: ReactNode }
   /** Applied to the outer navigation frame, including caller positioning and stacking. */
   className?: string
 }
@@ -126,6 +139,10 @@ const defaultLabels: NavBarLabels = {
   navigation: 'Main',
   home: 'Decentraland home',
   signIn: 'Sign in',
+  userId: 'User ID',
+  copyUserId: 'Copy user ID',
+  userIdCopied: 'User ID copied',
+  copyUserIdError: 'Could not copy user ID',
   notifications: 'Notifications',
   unreadNotifications: (count) => `Notifications, ${count} unread`,
   account: (name) => `Account: ${name}`,
@@ -325,23 +342,29 @@ function Balances({
 function NotificationsButton({
   count,
   labels,
-  onClick
+  icon,
+  onClick,
+  expanded
 }: {
   count: number
   labels: NavBarLabels
+  icon?: ReactNode
   onClick: () => void
+  expanded?: boolean | undefined
 }) {
   return (
     <button
       type="button"
       className={styles.iconButton}
       aria-label={count > 0 ? labels.unreadNotifications(count) : labels.notifications}
+      aria-expanded={expanded}
+      aria-haspopup={expanded === undefined ? undefined : 'dialog'}
       onClick={(event) => {
         event.currentTarget.focus({ preventScroll: true })
         onClick()
       }}
     >
-      <GeneralBell size={24} aria-hidden="true" />
+      {icon ?? <GeneralBell size={24} aria-hidden="true" />}
       {count > 0 ? (
         <span className={styles.badge} aria-hidden="true">
           {count > BADGE_MAX ? `${BADGE_MAX}+` : count}
@@ -371,7 +394,12 @@ function AccountActionList({
               href: action.href,
               className: styles.menuItem,
               onClick: onDone,
-              children: action.label
+              children: (
+                <>
+                  {action.icon}
+                  {action.label}
+                </>
+              )
             })
           ) : (
             <button
@@ -382,6 +410,7 @@ function AccountActionList({
                 action.onSelect()
               }}
             >
+              {action.icon}
               {action.label}
             </button>
           )}
@@ -396,21 +425,39 @@ function AccountMenu({
   actions,
   labels,
   renderLink,
-  onDone
+  onDone,
+  appearance
 }: {
   account: NavBarAccount
   actions: readonly NavBarAccountAction[]
   labels: NavBarLabels
   renderLink: LinkRenderer
   onDone?: () => void
+  appearance?: NavBarCommonProps['accountMenuAppearance']
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuId = useId()
   const { open, setOpen, toggle, onKeyDown, onBlur } = usePopup(rootRef, triggerRef)
   const displayName = account.name || shortAddress(account.address)
+  const sites = appearance === 'sites'
+  const [copyStatus, setCopyStatus] = useState('')
+  const copyAddress = async () => {
+    try {
+      await navigator.clipboard.writeText(account.address)
+      setCopyStatus(labels.userIdCopied)
+    } catch {
+      setCopyStatus(labels.copyUserIdError)
+    }
+  }
   return (
-    <div ref={rootRef} className={styles.account} onKeyDown={onKeyDown} onBlur={onBlur}>
+    <div
+      ref={rootRef}
+      className={styles.account}
+      data-appearance={appearance}
+      onKeyDown={onKeyDown}
+      onBlur={onBlur}
+    >
       <button
         ref={triggerRef}
         type="button"
@@ -418,17 +465,45 @@ function AccountMenu({
         aria-label={labels.account(displayName)}
         aria-expanded={open}
         aria-controls={menuId}
-        onClick={toggle}
+        onClick={() => {
+          setCopyStatus('')
+          toggle()
+        }}
       >
         <Avatar account={account} />
       </button>
       <div id={menuId} className={styles.accountMenu} hidden={!open} tabIndex={-1}>
-        <p className={styles.accountName}>{displayName}</p>
-        {account.name ? (
-          <p className={styles.accountAddress} title={account.address}>
-            {shortAddress(account.address)}
-          </p>
-        ) : null}
+        <div className={styles.accountHeader}>
+          {sites ? (
+            <div className={styles.accountMenuAvatar}>
+              <Avatar account={account} />
+            </div>
+          ) : null}
+          <div className={styles.accountDetails}>
+            <p className={styles.accountName}>{displayName}</p>
+            {sites ? (
+              <div className={styles.accountIdentity}>
+                <span>{labels.userId}</span>
+                <span title={account.address}>{shortAddress(account.address)}</span>
+                <button
+                  type="button"
+                  aria-label={labels.copyUserId}
+                  className={styles.iconButton}
+                  onClick={() => void copyAddress()}
+                >
+                  <GeneralCopy size={16} aria-hidden="true" />
+                </button>
+                <span role="status" className={styles.visuallyHidden}>
+                  {copyStatus}
+                </span>
+              </div>
+            ) : account.name ? (
+              <p className={styles.accountAddress} title={account.address}>
+                {shortAddress(account.address)}
+              </p>
+            ) : null}
+          </div>
+        </div>
         {actions.length > 0 ? (
           <AccountActionList
             actions={actions}
@@ -446,6 +521,9 @@ function AccountMenu({
 }
 
 function Drawer({
+  closingFrom,
+  panelRef,
+  onExited,
   scopeRef,
   headerRef,
   triggerRef,
@@ -453,6 +531,9 @@ function Drawer({
   onDesktop,
   children
 }: {
+  closingFrom: string | null
+  panelRef: RefObject<HTMLDivElement | null>
+  onExited: () => void
   scopeRef: RefObject<HTMLDivElement | null>
   headerRef: RefObject<HTMLElement | null>
   triggerRef: RefObject<HTMLButtonElement | null>
@@ -462,16 +543,39 @@ function Drawer({
 }) {
   const [top, setTop] = useState<number | null>(null)
   const [entryRevealed, setEntryRevealed] = useState(false)
+  const [reducedMotion, setReducedMotion] = useState(false)
   useLayoutEffect(() => {
     if (typeof window.matchMedia !== 'function') return
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const preference = window.matchMedia('(prefers-reduced-motion: reduce)')
     const onChange = (event: MediaQueryListEvent) => {
+      setReducedMotion(event.matches)
       if (event.matches) setEntryRevealed(true)
     }
-    if (reducedMotion.matches) setEntryRevealed(true)
-    reducedMotion.addEventListener('change', onChange)
-    return () => reducedMotion.removeEventListener('change', onChange)
+    setReducedMotion(preference.matches)
+    if (preference.matches) setEntryRevealed(true)
+    preference.addEventListener('change', onChange)
+    return () => preference.removeEventListener('change', onChange)
   }, [])
+  useLayoutEffect(() => {
+    if (closingFrom === null) return
+    let active = true
+    const finish = () => {
+      if (!active) return
+      if (typeof window.matchMedia === 'function' && window.matchMedia(DESKTOP_QUERY).matches)
+        onDesktop()
+      else onExited()
+    }
+    if (reducedMotion) finish()
+    else {
+      setEntryRevealed(true)
+      const animations = panelRef.current?.getAnimations?.() ?? []
+      if (!animations.length) finish()
+      else void Promise.all(animations.map((animation) => animation.finished)).then(finish, finish)
+    }
+    return () => {
+      active = false
+    }
+  }, [closingFrom, onExited, onDesktop, panelRef, reducedMotion])
   useLayoutEffect(() => {
     let frame = 0
     const measure = () => {
@@ -559,7 +663,15 @@ function Drawer({
         onClick={onClose}
       />
       <div
+        ref={panelRef}
         className={styles.drawer}
+        inert={closingFrom !== null}
+        data-exiting={closingFrom !== null || undefined}
+        style={
+          closingFrom === null
+            ? undefined
+            : ({ '--drawer-exit-from': closingFrom } as CSSProperties)
+        }
         data-testid="navbar-panel"
         data-entry-revealed={entryRevealed || undefined}
         onFocusCapture={() => setEntryRevealed(true)}
@@ -585,9 +697,12 @@ export function NavBar({
   mobileSecondaryNavigation,
   notifications,
   accountActions = [],
+  accountMenuAppearance,
   linkComponent,
   labels: labelOverrides,
   locale = 'en-US',
+  brand,
+  icons,
   className
 }: NavBarProps) {
   // An override set to undefined (an i18n map with a missing key) keeps the default instead of replacing it.
@@ -600,20 +715,31 @@ export function NavBar({
   const format = useMemo(() => numberFormat(locale), [locale])
   const renderLink = linkRenderer(linkComponent)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [drawerClosingFrom, setDrawerClosingFrom] = useState<string | null>(null)
+  const drawerPanelRef = useRef<HTMLDivElement>(null)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const drawerId = useId()
   const scopeRef = useRef<HTMLDivElement>(null)
   const count = unreadCount(notifications?.count)
   const navRef = useRef<HTMLElement>(null)
-  const dismissDrawer = useCallback(() => setDrawerOpen(false), [])
-  const closeDrawer = useCallback(() => {
+  const dismissDrawer = useCallback(() => {
+    setDrawerClosingFrom(null)
     setDrawerOpen(false)
+  }, [])
+  const requestDrawerExit = useCallback(() => {
+    const panel = drawerPanelRef.current
+    const clip = panel ? getComputedStyle(panel).clipPath : 'none'
+    setDrawerClosingFrom((current) => current ?? (clip === 'none' ? 'inset(0)' : clip))
     menuButtonRef.current?.focus({ preventScroll: true })
   }, [])
+  const closeDrawer = useCallback(() => {
+    dismissDrawer()
+    menuButtonRef.current?.focus({ preventScroll: true })
+  }, [dismissDrawer])
   const closeDrawerOnDesktop = useCallback(() => {
-    setDrawerOpen(false)
+    dismissDrawer()
     navRef.current?.querySelector<HTMLElement>('a[href]')?.focus()
-  }, [])
+  }, [dismissDrawer])
 
   const hasAccountOverride = accountControl !== null && accountControl !== undefined
   const secondaryNavigation = drawerOpen
@@ -666,8 +792,11 @@ export function NavBar({
             className: styles.logo,
             'aria-label': labels.home,
             onClick: drawerOpen ? dismissDrawer : undefined,
-            children: <GeneralDecentralandColor className={styles.logoMark} aria-hidden="true" />
+            children: icons?.logo ?? (
+              <GeneralDecentralandColor className={styles.logoMark} aria-hidden="true" />
+            )
           })}
+          {brand}
           <ul className={styles.sections} hidden={drawerOpen}>
             {sections.map((section, index) =>
               section.items ? (
@@ -697,14 +826,22 @@ export function NavBar({
             </div>
           ) : null}
           {account && notifications ? (
-            <NotificationsButton
-              count={count}
-              labels={labels}
-              onClick={() => {
-                dismissDrawer()
-                notifications.onSelect()
-              }}
-            />
+            <div
+              className={styles.notificationControl}
+              data-panel={notifications.panel ? true : undefined}
+            >
+              <NotificationsButton
+                count={count}
+                labels={labels}
+                icon={icons?.notifications}
+                expanded={notifications.expanded}
+                onClick={() => {
+                  dismissDrawer()
+                  notifications.onSelect()
+                }}
+              />
+              {notifications.panel}
+            </div>
           ) : null}
           {hasAccountOverride ? (
             !drawerOpen && hasSlot(accountControl) ? (
@@ -712,7 +849,9 @@ export function NavBar({
             ) : null
           ) : account ? (
             <AccountMenu
+              key={account.address}
               account={account}
+              appearance={accountMenuAppearance}
               actions={accountActions}
               labels={labels}
               renderLink={renderLink}
@@ -731,37 +870,44 @@ export function NavBar({
             aria-haspopup={drawerOpen ? undefined : 'dialog'}
             onClick={(event) => {
               event.currentTarget.focus({ preventScroll: true })
-              setDrawerOpen((open) => !open)
+              if (!drawerOpen) setDrawerOpen(true)
+              else if (drawerClosingFrom !== null) setDrawerClosingFrom(null)
+              else requestDrawerExit()
             }}
           >
-            <svg
-              width={24}
-              height={24}
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-              focusable="false"
-            >
-              <path d="M3 6h18M3 12h18M3 18h18" />
-            </svg>
-            {drawerOpen ? <GeneralClose size={24} aria-hidden="true" /> : null}
+            {icons?.menu ?? (
+              <svg
+                width={24}
+                height={24}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path d="M3 6h18M3 12h18M3 18h18" />
+              </svg>
+            )}
+            {drawerOpen ? <GeneralClose size={30} aria-hidden="true" /> : null}
           </button>
         </div>
         {drawerOpen ? (
           <Drawer
+            closingFrom={drawerClosingFrom}
+            panelRef={drawerPanelRef}
+            onExited={dismissDrawer}
             scopeRef={scopeRef}
             headerRef={navRef}
             triggerRef={menuButtonRef}
-            onClose={closeDrawer}
+            onClose={requestDrawerExit}
             onDesktop={closeDrawerOnDesktop}
           >
             <ul className={styles.drawerSections}>
               {sections.map((section, index) => (
-                <li key={index}>
+                <li key={index} className={styles.drawerSection}>
                   {section.items ? (
                     <>
                       <p className={styles.drawerGroup}>{section.label}</p>
@@ -770,7 +916,7 @@ export function NavBar({
                           <li key={itemIndex}>
                             {renderLink({
                               href: item.href,
-                              className: styles.drawerLink,
+                              className: styles.drawerItemLink,
                               'aria-current': item.active ? 'page' : undefined,
                               onClick: closeDrawer,
                               children: item.label

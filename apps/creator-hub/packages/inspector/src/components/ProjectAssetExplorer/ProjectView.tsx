@@ -12,7 +12,7 @@ import {
   MdUnfoldMore as ExpandAllIcon,
 } from 'react-icons/md';
 import { Item as MenuItem } from 'react-contexify';
-import cx from 'classnames';
+import { cx } from '../../lib/utils/cx';
 import type { Entity } from '@dcl/ecs';
 
 import { useSdk } from '../../hooks/sdk/useSdk';
@@ -983,14 +983,15 @@ function ProjectView({ folders, thumbnails }: Props) {
         </h2>
         <div>
           <Button
-            type="danger"
-            size="big"
+            variant="primary"
+            size="lg"
             onClick={handleConfirm}
           >
             Delete anyway
           </Button>
           <Button
-            size="big"
+            variant="secondary"
+            size="lg"
             onClick={handleModalClose}
           >
             Cancel

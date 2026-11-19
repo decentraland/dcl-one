@@ -32,6 +32,8 @@ futures.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
 uuid.workspace = true
+unicode-normalization.workspace = true
+icu_properties.workspace = true
 tokio-util.workspace = true
 dashmap.workspace = true
 parking_lot.workspace = true
@@ -70,6 +72,7 @@ catalyst-config = { path = "../config", features = ["test-support"] }
 catalyst-chain-index = { path = "../chain-index", features = ["test-support"] }
 catalyst-content = { path = "../content", features = ["test-support"] }
 catalyst-db = { path = "../db", features = ["test-support"] }
+catalyst-testing = { path = "../testing" }
 tokio = { workspace = true, features = ["test-util"] }
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }
 tokio-tungstenite.workspace = true

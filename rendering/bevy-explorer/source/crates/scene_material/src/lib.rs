@@ -117,7 +117,7 @@ impl From<&SceneBound> for SceneBoundKey {
 pub struct SceneBound {
     #[uniform(100)]
     pub data: SceneBoundData,
-    #[storage(101, read_only, visibility(fragment))]
+    #[cfg_attr(not(feature = "webgl2"), storage(101, read_only, visibility(fragment)))]
     pub cells: Handle<ShaderStorageBuffer>,
     /// Meshes that have 1 or 3 negative scale axis require special handling
     /// of the face culling
@@ -485,6 +485,10 @@ impl MaterialExtension for SceneBound {
                 SCENE_MATERIAL_OUTLINE_BLUE_MESH_TAG,
             ));
             fragment.shader_defs.extend(reveal_shader_defs());
+            // the material has no cell table (`webgl2`), so scene_bounds.wgsl leaves it out too
+            if cfg!(feature = "webgl2") {
+                fragment.shader_defs.push("NO_SCENE_CELLS".into());
+            }
 
             if data.inverted_scale {
                 fragment.shader_defs.push("INVERTED_SCALE".into());

@@ -2330,7 +2330,7 @@ async fn a_world_redeploy_overlapping_one_scene_keeps_the_rows_and_an_undeploy_d
         .await
         .unwrap();
     let places =
-        crate::explore::places::PlacesComponent::new(pool.clone(), "https://content.example");
+        crate::explore::places::PlacesComponent::new(pool.clone(), "https://content.example", None);
     assert_eq!(
         places
             .find_by_id_for(&kept.to_string(), None)

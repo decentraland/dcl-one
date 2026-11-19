@@ -34,6 +34,12 @@ use super::{CommsState, Settings, SharedState};
 #[path = "canonical_rooms_tests.rs"]
 mod canonical_rooms;
 
+#[path = "capture_replay_tests.rs"]
+mod capture_replay;
+
+#[path = "cast_tests.rs"]
+mod cast;
+
 #[path = "toolkit_moderation_tests.rs"]
 mod toolkit_moderation;
 
@@ -72,8 +78,12 @@ fn state_with(pool: PgPool, settings: Settings) -> SharedState {
     Arc::new(comms_state(pool, settings))
 }
 
+/// Every acquire fails; sqlx retries the refused connect until the acquire
+/// timeout, so the default 30 s would be spent on each closed-store query.
 fn lazy_pool() -> PgPool {
-    PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres")
+    sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(500))
+        .connect_lazy("postgres://postgres@127.0.0.1:1/postgres")
         .expect("a lazy pool never connects")
 }
 
@@ -1090,18 +1100,105 @@ async fn the_scene_adapter_mints_for_a_clean_wallet_and_refuses_platform_and_sce
         r#"{"signer":"decentraland-kernel-scene","realmName":"main","sceneId":"x"}"#,
     )
     .await;
-    assert!(
-        handlers::get_scene_adapter(
-            State(state),
+    let err = handlers::get_scene_adapter(
+        State(state.clone()),
+        at("/get-scene-adapter"),
+        scene_signed,
+        writes_on(),
+        axum::body::Bytes::new(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        (err.code, err.message.as_str()),
+        (401, "Access denied, invalid signed-fetch request"),
+        "the scene signer is refused"
+    );
+    for explorer in [
+        r#"{"realmName":"main","sceneId":"bafkreiexplorer"}"#,
+        r#"{"signer":"dcl:explorer","intent":"dcl:explorer:comms-handshake","realmName":"main","sceneId":"bafkreiexplorer"}"#,
+    ] {
+        let headers = signed(&other, "post", "/get-scene-adapter", explorer).await;
+        let Json(resp) = handlers::get_scene_adapter(
+            State(state.clone()),
             at("/get-scene-adapter"),
-            scene_signed,
+            headers,
             writes_on(),
-            axum::body::Bytes::new()
+            axum::body::Bytes::new(),
         )
         .await
-        .is_ok(),
-        "the adapter route declares no signer allow-list"
+        .expect("an explorer-signed request mints");
+        let claims =
+            super::livekit::decode_jwt_payload(resp.adapter.split("access_token=").nth(1).unwrap());
+        assert_eq!(claims["video"]["room"], "scene:main:bafkreiexplorer");
+    }
+}
+
+/// Refusals answered before any SQL, so these run without a database.
+#[tokio::test]
+async fn the_scene_adapter_refuses_the_scene_signer() {
+    let state = lazy_state(Settings::for_tests());
+    let key = random_key();
+    let target = serde_json::json!({ "realmName": "main", "sceneId": "bafkreiscene" });
+    for (key_name, signer) in [
+        ("signer", serde_json::json!("decentraland-kernel-scene")),
+        ("Signer", serde_json::json!("decentraland-kernel-scene")),
+        ("signer", serde_json::json!(" decentraland-kernel-scene")),
+        ("signer", serde_json::json!("Decentraland-Kernel-Scene")),
+        ("signer", serde_json::json!(1)),
+        ("signer", serde_json::json!(true)),
+        ("signer", serde_json::json!({})),
+    ] {
+        let mut metadata = target.clone();
+        metadata[key_name] = signer;
+        let headers = signed(&key, "post", "/get-scene-adapter", &metadata.to_string()).await;
+        let err = handlers::get_scene_adapter(
+            State(state.clone()),
+            at("/get-scene-adapter"),
+            headers,
+            writes_on(),
+            axum::body::Bytes::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            (err.code, err.message.as_str()),
+            (401, "Access denied, invalid signed-fetch request"),
+            "{metadata}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_scene_adapter_room_comes_from_signed_metadata_not_the_body() {
+    let state = lazy_state(Settings::for_tests());
+    let key = random_key();
+    let body = axum::body::Bytes::from(
+        serde_json::json!({ "realmName": "main", "sceneId": "bafkreibody" }).to_string(),
     );
+    let cases = [
+        ("{}", 401),
+        (
+            r#"{"realm":{"serverName":"main"},"sceneId":"bafkreisigned"}"#,
+            401,
+        ),
+        (r#"{"realmName":"","sceneId":"bafkreisigned"}"#, 401),
+        (r#"{"realmName":"main"}"#, 400),
+        (r#"{"realmName":"main","sceneId":""}"#, 400),
+    ];
+    for (metadata, code) in cases {
+        let headers = signed(&key, "post", "/get-scene-adapter", metadata).await;
+        let err = handlers::get_scene_adapter(
+            State(state.clone()),
+            at("/get-scene-adapter"),
+            headers,
+            writes_on(),
+            body.clone(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, code, "{metadata}");
+    }
 }
 
 /// A two-scene resolver that rejects any request other than a parcel of this world.

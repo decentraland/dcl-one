@@ -95,8 +95,11 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('        shard: [1, 2, 3]\n', rust)
         self.assertIn('      CATALYST_TEST_SHARD: ${{ matrix.shard }}/3\n', rust)
         # One of those shards runs the provisioned Archipelago tests; tooling/dev-regressions.py reads the setting.
-        self.assertIn("      CATALYST_TEST_PROVISIONED_SHARD: '2'\n", rust)
+        self.assertIn("      CATALYST_TEST_PROVISIONED_SHARD: '1'\n", rust)
         self.assertEqual(rust.count('CATALYST_TEST_PROVISIONED_SHARD:'), 1)
+        # One shard runs the doc-tests; tooling/catalyst-test.sh rejects a shard outside 1 to n.
+        self.assertIn("      CATALYST_TEST_DOC_SHARD: '2'\n", rust)
+        self.assertEqual(rust.count('CATALYST_TEST_DOC_SHARD:'), 1)
         # The dependency cache: the action prunes workspace output before saving, main writes, PRs read.
         self.assertNotIn('actions/cache', rust)
         cache = re.search(r'(?ms)^      - name: Restore the Rust dependency cache\n(.*?)(?=^      - |\Z)', rust).group(1)
@@ -106,17 +109,21 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('cache-on-failure: true', cache)
         self.assertLess(rust.index('Put the Nix Rust toolchain on PATH'), rust.index('Swatinem/rust-cache@'))
         self.assertLess(rust.index('Swatinem/rust-cache@'), rust.index('bash tooling/dev-test.sh rust'))
-        # The compiler cache: optional, pinned, and on only when the dependency cache hit its exact key
-        # and the server started, so it holds what that entry does not and a failure of the cache does
-        # not fail the tests. The wrapper is set in the test script only, because the dependency cache
-        # key hashes the job environment.
+        # The compiler cache: optional, pinned, and on only when the dependency cache restored an entry
+        # (exact or partial key) and the server started, so it holds what that entry does not and a
+        # failure of the cache does not fail the tests. The wrapper is set in the test script only,
+        # because the dependency cache key hashes the job environment.
         self.assertIn('        id: deps\n        uses: Swatinem/rust-cache@', rust)
         tool = re.search(r'(?ms)^      - name: Install the optional compiler cache\n(.*?)(?=^      - |\Z)', rust).group(1)
         self.assertIn('continue-on-error: true', tool)
         self.assertRegex(tool, r'uses: Mozilla-Actions/sccache-action@[0-9a-f]{40} # v')
         self.assertNotRegex(rust, r'(?m)^ +RUSTC_WRAPPER: ')
         tests = re.search(r'(?ms)^      - name: Run backend tests with PostgreSQL and isolated NATS\n(.*?)(?=^      - |\Z)', rust).group(1)
-        self.assertIn("USE_COMPILER_CACHE: ${{ steps.deps.outputs.cache-hit == 'true' && steps.compiler-cache.outcome == 'success' }}", tests)
+        restored = re.search(r'(?ms)^      - name: Check whether the dependency cache restored an entry\n(.*?)(?=^      - |\Z)', rust).group(1)
+        self.assertIn('id: deps-restored', restored)
+        self.assertIn('[ -d services/catalyst/target/debug/deps ]', restored)
+        self.assertLess(rust.index('Swatinem/rust-cache@'), rust.index('id: deps-restored'))
+        self.assertIn("USE_COMPILER_CACHE: ${{ steps.deps-restored.outputs.restored == 'true' && steps.compiler-cache.outcome == 'success' }}", tests)
         self.assertIn('if [ "$USE_COMPILER_CACHE" = true ] && sccache --start-server; then\n            export RUSTC_WRAPPER=sccache\n', tests)
         self.assertEqual(tests.count('RUSTC_WRAPPER=sccache'), 1)
         self.assertLess(tests.index('export RUSTC_WRAPPER=sccache'), tests.index('bash tooling/dev-test.sh rust'))
@@ -189,6 +196,21 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertEqual(found, {'bevy-explorer-e2e.yml:scenarios'})
         self.assertEqual(unset, set())
 
+    def test_the_tooling_tests_run_beside_smoke_on_the_same_platforms(self):
+        # They need only the dev shell, so smoke does not wait for them and they skip its caches.
+        found = jobs()
+        smoke, tooling = found['smoke'], found['tooling']
+        suite = 'nix develop --command python3 -m unittest discover -s tooling/tests -v\n'
+        self.assertEqual(sum(body.count('unittest discover -s tooling/tests -v') for body in found.values()), 1)
+        self.assertIn(suite, tooling)
+        self.assertIn('    name: Tooling tests\n', tooling)
+        self.assertIn('    needs: changes\n', tooling)
+        head = lambda body: body.split('    timeout-minutes:', 1)[0].split('    if:', 1)[1]
+        self.assertEqual(head(tooling), head(smoke))
+        for cache in ('Restore Rust build cache', 'Restore the pnpm store', 'Reserve disk space', 'cargo-mtimes.py'):
+            self.assertNotIn(cache, tooling)
+        self.assertNotRegex(tooling, r'(?m)^    (env|permissions):')
+
     def test_smoke_gives_unchanged_sources_the_snapshot_file_times(self):
         # Cargo decides by file time. The snapshot is of no use to Cargo unless the checkout's
         # unchanged files get the times they had when the snapshot was built.
@@ -235,7 +257,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     self.assertIn('nix flake archive --json', roots)
                     for command in re.findall(r'nix develop(?: \.#\w+)?', job):
                         self.assertEqual(command, 'nix develop .#ci' if shell == 'ci' else 'nix develop', name)
-        self.assertEqual(installs, 4)
+        self.assertEqual(installs, 5)
 
     def test_smoke_snapshots_are_saved_only_from_passing_main_pushes(self):
         def allowed(event, ref, platform, passed=True, hit=False):
@@ -401,8 +423,12 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         source = CREATOR_HUB.read_text().split('jobs:\n', 1)[1]
         found = dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\Z)', source))
         label = "contains(github.event.pull_request.labels.*.name, 'ci:desktop')"
+        linux = "contains(github.event.pull_request.labels.*.name, 'ci:linux')"
         # main always builds; a skipped build is not a failure for the required check.
-        self.assertIn(f"    if: github.event_name != 'pull_request' || {label}\n", found['creator-hub'])
+        self.assertIn(f"    if: github.event_name != 'pull_request' || {label} || {linux}\n", found['creator-hub'])
+        # ci:desktop builds macOS, Windows and Linux, ci:linux builds Linux alone; main builds all three.
+        self.assertIn(f"      macos-windows: ${{{{ github.event_name != 'pull_request' || {label} }}}}\n", found['creator-hub'])
+        self.assertIn(f"      linux: ${{{{ github.ref == 'refs/heads/main' || {label} || {linux} }}}}\n", found['creator-hub'])
         self.assertIn('    needs: [ changes, creator-hub ]\n', found['prune_pre_releases'])
         self.assertIn('creator-hub, prune_pre_releases ]', found['result'])
         self.assertIn('any(.value.result == "failure" or .value.result == "cancelled")', found['result'])
@@ -436,9 +462,10 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('BASE_SHA: ${{ github.event.pull_request.base.sha }}', web)
         steps = re.split(r'^      - ', web, flags=re.M)[1:]
         selected = [step for step in steps if 'if: steps.web-coverage.outputs' in step]
-        self.assertEqual(len(selected), 3)
+        self.assertEqual(len(selected), 4)
         for app in ('ui3', 'sites', 'ui3/editor-scene'):
             self.assertTrue(any(f'pnpm --dir apps/{app} test\n' in step for step in selected))
+        self.assertTrue(any('pnpm --dir apps/ui3 test:browser\n' in step for step in selected))
         contracts = next(step for step in steps if 'name: Check web types' in step)
         self.assertNotIn('\n        if:', contracts)
         self.assertIn('typecheck:scripts', contracts)

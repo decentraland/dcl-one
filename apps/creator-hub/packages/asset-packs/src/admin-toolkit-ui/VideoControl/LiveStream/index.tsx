@@ -1,4 +1,3 @@
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- ReactEcs is the JSX factory
 import ReactEcs, { UiEntity } from '@dcl/react-ecs';
 import type { DeepReadonlyObject, Entity, IEngine, PBVideoPlayer } from '@dcl/ecs';
 import { openExternalUrl } from '~system/RestrictedActions';

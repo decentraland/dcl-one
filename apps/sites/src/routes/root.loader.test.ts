@@ -22,3 +22,13 @@ it("hands the page no revision when the image sets none", async () => {
   vi.stubEnv("COMMIT_HASH", "");
   expect((await load()).commitHash).toBe("");
 });
+
+it("hands the page the Pulse host the deployment sets", async () => {
+  vi.stubEnv("PUBLIC_PULSE_SERVER", "pulse.example.test:7743");
+  expect((await load()).pulseServer).toBe("pulse.example.test:7743");
+});
+
+it("hands the page no Pulse host when the deployment sets none", async () => {
+  vi.stubEnv("PUBLIC_PULSE_SERVER", "");
+  expect((await load()).pulseServer).toBe("");
+});

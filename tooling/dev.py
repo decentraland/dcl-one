@@ -97,16 +97,11 @@ def save_json(path, value):
     temporary.replace(path)
 
 
-def ports_free(base, webtransport=None):
+def bindable(endpoints):
+    """Whether every (kind, port, address) can be bound now."""
     sockets = []
     try:
-        # TCP (the API's metrics on base+1, NATS on base+8 and +9), then the UDP ports: Pulse's WebTransport
-        # (the Sites port, or the public origin's port on every interface) and ENet ports, LiveKit's media.
-        for kind, port, address in [*((socket.SOCK_STREAM, port, '127.0.0.1') for port in (
-                                        base, base + 1, base + 2, base + 3, base + 4, base + 5, base + 7,
-                                        base + 8, base + 9)),
-                                    *((socket.SOCK_DGRAM, port, '127.0.0.1') for port in (base + 2, base + 6, base + 7)),
-                                    *([(socket.SOCK_DGRAM, webtransport, '0.0.0.0')] if webtransport else [])]:
+        for kind, port, address in endpoints:
             sock = socket.socket(socket.AF_INET, kind)
             sockets.append(sock)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -121,19 +116,50 @@ def ports_free(base, webtransport=None):
             sock.close()
 
 
+def ports_free(base, webtransport=None):
+    # TCP (the API's metrics on base+1, NATS on base+8 and +9), then the UDP ports: Pulse's WebTransport
+    # (the Sites port, or the public origin's port on every interface) and ENet ports, LiveKit's media.
+    return bindable([*((socket.SOCK_STREAM, port, '127.0.0.1') for port in (
+                         base, base + 1, base + 2, base + 3, base + 4, base + 5, base + 7, base + 8, base + 9)),
+                     *((socket.SOCK_DGRAM, port, '127.0.0.1') for port in (base + 2, base + 6, base + 7)),
+                     *([(socket.SOCK_DGRAM, webtransport, '0.0.0.0')] if webtransport else [])])
+
+
 def livekit_credentials():
     # The stack's own LiveKit server holds no data, so a stack created before it gets a pair on its next start.
     return {'LIVEKIT_API_KEY': 'API' + secrets.token_hex(6), 'LIVEKIT_API_SECRET': secrets.token_hex(32)}
 
 
-def missing_secrets(config):
-    """The generated secrets `config` lacks: the LiveKit pair, and the moderator token the API checks and Pulse
-    polls its ban snapshots with (`catalyst secrets init` derives the same pair for a deployment)."""
+def ingress_ports_free(base):
+    # Valkey, the ingress HTTP relay and its health check on loopback; RTMP on every interface, where
+    # livekit-ingress always listens (it has no bind address setting).
+    return bindable([(socket.SOCK_STREAM, base, '127.0.0.1'), (socket.SOCK_STREAM, base + 1, '0.0.0.0'),
+                     (socket.SOCK_STREAM, base + 2, '127.0.0.1'), (socket.SOCK_STREAM, base + 3, '127.0.0.1')])
+
+
+def ingress_block(base):
+    # The stack's ten ports are all taken, so the ingress gets a block of its own 10000 above them
+    # (wrapping to 10000 near the top of the range), the first free one in steps of 10.
+    start = base + 10000 if base + 10000 <= 65000 else 10000
+    for candidate in range(start, 65001, 10):
+        if ingress_ports_free(candidate):
+            return candidate
+    raise RuntimeError('No free ports for LiveKit Ingress; set ingress_port in .cache/dev/settings.json.')
+
+
+def missing_settings(config):
+    """The generated settings `config` lacks: the LiveKit pair, the moderator token the API checks and Pulse
+    polls its ban snapshots with (`catalyst secrets init` derives the same pair for a deployment), the
+    LiveKit Ingress port block and the password LiveKit and the ingress use for Valkey."""
     added = {}
     if 'LIVEKIT_API_SECRET' not in config:
         added.update(livekit_credentials())
     if 'MODERATOR_TOKEN' not in config:
         added['MODERATOR_TOKEN'] = secrets.token_hex(32)
+    if 'ingress_port' not in config:
+        added['ingress_port'] = ingress_block(config['port'])
+    if 'VALKEY_PASSWORD' not in config:
+        added['VALKEY_PASSWORD'] = secrets.token_hex(32)
     return added
 
 
@@ -148,13 +174,13 @@ def settings(create=False):
         if create and profile is not None and profile != config['profile']:
             print(f"Using saved profile {config['profile']}; FOUNDATION_DEV_PROFILE={profile} applies only on first "
                   'startup. Change it with foundation-dev profile.', file=sys.stderr)
-        if missing_secrets(config):
-            # A stack from before a generated secret, on whichever command reads it first; the lock
+        if missing_settings(config):
+            # A stack from before a generated setting, on whichever command reads it first; the lock
             # keeps tasks that start together on one value.
             with SETTINGS.with_suffix('.lock').open('w') as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX)
                 config = json.loads(SETTINGS.read_text())
-                if added := missing_secrets(config):
+                if added := missing_settings(config):
                     config.update(added)
                     save_json(SETTINGS, config)
         return config
@@ -178,7 +204,8 @@ def settings(create=False):
         raise ValueError('FOUNDATION_DEV_PROFILE must be mirror, testnet or offline')
     config = {'port': base, 'profile': profile, 'password': secrets.token_hex(24),
               'ENCRYPTION_KEY': secrets.token_hex(32), 'SESSION_SECRET': secrets.token_hex(32),
-              **missing_secrets({}), **origin_settings(os.environ)}
+              **origin_settings(os.environ)}
+    config.update(missing_settings(config))
     save_json(SETTINGS, config)
     return config
 
@@ -239,10 +266,13 @@ def livekit_ports(config):
 
 def livekit_yaml(config):
     signaling, tcp, udp = livekit_ports(config)
+    valkey = ingress_ports(config)[0]
     key = config['LIVEKIT_API_KEY']
     # Signaling listens on loopback, as the rest of the stack. Media cannot: browsers gather no loopback
     # ICE candidates, so the server offers this machine's own interface addresses (no STUN); a session
     # still needs a token signed with the stack's secret. The webhook drives comms presence in the API.
+    # The ingress reaches the server through Valkey; `rtmp_base_url` is the URL /scene-stream-access
+    # hands a streamer, so behind a public origin it names the origin's host.
     return textwrap.dedent(f'''\
         port: {signaling}
         bind_addresses:
@@ -257,9 +287,82 @@ def livekit_yaml(config):
           api_key: {key}
           urls:
             - http://127.0.0.1:{config['port']}/comms-gatekeeper/livekit-webhook
+        redis:
+          address: 127.0.0.1:{valkey}
+          password: {config['VALKEY_PASSWORD']}
+        ingress:
+          rtmp_base_url: {rtmp_base_url(config)}
         logging:
           level: info
         ''')
+
+
+def rtmp_base_url(config):
+    # What /scene-stream-access hands a streamer: loopback, or behind a public origin its host, where the
+    # RTMP port must be reachable directly (a TLS front or an HTTP tunnel does not carry RTMP).
+    origin = public(config)
+    host = origin[1] if origin else '127.0.0.1'
+    host = f'[{host}]' if ':' in host else host
+    return f'rtmp://{host}:{ingress_ports(config)[1]}/x'
+
+
+def ingress_ports(config):
+    # Valkey (LiveKit and its ingress meet there), the RTMP listener, the ingress HTTP relay and its
+    # health check, in the ingress block.
+    base = config['ingress_port']
+    return base, base + 1, base + 2, base + 3
+
+
+def ingress_yaml(config):
+    # RTMP only: /scene-stream-access creates RTMP ingresses, so WHIP stays off and needs no media ports.
+    # The ingress refuses a stream unless 30% of the machine's CPU stays idle (0 means that default); a
+    # development machine also runs builds, so it reserves almost nothing and counts a stream as a
+    # hundredth of a core.
+    signaling = livekit_ports(config)[0]
+    valkey, rtmp, relay, health = ingress_ports(config)
+    return textwrap.dedent(f'''\
+        api_key: {config['LIVEKIT_API_KEY']}
+        api_secret: {config['LIVEKIT_API_SECRET']}
+        ws_url: ws://127.0.0.1:{signaling}
+        redis:
+          address: 127.0.0.1:{valkey}
+          password: {config['VALKEY_PASSWORD']}
+        rtmp_port: {rtmp}
+        whip_port: -1
+        http_relay_port: {relay}
+        health_port: {health}
+        cpu_cost:
+          rtmp_cpu_cost: 0.01
+          min_idle_ratio: 0.001
+        logging:
+          level: info
+        ''')
+
+
+def valkey_conf(config):
+    # A file, so the password never shows in ps; nothing is saved to disk.
+    return textwrap.dedent(f'''\
+        bind 127.0.0.1
+        port {ingress_ports(config)[0]}
+        requirepass {config['VALKEY_PASSWORD']}
+        save ""
+        appendonly no
+        ''')
+
+
+def valkey_ready(config):
+    try:
+        with socket.create_connection(('127.0.0.1', ingress_ports(config)[0]), timeout=5) as sock:
+            sock.sendall(f"AUTH {config['VALKEY_PASSWORD']}\r\nPING\r\n".encode())
+            reply = b''
+            while reply.count(b'\r\n') < 2:
+                chunk = sock.recv(64)
+                if not chunk:
+                    break
+                reply += chunk
+            return reply == b'+OK\r\n+PONG\r\n'
+    except OSError:
+        return False
 
 
 def pulse_ports(config):
@@ -366,6 +469,9 @@ def runtime_env(config):
         # Sites' blog CMS base, taken from the shell when set (unset: the blog answers 503).
         # TODO(cms-migration): point it at the in-tree area once cms-server is migrated.
         'BLOG_CMS_URL',
+        # Sites' /download: the host of the launcher installers and the JSON of the download
+        # counts (unset: /download offers no installer and shows no total).
+        'EXPLORER_INSTALLERS_URL', 'DOWNLOAD_COUNTS_URL',
     ) if key in os.environ}
     base = config['port']
     env.update({
@@ -519,14 +625,12 @@ def testnet_env():
         'ETH_RPC_URL': 'https://rpc.decentraland.org/sepolia',
         'RPC_ENDPOINT_POLYGON': 'https://rpc.decentraland.org/amoy',
         'TRADE_RPC_URLS': '80002=https://rpc.decentraland.org/amoy,11155111=https://rpc.decentraland.org/sepolia',
-        # Gasless approvals and cancels: the local relay admits Amoy's Decentraland contracts (the bundled
-        # contract-addresses list under `amoy`) and forwards to the .zone transactions API, which pays testnet
-        # gas. COLLECTIONS_CHAIN_ID also keys the chain the relay verifies signatures and collections on.
+        # Gasless approvals, cancels and Credits purchases: the local relay admits Amoy's Decentraland contracts
+        # (the contract-addresses list under `amoy`) and pays testnet gas through the .zone transactions API, or
+        # through a relayer key of the stack's own; relayer_env picks which, and the list with it.
+        # COLLECTIONS_CHAIN_ID also keys the chain the relay verifies signatures and collections on.
         'COLLECTIONS_CHAIN_ID': '80002',
         'CONTRACT_ADDRESSES_CHAIN_KEY': 'amoy',
-        # The published list: the bundled copy predates MarketplaceV5, the off-chain V3 marketplace whose
-        # cancelSignature the Shop relays.
-        'CONTRACT_ADDRESSES_URL': 'https://contracts.decentraland.org/addresses.json',
         'TRANSACTIONS_UPSTREAM_URL': 'https://transactions-api.decentraland.zone',
         # Cancels and executions on chain close local trades: the trade-events index on the testnets,
         # through TRADE_RPC_URLS' 80002 and 11155111 entries (it checks each endpoint's eth_chainId).
@@ -554,10 +658,10 @@ def testnet_env():
         # it is refused at authorization). The usage index reads its CreditUsed events over RPC_ENDPOINT_POLYGON
         # on COLLECTIONS_CHAIN_ID; POST /credits/authorize signs only while that index is ready. Mock card
         # top-ups grant test credits with no charge.
-        # The relay doesn't admit this manager yet: it takes the contracts CONTRACT_ADDRESSES_URL lists (Amoy's
-        # entry is the shared one) and verified collections. So a self-custody wallet buys with Credits through
-        # its own transaction (the checkout falls back to it, paying its own gas); an in-app (managed) wallet,
-        # which can only relay, can't buy with Credits on this profile until the relay admits the manager.
+        # Without a relayer key the relay refuses this manager itself (the published list doesn't carry it, and the
+        # .zone transactions API wouldn't relay it either), marked as not sent: a self-custody wallet then buys
+        # with Credits through its own transaction, paying its own gas, and an in-app (managed) wallet, which can
+        # only relay, can't. With one (relayer_env) the relay admits it and the stack signs and pays the purchase.
         'CREDITS_MANAGER_CONTRACT': '0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c',
         # The same manager, for the Sites build: the in-world Shop's shell refuses a credit signed for any other.
         'VITE_SHOP_CREDITS_MANAGER': '0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c',
@@ -569,7 +673,43 @@ def testnet_env():
         # MANA only. This profile sets the mock card on Amoy alone, and the stack listens on 127.0.0.1.
         'CREDITS_MOCK_CARD': 'true',
         **credits_signer_env(),
+        **relayer_env(),
         **name_simulation_env(),
+    }
+
+
+# The highest fee per gas the stack's own relayer signs on Amoy: 200 gwei (Amoy's gas price read 30 gwei on
+# 2026-11-18). With the relay's 1.5M gas cap (MAX_GAS_LIMIT) one transaction costs it at most 0.3 test POL.
+TESTNET_RELAYER_MAX_FEE_PER_GAS_WEI = '200000000000'
+
+
+# The dApps' published contract map, whose `amoy` entry never carries dcl-one's own CreditsManager.
+PUBLISHED_CONTRACT_ADDRESSES_URL = 'https://contracts.decentraland.org/addresses.json'
+
+
+def relayer_env():
+    """Who pays the testnet relay's gas, and the contract list that goes with it (testnet only).
+
+    Without a relayer key the relay forwards to the .zone transactions API and admits the published list, which
+    lacks dcl-one's Amoy CreditsManager: the relay refuses that manager itself, marked as not sent, so a
+    self-custody wallet falls back to its own transaction instead of a forward .zone would reject unmarked.
+
+    With one (relayer.key in the gitignored stack state: a testnet-only key, funded with Amoy POL) the relay's
+    direct signer takes every meta-transaction it admits (purchases, approvals, cancels) instead of the forward,
+    capped at TESTNET_RELAYER_MAX_FEE_PER_GAS_WEI, and admits the bundled `amoy` entry, which carries the manager
+    (CONTRACT_ADDRESSES_URL unset). The key signs on Amoy alone: NAMES_SIGNER_ENABLED=false keeps it off the NAMEs
+    chain, whose ETH_RPC_URL is Sepolia's here while NAMES_CHAIN_ID stays mainnet's."""
+    key = STATE / 'relayer.key'
+    # An empty file reads as no key on the server, so it must not turn the signer on.
+    if not key.is_file() or not key.read_text().strip():
+        return {'CONTRACT_ADDRESSES_URL': PUBLISHED_CONTRACT_ADDRESSES_URL}
+    if key.stat().st_mode & 0o077:
+        print(f'Warning: {key} is readable by other users; chmod 600 it.', file=sys.stderr)
+    return {
+        'META_TX_BROADCAST_ENABLED': 'true',
+        'RELAYER_PRIVATE_KEY_FILE': str(key),
+        'RELAYER_MAX_FEE_PER_GAS_WEI': TESTNET_RELAYER_MAX_FEE_PER_GAS_WEI,
+        'NAMES_SIGNER_ENABLED': 'false',
     }
 
 
@@ -669,9 +809,20 @@ def project(config, postgres_only=False):
     pulse = process('pulse', {'api': 'process_healthy', 'nats': 'process_healthy'})
     pulse['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': pulse_ports(config)[2], 'path': '/metrics'},
                                 'period_seconds': 1, 'failure_threshold': 60}
-    livekit = process('livekit')
+    # Pulse exits when it loses its generation lease (a PostgreSQL restart, a keepalive slower than its lease
+    # after sleep or under load); a new start takes a fresh generation. Restarts are unlimited (0) because the
+    # supervisor never resets the count; a Pulse that keeps failing still times out the wait, which names it.
+    pulse['availability'] = {'restart': 'on_failure', 'backoff_seconds': 2, 'max_restarts': 0}
+    valkey = process('valkey')
+    valkey['readiness_probe'] = {'exec': {'command': command('valkey-ready')},
+                                 'period_seconds': 1, 'timeout_seconds': 15, 'failure_threshold': 60}
+    livekit = process('livekit', {'valkey': 'process_healthy'})
     livekit['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': livekit_ports(config)[0], 'path': '/'},
                                   'period_seconds': 1, 'failure_threshold': 60}
+    # GStreamer scans its plugins on the first start, which takes a minute or two.
+    ingress = process('ingress', {'livekit': 'process_healthy'})
+    ingress['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': ingress_ports(config)[3], 'path': '/'},
+                                  'period_seconds': 2, 'failure_threshold': 300}
     nats = process('nats')
     nats['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': nats_ports(config)[1], 'path': '/healthz'},
                                'period_seconds': 1, 'failure_threshold': 60}
@@ -681,8 +832,8 @@ def project(config, postgres_only=False):
     processes = {
         'postgres': postgres,
         'api-build': process('api-build', {'postgres': 'process_healthy'}), 'api': api,
-        'web-install': process('web-install'), 'sites': sites, 'livekit': livekit, 'pulse': pulse,
-        'nats': nats,
+        'web-install': process('web-install'), 'sites': sites, 'valkey': valkey, 'livekit': livekit,
+        'ingress': ingress, 'pulse': pulse, 'nats': nats,
     }
     if config['profile'] in ('mirror', 'testnet'):
         # The marketplace mirrors and chain indexes run in `catalyst index`, beside `serve`. The CreditUsed index
@@ -834,7 +985,8 @@ def import_asset_catalog(config, binary):
 
 # Long-running tasks and the signal that stops each one cleanly.
 SERVICES = {'postgres': signal.SIGINT, 'api': signal.SIGTERM, 'sites': signal.SIGTERM, 'index': signal.SIGTERM,
-            'livekit': signal.SIGTERM, 'pulse': signal.SIGTERM, 'nats': signal.SIGTERM}
+            'valkey': signal.SIGTERM, 'livekit': signal.SIGTERM, 'ingress': signal.SIGTERM,
+            'pulse': signal.SIGTERM, 'nats': signal.SIGTERM}
 
 
 def started(pid):
@@ -907,6 +1059,20 @@ def task(name):
         # The config travels in the environment, so the secret never shows in ps.
         env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR') if key in os.environ}
         os.execvpe('livekit-server', ['livekit-server'], {**env, 'LIVEKIT_CONFIG': livekit_yaml(config)})
+    elif name == 'valkey':
+        # Holds only LiveKit's routing state for this run: nothing is saved to disk.
+        env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR') if key in os.environ}
+        conf = STATE / 'valkey.conf'
+        conf.touch(mode=0o600)
+        conf.write_text(valkey_conf(config))
+        os.execvpe('valkey-server', ['valkey-server', str(conf)], env)
+    elif name == 'valkey-ready':
+        if not valkey_ready(config):
+            sys.exit(1)
+    elif name == 'ingress':
+        # The ingress starts a handler per stream by running `ingress` again from PATH.
+        env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR') if key in os.environ}
+        os.execvpe('ingress', ['ingress'], {**env, 'INGRESS_CONFIG_BODY': ingress_yaml(config)})
     elif name == 'nats':
         env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR') if key in os.environ}
         os.execvpe('nats-server', nats_argv(config), env)
@@ -942,7 +1108,7 @@ def status():
     config = settings()
     print(f"Sites: http://127.0.0.1:{config['port'] + 2}   API: http://127.0.0.1:{config['port']}   "
           f"LiveKit: ws://127.0.0.1:{livekit_ports(config)[0]}   Pulse: https://127.0.0.1:{pulse_ports(config)[0]} (UDP)   "
-          f"NATS: {nats_url(config)}")
+          f"NATS: {nats_url(config)}   RTMP ingress: {rtmp_base_url(config)}")
     if origin := public(config):
         tls = tls_files(config)
         print(f"Public: {config['public_origin']}   /ws and /rtc through the front; Pulse UDP {origin[1]}:{pulse_ports(config)[0]}"
@@ -955,6 +1121,15 @@ def status():
     return pc('process', 'list', '--output', 'wide').returncode
 
 
+def stale_graph(config):
+    """Processes the running supervisor's graph lacks: a stack started before they were added, whose
+    restarted tasks would already expect them (LiveKit reads Valkey)."""
+    running = set(json.loads((STATE / 'process-compose.json').read_text())['processes'])
+    if running == {'postgres'}:
+        return set()
+    return set(project(config)['processes']) - running
+
+
 def prepare_supervisor(postgres_only=False):
     """Write the process graph; returns the supervisor's `up` arguments and environment, or None if it runs."""
     config = settings(create=True)
@@ -962,10 +1137,14 @@ def prepare_supervisor(postgres_only=False):
         running = json.loads((STATE / 'process-compose.json').read_text())['processes']
         if not postgres_only and set(running) == {'postgres'}:
             raise RuntimeError('PostgreSQL-only stack is running. Run foundation-dev down before starting the full stack.')
+        if missing := stale_graph(config):
+            raise RuntimeError(f"The running stack predates {', '.join(sorted(missing))}. "
+                               'Run foundation-dev down, then foundation-dev up.')
         return None
     # Behind a public origin without a port Pulse's WebTransport sits outside the block; it must be free too.
     webtransport = pulse_ports(config)[0]
-    if not ports_free(config['port'], webtransport if webtransport != config['port'] + 2 else None):
+    if not ports_free(config['port'], webtransport if webtransport != config['port'] + 2 else None) \
+            or not ingress_ports_free(config['ingress_port']):
         raise RuntimeError('Configured ports are occupied. Stop the conflicting service or edit .cache/dev/settings.json.')
     temporary = STATE / 'tmp'
     temporary.mkdir(exist_ok=True, mode=0o700)
@@ -1174,13 +1353,16 @@ def wait_ready(timeout, postgres_only=False):
     log_positions = {name: log_position(STATE / f'{name}.log') for name in ('web-install', 'api-build')}
     print(f"Waiting up to {timeout}s for {'PostgreSQL' if postgres_only else 'the API and Sites'}.", flush=True)
     delays = backoff_delays(deadline)
+    restarting = []
     while True:
         processes = pc('process', 'list', '--output', 'json', capture_output=True, text=True)
         if processes.returncode:
             raise RuntimeError('The development supervisor is not running. Run foundation-dev up.')
         listing = json.loads(processes.stdout)
         for process in listing:
-            if process.get('exit_code', 0) != 0 and not process.get('is_running'):
+            # A process waiting for its restart has failed only once its restart budget runs out.
+            if process.get('exit_code', 0) != 0 and not process.get('is_running') \
+                    and process.get('status') != 'Restarting':
                 name = process['name']
                 raise RuntimeError(f'{name} failed. Inspect foundation-dev logs {name}.')
         if time.monotonic() - reported >= PROGRESS_SECONDS:
@@ -1196,6 +1378,9 @@ def wait_ready(timeout, postgres_only=False):
                     ensure_collation(config, 'template1')
                 print('PostgreSQL is ready for scratch test databases.')
                 return 0
+            restarting = [process['name'] for process in listing if process.get('status') == 'Restarting']
+            if restarting:
+                raise RuntimeError('A process is restarting')
             for url in urls:
                 with urllib.request.urlopen(url, timeout=3) as response:
                     if response.status != 200:
@@ -1207,6 +1392,9 @@ def wait_ready(timeout, postgres_only=False):
             if delay is None:
                 break
             time.sleep(min(delay, max(0, deadline - time.monotonic())))
+    if restarting:
+        names = ', '.join(restarting)
+        raise RuntimeError(f'Startup timed out while {names} kept restarting. Inspect foundation-dev logs {restarting[0]}.')
     raise RuntimeError('Startup timed out. Check foundation-dev status and foundation-dev logs api/sites.')
 
 
@@ -1311,8 +1499,8 @@ def main():
         commands.add_parser(command)
     commands.add_parser('up').add_argument('--postgres-only', action='store_true',
                                           help='Start only PostgreSQL for backend tests')
-    commands.add_parser('logs').add_argument('service', choices=('api', 'api-build', 'sites', 'postgres', 'web-install', 'index', 'livekit', 'pulse', 'nats', 'service'))
-    commands.add_parser('restart').add_argument('service', choices=('api', 'api-build', 'sites', 'postgres', 'web-install', 'index', 'livekit', 'pulse', 'nats'))
+    commands.add_parser('logs').add_argument('service', choices=('api', 'api-build', 'sites', 'postgres', 'web-install', 'index', 'valkey', 'livekit', 'ingress', 'pulse', 'nats', 'service'))
+    commands.add_parser('restart').add_argument('service', choices=('api', 'api-build', 'sites', 'postgres', 'web-install', 'index', 'valkey', 'livekit', 'ingress', 'pulse', 'nats'))
     commands.add_parser('service', help='Run the stack as a per-user systemd unit or LaunchAgent').add_argument(
         'action', choices=('install', 'uninstall'))
     wait_parser = commands.add_parser('wait')
@@ -1325,7 +1513,8 @@ def main():
     origin_parser.add_argument('--key', default='', help='Its PEM private key')
     commands.add_parser('trades-snapshot', help="Write the mirrored trades to a gzipped SQL file").add_argument('out')
     commands.add_parser('_task', help='Internal supervised process').add_argument('task', choices=(
-        'postgres', 'database-ready', 'api-build', 'api', 'api-run', 'web-install', 'sites', 'index', 'livekit', 'pulse', 'nats'))
+        'postgres', 'database-ready', 'api-build', 'api', 'api-run', 'web-install', 'sites', 'index', 'valkey', 'valkey-ready',
+        'livekit', 'ingress', 'pulse', 'nats'))
     args = parser.parse_args()
     if args.command == '_task':
         task(args.task)
@@ -1350,6 +1539,9 @@ def main():
             os.execvp('journalctl', ['journalctl', '--user', '-f', '-n', '80', '-u', service_name()])
         os.execvp('tail', ['tail', '-n', '80', '-F', str(STATE / f'{args.service}.log')])
     elif args.command == 'restart':
+        if supervisor_running() and (missing := stale_graph(settings())):
+            raise RuntimeError(f"The running stack predates {', '.join(sorted(missing))}. "
+                               'Run foundation-dev down, then foundation-dev up.')
         return pc('process', 'restart', args.service).returncode
     elif args.command == 'profile':
         if supervisor_running():

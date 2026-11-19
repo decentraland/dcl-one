@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { shell } from 'electron';
 import type { Scene } from '@dcl/schemas';
 
@@ -20,7 +21,12 @@ import { getScene, getRowsAndCols, parseCoords, pathToPosix, updateSceneThumbnai
 import { resolveOutdated } from './outdated';
 import { getDefaultScenesPath, getScenesPath } from './settings';
 
-import { DEFAULT_THUMBNAIL, NEW_SCENE_NAME, EMPTY_SCENE_TEMPLATE_REPO } from './constants';
+import {
+  DEFAULT_THUMBNAIL,
+  EMPTY_SCENE_TEMPLATE_DESCRIPTION,
+  EMPTY_SCENE_TEMPLATE_REPO,
+  NEW_SCENE_NAME,
+} from './constants';
 import { getProjectId } from './analytics';
 
 export function initializeWorkspace(services: Services) {
@@ -255,7 +261,7 @@ export function initializeWorkspace(services: Services) {
               if (await isDCL(projectDir)) {
                 promises.push(safeGetProject(projectDir));
               }
-              // eslint-disable-next-line no-empty
+              // oxlint-disable-next-line no-empty
             } catch (_) {}
           }
         }
@@ -337,6 +343,12 @@ export function initializeWorkspace(services: Services) {
       const scene = await getScene(fullName);
       scene.display!.title = name;
 
+      // The empty template describes itself, which a publish would show players as the scene's
+      // description.
+      if (scene.display?.description === EMPTY_SCENE_TEMPLATE_DESCRIPTION) {
+        scene.display.description = '';
+      }
+
       // Remove worldConfiguration for non-empty templates
       if (templateRepo !== EMPTY_SCENE_TEMPLATE_REPO) {
         delete scene.worldConfiguration;
@@ -344,6 +356,7 @@ export function initializeWorkspace(services: Services) {
 
       const sceneJsonPath = path.join(fullName, 'scene.json');
       await fs.writeFile(sceneJsonPath, JSON.stringify(scene, null, 2));
+      await rememberTemplateThumbnail(fullName, scene.display?.navmapThumbnail);
 
       await config.setConfig(config => {
         config.workspace.paths.push(fullName);
@@ -541,6 +554,36 @@ export function initializeWorkspace(services: Services) {
    * @param {string} params.thumbnail - The base64-encoded thumbnail image data.
    * @returns {Promise<void>} A promise that resolves if everything went ok.
    */
+  async function hashFile(filePath: string): Promise<string | undefined> {
+    try {
+      return createHash('sha256')
+        .update(await fs.readFile(filePath))
+        .digest('hex');
+    } catch {
+      return undefined;
+    }
+  }
+
+  // Remembered so the first capture can replace the template's stock picture, while a picture the
+  // creator put in its place (same path, other content) is kept.
+  async function rememberTemplateThumbnail(scenePath: string, thumbnail: string | undefined) {
+    if (!thumbnail) return;
+    const sha256 = await hashFile(path.join(scenePath, path.normalize(thumbnail)));
+    if (sha256)
+      await updateProjectInfo({
+        path: scenePath,
+        info: { templateThumbnail: { path: thumbnail, sha256 } },
+      });
+  }
+
+  async function isUnchangedTemplateThumbnail(scenePath: string, thumbnail: string) {
+    const { templateThumbnail } = await (await getProjectInfoFs(scenePath)).getAll();
+    if (templateThumbnail?.path !== thumbnail) return false;
+    return (
+      (await hashFile(path.join(scenePath, path.normalize(thumbnail)))) === templateThumbnail.sha256
+    );
+  }
+
   async function saveThumbnail({
     path: scenePath,
     thumbnail: thumbnailContent,
@@ -565,7 +608,12 @@ export function initializeWorkspace(services: Services) {
       !!currentThumb &&
       currentThumb !== expectedThumb &&
       currentThumb.toLowerCase() === expectedThumb.toLowerCase();
-    if (!currentThumb || isMiscasedAutoThumbnail || !(await fs.exists(currentThumbPath))) {
+    if (
+      !currentThumb ||
+      isMiscasedAutoThumbnail ||
+      !(await fs.exists(currentThumbPath)) ||
+      (await isUnchangedTemplateThumbnail(scenePath, currentThumb))
+    ) {
       await updateSceneThumbnail(scenePath, thumbnailPath);
     }
   }

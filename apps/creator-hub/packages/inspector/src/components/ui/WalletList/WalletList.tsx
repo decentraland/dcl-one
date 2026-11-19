@@ -55,6 +55,8 @@ const WalletList: React.FC<Props> = ({ label, info, addLabel, removeLabel, value
           />
           <MoreOptionsMenu>
             <Button
+              variant="secondary"
+              size="sm"
               aria-label={`${removeLabel} ${index + 1}`}
               onClick={handleRemove(index)}
             >

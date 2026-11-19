@@ -1,0 +1,268 @@
+.actions {
+  white-space: nowrap;
+}
+
+/* Two classes: over the cell padding of the table. */
+.actions.actions {
+  padding-right: 20px;
+}
+
+.actions > :global(.Actions) {
+  display: flex;
+  justify-content: flex-end;
+  gap: 20px;
+  opacity: 0;
+}
+
+/* Two classes: over the size, the colour and the states of the IconButton atom. */
+.actions.actions button {
+  box-sizing: border-box;
+  width: 30px;
+  height: 30px;
+  padding: 6px;
+  border-radius: 100px;
+  color: var(--dcl-silver);
+}
+
+.actions.actions button svg {
+  font-size: 1.125rem;
+}
+
+.actions.actions button:hover:not(:disabled) {
+  background-color: var(--palette-whiteTransparent-soft);
+}
+
+.actions.actions button:global(.Unpublish) {
+  color: var(--error);
+}
+
+.actions.actions button:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.bulk {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: var(--palette-neutral-softWhite);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dcl-silver);
+  font-size: 1rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.meta svg {
+  font-size: 1.125rem;
+  flex-shrink: 0;
+}
+
+.meta > :global(.Loader) {
+  width: auto;
+  height: auto;
+  flex-shrink: 0;
+}
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+
+.sceneName {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  max-width: 100%;
+  color: var(--palette-neutral-softWhite);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.sceneName img,
+.sceneName :global(.image-fallback-placeholder) {
+  width: 50px;
+  height: 50px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.sceneName > span {
+  flex: 1;
+  width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Three classes: over the two classes of the ViewBar bar. */
+/* The stats and the controls share one row while they fit, and the controls drop to a second row
+   in a narrow window instead of running over the stats. */
+.scenesBar.scenesBar.scenesBar {
+  height: auto;
+  min-height: 56px;
+  padding: 4px 10px 4px 20px;
+  flex-wrap: wrap;
+  row-gap: 8px;
+  /* A full pill at the one-row 56px; a rounded box when the controls wrap. */
+  border-radius: 28px;
+}
+
+.scenesBar.scenesBar.scenesBar > :global(.left) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.scenesBar.scenesBar.scenesBar > :global(.right) {
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px 30px;
+  margin-left: auto;
+}
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+}
+
+.stats > span {
+  gap: 5px;
+  font-size: 1rem;
+  font-weight: 400;
+}
+
+.updatedAt {
+  border-radius: 4px;
+}
+
+.updatedAt:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.deployer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--dcl-silver);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+/* The AvatarFace atom. */
+.deployer > span[data-size] {
+  flex-shrink: 0;
+}
+
+.deployer > span:not([data-size]) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+}
+
+/* The address uses Roboto, not the app font. */
+.deployer > .address {
+  font-family: "Roboto", "Helvetica", "Arial", sans-serif;
+}
+
+.table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.table th,
+.table td {
+  box-sizing: border-box;
+  padding: 0;
+  box-shadow: inset 0 -1px 0 var(--palette-whiteTransparent-soft);
+}
+
+.table th {
+  height: 40px;
+  color: var(--gray);
+  font-size: 0.875rem;
+  font-weight: 400;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.table td {
+  height: 70px;
+}
+
+.table th :global(.SortArrow) {
+  margin-left: 10px;
+  vertical-align: middle;
+  color: var(--brand);
+}
+
+.table tbody::before {
+  content: "";
+  display: table-row;
+  height: 20px;
+}
+
+.table th:global(.SelectCell),
+.table td:global(.SelectCell) {
+  width: 60px;
+  padding: 0 20px;
+}
+
+.table th:global(.Name) {
+  width: 660px;
+}
+
+.table tr > th:global(.Name):first-child {
+  width: 720px;
+}
+
+.table tr > :first-child:not(:global(.SelectCell)) {
+  padding-left: 20px;
+}
+
+.table th:global(.Actions) {
+  width: 100px;
+}
+
+/* The select box: a block, so the cell has no line box under it. */
+.table td:global(.SelectCell) > span {
+  display: flex;
+}
+
+.table tbody tr:hover,
+.table tbody tr:focus-within,
+.table tbody tr:global(.Selected) {
+  background-color: var(--palette-whiteTransparent-subtle);
+}
+
+.table tbody tr:hover :global(.Actions),
+.table tbody tr:focus-within :global(.Actions),
+.table tbody tr :global(.Actions.Running) {
+  opacity: 1;
+}
+
+@media (max-width: 1919.95px) {
+  .table {
+    table-layout: auto;
+  }
+
+  .table th:not(:global(.SelectCell)):not(:global(.Name)):not(:global(.Actions)) {
+    width: 226px;
+  }
+}

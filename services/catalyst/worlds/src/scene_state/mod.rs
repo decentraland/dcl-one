@@ -82,9 +82,9 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use crate::shared::routing::{get, post};
 use anyhow::{Context, anyhow};
 use axum::Router;
-use axum::routing::{get, post};
 use sqlx::PgPool;
 
 use crate::auth::eip1654::Eip1654Validator;

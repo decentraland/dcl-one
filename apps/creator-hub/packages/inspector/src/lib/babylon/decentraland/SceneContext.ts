@@ -1,7 +1,7 @@
 import type * as BABYLON from '@babylonjs/core';
-import future from 'fp-future';
-import mitt from 'mitt';
-import type { Emitter } from 'mitt';
+import { future } from '../../utils/future';
+import { createEmitter } from '../../utils/emitter';
+import type { Emitter } from '../../utils/emitter';
 import type { ComponentDefinition, Entity } from '@dcl/ecs';
 import { CrdtMessageType, Engine } from '@dcl/ecs';
 import * as components from '@dcl/ecs/dist/components';
@@ -69,7 +69,7 @@ export class SceneContext {
    * is the single path from viewport → ECS edits. {@link BabylonRenderer}
    * re-exposes this as its `events`, and input.ts / GizmoManager emit onto it.
    */
-  rendererEvents: Emitter<RendererEvents> = mitt<RendererEvents>();
+  rendererEvents: Emitter<RendererEvents> = createEmitter<RendererEvents>();
 
   Billboard = components.Billboard(this.engine);
   Transform = components.Transform(this.engine);

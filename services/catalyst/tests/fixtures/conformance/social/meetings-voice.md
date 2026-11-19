@@ -6,7 +6,8 @@ stream from OBS, and talk over voice (nearby, private calls, community voice).
 - Upstream: `decentraland/comms-gatekeeper` @ `b42d45c` (main, 2026-11-16);
   `decentraland/social-service-ea` @ `b0cf87e` (main, 2026-11-16; only Node image re-pins since
   `b6b2cef`, the pin in [`PARITY.md`](PARITY.md)).
-- dcl-one: `decentraland/dcl-one` @ `f695ad63b` (main, 2026-11-16).
+- dcl-one: `decentraland/dcl-one` @ `f695ad63b` (main, 2026-11-16); the Cast sections @ `05ca635f8`
+  (main, 2026-11-17) with `fix/cast-follow-ups`.
 - Method: static reading only. Nothing was built or run for this file. A row names the dcl-one test
   that pins it, or says "untested".
 - Paths: `GK/` is upstream comms-gatekeeper `src/`; `C/` is dcl-one `services/catalyst/`;
@@ -21,9 +22,9 @@ stream from OBS, and talk over voice (nearby, private calls, community voice).
 | Nearby (proximity) voice in scenes and islands | Server and Bevy client present. No multi-client run against a real LiveKit. |
 | Private 1:1 calls | Server routes and RPCs at parity; client flow in the Bevy engine and the shared HUD. |
 | Community voice (stage, raise hand, promote, kick, end) | Server at parity. Client lacks moderator mute (MV-6, MV-7). |
-| OBS/RTMP stream onto a scene screen | Served: `/scene-stream-access` and LiveKit Ingress into the scene room. Not run end to end. |
-| Share a screen or camera from a browser (Decentraland Cast) | Not available: every `/cast/*` route answers 501, and no dcl-one client publishes video. |
-| Presentations (slides) and presenters | Not available: no presentation-bot token, no presenters routes, no presenter service. |
+| OBS/RTMP stream onto a scene screen | Served: `/scene-stream-access` and LiveKit Ingress into the scene room. The local stack runs the ingress (`tooling/dev.py`); an RTMP push to a key created with the request the API makes reaches the room as H264 and Opus. Not run end to end through the API and a client. |
+| Share a screen or camera from a browser (Decentraland Cast) | Served: every `/cast/*` route, and the `apps/sites` streamer and watcher pages. Run headless against a local LiveKit; no multi-client run in the explorer. |
+| Presentations (slides) and presenters | Presenters routes and the presentation-bot token served; no presenter service (`cast-presenter-service`) is hosted. |
 
 ## How upstream Cast works
 
@@ -50,12 +51,12 @@ Cast publishes into the scene's own LiveKit room, the one `/get-scene-adapter` h
 
 | Route | Upstream | dcl-one | Status | Test |
 |---|---|---|---|---|
-| `POST /cast/streamer-token` | `routes.ts:241`; `cast.ts:242-304` | 501 (`G/mod.rs:871` → `G/streaming.rs:104-106`) | GAP MV-1 | untested |
-| `GET /cast/generate-stream-link` | `routes.ts:252`; `cast.ts:185-233` | 501 | GAP MV-1 | untested |
-| `GET /cast/stream-info/:streamingKey` | `routes.ts:253`; `get-stream-info-handler.ts:30-93` | 501 | GAP MV-1 | capture `cast-stream-info-invalid-key` (not replayed) |
-| `POST /cast/watcher-token` | `routes.ts:246`; `cast.ts:368-443` | 501 | GAP MV-2 | untested |
-| `GET/PUT/DELETE /cast/presenters[/:id]` | `routes.ts:291-293`; `cast.ts:512-614` | 501 | GAP MV-4 | `C/comms/src/gatekeeper/streaming.rs` asserts the GET 501 |
-| `POST /cast/presentation-bot-token` | `routes.ts:286`; `cast.ts:455-500` | 501 | GAP MV-5 | untested |
+| `POST /cast/streamer-token` | `routes.ts:241`; `cast.ts:242-304` | `G/streaming_cast.rs` `streamer_token` | DIVERGENCE: identity names the credential, display name cleaned (below) | `a_streaming_key_admits_a_streamer_who_becomes_a_presenter` |
+| `GET /cast/generate-stream-link` | `routes.ts:252`; `cast.ts:185-233` | `G/streaming_cast.rs` `generate_stream_link` over `issue_access` | MATCH | `a_scene_admin_gets_a_stream_link_that_is_reused_until_it_expires` |
+| `GET /cast/stream-info/:streamingKey` | `routes.ts:253`; `get-stream-info-handler.ts:30-93` | `G/streaming_cast.rs` `stream_info` | MATCH | `stream_info_answers_the_place_behind_a_live_key`; capture `cast-stream-info-invalid-key` replayed by `the_gatekeeper_answers_its_stateless_captures_as_production` |
+| `POST /cast/watcher-token` | `routes.ts:246`; `cast.ts:368-443` | `G/streaming_cast.rs` `watcher_token` | DIVERGENCE: a world's access policy is checked, and the token carries the wallet and the world authorization proof (below) | `a_viewer_watches_a_parcel_or_world_stream_unless_banned`; `a_private_worlds_cast_refuses_watchers_the_world_does_not_admit` |
+| `GET/PUT/DELETE /cast/presenters[/:id]` | `routes.ts:291-293`; `cast.ts:512-614` | `G/streaming_cast.rs` `list_presenters`, `promote_presenter`, `demote_presenter` | MATCH | `scene_admins_list_promote_and_demote_presenters`; capture `cast-presenters-unauth` replayed by `the_gatekeeper_answers_its_stateless_captures_as_production` |
+| `POST /cast/presentation-bot-token` | `routes.ts:286`; `cast.ts:455-500` | `G/streaming_cast.rs` `presentation_bot_token` | DIVERGENCE: identity names the credential | `a_streaming_key_admits_the_presentation_bot` |
 | `GET /scene-stream-access` | `list-scene-stream-access-handler.ts:62-80` | `G/streaming.rs:185-192` | MATCH, except no 404 on expiry and `ends_at` forced to `created_at + 4d` (MV-9) | `C/tests/gatekeeper_policy.rs` (PostgreSQL) |
 | `POST /scene-stream-access` | `add-…:80-130` | `G/streaming.rs:193-216,295-371` | MATCH | `C/tests/gatekeeper_policy.rs`; `canonical_rooms_tests.rs` |
 | `PUT /scene-stream-access` | `reset-…:86-150` | `G/streaming.rs:373-398` | MATCH, except 409/404 wrapped as 500 (MV-9) | `C/tests/gatekeeper_policy.rs` |
@@ -63,8 +64,29 @@ Cast publishes into the scene's own LiveKit room, the one `/get-scene-adapter` h
 | Platform bans on stream access (0a6b095) | `add-…:51-59` | `G/streaming.rs:131-136,225-247` | MATCH | `C/comms/src/gatekeeper/streaming.rs` tests |
 | Ingress webhooks, 4 h TTL, stale-flag reconcile (cdd006c), key expiry deadline (1e7d0f2), notifications | `adapters/streaming-ttl-checker.ts`, `streaming-key-ttl-checker.ts` | `G/streaming.rs:422-446`; `G/streaming_jobs.rs:28-60,239,278-326` (leased jobs, durable cleanup queue); `G/streaming_notifications.rs:12-60` | MATCH | `G/streaming_jobs.rs` tests |
 
-No ADR records Cast as out of scope. The 501 is stated in `G/streaming.rs:14-15,50-51` and
-`C/docs/comms/comms-crate.md:33` only.
+Cast differences from upstream (each pinned by a test in `G/cast_tests.rs`):
+
+- Publisher identities name the credential that minted them (`stream:<place>:<access id>:<uuid>`,
+  `presentation-bot:<room>:<access id>:<uuid>`). Revoking or replacing a key removes its WebRTC
+  publishers from the room, and the `participant_joined` webhook removes one that joins later with a
+  token of a revoked key. Upstream only deletes the RTMP ingress.
+- A replacement (expiry renewal or reset) stores the new credential in the transaction that
+  deactivates the old one: a failure keeps the old key in force, so a reset that fails leaves the key
+  it meant to replace working until the admin retries or revokes. A reset intent whose replacement
+  is still missing after an hour is delivered as a revocation.
+- `presenters` keeps at most 32 streamer ids of a place, written in one read-modify-write: ids whose
+  token expired unused go first, then the oldest not in the room. A streamer that leaves the room
+  leaves it, except the old session of a full reconnect, and one that rejoins with a live credential
+  is added back. Upstream appends one per streamer token.
+- A display name loses controls and Unicode default-ignorable characters and is NFKC-normalized. A
+  name that reads as another wallet's address (full or `0x1234…abcd`, through common Cyrillic and
+  Greek lookalikes) or as another viewer's `Guest#` default becomes `Guest#<last 4>` (watcher) or
+  `Streamer`, and so does a blank one. Lookalikes outside that fold are not caught.
+- A watcher token checks a world's access policy (allow-list, password, NFT, bans), carries the
+  viewer's wallet (`dcl.castWatcher`) and, in a world, the authorization proof a scene join carries,
+  so the ban and world access sweeps reach watchers already in the room.
+- Joining scene admins become presenters only in rooms with an active credential, off the join's
+  response, at most 8 lookups at once and one per room and wallet a minute.
 
 ## Voice
 
@@ -100,30 +122,25 @@ the mic, hanging up, raising a hand, promoting, demoting, kicking and ending a s
   (`B/crates/livestream_manager/src/plugin.rs:345-400`, `B/crates/av/src/video_player.rs:151`).
 - It publishes only the microphone (`B/crates/comms/src/livekit/mic.rs:706`); scene tokens allow only
   the microphone, as upstream. Screen sharing is meant to go through the Cast web app.
-- `apps/sites` `/landings/cast-stream` simulates the token and the screen share
-  (`apps/sites/src/features/social/cast-stream/machine.ts:140-175`); `sites` has no `livekit-client`.
-  `/landings/cast-watch` calls `GET /cast/stream-info/{location}` and `GET /cast/watcher-token/{location}`
-  (`apps/sites/src/data/lib/catalyst/landings/cast-watcher.server.ts:24-41`), which is not the upstream
-  contract (stream-info takes a key; watcher-token is a signed POST).
-- The Creator Hub Admin Toolkit Cast UI points at upstream production
-  (`apps/creator-hub/packages/asset-packs/src/admin-toolkit-ui/VideoControl/api.ts:11-16`).
+- `apps/sites` serves the streamer at `/cast/s/:token` and the watcher at `/cast/w/:location`
+  (`apps/sites/src/features/social/cast-live`), which join the room with `livekit-client` through
+  `GET /cast/stream-info/{streamingKey}`, `POST /cast/streamer-token` and the signed
+  `POST /cast/watcher-token` (`apps/sites/src/data/lib/catalyst/cast.ts`).
+- The Creator Hub Admin Toolkit (Cast, live stream, scene admins and bans) calls the realm's own
+  deployment: under a non-Decentraland realm's origin, `<origin>/comms-gatekeeper/...` and
+  `<origin>/cast-presenter-service/presentations`; on a `decentraland.org`, `.zone` or `.today`
+  realm, upstream's per-service hosts (`serviceUrl` in
+  `apps/creator-hub/packages/asset-packs/src/admin-toolkit-ui/fetch-utils.ts`).
 
 ## Backlog
 
 Ordered by what a meeting with screen sharing needs. Sizes: S small, M medium, L large.
 
-1. **MV-1: Cast core in the gatekeeper.** P0, M.
-   `generate-stream-link`, `stream-info/:key` and `streamer-token` (a `stream:` identity allowed every
-   source, added to `presenters`). The stream access table, ingress creation, admin decision and ban
-   gate already exist in `G/streaming.rs`.
-2. **MV-2: `POST /cast/watcher-token`.** P0, S. User-signed only, platform and scene bans, subscribe-only.
-3. **MV-3: A browser streamer and watcher.** P0, L. Wire `apps/sites` cast-stream and cast-watch to
-   `livekit-client` (screen, camera, publish; subscribe and render), and use the upstream contract.
-4. **MV-4: Presenters.** P1, S–M. `GET/PUT/DELETE /cast/presenters`, editing the metadata list without
-   clobbering it, and scene admins added as presenters on join.
-5. **MV-5: Presentation bot.** P1 for slides, M (L with the presenter service).
-   `POST /cast/presentation-bot-token` with `canUpdateOwnMetadata`, and host or port
-   `cast-presenter-service`.
+MV-1 to MV-4 (Cast routes, watcher token, the `apps/sites` streamer and watcher, presenters) and MV-11
+(the Admin Toolkit's base URLs) are done; see the Cast table and the client notes above.
+
+5. **MV-5: Presenter service.** P1 for slides, M–L. The presentation-bot token is served; host or port
+   `cast-presenter-service`, which publishes the slides.
 6. **MV-6: The Bevy client ignores a moderator mute.** P1, S. `sync_local`
    (`B/crates/comms/src/voice_chat/state.rs:738-754`) reads role and speaker but not `muted`; a speaker
    muted by a moderator keeps publishing. Upstream mute is metadata-only, so the client must enforce it.
@@ -136,5 +153,4 @@ Ordered by what a meeting with screen sharing needs. Sizes: S small, M medium, L
    `expiration_time`; PUT maps 409/404 instead of 500.
 10. **MV-10: Kick and end report success when LiveKit fails.** P2, S. Return an error or retry the
     removal; today the user may stay connected.
-11. **MV-11: Admin Toolkit base URLs.** P1, S. Make the gatekeeper and presenter bases configurable.
-12. **MV-12: HTTP-level tests for the bearer voice routes.** P2, M. Only the 401 shapes are captured.
+12. **MV-12: HTTP-level tests for the bearer voice routes.** P2, M. Only the 401 shapes are captured; those are replayed by `the_gatekeeper_answers_its_stateless_captures_as_production`.

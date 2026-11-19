@@ -57,19 +57,19 @@ describe('EventCard', () => {
   })
 
   describe('when it has a host', () => {
-    it('links the host to their profile beside the card link', () => {
-      setup({ creator: { name: 'Alice', profileHref: '/profile/alice' } })
+    it('links the host to their profile beside the card link in a day card', () => {
+      setup({ variant: 'day', creator: { name: 'Alice', profileHref: '/profile/alice' } })
       expect(screen.getByRole('link', { name: 'Alice' })).toHaveAttribute('href', '/profile/alice')
       expect(screen.getByText(/^by/)).toHaveTextContent('by Alice')
     })
 
-    it('shows the host face when there is one', () => {
-      const { container } = setup({ creator: { name: 'Alice', avatar: 'https://example.org/a.png' } })
+    it('shows the host face in a day card when there is one', () => {
+      const { container } = setup({ variant: 'day', creator: { name: 'Alice', avatar: 'https://example.org/a.png' } })
       expect(container.querySelector('img[src="https://example.org/a.png"]')).toHaveAttribute('alt', '')
     })
 
-    it('shows the initial, hidden from assistive technology, without a face', () => {
-      setup({ creator: { name: 'alice' } })
+    it('shows the initial in a day card, hidden from assistive technology, without a face', () => {
+      setup({ variant: 'day', creator: { name: 'alice' } })
       const initial = screen.getByText('A')
       expect(initial).toHaveAttribute('aria-hidden', 'true')
       expect(screen.queryByRole('link', { name: 'alice' })).toBeNull()
@@ -112,7 +112,7 @@ describe('EventCard', () => {
   })
 
   describe('when the image is missing or unsafe', () => {
-    it('keeps the compact cover box without an image', () => {
+    it('keeps the small cover box without an image', () => {
       const { container } = setup({ image: null })
       expect(container.querySelector('img')).toBeNull()
       expect(container.querySelector('.media')).not.toBeNull()
@@ -154,6 +154,78 @@ describe('EventCard', () => {
       expect(container.querySelector('.media')).not.toBeNull()
       expect(container.querySelector('img')).toBeNull()
     })
+  })
+})
+
+describe('EventCard small', () => {
+  it('is the default variant, with the text before the cover', () => {
+    const { container } = setup()
+    const card = screen.getByRole('article')
+    expect(card).toHaveClass('small')
+    expect(container.querySelector('.body')?.nextElementSibling).toHaveClass('media')
+    expect(screen.getByRole('heading', { level: 3 })).toHaveClass('smallTitle')
+  })
+
+  it('credits the host as muted plain text with no face, even with a profile', () => {
+    const { container } = setup({
+      creator: { name: 'Alice', avatar: 'https://example.org/a.png', profileHref: '/profile/alice' }
+    })
+    expect(container.querySelector('.smallBy')).toHaveTextContent('by Alice')
+    expect(screen.queryByRole('link', { name: 'Alice' })).toBeNull()
+    expect(container.querySelector('img[src="https://example.org/a.png"]')).toBeNull()
+  })
+
+  it('leaves the host row out without a host', () => {
+    const { container } = setup({ creator: undefined })
+    expect(container.querySelector('.smallBy')).toBeNull()
+  })
+
+  it('shows the time in a chip that a hover never folds away while the event is upcoming', () => {
+    const { container } = setup({ actions: <EventCardAction aria-label="Remind me" icon={<svg />} /> })
+    const chip = screen.getByText('Tomorrow at noon').closest('p')
+    expect(chip).toHaveClass('smallTime')
+    expect(chip?.closest('.reveal')).not.toHaveClass('hideOnHover')
+    expect(container.querySelector('.smallBy')).toBeNull()
+  })
+
+  it('opens a row of actions under the time on hover', () => {
+    setup({ actions: <EventCardAction aria-label="Remind me" icon={<svg />} /> })
+    const row = screen.getByRole('button', { name: 'Remind me' }).closest('.reveal')
+    expect(row).toHaveClass('showOnHover')
+    expect(screen.getByRole('article')).toHaveClass('hasActions')
+  })
+
+  it('has no action row without actions', () => {
+    const { container } = setup({ actions: undefined })
+    expect(container.querySelector('.showOnHover')).toBeNull()
+    expect(screen.getByRole('article')).not.toHaveClass('hasActions')
+  })
+
+  it('marks a live event, folds its time away on hover and names LIVE behind its glyph', () => {
+    const { container } = setup({ live: true, players: 16, playersLabel: '16 online' })
+    expect(screen.getByRole('article')).toHaveClass('isLive')
+    expect(screen.getByText('LIVE')).toHaveClass('liveLabel')
+    expect(screen.getByText('16 online')).toBeInTheDocument()
+    expect(screen.getByText('Tomorrow at noon').closest('.reveal')).toHaveClass('hideOnHover')
+    expect(container.querySelector('.live svg')).toHaveClass('liveIcon')
+  })
+
+  it('shows no count for a live event whose count is unknown', () => {
+    const { container } = setup({ live: true })
+    expect(screen.getByText('LIVE')).toBeInTheDocument()
+    expect(container.querySelector('.players')).toBeNull()
+  })
+
+  it('keeps the live badges over an empty cover', () => {
+    const { container } = setup({ live: true, image: null })
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('.media .badges')).not.toBeNull()
+  })
+
+  it('renders without a time', () => {
+    const { container } = setup({ time: undefined })
+    expect(container.querySelector('time')).toBeNull()
+    expect(screen.getByRole('heading', { name: 'Poker Night' })).toBeInTheDocument()
   })
 })
 
@@ -219,8 +291,10 @@ describe('EventCardActionLink', () => {
 // Vitest runs from library/ui (its config's root), where jsdom gives no file URL for this module.
 const css = readFileSync(join(process.cwd(), 'components/EventCard/EventCard.module.css'), 'utf8')
 const blockOf = (source: string, selector: string): string => {
-  const start = source.indexOf(`${selector} {`)
-  if (start < 0) throw new Error(`no rule ${selector}`)
+  // The rule starts a line, so `.actions` does not find `.small .actions`.
+  const match = new RegExp(`\\n *${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{`).exec(source)
+  if (!match) throw new Error(`no rule ${selector}`)
+  const start = match.index + 1
   return source.slice(start, source.indexOf('}', start))
 }
 const mediaOf = (query: string): string => {
@@ -240,37 +314,37 @@ describe('EventCard motion', () => {
     expect(lifted).toContain('box-shadow: 0 2px 12px 12px')
   })
 
-  it('fades the time out and the actions up 8px into its place', () => {
-    expect(blockOf(hover, '.hasActions .time')).toContain('transition: opacity 200ms')
-    expect(blockOf(hover, '.hasActions:hover .time,\n    .hasActions:focus-within .time')).toContain(
+  it("fades a day card's time out and its actions up 8px into its place", () => {
+    expect(blockOf(hover, '.day.hasActions .time')).toContain('transition: opacity 200ms')
+    expect(blockOf(hover, '.day.hasActions:hover .time,\n    .day.hasActions:focus-within .time')).toContain(
       'opacity: 0'
     )
-    const rest = blockOf(hover, '.hasActions .actions')
+    const rest = blockOf(hover, '.day.hasActions .actions')
     expect(rest).toContain('opacity: 0')
     expect(rest).toContain('transform: translateY(8px)')
     expect(rest).toMatch(/transition:\s*opacity 200ms,\s*transform 200ms/)
-    const shown = blockOf(hover, '.hasActions:hover .actions,\n    .hasActions:focus-within .actions')
+    const shown = blockOf(hover, '.day.hasActions:hover .actions,\n    .day.hasActions:focus-within .actions')
     expect(shown).toContain('opacity: 1')
     expect(shown).toContain('transform: translateY(0)')
   })
 
-  it('hides the waiting actions by opacity only, so they stay in the accessibility tree', () => {
+  it('hides the waiting actions without removing them, so they stay in the accessibility tree', () => {
     expect(hover).not.toMatch(/visibility:\s*hidden|display:\s*none/)
-    expect(blockOf(hover, '.hasActions .action')).toContain('pointer-events: none')
-    expect(blockOf(hover, '.hasActions:hover .action,\n    .hasActions:focus-within .action')).toContain(
+    expect(blockOf(hover, '.day.hasActions .action')).toContain('pointer-events: none')
+    expect(blockOf(hover, '.day.hasActions:hover .action,\n    .day.hasActions:focus-within .action')).toContain(
       'pointer-events: auto'
     )
   })
 
   it('shows every state at once, in place, under reduced motion', () => {
     const reduced = mediaOf('(prefers-reduced-motion: reduce)')
-    expect(blockOf(reduced, '.card,\n    .hasActions .time,\n    .hasActions .actions')).toContain(
+    expect(blockOf(reduced, '.card,\n    .day.hasActions .time,\n    .day.hasActions .actions,\n    .reveal')).toContain(
       'transition: none'
     )
     expect(
       blockOf(
         reduced,
-        '.card:hover,\n    .card:focus-within,\n    .hasActions .actions,\n    .hasActions:hover .actions,\n    .hasActions:focus-within .actions'
+        '.card:hover,\n    .card:focus-within,\n    .day.hasActions .actions,\n    .day.hasActions:hover .actions,\n    .day.hasActions:focus-within .actions,\n    .showOnHover'
       )
     ).toContain('transform: none')
   })
@@ -280,11 +354,42 @@ describe('EventCard motion', () => {
     expect(blockOf(css, '.actions')).not.toMatch(/opacity|transform|position/)
     expect(blockOf(css, '.footer')).toContain('flex-direction: column')
     expect(blockOf(css, '.action')).toMatch(/width: 44px;\s*height: 44px/)
-    expect(mediaOf('(hover: none), (max-width: 767px)')).toContain('min-height: 176px')
+    expect(blockOf(css, '.small .action')).not.toMatch(/width|height/)
+    expect(blockOf(css, '.small .media')).toMatch(/width: 135px;\s*height: 135px/)
+    // The small card's folding rows exist only for a device that hovers.
+    expect(blockOf(css, '.small .body')).not.toMatch(/grid-template-rows/)
+    const outsideHover = css
+      .replace(mediaOf('(hover: hover) and (min-width: 768px)'), '')
+      .replace(mediaOf('(prefers-reduced-motion: reduce)'), '')
+    expect(outsideHover).not.toMatch(/\n\s*\.(showOnHover|reveal) \{/)
   })
 
-  it('drops an action label in a compact card narrower than 400px', () => {
-    const narrow = css.slice(css.indexOf('@container (max-width: 399px) {'))
-    expect(blockOf(narrow, '.compact .actionLabel')).toContain('display: none')
+  it("folds a small card's host and opens its 32px actions row together over 200ms", () => {
+    expect(blockOf(hover, '.small .action')).toMatch(/width: 32px;\s*height: 32px/)
+    // A row never grows past the text column, so a long time ends in an ellipsis beside the cover.
+    expect(blockOf(hover, '.reveal')).toContain('grid-template-columns: minmax(0, 1fr)')
+    expect(blockOf(hover, '.reveal')).toMatch(
+      /transition:\s*grid-template-rows 200ms,\s*opacity 200ms,\s*transform 200ms/
+    )
+    const waiting = blockOf(hover, '.showOnHover')
+    expect(waiting).toContain('grid-template-rows: 0fr')
+    expect(waiting).toContain('opacity: 0')
+    expect(waiting).toContain('transform: translateY(8px)')
+    const shown = blockOf(hover, '.hasActions:hover .showOnHover,\n    .hasActions:focus-within .showOnHover')
+    expect(shown).toContain('grid-template-rows: 1fr')
+    expect(shown).toContain('opacity: 1')
+    const folded = blockOf(
+      hover,
+      '.hasActions:hover .hideOnHover,\n    .hasActions:focus-within .hideOnHover'
+    )
+    expect(folded).toContain('grid-template-rows: 0fr')
+    expect(folded).toContain('opacity: 0')
+  })
+
+  it('marks a live small card with its surface and a 5px live bar', () => {
+    expect(blockOf(css, '.small.isLive')).toContain('#680d4a')
+    const bar = blockOf(css, '.small.isLive::before')
+    expect(bar).toContain('width: 5px')
+    expect(bar).toContain('background: var(--dcl-system-red)')
   })
 })

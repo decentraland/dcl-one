@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 from hud_manifest_fixture import seal, SHARED
@@ -28,6 +29,39 @@ def producers(outcome='success'):
 
 
 class WorkflowTest(unittest.TestCase):
+
+    def test_avatar_preview_boot_contract_is_selected_for_its_inputs(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text()
+        patterns = re.findall(r"^ +- '?([^'\n]+)'?$", workflow, re.M)
+        for path in (
+            'rendering/avatar-preview/web/preview.js',
+            'rendering/avatar-preview/build.sh',
+            'rendering/avatar-preview/tools/preview-packaging.test.mjs',
+            'rendering/avatar-preview/Cargo.toml',
+            'rendering/bevy-explorer/source/Cargo.toml',
+            'rendering/avatar-preview/tools/preview-boot.test.mjs',
+            'rendering/bevy-explorer/source/deploy/web/engine/content_cache.js',
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns))
+        source = workflow.split('\n  source:\n', 1)[1].split('\n  changes:\n', 1)[0]
+        self.assertIn(
+            'run: node --experimental-vm-modules --test rendering/avatar-preview/tools/preview-*.test.mjs',
+            source,
+        )
+
+    def test_preview_patches_match_the_explorer_pins(self):
+        preview = tomllib.loads((ci.ROOT / 'rendering/avatar-preview/Cargo.toml').read_text())
+        explorer = tomllib.loads((ci.ROOT / 'rendering/bevy-explorer/source/Cargo.toml').read_text())
+        for source, crates in preview['patch'].items():
+            for name, pin in crates.items():
+                with self.subTest(source=source, crate=name):
+                    expected = explorer['patch'][source][name]
+                    self.assertEqual(
+                        (pin.get('git'), pin.get('rev')),
+                        (expected.get('git'), expected.get('rev')),
+                    )
+
     @staticmethod
     def upstream_commit_cache(job):
         """The key command of a job that restores the upstream commits, and the directory, key and fallback of the restore."""
@@ -210,10 +244,22 @@ class WorkflowTest(unittest.TestCase):
         self.assertNotIn('--remote', job)
         self.assertNotIn('--check', job)
 
-    def test_only_the_test_suite_rebuilds_a_tree_and_only_the_bevy_one(self):
+    def test_only_the_test_suite_and_clippy_rebuild_a_tree_and_only_the_bevy_one(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
         jobs = dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)', workflow.split('\njobs:\n', 1)[1]))
-        self.assertEqual([name for name, job in jobs.items() if 'materialise' in job], ['test'])
+        self.assertEqual([name for name, job in jobs.items() if 'materialise' in job], ['test', 'clippy'])
+        # Clippy compiles `common`'s tests, which include a shader of the Bevy tree.
+        clippy = jobs['clippy']
+        self.assertIn('        run: python3 "$GITHUB_WORKSPACE/tooling/patched-sources.py" materialise bevy\n', clippy)
+        # Written before the file times are restored, so an unchanged tree keeps its cached times.
+        self.assertLess(clippy.index('patched-sources.py" materialise bevy'), clippy.index('bevy-mtimes.py" restore'))
+        # It reads the same cache as the Test Suite: the key from the root, restored before the rebuild.
+        self.assertIn('        id: bases\n        working-directory: .\n', clippy)
+        self.assertIn('        env:\n'
+                      '          DCL_PATCHED_SOURCES_CACHE: ${{ github.workspace }}/.cache/patched-sources\n'
+                      '        run: python3 "$GITHUB_WORKSPACE/tooling/patched-sources.py" materialise bevy\n', clippy)
+        self.assertLess(clippy.index('actions/cache/restore@', clippy.index('- name: Restore the upstream commits\n')),
+                        clippy.index('patched-sources.py" materialise bevy'))
         job = jobs['test']
         python, rebuild, tests = (job.index(step) for step in (
             "python-version: '3.12'\n", 'run: python "$GITHUB_WORKSPACE/tooling/patched-sources.py" materialise bevy\n',
@@ -225,6 +271,7 @@ class WorkflowTest(unittest.TestCase):
         # and directory, read where the tool looks, on each system of the matrix.
         daily = (ci.ROOT / '.github/workflows/bevy-explorer-upstream.yml').read_text()
         self.assertEqual(self.upstream_commit_cache(job), self.upstream_commit_cache(daily))
+        self.assertEqual(self.upstream_commit_cache(jobs['clippy']), self.upstream_commit_cache(daily))
         restore = job.index('actions/cache/restore@', job.index('- name: Restore the upstream commits\n'))
         self.assertLess(restore, rebuild)
         step = job[job.rfind('- name:', 0, restore):job.rfind('- name:', 0, rebuild)]
@@ -237,7 +284,7 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn('        id: bases\n        working-directory: .\n', job)
         # Only the daily run saves the directory: each step of this workflow that names it restores it.
         self.assertEqual(re.findall(r'uses: (actions/cache\S*)@\S+ # v[\d.]+\n +with:\n +path: \.cache/patched-sources\n', workflow),
-                         ['actions/cache/restore'] * 2)
+                         ['actions/cache/restore'] * 3)
         # The rebuilt workspace has no lock file: it starts from the explorer's.
         self.assertIn('          cp Cargo.lock ../bevy/Cargo.lock\n          cargo test --manifest-path ../bevy/Cargo.toml ', job[tests:])
 
@@ -1095,11 +1142,12 @@ class SelectionTest(unittest.TestCase):
 
     def test_a_bevy_patch_and_the_patch_tool_select_the_test_suite_on_each_system(self):
         # The Test Suite rebuilds the Bevy tree from its series with the tool and tests its crates on
-        # each system. Every build takes a patched source by the revision that Cargo.lock names, so
-        # no other job and no image reads a series or the tool.
-        cases = (('rendering/bevy-explorer/patches/bevy/series/0001-scene-spawner.patch', {'test', 'native-matrix'}),
-                 ('rendering/bevy-explorer/patches/bevy/source.toml', {'test', 'native-matrix'}),
-                 ('tooling/patched-sources.py', {'test', 'native-matrix'}),
+        # each system; Clippy rebuilds it for a shader that `common`'s tests include. Every build takes
+        # a patched source by the revision that Cargo.lock names, so no other job and no image reads a
+        # series or the tool.
+        cases = (('rendering/bevy-explorer/patches/bevy/series/0001-scene-spawner.patch', {'test', 'clippy', 'native-matrix'}),
+                 ('rendering/bevy-explorer/patches/bevy/source.toml', {'test', 'clippy', 'native-matrix'}),
+                 ('tooling/patched-sources.py', {'test', 'clippy', 'native-matrix'}),
                  ('rendering/bevy-explorer/patches/winit/series/0001-one.patch', set()))
         for path, expected in cases:
             with self.subTest(path=path):

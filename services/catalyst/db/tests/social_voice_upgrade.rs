@@ -8,7 +8,7 @@ use sqlx::{
 };
 const STEP: &str = "0020_social_voice_notifications";
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 27] = [
+const PREPARED_PENDING_STEPS: [&str; 29] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -35,7 +35,9 @@ const PREPARED_PENDING_STEPS: [&str; 27] = [
     "0045_camera_reel_original_filename",
     "0046_player_report_evidence_source_key",
     "0047_shop_sale_notification_producers",
+    "0048_broker_purchases_write_ahead",
     "0049_land_authz_cursor_block_hash",
+    "0050_explore_poster_avif",
 ];
 const PREPARED_V2: &str = include_str!(concat!(
     env!("DCL_ONE_ROOT"),

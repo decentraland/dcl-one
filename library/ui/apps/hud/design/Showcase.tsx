@@ -2,6 +2,7 @@
 // the Explorer 2.0 Figma. Open with ?showcase=1. Add every new primitive here.
 
 import { Button } from './Button'
+import { ArmedButton, ARM_MS } from './ArmedButton'
 import { LogoPattern } from './LogoPattern'
 import { SubmitField } from './SubmitField'
 import { CodeInput } from './CodeInput'
@@ -29,6 +30,7 @@ import { KebabMenu } from './KebabMenu'
 import { HintsButton, KeyCap } from './HintsButton'
 import { useRef, useState } from 'react'
 import { ControlButton } from './ControlButton'
+import { showToast, ToastHost } from './Toast'
 import { Tooltip } from './Tooltip'
 import { Toggle } from './Toggle'
 import { Slider } from './Slider'
@@ -39,6 +41,7 @@ import { Bag, Close, People, Pin, VerifiedBadge } from './Glyphs'
 import { TextArea } from './TextArea'
 import { DateField } from './DateField'
 import { Panel } from './Panel'
+import { MenuPanel, MenuList, MenuRow, MenuDivider } from './MenuPanel'
 import { DclLogo } from './DclLogo'
 import { Avatar } from './Avatar'
 import { WearableCard, type Rarity } from './WearableCard'
@@ -269,6 +272,10 @@ export function Showcase(): React.JSX.Element {
         </div>
       </Section>
 
+      <Section title="ArmedButton (a confirm that spends or gives away what can't be taken back: SEND GIFT, SEND TIP, BUY ITEM)">
+        <ArmedShowcase />
+      </Section>
+
       <Section title="Button (start: the sign-in screens' CTA)">
         <div style={{ ...row, background: 'var(--loading-vignette)', padding: 16 }}>
           <Button size="start" style={{ width: 300 }}>Play as guest</Button>
@@ -288,7 +295,7 @@ export function Showcase(): React.JSX.Element {
 
       <Section title="Button (bare: a translucent fill, sized by the caller)">
         <div style={row}>
-          {(['scrim', 'faint', 'veil', 'glass', 'shade', 'primary', 'clear'] as const).map((variant) => (
+          {(['scrim', 'faint', 'veil', 'glass', 'shade', 'primary', 'clear', 'navigate', 'navigateExit'] as const).map((variant) => (
             <Button key={variant} size="bare" variant={variant} style={{ height: 46, padding: '0 20px' }}>
               {variant}
             </Button>
@@ -429,6 +436,10 @@ export function Showcase(): React.JSX.Element {
             <Slider value={vol} onChange={setVol} aria-label="Volume" />
             <span style={{ fontSize: 13, color: 'var(--ink-45)', width: 32 }}>{vol}</span>
           </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, height: 28 }}>
+            <span style={{ fontSize: 14, width: 60 }}>Rail</span>
+            <Slider variant="rail" value={vol} onChange={setVol} aria-label="Volume (navigation popover)" />
+          </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <span style={{ fontSize: 14 }}>Display name</span>
             <TextInput value={name} onChange={setName} placeholder="Your name" maxLength={15} />
@@ -490,13 +501,13 @@ export function Showcase(): React.JSX.Element {
       <Section title="DPI · HUD scale (Unity CanvasScaler)">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 560 }}>
           <p style={{ fontSize: 13, color: 'var(--ink-7)', margin: 0, lineHeight: 1.5 }}>
-            The HUD scales with viewport height against a 1080 reference, clamped 0.6–1.3 — the same
+            The HUD scales by the smaller of width ÷ 1920 and height ÷ 1080, with no clamp — the same
             curve as Unity&apos;s “Scale With Screen Size”. <code>innerHeight</code> is logical px
             (device px ÷ DPR), so a Retina panel scales identically to Unity on the same display.
           </p>
           <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
             {['720', '900', '1080', '1440'].map((h) => {
-              const s = Math.min(1.3, Math.max(0.6, Number(h) / 1080))
+              const s = Number(h) / 1080
               const sel = h === res
               return (
                 <div key={h} style={{ textAlign: 'center' }}>
@@ -525,13 +536,26 @@ export function Showcase(): React.JSX.Element {
             })}
           </div>
           <div style={{ fontSize: 12, color: 'var(--ink-45)', fontFamily: 'var(--font-mono)' }}>
-            Live viewport: {window.innerHeight}px → ×{Math.min(1.3, Math.max(0.6, window.innerHeight / 1080)).toFixed(3)}
+            Live viewport: {window.innerWidth}×{window.innerHeight}px → ×{Math.min(window.innerWidth / 1920, window.innerHeight / 1080).toFixed(3)}
           </div>
         </div>
       </Section>
 
-      <Section title="IconButton (sidebar rail)">
-        <Panel style={{ width: 60, padding: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <Section title="MenuPanel (a navigation button's panel)">
+        <MenuPanel label="Discover" title="DISCOVER">
+          <MenuList>
+            <MenuRow icon={<Icon name="events" size={24} />} label="Events" hint="X" trailing={<CountBadge count={3} />} />
+            <MenuRow icon={<Icon name="places" size={24} />} label="Places" hint="Z" />
+          </MenuList>
+          <MenuDivider />
+          <MenuList>
+            <MenuRow icon={<Icon name="communities" size={24} />} label="Communities" hint="O" disabled />
+          </MenuList>
+        </MenuPanel>
+      </Section>
+
+      <Section title="IconButton (navigation bar)">
+        <Panel style={{ width: 60, padding: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
           {NAV.map((n, i) => (
             <IconButton key={n.icon} icon={n.icon} label={n.label} active={i === 8} badge={i === 1 ? 3 : undefined} />
           ))}
@@ -695,6 +719,14 @@ export function Showcase(): React.JSX.Element {
         </div>
       </Section>
 
+      <Section title="WearableCard pick (gift picker)">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, 136px)', gap: 10 }}>
+          <WearableCard pick rarity="epic" count={3} />
+          <WearableCard pick rarity="rare" selected />
+          <WearableCard pick rarity="common" coverNote="Equipped" />
+        </div>
+      </Section>
+
       <Section title="EquippedItemCard (passport)">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 108px)', gap: 12 }}>
           {(['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'unique', 'exotic', 'base'] as Rarity[]).map((r, i) => (
@@ -728,6 +760,33 @@ export function Showcase(): React.JSX.Element {
         <ShowcaseRowScroller />
       </Section>
 
+      <Section title="Toast (plain · error · keyed progress · action + dismiss)">
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Button variant="secondary" size="sm" onClick={() => showToast('User Mojito has been successfully blocked.')}>
+            Plain
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => showToast('Something went wrong.', { tone: 'error' })}>
+            Error
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              let done = 0
+              const tick = (): void => {
+                done += 1
+                showToast(`Optimizing textures… ${done} / 5`, { key: 'showcase-progress', duration: null, busy: true })
+                if (done < 5) setTimeout(tick, 500)
+                else showToast('Textures optimized · 4.2 MB → 1.1 MB — Reload to see them', { key: 'showcase-progress', duration: null, dismissible: true, action: { label: 'Reload', ariaLabel: 'Reload the scene', onClick: () => undefined } })
+              }
+              tick()
+            }}
+          >
+            Keyed progress → action
+          </Button>
+        </div>
+        <ToastHost />
+      </Section>
       <Section title="Chat components">
         <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           <div style={{ width: 300, display: 'flex', flexDirection: 'column', gap: 8, padding: 12, background: 'rgba(19,19,19,0.6)', borderRadius: 14 }}>
@@ -772,6 +831,25 @@ function ShowcaseRowScroller(): React.JSX.Element {
         ))}
       </div>
       <ScrollThumb target={ref} length={80} axis="x" className={undefined} />
+    </div>
+  )
+}
+
+/** ArmedButton mounted again by SHOW AGAIN, so its wait can be tried: a press before ARM_MS counts nothing. */
+function ArmedShowcase(): React.JSX.Element {
+  const [shown, setShown] = useState(0)
+  const [sent, setSent] = useState(0)
+  return (
+    <div style={row}>
+      <Button variant="secondary" onClick={() => setShown((n) => n + 1)}>
+        SHOW AGAIN
+      </Button>
+      <ArmedButton key={shown} onClick={() => setSent((n) => n + 1)}>
+        SEND GIFT
+      </ArmedButton>
+      <span>
+        Sent {sent} · answers {ARM_MS} ms after it appears
+      </span>
     </div>
   )
 }

@@ -1,16 +1,18 @@
 import React, { useMemo } from 'react';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
-import InfoIcon from '@mui/icons-material/InfoOutlined';
-import { Typography } from 'decentraland-ui2';
-import { Button as ButtonText } from 'decentraland-ui2';
+import Text from '@ui/atoms/Text';
+
+import {
+  CheckCircleIcon,
+  OpenInNewIcon,
+  InfoOutlinedIcon as InfoIcon,
+} from '@ui/atoms/icons-material';
 import { t } from '/@/modules/store/translation/utils';
 import type { WorldsWalletStats } from '/@/lib/worlds';
 import { formatSize } from '/@/modules/file';
 import { getMbsFromAccountHoldings, type AccountHoldings } from '/@/lib/account';
 import { analytics, misc } from '#preload';
 import { Modal } from '..';
-import { Button } from '../../Button';
+import Button from '@ui/atoms/Button';
 import './styles.css';
 
 type Props = {
@@ -35,6 +37,8 @@ const LinkButton = ({
   trackingAction: string;
 }) => (
   <Button
+    variant="text"
+    className="hub-button hub-button--primary"
     endIcon={<OpenInNewIcon />}
     onClick={() => {
       analytics.track('Worlds Your Storage Modal Action', { action: trackingAction });
@@ -60,12 +64,12 @@ const WorldsYourStorageModal: React.FC<Props> = React.memo(
         size="small"
         className="WorldsYourStorageModal"
       >
-        <Typography className="TotalStorage">
+        <Text className="TotalStorage">
           <span>{t('modal.worlds_storage.total_available_storage')}</span>
           <span className="Mbs">
             {formatSize(Number(stats.maxAllowedSpace) - Number(stats.usedSpace))}
           </span>
-        </Typography>
+        </Text>
         <div className="Asset">
           <div className="Texts">
             <span className="Name">{t('modal.worlds_storage.mana')}</span>
@@ -128,10 +132,11 @@ const WorldsYourStorageModal: React.FC<Props> = React.memo(
             trackingAction="Click Buy NAME"
           />
         </div>
-        <Typography className="Proposal">
+        <Text className="Proposal">
           <InfoIcon className="InfoIcon" />
           <span>{t('modal.worlds_storage.proposal')}</span>{' '}
-          <ButtonText
+          <Button
+            className="LearnMore"
             variant="text"
             onClick={() => {
               analytics.track('Worlds Your Storage Modal Action', { action: 'Click Learn More' });
@@ -139,8 +144,8 @@ const WorldsYourStorageModal: React.FC<Props> = React.memo(
             }}
           >
             {t('modal.worlds_storage.learn_more')}
-          </ButtonText>
-        </Typography>
+          </Button>
+        </Text>
       </Modal>
     );
   },

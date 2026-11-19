@@ -1,6 +1,6 @@
 import { platform } from 'node:process';
 import path from 'node:path';
-import { app } from 'electron';
+import { app, systemPreferences } from 'electron';
 import {
   init as sentryInit,
   captureException,
@@ -34,6 +34,7 @@ import { stopExplorerGateway } from '/@/modules/explorer-gateway';
 import { runMigrations } from '/@/modules/migrations';
 import { getAnalytics, track, trackLifecycleEvent } from './modules/analytics';
 import { handleAppArguments } from './modules/app-args-handle';
+import { registerAppImageProtocolClient, runningAppImage } from './modules/appimage';
 import {
   DEEPLINK_PROTOCOL,
   flushPendingDeeplink,
@@ -84,18 +85,29 @@ app.on('second-instance', async (_e: unknown, argv: string[]) => {
   handleAppArguments(argv);
 });
 
+// macOS adds its own "Enter Full Screen" to a View menu, next to the "Toggle Full Screen" of
+// Electron's default menu.
+if (platform === 'darwin') {
+  systemPreferences.setUserDefault('NSFullScreenMenuItemEverywhere', 'boolean', false);
+}
+
 /**
  * Register the app as the handler for the deeplink scheme.
  * In development the executable is Electron itself, so the path to the app entry
  * point must be passed explicitly for the registration to resolve correctly.
  */
 if (shouldRegisterProtocolClient(!!process.defaultApp, platform)) {
+  const appImage =
+    platform === 'linux' ? runningAppImage(process.env, process.execPath) : undefined;
   if (process.defaultApp) {
     if (process.argv.length >= 2) {
       app.setAsDefaultProtocolClient(DEEPLINK_PROTOCOL, process.execPath, [
         path.resolve(process.argv[1]),
       ]);
     }
+  } else if (appImage) {
+    // Electron registers the desktop entry of an installed package, which an AppImage does not have.
+    registerAppImageProtocolClient(appImage, DEEPLINK_PROTOCOL);
   } else {
     app.setAsDefaultProtocolClient(DEEPLINK_PROTOCOL);
   }

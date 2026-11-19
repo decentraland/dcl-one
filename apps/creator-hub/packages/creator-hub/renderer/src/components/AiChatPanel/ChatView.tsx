@@ -1,35 +1,32 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import StopIcon from '@mui/icons-material/Stop';
-import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
-import AttachFileIcon from '@mui/icons-material/AttachFile';
-import ImageOutlinedIcon from '@mui/icons-material/ImageOutlined';
-import ViewInArOutlinedIcon from '@mui/icons-material/ViewInArOutlined';
-import AudiotrackIcon from '@mui/icons-material/Audiotrack';
-import InsertDriveFileOutlinedIcon from '@mui/icons-material/InsertDriveFileOutlined';
-import AddCommentOutlinedIcon from '@mui/icons-material/AddCommentOutlined';
-import CheckIcon from '@mui/icons-material/Check';
-import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
-import CloseIcon from '@mui/icons-material/Close';
-import RefreshIcon from '@mui/icons-material/Refresh';
-import UndoIcon from '@mui/icons-material/Undo';
-import HighlightAltIcon from '@mui/icons-material/HighlightAlt';
-import ContentCopyIcon from '@mui/icons-material/ContentCopy';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
-import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
-import type { Theme } from '@mui/material/styles';
-import Markdown, { type MarkdownToJSX } from 'markdown-to-jsx';
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Button,
-  CircularProgress,
-  Divider,
-  IconButton,
-  Menu,
-  MenuItem,
-  Select,
-  type SelectChangeEvent,
-  TextField,
-  Tooltip,
-} from 'decentraland-ui2';
+  StopIcon,
+  ArrowUpwardIcon,
+  AttachFileIcon,
+  ImageOutlinedIcon,
+  ViewInArOutlinedIcon,
+  AudiotrackIcon,
+  InsertDriveFileOutlinedIcon,
+  AddCommentOutlinedIcon,
+  CheckIcon,
+  KeyboardArrowDownIcon,
+  CloseIcon,
+  RefreshIcon,
+  UndoIcon,
+  HighlightAltIcon,
+  ContentCopyIcon,
+  OpenInNewIcon,
+  DeleteOutlineIcon,
+} from '@ui/atoms/icons-material';
+import { cx } from '/@/lib/cx';
+import Markdown, { type MarkdownToJSX } from 'markdown-to-jsx';
+import Button from '@ui/atoms/Button';
+import IconButton from '@ui/atoms/IconButton';
+import { Menu, MenuItem, MenuSeparator } from '@ui/atoms/Menu';
+import { Select, SelectOption } from '@ui/atoms/Select';
+import Spinner from '@ui/atoms/Spinner';
+import TextField from '@ui/atoms/TextField';
+import Tooltip from '@ui/atoms/Tooltip';
 
 import type { AiAssetMention, AiAttachment, AiAttachmentKind, AiProvider } from '/shared/types/ai';
 import {
@@ -48,61 +45,12 @@ import { WarningCircleIcon } from '../Icons';
 import { SignInCodeField } from '../SignInCodeField';
 import { toolChipLabel } from './labels';
 import {
-  AssistantBubble,
-  AssistantImage,
-  AssistantText,
-  AttachButton,
-  AttachmentBar,
-  AttachmentChip,
-  AttachmentName,
-  AttachmentRemove,
-  BillingBody,
-  BillingCard,
-  BillingTitle,
-  CommandLine,
-  Composer,
-  DropHint,
-  ErrorRow,
-  GuideLink,
-  HeaderActions,
-  HeaderTitle,
-  IntroMessage,
-  MenuSectionLabel,
-  OutdatedHint,
-  Panel,
-  PanelHeader,
-  PromptAnswer,
-  PromptBox,
-  PromptNote,
-  PromptOption,
-  PromptOptionDesc,
-  PromptOptions,
-  PromptOtherRow,
-  PromptQuestion,
-  ProviderHint,
-  ProviderOption,
-  ProviderValueHint,
-  SelectionBar,
-  SelectionNames,
-  SendButton,
-  SessionText,
-  SessionTitle,
-  SessionWhen,
-  SetupAlt,
-  SetupBox,
-  SetupDivider,
-  SetupStep,
-  SignInHintBody,
-  StopButton,
-  ThinkingRow,
-  Toolbar,
-  ToolbarPill,
-  ToolbarPillLabel,
-  ToolChip,
-  ToolDetail,
-  Transcript,
-  UserBubble,
-} from './component.styled';
+  SharingConsentCard,
+  SharingStatusChip,
+  TurnRating,
+  type SharingProps,
+} from './SharingConsent';
+import styles from './component.module.css';
 
 // Render assistant replies as markdown. Raw HTML is disabled so nothing the model emits
 // can inject markup, and links open in the default browser (the Electron security layer
@@ -111,24 +59,6 @@ const MARKDOWN_OPTIONS: MarkdownToJSX.Options = {
   disableParsingRawHTML: true,
   overrides: { a: { props: { target: '_blank', rel: 'noopener noreferrer' } } },
 };
-
-// Both toolbar dropdowns (the chat menu and the agent select) open below their trigger with a
-// 10px gap and share the same dark rounded paper + 12px option labels (#1619). `aiMenuSx` takes
-// extra paper styles so the chat menu can widen its paper on top of the shared chrome.
-const AI_MENU_ORIGIN = {
-  anchorOrigin: { vertical: 'bottom', horizontal: 'left' },
-  transformOrigin: { vertical: 'top', horizontal: 'left' },
-} as const;
-
-const aiMenuSx = (theme: Theme, paper?: Record<string, string | number>) => ({
-  '& .MuiPaper-root': {
-    backgroundColor: 'var(--ai-menu-bg)',
-    borderRadius: '12px',
-    marginTop: theme.spacing(1.25),
-    ...paper,
-  },
-  '& .MuiMenuItem-root': { fontSize: theme.typography.pxToRem(12) },
-});
 
 // Compact "last used" label for a session in the history menu.
 function formatWhen(ts: number): string {
@@ -243,20 +173,21 @@ function PromptBlock({
   };
 
   return (
-    <PromptBox>
-      <PromptQuestion>{prompt.question}</PromptQuestion>
+    <div className={styles.promptBox}>
+      <div className={styles.promptQuestion}>{prompt.question}</div>
       {answered ? (
-        <PromptAnswer>{prompt.answer}</PromptAnswer>
+        <div className={styles.promptAnswer}>{prompt.answer}</div>
       ) : (
         <>
           {prompt.options.length > 0 && (
-            <PromptOptions>
+            <div className={styles.promptOptions}>
               {prompt.options.map(o => (
-                <PromptOption
+                <button
+                  className={styles.promptOption}
                   key={o.label}
                   type="button"
                   disabled={disabled}
-                  selected={prompt.multiSelect && selected.has(o.label)}
+                  data-selected={(prompt.multiSelect && selected.has(o.label)) || undefined}
                   onClick={() => {
                     if (disabled) return;
                     if (prompt.multiSelect) toggle(o.label);
@@ -265,19 +196,20 @@ function PromptBlock({
                 >
                   <span>{o.label}</span>
                   {o.description !== undefined && o.description !== '' && (
-                    <PromptOptionDesc>{o.description}</PromptOptionDesc>
+                    <span className={styles.promptOptionDesc}>{o.description}</span>
                   )}
-                </PromptOption>
+                </button>
               ))}
-            </PromptOptions>
+            </div>
           )}
           {showOther && (
-            <PromptOtherRow>
+            <div className={styles.promptOtherRow}>
               <TextField
                 fullWidth
                 multiline
                 maxRows={4}
                 size="small"
+                className={styles.promptField}
                 placeholder={t('editor.ai.prompt.other_placeholder')}
                 value={other}
                 disabled={disabled}
@@ -290,37 +222,41 @@ function PromptBlock({
                 }}
               />
               {!prompt.multiSelect && (
-                <SendButton
+                <IconButton
+                  className={styles.sendButton}
                   aria-label={t('editor.ai.send')}
                   disabled={disabled || other.trim() === ''}
                   onClick={submitOther}
                 >
                   <ArrowUpwardIcon fontSize="small" />
-                </SendButton>
+                </IconButton>
               )}
-            </PromptOtherRow>
+            </div>
           )}
           {prompt.multiSelect && (
             <Button
-              color="primary"
-              size="small"
+              variant="text"
+              size="sm"
+              className={styles.textButton}
               disabled={disabled || (selected.size === 0 && other.trim() === '')}
               onClick={submitMulti}
             >
               {t('editor.ai.prompt.confirm')}
             </Button>
           )}
-          {prompt.dismissed === true && <PromptNote>{t('editor.ai.prompt.dismissed')}</PromptNote>}
+          {prompt.dismissed === true && (
+            <span className={styles.promptNote}>{t('editor.ai.prompt.dismissed')}</span>
+          )}
         </>
       )}
-    </PromptBox>
+    </div>
   );
 }
 
 // The pure chat surface, driven entirely by props. Both the inline panel (redux-backed)
 // and the detached window (mirror-backed) render this — neither reaches into a store from
 // here, so the same view works whichever owns the state (#1504).
-export interface ChatViewProps {
+export interface ChatViewProps extends SharingProps {
   providers: {
     id: AiProvider;
     label: string;
@@ -355,6 +291,8 @@ export interface ChatViewProps {
   onNewChat: () => void;
   onProviderChange: (provider: AiProvider) => void;
   onRevertTurn: (id: string, count: number) => void;
+  // Thumbs up or down on a shared reply (null clears it). Shown only on shared replies.
+  onRateTurn?: (id: string, rating: 'up' | 'down' | null) => void;
   // Answer an interactive `ask_user` prompt (unblocks the agent's waiting tool call).
   onAnswerPrompt: (id: string, answer: string) => void;
   onRecheck: () => void;
@@ -379,20 +317,19 @@ export interface ChatViewProps {
 
 function ClearMentionButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <Tooltip title={label}>
+    <Tooltip
+      label={label}
+      side="bottom"
+      portal
+      keepInViewport
+    >
       <IconButton
         size="small"
         aria-label={label}
+        className={styles.clearMention}
         onClick={onClick}
-        sx={{
-          flexShrink: 0,
-          padding: 0.25,
-          color: 'text.primary',
-          backgroundColor: 'action.hover',
-          '&:hover': { backgroundColor: 'action.selected' },
-        }}
       >
-        <CloseIcon sx={{ fontSize: 13 }} />
+        <CloseIcon className={styles.clearMentionIcon} />
       </IconButton>
     </Tooltip>
   );
@@ -418,6 +355,7 @@ export function ChatView(props: ChatViewProps) {
     onNewChat,
     onProviderChange,
     onRevertTurn,
+    onRateTurn,
     onAnswerPrompt,
     onRecheck,
     onDismissBilling,
@@ -429,6 +367,10 @@ export function ChatView(props: ChatViewProps) {
     onClose,
     draftPrompt,
     onDraftConsumed,
+    sharing,
+    onShareDecision,
+    onShareNotNow,
+    onSetConversationShared,
   } = props;
 
   const [input, setInput] = useState('');
@@ -458,6 +400,18 @@ export function ChatView(props: ChatViewProps) {
   // Anchor for the "New Chat" dropdown (new chat + recent sessions), replacing the old
   // full-panel history view.
   const [chatMenuAnchor, setChatMenuAnchor] = useState<null | HTMLElement>(null);
+  // Deletes a saved chat from its menu item and keeps the focus in the menu, on the next item
+  // or, after the last one, on the item before.
+  const deleteSessionByKey = (item: HTMLElement, id: string) => {
+    const items = Array.from(
+      item
+        .closest('[role="menu"]')
+        ?.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)') ?? [],
+    );
+    const at = items.indexOf(item);
+    (items[at + 1] ?? items[at - 1])?.focus();
+    onDeleteSession(id);
+  };
 
   // Saved conversations for the history menu (the current not-yet-used session isn't listed).
   const savedSessions = useMemo(() => sessions.filter(s => s.title !== ''), [sessions]);
@@ -476,13 +430,14 @@ export function ChatView(props: ChatViewProps) {
   const available = currentProvider?.available ?? false;
   const cmds = cliSetup(provider, navigator.userAgent.includes('Windows'));
   const guideLink = (
-    <GuideLink
+    <button
+      className={styles.guideLink}
       type="button"
       onClick={() => void misc.openExternal(cmds.guideUrl)}
     >
       {t('editor.ai.setup.install_guide', { provider: currentProvider?.label ?? provider })}
       <OpenInNewIcon fontSize="inherit" />
-    </GuideLink>
+    </button>
   );
 
   // In-app sign-in without a CLI (#1531): install the official CLI on demand + drive its
@@ -632,14 +587,9 @@ export function ChatView(props: ChatViewProps) {
     [addFiles],
   );
 
-  const handleProviderChange = useCallback(
-    (e: SelectChangeEvent) => onProviderChange(e.target.value as AiProvider),
-    [onProviderChange],
-  );
-
   const renderSetup = () => {
     return (
-      <SetupBox>
+      <div className={styles.setupBox}>
         <strong>{t('editor.ai.setup.title')}</strong>
         <span>{t('editor.ai.setup.description')}</span>
         {currentProvider?.desktopInstalled === true && (
@@ -649,10 +599,19 @@ export function ChatView(props: ChatViewProps) {
         {currentProvider?.managedSignIn === true && (
           <>
             <Button
-              color="primary"
-              size="small"
+              variant="text"
+              size="sm"
+              className={styles.textButton}
               disabled={signIn.busy}
-              startIcon={signIn.busy ? <CircularProgress size={16} /> : undefined}
+              startIcon={
+                signIn.busy ? (
+                  <Spinner
+                    ring="wide"
+                    size={16}
+                    role="progressbar"
+                  />
+                ) : undefined
+              }
               onClick={handleSignIn}
             >
               {t('editor.ai.setup.signin_button', {
@@ -662,61 +621,81 @@ export function ChatView(props: ChatViewProps) {
             {signIn.busy && signIn.message !== '' && <span>{signIn.message}</span>}
             {signIn.busy && (
               <Button
-                color="secondary"
-                size="small"
+                variant="text"
+                tone="neutral"
+                size="sm"
+                className={styles.textButton}
                 onClick={handleCancelSignIn}
               >
                 {t('editor.ai.setup.signin_cancel')}
               </Button>
             )}
             {signIn.url !== null && (
-              <SetupStep>
+              <div className={styles.setupStep}>
                 <span>{t('editor.ai.setup.signin_browser')}</span>
-                <CommandLine>{signIn.url}</CommandLine>
-              </SetupStep>
+                <pre className={styles.commandLine}>{signIn.url}</pre>
+              </div>
             )}
             {signIn.busy && signIn.url !== null && signIn.acceptsCode && (
               <SignInCodeField onSubmit={handleSubmitSignInCode} />
             )}
-            {signIn.error !== null && <ErrorRow>{signIn.error}</ErrorRow>}
-            <SetupDivider />
+            {signIn.error !== null && <div className={styles.errorRow}>{signIn.error}</div>}
+            <hr className={styles.setupDivider} />
           </>
         )}
         {currentProvider?.managedSignIn === true && (
           <span>{t('editor.ai.setup.manual_title')}</span>
         )}
-        <SetupStep>
+        <div className={styles.setupStep}>
           <span>{t('editor.ai.setup.install')}</span>
-          <CommandLine>{cmds.install}</CommandLine>
+          <pre className={styles.commandLine}>{cmds.install}</pre>
           {guideLink}
-        </SetupStep>
-        <SetupStep>
+        </div>
+        <div className={styles.setupStep}>
           <span>{t('editor.ai.setup.signin')}</span>
-          <CommandLine>{cmds.signin}</CommandLine>
-        </SetupStep>
+          <pre className={styles.commandLine}>{cmds.signin}</pre>
+        </div>
         <Button
-          color="secondary"
-          size="small"
-          startIcon={detecting ? <CircularProgress size={16} /> : <RefreshIcon />}
+          variant="text"
+          tone="neutral"
+          size="sm"
+          className={styles.textButton}
+          startIcon={
+            detecting ? (
+              <Spinner
+                ring="wide"
+                size={16}
+                role="progressbar"
+              />
+            ) : (
+              <RefreshIcon />
+            )
+          }
           disabled={detecting}
           onClick={onRecheck}
         >
           {t('editor.ai.setup.recheck')}
         </Button>
-        <SetupDivider />
-        <SetupAlt>
+        <hr className={styles.setupDivider} />
+        <div className={styles.setupAlt}>
           <strong>{t('editor.ai.setup.alt_title')}</strong>
           <span>{t('editor.ai.setup.alt_description')}</span>
           {mcpAccessOff ? (
             <span>{t('editor.ai.setup.alt_access_off')}</span>
           ) : mcpConfigSnippet === null ? (
-            <CircularProgress size={16} />
+            <Spinner
+              ring="wide"
+              size={16}
+              role="progressbar"
+            />
           ) : (
             <>
-              <CommandLine>{mcpConfigSnippet}</CommandLine>
+              <pre className={styles.commandLine}>{mcpConfigSnippet}</pre>
               <Button
-                color="secondary"
-                size="small"
+                variant="text"
+                tone="neutral"
+                size="sm"
+                className={styles.textButton}
                 startIcon={<ContentCopyIcon fontSize="small" />}
                 onClick={handleCopyMcpConfig}
               >
@@ -725,8 +704,8 @@ export function ChatView(props: ChatViewProps) {
               <span>{t('editor.ai.setup.alt_note')}</span>
             </>
           )}
-        </SetupAlt>
-      </SetupBox>
+        </div>
+      </div>
     );
   };
 
@@ -736,39 +715,63 @@ export function ChatView(props: ChatViewProps) {
     const lastId = messages[messages.length - 1]?.id;
     const transcript = messages.map(msg =>
       msg.role === 'user' ? (
-        <UserBubble key={msg.id}>
+        <div
+          className={styles.userBubble}
+          key={msg.id}
+        >
           {messageText(msg)}
           {msg.attachments !== undefined && msg.attachments.length > 0 && (
-            <AttachmentBar sx={{ mt: messageText(msg) !== '' ? 0.75 : 0, mb: 0 }}>
+            <div
+              className={styles.attachmentBar}
+              data-bubble={messageText(msg) !== '' ? 'spaced' : 'flush'}
+            >
               {msg.attachments.map((att, i) => (
-                <AttachmentChip key={`${att.name}-${i}`}>
+                <div
+                  className={styles.attachmentChip}
+                  key={`${att.name}-${i}`}
+                >
                   <AttachmentIcon kind={att.kind} />
-                  <AttachmentName title={att.name}>{att.name}</AttachmentName>
-                </AttachmentChip>
+                  <span
+                    className={styles.ellipsis}
+                    title={att.name}
+                  >
+                    {att.name}
+                  </span>
+                </div>
               ))}
-            </AttachmentBar>
+            </div>
           )}
-        </UserBubble>
+        </div>
       ) : (
-        <AssistantBubble key={msg.id}>
+        <div
+          className={styles.assistantBubble}
+          key={msg.id}
+        >
           {msg.parts.map((part, i) => {
             switch (part.kind) {
               case 'text':
                 return (
-                  <AssistantText key={i}>
+                  <div
+                    className={styles.assistantText}
+                    key={i}
+                  >
                     <Markdown options={MARKDOWN_OPTIONS}>{part.text}</Markdown>
-                  </AssistantText>
+                  </div>
                 );
               case 'tool':
                 return (
-                  <ToolChip key={i}>
+                  <div
+                    className={styles.toolChip}
+                    key={i}
+                  >
                     <span>{toolChipLabel(part.tool)}</span>
-                    {part.detail !== '' && <ToolDetail>{part.detail}</ToolDetail>}
-                  </ToolChip>
+                    {part.detail !== '' && <span className={styles.ellipsis}>{part.detail}</span>}
+                  </div>
                 );
               case 'image':
                 return (
-                  <AssistantImage
+                  <img
+                    className={styles.assistantImage}
                     key={i}
                     src={part.dataUrl}
                     alt={t('editor.ai.screenshot_alt')}
@@ -790,12 +793,14 @@ export function ChatView(props: ChatViewProps) {
             }
           })}
           {msg.error !== undefined && (
-            <ErrorRow>
+            <div className={styles.errorRow}>
               {msg.error}
               <div>
                 <Button
-                  color="secondary"
-                  size="small"
+                  variant="text"
+                  tone="neutral"
+                  size="sm"
+                  className={styles.textButton}
                   onClick={() => {
                     const lastUser = [...messages].reverse().find(m => m.role === 'user');
                     if (lastUser !== undefined) onSend(messageText(lastUser));
@@ -804,7 +809,7 @@ export function ChatView(props: ChatViewProps) {
                   {t('editor.ai.retry')}
                 </Button>
               </div>
-            </ErrorRow>
+            </div>
           )}
           {msg.id === lastId &&
             msg.done &&
@@ -812,45 +817,75 @@ export function ChatView(props: ChatViewProps) {
             (msg.mutations ?? 0) > 0 &&
             !msg.reverted && (
               <Button
-                color="secondary"
-                size="small"
+                variant="text"
+                tone="neutral"
+                size="sm"
+                className={styles.textButton}
                 startIcon={<UndoIcon fontSize="small" />}
                 onClick={() => onRevertTurn(msg.id, msg.mutations ?? 0)}
               >
                 {t('editor.ai.revert')}
               </Button>
             )}
-        </AssistantBubble>
+          {msg.done && (
+            <TurnRating
+              sharing={sharing}
+              recordId={msg.recordId}
+              rating={msg.rating}
+              onRate={onRateTurn !== undefined ? rating => onRateTurn(msg.id, rating) : undefined}
+            />
+          )}
+        </div>
       ),
     );
     return (
       <>
-        <IntroMessage>{t('editor.ai.empty')}</IntroMessage>
+        <div className={styles.introMessage}>{t('editor.ai.empty')}</div>
         {transcript}
         {busy && !isAwaitingAnswer(messages.at(-1)) && (
-          <ThinkingRow role="status">
-            <CircularProgress size={12} />
+          <div
+            className={styles.thinkingRow}
+            role="status"
+          >
+            <Spinner
+              ring="wide"
+              size={12}
+              role="progressbar"
+            />
             {t('editor.ai.thinking')}
-          </ThinkingRow>
+          </div>
         )}
       </>
     );
   };
 
+  const panelStyle =
+    width !== undefined ? ({ '--panel-width': `${width}px` } as CSSProperties) : undefined;
+
   return (
-    <Panel
-      fill={detached}
-      panelWidth={width}
+    <div
+      className={styles.panel}
+      data-fill={detached || undefined}
+      style={panelStyle}
       aria-label="ai-chat-panel"
     >
-      <PanelHeader>
-        <HeaderTitle>
+      <div className={styles.panelHeader}>
+        <div className={styles.headerTitle}>
           {t('editor.ai.title')}
           {title !== undefined && title !== '' ? ` — ${title}` : ''}
-        </HeaderTitle>
-        <HeaderActions>
+        </div>
+        <div className={styles.headerActions}>
+          <SharingStatusChip
+            sharing={sharing}
+            onShareDecision={onShareDecision}
+            onSetConversationShared={onSetConversationShared}
+          />
           {!detached && onPopOut !== undefined && (
-            <Tooltip title={t('editor.ai.pop_out')}>
+            <Tooltip
+              label={t('editor.ai.pop_out')}
+              side="bottom"
+              portal
+            >
               <IconButton
                 size="small"
                 aria-label={t('editor.ai.pop_out')}
@@ -860,7 +895,11 @@ export function ChatView(props: ChatViewProps) {
               </IconButton>
             </Tooltip>
           )}
-          <Tooltip title={t('editor.ai.close')}>
+          <Tooltip
+            label={t('editor.ai.close')}
+            side="bottom"
+            portal
+          >
             <IconButton
               size="small"
               aria-label={t('editor.ai.close')}
@@ -869,176 +908,171 @@ export function ChatView(props: ChatViewProps) {
               <CloseIcon fontSize="small" />
             </IconButton>
           </Tooltip>
-        </HeaderActions>
-      </PanelHeader>
+        </div>
+      </div>
 
       <>
-        <Toolbar>
-          <ToolbarPill
-            open={chatMenuAnchor !== null}
+        <div className={styles.toolbar}>
+          <button
+            className={styles.toolbarPill}
+            type="button"
+            data-open={chatMenuAnchor !== null || undefined}
             aria-label={t('editor.ai.new_chat')}
             aria-haspopup="menu"
             aria-expanded={chatMenuAnchor !== null}
-            onClick={e => setChatMenuAnchor(e.currentTarget)}
+            onClick={e => {
+              const pill = e.currentTarget;
+              setChatMenuAnchor(prev => (prev === null ? pill : null));
+            }}
           >
-            <AddCommentOutlinedIcon sx={{ fontSize: 16 }} />
-            <ToolbarPillLabel>
+            <AddCommentOutlinedIcon className={styles.menuIcon} />
+            <span className={styles.ellipsis}>
               {currentSession !== undefined ? currentSession.title : t('editor.ai.new_chat')}
-            </ToolbarPillLabel>
+            </span>
             <KeyboardArrowDownIcon
               fontSize="small"
-              sx={{ marginLeft: 'auto' }}
+              className={styles.pillChevron}
             />
-          </ToolbarPill>
+          </button>
           <Menu
-            anchorEl={chatMenuAnchor}
             open={chatMenuAnchor !== null}
+            anchor={chatMenuAnchor}
             onClose={() => setChatMenuAnchor(null)}
-            {...AI_MENU_ORIGIN}
-            sx={theme => ({
-              ...aiMenuSx(theme, { width: '300px' }),
-              '& .MuiMenuItem-root.Mui-selected, & .MuiMenuItem-root.Mui-selected:hover': {
-                backgroundColor: 'var(--ai-session-selected)',
-              },
-            })}
+            placement="bottom-start"
+            offset={10}
+            className={cx(styles.menu, styles.chatMenu)}
           >
             <MenuItem
+              className={styles.menuItem}
               disabled={busy || messages.length === 0}
-              sx={{ gap: 1, mx: 1, my: 0.5, borderRadius: 1 }}
               onClick={() => {
                 onNewChat();
                 setChatMenuAnchor(null);
               }}
             >
-              <AddCommentOutlinedIcon sx={{ fontSize: 16 }} />
+              <AddCommentOutlinedIcon className={styles.menuIcon} />
               {t('editor.ai.new_chat')}
             </MenuItem>
-            {savedSessions.length > 0 && [
-              <Divider key="div" />,
-              <MenuSectionLabel key="label">{t('editor.ai.history.title')}</MenuSectionLabel>,
-            ]}
+            {savedSessions.length > 0 && (
+              <>
+                <MenuSeparator />
+                <div className={styles.menuSectionLabel}>{t('editor.ai.history.title')}</div>
+              </>
+            )}
             {savedSessions.map(s => (
-              <MenuItem
+              <div
                 key={s.id}
-                selected={s.id === currentSessionId}
-                sx={{ gap: 1, mx: 1, my: 0.5, borderRadius: 1 }}
-                onClick={() => {
-                  onSwitchSession(s.id);
-                  setChatMenuAnchor(null);
-                }}
+                className={styles.sessionRow}
+                data-current={s.id === currentSessionId || undefined}
               >
-                <CheckIcon
-                  sx={{
-                    fontSize: 16,
-                    visibility: s.id === currentSessionId ? 'visible' : 'hidden',
+                <MenuItem
+                  className={styles.sessionItem}
+                  selected={s.id === currentSessionId}
+                  aria-keyshortcuts="Delete"
+                  onKeyDown={event => {
+                    if (event.key === 'Delete' || event.key === 'Backspace') {
+                      event.preventDefault();
+                      deleteSessionByKey(event.currentTarget, s.id);
+                    }
                   }}
-                />
-                <SessionText>
-                  <SessionTitle>{s.title}</SessionTitle>
-                  <SessionWhen>{formatWhen(s.updatedAt)}</SessionWhen>
-                </SessionText>
+                  onClick={() => {
+                    onSwitchSession(s.id);
+                    setChatMenuAnchor(null);
+                  }}
+                >
+                  <CheckIcon
+                    className={cx(styles.menuIcon, s.id !== currentSessionId && styles.hiddenMark)}
+                  />
+                  <span className={styles.sessionText}>
+                    <span className={styles.ellipsis}>{s.title}</span>
+                    <span className={styles.sessionWhen}>{formatWhen(s.updatedAt)}</span>
+                  </span>
+                </MenuItem>
+                {/* The keyboard deletes from the item above with the Delete key. */}
                 <IconButton
                   size="small"
+                  tabIndex={-1}
                   aria-label={t('editor.ai.history.delete')}
-                  onClick={e => {
-                    e.stopPropagation();
-                    onDeleteSession(s.id);
-                  }}
+                  onClick={() => onDeleteSession(s.id)}
                 >
                   <DeleteOutlineIcon fontSize="small" />
                 </IconButton>
-              </MenuItem>
+              </div>
             ))}
           </Menu>
           {providers.length > 1 && (
             <Select
-              size="small"
               value={provider}
-              onChange={handleProviderChange}
+              onChange={onProviderChange}
               disabled={busy}
-              IconComponent={KeyboardArrowDownIcon}
-              MenuProps={{
-                ...AI_MENU_ORIGIN,
-                sx: theme => ({
-                  ...aiMenuSx(theme),
-                  '& .MuiMenuItem-root.Mui-selected': {
-                    backgroundColor: 'var(--ai-selected)',
-                  },
-                  '& .MuiMenuItem-root.Mui-selected:hover': {
-                    backgroundColor: 'var(--ai-selected-hover)',
-                  },
-                }),
-              }}
-              sx={{
-                flex: 1,
-                minWidth: 0,
-                height: theme => theme.spacing(3.75),
-                borderRadius: theme => theme.spacing(1),
-                backgroundColor: 'var(--ai-menu-bg)',
-                fontSize: theme => theme.typography.pxToRem(12),
-                // Outline only on hover / while open, transparent at rest — matches the New Chat
-                // pill (#1619).
-                '& .MuiOutlinedInput-notchedOutline': { borderColor: 'transparent' },
-                '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'text.secondary' },
-                '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderColor: 'text.secondary' },
-                '& .MuiSelect-select': { display: 'flex', alignItems: 'center' },
-              }}
+              icon={<KeyboardArrowDownIcon />}
+              placement="bottom-end"
+              className={styles.providerSelect}
+              menuClassName={cx(styles.menu, styles.providerMenu)}
               // Show just the active agent's name in the closed box (with a subtle "sign in"
               // cue when it isn't ready), not the full per-row status.
               renderValue={id => {
                 const p = providers.find(x => x.id === id);
                 if (p === undefined) return id;
                 return (
-                  <ProviderOption>
+                  <span className={styles.providerOption}>
                     <span>{p.label}</span>
                     {!p.available && (
-                      <ProviderValueHint>{t('editor.ai.provider_signin')}</ProviderValueHint>
+                      <span className={styles.providerValueHint}>
+                        {t('editor.ai.provider_signin')}
+                      </span>
                     )}
-                  </ProviderOption>
+                  </span>
                 );
               }}
             >
               {/* Every agent is selectable — picking one that isn't signed in yet switches the
                   panel to its sign-in screen, so users can add and swap agents on the fly. */}
               {providers.map(p => (
-                <MenuItem
+                <SelectOption
                   key={p.id}
                   value={p.id}
-                  sx={{ gap: 1, mx: 1, my: 0.5, borderRadius: 1 }}
+                  label={p.label}
+                  className={styles.providerRow}
                 >
                   <CheckIcon
                     fontSize="small"
-                    sx={{ visibility: p.id === provider ? 'visible' : 'hidden' }}
+                    className={p.id === provider ? undefined : styles.hiddenMark}
                   />
-                  <ProviderOption>
+                  <span className={styles.providerOption}>
                     <span>{p.label}</span>
                     {!p.available && (
-                      <ProviderHint>{p.reason ?? t('editor.ai.provider_signin')}</ProviderHint>
+                      <span className={styles.providerHint}>
+                        {p.reason ?? t('editor.ai.provider_signin')}
+                      </span>
                     )}
-                  </ProviderOption>
-                </MenuItem>
+                  </span>
+                </SelectOption>
               ))}
             </Select>
           )}
-        </Toolbar>
+        </div>
 
-        <Transcript ref={transcriptRef}>
+        <div
+          className={styles.transcript}
+          ref={transcriptRef}
+        >
           {available ? renderTranscript() : renderSetup()}
-        </Transcript>
+        </div>
 
         {available &&
           currentProvider?.id === 'claude' &&
           isCliVersionOutdated(currentProvider.version, MIN_CLAUDE_CLI_VERSION) && (
-            <OutdatedHint>
+            <div className={styles.outdatedHint}>
               <WarningCircleIcon size={28} />
               <span>{t('editor.ai.outdated', { version: currentProvider.version ?? '' })}</span>
-            </OutdatedHint>
+            </div>
           )}
 
         {available && currentProvider?.needsLogin === true && (
-          <OutdatedHint>
+          <div className={styles.outdatedHint}>
             <WarningCircleIcon size={28} />
-            <SignInHintBody>
+            <div className={styles.signInHintBody}>
               <strong>
                 {t('editor.ai.setup.needs_login_title', { provider: currentProvider.label })}
               </strong>
@@ -1048,7 +1082,12 @@ export function ChatView(props: ChatViewProps) {
                 <>
                   <span>{t('editor.ai.setup.needs_login_help')}</span>
                   {cmds.relogin.map(step => (
-                    <CommandLine key={step}>{step}</CommandLine>
+                    <pre
+                      className={styles.commandLine}
+                      key={step}
+                    >
+                      {step}
+                    </pre>
                   ))}
                 </>
               )}
@@ -1059,102 +1098,119 @@ export function ChatView(props: ChatViewProps) {
                 })}
               </span>
               {guideLink}
-            </SignInHintBody>
-          </OutdatedHint>
+            </div>
+          </div>
         )}
 
+        <SharingConsentCard
+          sharing={sharing}
+          onShareDecision={onShareDecision}
+          onShareNotNow={onShareNotNow}
+        />
+
         {available && !billingDismissed && (
-          <BillingCard>
-            <BillingTitle>{t('editor.ai.billing_title')}</BillingTitle>
-            <BillingBody>{t('editor.ai.billing')}</BillingBody>
+          <div className={styles.billingCard}>
+            <span className={styles.billingTitle}>{t('editor.ai.billing_title')}</span>
+            <span className={styles.billingBody}>{t('editor.ai.billing')}</span>
             <Button
-              color="secondary"
               variant="text"
-              size="small"
+              tone="neutral"
+              size="sm"
+              className={styles.billingButton}
               onClick={onDismissBilling}
-              sx={{
-                backgroundColor: 'var(--dark-gray)',
-                borderRadius: theme => theme.spacing(1),
-                paddingLeft: theme => theme.spacing(2.5),
-                paddingRight: theme => theme.spacing(2.5),
-                '&:hover': { backgroundColor: 'var(--light-gray)' },
-                // ui2 pins secondary-text buttons' color AND textTransform (forced uppercase) at
-                // 0,6,0 specificity; out-specify both here (repeated & = 0,7,0) so the label stays
-                // white and reads as "Got It" rather than "GOT IT".
-                '&&&&&&&': { color: 'var(--white)', textTransform: 'none' },
-              }}
             >
               {t('editor.ai.billing_dismiss')}
             </Button>
-          </BillingCard>
+          </div>
         )}
 
         {available && selection.length > 0 && (
-          <SelectionBar>
+          <div className={styles.selectionBar}>
             <HighlightAltIcon fontSize="small" />
-            <SelectionNames>
+            <span className={styles.selectionNames}>
               {t('editor.ai.selection', {
                 names: selection.map(s => (s.name !== '' ? s.name : `#${s.id}`)).join(', '),
               })}
-            </SelectionNames>
+            </span>
             <ClearMentionButton
               label={t('editor.ai.selection_clear')}
               onClick={onClearSelection}
             />
-          </SelectionBar>
+          </div>
         )}
 
         {available &&
           assetMentions.map(mention => (
-            <SelectionBar key={assetMentionKey(mention)}>
+            <div
+              className={styles.selectionBar}
+              key={assetMentionKey(mention)}
+            >
               <InsertDriveFileOutlinedIcon fontSize="small" />
               {'path' in mention ? (
-                <SelectionNames title={mention.path}>
+                <span
+                  className={styles.selectionNames}
+                  title={mention.path}
+                >
                   {t('editor.ai.asset_mention', {
                     name: mention.path.split('/').pop() ?? mention.path,
                   })}
-                </SelectionNames>
+                </span>
               ) : (
-                <SelectionNames>
+                <span className={styles.selectionNames}>
                   {t('editor.ai.asset_mention_built_in', { name: mention.builtInEmote })}
-                </SelectionNames>
+                </span>
               )}
               <ClearMentionButton
                 label={t('editor.ai.asset_mention_remove')}
                 onClick={() => onRemoveAssetMention(mention)}
               />
-            </SelectionBar>
+            </div>
           ))}
 
-        <Composer
-          dragging={dragging}
+        <div
+          className={styles.composer}
+          data-dragging={dragging || undefined}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
           {dragging && (
-            <DropHint>
+            <div className={styles.dropHint}>
               <AttachFileIcon fontSize="small" />
               {t('editor.ai.attach.drop_hint')}
-            </DropHint>
+            </div>
           )}
           {attachments.length > 0 && (
-            <AttachmentBar>
+            <div className={styles.attachmentBar}>
               {attachments.map((att, i) => (
-                <AttachmentChip key={`${att.name}-${i}`}>
+                <div
+                  className={styles.attachmentChip}
+                  key={`${att.name}-${i}`}
+                >
                   <AttachmentIcon kind={att.kind} />
-                  <AttachmentName title={att.name}>{att.name}</AttachmentName>
-                  <Tooltip title={t('editor.ai.attach.remove')}>
-                    <AttachmentRemove
+                  <span
+                    className={styles.ellipsis}
+                    title={att.name}
+                  >
+                    {att.name}
+                  </span>
+                  <Tooltip
+                    label={t('editor.ai.attach.remove')}
+                    side="bottom"
+                    portal
+                    keepInViewport
+                  >
+                    <IconButton
+                      className={styles.attachmentRemove}
                       aria-label={t('editor.ai.attach.remove')}
                       onClick={() => removeAttachment(i)}
                     >
                       <CloseIcon />
-                    </AttachmentRemove>
+                    </IconButton>
                   </Tooltip>
-                </AttachmentChip>
+                </div>
               ))}
-            </AttachmentBar>
+            </div>
           )}
           <input
             ref={fileInputRef}
@@ -1168,70 +1224,70 @@ export function ChatView(props: ChatViewProps) {
             multiline
             maxRows={6}
             size="small"
+            tone="neutral"
             autoFocus
             inputRef={composerRef}
+            className={styles.composerField}
             placeholder={t('editor.ai.placeholder')}
             value={input}
             disabled={!available}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            sx={{
-              // Rounded field with the send control living inside it; a white focus/hover
-              // outline instead of the default primary (ruby) ring (#1576).
-              '& .MuiOutlinedInput-root': {
-                borderRadius: '10px',
-                alignItems: 'center',
-                paddingRight: theme => theme.spacing(0.75),
-                backgroundColor: 'var(--ai-input-bg)',
-              },
-              '& .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline': {
-                borderColor: 'text.secondary',
-              },
-              '& .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline': {
-                borderColor: 'secondary.main',
-              },
-            }}
-            InputProps={{
-              startAdornment: (
-                <Tooltip title={t('editor.ai.attach.button')}>
-                  <span>
-                    <AttachButton
-                      aria-label={t('editor.ai.attach.button')}
-                      disabled={!available || attachments.length >= MAX_ATTACHMENTS}
-                      onClick={() => fileInputRef.current?.click()}
-                    >
-                      <AttachFileIcon fontSize="small" />
-                    </AttachButton>
-                  </span>
-                </Tooltip>
-              ),
-              endAdornment: busy ? (
-                <Tooltip title={t('editor.ai.stop')}>
-                  <StopButton
+            startAdornment={
+              <Tooltip
+                label={t('editor.ai.attach.button')}
+                side="bottom"
+                portal
+                keepInViewport
+              >
+                <IconButton
+                  className={styles.attachButton}
+                  aria-label={t('editor.ai.attach.button')}
+                  disabled={!available || attachments.length >= MAX_ATTACHMENTS}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <AttachFileIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            }
+            endAdornment={
+              busy ? (
+                <Tooltip
+                  label={t('editor.ai.stop')}
+                  side="bottom"
+                  portal
+                  keepInViewport
+                >
+                  <IconButton
+                    className={styles.sendButton}
                     aria-label={t('editor.ai.stop')}
                     onClick={onStop}
                   >
                     <StopIcon fontSize="small" />
-                  </StopButton>
+                  </IconButton>
                 </Tooltip>
               ) : (
-                <Tooltip title={t('editor.ai.send')}>
-                  <span>
-                    <SendButton
-                      aria-label={t('editor.ai.send')}
-                      disabled={!available || (input.trim() === '' && attachments.length === 0)}
-                      onClick={handleSend}
-                    >
-                      <ArrowUpwardIcon fontSize="small" />
-                    </SendButton>
-                  </span>
+                <Tooltip
+                  label={t('editor.ai.send')}
+                  side="bottom"
+                  portal
+                  keepInViewport
+                >
+                  <IconButton
+                    className={styles.sendButton}
+                    aria-label={t('editor.ai.send')}
+                    disabled={!available || (input.trim() === '' && attachments.length === 0)}
+                    onClick={handleSend}
+                  >
+                    <ArrowUpwardIcon fontSize="small" />
+                  </IconButton>
                 </Tooltip>
-              ),
-            }}
+              )
+            }
           />
-        </Composer>
+        </div>
       </>
-    </Panel>
+    </div>
   );
 }

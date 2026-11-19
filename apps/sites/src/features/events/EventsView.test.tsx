@@ -126,6 +126,13 @@ describe("EventsView", () => {
     expect(await screen.findAllByText("No events this day.")).not.toHaveLength(0);
   });
 
+  it("should link to the event hosting article on the site", async () => {
+    setup("/events");
+    expect((await screen.findByRole("link", { name: "Learn More" })).getAttribute("href")).toBe(
+      "/blog/about-decentraland/how-to-make-and-run-an-event-in-decentraland",
+    );
+  });
+
   it("should show a busy place in Live Now with a Jump In to the web explorer on desktop", async () => {
     live = { events: [], places: [placeRecord({ title: "Meta GamiMall", base_position: "1,95", user_count: 6 })] };
     setup("/events");
@@ -368,6 +375,19 @@ describe("when calendar occupancy is available or unknown", () => {
     expect(within(card).queryByText("26 online")).toBeNull();
     if (expected) expect(within(card).getByText(expected)).toBeTruthy();
     else expect(within(card).queryByText(/online$/)).toBeNull();
+  });
+
+  it("should give a live event in the phone list its JUMP IN instead of Remind me", async () => {
+    vi.stubGlobal("innerWidth", 390);
+    calendar = [{ ...soon("now", "Live on phone", -0.5), live: true, x: 3, y: 7 }];
+    setup("/events");
+    const list = await screen.findByRole("list", { name: /^Events for / });
+    const liveCard = within(list).getByRole("link", { name: "Live on phone" }).closest("article")!;
+    expect(within(liveCard).getByRole("link", { name: "Jump in: Live on phone" }).getAttribute("href")).toMatch(
+      /\/play\/\?position=3%2C7(&|$)/,
+    );
+    expect(within(liveCard).queryByRole("button", { name: /Remind me/ })).toBeNull();
+    expect(within(liveCard).getByRole("button", { name: "Copy link: Live on phone" })).toBeTruthy();
   });
 
   it("should not present future event registrations as current occupancy", async () => {

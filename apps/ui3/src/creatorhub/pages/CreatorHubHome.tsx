@@ -10,7 +10,7 @@ import ThumbnailImage from "../../components/ThumbnailImage";
 import Spinner from "../../atoms/Spinner";
 import { asset } from "../../asset";
 import { docsUrl } from "../../data/docs";
-import { publicThumbnail } from "../../data/thumbnail";
+import { publicThumbnail, useThumbnailPublicBase } from "../../data/thumbnail";
 import "./creatorhubhome.css";
 
 type LearnResource = { title: string; href: string; kind: "doc" | "video" };
@@ -341,6 +341,7 @@ function StripHeader({ title, linkLabel, href, onLink }: StripHeaderProps) {
 }
 
 function TemplatesStrip({ templates, onCardClick }: { templates: ChTemplateCard[]; onCardClick?: (card: string) => void }) {
+  const thumbnailBase = useThumbnailPublicBase();
   return (
     <section className="chh__strip" aria-label="Start from a template">
       <StripHeader
@@ -354,7 +355,7 @@ function TemplatesStrip({ templates, onCardClick }: { templates: ChTemplateCard[
           <ChromeLink key={t.id} className="chh__templatecard" href={t.href} onClick={() => onCardClick?.(`template:${t.id}`)}>
             <span className="chh__scenecardmedia">
               {t.thumb ? (
-                <CoverImage className="chh__scenecardimg" src={publicThumbnail(t.thumb, 640)} fallbackSrc={t.thumb} alt="" loading="eager" />
+                <CoverImage className="chh__scenecardimg" src={publicThumbnail(t.thumb, 640, thumbnailBase)} fallbackSrc={t.thumb} alt="" loading="eager" />
               ) : (
                 <span className="chh__scenecardimg chh__scenecardimg--empty" aria-hidden="true" />
               )}
@@ -426,7 +427,7 @@ export default function CreatorHubHome({
               {!signedIn ? <Button variant="secondary" onClick={onSignIn}>Sign in</Button> : null}
               <Button
                 variant={signedIn ? undefined : "secondary"}
-                onClick={() => window.location.assign("/landings/creator-hub-download")}
+                onClick={() => window.location.assign("/download/creator-hub")}
               >
                 Get the desktop app
               </Button>

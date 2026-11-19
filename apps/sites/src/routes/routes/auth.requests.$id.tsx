@@ -30,6 +30,7 @@ import {
 import {
   completeDeepLinkSignIn,
   getAuthRequestId,
+  getDeepLinkTarget,
   getExplorerDeeplink,
   getSigninDeeplink,
   isBridgeOnlyEnabled,
@@ -38,6 +39,7 @@ import {
   launchDeepLink,
   resolveAuthApiUrl,
   startsRequestRecovery,
+  type DeepLinkTarget,
 } from "../lib/auth-deeplink";
 import {
   acknowledgmentBlocked,
@@ -92,6 +94,7 @@ type LoadedRequest = {
   bridgeOnly: boolean;
   authRequestId: string | null;
   authApiUrl: string;
+  target: DeepLinkTarget;
 };
 
 export async function loader({ request, params }: Route.LoaderArgs) {
@@ -107,6 +110,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     bridgeOnly: isBridgeOnlyEnabled(url.searchParams),
     authRequestId: getAuthRequestId(url.searchParams),
     authApiUrl: resolveAuthApiUrl(process.env.AUTH_API_URL, url.host),
+    target: getDeepLinkTarget(url.searchParams),
   };
   return data(loaded, NO_STORE);
 }
@@ -608,7 +612,7 @@ function AuthRequestPage({ loaded }: { loaded: LoadedRequest }) {
   }, [loaded.deepLinkIdValid, onDeepLinkSignIn]);
 
   const onReturnToExplorer = useCallback(() => {
-    window.location.href = getExplorerDeeplink(undefined, loaded.bridgeOnly, loaded.authRequestId);
+    window.location.href = getExplorerDeeplink(loaded.target.deepLink, loaded.bridgeOnly, loaded.authRequestId);
   }, [loaded.bridgeOnly, loaded.authRequestId]);
 
   useEffect(() => {
@@ -707,8 +711,9 @@ function AuthRequestPage({ loaded }: { loaded: LoadedRequest }) {
   if (phase === "continue_in_app") {
     return (
       <ContinueInApp
+        appName={loaded.target.appName}
         deepLinkUrl={getSigninDeeplink(
-          undefined,
+          loaded.target.deepLink,
           identityId ?? "",
           loaded.bridgeOnly,
           loaded.id,
@@ -721,9 +726,9 @@ function AuthRequestPage({ loaded }: { loaded: LoadedRequest }) {
     const isSigningIn = phase === "deeplink_signing";
     return (
       <div style={card}>
-        <h2 style={{ margin: "0 0 4px" }}>Sign in to Decentraland</h2>
+        <h2 style={{ margin: "0 0 4px" }}>{`Sign in to ${loaded.target.appName}`}</h2>
         <p style={subtle}>
-          The Decentraland app on this device is waiting for you to sign in with your wallet on{" "}
+          {`${loaded.target.appName} on this device is waiting for you to sign in with your wallet on `}
           <strong>{loaded.host}</strong>.
         </p>
         <p style={{ ...subtle, fontSize: 14 }}>
@@ -1022,76 +1027,70 @@ function Terminal({
 
 const CONTINUE_COUNTDOWN_SECONDS = 5;
 
-function ContinueInApp({ deepLinkUrl }: { deepLinkUrl: string }) {
+// Sign-in has already succeeded here, so a launch the page can't confirm is never reported as a
+// failure: the browser's "Open the app?" prompt keeps the page in focus, which looks the same
+// as a launch that didn't happen.
+function ContinueInApp({ appName, deepLinkUrl }: { appName: string; deepLinkUrl: string }) {
   const [countdown, setCountdown] = useState(CONTINUE_COUNTDOWN_SECONDS);
-  const [deepLinkFailed, setDeepLinkFailed] = useState(false);
+  const [hasAttempted, setHasAttempted] = useState(false);
   const [hasLaunched, setHasLaunched] = useState(false);
+  const [launchUnconfirmed, setLaunchUnconfirmed] = useState(false);
   const isLaunchingRef = useRef(false);
 
   const attemptDeepLink = useCallback(async () => {
     if (isLaunchingRef.current) return;
     isLaunchingRef.current = true;
+    setHasAttempted(true);
+    setLaunchUnconfirmed(false);
     try {
       const wasLaunched = await launchDeepLink(deepLinkUrl);
-      if (wasLaunched) {
-        setHasLaunched(true);
-      } else {
-        setDeepLinkFailed(true);
-      }
+      setHasLaunched(wasLaunched);
+      setLaunchUnconfirmed(!wasLaunched);
     } finally {
       isLaunchingRef.current = false;
     }
   }, [deepLinkUrl]);
 
-  const handleRetry = useCallback(() => {
-    setCountdown(CONTINUE_COUNTDOWN_SECONDS);
-    setDeepLinkFailed(false);
-  }, []);
-
   useEffect(() => {
-    if (deepLinkFailed || hasLaunched) return;
+    if (hasAttempted) return;
     const interval = setInterval(() => {
       setCountdown((prev) => (prev <= 0 ? 0 : prev - 1));
     }, 1000);
     return () => clearInterval(interval);
-  }, [deepLinkFailed, hasLaunched]);
+  }, [hasAttempted]);
 
   useEffect(() => {
-    if (deepLinkFailed || hasLaunched) return;
+    if (hasAttempted) return;
     if (countdown === 0) void attemptDeepLink();
-  }, [attemptDeepLink, countdown, deepLinkFailed, hasLaunched]);
+  }, [attemptDeepLink, countdown, hasAttempted]);
 
-  if (deepLinkFailed) {
-    return (
-      <div style={card}>
-        <h2>Couldn't open Decentraland</h2>
-        <p style={subtle}>
-          The app didn't launch. Make sure Decentraland is installed on this device, then try
-          again.
-        </p>
-        <button style={button} onClick={handleRetry}>
-          Try again
-        </button>
-        <p style={brandFooter}>
-          <a href={deepLinkUrl} style={{ color: "inherit" }}>
-            Open the link directly
-          </a>
-        </p>
-      </div>
-    );
+  let status: string;
+  if (hasLaunched) {
+    status = `Opening ${appName}\u{2026} You can close this tab once the app opens.`;
+  } else if (launchUnconfirmed) {
+    status =
+      `If your browser asks to open ${appName}, allow it. ` +
+      `If nothing happens, make sure ${appName} is installed and try again.`;
+  } else if (hasAttempted) {
+    status = `Opening ${appName}\u{2026}`;
+  } else {
+    status = `Returning you to ${appName} in ${countdown}\u{2026}`;
   }
 
   return (
     <div style={card}>
       <h2>Sign-in successful</h2>
-      <p style={subtle}>
-        {hasLaunched
-          ? "Redirecting you to Decentraland\u{2026} You can close this tab once the app opens."
-          : `Redirecting you to Decentraland in ${countdown}\u{2026}`}
-      </p>
+      <p style={subtle}>{status}</p>
       <button style={button} onClick={() => void attemptDeepLink()}>
-        Return to Decentraland
+        {`Return to ${appName}`}
       </button>
+      {launchUnconfirmed ? (
+        <p style={brandFooter}>
+          <a href={deepLinkUrl} style={{ color: "inherit" }}>
+            Open the link directly
+          </a>
+        </p>
+      ) : null}
     </div>
   );
 }

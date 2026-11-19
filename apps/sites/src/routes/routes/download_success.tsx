@@ -1,32 +1,23 @@
-import "@dcl/one-ui/foundations/foundations.css";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { DownloadSuccess } from "@dcl/one-ui/apps/sites/download/DownloadSuccess";
 import { DownloadSuccessFooter } from "@dcl/one-ui/apps/sites/download/DownloadSuccessFooter";
 import { parseCookies } from "@/core/lib/telemetry/session";
-import {
-  installerSelection,
-  installerUrl,
-} from "@/features/download/installers";
+import { installerUrl } from "@/data/lib/download/installers";
+import { installerSelection } from "@/features/download/installers";
 import {
   detectDownloadBrowser,
   stepImages,
   type DownloadBrowser,
 } from "@/features/download/steps";
+import { successCopy } from "@/features/download/success-copy";
 import {
-  successCopy,
-  type SuccessLocale,
-} from "@/features/download/success-copy";
+  SITES_LANGUAGES,
+  SitesLocaleContext,
+  saveSitesLocale,
+  sitesLanguage,
+} from "@ui/web/frames/sites-locale";
 import type { Route } from "./+types/download_success";
-
-const LOCALES = [
-  { code: "en", label: "English" },
-  { code: "es", label: "Español" },
-  { code: "fr", label: "Français" },
-  { code: "zh", label: "中文" },
-  { code: "ko", label: "한국어" },
-  { code: "ja", label: "日本語" },
-];
 
 function linkText(message: string, link: ReactNode) {
   const [before, after = ""] = message.split("{link}");
@@ -51,15 +42,16 @@ export function meta() {
 
 export function loader({ request }: Route.LoaderArgs) {
   const params = new URL(request.url).searchParams;
-  const requested =
-    params.get("lang") ??
-    parseCookies(request.headers.get("cookie")).lang ??
-    "en";
-  const locale: SuccessLocale = Object.hasOwn(successCopy, requested)
-    ? (requested as SuccessLocale)
-    : "en";
+  const locale = sitesLanguage(
+    params.get("lang") ?? parseCookies(request.headers.get("cookie")).lang,
+  ).code;
+  const selection = installerSelection(params);
+  // The installers come from the host the deployment configures; without one there is nothing to start.
+  const url = installerUrl(selection.os, selection.arch);
+  if (!url) throw new Response(null, { status: 404, statusText: "Not Found" });
   return {
-    ...installerSelection(params),
+    ...selection,
+    url,
     locale,
     year: new Date().getUTCFullYear(),
   };
@@ -68,15 +60,15 @@ export function loader({ request }: Route.LoaderArgs) {
 export default function DownloadSuccessRoute({
   loaderData,
 }: Route.ComponentProps) {
-  const { os, arch, locale, year } = loaderData;
+  const { os, url: href, locale, year } = loaderData;
   useEffect(() => {
     document.documentElement.lang = locale;
   }, [locale]);
   const copy = successCopy[locale];
   const success = copy.success;
   const footer = copy.footer;
-  const href = installerUrl(os, arch);
   const navigate = useNavigate();
+  const preference = useContext(SitesLocaleContext);
   const started = useRef<string | null>(null);
   const [browser, setBrowser] = useState<DownloadBrowser>("chrome");
   useEffect(() => {
@@ -170,12 +162,14 @@ export default function DownloadSuccessRoute({
         language={{
           listLabel: "Languages",
           triggerLabel: (label) => `Change language: ${label}`,
-          locales: LOCALES,
+          locales: SITES_LANGUAGES,
           current: locale,
           onChange: (code) => {
-            document.cookie = `lang=${code}; path=/; max-age=31536000; samesite=lax`;
+            const nextLocale = sitesLanguage(code).code;
+            saveSitesLocale(nextLocale);
+            preference?.onSelect(nextLocale);
             const url = new URL(window.location.href);
-            url.searchParams.set("lang", code);
+            url.searchParams.set("lang", nextLocale);
             void navigate(`${url.pathname}${url.search}`);
           },
         }}

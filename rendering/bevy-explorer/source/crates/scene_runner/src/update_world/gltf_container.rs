@@ -32,7 +32,6 @@ use common::{
     util::{ModifyComponentExt, SceneSpawnerPlus},
 };
 use rapier3d_f64::prelude::*;
-use serde::Deserialize;
 
 use crate::{
     initialize_scene::SceneEntityDefinitionHandle,
@@ -267,9 +266,14 @@ pub(crate) struct GltfProcessing {
     named_nodes: HashMap<String, Entity>,
 }
 
-#[derive(Deserialize)]
-struct DclNodeExtras {
-    dcl_collision_mask: Option<u32>,
+/// The collider mask in the extras of a node or a primitive, given as their JSON. ADR-215
+/// reserves `dcl_collider_mask`; a model that carries `dcl_collision_mask` keeps its mask. A
+/// value that is not a `u32` is ignored on its own, so the other name still counts.
+fn extras_collider_mask(extras: &str) -> Option<u32> {
+    let extras = serde_json::from_str::<serde_json::Value>(extras).ok()?;
+    ["dcl_collider_mask", "dcl_collision_mask"]
+        .into_iter()
+        .find_map(|name| u32::try_from(extras.get(name)?.as_u64()?).ok())
 }
 
 #[derive(Component)]
@@ -1013,6 +1017,9 @@ impl NodeProcessing<'_, '_> {
                         // see https://github.com/decentraland/bevy-explorer/issues/424
                         let mut base_clone = base.clone();
                         base_clone.anisotropy_strength = 0.;
+                        // a glTF occlusion texture does not darken the ambient light:
+                        // scene materials take it at full strength (see decisions.md)
+                        base_clone.occlusion_texture = None;
 
                         let h_scene_material = bound_mats.add(ExtendedMaterial {
                             base: base_clone,
@@ -1077,19 +1084,15 @@ impl NodeProcessing<'_, '_> {
             // get specified or default collider bits
             // try mesh node first
             let collider_bits = maybe_extras
-                .and_then(|extras| serde_json::from_str::<DclNodeExtras>(&extras.value).ok())
-                .and_then(|extras| extras.dcl_collision_mask)
+                .and_then(|extras| extras_collider_mask(&extras.value))
                 .or_else(|| {
                     // then try parent node
                     gltf_spawned_entities
                         .get(parent.parent())
                         .ok()
                         .and_then(|tpl| tpl.5)
-                        .and_then(|extras| {
-                            serde_json::from_str::<DclNodeExtras>(&extras.value).ok()
-                        })
-                        .map(|extras| extras.dcl_collision_mask)
-                        .unwrap_or({
+                        .and_then(|extras| extras_collider_mask(&extras.value))
+                        .or({
                             //fall back to container-specified default
                             if is_collider || is_trigger {
                                 definition.0.invisible_meshes_collision_mask.or(
@@ -1631,7 +1634,17 @@ fn debug_modifiers(
         commands.entity(child).try_remove::<ShadowCasterOverride>();
     };
 
-    // turn Cube1_4 into Cube1/Primitive4
+    fn path_matches(node: &[&str], modifier: &[String]) -> bool {
+        !modifier.is_empty()
+            && node.windows(modifier.len()).any(|window| {
+                window
+                    .iter()
+                    .zip(modifier)
+                    .all(|(node, modifier)| node == modifier)
+            })
+    }
+
+    // Legacy primitive alias: Cube1_4 can refer to Cube1/Primitive4.
     fn path_subsegments(segment: &str) -> Vec<String> {
         let Some(last_underscore) = segment.rfind('_') else {
             return vec![segment.to_owned()];
@@ -1648,6 +1661,19 @@ fn debug_modifiers(
     }
 
     for (modifiers, processed, def) in q {
+        let node_paths = processed
+            .named_nodes
+            .iter()
+            .map(|(path, child)| {
+                (
+                    *child,
+                    path.split('/')
+                        .filter(|segment| !segment.is_empty())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+
         let mut modifiers = modifiers
             .0
             .modifiers
@@ -1656,14 +1682,26 @@ fn debug_modifiers(
                 let path = if modifier.path.is_empty() {
                     None
                 } else {
+                    let literal = modifier
+                        .path
+                        .split('/')
+                        .filter(|segment| !segment.is_empty())
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>();
+                    // Numbered suffixes can be authored node names, not primitive aliases.
+                    // Prefer a literal hierarchy match before translating importer names.
                     Some(
-                        modifier
-                            .path
-                            .as_str()
-                            .split('/')
-                            .filter(|segment| !segment.is_empty())
-                            .flat_map(path_subsegments)
-                            .collect::<Vec<_>>(),
+                        if node_paths
+                            .iter()
+                            .any(|(_, path)| path_matches(path, &literal))
+                        {
+                            literal
+                        } else {
+                            literal
+                                .iter()
+                                .flat_map(|segment| path_subsegments(segment))
+                                .collect()
+                        },
                     )
                 };
 
@@ -1688,15 +1726,10 @@ fn debug_modifiers(
             .flat_map(|(path, _)| path)
             .collect::<HashSet<_>>();
 
-        for (path, child) in processed.named_nodes.iter() {
+        for (child, node_path_components) in &node_paths {
             let Ok((existing_material, existing_hidden)) = child_nodes.get(*child) else {
                 continue;
             };
-
-            let node_path_components = path
-                .split('/')
-                .filter(|segment| !segment.is_empty())
-                .collect::<Vec<_>>();
 
             reset_shadows(&mut commands, *child);
 
@@ -1706,15 +1739,7 @@ fn debug_modifiers(
                     modifier_path_components
                         .as_ref()
                         .is_none_or(|modifier_path_components| {
-                            node_path_components
-                                .windows(modifier_path_components.len())
-                                .any(|window| {
-                                    window.iter().zip(modifier_path_components).all(
-                                        |(node_segment, modifier_segment)| {
-                                            node_segment == modifier_segment
-                                        },
-                                    )
-                                })
+                            path_matches(node_path_components, modifier_path_components)
                         })
                 })
             {
@@ -2494,6 +2519,9 @@ fn update_gltf_linked_visibility(
 
 #[cfg(test)]
 mod processing_tests;
+
+#[cfg(test)]
+mod modifier_tests;
 
 #[cfg(test)]
 mod tests {

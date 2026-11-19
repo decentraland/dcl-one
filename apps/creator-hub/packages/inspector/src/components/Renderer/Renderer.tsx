@@ -1,7 +1,6 @@
-/* eslint-disable no-console */
 import React, { useCallback, useEffect, useState } from 'react';
 import { useDrop } from 'react-dnd';
-import cx from 'classnames';
+import { cx } from '../../lib/utils/cx';
 import type { Entity, Vector3Type } from '@dcl/ecs';
 
 import { DIRECTORY, withAssetDir } from '../../lib/data-layer/host/fs-utils';
@@ -61,6 +60,11 @@ import {
 import { analytics, Event } from '../../lib/logic/analytics';
 import { checkAssetCompatibility } from '../../lib/sdk/operations/add-asset/compatibility';
 import type { IncompatibleComponent } from '../../lib/sdk/operations/add-asset/compatibility';
+import {
+  canUpdateSceneSdk,
+  getSdkRequirement,
+  updateSceneSdk,
+} from '../../lib/sdk/operations/add-asset/scene-sdk';
 import { IncompatibleAssetModal } from '../IncompatibleAssetModal';
 import { Warnings } from '../Warnings';
 import { CameraSpeed } from './CameraSpeed';
@@ -111,7 +115,13 @@ const Renderer: React.FC = () => {
   const [incompatibleAssetInfo, setIncompatibleAssetInfo] = useState<{
     assetName: string;
     incompatibleComponents: IncompatibleComponent[];
+    minSdkVersion?: string;
   } | null>(null);
+  const requiredSdkVersion = incompatibleAssetInfo?.minSdkVersion;
+  const handleUpdateSdk =
+    requiredSdkVersion && canUpdateSceneSdk()
+      ? () => updateSceneSdk(requiredSdkVersion)
+      : undefined;
 
   useEffect(() => {
     if (sdk) {
@@ -250,7 +260,7 @@ const Renderer: React.FC = () => {
     // normalized device coords (x,y ∈ [-1,1], y up) relative to the viewport, so
     // an out-of-process renderer (Bevy) can raycast from the real cursor — its own
     // pointer is stale while the host overlay captures the HTML5 drag. Babylon
-    // reads its live pointer and ignores the NDC.
+    // picks at the same NDC, since an HTML5 drag sends it no pointer events.
     const clientOffset = dropClientOffsetRef.current;
     const rect = viewportRef.current?.getBoundingClientRect();
     const ndc =
@@ -326,11 +336,14 @@ const Renderer: React.FC = () => {
 
   const importCatalogAsset = async (asset: Asset) => {
     if (sdk) {
-      const compat = checkAssetCompatibility(asset.composite, sdk.engine);
+      const sdkRequirement = await getSdkRequirement(asset.minSdkVersion);
+      if (!isMounted()) return;
+      const compat = checkAssetCompatibility(asset.composite, sdk.engine, sdkRequirement);
       if (!compat.compatible) {
         setIncompatibleAssetInfo({
           assetName: asset.name,
           incompatibleComponents: compat.incompatibleComponents,
+          minSdkVersion: asset.minSdkVersion,
         });
         return;
       }
@@ -534,6 +547,7 @@ const Renderer: React.FC = () => {
         <IncompatibleAssetModal
           assetName={incompatibleAssetInfo.assetName}
           incompatibleComponents={incompatibleAssetInfo.incompatibleComponents}
+          onUpdateSdk={handleUpdateSdk}
           onClose={() => setIncompatibleAssetInfo(null)}
         />
       )}

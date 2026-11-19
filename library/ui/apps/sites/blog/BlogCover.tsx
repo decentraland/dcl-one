@@ -6,6 +6,7 @@ export type BlogCoverProps = {
   /** Sizes the cover and paints the hue gradient behind it (the no-image fallback). */
   className?: string
   image: BlogImage | null
+  gradient?: boolean
   hue: number
   /** Above the fold: loaded at once. Otherwise lazily. */
   priority?: boolean
@@ -14,11 +15,18 @@ export type BlogCoverProps = {
 }
 
 /** A post's picture, or its hue gradient when the CMS has none. */
-export function BlogCover({ className, image, hue, priority, decorative }: BlogCoverProps) {
+export function BlogCover({
+  className,
+  image,
+  hue,
+  gradient,
+  priority,
+  decorative
+}: BlogCoverProps) {
   const alt = decorative || !image ? '' : image.alt
   return (
     <div
-      className={className ? `${styles.cover} ${className}` : styles.cover}
+      className={[styles.cover, gradient && styles.gradient, className].filter(Boolean).join(' ')}
       style={{ '--blog-hue': hue } as CSSProperties}
       aria-hidden={alt ? undefined : true}
     >

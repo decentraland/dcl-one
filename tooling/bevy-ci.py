@@ -326,8 +326,9 @@ def select(base, head):
             affected = ()
         elif path == PATCH_TOOL or path.startswith(PATCHES + '/bevy/'):
             # The Test Suite rebuilds the Bevy tree from its series with the tool and tests its crates
-            # on each system. Every build takes a patched source by the revision that Cargo.lock names.
-            affected = ('test', 'native-matrix')
+            # on each system; Clippy rebuilds it for a shader that `common`'s tests include. Every
+            # build takes a patched source by the revision that Cargo.lock names.
+            affected = ('test', 'clippy', 'native-matrix')
         elif path.startswith('infra/gateway/') or path in GATEWAY_HUD_INPUTS:
             # The Linux Test Suite compares Explorer and HUD routing with the nginx map.
             affected = ('test',)

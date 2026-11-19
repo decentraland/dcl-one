@@ -3,7 +3,12 @@
   position: relative;
   flex: 1;
   min-height: 0;
-  margin: -22px clamp(-120px, -6vw, -20px) -22px;
+  margin: -22px calc(-1 * var(--menu-gutter, 0px)) -22px;
   overflow: hidden;
   background: var(--map-bg);
+}
+/* In the lobby's section modal: the frame's own edges. */
+.compact {
+  height: 100%;
+  margin: 0;
 }

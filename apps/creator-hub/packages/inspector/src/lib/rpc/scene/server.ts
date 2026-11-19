@@ -42,6 +42,8 @@ import {
 import { updateCanSave } from '../../../redux/app';
 import { getConfig } from '../../logic/config';
 import { withAssetDir } from '../../data-layer/host/fs-utils';
+import { isSdkTooOld } from '../../sdk/operations/add-asset/compatibility';
+import { getSdkRequirement } from '../../sdk/operations/add-asset/scene-sdk';
 import {
   fromSceneSpawnPoint,
   isSceneSpawnAxis,
@@ -277,6 +279,8 @@ export class SceneServer extends RPC<Method, Params, Result> {
     engine?: IEngine,
     // Network-id allocator, needed by addAsset for Smart Items with sync components.
     enumEntity?: EnumEntity,
+    // Hides the editor's gizmos and helpers for a Babylon capture; returns what puts them back.
+    hideEditorHelpers?: () => () => void,
   ) {
     super('SceneRpcInbound', transport);
 
@@ -333,12 +337,19 @@ export class SceneServer extends RPC<Method, Params, Result> {
         camera.setTarget(new Vector3(x, y, z));
       });
 
+      // The capture copies the canvas on the next rendered frame, so whatever is hidden now
+      // stays out of the picture, and the helpers come back once it is taken.
       this.handle('take_screenshot', async ({ width, height, precision }) => {
-        return ScreenshotTools.CreateScreenshotAsync(renderer.engine, camera, {
-          width,
-          height,
-          precision,
-        });
+        const restoreEditorHelpers = hideEditorHelpers?.();
+        try {
+          return await ScreenshotTools.CreateScreenshotAsync(renderer.engine, camera, {
+            width,
+            height,
+            precision,
+          });
+        } finally {
+          restoreEditorHelpers?.();
+        }
       });
     } else if (takeScreenshot) {
       // Non-Babylon renderer (Bevy): no camera control, but it can still capture
@@ -531,6 +542,14 @@ export class SceneServer extends RPC<Method, Params, Result> {
         if (isFileOnly(asset)) {
           throw new Error(
             `"${asset.name}" is a file-only asset (e.g. an avatar animation) with no entity to place. Ask the user to drag it into the scene, which adds its files to the local assets, then reference the file from scene code.`,
+          );
+        }
+        // The same SDK check a drop from the catalog runs: the item's script needs components
+        // an older scene SDK doesn't have.
+        const sdkRequirement = await getSdkRequirement(asset.minSdkVersion);
+        if (isSdkTooOld(sdkRequirement)) {
+          throw new Error(
+            `"${asset.name}" needs @dcl/sdk ${sdkRequirement.required} or newer, and this scene has ${sdkRequirement.installed}. Ask the user to update the scene's SDK first, then place it again.`,
           );
         }
         const dataLayer = getDataLayerInterface();

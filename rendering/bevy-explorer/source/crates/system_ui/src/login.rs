@@ -7,7 +7,6 @@ use bevy::{
     app::AppExit,
     prelude::*,
     tasks::{IoTaskPool, Task},
-    window::PrimaryWindow,
 };
 use bevy_dui::{DuiCommandsExt, DuiEntityCommandsExt, DuiProps, DuiRegistry};
 use common::{
@@ -16,8 +15,8 @@ use common::{
     rpc::{RpcResultReceiver, RpcResultSender},
     sets::SceneSets,
     structs::{
-        ActiveDialog, AppConfig, ChainLink, CurrentRealm, PreviewMode, PreviousLogin, SystemAudio,
-        WorldHold, ZOrder, TERMS_VERSION,
+        ActiveDialog, AppConfig, ChainLink, CurrentRealm, PreviewMode, PreviousLogin,
+        RequestClientWindowFocus, SystemAudio, WorldHold, ZOrder, TERMS_VERSION,
     },
     util::{TaskCompat, TaskExt},
 };
@@ -561,6 +560,12 @@ fn remember_login(
     }
 }
 
+/// A person signing out: the stored login goes, as unity-explorer's logout clears its identity. The
+/// benchmark guest's root key stays: it is not a sign-in.
+fn forget_login(config: &mut AppConfig) -> bool {
+    config.previous_login.take().is_some()
+}
+
 fn account_locked(wallet: &Wallet, world_hold: &Option<Res<WorldHold>>) -> bool {
     world_hold.is_none() && wallet.address().is_some()
 }
@@ -590,7 +595,7 @@ fn process_login_bridge(
     mut segment_config: ResMut<SegmentConfig>,
     mut login_events: ResMut<client_login::ClientLoginDelivery>,
     mut current_profile: ResMut<CurrentUserProfile>,
-    mut window: Query<&mut Window, With<PrimaryWindow>>,
+    mut commands: Commands,
     mut config: ResMut<AppConfig>,
     world_hold: Option<Res<WorldHold>>,
     preview: Res<PreviewMode>,
@@ -646,7 +651,9 @@ fn process_login_bridge(
             SystemApi::LoginLocalGuest(sender) if autopilot.is_none() => {
                 sender.send(Err(LOCAL_GUEST_AUTOPILOT_ONLY.to_owned()));
             }
-            SystemApi::LoginGuest | SystemApi::Logout if account_locked(&wallet, &world_hold) => {
+            SystemApi::LoginGuest | SystemApi::Logout | SystemApi::ForgetLogin
+                if account_locked(&wallet, &world_hold) =>
+            {
                 warn!("{ACCOUNT_LOCKED}");
             }
             SystemApi::LoginPrevious(default_on_error, rpc_result_sender) => {
@@ -846,6 +853,9 @@ fn process_login_bridge(
                 current_profile.deploy_held = false;
                 current_profile.revert_to = None;
             }
+            SystemApi::ForgetLogin if forget_login(&mut config) => {
+                platform::write_config_file(&*config);
+            }
             _ => (),
         }
     }
@@ -857,9 +867,7 @@ fn process_login_bridge(
                 sender.send(Err(ACCOUNT_LOCKED.to_owned()));
             }
             Some(Ok((root_address, ephemeral_key, auth, guest_account, profile, sender))) => {
-                if let Ok(mut window) = window.single_mut() {
-                    window.focused = true;
-                }
+                commands.trigger(RequestClientWindowFocus);
 
                 if remember_login(
                     &mut config,
@@ -980,6 +988,17 @@ mod tests {
             ..Default::default()
         };
         (config, account.address())
+    }
+
+    #[test]
+    fn signing_out_forgets_the_stored_login_and_keeps_the_benchmark_guest_key() {
+        let (mut config, _) = config_with_an_account_and_a_guest_key();
+        let guest_key = config.guest_root_key.clone();
+        assert!(forget_login(&mut config));
+        assert!(get_previous_login(&config).is_none());
+        assert_eq!(config.guest_root_key, guest_key);
+        // nothing left to forget: the config is not written again
+        assert!(!forget_login(&mut config));
     }
 
     fn a_guest_identity() -> (Address, EphemeralKey, Vec<ChainLink>) {

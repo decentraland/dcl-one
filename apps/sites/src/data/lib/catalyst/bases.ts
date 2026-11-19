@@ -74,6 +74,24 @@ export function worldsContentServerUrl(override?: string, env: BaseEnv = process
   );
 }
 
+/**
+ * The host of the Explorer launcher installers that /download and the home page offer and /download_success
+ * starts, from deployment config: the node serves no installer, so no default points at another operator's
+ * binaries; unset, the pages offer none and /download_success answers 404.
+ */
+export function explorerInstallersUrl(env: BaseEnv = processEnv()): string | null {
+  const v = envValue(env, "EXPLORER_INSTALLERS_URL");
+  return v ? trimSlash(v) : null;
+}
+
+/**
+ * The JSON of the Explorer's download counts per platform, from deployment config:
+ * unset, the hero shows its fallback total and /download no total.
+ */
+export function downloadCountsUrl(env: BaseEnv = processEnv()): string | null {
+  return envValue(env, "DOWNLOAD_COUNTS_URL") ?? null;
+}
+
 export function communitiesUrl(env: BaseEnv = processEnv()): string {
   return trimSlash(
     envValue(env, "COMMUNITIES_URL") ?? `${catalystUrl(undefined, env)}${SOCIAL_PREFIX}`,
@@ -112,6 +130,10 @@ export function siteUrl(path: string, env: BaseEnv = processEnv()): string {
  * The explorer entry every jump-in link targets: BEVY_PLAY_URL (default /play;
  * a path on this origin, or an absolute URL) with the launch parameters.
  * `playUrl({ position: "-3,-2" })` -> `/play/?position=-3%2C-2`.
+ * An absolute URL on another origin still works as a link, but a dcl-one /play
+ * may be framed only by its own origin (routes/lib/play-framing.ts), so the
+ * pages that frame BEVY_PLAY_URL (Place detail's watcher, the scene editor)
+ * show an empty frame for one.
  */
 export function playUrl(
   params?: Record<string, string | undefined> | URLSearchParams,

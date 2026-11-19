@@ -1,4 +1,6 @@
-use std::{borrow::Borrow, collections::VecDeque, num::ParseIntError, str::FromStr};
+use std::{
+    borrow::Borrow, collections::VecDeque, num::ParseIntError, str::FromStr, time::Duration,
+};
 
 use analytics::segment_system::SegmentConfig;
 use bevy::{
@@ -17,11 +19,12 @@ use bevy::{
 };
 
 use common::{
+    partition::{scene_partition, Tier},
     sets::RealmLifecycle,
     structs::{
         server_mode, AppConfig, AppError, CurrentRealm, EditorMode, GlobalCrdtStateUpdate,
-        IVec2Arg, NearbyVoiceDisabled, PreviewMode, SceneJsFile, SceneLoadDistance, SceneMeta,
-        SceneTime, ServerConfiguration, StartupScenes, WorldHold,
+        IVec2Arg, NearbyVoiceDisabled, PreviewMode, PrimaryCamera, SceneJsFile, SceneLoadDistance,
+        SceneMeta, SceneTime, ServerConfiguration, StartupScenes, WorldHold,
     },
     terrain::{Occupancy, TerrainChange, TerrainTargets, BORDER_PADDING},
     util::{TaskExt, TryPushChildrenEx},
@@ -50,6 +53,8 @@ use crate::{
         RendererSceneContext, SceneState, FROZEN_BLOCK, SCENE_FIRST_UPDATE_TICK,
         SCENE_JS_SPAWN_TICK,
     },
+    ring_parcels,
+    scene_partition::camera_facing,
     update_world::{visibility::VisibilityComponent, ComponentTracker},
     vec3_to_parcel, ContainerEntity, DeletedSceneEntities, MobileUiEmulation, OutOfWorld,
     SceneEntity, SceneThreadHandle,
@@ -1662,11 +1667,40 @@ pub struct CurrentImposterScene(pub Option<(PointerResult, bool)>);
 #[derive(Resource, Default)]
 pub struct CurrentSceneLoading(pub bool);
 
+/// A scene goes live once its nearest parcel is within this Chebyshev parcel ring of the player's
+/// parcel. A larger load distance widens the live area; a smaller one does not shrink it below
+/// this ring. A negative load distance (no loading by position) turns the ring off too.
+const LIVE_RING: i32 = 1;
+
+/// A live scene is kept until its nearest parcel is past this ring and past the load distance
+/// plus the unload margin.
+const LIVE_KEEP_RING: i32 = 2;
+
+/// How many scenes beyond the player's own, portables, system scenes and the imposter-bake scene
+/// may be loading at once.
+/// The next one spawns when one of them is ready, so the scenes in range come in waves, nearest
+/// first, instead of all in the frame they enter range. A slot is not taken back: a scene that has
+/// just come within the live ring waits behind farther scenes already loading, for at most
+/// `WAVE_SLOT_TIMEOUT`.
+const SCENES_PER_WAVE: usize = 6;
+
+/// A scene loading for longer than this stops holding a wave slot, so a stalled load cannot hold
+/// the scenes behind it back. It is app time (`Time`), which does not run on while a web tab is
+/// in the background and draws no frames. App time also caps each frame's step, so on slow frames
+/// the wait is at least this long in wall time, and can be longer.
+const WAVE_SLOT_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// When a scene took a wave slot, in app time. Only a scene spawned into a slot has it; the
+/// player's own scene, portables, system scenes and the imposter-bake scene spawn without one.
+#[derive(Component)]
+pub struct WaveSlotSince(Duration);
+
 #[expect(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn process_scene_lifecycle(
     mut commands: Commands,
     portables: Res<PortableScenes>,
     focus: Query<&GlobalTransform, With<PrimaryUser>>,
+    camera: Query<&GlobalTransform, (With<PrimaryCamera>, With<Camera>)>,
     scene_entities: Query<
         (
             Entity,
@@ -1674,6 +1708,7 @@ pub fn process_scene_lifecycle(
             Option<&RendererSceneContext>,
             Option<&SceneLoading>,
             Has<SuperUserScene>,
+            Option<&WaveSlotSince>,
         ),
         Or<(With<SceneLoading>, With<RendererSceneContext>)>,
     >,
@@ -1685,6 +1720,7 @@ pub fn process_scene_lifecycle(
     preview_mode: Res<PreviewMode>,
     mut current_scene_loading_res: ResMut<CurrentSceneLoading>,
     startup_scenes: Option<Res<StartupScenes>>,
+    time: Res<Time>,
 ) {
     let mut required_scene_ids: HashMap<(String, Option<String>), bool> = HashMap::new();
 
@@ -1737,6 +1773,18 @@ pub fn process_scene_lifecycle(
             .map(|(h, u)| ((h, u), false)),
     );
 
+    // the scenes with a parcel within a ring of the player's parcel. Only adds to what the load
+    // distance loads: a negative one (a headless worker fed scenes by its control channel) loads
+    // nothing by position, the ring included
+    let focus_parcel = vec3_to_parcel(focus.translation());
+    let ring_on = range.load >= 0.0;
+    let ring_scenes = |ring: i32| {
+        let pointers = &pointers;
+        ring_parcels(focus_parcel, if ring_on { ring } else { -1 })
+            .filter_map(move |parcel| pointers.get(parcel).and_then(PointerResult::hash_and_urn))
+    };
+    required_scene_ids.extend(ring_scenes(LIVE_RING).map(|(h, u)| ((h, u), false)));
+
     // add any portables to requirements. Portables are exempt from the
     // current-scene deferral below (see `retain`) so they load immediately
     // instead of queueing behind the spawn-point parcel scene at startup.
@@ -1751,23 +1799,26 @@ pub fn process_scene_lifecycle(
     );
 
     // add imposter scene
-    required_scene_ids.extend(
-        imposter_scene
-            .0
-            .as_ref()
-            .and_then(|(scene, _)| scene.hash_and_urn())
-            .map(|(h, u)| ((h, u), false)),
-    );
+    let imposter_scene = imposter_scene
+        .0
+        .as_ref()
+        .and_then(|(scene, _)| scene.hash_and_urn());
+    let imposter_hash = imposter_scene.as_ref().map(|(hash, _)| hash.clone());
+    let imposter_hash = imposter_hash.as_deref();
+    required_scene_ids.extend(imposter_scene.map(|(h, u)| ((h, u), false)));
 
-    // record additional optional scenes
+    // record additional optional scenes: a live scene is kept until it is past the load distance
+    // plus the unload margin and past the keep ring, so stepping back and forth across either
+    // edge does not respawn it
     let mut keep_scene_ids = required_scene_ids.keys().cloned().collect::<HashSet<_>>();
     keep_scene_ids.extend(pir.iter().flat_map(|(parcel, dist)| {
-        if *dist >= range.load && *dist <= range.unload {
+        if *dist >= range.load && *dist <= range.load + range.unload {
             pointers.get(parcel).and_then(PointerResult::hash_and_urn)
         } else {
             None
         }
     }));
+    keep_scene_ids.extend(ring_scenes(LIVE_KEEP_RING));
 
     // record which scene entities we should keep
     let keep_entities: HashMap<_, _> = keep_scene_ids
@@ -1786,10 +1837,13 @@ pub fn process_scene_lifecycle(
     // despawn any no-longer required entities
     let mut current_scene_loading = false;
     let mut startup_loading = false;
-    for (entity, scene_hash, maybe_ctx, maybe_loading, is_super) in &scene_entities {
-        match keep_entities.get(&entity) {
+    // the scenes holding a wave slot: spawned into one, still loading and not stalled
+    let mut wave_loading = 0usize;
+    for (entity, scene_hash, maybe_ctx, maybe_loading, is_super, slot_since) in &scene_entities {
+        let kept = match keep_entities.get(&entity) {
             Some((hash, _)) => {
                 existing_ids.insert(*hash);
+                true
             }
             None => {
                 if let Ok(mut commands) = commands.get_entity(entity) {
@@ -1797,8 +1851,9 @@ pub fn process_scene_lifecycle(
                     commands.despawn();
                 }
                 removed_hashes.push(&scene_hash.0);
+                false
             }
-        }
+        };
 
         // a failed load is terminal: the entity is kept (so the scene isn't respawned while
         // in range) but it will never get further, so it must not defer other scenes. a
@@ -1812,10 +1867,20 @@ pub fn process_scene_lifecycle(
             });
 
         // check if the current scene is still loading
-        if let Some((current_hash, _)) = current_scene.as_ref() {
-            if &scene_hash.0 == current_hash && still_loading {
-                current_scene_loading = true;
-            }
+        let is_current = current_scene
+            .as_ref()
+            .is_some_and(|(current_hash, _)| &scene_hash.0 == current_hash);
+        if is_current && still_loading {
+            current_scene_loading = true;
+        }
+
+        // a scene despawned this frame frees its slot now
+        if kept
+            && still_loading
+            && slot_since
+                .is_some_and(|since| time.elapsed().saturating_sub(since.0) < WAVE_SLOT_TIMEOUT)
+        {
+            wave_loading += 1;
         }
 
         // the startup set (system/super-user scenes and startup portables) is highest
@@ -1853,15 +1918,15 @@ pub fn process_scene_lifecycle(
     }
 
     let mut defer_to_current_scene = false;
-    if let Some(current_scene) = current_scene {
-        if required_scene_ids.contains_key(&current_scene)
+    if let Some(current_scene) = current_scene.as_ref() {
+        if required_scene_ids.contains_key(current_scene)
             && (!existing_ids.contains(&current_scene.0) || current_scene_loading)
         {
             defer_to_current_scene = true;
             // if the current scene is not even spawned, spawn only that scene
             // (plus super-user scenes and portables, which are exempt).
             required_scene_ids.retain(|scene, super_user| {
-                *super_user || scene == &current_scene || portable_ids.contains(scene)
+                *super_user || scene == current_scene || portable_ids.contains(scene)
             });
         }
     }
@@ -1873,18 +1938,54 @@ pub fn process_scene_lifecycle(
         return;
     }
 
-    // spawn any newly required scenes
-    for ((required_scene_hash, maybe_urn), super_user) in required_scene_ids
+    // the newly required scenes: the player's own, portables, system scenes and the scene an
+    // imposter is being baked from spawn at once; the rest fill the free wave slots nearest
+    // first, in front of the camera before behind
+    let (exempt, mut wave): (Vec<_>, Vec<_>) = required_scene_ids
         .iter()
         .filter(|((hash, _), _)| !existing_ids.contains(hash))
-    {
-        let entity = commands
-            .spawn((
-                SceneHash(required_scene_hash.clone()),
-                SceneLoading::SceneSpawned,
-                crate::load_timing::SpawnedAt(web_time::Instant::now()),
-            ))
-            .id();
+        .partition(|(scene, super_user)| {
+            **super_user
+                || current_scene.as_ref() == Some(*scene)
+                || portable_ids.contains(*scene)
+                || imposter_hash == Some(scene.0.as_str())
+        });
+    // ordered only when there are more than the free slots take: scenes that all spawn this frame
+    // need no order, and nothing is ordered while every slot is taken
+    let free = SCENES_PER_WAVE.saturating_sub(wave_loading);
+    if wave.len() > free && free > 0 {
+        let mut parcels_by_hash: HashMap<&str, Vec<IVec2>> = HashMap::new();
+        // the parcels in range, and those of the live ring, which the load distance may not reach
+        let live_ring = ring_parcels(focus_parcel, LIVE_RING);
+        for parcel in pir.iter().map(|(parcel, _)| *parcel).chain(live_ring) {
+            if let Some(PointerResult::Exists { hash, .. }) = pointers.get(parcel) {
+                parcels_by_hash
+                    .entry(hash.as_str())
+                    .or_default()
+                    .push(parcel);
+            }
+        }
+        let camera = camera_facing(&camera);
+        wave.sort_by_cached_key(|((hash, _), _)| {
+            let parcels = parcels_by_hash.get(hash.as_str()).into_iter().flatten();
+            scene_partition(focus.translation(), camera, parcels.copied())
+                .load_priority(Tier::Scene)
+        });
+    }
+    wave.truncate(free);
+
+    let exempt = exempt.into_iter().map(|scene| (scene, false));
+    let wave = wave.into_iter().map(|scene| (scene, true));
+    for (((required_scene_hash, maybe_urn), super_user), takes_slot) in exempt.chain(wave) {
+        let mut scene = commands.spawn((
+            SceneHash(required_scene_hash.clone()),
+            SceneLoading::SceneSpawned,
+            crate::load_timing::SpawnedAt(web_time::Instant::now()),
+        ));
+        if takes_slot {
+            scene.insert(WaveSlotSince(time.elapsed()));
+        }
+        let entity = scene.id();
         info!("spawning scene {:?} @ ??: {entity:?}", required_scene_hash);
         live_scenes
             .scenes

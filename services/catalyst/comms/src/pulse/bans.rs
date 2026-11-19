@@ -102,7 +102,7 @@ impl BanPoller {
     }
     pub fn spawn(mut self) -> tokio::sync::watch::Receiver<Option<Vec<String>>> {
         let (tx, rx) = tokio::sync::watch::channel(None);
-        tokio::spawn(async move {
+        crate::shared::task::spawn(async move {
             loop {
                 tokio::select! {
                     _ = tx.closed() => break,

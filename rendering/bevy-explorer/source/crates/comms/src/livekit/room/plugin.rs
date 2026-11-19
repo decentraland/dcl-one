@@ -685,7 +685,14 @@ fn record_disconnect(
             commands.entity(entity).try_insert(ServerRoomTerminal);
         } else if reason == DisconnectReason::DuplicateIdentity {
             record_identity_conflict(commands, recovery, scope);
-        } else if island {
+        } else if island
+            || matches!(
+                scope.map(|scope| &scope.0),
+                Some(crate::access_status::AccessScope::Scene(_))
+            )
+        {
+            // The island owner or the scene gatekeeper decides whether the player may return; a
+            // scene ban comes back as a refusal that keeps checking for the unban.
             // ConnectionStateChanged can already have started the backoff.
             if recovery.failure != Some(FailureKind::Transient) {
                 recovery.fail(now, AdmissionError::new(FailureKind::Transient));
@@ -707,6 +714,66 @@ fn record_identity_conflict(
         Some(crate::access_status::AccessScope::PrivateChat)
     ) {
         commands.set_state(ConnectionAvailability::Unavailable);
+    }
+}
+
+fn try_reconnect(
+    mut commands: Commands,
+    rooms: Query<
+        (
+            Entity,
+            &RoomRecovery,
+            Has<Disconnected>,
+            Has<CredentialRequest>,
+            Option<&crate::archipelago::IslandOwner>,
+        ),
+        (
+            With<LivekitTransport>,
+            Without<Connecting>,
+            Without<NeedsAdapter>,
+            Without<RoomSuspended>,
+            Without<VoiceRoom>,
+        ),
+    >,
+    time: Res<Time>,
+) {
+    if common::structs::multi_tenant() {
+        // orchestrated server: the adapter's token is long expired (the gatekeeper mints
+        // them with a five-minute TTL), so a re-dial can only be refused. The room stays
+        // Disconnected and the headless bin asks the orchestrator for a fresh adapter.
+        return;
+    }
+    for (entity, recovery, disconnected, refreshable, island) in &rooms {
+        if (!disconnected && recovery.failure.is_none())
+            || !recovery.can_retry(time.elapsed_secs_f64())
+        {
+            continue;
+        }
+        restart_room(
+            &mut commands,
+            entity,
+            refreshable,
+            island.map(|island| island.0),
+        );
+    }
+}
+
+/// Manual resume and automatic recovery use the same credential source.
+pub(super) fn restart_room(
+    commands: &mut Commands,
+    entity: Entity,
+    refreshable: bool,
+    island: Option<Entity>,
+) {
+    if let Some(island) = island {
+        if let Ok(mut owner) = commands.get_entity(island) {
+            owner.try_insert(crate::archipelago::RefreshIsland);
+            commands.entity(entity).try_insert(RoomSuspended);
+        }
+    } else if refreshable {
+        commands.entity(entity).try_insert(NeedsAdapter);
+    } else {
+        commands.entity(entity).try_insert(Connecting);
     }
 }
 
@@ -749,6 +816,43 @@ mod disconnect_tests {
         world.run_system_once(try_reconnect).unwrap();
         assert!(world.get::<RefreshIsland>(owner).is_some());
         assert!(world.get::<RoomSuspended>(island).is_some());
+    }
+
+    #[test]
+    fn participant_removed_from_a_scene_room_asks_the_gatekeeper_again() {
+        let mut world = World::new();
+        let room = world
+            .spawn((
+                CredentialRequest {
+                    method: "POST",
+                    url: "https://rooms.example/scene".into(),
+                    metadata: "{}".into(),
+                },
+                LivekitTransport {
+                    address: String::new(),
+                },
+            ))
+            .id();
+        let mut recovery = RoomRecovery::default();
+        record_disconnect(
+            &mut world.commands(),
+            room,
+            &mut recovery,
+            Some(&RoomAccessScope(AccessScope::Scene("scene".into()))),
+            DisconnectReason::ParticipantRemoved,
+            false,
+            0.0,
+        );
+        assert_eq!(recovery.failure, Some(FailureKind::Transient));
+        world.entity_mut(room).insert(recovery);
+        world.init_resource::<Time>();
+        world.run_system_once(try_reconnect).unwrap();
+        assert!(world.get::<NeedsAdapter>(room).is_none());
+        world
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(5));
+        world.run_system_once(try_reconnect).unwrap();
+        assert!(world.get::<NeedsAdapter>(room).is_some());
     }
 
     #[test]
@@ -827,65 +931,5 @@ mod disconnect_tests {
                 NextState::Pending(ConnectionAvailability::Unavailable)
             ));
         }
-    }
-}
-
-fn try_reconnect(
-    mut commands: Commands,
-    rooms: Query<
-        (
-            Entity,
-            &RoomRecovery,
-            Has<Disconnected>,
-            Has<CredentialRequest>,
-            Option<&crate::archipelago::IslandOwner>,
-        ),
-        (
-            With<LivekitTransport>,
-            Without<Connecting>,
-            Without<NeedsAdapter>,
-            Without<RoomSuspended>,
-            Without<VoiceRoom>,
-        ),
-    >,
-    time: Res<Time>,
-) {
-    if common::structs::multi_tenant() {
-        // orchestrated server: the adapter's token is long expired (the gatekeeper mints
-        // them with a five-minute TTL), so a re-dial can only be refused. The room stays
-        // Disconnected and the headless bin asks the orchestrator for a fresh adapter.
-        return;
-    }
-    for (entity, recovery, disconnected, refreshable, island) in &rooms {
-        if (!disconnected && recovery.failure.is_none())
-            || !recovery.can_retry(time.elapsed_secs_f64())
-        {
-            continue;
-        }
-        restart_room(
-            &mut commands,
-            entity,
-            refreshable,
-            island.map(|island| island.0),
-        );
-    }
-}
-
-/// Manual resume and automatic recovery use the same credential source.
-pub(super) fn restart_room(
-    commands: &mut Commands,
-    entity: Entity,
-    refreshable: bool,
-    island: Option<Entity>,
-) {
-    if let Some(island) = island {
-        if let Ok(mut owner) = commands.get_entity(island) {
-            owner.try_insert(crate::archipelago::RefreshIsland);
-            commands.entity(entity).try_insert(RoomSuspended);
-        }
-    } else if refreshable {
-        commands.entity(entity).try_insert(NeedsAdapter);
-    } else {
-        commands.entity(entity).try_insert(Connecting);
     }
 }

@@ -11,6 +11,10 @@
 //! buy to settle and refunds the line only when no MANA left the treasury. A
 //! claim with no transaction recorded (`pending`, `error`) is attempted,
 //! counted and refunded as if absent.
+//!
+//! Once a checkout is frozen (`reversing`, or `failed` by a manual refund),
+//! [`fence_unsent_lines`] marks its lines' unrecorded claims `error`
+//! (`checkout::claims::fence_unrecorded`), and the claim refuses its lines.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -379,12 +383,41 @@ impl OutboxWorker {
     /// Refunds the undelivered portion of a frozen checkout (one idempotent
     /// refund per checkout) and resolves it to `reversed` (nothing delivered)
     /// or `failed` (partial). A line is refunded only when its buy spent no
-    /// MANA: never claimed, no transaction recorded (`pending`, `error`), or
-    /// reverted on the buy leg. While a pending line's buy is unsettled the checkout stays
+    /// MANA: never claimed, no transaction recorded (`pending`, `error`) under
+    /// a claim that records its transaction before broadcasting it
+    /// (`write_ahead`), or reverted on the buy leg. A `pending` or `error`
+    /// claim kept from before that rule may have broadcast, so it is held, as
+    /// is one whose transaction released as dead turns out to have mined.
+    /// While a pending line's buy is unsettled the checkout stays
     /// `reversing` (the tick resumes that line); a line whose buy spent MANA
     /// without reaching escrow is held out of the refund for reconciliation.
+    /// Unrecorded `pending` claims are first marked `error`, and the claim
+    /// refuses to claim or re-arm a frozen checkout's line, so nothing counted
+    /// refundable can be sent afterwards.
     #[tracing::instrument(skip(self, buyer))]
     pub async fn compensate(&self, checkout_id: i64, buyer: &str) -> Result<(), ApiError> {
+        // a buy still being signed can no longer record (so broadcast) once refundable
+        fence_unsent_lines(&mut *self.credits.pool.acquire().await?, checkout_id).await?;
+        // A line whose unsent claim released a buy as dead is refunded only
+        // once a later look finds none of those buys mined; one that did
+        // spent MANA and is held. A failed look leaves the checkout
+        // `reversing` for the next tick.
+        let released: Vec<String> = sqlx::query_scalar(
+            "SELECT b.idempotency_key FROM credits.fulfillment_outbox o \
+             JOIN shop.broker_purchases b \
+               ON b.idempotency_key = 'checkout:' || o.checkout_id || ':' || o.id \
+             WHERE o.checkout_id = $1 AND o.status <> 'confirmed' \
+               AND b.status IN ('pending', 'error') AND cardinality(b.released_tx_hashes) > 0",
+        )
+        .bind(checkout_id)
+        .fetch_all(&self.credits.pool)
+        .await?;
+        let mut mined: Vec<String> = Vec::new();
+        for key in released {
+            if self.broker.released_buy_mined(&key).await? {
+                mined.push(key);
+            }
+        }
         let agg = sqlx::query(
             "SELECT COALESCE(SUM(unit_price_credits) FILTER (WHERE refundable), 0)::text AS refund_amt, \
                     COALESCE(SUM(unit_price_credits) FILTER (WHERE refundable), 0) > 0 AS has_refund, \
@@ -393,7 +426,9 @@ impl OutboxWorker {
                     count(*) FILTER (WHERE status <> 'confirmed' AND NOT refundable AND NOT awaiting) AS held \
              FROM ( \
                  SELECT o.status, o.unit_price_credits, \
-                        o.status <> 'confirmed' AND (b.status IS NULL OR b.status IN ('pending', 'error') \
+                        o.status <> 'confirmed' AND (b.status IS NULL \
+                            OR (b.status IN ('pending', 'error') AND b.write_ahead \
+                                AND NOT b.idempotency_key = ANY($2)) \
                             OR (b.status = 'reverted' AND b.forward_tx_hash IS NULL)) AS refundable, \
                         o.status = 'pending' AND COALESCE(b.status IN \
                             ('sent', 'bought', 'forwarding', 'confirmed'), false) AS awaiting \
@@ -403,6 +438,7 @@ impl OutboxWorker {
                  WHERE o.checkout_id = $1) lines",
         )
         .bind(checkout_id)
+        .bind(&mined)
         .fetch_one(&self.credits.pool)
         .await?;
         let awaiting: i64 = agg.get("awaiting");
@@ -771,6 +807,25 @@ fn truncate(s: &str, max: usize) -> &str {
         end -= 1;
     }
     &s[..end]
+}
+
+/// Fences the unrecorded broker claims of frozen checkout `checkout_id`'s
+/// unconfirmed lines; a checkout that is not frozen is left alone.
+pub(super) async fn fence_unsent_lines(
+    conn: &mut sqlx::PgConnection,
+    checkout_id: i64,
+) -> Result<(), sqlx::Error> {
+    let keys: Vec<String> = sqlx::query_scalar(
+        "SELECT 'checkout:' || o.checkout_id || ':' || o.id FROM credits.fulfillment_outbox o \
+         JOIN credits.checkouts c ON c.id = o.checkout_id \
+         WHERE o.checkout_id = $1 AND o.status <> 'confirmed' \
+           AND c.status IN ('reversing', 'reversed', 'failed')",
+    )
+    .bind(checkout_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    crate::checkout::claims::fence_unrecorded(conn, &keys).await?;
+    Ok(())
 }
 
 #[cfg(test)]

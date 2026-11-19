@@ -143,10 +143,13 @@ export function PhotoModeOverlay({ photoMode, onOpenGallery }: Props): React.JSX
             <div className={styles.gridV} style={{ left: '66.667%' }} />
             <div className={styles.gridH} style={{ top: '33.333%' }} />
             <div className={styles.gridH} style={{ top: '66.667%' }} />
+            {(['tl', 'tr', 'bl', 'br'] as const).map((c) => (
+              <div key={c} className={styles.corner} data-corner={c} />
+            ))}
           </div>
 
           <ControlButton variant="dark" className={styles.close} aria-label="Close camera" onClick={close}>
-            <Close size={12 * s} strokeWidth={2} />
+            <Close size={18 * s} strokeWidth={3} />
           </ControlButton>
 
           <div className={styles.row} style={{ left: frameRect.left, width: frameRect.width, top: bottom }}>

@@ -9,6 +9,10 @@
 //! and `GET /api/status` reports how fresh each catalogue is. Writes (favorites,
 //! likes, RSVPs, event/schedule creation, reports) arrive with stage 5.
 
+// Production routes go through `shared::routing` (explore/clippy.toml); test routers may use axum's.
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_config::config;
 pub(crate) use catalyst_content as content;
@@ -32,6 +36,7 @@ pub(crate) mod json_date;
 mod keyed_locks;
 pub mod mirror_state;
 pub mod moderation_hooks;
+pub mod node_assets;
 pub mod opensea;
 pub mod places;
 pub mod rate;
@@ -44,6 +49,7 @@ use std::sync::Arc;
 use crate::shared::signed_fetch;
 use std::time::Duration;
 
+use crate::shared::routing::{any, erase, get, patch, post, put};
 use anyhow::{Context, bail};
 use axum::Json;
 use axum::Router;
@@ -51,7 +57,6 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderMap, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::Response;
-use axum::routing::{get, patch, post, put};
 use serde::Serialize;
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -127,9 +132,11 @@ impl MirrorSource {
 pub struct Settings {
     /// The node's content base URL; thumbnails from it pass the image filter.
     pub content_public_url: String,
-    /// The deployment's own domain, swapped into mirrored upstream poster
-    /// URLs; `None` (a decentraland.org node, or no PUBLIC_URL) keeps them.
-    pub asset_rewrite_domain: Option<String>,
+    /// The deployment's public base used for node-local asset paths in API records.
+    /// When unset, records retain their upstream asset URLs.
+    pub asset_rewrite_base: Option<String>,
+    /// The configured public base for local posters. An unset value stays relative.
+    pub configured_public_base: Option<String>,
     /// Bearer for the events moderation routes; unset refuses them.
     pub events_admin_token: Option<String>,
     /// Optional moderation webhook, dispatched only with operator writes enabled.
@@ -213,19 +220,31 @@ impl std::fmt::Debug for Settings {
 }
 
 impl Settings {
-    /// The old `asset_rewrite_domain` rule: the public host unless it is
-    /// decentraland.org or a subdomain. Only a domain can carry the
-    /// `events-assets-*` subdomain, so an IP address, `localhost` or another
-    /// single-label host (a local development stack) keeps the upstream URLs.
-    pub fn asset_rewrite_domain_for(public_url: Option<&str>) -> Option<String> {
-        public_url
-            .and_then(|u| url::Url::parse(u).ok())
-            .and_then(|u| match u.host() {
-                Some(url::Host::Domain(h)) => Some(h.to_string()),
-                _ => None,
-            })
-            .filter(|h| h.contains('.'))
-            .filter(|h| h != "decentraland.org" && !h.ends_with(".decentraland.org"))
+    /// Use the complete public base for node-local paths when the node has
+    /// a public domain outside decentraland.org.
+    pub fn asset_rewrite_base_for(public_url: Option<&str>) -> Option<String> {
+        let url = Self::parse_public_base(public_url?)?;
+        let url::Host::Domain(host) = url.host()? else {
+            return None;
+        };
+        (host.contains('.') && host != "decentraland.org" && !host.ends_with(".decentraland.org"))
+            .then(|| url.as_str().trim_end_matches('/').to_owned())
+    }
+
+    pub fn configured_public_base_for(public_url: Option<&str>) -> Option<String> {
+        let url = Self::parse_public_base(public_url?)?;
+        Some(url.as_str().trim_end_matches('/').to_owned())
+    }
+
+    fn parse_public_base(value: &str) -> Option<url::Url> {
+        let url = url::Url::parse(value).ok()?;
+        (matches!(url.scheme(), "http" | "https")
+            && url.host().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.query().is_none()
+            && url.fragment().is_none())
+        .then_some(url)
     }
 
     pub fn events_asset_base_for(public_url: &str) -> String {
@@ -235,7 +254,8 @@ impl Settings {
     pub fn for_tests() -> Self {
         Self {
             content_public_url: "http://localhost/content/".to_string(),
-            asset_rewrite_domain: None,
+            asset_rewrite_base: None,
+            configured_public_base: None,
             events_admin_token: None,
             events_slack_webhook: None,
             events_upcoming_summaries_enabled: false,
@@ -309,11 +329,16 @@ impl ExploreState {
     ) -> Self {
         Self {
             voting_power: places::voting_power::Client::new(settings.snapshot_score_url.clone()),
-            places: PlacesComponent::new(pool.clone(), &settings.content_public_url)
-                .with_worlds_mirror(settings.worlds_upstream.is_some()),
+            places: PlacesComponent::new(
+                pool.clone(),
+                &settings.content_public_url,
+                settings.asset_rewrite_base.clone(),
+            )
+            .with_worlds_mirror(settings.worlds_upstream.is_some()),
             events: EventsComponent::new(
                 pool.clone(),
-                settings.asset_rewrite_domain.clone(),
+                settings.asset_rewrite_base.clone(),
+                settings.configured_public_base.clone(),
                 settings.events_asset_base_url.clone(),
             ),
             schedules: SchedulesComponent::new(pool.clone()),
@@ -847,7 +872,7 @@ pub fn router(state: SharedState) -> Router {
     Router::new()
         .route(
             "/api/places",
-            get(pl::get_place_list).post(pl::post_place_list_by_id),
+            get(pl::get_place_list).post(erase(pl::post_place_list_by_id)),
         )
         .route("/api/places/status", post(pl::post_place_status_list_by_id))
         .route("/api/places/{place_id}", get(pl::get_place))
@@ -864,7 +889,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/api/places/{place_id}/ranking", put(pa::put_place_ranking))
         .route(
             "/api/places/{place_id}/ranking-exclusion",
-            put(pa::put_place_ranking_exclusion).delete(pa::delete_place_ranking_exclusion),
+            put(pa::put_place_ranking_exclusion).delete(erase(pa::delete_place_ranking_exclusion)),
         )
         .route(
             "/api/places/{place_id}/highlight",
@@ -872,11 +897,11 @@ pub fn router(state: SharedState) -> Router {
         )
         .route(
             "/api/places/{place_id}/disable",
-            put(pa::put_place_disable).patch(pa::patch_place_disable),
+            put(pa::put_place_disable).patch(erase(pa::patch_place_disable)),
         )
         .route(
             "/api/places/{place_id}/featured",
-            put(pa::put_place_featured).delete(pa::delete_place_featured),
+            put(pa::put_place_featured).delete(erase(pa::delete_place_featured)),
         )
         .route("/api/categories", get(pl::get_categories))
         .route("/api/map", get(pl::get_map_places))
@@ -884,7 +909,7 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/api/destinations",
             get(destinations::get_destinations_list)
-                .post(destinations::post_destinations_list_by_id),
+                .post(erase(destinations::post_destinations_list_by_id)),
         )
         .route("/api/worlds", get(pl::get_world_list))
         .route("/api/worlds/{world_id}", get(pl::get_world))
@@ -901,7 +926,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/api/worlds/{world_id}/ranking", put(pa::put_world_ranking))
         .route(
             "/api/worlds/{world_id}/ranking-exclusion",
-            put(pa::put_world_ranking_exclusion).delete(pa::delete_world_ranking_exclusion),
+            put(pa::put_world_ranking_exclusion).delete(erase(pa::delete_world_ranking_exclusion)),
         )
         .route(
             "/api/worlds/{world_id}/highlight",
@@ -909,7 +934,7 @@ pub fn router(state: SharedState) -> Router {
         )
         .route(
             "/api/worlds/{world_id}/featured",
-            put(pa::put_world_featured).delete(pa::delete_world_featured),
+            put(pa::put_world_featured).delete(erase(pa::delete_world_featured)),
         )
         .route(
             "/api/destinations/ranking",
@@ -917,10 +942,10 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/places/place", get(places::social::inject_place_metadata))
         .route("/places/world", get(places::social::inject_world_metadata))
-        .route("/api/pois", get(pa::get_pois).post(pa::post_poi))
+        .route("/api/pois", get(pa::get_pois).post(erase(pa::post_poi)))
         .route(
             "/api/pois/{position}",
-            patch(pa::patch_poi).delete(pa::delete_poi),
+            patch(pa::patch_poi).delete(erase(pa::delete_poi)),
         )
         .route("/api/reports", get(pr::get_reports))
         .route("/api/reports/{id}", patch(pr::patch_report))
@@ -936,22 +961,23 @@ pub fn router(state: SharedState) -> Router {
         )
         .route(
             "/v1/destinations",
-            get(pv1::get_v1_destinations_list).post(destinations::post_v1_destinations_list),
+            get(pv1::get_v1_destinations_list).post(erase(destinations::post_v1_destinations_list)),
         )
         .route("/v1/destinations/{id}", get(pv1::get_v1_destination))
         .route(
             "/v1/destinations/{id}/favorites",
-            put(pi::put_v1_destination_favorites).delete(pi::delete_v1_destination_favorites),
+            put(pi::put_v1_destination_favorites)
+                .delete(erase(pi::delete_v1_destination_favorites)),
         )
         .route(
             "/v1/destinations/{id}/likes",
-            put(pi::put_v1_destination_likes).delete(pi::delete_v1_destination_likes),
+            put(pi::put_v1_destination_likes).delete(erase(pi::delete_v1_destination_likes)),
         )
         .route("/v1/categories", get(pv1::get_v1_categories))
         .route("/api/world_names", get(pl::get_world_names_list))
         .route(
             "/api/events",
-            get(ev::get_event_list).post(evw::create_event),
+            get(ev::get_event_list).post(erase(evw::create_event)),
         )
         .route("/api/events/search", post(ev::post_event_search))
         .route("/api/events/attending", get(ev::get_attending_event_list))
@@ -960,37 +986,37 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/api/events/{event_id}",
             get(ev::get_event)
-                .patch(evw::patch_event)
-                .delete(evw::delete_event),
+                .patch(erase(evw::patch_event))
+                .delete(erase(evw::delete_event)),
         )
         .route(
             "/api/events/{event_id}/attendees",
             get(ev::get_event_attendees)
-                .post(evw::create_event_attendee)
-                .delete(evw::delete_event_attendee),
+                .post(erase(evw::create_event_attendee))
+                .delete(erase(evw::delete_event_attendee)),
         )
         .route(
             "/api/schedules",
-            get(ev::get_schedule_list).post(evp::create_schedule),
+            get(ev::get_schedule_list).post(erase(evp::create_schedule)),
         )
         .route(
             "/api/schedules/{schedule_id}",
-            get(ev::get_schedule_by_id).patch(evp::patch_schedule),
+            get(ev::get_schedule_by_id).patch(erase(evp::patch_schedule)),
         )
         .route("/api/profiles/settings", get(evp::list_profile_settings))
         .route(
             "/api/profiles/me/settings",
-            get(evp::get_my_profile_settings).patch(evp::update_my_profile_settings),
+            get(evp::get_my_profile_settings).patch(erase(evp::update_my_profile_settings)),
         )
         .route(
             "/api/profiles/{profile_id}/settings",
-            get(evp::get_profile_settings).patch(evp::update_profile_settings),
+            get(evp::get_profile_settings).patch(erase(evp::update_profile_settings)),
         )
         .route(
             "/api/profiles/subscriptions",
             get(evp::get_profile_subscriptions)
-                .post(evp::create_profile_subscription)
-                .delete(evp::delete_profile_subscription),
+                .post(erase(evp::create_profile_subscription))
+                .delete(erase(evp::delete_profile_subscription)),
         )
         .route("/api/poster", post(events::posters::upload_poster))
         .route(
@@ -1031,11 +1057,11 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/api/status", get(status))
         .route("/openapi.json", get(openapi_json))
-        .route("/api", axum::routing::any(api_not_found))
-        .route("/api/{*rest}", axum::routing::any(api_not_found))
+        .route("/api", any(api_not_found))
+        .route("/api/{*rest}", any(api_not_found))
         // express fell through to the catch-all on a known path with another
         // method; axum's 405 answers the same JSON 404 (a per-route default).
-        .method_not_allowed_fallback(api_not_found)
+        .method_not_allowed_fallback(erase(api_not_found))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             copies::gate,
@@ -1155,20 +1181,24 @@ mod tests {
     }
 
     #[test]
-    fn the_asset_rewrite_domain_is_the_public_host_unless_it_is_decentraland() {
+    fn the_asset_rewrite_base_preserves_the_public_mount_unless_it_is_decentraland() {
         assert_eq!(
-            Settings::asset_rewrite_domain_for(Some("https://interconnected.online/")).as_deref(),
-            Some("interconnected.online")
+            Settings::asset_rewrite_base_for(Some("https://node.example:8443/prefix/")).as_deref(),
+            Some("https://node.example:8443/prefix")
         );
         assert_eq!(
-            Settings::asset_rewrite_domain_for(Some("https://events.decentraland.org")),
+            Settings::asset_rewrite_base_for(Some("https://interconnected.online/")).as_deref(),
+            Some("https://interconnected.online")
+        );
+        assert_eq!(
+            Settings::asset_rewrite_base_for(Some("https://events.decentraland.org")),
             None
         );
         assert_eq!(
-            Settings::asset_rewrite_domain_for(Some("https://decentraland.org")),
+            Settings::asset_rewrite_base_for(Some("https://decentraland.org")),
             None
         );
-        assert_eq!(Settings::asset_rewrite_domain_for(None), None);
+        assert_eq!(Settings::asset_rewrite_base_for(None), None);
         for local in [
             "http://127.0.0.1:5212",
             "http://localhost:5212/",
@@ -1176,12 +1206,12 @@ mod tests {
             "http://devbox:5212",
         ] {
             assert_eq!(
-                Settings::asset_rewrite_domain_for(Some(local)),
+                Settings::asset_rewrite_base_for(Some(local)),
                 None,
                 "{local}"
             );
         }
-        assert_eq!(Settings::asset_rewrite_domain_for(Some("garbage")), None);
+        assert_eq!(Settings::asset_rewrite_base_for(Some("garbage")), None);
     }
 
     #[test]
@@ -1956,4 +1986,16 @@ mod tests {
         assert_eq!(res.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(res.headers()[axum::http::header::RETRY_AFTER], "3600");
     }
+}
+
+/// Production routes stay on `shared::routing` (see `shared::routing::guard`).
+#[cfg(test)]
+#[test]
+fn production_routes_use_shared_routing() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let found = crate::shared::routing::guard::direct_axum_routes(&src);
+    assert!(
+        found.is_empty(),
+        "use crate::shared::routing instead of axum's method routers at {found:?}"
+    );
 }

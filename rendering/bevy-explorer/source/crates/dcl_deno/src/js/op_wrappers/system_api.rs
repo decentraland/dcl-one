@@ -12,10 +12,11 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
     FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, ListenedCommunity, LiveSceneInfo,
-    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PortableInfo,
-    ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
-    VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
+    FriendshipEventUpdate, HomeScene, HoverEvent, ListenedCommunity, LiveSceneInfo, LobbyStage,
+    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PlatformBanNotice,
+    PortableInfo, ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi,
+    SetAvatarData, TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage,
+    WelcomeState, WorldAccessEvent, WorldAccessVerdict,
 };
 
 // list of op declarations
@@ -44,10 +45,12 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_live_scene_info(),
             op_get_home_scene(),
             op_set_home_scene(),
+            op_set_lobby_stage(),
             op_get_service_urls(),
             op_get_welcome(),
             op_accept_terms(),
             op_get_satellite_view(),
+            op_get_world_access(),
             op_get_system_action_stream(),
             op_read_system_action_stream(),
             op_get_chat_stream(),
@@ -91,6 +94,8 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_read_photo_mode_stream(),
             op_get_world_access_stream(),
             op_read_world_access_stream(),
+            op_get_platform_ban_stream(),
+            op_read_platform_ban_stream(),
             op_set_world_password(),
             op_get_portables_stream(),
             op_read_portables_stream(),
@@ -100,6 +105,8 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_read_scene_loading_ui_stream(),
             op_get_analytics_event_stream(),
             op_read_analytics_event_stream(),
+            op_get_texture_optimization_stream(),
+            op_read_texture_optimization_stream(),
             op_get_avatar_modifiers(),
             // Social / Friends
             op_get_friendship_event_stream(),
@@ -317,10 +324,24 @@ pub async fn op_accept_terms(state: Rc<RefCell<OpState>>) -> Result<(), anyhow::
 
 #[op2(async)]
 #[serde]
+pub async fn op_get_world_access(
+    state: Rc<RefCell<OpState>>,
+    #[string] world: String,
+) -> Result<WorldAccessVerdict, anyhow::Error> {
+    dcl_js::system_api::op_get_world_access(state, world).await
+}
+
+#[op2(async)]
+#[serde]
 pub async fn op_get_satellite_view(
     state: Rc<RefCell<OpState>>,
 ) -> Result<Option<SatelliteView>, anyhow::Error> {
     dcl_js::system_api::op_get_satellite_view(state).await
+}
+
+#[op2]
+pub fn op_set_lobby_stage(state: Rc<RefCell<OpState>>, #[serde] stage: Option<LobbyStage>) {
+    dcl_js::system_api::op_set_lobby_stage(state, stage);
 }
 
 #[op2]
@@ -646,6 +667,20 @@ pub async fn op_read_world_access_stream(
     dcl_js::system_api::op_read_world_access_stream(state, rid).await
 }
 
+#[op2(async)]
+pub async fn op_get_platform_ban_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_platform_ban_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_platform_ban_stream(
+    state: Rc<RefCell<OpState>>,
+    rid: u32,
+) -> Result<Option<PlatformBanNotice>, deno_core::anyhow::Error> {
+    dcl_js::system_api::op_read_platform_ban_stream(state, rid).await
+}
+
 #[op2]
 pub fn op_set_world_password(state: Rc<RefCell<OpState>>, #[string] password: Option<String>) {
     dcl_js::system_api::op_set_world_password(state, password);
@@ -691,6 +726,20 @@ pub async fn op_read_analytics_event_stream(
     rid: u32,
 ) -> Result<Option<AnalyticsEvent>, deno_core::anyhow::Error> {
     dcl_js::system_api::op_read_analytics_event_stream(state, rid).await
+}
+
+#[op2(async)]
+pub async fn op_get_texture_optimization_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_texture_optimization_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_texture_optimization_stream(
+    state: Rc<RefCell<OpState>>,
+    rid: u32,
+) -> Result<Option<TextureOptimizationStatus>, deno_core::anyhow::Error> {
+    dcl_js::system_api::op_read_texture_optimization_stream(state, rid).await
 }
 
 #[op2(async)]

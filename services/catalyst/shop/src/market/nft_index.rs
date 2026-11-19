@@ -16,7 +16,8 @@
 //! latest transfer's `to`, the mint the first), `nft_order` (the latest
 //! legacy order event per token) and `land_data` (the latest Update per
 //! token), each a deterministic function of the log: a touched key is
-//! refolded over its whole history, `since = None` rebuilds.
+//! refolded over its whole history (for `land_data` the window is enough: a
+//! touched token's latest Update is in it), `since = None` rebuilds.
 //!
 //! The address set grows with the mirror. A collection enters the walk at
 //! the first window whose end its `created_at` may precede (an upper bound
@@ -525,7 +526,7 @@ pub struct FoldCounts {
 /// The three folds of `net` in one transaction: the keys an event past
 /// `since` touched (`None`: every key) and every token of a contract whose
 /// backfill completed since (`refold_owed`, cleared here), each over its
-/// whole history.
+/// whole history; `land_data` reads only the window.
 pub async fn fold(pool: &PgPool, net: ChainNet, since: Option<i64>) -> anyhow::Result<FoldCounts> {
     let since = since.unwrap_or(-1);
     let mut tx = pool.begin().await?;
@@ -593,20 +594,26 @@ pub async fn fold(pool: &PgPool, net: ChainNet, since: Option<i64>) -> anyhow::R
     })
 }
 
+/// Materialized so the per-token order does not shape the window's scan.
+pub(super) const LAND_DATA_SQL: &str = "WITH w AS MATERIALIZED (\
+    SELECT contract_address, token_id, detail, block_number, log_index FROM shop.nft_event \
+    WHERE network = 'ethereum' AND kind = 'land_data' AND block_number > $1) \
+SELECT DISTINCT ON (w.contract_address, w.token_id) w.contract_address, w.token_id::text AS token_id, w.detail, w.block_number, w.log_index \
+FROM w ORDER BY w.contract_address, w.token_id, w.block_number DESC, w.log_index DESC";
+
 /// The latest Update per touched LAND/estate token, parsed in Rust (the CSV
 /// has quoting SQL would re-implement badly) and upserted.
 async fn fold_land_data(conn: &mut PgConnection, since: i64) -> anyhow::Result<u64> {
-    let rows = sqlx::query(
-        "SELECT DISTINCT ON (e.contract_address, e.token_id) e.contract_address, e.token_id::text AS token_id, e.detail, e.block_number, e.log_index \
-         FROM shop.nft_event e \
-         WHERE e.network = 'ethereum' AND e.kind = 'land_data' \
-           AND (e.contract_address, e.token_id) IN (SELECT contract_address, token_id FROM shop.nft_event \
-                                                     WHERE network = 'ethereum' AND kind = 'land_data' AND block_number > $1) \
-         ORDER BY e.contract_address, e.token_id, e.block_number DESC, e.log_index DESC",
-    )
-    .bind(since)
-    .fetch_all(&mut *conn)
-    .await?;
+    // The cross-chain `block_number` misestimate (see `NESTED_LOOP_TOUCHED_MAX`) makes custom plans scan the table.
+    if since >= 0 {
+        sqlx::query("SET LOCAL enable_seqscan = off")
+            .execute(&mut *conn)
+            .await?;
+    }
+    let rows = sqlx::query(LAND_DATA_SQL)
+        .bind(since)
+        .fetch_all(&mut *conn)
+        .await?;
     type Columns = (
         Vec<String>,
         Vec<String>,
@@ -1340,6 +1347,18 @@ pub(crate) mod tests {
             parse_land_data(ev.detail.as_deref().unwrap()),
             Some((Some("1x2 Estate".to_string()), None))
         );
+    }
+
+    /// `land_data` is folded only past the marker, so backfill must never write Updates below it.
+    #[test]
+    fn backfill_topics_leave_out_land_updates() {
+        for net in [ChainNet::Ethereum, ChainNet::Matic] {
+            assert!(
+                !collection_topics(net)
+                    .to_string()
+                    .contains(TOPIC_LAND_UPDATE)
+            );
+        }
     }
 
     #[test]

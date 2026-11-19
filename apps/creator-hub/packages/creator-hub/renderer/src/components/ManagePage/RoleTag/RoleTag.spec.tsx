@@ -1,7 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { RoleType } from '/@/lib/land';
 import { WorldRoleType } from '/@/lib/worlds';
@@ -9,6 +8,7 @@ import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
 import { getRoleTag, RoleTag } from '.';
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 
 describe('getRoleTag', () => {
   describe('when the account owns the place, or rents it out', () => {
@@ -44,9 +44,9 @@ describe('RoleTag', () => {
   describe('when rendered as a collaborator', () => {
     it('should read as plain text, with no role of its own', () => {
       const { container } = render(
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <RoleTag variant="collaborator" />
-        </ThemeProvider>,
+        </TestProviders>,
       );
 
       expect(screen.getByText('Collaborator').tagName).toBe('SPAN');

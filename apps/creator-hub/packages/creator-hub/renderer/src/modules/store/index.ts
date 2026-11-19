@@ -7,9 +7,11 @@ import { configureStore, createDraftSafeSelector } from '@reduxjs/toolkit';
 import { captureException } from '@sentry/electron/renderer';
 
 import { createAnalyticsMiddleware } from './analytics/middleware';
+import { deploymentLogMiddleware } from './deployment/deploymentLog';
 import { deploymentRecordMiddleware } from './workspace/deploymentRecord';
 import { logger } from './logger';
 import * as ai from './ai';
+import * as aiSharing from './aiSharing';
 import * as editor from './editor';
 import * as snackbar from './snackbar';
 import * as translations from './translation';
@@ -30,6 +32,7 @@ import * as creatorFund from './creatorFund';
 export function createRootReducer() {
   return {
     ai: ai.reducer,
+    aiSharing: aiSharing.reducer,
     editor: editor.reducer,
     snackbar: snackbar.reducer,
     translation: translations.reducer,
@@ -57,7 +60,8 @@ const store = configureStore({
     getDefaultMiddleware()
       .concat(logger)
       .concat(createAnalyticsMiddleware())
-      .concat(deploymentRecordMiddleware),
+      .concat(deploymentRecordMiddleware)
+      .concat(deploymentLogMiddleware),
 });
 
 const isDevelopment = true; // todo

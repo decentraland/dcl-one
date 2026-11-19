@@ -177,6 +177,28 @@
         "needs_login_help": "Its saved sign-in may have expired, even if it showed as connected. Sign out and back in: run these in a terminal, one at a time, and finish in your browser. Then send your message again:",
         "needs_login_managed_help": "Its saved sign-in may have expired, even if it showed as connected. In Settings → AI, click Sign out, then Sign in, then send your message again.",
         "api_key_alternative": "Or use an API key: set {envVar} and turn on \"{setting}\" in Settings → AI."
+      },
+      "sharing": {
+        "card_title": "Help improve the AI assistant",
+        "card_body": "Share your conversations with Decentraland to help improve the assistant. An AI model reads them to find what works and what doesn't. Before anything is sent, your computer removes keys, seed phrases, emails and other common personal details.",
+        "signin_body": "Sign in to share your conversations and help improve the assistant.",
+        "details_toggle": "What's shared and what isn't",
+        "details_shared": "Shared: what you type, the assistant's replies, the tools it used with their file names and commands, the agent and model, and how long each reply took.",
+        "details_not_shared": "Not shared: images, file contents, your scene's name, or conversations you mark as not shared.",
+        "details_analysis": "How they're used: an AI model from a provider working for Decentraland summarises each conversation. The provider keeps no copy and doesn't train on it. We keep the patterns we see across many creators to improve the assistant.",
+        "details_publish": "The team discusses those patterns. Changes made from them may be published in the assistant's public instructions, skills and docs, and in the descriptions of those changes. Once published, they stay public even if you delete what you shared.",
+        "details_control": "Stop sharing or delete everything you've shared at any time in Settings. Stopping also stops the analysis, and deleting also deletes the summaries. Shared conversations and their summaries are kept for up to 180 days.",
+        "accept": "Share to help improve",
+        "decline": "No thanks",
+        "not_now": "Not now",
+        "chip": "Sharing",
+        "chip_excluded": "Not Sharing",
+        "chip_menu": "sharing options",
+        "rate_up": "Good reply",
+        "rate_down": "Bad reply",
+        "menu_share_chat": "Share this chat",
+        "menu_share_all": "Share all chats",
+        "menu_chat_erased": "What this chat shared was deleted."
       }
     },
     "publish": {
@@ -383,6 +405,8 @@
         "select_world": {
           "title": "Publish to your World",
           "description": "Choose the domain where your world will be published.",
+          "domain_type_label": "Domain type",
+          "world_name_label": "World name",
           "world_name": "WORLD (NAME)",
           "placeholder": "Select a Name",
           "claim_new_name": "Claim a new NAME",
@@ -616,12 +640,16 @@
         "code_editor": {
           "label": "Code editor of choice",
           "choose_device": "Choose from your device...",
+          "placeholder": "Add or select a default editor",
+          "list": "Added code editors",
+          "remove": "Remove {name}",
           "errors": {
             "load": "Failed to load code editors",
             "set": "Failed to set default editor",
             "invalid_app_extension": "Invalid application selected. Please select a valid .app bundle",
             "invalid_app_bundle": "Invalid application bundle structure",
             "invalid_exe_file": "Invalid application selected. Please select a valid .exe file",
+            "invalid_executable": "Invalid application selected. Please select a file that you can run",
             "unknown": "Failed to set default editor"
           }
         },
@@ -668,6 +696,55 @@
           "install": "Install",
           "sign_in_label": "Sign In",
           "copy": "Copy"
+        },
+        "ai_sharing": {
+          "label": "Share conversations to improve Creator Hub",
+          "description": "Sends what you ask the assistant and its replies to Decentraland, after removing keys and common personal details on your computer. An AI model summarises them to find ways to improve the assistant. Kept for up to 180 days.",
+          "signin": "Sign in to share conversations.",
+          "queued_title": "Waiting to upload ({count})",
+          "queued_empty": "Nothing is waiting to upload.",
+          "delete": "Delete everything I've shared",
+          "deleting": "Deleting…",
+          "deleted": "Deleted {count} shared turns.",
+          "delete_failed": "Couldn't delete your shared conversations. Check your connection and try again.",
+          "viewer_show": "Show what I've shared",
+          "viewer_hide": "Hide what I've shared",
+          "viewer_empty": "Nothing shared yet.",
+          "viewer_failed": "Couldn't load what you've shared. Check your connection and try again.",
+          "viewer_delete": "Delete this turn",
+          "viewer_more": "Show more",
+          "delete_confirm": "Are you sure you want to delete everything you've shared? This action can't be undone.",
+          "delete_confirm_yes": "Delete everything",
+          "delete_cancel": "Cancel",
+          "digests_show": "Show summaries made from your conversations",
+          "digests_hide": "Hide summaries",
+          "digests_empty": "No summaries yet. A conversation is summarised a few hours after it ends.",
+          "digests_failed": "Couldn't load the summaries. Check your connection and try again.",
+          "digests_more": "Show more",
+          "digests_problems": "Problems: {kinds}",
+          "digest_outcome": {
+            "achieved": "Achieved",
+            "partial": "Partly achieved",
+            "not_achieved": "Not achieved",
+            "abandoned": "Abandoned",
+            "unclear": "Unclear"
+          },
+          "digest_friction": {
+            "misunderstood_request": "misunderstood request",
+            "wrong_sdk_knowledge": "wrong SDK knowledge",
+            "tool_failed": "a tool failed",
+            "tool_missing": "missing tool",
+            "skill_missing": "missing skill",
+            "skill_ignored": "skill not used",
+            "asset_not_found": "asset not found",
+            "scene_broke": "scene broke",
+            "slow_or_stuck": "slow or stuck",
+            "creator_corrected_agent": "you corrected the assistant",
+            "creator_stopped_reply": "you stopped a reply",
+            "setup_or_sign_in": "setup or sign-in",
+            "other": "other"
+          },
+          "signin_link": "Sign in"
         }
       },
       "actions": {
@@ -729,7 +806,6 @@
     },
     "install_client": {
       "title": "To jump in, you'll need to install Decentraland first",
-      "download": "Download",
       "download_macos": "DOWNLOAD FOR MACOS",
       "download_win": "DOWNLOAD FOR WINDOWS",
       "cancel": "NOT NOW"
@@ -777,8 +853,8 @@
       "sent": "Thanks for helping us improve the Creator Hub! We've received your report and our team will investigate the issue and work on a fix.",
       "queued_title": "Issue Report Saved",
       "queued": "We saved your report and will send it as soon as you're back online.",
-      "unknown_title": "Couldn't Confirm Your Report",
-      "unknown": "We sent your report but couldn't confirm it arrived. If the problem continues, report it again.",
+      "unknown_title": "Issue Report Sent",
+      "unknown": "We sent your report but couldn't confirm it arrived yet. You don't need to send it again.",
       "failed_title": "Something went wrong",
       "failed": "We couldn't send your report. Check your connection and try again."
     }
@@ -796,8 +872,6 @@
       "delete_scene": "Deleting scene...",
       "delete_scene_failed": "Failed deleting scene",
       "dependencies_updated": "Scene dependencies were updated",
-      "multiplayer_sdk_installed": "Multiplayer Server SDK installed.",
-      "multiplayer_sdk_uninstalled": "Multiplayer Server SDK removed. Latest SDK release installed.",
       "updating_sdk_skills": "Installing the latest AI skills...",
       "sdk_skills_updated": "AI skills are up to date",
       "sdk_skills_update_failed": "Could not install the AI skills",
@@ -1473,7 +1547,6 @@
         "title": "Engagement",
         "description": "Understand how users engage with your place.",
         "minutes": "min",
-        "delta": "{value} min",
         "vs_last_week": "{value} vs. last week",
         "daily": {
           "title": "Average Daily Playtime",
@@ -1569,6 +1642,10 @@
       "day_7_retention": {
         "label": "Day 7 Retention",
         "tooltip": "The percentage of new users who returned to your place within 7 days of their first visit."
+      },
+      "total_playtime": {
+        "label": "Total Playtime",
+        "tooltip": "All the time users spent in your place, summed over every visit."
       },
       "median_playtime": {
         "label": "Median Playtime",
@@ -1811,9 +1888,9 @@
           "d3_retention": "D3 Retention",
           "d3_retention_info_label": "About D3 Retention",
           "playtime": "Total Playtime",
-          "playtime_info": "Average time each player spent in your place over the last 30 days.",
+          "playtime_info": "Total time players spent in your place over the last 30 days.",
           "playtime_info_label": "About Total Playtime",
-          "minutes": "{value} min",
+          "minutes": "{value} {minutes, plural, one {minute} other {minutes}}",
           "no_data": "No data"
         },
         "empty_body": "Once you publish a scene, it shows up here with its performance for the current cycle.",
