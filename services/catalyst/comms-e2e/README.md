@@ -29,7 +29,8 @@ comms-e2e doctor --stack-file <file>
 comms-e2e list [--tag pulse]
 comms-e2e run <scenario | --tag <tag> | --all> --stack-file <file>
               [--repeat <n>] [--seed <n>] [--strict] [--transport enet|webtransport]
-              [--report <file.json>] [--work-dir <directory>] [--allow-host <host>]
+              [--report <file.json>] [--report-hosts] [--work-dir <directory>]
+              [--allow-host <host>] [--allow-hostile-host <host>]
               [--deadline <seconds>] [--timeline <n>] [--one-source-address]
 comms-e2e console --stack-file <file> "/world_state" "/pulse_state"
 comms-e2e address --key-env <VARIABLE>
@@ -45,9 +46,17 @@ comms-e2e address --key-env <VARIABLE>
   (`--seed`), and the end of the timeline. `--report` writes every timeline in full.
 - A scenario whose prerequisite the stack file lacks is **skipped** with the reason. It is never
   counted as passed.
-- Hostile scenarios (floods, malformed frames, bans, a restart of a process of the stack) refuse
-  a target that is not loopback (`localhost` and `*.localhost` count as loopback) unless
-  `--allow-host` names it. A private or link-local address has to be named too.
+- `--repeat` takes 1 to 100.
+- Every scenario runs against loopback (`localhost` and `*.localhost` count as loopback). A
+  stack file that names any other host, a private or link-local address included, runs no
+  scenario unless `--allow-host <host>` names each such host; a refused scenario fails before
+  its first packet. Hostile scenarios (floods, malformed frames, bans, a restart of a process of
+  the stack) need the host named with `--allow-hostile-host <host>` as well: `--allow-host`
+  alone does not admit them. These flags prevent accidents and are not access control: a
+  deployment is protected by the servers' own limits. `doctor` is not a scenario and dials any
+  host.
+- The report, printed or written with `--report`, names the loopback hosts of the stack file and
+  counts the others; `--report-hosts` names them all.
 - `console` starts one explorer behind the fault links and runs console commands in it: the way
   to see what a build answers before writing a scenario.
 - One repeat may take `--deadline` seconds (300 unless given). A failure shows the last

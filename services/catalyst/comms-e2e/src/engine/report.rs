@@ -47,16 +47,33 @@ pub struct ScenarioResult {
 pub struct Report {
     pub run_id: String,
     pub first_seed: u64,
+    /// The hosts of the stack file: the loopback ones, or every one when the run asked for them.
     pub hosts: Vec<String>,
+    /// How many hosts that are not loopback `hosts` leaves out.
+    pub other_hosts: usize,
     pub results: Vec<ScenarioResult>,
 }
 
 impl Report {
-    pub fn new(run_id: &str, first_seed: u64, hosts: Vec<String>) -> Report {
+    /// A report of the stack whose hosts are `hosts`. Hosts that are not loopback are named only
+    /// if `name_every_host`; otherwise they are only counted.
+    pub fn new(run_id: &str, first_seed: u64, hosts: Vec<String>, name_every_host: bool) -> Report {
+        let (hosts, other_hosts) = if name_every_host {
+            (hosts, 0)
+        } else {
+            let total = hosts.len();
+            let loopback: Vec<String> = hosts
+                .into_iter()
+                .filter(|host| crate::stack::is_loopback_host(host))
+                .collect();
+            let others = total - loopback.len();
+            (loopback, others)
+        };
         Report {
             run_id: run_id.to_owned(),
             first_seed,
             hosts,
+            other_hosts,
             results: Vec::new(),
         }
     }
@@ -133,9 +150,21 @@ impl Report {
                 ));
             }
         }
+        let mut hosts = self.hosts.join(", ");
+        if self.other_hosts > 0 {
+            if !hosts.is_empty() {
+                hosts.push_str(" and ");
+            }
+            hosts.push_str(&format!(
+                "{} other host{} (--report-hosts names them)",
+                self.other_hosts,
+                if self.other_hosts == 1 { "" } else { "s" }
+            ));
+        }
+        out.push_str(&format!("\nhosts: {hosts}\n"));
         let (passed, failed, skipped) = self.count();
         out.push_str(&format!(
-            "\n{passed} passed, {failed} failed, {skipped} skipped  (run {}, first seed {})\n",
+            "{passed} passed, {failed} failed, {skipped} skipped  (run {}, first seed {})\n",
             self.run_id, self.first_seed
         ));
         out

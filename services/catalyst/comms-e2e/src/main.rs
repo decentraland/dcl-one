@@ -43,8 +43,8 @@ enum Command {
         /// The stack file
         #[arg(long, value_name = "file")]
         stack_file: PathBuf,
-        /// Repeats per scenario; absent, each scenario's own default
-        #[arg(long, value_name = "n")]
+        /// Repeats per scenario, 1 to 100; absent, each scenario's own default
+        #[arg(long, value_name = "n", value_parser = clap::value_parser!(u32).range(1..=100))]
         repeat: Option<u32>,
         /// The seed of the first repeat: replays a failure
         #[arg(long)]
@@ -52,9 +52,17 @@ enum Command {
         /// A skipped scenario fails the run
         #[arg(long)]
         strict: bool,
-        /// A host that hostile scenarios may target although it is not loopback
+        /// A host that is not loopback which scenarios may reach. Without it a run reaches only
+        /// loopback. It guards against accidents and is not access control
         #[arg(long = "allow-host", value_name = "host")]
         allowed_hosts: Vec<String>,
+        /// A host named with --allow-host which hostile scenarios (floods, malformed frames,
+        /// bans, restarts) may reach as well
+        #[arg(long = "allow-hostile-host", value_name = "host")]
+        allowed_hostile_hosts: Vec<String>,
+        /// Name every host of the stack file in the report, not only the loopback ones
+        #[arg(long)]
+        report_hosts: bool,
         /// Write the full report, timelines included, as JSON
         #[arg(long, value_name = "file")]
         report: Option<PathBuf>,
@@ -144,6 +152,8 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
             seed,
             strict,
             allowed_hosts,
+            allowed_hostile_hosts,
+            report_hosts,
             report,
             work_dir,
             deadline,
@@ -166,6 +176,8 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
                 seed,
                 strict,
                 allowed_hosts,
+                allowed_hostile_hosts,
+                report_hosts,
                 scenario_deadline: Duration::from_secs(deadline),
                 transport,
                 one_source_address,
@@ -258,5 +270,61 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
                 ExitCode::FAILURE
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run_with_repeat(repeat: &str) -> Result<Arguments, clap::Error> {
+        Arguments::try_parse_from([
+            "comms-e2e",
+            "run",
+            "pulse-smoke",
+            "--stack-file",
+            "stack.toml",
+            "--repeat",
+            repeat,
+        ])
+    }
+
+    #[test]
+    fn repeat_runs_from_1_to_100() {
+        for accepted in ["1", "100"] {
+            assert!(run_with_repeat(accepted).is_ok(), "{accepted}");
+        }
+        for refused in ["0", "101", "100000"] {
+            assert!(run_with_repeat(refused).is_err(), "{refused}");
+        }
+    }
+
+    #[test]
+    fn hostile_hosts_are_a_flag_of_their_own() {
+        let Command::Run {
+            allowed_hosts,
+            allowed_hostile_hosts,
+            report_hosts,
+            ..
+        } = Arguments::try_parse_from([
+            "comms-e2e",
+            "run",
+            "--all",
+            "--stack-file",
+            "stack.toml",
+            "--allow-host",
+            "stack.example",
+            "--allow-hostile-host",
+            "stack.example",
+            "--report-hosts",
+        ])
+        .unwrap()
+        .command
+        else {
+            panic!("a run");
+        };
+        assert_eq!(allowed_hosts, vec!["stack.example".to_owned()]);
+        assert_eq!(allowed_hostile_hosts, vec!["stack.example".to_owned()]);
+        assert!(report_hosts);
     }
 }

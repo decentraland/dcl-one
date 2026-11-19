@@ -5,7 +5,7 @@
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use catalyst_comms::archipelago::config::ClusterConfig;
 use catalyst_comms::pulse::hardening;
 use catalyst_comms::pulse::interest::{ParcelEncoder, ParcelEncoderOptions};
@@ -301,20 +301,32 @@ impl Stack {
         hosts
     }
 
-    /// Refuses a hostile run (floods, malformed frames, bans, restarts) against a host that is
-    /// neither loopback (`localhost` and `*.localhost` included) nor named in `allowed_hosts`.
-    pub fn ensure_safe_for(&self, hostile: bool, allowed_hosts: &[String]) -> Result<()> {
-        if !hostile {
-            return Ok(());
-        }
+    /// Whether a scenario may run against every host of the stack file. A loopback host
+    /// (`localhost` and `*.localhost` included) admits every scenario. Any other host admits a
+    /// scenario only if `allowed_hosts` (`--allow-host`) names it, and a hostile one (floods,
+    /// malformed frames, bans, restarts) only if `hostile_hosts` (`--allow-hostile-host`) names
+    /// it as well. These lists keep a run from reaching a host by accident; they are not access
+    /// control.
+    pub fn ensure_safe_for(
+        &self,
+        hostile: bool,
+        allowed_hosts: &[String],
+        hostile_hosts: &[String],
+    ) -> Result<(), Refusal> {
+        let names = |list: &[String], host: &str| list.iter().any(|named| named == host);
         for host in self.hosts() {
-            if is_local(&host) || allowed_hosts.iter().any(|allowed| allowed == &host) {
+            if is_loopback_host(&host) {
                 continue;
             }
-            bail!(
-                "a hostile scenario will not run against {host}: it is not a loopback address; \
-                 name it with --allow-host if that is intended"
-            );
+            let allowed = names(allowed_hosts, &host);
+            if allowed && (!hostile || names(hostile_hosts, &host)) {
+                continue;
+            }
+            return Err(Refusal {
+                host,
+                hostile,
+                allowed,
+            });
         }
         Ok(())
     }
@@ -352,6 +364,48 @@ impl Stack {
     }
 }
 
+/// Why a scenario may not run against the stack: a host of the stack file that is not loopback,
+/// and what the run did not name it with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refusal {
+    pub host: String,
+    /// The scenario is hostile.
+    pub hostile: bool,
+    /// `--allow-host` names the host.
+    pub allowed: bool,
+}
+
+impl Refusal {
+    /// The refusal as text, naming the host or, when `name_host` is false, leaving it out.
+    pub fn describe(&self, name_host: bool) -> String {
+        let target = if name_host {
+            format!("{}, which is not a loopback address,", self.host)
+        } else {
+            "a host of the stack file that is not a loopback address (--report-hosts names it)"
+                .to_owned()
+        };
+        match (self.hostile, self.allowed) {
+            (false, _) => format!("no scenario runs against {target} unless --allow-host names it"),
+            (true, false) => format!(
+                "a hostile scenario runs against {target} only if both --allow-host and \
+                 --allow-hostile-host name it"
+            ),
+            (true, true) => format!(
+                "a hostile scenario runs against {target} only if --allow-hostile-host names it \
+                 as well as --allow-host"
+            ),
+        }
+    }
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.describe(true))
+    }
+}
+
+impl std::error::Error for Refusal {}
+
 /// The value of the environment variable `variable`, which holds a secret.
 pub fn secret_from_environment(variable: &str) -> Result<String> {
     std::env::var(variable)
@@ -365,7 +419,8 @@ fn host_of(url: &Url) -> String {
         .to_owned()
 }
 
-fn is_local(host: &str) -> bool {
+/// Whether `host` is this machine: a loopback address, `localhost` or a name under `.localhost`.
+pub fn is_loopback_host(host: &str) -> bool {
     if host == "localhost" || host.ends_with(".localhost") {
         return true;
     }
@@ -387,16 +442,50 @@ mod tests {
         .unwrap()
     }
 
+    fn named(host: &str) -> Vec<String> {
+        vec![host.to_owned()]
+    }
+
     #[test]
-    fn hostile_run_refuses_a_public_host() {
+    fn a_host_that_is_not_loopback_admits_nothing_unnamed() {
         let public = stack_at("https://example.com");
-        let refusal = public.ensure_safe_for(true, &[]).unwrap_err().to_string();
-        assert!(refusal.contains("example.com"), "{refusal}");
+        for hostile in [false, true] {
+            let refusal = public.ensure_safe_for(hostile, &[], &[]).unwrap_err();
+            assert_eq!(refusal.host, "example.com");
+            assert!(refusal.to_string().contains("example.com"), "{refusal}");
+            assert!(refusal.to_string().contains("--allow-host"), "{refusal}");
+        }
+        // named with --allow-host: an ordinary scenario runs, a hostile one does not
         public
-            .ensure_safe_for(true, &["example.com".to_owned()])
+            .ensure_safe_for(false, &named("example.com"), &[])
             .unwrap();
-        // a run that is not hostile may go anywhere
-        public.ensure_safe_for(false, &[]).unwrap();
+        let refusal = public
+            .ensure_safe_for(true, &named("example.com"), &[])
+            .unwrap_err();
+        assert!(
+            refusal.to_string().contains("--allow-hostile-host"),
+            "{refusal}"
+        );
+        // a hostile scenario needs both
+        public
+            .ensure_safe_for(true, &named("example.com"), &named("example.com"))
+            .unwrap();
+        assert!(
+            public
+                .ensure_safe_for(true, &[], &named("example.com"))
+                .is_err()
+        );
+        assert!(
+            public
+                .ensure_safe_for(false, &[], &named("example.com"))
+                .is_err()
+        );
+        // another host named does not admit this one
+        assert!(
+            public
+                .ensure_safe_for(false, &named("example.org"), &[])
+                .is_err()
+        );
 
         for local in [
             "http://127.0.0.1:5210",
@@ -405,8 +494,20 @@ mod tests {
             "http://stack.localhost:5210",
             "http://[::1]:80",
         ] {
-            stack_at(local).ensure_safe_for(true, &[]).unwrap();
+            stack_at(local).ensure_safe_for(true, &[], &[]).unwrap();
+            stack_at(local).ensure_safe_for(false, &[], &[]).unwrap();
         }
+    }
+
+    #[test]
+    fn a_refusal_can_leave_the_host_out() {
+        let refusal = stack_at("https://example.com")
+            .ensure_safe_for(false, &[], &[])
+            .unwrap_err();
+        let unnamed = refusal.describe(false);
+        assert!(!unnamed.contains("example.com"), "{unnamed}");
+        assert!(unnamed.contains("--report-hosts"), "{unnamed}");
+        assert!(refusal.describe(true).contains("example.com"));
     }
 
     #[test]
@@ -420,10 +521,13 @@ mod tests {
             ("http://[fe80::1]:80", "fe80::1"),
         ] {
             let stack = stack_at(url);
-            let refusal = stack.ensure_safe_for(true, &[]).unwrap_err().to_string();
-            assert!(refusal.contains(host), "{refusal}");
-            assert!(refusal.contains("loopback"), "{refusal}");
-            stack.ensure_safe_for(true, &[host.to_owned()]).unwrap();
+            let refusal = stack.ensure_safe_for(false, &[], &[]).unwrap_err();
+            assert_eq!(refusal.host, host);
+            assert!(refusal.to_string().contains("loopback"), "{refusal}");
+            stack.ensure_safe_for(false, &named(host), &[]).unwrap();
+            stack
+                .ensure_safe_for(true, &named(host), &named(host))
+                .unwrap();
         }
     }
 
@@ -459,7 +563,8 @@ mod tests {
     fn a_public_pulse_address_is_refused_too() {
         let stack =
             Stack::parse("api = \"http://127.0.0.1:1\"\npulse_enet = \"8.8.8.8:9000\"\n").unwrap();
-        assert!(stack.ensure_safe_for(true, &[]).is_err());
+        assert!(stack.ensure_safe_for(true, &[], &[]).is_err());
+        assert!(stack.ensure_safe_for(false, &[], &[]).is_err());
     }
 
     /// A stack file in which every address is loopback, with `public` replacing one line.
@@ -533,19 +638,22 @@ mod tests {
         ];
         // the all-loopback stack is the control: nothing here refuses it
         stack_with_one_public("never matches", "")
-            .ensure_safe_for(true, &[])
+            .ensure_safe_for(true, &[], &[])
             .unwrap();
         for (replaced, public) in cases {
             let stack = stack_with_one_public(replaced, public);
-            let refusal = stack
-                .ensure_safe_for(true, &[])
-                .expect_err(public)
-                .to_string();
-            assert!(refusal.contains("8.8.8.8"), "{public}: {refusal}");
+            for hostile in [false, true] {
+                let refusal = stack
+                    .ensure_safe_for(hostile, &[], &[])
+                    .expect_err(public)
+                    .to_string();
+                assert!(refusal.contains("8.8.8.8"), "{public}: {refusal}");
+            }
+            let both = named("8.8.8.8");
             stack
-                .ensure_safe_for(true, &["8.8.8.8".to_owned()])
+                .ensure_safe_for(true, &both, &both)
                 .unwrap_or_else(|error| panic!("{public}: {error}"));
-            stack.ensure_safe_for(false, &[]).unwrap();
+            stack.ensure_safe_for(false, &both, &[]).unwrap();
         }
     }
 

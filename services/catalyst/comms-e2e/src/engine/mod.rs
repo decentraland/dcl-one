@@ -319,7 +319,12 @@ pub struct RunOptions {
     pub seed: Option<u64>,
     /// A skipped scenario fails the run.
     pub strict: bool,
+    /// Hosts that are not loopback which scenarios may reach (`--allow-host`).
     pub allowed_hosts: Vec<String>,
+    /// Of those, the hosts hostile scenarios may reach too (`--allow-hostile-host`).
+    pub allowed_hostile_hosts: Vec<String>,
+    /// The report names every host, not only the loopback ones (`--report-hosts`).
+    pub report_hosts: bool,
     pub work_dir: PathBuf,
     /// The longest one repeat may take.
     pub scenario_deadline: Duration,
@@ -336,6 +341,8 @@ impl Default for RunOptions {
             seed: None,
             strict: false,
             allowed_hosts: Vec::new(),
+            allowed_hostile_hosts: Vec::new(),
+            report_hosts: false,
             work_dir: std::env::temp_dir().join("comms-e2e"),
             scenario_deadline: Duration::from_secs(300),
             transport: Transport::Enet,
@@ -367,7 +374,7 @@ pub async fn run_scenarios(
             .as_nanos() as u64
             & 0xffff_ffff
     });
-    let mut report = Report::new(&run_id, first_seed, stack.hosts());
+    let mut report = Report::new(&run_id, first_seed, stack.hosts(), options.report_hosts);
 
     for scenario in selection {
         let started = Instant::now();
@@ -392,10 +399,16 @@ pub async fn run_scenarios(
                 reason: "the stack file has no Pulse over WebTransport (`pulse_webtransport`)"
                     .to_owned(),
             };
-        } else if let Err(refusal) = stack.ensure_safe_for(scenario.hostile, &options.allowed_hosts)
-        {
+        } else if let Err(refusal) = stack.ensure_safe_for(
+            scenario.hostile,
+            &options.allowed_hosts,
+            &options.allowed_hostile_hosts,
+        ) {
             result.outcome = Outcome::Failed {
-                expectation: format!("refused before the first packet: {refusal}"),
+                expectation: format!(
+                    "refused before the first packet: {}",
+                    refusal.describe(options.report_hosts)
+                ),
                 seed: first_seed,
                 repeat: 0,
                 timeline: Vec::new(),

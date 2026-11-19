@@ -146,13 +146,102 @@ async fn a_hostile_scenario_is_refused_against_a_public_host_before_it_runs() {
     );
     assert_eq!(RAN.load(Ordering::SeqCst), 0);
 
+    // --allow-host alone admits ordinary scenarios, not a hostile one
     let allowed = RunOptions {
         allowed_hosts: vec!["8.8.8.8".to_owned()],
         ..options()
     };
-    let report = run_scenarios(public, &[&hostile], &allowed).await;
+    let report = run_scenarios(public.clone(), &[&hostile], &allowed).await;
+    let Outcome::Failed { expectation, .. } = &report.results[0].outcome else {
+        panic!("expected a refusal");
+    };
+    assert!(
+        expectation.contains("--allow-hostile-host"),
+        "{expectation}"
+    );
+    assert_eq!(RAN.load(Ordering::SeqCst), 0);
+
+    let both = RunOptions {
+        allowed_hosts: vec!["8.8.8.8".to_owned()],
+        allowed_hostile_hosts: vec!["8.8.8.8".to_owned()],
+        ..options()
+    };
+    let report = run_scenarios(public, &[&hostile], &both).await;
     assert!(matches!(report.results[0].outcome, Outcome::Passed));
     assert_eq!(RAN.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn an_ordinary_scenario_is_refused_against_a_host_that_is_not_named() {
+    static RAN: AtomicU32 = AtomicU32::new(0);
+    fn counts(_ctx: Ctx) -> ScenarioFuture {
+        Box::pin(async {
+            RAN.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+    }
+    let ordinary = scenario("ordinary", counts);
+    let public = Arc::new(Stack::pulse_only("203.0.113.5:9000".parse().unwrap()));
+
+    let report = run_scenarios(public.clone(), &[&ordinary], &options()).await;
+    let Outcome::Failed { expectation, .. } = &report.results[0].outcome else {
+        panic!("expected a refusal");
+    };
+    assert!(
+        expectation.contains("refused before the first packet"),
+        "{expectation}"
+    );
+    assert!(expectation.contains("--allow-host"), "{expectation}");
+    // the report names no host that is not loopback unless asked to
+    assert!(!expectation.contains("203.0.113.5"), "{expectation}");
+    assert!(!report.render(10).contains("203.0.113.5"));
+    assert_eq!(RAN.load(Ordering::SeqCst), 0);
+
+    let allowed = RunOptions {
+        allowed_hosts: vec!["203.0.113.5".to_owned()],
+        ..options()
+    };
+    let report = run_scenarios(public, &[&ordinary], &allowed).await;
+    assert!(matches!(report.results[0].outcome, Outcome::Passed));
+    assert_eq!(RAN.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn the_report_counts_hosts_that_are_not_loopback_unless_asked_to_name_them() {
+    let passing = scenario("passing", passes);
+    let mut stack = Stack::pulse_only("127.0.0.1:9000".parse().unwrap());
+    stack.api = Some("http://203.0.113.5:5210".parse().unwrap());
+    stack.serve_metrics = Some("http://198.51.100.7:5210/metrics".parse().unwrap());
+    let stack = Arc::new(stack);
+    let named = |report_hosts: bool| RunOptions {
+        allowed_hosts: vec!["203.0.113.5".to_owned(), "198.51.100.7".to_owned()],
+        report_hosts,
+        ..options()
+    };
+
+    let report = run_scenarios(stack.clone(), &[&passing], &named(false)).await;
+    assert!(matches!(report.results[0].outcome, Outcome::Passed));
+    assert_eq!(report.hosts, vec!["127.0.0.1".to_owned()]);
+    assert_eq!(report.other_hosts, 2);
+    let json = serde_json::to_string(&report).unwrap();
+    let rendered = report.render(10);
+    for text in [&json, &rendered] {
+        assert!(!text.contains("203.0.113.5"), "{text}");
+        assert!(!text.contains("198.51.100.7"), "{text}");
+    }
+    assert!(rendered.contains("2 other hosts"), "{rendered}");
+
+    let report = run_scenarios(stack, &[&passing], &named(true)).await;
+    assert_eq!(report.other_hosts, 0);
+    let rendered = report.render(10);
+    for host in ["127.0.0.1", "203.0.113.5", "198.51.100.7"] {
+        assert!(
+            report.hosts.contains(&host.to_owned()),
+            "{:?}",
+            report.hosts
+        );
+        assert!(rendered.contains(host), "{rendered}");
+    }
 }
 
 #[tokio::test]
