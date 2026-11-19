@@ -95,9 +95,9 @@ impl WrapSchemeHandlerFactory for LocalSchemaHandlerBuilder {
 impl Clone for LocalSchemaHandlerBuilder {
     fn clone(&self) -> Self {
         let object = unsafe {
-            let rc_impl = &mut *self.object;
+            let rc_impl = &*self.object;
             rc_impl.interface.add_ref();
-            rc_impl
+            self.object
         };
         Self {
             object,
@@ -150,9 +150,9 @@ impl WrapResourceHandler for LocalResourceHandlerBuilder {
 impl Clone for LocalResourceHandlerBuilder {
     fn clone(&self) -> Self {
         let object = unsafe {
-            let rc_impl = &mut *self.object;
+            let rc_impl = &*self.object;
             rc_impl.interface.add_ref();
-            rc_impl
+            self.object
         };
         Self {
             object,

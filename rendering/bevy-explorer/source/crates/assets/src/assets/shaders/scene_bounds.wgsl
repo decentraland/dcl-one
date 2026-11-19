@@ -28,13 +28,13 @@ const SCENE_DITHER_CAPSULE: u32 = 4u;
 
 @group(2) @binding(100)
 var<uniform> scene_bounds: SceneBoundData;
-#ifndef WEBGL2
+#ifndef NO_SCENE_CELLS
 @group(2) @binding(101)
 var<storage, read> scene_cells: SceneCells;
 #endif
 
 fn cell_region(cell: vec2<i32>) -> u32 {
-#ifdef WEBGL2
+#ifdef NO_SCENE_CELLS
     // no storage buffers: the cell table is left out (scene_material's `webgl2`), so no cell is
     // in a scene and a bounded scene fades by its rectangle only
     return 0u;
@@ -50,7 +50,7 @@ fn cell_region(cell: vec2<i32>) -> u32 {
 }
 
 fn region_height(region: u32) -> f32 {
-#ifdef WEBGL2
+#ifdef NO_SCENE_CELLS
     return 0.0;
 #else
     return bitcast<f32>(scene_cells.data[region - 1u]);
@@ -72,7 +72,7 @@ fn scene_outside_amount(world_position: vec3<f32>) -> f32 {
         return max(max(outside_xy.x, outside_xy.y), world_position.y - scene_bounds.rect_height);
     }
 
-#ifdef WEBGL2
+#ifdef NO_SCENE_CELLS
     // no cell table (scene_material's `webgl2`): only a full rectangle fades
     return 0.0;
 #else

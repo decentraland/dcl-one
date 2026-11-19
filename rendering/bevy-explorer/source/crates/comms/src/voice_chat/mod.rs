@@ -22,7 +22,7 @@ use common::structs::AudioSettings;
 use common::{
     rpc::RpcStreamSender,
     sets::SceneSets,
-    structs::SystemAudio,
+    structs::{ClientWindowFocus, SystemAudio},
     util::{redact_access_token, AsH160},
 };
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
@@ -164,7 +164,7 @@ const CALL_TUNE_SECS: f32 = 3.056;
 pub const VOICE_CHAT_CHANNEL: &str = "voice-chat";
 
 /// The call microphone: whether it publishes into the voice room (the mic plugin reads it), and
-/// whether a call is connected (the mic key toggles it instead of the nearby mic then).
+/// whether a call is connected (the mic key drives it instead of the nearby mic then).
 #[derive(Resource, Default)]
 pub struct CallMic {
     pub enabled: bool,
@@ -422,8 +422,13 @@ pub struct VoiceChat {
 }
 
 impl VoiceChat {
-    /// The state as the HUD sees it.
-    pub fn snapshot(&self, mic: &CallMic, participants: &CallParticipants) -> VoiceChatStateData {
+    /// The state as the HUD sees it; the mic shows off while the client window lacks focus.
+    pub fn snapshot(
+        &self,
+        mic: &CallMic,
+        focus: ClientWindowFocus,
+        participants: &CallParticipants,
+    ) -> VoiceChatStateData {
         let state = &self.state;
         VoiceChatStateData {
             status: state.status,
@@ -433,7 +438,7 @@ impl VoiceChat {
             peer: state.peer.map(|a| format!("{a:#x}")),
             connection: self.connection,
             participants: participants.list(),
-            mic_enabled: mic.enabled,
+            mic_enabled: mic.enabled && focus == ClientWindowFocus::Focused,
             local_speaker: state.local_speaker,
             local_role: state.local_role,
             local_requesting_to_speak: state.local_requesting_to_speak,
@@ -572,11 +577,11 @@ fn user_refusal(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn drive_voice_chat(
     mut commands: Commands,
     mut voice: ResMut<VoiceChat>,
     mut call_mic: ResMut<CallMic>,
+    focus: Res<ClientWindowFocus>,
     mut inputs: ResMut<VoiceInputs>,
     mut system_api: EventReader<SystemApi>,
     mut social_events: EventReader<VoiceEventReceived>,
@@ -871,11 +876,15 @@ fn drive_voice_chat(
     if voice.state_streams.iter().any(|s| s.is_closed()) {
         voice.state_streams.retain(|s| !s.is_closed());
     }
-    let dirty = force_snapshot || changed || connection_changed || call_mic.is_changed();
+    let dirty = force_snapshot
+        || changed
+        || connection_changed
+        || call_mic.is_changed()
+        || focus.is_changed();
     if voice.state_streams.is_empty() || !dirty {
         return;
     }
-    let snapshot = voice.snapshot(&call_mic, &participants);
+    let snapshot = voice.snapshot(&call_mic, *focus, &participants);
     for sender in &voice.state_streams {
         let _ = sender.send(snapshot.clone());
     }
@@ -883,7 +892,6 @@ fn drive_voice_chat(
 
 /// Every microphone track published in the voice room is subscribed (the room is no transport,
 /// so nothing else would) and played flat.
-#[expect(clippy::type_complexity, reason = "Queries are complex")]
 fn subscribe_voice_room_tracks(
     mut commands: Commands,
     tracks: Query<(Entity, &PublishedBy), (With<Microphone>, With<Audio>, Without<VoiceRoomTrack>)>,
@@ -1093,6 +1101,7 @@ mod tests {
             .add_event::<SystemAudio>()
             .init_resource::<VoiceChat>()
             .init_resource::<CallMic>()
+            .insert_resource(ClientWindowFocus::Focused)
             .init_resource::<VoiceInputs>()
             .init_resource::<SocialClient>()
             .init_resource::<Wallet>()

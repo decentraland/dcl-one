@@ -9,6 +9,8 @@
 //!   standard input closes or says `leave` (`status` prints the room as seen now). The token
 //!   comes from the named environment variable and is never printed
 
+#![forbid(unsafe_code)]
+
 use anyhow::{anyhow, Context};
 
 mod join;

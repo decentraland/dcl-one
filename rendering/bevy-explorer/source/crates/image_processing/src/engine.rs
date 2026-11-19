@@ -116,7 +116,6 @@ fn drop_ktx2_result(ty: ProcessingAssetType, path: &AssetPath) {
     }
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn check_assets(
     mut a: EventReader<AssetEvent<Image>>,
     mut failed_gltfs: EventReader<AssetLoadFailedEvent<Gltf>>,
@@ -347,7 +346,6 @@ fn check_assets(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn pipe_events(
     mut channels: ResMut<Channels>,
     mut events: EventReader<AssetForProcessing>,
@@ -383,7 +381,7 @@ fn pipe_events(
                     ProcessingAssetType::Gltf => {
                         if let Some(h) = asset_server.get_handle::<Gltf>(&req.base_path) {
                             // on wasm the cache path is the source url (the processed bytes
-                            // overwrite the service-worker cache entry for that url), so wrap
+                            // overwrite the web cache entry for that url), so wrap
                             // it in a url-form IpfsPath to make it loadable
                             #[cfg(target_arch = "wasm32")]
                             let cache_path = {

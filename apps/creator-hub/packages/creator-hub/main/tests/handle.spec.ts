@@ -101,6 +101,25 @@ describe('formatArgs', () => {
     });
   });
 
+  describe('when a request carries a body', () => {
+    it('should keep an AI sharing upload body out of the log', () => {
+      const line = formatArgs([
+        {
+          baseUrl: 'https://ai-sharing.example.com',
+          path: '/turns',
+          rawBody: '{"records":[{"prompt":{"text":"my private prompt"}}]}',
+        },
+      ]);
+
+      expect(line).not.toContain('my private prompt');
+      expect(line).toContain('/turns');
+    });
+
+    it('should keep a structured body out of the log', () => {
+      expect(formatArgs([{ path: '/metrics', body: { note: 'hello' } }])).not.toContain('hello');
+    });
+  });
+
   describe('when arguments carry nothing sensitive', () => {
     it('should format them positionally', () => {
       expect(formatArgs(['scene-1', { open: true }])).toBe(
@@ -122,6 +141,8 @@ describe('handle', () => {
     ['ai.askResult', ['ask-1', 'ANSWER TEXT']],
     ['ai.mirrorPush', [{ messages: [{ text: 'PROMPT TEXT' }] }]],
     ['ai.remoteCommand', [{ type: 'send', text: 'PROMPT TEXT' }]],
+    ['aiSharing.peek', ['0x1234567890abcdef1234567890abcdef12345678', 20]],
+    ['aiSharing.setWallet', ['0x1234567890abcdef1234567890abcdef12345678']],
   ] as const)('when %s is called', (channel, args) => {
     it('should log the channel without its arguments', async () => {
       vi.mocked(log.info).mockClear();

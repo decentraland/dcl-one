@@ -43,6 +43,7 @@ impl Plugin for TransformAndParentPlugin {
                 PostUpdateSets::PlayerUpdate,
                 PostUpdateSets::CameraUpdate,
                 PostUpdateSets::InverseKinematics,
+                PostUpdateSets::SpringBones,
                 PostUpdateSets::Nametag,
                 PostUpdateSets::AttachSync,
                 PostUpdateSets::Billboard,
@@ -94,7 +95,6 @@ impl Plugin for TransformAndParentPlugin {
     }
 }
 
-#[allow(clippy::type_complexity)]
 pub(crate) fn process_transform_and_parent_updates(
     mut commands: Commands,
     mut scenes: Query<(
@@ -327,7 +327,6 @@ impl ParentPositionSyncStage for AvatarAttachStage {}
 pub struct SceneProxyStage;
 impl ParentPositionSyncStage for SceneProxyStage {}
 
-#[allow(clippy::type_complexity)]
 pub fn parent_position_sync<T: ParentPositionSyncStage>(
     mut commands: Commands,
     syncees: Query<(

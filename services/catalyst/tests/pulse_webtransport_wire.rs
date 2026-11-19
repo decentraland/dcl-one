@@ -9,6 +9,7 @@ use catalyst::comms::pulse::decentraland::pulse::{
     ClientMessage, HandshakeRequest, PlayerState, PlayerStateInput, ServerMessage, client_message,
     server_message,
 };
+use catalyst::comms::pulse::hardening::DEFAULT_CORRUPT_BURST;
 use catalyst::comms::pulse::server::ENET_CAPACITY;
 use catalyst::comms::pulse::transport::webtransport::framing::StreamFrameReader;
 use catalyst::comms::pulse::transport::webtransport::framing::{datagram_frame, stream_frame};
@@ -106,8 +107,14 @@ async fn signed_handshake(ts_ms: i64) -> (Vec<u8>, String) {
     (msg.encode_to_vec(), root_addr.to_lowercase())
 }
 
-#[test]
-fn full_handshake_and_gameplay_over_the_wire() {
+/// The server's cap on one reliable message, the WebTransport default.
+const MAX_MESSAGE_BYTES: usize = 4096;
+/// The protocol's `PacketCorrupted` disconnect reason.
+const PACKET_CORRUPTED: u32 = 16;
+
+/// Starts a Pulse server that listens on WebTransport and connects one client to it. The runtime
+/// runs the server; dropping it stops the server.
+fn serve_and_connect() -> (tokio::runtime::Runtime, Client) {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
         .with_test_writer()
@@ -123,7 +130,7 @@ fn full_handshake_and_gameplay_over_the_wire() {
         slot_base: ENET_CAPACITY as u32,
         slot_capacity: 64,
         max_datagram_bytes: 1200,
-        max_message_bytes: 4096,
+        max_message_bytes: MAX_MESSAGE_BYTES,
         service_timeout_ms: 1,
         server_full_reason: 6,
     })
@@ -143,19 +150,19 @@ fn full_handshake_and_gameplay_over_the_wire() {
     });
 
     let url = format!("https://127.0.0.1:{}/", wt_addr.port());
-    let mut client = Client::connect(ClientConfig {
+    let client = Client::connect(ClientConfig {
         url,
         server_cert_hash: Some(cert_hash),
     })
     .expect("client connects to the real server over QUIC");
+    (rt, client)
+}
 
-    let (handshake, wallet) = rt.block_on(signed_handshake(now_ms()));
-    assert!(client.send_stream(&stream_frame(&handshake)));
-
-    let mut reader = StreamFrameReader::new(4096);
+/// Reads the server's frames until a successful HandshakeResponse arrives.
+fn expect_authenticated(client: &mut Client, wallet: &str) {
+    let mut reader = StreamFrameReader::new(MAX_MESSAGE_BYTES);
     let deadline = Instant::now() + Duration::from_secs(15);
-    let mut authed = false;
-    while Instant::now() < deadline && !authed {
+    while Instant::now() < deadline {
         match client.service(Duration::from_millis(200)) {
             Some(ClientEvent::StreamData { data }) => {
                 reader.append(&data);
@@ -163,7 +170,7 @@ fn full_handshake_and_gameplay_over_the_wire() {
                     let msg = ServerMessage::decode(&frame[..]).expect("valid ServerMessage");
                     if let Some(server_message::Message::Handshake(h)) = msg.message {
                         assert!(h.success, "handshake rejected on the wire: {:?}", h.error);
-                        authed = true;
+                        return;
                     }
                 }
             }
@@ -173,10 +180,29 @@ fn full_handshake_and_gameplay_over_the_wire() {
             _ => {}
         }
     }
-    assert!(
-        authed,
-        "no successful HandshakeResponse received over the wire (wallet {wallet})"
-    );
+    panic!("no successful HandshakeResponse received over the wire (wallet {wallet})");
+}
+
+/// The code the server closes the session with within `within`; `None` while it stays open.
+fn close_code_within(client: &mut Client, within: Duration) -> Option<u32> {
+    let deadline = Instant::now() + within;
+    while Instant::now() < deadline {
+        if let Some(ClientEvent::Disconnected { reason }) =
+            client.service(Duration::from_millis(50))
+        {
+            return Some(reason);
+        }
+    }
+    None
+}
+
+#[test]
+fn full_handshake_and_gameplay_over_the_wire() {
+    let (rt, mut client) = serve_and_connect();
+
+    let (handshake, wallet) = rt.block_on(signed_handshake(now_ms()));
+    assert!(client.send_stream(&stream_frame(&handshake)));
+    expect_authenticated(&mut client, &wallet);
 
     let mut state = PlayerState {
         parcel_index: 5,
@@ -202,5 +228,61 @@ fn full_handshake_and_gameplay_over_the_wire() {
     }
 
     client.disconnect(0);
+    drop(rt);
+}
+
+// A stream frame declares its length before its payload. Like an ENet packet against the 4096-byte
+// receive buffer, a frame over the message cap and up to twice it is charged to the corruption
+// budget, and a larger one ends the session at once with PacketCorrupted.
+
+#[test]
+fn a_stream_frame_over_twice_the_message_cap_ends_the_session_at_once() {
+    let (rt, mut client) = serve_and_connect();
+
+    // Zero bytes: a reader that lost the frame's boundary reads them as empty frames.
+    assert!(client.send_stream(&stream_frame(&vec![0u8; 2 * MAX_MESSAGE_BYTES + 1])));
+
+    assert_eq!(
+        close_code_within(&mut client, Duration::from_secs(3)),
+        Some(PACKET_CORRUPTED)
+    );
+    drop(rt);
+}
+
+#[test]
+fn a_stream_frame_up_to_twice_the_message_cap_is_skipped_and_the_next_frame_is_read() {
+    let (rt, mut client) = serve_and_connect();
+
+    // One write, so the handshake arrives in the same chunks as the rejected payload.
+    let (handshake, wallet) = rt.block_on(signed_handshake(now_ms()));
+    let mut bytes = stream_frame(&vec![0xff; MAX_MESSAGE_BYTES + 1]);
+    bytes.extend_from_slice(&stream_frame(&handshake));
+    assert!(client.send_stream(&bytes));
+
+    expect_authenticated(&mut client, &wallet);
+    client.disconnect(0);
+    drop(rt);
+}
+
+#[test]
+fn each_stream_frame_up_to_twice_the_message_cap_spends_one_corruption_token() {
+    let (rt, mut client) = serve_and_connect();
+    let oversized = stream_frame(&vec![0xff; 2 * MAX_MESSAGE_BYTES]);
+
+    let budget: Vec<u8> = (0..DEFAULT_CORRUPT_BURST)
+        .flat_map(|_| oversized.iter().copied())
+        .collect();
+    assert!(client.send_stream(&budget));
+    assert_eq!(
+        close_code_within(&mut client, Duration::from_millis(500)),
+        None,
+        "frames within the corruption budget must not end the session"
+    );
+
+    assert!(client.send_stream(&oversized));
+    assert_eq!(
+        close_code_within(&mut client, Duration::from_secs(3)),
+        Some(PACKET_CORRUPTED)
+    );
     drop(rt);
 }

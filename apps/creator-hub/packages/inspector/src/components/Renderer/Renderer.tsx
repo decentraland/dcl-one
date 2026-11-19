@@ -260,7 +260,7 @@ const Renderer: React.FC = () => {
     // normalized device coords (x,y ∈ [-1,1], y up) relative to the viewport, so
     // an out-of-process renderer (Bevy) can raycast from the real cursor — its own
     // pointer is stale while the host overlay captures the HTML5 drag. Babylon
-    // reads its live pointer and ignores the NDC.
+    // picks at the same NDC, since an HTML5 drag sends it no pointer events.
     const clientOffset = dropClientOffsetRef.current;
     const rect = viewportRef.current?.getBoundingClientRect();
     const ndc =

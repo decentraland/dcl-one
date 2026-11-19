@@ -20,11 +20,9 @@ export const PREF = {
   lobbyRecents: 'lobby.recentPlaces',
   lobbyLayout: 'lobby.layout',
   lobbyStagePreset: 'lobby.stagePreset',
-  minimapPlaces: 'dcl-minimap-places',
   minimapStyle: 'dcl-minimap-style',
   minimapRotation: 'dcl-minimap-rotation',
   minimapZoom: 'dcl-minimap-zoom',
-  minimapMarkers: 'dcl-minimap-markers',
   minimapOpen: 'dcl-minimap-open',
   minimapWorldOpen: 'dcl-minimap-open-world',
   loadingLastTip: 'loadingLastTip',
@@ -36,7 +34,8 @@ export const PREF = {
   voiceUsed: 'nearbyVoiceUsed',
   launchCount: 'launchCount',
   gpuGuideSeen: 'hud.gpuGuideSeen',
-  loginMusicMuted: 'hud.loginMusicMuted'
+  loginMusicMuted: 'hud.loginMusicMuted',
+  askBeforeLeaving: 'hud.askBeforeLeaving'
 } as const
 
 const DB = 'hud-prefs'

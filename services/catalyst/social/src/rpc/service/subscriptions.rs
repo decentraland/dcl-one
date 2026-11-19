@@ -67,7 +67,7 @@ impl SocialServiceImpl {
                 }
             }
         };
-        tokio::spawn(async move {
+        crate::shared::task::spawn(async move {
             tokio::select! {
                 _ = cancellation.cancelled() => {},
                 _ = closed.closed() => {},
@@ -205,7 +205,7 @@ impl SocialServiceImpl {
                 }
             }
         };
-        tokio::spawn(async move {
+        crate::shared::task::spawn(async move {
             tokio::select! {
                 _ = cancellation.cancelled() => {},
                 _ = closed.closed() => {},
@@ -289,7 +289,7 @@ impl SocialServiceImpl {
                 }
             }
         };
-        tokio::spawn(async move {
+        crate::shared::task::spawn(async move {
             tokio::select! {
                 _ = cancellation.cancelled() => {},
                 _ = closed.closed() => {},

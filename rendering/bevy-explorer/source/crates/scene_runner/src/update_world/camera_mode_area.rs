@@ -80,7 +80,6 @@ impl Plugin for CameraModeAreaPlugin {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn update_camera_mode_area(
     player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,
     containing_scene: ContainingScene,

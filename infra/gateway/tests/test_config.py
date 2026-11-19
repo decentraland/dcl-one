@@ -356,6 +356,22 @@ class ConfigurationTest(unittest.TestCase):
                                      for regex, body in regexes if regex.search(path)))
         self.assertNotIn("location /report-user", text)
 
+    def test_cast_presentation_cap_admits_the_presenter_limit(self):
+        root = Path(__file__).parents[3] / "services/catalyst"
+        source = (root / "comms/src/cast_presenter/files.rs").read_text()
+        expr = re.search(r"pub const MAX_FILE_SIZE: usize = ([^;]+);", source)[1]
+        self.assertRegex(expr, r"^[\d\s*]+$")
+        self.assertEqual(gateway.CAST_PRESENTATION_CAP, f"{eval(expr) // (1024 * 1024) + 1}m")
+        text, regexes = self.worlds_locations()
+        body = next(body for regex, body in regexes if regex.search("/cast-presenter-service/presentations"))
+        self.assertIn("proxy_pass http://apis;", body)
+        self.assertIn(f"client_max_body_size {gateway.CAST_PRESENTATION_CAP};", body)
+        self.assertIn("limit_conn deploy_uploads", body)
+        for path in ["/cast-presenter-service/ping", "/x/cast-presenter-service/presentations"]:
+            with self.subTest(path=path):
+                self.assertFalse(any(gateway.CAST_PRESENTATION_CAP in body
+                                     for regex, body in regexes if regex.search(path)))
+
     def worlds_locations(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test"})
         table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [],

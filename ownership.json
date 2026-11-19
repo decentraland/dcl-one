@@ -177,12 +177,15 @@
     },
     {
       "id": "comms",
-      "description": "Communication and multiplayer crate (layer 8): the archipelago connector, the gatekeeper (admission, moderation, voice, streaming, LiveKit webhook, room events), live presence and Pulse",
+      "description": "Communication and multiplayer crate (layer 8): the archipelago connector, the gatekeeper (admission, moderation, voice, streaming, LiveKit webhook, room events), live presence and Pulse; and the community chat message router (its own process)",
       "owners": [
         "@decentraland/apis"
       ],
       "paths": [
         "/services/catalyst/comms/",
+        "/services/catalyst/message-router/",
+        "/services/catalyst/cast-bot/",
+        "/.github/workflows/cast-presenter.yml",
         "/library/vendor/rusty_enet/",
         "/library/dcl-livekit-token/",
         "/services/catalyst/comms-e2e/"
@@ -230,6 +233,7 @@
       "paths": [
         "/apps/ui3/src/shop/",
         "/library/shop/",
+        "/library/ui/apps/shop/",
         "/apps/sites/src/routes/shop/",
         "/tooling/shop-parity/",
         "/tooling/shop-trade-journey/"

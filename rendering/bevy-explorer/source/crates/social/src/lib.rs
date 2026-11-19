@@ -487,7 +487,6 @@ fn debug_write_social(social: Res<SocialClient>, mut debug: ResMut<DebugInfo>) {
 }
 
 #[cfg(feature = "social")]
-#[allow(clippy::too_many_arguments)]
 fn init_social_client(
     mut commands: Commands,
     wallet: Res<Wallet>,
@@ -604,7 +603,6 @@ fn init_social_client(
 }
 
 #[cfg(not(feature = "social"))]
-#[allow(clippy::too_many_arguments)]
 fn init_social_client(
     mut commands: Commands,
     wallet: Res<Wallet>,

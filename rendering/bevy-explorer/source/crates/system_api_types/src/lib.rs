@@ -4,6 +4,8 @@
 //! `ts-rs` (scripts/gen-ts-bindings.sh) to generate the TypeScript the react-web
 //! page and bridge scene consume. `system_bridge` re-exports everything here.
 
+#![forbid(unsafe_code)]
+
 pub mod languages;
 pub mod launch_options;
 pub mod services;
@@ -122,6 +124,22 @@ pub struct PortableInfo {
     pub reason: Option<String>,
     /// Smart wearables only: why the engine holds it.
     pub source: Option<SmartWearableSource>,
+}
+
+/// A map pin (`MapPin`) of a portable experience whose scene.json declares
+/// `isPortableExperience: true`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MapPinInfo {
+    /// `<scene hash>:<scene entity>`.
+    pub id: String,
+    pub x: i32,
+    pub y: i32,
+    /// At most 100 characters.
+    pub title: String,
+    /// A file of the scene's content; `None` draws the default pin.
+    pub icon: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, ts_rs::TS)]
@@ -821,6 +839,20 @@ pub struct FriendConnectivityEvent {
     pub status: String,
 }
 
+/// The signed-in wallet's platform ban. `banned` is false while the check is unknown or
+/// failed. Dates are the gatekeeper's ISO strings.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct PlatformBanNotice {
+    pub banned: bool,
+    /// Empty when the record was withheld or the ban is known only from a refusal
+    pub reason: String,
+    pub custom_message: Option<String>,
+    pub expires_at: Option<String>,
+}
+
 /// The engine needs a password to enter a world (see `ipfs::world_access`); answered with
 /// `SetWorldPassword`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -959,4 +991,56 @@ pub struct SettingInfo {
     pub step_size: f32,
     pub value: f32,
     pub default: f32,
+}
+
+/// A color as the catalyst `outfits` entity stores it. Other explorers read a missing `a` as 0.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, ts_rs::TS)]
+#[ts(export)]
+pub struct OutfitColor {
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+    #[serde(default = "opaque")]
+    pub a: f32,
+}
+
+fn opaque() -> f32 {
+    1.0
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, ts_rs::TS)]
+#[ts(export)]
+pub struct OutfitColored {
+    pub color: OutfitColor,
+}
+
+/// One saved look, as the catalyst `outfits` entity stores it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct OutfitData {
+    pub body_shape: String,
+    pub eyes: OutfitColored,
+    pub hair: OutfitColored,
+    pub skin: OutfitColored,
+    pub wearables: Vec<String>,
+    #[serde(default)]
+    pub force_render: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ts_rs::TS)]
+#[ts(export)]
+pub struct OutfitSlotData {
+    pub slot: u32,
+    pub outfit: OutfitData,
+}
+
+/// The local player's saved outfits: the metadata of their catalyst `outfits` entity. Fields
+/// other explorers add are dropped on the next deploy.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct OutfitsData {
+    pub outfits: Vec<OutfitSlotData>,
+    pub names_for_extra_slots: Vec<String>,
 }

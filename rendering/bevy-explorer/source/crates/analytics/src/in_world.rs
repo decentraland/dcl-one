@@ -84,7 +84,6 @@ impl FirstMove {
     }
 }
 
-#[allow(clippy::type_complexity)]
 pub fn report_in_world(
     player: Query<(&AvatarDynamicState, Has<OutOfWorld>), With<PrimaryUser>>,
     time: Res<Time>,

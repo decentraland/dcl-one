@@ -1,4 +1,4 @@
-// The web shell's side of the in-world Shop purchase (lib/shopProtocol). The HUD asks to buy items (one,
+// The web shell's side of the in-world Shop purchase (library/ui/apps/shop/shopProtocol). The HUD asks to buy items (one,
 // or its cart's); this reads their listings, the server's offers and the buyer's Credits balance itself,
 // shows the buyer the design's dialog over the app (./overlay), and on BUY ITEM settles the purchase
 // through the web Shop's own checkout (cart partition, review, the per-group executor and its rails), with
@@ -27,7 +27,8 @@ import type { RailContext } from '../../../shop/checkout/purchase/rail'
 import { createSpendGuard } from '@shop/checkout/purchase/spend-guard'
 import { fetchUserPurchases, getUsdBalance, type UsdBalance } from '@shop/credits/credits'
 import type { OfferSource } from '../../../shop/detail/offers'
-import { fetchShopListingForItem } from '@shop/detail/api'
+import { fetchShopItems } from '@shop/discovery/api'
+import { isResale } from '@shop/market/access-rule'
 import { ethereumChainId, settlementChainId } from '../../../shop/checkout/chain/config'
 import { rpcReader } from '../../../shop/land/evm'
 import { readBannedNames } from '../../../shop/names/reads'
@@ -41,7 +42,7 @@ import { creditsCeil, creditsFloor, type UsdCents } from '@shop/model/money'
 import type { CartLine, GroupProgress, GroupStatus, PurchaseOffer, PurchaseState } from '@shop/model/purchase'
 import type { Session } from '@shop/model/settlement'
 import { loginExpired, rootAddress, type StoredLogin } from '@explorer-core/features/auth/sso'
-import type { ShopPurchaseItem, ShopPurchaseStep } from '../../features/shop/ui'
+import type { ShopPurchaseItem, ShopPurchaseStep } from '@dcl/one-ui/apps/shop/ui'
 import { siteUrl } from '../../lib/baseDomain'
 import {
   parseBuyRequest,
@@ -65,7 +66,7 @@ import {
   type ShopNamesMode,
   type ShopOperationState,
   type ShopWalletKind
-} from '../../lib/shopProtocol'
+} from '@dcl/one-ui/apps/shop/shopProtocol'
 import { withUtm } from '@explorer-core/lib/utm'
 import { trustedCreditsManager, type TrustedManager } from './config'
 import { createLedger, type OperationRecord } from './ledger'
@@ -161,7 +162,7 @@ export interface ShellShopServices {
   balance(account: string, client: ShopClient): Promise<UsdBalance>
   resolvers(client: ShopClient): SettlementResolvers
   reader(): ChainReader
-  /** The creator-sales rollout, which the listing reads from its module (see features/shop/flagsQuery). */
+  /** The creator-sales rollout, which the listing reads from its module (see library/ui/apps/shop/flagsQuery). */
   primeFlags(): Promise<void>
   run(deps: CheckoutDeps, group: CartGroup, resolved: Resolved): Promise<GroupResult>
   watch(deps: CheckoutDeps, progress: GroupProgress): Promise<GroupResult>
@@ -243,10 +244,22 @@ function defaultStorage(): Storage | null {
   }
 }
 
+/**
+ * The listing BUY settles an item through, read as the in-world grid reads its card: the unified feed grouped by item,
+ * whose one row is the server's pick (a native trade first, then the lowest price, a trade before a store mint). So BUY
+ * settles the listing the card shows, a creator's MANA-priced (legacy) trade included, which the listings feed alone
+ * lacks. Never a resale. A failed read (the feed needs a current MANA/USD rate) rejects: it is not "not on sale".
+ */
+export async function fetchBuyListing(contract: string, itemId: string, client: ShopClient, creatorSales: () => boolean): Promise<CatalogItem | null> {
+  const { items } = await fetchShopItems({ contractAddress: contract, itemId, listingType: 'primary', first: 1 }, { client, creatorSales })
+  const row = items[0]
+  return row && !isResale(row) ? row : null
+}
+
 const LIVE: ShellShopServices = {
   client: (signer) => createShopClient(hostApiOptions({ signer })),
   // The creator-sales switch as this document holds it, asked when the listing is mapped, as the read did itself.
-  fetchItem: (contract, itemId, client) => fetchShopListingForItem(contract, itemId, { client, creatorSales: () => shopFlags().creatorSales }),
+  fetchItem: (contract, itemId, client) => fetchBuyListing(contract, itemId, client, () => shopFlags().creatorSales),
   offers: (client) => purchaseOfferSource(client),
   balance: (account, client) => getUsdBalance(account, client),
   resolvers: (client) => liveResolvers(client),
@@ -678,7 +691,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         if (record === 'expired') {
           op.expiredSince ??= svc.now()
           if (svc.now() - op.expiredSince >= EXPIRY_CONFIRM_MS) {
-            settled(op, 'failed', {}, 'This purchase never went through, and its Credits expired unused: nothing was bought.', 'one of its transactions never went through, and its Credits expired unused.')
+            // Expiry with no consumption indexed past it: it can no longer land, not proof it was never sent.
+            settled(op, 'failed', {}, 'This purchase expired before its Credits were spent on chain: nothing was bought.', 'one of its transactions expired before its Credits were spent on chain.')
             return true
           }
         } else op.expiredSince = undefined
@@ -1158,12 +1172,16 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       store.clear()
       store.restore(lines)
     }
-    // The relay gets the signed purchase only once its hand-off is kept; refused here, it was never sent.
+    // The relay gets the signed purchase only once its hand-off is kept; refused here, it was never sent,
+    // and the answer carries the relay's own evidence of that (`not_sent`).
     const rail = svc.rail()
     const send = rail.fetchImpl ?? ((...a: Parameters<typeof fetch>) => fetch(...a))
     const relay = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
       if ((init?.method ?? 'GET').toUpperCase() === 'POST' && !durable(op, 'handedOff')) {
-        return new Response(JSON.stringify({ ok: false, message: "This browser couldn't keep a record of the purchase, so it wasn't sent." }), { status: 409, headers: { 'content-type': 'application/json' } })
+        return new Response(JSON.stringify({ ok: false, not_sent: true, message: "This browser couldn't keep a record of the purchase, so it wasn't sent." }), {
+          status: 409,
+          headers: { 'content-type': 'application/json' }
+        })
       }
       return send(input, init)
     }) as typeof fetch

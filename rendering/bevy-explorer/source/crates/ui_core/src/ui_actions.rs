@@ -409,7 +409,6 @@ fn run_actions<M: ActionMarker>(world: &mut World, mut query: Local<Option<Actio
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn update_click(
     mut commands: Commands,
     mut q: Query<
@@ -446,7 +445,6 @@ fn update_click(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn update_drag(
     mut commands: Commands,
     mut q: Query<
@@ -524,7 +522,6 @@ fn update_drag(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn update_wheel(
     mut commands: Commands,
     mut q: Query<

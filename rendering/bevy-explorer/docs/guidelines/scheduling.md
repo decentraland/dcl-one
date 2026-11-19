@@ -27,7 +27,7 @@ flowchart LR
   end
   subgraph PostUpdate
     direction LR
-    ETP[EarlyTransformPropagate] --> EBB[EarlyBillboard] --> CU[ColliderUpdate] --> PU[PlayerUpdate] --> CAM[CameraUpdate] --> IK[InverseKinematics] --> NT[Nametag] --> AS[AttachSync] --> BB[Billboard] --> TP[bevy TransformPropagate]
+    ETP[EarlyTransformPropagate] --> EBB[EarlyBillboard] --> CU[ColliderUpdate] --> PU[PlayerUpdate] --> CAM[CameraUpdate] --> IK[InverseKinematics] --> SB[SpringBones] --> NT[Nametag] --> AS[AttachSync] --> BB[Billboard] --> TP[bevy TransformPropagate]
   end
   Update --> PostUpdate
 ```
@@ -54,9 +54,9 @@ The capped tier runs the phases one request at a time, so its budget can stop be
 ## The scene loop
 
 `run_scene_loop` runs a separate `Schedule` (`SceneLoopSchedule`) repeatedly inside the frame
-budget. It is also the frame pacer on native: the budget is one frame at the monitor refresh
-rate under vsync, or at the configured fps target, and after the loop the thread spin-sleeps to
-the deadline.
+budget. It is also the frame pacer on native: the budget is one frame at the configured fps
+target, capped at the monitor refresh rate under vsync, and after the loop the thread spin-sleeps
+to the deadline.
 
 Each pass of the loop runs four chained sets (`SceneLoopSets`):
 
@@ -108,6 +108,7 @@ index of every ordering point around the avatar, camera and collider transform p
 | `PlayerUpdate` | Player movement and ground resolution |
 | `CameraUpdate` | Camera follow and modes |
 | `InverseKinematics` | Foot and head IK, plus a propagate of the avatar subtree |
+| `SpringBones` | Spring-bone simulation of wearables' own bones, from post-IK poses computed from local transforms |
 | `Nametag` | Nametag positioning from post-IK globals |
 | `AttachSync` | Avatar-attach and scene-proxy position sync |
 | `Billboard` | Billboard orientation, facing this frame's camera |

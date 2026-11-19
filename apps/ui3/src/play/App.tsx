@@ -6,11 +6,11 @@ import { HudApp, type HudShopProps } from '@hud/App'
 import { ShopPage } from '@hud/features/shop/ShopPage'
 import { BridgeClient } from '@explorer-core/engine/bridge'
 import { EngineDriver } from '@explorer-core/engine/EngineDriver'
-import { IN_WORLD_SHOP } from './features/shop/entry'
+import { IN_WORLD_SHOP } from '@dcl/one-ui/apps/shop/entry'
 
 // The in-world Shop, loaded only when it is first opened. lazy() keeps a failed load, so a crash
 // swaps in a fresh one for the next open.
-const loadInWorldShop = () => lazy(() => import('./features/shop/InWorldShop'))
+const loadInWorldShop = () => lazy(() => import('@dcl/one-ui/apps/shop/InWorldShop'))
 let InWorldShop = /* @__PURE__ */ loadInWorldShop()
 
 // The HUD's one server-state cache (docs/web-app-standards.md, "QueryClient"), with the reference defaults.

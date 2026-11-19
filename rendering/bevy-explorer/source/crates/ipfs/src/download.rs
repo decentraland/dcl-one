@@ -336,9 +336,6 @@ impl IpfsIo {
         let _deferred_in_flight = DeferredDropper::new(&IPFS_IN_FLIGHT);
         let mut no_cache = false;
         let client = &self.client;
-        // no `X-IPFS` header on web: a caller with a cache key has read `web_cache` before the first
-        // attempt, and the header would have the service worker repeat that lookup. A retry does
-        // not read it again
         let request = client.get(&remote);
 
         let request = ipfs_io_read_state.send_failure(request.build().map_err(|e| {
@@ -377,8 +374,9 @@ impl IpfsIo {
                         .unwrap()
                         .connect_failed += 1;
                 }
-                // the bytes behind a content hash never change, so a server that says the url is
-                // wrong says so for the rest of the session; preview always asks again
+                // a catalyst only activates an entity once it holds all of its files, so a server
+                // that says a content hash's url is wrong says so for the rest of the session;
+                // preview always asks again
                 let session = match (&e, &cache_key) {
                     (platform::FetchError::Status(status, _), Some(CacheKey::Content(_)))
                         if !self.is_preview && failed_remotes::is_definitive(*status) =>

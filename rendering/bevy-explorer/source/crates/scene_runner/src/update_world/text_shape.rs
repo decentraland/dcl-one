@@ -1305,7 +1305,6 @@ struct LaidOutGlyph {
 /// Lay the spans out: a glyph per glyph and a quad per extra. `width` wraps (if `linebreak`
 /// allows it) and is the width lines are justified within; unbounded text is justified within
 /// its widest line.
-#[allow(clippy::too_many_arguments)]
 pub fn layout_text(
     entity: Entity,
     spans: &[TextSpanData],
@@ -1547,7 +1546,6 @@ fn quad_mesh(quads: &[TextQuad], offset: Vec2, to_world: impl Fn(Vec2) -> Vec2) 
     (mesh, aabb)
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_text_shapes(
     mut commands: Commands,
     query: Query<
@@ -1994,7 +1992,6 @@ mod line_tests;
 
 /// After the frame's builds have been applied: rebuild the atlases that ran out of room from
 /// the glyphs every shape (including this frame's) draws, and tidy up.
-#[allow(clippy::too_many_arguments)]
 fn maintain_glyph_atlases(
     mut commands: Commands,
     shapes: Query<(Entity, &TextShapeMesh, Has<RetryTextShape>)>,

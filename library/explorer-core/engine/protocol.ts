@@ -12,6 +12,11 @@ import type {
   CommunityVoiceStatus,
   ConnectivitySnapshot,
   HomeScene,
+  MapPinInfo,
+  OutfitData,
+  OutfitSlotData,
+  OutfitsData,
+  PlatformBanNotice,
   PortableInfo,
   SatelliteView,
   SceneLoadingUi,
@@ -798,6 +803,8 @@ export interface GetOwnedNamesRequest {
 export interface OwnedNamesMessage {
   kind: 'ownedNames'
   names: string[]
+  /** The lookup failed, so `names` is empty but not known to be. */
+  failed?: boolean
 }
 
 /** Mirrors the engine's BaseNotification (metadata varies by type). */
@@ -1114,6 +1121,13 @@ export interface PortablesMessage {
   portables: PortableInfo[]
 }
 
+/** The map pins of portable experiences (scene → page, from getMapPinsStream): the whole list
+ *  on subscribe and on every change. */
+export interface MapPinsMessage {
+  kind: 'mapPins'
+  pins: MapPinInfo[]
+}
+
 /** The engine needs a password to enter the world the player is travelling to (scene → page).
  *  Shown as the password dialog; answered with worldPasswordResolve. Re-sent with an `error` when
  *  an answer was refused (wrong password, too many attempts). There is only ever one open prompt:
@@ -1124,6 +1138,16 @@ export interface WorldPasswordRequestMessage {
   world: string
   /** Why the previous answer was refused; absent on the first ask. */
   error?: string
+}
+
+/** A realm change's refusal for a known platform ban (the engine's `common::platform_ban::REALM_CHANGE_BANNED`). */
+export const PLATFORM_BANNED_REFUSAL = 'You are banned from Decentraland'
+
+/** The signed-in wallet's platform ban, whole on subscribe and on every change (scene → page).
+ *  `banned` is false while the check is unknown or failed. */
+export interface PlatformBanMessage {
+  kind: 'platformBan'
+  ban: PlatformBanNotice
 }
 
 /** The engine no longer needs the password prompt answered (its realm change is over). */
@@ -2134,8 +2158,8 @@ export interface PreviewFocusRequest {
 }
 
 /** The Shop's stage around the preview avatar: where the page draws its stage image on screen, in CSS
- *  pixels like engineViewport's rect. The scene draws the same image (its images/shop-stage.jpg, the HUD's
- *  assets/shop/stage.jpg) there behind the avatar, so the avatar's window shows no seam, and drops the
+ *  pixels like engineViewport's rect. The scene draws the same image (its images/shop-stage.jpg, the in-world Shop's
+ *  library/ui/apps/shop/assets/stage.jpg) there behind the avatar, so the avatar's window shows no seam, and drops the
  *  Backpack's podium: the stage's floor is in the image. `null` gives the preview its own backdrop back. */
 export interface PreviewStageRequest {
   kind: 'previewStage'
@@ -2177,35 +2201,28 @@ export interface RGBColor {
   b: number
 }
 
-/** A saved avatar look (backpack Outfits tab). The shape mirrors the catalyst `outfits` entity's
- *  per-slot outfit so a saved look can later be deployed unchanged (Phase 2); Phase 1 persists
- *  these locally (localStorage in the bridge scene). */
-export interface Outfit {
-  bodyShape: string
-  eyes: { color: RGBColor }
-  hair: { color: RGBColor }
-  skin: { color: RGBColor }
-  wearables: string[]
-  forceRender: string[]
-}
+/** A saved avatar look (backpack Outfits tab): one slot of the player's catalyst `outfits`
+ *  entity, which the bridge scene has the engine deploy (a guest's last for the session). */
+export type Outfit = OutfitData
 
-/** One saved outfit at a fixed slot index (0-based). */
-export interface OutfitSlot {
-  slot: number
-  outfit: Outfit
-  /** A picture of the outfit worn (PNG data URL), kept on this device only. */
-  thumbnail?: string
-}
+/** One saved outfit at a fixed slot index (0-based), with a picture of it worn (PNG data URL)
+ *  kept on this device only. */
+export type OutfitSlot = OutfitSlotData & { thumbnail?: string }
 
 /** The player's saved outfits + owned DCL names that unlock extra slots (beyond the 5 free). */
-export interface OutfitsMetadata {
-  outfits: OutfitSlot[]
-  namesForExtraSlots: string[]
-}
+export type OutfitsMetadata = Omit<OutfitsData, 'outfits'> & { outfits: OutfitSlot[] }
 
 export interface OutfitsMessage {
   kind: 'outfits'
   metadata: OutfitsMetadata
+}
+
+/** A save or delete of a saved outfit was refused, so the outfits stay as they were (scene → page). */
+export interface OutfitSaveFailedMessage {
+  kind: 'outfitSaveFailed'
+  slot: number
+  action: 'save' | 'delete'
+  message: string
 }
 
 export interface GetOutfitsRequest {
@@ -2498,6 +2515,7 @@ export type SceneToPage =
   | CatalogPageMessage
   | GiftingPageMessage
   | OutfitsMessage
+  | OutfitSaveFailedMessage
   | OutfitHistoryMessage
   | CommunitiesMessage
   | CommunityBrowseMessage
@@ -2555,8 +2573,10 @@ export type SceneToPage =
   | PermissionRulesMessage
   | WorldPasswordRequestMessage
   | WorldPasswordWithdrawnMessage
+  | PlatformBanMessage
   | EditorSceneResultMessage
   | PortablesMessage
+  | MapPinsMessage
 
 // ---- events ----------------------------------------------------------------
 
@@ -2698,12 +2718,14 @@ export interface DiscoverPlace {
 // each place carries the signed-in user's own like, dislike and favourite. Every request is
 // answered, a failed one with `failed`.
 
-/** The places covering these `x,y` parcels. */
+/** The places covering these `x,y` parcels: Genesis City's, or `world`'s scenes when given. */
 export interface GetPlacesAtRequest {
   kind: 'getPlacesAt'
   /** Echoed in the answer. */
   request: number
   positions: string[]
+  /** A World's name: its scenes, the ones covering `positions` first. */
+  world?: string
 }
 export interface PlacesAtMessage {
   kind: 'placesAt'

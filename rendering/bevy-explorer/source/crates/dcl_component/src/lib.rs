@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::ops::RangeInclusive;
 
 // structs representing dcl components and de/serialization
@@ -145,6 +147,7 @@ impl SceneComponentId {
 
     pub const TEXT_SHAPE: SceneComponentId = SceneComponentId(1030);
     pub const NFT_SHAPE: SceneComponentId = SceneComponentId(1040);
+    pub const MAP_PIN: SceneComponentId = SceneComponentId(1097);
 
     pub const GLTF_CONTAINER: SceneComponentId = SceneComponentId(1041);
     pub const ANIMATOR: SceneComponentId = SceneComponentId(1042);

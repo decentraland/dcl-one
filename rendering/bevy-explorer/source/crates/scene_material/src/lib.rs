@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::marker::PhantomData;
 
 use bevy::{
@@ -476,6 +478,10 @@ impl MaterialExtension for SceneBound {
                 SCENE_MATERIAL_OUTLINE_BLUE_MESH_TAG,
             ));
             fragment.shader_defs.extend(reveal_shader_defs());
+            // the material has no cell table (`webgl2`), so scene_bounds.wgsl leaves it out too
+            if cfg!(feature = "webgl2") {
+                fragment.shader_defs.push("NO_SCENE_CELLS".into());
+            }
 
             if data.inverted_scale {
                 fragment.shader_defs.push("INVERTED_SCALE".into());

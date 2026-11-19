@@ -233,11 +233,13 @@ State, in every build:
   `preview`. Rendered URNs are normalised (lowercase, default wearables included); selected ones
   are as written. The HUD uses `/avatar_state --panel` for a single local-player report.
   It shows the completed model while a replacement loads and explains missing readings.
-- `/spring_bones`: the spring chains of the player's built avatar: `chains`, `joints` (spring
-  bones in them) and `longest_chain`, each `null` with a reason in `unavailable` until the avatar
-  is built. A wearable's own bones (hair, tails, capes) form the chains, each running from parent
-  to child off a body bone, or off the bone it forks from. The Spring bones debug section reads
-  it.
+- `/spring_bones [true|false]`: spring bones, the swing of a wearable's own bones (hair, tails,
+  capes): `enabled` (the Jiggle Bones setting, which an argument sets and saves),
+  `simulated_avatars` of at most `max_simulated_avatars`, `simulated_chains`, and for the player's
+  built avatar `player_simulated`, `chains`, `joints` (spring bones in them) and `longest_chain`,
+  each `null` with a reason in `unavailable` until the avatar is built. The player is simulated
+  first, then the avatars nearest the camera and in front of it. The Spring bones debug section
+  reads it.
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
@@ -322,6 +324,18 @@ State, in every build:
 - `/tree_wind [true|false]`: whether the landscape's trees and bushes sway in the wind. Still,
   they stand in their rest pose, so two frames of them agree whenever they were taken; the visual
   scenarios hold them still for their frames.
+- `/media_state`: the loaded video players and audio streams as JSON, the Media player debug
+  section's reading. On the web each row also carries the source's reopen state:
+  `retryAttempt` (reopens since its last 5 s of playback), `retryFailures` (failures since the
+  source was created), `retryDelaySeconds` (the wait before the scheduled one, else null),
+  `retryGaveUp` and `lastError`.
+
+On the web only:
+
+- `/media_retry_delay [ms]`: the wait before a failed media source's first reopen
+  (2000 by default; later waits double from it, 5 reopens at most) as `firstDelayMs` and
+  `maxReopens`; with `ms`, sets it first for every source failing from then on. For tests that
+  would otherwise wait the full 62 s schedule.
 
 The HUD and input:
 

@@ -186,7 +186,12 @@ export const slice = createSlice({
         },
       )
       .addCase(thunks.updateSettings.fulfilled, (state, { meta }) => {
-        state.settings = meta.arg;
+        // The sharing keys are not written by this action (see `updateAppSettings`).
+        const { aiDataSharing, aiSharingPending } = state.settings;
+        state.settings = { ...meta.arg, aiDataSharing, aiSharingPending };
+      })
+      .addCase(thunks.updateAiSharingSettings.fulfilled, (state, { meta }) => {
+        state.settings = { ...state.settings, ...meta.arg };
       })
       .addCase(thunks.fetchSdkCommandsVersion.fulfilled, (state, action) => {
         if (!supportsMultiInstance(action.payload.version)) {
@@ -213,6 +218,16 @@ export const slice = createSlice({
         if (projectIdx !== -1) {
           state.projects[projectIdx] = { ...state.projects[projectIdx], status: 'failed' };
         }
+      })
+      // The publish modal opened from the deploy snackbar reads the project from this list.
+      .addCase(thunks.saveAndGetThumbnail.fulfilled, (state, { meta, payload: thumbnail }) => {
+        const project = state.projects.find($ => $.path === meta.arg.path);
+        if (project) project.thumbnail = thumbnail;
+      })
+      // A publish writes the world and parcels it chose straight to scene.json.
+      .addCase(thunks.updateSceneJson.fulfilled, (state, { meta }) => {
+        const project = state.projects.find($ => $.path === meta.arg.path);
+        if (project) Object.assign(project, meta.arg.updates);
       })
       .addCase(deployment.executeDeployment.fulfilled, (state, payload) => {
         const path = payload.meta.arg;

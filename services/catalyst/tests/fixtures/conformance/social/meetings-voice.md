@@ -8,7 +8,7 @@ stream from OBS, and talk over voice (nearby, private calls, community voice).
   `b6b2cef`, the pin in [`PARITY.md`](PARITY.md)).
 - dcl-one: `decentraland/dcl-one` @ `f695ad63b` (main, 2026-11-16); the Cast sections @ `05ca635f8`
   (main, 2026-11-17) with `fix/cast-follow-ups`.
-- Method: static reading only. Nothing was built or run for this file. A row names the dcl-one test
+- Method: static reading only, except MV-5, whose named tests ran on 2026-11-17 against the pin above. A row names the dcl-one test
   that pins it, or says "untested".
 - Paths: `GK/` is upstream comms-gatekeeper `src/`; `C/` is dcl-one `services/catalyst/`;
   `G/` is `C/comms/src/gatekeeper/`; `B/` is `rendering/bevy-explorer/source/`.
@@ -24,7 +24,7 @@ stream from OBS, and talk over voice (nearby, private calls, community voice).
 | Community voice (stage, raise hand, promote, kick, end) | Server at parity. Client lacks moderator mute (MV-6, MV-7). |
 | OBS/RTMP stream onto a scene screen | Served: `/scene-stream-access` and LiveKit Ingress into the scene room. The local stack runs the ingress (`tooling/dev.py`); an RTMP push to a key created with the request the API makes reaches the room as H264 and Opus. Not run end to end through the API and a client. |
 | Share a screen or camera from a browser (Decentraland Cast) | Served: every `/cast/*` route, and the `apps/sites` streamer and watcher pages. Run headless against a local LiveKit; no multi-client run in the explorer. |
-| Presentations (slides) and presenters | Presenters routes and the presentation-bot token served; no presenter service (`cast-presenter-service`) is hosted. |
+| Presentations (slides) and presenters | Presenters routes and the presentation-bot token served; `POST /cast-presenter-service/presentations` presents PDF slides through a `cast-bot` process (MV-5). No PPTX, embedded video or client composition. |
 
 ## How upstream Cast works
 
@@ -53,9 +53,9 @@ Cast publishes into the scene's own LiveKit room, the one `/get-scene-adapter` h
 |---|---|---|---|---|
 | `POST /cast/streamer-token` | `routes.ts:241`; `cast.ts:242-304` | `G/streaming_cast.rs` `streamer_token` | DIVERGENCE: identity names the credential, display name cleaned (below) | `a_streaming_key_admits_a_streamer_who_becomes_a_presenter` |
 | `GET /cast/generate-stream-link` | `routes.ts:252`; `cast.ts:185-233` | `G/streaming_cast.rs` `generate_stream_link` over `issue_access` | MATCH | `a_scene_admin_gets_a_stream_link_that_is_reused_until_it_expires` |
-| `GET /cast/stream-info/:streamingKey` | `routes.ts:253`; `get-stream-info-handler.ts:30-93` | `G/streaming_cast.rs` `stream_info` | MATCH | `stream_info_answers_the_place_behind_a_live_key` |
+| `GET /cast/stream-info/:streamingKey` | `routes.ts:253`; `get-stream-info-handler.ts:30-93` | `G/streaming_cast.rs` `stream_info` | MATCH | `stream_info_answers_the_place_behind_a_live_key`; capture `cast-stream-info-invalid-key` replayed by `the_gatekeeper_answers_its_stateless_captures_as_production` |
 | `POST /cast/watcher-token` | `routes.ts:246`; `cast.ts:368-443` | `G/streaming_cast.rs` `watcher_token` | DIVERGENCE: a world's access policy is checked, and the token carries the wallet and the world authorization proof (below) | `a_viewer_watches_a_parcel_or_world_stream_unless_banned`; `a_private_worlds_cast_refuses_watchers_the_world_does_not_admit` |
-| `GET/PUT/DELETE /cast/presenters[/:id]` | `routes.ts:291-293`; `cast.ts:512-614` | `G/streaming_cast.rs` `list_presenters`, `promote_presenter`, `demote_presenter` | MATCH | `scene_admins_list_promote_and_demote_presenters` |
+| `GET/PUT/DELETE /cast/presenters[/:id]` | `routes.ts:291-293`; `cast.ts:512-614` | `G/streaming_cast.rs` `list_presenters`, `promote_presenter`, `demote_presenter` | MATCH | `scene_admins_list_promote_and_demote_presenters`; capture `cast-presenters-unauth` replayed by `the_gatekeeper_answers_its_stateless_captures_as_production` |
 | `POST /cast/presentation-bot-token` | `routes.ts:286`; `cast.ts:455-500` | `G/streaming_cast.rs` `presentation_bot_token` | DIVERGENCE: identity names the credential | `a_streaming_key_admits_the_presentation_bot` |
 | `GET /scene-stream-access` | `list-scene-stream-access-handler.ts:62-80` | `G/streaming.rs:185-192` | MATCH, except no 404 on expiry and `ends_at` forced to `created_at + 4d` (MV-9) | `C/tests/gatekeeper_policy.rs` (PostgreSQL) |
 | `POST /scene-stream-access` | `add-…:80-130` | `G/streaming.rs:193-216,295-371` | MATCH | `C/tests/gatekeeper_policy.rs`; `canonical_rooms_tests.rs` |
@@ -126,18 +126,55 @@ the mic, hanging up, raising a hand, promoting, demoting, kicking and ending a s
   (`apps/sites/src/features/social/cast-live`), which join the room with `livekit-client` through
   `GET /cast/stream-info/{streamingKey}`, `POST /cast/streamer-token` and the signed
   `POST /cast/watcher-token` (`apps/sites/src/data/lib/catalyst/cast.ts`).
-- The Creator Hub Admin Toolkit Cast UI points at upstream production
-  (`apps/creator-hub/packages/asset-packs/src/admin-toolkit-ui/VideoControl/api.ts:11-16`).
+- The Creator Hub Admin Toolkit (Cast, live stream, scene admins and bans) calls the realm's own
+  deployment: under a non-Decentraland realm's origin, `<origin>/comms-gatekeeper/...` and
+  `<origin>/cast-presenter-service/presentations`; on a `decentraland.org`, `.zone` or `.today`
+  realm, upstream's per-service hosts (`serviceUrl` in
+  `apps/creator-hub/packages/asset-packs/src/admin-toolkit-ui/fetch-utils.ts`).
 
 ## Backlog
 
 Ordered by what a meeting with screen sharing needs. Sizes: S small, M medium, L large.
 
-MV-1 to MV-4 (Cast routes, watcher token, the `apps/sites` streamer and watcher, presenters) are done;
-see the Cast table above.
+MV-1 to MV-4 (Cast routes, watcher token, the `apps/sites` streamer and watcher, presenters) and MV-11
+(the Admin Toolkit's base URLs) are done; see the Cast table and the client notes above.
 
-5. **MV-5: Presenter service.** P1 for slides, M–L. The presentation-bot token is served; host or port
-   `cast-presenter-service`, which publishes the slides.
+5. **MV-5: Presenter service.** P1 for slides, M–L. Upstream: `decentraland/cast-presenter-server` @
+   `cae7861`. Served for PDF at `POST <node>/cast-presenter-service/presentations`, the path the Admin
+   Toolkit calls (`C/comms/src/cast_presenter/`; the gateway admits a 101 MiB body there). The bot's
+   LiveKit connection is a `cast-bot` process per session (`C/cast-bot`, the Explorer's LiveKit SDK
+   rev; [ADR](../../../../../../docs/adr/2026-11-17-cast-presenter-bot-process.md)) at `CAST_BOT_BIN`.
+   Without it the route answers 503. Matches upstream:
+   - Requests: multipart upload or JSON `url` (Google Slides and Drive links rewritten; HTTPS, public
+     addresses only, pinned connection, 5 redirects, 100 MiB, 60 s); extension and magic bytes; JSON
+     body 1 MiB; `MAX_CONCURRENT_PRESENTATIONS` (default 10, 0 unlimited) answers 429.
+   - Answers and statuses: `create-presentation-handler.ts:38-178`. A token LiveKit refuses answers
+     401 on the JSON path, before the download, and 500 on the multipart path, as upstream.
+   - Data channel: the RFC-4 `Packet.scene` framing on topic `presentation` (`comms.ts:1-86`), with
+     commands only from the room metadata's `presenters`. `navigate`, `get-state`, `stop` and
+     `overlay:update` are handled; the `presentation:state`, `presentation:stopped` and bot-metadata
+     JSON is byte for byte (`component.ts:320-335`, `1405`, `1432-1448`; publisher
+     `component.ts:62`, `208-211`).
+   - Track and lifetime: one SCREENSHARE VP8 track `presentation`, the last frame repeated every
+     500 ms; a session with no remote participant for 5 minutes stops.
+   - Tests: `comms::cast_presenter::tests`, and `C/cast-bot/tests/livekit.rs` against a local
+     `livekit-server`.
+   Divergences:
+   - Only the gatekeeper's presentation-bot tokens are taken: the node checks the signature with its
+     LiveKit key, the expiry, a `presentation-bot:` identity of the granted room and a grant that can
+     publish a screen share, before a slot or a bot. Any other token answers 401 on both paths.
+   - Multipart uploads are read at most `MAX_CONCURRENT_PRESENTATIONS` at once (429 past that).
+   - PDFs render with hayro, not pdfjs: pixels differ, and annotation appearance streams are not drawn.
+   - `ws://` LiveKit URLs are accepted on loopback hosts.
+   - The SSRF resolver reads the hosts file.
+   Not served:
+   - PPTX (422 `Unable to render the presentation`).
+   - Embedded video: `video:*` commands are ignored and `videoState` stays `idle`.
+   - Client composition: no `slide` field, no `/presentations/:id/slides/:file`, `presenter:claim`
+     ignored.
+   - `/api/drive-video` and `/ping`.
+   Not run: a scene client presenting through the Admin Toolkit. The APIs image carries `cast-bot` and
+   sets `CAST_BOT_BIN` (`infra/containers/README.md`).
 6. **MV-6: The Bevy client ignores a moderator mute.** P1, S. `sync_local`
    (`B/crates/comms/src/voice_chat/state.rs:738-754`) reads role and speaker but not `muted`; a speaker
    muted by a moderator keeps publishing. Upstream mute is metadata-only, so the client must enforce it.
@@ -150,5 +187,4 @@ see the Cast table above.
    `expiration_time`; PUT maps 409/404 instead of 500.
 10. **MV-10: Kick and end report success when LiveKit fails.** P2, S. Return an error or retry the
     removal; today the user may stay connected.
-11. **MV-11: Admin Toolkit base URLs.** P1, S. Make the gatekeeper and presenter bases configurable.
-12. **MV-12: HTTP-level tests for the bearer voice routes.** P2, M. Only the 401 shapes are captured.
+12. **MV-12: HTTP-level tests for the bearer voice routes.** P2, M. Only the 401 shapes are captured; those are replayed by `the_gatekeeper_answers_its_stateless_captures_as_production`.

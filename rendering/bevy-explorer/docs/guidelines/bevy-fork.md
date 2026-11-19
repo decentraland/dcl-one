@@ -144,12 +144,30 @@ across workers:
   `cargo test --manifest-path ../bevy/Cargo.toml -p
   bevy_image -p bevy_gltf --lib --features
   bevy_gltf/dds,bevy_gltf/bevy_animation,bevy_image/ktx2,bevy_image/zstd`.
-- Accessors with no `bufferView` are accepted (zero-filled per spec; Blender morph targets).
-- `KHR_animation_pointer` channels (and any channel with no target node or an unknown target
-  path, which `gltf` never validates) are skipped with a warning naming the file, the animation
-  and the first pointer; the rest of the clip plays.
-  Upstream bevy panics on them. Animating the pointed-to property (a material's emissive, say)
-  is not supported.
+- Accessors with no `bufferView` are accepted (zero-filled per spec; Blender morph targets). When a
+  `KHR_draco_mesh_compression` primitive reads an accessor with neither a `bufferView` nor sparse
+  data (its indices or an attribute), the load fails with an error naming the extension, so
+  `image_processing` decodes the geometry and reloads it. A file that only lists the extension
+  loads, zero-filled.
+- Animation channels `gltf` would panic on are skipped, and the rest of the clip plays:
+  `KHR_animation_pointer` channels, channels with no target node or an unknown target path, and
+  samplers whose accessors don't fit the target (an input other than float scalars, an output of
+  another type or component type, a `byteStride` shorter than the element, a `count` that reads
+  past its bufferView, fewer values than keyframes, or, with no bufferView, more values than the
+  keyframes use). `gltf` validates none of these, and upstream bevy panics on them. One warning per
+  animation names the file, the number skipped and the first one's reason. Animating a
+  pointed-to property (a material's emissive, say) is not supported.
+- **Throwaway**: `KHR_mesh_quantization` (upstream #25954, backported without its coordinate
+  conversion). A file that requires it loads: integer positions and texture coordinates are read
+  as the floats they stand for, normals and tangents only from the signed normalized formats the
+  extension allows (others warn, as upstream), integer morph targets are dequantized, and a
+  primitive's bounds follow its position accessor's normalization. Tangents are read only through
+  the attribute conversion, so a quantized tangent accessor is never read as floats. The meshes
+  hold floats on the GPU; upstream #26030 keeps them quantized there.
+- Morph target reads stop at the mesh's vertex count (patch 0118, on top of the backport above),
+  so a target accessor's declared `count` never sizes an allocation: a zero-filled or sparse
+  target holds at most one displacement per vertex. Upstream reads the full `count`; keep this
+  patch on migration until upstream bounds it too.
 - Texture decode is skipped when `load_materials` is empty, with a 1x1 placeholder under the
   normal label: headless servers keep geometry without pixels.
 - `Rgba16Unorm` textures are converted to 8-bit, preserving sampler and sRGB (the web can't

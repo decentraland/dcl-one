@@ -531,7 +531,10 @@ impl GlobalCrdtState {
     }
 }
 
+/// Requires `ForeignAvatar`: the avatar crate tells remote avatars apart by that marker, as it
+/// does not depend on comms.
 #[derive(Component, Debug)]
+#[require(common::structs::ForeignAvatar)]
 pub struct ForeignPlayer {
     pub address: Address,
     /// the crdt context (player-presence view) this player entity belongs to; the same
@@ -777,7 +780,6 @@ fn remote_move_kind(
 /// [`PlayerMessage::Movement`]) or as a legacy rfc4 packet over a websocket transport (as
 /// [`PlayerMessage::PlayerData`]). Writes the CRDT transform and emits a [`PlayerPositionEvent`]
 /// for `foreign_dynamics` to interpolate.
-#[allow(clippy::too_many_arguments)]
 fn apply_foreign_movement(
     m: &rfc4::Movement,
     entity: Entity,
@@ -847,7 +849,6 @@ fn apply_foreign_movement(
     });
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn process_transport_updates(
     mut commands: Commands,
     mut contexts: Query<(Entity, &mut GlobalCrdtState)>,
@@ -968,7 +969,6 @@ pub fn process_transport_updates(
                                         profile_version: 0,
                                         audio_sender: audio_sender.clone(),
                                     },
-                                    common::structs::ForeignAvatar,
                                     ForeignAudioSource {
                                         audio_available_receiver: audio_receiver,
                                         audio_receiver: None,

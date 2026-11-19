@@ -9,8 +9,9 @@ fn root() -> PathBuf {
 /// The Pulse and archipelago wire messages, compiled from the one proto source
 /// (`library/protocol/proto`) without protoc: protox parses, prost-build emits
 /// one module per package into OUT_DIR (`decentraland.common.rs`,
-/// `decentraland.pulse.rs`, `decentraland.kernel.comms.v3.rs`), which
-/// src/protocol/pulse/mod.rs includes.
+/// `decentraland.pulse.rs`, `decentraland.kernel.comms.v3.rs`,
+/// `decentraland.kernel.comms.rfc4.rs`), which src/protocol/pulse/mod.rs
+/// includes.
 fn main() -> Result<()> {
     println!("cargo:rerun-if-env-changed=DCL_ONE_ROOT");
     let include = root().join("library/protocol/proto");
@@ -19,6 +20,7 @@ fn main() -> Result<()> {
         "decentraland/common/auth.proto",
         "decentraland/common/options.proto",
         "decentraland/common/vectors.proto",
+        "decentraland/kernel/comms/rfc4/comms.proto",
         "decentraland/kernel/comms/v3/archipelago.proto",
         "decentraland/pulse/pulse_client.proto",
         "decentraland/pulse/pulse_clusters.proto",

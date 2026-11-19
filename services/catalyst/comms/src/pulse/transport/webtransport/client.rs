@@ -55,7 +55,8 @@ impl std::error::Error for ClientError {}
 /// An event drained from the client. There is a single session, so no peer id.
 #[derive(Debug, Clone)]
 pub enum ClientEvent {
-    /// The session ended (server closed, transport error, or local disconnect).
+    /// The session ended (server closed, transport error, or local disconnect). `reason` is the
+    /// server's close code, 0 when the session ended without one.
     Disconnected { reason: u32 },
     /// Raw bytes arrived on the reliable bidi stream (unframed).
     StreamData { data: Bytes },
