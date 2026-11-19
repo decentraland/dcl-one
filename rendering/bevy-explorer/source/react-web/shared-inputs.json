@@ -5908,7 +5908,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/outfits.ts",
-      "sha256": "de1647bd967d385137c4949bf01392d9727fa307f03957820701c6de62af77d3"
+      "sha256": "4940b5f381241e8a35be703bbba78d802623ddda3f2ca74391f508d20fd4095c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/places.ts",
@@ -6140,7 +6140,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeOutfits.test.ts",
-      "sha256": "502700beebbe63ff76a4af757693911dce2e2dfdd810f5ec0c07eb1e0d3ac7e6"
+      "sha256": "7c6572d4e1d62d07c67c46e44415bccd2bd8e863d8f7bf72295ce29b9ae4d3c5"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
@@ -9050,11 +9050,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.module.css",
-      "sha256": "898c73123d816e1bc7ed1e159a7675eb798d23803d8fb73ea917142c025f0d6f"
+      "sha256": "b87079fa64d38c5c317be496f12c621f258f22c8f039bd1541812551f77050c3"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
-      "sha256": "72e026fadc748ec7eead92f09393bd20e113dd6db269c52b83f9a522f1760b0f"
+      "sha256": "70c2e1b3587cc8b009b211ba92a12e60110759b6135dcab2166a44af5df51af8"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
@@ -9990,7 +9990,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "cd70c59f59f7588219f72388681d6d8263883e80bd6c12f05bdf044702b4bcf6"
+      "sha256": "b44480f4a5bb485c4ba6175f4ca0b431c3ef532fde4649cf0d8852025f8c7942"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10362,7 +10362,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackOutfitErrors.test.tsx",
-      "sha256": "350d015de49ec57811288dbed30ed1a2b2ab147f3c6b2b1201357140dda33466"
+      "sha256": "d8faee89649063c0f36855388e7adcccc25ec15a05987872cc127e2555a94d63"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackOutfitPicture.test.tsx",

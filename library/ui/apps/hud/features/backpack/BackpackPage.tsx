@@ -667,6 +667,11 @@ export function BackpackPage({
                   aria-label="Saved outfits"
                   aria-busy={!backpack.outfitsLoaded}
                 >
+                  {backpack.outfits.filter((o) => o.slot >= 5).length > 1 && (
+                    <p className={styles.outfitNotice}>
+                      Without a NAME, deleting any outfit in the second row clears the entire row.
+                    </p>
+                  )}
                   {[0, 1].map((row) => (
                     row === 1 && backpack.outfitSlots <= 5 ? <NameBanner key="banner" /> : (
                       <div key={row} className={styles.outfitRow}>

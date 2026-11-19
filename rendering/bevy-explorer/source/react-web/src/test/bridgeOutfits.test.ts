@@ -395,6 +395,7 @@ describe('the bridge outfits domain', () => {
       }
       getJson.mockResolvedValue({ metadata: stored })
       readOwnedNames.mockResolvedValue([])
+      storage.set('outfit-thumb:0xa:6', PICTURE)
       storage.set('outfit-thumb:0xa:8', PICTURE)
     })
 
@@ -406,8 +407,21 @@ describe('the bridge outfits domain', () => {
         namesForExtraSlots: []
       })
       expect(failures()).toEqual([])
+      expect(storage.has('outfit-thumb:0xa:6')).toBe(false)
       expect(storage.has('outfit-thumb:0xa:8')).toBe(false)
       expect(lastOutfits()?.outfits.map((o) => o.slot)).toEqual([0])
+    })
+
+    it('should keep both outfits and pictures when the clear-all deploy is refused', async () => {
+      deployOutfits.mockRejectedValueOnce(new Error('failed to deploy'))
+      const { request, failures, lastOutfits } = await bridge()
+      await request({ kind: 'deleteOutfit', slot: 6 })
+      expect(failures()).toEqual([
+        { kind: 'outfitSaveFailed', action: 'delete', slot: 6, message: 'Error: failed to deploy' }
+      ])
+      expect(lastOutfits()?.outfits.map((o) => o.slot)).toEqual([0, 6, 8])
+      expect(storage.get('outfit-thumb:0xa:6')).toBe(PICTURE)
+      expect(storage.get('outfit-thumb:0xa:8')).toBe(PICTURE)
     })
   })
 
@@ -423,6 +437,14 @@ describe('the bridge outfits domain', () => {
       }
       getJson.mockResolvedValue({ metadata: stored })
       readOwnedNames.mockResolvedValue(undefined)
+    })
+
+    it('should delete only that outfit when Catalyst discovery throws during the names lookup', async () => {
+      readOwnedNames.mockRejectedValueOnce(new Error('Catalyst discovery failed'))
+      const { request, failures } = await bridge()
+      await request({ kind: 'deleteOutfit', slot: 6 })
+      expect(deployOutfits.mock.calls[0]?.[1].outfits.map((o) => o.slot)).toEqual([8])
+      expect(failures()).toEqual([])
     })
 
     it('should delete only that outfit', async () => {

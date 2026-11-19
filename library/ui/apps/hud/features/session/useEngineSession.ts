@@ -204,6 +204,7 @@ export const SAVE_FAILED_MESSAGE = 'There was an error updating your avatar prof
 export const OUTFIT_FAILED_MESSAGE = {
   save: "Couldn't save this outfit. Try again.",
   delete: "Couldn't delete this outfit. Try again.",
+  deleteExtraWithoutName: "Couldn't clear the second row. Check your connection and try deleting from that row again.",
   extraSlotWithoutName: 'Outfits in the second row need a NAME you own. Delete them before changing your other outfits.'
 } as const
 
@@ -3927,21 +3928,21 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const dismissOutfitError = useCallback(() => setOutfitFailure(null), [])
   // The live names lookup decides; until it answers, the outfits read does. An occupied extra slot
   // stays visible so the player can still delete it.
-  const extraSlotUsed = outfits.outfits.some((o) => o.slot >= 5)
+  const extraSlotCount = outfits.outfits.filter((o) => o.slot >= 5).length
   const extraOutfitSlots =
-    extraSlotUsed || (ownedNamesKnown ? ownedNames.length > 0 : outfits.namesForExtraSlots.length > 0)
-  // With no name, every change that keeps an outfit in an extra slot is refused, so say which to delete.
-  // A delete in the extra row clears all of them, so its own failure is a plain one.
-  const blockedByExtraSlot =
-    outfitFailure != null &&
-    ownedNamesKnown &&
-    ownedNames.length === 0 &&
-    extraSlotUsed &&
-    !(outfitFailure.action === 'delete' && outfitFailure.slot >= 5)
-  const outfitError =
-    outfitFailure == null
-      ? null
-      : OUTFIT_FAILED_MESSAGE[blockedByExtraSlot ? 'extraSlotWithoutName' : outfitFailure.action]
+    extraSlotCount > 0 || (ownedNamesKnown ? ownedNames.length > 0 : outfits.namesForExtraSlots.length > 0)
+  const extraSlotsWithoutName = ownedNamesKnown && ownedNames.length === 0 && extraSlotCount > 0
+  let outfitError: string | null = null
+  if (outfitFailure != null) {
+    outfitError = OUTFIT_FAILED_MESSAGE[outfitFailure.action]
+    if (extraSlotsWithoutName) {
+      if (outfitFailure.action !== 'delete' || outfitFailure.slot < 5) {
+        outfitError = OUTFIT_FAILED_MESSAGE.extraSlotWithoutName
+      } else if (extraSlotCount > 1) {
+        outfitError = OUTFIT_FAILED_MESSAGE.deleteExtraWithoutName
+      }
+    }
+  }
   const equipOutfit = useCallback((slot: number) => {
     // The bridge resolves the outfit's wearables by urn and re-emits the full `wearables` set (incl.
     // items off the loaded catalog page), which becomes the authoritative equipped set — so no

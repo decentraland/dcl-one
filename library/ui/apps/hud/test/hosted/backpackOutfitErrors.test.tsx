@@ -48,7 +48,7 @@ describe('a refused outfit save or delete', () => {
     })
   })
 
-  describe('when an outfit sits in an extra slot and the player owns no name', () => {
+  describe('when outfits sit in extra slots and the player owns no name', () => {
     const grey = { color: { r: 0.5, g: 0.5, b: 0.5, a: 1 } }
     const outfit = { bodyShape: '', eyes: grey, hair: grey, skin: grey, wearables: [], forceRender: [] }
     let h: Harness
@@ -56,8 +56,16 @@ describe('a refused outfit save or delete', () => {
     beforeEach(async () => {
       h = renderSession()
       await enterAsGuest(h)
-      act(() => h.driver.emit({ kind: 'outfits', metadata: { outfits: [{ slot: 6, outfit }], namesForExtraSlots: [] } }))
+      act(() => h.driver.emit({ kind: 'outfits', metadata: { outfits: [{ slot: 6, outfit }, { slot: 8, outfit }], namesForExtraSlots: [] } }))
       act(() => h.driver.emit({ kind: 'ownedNames', names: [] }))
+    })
+
+    it('should warn the player before deleting second-row outfits', async () => {
+      const s = h.session()
+      render(<BackpackPage backpack={{ ...s.backpack, open: true }} emotes={s.emotes} profile={fakeProfileState()} onNavigate={vi.fn()} setEngineViewport={vi.fn()} />)
+      await userEvent.click(screen.getByRole('tab', { name: /saved outfits/i }))
+
+      expect(screen.getByText('Without a NAME, deleting any outfit in the second row clears the entire row.')).toBeVisible()
     })
 
     describe('and a save to a free slot is refused', () => {
@@ -77,8 +85,8 @@ describe('a refused outfit save or delete', () => {
         act(() => h.driver.emit({ kind: 'outfitSaveFailed', slot: 6, action: 'delete', message: 'Error: failed to deploy' }))
       })
 
-      it('should say the outfit was not deleted', () => {
-        expect(h.session().backpack.outfitError).toBe(OUTFIT_FAILED_MESSAGE.delete)
+      it('should explain how to retry clearing the second row', () => {
+        expect(h.session().backpack.outfitError).toBe(OUTFIT_FAILED_MESSAGE.deleteExtraWithoutName)
       })
     })
   })

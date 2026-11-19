@@ -263,7 +263,7 @@ export function registerOutfits(ctx: Ctx): void {
       // With no name owned, the catalyst refuses any deploy that still holds a slot past the free
       // ones, so deleting one of them one at a time is refused while another remains: clear them all.
       const clearExtras =
-        msg.slot >= FREE_SLOTS && !me.isGuest && (await readOwnedNames(me.userId))?.length === 0
+        msg.slot >= FREE_SLOTS && !me.isGuest && (await readOwnedNames(me.userId).catch(() => undefined))?.length === 0
       const removed = (o: { slot: number }): boolean => (clearExtras ? o.slot >= FREE_SLOTS : o.slot === msg.slot)
       let slots: number[] = []
       const next = await apply(me, { slot: msg.slot, action: 'delete' }, (metadata) => {
