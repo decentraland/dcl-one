@@ -12,9 +12,9 @@ second source of tuning.
 
 A scene's base parcel alone does not describe its distance when it spans several parcels.
 Arrival-ordered download slots can also let a distant scene delay the active scene's files.
-This decision gives ticks and downloads one partition model. Spawning remains unordered:
-`process_scene_lifecycle` starts every newly required scene in the same frame, and sorting those
-spawns without a loading-wave limit would only reorder their initial definition requests.
+This decision gives ticks and downloads one partition model. It left spawning unordered;
+[Explorer scene streaming](2026-11-09-explorer-scene-streaming.md) now spawns the scenes in range
+in loading waves ordered by the same key.
 
 ## Decision
 

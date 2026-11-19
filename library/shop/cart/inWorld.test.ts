@@ -59,14 +59,31 @@ describe("the in-world cart model", () => {
     expect(c.getSnapshot().reduce((n, l) => n + l.quantity, 0)).toBe(MAX_PURCHASE_UNITS);
   });
 
+  // An operation id as the purchase flow makes them (OPERATION_ID refuses anything else when a record is read).
+  const OPERATION = "0f3a9c2e-0001";
+
   it("takes a purchase out once, however often it is heard", async () => {
     const c = cart();
     c.scopeTo(A);
     await c.add(item("1"));
     await c.add(item("1"));
-    await c.applyPurchase(A, "op-1", [{ contract: CONTRACT, itemId: "1", quantity: 1 }]);
-    await c.applyPurchase(A, "op-1", [{ contract: CONTRACT, itemId: "1", quantity: 1 }]);
+    await c.applyPurchase(A, OPERATION, [{ contract: CONTRACT, itemId: "1", quantity: 1 }]);
+    await c.applyPurchase(A, OPERATION, [{ contract: CONTRACT, itemId: "1", quantity: 1 }]);
     expect(c.getSnapshot()).toMatchObject([{ itemId: "1", quantity: 1 }]);
+  });
+
+  it("takes a purchase out once after a reload, from what storage remembers", async () => {
+    const storage = memory();
+    const before = cart(storage);
+    before.scopeTo(A);
+    await before.add(item("1"));
+    await before.add(item("1"));
+    await before.applyPurchase(A, OPERATION, [{ contract: CONTRACT, itemId: "1", quantity: 1 }]);
+
+    const after = cart(storage);
+    after.scopeTo(A);
+    await after.applyPurchase(A, OPERATION, [{ contract: CONTRACT, itemId: "1", quantity: 1 }]);
+    expect(after.getSnapshot()).toMatchObject([{ itemId: "1", quantity: 1 }]);
   });
 
   it("keeps the page's change when there is no storage", async () => {

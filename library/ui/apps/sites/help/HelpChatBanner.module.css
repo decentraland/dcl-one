@@ -45,6 +45,11 @@
   color: var(--dcl-text-secondary-on-brand);
 }
 
+.subtitle a {
+  color: inherit;
+  text-decoration: underline;
+}
+
 .action {
   margin-top: var(--dcl-space-16);
 }

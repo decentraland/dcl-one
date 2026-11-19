@@ -44,11 +44,15 @@ export function microphonePermissionState() {
 }
 
 /**
- * Prompts for microphone permission
+ * Prompts for microphone permission and stops the stream it opens, so the prompt leaves no
+ * capture running
  */
 export function promptMicrophonePermission() {
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        navigator.mediaDevices.getUserMedia({ audio: true });
+        navigator.mediaDevices
+            .getUserMedia({ audio: true })
+            .then((stream) => stream.getTracks().forEach((track) => track.stop()))
+            .catch(() => {});
     }
 }
 

@@ -7,7 +7,6 @@ use bevy::{
     app::AppExit,
     prelude::*,
     tasks::{IoTaskPool, Task},
-    window::PrimaryWindow,
 };
 use bevy_dui::{DuiCommandsExt, DuiEntityCommandsExt, DuiProps, DuiRegistry};
 use common::{
@@ -16,8 +15,8 @@ use common::{
     rpc::{RpcResultReceiver, RpcResultSender},
     sets::SceneSets,
     structs::{
-        ActiveDialog, AppConfig, ChainLink, CurrentRealm, PreviewMode, PreviousLogin, SystemAudio,
-        WorldHold, ZOrder, TERMS_VERSION,
+        ActiveDialog, AppConfig, ChainLink, CurrentRealm, PreviewMode, PreviousLogin,
+        RequestClientWindowFocus, SystemAudio, WorldHold, ZOrder, TERMS_VERSION,
     },
     util::{TaskCompat, TaskExt},
 };
@@ -596,7 +595,7 @@ fn process_login_bridge(
     mut segment_config: ResMut<SegmentConfig>,
     mut login_events: ResMut<client_login::ClientLoginDelivery>,
     mut current_profile: ResMut<CurrentUserProfile>,
-    mut window: Query<&mut Window, With<PrimaryWindow>>,
+    mut commands: Commands,
     mut config: ResMut<AppConfig>,
     world_hold: Option<Res<WorldHold>>,
     preview: Res<PreviewMode>,
@@ -868,9 +867,7 @@ fn process_login_bridge(
                 sender.send(Err(ACCOUNT_LOCKED.to_owned()));
             }
             Some(Ok((root_address, ephemeral_key, auth, guest_account, profile, sender))) => {
-                if let Ok(mut window) = window.single_mut() {
-                    window.focused = true;
-                }
+                commands.trigger(RequestClientWindowFocus);
 
                 if remember_login(
                     &mut config,

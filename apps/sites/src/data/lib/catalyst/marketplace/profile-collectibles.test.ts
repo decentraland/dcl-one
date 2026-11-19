@@ -327,6 +327,23 @@ describe("fetchProfileAssets", () => {
     expect(items.map((row) => row.name)).toEqual(["Parcel 162,-133", "Estate", "Untitled", "Untitled"]);
   });
 
+  it("treats the catalyst's \"Ens\" placeholder as no name, and empty coordinates as none", async () => {
+    json.mockResolvedValue({
+      data: [
+        token({ id: "n-1", category: "ens", name: "Ens", data: { ens: { subdomain: "brai" } } }),
+        token({ id: "n-2", category: "ens", name: "Ens", data: { ens: { subdomain: "" } } }),
+        token({ id: "p-1", category: "parcel", name: "Parcel", data: { parcel: { x: "", y: "" } } }),
+        token({ id: "p-2", category: "parcel", name: "Parcel", data: { parcel: { x: "7", y: " " } } }),
+        token({ id: "p-3", category: "parcel", name: "Parcel", data: { parcel: { x: 0, y: -3 } } }),
+      ],
+      total: 5,
+    });
+
+    const { items } = await fetchProfileAssets(CREATOR, { first: 24 });
+
+    expect(items.map((row) => row.name)).toEqual(["brai", "Untitled", "Untitled", "Untitled", "Parcel 0,-3"]);
+  });
+
   it("keeps a parcel's own name when it has one", async () => {
     json.mockResolvedValue({ data: [token({ category: "parcel", name: "Genesis Plaza", data: { parcel: { x: "0", y: "0" } } })], total: 1 });
 

@@ -56,16 +56,17 @@ export function Error({
       >
         {!!secondaryAction && (
           <Button
+            variant="secondary"
+            size="lg"
             onClick={secondaryAction.onClick}
-            size="big"
           >
             {secondaryAction.name}
           </Button>
         )}
         <Button
+          variant="primary"
+          size="lg"
           onClick={primaryAction.onClick}
-          type="danger"
-          size="big"
         >
           {primaryAction.name}
         </Button>

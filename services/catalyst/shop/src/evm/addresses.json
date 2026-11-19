@@ -194,12 +194,16 @@
     "POI": "0x7a0fad6854de8df1245da952cd3ae7f6893154c1",
     "MarketplaceV3": "0x6ab20ae56673ed65f520b7be332aeb61b3ed727d",
     "MarketplaceV4": "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7",
-    "CouponManager": "0xa40b1d129b8906888720686f3a01921ddf37716f",
-    "CouponManager_DEPRECATED": "0x910308308066ac75f2212c06596f54922b44e6bd",
-    "CollectionDiscountCoupon": "0x54df9990a3fd9443b9e84f9f5944904704756074",
+    "CouponManager": "0x6c956587d9fe70032781edcdc626310648575382",
+    "CouponManager_DEPRECATED": "0xa40b1d129b8906888720686f3a01921ddf37716f",
+    "CollectionDiscountCoupon": "0x4ee8f6b87f4917a3bbc7c8bb3a06db8555f83db9",
     "MockAggregatorManaUsd": "0xdcf00f5f60b62b07e668a84c0cedaf6f453d416e",
     "CreditsManager_DEPRECATED": "0x037566bc90f85e76587e1b07f9184585f09c1420",
-    "CreditsManager": "0x8052a560e6e6ac86eeb7e711a4497f639b322fb3"
+    "CreditsManager": "0x8052a560e6e6ac86eeb7e711a4497f639b322fb3",
+    "MarketplaceV5": "0x36fd1434a6c4b8ade80c9847c1d15033ce34488c",
+    "CouponManager_DEPRECATED_2": "0x910308308066ac75f2212c06596f54922b44e6bd",
+    "CollectionDiscountCoupon_DEPRECATED": "0x54df9990a3fd9443b9e84f9f5944904704756074",
+    "CreditsManager_DCL_ONE": "0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c"
   },
   "arbitrum": {
     "GRTMultisig": "0x9be99A553C598898Ff4718e6b1A25Cc37e398943"

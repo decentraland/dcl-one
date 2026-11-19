@@ -15,7 +15,10 @@ use common::{
     gpu_time::GPU_FRAME_TIME,
     memory::{MemoryReading, MemoryStatus},
     perf::{HudMainThreadCostDataPoint, JsHeapDataPoint, SamplingPausedReason},
-    structs::{AppConfig, CurrentRealm, OutOfWorld, PrimaryUser, SessionGraphics, WorldHold},
+    structs::{
+        AppConfig, ClientWindowFocus, CurrentRealm, OutOfWorld, PrimaryUser, SessionGraphics,
+        WorldHold,
+    },
 };
 use scene_runner::renderer_context::RendererSceneContext;
 use wallet::Wallet;
@@ -84,13 +87,13 @@ pub struct SessionSignals {
     pub realm_connected: bool,
     /// The primary user's `OutOfWorld`; `None` without a primary user.
     pub out_of_world: Option<bool>,
-    /// The focus reason sampling pauses for: the primary window's focus on native, the page's
-    /// focus and the viewport's activity on the web; `None` while focused.
+    /// `ViewportInactive` while the web viewport is inactive, else `WindowUnfocused` while the
+    /// client window lacks focus; `None` otherwise.
     pub focus_paused: Option<SamplingPausedReason>,
 }
 
-/// Fills [`FrameInputs`] from every source. Runs after `TimeSystem`, and on the web after the
-/// page focus is copied in.
+/// Fills [`FrameInputs`] from every source. Runs after `TimeSystem` and after the client window
+/// focus is copied in.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn collect_frame_inputs_system(
     mut inputs: ResMut<FrameInputs>,
@@ -105,15 +108,17 @@ pub(crate) fn collect_frame_inputs_system(
     world_hold: Option<Res<WorldHold>>,
     realm: Option<Res<CurrentRealm>>,
     player: Query<Has<OutOfWorld>, With<PrimaryUser>>,
-    #[cfg(not(target_arch = "wasm32"))] window: Query<&Window, With<bevy::window::PrimaryWindow>>,
-    #[cfg(target_arch = "wasm32")] browser_page_focus: Res<crate::web::BrowserPageFocus>,
+    client_window_focus: Res<ClientWindowFocus>,
 ) {
-    #[cfg(not(target_arch = "wasm32"))]
-    let focus_paused = (!window.single().map_or(true, |window| window.focused))
-        .then_some(SamplingPausedReason::WindowUnfocused);
-    // the page's focus, not the canvas's DOM focus (`Window::focused`)
     #[cfg(target_arch = "wasm32")]
-    let focus_paused = browser_page_focus.sampling_paused_reason();
+    let viewport_paused =
+        (!crate::web::viewport_active()).then_some(SamplingPausedReason::ViewportInactive);
+    #[cfg(not(target_arch = "wasm32"))]
+    let viewport_paused = None;
+    let focus_paused = viewport_paused.or_else(|| {
+        (*client_window_focus == ClientWindowFocus::NoFocus)
+            .then_some(SamplingPausedReason::WindowUnfocused)
+    });
     #[cfg(target_arch = "wasm32")]
     let hud_main_thread_cost_window = crate::web::take_hud_main_thread_cost_window();
     #[cfg(not(target_arch = "wasm32"))]
