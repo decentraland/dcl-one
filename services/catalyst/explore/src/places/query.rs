@@ -523,13 +523,32 @@ pub(super) fn destinations_highlighted_prefix(f: &PlaceListFilters) -> &'static 
 /// except under `most_active` (the only order with live counts), where
 /// people outrank curation: a busy uncurated destination lists above an
 /// empty featured one and `highlighted` only breaks ties among equal counts.
+/// Under `destinations_newest_first` the creation time leads the same way.
 pub(super) fn destinations_lead_prefix(f: &PlaceListFilters, live_prefix: &str) -> String {
     let highlighted = destinations_highlighted_prefix(f);
     if matches!(f.order_by, PlaceOrderBy::MostActive) {
         format!("{live_prefix}{highlighted}")
+    } else if destinations_newest_first(f) {
+        format!(
+            "{} DESC NULLS LAST, {highlighted}{live_prefix}",
+            f.order_by.order_expr()
+        )
     } else {
         format!("{highlighted}{live_prefix}")
     }
+}
+
+/// `order_by=created_at` with `order` omitted or `desc` on the destinations
+/// (`decentraland/places#896`): the newest destinations lead, so a feed of
+/// what is new is not the featured shelf again, and `highlighted`, the
+/// ranking and a search's text rank only break ties among equal creation
+/// times. Ascending keeps the shelf on top: no caller wants the oldest
+/// destinations above curation. `updated_at` never leads: the old places
+/// service's daily ranking rebuild stamps it on every ranked row and the
+/// mirror carries those stamps, so most of the catalogue ties on it and the
+/// id tiebreak, not recency, would pick the top of the feed.
+pub(super) fn destinations_newest_first(f: &PlaceListFilters) -> bool {
+    f.destinations_mode && f.order_desc && matches!(f.order_by, PlaceOrderBy::CreatedAt)
 }
 
 pub(super) fn destinations_ranking_prefix(f: &PlaceListFilters) -> &'static str {
@@ -578,15 +597,20 @@ pub(super) fn like_score_recount_join(order_by: PlaceOrderBy, row: &str) -> Stri
     )
 }
 
+/// `order` is the requested column and direction, `None` when the lead
+/// already sorts on it (`destinations_newest_first`), so no column is
+/// ordered twice.
 pub(super) fn build_order_by(
     lead_prefix: &str,
     ranking_prefix: &str,
     rank_prefix: &str,
-    order_column: &str,
-    dir: &str,
+    order: Option<(&str, &str)>,
     tail: &str,
 ) -> String {
-    format!("{lead_prefix}{ranking_prefix}{rank_prefix}{order_column} {dir} NULLS LAST, {tail}")
+    let order = order
+        .map(|(column, dir)| format!("{column} {dir} NULLS LAST, "))
+        .unwrap_or_default();
+    format!("{lead_prefix}{ranking_prefix}{rank_prefix}{order}{tail}")
 }
 
 pub(super) fn bind_param<'a>(
@@ -1319,8 +1343,7 @@ mod tests {
             &destinations_lead_prefix(&f, "(CASE WHEN true THEN 1 ELSE 0 END)::int DESC, "),
             destinations_ranking_prefix(&f),
             "ts_rank_cd(x, y, 32) DESC, ",
-            PlaceOrderBy::LikeScore.order_expr(),
-            "DESC",
+            Some((PlaceOrderBy::LikeScore.order_expr(), "DESC")),
             order_tail(&f),
         );
         let p_live = clause.find("::int DESC").unwrap();
@@ -1338,8 +1361,7 @@ mod tests {
             "",
             "",
             "",
-            PlaceOrderBy::LikeScore.order_expr(),
-            "DESC",
+            Some((PlaceOrderBy::LikeScore.order_expr(), "DESC")),
             order_tail(&PlaceListFilters::default()),
         );
         assert!(

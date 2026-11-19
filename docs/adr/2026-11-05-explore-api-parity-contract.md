@@ -186,6 +186,11 @@ exception:
 - world ids are matched case-insensitively on lookups;
 - `order_by=most_active` on `GET /api/worlds`;
 - `pointer` without `names` narrows destinations to places;
+- `order_by=created_at` with `order` omitted or `desc` on `GET /api/destinations` lists
+  the newest destinations first, above `highlighted` and the ranking, as
+  `decentraland/places#896` (`daafc956`) does; the pinned source sorts on the creation
+  time only below them. `order=asc` and `order_by=updated_at` keep the featured shelf on
+  top. Drop this entry when the pin moves past `daafc956`;
 - `GET /api/status` adds `catalogue`, `configured_mirrors` and `mirrors` to the three
   upstream keys (the two status entries are accepted entries of the gate);
 - `PATCH /api/places/{id}/disable` with a free-text reason;
