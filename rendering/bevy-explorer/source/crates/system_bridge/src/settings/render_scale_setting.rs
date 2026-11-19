@@ -61,6 +61,7 @@ impl AppSetting for RenderScaleSetting {
 mod tests {
     use super::*;
     use crate::settings::Settings;
+    use common::structs::SessionGraphics;
 
     fn render_resolution(settings: &Settings) -> &system_api_types::SettingInfo {
         &settings.settings[0].info
@@ -94,7 +95,7 @@ mod tests {
             let mut settings = Settings { settings: vec![] };
             settings.add_int_setting::<RenderScaleSetting>(&config);
             assert_eq!(render_resolution(&settings).value, shown);
-            assert_eq!(config.graphics.render_scale, saved);
+            assert_eq!(SessionGraphics::default().render_scale(&config), saved);
         }
     }
 }
