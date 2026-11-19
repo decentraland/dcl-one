@@ -149,13 +149,19 @@ impl ItemsComponent {
         &self.pool
     }
 
-    pub async fn collection_owner(&self, collection_id: &Uuid) -> Result<Option<String>, ApiError> {
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT eth_address FROM builder.collections WHERE id = $1")
-                .bind(collection_id)
-                .fetch_optional(&self.pool)
-                .await?;
-        Ok(row.map(|(addr,)| addr))
+    /// Moves a published collection and its items to `creator` in one
+    /// statement when the stored owner differs.
+    pub async fn sync_collection_owner(&self, id: &Uuid, creator: &str) -> Result<(), ApiError> {
+        sqlx::query(
+            "WITH moved AS (UPDATE builder.collections SET eth_address = $2 \
+               WHERE id = $1 AND contract_address IS NOT NULL AND eth_address <> $2 RETURNING id) \
+             UPDATE builder.items SET eth_address = $2 WHERE collection_id IN (SELECT id FROM moved)",
+        )
+        .bind(id)
+        .bind(creator)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     pub async fn collection_by_id(

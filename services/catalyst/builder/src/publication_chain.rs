@@ -80,6 +80,22 @@ impl PublicationChain<'_> {
         })
     }
 
+    /// The deployed collection's current `creator()` at the latest block,
+    /// lowercase: `transferCreatorship` moves it without a builder request.
+    pub async fn current_creator(&self, contract: &str) -> Result<String, ApiError> {
+        let raw = self
+            .rpc(
+                "eth_call",
+                json!([{"to":contract, "data":hex::encode_prefixed(creatorCall {}.abi_encode())}, "latest"]),
+            )
+            .await?;
+        let bytes = hex::decode(raw.as_str().unwrap_or_default())
+            .map_err(|_| invalid("Invalid collection creator response"))?;
+        let creator = creatorCall::abi_decode_returns(&bytes)
+            .map_err(|_| invalid("Invalid collection creator response"))?;
+        Ok(format!("{creator:#x}"))
+    }
+
     pub async fn verify(
         &self,
         store: &ItemsComponent,

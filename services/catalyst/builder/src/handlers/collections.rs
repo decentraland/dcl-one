@@ -44,6 +44,43 @@ fn should_paginate(page: Option<i64>, limit: Option<i64>) -> bool {
     matches!((page, limit), (Some(p), Some(l)) if p != 0 && l != 0 && l < DEFAULT_LIMIT)
 }
 
+/// The collection with a published standard collection's owner taken from
+/// its on-chain creator (builder-server's `syncOwnerFromChain`): a changed
+/// creator moves the collection and its items to it. Without a Polygon RPC
+/// or with the read failing, the stored owner answers.
+pub(super) async fn synced_collection(
+    state: &SharedState,
+    id: &Uuid,
+) -> Result<crate::items::CollectionMetaRow, ApiError> {
+    let mut meta = state
+        .items
+        .collection_by_id(id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Not found"))?;
+    let (Some(contract), None, Some(url)) = (
+        meta.contract_address.as_deref(),
+        meta.third_party_id.as_deref(),
+        state.settings.polygon_rpc_url.as_deref(),
+    ) else {
+        return Ok(meta);
+    };
+    let chain = crate::publication_chain::PublicationChain {
+        http: &state.http,
+        url,
+    };
+    match chain.current_creator(contract).await {
+        Ok(creator) if creator != meta.eth_address => {
+            state.items.sync_collection_owner(id, &creator).await?;
+            meta.eth_address = creator;
+        }
+        Ok(_) => {}
+        Err(error) => {
+            tracing::warn!(collection = %id, error = ?error, "collection creator read failed; the stored owner answers");
+        }
+    }
+    Ok(meta)
+}
+
 /// The owner or an admin address reads a collection by id.
 pub async fn get_collection(
     State(state): State<SharedState>,
@@ -56,11 +93,7 @@ pub async fn get_collection(
 
     let collection_id = Uuid::parse_str(id.trim()).map_err(|_| ApiError::not_found("Not found"))?;
 
-    let meta = state
-        .items
-        .collection_by_id(&collection_id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("Not found"))?;
+    let meta = synced_collection(&state, &collection_id).await?;
 
     let is_admin = state
         .settings
@@ -106,11 +139,7 @@ pub async fn get_collection_items(
 
     let collection_id = Uuid::parse_str(id.trim()).map_err(|_| ApiError::not_found("Not found"))?;
 
-    let owner = state
-        .items
-        .collection_owner(&collection_id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("Not found"))?;
+    let owner = synced_collection(&state, &collection_id).await?.eth_address;
 
     let is_admin = state
         .settings
@@ -618,6 +647,130 @@ mod tests {
         assert!(!should_paginate(Some(1), Some(0)));
         assert!(!should_paginate(Some(1), Some(100_000)));
         assert!(!should_paginate(Some(1), Some(100_001)));
+    }
+
+    /// A published collection follows its on-chain creator: after
+    /// `transferCreatorship` the new creator reads it and its items, which
+    /// move with it, and the previous one is refused; a failed creator read
+    /// keeps the stored owner.
+    #[tokio::test]
+    async fn published_collection_owner_follows_the_onchain_creator() {
+        use axum::extract::State as AxState;
+        use axum::routing::post;
+        use std::sync::Mutex;
+
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+            return;
+        };
+        let (owner, next) = (address_of(OWNER_KEY), address_of(STRANGER_KEY));
+        let contract = format!("0x{}00000000", Uuid::new_v4().simple());
+        let creator = Arc::new(Mutex::new(Some(owner.clone())));
+        async fn rpc(
+            AxState(creator): AxState<Arc<Mutex<Option<String>>>>,
+            Json(req): Json<serde_json::Value>,
+        ) -> Json<serde_json::Value> {
+            assert_eq!(req["method"], "eth_call");
+            assert_eq!(req["params"][1], "latest");
+            Json(match creator.lock().unwrap().clone() {
+                Some(c) => {
+                    json!({"jsonrpc":"2.0", "id":req["id"], "result": format!("0x{:0>64}", &c[2..])})
+                }
+                None => {
+                    json!({"jsonrpc":"2.0", "id":req["id"], "error": {"code": -32000, "message": "down"}})
+                }
+            })
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let rpc_app = Router::new()
+            .route("/", post(rpc))
+            .with_state(creator.clone());
+        tokio::spawn(async move { axum::serve(listener, rpc_app).await.unwrap() });
+        let state = Arc::new(
+            crate::State::new(
+                pool,
+                temp_storage().await,
+                Arc::default(),
+                dcl_http::Outbound::for_tests(),
+                None,
+                None,
+                crate::Settings {
+                    polygon_rpc_url: Some(url),
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        );
+        let app = crate::router(state.clone());
+        let (collection, item) = (Uuid::new_v4(), Uuid::new_v4());
+        let store = &state.items;
+        sqlx::query("INSERT INTO builder.collections (id, name, eth_address, contract_address, is_published) VALUES ($1, 'Moved', $2, $3, true)")
+            .bind(collection).bind(&owner).bind(&contract).execute(store.pool()).await.unwrap();
+        sqlx::query("INSERT INTO builder.items (id, collection_id, eth_address, name, type) VALUES ($1, $2, $3, 'Hat', 'wearable')")
+            .bind(item).bind(collection).bind(&owner).execute(store.pool()).await.unwrap();
+        let path = format!("/v1/collections/{collection}");
+        let items_path = format!("/v1/collections/{collection}/items");
+        let item_owner = || async {
+            sqlx::query_scalar::<_, String>("SELECT eth_address FROM builder.items WHERE id = $1")
+                .bind(item)
+                .fetch_one(store.pool())
+                .await
+                .unwrap()
+        };
+
+        assert_eq!(get(&app, &path, Some(OWNER_KEY)).await.0, StatusCode::OK);
+        assert_eq!(
+            get(&app, &path, Some(STRANGER_KEY)).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+
+        *creator.lock().unwrap() = Some(next.clone());
+        let (status, body) = get(&app, &path, Some(STRANGER_KEY)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["eth_address"], next.as_str());
+        assert_eq!(item_owner().await, next);
+        *creator.lock().unwrap() = Some(owner.clone());
+        let item_path = format!("/v1/items/{item}");
+        assert_eq!(
+            get(&app, &item_path, Some(OWNER_KEY)).await.0,
+            StatusCode::OK,
+            "an item read follows the creator too"
+        );
+        assert_eq!(item_owner().await, owner);
+        *creator.lock().unwrap() = Some(next.clone());
+        assert_eq!(
+            get(&app, &item_path, Some(OWNER_KEY)).await.0,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            get(&app, &item_path, Some(STRANGER_KEY)).await.0,
+            StatusCode::OK
+        );
+        assert_eq!(
+            get(&app, &items_path, Some(STRANGER_KEY)).await.0,
+            StatusCode::OK
+        );
+        assert_eq!(
+            get(&app, &path, Some(OWNER_KEY)).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            get(&app, &items_path, Some(OWNER_KEY)).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+
+        *creator.lock().unwrap() = None;
+        assert_eq!(
+            get(&app, &path, Some(STRANGER_KEY)).await.0,
+            StatusCode::OK,
+            "the stored owner answers"
+        );
+        assert_eq!(
+            get(&app, &path, Some(OWNER_KEY)).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+        cleanup(store, &[collection], &[]).await;
     }
 
     #[test]
