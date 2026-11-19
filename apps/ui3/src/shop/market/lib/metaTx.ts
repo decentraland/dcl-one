@@ -11,6 +11,8 @@ import { encodeFunctionData, parseAbi } from "viem";
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
 import { catalystBase } from "../../../data/catalyst/client";
+import { relayRefusal, type RelayRefusal } from "../../checkout/chain/metatx";
+import { pageOverride } from "../../pageOverride";
 import type { ContractData } from "@shop/market/lib/contracts";
 import { rpc } from "./rpc";
 import { chainSalt, signTypedData, walletAccount } from "./tx";
@@ -29,17 +31,20 @@ export class MetaTransactionError extends Error {
     /** The relay's HTTP status, and whether it answered with an explicit refusal (`ok: false`). */
     readonly status?: number,
     readonly refused?: boolean,
+    /** The relay's own word for the refusal (its daily limits), when it answered one. */
+    readonly refusal: RelayRefusal = {},
   ) {
     super(message);
   }
 }
 
-type RelayWindow = Window & { __SHOP_RELAY__?: string };
-
-/** The relay's base; POSTs go to `${relayBase()}/transactions` (decentraland-transactions `serverURL`). */
+/**
+ * The relay's base; POSTs go to `${relayBase()}/transactions` (decentraland-transactions `serverURL`). A test or a
+ * local build may repoint it from the page (../../pageOverride).
+ */
 export function relayBase(): string {
-  const fromWindow = typeof window !== "undefined" ? (window as RelayWindow).__SHOP_RELAY__ : undefined;
-  return fromWindow ?? `${catalystBase()}/transactions-api/v1`;
+  const fromPage = pageOverride<unknown>("__SHOP_RELAY__");
+  return typeof fromPage === "string" ? fromPage : `${catalystBase()}/transactions-api/v1`;
 }
 
 /** Ledger answers v as 0/1; the contracts recover only 27/28. */
@@ -112,9 +117,12 @@ export async function sendMetaTransaction(opts: {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ transactionData: { from, params: [opts.contract.address, txData] } }),
   });
-  const body = (await res.json().catch(() => null)) as { ok?: boolean; txHash?: string; message?: string; code?: string } | null;
+  const body = (await res.json().catch(() => null)) as { ok?: boolean; txHash?: string; message?: string; code?: string; error?: unknown } | null;
   if (!body || body.ok === false || !body.txHash) {
-    throw new MetaTransactionError(body?.message ?? `The relay answered ${res.status}`, body?.code ?? String(res.status), res.status, body?.ok === false);
+    // The refusal's code: `code` (the upstream transactions-server's, which dcl-one's relay also answers), else
+    // dcl-one's own `error` (its only one before), else the status.
+    const code = relayRefusal(body).error ?? String(res.status);
+    throw new MetaTransactionError(body?.message ?? `The relay answered ${res.status}`, code, res.status, body?.ok === false, relayRefusal(body));
   }
   return body.txHash;
 }

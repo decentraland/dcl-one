@@ -75,3 +75,76 @@ export function decentralandNavSections(
     }
   })
 }
+
+const publicSectionItems: Record<
+  Exclude<DecentralandNavigationSectionId, 'discover'>,
+  readonly DecentralandNavigationItem[]
+> = {
+  shop: [
+    { label: 'Shop All', href: '/shop/overview' },
+    { label: 'Wearables', href: '/shop/items?category=wearable' },
+    { label: 'Emotes', href: '/shop/items?category=emote' },
+    { label: 'NAMEs', href: '/shop/names' },
+    { label: 'LAND', href: '/shop/lands' },
+    { label: 'Merch', href: 'https://store.decentraland.org/' }
+  ],
+  create: [
+    { label: 'Create in Decentraland', href: '/create' },
+    { label: 'Publish Wearables & Emotes', href: '/create/wearables' },
+    { label: 'Publish LAND', href: '/create/land' }
+  ],
+  learn: [
+    { label: 'Get Started', href: '/docs/player/' },
+    { label: 'Start Creating', href: '/docs/creator/' },
+    { label: 'See What’s New', href: '/blog' }
+  ]
+}
+
+function matchingPublicItem(
+  items: readonly DecentralandNavigationItem[],
+  pathname: string,
+  search: URLSearchParams
+) {
+  let match: DecentralandNavigationItem | undefined
+  for (const item of items) {
+    if (!item.href.startsWith('/')) continue
+    const [path = item.href, query] = item.href.split('?')
+    const itemPath = path.replace(/\/$/, '')
+    const matches = query
+      ? pathname === itemPath &&
+        [...new URLSearchParams(query)].every(([key, value]) => search.get(key) === value)
+      : underPath(pathname, itemPath)
+    if (matches && (!match || item.href.length > match.href.length)) match = item
+  }
+  return match
+}
+
+/** Public Sites navigation. The host supplies resolved Marketplace eligibility. */
+export function decentralandPublicNavSections(
+  area: DecentralandNavigationArea | '' | undefined,
+  pathname: string,
+  { search, marketplaceEligible }: { search?: string; marketplaceEligible?: boolean } = {}
+): { desktop: NavBarSection[]; mobile: NavBarSection[] } {
+  const current = decentralandNavigationSection(area)
+  const path = pathname.replace(/\/$/, '')
+  const params = new URLSearchParams(search)
+  const desktop: NavBarSection[] = []
+  const mobile: NavBarSection[] = []
+  for (const { id, label, href, items } of decentralandNavigation) {
+    const active = id === current
+    const extraItems = id === 'discover' ? items ?? [] : publicSectionItems[id]
+    const visible =
+      id === 'shop' && !marketplaceEligible
+        ? extraItems.filter((item) => item.href !== '/shop/lands')
+        : extraItems
+    const match = active ? matchingPublicItem(visible, path, params) : undefined
+    const section = {
+      label,
+      active,
+      items: visible.map((item) => ({ ...item, active: item === match }))
+    }
+    desktop.push(id === 'learn' ? { label, href, active } : section)
+    mobile.push(section)
+  }
+  return { desktop, mobile }
+}
