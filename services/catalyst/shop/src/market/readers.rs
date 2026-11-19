@@ -56,7 +56,21 @@ pub struct Caches {
     refreshing: parking_lot::Mutex<HashMap<String, Refresh>>,
     /// The last good answer of the keys served while they refresh ([`Caches::keep`]), apart from
     /// the bounded maps, whose eviction would drop an expired one first.
-    kept: parking_lot::Mutex<HashMap<String, (Instant, Arc<Value>)>>,
+    kept: parking_lot::Mutex<HashMap<String, Kept>>,
+}
+
+/// A kept answer: when it was read, plus the age a test adds to it ([`Caches::backdate_kept`]),
+/// which never moves an `Instant` back past the clock's start.
+struct Kept {
+    at: Instant,
+    aged: Duration,
+    value: Arc<Value>,
+}
+
+impl Kept {
+    fn age(&self) -> Duration {
+        self.at.elapsed() + self.aged
+    }
 }
 
 /// A key's background refresh: running, or failed at an instant.
@@ -102,18 +116,23 @@ impl Caches {
         let mut kept = self.kept.lock();
         if kept
             .get(key)
-            .is_some_and(|(_, held)| Arc::ptr_eq(held, &value))
+            .is_some_and(|held| Arc::ptr_eq(&held.value, &value))
         {
             return;
         }
-        kept.insert(key.to_string(), (Instant::now(), value));
+        let fresh = Kept {
+            at: Instant::now(),
+            aged: Duration::ZERO,
+            value,
+        };
+        kept.insert(key.to_string(), fresh);
     }
 
     /// Ages `key`'s kept answer by `by`.
     #[cfg(any(test, feature = "test-support"))]
     pub fn backdate_kept(&self, key: &str, by: Duration) {
-        if let Some((at, _)) = self.kept.lock().get_mut(key) {
-            *at = at.checked_sub(by).expect("a backdate within the clock");
+        if let Some(held) = self.kept.lock().get_mut(key) {
+            held.aged += by;
         }
     }
 
@@ -122,8 +141,8 @@ impl Caches {
         self.kept
             .lock()
             .get(key)
-            .filter(|(at, _)| at.elapsed() < max_age)
-            .map(|(_, value)| Arc::clone(value))
+            .filter(|held| held.age() < max_age)
+            .map(|held| Arc::clone(&held.value))
     }
 
     /// Claims `key`'s background refresh: true for the one caller that is to run it and release

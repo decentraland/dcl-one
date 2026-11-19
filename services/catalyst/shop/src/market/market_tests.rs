@@ -1536,6 +1536,10 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         .await
         .unwrap();
     state.readers.clear();
+    // Read the directory first, through the dropdown's own path, which has no 500 ms bound: the
+    // feeds below then find it fresh, start no refresh of their own, and never depend on how
+    // fast a cold read is.
+    super::search::creator_directory(&state).await.unwrap();
     let feeds = [
         "/v3/catalog/unified?groupBy=item&first=12",
         "/v3/catalog/trending?first=10&days=3650",
@@ -1590,6 +1594,8 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     // A feed without the creator directory (here, its refresh held by another) answers without
     // profiles under a brief cache, never the hour these feeds had, so a CDN does not keep an
     // answer whose cards each ask /lambdas/profiles.
+    // No refresh is live here (the feeds above found the directory fresh), so no claim can drop
+    // over this hold once `clear()` has emptied the claims.
     state.readers.clear();
     assert!(
         state
