@@ -1091,6 +1091,21 @@ impl SessionGraphics {
         }
     }
 
+    /// [`Self::paced_fps`] as the debug panel shows it: when VSync sets the rate, the monitor's
+    /// rate (60 for a 60 Hz monitor, not the pacer's 61).
+    pub fn shown_fps(
+        session: Option<&Self>,
+        config: &AppConfig,
+        refresh_hz: Option<usize>,
+    ) -> usize {
+        let fps = Self::paced_fps(session, config, refresh_hz);
+        if config.graphics.vsync && refresh_hz == Some(fps) {
+            fps.saturating_sub(1)
+        } else {
+            fps
+        }
+    }
+
     pub fn parcel_grass(&self, config: &AppConfig) -> ParcelGrassSetting {
         self.parcel_grass.unwrap_or(config.parcel_grass_setting)
     }
@@ -2719,6 +2734,22 @@ mod tests {
         config.graphics.vsync = false;
         assert_eq!(paced(&config, None, Some(144)), 999);
         assert_eq!(paced(&config, Some(&thirty), Some(144)), 30);
+    }
+
+    #[test]
+    fn the_shown_rate_is_the_monitors_when_vsync_sets_it() {
+        let mut config = AppConfig::default();
+        let shown = |config: &AppConfig, refresh| SessionGraphics::shown_fps(None, config, refresh);
+        config.graphics.vsync = true;
+        config.graphics.fps_target = 999;
+        assert_eq!(shown(&config, Some(61)), 60);
+        assert_eq!(shown(&config, None), 999);
+        config.graphics.fps_target = 60;
+        assert_eq!(shown(&config, Some(61)), 60);
+        assert_eq!(shown(&config, Some(145)), 60);
+        config.graphics.vsync = false;
+        config.graphics.fps_target = 999;
+        assert_eq!(shown(&config, Some(61)), 999);
     }
 
     #[test]
