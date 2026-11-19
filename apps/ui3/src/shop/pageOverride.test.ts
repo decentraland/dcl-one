@@ -35,6 +35,17 @@ describe("the page's overrides of the Shop's relay, RPCs and chains", () => {
     expect(landChainId()).toBe(CHAIN.SEPOLIA);
   });
 
+  it("are honoured only with the type each reader expects", () => {
+    vi.stubEnv("VITE_SHOP_CHAIN_ID", String(CHAIN.POLYGON));
+    const own = { relay: relayBase(), rpc: rpcUrl(CHAIN.POLYGON), land: landChainId() };
+    page.__SHOP_ETHEREUM_CHAIN_ID__ = String(CHAIN.SEPOLIA);
+    page.__SHOP_RELAY__ = 42;
+    page.__SHOP_RPC__ = { [CHAIN.POLYGON]: { url: "https://rpc.example/polygon" } };
+    expect(landChainId()).toBe(own.land);
+    expect(relayBase()).toBe(own.relay);
+    expect(rpcUrl(CHAIN.POLYGON)).toBe(own.rpc);
+  });
+
   it("are ignored by a production build, which keeps its own", () => {
     vi.stubEnv("VITE_SHOP_CHAIN_ID", String(CHAIN.POLYGON));
     const own = { chain: settlementChainId(), relay: relayBase(), rpc: rpcUrl(CHAIN.POLYGON), land: landChainId() };

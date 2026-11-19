@@ -12,6 +12,7 @@ import { pageOverride } from "../pageOverride";
  * (`ethereumChainId`: VITE_SHOP_ETHEREUM_CHAIN_ID, or Sepolia when the Shop settles on Amoy, mainnet otherwise).
  */
 export function landChainId(): ChainId {
-  const chosen = pageOverride<number>("__SHOP_ETHEREUM_CHAIN_ID__") ?? ethereumChainId();
+  const fromPage = pageOverride<unknown>("__SHOP_ETHEREUM_CHAIN_ID__");
+  const chosen = typeof fromPage === "number" ? fromPage : ethereumChainId();
   return LAND_NETWORKS[chosen] ? chosen : CHAIN.ETHEREUM;
 }

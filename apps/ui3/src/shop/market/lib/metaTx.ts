@@ -40,7 +40,8 @@ export class MetaTransactionError extends Error {
  * local build may repoint it from the page (../../pageOverride).
  */
 export function relayBase(): string {
-  return pageOverride<string>("__SHOP_RELAY__") ?? `${catalystBase()}/transactions-api/v1`;
+  const fromPage = pageOverride<unknown>("__SHOP_RELAY__");
+  return typeof fromPage === "string" ? fromPage : `${catalystBase()}/transactions-api/v1`;
 }
 
 /** Ledger answers v as 0/1; the contracts recover only 27/28. */

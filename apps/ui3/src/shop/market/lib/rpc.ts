@@ -41,7 +41,8 @@ export function setRpcTransport(next: RpcTransport | null): () => void {
 }
 
 export function rpcUrl(chainId: ChainId): string {
-  const fromWindow = pageOverride<Partial<Record<number, string>>>("__SHOP_RPC__")?.[chainId];
+  const fromPage = pageOverride<Partial<Record<number, unknown>>>("__SHOP_RPC__")?.[chainId];
+  const fromWindow = typeof fromPage === "string" ? fromPage : undefined;
   const url = overrides.get(chainId) ?? fromWindow ?? DEFAULT_RPC[chainId];
   if (!url) throw new Error(`No RPC is configured for chain ${chainId}`);
   return url;
