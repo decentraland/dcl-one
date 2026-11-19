@@ -75,12 +75,19 @@ describe('bridge notifications poll', () => {
     expect(news(h.sent)).toHaveLength(1)
   })
 
-  it('does not poll for a guest or after logout', async () => {
+  it('polls for a guest, as unity-explorer does: a guest account has notifications', async () => {
     const h = fakeCtx()
     signed.mockResolvedValue({ notifications: [] })
     await h.req({ kind: 'getNotifications' })
     player = { userId: '0xg', isGuest: true }
     await h.tick(POLL_INTERVAL_S)
+    expect(polls()).toHaveLength(1)
+  })
+
+  it('does not poll after logout', async () => {
+    const h = fakeCtx()
+    signed.mockResolvedValue({ notifications: [] })
+    await h.req({ kind: 'getNotifications' })
     player = null
     await h.tick(POLL_INTERVAL_S)
     expect(polls()).toHaveLength(0)

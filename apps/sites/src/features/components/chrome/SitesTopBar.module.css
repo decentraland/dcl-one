@@ -41,6 +41,10 @@
   backdrop-filter: saturate(1.8) blur(20px);
   pointer-events: none;
 }
+.root[data-transparent]::before {
+  background: var(--dcl-transparencies-black-20);
+  box-shadow: none;
+}
 /* The landing page signed out, the reference's minimal nav: the logo, the wordmark and Sign in, no sections or menu. */
 .root[data-bare] {
   --dcl-navbar-menu-button-display: none;

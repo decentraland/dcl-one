@@ -100,11 +100,24 @@ impl SocialServiceImpl {
             .upsert_social_settings(&me, pmp.as_deref(), bvis.as_deref(), sreact.as_deref())
             .await
         {
-            Ok(row) => Ok(UpsertSocialSettingsResponse {
-                response: Some(upsert_social_settings_response::Response::Ok(
-                    settings_to_proto(&row),
-                )),
-            }),
+            Ok(row) => {
+                // Upstream's settings component calls the gatekeeper so the
+                // peers of the private-messages room see the change at once.
+                if let Some(privacy) = pmp.as_deref()
+                    && let Err(error) = context
+                        .server_context
+                        .voice()
+                        .publish_private_messages_privacy(&me, privacy)
+                        .await
+                {
+                    tracing::warn!(%error, address = %me, "private messages privacy not shown in the room");
+                }
+                Ok(UpsertSocialSettingsResponse {
+                    response: Some(upsert_social_settings_response::Response::Ok(
+                        settings_to_proto(&row),
+                    )),
+                })
+            }
             Err(e) => Ok(UpsertSocialSettingsResponse {
                 response: Some(
                     upsert_social_settings_response::Response::InternalServerError(internal_err(

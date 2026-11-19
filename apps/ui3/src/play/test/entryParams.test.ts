@@ -26,6 +26,8 @@ describe('unrecognisedEntryParams', () => {
   it('is empty for a link made of accepted params only', () => {
     expect(unrecognisedEntryParams(new URLSearchParams('?realm=x&position=1,2&mock=1&preview&world=boedo'))).toEqual([])
     expect(unrecognisedEntryParams(new URLSearchParams('?native=1&hud=0&gate=gpu&gpuGuide=1&simerror=realm'))).toEqual([])
+    // the shell's guest wallet choice (features/auth/guest.ts) is the page's own
+    expect(unrecognisedEntryParams(new URLSearchParams('?guestWallet=thirdweb'))).toEqual([])
     // campaign links: Segment reads them, never called out
     expect(unrecognisedEntryParams(new URLSearchParams('?utm_source=x&utm_campaign=y&anon_user_id=abc&analyticsSession=s'))).toEqual([])
     // ad clicks: a Google Ads final url as the ad serves it, and other platforms' click ids

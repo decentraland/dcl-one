@@ -2,7 +2,7 @@
 // and its modals sheet draw it: Buy Item, Buy N Items or Buy Name (the balance, what is bought and its
 // price), Insufficient Funds (what is missing, BUY CREDITS), Processing, Purchase successful, and the Error
 // modal ("Oops! Something went wrong": what happened, CANCEL and TRY AGAIN when it may be tried again, else
-// CLOSE). A NAME is one row whose tile is the NAME's art. Only its simulation is bought here, so a NAME's
+// CLOSE; or CANCEL and SWITCH TO <network> AND RETRY when the buyer's wallet has to send it from that network). A NAME is one row whose tile is the NAME's art. Only its simulation is bought here, so a NAME's
 // Purchase successful has no next step past CONTINUE SHOPPING.
 // A simulated NAME purchase (`simulation`, a testnet rehearsal that buys nothing) says so on every step it
 // shows, its failures included: a note that no Credits are spent and the NAME isn't registered or reserved,
@@ -66,7 +66,8 @@ export type ShopPurchaseStep =
   | ({ step: 'processing'; balance: number | null; count?: number; subject?: 'name' } & Simulated)
   | ({ step: 'success'; items: ShopPurchaseItem[] } & Simulated)
   | { step: 'pending' }
-  | ({ step: 'failed'; message: string; retry: boolean } & Simulated)
+  /** `switchTo`: the network the wallet must move to, named, for SWITCH TO … AND RETRY in place of TRY AGAIN. */
+  | ({ step: 'failed'; message: string; retry: boolean; switchTo?: string } & Simulated)
   | { step: 'signIn' }
 
 export interface ShopPurchaseDialogProps {
@@ -79,6 +80,8 @@ export interface ShopPurchaseDialogProps {
   /** A simulated NAME's PREVIEW ON AVATAR. */
   onPreview?: () => void
   onRetry?: () => void
+  /** SWITCH TO … AND RETRY: the wallet moved to the failed step's network, then the purchase tried again. */
+  onSwitchNetwork?: () => void
   onSignIn?: () => void
 }
 
@@ -99,7 +102,7 @@ const simulationDone = (items: readonly ShopPurchaseItem[]): string =>
 /** Whether a step's rows are a NAME. */
 const isName = (items: readonly ShopPurchaseItem[]): boolean => items.length === 1 && items[0].kind === 'name'
 
-export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onBackpack, onPreview, onRetry, onSignIn }: ShopPurchaseDialogProps): React.JSX.Element {
+export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onBackpack, onPreview, onRetry, onSwitchNetwork, onSignIn }: ShopPurchaseDialogProps): React.JSX.Element {
   const cancel = (
     <Button variant="dark" size="modal" onClick={onClose}>
       Cancel
@@ -240,12 +243,18 @@ export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onB
           actions={
             <>
               <Button variant="dark" size="modal" onClick={onClose}>
-                {view.retry ? 'Cancel' : 'Close'}
+                {view.retry || view.switchTo != null ? 'Cancel' : 'Close'}
               </Button>
-              {view.retry && (
-                <Button size="modal" onClick={onRetry}>
-                  Try again
+              {view.switchTo != null ? (
+                <Button size="modal" onClick={onSwitchNetwork}>
+                  Switch to {view.switchTo} and retry
                 </Button>
+              ) : (
+                view.retry && (
+                  <Button size="modal" onClick={onRetry}>
+                    Try again
+                  </Button>
+                )
               )}
             </>
           }

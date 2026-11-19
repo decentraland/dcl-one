@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
@@ -7,6 +8,7 @@ import type { AuthIdentity } from "@/data/lib/auth/types";
 import { useAuth } from "@/data/lib/auth/context";
 import { getIdentity } from "@/data/lib/auth/session";
 import * as authoring from "@/data/lib/catalyst/landings/submit-hangout";
+import { eventsPageKeys } from "@/data/lib/catalyst/places/events-page";
 import { loadHangoutOptions, type HangoutOptions } from "@/data/lib/catalyst/landings/hangout-options";
 import SubmitHangoutRoute from "./events_.new-event";
 
@@ -22,6 +24,7 @@ describe("when editing a hangout through its route", () => {
   let identity: AuthIdentity;
   let event: authoring.EditableHangout;
   let router: ReturnType<typeof createMemoryRouter>;
+  let client: QueryClient;
   let resolveLoad: (event: authoring.EditableHangout) => void;
   let rejectLoad: (error: Error) => void;
   let resolveOptions: (options: HangoutOptions) => void;
@@ -52,10 +55,12 @@ describe("when editing a hangout through its route", () => {
     router = createMemoryRouter([
       { id: "hangout", path: "/events/edit-event/:id", Component: SubmitHangoutRoute as never, loader: () => loaderData },
       { path: "/events", element: <h1>What's On</h1> },
-    ], { initialEntries: ["/events/edit-event/existing-event?step=details"], hydrationData: { loaderData: { hangout: loaderData } } });
-    render(<RouterProvider router={router} />);
+    ], { initialEntries: ["/events/edit-event/existing-event"], hydrationData: { loaderData: { hangout: loaderData } } });
+    client = new QueryClient();
+    client.setQueryData(eventsPageKeys.detail(event.id), event);
+    render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
   });
-  afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.resetAllMocks(); router.dispose(); });
+  afterEach(() => { cleanup(); client.clear(); vi.restoreAllMocks(); vi.resetAllMocks(); router.dispose(); });
 
   it("should keep loading inside the page before the footer", () => {
     expect(screen.getByRole("status").textContent).toContain("Loading your hangout");
@@ -74,7 +79,7 @@ describe("when editing a hangout through its route", () => {
     });
     it("should retry both the event read and access lookup", async () => {
       await user.click(screen.getByRole("button", { name: "Check access again" }));
-      await screen.findByRole("heading", { name: "Edit Hangout" });
+      await screen.findByRole("heading", { name: "Edit Event" });
       expect(authoring.loadEditableHangout).toHaveBeenCalledTimes(2);
       expect(loadHangoutOptions).toHaveBeenCalledTimes(2);
       expect(screen.queryByText("Event service unavailable")).toBeNull();
@@ -90,7 +95,7 @@ describe("when editing a hangout through its route", () => {
     it("should wait for access without exposing an editor or delete action", () => {
       expect(screen.getByRole("status").textContent).toBe("Loading your hangout…");
       expect(screen.queryByRole("button", { name: "Delete hangout" })).toBeNull();
-      expect(screen.queryByRole("heading", { name: "Edit Hangout" })).toBeNull();
+      expect(screen.queryByRole("heading", { name: "Edit Event" })).toBeNull();
     });
     describe("and the account lacks edit permission", () => {
       beforeEach(async () => { await act(async () => resolveOptions(options)); });
@@ -115,6 +120,13 @@ describe("when editing a hangout through its route", () => {
   });
   describe("and the event has loaded", () => {
     beforeEach(async () => { await act(async () => { resolveOptions(options); resolveLoad(event); }); });
+    it("should keep the prefilled cover, details, location and schedule in one editor", () => {
+      expect(screen.getByRole("textbox", { name: "Event Name" })).toHaveProperty("value", "Monthly series");
+      expect(screen.getByRole("img", { name: "Hangout cover" }).getAttribute("src")).toBe(event.image);
+      expect(screen.getByLabelText("World")).toHaveProperty("value", "music.dcl.eth");
+      expect(screen.getByLabelText("Date")).toHaveProperty("value", "2099-06-01");
+    });
+
     it("should allow the owner to clear a community absent from the management list", async () => {
       await user.selectOptions(screen.getByRole("combobox", { name: "Community" }), "");
       expect((screen.getByRole("combobox", { name: "Community" }) as HTMLSelectElement).value).toBe("");
@@ -127,12 +139,14 @@ describe("when editing a hangout through its route", () => {
       await user.click(screen.getByRole("button", { name: "Delete hangout" }));
       expect(authoring.deleteHangout).toHaveBeenCalledWith(identity, event.id);
       await waitFor(() => expect(router.state.location.pathname).toBe("/events"));
+      expect(client.getQueryState(eventsPageKeys.detail(event.id))?.isInvalidated).toBe(true);
     });
     it("should keep the editor open and show a failed delete", async () => {
       vi.mocked(authoring.deleteHangout).mockRejectedValueOnce(new Error("Delete denied"));
       await user.click(screen.getByRole("button", { name: "Delete hangout" }));
       expect(screen.getByRole("alert").textContent).toBe("Delete denied");
       expect(router.state.location.pathname).toBe("/events/edit-event/existing-event");
+      expect(client.getQueryState(eventsPageKeys.detail(event.id))?.isInvalidated).toBe(false);
     });
   });
 });
