@@ -3,7 +3,6 @@ import { useNavigate } from "react-router";
 
 import { ProfileNavigationContext } from "@ui/web/frames/ProfileNavigation";
 import StProfileCommunitiesTab from "@ui/web/pages/StProfileCommunitiesTab";
-import StProfileOverviewTab from "@ui/web/pages/StProfileOverviewTab";
 
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 import { track } from "@/core/lib/telemetry/track";
@@ -17,8 +16,16 @@ import { ProfileCreationsScreen } from "./ProfileCreationsScreen";
 import { ProfileOverviewScreen } from "./ProfileOverviewScreen";
 import { ProfilePhotosScreen } from "./ProfilePhotosScreen";
 import { ProfilePlacesScreen } from "./ProfilePlacesScreen";
-import { useMyCommunities, useRequiredProfile } from "./hooks";
-import { isOwnProfile, profileHref, profileTabs, readProfileTab, type ProfileTab } from "./tabs";
+import { ProfileReferralsScreen } from "./ProfileReferralsScreen";
+import { useMyCommunities, useProfileFlags, useRequiredProfile } from "./hooks";
+import {
+  isLegacyTabSegment,
+  isOwnProfile,
+  profileHref,
+  profileTabs,
+  readProfileTab,
+  type ProfileTab,
+} from "./tabs";
 
 const STORY: StoryId = "landings/profile";
 
@@ -48,18 +55,28 @@ export function ProfilePage({ address: rawAddress, tabSegment, ownOnServer, sid 
   if (!canReadProfile(address)) throw new ProfileRouteError("not-found", rawAddress);
 
   const own = useOwnProfile(address, ownOnServer);
-  const tab = readProfileTab(tabSegment, own);
+  // Referral Rewards follows its rollout flag. Until the flags have been read, a client navigation
+  // straight to that tab keeps it, also while a failed read is made again or after every try failed:
+  // only a flag read as off sends the page to Overview.
+  const flags = useProfileFlags(own);
+  const flagsUnread =
+    own && !flags.isSuccess && readProfileTab(tabSegment, own, { referral: true }) === "referral-rewards";
+  const referral = flags.data?.referral === true || flagsUnread;
+  const tab = readProfileTab(tabSegment, own, { referral });
   const navigate = useNavigate();
+  const legacySegment = isLegacyTabSegment(tabSegment);
   useEffect(() => {
     if (tab === null) navigate(profileHref(address), { replace: true });
-  }, [tab, address, navigate]);
+    // An old tab id in the URL moves to the current one, as the server does on a document request.
+    else if (legacySegment) navigate(profileHref(address, tab), { replace: true });
+  }, [tab, legacySegment, address, navigate]);
 
   const query = useRequiredProfile(address);
   const profile = query.data ?? emptyProfile(address);
   useProfileViewed(sid, address, own, query.isSuccess ? (query.data ? "live" : "fallback") : null, profile);
 
   const activeTab: ProfileTab = tab ?? "overview";
-  const tabs = profileTabs(own).map((entry) => ({ id: entry.id, label: entry.label }));
+  const tabs = profileTabs(own, { referral }).map((entry) => ({ id: entry.id, label: entry.label }));
   const onTab = (next: string) => track("profile_tab_changed", { tab: next as ProfileTab }, { sid, story: STORY });
 
   const navigation = {
@@ -68,7 +85,7 @@ export function ProfilePage({ address: rawAddress, tabSegment, ownOnServer, sid 
     onTab,
   };
 
-  // Overview, Creations, Places, Assets and Photos have the profile site's layout: its own tab bar
+  // Overview, Creations, Places, Assets, Photos and Referral Rewards have the profile site's layout: its own tab bar
   // (scrollable on narrow screens) and no section side panel, so they stay outside the context the
   // Sites chrome turns into that panel.
   if (activeTab === "overview") {
@@ -110,24 +127,18 @@ export function ProfilePage({ address: rawAddress, tabSegment, ownOnServer, sid 
     );
   }
 
+  if (activeTab === "referral-rewards") {
+    return <ProfileReferralsScreen profile={profile} own={own} tabs={navigation.tabs} onTab={onTab} />;
+  }
+
+  // Communities, the one tab left: it reads only its own data, as every tab does.
   return (
     <div className="landings-profile">
       <ProfileNavigationContext value={navigation}>
-        <ActiveTab tab={activeTab} address={address} profile={profile} own={own} tabs={tabs} sid={sid} />
+        <CommunitiesTab address={address} profile={profile} own={own} tabs={tabs} sid={sid} />
       </ProfileNavigationContext>
     </div>
   );
-}
-
-/** Each tab reads only its own data, so opening one tab does not fetch the others. */
-function ActiveTab({ tab, ...props }: TabProps & { tab: ProfileTab }) {
-  switch (tab) {
-    case "communities":
-      return <CommunitiesTab {...props} />;
-    case "referral-rewards":
-    default:
-      return <StProfileOverviewTab profile={props.profile as never} activeTab="overview" isOwnProfile={props.own} />;
-  }
 }
 
 function CommunitiesTab({ address, profile, own, tabs, sid }: TabProps) {

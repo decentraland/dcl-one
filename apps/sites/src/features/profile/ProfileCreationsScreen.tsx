@@ -1,27 +1,24 @@
 import { useState } from "react";
 
-import { Button, ShopCard, ShopCardPrice, type ShopCardCreator } from "@dcl/one-ui";
+import type { ShopCardCreator } from "@dcl/one-ui";
 import { BackpackUpperBody, GeneralSecondaryBarEmotes } from "@dcl/one-ui/foundations/icons";
 
-import { accountPage, assetPage } from "@/core/lib/shop/redirects";
+import { accountPage } from "@/core/lib/shop/redirects";
 import { shortAddress } from "@/data/lib/catalyst/format/address";
-import type { CreationsCategory, ProfileCreation } from "@/data/lib/catalyst/marketplace/profile-collectibles";
+import type { CreationsCategory } from "@/data/lib/catalyst/marketplace/profile-collectibles";
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
 import { DEFAULT_CREATIONS_CATEGORY } from "@/data/lib/profile/queries";
 
 import {
   catalogueTotal,
-  categoryGlyph,
-  collectibleBadges,
   CollectiblesItem,
   CollectiblesPanel,
+  CreationCard,
   loadedRows,
   loadMore,
   useCategoryTabs,
   unreadyState,
   useFocusNewRows,
-  useRouterClick,
-  ShopCardRouterLink,
   ViewAllLink,
   type CategoryOption,
   type CollectiblesState,
@@ -62,57 +59,6 @@ const CATEGORY_TABS: CategoryOption<CreationsCategory>[] = [
 function countLabel(shown: number, total: number): string {
   const noun = (n: number) => (n === 1 ? "1 creation" : `${n} creations`);
   return total > shown ? `Showing ${shown} of ${noun(total)}` : noun(shown);
-}
-
-/** The price as the Shop's card rule decided it: credits, MANA on its network, or why there is none. */
-function creationPrice(item: ProfileCreation) {
-  const payment = item.payment;
-  if (payment.kind === "credits") return <ShopCardPrice kind="credits" amount={payment.credits} />;
-  if (payment.kind === "mana") return <ShopCardPrice kind="mana" amount={payment.mana} network={item.network} />;
-  // A credit-eligible sale whose quote failed says so; anything else unpriced is not for sale.
-  return (
-    <ShopCardPrice
-      kind="none"
-      label={payment.kind === "creditsUnavailable" ? "Credits price unavailable" : "Not for sale"}
-    />
-  );
-}
-
-function CreationCard({ item, creator }: { item: ProfileCreation; creator: ShopCardCreator }) {
-  const routerClick = useRouterClick();
-  const href = assetPage(item.contractAddress, item.itemId, "item");
-  return (
-    <ShopCard
-      name={item.name}
-      image={item.thumbnail}
-      rarity={item.rarity}
-      creator={creator}
-      price={creationPrice(item)}
-      categoryIcon={categoryGlyph(item.traits.category)}
-      badges={collectibleBadges(item.traits)}
-      href={href}
-      linkComponent={ShopCardRouterLink}
-      variant="catalogue"
-      headingLevel={3}
-      actions={
-        item.payment.kind !== "none" ? (
-          <Button href={href} onClick={routerClick(href)} size="md" aria-label={`Buy ${item.name}`}>
-            Buy
-          </Button>
-        ) : (
-          <Button
-            href={href}
-            onClick={routerClick(href)}
-            variant="secondary"
-            size="md"
-            aria-label={`View in Shop: ${item.name}`}
-          >
-            View in Shop
-          </Button>
-        )
-      }
-    />
-  );
 }
 
 /** The profile's Creations tab: the wearables or emotes a member published, a page at a time. */

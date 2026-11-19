@@ -23,6 +23,8 @@ vi.mock("@/data/lib/catalyst/places/profile-places", async (original) => ({
   fetchProfilePlaces: net.fetchProfilePlaces,
 }));
 vi.mock("@/data/lib/catalyst/social/photos", () => ({ fetchUserPhotos: net.fetchUserPhotos }));
+const flags = vi.hoisted(() => ({ dappsFlags: vi.fn() }));
+vi.mock("@/data/lib/feature-flags.server", () => ({ dappsFlags: flags.dappsFlags }));
 
 import { createStaticHandler, RouterContextProvider } from "react-router";
 
@@ -82,6 +84,7 @@ const keysOf = (data: ProfileLoaderData) => data.dehydratedState.queries.map((q)
 beforeEach(() => {
   net.fetchProfile.mockImplementation(async (address: string) => avatar(address === A ? "Alice" : "Bob"));
   net.fetchProfileCreations.mockResolvedValue({ items: [], received: 0, total: 0 });
+  flags.dappsFlags.mockResolvedValue({ "dapps-show-referral": true });
 });
 afterEach(() => vi.resetAllMocks());
 
@@ -213,7 +216,7 @@ describe("profile loader, dehydrated state", () => {
     const out = await run(`/profile/${A}/assets`, { address: A, tab: "assets" }, A);
 
     expect(out.ok && out.data.own).toBe(true);
-    expect(out.ok && keysOf(out.data)).toEqual([profileKeys.profile(A), profileKeys.assets(A, null)]);
+    expect(out.ok && keysOf(out.data)).toEqual([profileKeys.flags(), profileKeys.profile(A), profileKeys.assets(A, null)]);
     expect(net.fetchProfileAssets.mock.calls[0]?.[1]).toMatchObject({ category: undefined, skip: 0 });
   });
 
@@ -222,7 +225,7 @@ describe("profile loader, dehydrated state", () => {
 
     const out = await run(`/profile/${A}/photos`, { address: A, tab: "photos" }, A);
 
-    expect(out.ok && keysOf(out.data)).toEqual([profileKeys.profile(A), profileKeys.photos(A)]);
+    expect(out.ok && keysOf(out.data)).toEqual([profileKeys.flags(), profileKeys.profile(A), profileKeys.photos(A)]);
     expect(net.fetchUserPhotos).toHaveBeenCalledTimes(1);
     expect(net.fetchUserPhotos.mock.calls[0]?.[1]).toEqual({ limit: 24, offset: 0 });
     expect(net.fetchUserPhotos.mock.calls[0]?.[2]).not.toHaveProperty("identity");
@@ -432,5 +435,53 @@ describe("profile document request, through the router's handler", () => {
 
     expect(context.statusCode).toBe(200);
     expect(context.loaderData.profile?.dehydratedState.queries[0]?.queryKey).toEqual(profileKeys.profile(A));
+  });
+});
+
+describe("profile loader, Referral Rewards", () => {
+  const referral = `/profile/${A}/referral-rewards`;
+
+  it("opens the member's own Referral Rewards while the flag is on, and hands the page the flag", async () => {
+    const out = await run(referral, { address: A, tab: "referral-rewards" }, A);
+
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    const entry = out.data.dehydratedState.queries.find((q) => q.queryHash === JSON.stringify(profileKeys.flags()));
+    expect(entry?.state.data).toEqual({ referral: true });
+  });
+
+  it("sends the tab to the profile root while the flag is off", async () => {
+    flags.dappsFlags.mockResolvedValue({});
+
+    const out = await run(referral, { address: A, tab: "referral-rewards" }, A);
+
+    expect(out.ok).toBe(false);
+    expect(locationOf(out.ok ? null : out.thrown)).toBe(`/profile/${A}`);
+  });
+
+  it("sends the profile site's old `referral` tab id to Referral Rewards, keeping the query", async () => {
+    const out = await run(`/profile/${A}/referral?utm_source=mail`, { address: A, tab: "referral" }, A);
+
+    expect(out.ok).toBe(false);
+    expect(locationOf(out.ok ? null : out.thrown)).toBe(`${referral}?utm_source=mail`);
+  });
+
+  it("sends the old `?tab=referral` link to Referral Rewards", async () => {
+    const out = await run(`/profile/${A}?tab=referral`, { address: A }, A);
+
+    expect(locationOf(out.ok ? null : out.thrown)).toBe(referral);
+  });
+
+  it("does not show another member's Referral Rewards, and reads no flags for them", async () => {
+    const out = await run(`/profile/${B}/referral-rewards`, { address: B, tab: "referral-rewards" }, A);
+
+    expect(locationOf(out.ok ? null : out.thrown)).toBe(`/profile/${B}`);
+    expect(flags.dappsFlags).not.toHaveBeenCalled();
+  });
+
+  it("keeps the tab of /profile/me/referral for the profile's own loader to decide", () => {
+    const thrown = thrownBy(() => ownProfileRedirect(request("/profile/me/referral", A), "referral"));
+
+    expect(locationOf(thrown)).toBe(referral);
   });
 });
