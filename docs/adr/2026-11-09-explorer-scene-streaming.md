@@ -72,8 +72,10 @@ the GPU.
   setting, 0 to 40, default 12), in view and behind the camera together. Scenes in view whose
   models are known start nearest first, by the download key (ring, then distance), while a place
   is free. With none free, a drawn stand-in behind the camera makes way for one in view, the
-  farthest first; one in view never does, and turning the camera alone stops nothing. Lowering
-  the setting stops the farthest over it, those behind the camera first. The cost of a stand-in
+  farthest first; one in view never does. So with every place taken, turning the camera stops
+  drawn stand-ins left behind as new ones come into view; they reload from the cache when the
+  player turns back. Lowering the setting stops the farthest over it, those behind the camera
+  first. The cost of a stand-in
   is not known before its files arrive, and a guess from the download misleads (a scene of flat
   PNGs takes ten times its download in memory), so the cap counts scenes.
 - **Definition.** A stand-in starts by loading the scene's entity definition as the live scene
