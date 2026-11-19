@@ -3,11 +3,31 @@
 }
 
 .toggle {
+  composes: text626f64792f736d2d7374726f6e67 from '../../../foundations/typography/text-styles.module.css';
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dcl-space-8);
   width: 100%;
   min-height: 44px;
-  padding-inline: 0;
-  letter-spacing: normal;
-  text-transform: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dcl-radius-sm);
+  background: transparent;
+  color: var(--dcl-text-primary);
+  text-align: start;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .toggle:hover {
+    background: var(--dcl-bg-hover);
+  }
+}
+
+.toggle:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
 }
 
 .chevron {
@@ -119,12 +139,7 @@ a.partyAddress:focus-visible {
 
 .unit,
 .srOnly {
-  position: absolute;
-  clip-path: inset(50%);
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  white-space: nowrap;
+  composes: visuallyHidden from '../shared/a11y.module.css';
 }
 
 .mana {

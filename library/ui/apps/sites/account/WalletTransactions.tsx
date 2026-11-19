@@ -112,25 +112,38 @@ export function WalletTransactions({
 }: TransactionsProps) {
   const panelId = useId()
   const name = `Transactions, ${display.label}`
-  const initialError = rows === undefined ? error : undefined
-  const loading = open && rows === undefined && initialError === undefined
+  const loading = open && rows === undefined && error === undefined
 
   return (
     <div className={styles.root}>
-      <Button
+      <button
         className={styles.toggle}
-        variant="text"
-        size="sm"
-        contentLayout="fill"
+        type="button"
         aria-label={name}
         aria-expanded={open}
         aria-controls={panelId}
-        trailingIcon={<GeneralDownArrow className={styles.chevron} size={16} aria-hidden="true" />}
         onClick={onToggle}
       >
         Transactions
-      </Button>
+        <GeneralDownArrow className={styles.chevron} size={16} aria-hidden="true" />
+      </button>
       <div id={panelId} className={styles.panel} hidden={!open}>
+        <div className={error ? styles.unavailable : styles.srOnly}>
+          <p className={styles.note} role="status">
+            {error ?? (loading ? 'Loading transactions…' : null)}
+          </p>
+          {error ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={fetching}
+              aria-label={`Try again, ${display.label} transactions`}
+              onClick={onRetry}
+            >
+              Try again
+            </Button>
+          ) : null}
+        </div>
         {!open ? null : rows ? (
           rows.length === 0 ? (
             <p className={styles.note}>No transactions yet.</p>
@@ -168,16 +181,6 @@ export function WalletTransactions({
             ))}
           </div>
         ) : null}
-        <div className={initialError ? styles.unavailable : styles.srOnly}>
-          <p className={styles.note} role="status">
-            {initialError ?? (loading ? 'Loading transactions…' : null)}
-          </p>
-          {initialError ? (
-            <Button variant="secondary" size="sm" loading={fetching} onClick={onRetry}>
-              Try again
-            </Button>
-          ) : null}
-        </div>
       </div>
     </div>
   )

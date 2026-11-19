@@ -28,10 +28,12 @@ export function WalletTransactions({ account, network, display }: WalletTransact
       counterpartyHref: explorerAddressUrl(chainId, transfer.counterparty),
     })),
   );
-  const error = transfers.isError
-    ? isHistoryUnavailable(transfers.error)
-      ? "Transaction history is not available on this node."
-      : "We couldn't load your transactions. Please try again later."
+  const error = transfers.isError && !transfers.isFetchNextPageError
+    ? rows
+      ? "Couldn't refresh transactions. The history shown may be out of date."
+      : isHistoryUnavailable(transfers.error)
+        ? "Transaction history is not available on this node."
+        : "We couldn't load your transactions. Please try again later."
     : undefined;
 
   return (

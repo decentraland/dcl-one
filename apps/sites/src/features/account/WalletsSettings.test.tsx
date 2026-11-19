@@ -106,13 +106,13 @@ describe("WalletsSettings", () => {
     expect(await within(card("Polygon MANA")).findByText("5")).toBeTruthy();
 
     balances({ ethereum: "7000000000000000000", polygon: "5000000000000000000" });
-    await user.click(within(ethereum).getByRole("button", { name: "Try again" }));
+    await user.click(within(ethereum).getByRole("button", { name: "Try again, Ethereum MANA balance" }));
 
     expect(await within(ethereum).findByText("7")).toBeTruthy();
     expect(within(ethereum).getByRole("status").textContent).toBe("");
   });
 
-  it("keeps an amount already shown and says it is not available when a later read fails", async () => {
+  it("keeps an amount already shown and marks it stale after a failed refresh", async () => {
     balances({ ethereum: "7000000000000000000", polygon: "5000000000000000000" });
     show();
 
@@ -122,9 +122,9 @@ describe("WalletsSettings", () => {
     balances({ ethereum: new Error("rpc down"), polygon: "5000000000000000000" });
     await act(() => client.refetchQueries({ queryKey: accountKeys.manaBalance(SIGNER, "ethereum") }));
 
-    expect(await within(ethereum).findByText(/^Balance not available/)).toBeTruthy();
+    expect(await within(ethereum).findByText(/balance shown may be out of date/)).toBeTruthy();
     expect(within(ethereum).getByText("7")).toBeTruthy();
-    expect(within(ethereum).getByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(within(ethereum).getByRole("button", { name: "Try again, Ethereum MANA balance" })).toBeTruthy();
   });
 
   it("offers no control that moves MANA or asks for a signature", async () => {
@@ -233,7 +233,7 @@ describe("WalletsSettings", () => {
     expect(within(ethereum).queryByText("No transactions yet.")).toBeNull();
     expect(ethereum.textContent).not.toContain("synchronizing");
 
-    await user.click(within(ethereum).getByRole("button", { name: "Try again" }));
+    await user.click(within(ethereum).getByRole("button", { name: "Try again, Ethereum MANA transactions" }));
 
     expect(await screen.findByRole("list", { name: "Transactions, Ethereum MANA" })).toBeTruthy();
   });
@@ -252,11 +252,36 @@ describe("WalletsSettings", () => {
     it("should announce progress and then render the recovered history", async () => {
       show();
       await userEvent.click(screen.getByRole("button", { name: "Transactions, Ethereum MANA" }));
-      await userEvent.click(await within(card("Ethereum MANA")).findByRole("button", { name: "Try again" }));
+      await userEvent.click(await within(card("Ethereum MANA")).findByRole("button", { name: "Try again, Ethereum MANA transactions" }));
 
       expect(await screen.findByText("Loading transactions…")).toBeTruthy();
       finishHistory({ transfers: [transfer(1)], next: null });
       expect(await screen.findByRole("list", { name: "Transactions, Ethereum MANA" })).toBeTruthy();
+    });
+  });
+
+  describe("when balance and history refreshes both fail", () => {
+    beforeEach(() => {
+      balances({});
+      api.fetchManaTransfers.mockResolvedValueOnce({ transfers: [transfer(1)], next: null });
+    });
+
+    it("should keep both values visible and name each retry", async () => {
+      show();
+      const ethereum = card("Ethereum MANA");
+      await within(ethereum).findByText("0");
+      await userEvent.click(within(ethereum).getByRole("button", { name: "Transactions, Ethereum MANA" }));
+      const list = await within(ethereum).findByRole("list");
+
+      balances({ ethereum: new Error("offline") });
+      api.fetchManaTransfers.mockRejectedValueOnce(new Error("offline"));
+      await act(() => client.refetchQueries({ queryKey: accountKeys.all(SIGNER) }));
+
+      expect(within(ethereum).getByText("0")).toBeTruthy();
+      expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+      expect(await within(ethereum).findByText(/history shown may be out of date/)).toBeTruthy();
+      expect(within(ethereum).getByRole("button", { name: "Try again, Ethereum MANA balance" })).toBeTruthy();
+      expect(within(ethereum).getByRole("button", { name: "Try again, Ethereum MANA transactions" })).toBeTruthy();
     });
   });
 

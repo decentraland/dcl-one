@@ -67,13 +67,21 @@ export function WalletBalance({
         <div className={unavailable ? styles.unavailable : styles.srOnly}>
           <p className={styles.note} role="status">
             {unavailable
-              ? 'Balance not available. This node cannot read this network right now.'
+              ? amount === undefined
+                ? 'Balance not available. This node cannot read this network right now.'
+                : "Couldn't refresh the balance. The balance shown may be out of date."
               : pending
                 ? 'Loading balance…'
                 : null}
           </p>
           {unavailable ? (
-            <Button variant="secondary" size="sm" loading={fetching} onClick={onRetry}>
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={fetching}
+              aria-label={`Try again, ${label} balance`}
+              onClick={onRetry}
+            >
               Try again
             </Button>
           ) : null}

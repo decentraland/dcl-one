@@ -7,6 +7,7 @@ import { browserProvider, web3Usable } from "../auth/shop-wallet";
 import type { AuthIdentity } from "../auth/types";
 import type { Eip1193Provider } from "../auth/wallet";
 import { CatalystError, getJSON, postPublicJSON } from "../catalyst/client";
+import { ETH_ADDRESS_RE } from "../catalyst/format/address";
 
 /**
  * The account's MANA on the two networks the wallets section shows. Every read is one the node already
@@ -23,11 +24,10 @@ export const WALLET_NETWORKS = {
 type EthCall = { to: string; data: string };
 type OwnWallet = Pick<Eip1193Provider, "request">;
 
-const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const BALANCE_OF = "0x70a08231";
 
 function balanceOfCall(account: string, network: WalletNetwork): EthCall {
-  if (!ADDRESS.test(account)) throw new RangeError("Not a wallet address");
+  if (!ETH_ADDRESS_RE.test(account)) throw new RangeError("Not a wallet address");
   const owner = account.slice(2).toLowerCase().padStart(64, "0");
   return { to: manaToken(WALLET_NETWORKS[network].chainId).address, data: `${BALANCE_OF}${owner}` };
 }
@@ -124,8 +124,8 @@ const TransferSchema = z.object({
   blockNumber: index,
   logIndex: index,
   transactionHash: z.string().regex(HASH),
-  from: z.string().regex(ADDRESS),
-  to: z.string().regex(ADDRESS),
+  from: z.string().regex(ETH_ADDRESS_RE),
+  to: z.string().regex(ETH_ADDRESS_RE),
   amount: z.string().regex(/^\d+$/),
   timestamp: index,
 });
@@ -163,7 +163,7 @@ export async function fetchManaTransfers(
   network: WalletNetwork,
   opts: TransfersOptions = {},
 ): Promise<ManaTransfersPage> {
-  if (!ADDRESS.test(account)) throw new RangeError("Not a wallet address");
+  if (!ETH_ADDRESS_RE.test(account)) throw new RangeError("Not a wallet address");
   const self = account.toLowerCase();
   const raw = await getJSON<unknown>("/marketplace-api/v1/mana/transfers", {
     readErrorBody: true,
@@ -193,7 +193,7 @@ export async function fetchManaTransfers(
   };
 }
 
-/** The index answers 503 while the operator has it off or it has not reached the chain's head. */
+/** The current endpoint distinguishes an unavailable index from a transient 503 by its response body. */
 export function isHistoryUnavailable(error: unknown): boolean {
   return (
     error instanceof CatalystError &&
