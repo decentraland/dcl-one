@@ -1874,6 +1874,7 @@ mod tests {
             ("sdk", "7"),
             ("creator_address", "0xABC"),
             ("only_highlighted", "true"),
+            ("only_excluded_from_ranking", "true"),
             ("positions", "1,2"),
             ("categories", "art,poi"),
             ("limit", "500"),
@@ -1884,7 +1885,7 @@ mod tests {
         assert_eq!(f.categories, vec!["art", "poi"]);
         assert_eq!(f.sdk.as_deref(), Some("7"));
         assert_eq!(f.creator_address.as_deref(), Some("0xabc"));
-        assert!(f.only_highlighted);
+        assert!(f.only_highlighted && f.only_excluded_from_ranking);
         assert!(f.positions.is_empty(), "names turn positions off");
         assert_eq!((f.limit, f.offset), (100, 2));
         // `places-repository/component.ts:65-67`: names and only_highlighted lift `world IS false`.
@@ -1896,15 +1897,17 @@ mod tests {
             ("search", ""),
             ("sdk", ""),
             ("only_highlighted", "1"),
+            ("only_excluded_from_ranking", "1"),
             ("order", "ASC"),
         ]))
         .unwrap();
         assert_eq!((default.limit, default.offset), (100, 0));
         assert!(default.search.is_none() && default.sdk.is_none());
         assert!(!default.only_highlighted && default.only_places && default.order_desc);
-        assert!(!default.only_excluded_from_ranking);
+        // gatsby `bool()` for the places-only flag: `1` is true, `yes` is not.
+        assert!(default.only_excluded_from_ranking);
         assert!(
-            list_filters(&pairs(&[("only_excluded_from_ranking", "true")]))
+            !list_filters(&pairs(&[("only_excluded_from_ranking", "yes")]))
                 .unwrap()
                 .only_excluded_from_ranking
         );
