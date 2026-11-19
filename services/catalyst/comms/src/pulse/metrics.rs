@@ -53,6 +53,13 @@ pub fn handshake(protocol: &'static str, outcome: &'static str) {
     counter!(HANDSHAKES, "protocol" => protocol, "outcome" => outcome).increment(1);
 }
 
+/// A send or receive on the ENet UDP socket failed and cost one datagram; the server kept serving.
+/// `operation` is `send` or `receive`; `kind` is the error's `std::io::ErrorKind`, a closed set.
+pub fn enet_socket_error(operation: &'static str, kind: std::io::ErrorKind) {
+    counter!("pulse_enet_socket_errors_total", "operation" => operation, "kind" => format!("{kind:?}"))
+        .increment(1);
+}
+
 /// Admission refusals count wallet/pass attempts; safety state is never evicted
 /// to make this gauge fall. There are no wallet labels.
 pub fn recovery_capacity(retained: usize, refused: u64) {
