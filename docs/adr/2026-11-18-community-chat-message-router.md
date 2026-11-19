@@ -50,8 +50,15 @@ secret.
 
 ## Consequences
 
-- The catalyst `Cargo.lock` names a git source of this repository, as the Explorer's does.
-- A deployment runs the binary beside `serve`, with the same `MESSAGE_ROUTER_KEY` on both; no
-  image carries it yet.
+- The catalyst `Cargo.lock` names a git source of this repository, as the Explorer's does, and
+  gains the LiveKit SDK's dependency tree (about 64 packages). Cargo locks an optional
+  dependency too, so every fresh resolve and every Nix vendor of the workspace fetches that
+  commit even though `catalyst` never compiles it. The commit holds only the patched source's
+  published paths while its root manifest lists upstream's members, so
+  `infra/packages/catalyst.nix` vendors its crates without loading that workspace
+  (`infra/packages/git-crates.nix`, shared with `bevy-explorer.nix`).
+- A deployment runs the binary beside `serve`, with the same `MESSAGE_ROUTER_KEY` on both and
+  `MESSAGE_ROUTER_IDENTITY_PREFIX` on `serve`; no image carries it yet. The process exits
+  non-zero when it cannot stay in the room, so its supervisor must restart it on exit.
 - Behaviour, configuration and metrics are in
   [comms ownership](../../services/catalyst/docs/comms/comms-crate.md#message-router).

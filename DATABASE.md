@@ -1143,14 +1143,20 @@ history, with V2 and anonymous controls; no performance change was measured.
 The community chat message router (`catalyst-message-router`, its own process with its own
 pool, `MESSAGE_ROUTER_DB_MAX_CONNECTIONS`, default 4, 5 s statement timeout) reads social's
 community tables by shared SQL and writes nothing. Per routed packet (a community chat message
-or reaction, at most 10 per sender in a burst and 5 per second sustained) it runs two queries:
+or reaction, at most 10 per sender in a burst and 5 per second sustained) it runs one statement
+with two parts:
 
 - membership: `EXISTS` over `social.community_members` on `(community_id, member_address)`,
   one probe of `community_members_pkey`, whatever the community's state;
-- recipients: `social.communities` by `id` (its primary key), `active` and not `suspended`,
-  joined to the community's `social.community_members` rows through the
-  `community_members_pkey` prefix, every member but the sender, `lower(member_address)`. The result is the community's member
-  count, which the router publishes in batches of 100 identities.
+- recipients: `ARRAY(...)` of `social.communities` by `id` (its primary key), `active` and not
+  `suspended`, joined to the community's `social.community_members` rows through the
+  `community_members_pkey` prefix, every member but the sender, `lower(member_address)`. The
+  result is the community's member count, which the router publishes in batches of 100
+  identities.
+
+The router routes at most as many packets at once as the pool has connections, so a packet
+never waits for a connection; one that finds every routing slot taken is dropped and counted
+`overloaded` instead of timing out on the pool.
 
 Inputs are a community uuid from the packet topic and the sender's LiveKit identity, lowercased
 (member addresses are stored lowercase). No table, index or column is added. Changing a column

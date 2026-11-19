@@ -186,18 +186,23 @@ d38ccd0885ad23028604e9a9fcc788cdfcbb81fe). It joins the private messages room
 `<MESSAGE_ROUTER_IDENTITY_PREFIX>-<MESSAGE_ROUTER_REPLICA>`. The Explorer
 (`rendering/bevy-explorer/source/crates/comms/src/community_chat.rs`) sends community chat to
 `message-router-dev-0`, or `message-router-prd-0` when its base domain is decentraland.org,
-and trusts the stamped author only from that identity; the defaults (`message-router-dev`,
-replica 0) are what a dcl-one deployment's clients address.
+and trusts the stamped author only from that identity. `serve` refuses to start with
+`MESSAGE_ROUTER_KEY` and no `MESSAGE_ROUTER_IDENTITY_PREFIX`; the replica defaults to 0, the
+one the Explorer addresses.
 
 For each data packet: no sender, its own packets and no topic are dropped; more than
 `MESSAGE_ROUTER_MAX_PACKET_SIZE_BYTES` (8192) counts `rejected_oversized`; a sender past its
-token bucket (`MESSAGE_ROUTER_RATE_LIMIT_MAX_TOKENS` 10, `_REFILL_PER_SECOND` 5, idle buckets
-swept every `_CLEANUP_INTERVAL_MS` 60,000) counts `rate_limited`. The rfc4 `Packet` must be a
-`chat` or `chat_reaction` on topic `community:<uuid>`, the room connected and the sender a
-member; it goes, with `Chat.forwarded_from` (or `ChatReaction.address`) set to the sender, to
-the other members of the community, if active and not suspended, on `community:<id>`, reliable, 100 destination
-identities per publish; a failed publish is logged and the rest still go. Anything else counts
-`failed`.
+token bucket (`shared::limits::RateLimiter`, `MESSAGE_ROUTER_RATE_LIMIT_MAX_TOKENS` 10,
+`_REFILL_PER_SECOND` 5) counts `rate_limited`. At most `MESSAGE_ROUTER_DB_MAX_CONNECTIONS`
+packets are routed at once; the event loop never waits for a slot, and a packet that finds every
+slot taken counts `overloaded`. The rfc4 `Packet` must be a `chat` or `chat_reaction` on topic
+`community:<uuid>`, the room connected and the sender a member (one read answers membership
+and recipients); it goes, with `Chat.forwarded_from` (or `ChatReaction.address`) set to the
+sender, to the other members of the community, if active and not suspended, on
+`community:<id>`, reliable, 100 destination identities per publish. A publish that fails or
+does not answer within 5 s is logged and counted in `message_batch_failures_total{reason}`
+(`error`, `timeout`), and the rest still go; the packet counts `delivered` only when at least
+one batch was published. Anything else counts `failed`.
 
 Its token comes from the gatekeeper: `POST /internal/message-router/token/v1`
 (`shared::message_router`), an HMAC-SHA256 over method, path, timestamp (±30 s), nonce
@@ -210,8 +215,10 @@ metadata update. The gateway keeps `/internal/message-router` private.
 Connections take a fresh token, `MESSAGE_ROUTER_CONNECT_ATTEMPTS` (5) tries
 `MESSAGE_ROUTER_CONNECT_DELAY_MS` (1,000) apart; exhausting them exits the process for its
 supervisor to restart. After a final disconnect it connects again, except for a client-initiated
-disconnect, a duplicate identity, a deleted room and the SIP reasons, after which it stays out
-of the room (not ready) until restarted.
+disconnect, a duplicate identity, a deleted room and the SIP reasons, after which the process
+exits non-zero for its supervisor to restart. A reconnect aborts the packets still routing for
+the old connection; SIGINT or SIGTERM lets them finish for up to 5 s, then aborts the rest and
+leaves the room.
 
 The router reads `DATABASE_URL`, `MESSAGE_ROUTER_TOKEN_URL` (https, or http to a loopback or
 private address), `MESSAGE_ROUTER_KEY` or `MESSAGE_ROUTER_KEY_FILE`, and optionally
@@ -220,7 +227,8 @@ private address), `MESSAGE_ROUTER_KEY` or `MESSAGE_ROUTER_KEY_FILE`, and optiona
 (`127.0.0.1:5007`: `/metrics`, `/health/live`, `/health/ready` while in the room). Under
 `NODE_POSTURE` island or journey its URLs must name loopback or `PUBLIC_URL`'s host. Series:
 `message_delivery_total{outcome}` (`delivered`, `failed`, `rejected_oversized`,
-`rate_limited`), `message_delivery_latency` (milliseconds) and `livekit_connection_status`.
+`rate_limited`, `overloaded`), `message_batch_failures_total{reason}`,
+`message_delivery_latency` (milliseconds) and `livekit_connection_status`.
 Build it with `cargo build -p catalyst-message-router --features livekit`; without the
 feature the crate's library and tests build without libwebrtc.
 
