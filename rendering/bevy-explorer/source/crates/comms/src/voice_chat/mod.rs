@@ -577,7 +577,6 @@ fn user_refusal(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn drive_voice_chat(
     mut commands: Commands,
     mut voice: ResMut<VoiceChat>,
@@ -893,7 +892,6 @@ fn drive_voice_chat(
 
 /// Every microphone track published in the voice room is subscribed (the room is no transport,
 /// so nothing else would) and played flat.
-#[expect(clippy::type_complexity, reason = "Queries are complex")]
 fn subscribe_voice_room_tracks(
     mut commands: Commands,
     tracks: Query<(Entity, &PublishedBy), (With<Microphone>, With<Audio>, Without<VoiceRoomTrack>)>,

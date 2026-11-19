@@ -480,7 +480,6 @@ fn unsubscribe_to_track(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[expect(clippy::type_complexity, reason = "Queries are complex")]
 fn subscribed_audio_track_with_open_sender(
     mut commands: Commands,
     mut tracks: Populated<
@@ -509,7 +508,6 @@ fn subscribed_audio_track_with_open_sender(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[expect(clippy::type_complexity, reason = "Queries are complex")]
 fn audio_track_is_now_subscribed(
     trigger: Trigger<OnAdd, Subscribed>,
     mut commands: Commands,
@@ -649,7 +647,6 @@ fn video_track_is_now_subscribed(
 }
 
 #[cfg(target_arch = "wasm32")]
-#[expect(clippy::type_complexity)]
 fn video_track_is_now_subscribed(
     trigger: Trigger<OnAdd, Subscribed>,
     mut commands: Commands,
@@ -876,7 +873,6 @@ fn update_track_volume(
 pub(in crate::livekit) struct ProximityMicrophone;
 
 #[cfg(target_arch = "wasm32")]
-#[expect(clippy::type_complexity)]
 fn update_track_volume(
     tracks: Populated<
         (

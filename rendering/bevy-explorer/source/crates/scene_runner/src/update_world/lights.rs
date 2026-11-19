@@ -595,7 +595,6 @@ pub fn update_directional_light(
     }
 
     // if the primary parcel doesn't specify anything, check any portables
-    #[allow(clippy::type_complexity)]
     let mut portable_settings: Option<(
         &str,
         Entity,

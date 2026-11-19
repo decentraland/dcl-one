@@ -358,7 +358,6 @@ pub fn extract_highlight_phases(
     phases.retain(|view, _| live.contains(view));
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn queue_highlight_meshes(
     draw_functions: Res<DrawFunctions<HighlightMaskItem>>,
     mask_pipeline: Res<HighlightMaskPipeline>,

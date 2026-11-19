@@ -19,7 +19,7 @@ use system_bridge::{
     CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
     FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
     FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest, ItemPurchaseState,
-    ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, PermanentPermissionItem,
+    ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData, PermanentPermissionItem,
     PermissionRequestEvent, PhotoModeState, PlatformBanNotice, PortableInfo, ProfileChangedEvent,
     ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetItemPurchaseState,
     SetPermanentPermission, SetSinglePermission, SystemApi, TextureOptimizationStatus,
@@ -243,6 +243,19 @@ pub async fn op_set_avatar(
         .borrow_mut::<SuperUserScene>()
         .send(SystemApi::SetAvatar(avatar, sx))?;
 
+    rx.await?.map_err(|e| anyhow::anyhow!(e))
+}
+
+pub async fn op_deploy_outfits(
+    state: Rc<RefCell<impl State>>,
+    address: String,
+    outfits: OutfitsData,
+) -> Result<(), anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::DeployOutfits(address, outfits, sx))?;
     rx.await?.map_err(|e| anyhow::anyhow!(e))
 }
 

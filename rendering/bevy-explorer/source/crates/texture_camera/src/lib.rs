@@ -141,7 +141,6 @@ fn update_layer_properties(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn update_avatar_layers(
     mut qs: ParamSet<(
         Query<&mut Propagate<RenderLayers>, Or<(Added<ForeignPlayer>, Added<PrimaryUser>)>>,
@@ -201,7 +200,6 @@ fn update_directional_light_layers(
 #[derive(Component)]
 pub struct TextureCamEntity(Entity);
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_texture_cameras(
     mut commands: Commands,
     q: Query<(
@@ -423,7 +421,6 @@ impl From<PbCameraLayers> for CameraLayers {
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn update_camera_layers(
     mut commands: Commands,
     changed: Query<(Entity, &CameraLayers, &ContainerEntity), Changed<CameraLayers>>,

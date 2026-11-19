@@ -14,7 +14,6 @@ use super::friends::PrivateChat;
 #[derive(Component)]
 pub struct ChatBubble(pub Option<Address>, pub Color);
 
-#[allow(clippy::type_complexity)]
 #[derive(SystemParam)]
 pub struct ConversationManager<'w, 's> {
     children: Query<'w, 's, &'static Children>,

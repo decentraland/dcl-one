@@ -13,7 +13,7 @@ use system_bridge::{
     CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
     FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
     FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest, ItemPurchaseState,
-    ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, PermanentPermissionItem,
+    ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData, PermanentPermissionItem,
     PermissionRequestEvent, PhotoModeState, PlatformBanNotice, PortableInfo, ProfileChangedEvent,
     ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, TextureOptimizationStatus,
     VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
@@ -38,6 +38,7 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_set_setting(),
             op_kernel_fetch_headers(),
             op_set_avatar(),
+            op_deploy_outfits(),
             op_native_input(),
             op_get_bindings(),
             op_set_bindings(),
@@ -1048,6 +1049,15 @@ pub async fn op_read_block_update_stream(
     #[smi] rid: u32,
 ) -> Result<Option<BlockUpdateData>, anyhow::Error> {
     dcl_js::system_api::op_read_block_update_stream(state, rid).await
+}
+
+#[op2(async)]
+pub async fn op_deploy_outfits(
+    state: Rc<RefCell<OpState>>,
+    #[string] address: String,
+    #[serde] outfits: OutfitsData,
+) -> Result<(), anyhow::Error> {
+    dcl_js::system_api::op_deploy_outfits(state, address, outfits).await
 }
 
 #[op2(async)]

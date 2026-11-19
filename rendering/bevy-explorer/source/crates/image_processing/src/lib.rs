@@ -36,7 +36,6 @@ pub struct AssetForProcessing {
 }
 
 #[cfg(target_arch = "wasm32")]
-#[allow(clippy::type_complexity)]
 static CHANNELS: OnceLock<
     Arc<
         Mutex<(

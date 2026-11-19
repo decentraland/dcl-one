@@ -67,7 +67,6 @@ static HUD_MAIN_THREAD_COST_WINDOW: Mutex<Option<HudMainThreadCostDataPoint>> = 
 /// nothing, while the engine holds the lock (the page thread must not block). With
 /// `react_commits_reported` false, the window holds no React commits.
 #[wasm_bindgen]
-#[allow(clippy::too_many_arguments)]
 pub fn engine_set_hud_main_thread_cost(
     covered_seconds: f32,
     react_commits_reported: bool,
