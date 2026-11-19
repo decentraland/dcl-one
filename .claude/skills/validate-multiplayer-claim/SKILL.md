@@ -13,6 +13,8 @@ The instrument is `comms-e2e`: scripted actors, a fault link, the real headless 
 
 Write every sentence of the claim as statements with one observable each: a console state, a disconnect code, a metric, what another actor sees. Name each statement's **owner**: the process that decides the fact (the explorer, Pulse, the archipelago, the gatekeeper, LiveKit).
 
+A statement that one actor sees another is observed **on the client that sees**: the event that client itself received when the other arrived (Pulse `PlayerJoined` for a peer entering its area of interest, a room's participant-joined event), then the state it holds for that peer. A count read from a server is the server's statement, not the client's.
+
 Done when every statement has one owner and one observable.
 
 ## 2. Read the owner
@@ -38,6 +40,7 @@ One sheet per statement. Every field is required; an empty field is an open conf
 
 ## 4. Run the experiment
 
+- The target is a stack on loopback. A shared deployment is a target only when whoever asked for the proof names it: pass it with `--allow-host`, run each case once or twice, and keep hostile scenarios (floods, malformed frames, bans, restarts) to a stack you started yourself. A statement that needs a hostile scenario on a build no loopback stack runs is `Not reproduced` until one does.
 - `comms-e2e doctor` first, then the scenario with `--strict` on the control and the treatment. Races repeat with seeds.
 - One failure mode per scenario. Move the fault's length until the mode changes and state the range the scenario covers: a stall that outlasts the transport timeout tests the timeout, not the burst.
 - On a failure read the first failing expectation and the actor's log. On a pass find the attribution signal and the proof of effect in the timeline.
@@ -57,7 +60,9 @@ Done when both builds ran and every sheet's attribution and proof of effect were
 
 ## Report
 
-Per statement: the verdict, both builds by commit, repeats, the scenario's result line, the control's first failing expectation verbatim, the attribution line, and what was not covered. Redact tokens and connection strings.
+Per statement: the verdict, both builds by commit, repeats, the scenario's result line, the control's first failing expectation verbatim, the attribution line, and what was not covered.
+
+What goes into a public pull request or comment: the verdicts, the result lines, counts and times. From a run against a host that is not loopback, nothing that names the host and no timeline. Never a stack file, an explorer log or console output. Tokens and connection strings are redacted wherever they appear.
 
 ## Example
 
