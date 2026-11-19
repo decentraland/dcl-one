@@ -16,6 +16,7 @@ use crate::engine::{
 use crate::fault::FaultLink;
 use crate::gatekeeper::Gatekeeper;
 use crate::pulse::{ConnectOptions, HandshakeOptions, HandshakeOutcome, PulseBot};
+use crate::stack::Stack;
 
 /// The scenarios of this group, in the order a run takes them.
 pub fn all() -> Vec<&'static Scenario> {
@@ -704,15 +705,32 @@ pub static STATIONARY_CREDENTIALS: Scenario = Scenario {
     run: |ctx| -> ScenarioFuture { Box::pin(stationary_credentials(ctx)) },
 };
 
-async fn stationary_credentials(ctx: Ctx) -> Result<()> {
-    let command = ctx
-        .stack()
+/// The stack file's `restart_command`, ready to start: killed if it is dropped, and started
+/// without the environment variables the stack file says hold secrets, as the explorer and the
+/// LiveKit client are.
+pub fn restart_command(stack: &Stack) -> Result<tokio::process::Command> {
+    let words = stack
         .restart_command
-        .clone()
+        .as_ref()
         .ok_or_else(|| anyhow!("the stack file has no restart command"))?;
-    let (program, arguments) = command
+    let (program, arguments) = words
         .split_first()
         .ok_or_else(|| anyhow!("the restart command is empty"))?;
+    let mut command = tokio::process::Command::new(program);
+    command.args(arguments).kill_on_drop(true);
+    for variable in stack.secret_variables() {
+        command.env_remove(variable);
+    }
+    Ok(command)
+}
+
+async fn stationary_credentials(ctx: Ctx) -> Result<()> {
+    let mut restart = restart_command(ctx.stack())?;
+    let program = restart
+        .as_std()
+        .get_program()
+        .to_string_lossy()
+        .into_owned();
     let realm = ctx.realm("main");
     let here = spot(&ctx, 0);
     let identity = ctx.identity(0);
@@ -731,15 +749,9 @@ async fn stationary_credentials(ctx: Ctx) -> Result<()> {
 
     ctx.record("runner", "restart", program);
     // The child is killed if this future is dropped (the scenario deadline).
-    let status = tokio::time::timeout(
-        Duration::from_secs(180),
-        tokio::process::Command::new(program)
-            .args(arguments)
-            .kill_on_drop(true)
-            .status(),
-    )
-    .await
-    .map_err(|_| anyhow!("the restart command did not return within 180 s"))??;
+    let status = tokio::time::timeout(Duration::from_secs(180), restart.status())
+        .await
+        .map_err(|_| anyhow!("the restart command did not return within 180 s"))??;
     if !status.success() {
         bail!("the restart command failed: {status}");
     }
