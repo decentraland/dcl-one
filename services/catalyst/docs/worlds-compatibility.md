@@ -221,6 +221,17 @@ difference not listed here is a gap, not a decision.
   and resolves other Unicode names; here those have no owner. A wrapped
   name has an owner only while the ENS Registry still gives its node to
   the NameWrapper (upstream trusts the NameWrapper alone).
+- **DCL NAME holder reader.** A DCL NAME world's owner is the NAME's
+  current holder, read from `MARKETPLACE_SUBGRAPH_URL` (upstream's
+  marketplace subgraph); it has no default and only the `mirror` posture
+  sets it. Without it a DCL NAME world cannot be published, and the
+  permission, settings and undeploy routes, owner admission, the limits
+  route and the quota pass fall back to the stored `worlds.owner`, which
+  keeps naming a former holder until a publish replaces it. So a node
+  with `WORLDS_WRITES_ENABLED=true` refuses to start without
+  `MARKETPLACE_SUBGRAPH_URL`, unless `IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true`
+  (a node without chain access, such as the `journey` posture), where it
+  logs a warning and serves personal worlds as before.
 - **Owner reconcile.** `worlds.owner` is rewritten from the name authority
   every `WORLDS_OWNER_RECONCILE_INTERVAL_SECS` (default 12 hours, as
   upstream) for worlds with a locally published scene, ENS worlds

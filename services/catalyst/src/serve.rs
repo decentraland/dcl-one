@@ -891,6 +891,17 @@ pub async fn serve(
             .with_ens(ens, i64::from(config.worlds.ens_max_size) * 1024 * 1024)
             .with_name_deny_list(worlds.names.clone()),
     );
+    policy
+        .check_writes_authority(
+            config.worlds.worlds_writes_enabled,
+            config.validator.ignore_blockchain_access_checks,
+        )
+        .map_err(anyhow::Error::msg)?;
+    if config.worlds.worlds_writes_enabled && !policy.has_names_reader() {
+        tracing::warn!(
+            "MARKETPLACE_SUBGRAPH_URL is unset: a DCL NAME world's owner is its stored worlds.owner"
+        );
+    }
     worlds.attach_policy(policy.clone());
     // A world read-through holds each mirrored scene's signer to this policy and shares the
     // content read-through's download bound.

@@ -390,6 +390,30 @@ impl Policy {
         world.is_ens_world() || self.names_reader().is_some()
     }
 
+    /// The boot rule of a node taking world writes: a DCL NAME world's owner
+    /// is read live from the names reader (`MARKETPLACE_SUBGRAPH_URL`), since
+    /// without one it is the stored `worlds.owner`. Only a node that skips
+    /// the chain checks (`IGNORE_BLOCKCHAIN_ACCESS_CHECKS`) runs without it.
+    pub fn check_writes_authority(
+        &self,
+        writes_enabled: bool,
+        chain_checks_ignored: bool,
+    ) -> Result<(), String> {
+        if writes_enabled && !chain_checks_ignored && self.names_reader().is_none() {
+            return Err(
+                "WORLDS_WRITES_ENABLED=true needs MARKETPLACE_SUBGRAPH_URL, the DCL NAME holder \
+                 reader; set it, or IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true on a node without chain access"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    /// Whether DCL NAME holders are read live (`MARKETPLACE_SUBGRAPH_URL`).
+    pub fn has_names_reader(&self) -> bool {
+        self.names_reader().is_some()
+    }
+
     pub fn with_max_parcels(mut self, max_parcels: u32) -> Self {
         self.max_parcels = max_parcels;
         self
@@ -1736,6 +1760,44 @@ mod tests {
     async fn scratch() -> Option<Policy> {
         let pool = crate::db::scratch::pool(4).await?;
         Some(Policy::new(pool, PersonalWorldsPolicy::disabled(), None))
+    }
+
+    #[tokio::test]
+    async fn world_writes_need_the_names_reader_unless_chain_checks_are_skipped() {
+        let pool = PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap();
+        let reader = |url: Option<&str>| {
+            Some(Arc::new(ChainIndex::new(
+                crate::http::Outbound::for_tests(),
+                crate::chain_index::IndexSettings {
+                    marketplace_subgraph_url: url.map(str::to_string),
+                    eth_network: "mainnet".to_string(),
+                    ..Default::default()
+                },
+            )))
+        };
+        let without = Policy::new(pool.clone(), policy(1), reader(None));
+        let err = without.check_writes_authority(true, false).unwrap_err();
+        assert!(err.contains("MARKETPLACE_SUBGRAPH_URL"), "{err}");
+        assert!(
+            Policy::new(pool.clone(), policy(1), None)
+                .check_writes_authority(true, false)
+                .is_err()
+        );
+        assert!(
+            without.check_writes_authority(false, false).is_ok(),
+            "reads only"
+        );
+        assert!(
+            without.check_writes_authority(true, true).is_ok(),
+            "no chain access"
+        );
+        let with = Policy::new(
+            pool,
+            policy(1),
+            reader(Some("https://reader.example/subgraph")),
+        );
+        assert!(with.has_names_reader());
+        assert!(with.check_writes_authority(true, false).is_ok());
     }
 
     #[tokio::test]
