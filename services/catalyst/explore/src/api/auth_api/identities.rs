@@ -14,8 +14,8 @@ use crate::shared::signed_fetch::{self, PayloadPolicy, Signer};
 
 use super::validation::validate_identity_chain;
 use super::{
-    ErrorBody, EvictedBody, admission_lock, bad_request, client_ip, ips_match, is_valid_uuid,
-    naive, normalize_ip, now_micros,
+    ErrorBody, EvictedBody, admission_lock, bad_request, chain_refused, client_ip, ips_match,
+    is_valid_uuid, naive, normalize_ip, now_micros,
 };
 use crate::api::Shared as AppState;
 
@@ -130,9 +130,14 @@ pub(super) async fn create_identity(
     if let Some(err) = identity_shape_error(&body.identity) {
         return bad_request(&format!("Invalid AuthIdentity: {err}"));
     }
-    let (owner, final_authority) = match validate_identity_chain(&parsed.auth_chain) {
+    let (owner, final_authority) = match validate_identity_chain(
+        &parsed.auth_chain,
+        state.eip1654.get().map(|v| &**v),
+    )
+    .await
+    {
         Ok(authorities) => authorities,
-        Err(msg) => return bad_request(&msg),
+        Err(refusal) => return chain_refused(refusal),
     };
     if !parsed
         .ephemeral_identity

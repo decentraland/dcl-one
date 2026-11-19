@@ -1953,6 +1953,7 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "anyhow",
+ "async-trait",
  "axum",
  "base64 0.23.1",
  "bytes",

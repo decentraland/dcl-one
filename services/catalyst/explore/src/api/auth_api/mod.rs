@@ -32,7 +32,7 @@ mod validation;
 
 use identities::{create_identity, get_identity};
 pub use identities::{sweep_expired_identities, sweep_identity_tombstones};
-use validation::{validate_auth_chain, validate_request_message};
+use validation::{ChainRefusal, validate_auth_chain, validate_request_message};
 
 const REQUEST_TTL_SECONDS: i64 = 300;
 /// An expired request still answers 410 for this long before the sweep drops it.
@@ -734,10 +734,11 @@ async fn create_request(
         Ok(validated) => validated,
         Err(msg) => return bad_request(&msg),
     };
-    let sender = match validate_auth_chain(validated.auth_chain) {
-        Ok(verified) => verified.sender.to_lowercase(),
-        Err(msg) => return bad_request(&msg),
-    };
+    let sender =
+        match validate_auth_chain(validated.auth_chain, state.eip1654.get().map(|v| &**v)).await {
+            Ok(verified) => verified.sender.to_lowercase(),
+            Err(refusal) => return chain_refused(refusal),
+        };
     let now = now_micros();
     let source = request_source(
         &headers,
@@ -940,9 +941,9 @@ async fn submit_outcome(
     }
 
     if let Some(chain) = body.auth_chain.as_ref()
-        && let Err(msg) = validate_auth_chain(chain)
+        && let Err(refusal) = validate_auth_chain(chain, state.eip1654.get().map(|v| &**v)).await
     {
-        return bad_request(&msg);
+        return chain_refused(refusal);
     }
 
     let now = now_micros();
@@ -1080,6 +1081,19 @@ fn gone_already_fulfilled(id: &str) -> Response {
         }),
     )
         .into_response()
+}
+
+fn chain_refused(refusal: ChainRefusal) -> Response {
+    match refusal {
+        ChainRefusal::Invalid(msg) => bad_request(&msg),
+        ChainRefusal::Unavailable => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorBody {
+                error: "Contract wallet signature verification unavailable".into(),
+            }),
+        )
+            .into_response(),
+    }
 }
 
 fn bad_request(msg: &str) -> Response {
@@ -1426,6 +1440,76 @@ mod tests {
             .header("x-real-ip", "203.0.113.9")
             .body(Body::empty())
             .unwrap()
+    }
+
+    fn contract_request(signature: &str) -> Vec<u8> {
+        let ephemeral = alloy_signer_local::PrivateKeySigner::random();
+        let chain =
+            validation::contract_wallet::chain(&format!("{:#x}", ephemeral.address()), signature);
+        serde_json::to_vec(
+            &json!({ "method": "personal_sign", "params": ["hi"], "authChain": chain }),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn contract_wallet_chains_need_the_validator() {
+        use validation::contract_wallet::{SIGNATURE, Wallet};
+        let state = crate::api::tests_support::state_without_db().await;
+        let app = Router::new().nest("/auth-api", routes().with_state(state.clone()));
+        let (status, body) = call(
+            &app,
+            json_post("/auth-api/requests", contract_request(SIGNATURE)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        let ephemeral = alloy_signer_local::PrivateKeySigner::random();
+        let outcome = serde_json::to_vec(&json!({
+            "sender": validation::contract_wallet::CONTRACT,
+            "result": "0xsig",
+            "authChain": validation::contract_wallet::chain(
+                &format!("{:#x}", ephemeral.address()),
+                SIGNATURE,
+            ),
+        }))
+        .unwrap();
+        let (status, body) = call(
+            &app,
+            json_post(
+                "/auth-api/v2/requests/8c545b52-c08e-4c39-a854-46e2b5b03c48/outcome",
+                outcome,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+
+        assert!(state.attach_eip1654(Some(std::sync::Arc::new(Wallet))));
+        let (status, body) = call(
+            &app,
+            json_post("/auth-api/requests", contract_request("0xbad0")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_contract_wallet_request_is_created_with_the_contract_as_sender() {
+        use validation::contract_wallet::{CONTRACT, SIGNATURE, Wallet};
+        let Some((_db, state)) = replica().await else {
+            return;
+        };
+        assert!(state.attach_eip1654(Some(std::sync::Arc::new(Wallet))));
+        let app = app(&state);
+        let (status, created) = call(
+            &app,
+            json_post("/auth-api/requests", contract_request(SIGNATURE)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        let id = created["requestId"].as_str().unwrap();
+        let (status, recovered) = call(&app, get_req(&format!("/auth-api/v2/requests/{id}"))).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(recovered["sender"], CONTRACT);
     }
 
     #[tokio::test]

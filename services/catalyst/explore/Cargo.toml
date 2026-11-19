@@ -54,6 +54,7 @@ ts = ["dep:ts-rs", "catalyst-shared/ts", "catalyst-config/ts", "catalyst-storage
 test-support = ["catalyst-fed/test-support", "catalyst-shared/test-support", "catalyst-config/test-support", "catalyst-storage/test-support", "catalyst-content/test-support", "catalyst-land-authz/test-support"]
 
 [dev-dependencies]
+async-trait.workspace = true
 catalyst-shared = { path = "../shared", features = ["test-support"] }
 catalyst-config = { path = "../config", features = ["test-support"] }
 catalyst-storage = { path = "../storage", features = ["test-support"] }
