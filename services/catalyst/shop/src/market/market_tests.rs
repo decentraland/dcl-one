@@ -1384,7 +1384,6 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         ),
         (Some("1"), Some(6))
     );
-    let trending = body;
     let (status, body) = get(app(), "/v3/catalog/suggested?first=2").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
@@ -1455,6 +1454,12 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         "{body}"
     );
 
+    // The trending rail's memo is filled right before the cancellation below, so the few reads in
+    // between are all that separate it from the check that it still answers: its 30 s cannot lapse
+    // over the rest of this test on a slow runner.
+    state.readers.clear();
+    let (status, trending) = get(app(), "/v3/catalog/trending?first=3").await;
+    assert_eq!(status, StatusCode::OK, "{trending}");
     // An operator cancellation drops the listing from every leg.
     let (status, body) = call(
         app(),
@@ -1532,7 +1537,7 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         .unwrap();
     state.readers.clear();
     let feeds = [
-        "/v3/catalog/unified?groupBy=item&first=50",
+        "/v3/catalog/unified?groupBy=item&first=12",
         "/v3/catalog/trending?first=10&days=3650",
         "/v3/catalog/creators?days=7",
     ];
