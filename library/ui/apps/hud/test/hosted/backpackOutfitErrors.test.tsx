@@ -60,12 +60,15 @@ describe('a refused outfit save or delete', () => {
       act(() => h.driver.emit({ kind: 'ownedNames', names: [] }))
     })
 
-    it('should warn the player before deleting second-row outfits', async () => {
+    it.each([false, true])('should warn about clearing the second row only without a NAME (owns NAME: %s)', async (ownsName) => {
+      act(() => h.driver.emit({ kind: 'ownedNames', names: ownsName ? ['mine'] : [] }))
       const s = h.session()
       render(<BackpackPage backpack={{ ...s.backpack, open: true }} emotes={s.emotes} profile={fakeProfileState()} onNavigate={vi.fn()} setEngineViewport={vi.fn()} />)
       await userEvent.click(screen.getByRole('tab', { name: /saved outfits/i }))
 
-      expect(screen.getByText('Without a NAME, deleting any outfit in the second row clears the entire row.')).toBeVisible()
+      const warning = screen.queryByText('Without a NAME, deleting any outfit in the second row clears the entire row.')
+      if (ownsName) expect(warning).toBeNull()
+      else expect(warning).toBeVisible()
     })
 
     describe('and a save to a free slot is refused', () => {

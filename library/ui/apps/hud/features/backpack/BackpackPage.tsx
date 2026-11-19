@@ -667,7 +667,7 @@ export function BackpackPage({
                   aria-label="Saved outfits"
                   aria-busy={!backpack.outfitsLoaded}
                 >
-                  {backpack.outfits.filter((o) => o.slot >= 5).length > 1 && (
+                  {backpack.warnAboutClearingExtraOutfits && (
                     <p className={styles.outfitNotice}>
                       Without a NAME, deleting any outfit in the second row clears the entire row.
                     </p>

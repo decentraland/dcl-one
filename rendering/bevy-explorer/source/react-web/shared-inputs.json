@@ -9115,7 +9115,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
-      "sha256": "70c2e1b3587cc8b009b211ba92a12e60110759b6135dcab2166a44af5df51af8"
+      "sha256": "cab753b6f77e10fda9e298a81471209ecccda06f13533510baa754cc0727cbbc"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
@@ -10059,7 +10059,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "866a72405de8f0d3d3552b3247b06c3ec48a96899209c1594c5f592240ffc37c"
+      "sha256": "fee3629c6ee5cb404da6c1bcb68fad20534e215a6fc14e716520cfe1fc08fba2"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10395,7 +10395,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "3f0875575f3b897192eaa34d575692fe7648924b2e74b020fb84616ef9942d7d"
+      "sha256": "6c9de22db64bdd036494d411f8afdcf1dfaae30224151ff5d99e6de8247b55d2"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -10435,7 +10435,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackOutfitErrors.test.tsx",
-      "sha256": "d8faee89649063c0f36855388e7adcccc25ec15a05987872cc127e2555a94d63"
+      "sha256": "f716f87cfc2be768eb91b8e091ae975c75412a1cf9e77800c649e9408caddd12"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackOutfitPicture.test.tsx",

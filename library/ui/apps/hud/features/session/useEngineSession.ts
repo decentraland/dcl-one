@@ -272,6 +272,7 @@ export interface BackpackState {
   outfits: OutfitSlot[]
   /** Number of outfit slots available (5 free + 1 per owned DCL name, capped at 10). */
   outfitSlots: number
+  warnAboutClearingExtraOutfits: boolean
   /** The saved outfits have arrived: until then every slot reads empty, saved or not. */
   outfitsLoaded: boolean
   /** Save the current look into a slot. */
@@ -3937,13 +3938,14 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const extraOutfitSlots =
     extraSlotCount > 0 || (ownedNamesKnown ? ownedNames.length > 0 : outfits.namesForExtraSlots.length > 0)
   const extraSlotsWithoutName = ownedNamesKnown && ownedNames.length === 0 && extraSlotCount > 0
+  const warnAboutClearingExtraOutfits = extraSlotsWithoutName && extraSlotCount > 1
   let outfitError: string | null = null
   if (outfitFailure != null) {
     outfitError = OUTFIT_FAILED_MESSAGE[outfitFailure.action]
     if (extraSlotsWithoutName) {
       if (outfitFailure.action !== 'delete' || outfitFailure.slot < 5) {
         outfitError = OUTFIT_FAILED_MESSAGE.extraSlotWithoutName
-      } else if (extraSlotCount > 1) {
+      } else if (warnAboutClearingExtraOutfits) {
         outfitError = OUTFIT_FAILED_MESSAGE.deleteExtraWithoutName
       }
     }
@@ -5209,7 +5211,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     backpack: {
       list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
       equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, stage: stagePreview, emote: emotePreview, rotate: rotatePreview, zoom: zoomPreview, forceRender, setForceRender,
-      outfits: outfits.outfits, outfitSlots: extraOutfitSlots ? 10 : 5, outfitsLoaded,
+      outfits: outfits.outfits, outfitSlots: extraOutfitSlots ? 10 : 5, outfitsLoaded, warnAboutClearingExtraOutfits,
       saveOutfit, deleteOutfit, outfitError, dismissOutfitError, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
