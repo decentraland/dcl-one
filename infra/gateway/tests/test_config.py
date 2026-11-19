@@ -375,8 +375,10 @@ class ConfigurationTest(unittest.TestCase):
     def test_camera_reel_upload_cap_admits_the_multipart_limit(self):
         root = Path(__file__).parents[3] / "services/catalyst"
         source = (root / "camera-reel/src/handlers/images.rs").read_text()
-        expr = re.search(r"pub const MAX_MULTIPART_IMAGE_BYTES: usize = ([^;]+);", source)[1]
-        self.assertRegex(expr, r"^[\d\s*]+$")
+        image = re.search(r"pub const MAX_MULTIPART_IMAGE_BYTES: usize = ([^;]+);", source)[1]
+        memory = re.search(r"const MAX_MULTIPART_MEMORY_BYTES: usize = ([^;]+);", source)[1]
+        expr = memory.replace("MAX_MULTIPART_IMAGE_BYTES", f"({image})")
+        self.assertRegex(expr, r"^[\d\s*+()]+$")
         self.assertEqual(gateway.CAMERA_REEL_UPLOAD_CAP, f"{eval(expr) // (1024 * 1024) + 1}m")
         cap = f"client_max_body_size {gateway.CAMERA_REEL_UPLOAD_CAP};"
         _, regexes = self.worlds_locations()
@@ -392,13 +394,18 @@ class ConfigurationTest(unittest.TestCase):
                 self.assertFalse(any(cap in body for regex, body in regexes if regex.search(path)))
         # The root alias keeps its prefix location; only the upload path is exact.
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
-        config = gateway.render(self.production_table(), cfg, "/mime.types")
-        alias = re.search(r"location = /camera-reel/api/images \{\n(.*?)\n\}", config, re.S)[1]
-        self.assertIn("rewrite ^/camera-reel/(.*)$ /camera-reel-service/$1 break;", alias)
-        self.assertIn("proxy_pass http://apis;", alias)
-        self.assertIn(cap, alias)
-        self.assertIn("location ^~ /camera-reel/ {", config)
-        self.assertNotIn("location = /camera-reel/api/images-json", config)
+        table = self.production_table()
+        row = next(row for row in table["aliases"] if row["key"] == gateway.CAMERA_REEL_ALIAS)
+        config = gateway.render(table, cfg, "/mime.types")
+        prefix = re.search(r"location \^~ /camera-reel/ \{\n(.*?)\n\}", config, re.S)[1]
+        self.assertIn(f"rewrite {row['rewrite']} break;", prefix)
+        self.assertNotIn(cap, prefix)
+        for path in ["/camera-reel/api/images", "/camera-reel/api/images/"]:
+            with self.subTest(path=path):
+                alias = re.search(rf"location = {re.escape(path)} \{{\n(.*?)\n\}}", config, re.S)[1]
+                self.assertIn(f"rewrite {row['rewrite']} break;", alias)
+                self.assertIn("proxy_pass http://apis;", alias)
+                self.assertIn(cap, alias)
 
     def worlds_locations(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test"})

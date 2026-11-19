@@ -25,10 +25,12 @@ REPORT_EVIDENCE_CAP = "5m"
 # multipart body) plus 1 MiB, so its own JSON 413 is the one a client meets; a
 # gateway test pins it.
 CAST_PRESENTATION_CAP = "101m"
-# A camera reel multipart upload: the app's `MAX_MULTIPART_IMAGE_BYTES` (5 MiB)
-# plus 1 MiB for the metadata field and framing, so its own error is the one a
-# client meets; a gateway test pins it. The 15 MiB JSON upload keeps the 1m cap.
-CAMERA_REEL_UPLOAD_CAP = "6m"
+# A camera reel multipart upload: the app's field budget (`MAX_MULTIPART_MEMORY_BYTES`,
+# 6 MiB) plus 1 MiB of framing, so its own error is the one a client meets; a gateway
+# test pins it. The 15 MiB JSON upload keeps the 1m cap.
+CAMERA_REEL_UPLOAD_CAP = "7m"
+# The root alias whose upload path takes CAMERA_REEL_UPLOAD_CAP.
+CAMERA_REEL_ALIAS = "^~ /camera-reel/"
 # The content server's `POST /entities` route limit at the default field
 # count (`max_deployment_body_bytes`: 200 MiB of files and fields plus
 # multipart framing), rounded up, so its own 413 is the one a client meets.
@@ -265,8 +267,11 @@ def render(table, cfg, mime):
         locations += (location("= " + row["path"], proxy("apis", extra))
                       + location("= " + row["path"] + "/", proxy("apis", extra))
                       if row.get("exact") else pair(row["path"], "apis", True, extra))
+    def alias_rewrite(row):
+        return row.get("rewrite") or "^(.*)$ " + row["to"].replace("$uri", "$1")
+
     for row in table["aliases"]:
-        rewrite = row.get("rewrite") or "^(.*)$ " + row["to"].replace("$uri", "$1")
+        rewrite = alias_rewrite(row)
         # These aliases belong to APIs. Re-selecting a location after the
         # rewrite could send /social/... to the Sites /social page instead.
         locations += location(row["key"], f"rewrite {rewrite} break;\n" + proxy("apis"))
@@ -342,10 +347,12 @@ def render(table, cfg, mime):
     # on the deploy routes.
     camera_upload = f"client_max_body_size {CAMERA_REEL_UPLOAD_CAP}; {uploads}"
     locations += location('~ "^/camera-reel-service/api/images/*$"', proxy("apis", camera_upload))
-    # The root alias is `^~ /camera-reel/`, which skips regex locations; an exact match wins.
-    locations += location("= /camera-reel/api/images",
-                          "rewrite ^/camera-reel/(.*)$ /camera-reel-service/$1 break;\n"
-                          + proxy("apis", camera_upload))
+    # The root alias is a `^~` prefix, which skips regex locations; exact matches win.
+    for row in table["aliases"]:
+        if row["key"] == CAMERA_REEL_ALIAS:
+            for path in ("/camera-reel/api/images", "/camera-reel/api/images/"):
+                locations += location("= " + path, f"rewrite {alias_rewrite(row)} break;\n"
+                                      + proxy("apis", camera_upload))
     # Both badges host forms reach this already rewritten under /badges. The admin
     # check is a bearer token the app reads after nginx buffers the body, so
     # concurrent uploads are capped as on the deploy routes.
