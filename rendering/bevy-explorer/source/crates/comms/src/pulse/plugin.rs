@@ -56,6 +56,7 @@ use crate::global_crdt::{
     CrdtContexts, GlobalCrdtState, NetworkUpdate, PlayerMessage, PlayerUpdate, SceneRealms,
 };
 use crate::profile::CurrentUserProfile;
+use crate::room_connection::{FailureKind, RealmRoom, RoomRecovery};
 use crate::{NetworkMessage, Transport, TransportType};
 use bevy::platform::collections::{HashMap, HashSet};
 
@@ -933,6 +934,7 @@ fn pump_pulse(
     profile: Option<Res<CurrentUserProfile>>,
     sinks: Query<&PulseSink>,
     world_hold: Option<Res<WorldHold>>,
+    mut realm_rooms: Query<&mut RoomRecovery, With<RealmRoom>>,
 ) {
     let Some(session) = session else {
         return;
@@ -948,7 +950,16 @@ fn pump_pulse(
         .and_then(|p| p.peer_profile().map(|p| p.version as i32))
         .unwrap_or(0);
 
-    drain_status(session, &sinks, now);
+    if drain_status(session, &sinks, now) && matches!(session.role, PulseRole::Player(_)) {
+        // Another device of this wallet signed in. The archipelago replaces only this device's
+        // own socket, so Pulse is what tells this one: the island ends too, in the identity
+        // conflict nothing retries, until a realm change replaces the realm's rooms as it ends
+        // this terminal stop. Their owners close what is still open.
+        warn!("pulse: another device of this wallet took the session over — ending the island");
+        for mut recovery in &mut realm_rooms {
+            recovery.failure = Some(FailureKind::IdentityConflict);
+        }
+    }
     drive_connection(
         session,
         &sinks,
@@ -1119,8 +1130,10 @@ fn forward_movement(
 /// `try_recv`, so the arms are free to mutate `session`. A `Disconnected`/`Failed` status is the
 /// driver signing off, handled as the teardown; a bare channel close means it vanished with no word
 /// (e.g. panicked) — the fallback teardown. Either way `lost_connection` nulls the link, ending the
-/// loop and making a status-then-close sequence idempotent.
-fn drain_status(session: &mut PulseSession, sinks: &Query<&PulseSink>, now: f64) {
+/// loop and making a status-then-close sequence idempotent. Returns whether the server ended the
+/// session for a newer one of the same wallet (`DuplicateSession`).
+fn drain_status(session: &mut PulseSession, sinks: &Query<&PulseSink>, now: f64) -> bool {
+    let mut taken_over = false;
     while let Some(status) = session.link.as_mut().map(|link| link.status.try_recv()) {
         match status {
             Ok(PulseStatus::Connecting) => debug!("pulse: connecting"),
@@ -1132,6 +1145,7 @@ fn drain_status(session: &mut PulseSession, sinks: &Query<&PulseSink>, now: f64)
             }
             Ok(PulseStatus::Disconnected(reason)) => {
                 warn!("pulse: disconnected ({reason:?})");
+                taken_over |= reason == transport::PulseDisconnect::DuplicateSession;
                 let accepted = session.accepted;
                 lost_connection(
                     session,
@@ -1153,6 +1167,7 @@ fn drain_status(session: &mut PulseSession, sinks: &Query<&PulseSink>, now: f64)
             }
         }
     }
+    taken_over
 }
 
 /// Advance the connection one step. `Down` (re)builds the driver; `Connecting` waits passively for

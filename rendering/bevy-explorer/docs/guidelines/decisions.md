@@ -370,10 +370,15 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **The client never sends what the Pulse server refuses for good.** A one-shot emote longer than
   60 s goes out without a duration and ends with an explicit stop, and inputs and teleports from
   outside the parcel grid are not sent (`lib.rs`, `pulse/mod.rs`).
-- **A second device on the same wallet takes over the island.** The archipelago's
-  `already_connected` is also set for this device's own stale socket, so it is only logged; the
-  server replaces the older socket and tells it with `Kicked`, which ends that session's island
-  connection (`archipelago.rs`).
+- **A second device on the same wallet takes over; Pulse tells the old one.** Pulse ends the older
+  session with `DuplicateSession` and the gatekeeper removes it from its island room; on
+  `DuplicateSession` a player ends its island connection for good: the realm's rooms end in the
+  identity-conflict state, which nothing retries, and a realm change starts them again, as it ends
+  Pulse's terminal stop. A removal from the island room on its own stays a transient failure. The
+  archipelago leaves the older socket open and sends it nothing more: it replaces, and tells with
+  `Kicked`, only this device's own stale socket (same session key). `already_connected` is set in
+  both cases, so it is only logged. A newer device that never reaches Pulse tells the older one
+  nothing through Pulse (`archipelago.rs`, `pulse/plugin.rs`).
 - **The scene-room request always signs as the explorer.** The engine's own gatekeeper requests
   carry `signer: dcl:explorer` and the comms-handshake intent; only fetches a scene makes sign as
   `decentraland-kernel-scene` (`lib.rs`, `restricted_actions`).

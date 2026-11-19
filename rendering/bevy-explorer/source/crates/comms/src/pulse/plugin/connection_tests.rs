@@ -549,6 +549,93 @@ fn a_terminal_reason_parks_until_the_next_realm_change() {
     assert_eq!(respawn_at(harness.session()), Some(0.0));
 }
 
+/// The realm's room and its island, connected, and a scene room beside them; in that order.
+fn realm_rooms(world: &mut World) -> [Entity; 3] {
+    use crate::room_connection::{RealmRoom, RoomRecovery};
+    let realm_room = world.spawn((RealmRoom, RoomRecovery::default())).id();
+    let island = world
+        .spawn((
+            RealmRoom,
+            RoomRecovery::default(),
+            crate::archipelago::IslandOwner(realm_room),
+        ))
+        .id();
+    let scene_room = world
+        .spawn((
+            crate::SceneRoom("scene".to_owned()),
+            RoomRecovery::default(),
+        ))
+        .id();
+    [realm_room, island, scene_room]
+}
+
+fn room_failure(world: &World, room: Entity) -> Option<crate::room_connection::FailureKind> {
+    world
+        .get::<crate::room_connection::RoomRecovery>(room)
+        .unwrap()
+        .failure
+}
+
+/// Pulse's `DuplicateSession` is the one word this device gets when another device of its wallet
+/// signs in: the archipelago replaces only this device's own socket. So the island ends with Pulse,
+/// in the identity-conflict state that nothing retries, until the realm changes; scene rooms stay.
+#[test]
+fn a_duplicate_session_ends_the_island_connection() {
+    use crate::room_connection::FailureKind;
+    let mut harness = Harness::established(1.0);
+    let [realm_room, island, scene_room] = realm_rooms(&mut harness.world);
+
+    harness.report(PulseStatus::Disconnected(PulseDisconnect::DuplicateSession));
+    harness.pump_at(2.0);
+
+    assert!(matches!(harness.session().state, Connection::Dead));
+    for room in [realm_room, island] {
+        assert_eq!(
+            room_failure(&harness.world, room),
+            Some(FailureKind::IdentityConflict)
+        );
+        assert!(!harness
+            .world
+            .get::<crate::room_connection::RoomRecovery>(room)
+            .unwrap()
+            .can_retry(1000.0));
+    }
+    assert_eq!(room_failure(&harness.world, scene_room), None);
+}
+
+/// A terminal reason that says nothing about another device, an overrun event budget here, ends
+/// Pulse alone: the island stays connected.
+#[test]
+fn a_rate_limit_disconnect_leaves_the_island_connection() {
+    let mut harness = Harness::established(1.0);
+    let rooms = realm_rooms(&mut harness.world);
+
+    harness.report(PulseStatus::Disconnected(
+        PulseDisconnect::DiscreteEventRateExceeded,
+    ));
+    harness.pump_at(2.0);
+
+    assert!(matches!(harness.session().state, Connection::Dead));
+    for room in rooms {
+        assert_eq!(room_failure(&harness.world, room), None);
+    }
+}
+
+/// A scene listener is not a player: a `DuplicateSession` ends its Pulse session and nothing else.
+#[test]
+fn a_duplicate_session_on_a_listener_ends_only_pulse() {
+    let (mut harness, _scenes) = Harness::listener([IVec2::ZERO]);
+    let rooms = realm_rooms(&mut harness.world);
+
+    harness.report(PulseStatus::Disconnected(PulseDisconnect::DuplicateSession));
+    harness.pump_at(2.0);
+
+    assert!(matches!(harness.session().state, Connection::Dead));
+    for room in rooms {
+        assert_eq!(room_failure(&harness.world, room), None);
+    }
+}
+
 /// The attempts that failed before an accepted connection are forgiven: the next failure is the
 /// first of a new run, which waits the first second again.
 #[test]
