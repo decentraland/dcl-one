@@ -80,10 +80,10 @@ beforeAll(async () => {
   await session.send('Page.enable')
 }, 300_000)
 afterAll(() => releaseHarness({ session, server, scratch }))
-async function openCase(id: string, width: number, publicNavigation = false) {
+async function openCase(id: string, width: number, publicNavigation = false, height = 900) {
   await session.send('Emulation.setDeviceMetricsOverride', {
     width,
-    height: 900,
+    height,
     deviceScaleFactor: 1,
     mobile: false
   })
@@ -260,21 +260,28 @@ describe('when the public Sites navigation runs with browser input', () => {
   }, 60_000)
 
   for (const preference of ['no-preference', 'reduce']) {
-    it(`should inset the Pixel-width drawer and honor ${preference} motion`, async () => {
+    it(`should fill the Pixel viewport below the header and honor ${preference} motion`, async () => {
       await session.send('Emulation.setEmulatedMedia', {
         features: [{ name: 'prefers-reduced-motion', value: preference }]
       })
       await session.send('Animation.enable')
       await session.send('Animation.setPlaybackRate', { playbackRate: 0 })
       try {
-        await openCase('out-solid-0', 485, true)
+        await openCase('out-solid-0', 485, true, 926)
         await click('button[aria-label="Open menu"]')
         const reduced = preference === 'reduce'
         expect(
           await evaluate(
-            `(()=>{const p=document.querySelector('[data-testid="navbar-panel"]'),b=p.getBoundingClientRect();return{left:b.left,right:innerWidth-b.right,opacity:Number(getComputedStyle(p).opacity),animations:p.getAnimations().length}})()`
+            `(()=>{const p=document.querySelector('[data-testid="navbar-panel"]'),b=p.getBoundingClientRect();return{left:b.left,right:b.right,top:b.top,bottom:b.bottom,opacity:Number(getComputedStyle(p).opacity),animations:p.getAnimations().length}})()`
           )
-        ).toEqual({ left: 16, right: 16, opacity: reduced ? 1 : 0, animations: reduced ? 0 : 1 })
+        ).toEqual({
+          left: 0,
+          right: 485,
+          top: 64,
+          bottom: 926,
+          opacity: reduced ? 1 : 0,
+          animations: reduced ? 0 : 1
+        })
         await evaluate(
           `document.querySelector('[data-testid="navbar-panel"]').getAnimations().forEach(a=>a.finish())`
         )
@@ -312,4 +319,22 @@ describe('when the public Sites navigation runs with browser input', () => {
       }
     }, 60_000)
   }
+
+  it('should scroll all the way to the final row inside a short viewport', async () => {
+    await openCase('out-solid-0', 485, true, 320)
+    const panel = '[data-testid="navbar-panel"]'
+    const finishAnimations = () =>
+      evaluate(
+        `Promise.all(document.querySelector('${panel}').getAnimations({subtree:true}).map(a=>a.finished))`
+      )
+    await click('button[aria-label="Open menu"]')
+    await finishAnimations()
+    await click(`${panel} > ul > li:nth-child(2) > button`)
+    await finishAnimations()
+    expect(
+      await evaluate(
+        `(()=>{const p=document.querySelector('${panel}'),last=[...p.querySelectorAll('button')].at(-1);p.scrollTop=p.scrollHeight;const b=p.getBoundingClientRect();return{reachedEnd:p.scrollTop>0&&last.getBoundingClientRect().bottom<=b.bottom,viewportBottom:b.bottom,documentScroll:scrollY}})()`
+      )
+    ).toEqual({ reachedEnd: true, viewportBottom: 320, documentScroll: 0 })
+  }, 60_000)
 })

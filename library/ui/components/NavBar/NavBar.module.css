@@ -478,11 +478,9 @@
   .drawer[data-compact] {
     --drawer-motion-duration: 280ms;
     --drawer-hidden-opacity: 0;
-    left: max(var(--dcl-space-16), env(safe-area-inset-left));
-    right: max(var(--dcl-space-16), env(safe-area-inset-right));
-    bottom: auto;
-    width: auto;
-    max-height: calc(100% - max(var(--dcl-space-16), env(safe-area-inset-bottom)));
+    padding-right: calc(var(--dcl-space-12) + env(safe-area-inset-right, 0px));
+    padding-bottom: calc(var(--dcl-space-12) + env(safe-area-inset-bottom, 0px));
+    padding-left: calc(var(--dcl-space-12) + env(safe-area-inset-left, 0px));
     overscroll-behavior: contain;
   }
 
