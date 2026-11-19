@@ -621,11 +621,43 @@ impl Referral {
             // this tier's key: release the claim and defer every unclaimed row
             // of the tier, which shares that key and its supply.
             if value["ok"] == true && value["data"].as_array().is_some_and(Vec::is_empty) {
-                sqlx::query("UPDATE social.referral_progress SET reward_requested_at=NULL,reward_retry_at=timezone('UTC',now())+$3::interval WHERE invited_user=$1 AND reward_tier=$2")
-                    .bind(invited).bind(total as i32).bind(EMPTY_SUPPLY_RETRY).execute(&mut *guard).await.map_err(database_error)?;
-                // The predicate implies referral_progress_reward_due_idx.
-                sqlx::query("UPDATE social.referral_progress SET reward_retry_at=timezone('UTC',now())+$2::interval WHERE reward_tier=$1 AND reward_requested_at IS NULL AND reward_response IS NULL")
-                    .bind(total as i32).bind(EMPTY_SUPPLY_RETRY).execute(&mut *guard).await.map_err(database_error)?;
+                let mut tx = sqlx::Connection::begin(&mut *guard)
+                    .await
+                    .map_err(database_error)?;
+                // The other rows keep their order and the first is due after
+                // the delay; a longer wait is never shortened. The predicate
+                // implies referral_progress_reward_due_idx.
+                sqlx::query(
+                    "WITH waiting AS (SELECT min(reward_retry_at) AS first FROM social.referral_progress \
+                       WHERE reward_tier=$1 AND reward_requested_at IS NULL AND reward_response IS NULL AND invited_user<>$2) \
+                     UPDATE social.referral_progress SET reward_retry_at=GREATEST(reward_retry_at, \
+                       timezone('UTC',now())+$3::interval+COALESCE(reward_retry_at-waiting.first,interval '0')) \
+                     FROM waiting \
+                     WHERE reward_tier=$1 AND reward_requested_at IS NULL AND reward_response IS NULL AND invited_user<>$2",
+                )
+                .bind(total as i32)
+                .bind(invited)
+                .bind(EMPTY_SUPPLY_RETRY)
+                .execute(&mut *tx)
+                .await
+                .map_err(database_error)?;
+                // The responder goes after the rest, so the next empty reply
+                // comes from another row of the tier.
+                sqlx::query(
+                    "UPDATE social.referral_progress SET reward_requested_at=NULL, \
+                       reward_retry_at=GREATEST(timezone('UTC',now())+$3::interval, \
+                         (SELECT max(reward_retry_at) FROM social.referral_progress \
+                          WHERE reward_tier=$2 AND reward_requested_at IS NULL AND reward_response IS NULL AND invited_user<>$1)) \
+                       +interval '1 second' \
+                     WHERE invited_user=$1 AND reward_tier=$2",
+                )
+                .bind(invited)
+                .bind(total as i32)
+                .bind(EMPTY_SUPPLY_RETRY)
+                .execute(&mut *tx)
+                .await
+                .map_err(database_error)?;
+                tx.commit().await.map_err(database_error)?;
                 return Ok(RewardAttempt::EmptySupply);
             }
             let reward = value["data"]
