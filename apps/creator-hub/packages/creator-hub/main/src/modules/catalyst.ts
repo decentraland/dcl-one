@@ -4,11 +4,13 @@ import { getEnvOverride } from './electron';
 
 const PEER_URLS: Record<Env, string> = {
   [Env.DEV]: 'https://peer.decentraland.zone',
+  [Env.STG]: 'https://dcl.dev',
   [Env.PROD]: 'https://peer.decentraland.org',
 };
 
 const WORLDS_CONTENT_URLS: Record<Env, string> = {
   [Env.DEV]: 'https://worlds-content-server.decentraland.zone',
+  [Env.STG]: 'https://dcl.dev/worlds-content-server',
   [Env.PROD]: 'https://worlds-content-server.decentraland.org',
 };
 

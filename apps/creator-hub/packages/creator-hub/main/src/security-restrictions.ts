@@ -96,6 +96,7 @@ const ALLOWED_EXTERNAL_ORIGINS = new Set<AllowedOrigins<typeof IS_DEV>>([
   'https://decentraland.org',
   'https://decentraland.today',
   'https://decentraland.zone',
+  'https://dcl.dev',
   'https://studios.decentraland.org',
   'https://docs.decentraland.org',
   'https://youtube.com',

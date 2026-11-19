@@ -3,9 +3,9 @@ import { Env } from '/shared/types/env';
 
 /**
  * Gets the environment setting synchronously.
- * Checks main process for CLI argument override (--env=dev or --env=prod),
+ * Checks main process for CLI argument override (--env=dev, --env=stg or --env=prod),
  * otherwise falls back to build-time environment.
- * @returns 'dev' or 'prod'
+ * @returns 'dev', 'stg' or 'prod'
  */
 export function getEnv(): Env {
   try {
