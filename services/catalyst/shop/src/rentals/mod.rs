@@ -28,9 +28,12 @@
 //!   contract, so off mainnet no rent is read and an asset the contract
 //!   holds is refused as not the lessor's (401).
 //! - `PATCH /v1/rentals-listings/{id}`: the same reader refreshes the asset
-//!   row; behind the write switch; the same envelope without a reader (the
-//!   old crate answered the stored row unchanged, which presents stale
-//!   metadata as a refresh).
+//!   row and syncs the listing's status ([`status::sync_listing`]: its own
+//!   Rentals logs while the `rentals` index is published, then expiry, a
+//!   transfer away from the lessor and a dissolved estate); behind the
+//!   write switch; the same envelope without a reader (the old crate
+//!   answered the stored row unchanged, which presents stale metadata as a
+//!   refresh).
 //! - Rental status sync (`open -> executed | cancelled | claimed`): the
 //!   `rentals` chain index ([`index`], `shop.rental_event`, the Rentals
 //!   contract's own logs instead of the rentals subgraph the old crate
@@ -38,7 +41,10 @@
 //!   unless `SHOP_RENTALS_INDEX_ENABLED=false`;
 //!   `GET /v1/rentals-index` reports its cursor. Until it publishes, a
 //!   listing keeps the status it was posted with and the rent quote
-//!   (`shop::mana`) reads the nonces on chain.
+//!   (`shop::mana`) reads the nonces on chain. The leased
+//!   `rental-listing-status` job ([`status`]) cancels expired open
+//!   listings, and, from the land-authz index while it is published, those
+//!   whose asset left the lessor or whose estate was dissolved.
 //! - The rent, claim and cancel calls ([`calls`]) are pure builders the
 //!   `shop::mana` quote and action routes serve over the chain readers.
 //!
@@ -64,6 +70,7 @@ pub mod index;
 pub mod nft;
 pub mod notices;
 pub mod signature;
+pub mod status;
 pub mod types;
 
 #[cfg(test)]

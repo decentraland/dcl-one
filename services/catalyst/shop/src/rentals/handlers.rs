@@ -372,8 +372,13 @@ pub async fn refresh_rentals_listing(
     let not_found = || ApiError::not_found("Rental listing was not found");
     let (contract_address, token_id) = state.db.listing_asset(&id).await?.ok_or_else(not_found)?;
 
-    let now = chrono::Utc::now().naive_utc();
-    match state.nft(&contract_address, &token_id).await {
+    let clock = chrono::Utc::now();
+    let now = clock.naive_utc();
+    let nft = state.nft(&contract_address, &token_id).await;
+    if let (Ok(nft), Ok(uuid)) = (&nft, uuid::Uuid::parse_str(&id)) {
+        super::status::sync_listing(state.db.pool(), uuid, nft.as_deref(), clock).await?;
+    }
+    match nft {
         Ok(Some(nft)) => {
             if let Some(refreshed) = state
                 .db

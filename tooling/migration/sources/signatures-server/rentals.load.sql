@@ -35,7 +35,10 @@ ON CONFLICT (id) DO UPDATE
        rental_contract_address = EXCLUDED.rental_contract_address, status = EXCLUDED.status,
        target = EXCLUDED.target, rented_days = EXCLUDED.rented_days,
        period_chosen = EXCLUDED.period_chosen, created_at = EXCLUDED.created_at,
-       updated_at = EXCLUDED.updated_at, started_at = EXCLUDED.started_at
+       updated_at = EXCLUDED.updated_at, started_at = EXCLUDED.started_at,
+       -- upstream keeps no reason: a node cancellation keeps its own while
+       -- upstream also says cancelled, any other status clears it
+       cancel_reason = CASE WHEN EXCLUDED.status = 'cancelled' THEN signatures.rentals.cancel_reason END
  WHERE signatures.rentals.signature = EXCLUDED.signature
    AND signatures.rentals.updated_at <= EXCLUDED.updated_at
 RETURNING id, signature

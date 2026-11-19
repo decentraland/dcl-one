@@ -27,6 +27,10 @@ LAND/Estate rentals listings.
   whose target `updated_at` is newer (a node fold) is not overwritten,
   including its listing tenant/lessor. Periods load only when the parent
   signature and update timestamp match the extracted parent version.
+- `cancel_reason` is not upstream's: upstream records no cause, so an imported
+  cancellation lands with NULL (an unknown cause, which a rebuild of the
+  `rentals` index never reopens). An update over a node row keeps the node's
+  reason while both say `cancelled` and clears it on any other status.
 - Skipped: a signature that the node holds under another id, and a second
   `open` listing for an asset (the node allows one open listing per asset;
   of two in one batch, the latest `updated_at` lands).
