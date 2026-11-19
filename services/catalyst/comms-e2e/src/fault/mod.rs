@@ -15,6 +15,7 @@ use std::time::Duration;
 use anyhow::{Result, bail};
 use parking_lot::Mutex;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use tokio::sync::Notify;
 use tokio::task::AbortHandle;
 
@@ -84,7 +85,10 @@ pub(crate) struct Shared {
     pub name: String,
     pub timeline: Timeline,
     pub faults: Mutex<Faults>,
-    pub seeded: Mutex<Seeded>,
+    /// The generators of the uplink and the downlink: each direction draws its own sequence, so
+    /// what one direction drew does not move the other.
+    pub up_seeded: Mutex<Seeded>,
+    pub down_seeded: Mutex<Seeded>,
     /// The generation new flows begin in: the number of endings so far.
     pub generation: AtomicU64,
     /// How each generation ended, indexed by generation: `half_open`, `cut` and `orphan` each push
@@ -161,14 +165,43 @@ impl Shared {
         self.timeline.record(&self.name, kind, detail);
     }
 
-    /// A value in `0.0..1.0` from the link's own seeded generator.
-    pub fn chance(&self) -> f32 {
-        (self.seeded.lock().below(1_000_000) as f32) / 1_000_000.0
+    fn seeded(&self, direction: Direction) -> &Mutex<Seeded> {
+        match direction {
+            Direction::Uplink => &self.up_seeded,
+            _ => &self.down_seeded,
+        }
     }
 
-    pub fn gap(&self, window: Duration) -> Duration {
-        self.seeded.lock().gap(window)
+    /// A value in `0.0..1.0` from the generator of `direction` on this link.
+    pub fn chance(&self, direction: Direction) -> f32 {
+        (self.seeded(direction).lock().below(1_000_000) as f32) / 1_000_000.0
     }
+
+    /// A wait inside `window` from the generator of `direction` on this link.
+    pub fn gap(&self, direction: Direction, window: Duration) -> Duration {
+        self.seeded(direction).lock().gap(window)
+    }
+}
+
+/// The seed of one direction of the link `name`, from the run's seed: a replay with the same seed
+/// draws the same sequence in each direction of each link, and two links of one run, or the two
+/// directions of one link, draw different ones.
+fn direction_seed(seed: u64, name: &str, direction: Direction) -> u64 {
+    let digest = Sha256::new()
+        .chain_update(b"comms-e2e fault link\0")
+        .chain_update(seed.to_be_bytes())
+        .chain_update(name.as_bytes())
+        .chain_update([0])
+        .chain_update(match direction {
+            Direction::Uplink => b"uplink".as_slice(),
+            _ => b"downlink".as_slice(),
+        })
+        .finalize();
+    u64::from_be_bytes(
+        digest[..8]
+            .try_into()
+            .expect("a digest is longer than 8 bytes"),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -240,7 +273,16 @@ impl FaultLink {
                 up: Fault::Pass,
                 down: Fault::Pass,
             }),
-            seeded: Mutex::new(Seeded::new(ctx.seed() ^ 0x6c69_6e6b)),
+            up_seeded: Mutex::new(Seeded::new(direction_seed(
+                ctx.seed(),
+                name,
+                Direction::Uplink,
+            ))),
+            down_seeded: Mutex::new(Seeded::new(direction_seed(
+                ctx.seed(),
+                name,
+                Direction::Downlink,
+            ))),
             generation: AtomicU64::new(0),
             endings: Mutex::new(Vec::new()),
             closed: AtomicBool::new(false),
@@ -356,5 +398,55 @@ impl Drop for FaultLink {
         self.shared.end_generation(ending::CUT);
         self.shared.parked.lock().clear();
         self.shared.changed.notify_waiters();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn link(seed: u64, name: &str) -> Arc<Shared> {
+        let ctx = Ctx::new(
+            Arc::new(crate::stack::Stack::pulse_only(
+                "127.0.0.1:9".parse().unwrap(),
+            )),
+            "unit",
+            "fault-seeds",
+            0,
+            seed,
+            std::env::temp_dir().join("comms-e2e-unit"),
+        );
+        FaultLink::shared(&ctx, name)
+    }
+
+    fn draw(shared: &Shared, direction: Direction) -> f32 {
+        shared.chance(direction)
+    }
+
+    #[test]
+    fn each_direction_draws_the_same_sequence_whatever_the_order() {
+        let (one, other) = (link(7, "pulse"), link(7, "pulse"));
+        // one draws every uplink value first, the other alternates, downlink first
+        let one_up: Vec<f32> = (0..32).map(|_| draw(&one, Direction::Uplink)).collect();
+        let one_down: Vec<f32> = (0..32).map(|_| draw(&one, Direction::Downlink)).collect();
+        let (mut other_up, mut other_down) = (Vec::new(), Vec::new());
+        for _ in 0..32 {
+            other_down.push(draw(&other, Direction::Downlink));
+            other_up.push(draw(&other, Direction::Uplink));
+        }
+        assert_eq!(one_up, other_up);
+        assert_eq!(one_down, other_down);
+        assert_ne!(one_up, one_down, "the two directions draw apart");
+    }
+
+    #[test]
+    fn two_links_of_one_run_draw_different_sequences() {
+        let sequence = |seed: u64, name: &str| -> Vec<f32> {
+            let shared = link(seed, name);
+            (0..32).map(|_| draw(&shared, Direction::Uplink)).collect()
+        };
+        assert_ne!(sequence(7, "api"), sequence(7, "pulse"));
+        assert_ne!(sequence(7, "pulse"), sequence(8, "pulse"));
+        assert_eq!(sequence(7, "pulse"), sequence(7, "pulse"));
     }
 }

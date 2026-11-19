@@ -103,69 +103,94 @@ async fn relay(
             continue;
         }
         let (length, client) = tokio::select! {
+            // a close that has arrived wins over a datagram waiting in the socket
+            biased;
+            _ = &mut changed => continue,
             received = socket.recv_from(&mut buffer) => match received {
                 Ok(received) => received,
                 // Windows reports an earlier send to a closed port here; the relay goes on.
                 Err(_) => continue,
             },
-            _ = &mut changed => continue,
         };
         drop(socket);
-
-        let generation = shared.generation.load(Ordering::SeqCst);
-        let fate = flows
-            .get(&client)
-            .and_then(|flow| shared.fate(flow.generation));
-        match fate {
-            Some(ending::HALF_OPEN) => {
-                // this flow is silent for good, whatever happened to the link since
-                shared.dropped.fetch_add(1, Ordering::Relaxed);
-                continue;
-            }
-            // cut: the next packet starts a new flow, from a new upstream port
-            Some(_) => {
-                flows.remove(&client);
-            }
-            None => {}
-        }
-        if let std::collections::hash_map::Entry::Vacant(slot) = flows.entry(client) {
-            let Ok(socket) = UdpSocket::bind((client.ip(), 0)).await else {
-                shared.record(
-                    "flow failed",
-                    format!("cannot bind an upstream socket on {}", client.ip()),
-                );
-                continue;
-            };
-            if socket.connect(upstream).await.is_err() {
-                continue;
-            }
-            let socket = Arc::new(socket);
-            shared.flows.fetch_add(1, Ordering::Relaxed);
-            shared.record("flow", serde_json::json!({ "client": client.to_string() }));
-            let pump = tokio::spawn(downlink(
-                shared.clone(),
-                socket.clone(),
-                listen.clone(),
-                client,
-                generation,
-            ));
-            slot.insert(Flow {
-                upstream: socket,
-                generation,
-                pump: pump.abort_handle(),
-            });
-        }
-        let flow = &flows[&client];
-        let packet = buffer[..length].to_vec();
-        let target = flow.upstream.clone();
-        forward(&shared, Direction::Uplink, packet, move |packet| {
-            let target = target.clone();
-            async move {
-                let _ = target.send(&packet).await;
-            }
-        })
+        uplink(
+            &shared,
+            &mut flows,
+            &listen,
+            upstream,
+            client,
+            buffer[..length].to_vec(),
+        )
         .await;
     }
+}
+
+/// One datagram from `client`: through the client's flow (made if it has none) towards the
+/// stack, as the uplink's fault says.
+async fn uplink(
+    shared: &Arc<Shared>,
+    flows: &mut HashMap<SocketAddr, Flow>,
+    listen: &Listen,
+    upstream: SocketAddr,
+    client: SocketAddr,
+    packet: Vec<u8>,
+) {
+    if shared.port_closed.load(Ordering::SeqCst) {
+        // the port closed while this datagram was being received: a closed port passes nothing
+        shared.dropped.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+    let generation = shared.generation.load(Ordering::SeqCst);
+    let fate = flows
+        .get(&client)
+        .and_then(|flow| shared.fate(flow.generation));
+    match fate {
+        Some(ending::HALF_OPEN) => {
+            // this flow is silent for good, whatever happened to the link since
+            shared.dropped.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        // cut: the next packet starts a new flow, from a new upstream port
+        Some(_) => {
+            flows.remove(&client);
+        }
+        None => {}
+    }
+    if let std::collections::hash_map::Entry::Vacant(slot) = flows.entry(client) {
+        let Ok(socket) = UdpSocket::bind((client.ip(), 0)).await else {
+            shared.record(
+                "flow failed",
+                format!("cannot bind an upstream socket on {}", client.ip()),
+            );
+            return;
+        };
+        if socket.connect(upstream).await.is_err() {
+            return;
+        }
+        let socket = Arc::new(socket);
+        shared.flows.fetch_add(1, Ordering::Relaxed);
+        shared.record("flow", serde_json::json!({ "client": client.to_string() }));
+        let pump = tokio::spawn(downlink(
+            shared.clone(),
+            socket.clone(),
+            listen.clone(),
+            client,
+            generation,
+        ));
+        slot.insert(Flow {
+            upstream: socket,
+            generation,
+            pump: pump.abort_handle(),
+        });
+    }
+    let target = flows[&client].upstream.clone();
+    forward(shared, Direction::Uplink, packet, move |packet| {
+        let target = target.clone();
+        async move {
+            let _ = target.send(&packet).await;
+        }
+    })
+    .await;
 }
 
 async fn downlink(
@@ -221,7 +246,7 @@ where
             shared.dropped.fetch_add(1, Ordering::Relaxed);
         }
         Fault::Drop { share } => {
-            if shared.chance() < share {
+            if shared.chance(direction) < share {
                 shared.dropped.fetch_add(1, Ordering::Relaxed);
             } else {
                 send(packet).await;
@@ -238,7 +263,7 @@ where
             });
         }
         Fault::Reorder { window } => {
-            let wait = shared.gap(window);
+            let wait = shared.gap(direction, window);
             let shared = shared.clone();
             tokio::spawn(async move {
                 if shared.sleep_unless_closed(wait).await {
@@ -250,5 +275,55 @@ where
             send(packet.clone()).await;
             send(packet).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::Ctx;
+    use crate::fault::FaultLink;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn a_datagram_received_after_the_port_closed_is_not_forwarded() {
+        let ctx = Ctx::new(
+            Arc::new(crate::stack::Stack::pulse_only(
+                "127.0.0.1:9".parse().unwrap(),
+            )),
+            "unit",
+            "udp-closed-port",
+            0,
+            1,
+            std::env::temp_dir().join("comms-e2e-unit"),
+        );
+        let link = FaultLink::udp(
+            &ctx,
+            "closing",
+            "127.0.0.1:0".parse().unwrap(),
+            "127.0.0.1:9".parse().unwrap(),
+        )
+        .await
+        .unwrap();
+        link.close_port().unwrap();
+        let stack = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let listen: Listen = Arc::new(Mutex::new(None));
+        let mut flows = HashMap::new();
+        // what the relay does with a datagram its receive returned after the close
+        uplink(
+            &link.shared,
+            &mut flows,
+            &listen,
+            stack.local_addr().unwrap(),
+            "127.0.0.1:40000".parse().unwrap(),
+            b"late".to_vec(),
+        )
+        .await;
+        let mut buffer = [0u8; 64];
+        let arrived =
+            tokio::time::timeout(Duration::from_millis(300), stack.recv_from(&mut buffer)).await;
+        assert!(arrived.is_err(), "a datagram crossed a closed port");
+        assert_eq!(link.counters().dropped, 1);
+        assert_eq!(link.counters().up_packets, 0);
     }
 }

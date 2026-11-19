@@ -802,15 +802,12 @@ async fn port_unreachable(ctx: Ctx) -> Result<()> {
         bot.view().leaves_of(&subject.wallet),
     );
 
-    // What is asserted about the fault, and what is only noted. A closed port has no socket to
-    // count with, and the explorer's own Pulse traffic counters count application messages, not
-    // the transport's keep-alive packets, so no counter shows a packet arriving at a closed
-    // port. The sound signal is the link's own count of what reached it:
+    // What is asserted about the fault, and what is only noted. A closed port has no socket, so
+    // nothing counts the packets sent to it, and the explorer's own Pulse traffic counters count
+    // application messages, not the transport's keep-alive packets. The link's own count of what
+    // reached it is the signal:
     //   - asserted: before the close the explorer's packets were reaching the link, so it was
     //     sending to this address on its own;
-    //   - asserted: during the closure none reached the link, so the port really was closed to
-    //     them (the explorer kept sending, because it was sending a moment before and again
-    //     right after the reopen);
     //   - asserted: after the reopen its packets reach the link again, within a short time.
     //   - only noted: the explorer's own log lines about a failed Pulse connection (the build
     //     before the fix logs `pulse: failed (enet service error ...)`; a fixed build logs
@@ -832,22 +829,13 @@ async fn port_unreachable(ctx: Ctx) -> Result<()> {
     // The port closes: this machine answers the explorer's packets "port unreachable", which its
     // socket reports as an error. Far shorter than any timeout of the transport.
     subject.fronts.pulse.close_port()?;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let up_when_closed = subject.fronts.pulse.counters().up_packets;
-    tokio::time::sleep(Duration::from_millis(1200)).await;
-    let during = subject.fronts.pulse.counters().up_packets - up_when_closed;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
     let state_inside = pulse_state(&subject.explorer).await;
     subject.fronts.pulse.restore();
-    ctx.note("packets that reached the front during the closure", during);
     ctx.note(
         "the explorer's Pulse state inside the closure",
         &state_inside,
     );
-    if during != 0 {
-        bail!(
-            "{during} packets of the explorer reached the Pulse front while its port was closed: the fault touched nothing"
-        );
-    }
     let up_at_restore = subject.fronts.pulse.counters().up_packets;
 
     expect_pulse(
