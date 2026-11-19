@@ -5,6 +5,7 @@
 // with a line of doc each so the dialog can show what IS accepted, the internal ones just known.
 
 import { AUTH_RETURN_PARAM } from '@explorer-core/features/auth/authReturn'
+import { THIRDWEB_GUEST_PARAM } from '@explorer-core/features/auth/guestWalletParam'
 import type { AcceptedParam } from '@explorer-core/hostContract'
 import { WEB_PARAMS } from '@explorer-core/engine/generated'
 import { DEBUG_PANEL_PARAM } from '@explorer-core/lib/debugPanelLauncher'
@@ -60,6 +61,8 @@ const INTERNAL_PARAMS = [
   'worldpw',
   ANALYTICS_SESSION_PARAM,
   AUTH_RETURN_PARAM,
+  // the shell's choice of guest wallet (features/auth/guest.ts)
+  THIRDWEB_GUEST_PARAM,
   // dev only (lib/systemScene.ts)
   ...(import.meta.env.PROD ? [] : ['bridgePort'])
 ]

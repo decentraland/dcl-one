@@ -129,8 +129,7 @@ function detectOs(userAgent: string | null | undefined): OsKey | undefined {
 function detectArch(userAgent: string | null | undefined, os: OsKey): ArchKey {
   const ua = (userAgent ?? "").toLowerCase();
   if (/arm64|aarch64/.test(ua)) return "arm64";
-  if (os === "windows") return "amd64";
-  if (/intel/.test(ua) && !/apple/.test(ua)) return "amd64";
+  // Every Mac's User-Agent says "Intel", whatever its chip: a Mac gets the Apple Silicon build unless told otherwise.
   return os === "macos" ? "arm64" : "amd64";
 }
 
@@ -151,6 +150,8 @@ function normalizeArch(v: string | null | undefined): ArchKey | undefined {
 type ResolvedDownload = {
   version: string;
   overridden: boolean;
+  /** The User-Agent names a Mac and the link names no chip: only the browser can tell which build fits. */
+  macChipUnknown: boolean;
   /** False when neither an override nor the User-Agent names Windows or macOS: the page offers no installer. */
   installable: boolean;
   detectedOs: OsKey;
@@ -185,24 +186,41 @@ export function resolveDownload(
   const primaryKey = pickKey(options, detectedOs, detectedArch) ?? DEFAULT_OPTION;
   const primary = options[primaryKey] ?? FALLBACK.options[DEFAULT_OPTION];
 
+  // Every other installer. Before a release is read they all lead to the releases page, so each system is offered once.
+  const buildKey = (opt: DownloadOption) => (opt.fileName ? opt.url : opt.osKey);
   const secondary: DownloadOption[] = [];
-  const seenOs = new Set<OsKey>([primary.osKey]);
-  for (const key of Object.keys(options)) {
-    const opt = options[key];
-    if (seenOs.has(opt.osKey)) continue;
-    const altKey = pickKey(options, opt.osKey, detectedArch);
-    const chosen = (altKey && options[altKey]) || opt;
-    secondary.push(chosen);
-    seenOs.add(opt.osKey);
+  const seen = new Set<string>([buildKey(primary)]);
+  for (const opt of Object.values(options)) {
+    if (seen.has(buildKey(opt))) continue;
+    secondary.push(opt);
+    seen.add(buildKey(opt));
   }
 
   return {
     version: release.version,
     overridden: osOverride !== undefined || archOverride !== undefined,
+    macChipUnknown: uaOs === "macos" && archOverride === undefined,
     installable: (osOverride ?? uaOs) !== undefined,
     detectedOs,
     detectedArch,
     primary,
     secondary,
   };
+}
+
+export type HeroDownloads = {
+  /** The installer for the visitor's system. */
+  primary: DownloadOption;
+  /** Every other installer of the release, for a visitor who wants another build. */
+  others: DownloadOption[];
+};
+
+/**
+ * The installers a page offers in place: the one for the system the User-Agent names, then the rest. Null when
+ * that system has no installer, or when the release could not be read and only the releases page is known.
+ */
+export function heroDownloads(release: DownloadRelease, userAgent: string | null | undefined): HeroDownloads | null {
+  const { installable, primary, secondary } = resolveDownload(release, userAgent);
+  if (!installable || !primary.fileName) return null;
+  return { primary, others: secondary };
 }

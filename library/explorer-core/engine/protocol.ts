@@ -751,6 +751,8 @@ export interface GetUserProfileRequest {
   kind: 'getUserProfile'
   address: string
   extras?: boolean
+  /** Optional for older HUDs. All replies to this read echo the same ID. */
+  requestId?: number
 }
 
 /** A fetched user's passport (kept separate from the local `profile` message so it
@@ -758,6 +760,8 @@ export interface GetUserProfileRequest {
 export interface UserProfileMessage {
   kind: 'userProfile'
   address: string
+  /** Echoed from the read it answers. Older bridges omit it. */
+  requestId?: number
   profile: Profile | null
 }
 
@@ -1295,11 +1299,13 @@ export interface CommunityFriend {
   hasClaimedName: boolean
 }
 
-/** A page request's handler threw, so its reply never came (scene → page). */
+/** A page request's handler threw while handling the request (scene → page). */
 export interface RequestFailedMessage {
   kind: 'requestFailed'
   request: PageToScene['kind']
   error: string
+  /** Correlation for a failed getUserProfile request that carried a request ID. */
+  profileRead?: { address: string; requestId: number }
 }
 
 /** Deploying the Backpack's look was rejected (scene → page). */

@@ -1,5 +1,5 @@
 import { RouterContextProvider } from "react-router";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { markPublicResponse } from "@/core/lib/telemetry/session";
 
@@ -31,4 +31,32 @@ it("hands the page the Pulse host the deployment sets", async () => {
 it("hands the page no Pulse host when the deployment sets none", async () => {
   vi.stubEnv("PUBLIC_PULSE_SERVER", "");
   expect((await load()).pulseServer).toBe("");
+});
+
+describe("when the shared locale is read for an Events request", () => {
+  let context: RouterContextProvider;
+  beforeEach(() => { context = new RouterContextProvider(); });
+
+  it.each([
+    ["lang=es", "es"],
+    ["lang=pt", "en"],
+    ["", "en"],
+  ])("should choose the allowlisted preference or English from %s", async (cookie, expected) => {
+    const response = await loader({
+      request: new Request("https://example.test/events", { headers: { cookie } }),
+      params: {},
+      context,
+    } as never);
+    expect(response.locale).toBe(expected);
+  });
+
+  it("should omit the preference from a shared-cacheable document", async () => {
+    markPublicResponse(context);
+    const response = await loader({
+      request: new Request("https://example.test/docs/", { headers: { cookie: "lang=es" } }),
+      params: {},
+      context,
+    } as never);
+    expect(response.locale).toBeUndefined();
+  });
 });

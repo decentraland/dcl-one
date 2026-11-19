@@ -108,37 +108,6 @@
   display: block;
 }
 
-.also {
-  display: flex;
-  align-items: center;
-  gap: var(--dcl-space-8);
-  margin-top: var(--dcl-space-8);
-  justify-content: center;
-}
-.alsoText {
-  font-size: var(--dcl-font-size-body-sm);
-  color: rgba(255, 255, 255, 0.7);
-}
-
-.altIcon {
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: var(--dcl-space-4);
-  display: flex;
-  align-items: center;
-  outline: none;
-}
-.altIcon:focus-visible {
-  outline: 2px solid var(--dcl-primary-primary);
-  outline-offset: 2px;
-}
-.altIcon img {
-  width: 20px;
-  height: 20px;
-  display: block;
-}
-
 /* The reference's BannerImage: half the row up to 480px wide, its 752x500 PNG setting the height. */
 .banner {
   width: 50%;

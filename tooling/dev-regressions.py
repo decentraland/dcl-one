@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -348,10 +349,15 @@ MANDATORY_ARCHIPELAGO = {
 }
 TEST_SCRIPT = [
     'durations="$root/tooling/catalyst-test-durations.tsv"',
-    'cargo test --locked "$@" --no-run --message-format=json-render-diagnostics | python3 -c \'',
+    'inventory=',
+    'targets=(--lib --bins)',
+    'if [ "${1:-}" = "--write-inventory" ]; then',
+    'inventory="$2"',
+    'cargo test --locked "$@" --no-run --message-format=json-render-diagnostics | tee "${inventory:-/dev/null}" | python3 -c \'',
     'if artifact.get("executable") and artifact.get("profile", {}).get("test"):',
     'print(os.path.relpath(target["src_path"]), ",".join(target["kind"]), artifact["executable"], sep="\\t")',
-    '\' > "$logs/binaries"',
+    'python3 "$root/tooling/catalyst-test-targets.py" plan "$@" > "$logs/binaries"',
+    'if [ "$planned" = false ]; then build_targets "$@" > "$logs/binaries"; fi',
     '[ -s "$logs/binaries" ] || { echo "catalyst-test: no test binaries found" >&2; exit 1; }',
     'shard="${CATALYST_TEST_SHARD:-1/1}"',
     'index="${shard%/*}" total="${shard#*/}"',
@@ -366,12 +372,18 @@ TEST_SCRIPT = [
     'for number, row in enumerate(rows):',
     'if time(row) is None:',
     'shards[number % total].append(row)',
-    'for row in sorted((row for row in rows if time(row) is not None), key=lambda row: -time(row)):',
+    'for row in sorted((row for row in rows if time(row) is not None), key=lambda row: (not socket(row), -time(row))):',
     'best = min((i for i in range(total) if taken[i] == min(taken)), key=lambda i: (cost(shards[i] + [row]), i))',
     'shards[best].append(row)',
     'for row in order(shards[index - 1]):',
     'print(row[2])',
     '\' "$index" "$total" "$durations" > "$logs/shard"',
+    'case "$target" in test/*) targets+=(--test "${target#test/}");; esac',
+    'done < "$logs/shard"',
+    'build_targets "$@" "${targets[@]}" > "$logs/artifacts"',
+    'python3 "$root/tooling/catalyst-test-targets.py" resolve "$logs/shard" "$logs/binaries" "$logs/artifacts" > "$logs/executables"',
+    'mv "$logs/executables" "$logs/shard"',
+    'if [ -n "$inventory" ]; then exit 0; fi',
     'grep -E \'/sockets_[^/]*$\' "$logs/shard" > "$logs/sockets" || [ $? -eq 1 ]',
     'grep -v -E \'/sockets_[^/]*$\' "$logs/shard" > "$logs/others" || [ $? -eq 1 ]',
     'xargs -P "$1" -I{} sh -c \'',
@@ -486,16 +498,16 @@ def validate_auth_stress_workflow(workflow):
 
 
 def validate_test_script(script):
-    # Pins the lines that keep the run complete: bash under set -e, the selection compiled
-    # unfiltered, every listed binary of the shard (all of them without CATALYST_TEST_SHARD) run
+    # Pins the lines that keep the run complete: bash under set -e, the selected targets compiled,
+    # every listed binary of the shard (all of them without CATALYST_TEST_SHARD) run
     # without arguments in both phases, the doc-tests in one shard (every shard without
-    # CATALYST_TEST_DOC_SHARD), and no exit before the end. Comment lines are inert.
+    # CATALYST_TEST_DOC_SHARD), and an early return for inventory builds. Comment lines are inert.
     require(script.splitlines()[:1] == ["#!/usr/bin/env bash"], "catalyst-test.sh must run under bash")
     lines = [line.strip() for line in script.splitlines() if line.strip() and not line.lstrip().startswith("#")]
     require(lines[:1] == ["set -euo pipefail"], "catalyst-test.sh must stop at the first failing step")
     positions = [[index for index, line in enumerate(lines) if line == pinned] for pinned in TEST_SCRIPT]
     require(all(len(found) == 1 for found in positions) and positions == sorted(positions),
-            "catalyst-test.sh must compile the selection unfiltered, run every listed binary without arguments and the doc-tests exactly once; update the guard's pinned lines with the script")
+            "catalyst-test.sh must build the selected targets, run every assigned binary without arguments and run the designated doc-tests; update the guard's pinned lines with the script")
     require(not any(line.startswith("exit") for line in lines), "catalyst-test.sh must not exit before the doc-tests")
 
 
@@ -523,6 +535,8 @@ def run(command, cwd=ROOT):
 
 
 def compiled_targets(arguments, cwd, *, selected=None, kind=None):
+    if selected and kind == "lib":
+        arguments = [*arguments, "--lib"]
     output = run(["cargo", "test", "--locked", *arguments, "--no-run", "--message-format=json-render-diagnostics"], cwd)
     return artifact_targets(output, selected, kind=kind)
 
@@ -607,6 +621,10 @@ def external_shard(environ):
     return index == int(chosen), f"{int(chosen)}/{total}"
 
 
+def external_targets():
+    return set(MANDATORY_ARCHIPELAGO) | {(target, kind) for target, kind, _ in EXTERNAL}
+
+
 def check_external():
     binary = external_prerequisites(os.environ)
     execute, owner = external_shard(os.environ)
@@ -614,9 +632,13 @@ def check_external():
                              stderr=subprocess.STDOUT, check=True, timeout=10)
     print(version.stdout, flush=True)
     # Preserve the broad runner's feature graph; choose targets from this exact build.
-    output = run(["cargo", "test", "--locked", *SELECTION.split(), "--no-run",
+    selected = external_targets()
+    filters = ["--lib"]
+    for name, kind in sorted(selected):
+        if kind != "lib":
+            filters.extend([f"--{kind}", name])
+    output = run(["cargo", "test", "--locked", *SELECTION.split(), *filters, "--no-run",
                   "--message-format=json-render-diagnostics"], ROOT / "services/catalyst")
-    selected = set(MANDATORY_ARCHIPELAGO) | {(target, kind) for target, kind, _ in EXTERNAL}
     targets = {kind: artifact_targets(output, {target for target, selected_kind in selected
                                               if selected_kind == kind}, kind=kind)
                for kind in {kind for _, kind in selected}}
@@ -674,6 +696,17 @@ def check_auth_stress():
     run_external(targets["dcl_auth"], AUTH_STRESS, show_output=True)
 
 
+def regression_targets(required):
+    if os.environ.get("CATALYST_TEST_SHARD", "1/1") == "1/1":
+        return compiled_targets(SELECTION.split(), ROOT / "services/catalyst", selected=required, kind="test")
+    names = set(required) | {name for name, kind in external_targets() if kind == "test"}
+    with tempfile.TemporaryDirectory() as temporary:
+        inventory = Path(temporary) / "artifacts.jsonl"
+        subprocess.run([str(ROOT / "tooling/catalyst-test.sh"), "--write-inventory", str(inventory),
+                        *sorted(names), "--", *SELECTION.split()], check=True)
+        return artifact_targets(inventory.read_text(), required, kind="test")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bevy-artifacts", type=Path)
@@ -711,7 +744,7 @@ def main():
         for target, names in manifest["unix"].items():
             required[target] += names
     # Match the runtime selection so Cargo reuses the same feature graph and binaries.
-    targets = compiled_targets(SELECTION.split(), ROOT / "services/catalyst", selected=required, kind="test")
+    targets = regression_targets(required)
     verify_targets(required, targets)
     vendor_targets = compiled_targets(["--manifest-path", "library/vendor/rusty_enet/Cargo.toml", "--lib"], ROOT)
     require("rusty_enet" in vendor_targets, "missing vendor lib target")

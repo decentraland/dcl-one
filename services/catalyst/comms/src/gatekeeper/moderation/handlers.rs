@@ -24,9 +24,7 @@ use crate::gatekeeper::auth::{
     authorize_moderator, require_service_token, service_token_error, validate_body,
     verify_signed_fetch,
 };
-use crate::gatekeeper::errors::{
-    ApiError, conflict, not_found_labeled, service_unavailable, unauthorized,
-};
+use crate::gatekeeper::errors::{ApiError, conflict, not_found_labeled, unauthorized};
 use crate::gatekeeper::{CommsState, SharedState};
 use crate::shared::signed_fetch::SignedPath;
 
@@ -229,7 +227,7 @@ pub async fn add_admin(
     let context = Context::resolve(&state, &sf.metadata).await?;
     context.check_selectors(&input)?;
     let place = &context.place;
-    scene::scene_owner_or_admin_decision(&state, place, &sf.signer)
+    scene::scene_manager_decision(&state, place, &sf.signer)
         .await
         .into_result()?;
     let admin = target_address(&state, &input, "admin", Some("name")).await?;
@@ -281,7 +279,7 @@ pub async fn remove_admin(
     let context = Context::resolve(&state, &sf.metadata).await?;
     context.check_selectors(&input)?;
     let place = &context.place;
-    scene::scene_owner_or_admin_decision(&state, place, &sf.signer)
+    scene::scene_manager_decision(&state, place, &sf.signer)
         .await
         .into_result()?;
     let admin = target_address(&state, &input, "admin", None).await?;
@@ -368,29 +366,15 @@ async fn ensure_can_list_bans(
     place: &PlaceLookup<'_>,
     signer: &Address,
 ) -> Result<(), ApiError> {
-    match scene::scene_owner_or_admin_decision(state, place, signer).await {
-        crate::PermissionDecision::Allowed => return Ok(()),
+    match scene::scene_manager_decision(state, place, signer).await {
+        crate::PermissionDecision::Allowed => Ok(()),
         crate::PermissionDecision::Refused(
             crate::AuthorityNotEstablished::RefusedLacksAuthority { .. },
-        ) => {}
-        crate::PermissionDecision::Refused(why) => return Err(why.into()),
+        ) => Err(unauthorized(
+            "User does not have permission to list scene bans",
+        )),
+        crate::PermissionDecision::Refused(why) => Err(why.into()),
     }
-    let row = place.get().await.map_err(|error| {
-        tracing::error!(
-            error,
-            place_id = place.place_id(),
-            "places lookup failed while authorizing a ban listing"
-        );
-        service_unavailable(scene::PLACE_LOOKUP_UNAVAILABLE_MSG)
-    })?;
-    if let Some(row) = row
-        && scene::holds_extended_permission(state, row, signer).await?
-    {
-        return Ok(());
-    }
-    Err(unauthorized(
-        "User does not have permission to list scene bans",
-    ))
 }
 
 /// GET /scene-bans (scene signed): the banned wallets of the place with
@@ -489,7 +473,7 @@ pub async fn ban_user(
     let context = Context::resolve(&state, &sf.metadata).await?;
     context.check_selectors(&input)?;
     let place = &context.place;
-    scene::scene_owner_or_admin_decision(&state, place, &sf.signer)
+    scene::scene_manager_decision(&state, place, &sf.signer)
         .await
         .into_result()?;
     let target = target_address(&state, &input, "banned_address", Some("banned_name")).await?;
@@ -532,7 +516,7 @@ pub async fn unban_user(
     let context = Context::resolve(&state, &sf.metadata).await?;
     context.check_selectors(&input)?;
     let place = &context.place;
-    scene::scene_owner_or_admin_decision(&state, place, &sf.signer)
+    scene::scene_manager_decision(&state, place, &sf.signer)
         .await
         .into_result()?;
     let target = target_address(&state, &input, "banned_address", Some("banned_name")).await?;

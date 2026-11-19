@@ -62,7 +62,7 @@ export type Event = {
 export type EventCategory = {
   name: string;
   active: boolean;
-  i18n: { en: string | null };
+  i18n: { en: string | null } & Partial<Record<string, string | null>>;
 };
 
 export type EventAttendee = z.infer<typeof EventAttendeeRecordSchema>;
@@ -88,11 +88,13 @@ function parseEvents(raw: unknown[]): (Event | null)[] {
 }
 
 function toEventCategory(c: z.infer<typeof EventCategoryRecordSchema>): EventCategory {
-  const en = c.i18n["en"];
+  const labels = Object.fromEntries(
+    Object.entries(c.i18n).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
   return {
     name: c.name,
     active: c.active,
-    i18n: { en: typeof en === "string" ? en : null },
+    i18n: { ...labels, en: labels.en ?? null },
   };
 }
 
