@@ -51,7 +51,7 @@ fn panel(ui: ExplorerUi) -> Option<HudPanel> {
 
 /// How long after a player action a scene may still take an action that needs one: the window
 /// the wallet, clipboard and Explorer UI actions share.
-pub(crate) const USER_GESTURE_WINDOW_SECS: f64 = 1.0;
+const USER_GESTURE_WINDOW_SECS: f64 = 1.0;
 
 /// Whether a player action reached the scene within the window.
 pub(crate) fn recent_user_gesture(context: &RendererSceneContext, time: &Time) -> bool {

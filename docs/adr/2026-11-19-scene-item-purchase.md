@@ -27,12 +27,18 @@ A scene's item purchase reuses that path, in three parts with one owner each.
   to a collection contract and an item id (`urn:decentraland:{matic|amoy}:collections-v2:
   {contract}:{id}`, the id in the one spelling the Shop takes, without leading zeros), so nothing
   else from the scene reaches the HUD. One request is in flight at a time across all scenes; a
-  second is `WAS_ALREADY_OPEN`.
+  second is `WAS_ALREADY_OPEN`, refused before the permission is consulted so the player is never
+  prompted about a request that cannot open. A prompt answered after the player left the scene is
+  `REJECTED_NOT_CURRENT_SCENE`.
 - **The HUD owns availability.** The engine sends the request on a `SystemApi` stream and holds
   the scene's call until the HUD answers `accepted` or `unavailable`. The session answers on
   receipt. The engine sets no deadline on that answer: the HUD opens the confirmation as it
   accepts, so a request the engine gave up on could still be bought there with no result for the
   scene. An unanswered request ends only when no HUD is listening any more.
+  The engine sees the bridge scene's stream, not the HUD page, so the bridge scene keeps the
+  request in flight and settles it when a page says `hello` (it started late or reloaded): a
+  request no page answered is sent again, and one a previous page accepted is reported
+  `Dismissed`, because the page that followed its purchase is gone.
   A host that can buy gives the shared HUD a `purchaseSceneItem` function; the `/play` host does,
   inside the shell with the in-world Shop on. Every other host answers `unavailable`, which the
   scene receives as `REJECTED_FEATURE_DISABLED`.
@@ -64,4 +70,7 @@ The scene learns a verdict and nothing else: `Purchased`, `Dismissed` or `Failed
   to buy, and the scene reads `Failed` when it closes.
 - An item purchase shares the `OpenExplorerUi` permission with the menu pages; the purchase
   dialog is the confirmation, so there is no second permission type. The permission's description
-  names the purchase confirmation, and a prompt for it shows the urn the scene asked to sell.
+  names the purchase confirmation, and a prompt for it names the parsed item (its id and
+  collection), never text the scene wrote.
+- A shell that has not answered the HUD within 30 seconds (a slow first load) is `Dismissed`,
+  not `Failed`: it may still open the dialog once loaded.

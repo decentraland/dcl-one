@@ -1,7 +1,7 @@
 // A purchase a scene asked for (library/ui/apps/shop/scenePurchase): what the shell is asked, and what the
 // scene is told as the operation ends.
-import { describe, expect, it, vi } from 'vitest'
-import { purchaseSceneItem, sceneOutcome, type SceneShell } from '@dcl/one-ui/apps/shop/scenePurchase'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { BUY_TIMEOUT_MS, purchaseSceneItem, sceneOutcome, type SceneShell } from '@dcl/one-ui/apps/shop/scenePurchase'
 import { OPERATION_STATES, SHOP_EVENT, SHOP_METHODS } from '@dcl/one-ui/apps/shop/shopProtocol'
 
 const CONTRACT = '0x' + 'ab'.repeat(20)
@@ -31,6 +31,28 @@ function fakeShell(): { shell: SceneShell; answer: (value: unknown) => void; ref
 }
 
 describe('a purchase a scene asked for', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('is dismissed, claiming nothing, when the shell has not answered in time', async () => {
+    vi.useFakeTimers()
+    const s = fakeShell()
+    const outcome = purchaseSceneItem(ITEM, s.shell)
+    await vi.advanceTimersByTimeAsync(BUY_TIMEOUT_MS)
+    expect(await outcome).toBe('dismissed')
+    expect(s.listening()).toBe(0)
+  })
+
+  it('waits as long as the dialog is open once the shell has answered', async () => {
+    vi.useFakeTimers()
+    const s = fakeShell()
+    const outcome = purchaseSceneItem(ITEM, s.shell)
+    s.answer(operation('reviewing'))
+    await vi.advanceTimersByTimeAsync(BUY_TIMEOUT_MS * 10)
+    expect(s.listening()).toBe(1)
+    s.post(operation('failed'))
+    expect(await outcome).toBe('failed')
+  })
+
   it('tells the scene only a verdict', () => {
     expect(OPERATION_STATES.map((s) => [s, sceneOutcome(s)])).toEqual([
       ['reviewing', null],

@@ -1234,6 +1234,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const driverRef = useRef<LoginDriver | null>(null)
   const hostRef = useRef(host)
   hostRef.current = host
+  const lastItemPurchase = useRef<number | null>(null)
   const [status, setStatus] = useState<LoginStatus>('loading')
   // Same-domain SSO identity read from localStorage (null = no stored account).
   const [stored, setStored] = useState<StoredLogin | null>(null)
@@ -2645,7 +2646,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           setWorldPassword(null)
           break
         case 'itemPurchaseRequest':
-          // answered here, on receipt: the engine holds the scene's call until it is
+          // answered here, on receipt: the engine holds the scene's call until it is. The bridge
+          // sends an unanswered request again to a page that says hello; each is answered once.
+          if (lastItemPurchase.current === msg.id) break
+          lastItemPurchase.current = msg.id
           answerItemPurchase(msg, (id, state) => driverRef.current?.send({ kind: 'itemPurchaseState', id, state }), hostRef.current.purchaseSceneItem)
           break
         case 'platformBan':

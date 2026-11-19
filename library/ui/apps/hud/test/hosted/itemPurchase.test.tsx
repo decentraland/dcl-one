@@ -33,6 +33,18 @@ describe('item purchase domain', () => {
   })
 })
 
+describe('item purchase domain: a request sent again', () => {
+  it('is answered once', async () => {
+    const purchase = vi.fn<PurchaseSceneItem>(() => new Promise(() => {}))
+    const h = renderSession(undefined, new FakeDriver(), { purchaseSceneItem: purchase })
+    await enterAsGuest(h)
+    h.driver.emit(REQ)
+    h.driver.emit(REQ)
+    expect(purchase).toHaveBeenCalledTimes(1)
+    expect(reports(h.driver)).toEqual([{ kind: 'itemPurchaseState', id: 3, state: 'accepted' }])
+  })
+})
+
 describe('answering an item purchase request', () => {
   it('is unavailable where the host cannot buy, whatever the item', () => {
     const report = vi.fn()

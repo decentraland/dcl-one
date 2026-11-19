@@ -5949,6 +5949,10 @@
       "sha256": "49f3bbf60f79a4233d5df7260c26ad05c1d61ce32d330d3db17bab8eeadd2d5b"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/itemPurchase.ts",
+      "sha256": "99775104f822d3b93074c6ece4f7f0911e7308f845f316601a9a4d2bd1dfae14"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/marketplace.ts",
       "sha256": "0f03d1ecb090d06c1c0a1bb5d7939677d22aa9e0f1d4be67ffccbf81818b8807"
     },
@@ -6181,6 +6185,10 @@
       "sha256": "998ff96bef58169bb48e7ac9e6fbbff742a428c2d864488565b66d965696be84"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeItemPurchase.test.ts",
+      "sha256": "b57526c27e327c3875a51951991678a7d98f390b2bf3a2cfe600608e9cd3f231"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeNearbyMutes.test.ts",
       "sha256": "a9ed65f189907d37250eb611c61332c8b3cdd92fcf452d9889a9862ffb8a88c4"
     },
@@ -6342,7 +6350,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "3033c3e09124951dc88427c6bc37ec814845940de43426ba63c05c93d7a05cf8"
+      "sha256": "b34555c4bdc1c0863ee07c5a9471b3820376a7762727432781b22b20ee1098a7"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -6395,6 +6403,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeGifting.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeHashing.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeIdentity.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeItemPurchase.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeNearbyMutes.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeNotifications.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
@@ -10059,7 +10068,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "026394f0a61de99b70b87da04248295bc7827e804e53f62dc7d1e488d8e155cc"
+      "sha256": "cf5424630375df79eb82184d42d8ac2c5823481e5c0efb90a65fce5388a0894b"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10611,7 +10620,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/itemPurchase.test.tsx",
-      "sha256": "f6c9b5e67d8b5428f272dfd96ed5ceecf7161e83dd480926c4d453071bc2176e"
+      "sha256": "be649de87a276f2dc11b0f0c3da084a2ce15032e88e6784de9d35feb33abfe23"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",

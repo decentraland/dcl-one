@@ -426,6 +426,9 @@ the gates and parses the item; the HUD draws nothing of its own. Expectations:
 - **Answered on receipt.** The engine holds the scene's call, and every other scene's request,
   until the HUD says `accepted` or `unavailable`, with no deadline. The session answers in its
   message handler (`useEngineSession.ts`), never after a read, a render or an effect.
+- **A page that connects settles the request in flight** (`domains/itemPurchase.ts`): the bridge
+  sends a request no page answered again on `hello`, and reports one a previous page accepted
+  `dismissed`. The session answers a repeated request id once.
 - **Availability is the host's.** A host that can buy passes `purchaseSceneItem` to `HudApp`
   (`/play` in the web shell, with the in-world Shop on), which hands it to the session; without
   it every request is `unavailable`. This host passes none.
@@ -435,7 +438,7 @@ the gates and parses the item; the HUD draws nothing of its own. Expectations:
 - **The confirmation is the shell's** purchase dialog, over the HUD frame; there is no HUD page,
   popup or screenshot for this domain.
 - Tests: `library/ui/apps/hud/test/hosted/itemPurchase.test.tsx` (the session contract and the
-  answers above); `apps/ui3/src/play/test/scenePurchase.test.ts` (what the shell is asked and how
+  answers above); `src/test/bridgeItemPurchase.test.ts` (the relay and what `hello` settles); `apps/ui3/src/play/test/scenePurchase.test.ts` (what the shell is asked and how
   its operation's states map to the outcome); the engine's gates and request lifecycle in
   `crates/restricted_actions/src/item_purchase.rs`.
 

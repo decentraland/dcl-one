@@ -77,6 +77,10 @@ impl Plugin for ItemPurchasePlugin {
 /// The collection item a scene's urn names: `urn:decentraland:{matic|amoy}:collections-v2:
 /// {contract}:{item id}`, and nothing else. A token id, a third-party collection or trailing
 /// text is refused, so what reaches the HUD is only ever a contract address and a number.
+/// 2^256 - 1, the largest item id a collection can hold.
+const UINT256_MAX: &str =
+    "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+
 fn parse_item_urn(urn: &str) -> Option<ItemPurchaseItem> {
     let mut parts = urn.strip_prefix("urn:decentraland:")?.split(':');
     let (network, kind, contract, item_id) =
@@ -93,6 +97,8 @@ fn parse_item_urn(urn: &str) -> Option<ItemPurchaseItem> {
         || item_id.len() > 78
         || !item_id.bytes().all(|b| b.is_ascii_digit())
         || (item_id.len() > 1 && item_id.starts_with('0'))
+        // same length, so the decimal strings order as the numbers do
+        || (item_id.len() == UINT256_MAX.len() && item_id > UINT256_MAX)
     {
         return None;
     }
@@ -109,6 +115,8 @@ struct SceneRequest {
     scene_hash: String,
     /// the urn as the scene gave it, echoed in the result
     urn: String,
+    /// the collection item the urn names, if it names one
+    item: Option<ItemPurchaseItem>,
     request_id: u32,
 }
 
@@ -171,7 +179,7 @@ impl ItemPurchases {
         self.last_id = self.last_id.wrapping_add(1);
         let message = ItemPurchaseRequest {
             id: self.last_id,
-            item: parse_item_urn(&request.urn),
+            item: request.item.clone(),
         };
         for stream in &self.streams {
             let _ = stream.send(message.clone());
@@ -354,14 +362,24 @@ fn open_item_purchase(
             response.send(OpenExplorerUiResult::RejectedFeatureDisabled);
             continue;
         }
+        // refused before any prompt: the player is not asked about a request that cannot open
+        if purchases.active.is_some() {
+            response.send(OpenExplorerUiResult::WasAlreadyOpen);
+            continue;
+        }
+        let urn = urn.unwrap_or_default();
+        let item = parse_item_urn(&urn);
+        // a prompt names what the scene asked to sell, from the parsed item: never the scene's text
+        let asked = item
+            .as_ref()
+            .map(|item| format!("Buy item {} of collection {}", item.item_id, item.contract));
         let request = SceneRequest {
             scene,
             scene_hash: context.hash.to_string(),
-            urn: urn.unwrap_or_default(),
+            urn,
+            item,
             request_id,
         };
-        // a prompt names what the scene asked to sell
-        let asked = Some(format!("Buy {}", request.urn));
         perms.check(
             PermissionType::OpenExplorerUi,
             scene,
@@ -373,6 +391,15 @@ fn open_item_purchase(
     }
 
     for (request, response) in perms.drain_success(PermissionType::OpenExplorerUi) {
+        // a prompt can be answered after the player walked out of the scene
+        if !player
+            .single()
+            .is_ok_and(|p| containing_scene.get(p).contains(&request.scene))
+        {
+            response.send(OpenExplorerUiResult::RejectedNotCurrentScene);
+            continue;
+        }
+        // begin() refuses a request another one overtook while its prompt was up
         purchases.begin(request, response);
     }
 
@@ -499,6 +526,7 @@ mod tests {
             scene: Entity::from_raw(1),
             scene_hash: "hash".to_owned(),
             urn: urn.to_owned(),
+            item: parse_item_urn(urn),
             request_id: 9,
         }
     }
@@ -526,6 +554,8 @@ mod tests {
             })
         );
         assert!(parse_item_urn(&URN.replace("matic", "amoy")).is_some());
+        assert!(parse_item_urn(&URN.replace(":12", ":0")).is_some());
+        assert!(parse_item_urn(&URN.replace(":12", &format!(":{UINT256_MAX}"))).is_some());
         for bad in [
             "",
             "urn:item",
@@ -540,6 +570,12 @@ mod tests {
             &URN.replace(":12", ":"),
             &URN.replace(":12", ":1&first=2"),
             &URN.replace(":12", ":-1"),
+            // past the largest id a collection holds, at the same length
+            &URN.replace(":12", &format!(":{}", "9".repeat(78))),
+            &URN.replace(
+                ":12",
+                ":115792089237316195423570985008687907853269984665640564039457584007913129639936",
+            ),
             // one spelling of each id
             &URN.replace(":12", ":012"),
             &URN.replace(":12", ":00"),
