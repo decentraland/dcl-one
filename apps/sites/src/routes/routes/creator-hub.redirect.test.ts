@@ -9,10 +9,7 @@ describe("/creator-hub/* redirects to /create/*", () => {
   it.each([
     ["/creator-hub", "", "/create"],
     ["/creator-hub/", "", "/create"],
-    ["/creator-hub/manage?filter=unpublished", "manage", "/download/creator-hub"],
-    ["/creator-hub/scene-editor?new=1&from=home", "scene-editor", "/download/creator-hub"],
-    ["/creator-hub/activity/example.dcl.eth", "activity/example.dcl.eth", "/download/creator-hub"],
-    ["/creator-hub/land", "land", "/profile/me/assets"],
+    ["/creator-hub/scenes?sort=recent", "scenes", "/create/scenes?sort=recent"],
     ["/creator-hub/wearables?tab=published", "wearables", "/create/wearables?tab=published"],
     ["/creator-hub/multiplayer-test?x=1", "multiplayer-test", "/create/preview?x=1"],
   ])("%s -> %s", (path, splat, expected) => {

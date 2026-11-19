@@ -7,7 +7,7 @@ import type { Route } from "./+types/builder.create-scene";
 
 const STORY = "creator-integration-redirect-create-scene";
 const FROM = "/builder/create-scene";
-const TO = "/download/creator-hub";
+const TO = "/create";
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const session = requestSession(request, context);

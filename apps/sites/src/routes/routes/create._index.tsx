@@ -9,7 +9,7 @@ import { liveScenesQuery } from "@/data/lib/create-landing/live-scenes";
 import { heroDownloads, loadLatestRelease } from "@/data/lib/download/creator-hub.server";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import CreateLanding from "@/features/create-landing/CreateLanding";
-import { CREATOR_HUB_DOWNLOAD } from "@/features/lib/creator/retired-hub";
+import { CREATOR_HUB_DOWNLOAD } from "@/features/create-landing/HeroDownload";
 
 import type { Route } from "./+types/create._index";
 

@@ -23,14 +23,12 @@ The Creator Hub is the desktop app. Sites keeps, under `/create`:
 Every other web Creator Hub page is removed, with the code, data readers, telemetry events,
 public assets and APIs only it used (`/api/creator-hub/*`, `/api/screens/v1/create`).
 
-- **Old links.** `/create/<page>` and `/creator-hub/<page>` for a removed page answer a permanent
-  redirect: `land` and `names` to the account's assets (`/profile/me/assets`), every other page to
-  `/download/creator-hub`; the list of pages is `apps/sites/src/features/lib/creator/retired-hub.ts`.
-  Any other unknown `/create/*` path is a 404. `/create?projectUrl=`, the link `dcl-scene-cli start`
-  prints, goes to `/download/creator-hub`.
-- **Builder links.** `/builder/scenes`, `/builder/worlds`, `/builder/pool` and the scene editor go to
-  `/download/creator-hub`; `/builder/land` and `/builder/names` go to the account's assets
-  (`/profile/me/assets`), and `/builder/land/:id` to that LAND's Shop manage page.
+- **Old links.** A `/create/*` path with no page, a removed one included, redirects to the `/create`
+  landing; `/creator-hub/*` maps to the same `/create` path. `/create?projectUrl=`, the link
+  `dcl-scene-cli start` prints, goes to `/download/creator-hub`.
+- **Builder links.** `/builder/scenes`, `/builder/worlds`, `/builder/pool`, `/builder/create-scene`
+  and the scene editor go to `/create`; `/builder/land` and `/builder/names` go to the account's
+  assets (`/profile/me/assets`), and `/builder/land/:id` to that LAND's Shop manage page.
 - **Site links.** Links that sent people to build or publish a scene, or to manage a World, go to
   `/download/creator-hub`: the navigation's Publish LAND, the profile's Manage World, the Shop's
   LAND, rental and NAME pages and, outside the mobile app, the NAME purchase's "Use it for your
