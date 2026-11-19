@@ -821,12 +821,20 @@ pub(super) async fn transition_request(
     status: &str,
 ) -> Result<(), Refusal> {
     let mut tx = map_db(connection.begin().await)?;
-    map_db(
-        sqlx::query("SELECT id FROM social.communities WHERE id = $1 FOR UPDATE")
-            .bind(community)
-            .execute(&mut *tx)
-            .await,
+    // A deleted or suspended community settles no request.
+    let open: Option<bool> = map_db(
+        sqlx::query_scalar(
+            "SELECT active AND NOT suspended FROM social.communities WHERE id = $1 FOR UPDATE",
+        )
+        .bind(community)
+        .fetch_optional(&mut *tx)
+        .await,
     )?;
+    if open != Some(true) {
+        return Err(Box::new(
+            CommError::not_found(format!("Community not found: {community}")).into_response(),
+        ));
+    }
     let changed = map_db(
         sqlx::query("DELETE FROM social.community_requests WHERE id = $1 AND community_id = $2 AND status = 'pending'")
             .bind(request)

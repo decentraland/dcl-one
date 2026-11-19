@@ -155,13 +155,14 @@ pub async fn members_gate(
     .await
 }
 
-pub async fn is_private(pool: &PgPool, id: CommunityId) -> sqlx::Result<bool> {
-    let row: Option<bool> =
-        sqlx::query_scalar("SELECT private FROM social.communities WHERE id = $1 AND active")
-            .bind(id)
-            .fetch_optional(pool)
-            .await?;
-    Ok(row.unwrap_or(false))
+/// The community's privacy; `None` when it is missing, inactive or suspended.
+pub async fn is_private(pool: &PgPool, id: CommunityId) -> sqlx::Result<Option<bool>> {
+    sqlx::query_scalar(
+        "SELECT private FROM social.communities WHERE id = $1 AND active AND NOT suspended",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
 }
 
 pub(crate) async fn banned(pool: &PgPool, id: CommunityId, wallet: &Address) -> sqlx::Result<bool> {
