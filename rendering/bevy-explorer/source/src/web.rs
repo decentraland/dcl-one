@@ -17,7 +17,6 @@ use common::{
     },
     util::JsThread,
 };
-use dcl_wasm::init_runtime;
 use futures_lite::io::{AsyncReadExt, AsyncWriteExt};
 use input_manager::InputPriorities;
 use once_cell::sync::OnceCell;
@@ -574,7 +573,6 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
     // the shared launch options' globals (src/launch.rs) — before anything composes a backend url
     crate::launch::latch(&options.launch)
         .map_err(|e| JsValue::from_str(&format!("engine_run: {e}")))?;
-    init_runtime();
 
     let default_filter = "symphonia=warn";
     let filter = match std::option_env!("RUST_LOG") {
@@ -617,7 +615,12 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
     let decentraland_app_config = DecentralandAppConfig::new(
         decentraland_serialized_app_config(),
         decentraland_app_arguments(&options),
-        Some(WASM_ASSET_LOADER_HANDLE.get().unwrap().clone()),
+        Some(
+            WASM_ASSET_LOADER_HANDLE
+                .get()
+                .cloned()
+                .ok_or_else(|| JsValue::from_str("asset load thread not initialized"))?,
+        ),
         compute_threads as usize,
     );
 

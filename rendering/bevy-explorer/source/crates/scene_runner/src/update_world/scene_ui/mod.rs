@@ -9,7 +9,7 @@ use std::collections::{BTreeSet, VecDeque};
 
 use bevy::{
     math::{Affine2, FloatOrd, Mat2},
-    platform::collections::{HashMap, HashSet},
+    platform::collections::{hash_map::Entry, HashMap, HashSet},
     prelude::*,
     render::{render_resource::Extent3d, renderer::RenderCapabilities},
     transform::TransformSystem,
@@ -846,37 +846,36 @@ fn create_ui_roots(
             // first appearance: get-or-create the scene atlas, then spawn this canvas's
             // root as a fixed-size flex child of the atlas container
             None => {
-                if !atlases.0.contains_key(&container.root) {
-                    let (camera, image) =
-                        world_ui::spawn_world_ui_view(&mut commands, images, None);
-                    commands
-                        .entity(camera)
-                        .try_insert(CameraCursorPosition::default());
-                    let atlas_container = commands
-                        .spawn((
-                            Node {
-                                flex_direction: FlexDirection::Row,
-                                flex_wrap: FlexWrap::Wrap,
-                                align_items: AlignItems::FlexStart,
-                                align_content: AlignContent::FlexStart,
-                                width: Val::Px(CANVAS_ATLAS_WIDTH),
-                                ..Default::default()
-                            },
-                            UiTargetCamera(camera),
-                            DespawnWith(container.root),
-                        ))
-                        .id();
-                    atlases.0.insert(
-                        container.root,
-                        SceneCanvasAtlas {
+                let atlas = match atlases.0.entry(container.root) {
+                    Entry::Occupied(entry) => entry.into_mut(),
+                    Entry::Vacant(entry) => {
+                        let (camera, image) =
+                            world_ui::spawn_world_ui_view(&mut commands, images, None);
+                        commands
+                            .entity(camera)
+                            .try_insert(CameraCursorPosition::default());
+                        let atlas_container = commands
+                            .spawn((
+                                Node {
+                                    flex_direction: FlexDirection::Row,
+                                    flex_wrap: FlexWrap::Wrap,
+                                    align_items: AlignItems::FlexStart,
+                                    align_content: AlignContent::FlexStart,
+                                    width: Val::Px(CANVAS_ATLAS_WIDTH),
+                                    ..Default::default()
+                                },
+                                UiTargetCamera(camera),
+                                DespawnWith(container.root),
+                            ))
+                            .id();
+                        entry.insert(SceneCanvasAtlas {
                             camera,
                             container: atlas_container,
                             image,
                             size: UVec2::splat(16),
-                        },
-                    );
-                }
-                let atlas = atlases.0.get(&container.root).unwrap();
+                        })
+                    }
+                };
                 let camera = atlas.camera;
                 let image = atlas.image.clone();
                 let atlas_container = atlas.container;
@@ -965,11 +964,9 @@ fn update_canvas_atlas(
                 );
             }
             let new_size = req.min(max_size).max(current);
-            images
-                .get_mut(atlas.image.id())
-                .unwrap()
-                .texture_descriptor
-                .size = Extent3d {
+            #[allow(clippy::unwrap_used, reason = "the same lookup succeeded above")]
+            let image = images.get_mut(atlas.image.id()).unwrap();
+            image.texture_descriptor.size = Extent3d {
                 width: new_size.x,
                 height: new_size.y,
                 depth_or_array_layers: 1,
@@ -1311,6 +1308,7 @@ fn layout_scene_ui(
                 false
             };
 
+            #[allow(clippy::unwrap_used, reason = "both branches above insert `scene_id`")]
             let link = valid_nodes.get(&scene_id).unwrap();
 
             // update style

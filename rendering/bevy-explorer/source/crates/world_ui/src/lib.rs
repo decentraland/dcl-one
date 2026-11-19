@@ -278,6 +278,7 @@ pub fn update_worldui_materials(
         let bottomright = translation.xy() + node.size() / 2.0;
         let required_uvs = Vec4::new(topleft.x, topleft.y, bottomright.x, bottomright.y);
         if mat.extension.data.uvs != required_uvs {
+            #[allow(clippy::unwrap_used, reason = "the same lookup succeeded above")]
             let mat = mats.get_mut(ref_mat.0).unwrap();
             mat.extension.data.uvs = required_uvs;
             updated_aabbs.insert(ref_mat.0, world_ui_quad_aabb(&mat.extension.data));
@@ -322,7 +323,9 @@ pub fn update_worldui_materials(
                 }
                 let req_size = req_size.min(max_size).max(image.size());
                 debug!("resized to {}", req_size);
-                images.get_mut(id).unwrap().texture_descriptor.size = Extent3d {
+                #[allow(clippy::unwrap_used, reason = "the same lookup succeeded above")]
+                let image = images.get_mut(id).unwrap();
+                image.texture_descriptor.size = Extent3d {
                     width: req_size.x,
                     height: req_size.y,
                     depth_or_array_layers: 1,

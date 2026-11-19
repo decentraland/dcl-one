@@ -840,16 +840,24 @@ impl NodeProcessing<'_, '_> {
 
             // collect named nodes to push to scene on request
             if let Some(name) = maybe_name {
-                let mut name = name.to_string();
-                let mut ptr = parent.parent();
-                while ptr != bevy_scene_entity {
-                    let (maybe_name, _, parent, ..) = gltf_spawned_entities.get(ptr).unwrap();
-                    if let Some(parent_name) = maybe_name {
-                        name = format!("{parent_name}/{name}");
+                let full_name = 'path: {
+                    let mut name = name.to_string();
+                    let mut ptr = parent.parent();
+                    while ptr != bevy_scene_entity {
+                        let Ok((maybe_name, _, parent, ..)) = gltf_spawned_entities.get(ptr) else {
+                            error!("gltf node {ptr:?} is missing from the spawned hierarchy");
+                            break 'path None;
+                        };
+                        if let Some(parent_name) = maybe_name {
+                            name = format!("{parent_name}/{name}");
+                        }
+                        ptr = parent.parent();
                     }
-                    ptr = parent.parent();
+                    Some(name)
+                };
+                if let Some(name) = full_name {
+                    progress.named_nodes.insert(name, spawned_ent);
                 }
-                progress.named_nodes.insert(name, spawned_ent);
             }
 
             // children of root nodes -> rotate
@@ -951,6 +959,7 @@ impl NodeProcessing<'_, '_> {
                 (h_mesh, cached_data.clone())
             } else {
                 // fix up the mesh
+                #[allow(clippy::unwrap_used, reason = "the same lookup succeeded above")]
                 let mesh_data = meshes.get_mut(h_gltf_mesh.0.id()).unwrap();
                 mesh_data.normalize_joint_weights();
 
@@ -2232,33 +2241,36 @@ fn expose_gltfs(
                     // copy
                     commands.entity(ent).try_insert(material.clone());
                     // set base
-                    let base = mats.get(material.id()).unwrap();
-                    if base.base.unlit {
-                        commands.entity(ent).try_insert(NotShadowCaster);
-                    } else {
-                        commands.entity(ent).try_remove::<NotShadowCaster>();
-                    }
-                    commands.entity(ent).try_insert(BaseMaterial {
-                        material: base.base.clone(),
-                        gltf: src.to_owned(),
-                        name: maybe_mat_name.unwrap().0.clone(),
-                    });
+                    if let Some(base) = mats.get(material.id()) {
+                        if base.base.unlit {
+                            commands.entity(ent).try_insert(NotShadowCaster);
+                        } else {
+                            commands.entity(ent).try_remove::<NotShadowCaster>();
+                        }
+                        commands.entity(ent).try_insert(BaseMaterial {
+                            material: base.base.clone(),
+                            gltf: src.to_owned(),
+                            name: maybe_mat_name.unwrap().0.clone(),
+                        });
 
-                    // write to scene
-                    scene.update_crdt(
-                        SceneComponentId::MATERIAL,
-                        CrdtType::LWW_ANY,
-                        scene_ent.id,
-                        &PbMaterial {
-                            material: Some(dcl_material_from_standard_material(
-                                &base.base, &images,
-                            )),
-                            gltf: maybe_mat_name.map(|name| pb_material::GltfMaterial {
-                                gltf_src: src.to_owned(),
-                                name: name.0.clone(),
-                            }),
-                        },
-                    );
+                        // write to scene
+                        scene.update_crdt(
+                            SceneComponentId::MATERIAL,
+                            CrdtType::LWW_ANY,
+                            scene_ent.id,
+                            &PbMaterial {
+                                material: Some(dcl_material_from_standard_material(
+                                    &base.base, &images,
+                                )),
+                                gltf: maybe_mat_name.map(|name| pb_material::GltfMaterial {
+                                    gltf_src: src.to_owned(),
+                                    name: name.0.clone(),
+                                }),
+                            },
+                        );
+                    } else {
+                        error!("gltf material of {src} is missing");
+                    }
                 }
 
                 if let Some(point) = maybe_point {
@@ -2551,7 +2563,7 @@ fn update_gltf_linked_transforms(
                         None
                     }
                     MoveState::Scene => {
-                        let parents = &stored_transforms_and_parents.get(&gltf_ent).unwrap().1;
+                        let (_, parents) = stored_transforms_and_parents.get(&gltf_ent)?;
                         for parent in parents.iter() {
                             if node_movement_state.get(parent).is_some() {
                                 // retain till all parents are processed
@@ -2590,8 +2602,9 @@ fn update_gltf_linked_transforms(
                         ) else {
                             return None;
                         };
-                        stored_transforms_and_parents.get_mut(&gltf_ent).unwrap().0 =
-                            gltf_root_relative;
+                        if let Some(stored) = stored_transforms_and_parents.get_mut(&gltf_ent) {
+                            stored.0 = gltf_root_relative;
+                        }
                         None
                     }
                 }

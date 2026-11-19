@@ -52,9 +52,8 @@ fn main() {
         return;
     }
 
-    decentraland_log_file();
     create_logs_folder();
-    create_log_files();
+    create_log_files(session_log());
 
     let decentraland_app = DecentralandApp::new(LogPlugin {
         filter: "wgpu=error,naga=error,bevy_animation=error,matrix=error,symphonia=warn"
@@ -62,10 +61,7 @@ fn main() {
         custom_layer: move |_| {
             // appending, as `startup_error` does, so neither writes over the other's lines
             let (non_blocking, guard) = tracing_appender::non_blocking(
-                File::options()
-                    .append(true)
-                    .open(SESSION_LOG.get().unwrap())
-                    .unwrap(),
+                File::options().append(true).open(session_log()).unwrap(),
             );
             Box::leak(guard.into());
             let layer = bevy::log::tracing_subscriber::fmt::layer()
@@ -316,41 +312,40 @@ fn create_logs_folder() {
     std::fs::create_dir_all(log_dir).unwrap();
 }
 
-fn create_log_files() {
-    File::create(SESSION_LOG.get().unwrap())
+fn create_log_files(session_log: &str) {
+    File::create(session_log)
         .expect("failed to create log file")
-        .write_all(format!("{}\n\n", SESSION_LOG.get().unwrap()).as_bytes())
+        .write_all(format!("{session_log}\n\n").as_bytes())
         .expect("failed to create log file");
 
     File::create(crash_marker()).unwrap();
-    println!("log file: {}", SESSION_LOG.get().unwrap());
+    println!("log file: {session_log}");
 }
 
-/// Generate the file name for the log files of current instance
-/// and saves it to [`SESSION_LOG`]
-fn decentraland_log_file() {
-    let log_dir = data_local_dir();
-    let session_time: chrono::DateTime<chrono::Utc> = chrono::DateTime::from_timestamp_millis(
-        web_time::SystemTime::now()
-            .duration_since(web_time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64,
-    )
-    .unwrap();
-    let session_log = log_dir.join(format!("{}.log", session_time.format("%Y%m%d-%H%M%S")));
-    SESSION_LOG
-        .set(session_log.to_string_lossy().into_owned())
+/// This run's log file, named from the time of the first call and kept in [`SESSION_LOG`].
+fn session_log() -> &'static str {
+    SESSION_LOG.get_or_init(|| {
+        let log_dir = data_local_dir();
+        let session_time: chrono::DateTime<chrono::Utc> = chrono::DateTime::from_timestamp_millis(
+            web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64,
+        )
         .unwrap();
+        let session_log = log_dir.join(format!("{}.log", session_time.format("%Y%m%d-%H%M%S")));
+        session_log.to_string_lossy().into_owned()
+    })
 }
 
 /// This run's crash marker: created with the log, removed on a graceful exit.
 fn crash_marker() -> PathBuf {
-    crash_report::marker_of(Path::new(SESSION_LOG.get().unwrap()))
+    crash_report::marker_of(Path::new(session_log()))
 }
 
 /// The log of an earlier run that left its crash marker behind.
 fn decentraland_crash_file() -> Option<PathBuf> {
-    crash_report::crashed_log(&data_local_dir(), Path::new(SESSION_LOG.get().unwrap()))
+    crash_report::crashed_log(&data_local_dir(), Path::new(session_log()))
 }
 
 /// A launch that stopped before the app ran, carrying the process exit status: 0 when the user

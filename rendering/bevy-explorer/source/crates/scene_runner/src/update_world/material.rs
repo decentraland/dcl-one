@@ -886,6 +886,7 @@ fn update_loading_materials(
             State::Ok => true,
             State::Pending => false,
             State::Failed => {
+                #[allow(clippy::unwrap_used, reason = "the same lookup succeeded above")]
                 let mat = mats.get_mut(h_mat).unwrap();
 
                 for item in [

@@ -274,11 +274,9 @@ fn update_booth_image(
             continue;
         };
         if image.size() != node_size.as_uvec2() {
-            images
-                .get_mut(h_image.image.id())
-                .unwrap()
-                .texture_descriptor
-                .size = Extent3d {
+            #[allow(clippy::unwrap_used, reason = "the same lookup succeeded above")]
+            let image = images.get_mut(h_image.image.id()).unwrap();
+            image.texture_descriptor.size = Extent3d {
                 width: (node_size.x as u32).max(16),
                 height: (node_size.y as u32).max(16),
                 ..Default::default()

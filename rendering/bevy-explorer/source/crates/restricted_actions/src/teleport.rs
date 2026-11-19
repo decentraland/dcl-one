@@ -183,7 +183,9 @@ pub fn handle_out_of_world(
         return;
     };
 
-    let (maybe_context, maybe_loadstate, maybe_collider_data) = scenes.get_mut(*scene).unwrap();
+    let Ok((maybe_context, maybe_loadstate, maybe_collider_data)) = scenes.get_mut(*scene) else {
+        return;
+    };
 
     // A failed load is terminal, with or without a context: a scene whose main js could not be
     // fetched has one and never ticks past its spawn tick.

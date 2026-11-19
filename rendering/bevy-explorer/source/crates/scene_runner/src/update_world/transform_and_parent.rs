@@ -408,12 +408,13 @@ pub fn parent_position_sync<T: ParentPositionSyncStage>(
         let maybe_override_visibility = if maybe_explicit_visibility.is_some() {
             None
         } else {
-            let inherited_visibility = inherited_visibility.get(sync.sync_to).unwrap();
-
-            Some(match inherited_visibility.get() {
-                true => Visibility::Visible,
-                false => Visibility::Hidden,
-            })
+            inherited_visibility
+                .get(sync.sync_to)
+                .ok()
+                .map(|inherited_visibility| match inherited_visibility.get() {
+                    true => Visibility::Visible,
+                    false => Visibility::Hidden,
+                })
         };
 
         commands

@@ -201,10 +201,9 @@ pub fn update_camera_mode_area(
     }
     current_permissions.retain(|scene, _| scenes.contains(scene));
 
-    if let Some(area_or_virtual) = area_or_virtual {
-        let (bevy_ent, scene_ent, maybe_area, _, maybe_virtual) =
-            areas.get(area_or_virtual).unwrap();
-
+    if let Some((bevy_ent, scene_ent, maybe_area, _, maybe_virtual)) =
+        area_or_virtual.and_then(|entity| areas.get(entity).ok())
+    {
         let permitted = match current_permissions.entry(scene_ent.root) {
             Entry::Occupied(occupied_entry) => {
                 occupied_entry.get() == &PermissionState::Resolved(true)

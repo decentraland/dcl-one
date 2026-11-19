@@ -638,6 +638,7 @@ fn clean_images(
             continue;
         };
         if image.asset_usage.intersects(RenderAssetUsages::MAIN_WORLD) {
+            #[allow(clippy::unwrap_used, reason = "the same lookup succeeded above")]
             let image = images.get_mut(id).unwrap();
             image.asset_usage = RenderAssetUsages::RENDER_WORLD;
         }
@@ -658,6 +659,7 @@ fn clean_images(
                 continue;
             };
             if image.asset_usage.intersects(RenderAssetUsages::MAIN_WORLD) {
+                #[allow(clippy::unwrap_used, reason = "the same lookup succeeded above")]
                 let image = images.get_mut(*id).unwrap();
                 image.asset_usage = RenderAssetUsages::RENDER_WORLD;
             }

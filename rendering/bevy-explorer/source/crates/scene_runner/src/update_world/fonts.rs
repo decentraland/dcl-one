@@ -66,6 +66,12 @@ pub struct FamilyKey {
     src: String,
 }
 
+impl From<&FamilyKey> for FamilyKey {
+    fn from(key: &FamilyKey) -> Self {
+        key.clone()
+    }
+}
+
 impl FamilyKey {
     pub fn scene(&self) -> Entity {
         self.scene
@@ -296,26 +302,22 @@ impl SceneFontServer<'_, '_> {
             } => (key, scene_hash, *fallback),
         };
 
-        if !self.families.families.contains_key(key) {
-            let stage = match self.ipfas.load_content_file::<Font>(&key.src, scene_hash) {
+        let ipfas = &self.ipfas;
+        let family = self.families.families.entry_ref(key).or_insert_with(|| {
+            let stage = match ipfas.load_content_file::<Font>(&key.src, scene_hash) {
                 Ok(handle) => Stage::ContentFile(handle),
                 Err(e) => {
                     warn!("font `{}` failed to load: {e}", key.src);
                     Stage::Failed
                 }
             };
-            self.families.families.insert(
-                key.clone(),
-                SceneFontFamily {
-                    fallback,
-                    stage,
-                    slots: HashMap::default(),
-                    metrics: None,
-                },
-            );
-        }
-
-        let family = self.families.families.get_mut(key).unwrap();
+            SceneFontFamily {
+                fallback,
+                stage,
+                slots: HashMap::default(),
+                metrics: None,
+            }
+        });
         if let Some(slot) = family.slots.get(&weight) {
             return slot.handle.clone();
         }
@@ -445,8 +447,13 @@ fn update_scene_fonts(mut fonts: SceneFontServer, scenes: Query<(), With<Rendere
             Stage::ContentFile(handle) => match ipfas.load_state(handle.id()) {
                 LoadState::Loaded => {
                     debug!("font `{}` loaded as a scene file", key.src);
-                    let font = assets.get(handle.id()).unwrap().clone();
-                    family.stage = Stage::Single(font);
+                    family.stage = match assets.get(handle.id()) {
+                        Some(font) => Stage::Single(font.clone()),
+                        None => {
+                            error!("font `{}` loaded but is missing from assets", key.src);
+                            Stage::Failed
+                        }
+                    };
                 }
                 LoadState::Failed(_) => match fontsource_id(&key.src) {
                     Some(id) => {
@@ -532,6 +539,10 @@ fn update_scene_fonts(mut fonts: SceneFontServer, scenes: Query<(), With<Rendere
             let Some(font) = font else {
                 continue;
             };
+            #[allow(
+                clippy::unwrap_used,
+                reason = "`landed` holds only weights read from `family.slots`"
+            )]
             let slot = family.slots.get_mut(&weight).unwrap();
             assets.insert(slot.handle.id(), font);
             slot.source = SlotSource::Done;

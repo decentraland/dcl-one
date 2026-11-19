@@ -236,8 +236,9 @@ fn decode(bytes: &[u8]) -> Result<ToEngine, rmp_serde::decode::Error> {
 #[wasm_bindgen]
 pub fn relay_init() -> u32 {
     let Some(data) = SCENE_QUEUE
-        .get()
-        .and_then(|queue| queue.try_lock().ok().and_then(|mut queue| queue.pop()))
+        .try_lock()
+        .ok()
+        .and_then(|mut queue| queue.pop())
     else {
         return 0;
     };

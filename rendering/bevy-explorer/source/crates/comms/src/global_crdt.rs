@@ -929,7 +929,13 @@ pub fn process_transport_updates(
                         {
                             (*entity, *scene_id, channel.clone())
                         } else if let Some(existing) = state.lookup.get_by_left(&update.address) {
-                            let mut foreign_player = players.get_mut(*existing).unwrap();
+                            let Ok(mut foreign_player) = players.get_mut(*existing) else {
+                                bevy::log::error_once!(
+                                    "player lookup for {} points at missing {existing:?}",
+                                    update.address
+                                );
+                                continue;
+                            };
                             foreign_player.transports.insert(update.transport_id);
                             (
                                 *existing,
@@ -1593,6 +1599,10 @@ fn handle_foreign_audio(
         } else if source.current_transport.is_none() {
             // request a new source
             if let Some(entity) = source.available_transports.iter().next() {
+                #[allow(
+                    clippy::unwrap_used,
+                    reason = "`available_transports` is retained against `transports` above"
+                )]
                 let control = transports.get(entity).unwrap();
                 let (sx, rx) = oneshot::channel();
                 if let Ok(()) = control.try_send(ChannelControl::VoiceSubscribe(player.address, sx))

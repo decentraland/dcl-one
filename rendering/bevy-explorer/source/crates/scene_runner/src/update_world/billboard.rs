@@ -134,7 +134,10 @@ pub(crate) fn update_billboards(
             target_global_transform.to_scale_rotation_translation();
 
         // get reference frame
-        let frame = global_transforms.get(parent.parent()).unwrap();
+        let Ok(frame) = global_transforms.get(parent.parent()) else {
+            bevy::log::error_once!("billboard parent has no GlobalTransform");
+            continue;
+        };
 
         // use global frame of reference
         let (g_scale, g_rotation, g_translation) = global_transform.to_scale_rotation_translation();

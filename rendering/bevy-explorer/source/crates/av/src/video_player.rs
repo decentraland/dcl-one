@@ -423,18 +423,21 @@ fn play_videos(
                     length,
                 })) => {
                     debug!("resize");
-                    let image = images.get_mut(&video.image).unwrap();
                     let target_extent = Extent3d {
                         width: width.max(16),
                         height: height.max(16),
                         depth_or_array_layers: 1,
                     };
-                    if image.texture_descriptor.size != target_extent {
-                        debug!("resize {target_extent:?}");
-                        image.data = None;
-                        image.texture_descriptor.size = target_extent;
-                        image.transfer_priority = RenderAssetTransferPriority::Immediate;
-                        video.resized = true;
+                    match images.get_mut(&video.image) {
+                        Some(image) if image.texture_descriptor.size != target_extent => {
+                            debug!("resize {target_extent:?}");
+                            image.data = None;
+                            image.texture_descriptor.size = target_extent;
+                            image.transfer_priority = RenderAssetTransferPriority::Immediate;
+                            video.resized = true;
+                        }
+                        Some(_) => (),
+                        None => bevy::log::error_once!("video image is missing"),
                     }
                     video.length = Some(length);
                     *sink_rate = Some(rate);
@@ -452,16 +455,17 @@ fn play_videos(
 
             // no pixels: the render world copied the frame into the gpu image itself
             if let Some(pixels) = frame.data() {
-                let image = images.get_mut(&video.image).unwrap();
-
-                match &mut image.data {
-                    Some(data) => {
-                        data.copy_from_slice(pixels);
-                        image.transfer_priority = RenderAssetTransferPriority::Priority(-2);
-                    }
-                    None => {
-                        image.data = Some(pixels.to_owned());
-                    }
+                match images.get_mut(&video.image) {
+                    Some(image) => match &mut image.data {
+                        Some(data) => {
+                            data.copy_from_slice(pixels);
+                            image.transfer_priority = RenderAssetTransferPriority::Priority(-2);
+                        }
+                        None => {
+                            image.data = Some(pixels.to_owned());
+                        }
+                    },
+                    None => bevy::log::error_once!("video image is missing"),
                 }
             }
             if video.resized {

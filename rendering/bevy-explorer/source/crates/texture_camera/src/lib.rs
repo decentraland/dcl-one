@@ -255,9 +255,13 @@ fn update_texture_cameras(
 
             let image = match maybe_existing_image {
                 Some(existing) => {
-                    let prev = images.get_mut(existing.0.id()).unwrap();
-                    if prev.texture_descriptor.size != image_size {
-                        prev.texture_descriptor.size = image_size;
+                    match images.get_mut(existing.0.id()) {
+                        Some(prev) => {
+                            if prev.texture_descriptor.size != image_size {
+                                prev.texture_descriptor.size = image_size;
+                            }
+                        }
+                        None => bevy::log::error_once!("texture camera image is missing"),
                     }
                     existing.0.clone()
                 }

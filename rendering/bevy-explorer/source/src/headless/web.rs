@@ -12,7 +12,6 @@ use bevy::{
     web_worker::WorkerSpec,
 };
 use common::structs::IVec2Arg;
-use dcl_wasm::init_runtime;
 use system_api_types::launch_options::LaunchOptions;
 use wallet::Wallet;
 use wasm_bindgen::{prelude::*, JsCast};
@@ -91,7 +90,6 @@ pub fn headless_run(options: JsValue) -> Result<(), JsValue> {
         None => IVec2::ZERO,
     };
     common::structs::set_server_mode();
-    init_runtime();
 
     let config = super::config(&realm, location, TICK_HZ, SCENE_THREADS, true);
 

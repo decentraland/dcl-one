@@ -48,6 +48,7 @@ pub fn start(port: u16) -> Result<SocketAddr> {
     let addr = listener.local_addr()?;
     let listener = TcpListener::from(listener);
     let (events, _) = broadcast::channel(EVENT_CAPACITY);
+    let inspector_events = events.clone();
     REPORTER
         .set(Reporter {
             started: Instant::now(),
@@ -58,9 +59,10 @@ pub fn start(port: u16) -> Result<SocketAddr> {
         let connections = Arc::new(Semaphore::new(8));
         while let Ok((stream, _)) = listener.accept().await {
             if let Ok(permit) = connections.clone().try_acquire_owned() {
+                let events = inspector_events.clone();
                 task::spawn(async move {
                     let _permit = permit;
-                    let _ = serve(stream, addr).await;
+                    let _ = serve(stream, addr, events).await;
                 });
             }
         }
@@ -84,7 +86,11 @@ async fn read_request(stream: &mut TcpStream) -> Result<(Request, Vec<u8>)> {
     bail!("Incomplete or oversized inspector handshake")
 }
 
-async fn serve(mut stream: TcpStream, addr: SocketAddr) -> Result<()> {
+async fn serve(
+    mut stream: TcpStream,
+    addr: SocketAddr,
+    events: broadcast::Sender<String>,
+) -> Result<()> {
     let (request, pending) = timeout(IO_TIMEOUT, read_request(&mut stream)).await??;
     let headers = request.headers();
     let hosts = headers.get_all("host");
@@ -120,7 +126,7 @@ async fn serve(mut stream: TcpStream, addr: SocketAddr) -> Result<()> {
         };
         let socket =
             WebSocketStream::from_partially_read(stream, pending, Role::Server, Some(limits)).await;
-        inspect(socket).await?;
+        inspect(socket, events).await?;
     } else {
         let ws = format!("ws://{addr}{TARGET}");
         let body = match path {
@@ -150,7 +156,10 @@ async fn next_event(receiver: &mut Option<broadcast::Receiver<String>>) -> Resul
     }
 }
 
-async fn inspect(mut socket: WebSocketStream<TcpStream>) -> Result<()> {
+async fn inspect(
+    mut socket: WebSocketStream<TcpStream>,
+    events: broadcast::Sender<String>,
+) -> Result<()> {
     let mut receiver = None;
     loop {
         let reply = tokio::select! {
@@ -166,7 +175,7 @@ async fn inspect(mut socket: WebSocketStream<TcpStream>) -> Result<()> {
                 let Some(id) = command["id"].as_u64() else { continue };
                 match command["method"].as_str() {
                     Some("Network.enable") => {
-                        receiver.get_or_insert_with(|| REPORTER.get().unwrap().events.subscribe());
+                        receiver.get_or_insert_with(|| events.subscribe());
                         json!({"id":id,"result":{}})
                     },
                     Some("Network.disable") => {

@@ -347,8 +347,7 @@ export function applyOptionsToUrlParams(urlParams, options) {
  * unknown key makes engine_run throw.
  */
 export function start(options = {}) {
-  // Launch at most once per page: a second engine_run re-runs init_runtime, whose OnceCell is
-  // already set, and panics ("can't init wasm queue"). One engine per page — ignore re-entry.
+  // One engine per page: a second call is ignored.
   if (window.__bevyStarted) {
     console.warn('[engine] start() ignored — the engine is already running');
     return;

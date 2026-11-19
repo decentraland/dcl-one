@@ -633,26 +633,27 @@ fn update_scrollables(
             bounds.border_size = Val::Px(bar_width * 0.25);
 
             // re-paginate content
-            let mut style = nodes.get_mut(info.content).unwrap().1;
-            let offset = info.slide_amount * -slider.position;
-            if slider.vertical {
-                style.top = Val::Px(offset.y.floor());
-                let position = slider.position;
-                commands
-                    .entity(slider.parent)
-                    .try_insert(DataChanged)
-                    .modify_component(move |pos: &mut ScrollPosition| {
-                        pos.v = position;
-                    });
-            } else {
-                style.left = Val::Px(offset.x.floor());
-                let position = slider.position;
-                commands
-                    .entity(slider.parent)
-                    .try_insert(DataChanged)
-                    .modify_component(move |pos: &mut ScrollPosition| {
-                        pos.h = position;
-                    });
+            if let Ok((_, mut style, _)) = nodes.get_mut(info.content) {
+                let offset = info.slide_amount * -slider.position;
+                if slider.vertical {
+                    style.top = Val::Px(offset.y.floor());
+                    let position = slider.position;
+                    commands
+                        .entity(slider.parent)
+                        .try_insert(DataChanged)
+                        .modify_component(move |pos: &mut ScrollPosition| {
+                            pos.v = position;
+                        });
+                } else {
+                    style.left = Val::Px(offset.x.floor());
+                    let position = slider.position;
+                    commands
+                        .entity(slider.parent)
+                        .try_insert(DataChanged)
+                        .modify_component(move |pos: &mut ScrollPosition| {
+                            pos.h = position;
+                        });
+                }
             }
         }
 
@@ -807,7 +808,9 @@ fn update_scrollables(
 
         commands.entity(entity).try_push_children(&children);
 
-        let mut style = nodes.get_mut(info.content).unwrap().1;
+        let Ok((_, mut style, _)) = nodes.get_mut(info.content) else {
+            return;
+        };
         let offset = info.slide_amount * -position;
         if vertical {
             style.top = Val::Px(offset.y.floor());

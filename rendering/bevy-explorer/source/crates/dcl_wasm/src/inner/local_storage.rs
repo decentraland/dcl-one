@@ -1,4 +1,4 @@
-use super::{gotham_state::GothamState, WasmError, WorkerContext};
+use super::{WasmError, WorkerContext};
 use bevy::{
     log::{debug, warn},
     platform::collections::HashMap,
@@ -21,7 +21,7 @@ use web_sys::{
 // TODO: init / store
 
 #[derive(Default, Serialize, Deserialize, Clone)]
-struct LocalStorage(HashMap<String, String>);
+pub(crate) struct LocalStorage(HashMap<String, String>);
 
 const STORAGE_DIR: &str = "scene_storage";
 const STORAGE_FILE: &str = "data";
@@ -109,7 +109,7 @@ async fn store(data: &str) -> Result<(), JsValue> {
 
 // Opens the player's file and loads what it holds. FILE is set last: the ops raise until it is.
 async fn load(
-    state: Weak<RefCell<GothamState>>,
+    local_storage: Weak<RefCell<LocalStorage>>,
     scene_dir: FileSystemDirectoryHandle,
     address: String,
 ) {
@@ -124,8 +124,8 @@ async fn load(
     match read(&file).await {
         Ok(Some(buf)) => match serde_json::from_str::<LocalStorage>(&buf) {
             Ok(storage) => {
-                if let Some(state) = state.upgrade() {
-                    state.borrow_mut().put(storage);
+                if let Some(local_storage) = local_storage.upgrade() {
+                    *local_storage.borrow_mut() = storage;
                 }
             }
             Err(_) => warn!("failed to deserialize storage"),
@@ -162,13 +162,13 @@ pub async fn init(state: &WorkerContext) {
 
     let address = storage_address(&*state.state.borrow());
     match address {
-        Ok(address) => load(Rc::downgrade(&state.state), scene_dir, address).await,
+        Ok(address) => load(Rc::downgrade(&state.local_storage), scene_dir, address).await,
         Err(_) => SCENE_DIR.with(|slot| *slot.borrow_mut() = Some(scene_dir)),
     }
 }
 
 fn write(state: &WorkerContext) {
-    let storage = state.state.borrow().borrow::<LocalStorage>().clone();
+    let storage = state.local_storage.borrow().clone();
 
     spawn_local(async move {
         let Ok(data) = serde_json::to_string(&storage) else {
@@ -198,7 +198,11 @@ fn address(state: &WorkerContext) -> Result<String, WasmError> {
         None => {
             // the player signed in after the scene started: open their file, for a later call
             if let Some(scene_dir) = SCENE_DIR.with(|slot| slot.borrow_mut().take()) {
-                spawn_local(load(Rc::downgrade(&state.state), scene_dir, address));
+                spawn_local(load(
+                    Rc::downgrade(&state.local_storage),
+                    scene_dir,
+                    address,
+                ));
             }
             Err(
                 anyhow::anyhow!("localStorage is not available: the player's storage is not open")
@@ -213,11 +217,7 @@ fn strip_prefix(key: &mut String) {
 }
 
 fn with_storage<R>(state: &WorkerContext, f: impl Fn(&mut HashMap<String, String>) -> R) -> R {
-    f(&mut state
-        .state
-        .borrow_mut()
-        .borrow_mut_or_default::<LocalStorage>()
-        .0)
+    f(&mut state.local_storage.borrow_mut().0)
 }
 
 // returns filtered keys matching current user, including the prefix

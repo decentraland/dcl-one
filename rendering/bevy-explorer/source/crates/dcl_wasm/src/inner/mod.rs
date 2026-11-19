@@ -15,7 +15,7 @@ use dcl_types::{
     RendererResponse, SceneElapsedTime, SceneResponseSender,
 };
 use gotham_state::GothamState;
-use once_cell::sync::OnceCell;
+use once_cell::sync::Lazy;
 use system_bridge::SystemApi;
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
@@ -45,22 +45,15 @@ pub struct SceneInitializationData {
 // Scenes waiting for a worker. Each wasm instance has its own copy: in engine memory the engine
 // pushes and a sandbox worker's relay (relay.rs) pops; in a scene runtime's memory the runtime
 // queues the scene the relay handed it, for `wasm_init_scene`.
-static SCENE_QUEUE: OnceCell<Arc<Mutex<Vec<SceneInitializationData>>>> = OnceCell::new();
-
-pub fn init_runtime() {
-    if SCENE_QUEUE.set(Default::default()).is_err() {
-        panic!("can't init wasm queue");
-    }
-}
+static SCENE_QUEUE: Lazy<Arc<Mutex<Vec<SceneInitializationData>>>> = Lazy::new(Default::default);
 
 /// The scene runtime (crates/dcl_scene_wasm) queues the scene the relay handed it, for
 /// `wasm_init_scene` to pick up.
 pub fn queue_scene(data: SceneInitializationData) -> bool {
     SCENE_QUEUE
-        .get()
-        .and_then(|queue| queue.try_lock().ok())
+        .try_lock()
         .map(|mut queue| queue.push(data))
-        .is_some()
+        .is_ok()
 }
 
 pub fn spawn_scene(
@@ -89,25 +82,20 @@ pub fn spawn_scene(
     IoTaskPool::get()
         .spawn(async move {
             // push data to static vec
-            SCENE_QUEUE
-                .get()
-                .unwrap()
-                .lock()
-                .await
-                .push(SceneInitializationData {
-                    initial_crdt_store,
-                    scene_context,
-                    thread_rx,
-                    scene_js,
-                    crdt_component_interfaces,
-                    renderer_sender,
-                    global_update_receiver,
-                    storage_root,
-                    super_user,
-                    scene_origin,
-                    kill_flag: kill_flag.clone(),
-                    ipc_close: ipc_close.clone(),
-                });
+            SCENE_QUEUE.lock().await.push(SceneInitializationData {
+                initial_crdt_store,
+                scene_context,
+                thread_rx,
+                scene_js,
+                crdt_component_interfaces,
+                renderer_sender,
+                global_update_receiver,
+                storage_root,
+                super_user,
+                scene_origin,
+                kill_flag: kill_flag.clone(),
+                ipc_close: ipc_close.clone(),
+            });
 
             // spin up a scene thread to consume it
             spawn_and_init_sandbox().await;
@@ -142,14 +130,13 @@ extern "C" {
 #[wasm_bindgen]
 pub async fn wasm_init_scene() -> Result<WorkerContext, JsValue> {
     let scene_initialization_data: SceneInitializationData = SCENE_QUEUE
-        .get()
-        .expect("scene queue not initialized")
         .lock()
         .await
         .pop()
-        .unwrap();
+        .ok_or_else(|| JsValue::from_str("no scene is queued"))?;
     let context = WorkerContext {
         state: Default::default(),
+        local_storage: Default::default(),
     };
 
     dcl_js::init_state(
@@ -177,6 +164,7 @@ pub async fn wasm_init_scene() -> Result<WorkerContext, JsValue> {
 #[wasm_bindgen]
 pub struct WorkerContext {
     state: Rc<RefCell<GothamState>>,
+    local_storage: Rc<RefCell<local_storage::LocalStorage>>,
 }
 
 #[wasm_bindgen]

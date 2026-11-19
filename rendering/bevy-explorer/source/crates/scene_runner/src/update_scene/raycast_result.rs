@@ -529,7 +529,10 @@ fn write_result(
         }
     };
 
-    let mut context = scene_context.get_mut(scene_root).unwrap().1;
+    let Ok((_, mut context, ..)) = scene_context.get_mut(scene_root) else {
+        bevy::log::error_once!("raycast result for missing scene {scene_root:?}");
+        return;
+    };
 
     let result = PbRaycastResult {
         timestamp: job.timestamp,

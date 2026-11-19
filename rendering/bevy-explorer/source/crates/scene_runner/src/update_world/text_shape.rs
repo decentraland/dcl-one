@@ -837,6 +837,10 @@ impl AtlasPage {
         let old_size = self.size;
         let new_size = old_size * 2;
         let bpp = self.bytes_per_pixel as usize;
+        #[allow(
+            clippy::unwrap_used,
+            reason = "the page holds the strong handle from `images.add`"
+        )]
         let image = images.get_mut(&self.image).unwrap();
         let old = image.data.take().unwrap();
         let mut data = vec![0u8; (new_size * new_size) as usize * bpp];
@@ -857,6 +861,10 @@ impl AtlasPage {
     fn write(&self, images: &mut Assets<Image>, pos: UVec2, width: u32, height: u32, src: &[u8]) {
         let bpp = self.bytes_per_pixel as usize;
         let row = width as usize * bpp;
+        #[allow(
+            clippy::unwrap_used,
+            reason = "the page holds the strong handle from `images.add`"
+        )]
         let image = images.get_mut(&self.image).unwrap();
         let data = image.data.as_mut().unwrap();
         for y in 0..height as usize {
@@ -1012,6 +1020,10 @@ impl GlyphAtlas {
         let old_sdf = self.sdf.restart(images);
         let old_color = self.color.as_mut().map(|page| page.restart(images));
         self.add_white(images);
+        #[allow(
+            clippy::unwrap_used,
+            reason = "`restart` returns the old page's strong handle"
+        )]
         let old_data = |handle: &Handle<Image>| images.get(handle).unwrap().data.clone().unwrap();
         let old_sdf_data = old_data(&old_sdf);
         let old_color_data = old_color.as_ref().map(old_data);

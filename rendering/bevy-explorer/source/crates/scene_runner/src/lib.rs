@@ -1341,7 +1341,9 @@ fn send_scene_updates(
 
     updates.scene_queue.pop_front();
 
-    let (_, mut context, scene_transform, is_super, traffic) = scenes.get_mut(ent).unwrap();
+    let Ok((_, mut context, scene_transform, is_super, traffic)) = scenes.get_mut(ent) else {
+        return;
+    };
 
     // only live scenes are queued, so this only fails if the scene broke this frame
     let Some(sender) = context.sender().cloned() else {

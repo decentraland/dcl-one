@@ -118,21 +118,23 @@ pub fn propagate_avatar_events(
 
     // add new/updated
     for (scene_entity, new_events) in new_events.iter() {
+        let Some(scene_events) = new_events.msg.get(&None) else {
+            bevy::log::error!(
+                "pointer events of {:?} have no scene entry",
+                scene_entity.id
+            );
+            continue;
+        };
         if let Some((foreign_entity, _, maybe_pes)) = foreign_player_lookup
             .get(&scene_entity.id)
             .and_then(|e| foreign_players.get_mut(*e).ok())
         {
             if let Some(mut pes) = maybe_pes {
-                pes.msg.insert(
-                    Some(scene_entity.root),
-                    new_events.msg.get(&None).unwrap().clone(),
-                );
+                pes.msg
+                    .insert(Some(scene_entity.root), scene_events.clone());
             } else {
                 commands.entity(foreign_entity).try_insert(PointerEvents {
-                    msg: HashMap::from_iter([(
-                        Some(scene_entity.root),
-                        new_events.msg.get(&None).unwrap().clone(),
-                    )]),
+                    msg: HashMap::from_iter([(Some(scene_entity.root), scene_events.clone())]),
                 });
             }
         }

@@ -144,6 +144,10 @@ fn av_player_on_add<T: AVPlayer>(
 ) {
     let entity = trigger.target();
     let (av_player_debug_ui_entity, children) = av_player_debug_ui.into_inner();
+    #[allow(
+        clippy::unwrap_used,
+        reason = "the observed OnAdd put T on this entity"
+    )]
     let av_player = av_players.get(entity).unwrap();
 
     let next_row = av_player_columns
@@ -184,8 +188,8 @@ fn av_player_on_remove<T: AVPlayer>(
     let deleted_row = children
         .iter()
         .find_map(|child| {
-            let node = nodes.get(child).unwrap();
-            let (_, av_player_ref) = av_player_refs.get(child).unwrap();
+            let node = nodes.get(child).ok()?;
+            let (_, av_player_ref) = av_player_refs.get(child).ok()?;
             if av_player_ref.0 == entity {
                 node.grid_row.get_start()
             } else {
@@ -195,7 +199,7 @@ fn av_player_on_remove<T: AVPlayer>(
         .unwrap();
     // Despawn nodes that reference entity that had
     for av_player_ref_entity in children.iter().filter_map(|child| {
-        let (node_entity, av_player_ref) = av_player_refs.get(child).unwrap();
+        let (node_entity, av_player_ref) = av_player_refs.get(child).ok()?;
         if av_player_ref.0 == entity {
             Some(node_entity)
         } else {
@@ -220,6 +224,10 @@ fn av_player_on_insert<T: AVPlayer>(
     av_player_references: Query<(Entity, &AvPlayerRef), With<AvPlayerColumn>>,
 ) {
     let entity = trigger.target();
+    #[allow(
+        clippy::unwrap_used,
+        reason = "the observed OnInsert put T on this entity"
+    )]
     let av_player = av_players.get(entity).unwrap();
 
     let Some(node) =

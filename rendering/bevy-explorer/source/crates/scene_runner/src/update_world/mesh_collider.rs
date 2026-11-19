@@ -404,13 +404,17 @@ impl SceneColliderData {
             if let Some(collider) = self.collider_set.get_mut(handle) {
                 let (req_scale, req_rotation, req_translation) =
                     transform.to_scale_rotation_translation();
-                let ColliderState {
+                let Some(ColliderState {
                     base_collider,
                     translation: init_translation,
                     scale: init_scale,
                     rotation: init_rotation,
                     ..
-                } = self.collider_state.get(id).unwrap();
+                }) = self.collider_state.get(id)
+                else {
+                    bevy::log::error_once!("collider {id:?} has a handle but no state");
+                    return None;
+                };
 
                 if (&req_scale, &req_rotation, &req_translation)
                     != (init_scale, init_rotation, init_translation)
@@ -441,6 +445,7 @@ impl SceneColliderData {
                         }
                     }
 
+                    #[allow(clippy::unwrap_used, reason = "the same lookup succeeded above")]
                     let state_mut = self.collider_state.get_mut(id).unwrap();
                     state_mut.translation = req_translation;
                     state_mut.rotation = req_rotation;
@@ -848,21 +853,21 @@ impl SceneColliderData {
             },
         );
 
-        result.map(|(handle, intersection)| {
-            let id = self.get_id(handle).unwrap().clone();
-            let position = self
-                .collider_set
-                .get(handle)
-                .unwrap()
-                .position()
-                .transform_point(&intersection.witness1);
-            RaycastResult {
+        result.and_then(|(handle, intersection)| {
+            let (Some(id), Some(collider)) = (self.get_id(handle), self.collider_set.get(handle))
+            else {
+                bevy::log::error_once!("shape cast hit an unregistered collider");
+                return None;
+            };
+            let id = id.clone();
+            let position = collider.position().transform_point(&intersection.witness1);
+            Some(RaycastResult {
                 id,
                 toi: intersection.time_of_impact as f32,
                 normal: DVec3::from(intersection.normal1).as_vec3(),
                 face: None,
                 position: DVec3::from(position).as_vec3(),
-            }
+            })
         })
     }
 
@@ -991,7 +996,10 @@ impl SceneColliderData {
             translation,
             PLAYER_COLLIDER_RADIUS + PLAYER_COLLIDER_OVERLAP,
             |slf, h| {
-                let collided = slf.collider_set.get(h).unwrap();
+                let Some(collided) = slf.collider_set.get(h) else {
+                    bevy::log::error_once!("avatar intersection with an unregistered collider");
+                    return;
+                };
                 let result = parry::query::closest_points(
                     &Isometry::from(Vector::from(translation)),
                     &avatar_inner_segment,

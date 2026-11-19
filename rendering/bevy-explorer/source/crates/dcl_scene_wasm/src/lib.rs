@@ -54,7 +54,6 @@ fn init_scene(init: RelayInit) -> bool {
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread().build() else {
         return false;
     };
-    dcl_wasm::init_runtime();
 
     let (thread_sx, thread_rx) = mpsc::unbounded_channel();
     let (renderer_sender, renderer_rx) = scene_response_channel();

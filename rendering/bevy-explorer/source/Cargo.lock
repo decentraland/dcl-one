@@ -8597,7 +8597,6 @@ dependencies = [
  "dcl_types",
  "ipfs",
  "num",
- "once_cell",
  "platform",
  "reqwest",
  "resvg",

@@ -828,6 +828,7 @@ impl PulseDecoder {
         if self.tick_secs(delta.server_tick) < joined_at {
             return Vec::new();
         }
+        #[allow(clippy::unwrap_used, reason = "the same lookup succeeded above")]
         let subject = self.subjects.get_mut(&delta.subject_id).unwrap();
 
         // A reliable baseline may still be in flight. Keep one future update to chain when it

@@ -22,7 +22,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 urn = { workspace = true }
 reqwest = { workspace = true }
-once_cell = { workspace = true }
 urlencoding = { workspace = true }
 
 num = "0.4.1"

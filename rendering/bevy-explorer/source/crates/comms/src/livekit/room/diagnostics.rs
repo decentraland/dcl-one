@@ -267,8 +267,8 @@ fn room_diagnostics(
             result[key] = json!({"sent": traffic.map(|t| t.sent.bytes), "received": traffic.map(|t| t.received.bytes), "peers": peer_quality});
             if traffic.is_none() {
                 result["unavailable"][key] = json!("Room has not connected");
-            } else {
-                result["unavailable"].as_object_mut().unwrap().remove(key);
+            } else if let Some(unavailable) = result["unavailable"].as_object_mut() {
+                unavailable.remove(key);
             }
         } else {
             #[cfg(not(target_arch = "wasm32"))]

@@ -23,7 +23,7 @@ use std::{any::type_name, marker::PhantomData};
 use std::sync::Arc;
 
 use bevy::{
-    asset::{DependencyLoadState, LoadState, RecursiveDependencyLoadState},
+    asset::{weak_handle, DependencyLoadState, LoadState, RecursiveDependencyLoadState},
     ecs::{schedule::ScheduleConfigs, system::ScheduleSystem},
     platform::collections::{HashMap, HashSet},
     prelude::*,
@@ -55,8 +55,6 @@ pub static TITLE_TEXT_STYLE: OnceCell<TextStyle> = OnceCell::new();
 pub static BODY_TEXT_STYLE: OnceCell<TextStyle> = OnceCell::new();
 pub static HOVER_TEXT_STYLE: OnceCell<[TextStyle; 10]> = OnceCell::new();
 
-pub static FONTS: OnceCell<HashMap<(FontName, WeightName), Handle<Font>>> = OnceCell::new();
-
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy)]
 pub enum FontName {
     Mono,
@@ -75,8 +73,56 @@ pub enum WeightName {
 /// Scale factor applied to SDK font sizes to match the reference renderer.
 pub const FONT_SIZE_SCALE: f32 = 0.95;
 
+const MONO_REGULAR: Handle<Font> = weak_handle!("2fb5b3a1-3a3b-4260-817c-9cf75f182be5");
+const MONO_BOLD: Handle<Font> = weak_handle!("6ef4a6e9-081c-4678-968c-2b53c2f0f70c");
+const SANS_REGULAR: Handle<Font> = weak_handle!("9465ba0f-ba1c-427e-a01c-b0b13bbaac46");
+const SANS_BOLD: Handle<Font> = weak_handle!("d68f3f7e-5e2c-47f7-988c-40e9628791e3");
+const SANS_ITALIC: Handle<Font> = weak_handle!("153171c0-5fff-45b2-b594-7967bad49efb");
+const SANS_BOLD_ITALIC: Handle<Font> = weak_handle!("0808bb24-46c7-4b0f-b6fb-07b8f133ef18");
+const SERIF_REGULAR: Handle<Font> = weak_handle!("585f270e-5336-4041-b958-bb6a3f063b01");
+const SERIF_BOLD: Handle<Font> = weak_handle!("37069a8a-1457-4fe5-9571-89338ec5ee4a");
+const SERIF_ITALIC: Handle<Font> = weak_handle!("32cb0841-9369-4eb8-a54b-278d4319b184");
+const SERIF_BOLD_ITALIC: Handle<Font> = weak_handle!("4ccba941-c1ca-47a6-bf75-2f8987a4ead2");
+
+/// Each built-in font handle with its bytes, in registration order.
+const BUILTIN_FONTS: [(Handle<Font>, &[u8]); 10] = [
+    (
+        MONO_REGULAR,
+        include_bytes!("fonts/NotoSansMono-Regular.ttf"),
+    ),
+    (MONO_BOLD, include_bytes!("fonts/NotoSansMono-Bold.ttf")),
+    (SANS_REGULAR, include_bytes!("fonts/NotoSans-Regular.ttf")),
+    (SANS_BOLD, include_bytes!("fonts/NotoSans-Bold.ttf")),
+    (SANS_ITALIC, include_bytes!("fonts/NotoSans-Italic.ttf")),
+    (
+        SANS_BOLD_ITALIC,
+        include_bytes!("fonts/NotoSans-BoldItalic.ttf"),
+    ),
+    (SERIF_REGULAR, include_bytes!("fonts/NotoSerif-Regular.ttf")),
+    (SERIF_BOLD, include_bytes!("fonts/NotoSerif-Bold.ttf")),
+    (SERIF_ITALIC, include_bytes!("fonts/NotoSerif-Italic.ttf")),
+    (
+        SERIF_BOLD_ITALIC,
+        include_bytes!("fonts/NotoSerif-BoldItalic.ttf"),
+    ),
+];
+
+/// The handle of a built-in font. Mono has no italic faces and maps them to its upright ones.
 pub fn user_font(name: FontName, weight: WeightName) -> Handle<Font> {
-    FONTS.get().unwrap().get(&(name, weight)).unwrap().clone()
+    use FontName::*;
+    use WeightName::*;
+    match (name, weight) {
+        (Mono, Regular | Italic) => MONO_REGULAR,
+        (Mono, Bold | BoldItalic) => MONO_BOLD,
+        (Sans, Regular) => SANS_REGULAR,
+        (Sans, Bold) => SANS_BOLD,
+        (Sans, Italic) => SANS_ITALIC,
+        (Sans, BoldItalic) => SANS_BOLD_ITALIC,
+        (Serif, Regular) => SERIF_REGULAR,
+        (Serif, Bold) => SERIF_BOLD,
+        (Serif, Italic) => SERIF_ITALIC,
+        (Serif, BoldItalic) => SERIF_BOLD_ITALIC,
+    }
 }
 
 /// Create the SDK font assets from the embedded font files and register them with the
@@ -89,55 +135,13 @@ pub fn user_font(name: FontName, weight: WeightName) -> Handle<Font> {
 /// prefers among equal fallback matches, ahead of any scene font. (bevy registers the asset
 /// again when text first uses it, sharing the same bytes; the copy registered here wins.)
 pub fn init_fonts(fonts: &mut Assets<Font>, font_system: &mut CosmicFontSystem) {
-    use FontName::*;
-    use WeightName::*;
-    let mut load = |bytes: &[u8]| {
+    for (handle, bytes) in BUILTIN_FONTS {
         let data = Arc::new(bytes.to_vec());
         font_system
             .db_mut()
             .load_font_source(Source::Binary(data.clone()));
-        fonts.add(Font { data })
-    };
-    let mono_regular = load(include_bytes!("fonts/NotoSansMono-Regular.ttf"));
-    let mono_bold = load(include_bytes!("fonts/NotoSansMono-Bold.ttf"));
-    let _ = FONTS.set(HashMap::from_iter([
-        ((Mono, Regular), mono_regular.clone()),
-        ((Mono, Bold), mono_bold.clone()),
-        ((Mono, Italic), mono_regular),
-        ((Mono, BoldItalic), mono_bold),
-        (
-            (Sans, Regular),
-            load(include_bytes!("fonts/NotoSans-Regular.ttf")),
-        ),
-        (
-            (Sans, Bold),
-            load(include_bytes!("fonts/NotoSans-Bold.ttf")),
-        ),
-        (
-            (Sans, Italic),
-            load(include_bytes!("fonts/NotoSans-Italic.ttf")),
-        ),
-        (
-            (Sans, BoldItalic),
-            load(include_bytes!("fonts/NotoSans-BoldItalic.ttf")),
-        ),
-        (
-            (Serif, Regular),
-            load(include_bytes!("fonts/NotoSerif-Regular.ttf")),
-        ),
-        (
-            (Serif, Bold),
-            load(include_bytes!("fonts/NotoSerif-Bold.ttf")),
-        ),
-        (
-            (Serif, Italic),
-            load(include_bytes!("fonts/NotoSerif-Italic.ttf")),
-        ),
-        (
-            (Serif, BoldItalic),
-            load(include_bytes!("fonts/NotoSerif-BoldItalic.ttf")),
-        ),
-    ]));
+        fonts.insert(handle.id(), Font { data });
+    }
 }
 
 pub struct UiCorePlugin;

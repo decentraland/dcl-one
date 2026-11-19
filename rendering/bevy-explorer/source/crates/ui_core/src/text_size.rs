@@ -93,14 +93,22 @@ impl DuiTemplate for LinkTemplate {
             }),
             On::<HoverEnter>::new(
                 move |mut bg: Query<&mut BackgroundColor>, mut t: Query<&mut TextColor>| {
-                    bg.get_mut(line).unwrap().0 = Color::WHITE;
-                    t.get_mut(label).unwrap().0 = Color::WHITE;
+                    if let Ok(mut line_bg) = bg.get_mut(line) {
+                        line_bg.0 = Color::WHITE;
+                    }
+                    if let Ok(mut label_color) = t.get_mut(label) {
+                        label_color.0 = Color::WHITE;
+                    }
                 },
             ),
             On::<HoverExit>::new(
                 move |mut bg: Query<&mut BackgroundColor>, mut t: Query<&mut TextColor>| {
-                    bg.get_mut(line).unwrap().0 = color;
-                    t.get_mut(label).unwrap().0 = color;
+                    if let Ok(mut line_bg) = bg.get_mut(line) {
+                        line_bg.0 = color;
+                    }
+                    if let Ok(mut label_color) = t.get_mut(label) {
+                        label_color.0 = color;
+                    }
                 },
             ),
         ));

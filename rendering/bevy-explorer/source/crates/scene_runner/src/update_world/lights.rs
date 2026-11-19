@@ -897,7 +897,10 @@ fn manage_shadow_casters(
     let mut max_enabled = max_enabled;
     // only write (and trigger change detection) when the target value differs
     for (light, _, importance, ..) in lights.drain(..).rev() {
-        let (maybe_p, maybe_s, mut vis) = write_lights.get_mut(light).unwrap();
+        let Ok((maybe_p, maybe_s, mut vis)) = write_lights.get_mut(light) else {
+            bevy::log::error_once!("light {light:?} has no Visibility");
+            continue;
+        };
 
         if importance.0 != 0.0 && max_enabled > 0 {
             vis.set_if_neq(Visibility::Visible);

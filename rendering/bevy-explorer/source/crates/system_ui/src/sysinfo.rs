@@ -254,26 +254,41 @@ fn update_scene_load_state(
         .map(|context| context.title.clone())
         .unwrap_or("???".to_owned());
 
-    if let Ok(sysinfo) = q.single() {
+    if let Some(children) = q
+        .single()
+        .ok()
+        .and_then(|sysinfo| q_children.get(sysinfo).ok())
+    {
         let mut ix = 0;
-        let children = q_children.get(sysinfo).unwrap();
         let mut set_child = |value: String| {
+            let child = children[ix];
+            ix += 1;
             // avoid touching Node/Text when unchanged - any write triggers relayout
             let display = if value.is_empty() {
                 Display::None
             } else {
                 Display::Flex
             };
-            let mut style = style.get_mut(children[ix]).unwrap();
-            if style.display != display {
-                style.display = display;
+            match style.get_mut(child) {
+                Ok(mut style) => {
+                    if style.display != display {
+                        style.display = display;
+                    }
+                }
+                Err(_) => bevy::log::error_once!("sysinfo row has no Node"),
             }
-            let container = q_children.get(children[ix]).unwrap();
-            let mut text = text.get_mut(container[1]).unwrap();
-            if text.0 != value {
-                text.0 = value;
+            let Ok(container) = q_children.get(child) else {
+                bevy::log::error_once!("sysinfo row has no children");
+                return;
+            };
+            match text.get_mut(container[1]) {
+                Ok(mut text) => {
+                    if text.0 != value {
+                        text.0 = value;
+                    }
+                }
+                Err(_) => bevy::log::error_once!("sysinfo row has no Text"),
             }
-            ix += 1;
         };
 
         let state = scene.map_or("-", |scene| {

@@ -2700,7 +2700,10 @@ pub fn process_startup_scenes(
 
     tasks.retain_mut(|(ix, t)| match t.complete() {
         Some(Ok((hash, source))) => {
-            let scene = startup_scenes.scenes.get_mut(*ix).unwrap();
+            let Some(scene) = startup_scenes.scenes.get_mut(*ix) else {
+                bevy::log::error!("startup scene {ix} is missing");
+                return false;
+            };
 
             info!("added startup scene from {}", source.pid);
             scene.hash = Some(hash.clone());
@@ -2724,7 +2727,10 @@ pub fn process_startup_scenes(
             false
         }
         Some(Err(e)) => {
-            let scene = startup_scenes.scenes.get_mut(*ix).unwrap();
+            let Some(scene) = startup_scenes.scenes.get_mut(*ix) else {
+                bevy::log::error!("startup scene {ix} is missing");
+                return false;
+            };
             error!("failed to load startup scene {}: {e}", scene.source);
             scene.failed = true;
             false

@@ -387,10 +387,11 @@ impl TabManager<'_, '_> {
                 }
                 self.commands.entity(tab_entity).try_insert(DataChanged);
                 for (i, child) in tab.active_entities.iter().enumerate() {
-                    self.active
-                        .get_mut(child.named("button-background"))
-                        .unwrap()
-                        .0 = Some(i) == tab.selected;
+                    if let Ok(mut background) =
+                        self.active.get_mut(child.named("button-background"))
+                    {
+                        background.0 = Some(i) == tab.selected;
+                    }
                 }
             }
         }
@@ -467,8 +468,11 @@ impl TabSelection {
                                 sel.selected = Some(ix);
                             }
                             for (i, child) in sel.active_entities.iter().enumerate() {
-                                active.get_mut(child.named("button-background")).unwrap().0 =
-                                    Some(i) == sel.selected;
+                                if let Ok(mut background) =
+                                    active.get_mut(child.named("button-background"))
+                                {
+                                    background.0 = Some(i) == sel.selected;
+                                }
                             }
                         }
 
@@ -488,7 +492,9 @@ impl TabSelection {
 
         commands.entity(id).try_push_children(&[components.root]);
         self.active_entities.insert(ix, components);
-        Ok(self.active_entities.get(ix).unwrap())
+        #[allow(clippy::unwrap_used, reason = "`ix` was inserted above")]
+        let tab = self.active_entities.get(ix).unwrap();
+        Ok(tab)
     }
 
     pub fn tab_count(&self) -> usize {
