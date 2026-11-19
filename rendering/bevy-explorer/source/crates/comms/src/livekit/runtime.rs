@@ -29,14 +29,13 @@ pub struct LivekitRuntime(
 );
 
 impl LivekitRuntime {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> std::io::Result<Self> {
         #[cfg(not(target_arch = "wasm32"))]
         let runtime = Arc::new(
             Builder::new_multi_thread()
                 .worker_threads(1)
                 .enable_all()
-                .build()
-                .unwrap(),
+                .build()?,
         );
         #[cfg_attr(
             target_arch = "wasm32",
@@ -47,17 +46,20 @@ impl LivekitRuntime {
             Builder::new_current_thread()
                 .worker_threads(1)
                 .enable_all()
-                .build_local(LocalOptions::default())
-                .unwrap(),
+                .build_local(LocalOptions::default())?,
         );
 
-        Self(runtime)
+        Ok(Self(runtime))
     }
-}
 
-impl Default for LivekitRuntime {
-    fn default() -> Self {
-        Self::new()
+    /// Builds the runtime and inserts it into `app`, as a non-send resource on the web.
+    pub(crate) fn insert(app: &mut App) -> std::io::Result<()> {
+        let runtime = Self::new()?;
+        #[cfg(not(target_arch = "wasm32"))]
+        app.insert_resource(runtime);
+        #[cfg(target_arch = "wasm32")]
+        app.insert_non_send_resource(runtime);
+        Ok(())
     }
 }
 
@@ -95,23 +97,10 @@ pub type LivekitRuntimeRes<'w> = Res<'w, LivekitRuntime>;
 #[cfg(target_arch = "wasm32")]
 pub type LivekitRuntimeRes<'w> = NonSend<'w, LivekitRuntime>;
 
-pub struct LivekitRuntimePlugin;
-
-impl Plugin for LivekitRuntimePlugin {
-    fn build(&self, app: &mut App) {
-        #[cfg(not(target_arch = "wasm32"))]
-        app.init_resource::<LivekitRuntime>();
-        #[cfg(target_arch = "wasm32")]
-        app.init_non_send_resource::<LivekitRuntime>();
-        #[cfg(target_arch = "wasm32")]
-        app.add_systems(First, yield_to_runtime);
-    }
-}
-
 /// Tokio uses cooperative scheduling, so unless we explicitly yield time for
 /// it, it will never poll the tasks on wasm, native does not have this issue
 /// as it is multithreaded
 #[cfg(target_arch = "wasm32")]
-fn yield_to_runtime(livekit_runtime: LivekitRuntimeRes) {
+pub(crate) fn yield_to_runtime(livekit_runtime: NonSend<LivekitRuntime>) {
     livekit_runtime.block_on(yield_now());
 }

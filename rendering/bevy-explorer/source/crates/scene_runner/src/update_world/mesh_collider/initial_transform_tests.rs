@@ -86,7 +86,7 @@ fn spawn_in_scene_loop(
 }
 
 #[test]
-fn first_input_uses_propagated_transforms_for_new_and_replaced_shapes() {
+fn first_input_uses_propagated_transforms_for_new_and_replaced_shapes() -> anyhow::Result<()> {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, AssetPlugin::default(), TransformPlugin))
         .init_asset::<Mesh>()
@@ -96,6 +96,7 @@ fn first_input_uses_propagated_transforms_for_new_and_replaced_shapes() {
         .init_resource::<InputIntersections>()
         .insert_resource(IpfsResource {
             inner: Arc::new(IpfsIo::new(
+                ipfs::http_client()?,
                 false,
                 Box::new(MemoryAssetReader {
                     root: Dir::default(),
@@ -186,4 +187,5 @@ fn first_input_uses_propagated_transforms_for_new_and_replaced_shapes() {
         );
         assert_eq!(positive, &[id(515)]);
     }
+    Ok(())
 }

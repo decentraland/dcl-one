@@ -69,7 +69,7 @@ fn test_components<T: AVPlayer>(
     test_component!(app, entity, AVSinks<T>, media);
 }
 
-fn min_test_app() -> App {
+fn min_test_app() -> anyhow::Result<App> {
     let mut app = App::new();
 
     app.add_plugins((
@@ -78,6 +78,7 @@ fn min_test_app() -> App {
             ..Default::default()
         },
         IpfsIoPlugin {
+            client: ipfs::http_client()?,
             preview: false,
             starting_realm: None,
             content_server_override: None,
@@ -108,13 +109,13 @@ fn min_test_app() -> App {
 
     app.world_mut().run_schedule(Startup);
 
-    app
+    Ok(app)
 }
 
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn test_insert_audio_stream() {
-    let mut app = min_test_app();
+fn test_insert_audio_stream() -> anyhow::Result<()> {
+    let mut app = min_test_app()?;
 
     let renderer_context = app
         .world_mut()
@@ -169,12 +170,13 @@ fn test_insert_audio_stream() {
         false,
         true,
     );
+    Ok(())
 }
 
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn test_insert_empty_audio_stream() {
-    let mut app = min_test_app();
+fn test_insert_empty_audio_stream() -> anyhow::Result<()> {
+    let mut app = min_test_app()?;
 
     let renderer_context = app
         .world_mut()
@@ -229,12 +231,13 @@ fn test_insert_empty_audio_stream() {
         false,
         true,
     );
+    Ok(())
 }
 
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn test_insert_livekit_audio_stream() {
-    let mut app = min_test_app();
+fn test_insert_livekit_audio_stream() -> anyhow::Result<()> {
+    let mut app = min_test_app()?;
 
     let renderer_context = app
         .world_mut()
@@ -289,12 +292,13 @@ fn test_insert_livekit_audio_stream() {
         false,
         true,
     );
+    Ok(())
 }
 
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn test_insert_video_player() {
-    let mut app = min_test_app();
+fn test_insert_video_player() -> anyhow::Result<()> {
+    let mut app = min_test_app()?;
 
     let renderer_context = app
         .world_mut()
@@ -349,12 +353,13 @@ fn test_insert_video_player() {
         true,
         true,
     );
+    Ok(())
 }
 
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn test_insert_empty_video_player() {
-    let mut app = min_test_app();
+fn test_insert_empty_video_player() -> anyhow::Result<()> {
+    let mut app = min_test_app()?;
 
     let renderer_context = app
         .world_mut()
@@ -409,12 +414,13 @@ fn test_insert_empty_video_player() {
         true,
         true,
     );
+    Ok(())
 }
 
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn test_insert_livekit_video_player() {
-    let mut app = min_test_app();
+fn test_insert_livekit_video_player() -> anyhow::Result<()> {
+    let mut app = min_test_app()?;
 
     let renderer_context = app
         .world_mut()
@@ -469,12 +475,13 @@ fn test_insert_livekit_video_player() {
         false,
         false,
     );
+    Ok(())
 }
 
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn test_removing_video_player() {
-    let mut app = min_test_app();
+fn test_removing_video_player() -> anyhow::Result<()> {
+    let mut app = min_test_app()?;
 
     let renderer_context = app
         .world_mut()
@@ -549,12 +556,13 @@ fn test_removing_video_player() {
         false,
         false,
     );
+    Ok(())
 }
 
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn test_removing_livekit_video_player() {
-    let mut app = min_test_app();
+fn test_removing_livekit_video_player() -> anyhow::Result<()> {
+    let mut app = min_test_app()?;
 
     let renderer_context = app
         .world_mut()
@@ -629,12 +637,14 @@ fn test_removing_livekit_video_player() {
         false,
         false,
     );
+    Ok(())
 }
 
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn test_livekit_video_player_without_should_be_playing_should_not_be_receiver() {
-    let mut app = min_test_app();
+fn test_livekit_video_player_without_should_be_playing_should_not_be_receiver() -> anyhow::Result<()>
+{
+    let mut app = min_test_app()?;
 
     let renderer_context = app
         .world_mut()
@@ -765,12 +775,13 @@ fn test_livekit_video_player_without_should_be_playing_should_not_be_receiver() 
         false,
         false,
     );
+    Ok(())
 }
 
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-pub(super) fn test_source_change() {
-    let mut app = min_test_app();
+pub(super) fn test_source_change() -> anyhow::Result<()> {
+    let mut app = min_test_app()?;
 
     let renderer_context = app
         .world_mut()
@@ -963,12 +974,13 @@ pub(super) fn test_source_change() {
         .0
         .clone();
     assert_eq!(video_handle, repeat_video_handle);
+    Ok(())
 }
 
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn test_despawn_av_player() {
-    let mut app = min_test_app();
+fn test_despawn_av_player() -> anyhow::Result<()> {
+    let mut app = min_test_app()?;
 
     let renderer_context = app
         .world_mut()
@@ -1011,4 +1023,5 @@ fn test_despawn_av_player() {
         .id();
 
     app.world_mut().entity_mut(video_player).despawn();
+    Ok(())
 }

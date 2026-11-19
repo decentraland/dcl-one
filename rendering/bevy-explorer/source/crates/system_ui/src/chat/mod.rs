@@ -224,17 +224,21 @@ fn debug_chat(
                 setup_chat_popup(commands, root, dui);
             }
             "add" => {
-                tab.single_mut()
-                    .unwrap()
-                    .add(
-                        &mut commands,
-                        &dui,
-                        Some(3),
-                        DuiButton::new_enabled("new tab", || {}),
-                        false,
-                        None,
-                    )
-                    .unwrap();
+                let Ok(mut tab) = tab.single_mut() else {
+                    input.reply_failed("chat is off");
+                    return;
+                };
+                if let Err(e) = tab.add(
+                    &mut commands,
+                    &dui,
+                    Some(3),
+                    DuiButton::new_enabled("new tab", || {}),
+                    false,
+                    None,
+                ) {
+                    input.reply_failed(format!("can't add the tab: {e}"));
+                    return;
+                }
             }
             _ => (),
         }
@@ -299,16 +303,21 @@ fn setup_chat_popup(mut commands: Commands, root: Res<SystemUiRoot>, dui: Res<Du
         .with_prop("close", On::<Click>::new(close_ui))
         .with_prop("friends", On::<Click>::new(toggle_friends));
 
-    let components = commands
-        .entity(root.0)
-        .spawn_template(&dui, "chat", props)
-        .unwrap();
+    let components = match commands.entity(root.0).spawn_template(&dui, "chat", props) {
+        Ok(components) => components,
+        Err(e) => {
+            error!("chat is off: {e}");
+            return;
+        }
+    };
 
     commands.entity(components.root).try_insert((
         ChatboxContainer,
         On::<Click>::new(
             |mut commands: Commands, q: Query<Entity, With<ChatInput>>| {
-                commands.entity(q.single().unwrap()).try_insert(Focus);
+                if let Ok(input) = q.single() {
+                    commands.entity(input).try_insert(Focus);
+                }
             },
         ),
     ));

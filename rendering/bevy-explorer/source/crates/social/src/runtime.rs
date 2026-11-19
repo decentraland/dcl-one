@@ -18,14 +18,13 @@ pub struct SocialRuntime(
 );
 
 impl SocialRuntime {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> std::io::Result<Self> {
         #[cfg(not(target_arch = "wasm32"))]
         let runtime = Arc::new(
             Builder::new_multi_thread()
                 .worker_threads(1)
                 .enable_all()
-                .build()
-                .unwrap(),
+                .build()?,
         );
         #[cfg_attr(
             target_arch = "wasm32",
@@ -36,17 +35,20 @@ impl SocialRuntime {
             Builder::new_current_thread()
                 .worker_threads(1)
                 .enable_all()
-                .build_local(LocalOptions::default())
-                .unwrap(),
+                .build_local(LocalOptions::default())?,
         );
 
-        Self(runtime)
+        Ok(Self(runtime))
     }
-}
 
-impl Default for SocialRuntime {
-    fn default() -> Self {
-        Self::new()
+    /// Builds the runtime and inserts it into `app`, as a non-send resource on the web.
+    pub(crate) fn insert(app: &mut App) -> std::io::Result<()> {
+        let runtime = Self::new()?;
+        #[cfg(not(target_arch = "wasm32"))]
+        app.insert_resource(runtime);
+        #[cfg(target_arch = "wasm32")]
+        app.insert_non_send_resource(runtime);
+        Ok(())
     }
 }
 
@@ -84,22 +86,9 @@ pub type SocialRuntimeRes<'w> = Res<'w, SocialRuntime>;
 #[cfg(target_arch = "wasm32")]
 pub type SocialRuntimeRes<'w> = NonSend<'w, SocialRuntime>;
 
-pub struct SocialRuntimePlugin;
-
-impl Plugin for SocialRuntimePlugin {
-    fn build(&self, app: &mut App) {
-        #[cfg(not(target_arch = "wasm32"))]
-        app.init_resource::<SocialRuntime>();
-        #[cfg(target_arch = "wasm32")]
-        app.init_non_send_resource::<SocialRuntime>();
-        #[cfg(target_arch = "wasm32")]
-        app.add_systems(First, yield_to_runtime);
-    }
-}
-
 /// Tokio uses cooperative scheduling, so unless we explicitly yield time for
 /// it, it will never poll the tasks on wasm.
 #[cfg(target_arch = "wasm32")]
-fn yield_to_runtime(social_runtime: SocialRuntimeRes) {
+pub(crate) fn yield_to_runtime(social_runtime: NonSend<SocialRuntime>) {
     social_runtime.block_on(yield_now());
 }

@@ -423,17 +423,24 @@ impl DecentralandApp {
         Self(app)
     }
 
-    pub fn build(self, decentraland_app_config: DecentralandAppConfig) -> App {
+    /// An error when the HTTP client can't be built or the LiveKit or social runtime can't start.
+    pub fn build(self, decentraland_app_config: DecentralandAppConfig) -> std::io::Result<App> {
         let mut app = self.0;
+        let http_client = ipfs::http_client().map_err(std::io::Error::other)?;
 
         // DefaultPlugins
         #[cfg(not(target_arch = "wasm32"))]
-        app.add_plugins(desktop_default_plugins(&decentraland_app_config));
+        app.add_plugins(desktop_default_plugins(
+            &decentraland_app_config,
+            http_client,
+        ));
         #[cfg(target_arch = "wasm32")]
-        app.add_plugins(wasm_default_plugins(&decentraland_app_config));
+        app.add_plugins(wasm_default_plugins(&decentraland_app_config, http_client));
 
         #[cfg(all(not(target_arch = "wasm32"), feature = "ffmpeg"))]
-        media::init_ffmpeg();
+        if let Err(e) = media::init_ffmpeg() {
+            error!("ffmpeg failed to initialize, video may not play: {e}");
+        }
 
         // we use kira for audio source asset management, regardless of native / wasm
         app.add_plugins(bevy_kira_audio::AudioPlugin);
@@ -700,6 +707,8 @@ impl DecentralandApp {
         app.insert_resource(decentraland_app_config.app_config);
 
         // Plugins
+        let comms_plugin = CommsPlugin::new(&mut app)?;
+        let social_plugin = SocialPlugin::new(&mut app)?;
         app.add_plugins((memory::MemoryStatusPlugin, gpu_memory::GpuMemoryPlugin))
             .add_plugins(SceneRunnerPlugin)
             .add_plugins(AVPlayerPlugin)
@@ -718,8 +727,8 @@ impl DecentralandApp {
                 no_fog: decentraland_app_config.arguments.no_fog,
             })
             .add_plugins(WalletPlugin)
-            .add_plugins(CommsPlugin)
-            .add_plugins(SocialPlugin)
+            .add_plugins(comms_plugin)
+            .add_plugins(social_plugin)
             .add_plugins(BanBlockPlugin)
             .add_plugins(ImageProcessingPlugin)
             .add_plugins(NftShapePlugin)
@@ -809,7 +818,7 @@ impl DecentralandApp {
         app.add_console_command::<SessionGraphicsCommand, _>(session_graphics);
         app.add_plugins(debug_panel::MemoryDebugPanelPlugin);
 
-        app
+        Ok(app)
     }
 }
 
@@ -927,7 +936,10 @@ fn update_app_config_from_arguments(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn desktop_default_plugins(decentraland_app_config: &DecentralandAppConfig) -> PluginGroupBuilder {
+fn desktop_default_plugins(
+    decentraland_app_config: &DecentralandAppConfig,
+    http_client: ipfs::HttpClient,
+) -> PluginGroupBuilder {
     // Compute runs both worlds' parallel systems and `par_iter` work, so it is sized from the core
     // count, not from what IO and async leave over (bevy assigns those first).
     let compute_threads = decentraland_app_config
@@ -993,6 +1005,7 @@ fn desktop_default_plugins(decentraland_app_config: &DecentralandAppConfig) -> P
         )
         .build()
         .add_before::<bevy::asset::AssetPlugin>(IpfsIoPlugin {
+            client: http_client,
             preview: decentraland_app_config.arguments.launch.preview,
             starting_realm: Some(map_realm_name(&decentraland_app_config.boot_server())),
             content_server_override: decentraland_app_config
@@ -1007,7 +1020,10 @@ fn desktop_default_plugins(decentraland_app_config: &DecentralandAppConfig) -> P
 }
 
 #[cfg(target_arch = "wasm32")]
-fn wasm_default_plugins(decentraland_app_config: &DecentralandAppConfig) -> PluginGroupBuilder {
+fn wasm_default_plugins(
+    decentraland_app_config: &DecentralandAppConfig,
+    http_client: ipfs::HttpClient,
+) -> PluginGroupBuilder {
     // The compute and async compute pools have real threads on the web (the page's compute and
     // async workers; the async pool's `spawn` runs futures there). The io pool and
     // `TaskPool::spawn` run their tasks on the engine worker's event loop, so one nominal thread
@@ -1058,6 +1074,7 @@ fn wasm_default_plugins(decentraland_app_config: &DecentralandAppConfig) -> Plug
         // stream's hand-over ahead of it; this plugin would replace both with the console hook
         .disable::<bevy::app::PanicHandlerPlugin>()
         .add_before::<AssetPlugin>(IpfsIoPlugin {
+            client: http_client,
             preview: decentraland_app_config.arguments.launch.preview,
             starting_realm: Some(map_realm_name(&decentraland_app_config.boot_server())),
             content_server_override: decentraland_app_config

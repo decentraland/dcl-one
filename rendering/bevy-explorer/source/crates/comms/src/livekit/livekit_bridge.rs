@@ -26,21 +26,27 @@ impl AudioTrackKiraBridge {
         let rtc_stream = NativeAudioStream::new(audio_track.rtc_track(), sample_rate as i32, 1);
 
         let (sender, receiver) = mpsc::channel(480);
-        std::thread::Builder::new()
+        let spawned = std::thread::Builder::new()
             .name(sid.to_string())
             .spawn(move || {
                 debug!(
                     "Audio worker thread {:?} ({:?}) started.",
-                    std::thread::current().name().unwrap(),
+                    std::thread::current().name(),
                     std::thread::current().id()
                 );
 
                 let mut rtc_stream = rtc_stream;
-                let runtime = tokio::runtime::Builder::new_current_thread()
+                let runtime = match tokio::runtime::Builder::new_current_thread()
                     .thread_name(sid)
                     .enable_all()
                     .build()
-                    .unwrap();
+                {
+                    Ok(runtime) => runtime,
+                    Err(e) => {
+                        error!("audio worker can't start its runtime: {e}");
+                        return;
+                    }
+                };
 
                 let handle = runtime.spawn(async move {
                     while let Some(frame) = rtc_stream.next().await {
@@ -63,11 +69,13 @@ impl AudioTrackKiraBridge {
 
                 debug!(
                     "Audio worker thread {:?} ({:?}) ended.",
-                    std::thread::current().name().unwrap(),
+                    std::thread::current().name(),
                     std::thread::current().id()
                 );
-            })
-            .unwrap();
+            });
+        if let Err(e) = spawned {
+            error!("can't start the audio worker thread: {e}");
+        }
 
         Self {
             sample_rate,

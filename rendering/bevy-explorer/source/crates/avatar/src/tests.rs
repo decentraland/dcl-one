@@ -12,7 +12,7 @@ use ipfs::{IpfsIo, IpfsResource};
 use super::*;
 
 /// The resources `update_render_avatar` reads, with nothing resolved and one request slot.
-fn app_with_render_avatar() -> App {
+fn app_with_render_avatar() -> anyhow::Result<App> {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, AssetPlugin::default()))
         .init_asset::<Collectible<Wearable>>()
@@ -22,6 +22,7 @@ fn app_with_render_avatar() -> App {
         .init_resource::<AppConfig>()
         .insert_resource(IpfsResource {
             inner: Arc::new(IpfsIo::new(
+                ipfs::http_client()?,
                 false,
                 Box::new(MemoryAssetReader {
                     root: Dir::default(),
@@ -32,12 +33,12 @@ fn app_with_render_avatar() -> App {
                 tokio::sync::mpsc::unbounded_channel().0,
             )),
         });
-    app
+    Ok(app)
 }
 
 #[test]
-fn a_removed_selection_releases_the_avatars_downloads() {
-    let mut app = app_with_render_avatar();
+fn a_removed_selection_releases_the_avatars_downloads() -> anyhow::Result<()> {
+    let mut app = app_with_render_avatar()?;
     let world = app.world_mut();
     // a scene avatar, its outfit registered under its wearables' hashes
     let avatar = world
@@ -70,15 +71,16 @@ fn a_removed_selection_releases_the_avatars_downloads() {
         None,
         "the outfit's hashes are no longer registered"
     );
+    Ok(())
 }
 
 /// The resources `file_emote_downloads` reads, with no emote pointer resolved.
-fn app_with_emote_downloads() -> App {
-    let mut app = app_with_render_avatar();
+fn app_with_emote_downloads() -> anyhow::Result<App> {
+    let mut app = app_with_render_avatar()?;
     app.init_asset::<Collectible<Emote>>()
         .init_asset::<CollectibleData<Emote>>()
         .init_resource::<Collectibles<Emote>>();
-    app
+    Ok(app)
 }
 
 #[test]
@@ -111,10 +113,10 @@ fn emote_downloads_are_filed_under_the_collectible_emotes_an_avatar_plays() {
 }
 
 #[test]
-fn an_avatar_that_stops_its_emote_releases_the_emotes_downloads() {
+fn an_avatar_that_stops_its_emote_releases_the_emotes_downloads() -> anyhow::Result<()> {
     use crate::animate::{file_emote_downloads, ActiveEmote, AvatarAnimPlayer};
 
-    let mut app = app_with_emote_downloads();
+    let mut app = app_with_emote_downloads()?;
     let world = app.world_mut();
     // an avatar back on its idle pose, with the emote it just played still filed
     let avatar = world
@@ -137,6 +139,7 @@ fn an_avatar_that_stops_its_emote_releases_the_emotes_downloads() {
         None,
         "the emote's hash has no owner once nothing plays it"
     );
+    Ok(())
 }
 
 fn urn(urn: &str) -> WearableUrn {
@@ -297,8 +300,8 @@ fn a_wearables_own_branch_moves_under_the_body_bone_it_hangs_off() {
 }
 
 #[test]
-fn a_body_that_exhausted_its_fallback_reports_failure_to_the_renderer_host() {
-    let mut app = app_with_render_avatar();
+fn a_body_that_exhausted_its_fallback_reports_failure_to_the_renderer_host() -> anyhow::Result<()> {
+    let mut app = app_with_render_avatar()?;
     let world = app.world_mut();
     let body = other_body();
     let owner = world
@@ -330,11 +333,12 @@ fn a_body_that_exhausted_its_fallback_reports_failure_to_the_renderer_host() {
     assert_eq!(reports[0].body_shape, body.as_str());
     assert_eq!(reports[0].state, LoadingState::FinishedWithError);
     assert!(world.get::<RetryRenderAvatar>(owner).is_none());
+    Ok(())
 }
 
 #[test]
-fn a_body_failure_waits_for_its_fallback_before_reporting_a_terminal_error() {
-    let mut app = app_with_render_avatar();
+fn a_body_failure_waits_for_its_fallback_before_reporting_a_terminal_error() -> anyhow::Result<()> {
+    let mut app = app_with_render_avatar()?;
     let world = app.world_mut();
     let body = other_body();
     let failed_body = body.clone();
@@ -380,6 +384,7 @@ fn a_body_failure_waits_for_its_fallback_before_reporting_a_terminal_error() {
         AvatarLoadFailures::body(world.get::<AvatarLoadFailures>(owner), body),
         Some(base_wearables::default_bodyshape_urn()),
     );
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -430,8 +435,8 @@ fn gltf_with_scene(default_scene: Option<Handle<Scene>>) -> Gltf {
     }
 }
 
-fn app_with_avatar_scenes() -> App {
-    let mut app = app_with_emote_downloads();
+fn app_with_avatar_scenes() -> anyhow::Result<App> {
+    let mut app = app_with_emote_downloads()?;
     app.add_plugins((TransformPlugin, ScenePlugin))
         .register_type::<Name>()
         .register_type::<ChildOf>()
@@ -451,7 +456,7 @@ fn app_with_avatar_scenes() -> App {
         .init_resource::<AssetCache<AvatarMaskKey, MaskMaterial>>();
     app.finish();
     app.cleanup();
-    app
+    Ok(app)
 }
 
 fn broken_body_gltf(app: &mut App, failure: BodyGltfFailure) -> Handle<Gltf> {
@@ -584,8 +589,8 @@ fn exercise_gltf_fallback(
     failure: BodyGltfFailure,
     exhaust_fallback: bool,
     scene_owned: bool,
-) -> (App, Entity, Vec<AvatarLoadReport>) {
-    let mut app = app_with_avatar_scenes();
+) -> anyhow::Result<(App, Entity, Vec<AvatarLoadReport>)> {
+    let mut app = app_with_avatar_scenes()?;
     let failed = broken_body_gltf(&mut app, failure);
     let requested = other_body();
     let default_body = base_wearables::default_bodyshape_urn();
@@ -732,44 +737,51 @@ fn exercise_gltf_fallback(
             && report.body_shape == default_body.as_str()
             && report.state == LoadingState::Finished));
     }
-    (app, owner, reports)
+    Ok((app, owner, reports))
 }
 
 #[test]
-fn a_failed_gltf_can_fall_back_without_terminal_error() {
-    exercise_gltf_fallback(BodyGltfFailure::FailedLoad, false, false);
+fn a_failed_gltf_can_fall_back_without_terminal_error() -> anyhow::Result<()> {
+    exercise_gltf_fallback(BodyGltfFailure::FailedLoad, false, false)?;
+    Ok(())
 }
 
 #[test]
-fn a_missing_gltf_can_fall_back_without_terminal_error() {
-    exercise_gltf_fallback(BodyGltfFailure::MissingAsset, false, false);
+fn a_missing_gltf_can_fall_back_without_terminal_error() -> anyhow::Result<()> {
+    exercise_gltf_fallback(BodyGltfFailure::MissingAsset, false, false)?;
+    Ok(())
 }
 
 #[test]
-fn a_gltf_without_a_default_scene_can_fall_back_without_terminal_error() {
-    exercise_gltf_fallback(BodyGltfFailure::NoDefaultScene, false, false);
+fn a_gltf_without_a_default_scene_can_fall_back_without_terminal_error() -> anyhow::Result<()> {
+    exercise_gltf_fallback(BodyGltfFailure::NoDefaultScene, false, false)?;
+    Ok(())
 }
 
 #[test]
-fn failed_gltfs_report_terminal_error_only_after_both_bodies_fail() {
-    exercise_gltf_fallback(BodyGltfFailure::FailedLoad, true, false);
+fn failed_gltfs_report_terminal_error_only_after_both_bodies_fail() -> anyhow::Result<()> {
+    exercise_gltf_fallback(BodyGltfFailure::FailedLoad, true, false)?;
+    Ok(())
 }
 
 #[test]
-fn missing_gltfs_report_terminal_error_only_after_both_bodies_fail() {
-    exercise_gltf_fallback(BodyGltfFailure::MissingAsset, true, false);
+fn missing_gltfs_report_terminal_error_only_after_both_bodies_fail() -> anyhow::Result<()> {
+    exercise_gltf_fallback(BodyGltfFailure::MissingAsset, true, false)?;
+    Ok(())
 }
 
 #[test]
-fn gltfs_without_default_scenes_report_terminal_error_only_after_both_bodies_fail() {
-    exercise_gltf_fallback(BodyGltfFailure::NoDefaultScene, true, false);
+fn gltfs_without_default_scenes_report_terminal_error_only_after_both_bodies_fail(
+) -> anyhow::Result<()> {
+    exercise_gltf_fallback(BodyGltfFailure::NoDefaultScene, true, false)?;
+    Ok(())
 }
 
 #[cfg(feature = "explorer")]
 #[test]
-fn an_exhausted_gltf_fallback_reports_terminal_error_to_the_scene_crdt() {
+fn an_exhausted_gltf_fallback_reports_terminal_error_to_the_scene_crdt() -> anyhow::Result<()> {
     use dcl_component::DclReader;
-    let (mut app, owner, _) = exercise_gltf_fallback(BodyGltfFailure::NoDefaultScene, true, true);
+    let (mut app, owner, _) = exercise_gltf_fallback(BodyGltfFailure::NoDefaultScene, true, true)?;
     app.world_mut()
         .run_system_once(apply_avatar_load_reports)
         .unwrap();
@@ -791,4 +803,5 @@ fn an_exhausted_gltf_fallback_reports_terminal_error_to_the_scene_crdt() {
     assert_eq!(errors.len(), 1);
     assert_eq!(errors[0].asset, other_body().as_str());
     assert!(errors[0].timestamp > 0);
+    Ok(())
 }

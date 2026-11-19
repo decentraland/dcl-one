@@ -11,6 +11,7 @@ use bevy::{
     platform::collections::HashMap,
 };
 use common::util::ReportErr;
+use dcl_component::proto_components::sdk::components::VideoState;
 use futures_channel::mpsc::{UnboundedSender, unbounded};
 use futures_lite::StreamExt;
 use js_sys::{Function, Reflect};
@@ -80,14 +81,23 @@ pub fn media_host_main(render_worker: Worker) {
         while let Some(command) = commands_rx.next().await {
             match command {
                 HostCommand::Create { id, url, has_video } => {
-                    let media = HostMedia::new(
+                    match HostMedia::new(
                         id,
                         url,
                         has_video,
                         events_tx.clone(),
                         render_worker.clone(),
-                    );
-                    insert(id, media);
+                    ) {
+                        Some(media) => insert(id, media),
+                        None => {
+                            error!("media {id}: can't create its video element");
+                            let _ = events_tx.unbounded_send(MediaEvent::State {
+                                id,
+                                state: VideoState::VsError,
+                                duration: f64::NAN,
+                            });
+                        }
+                    }
                 }
                 HostCommand::Command(id, command) => {
                     let msg = match command {
@@ -319,20 +329,26 @@ struct HostMedia {
 }
 
 impl HostMedia {
+    /// A new video element as media `id`; none when the page gives no element.
     fn new(
         id: MediaId,
         url: Option<String>,
         has_video: bool,
         events: UnboundedSender<MediaEvent>,
         render_worker: Worker,
-    ) -> (Self, MediaSourceCmd) {
-        let document = web_sys::window().unwrap().document().unwrap();
-        let video = document
-            .create_element("video")
-            .unwrap()
-            .dyn_into::<HtmlVideoElement>()
-            .unwrap();
-        Self::from_element(id, video, url, has_video, events, render_worker)
+    ) -> Option<(Self, MediaSourceCmd)> {
+        let video = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.create_element("video").ok())
+            .and_then(|element| element.dyn_into::<HtmlVideoElement>().ok())?;
+        Some(Self::from_element(
+            id,
+            video,
+            url,
+            has_video,
+            events,
+            render_worker,
+        ))
     }
 
     /// The element `video` as media `id`, and the command that opens it.

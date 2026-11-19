@@ -51,9 +51,10 @@ impl Server {
     }
 }
 
-fn ipfs() -> Arc<IpfsIo> {
+fn ipfs() -> anyhow::Result<Arc<IpfsIo>> {
     IoTaskPool::get_or_init(bevy::tasks::TaskPool::new);
-    Arc::new(IpfsIo::new(
+    Ok(Arc::new(IpfsIo::new(
+        crate::http_client()?,
         false,
         Box::new(FileAssetReader::new("assets")),
         None,
@@ -61,7 +62,7 @@ fn ipfs() -> Arc<IpfsIo> {
         1,
         #[cfg(feature = "ipfs_debug")]
         tokio::sync::mpsc::unbounded_channel().0,
-    ))
+    )))
 }
 
 fn asset(
@@ -100,9 +101,10 @@ async fn until(condition: impl Fn() -> bool) {
 }
 
 #[tokio::test]
-async fn retry_uses_live_priorities_after_another_download_completes_in_backoff() {
+async fn retry_uses_live_priorities_after_another_download_completes_in_backoff(
+) -> anyhow::Result<()> {
+    let io = ipfs()?;
     timeout(LIMIT, async {
-        let io = ipfs();
         let server = Server::start().await;
         io.register_download_priority("retry", LoadPriority::TOP);
         io.register_download_priority("competitor", LoadPriority::SCENE_PENDING);
@@ -191,12 +193,13 @@ async fn retry_uses_live_priorities_after_another_download_completes_in_backoff(
     })
     .await
     .expect("priority retry did not finish");
+    Ok(())
 }
 
 #[tokio::test]
-async fn preview_delay_leaves_the_slot_free_and_shared_readers_can_cancel() {
+async fn preview_delay_leaves_the_slot_free_and_shared_readers_can_cancel() -> anyhow::Result<()> {
+    let mut io = ipfs()?;
     timeout(LIMIT, async {
-        let mut io = ipfs();
         Arc::get_mut(&mut io).unwrap().is_preview = true;
         io.preview_delay_ms.store(60_000, Ordering::Relaxed);
         let server = Server::start().await;
@@ -213,12 +216,13 @@ async fn preview_delay_leaves_the_slot_free_and_shared_readers_can_cancel() {
     })
     .await
     .expect("delayed download survived its last reader");
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_503_without_retry_after_is_retried_after_a_growing_wait() {
+async fn a_503_without_retry_after_is_retried_after_a_growing_wait() -> anyhow::Result<()> {
+    let io = ipfs()?;
     timeout(LIMIT, async {
-        let io = ipfs();
         let server = Server::start().await;
         let (_reader, attempts) = DownloadReaders::first(&io.request_slots, None, None, None);
         let waits = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -257,12 +261,13 @@ async fn a_503_without_retry_after_is_retried_after_a_growing_wait() {
     })
     .await
     .expect("the 503 retries did not finish");
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_content_fetch_uses_exactly_one_ticket_on_its_own_gate() {
+async fn a_content_fetch_uses_exactly_one_ticket_on_its_own_gate() -> anyhow::Result<()> {
+    let io = ipfs()?;
     timeout(LIMIT, async {
-        let io = ipfs();
         let server = Server::start().await;
         let previous = io.request_slots.ticket(None).seq;
         let request = io.client.get(server.url("content")).build().unwrap();
@@ -277,12 +282,14 @@ async fn a_content_fetch_uses_exactly_one_ticket_on_its_own_gate() {
     })
     .await
     .expect("a content fetch blocked on its single slot");
+    Ok(())
 }
 
 #[tokio::test]
-async fn dropping_shared_readers_withdraws_only_the_last_claim_of_each_owner() {
+async fn dropping_shared_readers_withdraws_only_the_last_claim_of_each_owner() -> anyhow::Result<()>
+{
+    let io = ipfs()?;
     timeout(LIMIT, async {
-        let io = ipfs();
         let server = Server::start().await;
         io.register_download_priority("near", LoadPriority::TOP);
         io.register_download_priority("mid", LoadPriority::SCENE_PENDING);
@@ -305,12 +312,13 @@ async fn dropping_shared_readers_withdraws_only_the_last_claim_of_each_owner() {
         assert!(matches!(&*result.wait_for(Option::is_some).await.unwrap(), Some(Ok(bytes)) if bytes.as_ref() == b"x"));
         assert!(io.in_flight.lock().unwrap().is_empty());
     }).await.expect("shared reader priority did not settle");
+    Ok(())
 }
 
 #[tokio::test]
-async fn last_shared_reader_cancels_a_queued_attempt_and_a_retry_timer() {
+async fn last_shared_reader_cancels_a_queued_attempt_and_a_retry_timer() -> anyhow::Result<()> {
+    let io = ipfs()?;
     timeout(LIMIT, async {
-        let io = ipfs();
         let server = Server::start().await;
         let blocker = io.request_slots.try_acquire().unwrap();
         let queued = shared(&io, &server, "queued", "scene");
@@ -335,12 +343,13 @@ async fn last_shared_reader_cancels_a_queued_attempt_and_a_retry_timer() {
     })
     .await
     .expect("a cancelled shared download retained its entry or permit");
+    Ok(())
 }
 
 #[tokio::test]
-async fn immediate_timeout_retry_yields_to_an_older_unowned_request() {
+async fn immediate_timeout_retry_yields_to_an_older_unowned_request() -> anyhow::Result<()> {
+    let io = ipfs()?;
     timeout(LIMIT, async {
-        let io = ipfs();
         let server = Server::start().await;
         let request = io.client.get(server.url("retry")).build().unwrap();
         let blocker = io.request_slots.try_acquire().unwrap();
@@ -371,12 +380,14 @@ async fn immediate_timeout_retry_yields_to_an_older_unowned_request() {
     })
     .await
     .expect("immediate timeout retry did not rejoin the unowned queue");
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_stale_upgrade_cannot_revive_a_download_after_its_last_reader_left() {
+async fn a_stale_upgrade_cannot_revive_a_download_after_its_last_reader_left() -> anyhow::Result<()>
+{
+    let io = ipfs()?;
     timeout(LIMIT, async {
-        let io = ipfs();
         let server = Server::start().await;
         let old = shared(&io, &server, "same", "first-scene");
         server.reply("same", BUSY).await;
@@ -403,9 +414,10 @@ async fn a_stale_upgrade_cannot_revive_a_download_after_its_last_reader_left() {
         assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 2);
         assert_eq!(io.request_metrics.retries.load(Ordering::Relaxed), 0);
     }).await.expect("replacement did not get its own attempt");
+    Ok(())
 }
 
-fn cache_fixture(label: &str) -> (Arc<IpfsIo>, PathBuf) {
+fn cache_fixture(label: &str) -> anyhow::Result<(Arc<IpfsIo>, PathBuf)> {
     let dir = std::env::temp_dir().join(format!(
         "ipfs-{label}-{}-{}",
         std::process::id(),
@@ -415,14 +427,14 @@ fn cache_fixture(label: &str) -> (Arc<IpfsIo>, PathBuf) {
             .as_nanos()
     ));
     std::fs::create_dir(&dir).unwrap();
-    let mut io = ipfs();
+    let mut io = ipfs()?;
     Arc::get_mut(&mut io).unwrap().default_fs_path = Some(dir.clone());
-    (io, dir)
+    Ok((io, dir))
 }
 
 #[tokio::test]
-async fn cache_writer_skips_a_stale_staging_file() {
-    let (io, dir) = cache_fixture("stale-staging");
+async fn cache_writer_skips_a_stale_staging_file() -> anyhow::Result<()> {
+    let (io, dir) = cache_fixture("stale-staging")?;
     let stale = dir.join(format!("asset.part-{}-0", std::process::id()));
     std::fs::write(&stale, b"other writer").unwrap();
     io.cache_bytes("asset", b"verified").await.unwrap();
@@ -431,22 +443,24 @@ async fn cache_writer_skips_a_stale_staging_file() {
     std::fs::remove_file(dir.join("asset")).unwrap();
     std::fs::remove_file(stale).unwrap();
     std::fs::remove_dir(dir).unwrap();
+    Ok(())
 }
 
 #[tokio::test]
-async fn failed_cache_publish_removes_its_staging_file() {
-    let (io, dir) = cache_fixture("failed-publish");
+async fn failed_cache_publish_removes_its_staging_file() -> anyhow::Result<()> {
+    let (io, dir) = cache_fixture("failed-publish")?;
     let destination = dir.join("blocked");
     std::fs::create_dir(&destination).unwrap();
     assert!(io.cache_bytes("blocked", b"bytes").await.is_err());
     std::fs::remove_dir(destination).unwrap();
     // Reject a left-over staging file even when rename failed.
     std::fs::remove_dir(dir).unwrap();
+    Ok(())
 }
 
 #[tokio::test]
-async fn concurrent_writes_to_one_cache_key_publish_complete_files() {
-    let (io, dir) = cache_fixture("concurrent-staging");
+async fn concurrent_writes_to_one_cache_key_publish_complete_files() -> anyhow::Result<()> {
+    let (io, dir) = cache_fixture("concurrent-staging")?;
     let first = vec![1; 65536];
     let second = vec![2; 65536];
     let (a, b) = tokio::join!(
@@ -460,15 +474,16 @@ async fn concurrent_writes_to_one_cache_key_publish_complete_files() {
     std::fs::remove_file(dir.join("shared")).unwrap();
     // Every writer cleaned up its staging file.
     std::fs::remove_dir(dir).unwrap();
+    Ok(())
 }
 
 #[tokio::test]
-async fn shared_downloads_keep_arrival_order_when_workers_poll_in_reverse() {
+async fn shared_downloads_keep_arrival_order_when_workers_poll_in_reverse() -> anyhow::Result<()> {
     use std::future::{poll_fn, Future};
     use std::task::Poll;
 
+    let io = ipfs()?;
     timeout(LIMIT, async {
-        let io = ipfs();
         let server = Server::start().await;
         let share = |name: &str| {
             io.share_download(
@@ -494,6 +509,7 @@ async fn shared_downloads_keep_arrival_order_when_workers_poll_in_reverse() {
     })
     .await
     .expect("shared downloads did not finish in FIFO order");
+    Ok(())
 }
 
 fn status_only(status: &str) -> Vec<u8> {
@@ -522,9 +538,10 @@ async fn fail_shared(
 }
 
 #[tokio::test]
-async fn a_content_hash_that_answers_a_client_error_is_remembered_for_the_session() {
+async fn a_content_hash_that_answers_a_client_error_is_remembered_for_the_session(
+) -> anyhow::Result<()> {
+    let io = ipfs()?;
     timeout(LIMIT, async {
-        let io = ipfs();
         let server = Server::start().await;
         let later = Instant::now() + Duration::from_secs(3600);
         for (path, status, code) in [
@@ -552,12 +569,13 @@ async fn a_content_hash_that_answers_a_client_error_is_remembered_for_the_sessio
     })
     .await
     .expect("definitive failures were not remembered");
+    Ok(())
 }
 
 #[tokio::test]
-async fn transient_and_url_keyed_failures_keep_the_retry_window() {
+async fn transient_and_url_keyed_failures_keep_the_retry_window() -> anyhow::Result<()> {
+    let io = ipfs()?;
     timeout(LIMIT, async {
-        let io = ipfs();
         let server = Server::start().await;
         let mut urls = Vec::new();
         for (path, status) in [
@@ -604,6 +622,7 @@ async fn transient_and_url_keyed_failures_keep_the_retry_window() {
     })
     .await
     .expect("transient failures were not kept for the retry window");
+    Ok(())
 }
 
 const SCENE: &str = "bafkreiscene";
@@ -659,9 +678,9 @@ async fn read_missing(
 }
 
 #[tokio::test]
-async fn a_preview_client_asks_again_for_a_missing_file_at_once() {
+async fn a_preview_client_asks_again_for_a_missing_file_at_once() -> anyhow::Result<()> {
+    let mut io = ipfs()?;
     timeout(LIMIT, async {
-        let mut io = ipfs();
         Arc::get_mut(&mut io).unwrap().is_preview = true;
         let server = Server::start().await;
         let path = loopback_realm(&io, &server).await;
@@ -673,12 +692,13 @@ async fn a_preview_client_asks_again_for_a_missing_file_at_once() {
     })
     .await
     .expect("preview did not ask again");
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_preview_client_does_not_keep_a_content_failure_for_the_session() {
+async fn a_preview_client_does_not_keep_a_content_failure_for_the_session() -> anyhow::Result<()> {
+    let mut io = ipfs()?;
     timeout(LIMIT, async {
-        let mut io = ipfs();
         Arc::get_mut(&mut io).unwrap().is_preview = true;
         let server = Server::start().await;
         let key = CacheKey::Content("bafkmissing".into());
@@ -692,6 +712,7 @@ async fn a_preview_client_does_not_keep_a_content_failure_for_the_session() {
     })
     .await
     .expect("preview kept a session failure");
+    Ok(())
 }
 
 fn seed_session_404(io: &Arc<IpfsIo>, server: &Server) {
@@ -710,9 +731,9 @@ fn seed_session_404_at(io: &Arc<IpfsIo>, server: &Server, at: Instant) {
 }
 
 #[tokio::test]
-async fn a_session_failure_is_answered_by_read_without_a_request() {
+async fn a_session_failure_is_answered_by_read_without_a_request() -> anyhow::Result<()> {
+    let io = ipfs()?;
     timeout(LIMIT, async {
-        let io = ipfs();
         let server = Server::start().await;
         let path = loopback_realm(&io, &server).await;
         seed_session_404(&io, &server);
@@ -729,12 +750,13 @@ async fn a_session_failure_is_answered_by_read_without_a_request() {
     })
     .await
     .expect("a session failure was not answered from memory");
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_session_failure_answers_only_content_reads() {
+async fn a_session_failure_answers_only_content_reads() -> anyhow::Result<()> {
+    let io = ipfs()?;
     timeout(LIMIT, async {
-        let io = ipfs();
         let server = Server::start().await;
         let path = loopback_realm(&io, &server).await;
         let long_ago = Instant::now().checked_sub(Duration::from_secs(11)).unwrap();
@@ -756,12 +778,13 @@ async fn a_session_failure_answers_only_content_reads() {
     })
     .await
     .expect("a session failure answered a read that is not a content read");
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_successful_download_clears_a_failure_of_its_url() {
+async fn a_successful_download_clears_a_failure_of_its_url() -> anyhow::Result<()> {
+    let io = ipfs()?;
     timeout(LIMIT, async {
-        let io = ipfs();
         let server = Server::start().await;
         let url = server.url("found");
         io.failed_remotes.lock().unwrap().record(
@@ -778,12 +801,13 @@ async fn a_successful_download_clears_a_failure_of_its_url() {
     })
     .await
     .expect("a success did not clear the failure");
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_preview_client_ignores_a_session_failure() {
+async fn a_preview_client_ignores_a_session_failure() -> anyhow::Result<()> {
+    let mut io = ipfs()?;
     timeout(LIMIT, async {
-        let mut io = ipfs();
         Arc::get_mut(&mut io).unwrap().is_preview = true;
         let server = Server::start().await;
         let path = loopback_realm(&io, &server).await;
@@ -793,12 +817,14 @@ async fn a_preview_client_ignores_a_session_failure() {
     })
     .await
     .expect("preview did not ask again");
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_loopback_404_is_answered_from_memory_only_within_the_retry_window() {
+async fn a_loopback_404_is_answered_from_memory_only_within_the_retry_window() -> anyhow::Result<()>
+{
+    let io = ipfs()?;
     timeout(LIMIT, async {
-        let io = ipfs();
         let server = Server::start().await;
         let path = loopback_realm(&io, &server).await;
         assert!(read_missing(&io, &server, &path).await.is_err());
@@ -826,12 +852,13 @@ async fn a_loopback_404_is_answered_from_memory_only_within_the_retry_window() {
     })
     .await
     .expect("loopback failure was not answered from memory");
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_poisoned_failure_memory_keeps_answering() {
+async fn a_poisoned_failure_memory_keeps_answering() -> anyhow::Result<()> {
+    let io = ipfs()?;
     timeout(LIMIT, async {
-        let io = ipfs();
         let server = Server::start().await;
         let path = loopback_realm(&io, &server).await;
         let poisoner = std::thread::scope(|scope| {
@@ -854,6 +881,7 @@ async fn a_poisoned_failure_memory_keeps_answering() {
     })
     .await
     .expect("a poisoned failure memory stopped answering");
+    Ok(())
 }
 
 /// One shared download of `path` keyed by `key`, answered with [`OK`] (the byte `x`).
@@ -872,9 +900,9 @@ async fn download_x(
 }
 
 #[tokio::test]
-async fn a_download_that_does_not_match_its_hash_fails_and_is_not_cached() {
+async fn a_download_that_does_not_match_its_hash_fails_and_is_not_cached() -> anyhow::Result<()> {
+    let (io, dir) = cache_fixture("hash-mismatch")?;
     timeout(LIMIT, async {
-        let (io, dir) = cache_fixture("hash-mismatch");
         let server = Server::start().await;
         let hash = crate::content_hash::raw_cid(b"y");
         let error = download_x(&io, &server, "other", CacheKey::Content(hash.clone()))
@@ -888,12 +916,13 @@ async fn a_download_that_does_not_match_its_hash_fails_and_is_not_cached() {
     })
     .await
     .expect("the mismatched download did not finish");
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_hash_mismatch_is_asked_for_again_after_the_retry_window() {
+async fn a_hash_mismatch_is_asked_for_again_after_the_retry_window() -> anyhow::Result<()> {
+    let io = ipfs()?;
     timeout(LIMIT, async {
-        let io = ipfs();
         let server = Server::start().await;
         let url = server.url("flaky");
         let wrong = CacheKey::Content(crate::content_hash::raw_cid(b"y"));
@@ -918,12 +947,13 @@ async fn a_hash_mismatch_is_asked_for_again_after_the_retry_window() {
     })
     .await
     .expect("a hash mismatch was not retried");
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_download_that_matches_its_hash_is_read_and_cached() {
+async fn a_download_that_matches_its_hash_is_read_and_cached() -> anyhow::Result<()> {
+    let (io, dir) = cache_fixture("hash-match")?;
     timeout(LIMIT, async {
-        let (io, dir) = cache_fixture("hash-match");
         let server = Server::start().await;
         let hash = crate::content_hash::raw_cid(b"x");
         let bytes = download_x(&io, &server, "same", CacheKey::Content(hash.clone()))
@@ -936,12 +966,13 @@ async fn a_download_that_matches_its_hash_is_read_and_cached() {
     })
     .await
     .expect("the matching download did not finish");
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_name_the_hash_check_cannot_verify_is_read_and_not_cached() {
+async fn a_name_the_hash_check_cannot_verify_is_read_and_not_cached() -> anyhow::Result<()> {
+    let (io, dir) = cache_fixture("hash-unknown")?;
     timeout(LIMIT, async {
-        let (io, dir) = cache_fixture("hash-unknown");
         let server = Server::start().await;
         // not a hash `content_hash` computes: a realm's own name, a cid of another codec or hash
         let short_qm = "Qm".to_owned() + &crate::content_hash::raw_cid(b"y")[2..20];
@@ -957,4 +988,5 @@ async fn a_name_the_hash_check_cannot_verify_is_read_and_not_cached() {
     })
     .await
     .expect("an unverifiable download did not finish");
+    Ok(())
 }

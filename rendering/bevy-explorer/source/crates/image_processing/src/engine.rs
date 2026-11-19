@@ -30,7 +30,13 @@ pub struct ImageProcessingPlugin;
 impl Plugin for ImageProcessingPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<AssetForProcessing>();
-        app.add_systems(Update, (check_assets, pipe_events));
+        app.add_systems(
+            Update,
+            (
+                check_assets,
+                pipe_events.run_if(resource_exists::<Channels>),
+            ),
+        );
         // every KTX2 bevy decodes (one loaded by path through its `ImageLoader`, or an image
         // embedded in a glTF) goes through `ktx2::transcode_ktx2_image`
         crate::ktx2::install_ktx2_transcoder();
@@ -47,8 +53,19 @@ impl Plugin for ImageProcessingPlugin {
 
         #[cfg(target_arch = "wasm32")]
         {
-            let (req_sx, resp_rx) = CHANNELS.get().unwrap().lock().unwrap().0.take().unwrap();
-            app.insert_resource(Channels { req_sx, resp_rx });
+            let channels = CHANNELS.get().and_then(|channels| {
+                channels
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .0
+                    .take()
+            });
+            match channels {
+                Some((req_sx, resp_rx)) => {
+                    app.insert_resource(Channels { req_sx, resp_rx });
+                }
+                None => error!("image processing is off: the processor worker has no channels"),
+            }
         }
 
         app.init_resource::<ImgReprocessStats>();

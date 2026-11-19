@@ -41,9 +41,10 @@ fn spawn_rendering_camera(world: &mut World, position: Vec3, forward: Vec3) {
     ));
 }
 
-fn insert_ipfs(world: &mut World, slots: usize) {
+fn insert_ipfs(world: &mut World, slots: usize) -> anyhow::Result<()> {
     world.insert_resource(IpfsResource {
         inner: Arc::new(IpfsIo::new(
+            ipfs::http_client()?,
             false,
             Box::new(MemoryAssetReader {
                 root: Dir::default(),
@@ -54,6 +55,7 @@ fn insert_ipfs(world: &mut World, slots: usize) {
             tokio::sync::mpsc::unbounded_channel().0,
         )),
     });
+    Ok(())
 }
 
 /// Fill the request slots and queue one more request, so a publish is not skipped. The
@@ -199,9 +201,9 @@ fn an_entity_with_partitioned_downloads_takes_its_positions_partition() {
 }
 
 #[test]
-fn publishes_a_wearable_by_the_best_avatar_wearing_it() {
+fn publishes_a_wearable_by_the_best_avatar_wearing_it() -> anyhow::Result<()> {
     let mut world = world_with_player(Some(Vec3::X));
-    insert_ipfs(&mut world, 1);
+    insert_ipfs(&mut world, 1)?;
     world.init_resource::<ScenePointers>();
     world.init_resource::<PortableScenes>();
     world.init_resource::<LiveScenes>();
@@ -251,12 +253,13 @@ fn publishes_a_wearable_by_the_best_avatar_wearing_it() {
         world.resource::<IpfsResource>().scene_priority("shared"),
         Some(far.load_priority(Tier::Avatar))
     );
+    Ok(())
 }
 
 #[test]
-fn publishes_each_scenes_key_with_the_players_scene_on_top() {
+fn publishes_each_scenes_key_with_the_players_scene_on_top() -> anyhow::Result<()> {
     let mut world = world_with_player(Some(Vec3::X));
-    insert_ipfs(&mut world, 1);
+    insert_ipfs(&mut world, 1)?;
     // the player stands on "home"; "far" is behind the camera, five parcels away
     let mut pointers = ScenePointers::default();
     pointers.insert(
@@ -303,12 +306,13 @@ fn publishes_each_scenes_key_with_the_players_scene_on_top() {
         })
     );
     assert_eq!(ipfs.scene_priority("other"), None);
+    Ok(())
 }
 
 #[test]
-fn publishes_nothing_while_no_download_waits_for_a_slot() {
+fn publishes_nothing_while_no_download_waits_for_a_slot() -> anyhow::Result<()> {
     let mut world = world_with_player(Some(Vec3::X));
-    insert_ipfs(&mut world, 1);
+    insert_ipfs(&mut world, 1)?;
     world.init_resource::<ScenePointers>();
     world.init_resource::<PortableScenes>();
     world.init_resource::<LiveScenes>();
@@ -333,12 +337,13 @@ fn publishes_nothing_while_no_download_waits_for_a_slot() {
         world.resource::<IpfsResource>().scene_priority("home"),
         Some(LoadPriority::TOP)
     );
+    Ok(())
 }
 
 #[test]
-fn a_scene_registers_its_hash_at_spawn_and_releases_it_at_despawn() {
+fn a_scene_registers_its_hash_at_spawn_and_releases_it_at_despawn() -> anyhow::Result<()> {
     let mut world = world_with_player(None);
-    insert_ipfs(&mut world, 1);
+    insert_ipfs(&mut world, 1)?;
 
     let scene = world.spawn(SceneHash("s".to_owned())).id();
     assert_eq!(
@@ -349,12 +354,13 @@ fn a_scene_registers_its_hash_at_spawn_and_releases_it_at_despawn() {
 
     world.despawn(scene);
     assert_eq!(world.resource::<IpfsResource>().scene_priority("s"), None);
+    Ok(())
 }
 
 #[test]
-fn the_players_scene_is_active_before_it_has_a_context() {
+fn the_players_scene_is_active_before_it_has_a_context() -> anyhow::Result<()> {
     let mut world = world_with_player(Some(Vec3::X));
-    insert_ipfs(&mut world, 1);
+    insert_ipfs(&mut world, 1)?;
     world.init_resource::<ScenePointers>();
     world.init_resource::<PortableScenes>();
     world.init_resource::<LiveScenes>();
@@ -369,12 +375,13 @@ fn the_players_scene_is_active_before_it_has_a_context() {
         world.resource::<IpfsResource>().scene_priority("home"),
         Some(LoadPriority::TOP)
     );
+    Ok(())
 }
 
 #[test]
-fn the_arriving_players_scene_is_active_while_they_are_out_of_world() {
+fn the_arriving_players_scene_is_active_while_they_are_out_of_world() -> anyhow::Result<()> {
     let mut world = world_with_player(Some(Vec3::X));
-    insert_ipfs(&mut world, 1);
+    insert_ipfs(&mut world, 1)?;
     world.init_resource::<ScenePointers>();
     world.init_resource::<PortableScenes>();
     world.init_resource::<LiveScenes>();
@@ -398,12 +405,13 @@ fn the_arriving_players_scene_is_active_while_they_are_out_of_world() {
         Some(LoadPriority::TOP),
         "the scene the player is arriving in loads first"
     );
+    Ok(())
 }
 
 #[test]
-fn a_scene_without_a_partition_stays_at_the_bottom_of_the_scene_tier() {
+fn a_scene_without_a_partition_stays_at_the_bottom_of_the_scene_tier() -> anyhow::Result<()> {
     let mut world = world_with_player(Some(Vec3::X));
-    insert_ipfs(&mut world, 1);
+    insert_ipfs(&mut world, 1)?;
     world.init_resource::<ScenePointers>();
     world.init_resource::<PortableScenes>();
     world.init_resource::<LiveScenes>();
@@ -416,12 +424,13 @@ fn a_scene_without_a_partition_stays_at_the_bottom_of_the_scene_tier() {
         world.resource::<IpfsResource>().scene_priority("loading"),
         Some(LoadPriority::SCENE_PENDING)
     );
+    Ok(())
 }
 
 #[test]
-fn an_avatars_wearables_register_at_its_partition_and_release_at_despawn() {
+fn an_avatars_wearables_register_at_its_partition_and_release_at_despawn() -> anyhow::Result<()> {
     let mut world = world_with_player(None);
-    insert_ipfs(&mut world, 1);
+    insert_ipfs(&mut world, 1)?;
     let near = PartitionData {
         sqr_distance: 100.0,
         parcel_distance: 1,
@@ -448,12 +457,14 @@ fn an_avatars_wearables_register_at_its_partition_and_release_at_despawn() {
     let ipfs = world.resource::<IpfsResource>();
     assert_eq!(ipfs.scene_priority("body"), None);
     assert_eq!(ipfs.scene_priority("hat"), None);
+    Ok(())
 }
 
 #[test]
-fn an_avatar_without_a_partition_registers_at_the_bottom_of_the_avatar_tier() {
+fn an_avatar_without_a_partition_registers_at_the_bottom_of_the_avatar_tier() -> anyhow::Result<()>
+{
     let mut world = world_with_player(None);
-    insert_ipfs(&mut world, 1);
+    insert_ipfs(&mut world, 1)?;
 
     world.spawn(PartitionedDownloads(vec!["body".to_owned()]));
 
@@ -461,12 +472,13 @@ fn an_avatar_without_a_partition_registers_at_the_bottom_of_the_avatar_tier() {
         world.resource::<IpfsResource>().scene_priority("body"),
         Some(LoadPriority::AVATAR_PENDING)
     );
+    Ok(())
 }
 
 #[test]
-fn a_shared_wearable_survives_one_avatar_leaving() {
+fn a_shared_wearable_survives_one_avatar_leaving() -> anyhow::Result<()> {
     let mut world = world_with_player(None);
-    insert_ipfs(&mut world, 1);
+    insert_ipfs(&mut world, 1)?;
     let near = PartitionData {
         sqr_distance: 100.0,
         parcel_distance: 1,
@@ -495,12 +507,13 @@ fn a_shared_wearable_survives_one_avatar_leaving() {
         Some(near.load_priority(Tier::Avatar)),
         "still registered, at the key it had; the next publish lowers it to the far avatar's"
     );
+    Ok(())
 }
 
 #[test]
-fn an_outfit_change_swaps_the_registered_hashes() {
+fn an_outfit_change_swaps_the_registered_hashes() -> anyhow::Result<()> {
     let mut world = world_with_player(None);
-    insert_ipfs(&mut world, 1);
+    insert_ipfs(&mut world, 1)?;
     let near = PartitionData {
         sqr_distance: 100.0,
         parcel_distance: 1,
@@ -528,12 +541,14 @@ fn an_outfit_change_swaps_the_registered_hashes() {
         ipfs.scene_priority("kept"),
         Some(near.load_priority(Tier::Avatar))
     );
+    Ok(())
 }
 
 #[test]
-fn an_avatars_emotes_register_beside_its_wearables_and_release_when_playback_ends() {
+fn an_avatars_emotes_register_beside_its_wearables_and_release_when_playback_ends(
+) -> anyhow::Result<()> {
     let mut world = world_with_player(None);
-    insert_ipfs(&mut world, 1);
+    insert_ipfs(&mut world, 1)?;
     let near = PartitionData {
         sqr_distance: 100.0,
         parcel_distance: 1,
@@ -561,12 +576,13 @@ fn an_avatars_emotes_register_beside_its_wearables_and_release_when_playback_end
         ipfs.scene_priority("body"),
         Some(near.load_priority(Tier::Avatar))
     );
+    Ok(())
 }
 
 #[test]
-fn publishes_an_emote_at_the_partition_of_the_avatar_playing_it() {
+fn publishes_an_emote_at_the_partition_of_the_avatar_playing_it() -> anyhow::Result<()> {
     let mut world = world_with_player(Some(Vec3::X));
-    insert_ipfs(&mut world, 1);
+    insert_ipfs(&mut world, 1)?;
     world.init_resource::<ScenePointers>();
     world.init_resource::<PortableScenes>();
     world.init_resource::<LiveScenes>();
@@ -589,6 +605,7 @@ fn publishes_an_emote_at_the_partition_of_the_avatar_playing_it() {
             sqr_distance: FloatOrd(1024.0),
         })
     );
+    Ok(())
 }
 
 fn player_entity(world: &mut World) -> Entity {
@@ -599,9 +616,9 @@ fn player_entity(world: &mut World) -> Entity {
 }
 
 #[test]
-fn the_players_own_wearables_and_emotes_rank_ahead_of_the_players_scene() {
+fn the_players_own_wearables_and_emotes_rank_ahead_of_the_players_scene() -> anyhow::Result<()> {
     let mut world = world_with_player(Some(Vec3::X));
-    insert_ipfs(&mut world, 1);
+    insert_ipfs(&mut world, 1)?;
     world.init_resource::<ScenePointers>();
     world.init_resource::<PortableScenes>();
     world.init_resource::<LiveScenes>();
@@ -657,12 +674,14 @@ fn the_players_own_wearables_and_emotes_rank_ahead_of_the_players_scene() {
         ipfs.scene_priority("their-dance"),
         Some(near.load_priority(Tier::Avatar))
     );
+    Ok(())
 }
 
 #[test]
-fn a_wearable_the_player_shares_with_another_avatar_ranks_as_the_players_own() {
+fn a_wearable_the_player_shares_with_another_avatar_ranks_as_the_players_own() -> anyhow::Result<()>
+{
     let mut world = world_with_player(Some(Vec3::X));
-    insert_ipfs(&mut world, 1);
+    insert_ipfs(&mut world, 1)?;
     world.init_resource::<ScenePointers>();
     world.init_resource::<PortableScenes>();
     world.init_resource::<LiveScenes>();
@@ -696,6 +715,7 @@ fn a_wearable_the_player_shares_with_another_avatar_ranks_as_the_players_own() {
         world.resource::<IpfsResource>().scene_priority("shared"),
         Some(near.load_priority(Tier::Avatar))
     );
+    Ok(())
 }
 
 /// The publisher's per-frame work at a busy plaza: 20 scenes in range, 50 avatars with 10
@@ -703,9 +723,9 @@ fn a_wearable_the_player_shares_with_another_avatar_ranks_as_the_players_own() {
 /// none. Run with `--ignored --nocapture`.
 #[test]
 #[ignore]
-fn overhead_of_publishing_at_a_busy_plaza() {
+fn overhead_of_publishing_at_a_busy_plaza() -> anyhow::Result<()> {
     let mut world = world_with_player(Some(Vec3::X));
-    insert_ipfs(&mut world, 32);
+    insert_ipfs(&mut world, 32)?;
     world.init_resource::<ScenePointers>();
     world.init_resource::<PortableScenes>();
     world.init_resource::<LiveScenes>();
@@ -745,4 +765,5 @@ fn overhead_of_publishing_at_a_busy_plaza() {
     println!(
         "publisher: 20 live scenes + 50 avatars x 10 wearables: {busy:?} per frame with a download waiting (partitions, keys written in place); {idle:?} with none (partitions only)"
     );
+    Ok(())
 }

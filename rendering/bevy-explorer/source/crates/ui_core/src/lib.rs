@@ -206,44 +206,41 @@ fn setup(
 
     init_fonts(&mut fonts, &mut font_system);
 
-    TITLE_TEXT_STYLE
-        .set((
+    let title = (
+        TextFont {
+            font: user_font(FontName::Sans, WeightName::Bold),
+            font_size: 35.0 / 1.3,
+            ..Default::default()
+        },
+        TextColor(Color::BLACK),
+    );
+    let body = (
+        TextFont {
+            font: user_font(FontName::Sans, WeightName::Regular),
+            font_size: 25.0 / 1.3,
+            ..Default::default()
+        },
+        TextColor(Color::BLACK),
+    );
+    let hover = std::array::from_fn(|i| {
+        (
             TextFont {
                 font: user_font(FontName::Sans, WeightName::Bold),
-                font_size: 35.0 / 1.3,
-                ..Default::default()
-            },
-            TextColor(Color::BLACK),
-        ))
-        .unwrap();
-    BODY_TEXT_STYLE
-        .set((
-            TextFont {
-                font: user_font(FontName::Sans, WeightName::Regular),
                 font_size: 25.0 / 1.3,
                 ..Default::default()
             },
-            TextColor(Color::BLACK),
-        ))
-        .unwrap();
-    HOVER_TEXT_STYLE
-        .set(
-            (0..10)
-                .map(|i| {
-                    (
-                        TextFont {
-                            font: user_font(FontName::Sans, WeightName::Bold),
-                            font_size: 25.0 / 1.3,
-                            ..Default::default()
-                        },
-                        TextColor(Color::srgba(1.0, 1.0, 1.0, i as f32 / 9.0)),
-                    )
-                })
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap(),
+            TextColor(Color::srgba(1.0, 1.0, 1.0, i as f32 / 9.0)),
         )
-        .unwrap();
+    });
+    // a second setup keeps the styles of the first
+    let already_set = [
+        TITLE_TEXT_STYLE.set(title).is_err(),
+        BODY_TEXT_STYLE.set(body).is_err(),
+        HOVER_TEXT_STYLE.set(hover).is_err(),
+    ];
+    if already_set.contains(&true) {
+        error!("text styles are already set");
+    }
 }
 
 #[derive(States, Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]

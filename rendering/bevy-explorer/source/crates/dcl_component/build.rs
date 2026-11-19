@@ -113,7 +113,12 @@ fn gen_sdk_components() -> Result<()> {
         if path.extension().is_none_or(|ext| ext != "proto") {
             continue;
         }
-        let name = path.file_stem().unwrap().to_str().unwrap();
+        let Some(name) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            return Err(std::io::Error::other(format!(
+                "{} has no UTF-8 file name",
+                path.display()
+            )));
+        };
         if name == "map_pin" {
             continue;
         }
@@ -128,7 +133,10 @@ fn gen_sdk_components() -> Result<()> {
             .split('_')
             .map(|part| {
                 let mut chars = part.chars();
-                chars.next().unwrap().to_uppercase().to_string() + chars.as_str()
+                chars
+                    .next()
+                    .map_or_else(String::new, |first| first.to_uppercase().to_string())
+                    + chars.as_str()
             })
             .collect::<String>();
         assert!(
@@ -248,7 +256,7 @@ fn gen_sdk_components() -> Result<()> {
     // options carried in the same descriptor — proto stays the single source of truth.
     let quant_path = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR not set"))
         .join("pulse_quant.rs");
-    build_quant::generate(&descriptor_bytes, &quant_path);
+    build_quant::generate(&descriptor_bytes, &quant_path).map_err(std::io::Error::other)?;
 
     // The sources import common protos the list above does not name, so watch the whole tree.
     println!("cargo:rerun-if-changed={}", proto_root.display());

@@ -727,8 +727,12 @@ pub(crate) fn initialize_scene(
                 ref mut global_updates,
                 scene_origin,
                 crdt_context,
-            } => (global_updates.take().unwrap(), scene_origin, crdt_context),
+            } => (global_updates.take(), scene_origin, crdt_context),
             _ => panic!("bad state"),
+        };
+        let Some(global_updates) = global_updates else {
+            fail("global updates were already taken");
+            continue;
         };
 
         let crdt_component_interfaces = CrdtComponentInterfaces(HashMap::from_iter(

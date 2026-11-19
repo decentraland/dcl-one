@@ -16,7 +16,7 @@ fn visit_dirs(writer: &mut BufWriter<File>, dir: &Path, base_dir: &Path) -> std:
             if path.is_dir() {
                 visit_dirs(writer, &path, base_dir)?;
             } else if path.is_file() {
-                let relative_path = path.strip_prefix(base_dir).unwrap();
+                let relative_path = path.strip_prefix(base_dir).map_err(std::io::Error::other)?;
                 let relative_path = relative_path.to_string_lossy().replace('\\', "/");
                 if env::var_os("CARGO_FEATURE_AVATAR_PREVIEW").is_some()
                     && !preview_asset(&relative_path)
@@ -53,9 +53,10 @@ fn preview_asset(relative_path: &str) -> bool {
 fn main() -> std::io::Result<()> {
     let source_path = Path::new(SOURCE_DIR);
 
-    let out_dir = env::var_os("OUT_DIR").unwrap();
+    let out_dir =
+        env::var_os("OUT_DIR").ok_or_else(|| std::io::Error::other("OUT_DIR is not set"))?;
     let dest_path = Path::new(&out_dir).join("generated_asset_embedding.rs");
-    let mut writer = BufWriter::new(File::create(dest_path).unwrap());
+    let mut writer = BufWriter::new(File::create(dest_path)?);
 
     println!("cargo:rerun-if-changed={SOURCE_DIR}");
 
@@ -73,8 +74,8 @@ fn main() -> std::io::Result<()> {
     let mut hasher = bevy_platform::hash::FixedHasher.build_hasher();
 
     let mut shader_paths = fs::read_dir("src/assets/shaders")?
-        .map(|entry| entry.unwrap().path())
-        .collect::<Vec<_>>();
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
     shader_paths.sort();
 
     for path in shader_paths {

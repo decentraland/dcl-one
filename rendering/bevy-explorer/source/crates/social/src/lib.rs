@@ -40,12 +40,29 @@ use tokio::sync::{
 };
 use wallet::Wallet;
 
-pub struct SocialPlugin;
+/// Made by [`SocialPlugin::new`], which inserts the social runtime its systems take into an app;
+/// add the plugin to that same app. The runtime is not a field of the plugin because on the
+/// web it is a single-threaded runtime, which is not `Send`.
+pub struct SocialPlugin {
+    /// Private so the plugin can only come from `new`, which inserts the runtime.
+    _runtime: (),
+}
+
+impl SocialPlugin {
+    /// Inserts the social runtime into `app`; an error when the runtime can't start.
+    pub fn new(app: &mut bevy::prelude::App) -> std::io::Result<Self> {
+        #[cfg(feature = "social")]
+        runtime::SocialRuntime::insert(app)?;
+        #[cfg(not(feature = "social"))]
+        let _ = app;
+        Ok(Self { _runtime: () })
+    }
+}
 
 impl Plugin for SocialPlugin {
     fn build(&self, app: &mut bevy::prelude::App) {
-        #[cfg(feature = "social")]
-        app.add_plugins(runtime::SocialRuntimePlugin);
+        #[cfg(all(feature = "social", target_arch = "wasm32"))]
+        app.add_systems(First, runtime::yield_to_runtime);
         app.add_event::<FriendshipEvent>();
         app.add_event::<ConnectivityEvent>();
         app.add_event::<CommunityConnectivityEvent>();

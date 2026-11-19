@@ -157,8 +157,9 @@ mod delay_tests {
     use bevy::asset::io::memory::MemoryAssetReader;
     use std::sync::Arc;
 
-    fn app(preview: bool) -> App {
+    fn app(preview: bool) -> anyhow::Result<App> {
         let ipfs = IpfsIo::new(
+            crate::http_client()?,
             preview,
             Box::new(MemoryAssetReader { root: default() }),
             None,
@@ -172,13 +173,14 @@ mod delay_tests {
             inner: Arc::new(ipfs),
         })
         .add_plugins(WebRequestsDebugPanelPlugin);
-        app
+        Ok(app)
     }
 
     #[test]
-    fn only_preview_installs_delay_controls_and_starts_disabled() {
-        assert!(!app(false).world().contains_resource::<PreviewDelay>());
-        assert!(!app(true).world().resource::<PreviewDelay>().enabled);
+    fn only_preview_installs_delay_controls_and_starts_disabled() -> anyhow::Result<()> {
+        assert!(!app(false)?.world().contains_resource::<PreviewDelay>());
+        assert!(!app(true)?.world().resource::<PreviewDelay>().enabled);
+        Ok(())
     }
 }
 
@@ -191,8 +193,10 @@ mod request_tests {
     use std::{sync::Arc, time::Duration};
 
     #[test]
-    fn first_content_request_state_includes_completed_downloads_and_batches() {
+    fn first_content_request_state_includes_completed_downloads_and_batches() -> anyhow::Result<()>
+    {
         let ipfs = Arc::new(IpfsIo::new(
+            crate::http_client()?,
             false,
             Box::new(MemoryAssetReader { root: default() }),
             None,
@@ -253,6 +257,7 @@ mod request_tests {
         assert_eq!(state["fillRate"], 352_939.0);
         assert_eq!(state["sceneBatch"], json!([0, 1.0, 2]));
         assert_eq!(state["attachmentBatch"], json!([4, 4.0, 4]));
+        Ok(())
     }
 }
 

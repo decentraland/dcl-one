@@ -21,7 +21,7 @@ use std::{
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        RwLock,
+        PoisonError, RwLock,
     },
 };
 use system_bridge::SystemApi;
@@ -107,15 +107,25 @@ pub fn init_runtime() -> anyhow::Result<()> {
     let (init_sx, init_rx) = tokio::sync::oneshot::channel::<anyhow::Result<()>>();
 
     std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
+        let rt = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .unwrap();
+        {
+            Ok(rt) => rt,
+            Err(e) => {
+                error!("failed to create the ipc runtime: {e}");
+                let _ = init_sx.send(Err(e.into()));
+                return;
+            }
+        };
 
         let name_str = ipc_socket_name();
-        let name = name_str.clone().to_fs_name::<GenericFilePath>().unwrap();
-
-        let listener = rt.block_on(async { ListenerOptions::new().name(name).create_tokio() });
+        let listener = name_str
+            .clone()
+            .to_fs_name::<GenericFilePath>()
+            .and_then(|name| {
+                rt.block_on(async { ListenerOptions::new().name(name).create_tokio() })
+            });
         let listener = match listener {
             Ok(l) => l,
             Err(e) => {
@@ -125,7 +135,14 @@ pub fn init_runtime() -> anyhow::Result<()> {
             }
         };
 
-        let mut target = std::env::current_exe().unwrap();
+        let mut target = match std::env::current_exe() {
+            Ok(target) => target,
+            Err(e) => {
+                error!("failed to find the current executable: {e}");
+                let _ = init_sx.send(Err(e.into()));
+                return;
+            }
+        };
         target.pop();
 
         // pop an extra folder when running tests
@@ -161,7 +178,7 @@ pub fn init_runtime() -> anyhow::Result<()> {
             Err(e) => {
                 error!("runtime initialization failed: {e}");
                 let _ = init_sx.send(Err(e.into()));
-                child.wait().unwrap();
+                let _ = child.wait();
                 return;
             }
         };
@@ -171,7 +188,9 @@ pub fn init_runtime() -> anyhow::Result<()> {
         let (new_scene_sx, new_scene_rx) = tokio::sync::mpsc::unbounded_channel();
         let (router_sx, router_rx) = tokio::sync::mpsc::unbounded_channel();
 
-        *NEW_SCENE_SENDER.write().unwrap() = Some(new_scene_sx);
+        *NEW_SCENE_SENDER
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(new_scene_sx);
         ENGINE_IPC_CONTEXT.set(Some(ResponseContext {
             ipc_channel_registry: Default::default(),
             ipc_router: router_sx,
@@ -400,7 +419,9 @@ pub fn spawn_scene(
 
     let (main_sx, thread_rx) = tokio::sync::mpsc::unbounded_channel::<RendererResponse>();
 
-    let ipc_out = NEW_SCENE_SENDER.read().unwrap();
+    let ipc_out = NEW_SCENE_SENDER
+        .read()
+        .unwrap_or_else(PoisonError::into_inner);
     let Some(ipc_out) = ipc_out.as_ref() else {
         error!("scene {id:?} not started: ipc runtime is not initialized");
         return (main_sx, None);

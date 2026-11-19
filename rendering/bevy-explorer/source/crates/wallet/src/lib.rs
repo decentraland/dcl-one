@@ -277,16 +277,17 @@ pub struct SignedLoginMeta {
 }
 
 impl SignedLoginMeta {
-    pub fn new(is_guest: bool, origin: Uri) -> Self {
+    /// None when `origin` has no scheme or no authority.
+    pub fn new(is_guest: bool, origin: Uri) -> Option<Self> {
         let origin = origin.into_parts();
 
-        Self {
+        Some(Self {
             intent: "dcl:explorer:comms-handshake".to_owned(),
             signer: "dcl:explorer".to_owned(),
             is_guest,
-            origin: format!("{}://{}", origin.scheme.unwrap(), origin.authority.unwrap()),
+            origin: format!("{}://{}", origin.scheme?, origin.authority?),
             secret: None,
-        }
+        })
     }
 
     pub fn with_secret(mut self, secret: Option<String>) -> Self {

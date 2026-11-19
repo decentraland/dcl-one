@@ -362,7 +362,7 @@ fn a_smart_wearable_loads_from_its_content_file_while_the_current_scene_loads() 
 }
 
 #[test]
-fn empty_definition_is_kept_without_deferring_and_despawned_out_of_range() {
+fn empty_definition_is_kept_without_deferring_and_despawned_out_of_range() -> anyhow::Result<()> {
     use std::path::Path;
 
     use bevy::asset::io::{
@@ -386,6 +386,7 @@ fn empty_definition_is_kept_without_deferring_and_despawned_out_of_range() {
         .init_asset_loader::<EntityDefinitionLoader>()
         .insert_resource(IpfsResource {
             inner: std::sync::Arc::new(IpfsIo::new(
+                ipfs::http_client()?,
                 false,
                 Box::new(MemoryAssetReader {
                     root: Dir::default(),
@@ -455,4 +456,5 @@ fn empty_definition_is_kept_without_deferring_and_despawned_out_of_range() {
         .resource::<LiveScenes>()
         .scenes
         .contains_key("current"));
+    Ok(())
 }

@@ -36,15 +36,14 @@ fn main() -> Result<()> {
     // spawn runtime
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
-        .build()
-        .unwrap();
+        .build()?;
 
     // get the socket name from args
     let name_str = env::args().nth(1).expect("No socket name provided");
     let name = name_str.to_fs_name::<GenericFilePath>()?;
 
     // connect ipc stream
-    let stream = rt.block_on(async move { Stream::connect(name).await.unwrap() });
+    let stream = rt.block_on(async move { Stream::connect(name).await })?;
 
     let (recv_half, send_half) = stream.split();
 

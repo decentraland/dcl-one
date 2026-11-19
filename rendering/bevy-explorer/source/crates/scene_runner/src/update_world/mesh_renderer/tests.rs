@@ -35,7 +35,7 @@ pub(crate) fn record_charges(charges: Res<InstantiationCharges>, mut charged: Re
 /// An app that runs `update_mesh` as the explorer does: in `Update`, with the slice handed to
 /// the spawner (and the charges reset) in `SpawnScene`. A player in world and one scene root with
 /// a context.
-pub(crate) fn test_app() -> (App, Entity) {
+pub(crate) fn test_app() -> anyhow::Result<(App, Entity)> {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, AssetPlugin::default(), ScenePlugin))
         .init_asset::<Mesh>()
@@ -49,6 +49,7 @@ pub(crate) fn test_app() -> (App, Entity) {
         .insert_resource(scene_updates(Some(SIXTY_FPS)))
         .insert_resource(IpfsResource {
             inner: Arc::new(IpfsIo::new(
+                ipfs::http_client()?,
                 false,
                 Box::new(MemoryAssetReader {
                     root: Dir::default(),
@@ -77,7 +78,7 @@ pub(crate) fn test_app() -> (App, Entity) {
     app.world_mut().spawn(PrimaryUser::default());
     let root = app.world_mut().spawn_empty().id();
     give_context(&mut app, root);
-    (app, root)
+    Ok((app, root))
 }
 
 pub(crate) fn give_context(app: &mut App, root: Entity) {
@@ -172,8 +173,8 @@ pub(crate) fn charged(app: &App) -> Duration {
 }
 
 #[test]
-fn primitives_are_attached_until_the_slice_is_charged() {
-    let (mut app, root) = test_app();
+fn primitives_are_attached_until_the_slice_is_charged() -> anyhow::Result<()> {
+    let (mut app, root) = test_app()?;
     let fit = fit(PRIMITIVE_COST);
     let boxes = spawn_boxes(&mut app, root, fit + 3);
 
@@ -181,11 +182,12 @@ fn primitives_are_attached_until_the_slice_is_charged() {
 
     assert_eq!(attached(&app, &boxes), fit);
     assert_eq!(marked::<PendingPrimitive>(&app, &boxes), 3);
+    Ok(())
 }
 
 #[test]
-fn waiting_primitives_are_attached_first_next_frame() {
-    let (mut app, root) = test_app();
+fn waiting_primitives_are_attached_first_next_frame() -> anyhow::Result<()> {
+    let (mut app, root) = test_app()?;
     let fit = fit(PRIMITIVE_COST);
     let first = spawn_boxes(&mut app, root, fit + 3);
     app.update();
@@ -201,22 +203,24 @@ fn waiting_primitives_are_attached_first_next_frame() {
     assert_eq!(attached(&app, &left), 3);
     assert_eq!(marked::<PendingPrimitive>(&app, &left), 0);
     assert_eq!(attached(&app, &second), fit - 3);
+    Ok(())
 }
 
 #[test]
-fn the_first_primitive_of_a_frame_is_attached_however_much_was_spent() {
-    let (mut app, root) = test_app();
+fn the_first_primitive_of_a_frame_is_attached_however_much_was_spent() -> anyhow::Result<()> {
+    let (mut app, root) = test_app()?;
     let boxes = spawn_boxes(&mut app, root, 2);
     preset_charges(&mut app, Duration::from_millis(10));
 
     app.update();
 
     assert_eq!(attached(&app, &boxes), 1);
+    Ok(())
 }
 
 #[test]
-fn custom_texture_coordinates_cost_a_new_mesh() {
-    let (mut app, root) = test_app();
+fn custom_texture_coordinates_cost_a_new_mesh() -> anyhow::Result<()> {
+    let (mut app, root) = test_app()?;
     let scene_entity = scene_entity(&mut app, root);
     app.world_mut().spawn((
         scene_entity,
@@ -228,11 +232,12 @@ fn custom_texture_coordinates_cost_a_new_mesh() {
     app.update();
 
     assert_eq!(charged(&app), PRIMITIVE_COST + NEW_MESH_COST);
+    Ok(())
 }
 
 #[test]
-fn a_primitive_with_a_new_material_is_charged_for_both_and_marked_prepaid() {
-    let (mut app, root) = test_app();
+fn a_primitive_with_a_new_material_is_charged_for_both_and_marked_prepaid() -> anyhow::Result<()> {
+    let (mut app, root) = test_app()?;
     let scene_entity = scene_entity(&mut app, root);
     let entity = app
         .world_mut()
@@ -247,12 +252,13 @@ fn a_primitive_with_a_new_material_is_charged_for_both_and_marked_prepaid() {
 
     assert_eq!(charged(&app), PRIMITIVE_COST + NEW_MATERIAL_COST);
     assert!(app.world().get::<MaterialPrepaid>(entity).is_some());
+    Ok(())
 }
 
 // guard: the consumer goes through the budget's bypass
 #[test]
-fn behind_the_loading_backdrop_every_primitive_is_attached() {
-    let (mut app, root) = test_app();
+fn behind_the_loading_backdrop_every_primitive_is_attached() -> anyhow::Result<()> {
+    let (mut app, root) = test_app()?;
     let player = app
         .world_mut()
         .query_filtered::<Entity, With<PrimaryUser>>()
@@ -265,11 +271,12 @@ fn behind_the_loading_backdrop_every_primitive_is_attached() {
 
     assert_eq!(attached(&app, &boxes), boxes.len());
     assert_eq!(charged(&app), Duration::ZERO);
+    Ok(())
 }
 
 #[test]
-fn a_changed_primitive_is_neither_charged_nor_deferred() {
-    let (mut app, root) = test_app();
+fn a_changed_primitive_is_neither_charged_nor_deferred() -> anyhow::Result<()> {
+    let (mut app, root) = test_app()?;
     let boxes = spawn_boxes(&mut app, root, 2);
     app.update();
 
@@ -290,11 +297,12 @@ fn a_changed_primitive_is_neither_charged_nor_deferred() {
         assert_eq!(app.world().get::<Mesh3d>(*entity).unwrap().0, sphere);
     }
     assert_eq!(charged(&app), Duration::from_millis(10));
+    Ok(())
 }
 
 #[test]
-fn a_primitive_removed_while_waiting_is_never_attached() {
-    let (mut app, root) = test_app();
+fn a_primitive_removed_while_waiting_is_never_attached() -> anyhow::Result<()> {
+    let (mut app, root) = test_app()?;
     preset_charges(&mut app, Duration::from_millis(10));
     let boxes = spawn_boxes(&mut app, root, 2);
     app.update();
@@ -309,11 +317,12 @@ fn a_primitive_removed_while_waiting_is_never_attached() {
 
     assert!(app.world().get::<Mesh3d>(waiting_box).is_none());
     assert!(app.world().get::<PendingPrimitive>(waiting_box).is_none());
+    Ok(())
 }
 
 #[test]
-fn a_primitive_removed_and_added_in_one_tick_is_attached() {
-    let (mut app, root) = test_app();
+fn a_primitive_removed_and_added_in_one_tick_is_attached() -> anyhow::Result<()> {
+    let (mut app, root) = test_app()?;
     let boxes = spawn_boxes(&mut app, root, 1);
     app.update();
 
@@ -323,11 +332,12 @@ fn a_primitive_removed_and_added_in_one_tick_is_attached() {
     app.update();
 
     assert_eq!(attached(&app, &boxes), 1);
+    Ok(())
 }
 
 #[test]
-fn a_waiting_primitive_whose_scene_has_no_context_is_dropped() {
-    let (mut app, _) = test_app();
+fn a_waiting_primitive_whose_scene_has_no_context_is_dropped() -> anyhow::Result<()> {
+    let (mut app, _) = test_app()?;
     let root = app.world_mut().spawn_empty().id();
     let scene_entity = scene_entity(&mut app, root);
     let entity = app
@@ -345,11 +355,12 @@ fn a_waiting_primitive_whose_scene_has_no_context_is_dropped() {
     app.update();
 
     assert!(app.world().get::<PendingPrimitive>(entity).is_none());
+    Ok(())
 }
 
 #[test]
-fn waiting_primitives_are_left_alone_once_the_slice_is_spent() {
-    let (mut app, root) = test_app();
+fn waiting_primitives_are_left_alone_once_the_slice_is_spent() -> anyhow::Result<()> {
+    let (mut app, root) = test_app()?;
     preset_charges(&mut app, Duration::from_millis(10));
     let boxes = spawn_boxes(&mut app, root, 3);
     app.update();
@@ -377,11 +388,12 @@ fn waiting_primitives_are_left_alone_once_the_slice_is_spent() {
         marker_written::<PendingPrimitive>(&app, waiting_boxes[still_waiting]),
         before[still_waiting]
     );
+    Ok(())
 }
 
 #[test]
-fn a_waiting_primitive_removed_and_added_in_one_tick_keeps_waiting() {
-    let (mut app, root) = test_app();
+fn a_waiting_primitive_removed_and_added_in_one_tick_keeps_waiting() -> anyhow::Result<()> {
+    let (mut app, root) = test_app()?;
     preset_charges(&mut app, Duration::from_millis(10));
     let boxes = spawn_boxes(&mut app, root, 3);
     app.update();
@@ -403,12 +415,14 @@ fn a_waiting_primitive_removed_and_added_in_one_tick_keeps_waiting() {
     app.update();
 
     assert_eq!(attached(&app, &waiting_boxes), 2);
+    Ok(())
 }
 
 // guard: what waits when the player goes behind the backdrop is attached at once
 #[test]
-fn waiting_primitives_are_attached_when_the_player_goes_behind_the_backdrop() {
-    let (mut app, root) = test_app();
+fn waiting_primitives_are_attached_when_the_player_goes_behind_the_backdrop() -> anyhow::Result<()>
+{
+    let (mut app, root) = test_app()?;
     preset_charges(&mut app, Duration::from_millis(10));
     let boxes = spawn_boxes(&mut app, root, 50);
     app.update();
@@ -425,12 +439,13 @@ fn waiting_primitives_are_attached_when_the_player_goes_behind_the_backdrop() {
 
     assert_eq!(attached(&app, &boxes), 50);
     assert_eq!(marked::<PendingPrimitive>(&app, &boxes), 0);
+    Ok(())
 }
 
 // guard: once the waiting have spent the slice, arrivals still join them and changes still apply
 #[test]
-fn once_the_slice_is_spent_arrivals_wait_and_changes_apply() {
-    let (mut app, root) = test_app();
+fn once_the_slice_is_spent_arrivals_wait_and_changes_apply() -> anyhow::Result<()> {
+    let (mut app, root) = test_app()?;
     let shown = spawn_boxes(&mut app, root, 1);
     app.update();
     preset_charges(&mut app, Duration::from_millis(10));
@@ -454,4 +469,5 @@ fn once_the_slice_is_spent_arrivals_wait_and_changes_apply() {
         .sphere
         .clone();
     assert_eq!(app.world().get::<Mesh3d>(shown[0]).unwrap().0, sphere);
+    Ok(())
 }

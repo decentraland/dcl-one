@@ -125,7 +125,8 @@ pub fn headless_run(options: JsValue) -> Result<(), JsValue> {
     let mut wallet = Wallet::default();
     wallet.finalize_as_guest();
 
-    super::assemble(&mut app, config, &launch, &realm, true, wallet);
+    super::assemble(&mut app, config, &launch, &realm, true, wallet)
+        .map_err(|e| JsValue::from_str(&format!("can't build the app: {e}")))?;
     app.add_systems(PreUpdate, (report, forward_scene_logs));
 
     app.run();

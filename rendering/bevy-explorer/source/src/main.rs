@@ -11,7 +11,10 @@ use std::{
 
 use bevy::{
     app::AppExit,
-    log::{tracing_subscriber::Layer, LogPlugin},
+    log::{
+        tracing_subscriber::{Layer, Registry},
+        LogPlugin,
+    },
     prelude::*,
 };
 use clap::Parser;
@@ -60,18 +63,18 @@ fn main() {
         filter: "wgpu=error,naga=error,bevy_animation=error,matrix=error,symphonia=warn"
             .to_string(),
         custom_layer: move |_| {
-            // appending, as `startup_error` does, so neither writes over the other's lines
-            let (non_blocking, guard) = tracing_appender::non_blocking(
-                File::options()
-                    .append(true)
-                    .open(SESSION_LOG.get().unwrap())
-                    .unwrap(),
+            let session_log_layer = session_log_file().map(|file| {
+                let (non_blocking, guard) = tracing_appender::non_blocking(file);
+                Box::leak(guard.into());
+                bevy::log::tracing_subscriber::fmt::layer()
+                    .with_writer(non_blocking)
+                    .with_ansi(false)
+            });
+            // `Option`'s own `and_then` would shadow `Layer::and_then` in method syntax
+            let layer = <Option<_> as Layer<Registry>>::and_then(
+                session_log_layer,
+                PerfLogLayer::new(&BENCHMARK_LOG),
             );
-            Box::leak(guard.into());
-            let layer = bevy::log::tracing_subscriber::fmt::layer()
-                .with_writer(non_blocking)
-                .with_ansi(false)
-                .and_then(PerfLogLayer::new(&BENCHMARK_LOG));
             #[cfg(feature = "performance-profiler")]
             let layer =
                 layer.and_then(webgpu_build::perf::profiled_scopes::profiled_scopes_layer());
@@ -92,9 +95,15 @@ fn main() {
     let exit_code = match decentraland_app_config() {
         Ok(decentraland_app_config) => {
             // initialize v8 runtime from main thread
-            init_runtime().unwrap();
+            if let Err(e) = init_runtime() {
+                fail_startup(&format!("can't start the scene runtime: {e}"));
+            }
+            let mut app = match decentraland_app.build(decentraland_app_config) {
+                Ok(app) => app,
+                Err(e) => fail_startup(&format!("can't build the app: {e}")),
+            };
             // the autopilot ends its run with a code, success or failure
-            let exit = decentraland_app.build(decentraland_app_config).run();
+            let exit = app.run();
             // the app is gone, so its av threads are leaving: let them, rather than have
             // process teardown kill one inside ffmpeg
             #[cfg(feature = "ffmpeg")]
@@ -201,6 +210,23 @@ fn check_csv_folder(path: Option<&std::path::Path>, autopilot: bool) -> Result<(
         folder.display()
     ));
     Err(UserError(BENCHMARK_OUTPUT_ERROR))
+}
+
+/// The session log, opened for appending; none when it can't be opened, and the failure goes to
+/// stderr.
+fn session_log_file() -> Option<File> {
+    let session_log = SESSION_LOG.get()?;
+    File::options()
+        .append(true)
+        .open(session_log)
+        .inspect_err(|e| eprintln!("can't open the session log {session_log}: {e}"))
+        .ok()
+}
+
+/// Reports `message` through [`startup_error`] and exits with code 1; the crash marker stays.
+fn fail_startup(message: &str) -> ! {
+    startup_error(message);
+    std::process::exit(1);
 }
 
 /// The reason a launch stops before the app runs. It is logged, and also appended to the session

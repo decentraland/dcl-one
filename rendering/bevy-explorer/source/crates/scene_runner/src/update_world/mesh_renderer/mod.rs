@@ -112,7 +112,9 @@ impl Plugin for MeshDefinitionPlugin {
         );
 
         let generate_tangents = |mut mesh: Mesh| {
-            mesh.generate_tangents().unwrap();
+            if let Err(e) = mesh.generate_tangents() {
+                error!("primitive mesh has no tangents: {e}");
+            }
             mesh
         };
         let cube_uvs = |mut mesh: Mesh| {

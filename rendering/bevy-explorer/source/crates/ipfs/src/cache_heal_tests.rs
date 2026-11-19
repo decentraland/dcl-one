@@ -25,10 +25,11 @@ fn temp_dir(label: &str) -> PathBuf {
     dir
 }
 
-fn io_with_cache(label: &str) -> (Arc<IpfsIo>, PathBuf) {
+fn io_with_cache(label: &str) -> anyhow::Result<(Arc<IpfsIo>, PathBuf)> {
     IoTaskPool::get_or_init(bevy::tasks::TaskPool::new);
     let dir = temp_dir(label);
     let mut io = Arc::new(IpfsIo::new(
+        crate::http_client()?,
         false,
         Box::new(bevy::asset::io::file::FileAssetReader::new("assets")),
         None,
@@ -38,7 +39,7 @@ fn io_with_cache(label: &str) -> (Arc<IpfsIo>, PathBuf) {
         tokio::sync::mpsc::unbounded_channel().0,
     ));
     Arc::get_mut(&mut io).unwrap().default_fs_path = Some(dir.clone());
-    (io, dir)
+    Ok((io, dir))
 }
 
 fn content_path(file: &str) -> PathBuf {
@@ -274,8 +275,8 @@ fn each_entry_is_checked_once_and_the_session_holds_at_most_1024() {
 }
 
 #[tokio::test]
-async fn an_entry_under_a_content_hash_is_never_checked() {
-    let (io, dir) = io_with_cache("hash-keyed");
+async fn an_entry_under_a_content_hash_is_never_checked() -> anyhow::Result<()> {
+    let (io, dir) = io_with_cache("hash-keyed")?;
     let hash = raw_cid(b"original");
     scene_with(&io, "https://content.invalid", "tex.png", &hash).await;
     std::fs::write(dir.join(&hash), b"processed bytes").unwrap();
@@ -299,11 +300,12 @@ async fn an_entry_under_a_content_hash_is_never_checked() {
 
     assert_eq!(io.cache_heals.counts(), (0, 0));
     std::fs::remove_dir_all(dir).unwrap();
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_url_keyed_copy_is_dropped_once_and_downloaded_again() {
-    let (io, dir) = io_with_cache("url");
+async fn a_url_keyed_copy_is_dropped_once_and_downloaded_again() -> anyhow::Result<()> {
+    let (io, dir) = io_with_cache("url")?;
     let (base, log) = serve(vec![("/pic.png".to_owned(), b"a picture".to_vec())]).await;
     // a read waits for a connected realm
     scene_with(&io, &base, "unused.png", "bafkreiunused").await;
@@ -331,11 +333,12 @@ async fn a_url_keyed_copy_is_dropped_once_and_downloaded_again() {
     assert!(dir.join(&name).exists());
     assert_eq!(io.cache_heals.counts(), (1, 1));
     std::fs::remove_dir_all(dir).unwrap();
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_url_with_nothing_cached_drops_nothing() {
-    let (io, dir) = io_with_cache("empty");
+async fn a_url_with_nothing_cached_drops_nothing() -> anyhow::Result<()> {
+    let (io, dir) = io_with_cache("empty")?;
     scene_with(
         &io,
         "https://content.invalid",
@@ -351,11 +354,12 @@ async fn a_url_with_nothing_cached_drops_nothing() {
     );
     assert_eq!(io.cache_heals.counts(), (1, 0));
     std::fs::remove_dir_all(dir).unwrap();
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_loopback_remote_is_never_looked_up_in_the_web_cache() {
-    let (io, dir) = io_with_cache("loopback");
+async fn a_loopback_remote_is_never_looked_up_in_the_web_cache() -> anyhow::Result<()> {
+    let (io, dir) = io_with_cache("loopback")?;
     let hash = raw_cid(b"original");
     scene_with(&io, "http://127.0.0.1:9", "tex.png", &hash).await;
     let ipfs_path = IpfsPath::new_from_path(&content_path("tex.png"))
@@ -369,11 +373,12 @@ async fn a_loopback_remote_is_never_looked_up_in_the_web_cache() {
         Some(format!("https://content.invalid/contents/{hash}"))
     );
     std::fs::remove_dir_all(dir).unwrap();
+    Ok(())
 }
 
 #[test]
-fn a_failed_load_drops_a_bad_url_entry_and_a_reader_error_does_not() {
-    let (io, dir) = io_with_cache("system");
+fn a_failed_load_drops_a_bad_url_entry_and_a_reader_error_does_not() -> anyhow::Result<()> {
+    let (io, dir) = io_with_cache("system")?;
     bevy::tasks::block_on(scene_with(
         &io,
         "https://content.invalid",
@@ -429,6 +434,7 @@ fn a_failed_load_drops_a_bad_url_entry_and_a_reader_error_does_not() {
         .checks
         .is_empty());
     std::fs::remove_dir_all(dir).unwrap();
+    Ok(())
 }
 
 #[derive(Asset, TypePath)]
@@ -468,8 +474,9 @@ impl AssetLoader for RecordingLoader {
 }
 
 #[tokio::test]
-async fn a_healed_asset_loads_again_with_the_settings_it_was_first_loaded_with() {
-    let (io, dir) = io_with_cache("settings");
+async fn a_healed_asset_loads_again_with_the_settings_it_was_first_loaded_with(
+) -> anyhow::Result<()> {
+    let (io, dir) = io_with_cache("settings")?;
     let (base, log) = serve(vec![("/model.settingstest".to_owned(), b"good".to_vec())]).await;
     scene_with(&io, &base, "unused.png", "bafkreiunused").await;
     let (path, name) = url_asset(&io, &format!("{base}/model.settingstest"), "settingstest").await;
@@ -521,6 +528,7 @@ async fn a_healed_asset_loads_again_with_the_settings_it_was_first_loaded_with()
     assert_eq!(io.cache_heals.counts(), (1, 1));
     assert_eq!(*log.lock().unwrap(), vec!["/model.settingstest".to_owned()]);
     std::fs::remove_dir_all(dir).unwrap();
+    Ok(())
 }
 
 fn sorted(paths: Vec<AssetPath<'static>>) -> Vec<String> {

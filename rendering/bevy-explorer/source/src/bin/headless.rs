@@ -316,24 +316,27 @@ fn spawn_stdin_reader() -> std::sync::mpsc::Receiver<ControlCommand> {
     rx
 }
 
-fn main() -> AppExit {
-    let session_time: chrono::DateTime<chrono::Utc> = chrono::DateTime::from_timestamp_millis(
-        web_time::SystemTime::now()
-            .duration_since(web_time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64,
-    )
-    .unwrap();
-    let dirs = platform::project_directories().unwrap();
+/// Names this session's log file, in the data directory, and creates that directory.
+fn set_session_log() -> anyhow::Result<()> {
+    let session_time = chrono::Utc::now();
+    let dirs = platform::project_directories()
+        .ok_or_else(|| anyhow::anyhow!("no data directory for this platform"))?;
     let log_dir = dirs.data_local_dir();
-    std::fs::create_dir_all(log_dir).unwrap();
+    std::fs::create_dir_all(log_dir)?;
     let session_log = log_dir.join(format!(
         "headless-{}.log",
         session_time.format("%Y%m%d-%H%M%S")
     ));
     SESSION_LOG
         .set(session_log.to_string_lossy().into_owned())
-        .unwrap();
+        .map_err(|_| anyhow::anyhow!("the session log is already set"))
+}
+
+fn main() -> AppExit {
+    if let Err(e) = set_session_log() {
+        eprintln!("[headless] can't set up the session log: {e}");
+        return AppExit::from_code(1);
+    }
 
     // args first, so --help and a bad flag answer without spawning the scene runtime
     let args = parse_args();
@@ -343,7 +346,10 @@ fn main() -> AppExit {
     // Headless is always a server: a lost JS sidecar must restart the whole engine (the
     // desktop client and the scene_runner tests leave this false).
     dcl_deno_ipc::EXIT_ON_SIDECAR_LOSS.store(true, std::sync::atomic::Ordering::SeqCst);
-    init_runtime().unwrap();
+    if let Err(e) = init_runtime() {
+        eprintln!("[headless] can't start the scene runtime: {e}");
+        return AppExit::from_code(1);
+    }
 
     println!(
         "[headless] realm={} location={} preview={} server_mode={} tick_hz={}",
@@ -402,14 +408,17 @@ fn main() -> AppExit {
         "orchestrated engine must run with a guest wallet"
     );
 
-    webgpu_build::headless::assemble(
+    if let Err(e) = webgpu_build::headless::assemble(
         &mut app,
         config,
         &args.launch,
         &args.realm,
         args.server_mode,
         wallet,
-    );
+    ) {
+        eprintln!("[headless] can't build the app: {e}");
+        return AppExit::from_code(1);
+    }
     app.insert_resource(delegations);
     if !args.server_mode {
         // a test client answers `/world_state` (and, from the comms plugin, `/chat_history` and
@@ -632,10 +641,11 @@ fn claim_scene_locks(
         if held.contains_key(hash) {
             continue;
         }
-        let dir = platform::project_directories()
-            .unwrap()
-            .data_local_dir()
-            .join("scene-locks");
+        let Some(dirs) = platform::project_directories() else {
+            warn_once!("[headless] no data directory for scene locks");
+            return;
+        };
+        let dir = dirs.data_local_dir().join("scene-locks");
         // base64 may contain '/'; '_' is outside its alphabet so names stay distinct.
         // long hashes keep their tail to fit windows MAX_PATH under the data dir
         let name = hash.replace('/', "_");
@@ -853,10 +863,7 @@ fn request_delegation_renewals(
     const REFRESH_BUFFER_MS: i64 = 5 * 60 * 1000;
     const REQUEST_THROTTLE_SECS: f64 = 30.0;
 
-    let now_ms = web_time::SystemTime::now()
-        .duration_since(web_time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64;
+    let now_ms = chrono::Utc::now().timestamp_millis();
     let elapsed = time.elapsed_secs_f64();
 
     // drop throttle state for scenes no longer holding a delegation (removed scenes),

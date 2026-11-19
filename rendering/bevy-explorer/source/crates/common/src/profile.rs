@@ -129,47 +129,54 @@ pub struct SerializedProfile {
 
 impl Default for SerializedProfile {
     fn default() -> Self {
-        let avatar = serde_json::from_str("
-            {
-                \"bodyShape\":\"urn:decentraland:off-chain:base-avatars:BaseFemale\",
-                \"wearables\":[
-                    \"urn:decentraland:off-chain:base-avatars:f_sweater\",
-                    \"urn:decentraland:off-chain:base-avatars:f_jeans\",
-                    \"urn:decentraland:off-chain:base-avatars:bun_shoes\",
-                    \"urn:decentraland:off-chain:base-avatars:standard_hair\",
-                    \"urn:decentraland:off-chain:base-avatars:f_eyes_01\",
-                    \"urn:decentraland:off-chain:base-avatars:f_eyebrows_00\",
-                    \"urn:decentraland:off-chain:base-avatars:f_mouth_00\"
-                ],
-                \"emotes\":[
-                    {\"slot\": 0, \"urn\": \"handsair\" },
-                    {\"slot\": 1, \"urn\": \"wave\" },
-                    {\"slot\": 2, \"urn\": \"fistpump\" },
-                    {\"slot\": 3, \"urn\": \"dance\" },
-                    {\"slot\": 4, \"urn\": \"raisehand\" },
-                    {\"slot\": 5, \"urn\": \"clap\" },
-                    {\"slot\": 6, \"urn\": \"money\" },
-                    {\"slot\": 7, \"urn\": \"kiss\" },
-                    {\"slot\": 8, \"urn\": \"headexplode\" },
-                    {\"slot\": 9, \"urn\": \"shrug\" }
-                ],
-               \"snapshots\": {
-                    \"face256\":\"\",
-                    \"body\":\"\"
-                },
-                \"eyes\":{
-                    \"color\":{\"r\":0.3,\"g\":0.2235294133424759,\"b\":0.99,\"a\":1}
-                },
-                \"hair\":{
-                    \"color\":{\"r\":0.5960784554481506,\"g\":0.37254902720451355,\"b\":0.21568627655506134,\"a\":1}
-                },
-                \"skin\":{
-                    \"color\":{\"r\":0.4901960790157318,\"g\":0.364705890417099,\"b\":0.27843138575553894,\"a\":1}
-                }
-            }
-        ").unwrap();
-
-        //                     {\"slot\": 1, \"urn\": \"urn:decentraland:matic:collections-v2:0x9087f96750c4e7607454c67c4f0bcf357ae62a46:2\" }
+        let base_avatar = |name: &str| format!("urn:decentraland:off-chain:base-avatars:{name}");
+        let color = |r, g, b| Some(AvatarColor::new(Color3 { r, g, b }));
+        let avatar = AvatarWireFormat {
+            name: None,
+            body_shape: Some(base_avatar("BaseFemale")),
+            eyes: color(0.3, 0.22352941, 0.99),
+            hair: color(0.59607846, 0.37254903, 0.21568628),
+            skin: color(0.49019608, 0.3647059, 0.2784314),
+            wearables: [
+                "f_sweater",
+                "f_jeans",
+                "bun_shoes",
+                "standard_hair",
+                "f_eyes_01",
+                "f_eyebrows_00",
+                "f_mouth_00",
+            ]
+            .into_iter()
+            .map(base_avatar)
+            .collect(),
+            force_render: None,
+            emotes: Some(
+                [
+                    "handsair",
+                    "wave",
+                    "fistpump",
+                    "dance",
+                    "raisehand",
+                    "clap",
+                    "money",
+                    "kiss",
+                    "headexplode",
+                    "shrug",
+                ]
+                .into_iter()
+                .zip(0..)
+                .map(|(urn, slot)| AvatarEmote {
+                    slot,
+                    urn: urn.to_owned(),
+                })
+                .collect(),
+            ),
+            snapshots: Some(AvatarSnapshots {
+                face256: String::new(),
+                body: String::new(),
+            }),
+            extra: HashMap::new(),
+        };
 
         Self {
             user_id: Default::default(),
@@ -183,12 +190,9 @@ impl Default for SerializedProfile {
             extra_fields: HashMap::from_iter([
                 (
                     "description".to_owned(),
-                    serde_json::to_value(String::default()).unwrap(),
+                    serde_json::Value::String(String::new()),
                 ),
-                (
-                    "tutorialStep".to_owned(),
-                    serde_json::to_value(0u32).unwrap(),
-                ),
+                ("tutorialStep".to_owned(), serde_json::Value::from(0u32)),
             ]),
         }
     }

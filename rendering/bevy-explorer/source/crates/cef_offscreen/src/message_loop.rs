@@ -61,13 +61,19 @@ impl Default for MessageLoopPlugin {
         reap_abandoned_cache_dirs();
         let cache_dir = cef_cache_dir();
 
+        #[cfg(target_os = "macos")]
+        let framework_dir =
+            bundled_framework_dir().unwrap_or_else(debug_chromium_embedded_framework_dir_path);
+        #[cfg(target_os = "macos")]
+        if framework_dir.to_str().is_none() {
+            warn!(
+                "the CEF framework path is not UTF-8: {}",
+                framework_dir.display()
+            );
+        }
         let settings = Settings {
             #[cfg(target_os = "macos")]
-            framework_dir_path: bundled_framework_dir()
-                .unwrap_or_else(debug_chromium_embedded_framework_dir_path)
-                .to_str()
-                .unwrap()
-                .into(),
+            framework_dir_path: framework_dir.to_string_lossy().as_ref().into(),
             browser_subprocess_path: render_process_path()
                 .map(|p| p.to_str().unwrap_or_default().into())
                 .unwrap_or_default(),

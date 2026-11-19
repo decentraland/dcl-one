@@ -125,8 +125,7 @@ async fn init_request(request: CreateRequest) -> Result<InitializedRequest, anyh
 
     let response = platform::http_client_builder()
         .use_native_tls()
-        .build()
-        .unwrap()
+        .build()?
         .post(auth_server_endpoint_url())
         .header("Content-Type", "application/json")
         .timeout(AUTH_SERVER_TIMEOUT)

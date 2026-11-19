@@ -31,7 +31,6 @@ use crate::{
         mic::MicPlugin,
         participant::{plugin::LivekitParticipantPlugin, HostingParticipants, LivekitParticipant},
         room::plugin::LivekitRoomPlugin,
-        runtime::LivekitRuntimePlugin,
         track::{
             plugin::LivekitTrackPlugin, Camera as LivekitSourceCamera, LivekitTrack, Publishing,
             ScreenshareVideo as LivekitSourceScreenshare, Video,
@@ -67,7 +66,8 @@ impl Plugin for LivekitPlugin {
         if !headless {
             app.add_plugins(MicPlugin);
         }
-        app.add_plugins(LivekitRuntimePlugin);
+        #[cfg(target_arch = "wasm32")]
+        app.add_systems(First, super::runtime::yield_to_runtime);
         app.add_plugins(LivekitRoomPlugin);
         app.add_plugins(super::room::diagnostics::RoomDiagnosticsPlugin);
         app.add_plugins(LivekitParticipantPlugin);

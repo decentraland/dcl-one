@@ -211,7 +211,7 @@ fn preview_and_local_scenes_are_not_eligible() {
     assert!(scene_eligibility("bafk/../x", remote, false).is_err());
 }
 
-fn io_with_cache(label: &str) -> (Arc<IpfsIo>, PathBuf) {
+fn io_with_cache(label: &str) -> anyhow::Result<(Arc<IpfsIo>, PathBuf)> {
     IoTaskPool::get_or_init(bevy::tasks::TaskPool::new);
     let dir = std::env::temp_dir().join(format!(
         "bevy-variants-{label}-{}-{}",
@@ -223,6 +223,7 @@ fn io_with_cache(label: &str) -> (Arc<IpfsIo>, PathBuf) {
     ));
     std::fs::create_dir(&dir).unwrap();
     let mut io = Arc::new(IpfsIo::new(
+        crate::http_client()?,
         false,
         Box::new(bevy::asset::io::file::FileAssetReader::new("assets")),
         None,
@@ -232,23 +233,24 @@ fn io_with_cache(label: &str) -> (Arc<IpfsIo>, PathBuf) {
         tokio::sync::mpsc::unbounded_channel().0,
     ));
     Arc::get_mut(&mut io).unwrap().default_fs_path = Some(dir.clone());
-    (io, dir)
+    Ok((io, dir))
 }
 
 #[tokio::test]
-async fn variants_are_off_by_default() {
-    let (io, dir) = io_with_cache("off");
+async fn variants_are_off_by_default() -> anyhow::Result<()> {
+    let (io, dir) = io_with_cache("off")?;
     io.request_bevy_variants(SCENE);
     assert!(io.bevy_variants.manifests.lock().unwrap().is_empty());
     let path = content_path("tex.png");
     let ipfs_path = IpfsPath::new_from_path(&path).unwrap().unwrap();
     assert!(io.read_bevy_variant(&ipfs_path, &path).await.is_none());
     std::fs::remove_dir_all(dir).unwrap();
+    Ok(())
 }
 
 #[tokio::test]
-async fn preview_and_local_scenes_ask_for_no_manifest() {
-    let (mut io, dir) = io_with_cache("preview");
+async fn preview_and_local_scenes_ask_for_no_manifest() -> anyhow::Result<()> {
+    let (mut io, dir) = io_with_cache("preview")?;
     Arc::get_mut(&mut io).unwrap().is_preview = true;
     io.set_bevy_variants_base("https://abgen.example");
     io.request_bevy_variants(SCENE);
@@ -260,6 +262,7 @@ async fn preview_and_local_scenes_ask_for_no_manifest() {
         .clone();
     assert!(matches!(state, ManifestState::Ineligible("preview mode")));
     std::fs::remove_dir_all(dir).unwrap();
+    Ok(())
 }
 
 fn content_path(file: &str) -> PathBuf {
@@ -389,8 +392,8 @@ fn requests_for(log: &Mutex<Vec<String>>, path: &str) -> usize {
 }
 
 #[tokio::test]
-async fn a_texture_variant_is_served_as_its_ktx2_and_cached_under_its_url() {
-    let (io, dir) = io_with_cache("served");
+async fn a_texture_variant_is_served_as_its_ktx2_and_cached_under_its_url() -> anyhow::Result<()> {
+    let (io, dir) = io_with_cache("served")?;
     let (ktx2, cid) = bc7_variant();
     let variant_route = format!("/{}", served_path(&cid));
     let original_route = format!("/contents/{ORIGINAL_CID}");
@@ -426,15 +429,16 @@ async fn a_texture_variant_is_served_as_its_ktx2_and_cached_under_its_url() {
     assert_eq!(session.served_by_format.get("ktx2-bc"), Some(&[1, 1]));
     drop(session);
     std::fs::remove_dir_all(dir).unwrap();
+    Ok(())
 }
 
 /// Wearables and emotes register their entity with the catalyst's content url as its own base
 /// (`collectibles::request_collectibles`) and request its manifest as a scene does: the
 /// manifest is fetched from the variants base and the entity's files read as their variants.
 #[tokio::test]
-async fn a_wearable_entity_fetches_its_manifest_and_reads_its_variants() {
+async fn a_wearable_entity_fetches_its_manifest_and_reads_its_variants() -> anyhow::Result<()> {
     const WEARABLE: &str = "bafkreiwearable";
-    let (io, dir) = io_with_cache("wearable");
+    let (io, dir) = io_with_cache("wearable")?;
     let (ktx2, cid) = bc7_variant();
     let manifest = format!(
         r#"{{"v": 3, "lanes": {{"texture": "t2"}}, "files": {{"{ORIGINAL_CID}": ["{}"]}}}}"#,
@@ -507,13 +511,15 @@ async fn a_wearable_entity_fetches_its_manifest_and_reads_its_variants() {
     assert_eq!(requests_for(&log, &manifest_route), 1);
     assert_eq!(requests_for(&log, &variant_route), 1);
     std::fs::remove_dir_all(dir).unwrap();
+    Ok(())
 }
 
 /// The manifest names no hash for a variant, so its header decides: a KTX2 that holds no BC
 /// format this client unwraps (here sRGB BC7) falls back, and is not asked for again.
 #[tokio::test]
-async fn a_texture_variant_whose_header_names_no_bc_format_falls_back_to_the_original() {
-    let (io, dir) = io_with_cache("not-bc");
+async fn a_texture_variant_whose_header_names_no_bc_format_falls_back_to_the_original(
+) -> anyhow::Result<()> {
+    let (io, dir) = io_with_cache("not-bc")?;
     let (_, level0, level1) = super::ktx2::tests::bc7_two_levels();
     let srgb = super::ktx2::tests::ktx2(146, 8, 4, &[level0, level1]);
     let variant_route = format!("/{}", served_path(VARIANT_CID));
@@ -544,11 +550,12 @@ async fn a_texture_variant_whose_header_names_no_bc_format_falls_back_to_the_ori
     assert_eq!(requests_for(&log, &variant_route), 1);
     assert_eq!(requests_for(&log, &original_route), 2);
     std::fs::remove_dir_all(dir).unwrap();
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_variant_that_is_no_ktx2_falls_back_to_the_original() {
-    let (io, dir) = io_with_cache("not-ktx2");
+async fn a_variant_that_is_no_ktx2_falls_back_to_the_original() -> anyhow::Result<()> {
+    let (io, dir) = io_with_cache("not-ktx2")?;
     let variant_route = format!("/{}", served_path(VARIANT_CID));
     let original_route = format!("/contents/{ORIGINAL_CID}");
     let (base, log) = serve(vec![
@@ -570,11 +577,12 @@ async fn a_variant_that_is_no_ktx2_falls_back_to_the_original() {
     assert_eq!(read_all(&io, &path).await, b"original png");
     assert_eq!(requests_for(&log, &variant_route), 1);
     std::fs::remove_dir_all(dir).unwrap();
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_missing_variant_falls_back_to_the_original() {
-    let (io, dir) = io_with_cache("missing");
+async fn a_missing_variant_falls_back_to_the_original() -> anyhow::Result<()> {
+    let (io, dir) = io_with_cache("missing")?;
     let original_route = format!("/contents/{ORIGINAL_CID}");
     let (base, _log) = serve(vec![(original_route, b"original png".to_vec())]).await;
     scene_with_variant(&io, &base, VARIANT_CID).await;
@@ -585,6 +593,7 @@ async fn a_missing_variant_falls_back_to_the_original() {
     assert!(session.recent[0].reason.starts_with("fetch:"));
     drop(session);
     std::fs::remove_dir_all(dir).unwrap();
+    Ok(())
 }
 
 /// A `g` variant: a GLB (its embedded images BC KTX2), served at its own path (native has no
@@ -598,8 +607,8 @@ fn glb_variant() -> (Vec<u8>, String) {
 }
 
 #[tokio::test]
-async fn a_glb_variant_is_read_as_served() {
-    let (io, dir) = io_with_cache("glb");
+async fn a_glb_variant_is_read_as_served() -> anyhow::Result<()> {
+    let (io, dir) = io_with_cache("glb")?;
     let (served, cid) = glb_variant();
     let variant_route = format!("/{}", served_path_of("glb", &cid));
     let original_route = format!("/contents/{ORIGINAL_CID}");
@@ -625,13 +634,14 @@ async fn a_glb_variant_is_read_as_served() {
     assert_eq!(session.served_by_format.get("glb"), Some(&[1, 1]));
     drop(session);
     std::fs::remove_dir_all(dir).unwrap();
+    Ok(())
 }
 
 /// A `g` variant that is not a binary glTF at all falls back before the loader sees it: the
 /// original is read instead, the copy dropped and the variant not asked for again.
 #[tokio::test]
-async fn a_glb_variant_that_is_not_a_glb_falls_back_to_the_original() {
-    let (io, dir) = io_with_cache("glb-not-glb");
+async fn a_glb_variant_that_is_not_a_glb_falls_back_to_the_original() -> anyhow::Result<()> {
+    let (io, dir) = io_with_cache("glb-not-glb")?;
     let served = b"<html>not found</html>".to_vec();
     let cid = crate::content_hash::raw_cid(&served);
     let variant_route = format!("/{}", served_path_of("glb", &cid));
@@ -658,6 +668,7 @@ async fn a_glb_variant_that_is_not_a_glb_falls_back_to_the_original() {
     assert_eq!(requests_for(&log, &variant_route), 1);
     assert_eq!(requests_for(&log, &original_route), 2);
     std::fs::remove_dir_all(dir).unwrap();
+    Ok(())
 }
 
 /// A `glb` variant whose embedded KTX2 does not unwrap fails the `Gltf` load, not the read: the
@@ -846,8 +857,8 @@ fn snapshot_of(variants: &BevyVariants) -> serde_json::Value {
 /// near the deadline waits out what is left, a read after it goes to the original at once, and
 /// a manifest that arrives late still serves the files read after it.
 #[tokio::test]
-async fn files_wait_for_a_pending_manifest_only_until_its_deadline() {
-    let (io, dir) = io_with_cache("deadline");
+async fn files_wait_for_a_pending_manifest_only_until_its_deadline() -> anyhow::Result<()> {
+    let (io, dir) = io_with_cache("deadline")?;
     let (ktx2, cid) = bc7_variant();
     let variant_route = format!("/{}", served_path(&cid));
     let (base, log) = serve(vec![(variant_route.clone(), ktx2.clone())]).await;
@@ -917,4 +928,5 @@ async fn files_wait_for_a_pending_manifest_only_until_its_deadline() {
     )));
     assert_eq!(reading.await.unwrap(), ktx2);
     std::fs::remove_dir_all(dir).unwrap();
+    Ok(())
 }

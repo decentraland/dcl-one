@@ -14,7 +14,7 @@ use std::fmt::Write as _;
 
 use prost_reflect::{DescriptorPool, DynamicMessage, Value};
 
-pub fn generate(descriptor_bytes: &[u8], out_path: &std::path::Path) {
+pub fn generate(descriptor_bytes: &[u8], out_path: &std::path::Path) -> std::fmt::Result {
     let pool = DescriptorPool::decode(descriptor_bytes).expect("decode descriptor");
     let quant = pool
         .get_extension_by_name("decentraland.common.quantized")
@@ -79,8 +79,7 @@ pub fn generate(descriptor_bytes: &[u8], out_path: &std::path::Path) {
                      pub fn {name}_step() -> f32 {{\n        \
                      ({max}f32 - {min}f32) / ((1u32 << {bits}) - 1) as f32\n    \
                      }}",
-                )
-                .unwrap();
+                )?;
             } else if opts.has_extension(&quant_power) {
                 let value = opts.get_extension(&quant_power);
                 let q = value
@@ -113,8 +112,7 @@ pub fn generate(descriptor_bytes: &[u8], out_path: &std::path::Path) {
                      pub fn {name}_quantized(value: f32) -> u32 {{\n        \
                      quantize_power(value, {max}f32, {pow}f32, {bits})\n    \
                      }}",
-                )
-                .unwrap();
+                )?;
             }
         }
 
@@ -122,10 +120,11 @@ pub fn generate(descriptor_bytes: &[u8], out_path: &std::path::Path) {
             continue;
         }
 
-        writeln!(out, "impl {} {{\n{accessors}\n}}\n", msg.name()).unwrap();
+        writeln!(out, "impl {} {{\n{accessors}\n}}\n", msg.name())?;
     }
 
     std::fs::write(out_path, out).expect("write pulse_quant.rs");
+    Ok(())
 }
 
 fn get_f32(message: &DynamicMessage, field: &str) -> f32 {

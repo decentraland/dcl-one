@@ -19,7 +19,7 @@
 
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, PoisonError},
 };
 
 use avatar::{
@@ -180,7 +180,10 @@ fn main() -> AppExit {
         .filter(|r| !r.is_empty())
         .unwrap_or_else(|| root.clone());
 
-    init_runtime().unwrap();
+    if let Err(e) = init_runtime() {
+        eprintln!("avatar_render: can't start the scene runtime: {e}");
+        return AppExit::from_code(1);
+    }
 
     let base_config: AppConfig = serialized_app_config();
     let final_config = AppConfig {
@@ -195,7 +198,13 @@ fn main() -> AppExit {
     };
     let audio_settings = final_config.audio.clone();
 
-    let mut app = offline_app(final_config, &realm, content_server.unwrap_or(root));
+    let mut app = match offline_app(final_config, &realm, content_server.unwrap_or(root)) {
+        Ok(app) => app,
+        Err(e) => {
+            eprintln!("avatar_render: can't build the app: {e}");
+            return AppExit::from_code(1);
+        }
+    };
 
     app.add_plugins((
         bevy_kira_audio::AudioPlugin,
@@ -299,7 +308,7 @@ fn drive_capture(
 ) {
     let expected = jobs.jobs.len() * 2;
     if state.captured {
-        let written = state.written.lock().unwrap();
+        let written = state.written.lock().unwrap_or_else(PoisonError::into_inner);
         if written.len() < expected {
             return;
         }
@@ -362,7 +371,10 @@ fn drive_capture(
                                 .map(|()| path.clone())
                                 .map_err(|e| format!("{}: {e}", path.display()))
                         });
-                    written.lock().unwrap().push(result);
+                    written
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .push(result);
                 });
         }
     }

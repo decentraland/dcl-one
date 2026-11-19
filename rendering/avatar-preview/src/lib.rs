@@ -40,10 +40,11 @@ pub fn start(
     base_domain: Option<String>,
     on_event: js_sys::Function,
     flags: Option<String>,
-) {
+) -> Result<(), wasm_bindgen::JsValue> {
     console_error_panic_hook::set_once();
     host::set_event_callback(on_event);
-    run(&canvas, base_domain.as_deref(), &flags.unwrap_or_default());
+    run(&canvas, base_domain.as_deref(), &flags.unwrap_or_default())
+        .map_err(|message| js_sys::Error::new(&message).into())
 }
 
 /// Diagnostic switches (`flags`, comma-separated) for the camera pipeline.
@@ -55,7 +56,7 @@ pub struct StageFlags {
     pub clear_surface: bool,
 }
 
-pub fn run(canvas: &str, base_domain: Option<&str>, flags: &str) {
+pub fn run(canvas: &str, base_domain: Option<&str>, flags: &str) -> Result<(), String> {
     let stage = StageFlags {
         no_bloom: flags.split(',').any(|f| f == "nobloom"),
         no_msaa: flags.split(',').any(|f| f == "nomsaa"),
@@ -73,6 +74,9 @@ pub fn run(canvas: &str, base_domain: Option<&str>, flags: &str) {
         content_url: format!("{catalyst}/content"),
         lambdas_url: format!("{catalyst}/lambdas"),
     };
+
+    let http_client =
+        ipfs::http_client().map_err(|e| format!("can't create the http client: {e}"))?;
 
     let mut app = App::new();
     // the Explorer's preview mode, set before its plugins build: the scene material then leaves
@@ -113,6 +117,7 @@ pub fn run(canvas: &str, base_domain: Option<&str>, flags: &str) {
                     .with_uri_resolver(std::sync::Arc::new(ipfs::ipfs_path::resolve_content_uri)),
             )
             .add_before::<AssetPlugin>(IpfsIoPlugin {
+                client: http_client,
                 preview: false,
                 assets_root: None,
                 starting_realm: None,
@@ -146,6 +151,7 @@ pub fn run(canvas: &str, base_domain: Option<&str>, flags: &str) {
     app.add_systems(Startup, (point_at_catalyst, setup_stage));
     app.add_systems(Update, spawn_avatar_on_first_outfit);
     app.run();
+    Ok(())
 }
 
 /// The collectible resolver asks the realm's content server for pointers; there is no realm

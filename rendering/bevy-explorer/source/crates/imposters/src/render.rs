@@ -108,8 +108,9 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
         uv[1] = 4.0 / 72.0 + 64.0 / 72.0 * uv[1];
     }
 
-    let cube: Mesh = ImposterMesh::default().build();
-    let aabb = cube.compute_aabb().unwrap();
+    let imposter_mesh = ImposterMesh::default();
+    let aabb = Aabb::from_min_max(imposter_mesh.min, imposter_mesh.max);
+    let cube: Mesh = imposter_mesh.build();
 
     debug!("base mesh: {:#?}", cube);
 

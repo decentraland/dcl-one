@@ -26,9 +26,10 @@ use crate::{
 /// The kira sound playing a stream's audio.
 pub type AudioHandle = <StreamingSoundData<AudioDecoderError> as kira::sound::SoundData>::Handle;
 
-pub fn init_ffmpeg() {
-    ffmpeg_next::init().unwrap();
+pub fn init_ffmpeg() -> Result<(), ffmpeg_next::Error> {
+    ffmpeg_next::init()?;
     ffmpeg_next::log::set_level(ffmpeg_next::log::Level::Error);
+    Ok(())
 }
 
 /// Polled by ffmpeg while it opens and reads. True once every command sender is gone, so a
@@ -72,7 +73,10 @@ pub fn ffmpeg_worker(
         if disposed.strong_count() == 0 {
             return Ok(None);
         }
-        let local_folder = ipfas.cache_path().unwrap().join("video_downloads");
+        let local_folder = ipfas
+            .cache_path()
+            .ok_or_else(|| anyhow::anyhow!("no disk cache for video downloads"))?
+            .join("video_downloads");
         let local_path = local_folder.join(Path::new(urlencoding::encode(url).as_ref()));
 
         if std::fs::File::open(&local_path).is_err() {

@@ -24,8 +24,8 @@ use scene_material::SceneMaterialExt;
 
 /// `mesh_renderer`'s test app with the material systems as `MaterialDefinitionPlugin` adds
 /// them, after `update_mesh`; the charges are recorded after both.
-fn material_app() -> (App, Entity) {
-    let (mut app, root) = test_app();
+fn material_app() -> anyhow::Result<(App, Entity)> {
+    let (mut app, root) = test_app()?;
     app.init_asset::<Image>()
         .init_asset::<StandardMaterial>()
         .init_resource::<ProfileCache>()
@@ -43,7 +43,7 @@ fn material_app() -> (App, Entity) {
                 .after(update_mesh)
                 .before(record_charges),
         );
-    (app, root)
+    Ok((app, root))
 }
 
 /// A distinct untextured material for each `index`.
@@ -97,8 +97,8 @@ fn created(app: &App, entities: &[Entity]) -> usize {
 }
 
 #[test]
-fn new_materials_are_created_until_the_slice_is_charged() {
-    let (mut app, root) = material_app();
+fn new_materials_are_created_until_the_slice_is_charged() -> anyhow::Result<()> {
+    let (mut app, root) = material_app()?;
     let fit = fit(NEW_MATERIAL_COST);
     let entities = spawn_materials(&mut app, root, 0..fit + 2);
 
@@ -113,21 +113,23 @@ fn new_materials_are_created_until_the_slice_is_charged() {
     for entity in refused {
         assert!(app.world().get::<MeshMaterial3dLoading>(*entity).is_none());
     }
+    Ok(())
 }
 
 #[test]
-fn a_cached_material_costs_less_than_a_new_one() {
-    let (mut app, root) = material_app();
+fn a_cached_material_costs_less_than_a_new_one() -> anyhow::Result<()> {
+    let (mut app, root) = material_app()?;
     spawn_materials(&mut app, root, [7, 7].into_iter());
 
     app.update();
 
     assert_eq!(charged(&app), NEW_MATERIAL_COST + MATERIAL_COST);
+    Ok(())
 }
 
 #[test]
-fn waiting_materials_are_created_first_next_frame() {
-    let (mut app, root) = material_app();
+fn waiting_materials_are_created_first_next_frame() -> anyhow::Result<()> {
+    let (mut app, root) = material_app()?;
     let fit = fit(NEW_MATERIAL_COST);
     let first = spawn_materials(&mut app, root, 0..fit + 3);
     app.update();
@@ -143,12 +145,13 @@ fn waiting_materials_are_created_first_next_frame() {
     assert_eq!(created(&app, &left), 3);
     assert_eq!(marked::<PendingMaterial>(&app, &left), 0);
     assert_eq!(created(&app, &second), fit - 3);
+    Ok(())
 }
 
 // guard: the consumer goes through the budget's bypass
 #[test]
-fn behind_the_loading_backdrop_every_material_is_created() {
-    let (mut app, root) = material_app();
+fn behind_the_loading_backdrop_every_material_is_created() -> anyhow::Result<()> {
+    let (mut app, root) = material_app()?;
     let player = app
         .world_mut()
         .query_filtered::<Entity, With<PrimaryUser>>()
@@ -161,6 +164,7 @@ fn behind_the_loading_backdrop_every_material_is_created() {
 
     assert_eq!(created(&app, &entities), entities.len());
     assert_eq!(charged(&app), Duration::ZERO);
+    Ok(())
 }
 
 fn material_handle(app: &App, entity: Entity) -> Option<AssetId<SceneMaterial>> {
@@ -170,8 +174,8 @@ fn material_handle(app: &App, entity: Entity) -> Option<AssetId<SceneMaterial>> 
 }
 
 #[test]
-fn a_changed_material_is_neither_charged_nor_deferred() {
-    let (mut app, root) = material_app();
+fn a_changed_material_is_neither_charged_nor_deferred() -> anyhow::Result<()> {
+    let (mut app, root) = material_app()?;
     let entities = spawn_materials(&mut app, root, 0..2);
     app.update();
     let before: Vec<_> = entities.iter().map(|e| material_handle(&app, *e)).collect();
@@ -190,11 +194,12 @@ fn a_changed_material_is_neither_charged_nor_deferred() {
         assert_ne!(after, before);
     }
     assert_eq!(charged(&app), Duration::from_millis(10));
+    Ok(())
 }
 
 #[test]
-fn a_prepaid_material_is_created_whatever_was_spent() {
-    let (mut app, root) = material_app();
+fn a_prepaid_material_is_created_whatever_was_spent() -> anyhow::Result<()> {
+    let (mut app, root) = material_app()?;
     let entity = app
         .world_mut()
         .spawn((container(root), material(1), MaterialPrepaid))
@@ -206,11 +211,12 @@ fn a_prepaid_material_is_created_whatever_was_spent() {
     assert!(material_handle(&app, entity).is_some());
     assert!(app.world().get::<MaterialPrepaid>(entity).is_none());
     assert_eq!(charged(&app), Duration::from_millis(10));
+    Ok(())
 }
 
 #[test]
-fn a_material_waits_for_its_waiting_primitive() {
-    let (mut app, root) = material_app();
+fn a_material_waits_for_its_waiting_primitive() -> anyhow::Result<()> {
+    let (mut app, root) = material_app()?;
     let entity = app
         .world_mut()
         .spawn((container(root), material(1), PendingPrimitive))
@@ -221,11 +227,12 @@ fn a_material_waits_for_its_waiting_primitive() {
     assert!(material_handle(&app, entity).is_none());
     assert!(app.world().get::<PendingMaterial>(entity).is_some());
     assert_eq!(charged(&app), Duration::ZERO);
+    Ok(())
 }
 
 #[test]
-fn a_material_removed_while_waiting_is_never_created() {
-    let (mut app, root) = material_app();
+fn a_material_removed_while_waiting_is_never_created() -> anyhow::Result<()> {
+    let (mut app, root) = material_app()?;
     preset_charges(&mut app, Duration::from_millis(10));
     let entities = spawn_materials(&mut app, root, 0..2);
     app.update();
@@ -240,11 +247,12 @@ fn a_material_removed_while_waiting_is_never_created() {
 
     assert!(material_handle(&app, waiting_entity).is_none());
     assert!(app.world().get::<PendingMaterial>(waiting_entity).is_none());
+    Ok(())
 }
 
 #[test]
-fn a_primitive_and_its_new_material_appear_in_the_same_frame() {
-    let (mut app, root) = material_app();
+fn a_primitive_and_its_new_material_appear_in_the_same_frame() -> anyhow::Result<()> {
+    let (mut app, root) = material_app()?;
     let primitives: Vec<_> = (0..3)
         .map(|index| {
             let scene_entity = scene_entity(&mut app, root);
@@ -272,11 +280,12 @@ fn a_primitive_and_its_new_material_appear_in_the_same_frame() {
     }
     assert!(app.world().get::<Mesh3d>(primitives[2]).is_none());
     assert!(material_handle(&app, primitives[2]).is_none());
+    Ok(())
 }
 
 #[test]
-fn waiting_materials_are_left_alone_once_the_slice_is_spent() {
-    let (mut app, root) = material_app();
+fn waiting_materials_are_left_alone_once_the_slice_is_spent() -> anyhow::Result<()> {
+    let (mut app, root) = material_app()?;
     preset_charges(&mut app, Duration::from_millis(10));
     let entities = spawn_materials(&mut app, root, 0..3);
     app.update();
@@ -304,11 +313,12 @@ fn waiting_materials_are_left_alone_once_the_slice_is_spent() {
         marker_written::<PendingMaterial>(&app, waiting_entities[still_waiting]),
         before[still_waiting]
     );
+    Ok(())
 }
 
 #[test]
-fn a_material_waiting_for_its_primitive_is_left_alone() {
-    let (mut app, root) = material_app();
+fn a_material_waiting_for_its_primitive_is_left_alone() -> anyhow::Result<()> {
+    let (mut app, root) = material_app()?;
     let entity = app
         .world_mut()
         .spawn((container(root), material(1), PendingPrimitive))
@@ -320,11 +330,12 @@ fn a_material_waiting_for_its_primitive_is_left_alone() {
     app.update();
 
     assert_eq!(marker_written::<PendingMaterial>(&app, entity), before);
+    Ok(())
 }
 
 #[test]
-fn a_waiting_material_removed_and_added_in_one_tick_keeps_waiting() {
-    let (mut app, root) = material_app();
+fn a_waiting_material_removed_and_added_in_one_tick_keeps_waiting() -> anyhow::Result<()> {
+    let (mut app, root) = material_app()?;
     preset_charges(&mut app, Duration::from_millis(10));
     let entities = spawn_materials(&mut app, root, 0..3);
     app.update();
@@ -347,11 +358,12 @@ fn a_waiting_material_removed_and_added_in_one_tick_keeps_waiting() {
     app.update();
 
     assert_eq!(created(&app, &waiting_entities), 2);
+    Ok(())
 }
 
 #[test]
-fn a_prepaid_material_whose_source_is_not_ready_is_gated_again() {
-    let (mut app, root) = material_app();
+fn a_prepaid_material_whose_source_is_not_ready_is_gated_again() -> anyhow::Result<()> {
+    let (mut app, root) = material_app()?;
     let video_id = SceneEntityId {
         id: 600,
         generation: 0,
@@ -384,6 +396,7 @@ fn a_prepaid_material_whose_source_is_not_ready_is_gated_again() {
     assert!(material_handle(&app, entity).is_none());
     assert!(app.world().get::<PendingMaterial>(entity).is_some());
     assert!(app.world().get::<MaterialPrepaid>(entity).is_none());
+    Ok(())
 }
 
 // the material cache
@@ -463,8 +476,8 @@ fn removed_materials_of_despawned_scenes_leave_the_owners() {
 
 // guard: what waits when the player goes behind the backdrop is created at once
 #[test]
-fn waiting_materials_are_created_when_the_player_goes_behind_the_backdrop() {
-    let (mut app, root) = material_app();
+fn waiting_materials_are_created_when_the_player_goes_behind_the_backdrop() -> anyhow::Result<()> {
+    let (mut app, root) = material_app()?;
     preset_charges(&mut app, Duration::from_millis(10));
     let entities = spawn_materials(&mut app, root, 0..50);
     app.update();
@@ -481,11 +494,13 @@ fn waiting_materials_are_created_when_the_player_goes_behind_the_backdrop() {
 
     assert_eq!(created(&app, &entities), 50);
     assert_eq!(marked::<PendingMaterial>(&app, &entities), 0);
+    Ok(())
 }
 
 #[test]
-fn a_material_waiting_for_its_primitive_comes_with_it_once_the_slice_is_spent() {
-    let (mut app, root) = material_app();
+fn a_material_waiting_for_its_primitive_comes_with_it_once_the_slice_is_spent() -> anyhow::Result<()>
+{
+    let (mut app, root) = material_app()?;
     preset_charges(&mut app, Duration::from_millis(10));
     let primitives: Vec<_> = (0..2)
         .map(|index| {
@@ -520,6 +535,7 @@ fn a_material_waiting_for_its_primitive_comes_with_it_once_the_slice_is_spent() 
         .unwrap();
     assert_ne!(own.base.base_color, StandardMaterial::default().base_color);
     assert_eq!(marked::<PendingMaterial>(&app, &modifiers), 1);
+    Ok(())
 }
 
 /// What `update_mesh` and `update_materials` cost a frame with the slice spent and `backlog`
@@ -529,10 +545,10 @@ fn a_material_waiting_for_its_primitive_comes_with_it_once_the_slice_is_spent() 
 /// Run with `--ignored --nocapture`.
 #[test]
 #[ignore]
-fn per_frame_cost_with_a_large_backlog() {
+fn per_frame_cost_with_a_large_backlog() -> anyhow::Result<()> {
     const FRAMES: usize = 60;
     for backlog in [100, 10_000, 95_000] {
-        let (mut app, root) = material_app();
+        let (mut app, root) = material_app()?;
         let flood: Vec<_> = (0..backlog)
             .map(|index| {
                 let scene_entity = SceneEntity {
@@ -578,4 +594,5 @@ fn per_frame_cost_with_a_large_backlog() {
             material_times[FRAMES - 1].as_secs_f64() * 1e6,
         );
     }
+    Ok(())
 }

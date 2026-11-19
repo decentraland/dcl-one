@@ -555,14 +555,12 @@ mod tests {
     }
 
     #[test]
-    fn pause_discards_queued_messages_and_policy_blocks_resume() {
+    fn pause_discards_queued_messages_and_policy_blocks_resume() -> anyhow::Result<()> {
         let mut app = App::new();
-        app.add_plugins((
-            console::ConsolePlugin {
-                add_bevy_console: false,
-            },
-            crate::livekit::runtime::LivekitRuntimePlugin,
-        ))
+        crate::livekit::LivekitRuntime::insert(&mut app)?;
+        app.add_plugins(console::ConsolePlugin {
+            add_bevy_console: false,
+        })
         .insert_resource(State::new(ConnectionAvailability::Available))
         .add_console_command::<RoomConnectionCommand, _>(room_connection);
         app.add_plugins(super::super::control::RoomControlPlugin);
@@ -612,6 +610,7 @@ mod tests {
             .get::<crate::livekit::LivekitNetworkMessage>(room)
             .unwrap()
             .is_empty());
+        Ok(())
     }
 
     #[test]

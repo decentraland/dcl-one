@@ -23,7 +23,7 @@ fn test_tls() {
 
 #[cfg(feature = "livekit")]
 #[test]
-fn test_livekit() {
+fn test_livekit() -> anyhow::Result<()> {
     use http::Uri;
 
     let mut wallet = Wallet::default();
@@ -33,7 +33,8 @@ fn test_livekit() {
         true,
         Uri::try_from("https://worlds-content-server.decentraland.org/world/mannakia.dcl.eth")
             .unwrap(),
-    );
+    )
+    .ok_or_else(|| anyhow::anyhow!("the realm address has no scheme or host"))?;
 
     let rt = Arc::new(
         tokio::runtime::Builder::new_current_thread()
@@ -78,6 +79,7 @@ fn test_livekit() {
     });
 
     rt.block_on(task).unwrap();
+    Ok(())
 }
 
 #[test]

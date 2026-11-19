@@ -615,14 +615,20 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
         },
     });
 
+    let wasm_loader_handle = WASM_ASSET_LOADER_HANDLE
+        .get()
+        .ok_or_else(|| JsValue::from_str("the asset loader handle is not set"))?
+        .clone();
     let decentraland_app_config = DecentralandAppConfig::new(
         decentraland_serialized_app_config(),
         decentraland_app_arguments(&options),
-        Some(WASM_ASSET_LOADER_HANDLE.get().unwrap().clone()),
+        Some(wasm_loader_handle),
         compute_threads as usize,
     );
 
-    let mut app = decentraland_app.build(decentraland_app_config);
+    let mut app = decentraland_app
+        .build(decentraland_app_config)
+        .map_err(|e| JsValue::from_str(&format!("can't build the app: {e}")))?;
 
     // on wasm we need to explicitly specify key binds for the platform
     let user_agent = js_sys::global()

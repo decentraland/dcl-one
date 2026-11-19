@@ -14,7 +14,7 @@ fn main() -> Result<()> {
     revision_inputs();
 
     let output = Command::new("git").args(["rev-parse", "HEAD"]).output()?;
-    let git_hash = String::from_utf8(output.stdout).unwrap();
+    let git_hash = String::from_utf8(output.stdout).map_err(std::io::Error::other)?;
     println!("cargo:rustc-env=BEVY_EXPLORER_VERSION={git_hash}");
 
     modified()?;
@@ -70,7 +70,7 @@ fn modified() -> Result<()> {
         return Err(std::io::Error::other(format!("{}", diff.status)));
     }
     let mut modifications = String::from_utf8(diff.stdout)
-        .unwrap()
+        .map_err(std::io::Error::other)?
         .split('\0')
         .filter(|path| !path.is_empty())
         .map(ToOwned::to_owned)
@@ -84,7 +84,7 @@ fn modified() -> Result<()> {
     }
     modifications.extend(
         String::from_utf8(diff.stdout)
-            .unwrap()
+            .map_err(std::io::Error::other)?
             .split('\0')
             .filter(|path| !path.is_empty())
             .map(ToOwned::to_owned),

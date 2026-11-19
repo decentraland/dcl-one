@@ -37,10 +37,17 @@ pub struct ChatHistory {
 }
 
 fn setup_chat_history(mut commands: Commands, root: Res<SystemUiRoot>, dui: Res<DuiRegistry>) {
-    let history = commands
-        .entity(root.0)
-        .spawn_template(&dui, "chat-history", DuiProps::new())
-        .unwrap();
+    let history =
+        match commands
+            .entity(root.0)
+            .spawn_template(&dui, "chat-history", DuiProps::new())
+        {
+            Ok(history) => history,
+            Err(e) => {
+                error!("chat history is off: {e}");
+                return;
+            }
+        };
     commands
         .entity(history.named("chat-content"))
         .try_insert(ChatHistory::default());
