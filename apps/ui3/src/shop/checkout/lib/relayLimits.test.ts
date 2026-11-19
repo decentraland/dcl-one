@@ -14,14 +14,14 @@ const quota = (refusal: Record<string, unknown>) => new GaslessUnavailableError(
 
 describe("the relay's limits, said to the buyer", () => {
   it("names the spent quota, its size and the minute it frees up, never too early", () => {
-    expect(relayLimitText(quota({ quota: 30, retryAt: secs(at(14, 5)) }), NOW)).toBe(`You've used all 30 fee-free transactions this account gets in 24 hours. You can buy fee-free again at ${time(at(14, 5))}.`);
+    expect(relayLimitText(quota({ quota: 30, retryAt: secs(at(14, 5)) }), NOW)).toBe(`You've used all 30 fee-free transactions this account gets in 24 hours. Try again at ${time(at(14, 5))}.`);
     // 14:05:20 frees up after 14:05: the time shown is the next minute.
-    expect(relayLimitText(quota({ quota: 30, retryAt: secs(at(14, 5, 20)) }), NOW)).toBe(`You've used all 30 fee-free transactions this account gets in 24 hours. You can buy fee-free again at ${time(at(14, 6))}.`);
+    expect(relayLimitText(quota({ quota: 30, retryAt: secs(at(14, 5, 20)) }), NOW)).toBe(`You've used all 30 fee-free transactions this account gets in 24 hours. Try again at ${time(at(14, 6))}.`);
   });
 
   it("says tomorrow for a time past midnight, and to try again later without a usable time", () => {
     const tomorrow = new Date(2026, 10, 20, 9, 30, 0);
-    expect(relayLimitText(quota({ retryAt: secs(tomorrow) }), NOW)).toBe(`You've used all the fee-free transactions this account gets in 24 hours. You can buy fee-free again tomorrow at ${time(tomorrow)}.`);
+    expect(relayLimitText(quota({ retryAt: secs(tomorrow) }), NOW)).toBe(`You've used all the fee-free transactions this account gets in 24 hours. Try again tomorrow at ${time(tomorrow)}.`);
     for (const retryAt of [undefined, secs(at(9)), secs(NOW) + 2 * 86_400, Number.MAX_SAFE_INTEGER, 1.5, "soon"]) {
       expect(relayLimitText(quota({ retryAt }), NOW), String(retryAt)).toBe("You've used all the fee-free transactions this account gets in 24 hours. Try again later.");
     }
@@ -33,7 +33,7 @@ describe("the relay's limits, said to the buyer", () => {
     const freed = new Date(2026, 10, 20, 23, 59, 30);
     const shown = new Date(2026, 10, 21, 0, 0, 0);
     const day = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(shown);
-    expect(relayLimitText(quota({ quota: 30, retryAt: secs(freed) }), late)).toBe(`You've used all 30 fee-free transactions this account gets in 24 hours. You can buy fee-free again on ${day} at ${time(shown)}.`);
+    expect(relayLimitText(quota({ quota: 30, retryAt: secs(freed) }), late)).toBe(`You've used all 30 fee-free transactions this account gets in 24 hours. Try again on ${day} at ${time(shown)}.`);
   });
 
   it("says an account with a quota of none has no fee-free transactions, rather than promising one", () => {

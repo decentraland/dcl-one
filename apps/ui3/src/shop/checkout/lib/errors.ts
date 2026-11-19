@@ -50,7 +50,8 @@ export function relayLimitText(e: unknown, now: Date = new Date()): string | nul
   if (refusal.error === "quota_reached") {
     if (refusal.quota === 0) return "Fee-free transactions aren't available for this account.";
     const used = typeof refusal.quota === "number" ? `all ${refusal.quota} fee-free transactions` : "all the fee-free transactions";
-    return `You've used ${used} this account gets in 24 hours. ${when ? `You can buy fee-free again ${when}.` : "Try again later."}`;
+    // "Try again at": the relay's time estimates the next opening, which another request can take first.
+    return `You've used ${used} this account gets in 24 hours. ${when ? `Try again ${when}.` : "Try again later."}`;
   }
   if (refusal.error === "relay_budget_spent") return `The shared fee-free limit for this operation has been reached. ${when ? `Try again ${when}.` : "Try again later."}`;
   return null;
