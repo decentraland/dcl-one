@@ -203,6 +203,7 @@ export interface Ipc {
   'landUnpublish.prepare': (parcel: string) => Promise<EmptySceneDraft>;
   'landUnpublish.deploy': (request: EmptySceneDeploy) => Promise<void>;
   'electron.openExternal': (url: string) => Promise<void>;
+  'electron.openDeepLink': (url: string) => Promise<boolean>;
   'electron.logDeployment': (entry: DeploymentLogEntry) => Promise<void>;
   'electron.logRendererError': (entry: RendererErrorLogEntry) => Promise<void>;
   'electron.copyToClipboard': (text: string) => Promise<void>;

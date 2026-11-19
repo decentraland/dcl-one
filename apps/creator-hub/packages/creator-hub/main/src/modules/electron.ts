@@ -70,6 +70,18 @@ export async function openExternal(url: string) {
   shell.openExternal(url);
 }
 
+/**
+ * Opens a `decentraland://` link in the installed desktop client. Resolves false when no app
+ * handles the scheme: macOS and Linux then do nothing at all, so the caller can fall back to
+ * the web.
+ */
+export async function openDeepLink(url: string): Promise<boolean> {
+  if (!url.startsWith('decentraland://')) throw new Error('Not a decentraland:// link');
+  if (!app.getApplicationNameForProtocol(url)) return false;
+  await shell.openExternal(url);
+  return true;
+}
+
 export async function getAppVersion() {
   return app.getVersion();
 }

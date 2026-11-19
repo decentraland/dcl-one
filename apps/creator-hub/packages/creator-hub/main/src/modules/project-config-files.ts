@@ -98,6 +98,22 @@ export function ensureEditorFilesNotDeployed(dir: string): void {
   fs.writeFileSync(dclignore, `${head}${EDITOR_FILES_COMMENT}\n${missing.join('\n')}\n`);
 }
 
+// The empty template's description of itself (preload's `EMPTY_SCENE_TEMPLATE_DESCRIPTION`),
+// which a publish would show players as the scene's own.
+const TEMPLATE_DESCRIPTION = 'Empty Scene Template';
+
+/**
+ * Clears the empty template's description from `scene.json`. Creator Hub clears it when it
+ * creates a scene; scenes created before that still carry it.
+ */
+export function clearTemplateDescription(dir: string): void {
+  const file = path.join(dir, 'scene.json');
+  const scene = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (scene?.display?.description !== TEMPLATE_DESCRIPTION) return;
+  scene.display.description = '';
+  fs.writeFileSync(file, JSON.stringify(scene, null, 2));
+}
+
 // npm `overrides` a new scene gets on top of its template's `package.json`. `@dcl/sdk` 7.33.0
 // (what the templates' `latest` installs) pulls protobufjs 6.11 and 7.2 through `@dcl/hashing`
 // and `@dcl/protocol`, which `npm audit` reports as critical. 7.6.6 is the release the SDK's

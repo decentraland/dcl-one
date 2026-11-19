@@ -10,6 +10,11 @@ export async function openExternal(url: string) {
   await invoke('electron.openExternal', url);
 }
 
+/** Opens a `decentraland://` link in the desktop client; false when it isn't installed. */
+export async function openDeepLink(url: string) {
+  return invoke('electron.openDeepLink', url);
+}
+
 export async function showSaveDialog(opts: Partial<SaveDialogOptions>) {
   return invoke('electron.showSaveDialog', opts);
 }
