@@ -21,7 +21,7 @@ const record = (over: Partial<ManaAttemptRecord> = {}): ManaAttemptRecord => ({
   nonce: '7',
   data: CALL,
   fromBlock: '100',
-  sends: [{ stage: 'dispatched', payload: keccak256(SIGNED), at: 1 }],
+  sends: [{ id: 's1', stage: 'dispatched', payload: keccak256(SIGNED), at: 1 }],
   ...over
 })
 
@@ -49,7 +49,7 @@ const execution = (over: Partial<ManaExecution> = {}): ManaExecution => ({ user:
 
 describe('a MANA sale on chain', () => {
   it('ends bought on the relay’s hash only when its transaction is a signed send of ours, finalized and successful', async () => {
-    const rec = record({ sends: [{ stage: 'dispatched', payload: keccak256(SIGNED), at: 1, hash: RELAY_HASH }] })
+    const rec = record({ sends: [{ id: 's2', stage: 'dispatched', payload: keccak256(SIGNED), at: 1, hash: RELAY_HASH }] })
     expect(await resolve(rec, chain({ txs: { [RELAY_HASH]: { to: STORE, input: SIGNED } }, receipts: { [RELAY_HASH]: { status: 'success', blockNumber: 300n } } }))).toEqual({ kind: 'succeeded', txHash: RELAY_HASH })
     // Another signed payload, another contract, not finalized yet: not ours, or not final.
     expect(await resolve(rec, chain({ txs: { [RELAY_HASH]: { to: STORE, input: OTHER_SIGNED } }, receipts: { [RELAY_HASH]: { status: 'success', blockNumber: 300n } } }))).toMatchObject({ kind: 'waiting' })
@@ -59,7 +59,7 @@ describe('a MANA sale on chain', () => {
 
   it('keeps waiting while the nonce isn’t consumed at the finalized block, open to RETRY unless a send is on its way', async () => {
     expect(await resolve(record(), chain({ nonce: 7n }))).toEqual({ kind: 'waiting', retry: true })
-    expect(await resolve(record({ sends: [{ stage: 'dispatched', payload: keccak256(SIGNED), at: 1 }, { stage: 'signing' }] }), chain({ nonce: 7n }))).toEqual({ kind: 'waiting', retry: false })
+    expect(await resolve(record({ sends: [{ id: 's3', stage: 'dispatched', payload: keccak256(SIGNED), at: 1 }, { id: 's4', stage: 'signing' }] }), chain({ nonce: 7n }))).toEqual({ kind: 'waiting', retry: false })
   })
 
   it('ends not bought when the nonce was consumed and no execution of this call by the buyer is in range', async () => {
@@ -117,7 +117,7 @@ describe('a MANA sale on chain', () => {
 
   it('keeps waiting for a record without what this needs, and for one that sent nothing', async () => {
     expect(await resolve(record({ fromBlock: undefined }), chain({ nonce: 8n }))).toMatchObject({ kind: 'waiting' })
-    expect(await resolve(record({ sends: [{ stage: 'refused', payload: keccak256(SIGNED), at: 1 }] }), chain({ nonce: 8n }))).toMatchObject({ kind: 'waiting' })
+    expect(await resolve(record({ sends: [{ id: 's5', stage: 'refused', payload: keccak256(SIGNED), at: 1 }] }), chain({ nonce: 8n }))).toMatchObject({ kind: 'waiting' })
   })
 
   it('reads an execution in both layouts the venues log it in', () => {

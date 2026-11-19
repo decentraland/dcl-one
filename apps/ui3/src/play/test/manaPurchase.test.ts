@@ -162,28 +162,31 @@ describe('a MANA purchase’s attempt', () => {
     a.handOff({ rail: 'relay', nonce: 1n, data: CALL })
     const approve = JSON.stringify({ domain: { verifyingContract: MANA }, message: {} })
     await expect(a.observe(wallet).request({ method: 'eth_signTypedData_v4', params: [BUYER, approve] })).rejects.toBe(reject)
-    expect(a.record.sends).toEqual([{ stage: 'signing' }])
+    expect(a.record.sends).toMatchObject([{ stage: 'signing' }])
     const sale = JSON.stringify({ domain: { verifyingContract: STORE }, message: {} })
     await expect(a.observe(wallet).request({ method: 'eth_signTypedData_v4', params: [BUYER, sale] })).rejects.toBe(reject)
-    expect(a.record.sends).toEqual([{ stage: 'declined' }])
+    expect(a.record.sends).toMatchObject([{ stage: 'declined' }])
     expect(a.dispatched()).toBe(false)
   })
 
-  it('keeps only what may be evidence: the sends that went, each payload once', () => {
+  it('keeps only what may be evidence: the sends that went, each as itself even with the same bytes', () => {
     const a = attempt()
     a.handOff({ rail: 'relay', nonce: 3n, data: CALL })
     const rec: ManaAttemptRecord = {
       ...a.record,
       fromBlock: '1',
       sends: [
-        { stage: 'dispatched', payload: keccak256('0x01'), at: 1 },
-        { stage: 'refused', payload: keccak256('0x02'), at: 2 },
-        { stage: 'dispatched', payload: keccak256('0x01'), at: 3, hash: HASH },
-        { stage: 'declined' },
-        { stage: 'signing' }
+        { id: 's7', stage: 'dispatched', payload: keccak256('0x01'), at: 1 },
+        { id: 's8', stage: 'refused', payload: keccak256('0x02'), at: 2 },
+        { id: 's9', stage: 'dispatched', payload: keccak256('0x01'), at: 3, hash: HASH },
+        { id: 's10', stage: 'declined' },
+        { id: 's11', stage: 'signing' }
       ]
     }
-    expect(compactManaAttempt(rec).sends).toEqual([{ stage: 'dispatched', payload: keccak256('0x01'), at: 1, hash: HASH }])
+    expect(compactManaAttempt(rec).sends).toEqual([
+      { id: 's7', stage: 'dispatched', payload: keccak256('0x01'), at: 1 },
+      { id: 's9', stage: 'dispatched', payload: keccak256('0x01'), at: 3, hash: HASH }
+    ])
   })
 
   it('retires a send left signing, and has no room once as many sends went as a record keeps', async () => {
@@ -197,7 +200,7 @@ describe('a MANA purchase’s attempt', () => {
     expect(a.retire()).toBe(true)
     expect(a.record.sends.map((s) => s.stage)).toEqual(['dispatched'])
     expect(manaHasRoom(a.record)).toBe(true)
-    const full: ManaAttemptRecord = { ...a.record, sends: Array.from({ length: MAX_SENDS }, (_, i) => ({ stage: 'dispatched' as const, payload: keccak256(`0x0${i}`), at: i })) }
+    const full: ManaAttemptRecord = { ...a.record, sends: Array.from({ length: MAX_SENDS }, (_, i) => ({ id: `s${i}`, stage: 'dispatched' as const, payload: keccak256(`0x0${i}`), at: i })) }
     expect(manaHasRoom(full)).toBe(false)
     const capped = attempt(keeper(), { from: full })
     capped.retry()
@@ -221,6 +224,71 @@ describe('a MANA purchase’s attempt', () => {
     expect(a.record.sends[1]).toMatchObject({ stage: 'dispatched', payload: keccak256(second as Hex), hash: HASH })
   })
 
+  it('keeps a retry and its hash when the first send’s late refusal comes back, even with the same signed bytes, through a reload', async () => {
+    // One record for the operation, as the shell keeps it: both attempts read and write it.
+    let stored: ManaAttemptRecord | undefined
+    const keep = (record: ManaAttemptRecord) => {
+      stored = structuredClone(record)
+      return true
+    }
+    const shared = { mana: MANA, checkpoint: async () => 1000n, now: () => 5_000, load: () => stored, sendMs: 20 }
+    const a = createManaAttempt(TERMS, keep, shared)
+    keep(a.record)
+    a.handOff({ rail: 'relay', nonce: 3n, data: CALL })
+    let answerA!: (res: Response) => void
+    await expect(a.relay((() => new Promise<Response>((r) => (answerA = r))) as unknown as typeof fetch)('https://relay/transactions', post(STORE, PAYLOAD))).rejects.toThrow(TypeError)
+    // The retry, as retryMana makes it: a second attempt from what was kept. The wallet signs the same bytes.
+    const b = createManaAttempt(TERMS, keep, { ...shared, from: stored })
+    b.retry()
+    expect(b.handOff({ rail: 'relay', nonce: 3n, data: CALL })).toBe(true)
+    await b.relay(sent() as unknown as typeof fetch)('https://relay/transactions', post(STORE, PAYLOAD))
+    answerA(new Response(JSON.stringify({ ok: false, not_sent: true }), { status: 400 }))
+    await vi.waitFor(() => expect(stored!.sends.map((x) => x.stage)).toEqual(['refused', 'dispatched']))
+    expect(stored!.sends[1]).toMatchObject({ stage: 'dispatched', payload: keccak256(PAYLOAD as Hex), hash: HASH })
+    // A reload reads it whole: the retry still went, with its hash.
+    const reloaded = JSON.parse(JSON.stringify(stored)) as unknown
+    expect(isManaAttempt(reloaded)).toBe(true)
+    expect(manaDispatched(reloaded as ManaAttemptRecord)).toBe(true)
+    expect(compactManaAttempt(reloaded as ManaAttemptRecord).sends).toMatchObject([{ stage: 'dispatched', hash: HASH }])
+  })
+
+  it('keeps an unanswered first send dispatched when a retry with the same signed bytes is refused', async () => {
+    let stored: ManaAttemptRecord | undefined
+    const keep = (record: ManaAttemptRecord) => {
+      stored = structuredClone(record)
+      return true
+    }
+    const shared = { mana: MANA, checkpoint: async () => 1000n, now: () => 5_000, load: () => stored, sendMs: 20 }
+    const a = createManaAttempt(TERMS, keep, shared)
+    keep(a.record)
+    a.handOff({ rail: 'relay', nonce: 3n, data: CALL })
+    await expect(a.relay((() => new Promise<Response>(() => {})) as unknown as typeof fetch)('https://relay/transactions', post(STORE, PAYLOAD))).rejects.toThrow(TypeError)
+    const b = createManaAttempt(TERMS, keep, { ...shared, from: stored })
+    b.retry()
+    b.handOff({ rail: 'relay', nonce: 3n, data: CALL })
+    await b.relay(sent({ ok: false, not_sent: true }) as unknown as typeof fetch)('https://relay/transactions', post(STORE, PAYLOAD))
+    // The same bytes, two requests: only the refused one is refused; the first may still have gone.
+    expect(stored!.sends.map((x) => x.stage)).toEqual(['dispatched', 'refused'])
+    expect(manaDispatched(stored!)).toBe(true)
+  })
+
+  it('bounds the relay’s whole answer: headers in time and a body that never ends still give way at the deadline', async () => {
+    const a = attempt(keeper(), { sendMs: 20 })
+    a.handOff({ rail: 'relay', nonce: 3n, data: CALL })
+    const open = new ReadableStream<Uint8Array>({ start: () => {} })
+    const started = Date.now()
+    await expect(a.relay((async () => new Response(open, { status: 200 })) as unknown as typeof fetch)('https://relay/transactions', post(STORE))).rejects.toThrow(TypeError)
+    expect(Date.now() - started).toBeLessThan(1000)
+    expect(a.dispatched()).toBe(true)
+  })
+
+  it('hands the rails a buffered answer: its body read once, whole', async () => {
+    const a = attempt()
+    a.handOff({ rail: 'relay', nonce: 3n, data: CALL })
+    const res = await a.relay(sent() as unknown as typeof fetch)('https://relay/transactions', post(STORE))
+    expect(await res.json()).toEqual({ ok: true, txHash: HASH })
+  })
+
   it('takes a kept record up again for a retry, and only for the same sale', () => {
     const a = attempt()
     a.handOff({ rail: 'relay', nonce: 3n, data: CALL })
@@ -238,8 +306,8 @@ describe('a MANA purchase’s attempt', () => {
       data: CALL,
       fromBlock: '99',
       sends: [
-        { stage: 'refused', payload: keccak256(PAYLOAD as Hex), at: 1 },
-        { stage: 'dispatched', payload: keccak256('0x01'), at: 2, hash: HASH }
+        { id: 's16', stage: 'refused', payload: keccak256(PAYLOAD as Hex), at: 1 },
+        { id: 's17', stage: 'dispatched', payload: keccak256('0x01'), at: 2, hash: HASH }
       ]
     }
     expect(isManaAttempt(good)).toBe(true)
@@ -248,7 +316,7 @@ describe('a MANA purchase’s attempt', () => {
     expect(isManaAttempt({ ...good, fingerprint: '0x12' })).toBe(false)
     expect(isManaAttempt({ ...good, nonce: undefined })).toBe(false)
     expect(isManaAttempt({ ...good, fromBlock: undefined })).toBe(false)
-    expect(isManaAttempt({ ...good, sends: [{ stage: 'dispatched' }] })).toBe(false)
+    expect(isManaAttempt({ ...good, sends: [{ id: 's18', stage: 'dispatched' }] })).toBe(false)
     expect(isManaAttempt({ ...good, sends: [{ stage: 'later' }] })).toBe(false)
     expect(isManaAttempt({ ...good, terms: { ...good.terms, venue: MANA } })).toBe(false)
   })

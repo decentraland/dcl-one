@@ -38,6 +38,8 @@ type SendStage = 'signing' | 'dispatched' | 'refused' | 'declined'
 
 /** One send of the sale through the relay: the first, or a retry of it at the same nonce. */
 interface ManaSend {
+  /** This send's own name, kept with it from its signature on: two sends of the same sale can carry the same bytes. */
+  id: string
   stage: SendStage
   /** keccak256 of the signed execution its relay request carried (executeMetaTransaction's call data). */
   payload?: string
@@ -91,6 +93,8 @@ const isUnits = (v: unknown): boolean =>
 function isSend(v: unknown): v is ManaSend {
   return (
     isObject(v) &&
+    typeof v.id === 'string' &&
+    /^[0-9a-z-]{1,64}$/.test(v.id) &&
     STAGES.includes(v.stage as SendStage) &&
     (v.payload === undefined || (typeof v.payload === 'string' && HASH.test(v.payload))) &&
     (v.hash === undefined || (typeof v.hash === 'string' && TX_HASH.test(v.hash))) &&
@@ -120,6 +124,7 @@ export function isManaAttempt(v: unknown): v is ManaAttemptRecord {
     Array.isArray(sends) &&
     sends.length <= MAX_SENDS &&
     sends.every(isSend) &&
+    new Set(sends.map((x) => (x as ManaSend).id)).size === sends.length &&
     // A signature names a nonce and a call, and a dispatch has its checkpoint.
     (sends.length === 0 || (v.nonce !== undefined && v.data !== undefined)) &&
     (!sends.some((s) => (s as ManaSend).stage === 'dispatched') || v.fromBlock !== undefined)
@@ -132,19 +137,12 @@ export function manaDispatched(attempt: ManaAttemptRecord): boolean {
 }
 
 /**
- * The record with only what may be evidence: the sends that went (`dispatched`), each payload once, in order. A send
- * still `signing` with no sender left to finish it, one the relay refused or one the buyer declined never left this
- * page, so nothing on chain can be it.
+ * The record with only what may be evidence: the sends that went (`dispatched`), each one kept as itself (two may carry
+ * the same bytes, and the relay may still answer either), in order. A send still `signing` with no sender left to finish
+ * it, one the relay refused or one the buyer declined never left this page, so nothing on chain can be it.
  */
 export function compactManaAttempt(record: ManaAttemptRecord): ManaAttemptRecord {
-  const sends: ManaSend[] = []
-  for (const send of record.sends) {
-    if (send.stage !== 'dispatched') continue
-    const same = sends.find((s) => s.payload === send.payload)
-    if (same) same.hash ??= send.hash
-    else sends.push({ ...send })
-  }
-  return { ...record, sends }
+  return { ...record, sends: record.sends.filter((s) => s.stage === 'dispatched').map((s) => ({ ...s })) }
 }
 
 /** Whether the record has room for another send: none being signed, and fewer than MAX_SENDS that went. */
@@ -252,20 +250,47 @@ function relayRequest(input: Parameters<typeof fetch>[0], init: RequestInit | un
 
 const isDecline = (e: unknown): boolean => (e as { code?: unknown } | null)?.code === 4001
 
+/** A new send's name. */
+const sendId = (): string => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`)
+
+/** A relay answer read whole: its status, headers and body text. */
+type Answer = { status: number; headers: Headers; text: string }
+
 /**
  * A purchase's attempt: a fresh one at `terms` (no send yet), or `from` a kept record (a retry after a reload).
- * `keep` writes the record and reads it back from storage: true only when what storage holds is the record given.
- * `mana`: the chain's MANA token, whose approve the relay may carry while the buyer authorizes it. `checkpoint` reads
- * a block at or before now, kept before the first relay request; `now` stamps each send. `onDispatch` hears each send
- * kept as gone, right before its request leaves: the purchase is followed from then on, not once its answer comes.
+ *
+ * The record lives with the operation, not in the attempt: every change reads it from `load` (the operation's current
+ * record, which another attempt of the same operation, a retry, may have changed meanwhile) and writes it through
+ * `keep`, which reads it back from storage (true only when storage holds the record given). An answer the relay gives
+ * late lands on its own send, by that send's name, in whatever the record has become.
+ *
+ * `mana`: the chain's MANA token, whose approve the relay may carry while the buyer authorizes it. `checkpoint` reads a
+ * block at or before now, kept before the first relay request; `now` stamps each send. `onDispatch` hears each send kept
+ * as gone, right before its request leaves: the purchase is followed from then on, not once its answer comes. `sendMs`
+ * bounds a relay request, its whole answer included.
  */
 export function createManaAttempt(
   terms: ManaSaleTerms,
   keep: (record: ManaAttemptRecord) => boolean,
-  opts: { mana: string; checkpoint: () => Promise<bigint>; now: () => number; from?: ManaAttemptRecord; onDispatch?: () => void; sendMs?: number }
+  opts: {
+    mana: string
+    checkpoint: () => Promise<bigint>
+    now: () => number
+    from?: ManaAttemptRecord
+    load?: () => ManaAttemptRecord | undefined
+    onDispatch?: () => void
+    sendMs?: number
+  }
 ): ManaAttempt {
-  const record: ManaAttemptRecord = opts.from ? structuredClone(opts.from) : { venue: terms.venue.toLowerCase(), terms: storeTerms(terms), fingerprint: manaFingerprint(terms), sends: [] }
-  if (record.fingerprint !== manaFingerprint(terms)) throw new Error('The kept attempt is for another sale')
+  let local: ManaAttemptRecord = opts.from
+    ? structuredClone(opts.from)
+    : { venue: terms.venue.toLowerCase(), terms: storeTerms(terms), fingerprint: manaFingerprint(terms), sends: [] }
+  if (local.fingerprint !== manaFingerprint(terms)) throw new Error('The kept attempt is for another sale')
+  /** The operation's record as it stands now. */
+  const read = (): ManaAttemptRecord => {
+    const shared = opts.load?.()
+    return shared && shared.fingerprint === local.fingerprint ? shared : local
+  }
   const mana = opts.mana.toLowerCase()
   /** Set once a checkpoint couldn't be kept: nothing more is sent for the purchase. */
   let blocked = false
@@ -274,38 +299,35 @@ export function createManaAttempt(
   let authorizing = 0
   /** The buyer's RETRY lets one more send be handed off. */
   let retrying = false
-  /** Keeps `next` as the record, or leaves the record as it was and blocks the purchase. */
+  /** The send this attempt is signing or sending now. */
+  let current: string | null = null
+  /** Keeps `next` as the record, or leaves it as it was and blocks the purchase. */
   const move = (next: ManaAttemptRecord): boolean => {
     if (!keep(structuredClone(next))) {
       blocked = true
       return false
     }
-    for (const k of Object.keys(record) as (keyof ManaAttemptRecord)[]) delete record[k]
-    Object.assign(record, structuredClone(next))
+    local = structuredClone(next)
     return true
   }
-  const last = (): ManaSend | undefined => record.sends[record.sends.length - 1]
-  const restage = (change: Partial<ManaSend>): boolean => {
-    const send = last()
-    return send ? move({ ...record, sends: [...record.sends.slice(0, -1), { ...send, ...change }] }) : false
+  /** Changes the send named `id` in the record as it stands now; false when it is gone or couldn't be kept. */
+  const change = (id: string | null, patch: Partial<ManaSend>): boolean => {
+    const now = read()
+    const at = id == null ? -1 : now.sends.findIndex((x) => x.id === id)
+    return at >= 0 && move({ ...now, sends: now.sends.map((x, i) => (i === at ? { ...x, ...patch } : x)) })
   }
-  /**
-   * The relay's answer for the send that carried `payload`, kept on that send alone (never on a later one, however late
-   * it comes): its evidence that nothing went (`refused`), or the hash it gave.
-   */
-  const answerFor = async (payload: string, res: Response): Promise<void> => {
-    const body = (await res
-      .clone()
-      .json()
-      .catch(() => null)) as { ok?: unknown; txHash?: unknown } | null
-    const at = record.sends.findIndex((x) => x.stage === 'dispatched' && x.payload === payload)
-    if (at < 0) return
-    const change: Partial<ManaSend> | null = refusedBeforeBroadcast(body)
-      ? { stage: 'refused' }
-      : body?.ok !== false && typeof body?.txHash === 'string' && TX_HASH.test(body.txHash)
-        ? { hash: body.txHash }
-        : null
-    if (change) move({ ...record, sends: record.sends.map((x, i) => (i === at ? { ...x, ...change } : x)) })
+  const send = (id: string | null): ManaSend | undefined => (id == null ? undefined : read().sends.find((x) => x.id === id))
+  /** The relay's word in `answer` for the send named `id`: that nothing went (`refused`), or the hash it gave. */
+  const answerFor = (id: string, answer: Answer): void => {
+    let body: { ok?: unknown; txHash?: unknown } | null = null
+    try {
+      body = JSON.parse(answer.text) as { ok?: unknown; txHash?: unknown }
+    } catch {
+      body = null
+    }
+    if (send(id)?.stage !== 'dispatched') return
+    if (refusedBeforeBroadcast(body)) change(id, { stage: 'refused' })
+    else if (body?.ok !== false && typeof body?.txHash === 'string' && TX_HASH.test(body.txHash)) change(id, { hash: body.txHash })
   }
   /** A wallet request for the sale's signature: the typed data's domain is the venue's. */
   const saleSignature = (args: { method: string; params?: unknown }): boolean => {
@@ -313,40 +335,48 @@ export function createManaAttempt(
     if (args.method !== 'eth_signTypedData_v4' || typeof params[1] !== 'string') return false
     try {
       const domain = (JSON.parse(params[1]) as { domain?: { verifyingContract?: unknown } }).domain
-      return typeof domain?.verifyingContract === 'string' && domain.verifyingContract.toLowerCase() === record.venue
+      return typeof domain?.verifyingContract === 'string' && domain.verifyingContract.toLowerCase() === read().venue
     } catch {
       return false
     }
   }
   return {
-    record,
+    get record() {
+      return read()
+    },
     handOff(attempt) {
       // Only through the relay, and never past a checkpoint that couldn't be kept or a purchase closed.
       if (blocked || closed || attempt.rail !== 'relay') return false
-      if (record.sends.length === 0) {
-        return move({ ...record, nonce: attempt.nonce.toString(), data: attempt.data, sends: [{ stage: 'signing' }] })
+      const now = read()
+      const id = sendId()
+      if (now.sends.length === 0) {
+        if (!move({ ...now, nonce: attempt.nonce.toString(), data: attempt.data, sends: [{ id, stage: 'signing' }] })) return false
+        current = id
+        return true
       }
       // A retry: the buyer's own, of the same call at the same nonce, while no send is being signed and the record has room.
-      if (!retrying || !manaHasRoom(compactManaAttempt(record)) || last()?.stage === 'signing') return false
-      if (attempt.nonce.toString() !== record.nonce || attempt.data.toLowerCase() !== record.data?.toLowerCase()) return false
+      if (!retrying || !manaHasRoom(compactManaAttempt(now)) || now.sends.some((x) => x.stage === 'signing')) return false
+      if (attempt.nonce.toString() !== now.nonce || attempt.data.toLowerCase() !== now.data?.toLowerCase()) return false
       retrying = false
-      const kept = compactManaAttempt(record)
-      return move({ ...kept, sends: [...kept.sends, { stage: 'signing' }] })
+      const kept = compactManaAttempt(now)
+      if (!move({ ...kept, sends: [...kept.sends, { id, stage: 'signing' }] })) return false
+      current = id
+      return true
     },
-    relay(send) {
+    relay(post) {
       return (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-        if (methodOf(input, init) !== 'POST') return send(input, init)
+        if (methodOf(input, init) !== 'POST') return post(input, init)
         if (closed) return notSent('This purchase was cancelled, so nothing more was sent for it.')
         const request = relayRequest(input, init)
-        if (request?.target === mana) return authorizing > 0 ? send(input, init) : notSent('MANA is approved only when you authorize it, so nothing was sent.')
-        if (request?.target !== record.venue) return notSent('The Shop sends only this purchase, so nothing was sent.')
+        if (request?.target === mana) return authorizing > 0 ? post(input, init) : notSent('MANA is approved only when you authorize it, so nothing was sent.')
+        if (request?.target !== read().venue) return notSent('The Shop sends only this purchase, so nothing was sent.')
         // The sale: its signature was kept (`signing`); now its checkpoints, before the request leaves.
-        const pending = last()
-        if (blocked || pending?.stage !== 'signing') {
+        const id = current
+        if (blocked || id == null || send(id)?.stage !== 'signing') {
           blocked = true
           return notSent("This browser couldn't keep a record of the purchase, so it wasn't sent.")
         }
-        let fromBlock = record.fromBlock
+        let fromBlock = read().fromBlock
         if (fromBlock == null) {
           try {
             fromBlock = (await opts.checkpoint()).toString()
@@ -355,35 +385,41 @@ export function createManaAttempt(
             return notSent("This purchase couldn't be checked on chain, so it wasn't sent.")
           }
         }
-        if (!move({ ...record, fromBlock, sends: [...record.sends.slice(0, -1), { ...pending, stage: 'dispatched', payload: keccak256(request.payload), at: opts.now() }] })) {
+        const now = read()
+        const at = now.sends.findIndex((x) => x.id === id)
+        if (at < 0 || !move({ ...now, fromBlock, sends: now.sends.map((x, i) => (i === at ? { ...x, stage: 'dispatched', payload: keccak256(request.payload), at: opts.now() } : x)) })) {
           return notSent("This browser couldn't keep a record of the purchase, so it wasn't sent.")
         }
+        current = null
         // Kept as gone: whoever follows the purchase takes over from here, whatever the request and its answer take.
         opts.onDispatch?.()
-        const payload = keccak256(request.payload)
-        const sending = send(input, init)
+        // The whole answer, body included, read under the deadline; the rails get it buffered.
+        const answering = (async (): Promise<Answer> => {
+          const res = await post(input, init)
+          return { status: res.status, headers: new Headers(res.headers), text: await res.text() }
+        })()
         // An answer past the deadline still lands on its own send.
         let late = false
-        sending.then(
-          (res) => {
-            if (late) void answerFor(payload, res)
+        answering.then(
+          (answer) => {
+            if (late) answerFor(id, answer)
           },
           () => {}
         )
-        let res: Response
+        let answer: Answer
         try {
-          res = await deadline(sending, opts.sendMs ?? SEND_MS, 'The relay')
+          answer = await deadline(answering, opts.sendMs ?? SEND_MS, 'The relay')
         } catch (e) {
-          // No answer in time: the request may have reached the relay, so the send stays dispatched, and the rails take
-          // it as a relay that didn't answer (followed, never sent again from here).
+          // No whole answer in time: the request may have reached the relay, so the send stays dispatched, and the rails
+          // take it as a relay that didn't answer (followed, never sent again from here).
           if (e instanceof DeadlineError) {
             late = true
             throw new TypeError(e.message)
           }
           throw e
         }
-        await answerFor(payload, res)
-        return res
+        answerFor(id, answer)
+        return new Response(answer.text, { status: answer.status, headers: answer.headers })
       }) as typeof fetch
     },
     async authorize(run) {
@@ -399,12 +435,13 @@ export function createManaAttempt(
       retrying = true
     },
     answered(hash) {
-      const send = last()
-      if (send?.stage === 'dispatched' && !send.hash && TX_HASH.test(hash)) restage({ hash })
+      const latest = read().sends.filter((x) => x.stage === 'dispatched').at(-1)
+      if (latest && !latest.hash && TX_HASH.test(hash)) change(latest.id, { hash })
     },
     retire() {
-      const kept = compactManaAttempt(record)
-      return JSON.stringify(kept) === JSON.stringify(record) || move(kept)
+      const now = read()
+      const kept = compactManaAttempt(now)
+      return JSON.stringify(kept) === JSON.stringify(now) || move(kept)
     },
     observe(wallet) {
       return {
@@ -413,7 +450,7 @@ export function createManaAttempt(
             return await wallet.request(args)
           } catch (e) {
             // Declined in the wallet: the buyer said no to this send's signature. Nothing of it went.
-            if (isDecline(e) && saleSignature(args) && last()?.stage === 'signing') restage({ stage: 'declined' })
+            if (isDecline(e) && saleSignature(args) && send(current)?.stage === 'signing') change(current, { stage: 'declined' })
             throw e
           }
         },
@@ -421,7 +458,7 @@ export function createManaAttempt(
         ...(wallet.removeListener ? { removeListener: wallet.removeListener.bind(wallet) } : {})
       }
     },
-    dispatched: () => manaDispatched(record),
+    dispatched: () => manaDispatched(read()),
     open: () => !closed,
     close() {
       closed = true

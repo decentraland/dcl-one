@@ -901,6 +901,33 @@ describe('the in-world purchase with MANA', () => {
       expect(w.relay.posts).toHaveLength(2)
     })
 
+    it('offers RETRY after a send whose answer’s body never ends, without closing it or reloading', async () => {
+      const w = world({ allowance: maxUint256 })
+      let n = 0
+      // The first sale request is taken and answered with headers at once; its body never ends.
+      const endless = (async (url: string, init?: RequestInit) => {
+        const res = await w.relay.fetchImpl(url, init)
+        if (++n === 1) return new Response(new ReadableStream<Uint8Array>({ start: () => {} }), { status: 200 })
+        return res
+      }) as unknown as typeof fetch
+      const p = page(w, {
+        services: {
+          rail: () => ({ relayerUrl: 'https://node.test/transactions-api/v1', fetchImpl: endless, gasless: true, wait: { timeoutMs: 30, pollMs: 10 } }),
+          manaTimeouts: () => ({ sendMs: 50, readMs: 50 })
+        }
+      })
+      w.relay.state.confirm = 'none'
+      await p.payMana()
+      const pending = await p.until('pending')
+      w.relay.state.confirm = 'success'
+      w.clock.now += RETRY_AFTER_MS
+      await new Promise((r) => setTimeout(r, 120))
+      pending.handlers.onCheckAgain?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', retry: true }))
+      p.shown.at(-1)!.handlers.onRetry?.()
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'succeeded' }))
+    })
+
     it('keeps the relay’s late refusal on the dialog still up for it, with TRY AGAIN, however the watch wakes', async () => {
       const w = world({ allowance: maxUint256 })
       let release!: () => void
@@ -995,7 +1022,7 @@ describe('the in-world purchase with MANA', () => {
   })
 
   describe('a retry that didn’t go', () => {
-    const FIRST = { stage: 'dispatched', payload: '0x' + 'c1'.repeat(32), at: 0 }
+    const FIRST = { id: 's1', stage: 'dispatched', payload: '0x' + 'c1'.repeat(32), at: 0 }
     const seedRecord = (w: World, id: string, sends: Record<string, unknown>[]) =>
       w.storage.setItem(
         `dcl-inworld-shop:record:v1:${BUYER}:${id}`,
@@ -1023,7 +1050,7 @@ describe('the in-world purchase with MANA', () => {
     it('drops a retry left signing by a page that went, keeps the first send’s evidence, and offers RETRY again', async () => {
       const w = world({ allowance: maxUint256 })
       w.clock.now = RETRY_AFTER_MS + 10
-      seedRecord(w, '0000000b-0000-0000-0000-000000000001', [FIRST, { stage: 'signing' }])
+      seedRecord(w, '0000000b-0000-0000-0000-000000000001', [FIRST, { id: 's2', stage: 'signing' }])
       const p = page(w)
       expect(await p.open()).toMatchObject({ operation: '0000000b-0000-0000-0000-000000000001' })
       await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', retry: true }))
@@ -1051,7 +1078,7 @@ describe('the in-world purchase with MANA', () => {
     it('stops offering RETRY when the record holds as many sends as it keeps, and still checks the chain', async () => {
       const w = world({ allowance: maxUint256 })
       w.clock.now = RETRY_AFTER_MS + 10
-      const sends = Array.from({ length: 8 }, (_, i) => ({ stage: 'dispatched', payload: '0x' + (i + 16).toString(16).repeat(32), at: 0 }))
+      const sends = Array.from({ length: 8 }, (_, i) => ({ id: `s${i}`, stage: 'dispatched', payload: '0x' + (i + 16).toString(16).repeat(32), at: 0 }))
       seedRecord(w, '0000000b-0000-0000-0000-000000000003', sends)
       const p = page(w)
       await p.open()
@@ -1090,7 +1117,7 @@ describe('the in-world purchase with MANA', () => {
 
     it('ends a purchase none of whose sends was dispatched as cancelled: it provably sent nothing', async () => {
       const w = world()
-      seed(w, '0000000a-0000-0000-0000-000000000001', [{ stage: 'signing' }])
+      seed(w, '0000000a-0000-0000-0000-000000000001', [{ id: 's4', stage: 'signing' }])
       const p = page(w)
       await p.shell.request('shop.status', {})
       await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ operation: '0000000a-0000-0000-0000-000000000001', state: 'cancelled' }))
@@ -1098,7 +1125,7 @@ describe('the in-world purchase with MANA', () => {
 
     it('keeps a dispatched purchase the chain can’t settle yet, and a BUY of its item shows it', async () => {
       const w = world()
-      seed(w, '0000000a-0000-0000-0000-000000000002', [{ stage: 'dispatched', payload: '0x' + 'cd'.repeat(32), at: w.clock.now }])
+      seed(w, '0000000a-0000-0000-0000-000000000002', [{ id: 's5', stage: 'dispatched', payload: '0x' + 'cd'.repeat(32), at: w.clock.now }])
       const p = page(w)
       const answer = await p.open()
       expect(answer).toMatchObject({ operation: '0000000a-0000-0000-0000-000000000002', state: 'processing' })

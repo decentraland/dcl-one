@@ -1588,6 +1588,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       checkpoint: () => svc.manaEvidence().finalized(chainId),
       now: svc.now,
       sendMs: timeouts.sendMs,
+      // One record for the operation: a retry's attempt and this one change the same record, never a copy of it.
+      load: () => op.mana,
       // Kept as gone: pending from here, closable, and followed by the watch, however long the relay and the executor take.
       onDispatch: () => {
         if (op.state === 'processing') move(op, 'pending')
@@ -1729,6 +1731,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         now: svc.now,
         sendMs: svc.manaTimeouts().sendMs,
         from: record,
+        load: () => op.mana,
         // Kept as gone: in progress from here, closable, and followed by the watch, however long the relay takes.
         onDispatch: () => {
           op.manaRetry = undefined
