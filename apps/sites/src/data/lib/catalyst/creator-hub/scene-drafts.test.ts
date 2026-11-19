@@ -7,7 +7,7 @@ import path from "node:path";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { createIdentityFromPrivateKey } from "../../auth/identity";
+import { createIdentityFromPrivateKey, generateEphemeralKey } from "../../auth/identity";
 import { signRequest } from "../../auth/signer";
 import {
   action,
@@ -218,6 +218,60 @@ describe("scene-drafts auth: ADR-44 AuthChain verification", () => {
     expect(replayRes.ok).toBe(false);
     if (replayRes.ok) return;
     expect(replayRes.status).toBe(401);
+  });
+
+  it("accepts only a Decentraland Login delegation, with carriage returns ignored", async () => {
+    const delegatedWith = async (firstLine: string, separator = "\n") => {
+      const account = privateKeyToAccount(generatePrivateKey());
+      const ephemeral = generateEphemeralKey();
+      const expiration = new Date(Date.now() + 60_000).toISOString();
+      const message = [firstLine, `Ephemeral address: ${ephemeral.address}`, `Expiration: ${expiration}`].join(
+        separator,
+      );
+      const signer = account.address.toLowerCase();
+      const identity = {
+        signer,
+        ephemeral,
+        expiration,
+        authChain: [
+          { type: "SIGNER" as const, payload: signer, signature: "" },
+          { type: "ECDSA_EPHEMERAL" as const, payload: message, signature: await account.signMessage({ message }) },
+        ],
+      };
+      const s = await signRequest(identity, "GET", "/create/drafts", {});
+      return verifyAuthChainRequest(new Request("http://localhost/create/drafts", { headers: s.headers }));
+    };
+
+    expect((await delegatedWith("Decentraland Login")).ok).toBe(true);
+    expect((await delegatedWith("Decentraland Login", "\r\n")).ok).toBe(true);
+    for (const firstLine of ["Decentraland Storage Delegation", "Decentraland Login ", ""]) {
+      const res = await delegatedWith(firstLine);
+      expect(res).toEqual({ ok: false, status: 401, error: "malformed ephemeral payload" });
+    }
+  });
+
+  it("requires the ephemeral address on line 2 and the expiration on line 3", async () => {
+    const account = privateKeyToAccount(generatePrivateKey());
+    const ephemeral = generateEphemeralKey();
+    const expiration = new Date(Date.now() + 60_000).toISOString();
+    const message = `Decentraland Login\nExpiration: ${expiration}\nEphemeral address: ${ephemeral.address}`;
+    const signer = account.address.toLowerCase();
+    const s = await signRequest(
+      {
+        signer,
+        ephemeral,
+        expiration,
+        authChain: [
+          { type: "SIGNER", payload: signer, signature: "" },
+          { type: "ECDSA_EPHEMERAL", payload: message, signature: await account.signMessage({ message }) },
+        ],
+      },
+      "GET",
+      "/create/drafts",
+      {},
+    );
+    const res = await verifyAuthChainRequest(new Request("http://localhost/create/drafts", { headers: s.headers }));
+    expect(res).toEqual({ ok: false, status: 401, error: "malformed ephemeral payload" });
   });
 });
 

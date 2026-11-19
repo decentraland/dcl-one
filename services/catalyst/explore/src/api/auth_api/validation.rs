@@ -543,10 +543,19 @@ mod tests {
     }
 
     fn delegated_chain(signer_key: &str, ephemeral_key: &str, expiration: &str) -> AuthChain {
+        delegated_chain_for("Decentraland Login", signer_key, ephemeral_key, expiration)
+    }
+
+    fn delegated_chain_for(
+        first_line: &str,
+        signer_key: &str,
+        ephemeral_key: &str,
+        expiration: &str,
+    ) -> AuthChain {
         use alloy_signer::SignerSync;
         let signer = wallet(signer_key);
         let message = format!(
-            "Decentraland Login\nEphemeral address: {}\nExpiration: {expiration}",
+            "{first_line}\nEphemeral address: {}\nExpiration: {expiration}",
             address_of(ephemeral_key)
         );
         let signature = format!(
@@ -595,6 +604,26 @@ mod tests {
     fn identity_chain_refuses_an_expired_delegation() {
         let chain = delegated_chain(SIGNER_KEY, EPHEMERAL_KEY, "2020-01-01T00:00:00.000Z");
         assert!(validate_identity_chain(&chain).is_err());
+    }
+
+    #[test]
+    fn requests_and_identities_need_a_login_delegation() {
+        let login = delegated_chain(SIGNER_KEY, EPHEMERAL_KEY, "2100-01-01T00:00:00.000Z");
+        assert!(validate_auth_chain(&login).is_ok());
+        assert!(validate_identity_chain(&login).is_ok());
+
+        let other = delegated_chain_for(
+            "Decentraland Storage Delegation",
+            SIGNER_KEY,
+            EPHEMERAL_KEY,
+            "2100-01-01T00:00:00.000Z",
+        );
+        for err in [
+            validate_auth_chain(&other).map(|_| ()).unwrap_err(),
+            validate_identity_chain(&other).map(|_| ()).unwrap_err(),
+        ] {
+            assert!(err.starts_with("Invalid ephemeral payload"), "{err}");
+        }
     }
 
     #[test]

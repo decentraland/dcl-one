@@ -506,6 +506,38 @@ mod tests {
         }
     }
 
+    /// A `[SIGNER, ECDSA_EPHEMERAL]` chain whose delegation starts with
+    /// `first_line`, and its owner.
+    fn delegated_with(first_line: &str) -> (String, AuthChain) {
+        let owner = Wallet::random().unwrap();
+        let ephemeral = Wallet::random().unwrap();
+        let expiration = (chrono::Utc::now() + chrono::Duration::days(1))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let payload = format!(
+            "{first_line}\nEphemeral address: {}\nExpiration: {expiration}",
+            ephemeral.address()
+        );
+        let chain = json!([
+            { "payload": owner.address(), "signature": "", "type": "SIGNER" },
+            { "payload": payload, "signature": owner.sign_message(payload.as_bytes()).unwrap(), "type": "ECDSA_EPHEMERAL" },
+        ]);
+        (owner.address(), serde_json::from_value(chain).unwrap())
+    }
+
+    #[test]
+    fn only_a_login_delegation_proves_the_owner() {
+        let (owner, chain) = delegated_with("Decentraland Login");
+        assert!(auth_chain_is_valid(Some(&chain), &owner));
+
+        let (owner, chain) = delegated_with("Decentraland Storage Delegation");
+        let ephemeral = parse_ephemeral_payload(&chain[1].payload).unwrap().1;
+        assert!(
+            crate::auth::verify_auth_chain(&chain, &ephemeral, None).is_ok(),
+            "otherwise a valid chain"
+        );
+        assert!(!auth_chain_is_valid(Some(&chain), &owner));
+    }
+
     #[tokio::test]
     async fn the_logged_in_checkpoint_completes_the_bound_wallets_cp7_without_metadata() {
         let Some(onboarding) = onboarding().await else {

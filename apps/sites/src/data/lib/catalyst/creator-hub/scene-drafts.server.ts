@@ -165,15 +165,27 @@ type AuthResult =
 
 const DEFAULT_MAX_AGE_MS = 10 * 60_000;
 
+const LOGIN_PURPOSE = "Decentraland Login";
+const EPHEMERAL_ADDRESS_PREFIX = "Ephemeral address: ";
+const EXPIRATION_PREFIX = "Expiration: ";
+
+/** A login delegation, line by line as `dcl-auth`'s `verify_login_chain` reads it. */
 function parseEphemeral(
   message: string,
 ): { address: string; expiration: number } | null {
-  const addr = /Ephemeral address:\s*(0x[0-9a-fA-F]{40})/i.exec(message);
-  const exp = /Expiration:\s*(.+)\s*$/im.exec(message);
-  if (!addr) return null;
-  const expiration = exp ? Date.parse(exp[1].trim()) : NaN;
+  const [purpose, addressLine, expirationLine] = message.replace(/\r/g, "").split("\n");
+  if (
+    purpose !== LOGIN_PURPOSE ||
+    !addressLine?.startsWith(EPHEMERAL_ADDRESS_PREFIX) ||
+    !expirationLine?.startsWith(EXPIRATION_PREFIX)
+  ) {
+    return null;
+  }
+  const address = addressLine.slice(EPHEMERAL_ADDRESS_PREFIX.length);
+  if (!ETH_ADDRESS_RE.test(address)) return null;
+  const expiration = Date.parse(expirationLine.slice(EXPIRATION_PREFIX.length).trim());
   return {
-    address: addr[1].toLowerCase(),
+    address: address.toLowerCase(),
     expiration: Number.isFinite(expiration) ? expiration : Infinity,
   };
 }

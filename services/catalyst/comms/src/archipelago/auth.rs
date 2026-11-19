@@ -938,6 +938,44 @@ mod tests {
         redeem(&s, &address, &challenge, &chain).expect_err("impostor signature must be rejected");
     }
 
+    #[test]
+    fn only_a_login_delegation_redeems_a_challenge() {
+        use alloy::signers::{SignerSync, local::PrivateKeySigner};
+
+        for (first_line, accepted) in [
+            ("Decentraland Login", true),
+            ("Decentraland Storage Delegation", false),
+        ] {
+            let s = ChallengeStore::new(cfg());
+            let root = PrivateKeySigner::random();
+            let ephemeral = PrivateKeySigner::random();
+            let address = format!("{:#x}", root.address());
+            let challenge = offered(&s, &address);
+            let delegation = format!(
+                "{first_line}\nEphemeral address: {:#x}\nExpiration: 2099-12-31T00:00:00.000Z",
+                ephemeral.address()
+            );
+            let chain: AuthChain = serde_json::from_value(serde_json::json!([
+                { "type": "SIGNER", "payload": address, "signature": "" },
+                { "type": "ECDSA_EPHEMERAL", "payload": delegation,
+                  "signature": root.sign_message_sync(delegation.as_bytes()).unwrap().to_string() },
+                { "type": "ECDSA_SIGNED_ENTITY", "payload": challenge,
+                  "signature": ephemeral.sign_message_sync(challenge.as_bytes()).unwrap().to_string() },
+            ]))
+            .unwrap();
+            let result = redeem(&s, &address, &challenge, &chain);
+            if accepted {
+                result.expect("a login delegation redeems");
+            } else {
+                let err = result.unwrap_err();
+                assert!(
+                    matches!(&err, AuthError::InvalidChain(d) if d.contains("InvalidEphemeralPayload")),
+                    "{err:?}"
+                );
+            }
+        }
+    }
+
     fn signed(signer: &alloy::signers::local::PrivateKeySigner, challenge: &str) -> AuthChain {
         use alloy::signers::SignerSync;
         serde_json::from_value(serde_json::json!([
