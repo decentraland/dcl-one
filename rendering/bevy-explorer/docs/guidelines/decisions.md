@@ -741,7 +741,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   monitor and ignores the frame limit. Here VSync only removes tearing: the explorer paces to the
   lower of the Target Frame Rate (or a session override) and the monitor's refresh rate. Medium's
   60 fps holds on a 120 or 144 Hz monitor, and the debug panel's 30 FPS limit, `/fps` and
-  `--fps` still apply; Max means the monitor's rate.
+  `--fps` still apply; Max means the monitor's rate. A target that does not divide the refresh rate
+  shows frames for an uneven number of refreshes (60 fps on 144 Hz alternates 2 and 3), so motion
+  can judder slightly; 60 fps on 60 or 120 Hz is even.
 - **No satellite floor.** unity-explorer lays the minimap's satellite images flat at 0.205 m under the
   terrain in Genesis City; here the ground covers that plane everywhere, so the floor would never be
   seen and is not shipped.
