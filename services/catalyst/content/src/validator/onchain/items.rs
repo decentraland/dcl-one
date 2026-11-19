@@ -126,12 +126,19 @@ fn token_ref(l1: bool, contract: Option<Address>, id: &str) -> ItemRef {
 
 pub fn item_ref(urn: &str) -> ItemRef {
     // Classify the decoded segments the content step resolved, not the raw spelling.
-    let segments: Vec<String> = super::super::urn::segments(urn)
-        .unwrap_or_else(|| urn.split(':').map(str::to_string).collect())
-        .into_iter()
-        .map(|s| s.to_lowercase())
-        .collect();
+    let resolved = super::super::urn::segments(urn);
+    let segments: Vec<String> = match &resolved {
+        Some(segments) => segments.iter().map(|(_, d)| d.to_lowercase()).collect(),
+        None => urn.split(':').map(str::to_lowercase).collect(),
+    };
     let parts: Vec<&str> = segments.iter().map(String::as_str).collect();
+    // The resolver picks the collections-v1 route on the raw collection segment.
+    let v1_by_contract = |collection: &str| match &resolved {
+        Some(segments) => segments
+            .get(4)
+            .is_some_and(|(raw, _)| super::super::urn::is_v1_contract(raw)),
+        None => is_hex_address(collection),
+    };
     let ["urn", "decentraland", network, kind, rest @ ..] = &parts[..] else {
         return ItemRef::NotAsked;
     };
@@ -149,7 +156,7 @@ pub fn item_ref(urn: &str) -> ItemRef {
         // The reference counts assets without a token as owned (on-chain/client.js ownsItemsAtTimestamp).
         ("collections-v1", [_] | [_, _]) => ItemRef::NotAsked,
         ("collections-v1", [collection, _name, id]) if is_digits(id) => {
-            if is_hex_address(collection) {
+            if v1_by_contract(collection) {
                 token_ref(l1, collection.parse().ok(), id)
             } else if is_ethereum(network) {
                 token_ref(l1, v1_collection_contract(collection), id)
@@ -270,6 +277,39 @@ mod tests {
                 token: U256::from(12u8)
             },
             "a decoded colon stays inside its segment"
+        );
+    }
+
+    #[test]
+    fn collections_v1_routes_on_the_raw_collection_segment() {
+        let hex = &A[2..];
+        for urn in [
+            format!("urn:decentraland:ethereum:collections-v1:%30x{hex}:hat:1"),
+            format!("urn:decentraland:ethereum:collections-v1:0X{hex}:hat:1"),
+        ] {
+            assert_eq!(
+                crate::validator::urn::parse(&urn),
+                Some(crate::validator::urn::UrnType::CollectionV1Item)
+            );
+            assert_eq!(
+                item_ref(&urn),
+                ItemRef::Token {
+                    l1: true,
+                    contract: None,
+                    token: U256::from(1u8)
+                },
+                "{urn} resolves by name, so it names no contract"
+            );
+        }
+        assert_eq!(
+            item_ref(&format!(
+                "urn:decentraland:ethereum:collections-v1:{A}:hat:1"
+            )),
+            ItemRef::Token {
+                l1: true,
+                contract: A.parse().ok(),
+                token: U256::from(1u8)
+            }
         );
     }
 

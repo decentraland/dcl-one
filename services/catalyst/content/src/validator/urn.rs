@@ -48,18 +48,24 @@ pub fn parse(input: &str) -> Option<UrnType> {
     resolved(input).map(|(kind, _)| kind)
 }
 
-/// `input`'s segments as the resolver reads them: `urn`, then each URL path
-/// segment percent-decoded (no surrounding whitespace, tab or newline, query
-/// or fragment), a legacy `dcl://` address as its URN; `None` when it does
-/// not resolve.
-pub fn segments(input: &str) -> Option<Vec<String>> {
+/// `input`'s segments as the resolver reads them, each as `(raw, decoded)`:
+/// `urn`, then each URL path segment (no surrounding whitespace, tab or
+/// newline, query or fragment), a legacy `dcl://` address as its URN; `None`
+/// when it does not resolve.
+pub fn segments(input: &str) -> Option<Vec<(String, String)>> {
     let (_, urn) = resolved(input)?;
     let path = urn.strip_prefix("urn:")?;
-    let mut segments = vec!["urn".to_string()];
+    let mut segments = vec![("urn".to_string(), "urn".to_string())];
     for part in path.split(':') {
-        segments.push(decode(part)?);
+        segments.push((part.to_string(), decode(part)?));
     }
     Some(segments)
+}
+
+/// Whether a collections-v1 collection segment routes by contract, as
+/// `resolve` decides it: on the raw spelling.
+pub fn is_v1_contract(raw: &str) -> bool {
+    is_hex(raw)
 }
 
 fn resolved(input: &str) -> Option<(UrnType, String)> {
@@ -386,7 +392,7 @@ mod tests {
         let urn = format!("urn:decentraland:%6datic:collections-v2:{C}:1:42");
         assert_eq!(parse(&urn), Some(CollectionV2Item));
         assert_eq!(
-            segments(&urn),
+            segments(&urn).map(|s| s.into_iter().map(|(_, d)| d).collect::<Vec<_>>()),
             Some(
                 [
                     "urn",
@@ -404,8 +410,10 @@ mod tests {
         let by_name = "urn:decentraland:ethereum:collections-v1:halloween%5F2019:hat";
         assert_eq!(parse(by_name), Some(CollectionV1Asset));
         assert_eq!(
-            segments(by_name).as_deref().map(|s| s[4].as_str()),
-            Some("halloween_2019")
+            segments(by_name)
+                .as_deref()
+                .map(|s| (s[4].0.as_str(), s[4].1.as_str())),
+            Some(("halloween%5F2019", "halloween_2019"))
         );
         assert_eq!(
             segments(&format!("urn:decentraland:matic:collections-v2:{C}:%zz:2")),
