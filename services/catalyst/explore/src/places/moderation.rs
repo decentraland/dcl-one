@@ -164,9 +164,7 @@ pub(super) struct Resolved {
 const RESOLVE_COLUMNS: &str = "id, world, disabled, raw->>'disabled_reason' AS disabled_reason, \
      title, base_position, world_name, content_rating";
 
-/// A world-scene place (`explore.world_scene_place`, which `find_by_id_for`
-/// prefers) as a world-backed row: its own overlay decides `disabled`, its
-/// rating is the one the scene projection serves, retired scenes included.
+/// A world-scene place as a world-backed row, disabled by its own overlay.
 const WORLD_SCENE_RESOLVE: &str = "SELECT p.identity::text AS id, true AS world, \
      COALESCE(m.disabled, false) AS disabled, m.reason AS disabled_reason, \
      COALESCE(NULLIF(btrim(s.entity #>> '{metadata,display,title}'), ''), w.title) AS title, \

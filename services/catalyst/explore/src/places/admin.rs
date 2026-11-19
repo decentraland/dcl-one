@@ -2612,12 +2612,29 @@ mod tests {
                 operator_writes_enabled: true,
                 user_writes_enabled: true,
                 places_admin_token: Some("admin".into()),
+                data_team_token: Some("data".into()),
                 places_admin_addresses: vec![address()],
                 ..Settings::for_tests()
             },
             None,
         )));
         let place = format!("/api/places/{id}");
+        let ranking_by = |token: &'static str| {
+            let app = app.clone();
+            let path = format!("{place}/ranking");
+            async move {
+                call(
+                    &app,
+                    "PUT",
+                    &path,
+                    Some(token),
+                    Some(json!({ "ranking": 3 })),
+                )
+                .await
+            }
+        };
+        let (status, body) = ranking_by("data").await;
+        assert_eq!(status, StatusCode::CREATED, "uncurated: {body}");
         for (method, path, auth, body) in [
             (
                 "PUT",
@@ -2645,6 +2662,10 @@ mod tests {
                 call(&app, method, &format!("{place}/{path}"), Some(auth), body).await;
             assert_eq!(status, StatusCode::CREATED, "{path}: {body}");
             assert_eq!(body["data"]["id"], id, "{path}");
+            if path == "highlight" {
+                let (status, body) = ranking_by("data").await;
+                assert_eq!(status, StatusCode::FORBIDDEN, "highlighted: {body}");
+            }
         }
         let overlay = moderation::overlay(&pool, &id).await.unwrap().unwrap();
         assert_eq!(
@@ -2688,6 +2709,30 @@ mod tests {
             ),
             (json!("T"), json!(true))
         );
+        // `updatePlace`'s predicate: a disabled world row takes a highlight
+        // only when the disable is `opt_out`.
+        for (reason, written) in [("moderation", false), ("opt_out", true)] {
+            let (status, body) = call(
+                &app,
+                "PATCH",
+                &format!("{place}/disable"),
+                Some("admin"),
+                Some(json!({ "disabled": true, "reason": reason })),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            let applied = moderation::apply_with(
+                &pool,
+                Target::Place(&id),
+                &Decision::Highlighted(false),
+                ADMIN_TOKEN_ACTOR,
+                moderation::Context::default(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(applied.written, written, "{reason}");
+        }
     }
 
     #[tokio::test]
