@@ -839,7 +839,8 @@ pub struct UnifiedItem {
     pub chain_id: ChainId,
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub created_at: i64,
-    /// The creator's profile on the item and trending feeds (`name_creators`).
+    /// The creator's profile on the browse and trending feeds: never set on the row itself, it is
+    /// added to each response's JSON (`with_creator_profiles`) under the content denylist as it stands.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub creator_profile: Option<CreatorProfile>,
@@ -1298,9 +1299,10 @@ fn body_of(v: impl Serialize) -> Result<Value, ApiError> {
     serde_json::to_value(v).map_err(|e| ApiError::Internal(e.to_string()))
 }
 
-/// Served from a 30 s memo for a browse read, which also carries its creators' profiles; the
-/// readiness gates and the MANA rate read still run per request, while a memo hit keeps the prices
-/// it was built with (at most 30 s old).
+/// Served from a 30 s memo for a browse read, which then carries its creators' profiles, added to
+/// each response under the content denylist as it stands (never memoized). The readiness gates
+/// and the MANA rate read still run per request, while a memo hit keeps the prices it was built
+/// with (at most 30 s old).
 pub async fn get_unified_catalog(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
@@ -1320,30 +1322,31 @@ pub async fn get_unified_catalog(
     let with_profiles = browse_key.is_some();
     let read = || async {
         match group_by {
-            UnifiedGroupBy::Item => {
-                let (page, directory) =
-                    tokio::join!(unified_items(&state, &filters, rate), async {
-                        match with_profiles {
-                            true => directory_snapshot(&state).await,
-                            false => None,
-                        }
-                    });
-                page.and_then(|(mut data, total)| {
-                    name_creators(directory.as_deref(), &state.denylist, data.iter_mut());
-                    body_of(DataTotal { data, total })
-                })
-            }
+            UnifiedGroupBy::Item => unified_items(&state, &filters, rate)
+                .await
+                .and_then(|(data, total)| body_of(DataTotal { data, total })),
             UnifiedGroupBy::Listing => unified_listings(&state, &filters, rate)
                 .await
                 .and_then(|(data, total)| body_of(DataTotal { data, total })),
         }
     };
-    let result = match browse_key {
-        Some(key) => memoized(&state, Ttl::S30, key, read).await,
-        None => read().await.map(Arc::new),
-    };
+    let with_profiles = with_profiles && group_by == UnifiedGroupBy::Item;
+    let (result, directory) = tokio::join!(
+        async {
+            match browse_key {
+                Some(key) => memoized(&state, Ttl::S30, key, read).await,
+                None => read().await.map(Arc::new),
+            }
+        },
+        async {
+            match with_profiles {
+                true => directory_snapshot(&state).await,
+                false => None,
+            }
+        }
+    );
     match result {
-        Ok(body) => Json(body.as_ref()).into_response(),
+        Ok(body) => with_creator_profiles(&state, body, directory.as_deref(), None),
         Err(e) => e.into_response(),
     }
 }
@@ -1408,7 +1411,8 @@ pub async fn get_related_catalog(
     Json(RelatedResponseBody { data }).into_response()
 }
 
-/// Served from a 30 s memo per clamped request; the readiness gates still run per request.
+/// Served from a 30 s memo per clamped request, with its creators' profiles added to each response
+/// as in [`get_unified_catalog`]; the readiness gates still run per request.
 pub async fn get_trending_catalog(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
@@ -1426,39 +1430,75 @@ pub async fn get_trending_catalog(
         trending_clamp_days(req.days),
     );
     let key = format!("trending:{first}:{days}:{:?}", req.filters);
-    let body = memoized(&state, Ttl::S30, key, || async {
-        let (trending, directory) = tokio::join!(
-            trending_items(&state, Some(first), Some(days), &req.filters, rate),
-            directory_snapshot(&state)
-        );
-        let mut data = trending?;
-        name_creators(
-            directory.as_deref(),
-            &state.denylist,
-            data.iter_mut().map(|t| &mut t.item),
-        );
-        body_of(TrendingResponseBody { data }).map_err(IntoResponse::into_response)
-    })
-    .await;
+    let (body, directory) = tokio::join!(
+        memoized(&state, Ttl::S30, key, || async {
+            let data = trending_items(&state, Some(first), Some(days), &req.filters, rate).await?;
+            body_of(TrendingResponseBody { data }).map_err(IntoResponse::into_response)
+        }),
+        directory_snapshot(&state)
+    );
     match body {
-        Ok(body) => (hour_cache(), Json(body.as_ref())).into_response(),
+        Ok(body) => with_creator_profiles(&state, body, directory.as_deref(), Some(hour_cache())),
         Err(r) => r,
     }
 }
 
-/// Sets each row's `creator_profile` from the creator directory, read beside
-/// the feed, so the overview's cards need no `/lambdas/profiles` request.
-fn name_creators<'a>(
+/// A feed body (`{"data": [row, ...]}`, each row naming its `creator`) as this response serves it:
+/// with each row's `creatorProfile` from the creator directory under the content denylist as it
+/// stands now, so a profile denylisted since the body was memoized leaves it at once. A body that
+/// carries a profile is sent `no-cache` (no copy is used without revalidation); without the
+/// directory it goes as it is, under `cacheable` when given.
+fn with_creator_profiles(
+    state: &MarketplaceState,
+    body: Arc<Value>,
     directory: Option<&Value>,
-    denylist: &Denylist,
-    items: impl Iterator<Item = &'a mut UnifiedItem>,
-) {
-    let Some(directory) = directory else { return };
-    let mut items: Vec<&mut UnifiedItem> = items.collect();
-    let wanted: HashSet<String> = items.iter().map(|i| i.creator.to_lowercase()).collect();
+    cacheable: Option<HeaderMap>,
+) -> Response {
+    let Some(directory) = directory else {
+        return match cacheable {
+            Some(headers) => (headers, Json(body.as_ref())).into_response(),
+            None => Json(body.as_ref()).into_response(),
+        };
+    };
+    let mut body = Arc::unwrap_or_clone(body);
+    name_creators(&mut body, directory, &state.denylist);
+    (profiles_revalidate(), Json(body)).into_response()
+}
+
+/// The `Cache-Control` of a response that carries creator profiles: a cache may keep it only to
+/// revalidate it, so a profile the content denylist withholds is gone from its next answer.
+fn profiles_revalidate() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(CACHE_CONTROL, "no-cache".parse().unwrap());
+    headers
+}
+
+/// Sets each row's `creatorProfile` from the creator directory (rows of creators it does not hold
+/// get none, and the cards ask `/lambdas/profiles`), so the overview's cards need no request.
+fn name_creators(body: &mut Value, directory: &Value, denylist: &Denylist) {
+    let Some(rows) = body.get_mut("data").and_then(Value::as_array_mut) else {
+        return;
+    };
+    let creator_of = |row: &Value| {
+        row.get("creator")
+            .and_then(Value::as_str)
+            .map(str::to_lowercase)
+    };
+    let wanted: HashSet<String> = rows.iter().filter_map(creator_of).collect();
     let profiles = creator_profiles(directory, &wanted, denylist);
-    for item in &mut items {
-        item.creator_profile = profiles.get(&item.creator.to_lowercase()).cloned();
+    for row in rows.iter_mut() {
+        let profile = creator_of(row).and_then(|c| profiles.get(&c));
+        let Some(fields) = row.as_object_mut() else {
+            continue;
+        };
+        match profile.map(serde_json::to_value) {
+            Some(Ok(profile)) => {
+                fields.insert("creatorProfile".to_string(), profile);
+            }
+            _ => {
+                fields.remove("creatorProfile");
+            }
+        }
     }
 }
 
@@ -1578,14 +1618,19 @@ pub async fn get_top_creators(
     );
     match ranked {
         Ok(mut data) => {
-            if let Some(directory) = directory.as_deref() {
-                let ids = data.iter().map(|c| c.id.clone()).collect();
-                let profiles = creator_profiles(directory, &ids, &state.denylist);
-                for creator in &mut data {
-                    creator.profile = profiles.get(&creator.id).cloned();
-                }
+            let Some(directory) = directory.as_deref() else {
+                return (hour_cache(), Json(TopCreatorsResponseBody { data })).into_response();
+            };
+            let ids = data.iter().map(|c| c.id.clone()).collect();
+            let profiles = creator_profiles(directory, &ids, &state.denylist);
+            for creator in &mut data {
+                creator.profile = profiles.get(&creator.id).cloned();
             }
-            (hour_cache(), Json(TopCreatorsResponseBody { data })).into_response()
+            (
+                profiles_revalidate(),
+                Json(TopCreatorsResponseBody { data }),
+            )
+                .into_response()
         }
         Err(r) => r,
     }
@@ -2233,30 +2278,42 @@ mod tests {
             creator: creator.into(),
             ..unified_item("0xc", "1")
         };
-        let mut items = vec![row("0xAA"), row("0xcc")];
+        let page = serde_json::to_value(DataTotal {
+            data: vec![row("0xAA"), row("0xcc")],
+            total: 2,
+        })
+        .unwrap();
         let directory = json!([{ "address": "0xaa", "entity_id": "bafyquack", "name": "Quack", "face": null, "claimed": true, "names": ["Quack"], "items": 2, "collections": 1 }]);
         let denylist = Denylist::default();
-        name_creators(None, &denylist, items.iter_mut());
-        assert!(items.iter().all(|i| i.creator_profile.is_none()));
-        name_creators(Some(&directory), &denylist, items.iter_mut());
-        let body = serde_json::to_value(&items).unwrap();
+        assert!(
+            page["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r.get("creatorProfile").is_none()),
+            "a memoized page carries no profile"
+        );
+        let mut body = page.clone();
+        name_creators(&mut body, &directory, &denylist);
         assert_eq!(
-            body[0]["creatorProfile"],
+            body["data"][0]["creatorProfile"],
             json!({ "name": "Quack", "face": null, "claimed": true })
         );
         assert!(
-            body[1].get("creatorProfile").is_none(),
+            body["data"][1].get("creatorProfile").is_none(),
             "an unknown creator is left to the client: {}",
-            body[1]
+            body["data"][1]
         );
-        // A denylisted profile entity leaves the feed, as /lambdas/profiles leaves it out.
+        // A profile denylisted since the page was memoized leaves the next response, as
+        // /lambdas/profiles leaves it out.
         denylist.set_remote(
             "https://registry.example/denylist",
             ["bafyquack".to_string()],
         );
-        name_creators(Some(&directory), &denylist, items.iter_mut());
+        let mut body = page.clone();
+        name_creators(&mut body, &directory, &denylist);
         assert_eq!(
-            serde_json::to_value(&items[0].creator_profile).unwrap(),
+            body["data"][0]["creatorProfile"],
             json!({ "name": "", "face": null, "claimed": false })
         );
     }
