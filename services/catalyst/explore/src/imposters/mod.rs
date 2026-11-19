@@ -110,6 +110,7 @@ impl Settings {
                     raw.bake.timeout_secs.filter(|s| *s > 0).unwrap_or(1800),
                 ),
                 queue_depth: raw.bake.queue_depth.unwrap_or(1).clamp(1, 2) as usize,
+                poll: bake::POLL,
             })
         } else {
             None
@@ -430,6 +431,8 @@ mod tests {
             sdk6_adaption_layer: String::new(),
             timeout: Duration::from_secs(20),
             queue_depth: 1,
+            // A replica's marker reaches the baker by this poll, not a notify.
+            poll: Duration::from_millis(100),
         });
         settings.bake_max_failures = max_failures;
         std::fs::create_dir_all(&settings.store_root).unwrap();

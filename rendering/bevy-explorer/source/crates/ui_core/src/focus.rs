@@ -84,7 +84,6 @@ fn defocus(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn focus(
     mut commands: Commands,
     focused_elements: Query<(Entity, &Interaction, Option<&UiActionPriority>, &Focusable)>,

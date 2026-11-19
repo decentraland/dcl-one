@@ -44,7 +44,6 @@ pub enum RpcResultSender<T> {
     },
     Remote {
         id: u64,
-        #[allow(clippy::type_complexity)]
         router: Arc<AsyncRwLock<Option<tokio::sync::mpsc::UnboundedSender<(u64, IpcMessage)>>>>,
         receiver_dropped: CancellationToken,
         sender_alive: tokio::sync::mpsc::Sender<()>,

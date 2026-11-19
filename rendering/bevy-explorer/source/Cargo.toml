@@ -105,6 +105,7 @@ too_many_arguments = "allow"
 type_complexity = "allow"
 todo = "deny"
 unimplemented = "deny"
+dbg_macro = "deny"
 
 [workspace]
 resolver = "2"

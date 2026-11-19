@@ -28,7 +28,6 @@ const WAITING_FOR_FIRST_SNAPSHOT: &str = "Waiting for the first 15 s of sampled 
 #[command(name = "/performance_state")]
 pub(super) struct PerformanceStateCommand;
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn performance_state(
     mut input: ConsoleCommand<PerformanceStateCommand>,
     diagnostics: Res<DiagnosticsStore>,
