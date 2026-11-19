@@ -45,7 +45,7 @@ import { creditsCeil, creditsFloor, type UsdCents } from '@shop/model/money'
 import type { CartLine, GroupProgress, GroupStatus, PurchaseOffer, PurchaseState } from '@shop/model/purchase'
 import type { Session } from '@shop/model/settlement'
 import { loginExpired, rootAddress, type StoredLogin } from '@explorer-core/features/auth/sso'
-import type { ShopPurchaseItem, ShopPurchaseStep } from '@dcl/one-ui/apps/shop/ui'
+import type { ShopPaymentMethod, ShopPurchaseItem, ShopPurchaseStep } from '@dcl/one-ui/apps/shop/ui'
 import { checkoutSiteUrl } from '../../lib/baseDomain'
 import {
   parseBuyRequest,
@@ -106,6 +106,12 @@ export interface ShellPurchaseHandlers {
   /** SWITCH TO … AND RETRY: move the wallet to the failed step's network, then try again. */
   onSwitchNetwork?: () => void
   onSignIn?: () => void
+  /** BUY on Choose your payment method, with the row picked. */
+  onPay?: (method: ShopPaymentMethod) => void
+  /** AUTHORIZE (or TRY AGAIN) on Authorize MANA. */
+  onAuthorize?: () => void
+  /** CHECK AGAIN on a purchase still being confirmed. */
+  onCheckAgain?: () => void
 }
 
 /** Draws the dialog over the app, or takes it away. */

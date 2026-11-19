@@ -12,6 +12,16 @@ import { installHudScale } from '@explorer-core/lib/hudScale'
 import styles from './dialogOverlay.module.css'
 
 const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+
+/**
+ * What Tab stops at, in order: a group of radios is one stop, its checked one (the browser's own Tab does the same;
+ * the arrow keys move within the group).
+ */
+function tabStops(root: HTMLElement | null): HTMLElement[] {
+  const all = [...(root?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])]
+  const radio = (el: HTMLElement): el is HTMLInputElement => el instanceof HTMLInputElement && el.type === 'radio' && el.name !== ''
+  return all.filter((el) => !radio(el) || el.checked || !all.some((other) => other !== el && radio(other) && other.name === el.name && other.checked))
+}
 /** The buttons a step's first focus goes to (a scrolling row or a field may come before them, and is reached by Tab). */
 const BUTTONS = 'button:not([disabled])'
 
@@ -53,7 +63,7 @@ export function ShellDialog({ step, view, quiet, onEscape, children }: ShellDial
     }
     if (e.key !== 'Tab') return
     e.preventDefault()
-    const items = [...(ref.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])]
+    const items = tabStops(ref.current)
     if (items.length === 0) return
     const at = items.indexOf(document.activeElement as HTMLElement)
     const next = e.shiftKey ? (at <= 0 ? items.length - 1 : at - 1) : at === items.length - 1 ? 0 : at + 1
