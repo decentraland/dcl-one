@@ -427,10 +427,7 @@ impl IpfsIo {
         }
         let data = SharedBytes(Arc::new(fetched.body));
 
-        // Bytes that are not what their hash names fail the read like a failed transfer: they
-        // never reach a loader, nor the cache, which is keyed on the hash alone and answers for
-        // every server. The url is asked for again after the retry window. A name the check
-        // can't verify is read but not cached.
+        // The starting read's key determines the check for every reader sharing the download.
         let verified = match &cache_key {
             Some(CacheKey::Content(hash)) => match content_hash::check_content_hash(hash, &data) {
                 content_hash::Check::Matches => true,
@@ -461,8 +458,8 @@ impl IpfsIo {
         #[cfg(target_arch = "wasm32")]
         {
             let kept = match &cache_key {
-                Some(key @ CacheKey::Content(_)) => {
-                    web_cache::share(&remote, key.name(), &data, || verified).await
+                Some(CacheKey::Content(hash)) if verified => {
+                    web_cache::share(&remote, hash, &data).await
                 }
                 Some(CacheKey::Url(_)) if !no_cache => web_cache::keep(&remote, &data).await,
                 _ => Ok(()),

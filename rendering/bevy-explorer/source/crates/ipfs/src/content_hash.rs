@@ -1,5 +1,4 @@
-//! Checks downloaded bytes against the content hash they were requested by. A download whose
-//! bytes are not what its hash names fails, so they never reach a loader or the cache.
+//! Checks downloaded bytes against a supplied content hash.
 //!
 //! Covers the hashes decentraland deployments use (`@dcl/hashing`):
 //! - `Qm…`: the sha-256 of the bytes in a CIDv0 wrapper (decentraland's own scheme, not an ipfs
@@ -11,7 +10,7 @@
 //!   hashed that way would not match. None did across 4574 files of live scenes, worlds,
 //!   wearables and emotes (2026-11).
 //!
-//! Any other name (a realm's own file names, another codec or hash function) is [`Check::Unknown`].
+//! Any other name (a realm's own file names, another codec or hash function) is treated as unknown.
 
 use multihash_codetable::{Code, MultihashDigest};
 
@@ -22,7 +21,7 @@ const DAG_PB: u8 = 0x70;
 
 /// What a content hash says about some bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Check {
+pub(crate) enum Check {
     /// The bytes are what the hash names.
     Matches,
     /// The hash is one this module computes, and it names other bytes.
@@ -31,7 +30,7 @@ pub enum Check {
     Unknown,
 }
 
-pub fn check_content_hash(hash: &str, bytes: &[u8]) -> Check {
+pub(crate) fn check_content_hash(hash: &str, bytes: &[u8]) -> Check {
     // base58 of a sha-256 multihash, and base32 of a sha-256 CIDv1 behind its `b` prefix
     let computed = match hash.len() {
         46 if hash.starts_with("Qm") => {

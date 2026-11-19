@@ -507,16 +507,10 @@ mod io {
         Ok(deleted.as_bool().unwrap_or(false))
     }
 
-    /// Stores `data`, the bytes `url` answered with, under the shared key for `hash`, if
-    /// `matches_hash`: whether they are what `hash` names. The url's own entry, if an older
-    /// worker left one, goes: it is dead weight beside the shared one.
-    pub async fn share(
-        url: &str,
-        hash: &str,
-        data: &[u8],
-        matches_hash: impl FnOnce() -> bool,
-    ) -> Result<(), JsValue> {
-        if !names(url, hash) || !matches_hash() {
+    /// Stores verified `data` under the shared key when `url` names `hash`, then removes
+    /// any entry under the url's own key. The caller checks the bytes against `hash`.
+    pub(crate) async fn share(url: &str, hash: &str, data: &[u8]) -> Result<(), JsValue> {
+        if !names(url, hash) {
             return Ok(());
         }
         let [shared, own] = keys(url).ok_or("not a url")?;
