@@ -827,12 +827,21 @@ mod tests {
 
     #[tokio::test]
     async fn a_snapshot_list_is_never_followed_through_a_redirect() {
+        // A same-origin target on a configured source: only the redirect policy refuses it.
         let (port, hits) = redirecting_peer("/snapshots", |port| {
-            format!("http://127.0.0.1:{port}/target")
+            format!("http://localhost:{port}/target")
         })
         .await;
-        let client = crate::http::HttpClientCfg::default().build().unwrap();
-        let server = format!("http://127.0.0.1:{port}");
+        let server = format!("http://localhost:{port}");
+        let config = crate::config::Config::parse_for_tests(&[
+            "x",
+            "--database-url",
+            "postgres:///catalyst",
+            "--sync-source",
+            &server,
+        ])
+        .unwrap();
+        let client = crate::sync::sync_http_client(&config).unwrap();
         assert!(
             crate::sync::snapshots::fetch_snapshots(&client, &server, 1)
                 .await

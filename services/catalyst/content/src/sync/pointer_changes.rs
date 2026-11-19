@@ -464,11 +464,20 @@ mod tests {
     #[tokio::test]
     async fn a_pointer_changes_page_is_never_followed_through_a_redirect() {
         let (port, hits) = redirecting_peer("/pointer-changes", |port| {
-            format!("http://127.0.0.1:{port}/target")
+            format!("http://localhost:{port}/target")
         })
         .await;
-        let client = crate::http::HttpClientCfg::default().build().unwrap();
-        let page = fetch_page(&client, &format!("http://127.0.0.1:{port}/pointer-changes")).await;
+        let server = format!("http://localhost:{port}");
+        let config = crate::config::Config::parse_for_tests(&[
+            "x",
+            "--database-url",
+            "postgres:///catalyst",
+            "--sync-source",
+            &server,
+        ])
+        .unwrap();
+        let client = crate::sync::sync_http_client(&config).unwrap();
+        let page = fetch_page(&client, &format!("{server}/pointer-changes")).await;
         assert!(
             matches!(&page, Err(SyncError::Other(e)) if e.contains("refusing to follow")),
             "{page:?}"
