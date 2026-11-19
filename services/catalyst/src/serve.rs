@@ -972,6 +972,7 @@ pub async fn serve(
         presence_badge_store,
         live_presence.clone(),
         eip1654.clone(),
+        content.denylist.clone(),
         primary,
         &jobs,
     )

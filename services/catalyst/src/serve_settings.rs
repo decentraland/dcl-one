@@ -123,6 +123,7 @@ pub(super) fn comms_settings(config: &Config) -> anyhow::Result<comms::gatekeepe
         report_evidence_daily_mib: config.social.report_evidence_daily_mib,
         cast2_url: config.social.cast2_url.clone(),
         commit_hash: config.node.commit_hash.clone(),
+        allow_local_preview: config.social.allow_local_preview,
     })
     .context("LIVEKIT_* / COMMS_* configuration")
 }

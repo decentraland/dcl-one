@@ -77,7 +77,8 @@ async fn record_connection(
 
 /// POST /get-scene-adapter: the wallet's own signed fetch (the scene signer is
 /// refused); the realm and scene come from the signed metadata only, the body
-/// is ignored; a Genesis scene id must be a scene active here (else 404); the
+/// is ignored; a Genesis scene id must be a scene active here and not
+/// denylisted (else 404; a local preview passes with `ALLOW_LOCAL_PREVIEW`); the
 /// platform ban
 /// (device-widened) then the scene ban refuse before the world access check
 /// (`worlds::policy::Policy::can_access`, a local call; a shared-secret

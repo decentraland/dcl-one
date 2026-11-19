@@ -979,49 +979,126 @@ async fn the_scene_adapter_route_records_an_untrusted_peer_by_its_socket_address
     assert_eq!(recorded.as_deref(), Some("203.0.113.50"));
 }
 
-/// A Genesis scene token names a scene active here: an unknown id is 404 and an unreadable
-/// catalogue 503, before any ban or connection work.
-#[tokio::test]
-async fn the_scene_adapter_refuses_a_genesis_scene_that_is_not_deployed() {
-    let mut state = comms_state(lazy_pool(), Settings::for_tests());
-    state.scenes = Arc::new(DeployedGenesis {
-        inner: StubScenes::default(),
-        only: Some(vec!["bafkreideployed".to_string()]),
-    });
-    let state = Arc::new(state);
+/// A shared-realm adapter call to the handler over `scenes`, on a closed store.
+async fn genesis_adapter_error(
+    scenes: DeployedGenesis,
+    settings: Settings,
+    denylisted: &[&str],
+    realm: &str,
+    scene_id: &str,
+) -> super::errors::ApiError {
+    let mut state = comms_state(lazy_pool(), settings);
+    state.scenes = Arc::new(scenes);
+    for id in denylisted {
+        state.content_denylist.operator_insert(id);
+    }
     let key = random_key();
     let path = "/get-scene-adapter";
-    let error = handlers::get_scene_adapter(
-        State(state.clone()),
+    handlers::get_scene_adapter(
+        State(Arc::new(state)),
         at(path),
-        signed(&key, "post", path, &meta("main", "bafkreiinvented", None)).await,
+        signed(&key, "post", path, &meta(realm, scene_id, None)).await,
         writes_on(),
         axum::body::Bytes::new(),
     )
     .await
-    .unwrap_err();
+    .unwrap_err()
+}
+
+/// A Genesis scene token names a scene active here: an unknown id is 404, before any ban or
+/// connection work.
+#[tokio::test]
+async fn the_scene_adapter_refuses_a_genesis_scene_that_is_not_deployed() {
+    let error = genesis_adapter_error(
+        DeployedGenesis::only(&["bafkreideployed"]),
+        Settings::for_tests(),
+        &[],
+        "main",
+        "bafkreiinvented",
+    )
+    .await;
     assert_eq!(error.code, 404);
     assert!(
         error.message.contains("bafkreiinvented"),
         "{}",
         error.message
     );
+}
 
-    let unreadable = lazy_state(Settings::for_tests());
-    let error = handlers::get_scene_adapter(
-        State(unreadable),
-        at(path),
-        signed(&key, "post", path, &meta("main", "bafkreideployed", None)).await,
-        writes_on(),
-        axum::body::Bytes::new(),
+/// A catalogue read that fails answers 503 and mints nothing.
+#[tokio::test]
+async fn the_scene_adapter_answers_503_when_the_genesis_catalogue_is_unreadable() {
+    let error = genesis_adapter_error(
+        DeployedGenesis::unreadable(),
+        Settings::for_tests(),
+        &[],
+        "main",
+        "bafkreideployed",
     )
-    .await
-    .unwrap_err();
+    .await;
     assert_eq!(error.code, 503);
     assert_eq!(
         error.message,
         "Scene verification is temporarily unavailable"
     );
+}
+
+/// A deployed scene on content's denylist is answered as unknown.
+#[tokio::test]
+async fn the_scene_adapter_refuses_a_denylisted_genesis_scene() {
+    let error = genesis_adapter_error(
+        DeployedGenesis::every_scene(),
+        Settings::for_tests(),
+        &["bafkreidenied"],
+        "main",
+        "bafkreidenied",
+    )
+    .await;
+    assert_eq!(error.code, 404);
+}
+
+/// Without `ALLOW_LOCAL_PREVIEW` a preview scene is checked like any other.
+#[tokio::test]
+async fn the_scene_adapter_refuses_a_preview_scene_without_allow_local_preview() {
+    for (realm, scene_id) in [("main", "b64-cHJldmlldw"), ("LocalPreview", "bafkreilocal")] {
+        let error = genesis_adapter_error(
+            DeployedGenesis::only(&[]),
+            Settings::for_tests(),
+            &[],
+            realm,
+            scene_id,
+        )
+        .await;
+        assert_eq!(error.code, 404, "{realm} {scene_id}");
+    }
+}
+
+/// With `ALLOW_LOCAL_PREVIEW` a preview scene (a `b64-` id or a preview realm) passes the
+/// deployment check; a regular scene in a regular realm is still checked.
+#[tokio::test]
+async fn allow_local_preview_accepts_a_preview_scene_without_a_deployment() {
+    let mut settings = Settings::for_tests();
+    settings.allow_local_preview = true;
+    let mut state = comms_state(lazy_pool(), settings);
+    state.scenes = Arc::new(DeployedGenesis::only(&[]));
+    for (realm, scene_id, accepted) in [
+        ("main", "b64-cHJldmlldw", true),
+        ("LocalPreview", "bafkreilocal", true),
+        ("preview", "bafkreilocal", true),
+        ("main", "bafkreiinvented", false),
+    ] {
+        let resolved = scene::resolve_adapter_room(&state, realm, scene_id)
+            .await
+            .unwrap();
+        let checked = scene::require_genesis_deployment(&state, &resolved).await;
+        match checked {
+            Ok(()) => assert!(accepted, "{realm} {scene_id} was accepted"),
+            Err(error) => {
+                assert!(!accepted, "{realm} {scene_id}: {}", error.message);
+                assert_eq!(error.code, 404);
+            }
+        }
+    }
 }
 
 #[tokio::test]
@@ -1276,10 +1353,12 @@ async fn the_scene_adapter_room_comes_from_signed_metadata_not_the_body() {
 }
 
 /// A catalogue holding Genesis deployments: an adapter request in a shared realm resolves to an
-/// active deployment when `only` is `None` or lists the id; every other request goes to `inner`.
+/// active deployment when `only` is `None` or lists the id, and fails as a database error when
+/// `unreadable`; every other request goes to `inner`.
 struct DeployedGenesis {
     inner: StubScenes,
     only: Option<Vec<String>>,
+    unreadable: bool,
 }
 
 impl DeployedGenesis {
@@ -1288,7 +1367,25 @@ impl DeployedGenesis {
     }
 
     fn over(inner: StubScenes) -> Self {
-        Self { inner, only: None }
+        Self {
+            inner,
+            only: None,
+            unreadable: false,
+        }
+    }
+
+    fn only(ids: &[&str]) -> Self {
+        Self {
+            only: Some(ids.iter().map(|id| id.to_string()).collect()),
+            ..Self::every_scene()
+        }
+    }
+
+    fn unreadable() -> Self {
+        Self {
+            unreadable: true,
+            ..Self::every_scene()
+        }
     }
 }
 
@@ -1314,6 +1411,9 @@ impl crate::interfaces::SceneIdentity for DeployedGenesis {
         else {
             return self.inner.resolve(request).await;
         };
+        if self.unreadable {
+            return Err(sqlx::Error::PoolTimedOut.into());
+        }
         let deployed = self
             .only
             .as_ref()

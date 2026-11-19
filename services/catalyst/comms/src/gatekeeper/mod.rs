@@ -150,6 +150,10 @@ pub struct RawSettings {
     pub cast2_url: String,
     /// `COMMIT_HASH` for `/status`.
     pub commit_hash: Option<String>,
+    /// `ALLOW_LOCAL_PREVIEW`: a local preview scene (a `b64-` id or a
+    /// `preview`/`localpreview` realm) gets a Genesis scene token without a
+    /// deployed scene behind it.
+    pub allow_local_preview: bool,
 }
 
 impl RawSettings {
@@ -192,6 +196,8 @@ pub struct Settings {
     /// The Cast 2.0 web app base of the stream links, no trailing slash.
     pub cast2_url: String,
     pub commit_hash: Option<String>,
+    /// Local preview scenes skip the Genesis deployment check (`ALLOW_LOCAL_PREVIEW`).
+    pub allow_local_preview: bool,
 }
 
 /// Masks the moderator and gatekeeper tokens (the LiveKit secret is masked
@@ -223,6 +229,7 @@ impl std::fmt::Debug for Settings {
             )
             .field("cast2_url", &self.cast2_url)
             .field("commit_hash", &self.commit_hash)
+            .field("allow_local_preview", &self.allow_local_preview)
             .finish()
     }
 }
@@ -353,6 +360,7 @@ impl Settings {
                 url => url.to_string(),
             },
             commit_hash: raw.commit_hash,
+            allow_local_preview: raw.allow_local_preview,
         })
     }
 
@@ -381,6 +389,7 @@ impl Settings {
                 * 1024,
             cast2_url: streaming::cast::DEFAULT_CAST2_URL.to_string(),
             commit_hash: None,
+            allow_local_preview: false,
         }
     }
 }
@@ -418,6 +427,8 @@ crate::shared::send_sync_once! {
         /// `None` refuses such chains.
         pub eip1654: Option<Arc<dyn Eip1654Validator>>,
         pub caches: admission::scene::SceneCaches,
+        /// Content's moderation denylist: a listed Genesis scene gets no scene token.
+        pub content_denylist: Arc<crate::content::Denylist>,
         /// Where the LiveKit webhook's participant events are also handed.
         pub room_events: Option<Arc<dyn RoomEventSink>>,
         /// Where every verified participant event is stored before it is acknowledged.
@@ -480,6 +491,7 @@ impl CommsState {
             name_owners: None,
             eip1654,
             caches: admission::scene::SceneCaches::default(),
+            content_denylist: Arc::default(),
             room_events: None,
             room_event_store: None,
             webhooks: webhook::WebhookCoordinator::default(),
@@ -504,6 +516,12 @@ impl CommsState {
         reader: Arc<dyn crate::interfaces::NameOwnerReader>,
     ) -> Self {
         self.name_owners = Some(reader);
+        self
+    }
+
+    /// Content's denylist, shared with the content reads.
+    pub fn with_content_denylist(mut self, denylist: Arc<crate::content::Denylist>) -> Self {
+        self.content_denylist = denylist;
         self
     }
 

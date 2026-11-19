@@ -494,6 +494,11 @@ pub struct SocialConfig {
     )]
     pub private_messages_room_id: String,
 
+    /// Give a local preview scene (a `b64-` id or a `preview`/`localpreview`
+    /// realm) a Genesis scene token without a deployed scene behind it.
+    #[arg(long, env = "ALLOW_LOCAL_PREVIEW", default_value_t = false, action = clap::ArgAction::Set)]
+    pub allow_local_preview: bool,
+
     /// The one wallet that may mint the authoritative-server host token; unset refuses /get-server-scene-adapter.
     #[arg(long, env = "AUTHORITATIVE_SERVER_ADDRESS")]
     pub authoritative_server_address: Option<String>,
