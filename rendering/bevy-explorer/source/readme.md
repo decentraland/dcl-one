@@ -219,6 +219,14 @@ Console commands:
   portables included: a debug listing, where `/portables` and the scenes' own
   `getPortableExperiencesLoaded` hide them.
 
+A scene loaded as a portable experience whose scene.json also declares
+`isPortableExperience: true` can place map pins (`MapPin`); no other scene's pins are read. The
+HUD follows them through `getMapPinsStream` (`MapPinInfo`: the parcel, the title cut to 100
+characters, and an icon url resolved from a file of the scene's content) and draws them
+on the full map and the minimap under the Layers panel's Quest Mini-Games switch.
+`/map_pins_state` (the debug panel's Map pins section) reports the scenes read, the pins read and
+ignored, and the list last sent to the HUD.
+
 ## Testing
 
 ```bash
@@ -303,7 +311,10 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   Use the panel to inspect a scene, compare frame and memory measurements, diagnose
   room and media connections, and exercise supported controls. Availability depends
   on the build, platform and preview mode. `/performance_state` reports the effective
-  frame-rate target and session override independently of the panel.
+  frame-rate target and session override, the sampling status, the latest 15 s performance
+  snapshot and the frame-time breakdown independently of the panel; `/debug_memory`, and in a
+  `performance-profiler` build `/render_state` and `/profile_top`, the rest
+  ([profiling](../docs/guidelines/profiling.md)).
 - The HUD, by role and accessible name (`library/explorer-core/lib/hudAutomation.ts`): `/hud_list [role]`,
   `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
   `hidden`, `enabled`, `actionable`, `ready`; `"timeout"` ms). A selector is the name or JSON
@@ -323,7 +334,8 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   them real (below); without one they fall back to DOM events and say `"input": "synthetic"`.
 - Portables and smart wearables: `/portables`, `/stop_portable <hash>`, `/smart_wearables`,
   `/smart_wearable run|kill|restart <urn>` and the `, smart wearable` mark in `/live_scenes`
-  ([Smart wearables and portables](#smart-wearables-and-portables)).
+  ([Smart wearables and portables](#smart-wearables-and-portables)); a portable experience's map
+  pins: `/map_pins_state`.
 - Scene pointer: `/hover_entity <entity>` and `/click_entity <entity>` hover and click a scene
   entity by id through the pointer pipeline, on native and web alike, and answer with the hit, the
   hover entries, the scene's pointer events and a diagnosis (`docs/guidelines/running.md`). A hover

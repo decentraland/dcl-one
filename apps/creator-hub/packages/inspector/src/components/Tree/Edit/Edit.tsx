@@ -42,14 +42,15 @@ export function Edit({ value, onCancel, onSubmit }: Props) {
         </span>
         <div>
           <Button
-            type="danger"
-            size="big"
+            variant="primary"
+            size="lg"
             onClick={handleConfirm}
           >
             Yes
           </Button>
           <Button
-            size="big"
+            variant="secondary"
+            size="lg"
             onClick={handleModalClose}
           >
             Cancel

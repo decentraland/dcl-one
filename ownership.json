@@ -229,6 +229,7 @@
       "paths": [
         "/apps/ui3/src/shop/",
         "/library/shop/",
+        "/library/ui/apps/shop/",
         "/apps/sites/src/routes/shop/",
         "/tooling/shop-parity/",
         "/tooling/shop-trade-journey/"

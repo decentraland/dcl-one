@@ -14,6 +14,8 @@ vi.hoisted(() =>
 );
 
 const APP_ID = "app-example123";
+const BOOT_SETTINGS = { app_id: APP_ID, alignment: "right", hide_default_launcher: true };
+const READY_CALL = ["ready", expect.any(Function)];
 const WALLET = "0x" + "ab".repeat(20);
 
 type IntercomWindow = Window & { Intercom?: (...args: unknown[]) => void; intercomSettings?: unknown };
@@ -53,7 +55,7 @@ describe("useIntercom", () => {
   it("injects the widget script for the app id once mounted in the browser", () => {
     render(<Widget />);
     expect(scripts().map((s) => s.src)).toEqual([`${INTERCOM_WIDGET_URL}${APP_ID}`]);
-    expect(win.intercomSettings).toEqual({ alignment: "right" });
+    expect(win.intercomSettings).toEqual({ alignment: "right", hide_default_launcher: true });
   });
 
   it("boots the widget with the app id, the alignment and the wallet once the script loads", async () => {
@@ -61,7 +63,7 @@ describe("useIntercom", () => {
     render(<Widget wallet={WALLET} />);
     loadScript(intercom);
     await waitFor(() =>
-      expect(intercom.mock.calls).toEqual([["boot", { app_id: APP_ID, alignment: "right", Wallet: WALLET }]]),
+      expect(intercom.mock.calls).toEqual([READY_CALL, ["boot", { ...BOOT_SETTINGS, Wallet: WALLET }]]),
     );
   });
 
@@ -70,7 +72,7 @@ describe("useIntercom", () => {
     const queue = win.Intercom as unknown as { q: unknown[][] };
     scripts()[0].dispatchEvent(new Event("load"));
     await waitFor(() =>
-      expect(queue.q).toEqual([["boot", { app_id: APP_ID, alignment: "right", Wallet: WALLET }]]),
+      expect(queue.q).toEqual([READY_CALL, ["boot", { ...BOOT_SETTINGS, Wallet: WALLET }]]),
     );
   });
 
@@ -78,7 +80,7 @@ describe("useIntercom", () => {
     const intercom = vi.fn();
     render(<Widget wallet={null} />);
     loadScript(intercom);
-    await waitFor(() => expect(intercom).toHaveBeenCalledWith("boot", { app_id: APP_ID, alignment: "right" }));
+    await waitFor(() => expect(intercom).toHaveBeenCalledWith("boot", BOOT_SETTINGS));
   });
 
   it("shuts the widget down when the page unmounts", async () => {
@@ -100,7 +102,7 @@ describe("useIntercom", () => {
 
     render(<Widget />);
     await waitFor(() =>
-      expect(intercom.mock.calls).toEqual([["boot", { app_id: APP_ID, alignment: "right" }]]),
+      expect(intercom.mock.calls).toEqual([READY_CALL, ["boot", BOOT_SETTINGS]]),
     );
     expect(scripts()).toHaveLength(1);
   });
@@ -117,7 +119,8 @@ describe("useIntercom", () => {
     await waitFor(() =>
       expect(intercom.mock.calls).toEqual([
         ["shutdown"],
-        ["boot", { app_id: APP_ID, alignment: "right", Wallet: OTHER }],
+        READY_CALL,
+        ["boot", { ...BOOT_SETTINGS, Wallet: OTHER }],
       ]),
     );
   });

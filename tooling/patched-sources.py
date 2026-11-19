@@ -123,7 +123,7 @@ PATCHES = EXPLORER + "/patches"
 WORKSPACE = EXPLORER + "/source"
 MIRROR = "https://github.com/decentraland/dcl-one"
 # The other git repositories that the Explorer takes a crate from, each with the commit of the lock file.
-OTHER_GIT = {"https://github.com/gltf-rs/gltf": "12fc1b7ce28c7b4c6d1b881a30df24060dccfbda"}
+OTHER_GIT = {"https://github.com/gltf-rs/gltf": "50d65229477fe5f785c2c90df21eb59c93ea2261"}
 IDENT = "patched-sources <patched-sources@invalid> 0 +0000"
 STAMP = ".patched-stamp.json"
 LOCAL = frozenset({".git", "target", STAMP})

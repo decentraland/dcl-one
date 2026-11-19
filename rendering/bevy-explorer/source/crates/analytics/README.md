@@ -71,3 +71,31 @@ Two events answer the funnel's in-world questions (`in_world.rs`):
 - `time_spent_in_world` (`time_spent` seconds, `realm_name`): the desktop client's event, sent in
   chunks of up to 30 s and when the realm or the login changes, so the sum per session is the
   playtime. A page closed mid-chunk loses that chunk.
+
+## Performance Metrics
+
+With Segment configured, the client queues one event per completed snapshot. Each snapshot
+covers about 15 seconds of sampled play.
+CPU frame times measure elapsed time between frames. GPU frame times measure render graph
+execution for frames with a timestamp reading. The two sample counts can differ. Both use the
+same hiccup threshold, the larger of 50 ms and two target frame intervals (50 ms when uncapped).
+
+| Property | Meaning |
+| --- | --- |
+| `hiccup_count`, `gpu_hiccup_count` | Number of frame times strictly above the shared threshold |
+| `hiccup_sample_count`, `gpu_hiccup_sample_count` | Number of CPU frames or GPU readings in the snapshot |
+| `hiccup_threshold_ms`, `gpu_hiccup_threshold_ms` | Shared CPU and GPU threshold in milliseconds |
+| `hiccup_time_ms`, `gpu_hiccup_time_ms` | Sum of the full durations of frames over threshold, in milliseconds |
+| `hiccup_excess_time_ms`, `gpu_hiccup_excess_time_ms` | Sum of the time above threshold for those frames, in milliseconds |
+
+The CPU and GPU distributions report minimum, maximum, mean and percentiles 1, 5, 10, 20,
+50, 75, 80, 90, 95 and 99 in milliseconds (for example, `min_frame_time`, `p95_frame_time`,
+`gpu_min_frame_time` and `gpu_p95_frame_time`). The event omits all `gpu_` properties when
+the snapshot has no GPU readings. A measured sample with no hiccups reports zero counts and
+durations for hiccups. A non-finite frame timing serializes as `null`.
+
+`samples` counts CPU frames, `total_time` is their total duration in milliseconds, and
+`median_frame_time` equals `p50_frame_time`. `hiccups_in_thousand_frames` is the CPU
+hiccup count scaled to 1,000 frames and rounded down. `hiccups_time` reports the full
+duration of CPU frames over threshold in **seconds**. The legacy fields `player_count`,
+`used_jsheap_size` and `memory_usage` report `-1`.

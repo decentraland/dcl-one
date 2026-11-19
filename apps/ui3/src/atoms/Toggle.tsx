@@ -10,6 +10,8 @@ type ToggleProps = {
   disabled?: boolean;
   id?: string;
   className?: string;
+  /** "small" is 34 x 20, for a switch inside a menu row. */
+  size?: "medium" | "small";
 };
 
 // A host that is not built by Vite has no `import.meta.env`.
@@ -17,7 +19,7 @@ function isDev(): boolean {
   return typeof import.meta.env !== "undefined" && import.meta.env.DEV;
 }
 
-export default function Toggle({ checked, defaultChecked = false, onChange, ariaLabel, ariaLabelledBy, disabled = false, id, className }: ToggleProps) {
+export default function Toggle({ checked, defaultChecked = false, onChange, ariaLabel, ariaLabelledBy, disabled = false, id, className, size = "medium" }: ToggleProps) {
   const [internal, setInternal] = useState(defaultChecked);
   const isControlled = checked !== undefined;
   const on = isControlled ? checked : internal;
@@ -43,7 +45,7 @@ export default function Toggle({ checked, defaultChecked = false, onChange, aria
       aria-label={ariaLabel}
       aria-labelledby={ariaLabelledBy}
       id={id}
-      className={"toggle" + (on ? " is-on" : "") + (className ? " " + className : "")}
+      className={"toggle" + (size === "small" ? " toggle--small" : "") + (on ? " is-on" : "") + (className ? " " + className : "")}
       disabled={disabled}
       onClick={toggle}
     >

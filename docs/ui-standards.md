@@ -416,7 +416,9 @@ include the shared sources so that changes invalidate the affected artifacts.
   (`src/test/sharedUi.test.tsx` checks them).
 
 The Sites host maps `@hud`, `@explorer-core` and `@hud-host` the same way,
-with React deduplicated and both folders allowed to its dev servers:
+and also `@shop-host`, the in-world Shop's host (`library/ui/apps/shop/hostContract.ts`,
+implemented by `apps/ui3/src/play/shopHost.ts`), with React and TanStack Query
+deduplicated and both folders allowed to its dev servers:
 `apps/ui3/tsconfig.json` and `apps/ui3/vitest.config.ts` for the `/play`
 type check and tests, `apps/sites/tsconfig.json` and
 `apps/sites/vite.config.ts` for the Sites build.

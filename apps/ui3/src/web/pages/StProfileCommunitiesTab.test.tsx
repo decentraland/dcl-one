@@ -11,6 +11,6 @@ describe("StProfileCommunitiesTab", () => {
         communities={[{ id: "c 1", name: "Builders", membersCount: 3, role: "member", thumb: null }]}
       />,
     );
-    expect(screen.getByText("Builders").closest("a")).toHaveAttribute("href", "/communities/c%201");
+    expect(screen.getByText("Builders").closest("a")).toHaveAttribute("href", "/social/communities/c%201");
   });
 });

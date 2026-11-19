@@ -6,7 +6,7 @@ use std::sync::{
 };
 
 use bevy::{ecs::relationship::Relationship, prelude::*};
-use common::structs::{MicState, SystemAudio};
+use common::structs::{ClientWindowFocus, MicState, SystemAudio};
 use tokio::{sync::oneshot, task::JoinHandle};
 use web_time::Instant;
 #[cfg(target_arch = "wasm32")]
@@ -84,11 +84,11 @@ impl Plugin for MicPlugin {
                 poll_microphone_permission,
                 verify_availability.run_if(in_state(MicrophoneAvailability::Unavailable)),
                 verify_microphone_device_health.run_if(in_state(MicrophoneAvailability::Available)),
-                verify_enabled.run_if(
+                enable_microphone_state_system.run_if(
                     in_state(MicrophoneAvailability::Available)
                         .and(in_state(MicrophoneState::Disabled)),
                 ),
-                verify_disabled.run_if(in_state(MicrophoneState::Enabled)),
+                disable_microphone_state_system.run_if(in_state(MicrophoneState::Enabled)),
                 // Revocation runs even when permission or device availability was lost.
                 reconcile_publications,
             )
@@ -305,20 +305,25 @@ struct CaptureFormat {
 fn add_ping_systems(world: &mut World) {
     // This stops the ping being played during startup
     world.resource_scope::<Schedules, ()>(|_, mut schedules| {
-        schedules.add_systems(OnEnter(MicrophoneTransmissionState::Enabled), ping_enabled);
+        schedules.add_systems(
+            OnEnter(MicrophoneTransmissionState::Enabled),
+            ping_enabled.run_if(|last: Res<LastTransmission>| !last.focus_paused),
+        );
         schedules.add_systems(
             OnEnter(MicrophoneTransmissionState::Disabled),
             ping_disabled.run_if(|mic_state: Res<MicState>, last: Res<LastTransmission>| {
-                mic_off_pings(mic_state.scene_blocked(), last.call)
+                !last.focus_paused && mic_off_pings(mic_state.scene_blocked(), last.call)
             }),
         );
     });
 }
 
-/// Whether the call's mic was among those transmitting when the last one stopped.
+/// Whether the call's mic was among those transmitting when the last one stopped, and whether
+/// that stop was a focus pause still awaiting its resume.
 #[derive(Resource, Default)]
 struct LastTransmission {
     call: bool,
+    focus_paused: bool,
 }
 
 /// The scene room refused the player as banned: nearby voice is off until the admission resets
@@ -344,6 +349,9 @@ fn transmission_state(
     microphone_transmission_state: Res<State<MicrophoneTransmissionState>>,
     mut next_state: ResMut<NextState<MicrophoneTransmissionState>>,
     mut last: ResMut<LastTransmission>,
+    focus: Res<ClientWindowFocus>,
+    mic: Res<MicState>,
+    call_mic: Res<CallMic>,
 ) {
     let mut transmitting = false;
     let mut call = false;
@@ -360,13 +368,25 @@ fn transmission_state(
     if transmitting && last.call != call {
         last.call = call;
     }
+    // the pause ends on focus with nothing left to resume or a mic change since
+    if *focus == ClientWindowFocus::Focused
+        && (!can_capture_microphone(&mic, &call_mic, *focus)
+            || mic.is_changed()
+            || call_mic.is_changed())
+    {
+        last.focus_paused = false;
+    }
     if !transmitting && microphone_transmission_state.get() == &MicrophoneTransmissionState::Enabled
     {
+        last.focus_paused = *focus == ClientWindowFocus::NoFocus;
         next_state.set(MicrophoneTransmissionState::Disabled);
     } else if transmitting
         && microphone_transmission_state.get() == &MicrophoneTransmissionState::Disabled
     {
         next_state.set(MicrophoneTransmissionState::Enabled);
+    } else if transmitting {
+        // the pause ends once transmission is back
+        last.focus_paused = false;
     }
 }
 
@@ -478,12 +498,39 @@ fn tear_down_microphone(mut commands: Commands) {
 }
 
 /// A call holds the nearby mic off without changing the user's setting.
-fn nearby_mic_on(mic_state: &MicState, call_mic: &CallMic) -> bool {
+const fn nearby_mic_on(mic_state: &MicState, call_mic: &CallMic) -> bool {
     mic_state.enabled && !mic_state.scene_blocked() && !call_mic.suppress_nearby
 }
 
-fn verify_enabled(mut commands: Commands, mic_state: Res<MicState>, call_mic: Res<CallMic>) {
-    if nearby_mic_on(&mic_state, &call_mic) || call_mic.enabled {
+/// True while focused and the nearby mic or the call mic is on.
+const fn can_capture_microphone(
+    mic_state: &MicState,
+    call_mic: &CallMic,
+    focus: ClientWindowFocus,
+) -> bool {
+    matches!(focus, ClientWindowFocus::Focused)
+        && (nearby_mic_on(mic_state, call_mic) || call_mic.enabled)
+}
+
+/// The focus [`MicrophoneState`] follows: the client window's natively, always `Focused` on the
+/// web.
+const fn microphone_state_focus(focus: ClientWindowFocus) -> ClientWindowFocus {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = focus;
+        ClientWindowFocus::Focused
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    focus
+}
+
+fn enable_microphone_state_system(
+    mut commands: Commands,
+    mic_state: Res<MicState>,
+    call_mic: Res<CallMic>,
+    focus: Res<ClientWindowFocus>,
+) {
+    if can_capture_microphone(&mic_state, &call_mic, microphone_state_focus(*focus)) {
         debug!("Microphone is now enabled.");
         commands.set_state(MicrophoneState::Enabled);
     }
@@ -509,7 +556,7 @@ fn build_cpal_stream(
     let num_channels = config.channels() as u32;
     let sample_rate = config.sample_rate().0;
 
-    let new_stream = microphone_device
+    let Ok(new_stream) = microphone_device
         .build_input_stream(
             &config.into(),
             move |data_f32: &[f32], _: &cpal::InputCallbackInfo| {
@@ -537,7 +584,10 @@ fn build_cpal_stream(
             },
             None,
         )
-        .unwrap();
+        .inspect_err(|err| error!("{err}"))
+    else {
+        return;
+    };
 
     if let Err(err) = new_stream.play() {
         error!("{err}");
@@ -559,11 +609,29 @@ fn drop_cpal_stream(mut commands: Commands, mut mic_stream: NonSendMut<MicStream
     commands.set_state(MicrophoneState::Disabled);
 }
 
-fn verify_disabled(mut commands: Commands, mic_state: Res<MicState>, call_mic: Res<CallMic>) {
-    if !nearby_mic_on(&mic_state, &call_mic) && !call_mic.enabled {
+fn disable_microphone_state_system(
+    mut commands: Commands,
+    mic_state: Res<MicState>,
+    call_mic: Res<CallMic>,
+    focus: Res<ClientWindowFocus>,
+) {
+    if !can_capture_microphone(&mic_state, &call_mic, microphone_state_focus(*focus)) {
         debug!("Microphone is now disabled.");
         commands.set_state(MicrophoneState::Disabled);
     }
+}
+
+/// True while focused and the mic is available, permitted and on its device.
+const fn microphone_routes_open(
+    focus: ClientWindowFocus,
+    mic: &MicState,
+    permission: MicrophonePermission,
+    availability: MicrophoneAvailability,
+) -> bool {
+    matches!(focus, ClientWindowFocus::Focused)
+        && mic.available
+        && matches!(permission, MicrophonePermission::Granted)
+        && matches!(availability, MicrophoneAvailability::Available)
 }
 
 fn can_publish_microphone(participant: &Participant) -> bool {
@@ -610,6 +678,7 @@ fn reconcile_publications(
     )>,
     mic: Res<MicState>,
     call_mic: Res<CallMic>,
+    focus: Res<ClientWindowFocus>,
     permission: Res<State<MicrophonePermission>>,
     availability: Res<State<MicrophoneAvailability>>,
     drain: Res<MicrophoneDrain>,
@@ -617,9 +686,7 @@ fn reconcile_publications(
     #[cfg(not(target_arch = "wasm32"))] source: Res<LocalAudioSource>,
     #[cfg(not(target_arch = "wasm32"))] format: Option<Res<CaptureFormat>>,
 ) {
-    let enabled = mic.available
-        && *permission.get() == MicrophonePermission::Granted
-        && *availability.get() == MicrophoneAvailability::Available;
+    let enabled = microphone_routes_open(*focus, &mic, *permission.get(), *availability.get());
     let eligible = |room: Entity, participant: &LivekitParticipant| {
         rooms.get(room).is_ok_and(|room| {
             enabled
@@ -1319,5 +1386,133 @@ mod routing_tests {
             mic_off_pings(true, true),
             "call mic muted in a blocked scene"
         );
+    }
+
+    #[test]
+    fn the_nearby_mic_captures_only_while_the_window_has_focus() {
+        let mic = mic_state(true, true);
+        let call_mic = CallMic::default();
+        assert!(can_capture_microphone(
+            &mic,
+            &call_mic,
+            ClientWindowFocus::Focused
+        ));
+        assert!(!can_capture_microphone(
+            &mic,
+            &call_mic,
+            ClientWindowFocus::NoFocus
+        ));
+    }
+
+    #[test]
+    fn the_call_mic_captures_only_while_the_window_has_focus() {
+        let mic = mic_state(true, false);
+        let call_mic = CallMic {
+            enabled: true,
+            in_call: true,
+            suppress_nearby: true,
+        };
+        assert!(can_capture_microphone(
+            &mic,
+            &call_mic,
+            ClientWindowFocus::Focused
+        ));
+        assert!(!can_capture_microphone(
+            &mic,
+            &call_mic,
+            ClientWindowFocus::NoFocus
+        ));
+    }
+
+    #[test]
+    fn microphone_routes_close_without_focus_and_reopen_with_it() {
+        let mic = mic_state(true, true);
+        let open = |focus| {
+            microphone_routes_open(
+                focus,
+                &mic,
+                MicrophonePermission::Granted,
+                MicrophoneAvailability::Available,
+            )
+        };
+        assert!(!open(ClientWindowFocus::NoFocus));
+        assert!(open(ClientWindowFocus::Focused));
+    }
+
+    #[test]
+    fn a_focus_pause_plays_no_mic_chimes_and_a_player_toggle_still_does() {
+        use bevy::state::app::StatesPlugin;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let drain = MicrophoneDrain::default();
+        let mut app = App::new();
+        app.add_plugins(StatesPlugin)
+            .init_state::<MicrophoneTransmissionState>()
+            .add_event::<SystemAudio>()
+            .init_resource::<LastTransmission>()
+            .insert_resource(mic_state(true, true))
+            .init_resource::<CallMic>()
+            .insert_resource(ClientWindowFocus::Focused)
+            .add_systems(Startup, add_ping_systems)
+            .add_systems(Update, transmission_state);
+        let room = app.world_mut().spawn_empty().id();
+        let publication = pending(&runtime, &drain);
+        let control = publication.state.clone();
+        app.world_mut()
+            .spawn((publication, <HostedBy as Relationship>::from(room)));
+        // two frames: one to request the transmission state, one to enter it
+        let chimes = |app: &mut App| {
+            (0..2)
+                .map(|_| {
+                    app.update();
+                    app.world()
+                        .resource::<Events<SystemAudio>>()
+                        .iter_current_update_events()
+                        .count()
+                })
+                .sum::<usize>()
+        };
+        let transmit = |transmitting: bool| {
+            control.lock().unwrap().transmitting = transmitting;
+        };
+
+        transmit(true);
+        assert_eq!(chimes(&mut app), 1, "the player opens the mic");
+
+        app.insert_resource(ClientWindowFocus::NoFocus);
+        transmit(false);
+        assert_eq!(chimes(&mut app), 0, "focus loss");
+        app.insert_resource(ClientWindowFocus::Focused);
+        assert_eq!(chimes(&mut app), 0, "focus return, republish pending");
+        transmit(true);
+        assert_eq!(chimes(&mut app), 0, "resume");
+
+        transmit(false);
+        assert_eq!(chimes(&mut app), 1, "the player closes the mic");
+
+        // the mic closed during the pause: nothing resumes, and reopening it chimes
+        transmit(true);
+        assert_eq!(chimes(&mut app), 1, "the player opens the mic");
+        app.insert_resource(ClientWindowFocus::NoFocus);
+        transmit(false);
+        assert_eq!(chimes(&mut app), 0, "focus loss");
+        app.world_mut().resource_mut::<MicState>().enabled = false;
+        assert_eq!(chimes(&mut app), 0, "the player closes the mic while away");
+        app.insert_resource(ClientWindowFocus::Focused);
+        assert_eq!(chimes(&mut app), 0, "focus return");
+        app.world_mut().resource_mut::<MicState>().enabled = true;
+        transmit(true);
+        assert_eq!(chimes(&mut app), 1, "the player reopens the mic");
+
+        // a resume that never republishes: the player's next start still chimes
+        app.insert_resource(ClientWindowFocus::NoFocus);
+        transmit(false);
+        assert_eq!(chimes(&mut app), 0, "focus loss");
+        app.insert_resource(ClientWindowFocus::Focused);
+        assert_eq!(chimes(&mut app), 0, "focus return, nothing republishes");
+        app.world_mut().resource_mut::<CallMic>().enabled = true;
+        transmit(true);
+        assert_eq!(chimes(&mut app), 1, "the player's call mic starts");
     }
 }

@@ -419,3 +419,13 @@
   grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
   gap: 8px;
 }
+
+/* Clear of the section modal's close button, on its 68 px header line. */
+.compact .head {
+  height: 68px;
+  margin-bottom: 0;
+  padding-right: 62px;
+}
+.compact .grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}

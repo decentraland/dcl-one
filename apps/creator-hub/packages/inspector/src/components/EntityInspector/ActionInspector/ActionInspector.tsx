@@ -1391,6 +1391,8 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
             {renderAction(action, idx)}
             <MoreOptionsMenu className="ActionMenu">
               <Button
+                variant="secondary"
+                size="sm"
                 className="RemoveButton"
                 onClick={e => handleRemoveAction(e, idx)}
               >

@@ -13,17 +13,13 @@ pub(super) fn should_validate_face_thumbnail(
     if (adr_timestamps::ADR_290_OPTIONAL..adr_timestamps::ADR_290_REJECTED).contains(&ts) {
         let has_content = !entity.content.is_empty();
         let has_files = files.len() > 1;
+        // Truthy like upstream `a?.avatar?.snapshots`: `snapshots: null` does not opt in.
         let has_snapshots = entity
             .metadata
             .as_ref()
             .and_then(|m| m.get("avatars"))
             .and_then(|a| a.as_array())
-            .map(|avatars| {
-                avatars
-                    .iter()
-                    .any(|a| a.get("avatar").and_then(|av| av.get("snapshots")).is_some())
-            })
-            .unwrap_or(false);
+            .is_some_and(|avatars| avatars.iter().any(avatar_has_snapshots));
         return has_content || has_files || has_snapshots;
     }
     false
@@ -209,7 +205,35 @@ fn has_uri_scheme(path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{avatar_has_snapshots, is_relative_thumbnail_path};
+    use std::collections::HashMap;
+
+    use super::{
+        Entity, EntityType, adr_timestamps, avatar_has_snapshots, is_relative_thumbnail_path,
+        should_validate_face_thumbnail,
+    };
+
+    #[test]
+    fn optional_window_face_thumbnail_ignores_null_snapshots() {
+        use serde_json::json;
+        let profile = |snapshots| Entity {
+            id: "bafkreiprofile".into(),
+            entity_type: EntityType::Profile,
+            pointers: vec!["0x0000000000000000000000000000000000000001".into()],
+            timestamp: adr_timestamps::ADR_290_OPTIONAL + 1000,
+            content: vec![],
+            version: "v3".into(),
+            metadata: Some(json!({ "avatars": [{ "avatar": { "snapshots": snapshots } }] })),
+        };
+        let files = HashMap::new();
+        assert!(!should_validate_face_thumbnail(
+            &profile(json!(null)),
+            &files
+        ));
+        assert!(should_validate_face_thumbnail(
+            &profile(json!({ "face256": "Qm1" })),
+            &files
+        ));
+    }
 
     #[test]
     fn snapshots_count_only_when_truthy() {

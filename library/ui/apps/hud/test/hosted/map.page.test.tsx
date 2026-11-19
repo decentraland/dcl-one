@@ -7,10 +7,12 @@ import { fixMapPublicReads, receiveMapReply, setMapTransport, type MapRequest } 
 import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import type { EventData } from '@explorer-core/engine/protocol'
 import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
+import { mapPins } from '@explorer-core/features/map/mapPins'
 import { navigation } from '@explorer-core/features/map/navigation'
 import { eventOf, placeOf } from '@explorer-core/test/mapFixtures'
 import { MapPage } from '../../features/map/MapPage'
-import type { MapState } from '../../features/session/useEngineSession'
+import { MARKER_ART } from '../../features/map/mapArt'
+import type { MapState, TravelOutcome } from '../../features/session/useEngineSession'
 import { fakeProfileState, fakeSession } from '../harness'
 
 const place = (id: string, title: string, positions: string[], extra: Partial<DiscoverPlace> = {}): DiscoverPlace =>
@@ -81,11 +83,11 @@ function serve(services: Services = {}): MapRequest[] {
   return seen
 }
 
-function renderMap(over: Partial<MapState> = {}, genesis = true): MapState {
+function renderMap(over: Partial<MapState> = {}, genesis = true, compact?: { onTravel: () => void }): MapState {
   const session = fakeSession()
   const map: MapState = { ...session.map, open: true, teleportToPlace: vi.fn(() => 'sent' as const), changeRealm: vi.fn(() => 'sent' as const), toggle: vi.fn(), setHome: vi.fn(), ...over }
   const minimap = genesis ? session.minimap : { ...session.minimap, satelliteView: null }
-  render(<MapPage map={map} minimap={minimap} profile={fakeProfileState()} gallery={session.gallery} onNavigate={vi.fn()} />)
+  render(<MapPage map={map} minimap={minimap} profile={fakeProfileState()} gallery={session.gallery} compact={compact} onNavigate={vi.fn()} />)
   return map
 }
 
@@ -106,7 +108,8 @@ afterEach(() => {
   vi.restoreAllMocks()
   setMapTransport(null)
   fixMapPublicReads(null)
-  for (const layer of ['liveEvents', 'pois', 'people'] as const) mapLayers.set(layer, true)
+  for (const layer of ['liveEvents', 'pois', 'pins', 'people'] as const) mapLayers.set(layer, true)
+  mapPins.clear()
   mapLayers.setMapType('satellite')
   navigation.stop()
 })
@@ -186,6 +189,37 @@ describe('map layers', () => {
     expect(within(view()).queryByRole('button', { name: 'Friday Party' })).not.toBeInTheDocument()
   })
 
+  it('draws the quest pins of portable experiences, with their own icon, and hides them with their layer', async () => {
+    serve({ places: [place('p', 'Plaza', ['10,-5'])] })
+    renderMap()
+    act(() =>
+      mapPins.receive([
+        { id: 'bafypx:512', x: 10, y: -5, title: 'Memory Grid', icon: null },
+        { id: 'bafypx:513', x: 3, y: 2, title: 'Tile Tally', icon: 'https://content.test/tile_tally.png' },
+        { id: 'bafypx:514', x: 4, y: 2, title: '   ', icon: null }
+      ])
+    )
+    expect(marker('Pin at 4, 2')).toHaveAttribute('data-marker', 'pins')
+    const memory = marker('Memory Grid')
+    expect(memory).toHaveAttribute('data-marker', 'pins')
+    expect(within(view()).queryByText('Memory Grid')).not.toBeInTheDocument()
+    expect(marker('Tile Tally').querySelector('img')).toHaveAttribute('src', 'https://content.test/tile_tally.png')
+    fireEvent.error(marker('Tile Tally').querySelector('img')!)
+    expect(marker('Tile Tally').querySelector('img')).toHaveAttribute('src', MARKER_ART.quest)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Layers' }))
+    await userEvent.click(within(screen.getByRole('region', { name: 'Layers' })).getByRole('switch', { name: 'Quest Mini-Games' }))
+    expect(within(view()).queryByRole('button', { name: 'Memory Grid' })).not.toBeInTheDocument()
+  })
+
+  it('opens the place under a quest pin when it is clicked', async () => {
+    serve({ places: [place('p', 'Plaza', ['10,-5'])] })
+    renderMap()
+    act(() => mapPins.receive([{ id: 'bafypx:512', x: 10, y: -5, title: 'Memory Grid', icon: null }]))
+    await userEvent.click(marker('Memory Grid'))
+    expect(await within(panel()).findByRole('heading', { name: 'Plaza' })).toBeInTheDocument()
+  })
+
   it('leaves a live event in a world off the map', async () => {
     serve({ events: [event('w', 'World Party', 0, 0, { live: true, world: true }), event('g', 'City Party', 5, 5, { live: true })] })
     renderMap()
@@ -198,7 +232,7 @@ describe('map layers', () => {
     renderMap()
     await userEvent.click(screen.getByRole('button', { name: 'Layers' }))
     const layers = screen.getByRole('region', { name: 'Layers' })
-    for (const name of ['Live Events', 'Points of interest', 'People']) {
+    for (const name of ['Live Events', 'Points of interest', 'Quest Mini-Games', 'People']) {
       expect(within(layers).getByRole('switch', { name })).toBeChecked()
     }
     expect(within(layers).getByRole('radio', { name: 'Satellite' })).toBeChecked()
@@ -567,6 +601,38 @@ describe('map navigation', () => {
     expect(navigation.getSnapshot()).toBeNull()
   })
 
+  it('ends the route to a one-parcel place whose base is elsewhere, as the place detail does', async () => {
+    serve({ search: [{ ...CLUB, base_position: '-21,60' }] })
+    renderMap()
+    await search('club')
+    await userEvent.click(await within(panel()).findByRole('button', { name: /Sugar Club/ }))
+    await userEvent.click(await within(panel()).findByRole('button', { name: 'start navigation' }))
+    expect(navigation.getSnapshot()?.parcel).toEqual({ x: -20, y: 60 })
+    await userEvent.click(within(panel()).getByRole('button', { name: 'JUMP IN' }))
+    expect(navigation.getSnapshot()).toBeNull()
+  })
+
+  it("keeps the search and the route in the lobby's modal when the startup lobby refuses the jump", async () => {
+    serve({ search: [CLUB] })
+    const onTravel = vi.fn()
+    const teleportToPlace = vi.fn((): TravelOutcome => 'refused')
+    const map = renderMap({ teleportToPlace }, true, { onTravel })
+    await search('club')
+    await userEvent.click(await within(panel()).findByRole('button', { name: /Sugar Club/ }))
+    await userEvent.click(await within(panel()).findByRole('button', { name: 'start navigation' }))
+    await userEvent.click(within(panel()).getByRole('button', { name: 'JUMP IN' }))
+    expect(teleportToPlace).toHaveBeenCalledWith(-20, 60)
+    expect(onTravel).not.toHaveBeenCalled()
+    expect(vi.mocked(map.toggle)).not.toHaveBeenCalled()
+    expect(navigation.getSnapshot()).not.toBeNull()
+    expect(screen.getByRole('textbox', { name: 'Search' })).toHaveValue('Sugar Club')
+    teleportToPlace.mockReturnValue('sent')
+    await userEvent.click(within(panel()).getByRole('button', { name: 'JUMP IN' }))
+    expect(onTravel).toHaveBeenCalledOnce()
+    expect(navigation.getSnapshot()).toBeNull()
+    expect(screen.getByRole('textbox', { name: 'Search' })).toHaveValue('')
+  })
+
   it('offers to start or exit the route by whether one leads to the place', async () => {
     serve({ search: [CLUB] })
     renderMap()
@@ -581,6 +647,35 @@ describe('map navigation', () => {
     await userEvent.click(within(panel()).getByRole('button', { name: 'Back' }))
     await userEvent.click(await within(panel()).findByRole('button', { name: /Sugar Club/ }))
     expect(await within(panel()).findByRole('button', { name: 'exit navigation' })).toBeInTheDocument()
+  })
+
+  // a parcel's centre, `metres` along both axes
+  const standAt = (metres: number, genesis: boolean): void => {
+    const session = fakeSession()
+    const minimap = { ...session.minimap, pose: { current: { ...session.minimap.pose.current, x: metres, z: metres } }, satelliteView: genesis ? session.minimap.satelliteView : null }
+    render(<MapPage map={{ ...session.map, open: false }} minimap={minimap} profile={fakeProfileState()} gallery={session.gallery} onNavigate={vi.fn()} />)
+  }
+
+  it('ends the route on arrival in Genesis City', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    act(() => navigation.start(PLAZA))
+    standAt(8, true)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000)
+    })
+    expect(navigation.getSnapshot()).toBeNull()
+    vi.useRealTimers()
+  })
+
+  it('keeps the route in a World standing on the destination parcel numbers', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    act(() => navigation.start(place('far', 'Far', ['5,5'])))
+    standAt(88, false)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000)
+    })
+    expect(navigation.getSnapshot()?.parcel).toEqual({ x: 5, y: 5 })
+    vi.useRealTimers()
   })
 })
 

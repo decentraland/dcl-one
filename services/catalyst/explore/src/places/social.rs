@@ -16,9 +16,8 @@
 //! `?position=x.y`, dot-glued, or `/places/world/?name=`). The generic card's
 //! URL is the site root plus the request's own path and query
 //! (`Social/routes.ts:66-70`). `id` is looked up only when it is a UUID
-//! (`validator/lib/isUUID`), `position` through `toCanonicalPosition`. The
-//! image goes through the catalogue's URL sanitizer at the sink, as upstream
-//! did.
+//! (`validator/lib/isUUID`), `position` through `toCanonicalPosition`. Cards use
+//! the image already projected by the catalogue.
 
 use axum::extract::{OriginalUri, Query, State};
 use axum::http::{HeaderMap, HeaderValue, header};
@@ -26,7 +25,6 @@ use axum::response::{Html, IntoResponse, Response};
 
 use super::PlaceRow;
 use crate::SharedState;
-use crate::sanitize::sanitize_image_url;
 
 /// `Place/utils.ts:25`'s default.
 pub const DEFAULT_BASE_URL: &str = "https://decentraland.org/places";
@@ -278,13 +276,11 @@ async fn place_at(state: &SharedState, position: &str) -> Option<PlaceRow> {
         .and_then(|(rows, _)| rows.into_iter().next())
 }
 
-fn card_for(state: &SharedState, row: &PlaceRow, url: &str) -> Response {
-    let image =
-        sanitize_image_url(row.image.as_deref(), state.places.content_origin()).unwrap_or_default();
+fn card_for(row: &PlaceRow, url: &str) -> Response {
     let card = Card::found(
         row.title.as_deref().unwrap_or(""),
         row.description.as_deref().unwrap_or(""),
-        &image,
+        row.image.as_deref().unwrap_or_default(),
         url,
     );
     with_canonical(url, render(&card))
@@ -315,7 +311,7 @@ pub async fn inject_place_metadata(
 
     if let Some(place) = place {
         let url = place_url(base, &place);
-        return card_for(&state, &place, &url);
+        return card_for(&place, &url);
     }
     let url = fallback_url(base, original_url(&uri));
     Html(render(&Card::generic(&url))).into_response()
@@ -348,7 +344,7 @@ pub async fn inject_world_metadata(
     if let Some(world) = world {
         let name = world.world_name.clone().unwrap_or_default();
         let url = world_url(base, &name);
-        return card_for(&state, &world, &url);
+        return card_for(&world, &url);
     }
     let url = fallback_url(base, original_url(&uri));
     Html(render(&Card::generic(&url))).into_response()
@@ -359,7 +355,7 @@ mod tests {
     use super::*;
 
     fn img(value: Option<&str>) -> Option<String> {
-        sanitize_image_url(value, None)
+        crate::sanitize::sanitize_image_url(value, None)
     }
 
     const BREAKOUT: &str = "https://a\"><script>alert(1)</script><meta name=\"x";
@@ -614,7 +610,7 @@ mod tests {
         sqlx::query("INSERT INTO explore.place (id, base_position, title, description, raw) VALUES ($1, $2, 'Plaza <b>', 'First\n\nsecond', $3)")
             .bind(&place)
             .bind(&position)
-            .bind(serde_json::json!({ "positions": [position], "image": "https://cdn.example.org/p.png" }))
+            .bind(serde_json::json!({ "positions": [position], "image": "https://peer.decentraland.org/content/contents/bafyCard" }))
             .execute(&pool)
             .await
             .unwrap();
@@ -628,6 +624,7 @@ mod tests {
             pool,
             crate::Settings {
                 places_base_url: "https://places.example.org/ignored".into(),
+                asset_rewrite_base: Some("https://node.example".into()),
                 ..crate::Settings::for_tests()
             },
             None,
@@ -672,7 +669,7 @@ mod tests {
                 html.contains("name=\"description\" content=\"First\" data-react-helmet=\"true\""),
                 "the first paragraph only: {html}"
             );
-            assert!(html.contains("content=\"https://cdn.example.org/p.png\""));
+            assert!(html.contains("property=\"og:image\" content=\"https://node.example/content/contents/bafyCard\""), "{uri}: {html}");
             assert!(
                 html.contains(&format!("property=\"og:url\" content=\"{canonical}\"")),
                 "{uri}: {html}"

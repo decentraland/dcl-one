@@ -27,7 +27,7 @@ flowchart LR
   end
   subgraph PostUpdate
     direction LR
-    ETP[EarlyTransformPropagate] --> EBB[EarlyBillboard] --> CU[ColliderUpdate] --> PU[PlayerUpdate] --> CAM[CameraUpdate] --> IK[InverseKinematics] --> NT[Nametag] --> AS[AttachSync] --> BB[Billboard] --> TP[bevy TransformPropagate]
+    ETP[EarlyTransformPropagate] --> EBB[EarlyBillboard] --> CU[ColliderUpdate] --> PU[PlayerUpdate] --> CAM[CameraUpdate] --> IK[InverseKinematics] --> SB[SpringBones] --> NT[Nametag] --> AS[AttachSync] --> BB[Billboard] --> TP[bevy TransformPropagate]
   end
   Update --> PostUpdate
 ```
@@ -108,9 +108,11 @@ index of every ordering point around the avatar, camera and collider transform p
 | `PlayerUpdate` | Player movement and ground resolution |
 | `CameraUpdate` | Camera follow and modes |
 | `InverseKinematics` | Foot and head IK, plus a propagate of the avatar subtree |
+| `SpringBones` | Spring-bone simulation of wearables' own bones, from post-IK poses computed from local transforms |
 | `Nametag` | Nametag positioning from post-IK globals |
 | `AttachSync` | Avatar-attach and scene-proxy position sync |
 | `Billboard` | Billboard orientation, facing this frame's camera |
+| `CameraFit` | Geometry fitted to a camera's final projection, after bevy's `CameraUpdateSystem` (a resize resets a projection's aspect ratio there) |
 
 A system that needs a position in `PostUpdate` goes `.in_set(PostUpdateSets::X)` as a
 producer or `.after(PostUpdateSets::X)` as a consumer. If an ordering point is genuinely
@@ -143,7 +145,8 @@ well, or its writes land a frame late. `crates/avatar/src/point_at_marker.rs` is
     instances already in progress first, and reveals each when its last node is done;
   - `spawn_timing`'s `start_spawner` before the spawner, `finish_spawner` between the spawner and
     processing, and `finish_processing` after processing: they measure both into diagnostics.
-- **`Last`**: CEF command drain, livekit room close on app exit, the web engine heartbeat.
+- **`Last`**: CEF command drain, livekit room close on app exit, the web engine heartbeat, the
+  profiler's frame fold and the benchmark summary.
 - **`OnEnter`/`OnExit`**: a few states (transmitter, receiver, microphone, parcel grass).
 
 Other named sets: `RealmLifecycle` for systems that react to a realm change, `TerrainSet` in

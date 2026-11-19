@@ -2500,15 +2500,6 @@
       "loose": false,
       "props": {}
     },
-    "lp_community_private_gated": {
-      "loose": false,
-      "props": {
-        "community_id": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
     "lp_community_review_reached": {
       "loose": false,
       "props": {
@@ -2568,44 +2559,19 @@
         }
       }
     },
-    "lp_community_viewed": {
-      "loose": false,
-      "props": {
-        "community_id": {
-          "kind": "string",
-          "optional": false
-        },
-        "members_count": {
-          "kind": "unknown",
-          "optional": false
-        },
-        "privacy": {
-          "kind": "enum-string",
-          "values": [
-            "private",
-            "public"
-          ],
-          "optional": false
-        },
-        "source": {
-          "kind": "enum-string",
-          "values": [
-            "fixture",
-            "live"
-          ],
-          "optional": false
-        }
-      }
-    },
     "lp_creatorhub_download_clicked": {
       "loose": false,
       "props": {
         "arch": {
-          "kind": "string",
+          "kind": "enum-string",
+          "values": [
+            "amd64",
+            "arm64"
+          ],
           "optional": false
         },
         "file_name": {
-          "kind": "string",
+          "kind": "unknown",
           "optional": false
         },
         "kind": {

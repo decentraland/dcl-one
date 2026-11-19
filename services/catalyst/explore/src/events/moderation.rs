@@ -1246,8 +1246,9 @@ pub(super) async fn resolve_poster<'e>(
     image: &str,
     settings: &crate::Settings,
     kind: &str,
+    write: super::posters::PosterWrite<'_>,
 ) -> Result<String, ApiError> {
-    super::posters::resolve(executor, image, settings, kind)
+    super::posters::resolve(executor, image, settings, kind, write)
         .await
         .map_err(|error| match error {
             ApiError::Http { status: 400, .. } => invalid_image(image),
@@ -1287,7 +1288,16 @@ pub async fn create_as(
         (&mut body.image_vertical, "poster-vertical"),
     ] {
         if let Some(value) = image.as_deref().filter(|v| !v.is_empty()) {
-            *image = Some(resolve_poster(pool, value, settings, kind).await?);
+            *image = Some(
+                resolve_poster(
+                    pool,
+                    value,
+                    settings,
+                    kind,
+                    super::posters::PosterWrite::Create,
+                )
+                .await?,
+            );
         } else {
             *image = None;
         }

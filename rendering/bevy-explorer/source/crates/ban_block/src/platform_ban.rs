@@ -1,6 +1,5 @@
-//! The platform ban: an account-level ban of the local user's wallet from all of Decentraland,
-//! read from the comms gatekeeper's public `GET /users/{address}/bans`. The one fact this crate
-//! owns rather than reads from another crate.
+//! Checks the local user's platform ban against the comms gatekeeper's public
+//! `GET /users/{address}/bans` and records the answer in `PlatformBanStatus`.
 
 use alloy_core::primitives::Address;
 use bevy::{
@@ -8,7 +7,6 @@ use bevy::{
     ecs::{
         change_detection::DetectChanges,
         event::{Event, EventReader, EventWriter},
-        resource::Resource,
         schedule::{common_conditions::resource_changed, IntoScheduleConfigs},
         system::{Local, Res, ResMut},
     },
@@ -19,11 +17,13 @@ use bevy::{
 use bevy_console::ConsoleCommand;
 use common::{
     base_domain::{self, Service},
+    platform_ban::{PlatformBanInfo, PlatformBanSource, PlatformBanStatus},
     structs::CurrentRealm,
     util::{TaskCompat, TaskExt},
 };
+use comms::access_status::{AccessScope, AccessStatus};
 use console::DoAddConsoleCommand;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use wallet::Wallet;
 
 use crate::{AdmissionView, BanScope, SceneAdmission};
@@ -33,55 +33,6 @@ pub const RECHECK_SECS: f64 = 300.0;
 /// The least a server's `Retry-After` is honoured as.
 pub const MIN_RETRY_SECS: f64 = 5.0;
 const REQUEST_TIMEOUT_SECS: u64 = 10;
-
-#[derive(Resource)]
-pub struct PlatformBanStatus {
-    state: PlatformBanState,
-    source: Option<PlatformBanSource>,
-    http: reqwest::Client,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum PlatformBanState {
-    Unknown,
-    Checked {
-        ban: Option<PlatformBanInfo>,
-        checked_at: f64,
-    },
-    Failed {
-        error: String,
-        checked_at: f64,
-    },
-}
-
-/// The gatekeeper's `ban` object, as served; dates stay ISO strings.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PlatformBanInfo {
-    #[serde(default)]
-    pub id: String,
-    #[serde(default)]
-    pub reason: String,
-    #[serde(default)]
-    pub custom_message: Option<String>,
-    #[serde(default)]
-    pub banned_at: String,
-    #[serde(default)]
-    pub expires_at: Option<String>,
-    #[serde(default)]
-    pub banned_by: String,
-    /// What a withheld record matched (`device`); `None` for a record as served.
-    #[serde(default)]
-    pub matched_on: Option<String>,
-}
-
-/// How the platform ban became known.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PlatformBanSource {
-    BanStatusEndpoint,
-    SceneAdmissionRefusal,
-}
 
 /// `GET /users/{address}/bans`: `{"data":{"isBanned":bool,"ban":{..}?,"matchedOn":"device"?}}`.
 #[derive(Deserialize)]
@@ -99,155 +50,83 @@ struct BanStatusBody {
     matched_on: Option<String>,
 }
 
-impl PlatformBanInfo {
-    /// Decodes the ban-status body: `Ok(None)` when not banned, whatever else it carries; a ban
-    /// without its record is a ban whose record was withheld.
-    #[cfg(test)]
-    pub fn from_json(body: &[u8]) -> Result<Option<Self>, String> {
-        let envelope: BanStatusEnvelope =
-            serde_json::from_slice(body).map_err(|e| format!("bad ban status body: {e}"))?;
-        Ok(Self::from_body(envelope.data))
-    }
+/// Decodes the ban-status body: `Ok(None)` when not banned, whatever else it carries; a ban
+/// without its record is a ban whose record was withheld.
+#[cfg(test)]
+fn ban_from_json(body: &[u8]) -> Result<Option<PlatformBanInfo>, String> {
+    let envelope: BanStatusEnvelope =
+        serde_json::from_slice(body).map_err(|e| format!("bad ban status body: {e}"))?;
+    Ok(ban_from_body(envelope.data))
+}
 
-    fn from_body(body: BanStatusBody) -> Option<Self> {
-        if !body.is_banned {
-            return None;
-        }
-        Some(body.ban.unwrap_or_else(|| {
-            Self::withheld(body.matched_on.as_deref().unwrap_or("another match"))
-        }))
+fn ban_from_body(body: BanStatusBody) -> Option<PlatformBanInfo> {
+    if !body.is_banned {
+        return None;
     }
+    Some(body.ban.unwrap_or_else(|| {
+        PlatformBanInfo::withheld(body.matched_on.as_deref().unwrap_or("another match"))
+    }))
+}
 
-    /// A ban with no record; `matched_on` is what it matched.
-    pub fn withheld(matched_on: &str) -> Self {
-        Self {
-            id: String::new(),
-            reason: String::new(),
-            custom_message: None,
-            banned_at: String::new(),
-            expires_at: None,
-            banned_by: String::new(),
-            matched_on: Some(matched_on.to_owned()),
-        }
-    }
-
-    /// A ban known only from a scene-admission refusal: the message is all there is.
-    pub fn from_refusal(message: &str) -> Self {
-        Self {
-            id: String::new(),
-            reason: message.to_owned(),
-            custom_message: None,
-            banned_at: String::new(),
-            expires_at: None,
-            banned_by: String::new(),
-            matched_on: None,
-        }
+/// The platform-scoped refusal the scene admission shows, as `(message, scene_id)`.
+fn platform_refusal(admission: &SceneAdmission) -> Option<(&str, &str)> {
+    match admission.view() {
+        AdmissionView::Refused {
+            scope: BanScope::Platform,
+            message,
+            scene_id,
+        } => Some((message, scene_id)),
+        _ => None,
     }
 }
 
-impl PlatformBanStatus {
-    pub fn new() -> Self {
-        Self {
-            state: PlatformBanState::Unknown,
-            source: None,
-            http: platform::http_client_builder()
-                .build()
-                .expect("reqwest client"),
-        }
-    }
-
-    pub fn state(&self) -> &PlatformBanState {
-        &self.state
-    }
-
-    /// `Some` only while a ban is known.
-    pub fn source(&self) -> Option<PlatformBanSource> {
-        match &self.state {
-            PlatformBanState::Checked { ban: Some(_), .. } => self.source,
-            _ => None,
-        }
-    }
-
-    /// `Some` only for a checked ban; unknown and failed are `None`.
-    pub fn ban(&self) -> Option<&PlatformBanInfo> {
-        match &self.state {
-            PlatformBanState::Checked { ban, .. } => ban.as_ref(),
-            _ => None,
-        }
-    }
-
-    /// Records an answer; the same answer again only moves `checked_at`.
-    pub fn apply_platform_ban(
-        &mut self,
-        ban: Option<PlatformBanInfo>,
-        source: PlatformBanSource,
-        checked_at: f64,
-    ) {
-        self.source = ban.is_some().then_some(source);
-        self.state = PlatformBanState::Checked { ban, checked_at };
-    }
-
-    /// Records a failed check. A ban learnt from a scene-admission refusal is kept: a failed poll
-    /// is no evidence against it.
-    pub fn platform_ban_check_failed(&mut self, error: String, checked_at: f64) {
-        if self.source() == Some(PlatformBanSource::SceneAdmissionRefusal) {
-            warn!("[ban_block] platform ban check failed, keeping the refusal: {error}");
-            return;
-        }
-        self.state = PlatformBanState::Failed { error, checked_at };
-        self.source = None;
-    }
-
-    /// Forgets the answer.
-    pub fn reset_platform_ban(&mut self) {
-        self.state = PlatformBanState::Unknown;
-        self.source = None;
-    }
-}
-
-/// True while the known ban came from a scene-admission refusal and the admission still shows
-/// that refusal.
-fn refusal_outranks_not_banned(
-    source: Option<PlatformBanSource>,
+/// Records the endpoint's "not banned". While a platform refusal stands, keeps it as the ban and
+/// clears its scene's denial from `AccessStatus`.
+fn apply_not_banned(
+    status: &mut PlatformBanStatus,
     admission: &SceneAdmission,
-) -> bool {
-    source == Some(PlatformBanSource::SceneAdmissionRefusal)
-        && matches!(
-            admission.view(),
-            AdmissionView::Refused {
-                scope: BanScope::Platform,
-                ..
-            }
-        )
+    access: &mut AccessStatus,
+    now: f64,
+) {
+    let Some((message, scene_id)) = platform_refusal(admission) else {
+        status.apply_platform_ban(None, PlatformBanSource::BanStatusEndpoint, now);
+        return;
+    };
+    if status.source() != Some(PlatformBanSource::SceneAdmissionRefusal) {
+        status.apply_platform_ban(
+            Some(PlatformBanInfo::from_refusal(message)),
+            PlatformBanSource::SceneAdmissionRefusal,
+            now,
+        );
+    }
+    access.remove_scope(&AccessScope::Scene(scene_id.to_owned()));
 }
 
-/// Records a platform-scoped admission refusal as the platform ban while none is known.
+/// Records a platform-scoped admission refusal as the platform ban while none is known, and lifts
+/// a ban learnt from a refusal once the admission is allowed.
 fn cross_feed_admission_refusal(
     admission: Res<SceneAdmission>,
     mut status: ResMut<PlatformBanStatus>,
     time: Res<Time>,
 ) {
-    let AdmissionView::Refused {
-        scope: BanScope::Platform,
-        message,
-        ..
-    } = admission.view()
-    else {
-        return;
-    };
-    if status.ban().is_some() {
-        return;
-    }
-    status.apply_platform_ban(
-        Some(PlatformBanInfo::from_refusal(message)),
-        PlatformBanSource::SceneAdmissionRefusal,
-        time.elapsed_secs_f64(),
-    );
-}
-
-impl Default for PlatformBanStatus {
-    fn default() -> Self {
-        Self::new()
+    let now = time.elapsed_secs_f64();
+    match admission.view() {
+        AdmissionView::Refused {
+            scope: BanScope::Platform,
+            message,
+            ..
+        } if status.ban().is_none() => status.apply_platform_ban(
+            Some(PlatformBanInfo::from_refusal(message)),
+            PlatformBanSource::SceneAdmissionRefusal,
+            now,
+        ),
+        AdmissionView::Allowed { .. }
+            if status.source() == Some(PlatformBanSource::SceneAdmissionRefusal) =>
+        {
+            info!("[ban_block] the gatekeeper admitted the user: lifting the refusal's ban");
+            status.apply_platform_ban(None, PlatformBanSource::SceneAdmissionRefusal, now);
+        }
+        _ => (),
     }
 }
 
@@ -288,7 +167,10 @@ impl Plugin for PlatformBanPlugin {
             )
             .add_systems(
                 PostUpdate,
-                cross_feed_admission_refusal.run_if(resource_changed::<SceneAdmission>),
+                // records this frame's refusal before `change_realm` runs
+                cross_feed_admission_refusal
+                    .run_if(resource_changed::<SceneAdmission>)
+                    .before(ipfs::change_realm),
             );
     }
 }
@@ -298,6 +180,19 @@ impl Plugin for PlatformBanPlugin {
 pub struct CheckFailure {
     pub error: String,
     pub retry_after_secs: Option<f64>,
+}
+
+/// The client ban-status requests are sent with.
+struct BanCheckClient(reqwest::Client);
+
+impl Default for BanCheckClient {
+    fn default() -> Self {
+        Self(
+            platform::http_client_builder()
+                .build()
+                .expect("reqwest client"),
+        )
+    }
 }
 
 /// One ban-status request on its way, for the address it was sent for.
@@ -314,6 +209,8 @@ struct BanCheckSchedule {
     retry_after: Option<f64>,
     /// A trigger that arrived while a request was in flight.
     retrigger: bool,
+    /// The `expires_at` of the known ban that a check was already started for once it passed.
+    expiry_checked: Option<String>,
     in_flight: Option<InFlightBanCheck>,
 }
 
@@ -331,15 +228,23 @@ impl BanCheckSchedule {
         true
     }
 
-    /// Whether a check starts now: a trigger, or the period or the server's delay elapsed. A
-    /// kept trigger waits out the server's delay.
-    fn starts(&mut self, now: f64, triggered: bool) -> bool {
+    /// Whether a check starts now: a trigger, the period or the server's delay elapsed, or
+    /// `passed_expiry` (the known ban's passed `expires_at`) not yet checked. A kept trigger and a
+    /// passed expiry wait out the server's delay; any check started after the expiry covers it.
+    fn starts(&mut self, now: f64, triggered: bool, passed_expiry: Option<&str>) -> bool {
         let kept = self.retry_after.is_none() && self.retrigger;
-        let start = triggered || kept || due(now, self.last_checked, self.retry_after);
+        let expiry_due = passed_expiry.is_some()
+            && self.retry_after.is_none()
+            && self.expiry_checked.as_deref() != passed_expiry;
+        let start =
+            triggered || kept || expiry_due || due(now, self.last_checked, self.retry_after);
         if start {
             self.last_checked = Some(now);
             self.retry_after = None;
             self.retrigger = false;
+            if let Some(expiry) = passed_expiry {
+                self.expiry_checked = Some(expiry.to_owned());
+            }
         }
         start
     }
@@ -348,6 +253,20 @@ impl BanCheckSchedule {
     fn delay(&mut self, retry_after_secs: Option<f64>) {
         self.retry_after = retry_after_secs.map(|secs| secs.max(MIN_RETRY_SECS));
     }
+}
+
+/// Whether the known ban's `expires_at` has passed at `now`.
+fn ban_expired(status: &PlatformBanStatus, now: web_time::SystemTime) -> bool {
+    let Some(expires_at) = status.ban().and_then(|ban| ban.expires_at.as_deref()) else {
+        return false;
+    };
+    let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(expires_at) else {
+        return false;
+    };
+    let Ok(now) = now.duration_since(web_time::UNIX_EPOCH) else {
+        return false;
+    };
+    expires_at.timestamp_millis() <= now.as_millis() as i64
 }
 
 /// Whether a check is due: never checked, the server's retry delay passed, or the recheck period
@@ -361,16 +280,19 @@ pub fn due(now: f64, last_checked: Option<f64>, retry_after: Option<f64>) -> boo
 }
 
 /// Polls the one request in flight, dropping an answer for an address that is no longer the
-/// wallet's, and starts the next one when a check is due. A trigger that lands while a request
-/// is in flight starts another as soon as it completes.
+/// wallet's, and starts the next one when a check is due or a known ban's expiry has passed. A
+/// trigger that lands while a request is in flight starts another as soon as it completes.
+#[allow(clippy::too_many_arguments)]
 fn check_platform_ban(
     mut status: ResMut<PlatformBanStatus>,
     wallet: Res<Wallet>,
     realm: Option<Res<CurrentRealm>>,
     admission: Res<SceneAdmission>,
+    mut access: ResMut<AccessStatus>,
     time: Res<Time>,
     mut refresh: EventReader<PlatformBanRefreshRequested>,
     mut schedule: Local<BanCheckSchedule>,
+    client: Local<BanCheckClient>,
 ) {
     let now = time.elapsed_secs_f64();
     if schedule.follow(wallet.address()) {
@@ -392,18 +314,12 @@ fn check_platform_ban(
         schedule.in_flight = None;
         if for_address == address {
             match result {
-                Ok(None) if refusal_outranks_not_banned(status.source(), &admission) => {
-                    info!("[ban_block] platform ban check: not banned, keeping the refusal");
+                Ok(None) => {
+                    info!("[ban_block] platform ban check: not banned");
+                    apply_not_banned(&mut status, &admission, &mut access, now);
                 }
                 Ok(ban) => {
-                    info!(
-                        "[ban_block] platform ban check: {}",
-                        if ban.is_some() {
-                            "banned"
-                        } else {
-                            "not banned"
-                        }
-                    );
+                    info!("[ban_block] platform ban check: banned");
                     status.apply_platform_ban(ban, PlatformBanSource::BanStatusEndpoint, now);
                 }
                 Err(failure) => {
@@ -415,15 +331,20 @@ fn check_platform_ban(
         }
     }
 
-    if !schedule.starts(now, triggered) {
+    // read after the answer above: a lifted ban has no expiry to check
+    let passed_expiry = status
+        .ban()
+        .and_then(|ban| ban.expires_at.clone())
+        .filter(|_| ban_expired(&status, web_time::SystemTime::now()));
+    if !schedule.starts(now, triggered, passed_expiry.as_deref()) {
         return;
     }
     let url = base_domain::url(
         Service::CommsGatekeeper,
         &format!("/users/{address:#x}/bans"),
     );
-    let request = status
-        .http
+    let request = client
+        .0
         .get(url)
         .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS));
     schedule.in_flight = Some(InFlightBanCheck {
@@ -449,7 +370,7 @@ async fn fetch_ban_status(
         return response
             .json::<BanStatusEnvelope>()
             .await
-            .map(|envelope| PlatformBanInfo::from_body(envelope.data))
+            .map(|envelope| ban_from_body(envelope.data))
             .map_err(|e| failed(format!("bad ban status body: {e}")));
     }
     let retry_after_secs = response
@@ -476,6 +397,8 @@ fn retry_after_secs(value: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::ecs::change_detection::Mut;
+    use common::platform_ban::PlatformBanState;
 
     fn address(n: u8) -> Address {
         Address::from_slice(&[n; 20])
@@ -484,33 +407,31 @@ mod tests {
     #[test]
     fn the_ban_status_body_decodes_as_served() {
         let banned = br#"{"data":{"isBanned":true,"ban":{"id":"b1","bannedAddress":"0xab","bannedBy":"0xcd","reason":"spam","customMessage":"go away","bannedAt":"2026-01-01T00:00:00.000Z","expiresAt":null,"liftedAt":null,"liftedBy":null,"createdAt":"2026-01-01T00:00:00.000Z"}}}"#;
-        let ban = PlatformBanInfo::from_json(banned).unwrap().unwrap();
+        let ban = ban_from_json(banned).unwrap().unwrap();
         assert_eq!(ban.reason, "spam");
         assert_eq!(ban.matched_on, None);
         assert_eq!(ban.custom_message.as_deref(), Some("go away"));
         assert_eq!(ban.expires_at, None);
         assert_eq!(
-            PlatformBanInfo::from_json(br#"{"data":{"isBanned":false}}"#).unwrap(),
+            ban_from_json(br#"{"data":{"isBanned":false}}"#).unwrap(),
             None
         );
         assert_eq!(
-            PlatformBanInfo::from_json(br#"{"data":{"isBanned":false,"ban":{"reason":"stale"}}}"#)
-                .unwrap(),
+            ban_from_json(br#"{"data":{"isBanned":false,"ban":{"reason":"stale"}}}"#).unwrap(),
             None
         );
-        assert!(PlatformBanInfo::from_json(b"not json").is_err());
+        assert!(ban_from_json(b"not json").is_err());
     }
 
     #[test]
     fn a_device_matched_ban_is_a_ban_with_its_record_withheld() {
-        let withheld =
-            PlatformBanInfo::from_json(br#"{"data":{"isBanned":true,"matchedOn":"device"}}"#)
-                .unwrap()
-                .unwrap();
+        let withheld = ban_from_json(br#"{"data":{"isBanned":true,"matchedOn":"device"}}"#)
+            .unwrap()
+            .unwrap();
         assert_eq!(withheld, PlatformBanInfo::withheld("device"));
         assert_eq!(withheld.matched_on.as_deref(), Some("device"));
         assert_eq!(withheld.reason, "");
-        let unexplained = PlatformBanInfo::from_json(br#"{"data":{"isBanned":true}}"#)
+        let unexplained = ban_from_json(br#"{"data":{"isBanned":true}}"#)
             .unwrap()
             .unwrap();
         assert_eq!(unexplained, PlatformBanInfo::withheld("another match"));
@@ -546,6 +467,60 @@ mod tests {
     }
 
     #[test]
+    fn a_passed_expiry_is_checked_once_after_the_server_delay() {
+        const EXPIRY: Option<&str> = Some("2026-12-01T00:00:00.000Z");
+        let mut schedule = BanCheckSchedule::default();
+        schedule.follow(Some(address(1)));
+        assert!(schedule.starts(0.0, false, None));
+
+        // a failed check asks for 30 s; the expiry passes during the wait
+        schedule.delay(Some(30.0));
+        assert!(
+            !schedule.starts(10.0, false, EXPIRY),
+            "the server delay holds"
+        );
+        // the delay's own check covers the expiry
+        assert!(schedule.starts(30.0, false, EXPIRY));
+        assert!(!schedule.starts(31.0, false, EXPIRY), "no second check");
+        assert!(!schedule.starts(200.0, false, EXPIRY));
+
+        // a passed expiry with no delay starts one check at once
+        let mut schedule = BanCheckSchedule::default();
+        schedule.follow(Some(address(2)));
+        assert!(schedule.starts(0.0, false, None));
+        assert!(schedule.starts(1.0, false, EXPIRY));
+        assert!(!schedule.starts(2.0, false, EXPIRY));
+    }
+
+    #[test]
+    fn a_ban_is_expired_once_its_expiry_passes() {
+        let at = |secs: u64| web_time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+        // 2026-12-01T00:00:00Z
+        let expiry = 1_796_083_200;
+        let mut status = PlatformBanStatus::new();
+        assert!(!ban_expired(&status, at(expiry)), "no ban");
+        let ban = |expires_at: Option<&str>| PlatformBanInfo {
+            expires_at: expires_at.map(str::to_owned),
+            ..PlatformBanInfo::from_refusal("")
+        };
+        status.apply_platform_ban(
+            Some(ban(Some("2026-12-01T00:00:00.000Z"))),
+            PlatformBanSource::BanStatusEndpoint,
+            1.0,
+        );
+        assert!(!ban_expired(&status, at(expiry - 1)));
+        assert!(ban_expired(&status, at(expiry)));
+        status.apply_platform_ban(Some(ban(None)), PlatformBanSource::BanStatusEndpoint, 2.0);
+        assert!(!ban_expired(&status, at(expiry)), "a permanent ban");
+        status.apply_platform_ban(
+            Some(ban(Some("soon"))),
+            PlatformBanSource::BanStatusEndpoint,
+            3.0,
+        );
+        assert!(!ban_expired(&status, at(expiry)), "an unreadable expiry");
+    }
+
+    #[test]
     fn a_failed_check_fails_open_but_keeps_a_refusal() {
         let mut status = PlatformBanStatus::new();
         status.platform_ban_check_failed("status 500".into(), 1.0);
@@ -563,24 +538,115 @@ mod tests {
     }
 
     #[test]
-    fn a_not_banned_is_dropped_only_while_the_refusal_is_on_screen() {
+    fn a_not_banned_keeps_a_standing_refusal_and_asks_the_gatekeeper_again() {
         let refusal = SceneAdmission::from_refusal(403, Some(PLATFORM_BANNED), false, "s");
-        let scene_ban =
-            SceneAdmission::from_refusal(403, Some("User is banned from this scene"), false, "s");
-        let from_refusal = Some(PlatformBanSource::SceneAdmissionRefusal);
-        let from_endpoint = Some(PlatformBanSource::BanStatusEndpoint);
-        assert!(refusal_outranks_not_banned(from_refusal, &refusal));
-        assert!(!refusal_outranks_not_banned(
-            from_refusal,
-            &SceneAdmission::unknown()
-        ));
-        assert!(!refusal_outranks_not_banned(
-            from_refusal,
-            &SceneAdmission::allowed("s")
-        ));
-        assert!(!refusal_outranks_not_banned(from_refusal, &scene_ban));
-        assert!(!refusal_outranks_not_banned(from_endpoint, &refusal));
-        assert!(!refusal_outranks_not_banned(None, &refusal));
+        let scene = AccessScope::Scene("s".to_owned());
+        let endpoint_ban = PlatformBanInfo {
+            reason: "spam".into(),
+            expires_at: Some("2026-12-01T00:00:00.000Z".into()),
+            ..PlatformBanInfo::from_refusal("")
+        };
+
+        // an endpoint ban expires while its refusal stands: the refusal is the ban now
+        let mut status = PlatformBanStatus::new();
+        status.apply_platform_ban(
+            Some(endpoint_ban),
+            PlatformBanSource::BanStatusEndpoint,
+            1.0,
+        );
+        let mut access = AccessStatus::default();
+        access.set_denied(scene.clone());
+        apply_not_banned(&mut status, &refusal, &mut access, 2.0);
+        assert_eq!(
+            status.source(),
+            Some(PlatformBanSource::SceneAdmissionRefusal)
+        );
+        assert!(!access.is_denied(&scene), "the gatekeeper is asked again");
+
+        // the refusal's ban is kept, and asked about again, on the next "not banned"
+        access.set_denied(scene.clone());
+        apply_not_banned(&mut status, &refusal, &mut access, 3.0);
+        assert!(status.ban().is_some());
+        assert!(!access.is_denied(&scene));
+
+        // with no platform refusal standing, "not banned" lifts any ban
+        for admission in [
+            SceneAdmission::unknown(),
+            SceneAdmission::allowed("s"),
+            SceneAdmission::from_refusal(403, Some("User is banned from this scene"), false, "s"),
+        ] {
+            let mut status = PlatformBanStatus::new();
+            status.apply_platform_ban(
+                Some(PlatformBanInfo::from_refusal(PLATFORM_BANNED)),
+                PlatformBanSource::SceneAdmissionRefusal,
+                1.0,
+            );
+            let mut access = AccessStatus::default();
+            access.set_denied(scene.clone());
+            apply_not_banned(&mut status, &admission, &mut access, 2.0);
+            assert_eq!(status.ban(), None, "{admission:?}");
+            assert!(access.is_denied(&scene), "{admission:?}");
+        }
+    }
+
+    #[test]
+    fn an_expired_ban_ends_once_the_gatekeeper_admits_the_user() {
+        let mut app = cross_feed_app();
+        let refusal = SceneAdmission::from_refusal(403, Some(PLATFORM_BANNED), false, "s");
+        app.world_mut()
+            .resource_mut::<PlatformBanStatus>()
+            .apply_platform_ban(
+                Some(PlatformBanInfo {
+                    reason: "spam".into(),
+                    ..PlatformBanInfo::from_refusal("")
+                }),
+                PlatformBanSource::BanStatusEndpoint,
+                1.0,
+            );
+        set_admission(&mut app, refusal.clone());
+
+        // expiry, then "not banned": the refusal still stands, so the ban does
+        let mut access = AccessStatus::default();
+        app.world_mut()
+            .resource_scope(|world, mut status: Mut<PlatformBanStatus>| {
+                apply_not_banned(
+                    &mut status,
+                    world.resource::<SceneAdmission>(),
+                    &mut access,
+                    2.0,
+                )
+            });
+        app.update();
+        assert!(app.world().resource::<PlatformBanStatus>().ban().is_some());
+
+        // the gatekeeper asked again refuses: the ban stands
+        set_admission(&mut app, refusal);
+        assert!(app.world().resource::<PlatformBanStatus>().ban().is_some());
+
+        // it admits the user: the ban ends
+        set_admission(&mut app, SceneAdmission::allowed("s"));
+        assert_eq!(app.world().resource::<PlatformBanStatus>().ban(), None);
+    }
+
+    #[test]
+    fn an_admission_lifts_only_a_ban_learnt_from_a_refusal() {
+        let mut app = cross_feed_app();
+        let record = PlatformBanInfo {
+            reason: "spam".into(),
+            ..PlatformBanInfo::from_refusal("")
+        };
+        app.world_mut()
+            .resource_mut::<PlatformBanStatus>()
+            .apply_platform_ban(
+                Some(record.clone()),
+                PlatformBanSource::BanStatusEndpoint,
+                1.0,
+            );
+        set_admission(&mut app, SceneAdmission::allowed("s"));
+        assert_eq!(
+            app.world().resource::<PlatformBanStatus>().ban(),
+            Some(&record)
+        );
     }
 
     /// An app with the admission, the status and the clock, running the cross-feed.
@@ -680,25 +746,25 @@ mod tests {
         let mut schedule = BanCheckSchedule::default();
         assert!(schedule.follow(Some(address(1))));
         assert!(
-            schedule.starts(0.0, false),
+            schedule.starts(0.0, false, None),
             "a new address is checked at once"
         );
-        assert!(!schedule.starts(1.0, false));
-        assert!(schedule.starts(1.0, true), "a trigger starts a check");
+        assert!(!schedule.starts(1.0, false, None));
+        assert!(schedule.starts(1.0, true, None), "a trigger starts a check");
 
         // a trigger during a request is kept for when the request completes
         schedule.retrigger = true;
-        assert!(schedule.starts(2.0, false));
+        assert!(schedule.starts(2.0, false, None));
         assert!(!schedule.retrigger);
-        assert!(!schedule.starts(3.0, false));
+        assert!(!schedule.starts(3.0, false, None));
 
         // a server delay is floored and then honoured, by a kept trigger too
         schedule.delay(Some(0.0));
         schedule.retrigger = true;
         assert_eq!(schedule.retry_after, Some(MIN_RETRY_SECS));
-        assert!(!schedule.starts(2.0 + MIN_RETRY_SECS - 1.0, false));
+        assert!(!schedule.starts(2.0 + MIN_RETRY_SECS - 1.0, false, None));
         assert!(schedule.retrigger);
-        assert!(schedule.starts(2.0 + MIN_RETRY_SECS, false));
+        assert!(schedule.starts(2.0 + MIN_RETRY_SECS, false, None));
         assert!(!schedule.retrigger);
 
         // the same address is no change; another drops the schedule

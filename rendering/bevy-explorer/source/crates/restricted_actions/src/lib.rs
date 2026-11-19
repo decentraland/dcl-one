@@ -1,8 +1,10 @@
 pub mod agent_commands;
 pub mod explorer_ui;
+mod map_pins;
 pub mod portables;
 pub mod smart_wearables;
 pub mod teleport;
+pub mod world_access;
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -131,6 +133,8 @@ impl Plugin for RestrictedActionsPlugin {
         app.add_plugins(agent_commands::AgentCommandsPlugin);
         app.add_plugins(smart_wearables::SmartWearablesPlugin);
         app.add_plugins(portables::PortablesPlugin);
+        app.add_plugins(world_access::WorldAccessPlugin);
+        app.add_plugins(map_pins::MapPinsPlugin);
     }
 }
 
