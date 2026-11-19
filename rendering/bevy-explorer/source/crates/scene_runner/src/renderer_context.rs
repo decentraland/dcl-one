@@ -369,7 +369,7 @@ impl RendererSceneContext {
                     .entity(spawned)
                     .try_insert(ParentPositionSync::<SceneProxyStage>::new(primary));
             } else {
-                warn!("no primary entity for scene proxy {id:?}");
+                error!("no primary entity for scene proxy {id:?}");
             }
         }
 
