@@ -104,9 +104,23 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
     }
   })
   /** The chain as the evidence reads it: the nonce the fake chain holds, the executions given, the relay's transactions. */
-  const onChain = { executions: [] as ManaExecution[], fail: false, finalized: 1000n, latest: 1000n, receiptBlock: 900n, foreignHash: false }
+  const onChain = {
+    executions: [] as ManaExecution[],
+    fail: false,
+    finalized: 1000n,
+    latest: 1000n,
+    receiptBlock: 900n,
+    foreignHash: false,
+    /** Holds every finalized-block read after the first (the pre-dispatch checkpoint) until released. */
+    hold: null as Promise<void> | null,
+    finalizedReads: 0
+  }
   const evidence: ManaEvidence = {
-    finalized: async () => onChain.finalized,
+    finalized: async () => {
+      onChain.finalizedReads++
+      if (onChain.hold && onChain.finalizedReads > 1) await onChain.hold
+      return onChain.finalized
+    },
     latest: async () => onChain.latest,
     nonceAt: async (_c, venue, user) => chain.nonces.get(`${venue.address.toLowerCase()}:${user.toLowerCase()}`) ?? 0n,
     // As eth_getLogs answers: only what lies in the range asked for.
@@ -777,6 +791,47 @@ describe('the in-world purchase with MANA', () => {
       await new Promise((r) => setTimeout(r, 30))
       expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', check: 'ready' })
       expect(p.events.at(-1)).toMatchObject({ state: 'pending' })
+    })
+
+    it('shows the purchase in progress, closable, while the chain read after the send is held, and settles once it answers', async () => {
+      const w = world({ allowance: maxUint256 })
+      let release!: () => void
+      w.onChain.hold = new Promise<void>((r) => (release = r))
+      const p = page(w, { services: { sleep: () => new Promise((r) => setTimeout(r, 20)) } })
+      await p.payMana()
+      const pending = await p.until('pending')
+      expect(p.events.at(-1)).toMatchObject({ state: 'pending' })
+      // The read is still held: closing works, and BUY shows the same purchase without signing or sending again.
+      await vi.waitFor(() => expect(w.onChain.finalizedReads).toBeGreaterThan(1))
+      pending.handlers.onClose()
+      const op = p.events.at(-1)!.operation
+      expect(await p.open()).toMatchObject({ operation: op, state: 'pending' })
+      expect(p.shown.at(-1)?.view.step).toBe('pending')
+      expect(signatures(w)).toHaveLength(1)
+      expect(w.relay.posts).toHaveLength(1)
+      release()
+      await p.until('success')
+      expect(p.events.at(-1)).toMatchObject({ operation: op, state: 'succeeded' })
+    })
+
+    it('shows the purchase in progress at once after a retry, before the chain answers', async () => {
+      const w = world({ allowance: maxUint256 })
+      const p = page(w, { services: { sleep: () => new Promise((r) => setTimeout(r, 20)) } })
+      w.relay.state.mode = 'down'
+      await p.payMana()
+      const pending = await p.until('pending')
+      w.relay.state.mode = 'ok'
+      w.clock.now += RETRY_AFTER_MS
+      pending.handlers.onCheckAgain?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', retry: true }))
+      let release!: () => void
+      w.onChain.hold = new Promise<void>((r) => (release = r))
+      w.onChain.finalizedReads = 1
+      p.shown.at(-1)!.handlers.onRetry?.()
+      await vi.waitFor(() => expect(w.relay.posts).toHaveLength(2))
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending' }))
+      release()
+      await p.until('success')
     })
 
     it('opens RETRY on a dialog already up once the wait passes, with no press', async () => {

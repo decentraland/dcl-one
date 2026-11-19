@@ -1628,10 +1628,10 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     // A sale that went (or that the executor says went): whatever it read (a receipt for the relay's hash, a revert, no
     // answer), only the chain's evidence for this sale's own signed execution settles it (./manaEvidence). A reverted
     // transaction doesn't retire the sale's nonce: the sale may still run, so it is followed like any other.
+    // Kept as pending and shown so at once, closable: the watch (started once this returns) reads the chain.
     if (attempt.dispatched() || result.status === 'confirmed' || result.status === 'pending') {
       move(op, 'pending')
-      const done = await check(op as Operation & { buyer: string }, store).catch(() => false)
-      if (!done && slot.holds(op) && !TERMINAL_STATES.includes(op.state)) showPending(op)
+      showPending(op)
       return
     }
     if (result.status === 'skipped') {
@@ -1727,9 +1727,10 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       attempt.retire()
     }
     op.manaRetry = undefined
-    const done = await check(op as Operation & { buyer: string }, (op.store ??= ledger.storeFor(op))).catch(() => false)
-    if (!done && slot.holds(op) && !TERMINAL_STATES.includes(op.state)) showPending(op)
+    // Shown as still in progress at once, closable; the chain is read in the background, by the watch and one look now.
+    if (slot.holds(op) && !TERMINAL_STATES.includes(op.state)) showPending(op)
     void reconcile(op)
+    void check(op as Operation & { buyer: string }, (op.store ??= ledger.storeFor(op))).catch(() => false)
   }
 
   /**

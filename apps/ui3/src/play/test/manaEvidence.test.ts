@@ -2,7 +2,7 @@
 // to a signed send ends it as bought, and only a consumed nonce with no possible match ends it as not bought.
 import { describe, expect, it, vi } from 'vitest'
 import { encodeAbiParameters, encodeEventTopics, keccak256, parseAbiItem, type Hex } from 'viem'
-import { decodeExecution, resolveMana, type ManaEvidence, type ManaExecution } from '../shell/shop/manaEvidence'
+import { createManaEvidence, decodeExecution, resolveMana, type ManaEvidence, type ManaExecution } from '../shell/shop/manaEvidence'
 import type { ManaAttemptRecord } from '../shell/shop/manaPurchase'
 
 const STORE = '0x214ffc0f0103735728dc66b61a22e4f163e275ae'
@@ -89,6 +89,19 @@ describe('a MANA sale on chain', () => {
     const evidence = chain({ nonce: 8n })
     expect(await resolve(record({ fromBlock: String(F + 1n) }), evidence)).toEqual({ kind: 'waiting', retry: false })
     expect(evidence.executions).not.toHaveBeenCalled()
+  })
+
+  it('offers no RETRY on a finalized block below the checkpoint, even with the nonce exactly the sale’s', async () => {
+    expect(await resolve(record({ fromBlock: String(F + 1n) }), chain({ nonce: 7n }))).toEqual({ kind: 'waiting', retry: false })
+  })
+
+  it('gives up on a chain read that stalls, so a later look can try again', async () => {
+    const stalled = (_url: string, init?: RequestInit) =>
+      new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => reject(new DOMException('timed out', 'TimeoutError'))))
+    const reader = { call: async () => '0x' as Hex, receipt: () => new Promise<null>(() => {}), balance: async () => 0n, code: async () => '0x' as Hex }
+    const evidence = createManaEvidence({ url: () => 'https://rpc.test', fetchImpl: stalled as unknown as typeof fetch, reader, readMs: 20 })
+    await expect(evidence.finalized(137)).rejects.toThrow()
+    await expect(evidence.receipt(137, HASH)).rejects.toThrow(/too long/)
   })
 
   it('never ends a sale as not bought at a venue whose evidence isn’t verified', async () => {

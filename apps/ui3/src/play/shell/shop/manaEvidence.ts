@@ -94,15 +94,41 @@ export function decodeExecution(log: RawLog): ManaExecution {
   return { user: user.toLowerCase(), call, txHash: log.transactionHash, blockNumber: BigInt(log.blockNumber) }
 }
 
-/** The chain reads over each chain's configured RPC, as the Shop's own reader reaches it. */
-export function createManaEvidence(opts: { url?: (chainId: ChainId) => string | null; fetchImpl?: typeof fetch; reader: ChainReader }): ManaEvidence {
+/** How long one chain read may take before it gives way: the watch reads again later. */
+export const EVIDENCE_READ_MS = 15_000
+
+/** `promise`, or a rejection once `ms` passed: a stalled read never holds a later one up. */
+function deadline<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('A chain read took too long')), ms)
+    promise.then(
+      (v) => {
+        clearTimeout(timer)
+        resolve(v)
+      },
+      (e: unknown) => {
+        clearTimeout(timer)
+        reject(e)
+      }
+    )
+  })
+}
+
+/** The chain reads over each chain's configured RPC, as the Shop's own reader reaches it, each within EVIDENCE_READ_MS. */
+export function createManaEvidence(opts: { url?: (chainId: ChainId) => string | null; fetchImpl?: typeof fetch; reader: ChainReader; readMs?: number }): ManaEvidence {
   const urlFor = opts.url ?? rpcUrl
   const fetchImpl = opts.fetchImpl ?? ((...a: Parameters<typeof fetch>) => fetch(...a))
+  const readMs = opts.readMs ?? EVIDENCE_READ_MS
   let id = 1
   const rpc = async <T>(chainId: number, method: string, params: unknown[]): Promise<T> => {
     const url = urlFor(chainId as ChainId)
     if (!url) throw new Error(`No RPC is configured for chain ${chainId}`)
-    const res = await fetchImpl(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: id++, method, params }) })
+    const res = await fetchImpl(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: id++, method, params }),
+      signal: AbortSignal.timeout(readMs)
+    })
     if (!res.ok) throw new Error(`RPC ${method} answered HTTP ${res.status}`)
     const body = (await res.json()) as { result?: T; error?: { message?: string } }
     if (body.error) throw new Error(body.error.message ?? `RPC ${method} failed`)
@@ -131,7 +157,7 @@ export function createManaEvidence(opts: { url?: (chainId: ChainId) => string | 
       const tx = await rpc<{ to: string | null; input: Hex } | null>(chainId, 'eth_getTransactionByHash', [hash])
       return tx ? { to: tx.to, input: tx.input } : null
     },
-    receipt: (chainId, hash) => opts.reader.receipt(chainId as ChainId, hash)
+    receipt: (chainId, hash) => deadline(opts.reader.receipt(chainId as ChainId, hash), readMs)
   }
 }
 
@@ -169,13 +195,14 @@ export async function resolveMana(
   for (const send of attempt.sends) {
     if (send.hash && (await attributed(send.hash))) return { kind: 'succeeded', txHash: send.hash as Hex }
   }
+  // A finalized block below the checkpoint (a lagging node) says nothing yet, neither about N nor about a retry.
+  const fromBlock = BigInt(attempt.fromBlock)
+  if (finalized < fromBlock) return { kind: 'waiting', retry: false }
   const nonce = BigInt(attempt.nonce)
   const read = await evidence.nonceAt(chainId, ctx.venue, buyer, finalized)
   if (read === nonce) return { kind: 'waiting', retry: idle }
   if (read < nonce) return { kind: 'waiting', retry: false }
   // N was consumed by F: the sale ran at N (one of these sends), or it never can.
-  const fromBlock = BigInt(attempt.fromBlock)
-  if (finalized < fromBlock) return { kind: 'waiting', retry: false }
   const call = keccak256(attempt.data)
   const matches = (await evidence.executions(chainId, venue, fromBlock, finalized)).filter((e) => e.user === buyer && keccak256(e.call) === call)
   if (matches.length === 0) return verifiedVenue(chainId, venue) ? { kind: 'failed' } : { kind: 'waiting', retry: false }
