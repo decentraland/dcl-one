@@ -110,6 +110,29 @@ export function promoteAiAssistantSetting(settings: Partial<AppSettings> | undef
   }
 }
 
+const withoutTrailingSeparator = (value: string) => value.replace(/[\\/]+$/, '');
+
+/**
+ * Moves the scenes folder off the hidden app data folder, once, in place on merged settings
+ * not yet promoted. Only an install whose old folder holds no scenes moves: one that holds
+ * scenes keeps them where they are, and a folder the user chose is never touched. A user can
+ * still move to the new folder from Settings (Reset).
+ */
+export function promoteScenesPath(
+  settings: Partial<AppSettings> | undefined,
+  {
+    legacyPath,
+    defaultPath,
+    legacyHasScenes,
+  }: { legacyPath: string; defaultPath: string; legacyHasScenes: boolean },
+): void {
+  if (!settings || settings.scenesPathPromoted) return;
+  const current = settings.scenesPath || legacyPath;
+  const isLegacy = withoutTrailingSeparator(current) === withoutTrailingSeparator(legacyPath);
+  if (isLegacy) settings.scenesPath = legacyHasScenes ? legacyPath : defaultPath;
+  settings.scenesPathPromoted = true;
+}
+
 /** Enables the debug console once, in place, on merged settings not yet promoted — the
  * toolbar's "Open Debug Console" checkbox was removed, so this is now the only way an
  * existing install gets it turned on. */

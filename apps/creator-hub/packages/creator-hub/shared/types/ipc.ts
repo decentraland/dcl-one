@@ -177,6 +177,7 @@ export interface MobileDebugBroadcastResult {
 export interface Ipc {
   'electron.getEnvOverride': () => Env | null;
   'electron.getUserDataPath': () => string;
+  'electron.getDefaultScenesPath': () => string;
   'electron.getAppVersion': () => Promise<string>;
   'updater.getDownloadedVersion': () => string | null;
   'updater.setupUpdaterEvents': () => void;

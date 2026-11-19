@@ -10,6 +10,7 @@ import {
   shell,
 } from 'electron';
 import log from 'electron-log/main';
+import { getDefaultScenesPath } from '/shared/paths';
 import type { Env } from '/shared/types/env';
 import type { DeploymentLogEntry, RendererErrorLogEntry } from '/shared/types/ipc';
 
@@ -26,6 +27,11 @@ export function getEnvOverride(): Env | null {
 
 export function getHome() {
   return app.getPath('home');
+}
+
+/** Where new scenes go unless the user picks another folder. */
+export function getDefaultScenesPathForUser() {
+  return getDefaultScenesPath(getHome());
 }
 
 export function getUserDataPath() {

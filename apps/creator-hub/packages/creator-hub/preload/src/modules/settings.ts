@@ -1,18 +1,22 @@
-import path from 'path';
 import { ipcRenderer, type IpcRendererEvent } from 'electron';
 import {
   DEPENDENCY_UPDATE_STRATEGY,
   DEFAULT_DEPENDENCY_UPDATE_STRATEGY,
 } from '/shared/types/settings';
 import type { AppSettings } from '/shared/types/settings';
-import { SCENES_DIRECTORY } from '/shared/paths';
 
+import * as fs from '../services/fs';
 import { invoke } from '../services/ipc';
 import { getConfig, setConfig } from '../services/config';
 
+/**
+ * The default scenes folder, created when missing: Settings checks the folder it shows exists,
+ * and a user who resets to it may never have had it.
+ */
 export async function getDefaultScenesPath() {
-  const userDataPath = await invoke('electron.getUserDataPath');
-  return path.join(userDataPath, SCENES_DIRECTORY);
+  const scenesPath = await invoke('electron.getDefaultScenesPath');
+  await fs.mkdir(scenesPath, { recursive: true }).catch(() => undefined);
+  return scenesPath;
 }
 
 export async function getScenesPath() {

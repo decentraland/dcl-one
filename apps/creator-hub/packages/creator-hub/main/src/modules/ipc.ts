@@ -44,6 +44,7 @@ export function initIpc({ beforeQuitCleanup }: InitIpcOptions) {
   handleSync('electron.getEnvOverride', () => electron.getEnvOverride());
   handle('electron.getAppVersion', () => electron.getAppVersion());
   handle('electron.getUserDataPath', () => electron.getUserDataPath());
+  handle('electron.getDefaultScenesPath', () => electron.getDefaultScenesPathForUser());
   handle('electron.getWorkspaceConfigPath', (_event, path) =>
     electron.getWorkspaceConfigPath(path),
   );
