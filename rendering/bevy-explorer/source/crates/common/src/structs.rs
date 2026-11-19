@@ -1051,6 +1051,7 @@ impl GraphicsSettings {
         self.shadow_distance = preset.shadow_distance;
         self.light_count = preset.light_count;
         self.shadow_caster_count = preset.shadow_caster_count;
+        self.lens_flare = preset.lens_flare;
         self.dof = preset.dof;
         self.ssao = preset.ssao;
         self.fog = preset.fog;
@@ -2771,6 +2772,7 @@ mod tests {
         (g.vsync, g.fps_target, g.render_scale) = (false, 144, 0.5);
         (g.msaa, g.bloom, g.dof) = (AaSetting::FxaaLow, BloomSetting::High, DofSetting::Off);
         (g.shadow_distance, g.light_count, g.shadow_caster_count) = (200.0, 32, 8);
+        g.lens_flare = false;
         (g.ambient_brightness, g.oob, g.cel_shading) = (10, 0.0, false);
         config.reset_outdated_settings();
 
