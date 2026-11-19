@@ -72,6 +72,8 @@ pub struct ContentValidator<'a, E: ExternalCalls, B: BlockchainChecker> {
     pub ignore_blockchain_access: bool,
     /// An entity a peer serves: the item thumbnail is not checked and an
     /// item's equivalent pointers count as one, as the reference does.
+    /// A new deploy also needs integer emote and outfit slots, stricter than
+    /// the reference's number; a synced entity keeps the numeric reading.
     pub synced: bool,
     /// The access step already passed for this entity and chain (the
     /// read-through's check before its content was in): not asked again.
@@ -1552,6 +1554,22 @@ mod tests {
             assert!(!outfits_ok(&outfits("1.5", ""), false));
             assert!(outfits_ok(&outfits("1.5", ""), true));
             assert!(!outfits_ok(&outfits("4.5", ""), true));
+            // `-0.0` and `0` are one slot.
+            assert!(!profile_ok(&emotes("0,-0.0"), false));
+            assert!(!outfits_ok(&outfits("0,-0.0", ""), false));
+            // Slots are unique across every avatar of the profile.
+            let two_avatars = |first: &str, second: &str| {
+                let mut d = emotes(first);
+                let metadata = d.entity.metadata.as_mut().unwrap();
+                let mut avatar = metadata["avatars"][0].clone();
+                avatar["avatar"]["emotes"] = emotes(second).entity.metadata.unwrap()["avatars"][0]
+                    ["avatar"]["emotes"]
+                    .clone();
+                metadata["avatars"].as_array_mut().unwrap().push(avatar);
+                d
+            };
+            assert!(profile_ok(&two_avatars("1", "2.0"), false));
+            assert!(!profile_ok(&two_avatars("1", "1.0"), false));
         }
 
         #[tokio::test]

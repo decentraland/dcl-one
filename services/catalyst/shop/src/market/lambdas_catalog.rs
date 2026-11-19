@@ -1334,6 +1334,10 @@ fn apply_names(entity: &mut Value, owned_names: &[String]) {
     if !owned_names.is_empty() {
         kept.extend(extra);
     }
+    let kept: Vec<Value> = kept
+        .into_iter()
+        .map(super::profiles::integral_slot)
+        .collect();
     *metadata = json!({ "outfits": kept, "namesForExtraSlots": owned_names });
 }
 
@@ -1736,6 +1740,19 @@ mod tests {
         assert_eq!(
             e["metadata"],
             json!({ "outfits": [{ "slot": 0 }, { "slot": 7 }], "namesForExtraSlots": ["alice"] })
+        );
+    }
+
+    #[test]
+    fn integral_float_outfit_slots_are_served_as_integers() {
+        let mut e: Value = serde_json::from_str(
+            r#"{"metadata": {"outfits": [{"slot": 1.0}, {"slot": 5e0}, {"slot": 2.5}]}}"#,
+        )
+        .unwrap();
+        apply_names(&mut e, &["alice".to_string()]);
+        assert_eq!(
+            serde_json::to_string(&e["metadata"]["outfits"]).unwrap(),
+            r#"[{"slot":1},{"slot":2.5},{"slot":5}]"#
         );
     }
 

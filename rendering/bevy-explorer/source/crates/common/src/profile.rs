@@ -11,8 +11,22 @@ pub struct AvatarSnapshots {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct AvatarEmote {
+    #[serde(deserialize_with = "integral_slot")]
     pub slot: u32,
     pub urn: String,
+}
+
+/// A slot in any integral JSON number form (`1`, `1.0`, `1e0`): the catalyst
+/// accepts and serves them all.
+fn integral_slot<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
+    let slot = f64::deserialize(deserializer)?;
+    if slot.fract() == 0.0 && (0.0..=u32::MAX as f64).contains(&slot) {
+        Ok(slot as u32)
+    } else {
+        Err(serde::de::Error::custom(format!(
+            "invalid emote slot {slot}, expected a non-negative integer"
+        )))
+    }
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, Default)]
@@ -197,6 +211,30 @@ impl Default for SerializedProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn emote_slots_read_in_every_integral_json_number_form() {
+        let slot = |slot: &str| {
+            serde_json::from_str::<AvatarEmote>(&format!(r#"{{"slot": {slot}, "urn": "wave"}}"#))
+                .map(|emote| emote.slot)
+        };
+        for (text, expected) in [("1", 1), ("1.0", 1), ("1e0", 1), ("-0.0", 0)] {
+            assert_eq!(slot(text).unwrap(), expected, "{text}");
+        }
+        for text in ["1.5", "-1", "\"1\""] {
+            assert!(slot(text).is_err(), "{text}");
+        }
+
+        // The scene IPC still round-trips a profile's integer slots.
+        let mut profile = SerializedProfile::default();
+        profile.avatar.emotes = Some(vec![AvatarEmote {
+            slot: 3,
+            urn: "wave".to_owned(),
+        }]);
+        let bytes = crate::rpc::rmp_encode(&profile).unwrap();
+        let decoded: SerializedProfile = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(decoded.avatar.emotes, profile.avatar.emotes);
+    }
 
     #[test]
     fn compact_profile_of_a_full_profile() {
