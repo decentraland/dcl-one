@@ -1,7 +1,7 @@
 // Engine logic - ES module
 // Handles WASM/WebGPU initialization and game execution
 
-import init, { engine_init, engine_start, engine_spawn_worker, engine_console_command, engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take, gpu_cache_hash, report_pointer_lock, media_host_main, audio_host_main, livekit_host_main, engine_prepare_render, engine_set_viewport_active } from "./pkg/webgpu_build.js";
+import init, { engine_init, engine_start, engine_spawn_worker, engine_console_command, engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take, gpu_cache_hash, report_pointer_lock, media_host_main, audio_host_main, livekit_host_main, engine_prepare_render, engine_set_viewport_active, engine_set_page_focus, engine_set_hud_main_thread_cost } from "./pkg/webgpu_build.js";
 import { createSandboxHost } from "./sandbox_host.js";
 import { installContentCachePageFunctions, requestPersistentStorage } from "./content_cache.js";
 
@@ -281,50 +281,6 @@ export async function initEngine() {
     (e) => console.warn("[Main JS] persistent storage request failed", e),
   );
 
-  // Setup HLS video source callback
-  window.setVideoSource = (video, src) => {
-    async function isHlsStream(url) {
-      try {
-        const response = await fetch(url, {
-          method: "HEAD",
-          mode: "cors",
-        });
-
-        if (!response.ok) {
-          return false;
-        }
-
-        const contentType = response.headers.get("Content-Type");
-
-        if (contentType) {
-          return (
-            contentType.includes("application/vnd.apple.mpegurl") ||
-            contentType.includes("application/x-mpegURL")
-          );
-        }
-
-        return false;
-      } catch (error) {
-        return false;
-      }
-    }
-
-    if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = src;
-    } else if (Hls.isSupported()) {
-      // check if we need hls
-      setTimeout(async () => {
-        if (await isHlsStream(src)) {
-          var hls = new Hls();
-          hls.loadSource(src);
-          hls.attachMedia(video);
-        } else {
-          video.src = src;
-        }
-      }, 0);
-    }
-  };
-
   // The scene sandbox workers (sandbox_host.js), behind the page functions the engine calls.
   const sandboxes = createSandboxHost({
     compiledModule,
@@ -511,6 +467,32 @@ export function start(options = {}) {
   };
   document.addEventListener("visibilitychange", updateViewport);
   updateViewport();
+
+  // report `document.hasFocus()` to the engine on every change
+  const updatePageFocus = () => engine_set_page_focus(document.hasFocus());
+  window.addEventListener("focus", updatePageFocus);
+  window.addEventListener("blur", updatePageFocus);
+  document.addEventListener("visibilitychange", updatePageFocus);
+  updatePageFocus();
+
+  // the HUD's main-thread cost window, every second: the window ends only once the engine
+  // stored it, so one refused while the engine holds its lock stays and grows until the next
+  // tick; what accumulated while the tab was hidden is discarded when it shows again
+  setInterval(() => {
+    const cost = window.__bevyPeekHudMainThreadCost?.();
+    if (!cost) return;
+    const commits = cost.reactCommits;
+    const frames = cost.longAnimationFrames;
+    const stored = engine_set_hud_main_thread_cost(
+      cost.coveredSeconds,
+      commits !== null, commits?.commitCount ?? 0, commits?.commitTimeSumMs ?? 0,
+      frames !== null, frames?.frameCount ?? 0, frames?.hudScriptTimeSumMs ?? 0, frames?.styleAndLayoutTimeSumMs ?? 0,
+    );
+    if (stored) window.__bevyTakeHudMainThreadCost();
+  }, 1000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) window.__bevyDiscardHudMainThreadCost?.();
+  });
 
   // The engine worker cannot see the document's pointer-lock state (Escape, a refused request):
   // report it through the shared wasm memory (src/web.rs report_pointer_lock).

@@ -23,6 +23,10 @@ use dcl_component::proto_components::{
     },
     social_service::v2::PrivateMessagePrivacySetting,
 };
+pub use platform::{
+    default_color_grading, scatter_bloom, BLOOM_SCATTER, GRADING_MIDTONES_RANGE,
+    GRADING_SHADOWS_WEIGHT,
+};
 use serde::{Deserialize, Serialize};
 use system_api_types::SatelliteView;
 pub use system_api_types::{PermissionLevel, PermissionType, PermissionValue, PointerTargetType};
@@ -797,6 +801,7 @@ impl AppConfig {
         self.graphics.ssao = default.graphics.ssao;
         self.graphics.sky_reflections = default.graphics.sky_reflections;
         self.graphics.oob = default.graphics.oob;
+        self.graphics.spring_bones = default.graphics.spring_bones;
         self.scene_load_distance = default.scene_load_distance;
         self.scene_unload_extra_distance = default.scene_unload_extra_distance;
         self.scene_imposter_distances = default.scene_imposter_distances.clone();
@@ -968,12 +973,18 @@ pub struct GraphicsSettings {
     pub avatar_outline: bool,
     /// show a hologram ghost where an avatar is still loading
     pub avatar_ghosts: bool,
+    /// swing the extra bones of wearables (hair, tails, capes) on the nearest avatars
+    pub spring_bones: bool,
     /// bytes of throttled asset uploads to the gpu per frame; 0 = unlimited
     pub gpu_bytes_per_frame: usize,
     /// share of the window's device pixels the world renders at, upscaled to the window with FSR
     /// (`visuals::upscale`); the UI stays at full resolution
     pub render_scale: f32,
 }
+
+/// The ambient brightness setting at which the Trilight ambient is the sky preset's
+/// (visuals::sky_envmap).
+pub const AMBIENT_BRIGHTNESS_DEFAULT: i32 = 50;
 
 impl Default for GraphicsSettings {
     fn default() -> Self {
@@ -988,16 +999,17 @@ impl Default for GraphicsSettings {
             shadow_caster_count: 0,
             window: WindowSetting::Windowed,
             // fullscreen_res: FullscreenResSetting(UVec2::new(1280,720)),
-            fog: FogSetting::Atmospheric,
+            fog: FogSetting::On,
             bloom: BloomSetting::Low,
             dof: DofSetting::High,
             ssao: SsaoSetting::Off,
             sky_reflections: SkyReflectionSetting::High,
             oob: 2.0,
-            ambient_brightness: 50,
+            ambient_brightness: AMBIENT_BRIGHTNESS_DEFAULT,
             cel_shading: true,
             avatar_outline: true,
             avatar_ghosts: true,
+            spring_bones: false,
             gpu_bytes_per_frame: 10_000_000,
             render_scale: 1.0,
         }
@@ -1100,6 +1112,16 @@ pub const SUN_CASCADE_4_SPLITS: [f32; 3] = [0.102, 0.282, 0.474];
 pub const SPOT_SHADOW_MAX_DISTANCE: f32 = 20.0;
 pub const MIN_CASCADE: f32 = 0.1;
 
+/// A light with its own cascades (the lobby stage's key light): the shadow settings only turn its
+/// shadows on or off.
+#[derive(Component)]
+pub struct StageLight;
+
+/// The camera that shows the lobby stage, drawn with no post-processing: the bloom setting
+/// leaves it alone.
+#[derive(Component)]
+pub struct StageCamera;
+
 /// The sun's cascades for a quality and a shadow distance, `None` when it casts no shadows.
 pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShadowConfig> {
     if distance <= 0.0 {
@@ -1154,8 +1176,8 @@ pub struct FullscreenResSetting(pub UVec2);
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FogSetting {
     Off,
-    Basic,
-    Atmospheric,
+    #[serde(alias = "Basic", alias = "Atmospheric")]
+    On,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1350,9 +1372,20 @@ pub struct SceneMeta {
     /// ([`PortableExperiencesToggle`]) and `nearbyVoiceChat` are read. Kept as raw json so a value of another shape never
     /// fails the scene.json.
     pub feature_toggles: Option<serde_json::Value>,
+    /// `isPortableExperience`. Kept as raw json so a value of another shape never fails the
+    /// scene.json.
+    pub is_portable_experience: Option<serde_json::Value>,
 }
 
 impl SceneMeta {
+    /// `isPortableExperience: true`, however the scene was loaded.
+    pub fn declares_portable_experience(&self) -> bool {
+        self.is_portable_experience
+            .as_ref()
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    }
+
     /// What this scene says about portable experiences while the player stands in it.
     pub fn portable_experiences_toggle(&self) -> PortableExperiencesToggle {
         self.feature_toggles
@@ -1399,6 +1432,11 @@ impl std::str::FromStr for PortableExperiencesToggle {
 
 #[derive(Component)]
 pub struct NearbyVoiceDisabled;
+
+/// On the root of a scene loaded as a portable experience whose scene.json also declares
+/// `isPortableExperience: true`: the only scenes whose `MapPin`s are read.
+#[derive(Component)]
+pub struct ReadsMapPins;
 
 pub trait PermissionStrings {
     fn active(&self) -> &str;
@@ -1774,8 +1812,8 @@ pub struct SceneGlobalLight {
     /// setting below the horizon at night while the light follows the moon
     pub sun_illuminance: f32,
     pub sun_direction: Vec3,
-    /// the ambient light the sky env map is levelled towards: white at the ambient brightness
-    /// setting unless a scene overrides it, as a tint and a multiplier
+    /// a tint and a multiplier on the Trilight ambient and on the floor the sky reflections are
+    /// levelled towards (visuals::sky_envmap): white at 1 unless a scene overrides it
     pub ambient_color: Color,
     pub ambient_brightness: f32,
     /// a scene hid the sun and moon discs (not their light)
@@ -1884,6 +1922,42 @@ pub enum AppError {
     NetworkFailure(anyhow::Error),
 }
 
+/// The client's focus: one representation for the native window's focus and the browser page's
+/// focus.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientWindowFocus {
+    Focused,
+    NoFocus,
+}
+
+impl ClientWindowFocus {
+    /// From the OS's focus report for the window, not `Window::focused`, which also holds
+    /// unanswered focus requests.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn from_window_focused(window_focused: &bevy::window::WindowFocused) -> Self {
+        Self::from_has_focus(window_focused.focused)
+    }
+
+    /// `page_has_focus` is `document.hasFocus()`, not `Window::focused`.
+    #[cfg(target_arch = "wasm32")]
+    pub fn from_page_focus(page_has_focus: bool) -> Self {
+        Self::from_has_focus(page_has_focus)
+    }
+
+    fn from_has_focus(has_focus: bool) -> Self {
+        if has_focus {
+            Self::Focused
+        } else {
+            Self::NoFocus
+        }
+    }
+}
+
+/// Asks the OS to focus the primary window. [`ClientWindowFocus`] changes only once the OS
+/// reports the focus.
+#[derive(Event, Debug, Clone, Copy)]
+pub struct RequestClientWindowFocus;
+
 #[derive(Resource, Default, Serialize, Deserialize, Clone)]
 pub struct MicState {
     pub available: bool,
@@ -1905,7 +1979,16 @@ pub struct MicState {
 }
 
 impl MicState {
-    pub fn scene_blocked(&self) -> bool {
+    /// This state with `enabled` false while the client window lacks focus, since the mic is
+    /// paused then.
+    pub fn gated_by_client_window_focus(&self, focus: ClientWindowFocus) -> Self {
+        Self {
+            enabled: self.enabled && focus == ClientWindowFocus::Focused,
+            ..self.clone()
+        }
+    }
+
+    pub const fn scene_blocked(&self) -> bool {
         self.scene_blocked
     }
 
@@ -1994,7 +2077,7 @@ pub struct Clips {
     pub named: HashMap<String, (AnimationNodeIndex, f32)>,
 }
 
-/// A remote player's avatar; comms spawns it beside `ForeignPlayer`. Avatar systems that
+/// A remote player's avatar; comms' `ForeignPlayer` requires it. Avatar systems that
 /// treat remote and local emotes differently read this instead of the comms type.
 #[derive(Component, Default, Debug, Clone, Copy)]
 pub struct ForeignAvatar;
@@ -2209,10 +2292,172 @@ impl CameraSmoothing {
 #[derive(Event)]
 pub struct PointAtMarkerVisibilityChanged;
 
+/// The local player's language as a BCP-47 tag: the chosen one, else the system's. `None` where
+/// no player is present (headless).
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
+pub struct PlayerLanguage(pub Option<String>);
+
+/// Who may DM a user.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DmPrivacy {
+    #[default]
+    All,
+    OnlyFriends,
+}
+
+impl From<PrivateMessagePrivacySetting> for DmPrivacy {
+    fn from(value: PrivateMessagePrivacySetting) -> Self {
+        match value {
+            PrivateMessagePrivacySetting::All => DmPrivacy::All,
+            PrivateMessagePrivacySetting::OnlyFriends => DmPrivacy::OnlyFriends,
+        }
+    }
+}
+
+impl From<DmPrivacy> for PrivateMessagePrivacySetting {
+    fn from(value: DmPrivacy) -> Self {
+        match value {
+            DmPrivacy::All => PrivateMessagePrivacySetting::All,
+            DmPrivacy::OnlyFriends => PrivateMessagePrivacySetting::OnlyFriends,
+        }
+    }
+}
+
+/// Another user's DM privacy, as returned by `GetPrivateMessagesSettings`.
+#[derive(Clone, Debug)]
+pub struct DmPrivacyOf {
+    pub address: String,
+    pub privacy: DmPrivacy,
+}
+
+/// A scene's javascript, as loaded from its content
+#[derive(Asset, Debug, Clone, TypePath)]
+pub struct SceneJsFile(pub Arc<String>);
+
+/// A world password the HUD must ask for (see `ipfs::world_access`); answered with the password,
+/// or `None` when the player gives up. Dropped unanswered when the realm change no longer needs it.
+pub struct WorldPasswordPrompt {
+    pub world: String,
+    /// Why the previous answer was refused; `None` on the first ask
+    pub error: Option<String>,
+    pub answer: tokio::sync::oneshot::Sender<Option<String>>,
+}
+
+/// Where world password prompts go, installed by whatever shows them (the system bridge). Without
+/// it a password-protected world can't be entered.
+#[derive(Resource, Clone)]
+pub struct WorldPasswordPrompter(pub tokio::sync::mpsc::UnboundedSender<WorldPasswordPrompt>);
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::inputs::CommonInputAction;
+
+    #[test]
+    fn fog_reads_the_old_variants_as_on() {
+        for old in ["\"Basic\"", "\"Atmospheric\"", "\"On\""] {
+            assert_eq!(
+                serde_json::from_str::<FogSetting>(old).unwrap(),
+                FogSetting::On
+            );
+        }
+    }
+
+    #[test]
+    fn grading_brightens_shadows_and_keeps_gamma_neutral() {
+        let g = default_color_grading();
+        // the shadows weight w adds 4w to the (1, 1, 1) multiplier
+        assert_eq!(g.shadows.gain, 1.0 + 4.0 * GRADING_SHADOWS_WEIGHT);
+        assert_eq!(g.shadows.lift, 0.0);
+        assert_eq!(
+            (g.shadows.gamma, g.midtones.gamma, g.highlights.gamma),
+            (1.0, 1.0, 1.0)
+        );
+        assert_eq!(g.global.midtones_range, GRADING_MIDTONES_RANGE);
+    }
+
+    const TONEMAPPING_SHADER: &str = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/rendering/bevy-explorer/bevy/crates/bevy_core_pipeline/src/tonemapping/tonemapping_shared.wgsl"
+    ));
+
+    /// bevy_core_pipeline's `sectional_color_grading` (tonemapping_shared.wgsl): the weight of
+    /// the shadows section for a colour whose channels average `level`.
+    fn bevy_shadows_weight(level: f32) -> f32 {
+        const LEVEL_MARGIN: f32 = 0.1;
+        let midtones = (level - GRADING_MIDTONES_RANGE.start) / (2.0 * LEVEL_MARGIN) + 0.5;
+        1.0 - midtones.clamp(0.0, 1.0)
+    }
+
+    /// The shader the function above stands for: the shadows section fades into the midtones.
+    /// With the fade given to the highlights instead, the shadow gain ends at a hard step, and
+    /// a pixel just above the step comes out darker than one just below it: a dark rim along
+    /// every shadow edge, and blotches wherever a shaded surface straddles the step.
+    #[test]
+    fn bevy_fades_the_shadows_section_into_the_midtones() {
+        assert!(TONEMAPPING_SHADER.contains("const LEVEL_MARGIN: f32 = 0.1;"));
+        let fade = TONEMAPPING_SHADER
+            .split("level < midtone_range.x + LEVEL_MARGIN")
+            .nth(1)
+            .and_then(|rest| rest.split("} else if").next())
+            .expect("the shadows to midtones fade");
+        assert!(fade.contains("levels.x = 1.0 - levels.y;"), "{fade}");
+    }
+
+    #[test]
+    fn grading_shadow_band_follows_the_smoothstep() {
+        // the target band: `1 - smoothstep(start, end, luma)` with the
+        // limits 0 and 0.3
+        let target = |level: f32| {
+            let t = (level / 0.3).clamp(0.0, 1.0);
+            1.0 - t * t * (3.0 - 2.0 * t)
+        };
+        for step in 0..=100 {
+            let level = step as f32 / 100.0;
+            let (ours, theirs) = (bevy_shadows_weight(level), target(level));
+            assert!((ours - theirs).abs() < 0.08, "{level}: {ours} vs {theirs}");
+        }
+    }
+
+    #[test]
+    fn grading_never_darkens_a_brighter_pixel() {
+        let gain = default_color_grading().shadows.gain;
+        let graded = |level: f32| level * (1.0 + (gain - 1.0) * bevy_shadows_weight(level));
+        for step in 0..1000 {
+            let (darker, brighter) = (step as f32 / 1000.0, (step + 1) as f32 / 1000.0);
+            assert!(graded(darker) < graded(brighter), "{darker}");
+        }
+    }
+
+    /// bevy_core_pipeline's `compute_blend_factor` (bloom/mod.rs): the blend constant of the
+    /// upsample pass that adds mip `mip` of `max_mip` into the finer one; mip 0 is the composite.
+    fn bevy_bloom_blend(b: &bevy::core_pipeline::bloom::Bloom, mip: f32, max_mip: f32) -> f32 {
+        let lf_boost = (1.0
+            - (1.0 - mip / max_mip).powf(1.0 / (1.0 - b.low_frequency_boost_curvature)))
+            * b.low_frequency_boost;
+        b.intensity + lf_boost
+    }
+
+    #[test]
+    fn bloom_weighs_mips_by_scatter() {
+        let b = scatter_bloom();
+        assert_eq!(b.prefilter.threshold, 1.0);
+        // the knee is threshold * 0.5; bevy: knee = threshold * softness
+        assert_eq!(b.prefilter.threshold_softness, 0.5);
+        assert_eq!(b.high_pass_frequency, 1.0);
+        // a scatter bloom folds lerp(fine, coarse, s) over the chain and adds the result once: mip i weighs
+        // (1 - s) s^i. bevy adds mip i with weight blend(0) * blend(1) * .. * blend(i).
+        let max_mip = 7.0;
+        let mut weight = 1.0;
+        for mip in 0..=7 {
+            weight *= bevy_bloom_blend(&b, mip as f32, max_mip);
+            let scatter = (1.0 - BLOOM_SCATTER) * BLOOM_SCATTER.powi(mip);
+            assert!(
+                (weight - scatter).abs() < 0.002,
+                "mip {mip}: bevy {weight} vs scatter {scatter}"
+            );
+        }
+    }
 
     #[test]
     fn landscape_distance_from_config_is_clamped() {
@@ -2529,60 +2774,23 @@ mod tests {
             );
         }
     }
-}
 
-/// The local player's language as a BCP-47 tag: the chosen one, else the system's. `None` where
-/// no player is present (headless).
-#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
-pub struct PlayerLanguage(pub Option<String>);
-
-/// Who may DM a user.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum DmPrivacy {
-    #[default]
-    All,
-    OnlyFriends,
-}
-
-impl From<PrivateMessagePrivacySetting> for DmPrivacy {
-    fn from(value: PrivateMessagePrivacySetting) -> Self {
-        match value {
-            PrivateMessagePrivacySetting::All => DmPrivacy::All,
-            PrivateMessagePrivacySetting::OnlyFriends => DmPrivacy::OnlyFriends,
+    #[test]
+    fn is_portable_experience_parses_leniently() {
+        let meta = |field: &str| -> SceneMeta {
+            serde_json::from_str(&format!(
+                r#"{{"main":"bin/index.js","scene":{{"base":"0,0","parcels":["0,0"]}}{field}}}"#
+            ))
+            .unwrap()
+        };
+        assert!(meta(r#","isPortableExperience":true"#).declares_portable_experience());
+        for field in [
+            "",
+            r#","isPortableExperience":false"#,
+            r#","isPortableExperience":"true""#,
+            r#","isPortableExperience":1"#,
+        ] {
+            assert!(!meta(field).declares_portable_experience(), "{field}");
         }
     }
 }
-
-impl From<DmPrivacy> for PrivateMessagePrivacySetting {
-    fn from(value: DmPrivacy) -> Self {
-        match value {
-            DmPrivacy::All => PrivateMessagePrivacySetting::All,
-            DmPrivacy::OnlyFriends => PrivateMessagePrivacySetting::OnlyFriends,
-        }
-    }
-}
-
-/// Another user's DM privacy, as returned by `GetPrivateMessagesSettings`.
-#[derive(Clone, Debug)]
-pub struct DmPrivacyOf {
-    pub address: String,
-    pub privacy: DmPrivacy,
-}
-
-/// A scene's javascript, as loaded from its content
-#[derive(Asset, Debug, Clone, TypePath)]
-pub struct SceneJsFile(pub Arc<String>);
-
-/// A world password the HUD must ask for (see `ipfs::world_access`); answered with the password,
-/// or `None` when the player gives up. Dropped unanswered when the realm change no longer needs it.
-pub struct WorldPasswordPrompt {
-    pub world: String,
-    /// Why the previous answer was refused; `None` on the first ask
-    pub error: Option<String>,
-    pub answer: tokio::sync::oneshot::Sender<Option<String>>,
-}
-
-/// Where world password prompts go, installed by whatever shows them (the system bridge). Without
-/// it a password-protected world can't be entered.
-#[derive(Resource, Clone)]
-pub struct WorldPasswordPrompter(pub tokio::sync::mpsc::UnboundedSender<WorldPasswordPrompt>);

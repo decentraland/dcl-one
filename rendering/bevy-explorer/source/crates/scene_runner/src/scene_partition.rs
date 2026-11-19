@@ -58,11 +58,18 @@ pub fn sampling_transform(
     player: &Query<&GlobalTransform, With<PrimaryUser>>,
 ) -> Option<(Vec3, Option<(Vec3, Vec3)>)> {
     let player = player.single().ok()?;
-    let camera = camera
+    Some((player.translation(), camera_facing(camera)))
+}
+
+/// The rendering camera's position and forward direction, `None` without one (the headless
+/// server): what "in front of the camera" is measured against.
+pub(crate) fn camera_facing(
+    camera: &Query<&GlobalTransform, (With<PrimaryCamera>, With<Camera>)>,
+) -> Option<(Vec3, Vec3)> {
+    camera
         .single()
         .ok()
-        .map(|camera| (camera.translation(), camera.forward().as_vec3()));
-    Some((player.translation(), camera))
+        .map(|camera| (camera.translation(), camera.forward().as_vec3()))
 }
 
 #[allow(clippy::type_complexity)]

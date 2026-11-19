@@ -41,7 +41,7 @@ at 22 MB raw and 7.6 MB gzipped, needing no isolation headers.
   MSAA, and no scene-bounds cell table (`scene_material`'s `webgl2` feature), which the
   preview, showing no scenes, never reads.
 - Changes the preview needs in Explorer crates land in those crates behind features or as
-  general fixes (for example the `assets` crate's `preview` feature, which embeds only the
+  general fixes (for example the `assets` crate's `avatar-preview` feature, which embeds only the
   shaders, the ghost body and the idle clip); the preview carries no copies of Explorer code.
 - The Explorer's CI does not gate on the preview. The preview's own workflow builds and
   publishes it, and runs on changes to the Explorer crates it links, so a change that breaks
@@ -66,5 +66,5 @@ like `library/uuav`: a second workspace next to the Explorer's, consuming it by 
 - Upstream fixes the spike identified: meshes the wearable loader loads for the main world
   only must be promoted by whoever spawns them, a step that belongs in `collectibles`;
   `ipfs` does not build with `ipfs_debug` off.
-- The preview module must stay small: size-first release profile, the `assets` `preview`
+- The preview module must stay small: size-first release profile, the `assets` `avatar-preview`
   feature, and a size check in its workflow.

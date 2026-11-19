@@ -28,9 +28,9 @@ scene and world administration and moderation.
 |---|---|---|---|---|
 | Signed fetch: crypto-middleware 6.x payload, legacy form only with canonical metadata keys (37776fc, 315f59d) | `GK/logic/utils.ts:23-48` | `G/auth.rs:196-258`, keys `:53-63` | MATCH | `either_shape_with_mixed_case_metadata_verifies_through_the_allowlist` |
 | Re-spelled `signer` key refused (637d2a4) | crypto-middleware 6.3.0 | `G/auth.rs:117-119,219-226` | MATCH | `the_signer_allowlist_refuses_missing_respelled_and_unlisted_signers` |
-| No signer allow-list on either adapter route | `utils.ts:34-103` | `G/admission/handlers.rs:98-106`, `G/auth.rs:306-322` | MATCH | – |
-| Any verify failure answers 401 | `utils.ts:46-48` | `handlers.rs:106,231` | MATCH | capture `get-scene-adapter-unauth` (not replayed) |
-| Realm name source | signed `realmName` only, else 401 (`utils.ts:50-53`) | `realmName`, then `realm.serverName`, then the unsigned body (`handlers.rs:58-64,112-113`) | DIVERGENCE (more permissive) | `realm_and_scene_prefer_the_signed_metadata_over_the_body` |
+| Signer gate on the adapter routes | none (`utils.ts:34-103`) | `/get-scene-adapter` refuses the scene signer, a re-spelled key too (`verify_wallet_signed_fetch`, `G/auth.rs`); `/get-server-scene-adapter` has no gate | DIVERGENCE (stricter) | `the_scene_adapter_refuses_the_scene_signer` |
+| Any verify failure answers 401 | `utils.ts:46-48` | `handlers.rs:106,231` | MATCH | captures `get-scene-adapter-unauth`, `get-server-scene-adapter-unauth`, replayed by `the_gatekeeper_answers_its_stateless_captures_as_production` |
+| Realm name source, `/get-scene-adapter` | signed `realmName` only, else 401 (`utils.ts:50-53`) | signed `realmName` only, else 401; `sceneId` signed only, else 400; the body is ignored (`handlers.rs`, `signed_scene_target`) | MATCH | `room_comes_from_signed_realm_name_and_scene_id_only`, `the_scene_adapter_room_comes_from_signed_metadata_not_the_body` |
 | Canonical metadata keys | 8 keys | adds `displayName` (`G/auth.rs:48-52`) | DIVERGENCE | untested |
 | Platform ban 403, deny list 401, order | platform first (`handlers/comms-scene-handler.ts:46-63`) | deny list first (`handlers.rs:109-111`) | GAP-AU-8 | untested |
 | Platform-ban lookup failure | fail open (`access-gate/component.ts:30-36`) | fail closed, 503 (`G/moderation/store.rs:383-400`) | DIVERGENCE (safer) | `undetermined_scene_and_private_message_tokens_request_retry` |
@@ -134,7 +134,7 @@ scene and world administration and moderation.
 6. **GAP-AU-6: `with_not_before` shortens island tokens.** Severity P2. Keep the lifetime and reject a non-positive `nbf`, as upstream does.
 7. **GAP-AU-7: A world scene ban answers 401 "not authorized to access this world".** Severity P2. Upstream answers 403 "User is banned from this scene".
 8. **GAP-AU-8: Check order.** Severity P2. A wallet both deny-listed and platform-banned gets 401; upstream gives 403.
-9. **GAP-AU-9: Undocumented token claims and realm sources.** Severity P2. Record `name`, `isGuest` metadata, server-token metadata, the island `canUpdateOwnMetadata=false`, `displayName` as a canonical key and the `realm.serverName`/body realm fallbacks as divergences, or remove them.
+9. **GAP-AU-9: Undocumented token claims and realm sources.** Severity P2. Record `name`, `isGuest` metadata, server-token metadata, the island `canUpdateOwnMetadata=false`, `displayName` as a canonical key as divergences, or remove them. `/get-server-scene-adapter` and streaming still fall back to `realm.serverName` (`realm_name_from_metadata`). The web place-page scene chat signs `/get-scene-adapter` as `dcl:explorer`.
 10. **GAP-AU-10: Extended holders cannot write admins or scene bans.** Severity P1.
     - Expected: LAND operators, world deployment and streaming grantees and land-lease holders may add and remove admins and scene bans (`isSceneOwnerOrAdmin`).
     - dcl-one: only an explicit admin or the owner (`Policy::is_admin`). The listing gate already uses the extended check (`holds_extended_permission`, `scene_policy.rs:410`); reuse it for writes.

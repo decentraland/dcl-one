@@ -68,7 +68,6 @@ Code that serves none of these deliverables is removed, not kept for reference:
 - Reach other files through `env!("DCL_ONE_ROOT")`, never `../` chains.
 - Domain crates follow `docs/module-layers.toml`; no upward dependency.
 - Keep the fresh-schema bootstrap single.
-- Put helpers other crates' tests use behind a `test-support` feature.
 - ops, presence, serve and main stay in the root crate.
 
 ## Ownership
@@ -79,7 +78,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 - `shared::notifications` is the one write path into `social.notifications` and its email delivery rows for every producer, Social and Shop alike; Social owns those tables, reads them, delivers the email and keeps the templates, and `with_emailable_kinds!` is the one list of templated types both use. Shop depends on neither Social, Comms nor Explore: it reads flag documents through `shared::feature_flags` and serves the Registry's CORS from `shared::cors`; `serve` hands it Social's mailer and profile-image renderer and hands Comms its name owners (`src/serve_adapters.rs`).
 - `worlds`: world catalogues, deployments, permissions, world/player storage, encrypted env values, SDK7 scene hosting with per-scene isolation, limits and cancellation.
 - Guest code reaches storage through a scoped host API, never the shared pool.
-- `comms` (layer 8): Pulse, the archipelago connector (`/ws`), the gatekeeper (admission, moderation, player reports, voice, streaming, LiveKit webhook, room events) and presence; all but Pulse run in `catalyst serve`.
+- `comms` (layer 8): Pulse, the archipelago connector (`/ws`), the gatekeeper (admission, moderation, player reports, voice, streaming, LiveKit webhook, room events), the Cast presenter (`cast_presenter`, its LiveKit side in `cast-bot` processes) and presence; all but Pulse and `cast-bot` run in `catalyst serve`.
   - Worlds supplies access and scene identity via `comms::interfaces`; social supplies membership, privacy and notification persistence via `SocialDirectory` and keeps MLS.
   - Comms owns streaming lifecycle and cleanup intent; social owns notification delivery records.
   - Comms depends on no Explore code. The gatekeeper's removal reader (`gatekeeper::removed_places`) reaches Explore by shared SQL: it reads place context from `explore.place_indexed`, `content.active_pointers` and `content.deployments`; on `explore.place_removal_pending` it reads due rows, sets `owner_address` (only when empty), `cleaned_at` (in its cleanup transaction), `attempts` and `retry_at`, deletes a cleaned row, and deletes the place's `explore.place_removal_state` row once neither `explore.place` nor `explore.place_world_local` holds the place and no `explore.place_removal_pending` row for it remains. Explore's trigger alone inserts those rows. Changing a column it reads or writes updates this paragraph and `DATABASE.md` "Place removal feed" in the same change. Explore's live counts take the gatekeeper's participants through `src/serve_adapters.rs`.

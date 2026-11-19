@@ -294,6 +294,22 @@
 .clear:active:not(:disabled) {
   background: var(--tint-clear-press);
 }
+.navigate {
+  background: var(--map-nav-tint);
+  color: var(--brand);
+}
+.navigate:hover:not(:disabled),
+.navigate:focus-visible {
+  background: var(--map-nav-hover);
+}
+.navigate:active:not(:disabled) {
+  background: var(--map-nav-press);
+}
+.navigateExit {
+  border: 2px solid var(--map-live);
+  background: var(--white);
+  color: var(--map-live);
+}
 
 /* bare: sized by the caller's class. Not dimmed when disabled: the caller shows that state. */
 .bare {

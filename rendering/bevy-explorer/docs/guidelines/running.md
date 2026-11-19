@@ -191,7 +191,10 @@ World and Scene Loading show where the player is and which load stage is active.
 Deployment shows the Sites build serving `/play` and the commit the page's `catalyst` service reports, which is
 this deployment's APIs only behind its own gateway; it reads once each time it is expanded. The Explorer's own build
 is Performance's client version.
-Performance and Memory and limits expose the engine's measurements and budgets.
+Performance and Memory and limits expose the engine's measurements and budgets: the sampled
+frame-time snapshots, the frame-time breakdown and the memory tiers; a `performance-profiler`
+build adds Render and Profiler, Bevy's per-pass render timings and the scope profiler
+([profiling](profiling.md)).
 The room, voice, rendering, media and avatar sections appear with the plugins that
 supply them. When several readings need the same scene, peer or sample, the panel
 shows the cause once. Expand the reading count to see which fields it affects.
@@ -240,11 +243,13 @@ State, in every build:
   never saved. The reply is JSON: `count`, `built` (demo avatars whose build finished), `shown` (not
   hidden) and `drawn` (a mesh in some view this frame), `cap`,
   `layout`, `seed`, `maleOnly`, `wearables`, `emote`. The E2E package's `avatar-sweep` drives it.
-- `/spring_bones`: the spring chains of the player's built avatar: `chains`, `joints` (spring
-  bones in them) and `longest_chain`, each `null` with a reason in `unavailable` until the avatar
-  is built. A wearable's own bones (hair, tails, capes) form the chains, each running from parent
-  to child off a body bone, or off the bone it forks from. The Spring bones debug section reads
-  it.
+- `/spring_bones [true|false]`: spring bones, the swing of a wearable's own bones (hair, tails,
+  capes): `enabled` (the Jiggle Bones setting, which an argument sets and saves),
+  `simulated_avatars` of at most `max_simulated_avatars`, `simulated_chains`, and for the player's
+  built avatar `player_simulated`, `chains`, `joints` (spring bones in them) and `longest_chain`,
+  each `null` with a reason in `unavailable` until the avatar is built. The player is simulated
+  first, then the avatars nearest the camera and in front of it. The Spring bones debug section
+  reads it.
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
@@ -329,6 +334,18 @@ State, in every build:
 - `/tree_wind [true|false]`: whether the landscape's trees and bushes sway in the wind. Still,
   they stand in their rest pose, so two frames of them agree whenever they were taken; the visual
   scenarios hold them still for their frames.
+- `/media_state`: the loaded video players and audio streams as JSON, the Media player debug
+  section's reading. On the web each row also carries the source's reopen state:
+  `retryAttempt` (reopens since its last 5 s of playback), `retryFailures` (failures since the
+  source was created), `retryDelaySeconds` (the wait before the scheduled one, else null),
+  `retryGaveUp` and `lastError`.
+
+On the web only:
+
+- `/media_retry_delay [ms]`: the wait before a failed media source's first reopen
+  (2000 by default; later waits double from it, 5 reopens at most) as `firstDelayMs` and
+  `maxReopens`; with `ms`, sets it first for every source failing from then on. For tests that
+  would otherwise wait the full 62 s schedule.
 
 The HUD and input:
 
@@ -455,7 +472,7 @@ of the contract.
   output the way the real shader does, or it shows artifacts the render never produces.
 - `/player_position` reports z, and parcel y is `floor(z / 16)`, not `floor(-z / 16)`. That
   sign slip has looked like a hung console RPC before.
-- The `tracy` cargo feature enables bevy's Tracy tracing for native profiling.
+- The `tracy` cargo feature adds Tracy's wire layer for native profiling; the in-app readings and the capture steps are on the [profiling](profiling.md) page.
 
 ## Testing gotchas
 

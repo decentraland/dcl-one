@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { GeneralImage } from '../../foundations/icons/general'
 import styles from './CardImage.module.css'
-import { hasUnsafeURLCharacters } from '../../link.helpers'
+import { imageSource } from '../../link.helpers'
 import { contentLabel, hasRenderableContent } from '../../content.helpers'
 
 export type CardImageProps = {
@@ -11,22 +11,6 @@ export type CardImageProps = {
   priority?: boolean
   fallback?: ReactNode
   className?: string
-}
-
-function imageSource(value: string | null | undefined): string | undefined {
-  if (typeof value !== 'string') return undefined
-  if (hasUnsafeURLCharacters(value)) return undefined
-  const source = value.trim()
-  if (!source) return undefined
-  if (source.startsWith('/')) return source.startsWith('//') ? undefined : source
-  if (!/^https:\/\//i.test(source)) return undefined
-  try {
-    const url = new URL(source)
-    if (url.protocol !== 'https:' || url.username || url.password) return undefined
-    return url.href
-  } catch {
-    return undefined
-  }
 }
 
 function ImageAttempt({

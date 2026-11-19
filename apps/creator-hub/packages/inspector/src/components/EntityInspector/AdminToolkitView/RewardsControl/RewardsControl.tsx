@@ -134,6 +134,8 @@ const RewardsControl: React.FC<WithSdkProps & Props> = ({ sdk, ...props }) => {
             <div className="RightMenu">
               <MoreOptionsMenu>
                 <Button
+                  variant="secondary"
+                  size="sm"
                   className="RemoveButton"
                   onClick={() => handleRemoveRewardItem(idx)}
                 >

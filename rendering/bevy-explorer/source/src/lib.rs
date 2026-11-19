@@ -2,6 +2,7 @@
 // the headless binary takes the same launch options
 pub mod automation;
 mod autopilot;
+mod client_window_focus;
 mod commands;
 mod debug_panel;
 mod deep_link;
@@ -10,6 +11,7 @@ mod gpu_memory;
 mod memory;
 #[cfg(test)]
 mod memory_tests;
+pub mod perf;
 #[cfg(target_arch = "wasm32")]
 mod web;
 pub mod world_state;
@@ -776,6 +778,21 @@ impl DecentralandApp {
         // clients; after every plugin that adds a render-graph node, which its brackets enclose
         // (the first render frame warns, under `gpu_time`, about any node they do not)
         app.add_plugins(GpuTimePlugin);
+
+        // what the explorer measures about itself: the sampler, the frame-time breakdown and their
+        // debug panel section; with the `performance-profiler` feature, the scope profiler, Bevy's
+        // per-pass render timings (not in a `tracy` build, whose GPU context they would double)
+        // and its system information on Windows and Linux
+        app.add_plugins(client_window_focus::ClientWindowFocusPlugin);
+        app.add_plugins(perf::PerformanceMonitoringPlugin);
+        #[cfg(all(
+            feature = "performance-profiler",
+            not(feature = "tracy"),
+            not(target_arch = "wasm32")
+        ))]
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+        #[cfg(all(feature = "performance-profiler", any(windows, target_os = "linux")))]
+        app.add_plugins(bevy::diagnostic::SystemInformationDiagnosticsPlugin);
 
         // Systems
         app.configure_sets(Startup, SetupSets::Init.before(SetupSets::Main));

@@ -94,7 +94,9 @@ the page's last 200 console lines; a failed restore adds the same as `restore-pa
 boot, has its credentials replaced as the engine's own benchmark log does
 (`crates/perf_output/src/scrub.rs`: an `access_token`, a named key or signature, an identity),
 and a `Bearer` token. A failed visual scenario adds `frame.png`, `reference.png` and
-`diff.png`. A client that fails to boot, at the open, at the
+`diff.png`. A media retry scenario adds `realm-requests.jsonl`: each request its loopback realm
+received, with the entity file a content hash names, the status, the duration and whether the
+answer finished; a request still open has no duration. A client that fails to boot, at the open, at the
 console's coming or on the way into the world, leaves `boot-failures/boot-<n>.console.txt`, what
 the page said, and `boot-<n>.jpg`, how it looked; it is booted once more for the next scenario,
 and after a second failure every later scenario fails at once with that error, which the run logs
@@ -142,6 +144,11 @@ from there afterwards; what it does not have yet it asks the catalyst for, a few
 second, waiting and trying again when refused. The first run fills the directory, slowly; later
 runs ask the catalyst for nothing. Other requests (profiles, `/about`) pass through, not kept.
 The sweep's last stderr line counts each kind.
+
+The page stops on its launch-link warning for a `catalyst` outside Decentraland's own domains,
+which the mirror is: choose Advanced, then Continue anyway, in the window the sweep opens, once
+per run. The player enters the world at a different spot each session, so for runs that are
+compared, stand in one place first with `--setup "/move_player_to <x> <y> <z>"`.
 
 Each stdout line is one step: `count`, `built` (`-1` when the avatars did not finish building
 within `--load-timeout`), `shown` (demo avatars not hidden, by the cap say) and `drawn` (those with
@@ -231,7 +238,9 @@ boots a second client with `--comms-gatekeeper` pointed at `driver/gatekeeper-st
 gatekeeper answering as scripted, `DCL_E2E_GATEKEEPER_PORT`, 18745 by default, one shared by
 every spec and closed with the sessions) to see a banned answer and a failed check; a scenario's
 `session.nativeArgs` is what starts that client, on an automation port of its own. On the web
-a service override stops the boot at the launch gate, so those scenarios are todos there.
+a service override stops the boot at the launch gate, so those scenarios are todos there. The
+same file checks realm entry: entered when not banned or when the check fails, and, against the
+stub, a `/changerealm` refused while banned, including for a new sign-in before it asks to enter.
 `specs/scene-ban.test.ts` reads the scene room's admission and moderation lists at Genesis Plaza and
 their absence on an empty parcel, and, on the standalone against the same stub, a refused scene
 adapter reported as a scene ban.
@@ -239,17 +248,17 @@ adapter reported as a scene ban.
 ## Scenario map
 
 explorer-automation's 89 Explorer tests outside the sign-in flows, by fixture; the class of each
-test is in the spec file's header. Port 47, Partial 35, Gap 5, Drop 2.
+test is in the spec file's header. Port 48, Partial 35, Gap 4, Drop 2.
 
 | Fixture (tests) | Spec | Port | Partial | Gap | Drop | What changed |
 | --- | --- | --- | --- | --- | --- | --- |
 | ExplorePanel (7) | `explore-panel` | 6 | 1 | | | Pages instead of one panel, each opened by a row of the rail's Discover, Me or System panel; the top bar's Shop tab is not driven |
 | Shortcuts (7) | `shortcuts` | 6 | 1 | | | Gallery is `G`, not `K` |
 | Navbar (4) | `navbar` | | 3 | 1 | | A fixed rail set, no flags, the other entries rows of the Me, Discover and System panels; the help rows are in the System panel, which has no controls row |
-| Minimap (5) | `minimap` | 3 | 1 | 1 | | The rail's Map button shows the minimap; no favourite heart; the dots menu adds the minimap's own settings; name and compass are unreadable text |
+| Minimap (5) | `minimap` | 4 | 1 | | | The rail's Map button shows the minimap; the dots menu adds the minimap's own settings; name and compass are unreadable text |
 | Navmap (1) | `navmap` | 1 | | | | `Sports`, not `Sport` |
 | Events (3) | `events` | 2 | 1 | | | The detail opens for the first event the service lists, when there is one |
-| Places (5) | `places` | | 4 | 1 | | Tabs, category chips and Filter & Sort, without counters; a card opens the destination card, which no scenario opens yet |
+| Places (5) | `places` | | 4 | 1 | | Tabs, category chips and Filter & Sort, without counters; a card opens the place's detail, which no scenario opens yet |
 | Communities (4) | `communities` | | 4 | | | No titles or counts; the invites view's titles only with something pending; the detail is a modal |
 | Chat (6) | `chat` | 2 | 4 | | | Escape leaves the input but keeps the panel; history checked through `/chat_history` |
 | EmoteWheel (3) | `emote-wheel` | 2 | 1 | | | The emote playing is asserted through `/avatar_state` |
@@ -287,6 +296,7 @@ Specs with no explorer-automation counterpart, outside the counts above:
 | Spec | Scenarios | Needs |
 | --- | --- | --- |
 | `debug-panel` | every debug reading resolves; the panel shows live data, stays open while the player walks and uses the world and HUD, and plays an emote | |
+| `media-retry` | a video whose source fails twice plays after two reopens, not given up, with its reopen count restarted after 5 s of playback; one whose source always fails reports `VS_ERROR` after one open and five reopens; a paused one whose source fails reports `VS_ERROR` and plays once the scene plays it (`/media_state`, `/media_retry_delay`); web only, todos on the standalone | the scene built (`pnpm run build-scenes video`) |
 | `smart-wearables` | a realm's `/preview-wearables` runs the fixture as a smart wearable with no prompt (`/live_scenes`, `/smart_wearables`, its log and UI label, the sidebar's `Portable experiences` button); `/stop_portable` stops it, it stays listed as stopped, and the popover's `Restart` runs it again; a parcel scene with `portableExperiences: disabled` pauses it (blocked, still live); a configured wearable, run as a guest through the backend, runs with no prompt | the fixture built (`pnpm run build-scenes smart-wearable`); `DCL_E2E_SMART_WEARABLE_URN` for the fourth |
 
 The first three smart-wearable scenarios boot a guest client on a loopback realm of their own
@@ -309,7 +319,9 @@ InWorld spec `smart-wearables` previews ([scenes/README.md](scenes/README.md)).
 960x540 window, turns the nametags off and holds the landscape's trees still (`/nametags false`:
 the scenes hide avatars, not the nametag over the hidden guest, whose name changes every run;
 `/tree_wind false`: the trees and bushes sway in the wind, so no two frames of them agree),
-teleports to each scene, waits for its entities and its settle time, and compares the engine's frame (`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
+clears the sky (`/cloud 0 0`: the clouds drift from boot, seeded by the day of the month), turns
+the empty parcels' grass off for the session (`/session_graphics grass off`: its stacked shells
+are not drawn in a fixed order, so its pixels move with each bevy pin), teleports to each scene, waits for its entities and its settle time, and compares the engine's frame (`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
 differs when any RGB channel differs by more than 8, and the scene passes when at most 0.3% of the
 pixels differ (1.5% for `avatar-shape`), as explorer-automation compared. A last scenario turns
 the nametags back on at `avatar-shape` and reads `/nametag_state` until the scene's five avatars
@@ -336,14 +348,14 @@ A reference counts as approved once a reviewer has checked it against the scene'
 - **Scenarios**, as unity-explorer runs explorer-automation: on a pull request of this repository
   when a maintainer applies the `ci:e2e` label (the label admits the commit it is applied to, and
   that alone: a push takes it off and runs nothing, and the maintainer puts it back to run the
-  new commit; a draft or a fork does not run), after each Bevy Explorer / CI run of a push to
-  main, nightly against main's newest web app, and by hand (a commit, a group, record). A pull
-  request's run comes from its own event, so it is one of the pull request's checks and an
-  approval of the `e2e` deployment names its commit. `tooling/bevy-e2e-inputs.py` picks the web
-  app: a pull request's job waits for the commit's Bevy Explorer / CI run and takes the web app it
-  built (one that has expired is reported, never replaced by main's), or main's newest when the
-  pull request changed no web input but changed the suite. The job downloads it, runs the InWorld
-  scenarios, then builds the scenes and runs the Visual ones, and uploads `report/`. It runs on the Windows runner with a GPU that the
+  new commit; a draft or a fork does not run), nightly against main's newest web app, and by hand
+  (a commit, a group, record). A pull request's run comes from its own event, so it is one of the
+  pull request's checks and an approval of the `e2e` deployment names its commit.
+  `tooling/bevy-e2e-inputs.py` picks the web app: a pull request's job waits for the commit's Bevy
+  Explorer / CI run and takes the web app it built (one that has expired is reported, never
+  replaced by main's), or main's newest when the pull request changed no web input but changed the
+  suite. The job downloads it, runs the InWorld scenarios, then builds the scenes and runs the
+  Visual ones, and uploads `report/`. It runs on the Windows runner with a GPU that the
   `BEVY_E2E_WINDOWS_RUNNER` repository variable names (explorer-automation's
   `win-gpu-t4-explorer`, which an org admin enables for this repository), in the `e2e`
   environment, whose `DCL_E2E_ACCOUNT_KEYS` secret reaches only the two scenario steps. That
@@ -355,12 +367,12 @@ A reference counts as approved once a reviewer has checked it against the scene'
   with those flags (`pnpm run gpu-probe`), and when the browser runs on an adapter other than the
   NVIDIA one (the VM's paravirtual display adapter comes first, the GPU second), the scenarios get
   `--use-adapter-luid=<its LUID>` as well, so the browser's GPU process starts on the GPU. The
-  scenes' CLI is built on a
-  hosted Windows runner and handed over, so the image needs no Rust toolchain. The label
-  is what admits a pull request's code to that runner and those accounts; the Inputs summary
-  names the pull request and the commit under test; the job holds no write permission and saves
-  no cache; required reviewers on the environment (a repository setting) add an approval on top.
-  Until the variable is set the job is skipped.
+  scenes' CLI is built on a hosted Windows runner and handed over, so the image needs no Rust
+  toolchain. The label is what admits a pull request's code to that runner and those accounts; the
+  Inputs summary names the pull request and the commit under test; the job holds no write
+  permission and saves no cache; required reviewers on the environment (a repository setting) add
+  an approval on top. Until the variable is set the job is skipped. The scenarios job's checkout
+  is sparse: this folder and the web driver.
 - **Status comment**, after a pull request's scenarios: a job without secrets writes the
   *InWorld* and *Automation* sections of the PR's CI status comment from the uploaded report
   (`tooling/bevy-e2e-report.py`).
@@ -420,13 +432,15 @@ change on the left updates what is on the right in the same change, then runs th
 | A list region's `aria-busy` or what sets it (the Backpack's `Catalog` and `Saved outfits`, `Places results`), or a HUD control animated other than by CSS (which `hudAutomation.ts` cannot see moving) | `CATALOG` and `SAVED_OUTFITS` in `specs/backpack.ts`, `RESULTS` in `specs/places.test.ts`; the HUD tests that pin the state (`backpackStates`, `placesBrowser`, `hudAutomation`) | the HUD's tests; the scenarios in CI |
 | What `/world_state`'s `keyboardClaimed` reads (`InputPriorities`), or how the HUD relays a field's focus (`uiFocus`) | `keyboardTaken` and `keyboardReleased` in `driver/explorer.ts`, `closePage` in `specs/pages.ts`, `closeToRest` in `driver/harness.ts` and their tests | `cargo test world_state`; `pnpm test` |
 | A key binding | The keys in `specs/pages.ts`; the shortcuts spec's header | the same |
+| The lobby's default layout or its Landing card (`library/explorer-core/features/lobby/layout.ts`, `LobbyCards.tsx`), or the layout editor's controls (`LobbyEditor.tsx`: `Customize lobby layout`, `Reset to Default`, `SAVE`) | `enterWorld` in `driver/session.ts`, which presses the first button named exactly `Jump In`: only the Landing card carries that name. The web driver starts each run on a fresh browser profile, so the default layout is shown. A native run reads the layout the client stored; when the lobby shows no `Jump In` for `NO_LANDING_POLLS` polls, `enterWorld` resets it to the shipped layout through the editor and saves it, then jumps in | `pnpm test`; the scenarios in CI |
 | A console command's name, arguments or reply, in the engine or in `hudAutomation.ts`; what `/hud_login` and `/hud_logout` do with the session (`useEngineSession.ts`: the stored sign-in, the welcome page, the lobby's pick, the sign-out) | `driver/explorer.ts`, `driver/session.ts` and their tests; the Explorer readme's "Agents and tests" and `docs/guidelines/running.md` "Test commands" | `pnpm test`; the HUD's tests (`react-web`: `pnpm test`) |
 | `/hover_entity`, `/click_entity`, `/raycast_stats`, `/raycast_budget`, `/scene_logs` or the `pointer-targets` and `raycast-storm` scenes | `driver/explorer.ts`, `test/explorer.test.ts`, `specs/visual/pointer.test.ts`, `specs/visual/raycast-budget.test.ts`, `rendering/bevy-explorer/docs/guidelines/interaction.md`; `scenes/README.md` for a scene | `pnpm test`; the two scenarios, e.g. `pnpm run e2e --visual --filter 'the box behind the wall'` and `--filter 'a zero budget holds'` (the scenarios of `pointer.test.ts` and `raycast-budget.test.ts` have their own names; a pattern on a file name selects nothing). On the web these commands reach the engine through `engine_console_command` and write Bevy input events, not the page's trusted input |
 | `--automation-token`, `--automation-port`, their environment fallbacks, the `dcl/console` methods, or the `__dclTrustedInput` contract | `driver/native.ts`, `driver/web.ts`, `local-harness/web-driver` and its README; the readme section | `pnpm test`; the web driver's tests |
 | The smart-wearable fixture (`scenes/smart-wearable`: its title, name, log line or label), `/preview-wearables` or `buildScene` in `driver/realm.ts`, the `/smart_wearable*`, `/portables` or `/stop_portable` commands, or the HUD's `Portable experiences` button, popover or its `Stop`/`Restart` rows | `specs/smart-wearables.test.ts`, `test/realm.test.ts`, `scenes/README.md` | `pnpm test`; the scenario in CI |
+| The web media backend's reopen schedule, the states it reports or `/media_state`'s retry fields (`crates/media/src/retry.rs`, `crates/media/src/source_state.rs`, `crates/media/src/html`), `/media_retry_delay`, the `video` scene or `contentFailures` in `driver/realm.ts` | `specs/media-retry.test.ts`, `driver/explorer.ts` and `test/explorer.test.ts`, `test/realm.test.ts`, `scenes/README.md`, `decisions.md` "Media reopens on the web" | `cargo test -p media`; `pnpm test`; the scenarios in CI |
 | A scene under `scenes/`, its parcels or spawn, `specs/visual/scenes.ts`, the 960x540 window or the tolerance | The references, re-recorded in CI (`record`) and committed in a PR; `scenes/README.md` | the visual scenarios in CI |
-| A path moved under `apps/bevy-explorer/e2e`, `tooling/bevy-e2e-*.py` or the workflow | The workflow's `paths` filters, `tooling/bevy-ci.py` and `tooling/tests/test_bevy_ci.py`, the LFS patterns in `.gitattributes`, the links in this README | the tooling tests |
-| The CI workflow's name, its job names, the `bevy-explorer-web-<sha>` artifact or the status comment's sections | `tooling/bevy-e2e-inputs.py`, `tooling/bevy-e2e-report.py` and their tests; the e2e workflow's `workflow_run` | the tooling tests |
+| A path moved under `apps/bevy-explorer/e2e`, `local-harness/web-driver`, `tooling/bevy-e2e-*.py` or the workflow, or a new read outside this folder | The workflow's `paths` filters and the scenarios job's `sparse-checkout`, `tooling/bevy-ci.py` and `tooling/tests/test_bevy_ci.py`, the LFS patterns in `.gitattributes`, the links in this README | the tooling tests |
+| The CI workflow's file, its job names, the `bevy-explorer-web-<sha>` artifact or the status comment's sections | `tooling/bevy-e2e-inputs.py`, `tooling/bevy-e2e-report.py` and their tests | the tooling tests |
 | A scenario the HUD can no longer run, or a Gap whose feature landed | A `todo` with the reason, or the todo back into a scenario; its header row and the scenario map | the scenarios in CI |
 
 ```sh

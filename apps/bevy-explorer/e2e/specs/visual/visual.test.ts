@@ -61,11 +61,14 @@ for (const scene of SCENES) {
       // landscape's trees and bushes around the scene sway in the wind, so no two frames of them
       // agree: held still for the frame. The clouds drift from boot and their noise is seeded by
       // the day of the month: cover 0 clears the sky, which then reads the same on any day. The
-      // sky eases to a new cover over a few seconds, less than the teleport and settle take.
+      // sky eases to a new cover over a few seconds, less than the teleport and settle take. The
+      // grass on the empty parcels around the scene is drawn as stacked shells whose order is not
+      // fixed from one bevy pin to the next, so its pixels drift between builds: off for the session.
       restore(async () => {
         await explorer.json('/nametags true')
         await explorer.json('/tree_wind true')
         await explorer.run(`/cloud ${DEFAULT_CLOUD_COVER} ${DEFAULT_CLOUD_SPEED}`)
+        await explorer.run('/session_graphics grass')
       })
       const nametags = await explorer.json<{ visible: boolean }>('/nametags false')
       assert.equal(nametags.visible, false, 'the nametags should be off for the frame')
@@ -74,6 +77,7 @@ for (const scene of SCENES) {
       await explorer.run('/cloud 0 0')
       const sky = await explorer.json<{ cover: number }>('/sky_state')
       assert.equal(sky.cover, 0, 'the sky should have no cloud for the frame')
+      await explorer.run('/session_graphics grass off')
       await explorer.teleport(x, y)
       await until(() => explorer.sceneEntities(), (entities) => entities.length > RESERVED_ENTITIES, {
         timeoutMs: SCENE_LIVE_TIMEOUT_MS,
