@@ -2247,3 +2247,27 @@ async fn the_venues_read_eth_rpc_url_on_mainnet_only() {
         Some("https://mainnet.example/")
     );
 }
+
+#[tokio::test]
+async fn the_committee_walk_reads_polygon_when_trade_rpc_urls_has_no_137_entry() {
+    use super::chain_walk::ChainNet;
+    let settings = |trade: Option<&str>| {
+        let mut s = Settings::for_tests();
+        s.eth_rpc_url = Some("https://eth.example/".into());
+        s.polygon_rpc_url = Some("https://polygon.example/".into());
+        s.market.trade_rpc_urls = super::listings::RpcEndpoints::from_env(trade);
+        support::state_without_db_settings(s)
+    };
+    let fallback = settings(None);
+    assert_eq!(
+        fallback.committee_rpc_url(ChainNet::Matic).as_deref(),
+        Some("https://polygon.example/")
+    );
+    assert_eq!(fallback.chain_rpc_url(ChainNet::Matic), None);
+    assert_eq!(fallback.committee_rpc_url(ChainNet::Ethereum), None);
+    let listed = settings(Some("137=https://matic.example/"));
+    assert_eq!(
+        listed.committee_rpc_url(ChainNet::Matic).as_deref(),
+        Some("https://matic.example/")
+    );
+}

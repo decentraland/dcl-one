@@ -699,6 +699,73 @@ mod tests {
         pool.close().await;
     }
 
+    /// The curation console lists the published index's current members,
+    /// an empty committee while the index is unpublished, and answers 503
+    /// when the index cannot be read.
+    #[tokio::test]
+    async fn curation_console_lists_the_indexed_committee() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+            return;
+        };
+        let admin = address_of(OWNER_KEY);
+        let state = state_on(pool.clone(), &admin).await;
+        let app = crate::router(state);
+        let (removed, member) = (
+            "0x00000000000000000000000000000000000000aa",
+            "0x00000000000000000000000000000000000000bb",
+        );
+        for (block, wallet, set) in [
+            (10_i64, removed, true),
+            (20, member, true),
+            (30, removed, false),
+        ] {
+            sqlx::query(
+                "INSERT INTO shop.committee_event (network, block_number, log_index, block_time, contract_address, member, is_member) \
+                 VALUES ('matic', $1, 0, $1, '0xaeec95a8aa671a6d3fec56594827d7804964fa70', $2, $3)",
+            )
+            .bind(block)
+            .bind(wallet)
+            .bind(set)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let committee = |body: &Value| {
+            body["data"]["committee"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|m| m["address"].as_str().map(str::to_string))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+
+        let (status, body) = get(&app, "/v1/collections/curation", Some(OWNER_KEY)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(committee(&body).is_empty(), "unpublished index: {body}");
+
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, fold_through, folded_at, full_history) \
+             VALUES ('committee', 'matic', 0, 100, 100, 100, timezone('UTC', now()), true)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (status, body) = get(&app, "/v1/collections/curation", Some(OWNER_KEY)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(committee(&body), vec![member.to_string()], "{body}");
+
+        sqlx::query("ALTER TABLE shop.committee_event RENAME TO committee_event_gone")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, body) = get(&app, "/v1/collections/curation", Some(OWNER_KEY)).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        pool.close().await;
+    }
+
     #[test]
     fn collection_items_union_arms_serialize_correctly() {
         let plain = ApiData::ok(CollectionItemsOut::Plain(vec![]));

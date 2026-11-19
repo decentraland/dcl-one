@@ -3376,14 +3376,60 @@ async fn committee_index_keeps_member_set_logs_of_both_contracts() {
             (CONTRACTS[1].to_string(), BOB.to_string(), true),
         ]
     );
-    assert_eq!(pass(&st, &url, &CommitteeIndex).await.rows_written, 0);
+    let count = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM shop.committee_event")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap()
+    };
+
+    // A walk over blocks it already holds writes nothing new.
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = start_block - 1, last_block_hash = NULL, \
+         last_block_time = NULL, fold_through = NULL, folded_block = NULL, folded_at = NULL WHERE indexer = 'committee'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let again = pass(&st, &url, &CommitteeIndex).await;
+    assert!(again.published, "{again:?}");
+    assert_eq!(again.rows_written, 0, "{again:?}");
+    assert_eq!(count().await, 3);
+
+    // A reorg that drops BOB's MemberSet: the rewind deletes the rows past
+    // its target and unpublishes the index, and the next pass keeps only
+    // the logs the chain still has.
+    let cursor = chain_walk::cursor(&db.pool, chain_walk::INDEXER_COMMITTEE, ChainNet::Matic)
+        .await
+        .unwrap()
+        .unwrap();
     chain
         .forks
         .lock()
-        .insert(s + 98, format!("0x{}", "ee".repeat(32)));
-    chain.logs.lock().clear();
+        .insert(cursor.last_block as u64, format!("0x{}", "ee".repeat(32)));
+    chain
+        .logs
+        .lock()
+        .retain(|l| l["blockNumber"] != json!(format!("0x{:x}", s + 3)));
     let rewound = pass(&st, &url, &CommitteeIndex).await;
-    assert!(rewound.reorg_rewound_to.is_some());
-    assert!(!rewound.published || pass(&st, &url, &CommitteeIndex).await.published);
+    assert!(rewound.reorg_rewound_to.is_some(), "{rewound:?}");
+    assert!(!rewound.published, "{rewound:?}");
+    assert_eq!(count().await, 0, "the rewind deletes the reorged rows");
+    let unpublished: bool = sqlx::query_scalar(
+        "SELECT folded_block IS NULL AND folded_at IS NULL FROM shop.chain_cursor WHERE indexer = 'committee'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert!(unpublished, "the rewind clears the published block");
+    chain.forks.lock().clear();
+    let replayed = pass(&st, &url, &CommitteeIndex).await;
+    assert!(replayed.published, "{replayed:?}");
+    let members: Vec<String> =
+        sqlx::query_scalar("SELECT member FROM shop.committee_event ORDER BY block_number")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(members, vec![ALICE.to_string(), ALICE.to_string()]);
     db.drop().await;
 }

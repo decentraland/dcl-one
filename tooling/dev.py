@@ -588,6 +588,8 @@ def runtime_env(config, refuse_exposed_relayer=True):
             'LAND_SUBGRAPH_URL': 'https://subgraph.decentraland.org/land-manager',
             'MARKETPLACE_NFT_INDEX_ENABLED': 'true', 'LAND_AUTHZ_INDEX_ENABLED': 'true',
             'SHOP_RENTALS_INDEX_ENABLED': 'true',
+            # Builder's curation committee: the Polygon Committee contracts over RPC_ENDPOINT_POLYGON.
+            'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'true',
             'ETH_RPC_URL': 'https://rpc.decentraland.org/mainnet',
             'BUILDER_CONTENT_BUCKET_URL': 'https://builder-items.decentraland.org',
             # Scene-template models (Qm... CIDs) live in the asset-packs bucket, which this
@@ -644,6 +646,8 @@ def testnet_env(config, refuse_exposed_relayer=True):
         'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
         # The Rentals contract is mainnet's; there is no chain-1 endpoint here.
         'SHOP_RENTALS_INDEX_ENABLED': 'false',
+        # The Committee contracts are Polygon mainnet's; RPC_ENDPOINT_POLYGON is Amoy here.
+        'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'false',
         'VITE_SHOP_CHAIN_ID': '80002',
         # The catalogue's chainId for MATIC items, and the chain the Shop's coupons pair with: the pages ask the
         # node to settle on it, and the node refuses a catalogue chain that differs from COLLECTIONS_CHAIN_ID.

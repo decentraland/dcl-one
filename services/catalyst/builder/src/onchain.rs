@@ -458,13 +458,8 @@ pub(crate) fn shape_committee(addresses: Vec<String>) -> Vec<CommitteeMemberOut>
     let mut distinct: Vec<String> = addresses
         .into_iter()
         .filter_map(|addr| {
-            let a = addr
-                .split('-')
-                .next()
-                .unwrap_or(&addr)
-                .trim()
-                .to_ascii_lowercase();
-            (!a.is_empty() && a.starts_with("0x")).then_some(a)
+            let a = addr.trim().to_ascii_lowercase();
+            a.starts_with("0x").then_some(a)
         })
         .collect();
     distinct.sort();
@@ -895,9 +890,9 @@ mod tests {
         });
         assert_eq!(serde_json::to_value(&member).unwrap(), old);
         let shaped = shape_committee(vec![
-            "0xB-1".into(),
+            "0xB".into(),
             "0xa".into(),
-            "0xb-2".into(),
+            " 0xb".into(),
             "junk".into(),
             " ".into(),
         ]);
