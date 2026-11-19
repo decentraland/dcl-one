@@ -60,11 +60,14 @@ and boot.js's crash watchdog calls `engine_crash_event` on the page thread, whic
 wasm memory, to build the request and post it with `keepalive`. Nothing before the terms are
 accepted. Natively the next run reports the previous one's log (`crash_report.rs`).
 
-The web crash report carries the session's rollout flags: the page reports them as `Feature Flags
-Resolved` (`feature_flags`, the flags that are on as a `?ff=` value; `feature_flags_override`, the
-entry url's own), and `/track` keeps that event's two fields for `crash_batch` as well as queueing
-it, when the event's `session_id` is this session's (the page's queue can hold an earlier load's). Opening the page with `?ff=<feature_flags>` runs a session with the same flags
-(`library/explorer-core/lib/featureFlags.ts`). Other events join to the flags on `session_id`.
+The engine reads the session's rollout flags (`common::feature_flags`: Unleash's `explorer.json`
+under the `--ff` / `?ff=` overrides) and reports them once the read settles as `Feature Flags
+Resolved`: `feature_flags`, the flags that are on as an `ff` value that runs a session with the same
+flags; `feature_flags_override`, the launch option's own; `feature_flags_source`, `service`,
+`unavailable` (the read failed), `ignored` (`ff` has `-*`) or `other-domain` (a base domain other
+than decentraland.org or .zone: nothing is asked). Other events join to it on `session_id`. The
+web crash report carries `feature_flags` and `feature_flags_override` itself (`crash.rs`).
+`/feature_flags` and the debug panel's "Feature flags" section show the session's flags.
 
 The loading screen is reported as mobile's funnel names it (`loading.rs`): `Screen Viewed`
 LOADING_START {position, realm, when: on_explorer_ready | on_changerealm | on_moveto} when it

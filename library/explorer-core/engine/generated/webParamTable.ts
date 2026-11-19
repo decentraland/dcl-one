@@ -253,5 +253,11 @@ export const WEB_PARAMS: WebParam[] = [
     "kind": "string",
     "delivery": "host",
     "doc": "The landing page's Segment anonymous id, stamped on every analytics event so the warehouse joins this session to the web visit it came from"
+  },
+  {
+    "name": "ff",
+    "kind": "string",
+    "delivery": "launch",
+    "doc": "Override the remote feature flags, a comma list: `name` forces a flag on, `name:variant` on with that variant, `-name` off; `-*` ignores the service entirely (nothing is fetched and every flag not forced on is off). Names the client does not read are dropped. A link may set it: a flag only hides or shows a feature, never a permission"
   }
 ]

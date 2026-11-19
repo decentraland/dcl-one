@@ -35,8 +35,7 @@ export const PREF = {
   launchCount: 'launchCount',
   gpuGuideSeen: 'hud.gpuGuideSeen',
   loginMusicMuted: 'hud.loginMusicMuted',
-  askBeforeLeaving: 'hud.askBeforeLeaving',
-  featureFlagsUserId: 'hud.featureFlagsUserId'
+  askBeforeLeaving: 'hud.askBeforeLeaving'
 } as const
 
 const DB = 'hud-prefs'

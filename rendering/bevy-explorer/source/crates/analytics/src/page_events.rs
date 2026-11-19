@@ -1,7 +1,7 @@
 //! `/track <base64>`: the host page's analytics events, queued into the engine's Segment batch
 //! with the common fields. The payload is one base64 token (the console splits on whitespace) of
 //! a JSON array of `{ event, properties, timestamp, messageId }`, stamped by the page when each
-//! happened. A `Feature Flags Resolved` event is also kept for the crash report (`crash.rs`).
+//! happened.
 
 use base64::Engine;
 use bevy::prelude::*;
@@ -11,7 +11,6 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{
-    crash,
     data_definition::SegmentEvent,
     segment_system::{SegmentConfig, SegmentMetricsEvents},
 };
@@ -54,9 +53,6 @@ fn track_cmd(
             Ok(items) => {
                 let count = items.len();
                 for item in items {
-                    if item.event == crash::FEATURE_FLAGS_EVENT {
-                        crash::note_feature_flags(&item.properties, &config.common().session_id);
-                    }
                     metrics.add_event_with_id(
                         SegmentEvent::Page {
                             name: item.event,

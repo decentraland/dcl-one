@@ -16,7 +16,6 @@ import { isNativeHud } from './lib/bootMode'
 import { publicUrl } from './lib/publicUrl'
 import { inShell } from '@explorer-core/lib/shell'
 import { loadPrefs } from '@explorer-core/lib/prefs'
-import { loadFeatureFlags } from '@explorer-core/lib/featureFlags'
 import { bootAnalytics, dropAttributionParams, listenForGoogleTag } from '@explorer-core/lib/analytics'
 import { AUTH_RETURN_PARAM } from '@explorer-core/features/auth/sso'
 import './styles/global.css'
@@ -78,8 +77,6 @@ if (isNativeHud()) {
 if (!redirecting) void loadPrefs().then(() => {
   countLaunch()
   bootAnalytics()
-  // the rollout flags read beside the first render, never ahead of it (lib/featureFlags)
-  void loadFeatureFlags()
   if (inShell) listenForGoogleTag()
   // the auth return marker too (sso.ts has read it): the engine's url sync rebuilds the shell's
   // address bar from this frame's search, and a reload must not read as a return from the auth site

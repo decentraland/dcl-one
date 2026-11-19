@@ -646,14 +646,6 @@
           "kind": "regular"
         },
         {
-          "name": "featureFlags.test.ts",
-          "kind": "regular"
-        },
-        {
-          "name": "featureFlags.ts",
-          "kind": "regular"
-        },
-        {
           "name": "gpu.test.ts",
           "kind": "regular"
         },
@@ -5007,10 +4999,6 @@
           "kind": "regular"
         },
         {
-          "name": "useFeatureFlag.ts",
-          "kind": "regular"
-        },
-        {
           "name": "useFocusTrap.ts",
           "kind": "regular"
         },
@@ -5226,10 +5214,6 @@
         },
         {
           "name": "textureOptimization.test.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "useFeatureFlag.test.tsx",
           "kind": "regular"
         }
       ]
@@ -6089,7 +6073,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
-      "sha256": "50d6548aefc6f7ae91a67bcd706ec90ee82b49df7ef2d67713c2d02eb455ef88"
+      "sha256": "7791923ac47aae937b11fe83f7c102ac72fd5fff189a9ad6adef0f5b13ff7f9c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/hudMainThreadCost.ts",
@@ -6117,7 +6101,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/main.tsx",
-      "sha256": "d6a69cbe33fb631424f63a735519a18d6d73d227aa0cde471429b9d7d7edad82"
+      "sha256": "71308f3e5257b606c59896913c7a66466a4e964fa8d08f28660648989b86eecf"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/shell/localGuest.ts",
@@ -6867,14 +6851,6 @@
       "sha256": "2d6fdf87314ce3c3bedbdb79d1c659c14f554fb9bfbdd3118dc3ef93be34bdf0"
     },
     {
-      "path": "library/explorer-core/lib/featureFlags.test.ts",
-      "sha256": "546d2ad1f3fd3bc12663021a8a468c27bde9c515e9441719297cdb6f21f11d84"
-    },
-    {
-      "path": "library/explorer-core/lib/featureFlags.ts",
-      "sha256": "195ce161d9b747f71c3f249b5680e08ca52c8745408368ec4f5bb553d6a50bdc"
-    },
-    {
       "path": "library/explorer-core/lib/gpu.test.ts",
       "sha256": "74bd1e89d9adbb69d3161431f008f927aaede96034ecf1935ba0d13f9e22437c"
     },
@@ -6932,7 +6908,7 @@
     },
     {
       "path": "library/explorer-core/lib/prefs.ts",
-      "sha256": "24fe3d93d0060fb3f062acfb762f6c958ca92ca6785e43e095cabd397b8a6500"
+      "sha256": "99a0d74d5f633124edbb7aa5a939fdbcd5cca20ac94430e941653d0979c6cbc6"
     },
     {
       "path": "library/explorer-core/lib/realmCheck.ts",
@@ -10351,10 +10327,6 @@
       "sha256": "ccb0c386a1b862293f7137b1587474d41e357713955f6c15fecd473fe8fbadec"
     },
     {
-      "path": "library/ui/apps/hud/lib/useFeatureFlag.ts",
-      "sha256": "08bc017b462e8a3e12da8579e1a19859370bf423072fa125963cb533e839240d"
-    },
-    {
       "path": "library/ui/apps/hud/lib/useFocusTrap.ts",
       "sha256": "8b30600d944e137ce3224dcd53ef20abf9271c71bccb9ef9bcee71537c164780"
     },
@@ -10985,10 +10957,6 @@
     {
       "path": "library/ui/apps/hud/test/textureOptimization.test.tsx",
       "sha256": "97048bb11827e332f4bbf987f7380d5227412789a10e54da40d910faadbef8f3"
-    },
-    {
-      "path": "library/ui/apps/hud/test/useFeatureFlag.test.tsx",
-      "sha256": "33f9138bc786c2985721ee8925e32bacc7daf8592fdc9bfbc8998d2d103aeeef"
     },
     {
       "path": "library/ui/foundations/colors/colors.css",
@@ -12406,81 +12374,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/explorer-core/lib/featureFlags.test.ts",
-      "to": "library/explorer-core/lib/analytics.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/explorer-core/lib/featureFlags.test.ts",
-      "to": "library/explorer-core/lib/analytics.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/explorer-core/lib/featureFlags.test.ts",
-      "to": "library/explorer-core/lib/analytics.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/explorer-core/lib/featureFlags.test.ts",
-      "to": "library/explorer-core/lib/featureFlags.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/explorer-core/lib/featureFlags.test.ts",
-      "to": "library/explorer-core/lib/featureFlags.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/explorer-core/lib/featureFlags.test.ts",
-      "to": "library/explorer-core/lib/featureFlags.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/explorer-core/lib/featureFlags.test.ts",
-      "to": "library/explorer-core/lib/prefs.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/explorer-core/lib/featureFlags.test.ts",
-      "to": "library/explorer-core/lib/prefs.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/explorer-core/lib/featureFlags.test.ts",
-      "to": "library/explorer-core/lib/prefs.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/explorer-core/lib/featureFlags.ts",
-      "to": "library/explorer-core/lib/analytics.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/explorer-core/lib/featureFlags.ts",
-      "to": "library/explorer-core/lib/analytics.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/explorer-core/lib/featureFlags.ts",
-      "to": "library/explorer-core/lib/analytics.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/explorer-core/lib/featureFlags.ts",
-      "to": "library/explorer-core/lib/prefs.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/explorer-core/lib/featureFlags.ts",
-      "to": "library/explorer-core/lib/prefs.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/explorer-core/lib/featureFlags.ts",
-      "to": "library/explorer-core/lib/prefs.ts",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/explorer-core/lib/gpu.test.ts",
       "to": "library/explorer-core/lib/gpu.ts",
       "kind": "native:runtime"
@@ -37786,21 +37679,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/hud/lib/useFeatureFlag.ts",
-      "to": "library/explorer-core/lib/featureFlags.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/lib/useFeatureFlag.ts",
-      "to": "library/explorer-core/lib/featureFlags.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/lib/useFeatureFlag.ts",
-      "to": "library/explorer-core/lib/featureFlags.ts",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/hud/lib/useFocusTrap.ts",
       "to": "library/explorer-core/lib/inputLock.ts",
       "kind": "native:runtime"
@@ -44548,36 +44426,6 @@
     {
       "from": "library/ui/apps/hud/test/textureOptimization.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/test/useFeatureFlag.test.tsx",
-      "to": "library/explorer-core/lib/featureFlags.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/test/useFeatureFlag.test.tsx",
-      "to": "library/explorer-core/lib/featureFlags.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/test/useFeatureFlag.test.tsx",
-      "to": "library/explorer-core/lib/featureFlags.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/test/useFeatureFlag.test.tsx",
-      "to": "library/ui/apps/hud/lib/useFeatureFlag.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/test/useFeatureFlag.test.tsx",
-      "to": "library/ui/apps/hud/lib/useFeatureFlag.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/test/useFeatureFlag.test.tsx",
-      "to": "library/ui/apps/hud/lib/useFeatureFlag.ts",
       "kind": "test:runtime"
     },
     {
@@ -45168,16 +45016,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/src/main.tsx",
       "to": "library/explorer-core/lib/coiServiceWorker.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/src/main.tsx",
-      "to": "library/explorer-core/lib/featureFlags.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/src/main.tsx",
-      "to": "library/explorer-core/lib/featureFlags.ts",
       "kind": "production:runtime"
     },
     {
@@ -46148,16 +45986,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/lib/color.ts",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/explorer-core/lib/featureFlags.test.ts",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/explorer-core/lib/featureFlags.ts",
       "kind": "type"
     },
     {
@@ -47777,11 +47605,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/lib/useFeatureFlag.ts",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/lib/useFocusTrap.ts",
       "kind": "type"
     },
@@ -48563,11 +48386,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/textureOptimization.test.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/test/useFeatureFlag.test.tsx",
       "kind": "type"
     },
     {
