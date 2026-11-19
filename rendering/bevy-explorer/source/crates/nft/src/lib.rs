@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod asset_source;
 mod extended_image_loader;
 

@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod agent_commands;
 pub mod explorer_ui;
 pub mod item_purchase;

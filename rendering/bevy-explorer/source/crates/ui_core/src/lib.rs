@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod bound_node;
 pub mod button;
 pub mod color_picker;

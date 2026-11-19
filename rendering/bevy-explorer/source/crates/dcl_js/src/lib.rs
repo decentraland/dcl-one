@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use anyhow::anyhow;

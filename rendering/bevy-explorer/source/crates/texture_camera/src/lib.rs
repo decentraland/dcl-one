@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::f32::consts::FRAC_PI_4;
 
 use bevy::{

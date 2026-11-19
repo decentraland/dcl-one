@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use anyhow::anyhow;
 use bevy::log::{debug, error, warn};
 use common::structs::SceneJsFile;

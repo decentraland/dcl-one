@@ -478,6 +478,15 @@ pub struct SocialConfig {
     #[arg(long, env = "LIVEKIT_ALLOW_DEV_CREDS", default_value_t = false, action = clap::ArgAction::Set)]
     pub livekit_allow_dev_creds: bool,
 
+    /// The `cast-bot` binary each Cast presentation runs (services/catalyst/cast-bot);
+    /// unset answers 503 on `/cast-presenter-service/presentations`.
+    #[arg(long, env = "CAST_BOT_BIN")]
+    pub cast_bot_bin: Option<std::path::PathBuf>,
+
+    /// Cast presentations running at once on this node; 0 is unlimited.
+    #[arg(long, env = "MAX_CONCURRENT_PRESENTATIONS", default_value_t = 10)]
+    pub max_concurrent_presentations: usize,
+
     #[arg(
         long,
         env = "PRIVATE_MESSAGES_ROOM_ID",

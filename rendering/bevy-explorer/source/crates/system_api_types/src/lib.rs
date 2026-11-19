@@ -4,6 +4,8 @@
 //! `ts-rs` (scripts/gen-ts-bindings.sh) to generate the TypeScript the react-web
 //! page and bridge scene consume. `system_bridge` re-exports everything here.
 
+#![forbid(unsafe_code)]
+
 pub mod languages;
 pub mod launch_options;
 pub mod services;

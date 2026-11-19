@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod avatar_movement;
 pub mod camera;
 mod debug_panel;

@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 #[cfg(feature = "explorer")]
 use std::path::PathBuf;
 use std::{collections::VecDeque, f32::consts::PI, time::Duration};

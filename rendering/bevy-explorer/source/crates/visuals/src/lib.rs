@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 mod atmosphere_params;
 mod coast;
 mod day_night;
