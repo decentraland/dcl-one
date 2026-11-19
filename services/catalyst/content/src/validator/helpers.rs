@@ -41,25 +41,19 @@ pub(super) fn validate_profile_wearable_urns(
                         if is_old_emote(pointer) {
                             continue;
                         }
-                        if !pointer.starts_with("urn:") && !pointer.starts_with("dcl://") {
+                        let Some(parsed) = super::urn::parse(pointer) else {
                             return Err(format!(
                                 "Each profile wearable pointer should be a urn, for example \
                                  (urn:decentraland:{{protocol}}:collections-v2:\
                                  {{contract(0x[a-fA-F0-9]+)}}:{{name}}). Invalid pointer: ({pointer})"
                             ));
-                        }
+                        };
 
-                        if timestamp >= adr_timestamps::ADR_244 {
-                            let lower = pointer.to_lowercase();
-                            let is_asset = (lower.contains("collections-v1:")
-                                || lower.contains("collections-v2:"))
-                                && count_urn_segments(&lower) <= 6;
-                            if is_asset {
-                                return Err(format!(
-                                    "Wearable pointer {pointer} should be an item, not an asset. \
-                                     The URN must include the tokenId."
-                                ));
-                            }
+                        if timestamp >= adr_timestamps::ADR_244 && parsed.is_collection_asset() {
+                            return Err(format!(
+                                "Wearable pointer {pointer} should be an item, not an asset. \
+                                 The URN must include the tokenId."
+                            ));
                         }
                     }
                 }
@@ -71,7 +65,7 @@ pub(super) fn validate_profile_wearable_urns(
 
 pub(super) fn validate_profile_emote_urns(
     metadata: &serde_json::Value,
-    _timestamp: Timestamp,
+    timestamp: Timestamp,
 ) -> Result<(), String> {
     if let Some(avatars) = metadata.get("avatars").and_then(|v| v.as_array()) {
         for avatar in avatars {
@@ -85,11 +79,17 @@ pub(super) fn validate_profile_emote_urns(
                         if is_old_emote(urn) {
                             continue;
                         }
-                        if !urn.starts_with("urn:") && !urn.starts_with("dcl://") {
+                        let Some(parsed) = super::urn::parse(urn) else {
                             return Err(format!(
                                 "Each profile emote pointer should be a urn, for example \
                                  (urn:decentraland:{{protocol}}:collections-v2:\
                                  {{contract(0x[a-fA-F0-9]+)}}:{{name}}). Invalid pointer: ({urn})"
+                            ));
+                        };
+                        if timestamp >= adr_timestamps::ADR_244 && parsed.is_collection_asset() {
+                            return Err(format!(
+                                "Emote pointer {urn} should be an item, not an asset. \
+                                 The URN must include the tokenId."
                             ));
                         }
                     }
@@ -134,11 +134,7 @@ pub(super) fn profile_has_emotes(metadata: &serde_json::Value) -> bool {
 }
 
 fn is_old_emote(s: &str) -> bool {
-    s.len() <= 20 && s.chars().all(|c| c.is_ascii_alphabetic())
-}
-
-pub(super) fn count_urn_segments(urn: &str) -> usize {
-    urn.split(':').count()
+    (1..=20).contains(&s.len()) && s.chars().all(|c| c.is_ascii_alphabetic())
 }
 
 /// The scene `display.navmapThumbnail` rule shared by Content and Worlds deploys:
@@ -321,5 +317,91 @@ mod schema_27_2_tests {
         let mut invalid = metadata;
         invalid["avatars"][0]["avatar"]["emotes"][0]["slot"] = serde_json::json!(10);
         assert!(validate_profile_emote_urns(&invalid, 1_800_000_000_000).is_err());
+    }
+}
+
+#[cfg(test)]
+mod urn_rule_tests {
+    use super::*;
+
+    const C: &str = "0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d";
+    const AFTER_244: Timestamp = adr_timestamps::ADR_244 + 1;
+    const BEFORE_244: Timestamp = adr_timestamps::ADR_244 - 1;
+
+    fn wearing(urn: &str) -> serde_json::Value {
+        serde_json::json!({"avatars": [{"avatar": {"wearables": [urn]}}]})
+    }
+
+    fn emoting(urn: &str) -> serde_json::Value {
+        serde_json::json!({"avatars": [{"avatar": {"emotes": [{"slot": 0, "urn": urn}]}}]})
+    }
+
+    #[test]
+    fn profile_urns_must_resolve() {
+        for urn in [
+            "urn:foo:bar",
+            "",
+            "urn:decentraland:matic:collections-v2:0x1:1:2:3",
+            "dcl://base-avatars/a/b",
+            "urn:decentraland:polygon:collections-v2:0x1:1:2",
+        ] {
+            assert!(
+                validate_profile_wearable_urns(&wearing(urn), AFTER_244).is_err(),
+                "{urn:?}"
+            );
+            assert!(
+                validate_profile_emote_urns(&emoting(urn), AFTER_244).is_err(),
+                "{urn:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolvable_forms_are_accepted() {
+        for urn in [
+            format!("URN:decentraland:matic:collections-v2:{C}:1:5"),
+            format!("urn:decentraland:matic:collections-v2:{C}"),
+            format!("urn:decentraland:matic:collections-thirdparty:tp:col:hat:matic:{C}:5"),
+            "urn:decentraland:matic:collections-thirdparty:tp:col:hat".to_string(),
+            "urn:decentraland:off-chain:base-avatars:BaseMale".to_string(),
+            "dcl://base-avatars/f_sweater".to_string(),
+            "hat".to_string(),
+        ] {
+            assert!(
+                validate_profile_wearable_urns(&wearing(&urn), AFTER_244).is_ok(),
+                "{urn}"
+            );
+            assert!(
+                validate_profile_emote_urns(&emoting(&urn), AFTER_244).is_ok(),
+                "{urn}"
+            );
+        }
+    }
+
+    #[test]
+    fn assets_need_a_token_id_after_adr_244() {
+        for urn in [
+            format!("urn:decentraland:matic:collections-v2:{C}:1"),
+            format!("urn:decentraland:matic:collections-v2:{C}:1?x:2"),
+            format!("urn:decentraland:ethereum:collections-v1:{C}:hat"),
+            "dcl://halloween_2019/bride_of_frankie_earring".to_string(),
+        ] {
+            assert!(
+                validate_profile_wearable_urns(&wearing(&urn), AFTER_244).is_err(),
+                "{urn}"
+            );
+            assert!(
+                validate_profile_emote_urns(&emoting(&urn), AFTER_244).is_err(),
+                "{urn}"
+            );
+            assert!(
+                validate_profile_wearable_urns(&wearing(&urn), BEFORE_244).is_ok(),
+                "{urn}"
+            );
+            assert!(
+                validate_profile_emote_urns(&emoting(&urn), BEFORE_244).is_ok(),
+                "{urn}"
+            );
+        }
     }
 }

@@ -17,7 +17,7 @@ use super::checker::{
 };
 use super::error::ValidationResponse;
 use super::helpers::{
-    avatar_has_snapshots, count_urn_segments, navmap_thumbnail_error, profile_has_emotes,
+    avatar_has_snapshots, navmap_thumbnail_error, profile_has_emotes,
     should_validate_face_thumbnail, validate_profile_emote_urns, validate_profile_wearable_urns,
 };
 use super::image_metadata::{check_face256_thumbnail_image, check_wearable_thumbnail_image};
@@ -813,27 +813,32 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         }
 
         if entity.timestamp >= adr_timestamps::ADR_244 {
-            let mut non_item_urns: Vec<String> = Vec::new();
-            if let Some(outfits) = metadata.get("outfits").and_then(|v| v.as_array()) {
-                for outfit in outfits {
-                    if let Some(wearables) = outfit
-                        .get("outfit")
-                        .and_then(|o| o.get("wearables"))
-                        .and_then(|w| w.as_array())
-                    {
-                        for w in wearables {
-                            if let Some(urn) = w.as_str() {
-                                let lower = urn.to_lowercase();
-                                if (lower.contains("collections-v1:")
-                                    || lower.contains("collections-v2:"))
-                                    && count_urn_segments(&lower) <= 6
-                                {
-                                    non_item_urns.push(urn.to_string());
-                                }
-                            }
-                        }
-                    }
+            let mut seen: HashSet<&str> = HashSet::new();
+            let mut invalid_urns: Vec<&str> = Vec::new();
+            let mut non_item_urns: Vec<&str> = Vec::new();
+            let wearables = metadata
+                .get("outfits")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|o| o.get("outfit")?.get("wearables")?.as_array())
+                .flatten()
+                .filter_map(|w| w.as_str());
+            for urn in wearables {
+                if !seen.insert(urn) {
+                    continue;
                 }
+                match super::urn::parse(urn) {
+                    None => invalid_urns.push(urn),
+                    Some(parsed) if parsed.is_collection_asset() => non_item_urns.push(urn),
+                    Some(_) => {}
+                }
+            }
+            if !invalid_urns.is_empty() {
+                return ValidationResponse::fail(format!(
+                    "Invalid wearable pointer: ({})",
+                    invalid_urns.join(", ")
+                ));
             }
             if !non_item_urns.is_empty() {
                 return ValidationResponse::fail(format!(
@@ -1465,6 +1470,56 @@ mod tests {
             assert!(validator.validate(&d.view()).await.is_ok());
             assert!(validator.validate_staging(&d.view(), false).await.is_ok());
             assert_eq!(calls.1.load(std::sync::atomic::Ordering::SeqCst), 2);
+        }
+
+        #[test]
+        fn outfit_wearables_must_resolve_to_items() {
+            let calls = Calls::new(Duration::ZERO);
+            let checker = SlowChecker(Duration::ZERO, false);
+            let validator = ContentValidator {
+                external_calls: &calls,
+                blockchain_checker: &checker,
+                ignore_blockchain_access: false,
+                synced: false,
+                access_passed: false,
+            };
+            let c = "0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d";
+            let wearing = |urn: &str| {
+                let mut d = profile();
+                d.entity.entity_type = EntityType::Outfits;
+                d.entity.pointers = vec![format!("{OWNER}:outfits")];
+                d.entity.metadata = Some(serde_json::json!({
+                    "outfits": [{"slot": 0, "outfit": {"wearables": [urn]}}],
+                    "namesForExtraSlots": []
+                }));
+                d
+            };
+            let errors = |urn: &str| {
+                validator
+                    .validate_outfits_content(&wearing(urn).view())
+                    .errors()
+                    .map(<[String]>::to_vec)
+                    .unwrap_or_default()
+            };
+            assert_eq!(
+                errors("urn:foo:bar"),
+                ["Invalid wearable pointer: (urn:foo:bar)"]
+            );
+            let asset = format!("urn:decentraland:matic:collections-v2:{c}:1?x:2");
+            assert_eq!(
+                errors(&asset),
+                [format!(
+                    "Wearable pointers {asset} should be items, not assets. \
+                     The URNs must include the tokenId."
+                )]
+            );
+            for urn in [
+                format!("URN:decentraland:matic:collections-v2:{c}:1:5"),
+                format!("urn:decentraland:matic:collections-v2:{c}"),
+                "urn:decentraland:off-chain:base-avatars:BaseMale".to_string(),
+            ] {
+                assert!(errors(&urn).is_empty(), "{urn}");
+            }
         }
 
         #[tokio::test]
