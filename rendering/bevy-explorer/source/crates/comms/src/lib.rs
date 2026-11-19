@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod access_status;
 pub mod adapter;
 mod anim_announce;
