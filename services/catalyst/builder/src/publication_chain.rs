@@ -80,8 +80,19 @@ impl PublicationChain<'_> {
         })
     }
 
+    /// Refuses an RPC that is not Polygon Mainnet.
+    pub async fn ensure_polygon(&self) -> Result<(), ApiError> {
+        if quantity(&self.rpc("eth_chainId", json!([])).await?)? != U256::from(137) {
+            return Err(ApiError::service_unavailable(
+                "Publication verification requires Polygon Mainnet",
+            ));
+        }
+        Ok(())
+    }
+
     /// The deployed collection's current `creator()` at the latest block,
     /// lowercase: `transferCreatorship` moves it without a builder request.
+    /// The caller checks the chain first ([`Self::ensure_polygon`]).
     pub async fn current_creator(&self, contract: &str) -> Result<String, ApiError> {
         let raw = self
             .rpc(
@@ -93,6 +104,9 @@ impl PublicationChain<'_> {
             .map_err(|_| invalid("Invalid collection creator response"))?;
         let creator = creatorCall::abi_decode_returns(&bytes)
             .map_err(|_| invalid("Invalid collection creator response"))?;
+        if creator == Address::ZERO {
+            return Err(invalid("The collection has no creator"));
+        }
         Ok(format!("{creator:#x}"))
     }
 
@@ -116,11 +130,7 @@ impl PublicationChain<'_> {
         if state.status == "published" || state.status == "reverted" {
             return Ok(state);
         }
-        if quantity(&self.rpc("eth_chainId", json!([])).await?)? != U256::from(137) {
-            return Err(ApiError::service_unavailable(
-                "Publication verification requires Polygon Mainnet",
-            ));
-        }
+        self.ensure_polygon().await?;
         let transaction = self.rpc("eth_getTransactionByHash", json!([hash])).await?;
         if transaction.is_null() {
             return Err(ApiError::service_unavailable(

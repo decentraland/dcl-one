@@ -123,14 +123,17 @@ pub async fn get_item(
     headers: HeaderMap,
 ) -> Result<Json<ApiData<Value>>, ApiError> {
     let owner = signer(&state, &headers, "get", &original, &uri).await?;
-    let collection: Option<Uuid> =
-        sqlx::query_scalar("SELECT collection_id FROM builder.items WHERE id = $1")
-            .bind(id)
-            .fetch_optional(state.items.pool())
-            .await?
-            .flatten();
-    if let Some(collection) = collection {
-        super::collections::synced_collection(&state, &collection).await?;
+    if let Some(collection) = state.items.item_collection(id).await? {
+        let meta = super::collections::synced_collection(&state, &collection).await?;
+        if meta.follows_chain() {
+            if !meta.eth_address.eq_ignore_ascii_case(owner.as_str()) {
+                return Err(ApiError::not_found("Item not found"));
+            }
+            let mut item = state.items.collection_item_draft(collection, id).await?;
+            // The row keeps the previous creator while writes are off.
+            item["eth_address"] = Value::String(meta.eth_address);
+            return Ok(Json(ApiData::ok(item)));
+        }
     }
     Ok(Json(ApiData::ok(
         state.items.item_draft(owner.as_str(), id).await?,

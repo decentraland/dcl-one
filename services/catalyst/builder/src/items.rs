@@ -348,6 +348,13 @@ pub struct CollectionMetaRow {
     pub updated_at: NaiveDateTime,
 }
 
+impl CollectionMetaRow {
+    /// A published standard collection: its owner is its on-chain creator.
+    pub fn follows_chain(&self) -> bool {
+        self.contract_address.is_some() && self.third_party_id.is_none()
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "builder/"))]
 pub struct CollectionMetaOut {
