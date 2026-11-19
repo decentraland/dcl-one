@@ -163,4 +163,26 @@ describe("the Shop overview", () => {
     expect((await read).items[0]?.compareAtCredits).toBeGreaterThan(0);
     setShopClient(null);
   });
+
+  it("sends Best Deals only once unknown flags say creator sales are on", async () => {
+    for (const [creatorSales, deals] of [
+      [false, 0],
+      [true, 1],
+    ] as const) {
+      invalidateShopQueries();
+      const client = catalogClient();
+      setShopClient(client);
+      primeRemoteFlags(null);
+      let answer!: () => void;
+      const flags = new Promise<void>((resolve) => (answer = resolve));
+      prefetchOverviewRails(flags);
+      const asked = (part: string) => client.calls.filter((c) => c.url.includes(part)).length;
+      expect([asked("sortBy=newest"), asked("/catalog/trending"), asked("discounted=true")]).toEqual([1, 1, 0]);
+      primeRemoteFlags({ "dapps-shop-creator-sales": creatorSales });
+      answer();
+      await settle();
+      expect(asked("discounted=true"), `creator sales ${creatorSales}`).toBe(deals);
+    }
+    setShopClient(null);
+  });
 });

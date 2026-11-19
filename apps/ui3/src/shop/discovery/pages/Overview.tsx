@@ -28,7 +28,7 @@ import { t } from "@shop/discovery/intl";
 import { useShopQuery } from "../query";
 import "./overview.css";
 import { shopReads } from "../reads";
-import { readDeals, readListings, readTrending } from "./overviewRails";
+import { RAIL_KEYS, readDeals, readListings, readTrending } from "./overviewRails";
 
 const MIN_DEALS = 3;
 
@@ -85,12 +85,12 @@ export default function Overview() {
   // Trending lists resales too only for a visitor who sees the Marketplace (market/access.tsx).
   const listingType = listingTypeFor(useMarketplace());
 
-  const listings = useShopQuery(["overview-listings"], (signal) => readListings(shopReads(signal)));
+  const listings = useShopQuery(RAIL_KEYS.listings, (signal) => readListings(shopReads(signal)));
   // Widening to resales (a web3 visitor whose access resolves after hydration) keeps the primed rail until it lands.
-  const trending = useShopQuery(["overview-trending", listingType ?? "all"], (signal) => readTrending(listingType, shopReads(signal)), {
+  const trending = useShopQuery(RAIL_KEYS.trending(listingType), (signal) => readTrending(listingType, shopReads(signal)), {
     keepPrevious: listingType === undefined,
   });
-  const deals = useShopQuery(flags.creatorSales ? ["overview-deals"] : null, (signal) => readDeals(shopReads(signal)));
+  const deals = useShopQuery(flags.creatorSales ? RAIL_KEYS.deals : null, (signal) => readDeals(shopReads(signal)));
 
   const items = listings.data?.items ?? [];
   const trendingItems = trending.data ?? [];
