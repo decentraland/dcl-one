@@ -96,22 +96,27 @@ fn change_realm_dialog(
     let mut root = commands.spawn(ZOrder::BackpackPopup.default());
     let root_id = root.id();
 
-    let components = dui
-        .apply_template(
-            &mut root,
-            "change-realm",
-            DuiProps::new()
-                .with_prop(
-                    "realm",
-                    realm
-                        .config
-                        .realm_name
-                        .clone()
-                        .unwrap_or(String::from("<none>")),
-                )
-                .with_prop("buttons", vec![DuiButton::close_sad("cancel")]),
-        )
-        .unwrap();
+    let components = match dui.apply_template(
+        &mut root,
+        "change-realm",
+        DuiProps::new()
+            .with_prop(
+                "realm",
+                realm
+                    .config
+                    .realm_name
+                    .clone()
+                    .unwrap_or(String::from("<none>")),
+            )
+            .with_prop("buttons", vec![DuiButton::close_sad("cancel")]),
+    ) {
+        Ok(components) => components,
+        Err(e) => {
+            error!("change-realm dialog not shown: {e}");
+            commands.entity(root_id).despawn();
+            return;
+        }
+    };
     commands
         .entity(components.named("server-list"))
         .try_insert(ServerList { task, root_id });

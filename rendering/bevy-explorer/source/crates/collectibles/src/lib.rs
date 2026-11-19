@@ -475,6 +475,37 @@ mod tests {
     }
 
     #[test]
+    fn builtin_emote_urns_match_parsed_bare_names() {
+        for full in [
+            "urn:decentraland:off-chain:unknown-source:idle_male",
+            "urn:decentraland:off-chain:unknown-source:jump",
+            "urn:decentraland:off-chain:unknown-source:walk",
+            "urn:decentraland:off-chain:unknown-source:run",
+            "urn:decentraland:off-chain:unknown-source:double_jump",
+            "urn:decentraland:off-chain:unknown-source:glide",
+        ] {
+            let bare = full.rsplit(':').next().unwrap();
+            assert_eq!(EmoteUrn::builtin(full), EmoteUrn::new(bare).unwrap());
+        }
+        assert_eq!(
+            EmoteUrn::new("Idle_Male").unwrap(),
+            EmoteUrn::builtin("urn:decentraland:off-chain:unknown-source:idle_male")
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "uppercase")]
+    fn builtin_emote_urn_rejects_uppercase() {
+        EmoteUrn::builtin("urn:decentraland:off-chain:unknown-source:Idle_Male");
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown-source collection")]
+    fn builtin_emote_urn_rejects_other_collections() {
+        EmoteUrn::builtin("urn:decentraland:off-chain:base-emotes:wave");
+    }
+
+    #[test]
     fn bare_emote_names_are_tried_under_every_source_collection() {
         let bare = EmoteUrn::new("sittingChair2").unwrap();
         assert_eq!(

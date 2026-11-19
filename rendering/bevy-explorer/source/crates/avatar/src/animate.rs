@@ -47,20 +47,15 @@ use crate::{process_avatar, upload_cpu_mesh, AvatarDefinition};
 #[derive(Component)]
 pub struct AvatarAnimPlayer(pub Entity);
 
-// engine-emote urns used every frame by the velocity selector; parsed once
-// (EmoteUrn::new re-validates and re-allocates several times per call)
-static URN_IDLE: std::sync::LazyLock<EmoteUrn> =
-    std::sync::LazyLock::new(|| EmoteUrn::new("idle_male").unwrap());
-static URN_JUMP: std::sync::LazyLock<EmoteUrn> =
-    std::sync::LazyLock::new(|| EmoteUrn::new("jump").unwrap());
-static URN_WALK: std::sync::LazyLock<EmoteUrn> =
-    std::sync::LazyLock::new(|| EmoteUrn::new("walk").unwrap());
-static URN_RUN: std::sync::LazyLock<EmoteUrn> =
-    std::sync::LazyLock::new(|| EmoteUrn::new("run").unwrap());
-static URN_DOUBLE_JUMP: std::sync::LazyLock<EmoteUrn> =
-    std::sync::LazyLock::new(|| EmoteUrn::new("double_jump").unwrap());
-static URN_GLIDE: std::sync::LazyLock<EmoteUrn> =
-    std::sync::LazyLock::new(|| EmoteUrn::new("glide").unwrap());
+// engine-emote urns, borrowed from static strings, so a clone does not allocate
+pub(crate) static URN_IDLE: EmoteUrn =
+    EmoteUrn::builtin("urn:decentraland:off-chain:unknown-source:idle_male");
+static URN_JUMP: EmoteUrn = EmoteUrn::builtin("urn:decentraland:off-chain:unknown-source:jump");
+static URN_WALK: EmoteUrn = EmoteUrn::builtin("urn:decentraland:off-chain:unknown-source:walk");
+static URN_RUN: EmoteUrn = EmoteUrn::builtin("urn:decentraland:off-chain:unknown-source:run");
+static URN_DOUBLE_JUMP: EmoteUrn =
+    EmoteUrn::builtin("urn:decentraland:off-chain:unknown-source:double_jump");
+static URN_GLIDE: EmoteUrn = EmoteUrn::builtin("urn:decentraland:off-chain:unknown-source:glide");
 
 // per-avatar animate state previously held in per-frame-rebuilt Local HashMaps
 #[derive(Component, Default)]
@@ -830,7 +825,7 @@ fn animate(
                     },
                     move_kind,
                 )
-            } else if active_emote.urn == *URN_JUMP && !active_emote.finished {
+            } else if active_emote.urn == URN_JUMP && !active_emote.finished {
                 (
                     ActiveEmote {
                         playback: EmotePlayback {
@@ -953,7 +948,7 @@ fn animate(
         // one-shot is dropped.
         if let Some(request) = masked.request.as_mut() {
             let suspended = active_emote.source == ActiveEmoteSource::TriggeredEmote
-                || active_emote.urn == *URN_GLIDE;
+                || active_emote.urn == URN_GLIDE;
             if suspended {
                 if request.active && !request.repeat {
                     debug!("dropping suspended one-shot {:?}", request.urn);
@@ -1766,10 +1761,10 @@ fn play_slot(
     }
 
     // nasty hack for falling animation
-    if playback.urn == *URN_JUMP && active_animation.seek_time() >= 0.4 && playback.repeat {
+    if playback.urn == URN_JUMP && active_animation.seek_time() >= 0.4 && playback.repeat {
         active_animation.set_speed(speed * 0.125);
     }
-    if playback.urn == *URN_JUMP && active_animation.seek_time() >= 0.5833 && playback.repeat {
+    if playback.urn == URN_JUMP && active_animation.seek_time() >= 0.5833 && playback.repeat {
         active_animation.seek_to(0.5833);
         active_animation.set_speed(0.0);
     }
