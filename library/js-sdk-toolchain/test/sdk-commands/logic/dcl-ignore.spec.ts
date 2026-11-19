@@ -5,6 +5,10 @@ describe('dcl-ignore', () => {
     it('should include *.map to exclude sourcemap files', () => {
       expect(defaultDclIgnore).toContain('*.map')
     })
+
+    it('should exclude the editor files scene templates ship without a leading dot', () => {
+      expect(defaultDclIgnore).toEqual(expect.arrayContaining(['cursor.config', 'cursorignore']))
+    })
   })
 
   describe('getDCLIgnorePatterns', () => {
@@ -26,6 +30,7 @@ describe('dcl-ignore', () => {
       }
       const patterns = await getDCLIgnorePatterns(components as any, '/some/dir')
       expect(patterns).toContain('*.map')
+      expect(patterns).toEqual(expect.arrayContaining(['cursor.config', 'cursorignore']))
       // custom patterns should also be present
       expect(patterns).toContain('custom-folder')
       expect(patterns).toContain('*.log')

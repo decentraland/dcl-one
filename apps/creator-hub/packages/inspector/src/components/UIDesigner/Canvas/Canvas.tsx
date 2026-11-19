@@ -1449,7 +1449,11 @@ const CanvasComponent: React.FC = () => {
                   </>
                 }
                 action={
-                  <Button onClick={createRoot}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={createRoot}
+                  >
                     <IoAddOutline aria-hidden="true" />
                     New GUI
                   </Button>

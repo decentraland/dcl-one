@@ -4,7 +4,7 @@
 // known), sent (rays, OK) and failed (TRY AGAIN, Contact Support).
 
 import { useState } from 'react'
-import { Avatar, Button, Modal, ModalActions, ModalTitle, Spinner, VerifiedBadge } from '../../design'
+import { ArmedButton, Avatar, Button, Modal, ModalActions, ModalTitle, Spinner, VerifiedBadge } from '../../design'
 import { MIN_TIP, TIP_AMOUNT, type DonateCreator, type DonateHandlers, type DonateView } from './types'
 import styles from './DonatePanel.module.css'
 
@@ -151,9 +151,11 @@ function Form({ view, handlers }: { view: Extract<DonateView, { step: 'form' }>;
         <Button variant="secondary" onClick={handlers.onClose}>
           Cancel
         </Button>
-        <Button disabled={!valid} onClick={() => valid && handlers.onSend?.(mana.trim())}>
+        {/* The first suggestion is already picked, so the form opens ready to send: a second click of the press
+            that opened it must not. */}
+        <ArmedButton disabled={!valid} onClick={() => valid && handlers.onSend?.(mana.trim())}>
           SEND TIP
-        </Button>
+        </ArmedButton>
       </ModalActions>
     </>
   )

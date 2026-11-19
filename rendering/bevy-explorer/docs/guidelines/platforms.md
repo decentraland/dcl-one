@@ -20,6 +20,13 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
 (the livekit bridge in `comms`, the page-event dispatch), behind a `cfg` there, not in
 `platform`. Either way the platform-specific part is a leaf; the logic that uses it is shared.
 
+- **Window focus goes through `ClientWindowFocus`.** Read the client's focus from the
+  `ClientWindowFocus` resource (the OS's focus report natively, `document.hasFocus()` on the
+  web) and ask for focus with `commands.trigger(RequestClientWindowFocus)`. Nothing else reads
+  or writes `Window::focused`: it also holds focus requests the OS may refuse, and on the web it
+  is the canvas's focus, not the page's. `ClientWindowFocusPlugin` is the only code that touches
+  it.
+
 ## Web
 
 - **Chrome only.** Design against Chrome's feature set (multi-memory, JSPI, `Atomics.waitAsync`)

@@ -33,6 +33,8 @@ export type ProjectInfo = {
   uiDesignerOpen?: boolean;
   /** The latest publish per target, keyed `land:<x,y>` or `world:<worldName>:<x,y>`. */
   deployments?: Record<string, ProjectDeployment>;
+  /** The thumbnail the scene's template came with, until a capture replaces it. */
+  templateThumbnail?: { path: string; sha256: string };
 };
 
 export type Project = {

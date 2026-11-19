@@ -32,19 +32,54 @@ function parseGitHubUrl(githubUrl: string) {
   throw new Error("URL doesn't match the expected GitHub format.");
 }
 
+// GitHub's zipball answers in under a second when it's well, but a slow answer is common enough
+// that the shared 5 s request timeout failed scene creation from a template. The limit covers the
+// whole download, body included: the shared fetch's timeout stops at the headers.
+const ZIPBALL_TIMEOUT_MS = 30_000;
+const ZIPBALL_ATTEMPTS = 2;
+
+async function downloadZipball(apiUrl: string): Promise<ArrayBuffer> {
+  const response = await fetch(apiUrl, undefined, ZIPBALL_TIMEOUT_MS);
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    throw Object.assign(new Error(`GitHub API request failed with status ${response.status}`), {
+      retryable: response.status >= 500,
+    });
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const stalled = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      void response.body?.cancel().catch(() => undefined);
+      reject(Object.assign(new Error(`Download of ${apiUrl} stalled`), { retryable: true }));
+    }, ZIPBALL_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([response.arrayBuffer(), stalled]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchZipball(apiUrl: string): Promise<ArrayBuffer> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await downloadZipball(apiUrl);
+    } catch (error) {
+      const retryable = (error as { retryable?: boolean }).retryable !== false;
+      if (!retryable || attempt >= ZIPBALL_ATTEMPTS) throw error;
+      log.warn(`[download-github-folder] ${apiUrl} failed, retrying`, error);
+    }
+  }
+}
+
 export async function downloadGithubRepo(githubUrl: string, destination: string) {
   const { owner, repo, branch, path: subfolderPath } = parseGitHubUrl(githubUrl);
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/zipball//${branch}`;
+  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/zipball/${branch}`;
 
   try {
-    const ghResponse = await fetch(apiUrl);
-    if (!ghResponse.ok) {
-      throw new Error(`GitHub API request failed with status ${ghResponse.status}`);
-    }
-
     // Download and extract the zip file
     const tempZipPath = path.join(destination, `${repo}.zip`);
-    const zipContent = await ghResponse.arrayBuffer();
+    const zipContent = await fetchZipball(apiUrl);
     await fs.writeFile(tempZipPath, new Uint8Array(zipContent));
     await extract(tempZipPath, {
       dir: destination,

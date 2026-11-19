@@ -801,6 +801,7 @@ impl AppConfig {
         self.graphics.ssao = default.graphics.ssao;
         self.graphics.sky_reflections = default.graphics.sky_reflections;
         self.graphics.oob = default.graphics.oob;
+        self.graphics.spring_bones = default.graphics.spring_bones;
         self.scene_load_distance = default.scene_load_distance;
         self.scene_unload_extra_distance = default.scene_unload_extra_distance;
         self.scene_imposter_distances = default.scene_imposter_distances.clone();
@@ -1921,6 +1922,42 @@ pub enum AppError {
     NetworkFailure(anyhow::Error),
 }
 
+/// The client's focus: one representation for the native window's focus and the browser page's
+/// focus.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientWindowFocus {
+    Focused,
+    NoFocus,
+}
+
+impl ClientWindowFocus {
+    /// From the OS's focus report for the window, not `Window::focused`, which also holds
+    /// unanswered focus requests.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn from_window_focused(window_focused: &bevy::window::WindowFocused) -> Self {
+        Self::from_has_focus(window_focused.focused)
+    }
+
+    /// `page_has_focus` is `document.hasFocus()`, not `Window::focused`.
+    #[cfg(target_arch = "wasm32")]
+    pub fn from_page_focus(page_has_focus: bool) -> Self {
+        Self::from_has_focus(page_has_focus)
+    }
+
+    fn from_has_focus(has_focus: bool) -> Self {
+        if has_focus {
+            Self::Focused
+        } else {
+            Self::NoFocus
+        }
+    }
+}
+
+/// Asks the OS to focus the primary window. [`ClientWindowFocus`] changes only once the OS
+/// reports the focus.
+#[derive(Event, Debug, Clone, Copy)]
+pub struct RequestClientWindowFocus;
+
 #[derive(Resource, Default, Serialize, Deserialize, Clone)]
 pub struct MicState {
     pub available: bool,
@@ -1942,7 +1979,16 @@ pub struct MicState {
 }
 
 impl MicState {
-    pub fn scene_blocked(&self) -> bool {
+    /// This state with `enabled` false while the client window lacks focus, since the mic is
+    /// paused then.
+    pub fn gated_by_client_window_focus(&self, focus: ClientWindowFocus) -> Self {
+        Self {
+            enabled: self.enabled && focus == ClientWindowFocus::Focused,
+            ..self.clone()
+        }
+    }
+
+    pub const fn scene_blocked(&self) -> bool {
         self.scene_blocked
     }
 
@@ -2245,6 +2291,62 @@ impl CameraSmoothing {
 
 #[derive(Event)]
 pub struct PointAtMarkerVisibilityChanged;
+
+/// The local player's language as a BCP-47 tag: the chosen one, else the system's. `None` where
+/// no player is present (headless).
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
+pub struct PlayerLanguage(pub Option<String>);
+
+/// Who may DM a user.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DmPrivacy {
+    #[default]
+    All,
+    OnlyFriends,
+}
+
+impl From<PrivateMessagePrivacySetting> for DmPrivacy {
+    fn from(value: PrivateMessagePrivacySetting) -> Self {
+        match value {
+            PrivateMessagePrivacySetting::All => DmPrivacy::All,
+            PrivateMessagePrivacySetting::OnlyFriends => DmPrivacy::OnlyFriends,
+        }
+    }
+}
+
+impl From<DmPrivacy> for PrivateMessagePrivacySetting {
+    fn from(value: DmPrivacy) -> Self {
+        match value {
+            DmPrivacy::All => PrivateMessagePrivacySetting::All,
+            DmPrivacy::OnlyFriends => PrivateMessagePrivacySetting::OnlyFriends,
+        }
+    }
+}
+
+/// Another user's DM privacy, as returned by `GetPrivateMessagesSettings`.
+#[derive(Clone, Debug)]
+pub struct DmPrivacyOf {
+    pub address: String,
+    pub privacy: DmPrivacy,
+}
+
+/// A scene's javascript, as loaded from its content
+#[derive(Asset, Debug, Clone, TypePath)]
+pub struct SceneJsFile(pub Arc<String>);
+
+/// A world password the HUD must ask for (see `ipfs::world_access`); answered with the password,
+/// or `None` when the player gives up. Dropped unanswered when the realm change no longer needs it.
+pub struct WorldPasswordPrompt {
+    pub world: String,
+    /// Why the previous answer was refused; `None` on the first ask
+    pub error: Option<String>,
+    pub answer: tokio::sync::oneshot::Sender<Option<String>>,
+}
+
+/// Where world password prompts go, installed by whatever shows them (the system bridge). Without
+/// it a password-protected world can't be entered.
+#[derive(Resource, Clone)]
+pub struct WorldPasswordPrompter(pub tokio::sync::mpsc::UnboundedSender<WorldPasswordPrompt>);
 
 #[cfg(test)]
 mod tests {
@@ -2692,59 +2794,3 @@ mod tests {
         }
     }
 }
-
-/// The local player's language as a BCP-47 tag: the chosen one, else the system's. `None` where
-/// no player is present (headless).
-#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
-pub struct PlayerLanguage(pub Option<String>);
-
-/// Who may DM a user.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum DmPrivacy {
-    #[default]
-    All,
-    OnlyFriends,
-}
-
-impl From<PrivateMessagePrivacySetting> for DmPrivacy {
-    fn from(value: PrivateMessagePrivacySetting) -> Self {
-        match value {
-            PrivateMessagePrivacySetting::All => DmPrivacy::All,
-            PrivateMessagePrivacySetting::OnlyFriends => DmPrivacy::OnlyFriends,
-        }
-    }
-}
-
-impl From<DmPrivacy> for PrivateMessagePrivacySetting {
-    fn from(value: DmPrivacy) -> Self {
-        match value {
-            DmPrivacy::All => PrivateMessagePrivacySetting::All,
-            DmPrivacy::OnlyFriends => PrivateMessagePrivacySetting::OnlyFriends,
-        }
-    }
-}
-
-/// Another user's DM privacy, as returned by `GetPrivateMessagesSettings`.
-#[derive(Clone, Debug)]
-pub struct DmPrivacyOf {
-    pub address: String,
-    pub privacy: DmPrivacy,
-}
-
-/// A scene's javascript, as loaded from its content
-#[derive(Asset, Debug, Clone, TypePath)]
-pub struct SceneJsFile(pub Arc<String>);
-
-/// A world password the HUD must ask for (see `ipfs::world_access`); answered with the password,
-/// or `None` when the player gives up. Dropped unanswered when the realm change no longer needs it.
-pub struct WorldPasswordPrompt {
-    pub world: String,
-    /// Why the previous answer was refused; `None` on the first ask
-    pub error: Option<String>,
-    pub answer: tokio::sync::oneshot::Sender<Option<String>>,
-}
-
-/// Where world password prompts go, installed by whatever shows them (the system bridge). Without
-/// it a password-protected world can't be entered.
-#[derive(Resource, Clone)]
-pub struct WorldPasswordPrompter(pub tokio::sync::mpsc::UnboundedSender<WorldPasswordPrompt>);

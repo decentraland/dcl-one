@@ -46,6 +46,7 @@ import { openProfileCard } from '../profileCard/ProfileCard'
 import { formatConsoleReply, parseChatCommand } from '@explorer-core/features/chat/chatCommands'
 import { applyLanguageSetting, clearAutoTranslate } from '@explorer-core/features/chat/translation'
 import { clearPingMode, shouldPing } from '../chat/ping'
+import { useAskBeforeLeaving } from '../settings/askBeforeLeaving'
 import { risingIds, rowKeys } from '@explorer-core/features/chat/lineIds'
 import { communityChannel, communityIdOf } from '@explorer-core/engine/communityChannel'
 import { mentionName, mentionsName } from '@explorer-core/engine/mention'
@@ -4745,9 +4746,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     settleHudLogin(new Error(fatalError.message))
   }, [fatalError, settleHudLogin, restoreHudSignIn])
 
-  // The shell's question before the page goes (apps/ui3 shell/mount.ts) is for a session: the
-  // start screen has none to lose.
-  const sessionLive = phase !== 'login'
+  // The shell's question before the page goes (apps/ui3 shell/mount.ts) is for a session (the
+  // start screen has none to lose), and only for a player who turned it on in Settings.
+  const askBeforeLeaving = useAskBeforeLeaving()
+  const sessionLive = phase !== 'login' && askBeforeLeaving
   useEffect(() => {
     if (inShell) postToShell({ type: 'bevy-shell:session', live: sessionLive })
   }, [sessionLive])
@@ -5002,7 +5004,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       case 'ChatPanel': toggleChat(); break
       case 'Emote': toggleEmotes(); break
       // 'Microphone' is NOT handled here: MicUiPlugin isn't NativeUi-gated, so the engine
-      // itself still toggles the mic on that action (the mic relay updates the HUD icon).
+      // itself opens the mic on press and closes it on release (the mic relay updates the
+      // HUD icon).
       // 'Chat' (Enter) is NOT handled here: the bridge's chat domain turns it into the
       // dedicated 'focusChat' message (releasing the engine pointer lock scene-side too).
     }

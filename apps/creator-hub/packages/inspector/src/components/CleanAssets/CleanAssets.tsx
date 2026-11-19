@@ -229,14 +229,16 @@ const CleanAssets: React.FC<Props> = ({
 
               <div className="footer">
                 <Button
-                  type="text"
+                  variant="ghost"
+                  size="md"
                   onClick={onScan}
                   className="ScanButton"
                 >
                   SCAN AGAIN
                 </Button>
                 <Button
-                  type="danger"
+                  variant="primary"
+                  size="md"
                   onClick={validateRemove}
                   disabled={selectedAssets.size === 0}
                 >
@@ -263,14 +265,15 @@ const CleanAssets: React.FC<Props> = ({
           </div>
           <div className="actions">
             <Button
-              size="big"
-              type="danger"
+              variant="primary"
+              size="md"
               onClick={handleRemoveSelected}
             >
               Remove
             </Button>
             <Button
-              size="big"
+              variant="secondary"
+              size="md"
               onClick={() => setShowConfirmation(false)}
             >
               Back
