@@ -37,12 +37,12 @@ interface Entry {
   extras: boolean
   /** When the engine last answered that it holds nothing for this address. */
   missingAt: number | undefined
-  /** The version the engine last announced (`profileChanged`): the engine already holds it, so a reply
-   *  below it was read before the announcement. Kept when the copy is forgotten. */
+  /** The last version announced by `profileChanged`. Kept when the copy is forgotten so untagged
+   *  replies and own-profile messages below it can still be recognised as stale. */
   announced: number | undefined
   /** The local player's profile only: set when the engine announces a version below `peak`. It put an
-   *  earlier profile back (an edit failed to deploy), so a copy above it was read before that, and is
-   *  not taken while the engine announces versions below the peak. Another player's profile can
+   *  earlier profile back (an edit failed to deploy), so untagged messages above it are stale while
+   *  the engine announces versions below the peak. Another player's profile can
    *  reach the engine's cache before their avatar announces an older version, which is no revert. */
   revertedTo: number | undefined
   /** The local player's profile only: the highest version the engine announced (or, before any, the
@@ -50,7 +50,8 @@ interface Entry {
    *  profile put back, even one above an earlier revert: an older edit that landed after a newer one
    *  failed. */
   peak: number | undefined
-  /** The current read may send another reply with badge tiers after its first reply settles pending. */
+  /** Matches replies to the latest read for this address. Kept after its first reply clears pending
+   *  so the same read can still supply badge tiers. Invalidation discards the ID. */
   requestId: number | undefined
   pending: boolean
   subscribers: number
@@ -105,8 +106,7 @@ function sweep(now: number): void {
   if (now - lastSweep < SWEEP_EVERY) return
   lastSweep = now
   for (const [key, e] of entries) {
-    // The local player's entry stays: it carries what was announced, which a read still in flight
-    // when the entry would go (a hung passport read, say) is checked against.
+    // Keep the local player's version history for the rollback guard on untagged messages.
     if (key !== own && e.subscribers === 0 && !e.pending && now - e.idleSince > IDLE_TTL) {
       entries.delete(key)
       listeners.delete(key)
@@ -210,6 +210,14 @@ export function receiveProfile(address: string, profile: Profile | null, request
     return
   }
   applyProfile(key, e, profile)
+}
+
+/** Retire the failed read so a later subscription or refresh can retry it. */
+export function profileReadFailed(address: string, requestId: number): void {
+  const e = entries.get(profileKey(address))
+  if (e?.requestId !== requestId) return
+  e.requestId = undefined
+  e.pending = false
 }
 
 /** An own-profile message also updates the passport while its separate read is in flight. */

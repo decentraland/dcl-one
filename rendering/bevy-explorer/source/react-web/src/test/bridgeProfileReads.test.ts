@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Ctx } from '../../bridge-scene/src/bridge'
+import { expectConsoleOutput } from '@explorer-core/test/console'
 import type { GetUserProfileRequest, SceneToPage } from '@explorer-core/engine/protocol'
 
 const api = vi.hoisted(() => ({
@@ -16,6 +17,8 @@ vi.mock('../../bridge-scene/src/system-helpers', () => ({ relay: () => {} }))
 vi.mock('../../bridge-scene/src/identity', () => ({ identity: { onChange: () => {} } }))
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/players/index.js', () => ({ getPlayer: () => null }))
 
+vi.mock('../../bridge-scene/node_modules/@dcl/sdk/ecs.js', () => ({ engine: {} }))
+const { startBridge } = await import('../../bridge-scene/src/bridge')
 const { registerProfile } = await import('../../bridge-scene/src/domains/profile')
 
 async function read(request: GetUserProfileRequest): Promise<SceneToPage[]> {
@@ -52,6 +55,29 @@ describe('bridge profile reads', () => {
     expect(await read({ kind: 'getUserProfile', address: '0xabc', requestId: 42 })).toEqual([
       { kind: 'userProfile', address: '0xabc', requestId: 42, profile: null }
     ])
+  })
+
+  it('reports a thrown profile read with its address and request ID', () => {
+    const failure = new Error('profile read failed')
+    expectConsoleOutput('error', [['[bridge] getUserProfile failed', failure]])
+    const channel = {
+      postMessage: vi.fn(),
+      onmessage: undefined as ((event: { data: unknown }) => void) | undefined
+    }
+    vi.stubGlobal('BroadcastChannel', function () { return channel })
+    try {
+      startBridge((ctx) => ctx.on('getUserProfile', () => { throw failure }))
+      channel.onmessage?.({ data: { to: 'scene', msg: { kind: 'getUserProfile', address: '0xabc', requestId: 17 } } })
+      expect(channel.postMessage).toHaveBeenCalledWith({
+        to: 'page',
+        msg: {
+          kind: 'requestFailed', request: 'getUserProfile', error: String(failure),
+          profileRead: { address: '0xabc', requestId: 17 }
+        }
+      })
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('still answers a read from a HUD that sends no request ID', async () => {

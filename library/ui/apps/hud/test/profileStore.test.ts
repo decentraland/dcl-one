@@ -44,6 +44,19 @@ describe('profile store', () => {
     off2()
   })
 
+  it('drops a tagged reply when the address has no matching read', () => {
+    receiveProfile('0xabc', full(), 1)
+    expect(peekProfile('0xabc')).toBeUndefined()
+  })
+
+  it('accepts an older bridge’s untagged reply to a tagged read', () => {
+    const unsubscribe = subscribeProfile('0xabc', vi.fn())
+    expect(request).toHaveBeenCalledWith('0xabc', false, expect.any(Number))
+    receiveProfile('0xabc', full())
+    expect(peekProfile('0xabc')).toEqual(full())
+    unsubscribe()
+  })
+
   it('does not ask for an address it already holds the engine copy of', () => {
     receiveProfile('0xABC', full())
     subscribeProfile('0xabc', vi.fn())

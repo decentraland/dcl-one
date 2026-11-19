@@ -119,6 +119,53 @@ describe('profile domain', () => {
       profile: { ...profile, address, version: 3 }
     })
     expect(peekProfile(address)).toBeUndefined()
+
+    subscribeProfile(address, () => {})
+    const next = h.driver.last('getUserProfile')
+    expect(next).toMatchObject({ address, requestId: expect.any(Number) })
+    expect(next?.requestId).not.toBe(request?.requestId)
+  })
+
+  it('lets a failed current profile read be retried without retiring other reads', async () => {
+    expectConsoleOutput('error', [
+      ['[bridge] getUserProfile failed:', 'legacy'],
+      ['[bridge] getUserProfile failed:', 'old'],
+      ['[bridge] getUserProfile failed:', 'current']
+    ])
+    const h = renderSession()
+    await enterAsGuest(h)
+    const address = '0xabc'
+    const other = '0xdef'
+    subscribeProfile(address, () => {})
+    const oldId = h.driver.last('getUserProfile')!.requestId!
+    h.driver.emit({ kind: 'profileChanged', address, version: 4 })
+    const currentId = h.driver.last('getUserProfile')!.requestId!
+    subscribeProfile(other, () => {})
+
+    h.driver.emit({ kind: 'requestFailed', request: 'getUserProfile', error: 'legacy' })
+    h.driver.emit({
+      kind: 'requestFailed', request: 'getUserProfile', error: 'old',
+      profileRead: { address, requestId: oldId }
+    })
+    subscribeProfile(address, () => {})
+    expect(h.driver.sentOf('getUserProfile')).toHaveLength(3)
+
+    h.driver.emit({
+      kind: 'requestFailed', request: 'getUserProfile', error: 'current',
+      profileRead: { address: address.toUpperCase(), requestId: currentId }
+    })
+    h.driver.emit({ kind: 'userProfile', address, requestId: oldId, profile: { ...profile, address, version: 3 } })
+    expect(peekProfile(address)).toBeUndefined()
+    subscribeProfile(other, () => {})
+    expect(h.driver.sentOf('getUserProfile')).toHaveLength(3)
+
+    subscribeProfile(address, () => {})
+    const retry = h.driver.last('getUserProfile')!
+    expect(h.driver.sentOf('getUserProfile')).toHaveLength(4)
+    expect(retry).toMatchObject({ address, requestId: expect.any(Number) })
+    expect(retry.requestId).not.toBe(currentId)
+    h.driver.emit({ kind: 'userProfile', address, requestId: retry.requestId, profile: { ...profile, address, version: 4 } })
+    expect(peekProfile(address)?.version).toBe(4)
   })
 
   it('saves an edit optimistically, and reverts it when the engine rejects the deploy', async () => {
