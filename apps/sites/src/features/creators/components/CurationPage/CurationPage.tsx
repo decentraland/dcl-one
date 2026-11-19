@@ -133,10 +133,17 @@ const CurationPage = () => {
     changeParams({ [filter]: toMultiParam(values, defaults) })
   }
 
+  // The router's setter applies its updater to the params of the render it came from: the debounced search must use
+  // the newest one, or it brings back a filter clicked while it waited.
+  const latestChangeParams = useRef(changeParams)
+  useEffect(() => {
+    latestChangeParams.current = changeParams
+  })
+
   function onSearchChange(value: string) {
     setSearchInput(value)
     if (searchTimer.current) clearTimeout(searchTimer.current)
-    searchTimer.current = setTimeout(() => changeParams({ q: value.trim() || null }), SEARCH_DEBOUNCE_MS)
+    searchTimer.current = setTimeout(() => latestChangeParams.current({ q: value.trim() || null }), SEARCH_DEBOUNCE_MS)
   }
 
   function goToPage(next: number) {

@@ -116,9 +116,10 @@
   align-items: center;
   gap: 16px;
 
-  /* Preview and publish are desktop-only; the ⋯ menu beside them stays on every screen. */
+  /* Preview and publish are desktop-only; the ⋯ menu beside them stays on every screen. A tooltip wraps its trigger. */
   @media (max-width: 900px) {
-    & > [data-desktop-only] {
+    & > [data-desktop-only],
+    & > :has(> [data-desktop-only]) {
       display: none;
     }
   }
