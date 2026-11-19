@@ -61,12 +61,11 @@ pub struct BaseMaterial {
 pub struct MaterialDefinition {
     pub material: StandardMaterial,
     pub shadow_caster: bool,
-    /// An SDK PBR material: its emissive colour is not multiplied by its albedo texture.
+    /// An SDK PBR material, which has emissive rules of its own (`SCENE_PLAIN_EMISSIVE`).
     pub plain_emissive: bool,
     pub base_color_texture: Option<TextureUnion>,
     pub emmissive_texture: Option<TextureUnion>,
     pub normal_map: Option<TextureUnion>,
-    /// An unlit material's alpha texture.
     pub alpha_texture: Option<TextureUnion>,
 }
 
@@ -139,8 +138,7 @@ impl MaterialDefinition {
                     .map(Color4DclToBevy::convert_srgba)
                     .unwrap_or(base.base_color);
 
-                // an unlit material blends through its alpha texture only; `alpha_test` and
-                // the diffuse alpha leave it opaque
+                // `alpha_test` and the diffuse alpha leave an unlit material opaque
                 let alpha_mode = if tex_is_present(&unlit.alpha_texture) {
                     AlphaMode::Blend
                 } else {
@@ -178,13 +176,12 @@ impl MaterialDefinition {
                         AlphaMode::Mask(pbr.alpha_test.unwrap_or(0.5))
                     }
                     Some(MaterialTransparencyMode::MtmAlphaBlend) => AlphaMode::Blend,
-                    // blended without a cutoff, the alpha thinning the surface's colour but not
-                    // its highlights (bound_material.wgsl)
+                    // blended without a cutoff (bound_material.wgsl)
                     Some(MaterialTransparencyMode::MtmAlphaTestAndAlphaBlend) => {
                         AlphaMode::Premultiplied
                     }
-                    // the albedo alpha alone decides; `alpha_test` applies in the alpha-test
-                    // mode only and the deprecated alpha texture never
+                    // `alpha_test` applies in the alpha-test mode only, and the deprecated
+                    // alpha texture never
                     Some(MaterialTransparencyMode::MtmAuto) | None => {
                         if base_color.alpha() < 1.0 {
                             AlphaMode::Blend
@@ -194,8 +191,8 @@ impl MaterialDefinition {
                     }
                 };
 
-                // the emissive colour is HDR: its values are linear, unlike the other colours.
-                // an unset colour is black, so an emissive texture alone emits nothing
+                // HDR, so linear, unlike the other colours. an emissive texture alone emits
+                // nothing: the unset colour is black
                 let emissive = pbr
                     .emissive_color
                     .map(|color| {
@@ -1068,8 +1065,7 @@ pub fn dcl_material_from_standard_material(
             alpha_texture,
             emissive_texture: base.emissive_texture.as_ref().map(dcl_texture),
             bump_texture: base.normal_map_texture.as_ref().map(dcl_texture),
-            // as an SDK material reads them back: the albedo sRGB, the emissive linear and
-            // scaled by its intensity
+            // in the form an SDK material is read: sRGB albedo, linear emissive
             albedo_color: Some(base.base_color.convert_srgba()),
             emissive_color: Some(Color::LinearRgba(base.emissive).convert_linear_rgb()),
             reflectivity_color: None,

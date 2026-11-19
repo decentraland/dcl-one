@@ -807,7 +807,6 @@ mod definition {
             ..Default::default()
         });
         assert!(flat.alpha_texture.is_some());
-        // an empty source is no texture
         let empty = unlit(UnlitMaterial {
             alpha_texture: texture(""),
             ..Default::default()

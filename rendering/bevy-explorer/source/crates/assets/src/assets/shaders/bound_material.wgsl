@@ -46,7 +46,6 @@ override fn ambient::ambient_light(world_position: vec4<f32>, world_normal: vec3
     return vec3(0.0);
 }
 #endif
-// an unlit material's alpha texture (scene_material::SceneBound)
 @group(2) @binding(102) var scene_alpha_texture: texture_2d<f32>;
 @group(2) @binding(103) var scene_alpha_sampler: sampler;
 
@@ -84,9 +83,8 @@ fn fragment(
     var pbr_input = pbr_input_from_standard_material(in, is_front_m);
     var out: FragmentOutput;
 
-    // with a normal prepass and no MSAA, an opaque material takes its normal from the prepass,
-    // which holds the geometric normal (bound_prepass.wgsl; the avatar outline finds its edges
-    // in it), so the normal map is applied here
+    // the prepass holds the geometric normal (the avatar outline finds its edges in it), so a
+    // normal read from it has no normal map applied
 #ifdef LOAD_PREPASS_NORMALS
 #ifdef VERTEX_UVS
 #ifdef VERTEX_TANGENTS
@@ -112,8 +110,7 @@ fn fragment(
 #endif
 
 #ifdef VERTEX_UVS
-    // the alpha texture scales the alpha by its brightness, not by its own alpha channel, and is
-    // read where the main texture is
+    // the alpha texture's brightness scales the alpha, not its own alpha channel
     if (scene_bounds.flags & SCENE_ALPHA_TEXTURE) != 0u {
         let alpha_uv = (material.uv_transform * vec3(in.uv, 1.0)).xy;
         let alpha_texel = textureSampleBias(scene_alpha_texture, scene_alpha_sampler, alpha_uv, view.mip_bias);
@@ -190,19 +187,16 @@ fn fragment(
     pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
 
     if (scene_bounds.flags & SCENE_PLAIN_EMISSIVE) != 0u {
-        // the lighting scales the emissive light by the alpha, on top of the blend: an SDK
-        // material's is dimmed by the blend alone
+        // the lighting scales the emissive light by the alpha, on top of the blend
         let alpha = max(pbr_input.material.base_color.a, 0.0001);
         pbr_input.material.emissive = vec4(pbr_input.material.emissive.rgb / alpha, 0.0);
-        // premultiplied (alpha test and blend): the alpha thins the surface's own colour and
-        // leaves its highlights and emissive light whole
+        // premultiplied: the alpha thins the surface's colour, not its highlights
         if (material.flags & pbr_types::STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS) == pbr_types::STANDARD_MATERIAL_FLAGS_ALPHA_MODE_PREMULTIPLIED {
             pbr_input.material.base_color = vec4(pbr_input.material.base_color.rgb * pbr_input.material.base_color.a, pbr_input.material.base_color.a);
         }
     }
 
 #ifdef ENVIRONMENT_MAP
-    // a dark metal reflects the sky at grazing angles as a pale one does
     sky_envmap_reflectivity = sky_envmap_metallic_reflectivity(pbr_input.material.metallic);
 #endif
 
@@ -216,7 +210,6 @@ fn fragment(
             out.color = apply_pbr_lighting(pbr_input);
         }
     } else {
-        // an unlit material shows its colour as it is, tonemapped with the frame like the rest
         out.color = pbr_input.material.base_color;
     }
 

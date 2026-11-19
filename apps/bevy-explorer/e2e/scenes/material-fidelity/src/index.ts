@@ -24,22 +24,11 @@ import {
 import { Color3, Color4, Quaternion, Vector2, Vector3 } from '@dcl/sdk/math'
 
 /**
- * material-fidelity: charts of the SDK material for comparing two clients.
- *
- * Eight boards stand in a row, 20 m apart, each tilted 45 degrees towards the sky and holding a
- * 6 by 6 grid of spheres. A row varies one material value across its six columns and holds the
- * rest; the first two boards are metallic by roughness charts. The line under a row names what
- * it varies, left to right. Board 7 holds the cases that need their own texture or another
- * shape: which way up a texture sits, samplers on an image used once, bumps on every shape, the
- * emissive rules, and grey ramps. Board 8 turns bumped shapes to bring each axis of the normal map
- * under the sun, and holds glTF cubes: with SDK materials put on them, and with emissive
- * materials of their own.
+ * material-fidelity: charts of the SDK material for comparing two clients. `../README.md` lists
+ * what each board holds.
  *
  * Each board has a virtual camera on its normal, so two clients at the same board render the
- * same frame. E goes to the next board and F to the previous one; after the last board comes
- * the free player camera. Avatars are hidden.
- *
- * The scene adds no light: the sun and the sky of each client light the boards.
+ * same frame. The scene adds no light: the sun and the sky of each client light the boards.
  */
 
 const LAVA = 'assets/lava.jpg'
@@ -67,9 +56,8 @@ type Unlit = Partial<PBMaterial_UnlitMaterial>
 /** `planeUvs` is a plane with its four corners' UVs given, the same picture as the default. */
 type Shape = 'sphere' | 'box' | 'plane' | 'cylinder' | 'cone' | 'planeUvs'
 /**
- * What one cell wears: a PBR material, an unlit one, or no Material component at all. `turn`
- * rolls the shape about the board's normal, in degrees. A `gltf` cell is a model, as it is or
- * with `modifier` put on all its nodes.
+ * `'none'` is a shape with no Material component. `turn` rolls the shape about the board's
+ * normal, in degrees. `modifier` is put on every node of the model.
  */
 type Cell =
   | { pbr: Pbr; shape?: Shape; turn?: number }
@@ -386,7 +374,7 @@ export function main() {
   const centreX = FIRST_STATION_X + ((STATIONS.length - 1) * STATION_SPACING) / 2
   const tilt = Quaternion.fromEulerDegrees(BOARD_TILT, 0, 0)
 
-  // The backing all six boards share: local +Y runs up the slope and -Z faces the cameras.
+  // Local +Y runs up the slope and -Z faces the cameras.
   const backing = engine.addEntity()
   Transform.create(backing, { position: Vector3.create(centreX, BOARD_CENTRE_Y, BOARD_CENTRE_Z), rotation: tilt })
   const slab = engine.addEntity()
@@ -422,7 +410,6 @@ export function main() {
   })
 }
 
-/** Builds one board and returns its camera. */
 function buildStation(station: Station, index: number, tilt: Quaternion): Entity {
   const centre = Vector3.create(FIRST_STATION_X + index * STATION_SPACING, BOARD_CENTRE_Y, BOARD_CENTRE_Z)
   const root = engine.addEntity()
@@ -466,7 +453,6 @@ function buildStation(station: Station, index: number, tilt: Quaternion): Entity
     })
   })
 
-  // On the board's normal, looking at its centre.
   const normal = Vector3.rotate(Vector3.create(0, 0, -1), tilt)
   const camera = engine.addEntity()
   Transform.create(camera, { position: Vector3.add(centre, Vector3.scale(normal, CAMERA_DISTANCE)) })
