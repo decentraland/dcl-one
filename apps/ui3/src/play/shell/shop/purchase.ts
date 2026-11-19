@@ -698,11 +698,14 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     !!op.mana && !!op.release && !op.foreign && !running && !op.manaSending && op.manaRetry === true && !TERMINAL_STATES.includes(op.state)
   /** CHECK AGAIN: one look now, besides the watch's own; the dialog follows if it settled. */
   const checkAgain = async (op: Operation, view: (check: 'ready' | 'checking') => void): Promise<void> => {
-    if (!op.buyer || op.foreign || TERMINAL_STATES.includes(op.state)) return
+    if (!op.buyer || op.foreign || !stillPending(op)) return
     view('checking')
     const done = await check(op as Operation & { buyer: string }, (op.store ??= ledger.storeFor(op))).catch(() => false)
-    if (!done && slot.holds(op) && !TERMINAL_STATES.includes(op.state)) showPending(op)
+    // Repainted only while it is still the purchase in progress: a refusal the watch showed meanwhile stays shown.
+    if (!done && slot.holds(op) && stillPending(op)) showPending(op)
   }
+  /** Whether the purchase is still in progress (not settled, and not back on a dialog that ends it). */
+  const stillPending = (op: Operation): boolean => op.state === 'processing' || op.state === 'pending'
   /** The signed-in login that can buy here: its key held, and a wallet here that signs for its account. */
   const usable = (): { login: StoredLogin; buyer: string } | null => {
     const who = signedIn()
@@ -858,6 +861,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     }
     if (!venue.metaTx) return false
     const resolution = await resolveMana(attempt, { chainId: op.chainId, buyer: op.buyer, venue: { address: venue.address, metaTx: venue.metaTx }, evidence: svc.manaEvidence() })
+    // Settled, or put back on a dialog that ends it, while the chain was read: this look has nothing left to say.
+    if (!stillPending(op)) return true
     if (resolution.kind === 'succeeded') {
       settled(op, 'succeeded', { txHash: resolution.txHash })
       return true

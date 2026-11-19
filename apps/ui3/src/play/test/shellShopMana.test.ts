@@ -113,11 +113,16 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
     foreignHash: false,
     /** Holds every finalized-block read after the first (the pre-dispatch checkpoint) until released. */
     hold: null as Promise<void> | null,
-    finalizedReads: 0
+    finalizedReads: 0,
+    /** Holds the next finalized-block read only, until released. */
+    holdNext: null as Promise<void> | null
   }
   const evidence: ManaEvidence = {
     finalized: async () => {
       onChain.finalizedReads++
+      const next = onChain.holdNext
+      onChain.holdNext = null
+      if (next) await next
       if (onChain.hold && onChain.finalizedReads > 1) await onChain.hold
       return onChain.finalized
     },
@@ -1009,6 +1014,75 @@ describe('the in-world purchase with MANA', () => {
       } else {
         expect((await p.open()) as { operation: string }).not.toMatchObject({ operation: op })
       }
+    })
+
+    it('leaves the refusal the watch showed, with TRY AGAIN, when an older CHECK AGAIN read comes back afterwards', async () => {
+      const w = world({ allowance: maxUint256 })
+      let answer!: () => void
+      const held = new Promise<void>((r) => (answer = r))
+      const slow = (async (url: string, init?: RequestInit) => {
+        const res = await w.relay.fetchImpl(url, init)
+        await held
+        return res
+      }) as unknown as typeof fetch
+      const sleepers: (() => void)[] = []
+      const wake = () => sleepers.splice(0).forEach((r) => r())
+      w.relay.state.mode = 'refuse'
+      const p = page(w, {
+        services: {
+          rail: () => ({ relayerUrl: 'https://node.test/transactions-api/v1', fetchImpl: slow, gasless: true, wait: { timeoutMs: 30, pollMs: 10 } }),
+          sleep: () => new Promise<void>((r) => sleepers.push(r)),
+          manaTimeouts: () => ({ sendMs: 50, readMs: 50 })
+        }
+      })
+      await p.payMana()
+      const pending = await p.until('pending')
+      await new Promise((r) => setTimeout(r, 120))
+      // CHECK AGAIN's chain read is held; meanwhile the refusal comes back and the watch shows it.
+      let read!: () => void
+      w.onChain.holdNext = new Promise<void>((r) => (read = r))
+      pending.handlers.onCheckAgain?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', check: 'checking' }))
+      answer()
+      await new Promise((r) => setTimeout(r, 30))
+      wake()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'failed', retry: true }))
+      read()
+      await new Promise((r) => setTimeout(r, 30))
+      expect(p.shown.at(-1)?.view).toMatchObject({ step: 'failed', retry: true })
+    })
+
+    it('ends failed, never cancelled, when the first send and its retry are both refused', async () => {
+      const w = world({ allowance: maxUint256 })
+      const holds: (() => void)[] = []
+      const slow = (async (url: string, init?: RequestInit) => {
+        const res = await w.relay.fetchImpl(url, init)
+        await new Promise<void>((r) => holds.push(r))
+        return res
+      }) as unknown as typeof fetch
+      w.relay.state.mode = 'refuse'
+      const p = page(w, {
+        services: {
+          rail: () => ({ relayerUrl: 'https://node.test/transactions-api/v1', fetchImpl: slow, gasless: true, wait: { timeoutMs: 30, pollMs: 10 } }),
+          manaTimeouts: () => ({ sendMs: 80, readMs: 80 })
+        }
+      })
+      await p.payMana()
+      const pending = await p.until('pending')
+      const op = p.events.at(-1)!.operation
+      // A's answer is held past its deadline; then RETRY sends B.
+      await new Promise((r) => setTimeout(r, 160))
+      w.clock.now += RETRY_AFTER_MS
+      pending.handlers.onCheckAgain?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', retry: true }))
+      p.shown.at(-1)!.handlers.onRetry?.()
+      await vi.waitFor(() => expect(holds).toHaveLength(2))
+      // A's refusal comes back while B is in flight, then B's own, in time.
+      holds[0]()
+      await new Promise((r) => setTimeout(r, 10))
+      holds[1]()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'failed', retry: true }))
+      expect(p.events.filter((e) => e.operation === op).map((e) => e.state)).not.toContain('cancelled')
     })
 
     it('keeps the relay’s late refusal with the purchase it answers: closed meanwhile, it ends unbought and frees the item', async () => {

@@ -139,10 +139,12 @@ export function manaDispatched(attempt: ManaAttemptRecord): boolean {
 /**
  * The record with only what may be evidence: the sends that went (`dispatched`), each one kept as itself (two may carry
  * the same bytes, and the relay may still answer either), in order. A send still `signing` with no sender left to finish
- * it, one the relay refused or one the buyer declined never left this page, so nothing on chain can be it.
+ * it, or one the buyer declined, never left this page, so nothing on chain can be it. The relay's refusals are kept
+ * while no send went: they are the proof that the purchase ended unsent (failed), not that it never started.
  */
 export function compactManaAttempt(record: ManaAttemptRecord): ManaAttemptRecord {
-  return { ...record, sends: record.sends.filter((s) => s.stage === 'dispatched').map((s) => ({ ...s })) }
+  const went = record.sends.some((s) => s.stage === 'dispatched')
+  return { ...record, sends: record.sends.filter((s) => s.stage === 'dispatched' || (!went && s.stage === 'refused')).map((s) => ({ ...s })) }
 }
 
 /** Whether the record has room for another send: none being signed, and fewer than MAX_SENDS that went. */
