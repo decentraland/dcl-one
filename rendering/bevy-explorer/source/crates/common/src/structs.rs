@@ -680,7 +680,7 @@ pub struct AppConfig {
 
 /// bump to run one-time migrations of the preset-managed settings in existing configs
 /// (see [`AppConfig::reset_outdated_settings`])
-pub const SETTINGS_GENERATION: u32 = 3;
+pub const SETTINGS_GENERATION: u32 = 4;
 
 /// bump to run one-time migrations of saved input binding tables
 /// (see [`AppConfig::migrate_inputs`])
@@ -777,6 +777,8 @@ impl AppConfig {
     /// else. gen 1: reinitialize the preset-managed settings to the current defaults.
     /// gen 2: default bloom dropped High -> Low; move configs still on the old default.
     /// gen 3: native gpu uploads became capped by default; move configs still uncapped (0).
+    /// gen 4: the defaults became the Medium graphics preset; reset the settings the presets set,
+    /// so every saved config lands on Medium.
     pub fn reset_outdated_settings(&mut self) {
         if self.settings_generation >= SETTINGS_GENERATION {
             return;
@@ -791,9 +793,14 @@ impl AppConfig {
         if self.settings_generation < 3 && self.graphics.gpu_bytes_per_frame == 0 {
             self.graphics.gpu_bytes_per_frame = default.graphics.gpu_bytes_per_frame;
         }
+        if self.settings_generation < 4 {
+            self.graphics.reset_quality_preset(&default.graphics);
+        }
         self.settings_generation = SETTINGS_GENERATION;
     }
 
+    /// gen 1's list, frozen: the settings the presets managed then, load distances and avatars
+    /// included. Today's preset settings are [`GraphicsSettings::reset_quality_preset`].
     fn reset_preset_settings(&mut self, default: &Self) {
         self.graphics.msaa = default.graphics.msaa;
         self.graphics.shadow_distance = default.graphics.shadow_distance;
@@ -992,17 +999,25 @@ pub struct GraphicsSettings {
 /// (visuals::sky_envmap).
 pub const AMBIENT_BRIGHTNESS_DEFAULT: i32 = 50;
 
+/// The defaults are the Medium graphics preset, the one a new install gets: the HUD's Graphics
+/// Preset (`react-web/bridge-scene/src/domains/graphicsPresets.ts`) reads Medium off each
+/// setting's published default.
 impl Default for GraphicsSettings {
     fn default() -> Self {
         Self {
-            vsync: false,
+            // the browser paces the web build to the display, whatever this says
+            vsync: !cfg!(target_arch = "wasm32"),
             log_fps: !cfg!(target_arch = "wasm32"),
-            msaa: AaSetting::FxaaLow,
+            // FXAA, not MSAA, so depth of field stays on (see `DofSetting::apply_to_camera`)
+            msaa: AaSetting::FxaaHigh,
             fps_target: 60,
+            // one 4096 cascade (`visuals`), so a short distance keeps its texels small
             shadow_distance: 20.0,
+            // one cascade
             shadow_settings: ShadowSetting::Low,
-            light_count: 4,
-            shadow_caster_count: 0,
+            light_count: 6,
+            // spot light shadows within 20 m
+            shadow_caster_count: 3,
             window: WindowSetting::Windowed,
             // fullscreen_res: FullscreenResSetting(UVec2::new(1280,720)),
             fog: FogSetting::On,
@@ -1019,6 +1034,26 @@ impl Default for GraphicsSettings {
             gpu_bytes_per_frame: 10_000_000,
             render_scale: 1.0,
         }
+    }
+}
+
+impl GraphicsSettings {
+    /// Set every setting the HUD's Graphics Preset sets to `preset`'s value, keeping the rest.
+    pub fn reset_quality_preset(&mut self, preset: &Self) {
+        self.vsync = preset.vsync;
+        self.fps_target = preset.fps_target;
+        self.render_scale = preset.render_scale;
+        self.msaa = preset.msaa;
+        self.bloom = preset.bloom;
+        self.avatar_outline = preset.avatar_outline;
+        self.shadow_settings = preset.shadow_settings;
+        self.shadow_distance = preset.shadow_distance;
+        self.light_count = preset.light_count;
+        self.shadow_caster_count = preset.shadow_caster_count;
+        self.dof = preset.dof;
+        self.ssao = preset.ssao;
+        self.fog = preset.fog;
+        self.sky_reflections = preset.sky_reflections;
     }
 }
 
@@ -1039,6 +1074,42 @@ impl SessionGraphics {
 
     pub fn fps_target(&self, config: &AppConfig) -> usize {
         self.fps_target.unwrap_or(config.graphics.fps_target)
+    }
+
+    /// The frame rate the explorer paces to: the session's target, else the player's, and with
+    /// VSync on no faster than the monitor. VSync only removes tearing, so a lower target still
+    /// applies, and Max (999) means the monitor's rate. `refresh_hz`, when known, is the monitor's
+    /// rate rounded up past it (60 Hz gives 61), so at the monitor's rate VSync, not the pacer's
+    /// sleep, sets the frame time.
+    pub fn paced_fps(
+        session: Option<&Self>,
+        config: &AppConfig,
+        refresh_hz: Option<usize>,
+    ) -> usize {
+        let target = session.map_or(config.graphics.fps_target, |session| {
+            session.fps_target(config)
+        });
+        match refresh_hz {
+            Some(refresh) if config.graphics.vsync && (target == 0 || refresh <= target + 1) => {
+                refresh
+            }
+            _ => target,
+        }
+    }
+
+    /// [`Self::paced_fps`] as the debug panel shows it: when VSync sets the rate, the monitor's
+    /// rate (60 for a 60 Hz monitor, not the pacer's 61).
+    pub fn shown_fps(
+        session: Option<&Self>,
+        config: &AppConfig,
+        refresh_hz: Option<usize>,
+    ) -> usize {
+        let fps = Self::paced_fps(session, config, refresh_hz);
+        if config.graphics.vsync && refresh_hz == Some(fps) {
+            fps.saturating_sub(1)
+        } else {
+            fps
+        }
     }
 
     pub fn parcel_grass(&self, config: &AppConfig) -> ParcelGrassSetting {
@@ -1166,6 +1237,12 @@ pub enum AaSetting {
     Msaa2x,
     Msaa4x,
     Msaa8x,
+}
+
+impl AaSetting {
+    pub fn is_msaa(self) -> bool {
+        matches!(self, Self::Msaa2x | Self::Msaa4x | Self::Msaa8x)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -2611,6 +2688,102 @@ mod tests {
         assert_eq!(uncapped.graphics.gpu_bytes_per_frame, 10_000_000);
         assert_eq!(uncapped.settings_generation, SETTINGS_GENERATION);
         assert_eq!(saved(500_000).graphics.gpu_bytes_per_frame, 500_000);
+    }
+
+    #[test]
+    fn default_graphics_are_the_medium_preset() {
+        let g = GraphicsSettings::default();
+        assert_eq!((g.fps_target, g.render_scale), (60, 1.0));
+        assert_eq!((g.bloom, g.avatar_outline), (BloomSetting::Low, true));
+        assert_eq!(
+            (
+                g.shadow_settings,
+                g.shadow_distance,
+                g.light_count,
+                g.shadow_caster_count
+            ),
+            (ShadowSetting::Low, 20.0, 6, 3)
+        );
+        assert_eq!(
+            (g.dof, g.ssao, g.fog, g.sky_reflections),
+            (
+                DofSetting::High,
+                SsaoSetting::Off,
+                FogSetting::On,
+                SkyReflectionSetting::High
+            )
+        );
+        assert_eq!(g.msaa, AaSetting::FxaaHigh);
+        assert_eq!(g.vsync, !cfg!(target_arch = "wasm32"));
+    }
+
+    #[test]
+    fn vsync_caps_the_target_at_the_refresh_rate() {
+        let mut config = AppConfig::default();
+        let paced = |config: &AppConfig, session: Option<&SessionGraphics>, refresh| {
+            SessionGraphics::paced_fps(session, config, refresh)
+        };
+        let thirty = SessionGraphics {
+            fps_target: Some(30),
+            ..Default::default()
+        };
+        config.graphics.vsync = true;
+        config.graphics.fps_target = 60;
+        assert_eq!(paced(&config, None, Some(144)), 60);
+        assert_eq!(paced(&config, None, Some(50)), 50);
+        // a 60 Hz monitor reads as 61: VSync sets the rate
+        assert_eq!(paced(&config, None, Some(61)), 61);
+        assert_eq!(paced(&config, Some(&thirty), Some(144)), 30);
+        assert_eq!(paced(&config, None, None), 60);
+        config.graphics.fps_target = 999;
+        assert_eq!(paced(&config, None, Some(144)), 144);
+        config.graphics.vsync = false;
+        assert_eq!(paced(&config, None, Some(144)), 999);
+        assert_eq!(paced(&config, Some(&thirty), Some(144)), 30);
+    }
+
+    #[test]
+    fn the_shown_rate_is_the_monitors_when_vsync_sets_it() {
+        let mut config = AppConfig::default();
+        let shown = |config: &AppConfig, refresh| SessionGraphics::shown_fps(None, config, refresh);
+        config.graphics.vsync = true;
+        config.graphics.fps_target = 999;
+        assert_eq!(shown(&config, Some(61)), 60);
+        assert_eq!(shown(&config, None), 999);
+        config.graphics.fps_target = 60;
+        assert_eq!(shown(&config, Some(61)), 60);
+        assert_eq!(shown(&config, Some(145)), 60);
+        config.graphics.vsync = false;
+        config.graphics.fps_target = 999;
+        assert_eq!(shown(&config, Some(61)), 999);
+    }
+
+    #[test]
+    fn generation_4_lands_on_medium_and_keeps_the_rest() {
+        let mut config = AppConfig {
+            settings_generation: 3,
+            scene_load_distance: 100.0,
+            max_avatars: 50,
+            ..Default::default()
+        };
+        let g = &mut config.graphics;
+        (g.vsync, g.fps_target, g.render_scale) = (false, 144, 0.5);
+        (g.msaa, g.bloom, g.dof) = (AaSetting::FxaaLow, BloomSetting::High, DofSetting::Off);
+        (g.shadow_distance, g.light_count, g.shadow_caster_count) = (200.0, 32, 8);
+        (g.ambient_brightness, g.oob, g.cel_shading) = (10, 0.0, false);
+        config.reset_outdated_settings();
+
+        let mut medium = GraphicsSettings::default();
+        (medium.ambient_brightness, medium.oob, medium.cel_shading) = (10, 0.0, false);
+        assert_eq!(
+            serde_json::to_value(&config.graphics).unwrap(),
+            serde_json::to_value(&medium).unwrap()
+        );
+        assert_eq!(
+            (config.scene_load_distance, config.max_avatars),
+            (100.0, 50)
+        );
+        assert_eq!(config.settings_generation, SETTINGS_GENERATION);
     }
 
     #[test]

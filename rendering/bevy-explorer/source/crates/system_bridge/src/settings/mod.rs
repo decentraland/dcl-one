@@ -90,6 +90,8 @@ pub mod spring_bones_setting;
 pub mod ssao_setting;
 pub mod video_threads;
 pub mod volume_settings;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod vsync_setting;
 pub mod window_settings;
 
 /// Inserts both prepasses while the avatar outline (edge detection) is on or the camera has SSAO
@@ -216,6 +218,8 @@ impl Plugin for SettingBridgePlugin {
         }
 
         add_enum_setting::<FpsTargetSetting>(app, &mut settings, &mut schedule, &config);
+        #[cfg(not(target_arch = "wasm32"))]
+        add_enum_setting::<vsync_setting::VsyncSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<render_scale_setting::RenderScaleSetting>(
             app,
             &mut settings,
