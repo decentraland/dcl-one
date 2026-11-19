@@ -27,6 +27,15 @@ describe("the relay's limits, said to the buyer", () => {
     }
   });
 
+  it("names the date when the rounded time lands two days out, never a day early", () => {
+    // Refused at 23:59:45; the slot frees at 23:59:30 the next day, which rounds up to midnight the day after.
+    const late = new Date(2026, 10, 19, 23, 59, 45);
+    const freed = new Date(2026, 10, 20, 23, 59, 30);
+    const shown = new Date(2026, 10, 21, 0, 0, 0);
+    const day = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(shown);
+    expect(relayLimitText(quota({ quota: 30, retryAt: secs(freed) }), late)).toBe(`You've used all 30 fee-free transactions this account gets in 24 hours. You can buy fee-free again on ${day} at ${time(shown)}.`);
+  });
+
   it("says an account with a quota of none has no fee-free transactions, rather than promising one", () => {
     expect(relayLimitText(quota({ quota: 0, retryAt: secs(at(14)) }), NOW)).toBe("Fee-free transactions aren't available for this account.");
   });

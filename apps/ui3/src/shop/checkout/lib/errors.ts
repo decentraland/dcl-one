@@ -16,9 +16,10 @@ type Refused = { refusal?: { error?: unknown; retryAt?: unknown; quota?: unknown
 const QUOTA_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * When a limit frees up (`retryAt`, unix seconds), as the buyer reads it: "at HH:MM" or "tomorrow at HH:MM", the
- * minute rounded up so the time shown is never too early; null when there's no usable time. The bounds are checked
- * on the number before any date is made: a time already past, or past the window, says nothing reliable.
+ * When a limit frees up (`retryAt`, unix seconds), as the buyer reads it: "at HH:MM", "tomorrow at HH:MM", or "on
+ * {date} at HH:MM" when the rounded time lands two days out (a refusal just before midnight), the minute rounded up so
+ * the time shown is never too early; null when there's no usable time. The bounds are checked on the number before
+ * any date is made: a time already past, or past the window, says nothing reliable.
  */
 function retryWhen(retryAt: unknown, now: Date): string | null {
   if (typeof retryAt !== "number" || !Number.isSafeInteger(retryAt)) return null;
@@ -27,7 +28,10 @@ function retryWhen(retryAt: unknown, now: Date): string | null {
   const at = new Date(Math.ceil(ms / 60_000) * 60_000);
   try {
     const time = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(at);
-    return at.toDateString() === now.toDateString() ? `at ${time}` : `tomorrow at ${time}`;
+    if (at.toDateString() === now.toDateString()) return `at ${time}`;
+    const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    if (at.toDateString() === tomorrow.toDateString()) return `tomorrow at ${time}`;
+    return `on ${new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(at)} at ${time}`;
   } catch {
     return null;
   }
