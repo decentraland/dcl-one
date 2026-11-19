@@ -11,6 +11,7 @@ are external. Explorer images: pipeline.
 | `image-gateway` (`foundation-gateway:nix`) | `gateway` (8080) | `/tmp` |
 
 - Run API, indexer, Pulse and migrations from one `apis` digest; domain crates are not separate services.
+- The community chat message router, `catalyst-message-router`, is a separate binary that links libwebrtc (`cargo build -p catalyst-message-router --features livekit`); no image carries it ([message router](../../services/catalyst/docs/comms/comms-crate.md#message-router)).
 - The APIs image has no SDK Play embed (`PLAY_EMBED_DIR` unset) and no `scene-build.wasm`.
 - The APIs image carries `cast-bot` (`.#cast-bot`, `infra/packages/cast-bot.nix`), the LiveKit
   participant `serve` starts once per Cast presentation, and sets `CAST_BOT_BIN` to it, so

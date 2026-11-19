@@ -18,11 +18,12 @@
 //
 // Each line: {"step", "count", "built", "shown", "drawn", "loadSeconds", "cap", "emote", "nametags", "layout", "seed", "samples",
 // "fps", "frameMs", "gpuFrameMs", "engineMemoryMiB", "hiccups"} where fps, frameMs and gpuFrameMs
-// are {median, p95, max} over the window's samples. The session's Max Avatars is restored at the
-// end. `/avatar_demo cap` is session-only, so the stored setting never changes.
+// are {median, p95, max} over the window's samples. `/avatar_demo cap` is session-only, so the
+// stored setting never changes; at the end the session goes back to it, and nametags and the
+// demo emote to what they were.
 import { appendFile, writeFile } from 'node:fs/promises'
 import { parseArgs } from 'node:util'
-import { serveCatalystMirror, type CatalystMirror } from '../driver/catalyst-mirror.ts'
+import { DEFAULT_UPSTREAM, serveCatalystMirror, type CatalystMirror } from '../driver/catalyst-mirror.ts'
 import { chromeArgs } from '../driver/chrome.ts'
 import { DEFAULT_WEB_APP } from '../driver/paths.ts'
 import { serveWebApp, type StaticServer } from '../driver/serve.ts'
@@ -78,7 +79,7 @@ const caps = list(values.caps).map((cap) => (cap === 'all' ? CAP_ALL : Number(ca
 if (caps.some((cap) => !Number.isInteger(cap) || cap < 1 || cap > CAP_ALL)) throw new Error(`--caps takes integers from 1 to ${CAP_ALL}, or all`)
 const emotes = list(values.emotes)
 const nametags = list(values.nametags).map((value) => {
-  if (value !== 'on' && value !== 'off') throw new Error('--nametags takes on, off or both')
+  if (value !== 'on' && value !== 'off') throw new Error('--nametags takes on, off, or on,off for both')
   return value === 'on'
 })
 if (values.layout !== 'grid' && values.layout !== 'around') throw new Error('--layout takes grid or around')
@@ -117,6 +118,7 @@ interface DemoReply {
   shown: number
   drawn: number
   cap: number
+  emote: string
 }
 
 interface PerformanceReply {
@@ -141,7 +143,7 @@ page.searchParams.set('realm', values.realm)
 page.searchParams.set('position', values.position)
 let mirror: CatalystMirror | undefined
 if (values.mirror != null) {
-  mirror = await serveCatalystMirror(values.mirror, mirrorPort)
+  mirror = await serveCatalystMirror(values.mirror, mirrorPort, DEFAULT_UPSTREAM, page.origin)
   page.searchParams.set('catalyst', mirror.url)
 }
 log(`opening ${page.href}`)
@@ -166,7 +168,8 @@ async function until<T>(what: string, timeoutMs: number, probe: () => Promise<T 
   }
 }
 
-let originalCap: number | undefined
+// what the session had before the sweep changed it, to put back at the end
+let before: { emote: string; nametags: boolean } | undefined
 let step = 0
 try {
   await driver.ready({ timeout: READY_TIMEOUT_MS })
@@ -178,7 +181,7 @@ try {
   if (typeof first !== 'object' || typeof first.cap !== 'number') {
     throw new Error(`/avatar_demo is unavailable (scene preview mode is needed): ${JSON.stringify(first)}`)
   }
-  originalCap = first.cap
+  before = { emote: first.emote, nametags: (await run<{ visible: boolean }>('/nametags')).visible }
   if (values.out) await writeFile(values.out, '')
   await run(`/avatar_demo layout ${values.layout}`)
   await run(`/avatar_demo seed ${seed}`.trim())
@@ -243,8 +246,11 @@ try {
   }
 } finally {
   await run('/avatar_demo clear').catch(() => undefined)
-  if (originalCap !== undefined) await run(`/avatar_demo cap ${originalCap}`).catch(() => undefined)
-  await run('/nametags true').catch(() => undefined)
+  await run('/avatar_demo cap').catch(() => undefined)
+  if (before !== undefined) {
+    await run(`/avatar_demo emote ${before.emote}`).catch(() => undefined)
+    await run(`/nametags ${before.nametags}`).catch(() => undefined)
+  }
   await run('/avatar_demo layout grid').catch(() => undefined)
   await run('/avatar_demo seed').catch(() => undefined)
   await driver.close()

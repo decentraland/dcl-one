@@ -363,7 +363,7 @@ function CommunityStream({ state, collapsed, setCollapsed, people, setPeople }: 
         <div className={styles.headActions}>
           {collapsed && controls}
           {moderator && !collapsed && (
-            <Tooltip label="End stream for everyone" side="bottom">
+            <Tooltip label="End stream for everyone" side="bottom" align="end">
               <ControlButton variant="faint" size="sm" aria-label="End stream" onClick={() => act({ op: 'endCommunityCall' })}>
                 <MaskIcon src={endStreamIcon} size={16} />
               </ControlButton>

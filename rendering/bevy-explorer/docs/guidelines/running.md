@@ -233,15 +233,18 @@ State, in every build:
   `preview`. Rendered URNs are normalised (lowercase, default wearables included); selected ones
   are as written. The HUD uses `/avatar_state --panel` for a single local-player report.
   It shows the completed model while a replacement loads and explains missing readings.
-- `/avatar_demo [spawn <n>|clear|cap <n>|layout <grid|around>|seed [n]|emote <name>|...]` (scene preview
+- `/avatar_demo [spawn <n>|clear|cap [n]|layout <grid|around>|seed [n]|emote <name>|...]` (scene preview
   only): local demo avatars with random base wearables, up to 1024. `layout grid` (the default)
-  stands new ones in a 32-wide grid in front of the player; `layout around` fills a disc centred
+  stands new ones in a 32-wide grid in front of the player, each row filled from straight ahead
+  outwards; `layout around` fills a disc centred
   on the player, nearest first, so part of the crowd is behind the camera.
-  `seed <n>` gives the avatar at each position the same look in every session, so two runs
-  compare the same crowd; `seed` alone goes back to a new crowd each time.
-  `cap <n>` sets Max Avatars for the session only (1 to 1025), past the setting's range and
-  never saved. The reply is JSON: `count`, `built` (demo avatars whose build finished), `shown` (not
-  hidden) and `drawn` (a mesh in some view this frame), `cap`,
+  `seed <n>` gives the avatar at each position the same look in every session of one build, so
+  two runs compare the same crowd; `seed` alone goes back to a new crowd each time.
+  `cap <n>` sets Max Avatars for the session only (1 to 1025), past the setting's range: it wins
+  over the Max Avatars setting, which it neither changes nor saves, until `cap` alone goes back
+  to the setting. The reply is JSON: `count`, `built` (demo avatars whose build finished), `shown` (not
+  hidden) and `drawn` (a mesh in some view this frame), `cap` (the one in force), `sessionCap`
+  (what `cap <n>` set, else `null`),
   `layout`, `seed`, `maleOnly`, `wearables`, `emote`. The E2E package's `avatar-sweep` drives it.
 - `/spring_bones [true|false]`: spring bones, the swing of a wearable's own bones (hair, tails,
   capes): `enabled` (the Jiggle Bones setting, which an argument sets and saves),

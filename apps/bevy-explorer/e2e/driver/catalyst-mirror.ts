@@ -3,7 +3,8 @@
 // rate. Content files (`GET /content/contents/<hash>`) and active-entity lookups
 // (`POST /content/entities/active`) are kept in a directory and answered from it afterwards;
 // every other request is passed through and not kept (its body as text). The explorer is pointed at it with its
-// `catalyst` service override.
+// `catalyst` service override. Only that explorer's page is served: a request names loopback as
+// its host, and one from a browser page comes from the page's origin.
 import { createHash } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
@@ -22,13 +23,25 @@ const RETRY_MAX_MS = 60_000
 const CONTENT_FILE = /^\/content\/contents\/([A-Za-z0-9]{10,128})$/
 const ACTIVE_ENTITIES = '/content/entities/active'
 
-const CORS_HEADERS: Record<string, string> = {
-  'access-control-allow-origin': '*',
-  'access-control-allow-methods': 'GET, HEAD, POST, OPTIONS',
-  'access-control-allow-headers': '*',
-  'access-control-max-age': '86400',
-  'cross-origin-resource-policy': 'cross-origin'
+/** The longest request body read: an active-entities lookup for a crowd is a few kilobytes. */
+const MAX_BODY_BYTES = 1024 * 1024
+/** The names a request may give as its host, without the port. */
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
+
+/** What lets the page at `pageOrigin`, and no other, read the mirror's answers. */
+function corsHeaders(pageOrigin: string | undefined): Record<string, string> {
+  if (pageOrigin === undefined) return {}
+  return {
+    'access-control-allow-origin': pageOrigin,
+    vary: 'origin',
+    'access-control-allow-methods': 'GET, HEAD, POST, OPTIONS',
+    'access-control-allow-headers': '*',
+    'access-control-max-age': '86400',
+    'cross-origin-resource-policy': 'cross-origin'
+  }
 }
+
+class BodyTooLarge extends Error {}
 
 export interface MirrorStats {
   /** Answered from the directory. */
@@ -61,9 +74,10 @@ export function retryDelayMs(attempt: number, retryAfter: string | null): number
   return Math.min(wait, RETRY_MAX_MS)
 }
 
-/** The file an active-entities request is kept in: the same pointers or ids in any order ask
- *  the same thing. Undefined for a body that is not such a request. */
-export function activeEntitiesKey(body: string): string | undefined {
+/** An active-entities request as it is sent upstream, and the file its answer is kept in: the
+ *  same pointers or ids in any order ask the same thing, and so do pointers in any case. Ids
+ *  keep theirs, which is part of a content id. Undefined for a body that is not such a request. */
+export function activeEntitiesLookup(body: string): { key: string; body: string } | undefined {
   let parsed: unknown
   try {
     parsed = JSON.parse(body)
@@ -72,17 +86,23 @@ export function activeEntitiesKey(body: string): string | undefined {
   }
   if (typeof parsed !== 'object' || parsed === null) return undefined
   const { pointers, ids } = parsed as { pointers?: unknown; ids?: unknown }
-  const strings = (value: unknown): string[] | undefined =>
-    Array.isArray(value) && value.every((item) => typeof item === 'string') ? [...new Set(value as string[])].map((item) => item.toLowerCase()).sort() : undefined
-  const canonical = { pointers: strings(pointers), ids: strings(ids) }
+  const strings = (value: unknown, each: (item: string) => string): string[] | undefined =>
+    Array.isArray(value) && value.every((item) => typeof item === 'string') ? [...new Set((value as string[]).map(each))].sort() : undefined
+  const canonical = { pointers: strings(pointers, (pointer) => pointer.toLowerCase()), ids: strings(ids, (id) => id) }
   if (canonical.pointers === undefined && canonical.ids === undefined) return undefined
-  return createHash('sha256').update(JSON.stringify(canonical)).digest('hex')
+  const asked = JSON.stringify(canonical)
+  return { key: createHash('sha256').update(asked).digest('hex'), body: asked }
 }
 
 function readBody(request: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
-    request.on('data', (chunk: Buffer) => chunks.push(chunk))
+    let size = 0
+    request.on('data', (chunk: Buffer) => {
+      size += chunk.length
+      if (size > MAX_BODY_BYTES) reject(new BodyTooLarge())
+      else chunks.push(chunk)
+    })
     request.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
     request.on('error', reject)
   })
@@ -96,9 +116,11 @@ async function keep(file: string, body: Buffer): Promise<void> {
   await rename(partial, file)
 }
 
-/** Serve the mirror on loopback at `port` (0 picks a free one), keeping files under `directory`. */
-export async function serveCatalystMirror(directory: string, port = 0, upstream = DEFAULT_UPSTREAM): Promise<CatalystMirror> {
+/** Serve the mirror on loopback at `port` (0 picks a free one), keeping files under `directory`.
+ *  `pageOrigin` is the one web origin whose pages may use it; without it, no page may. */
+export async function serveCatalystMirror(directory: string, port = 0, upstream = DEFAULT_UPSTREAM, pageOrigin?: string): Promise<CatalystMirror> {
   const root = path.resolve(directory)
+  const cors = corsHeaders(pageOrigin)
   const origin = upstream.replace(/\/$/, '')
   const stats: MirrorStats = { kept: 0, fetched: 0, passed: 0, refused: 0 }
 
@@ -111,9 +133,11 @@ export async function serveCatalystMirror(directory: string, port = 0, upstream 
     try {
       return await work()
     } finally {
-      await sleep(UPSTREAM_PAUSE_MS)
-      running -= 1
-      waiting.shift()?.()
+      // the slot stays taken for the pause; the answer does not wait for it
+      void sleep(UPSTREAM_PAUSE_MS).then(() => {
+        running -= 1
+        waiting.shift()?.()
+      })
     }
   }
 
@@ -129,6 +153,8 @@ export async function serveCatalystMirror(directory: string, port = 0, upstream 
         if (reply && reply.status !== 429 && reply.status < 500) {
           return { status: reply.status, contentType: reply.headers.get('content-type') ?? 'application/octet-stream', body: Buffer.from(await reply.arrayBuffer()) }
         }
+        // a refusal's body is not read, so it is released for the connection to be used again
+        await reply?.body?.cancel().catch(() => undefined)
         stats.refused += 1
         if (attempt >= UPSTREAM_TRIES) {
           return { status: reply?.status ?? 502, contentType: 'text/plain; charset=utf-8', body: Buffer.from('the upstream catalyst refused the request') }
@@ -175,10 +201,10 @@ export async function serveCatalystMirror(directory: string, port = 0, upstream 
     }
     const body = method === 'GET' || method === 'HEAD' ? undefined : await readBody(request)
     if (method === 'POST' && url.pathname === ACTIVE_ENTITIES && body !== undefined) {
-      const key = activeEntitiesKey(body)
-      if (key) {
-        const init = { method, body, headers: { 'content-type': 'application/json' } }
-        return kept(path.join(root, 'active', `${key}.json`), 'application/json; charset=utf-8', () => ask(url.pathname, init))
+      const lookup = activeEntitiesLookup(body)
+      if (lookup) {
+        const init = { method, body: lookup.body, headers: { 'content-type': 'application/json' } }
+        return kept(path.join(root, 'active', `${lookup.key}.json`), 'application/json; charset=utf-8', () => ask(url.pathname, init))
       }
     }
     stats.passed += 1
@@ -187,17 +213,30 @@ export async function serveCatalystMirror(directory: string, port = 0, upstream 
   }
 
   const handler = (request: IncomingMessage, response: ServerResponse): void => {
+    // a page of another origin, or a name that only resolves to loopback, is not the explorer
+    const host = (request.headers.host ?? '').replace(/:\d+$/, '').toLowerCase()
+    const from = request.headers.origin
+    if (!LOOPBACK_HOSTS.has(host) || (from !== undefined && from !== pageOrigin)) {
+      request.resume()
+      response.writeHead(403).end()
+      return
+    }
     if (request.method === 'OPTIONS') {
-      response.writeHead(204, CORS_HEADERS).end()
+      response.writeHead(204, cors).end()
       return
     }
     answer(request)
       .then((reply) => {
-        response.writeHead(reply.status, { ...CORS_HEADERS, 'content-type': reply.contentType, 'content-length': reply.body.length })
+        response.writeHead(reply.status, { ...cors, 'content-type': reply.contentType, 'content-length': reply.body.length })
         response.end(request.method === 'HEAD' ? undefined : reply.body)
       })
-      .catch(() => {
-        if (!response.headersSent) response.writeHead(502, CORS_HEADERS)
+      .catch((error: unknown) => {
+        if (error instanceof BodyTooLarge) {
+          // the rest of the body is not read: the connection ends with the answer
+          response.writeHead(413, { ...cors, connection: 'close' }).end(() => request.destroy())
+          return
+        }
+        if (!response.headersSent) response.writeHead(502, cors)
         response.end()
       })
   }

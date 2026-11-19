@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 mod batch_sizes;
 pub mod bevy_variants;
 pub mod cache_heal;
@@ -2296,9 +2298,7 @@ where
         cx: &mut std::task::Context<'_>,
         offset: u64,
     ) -> std::task::Poll<std::io::Result<u64>> {
-        let mut pinned = unsafe { self.map_unchecked_mut(|slf| &mut slf.0) };
-        pinned
-            .as_mut()
+        std::pin::Pin::new(&mut self.get_mut().0)
             .poll_seek(cx, std::io::SeekFrom::Current(offset as i64))
     }
 }
@@ -2312,8 +2312,7 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        let mut pinned = unsafe { self.map_unchecked_mut(|slf| &mut slf.0) };
-        pinned.as_mut().poll_read(cx, buf)
+        std::pin::Pin::new(&mut self.get_mut().0).poll_read(cx, buf)
     }
 }
 

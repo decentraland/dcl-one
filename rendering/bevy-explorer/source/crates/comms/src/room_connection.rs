@@ -471,7 +471,12 @@ pub(crate) fn finish_credentials(
     for (entity, mut task, mut recovery, context, scene, realm, suspended, rechecking) in
         &mut requests
     {
-        if suspended || wallet.address() != Some(task.identity) {
+        // An identity conflict (another device took the session over) outlasts a refresh that
+        // was already asked for.
+        if suspended
+            || wallet.address() != Some(task.identity)
+            || recovery.failure == Some(FailureKind::IdentityConflict)
+        {
             commands.entity(entity).try_remove::<CredentialTask>();
             continue;
         }

@@ -122,10 +122,10 @@ pnpm run avatar-sweep --mirror ~/.cache/dcl-catalyst-mirror --port 8765 --mirror
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--counts` | `0,10,20,50,100,200,400,800` | Demo avatars per step, up to 1024 |
-| `--caps` | `20,all` | Max Avatars for the session (`/avatar_demo cap`, not saved); `all` shows every avatar |
+| `--caps` | `20,all` | Max Avatars for the session (`/avatar_demo cap`: it wins over the setting and is never saved); `all` shows every avatar |
 | `--emotes` | `none,dance` | What new demo avatars play, looped (`/avatar_demo emote`) |
-| `--nametags` | `on` | `on`, `off` or both (`/nametags`) |
-| `--layout` | `grid` | `grid` puts every demo avatar in view, in front of the player; `around` fills a disc centred on the player, nearest first, so part of the crowd is behind the camera (`/avatar_demo layout`) |
+| `--nametags` | `on` | `on`, `off`, or `on,off` for both (`/nametags`) |
+| `--layout` | `grid` | `grid` stands the demo avatars in front of the player, each row filled from straight ahead outwards; `around` fills a disc centred on the player, nearest first, so part of the crowd is behind the camera (`/avatar_demo layout`) |
 | `--seed` | `1` | The crowd: with a number, the avatar at each position has the same look in every run (`/avatar_demo seed`), so two builds are compared on the same avatars; `none` draws a new crowd each time |
 | `--setup` | none | A console line to run once before the first step, such as an engine tunable under comparison; repeat it for several |
 | `--window`, `--settle`, `--load-timeout` | `10`, `3`, `180` | Seconds |
@@ -143,6 +143,8 @@ The mirror keeps every content file and active-entity lookup it serves in `<dir>
 from there afterwards; what it does not have yet it asks the catalyst for, a few requests a
 second, waiting and trying again when refused. The first run fills the directory, slowly; later
 runs ask the catalyst for nothing. Other requests (profiles, `/about`) pass through, not kept.
+The mirror answers the sweep's own page only: a request from a page of another origin, or one
+that does not name loopback as its host, gets a 403, and a request body over 1 MiB a 413.
 The sweep's last stderr line counts each kind.
 
 The page stops on its launch-link warning for a `catalyst` outside Decentraland's own domains,
@@ -158,7 +160,8 @@ window, with the last `engineMemoryMiB` and `hiccups`. Compare `frameMs.p95` acr
 `cap: "all"` for the cost of drawn avatars, and `cap: 20` against `all` for what avatars hidden by
 the cap still cost. Run it on each GPU class (discrete, integrated) the cap must hold on, and give
 the machine's GPU (`pnpm run gpu-probe`) with the results. At the end the demo avatars are
-cleared, the session's Max Avatars restored and nametags turned back on.
+cleared, the session goes back to the Max Avatars setting, and nametags and the demo emote go
+back to what they were.
 
 ## How a spec is written
 

@@ -49,10 +49,12 @@ export function microphonePermissionState() {
  */
 export function promptMicrophonePermission() {
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        navigator.mediaDevices
-            .getUserMedia({ audio: true })
-            .then((stream) => stream.getTracks().forEach((track) => track.stop()))
-            .catch(() => {});
+        Promise.resolve()
+            .then(() => navigator.mediaDevices.getUserMedia({ audio: true }))
+            .then(
+                (stream) => stream.getTracks().forEach((track) => track.stop()),
+                (err) => warn("microphone permission prompt failed", err),
+            );
     }
 }
 
@@ -533,8 +535,11 @@ export function local_audio_track_set_enabled(track, enabled) {
 }
 
 export function local_audio_track_stop(track) {
-    track.mediaStreamTrack.enabled = false;
-    track.stop();
+    try {
+        track.mediaStreamTrack.enabled = false;
+    } finally {
+        track.stop();
+    }
 }
 
 /**
@@ -614,9 +619,8 @@ export function remote_track_pan_and_volume(remote_track, pan, volume) {
     const track_rig = remote_track.trackRig;
     if (!track_rig) return;
     // kira's 0 (left) .. 1 (right) to the stereo panner's -1 .. 1
-    track_rig.pannerNode.pan.value = Math.max(-1, Math.min(1, pan * 2 - 1));
-    // Volume should be between 0 and 1 (or higher for boost)
-    track_rig.gainNode.gain.value = Math.max(0, volume);
+    track_rig.pannerNode.pan.value = clamp(pan * 2 - 1, -1, 1, 0);
+    track_rig.gainNode.gain.value = clamp(volume, 0, MAX_GAIN, 0);
 
     // nodes.analyser.getByteTimeDomainData(nodes.dataArray);
 
@@ -639,8 +643,17 @@ export function remote_track_pan_and_volume(remote_track, pan, volume) {
  */
 export function remote_audio_track_set_volume(remote_audio_track, volume) {
     if (remote_audio_track.trackRig) {
-        remote_audio_track.trackRig.gainNode.gain.value = Math.max(0, volume);
+        remote_audio_track.trackRig.gainNode.gain.value = clamp(volume, 0, MAX_GAIN, 0);
     } else if (remote_audio_track.audioElement) {
-        remote_audio_track.setVolume(volume);
+        // HTMLMediaElement.volume throws outside 0..1
+        remote_audio_track.setVolume(clamp(volume, 0, 1, 0));
     }
+}
+
+// Gain may boost above 1, but never without bound.
+const MAX_GAIN = 4;
+
+// AudioParam and element setters throw on non-finite values; those fall back to `otherwise`.
+function clamp(value, min, max, otherwise) {
+    return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : otherwise;
 }
