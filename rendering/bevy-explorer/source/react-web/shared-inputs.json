@@ -6556,7 +6556,7 @@
     },
     {
       "path": "library/explorer-core/features/auth/guest.ts",
-      "sha256": "09fe9af4edaf7d4d8ed3ab2124b37de40bc8973b1d2e8bfde839f2df4a66e1ec"
+      "sha256": "113d596afaf406a22121e802fbba628b68b687be32d6cfcd19ad8fa0d2fc7492"
     },
     {
       "path": "library/explorer-core/features/auth/guestWalletEvent.ts",
@@ -7028,7 +7028,7 @@
     },
     {
       "path": "library/explorer-core/test/guestIdentity.test.ts",
-      "sha256": "8500b135e5f273c2e1db41bb83be119f6355eb6e369985fc34593f129cea6bc3"
+      "sha256": "921ace9c6ca1915caf6b1d37a5431c1a65f8ca08c49f5342aacd22e155482188"
     },
     {
       "path": "library/explorer-core/test/guestWalletEvent.test.ts",
@@ -10068,7 +10068,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "cf38c67b5aaedfcc4f51762c7f06124827b772eb523f2c52baac6ac6b3665954"
+      "sha256": "6de142d469f439a822565e5a26daf7cb49926e6a85792cdd82f65c6a339461e4"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10832,7 +10832,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/welcome.test.tsx",
-      "sha256": "f7a069a96908146c9e794be96a4d41e7acfc18fe397875c73893ef11195b811c"
+      "sha256": "337b6aef05d280a0613ae532eb833344602873759e3c1207c9129c4abff7892d"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/worldAccess.test.tsx",

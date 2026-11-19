@@ -2542,7 +2542,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           termsOk.current = true
           setWelcome(null)
           // the profile read for the page (a new account's) still holds the name it offered: the accept
-          // deployed the one the player chose, so read it again, or the Me panel keeps the offered one
+          // deployed the one the player chose, so read it again, or the Me panel keeps the offered one.
+          // The bridge answers profile reads one at a time, in order (bridge-scene domains/profile.ts),
+          // so a first read still in flight can't land after this one.
           if (fetchedRef.current.has('getProfile')) driverRef.current?.send({ kind: 'getProfile' })
           if (welcomeRef.current?.newProfile) {
             screenViewed('AUTH_DEPLOY_SUCCESS')

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import {
@@ -91,6 +91,18 @@ describe('guest identity', () => {
     expect(webGuestBackendFor({ hostname: 'example.com', search: '?guestWallet=thirdweb' })).toBe(webGuestBackend)
     expect(webGuestBackendFor({ hostname: 'example.com', search: '?realm=x&guestWallet=thirdweb' })).toBe(webGuestBackend)
     expect(webGuestBackendFor({ hostname: 'example.com', search: '?guestWallet=local' })).toBe(localGuestBackend)
+  })
+
+  // an origin thirdweb refuses: one visit with the parameter must not leave the next ones on thirdweb
+  it('keeps no session from a thirdweb login that failed, so the next PLAY AS GUEST uses a local key', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('Unauthorized domain', { status: 401 })))
+    try {
+      await expect(webGuestBackend.login('session-1')).rejects.toThrow()
+      expect(localStorage.getItem(GUEST_SESSION_KEY)).toBeNull()
+      expect(webGuestBackendFor({ hostname: 'example.com', search: '' })).toBe(localGuestBackend)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   // the guard forgets a guest's sign-in a day before it expires; the kept thirdweb session brings the

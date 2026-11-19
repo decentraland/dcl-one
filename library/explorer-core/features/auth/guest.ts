@@ -25,9 +25,12 @@ export interface GuestBackend {
 }
 
 export const webGuestBackend: GuestBackend = {
-  login(sessionId) {
+  // kept only once thirdweb has signed it in: a failed login (an origin thirdweb refuses) leaves no
+  // session behind to make the next PLAY AS GUEST pick thirdweb again
+  async login(sessionId) {
+    const wallet = await guestLogin(sessionId)
     localStorage.setItem(GUEST_SESSION_KEY, sessionId)
-    return guestLogin(sessionId)
+    return wallet
   },
   sign: guestSign,
   keptSessionId: () => localStorage.getItem(GUEST_SESSION_KEY)
