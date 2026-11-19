@@ -41,15 +41,19 @@
   },
   "apps/sites/src/features/create-landing/CreateLanding.module.css": {
     "primitives": 0,
-    "tokens": 199
+    "tokens": 198
   },
   "apps/sites/src/features/docs/docs.css": {
     "primitives": 11,
     "tokens": 0
   },
+  "apps/sites/src/features/download/CreatorHubDownload.module.css": {
+    "primitives": 0,
+    "tokens": 8
+  },
   "apps/sites/src/features/download/CreatorHubDownloadPage.module.css": {
     "primitives": 0,
-    "tokens": 13
+    "tokens": 4
   },
   "apps/sites/src/features/download/DownloadPage.module.css": {
     "primitives": 0,
