@@ -729,6 +729,17 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 
 ## Deliberate choices that look like mistakes
 
+- **An avatar out of every view stops animating.** A foreign avatar whose sphere of 9 m leaves
+  the view of every active 3D camera that draws it (the player's, a scene's texture cameras, the
+  profile booth's) takes its bones out of the animation evaluation, and resumes when a sphere of
+  6 m comes back into one (`crates/avatar/src/pause_hidden.rs`). Sampling every clip for every
+  bone is the per-avatar animation cost, and at 400 avatars around the player it cut the compute
+  pool's animation and transform time by about 2 ms a frame each. While paused, an entity a scene
+  attached to one of its bones stays where the bone was, spring bones rest, and under a low sun
+  its shadow can fall into view and stay still. A camera jump wider than the margin other than a
+  teleport (a fast flick, a cut with no transition) shows a newly visible avatar in its paused
+  pose for one frame, since the views are the last frame's. Do not report these as bugs; widen
+  the margins if one shows in practice.
 - **Fog does not hide the loading edge.** The fog is the sky preset's: one exponential density
   (0.0005 per metre) and a colour by time of day, as the Unity client renders it. It does not
   thicken with a shorter scene load distance, so the edge of the loaded scenes shows through it,

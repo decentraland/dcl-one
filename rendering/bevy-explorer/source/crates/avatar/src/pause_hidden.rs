@@ -25,6 +25,10 @@
 //! edge does not switch back and forth. An entity a scene attached to a bone of an avatar out of
 //! view stays where the bone was until the avatar resumes.
 //!
+//! The margin is sized for shadows under a high sun. Under a low sun (dawn, dusk, or a time a
+//! scene sets) an avatar's shadow reaches further than the margin, so the shadow of an avatar
+//! outside it can fall into view and stays still until the avatar resumes.
+//!
 //! The views are the ones the last frame was drawn with: the cameras move, and their frusta are
 //! rebuilt, after the animation is evaluated. The margin covers a turning or moving camera. A
 //! teleport moves the view further than that, so in the frame of a teleport every shown avatar
@@ -364,6 +368,40 @@ mod tests {
         app.update();
         assert!(app.world().get::<AnimationTarget>(avatar.bone).is_some());
         assert!(app.world().get::<PausedAnimation>(avatar.root).is_none());
+    }
+
+    /// A view whose camera stands `distance` metres in front of the avatar's centre, at the
+    /// origin, facing away from it.
+    fn behind(distance: f32) -> Frustum {
+        use bevy::render::camera::CameraProjection;
+
+        PerspectiveProjection::default().compute_frustum(&GlobalTransform::from(
+            Transform::from_xyz(0.0, 1.0, -distance).looking_to(Vec3::NEG_Z, Vec3::Y),
+        ))
+    }
+
+    #[test]
+    fn an_avatar_between_the_margins_keeps_its_state() {
+        let (mut app, avatar) = app_with_avatar(false);
+        let animating = |app: &App| app.world().get::<AnimationTarget>(avatar.bone).is_some();
+        // 7.5 m outside the view (with the near plane): between the two margins
+        let camera = app
+            .world_mut()
+            .spawn((Camera3d::default(), behind(7.4)))
+            .id();
+        app.update();
+        assert!(animating(&app), "animating, it carries on");
+
+        app.world_mut().entity_mut(camera).insert(behind(30.0));
+        app.update();
+        assert!(!animating(&app));
+        app.world_mut().entity_mut(camera).insert(behind(7.4));
+        app.update();
+        assert!(!animating(&app), "paused, it stays paused");
+
+        app.world_mut().entity_mut(camera).insert(behind(4.0));
+        app.update();
+        assert!(animating(&app), "inside the resume margin it resumes");
     }
 
     /// A frustum 30 m from the origin, where the avatars stand, looking at it or away from it.

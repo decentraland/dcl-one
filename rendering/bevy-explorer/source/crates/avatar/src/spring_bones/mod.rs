@@ -23,7 +23,7 @@ pub mod sim;
 use chains::{plan_chains, SkinJoint};
 use sim::{AnchorPose, ChainState, FramePlan, JointConfig, Shown, Stepper, TIP_LENGTH};
 
-use crate::AvatarProcessed;
+use crate::{pause_hidden::PausedAnimation, AvatarProcessed};
 
 /// Most avatars simulated at once. The rest keep their spring bones at rest.
 pub const MAX_SIMULATED_AVATARS: usize = 10;
@@ -248,7 +248,7 @@ fn measure(
 /// Picks the avatars to simulate, steps their chains and writes the bones' rotations.
 ///
 /// The player comes first, then other avatars by distance from the camera, leaving out those
-/// behind it and those hidden. An avatar that drops out gets its bones back at rest. Bone poses
+/// behind it, those hidden and those whose animation is paused out of view. An avatar that drops out gets its bones back at rest. Bone poses
 /// are computed here from local transforms: the stored globals predate this frame's movement and
 /// IK.
 fn simulate_spring_bones(
@@ -268,6 +268,7 @@ fn simulate_spring_bones(
         With<AvatarProcessed>,
     >,
     owners: Query<(&GlobalTransform, Has<PrimaryUser>)>,
+    paused: Query<(), With<PausedAnimation>>,
     camera: Query<&GlobalTransform, With<PrimaryCamera>>,
     // poses are read for every avatar before any rotation is written
     mut transforms: ParamSet<(
@@ -284,7 +285,8 @@ fn simulate_spring_bones(
     if config.graphics.spring_bones {
         for (entity, chains, owner, visibility, _) in avatars.iter() {
             // as last propagated, so a hide on the avatar's owner or scene entity counts too
-            if chains.0.is_empty() || !visibility.get() {
+            // a paused avatar's pose is frozen and out of every view: a swing would not show
+            if chains.0.is_empty() || !visibility.get() || paused.contains(owner.parent()) {
                 continue;
             }
             let Ok((position, is_player)) = owners.get(owner.parent()) else {
