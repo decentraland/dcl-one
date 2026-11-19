@@ -479,11 +479,16 @@ pub(super) async fn comms_states(
         peer_state_max: config.worlds.cluster_peer_state_max,
         peer_state_ttl_ms: config.worlds.cluster_peer_state_ttl_ms,
         control_v4_audience: non_empty(&config.worlds.archipelago_control_v4_audience),
+        ..Default::default()
     })
     .context("ARCHIPELAGO_CONTROL_V4_AUDIENCE and NATS_URL configuration")?
     .with_max_users_per_world(config.worlds.max_users_per_world)
     .with_shared_secret_max_attempts(config.worlds.shared_secret_max_attempts_per_minute)
     .with_room_authority_key(non_empty(&config.room_authority.pulse_room_authority_key).as_deref())?
+    .with_message_router_key(
+        non_empty(&config.message_router.message_router_key).as_deref(),
+        non_empty(&config.message_router.message_router_identity_prefix).as_deref(),
+    )?
     .with_room_event_sink(room_events);
     let gatekeeper = match room_event_store {
         Some(store) => gatekeeper.with_room_event_store(store),

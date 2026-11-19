@@ -332,9 +332,9 @@ const mockWearables: Wearable[] = BASE.map((b, i) => {
 const BASE_MALE = 'urn:decentraland:off-chain:base-avatars:BaseMale'
 const mockOutfit = (urns: string[]): Outfit => ({
   bodyShape: BASE_MALE,
-  eyes: { color: { r: 0.37, g: 0.22, b: 0.19 } },
-  hair: { color: { r: 0.6, g: 0.36, b: 0.2 } },
-  skin: { color: { r: 0.8, g: 0.6, b: 0.47 } },
+  eyes: { color: { r: 0.37, g: 0.22, b: 0.19, a: 1 } },
+  hair: { color: { r: 0.6, g: 0.36, b: 0.2, a: 1 } },
+  skin: { color: { r: 0.8, g: 0.6, b: 0.47, a: 1 } },
   wearables: urns,
   forceRender: []
 })
@@ -477,7 +477,7 @@ const defaultBindings = (): BindingEntry[] => [
   [{ System: 'PhotoTiltLeft' }, ['KeyQ', 'Gamepad DPadLeft']],
   [{ System: 'PhotoTiltRight' }, ['KeyE', 'Gamepad DPadRight']],
   [{ System: 'PointAt' }, ['Mouse Middle', 'KeyQ']],
-  [{ System: 'Microphone' }, ['KeyV']],
+  [{ System: 'Microphone' }, ['KeyT']],
   [{ System: 'Map' }, ['KeyM', 'Tab']],
   [{ System: 'Chat' }, ['Enter', 'NumpadEnter']],
   [{ System: 'CameraUp' }, ['ArrowUp']],
@@ -502,7 +502,7 @@ const defaultBindings = (): BindingEntry[] => [
   [{ System: 'Gallery' }, ['KeyG']],
   [{ System: 'Settings' }, ['KeyP']],
   [{ System: 'Friends' }, ['KeyL']],
-  [{ System: 'ChatPanel' }, ['KeyT']]
+  [{ System: 'ChatPanel' }, []]
 ]
 
 // Saved profile edits, in order. Applied over the mock's stock passport so an edit made in ?mock=1
@@ -1881,7 +1881,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     if (msg.kind === 'getUserProfile') {
       if (msg.address.toLowerCase() === o.userId.toLowerCase()) {
-        reply({ kind: 'userProfile', address: msg.address, profile: ownProfile(o) })
+        reply({ kind: 'userProfile', address: msg.address, requestId: msg.requestId, profile: ownProfile(o) })
         return
       }
       // Resolve a real name from the nearby roster (real engine gets it from the catalyst).
@@ -1890,10 +1890,10 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       if (msg.extras !== true) {
         // Like the engine, hold nothing for someone never seen: a friend's seeded name stays.
         const profile = member == null ? null : { address: msg.address, name, picture: member.picture, hasClaimedName: !name.includes('#'), isGuest: false }
-        reply({ kind: 'userProfile', address: msg.address, profile })
+        reply({ kind: 'userProfile', address: msg.address, requestId: msg.requestId, profile })
         return
       }
-      reply({ kind: 'userProfile', address: msg.address, profile: richProfile(msg.address, name, false) })
+      reply({ kind: 'userProfile', address: msg.address, requestId: msg.requestId, profile: richProfile(msg.address, name, false) })
       return
     }
     // Slash-command effects (no engine in mock): echo a system chat line so the flow is testable in ?mock=1.

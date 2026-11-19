@@ -23,8 +23,8 @@ stream from OBS, and talk over voice (nearby, private calls, community voice).
 | Private 1:1 calls | Server routes and RPCs at parity; client flow in the Bevy engine and the shared HUD. |
 | Community voice (stage, raise hand, promote, kick, end) | Server at parity. Client lacks moderator mute (MV-6, MV-7). |
 | OBS/RTMP stream onto a scene screen | Served: `/scene-stream-access` and LiveKit Ingress into the scene room. The local stack runs the ingress (`tooling/dev.py`); an RTMP push to a key created with the request the API makes reaches the room as H264 and Opus. Not run end to end through the API and a client. |
-| Share a screen or camera from a browser (Decentraland Cast) | Served: every `/cast/*` route, and the `apps/sites` streamer and watcher pages. Run headless against a local LiveKit; no multi-client run in the explorer. |
-| Presentations (slides) and presenters | Presenters routes and the presentation-bot token served; `POST /cast-presenter-service/presentations` presents PDF slides through a `cast-bot` process (MV-5). No PPTX, embedded video or client composition. |
+| Share a screen or camera from a browser (Decentraland Cast) | Served: every `/cast/*` route, and the `apps/sites` streamer and watcher pages. `pnpm drive:cast` (`apps/sites/scripts/drive/cast.mts`) runs them headless against a real node: a world owner's scene-signed stream link, then stream-info, streamer, watcher and presenters answers from `catalyst serve` and a local LiveKit. No multi-client run in the explorer. |
+| Presentations (slides) and presenters | Presenters routes and the presentation-bot token served; `POST /cast-presenter-service/presentations` presents PDF slides through a `cast-bot` process (MV-5). `pnpm drive:cast` presents a PDF through the node, moves it with `navigate` from a presenter and stops it, and the watcher page shows each slide. No PPTX, embedded video or client composition. |
 
 ## How upstream Cast works
 
@@ -57,15 +57,22 @@ Cast publishes into the scene's own LiveKit room, the one `/get-scene-adapter` h
 | `POST /cast/watcher-token` | `routes.ts:246`; `cast.ts:368-443` | `G/streaming_cast.rs` `watcher_token` | DIVERGENCE: a world's access policy is checked, and the token carries the wallet and the world authorization proof (below) | `a_viewer_watches_a_parcel_or_world_stream_unless_banned`; `a_private_worlds_cast_refuses_watchers_the_world_does_not_admit` |
 | `GET/PUT/DELETE /cast/presenters[/:id]` | `routes.ts:291-293`; `cast.ts:512-614` | `G/streaming_cast.rs` `list_presenters`, `promote_presenter`, `demote_presenter` | MATCH | `scene_admins_list_promote_and_demote_presenters`; capture `cast-presenters-unauth` replayed by `the_gatekeeper_answers_its_stateless_captures_as_production` |
 | `POST /cast/presentation-bot-token` | `routes.ts:286`; `cast.ts:455-500` | `G/streaming_cast.rs` `presentation_bot_token` | DIVERGENCE: identity names the credential | `a_streaming_key_admits_the_presentation_bot` |
-| `GET /scene-stream-access` | `list-scene-stream-access-handler.ts:62-80` | `G/streaming.rs:185-192` | MATCH, except no 404 on expiry and `ends_at` forced to `created_at + 4d` (MV-9) | `C/tests/gatekeeper_policy.rs` (PostgreSQL) |
+| `GET /scene-stream-access` | `list-scene-stream-access-handler.ts:62-80` | `G/streaming.rs:185-192` | MATCH: the stored expiry is answered, and a credential past it answers 404 `Streaming access has expired` | `C/tests/gatekeeper_policy.rs` (PostgreSQL) |
 | `POST /scene-stream-access` | `add-…:80-130` | `G/streaming.rs:193-216,295-371` | MATCH | `C/tests/gatekeeper_policy.rs`; `canonical_rooms_tests.rs` |
-| `PUT /scene-stream-access` | `reset-…:86-150` | `G/streaming.rs:373-398` | MATCH, except 409/404 wrapped as 500 (MV-9) | `C/tests/gatekeeper_policy.rs` |
+| `PUT /scene-stream-access` | `reset-…:86-150` | `G/streaming.rs:373-398` | MATCH for 404 (no active credential); a concurrent change inside the reset answers 500, not compared with upstream (MV-9) | `C/tests/gatekeeper_policy.rs` |
 | `DELETE /scene-stream-access` | `remove-…:42-65` | `G/streaming.rs:400-413` | MATCH | `C/tests/gatekeeper_policy.rs` |
 | Platform bans on stream access (0a6b095) | `add-…:51-59` | `G/streaming.rs:131-136,225-247` | MATCH | `C/comms/src/gatekeeper/streaming.rs` tests |
 | Ingress webhooks, 4 h TTL, stale-flag reconcile (cdd006c), key expiry deadline (1e7d0f2), notifications | `adapters/streaming-ttl-checker.ts`, `streaming-key-ttl-checker.ts` | `G/streaming.rs:422-446`; `G/streaming_jobs.rs:28-60,239,278-326` (leased jobs, durable cleanup queue); `G/streaming_notifications.rs:12-60` | MATCH | `G/streaming_jobs.rs` tests |
 
 Cast differences from upstream (each pinned by a test in `G/cast_tests.rs`):
 
+- A world has one stream credential for all its scenes, so `/scene-stream-access` and
+  `/cast/generate-stream-link` take authority over the whole world there: its owner, an admin of the
+  world place, or a deployment or streaming grantee without a parcel restriction. An admin granted on
+  one scene through `/scene-admin`, or a grantee of some parcels, is refused (403) in a world; on a
+  Genesis place both are admitted. Pinned by
+  `a_world_published_here_answers_every_scene_route_under_its_stripped_realm_name`
+  (`C/tests/gatekeeper_policy.rs`).
 - Publisher identities name the credential that minted them (`stream:<place>:<access id>:<uuid>`,
   `presentation-bot:<room>:<access id>:<uuid>`). Revoking or replacing a key removes its WebRTC
   publishers from the room, and the `participant_joined` webhook removes one that joins later with a
@@ -157,8 +164,8 @@ MV-1 to MV-4 (Cast routes, watcher token, the `apps/sites` streamer and watcher,
      `component.ts:62`, `208-211`).
    - Track and lifetime: one SCREENSHARE VP8 track `presentation`, the last frame repeated every
      500 ms; a session with no remote participant for 5 minutes stops.
-   - Tests: `comms::cast_presenter::tests`, and `C/cast-bot/tests/livekit.rs` against a local
-     `livekit-server`.
+   - Tests: `comms::cast_presenter::tests`, `C/cast-bot/tests/livekit.rs` against a local
+     `livekit-server`, and `pnpm drive:cast` in `apps/sites` through the node (above).
    Divergences:
    - Only the gatekeeper's presentation-bot tokens are taken: the node checks the signature with its
      LiveKit key, the expiry, a `presentation-bot:` identity of the granted room and a grant that can
@@ -169,7 +176,9 @@ MV-1 to MV-4 (Cast routes, watcher token, the `apps/sites` streamer and watcher,
    - The SSRF resolver reads the hosts file.
    Not served:
    - PPTX (422 `Unable to render the presentation`).
-   - Embedded video: `video:*` commands are ignored and `videoState` stays `idle`.
+   - Embedded video: `video:play` is answered with a `presentation:error` event
+     (`video-playback-failed`); the other `video:*` commands are ignored and `videoState` stays
+     `idle`.
    - Client composition: no `slide` field, no `/presentations/:id/slides/:file`, `presenter:claim`
      ignored.
    - `/api/drive-video` and `/ping`.
@@ -181,10 +190,11 @@ MV-1 to MV-4 (Cast routes, watcher token, the `apps/sites` streamer and watcher,
 7. **MV-7: No moderator "mute speaker" action in the HUD and bridge.** P2, S. Add it to
    `VoiceChatAction` and the participant menu.
 8. **MV-8: End-to-end run.** P1, M. Two clients, a real LiveKit with Ingress and the webhook: private
-   call, community stage, nearby audio, an RTMP stream on a scene screen, and a Cast screen share once
-   MV-1 to MV-3 land.
-9. **MV-9: `/scene-stream-access` details.** P2, S. GET answers 404 on expiry and uses
-   `expiration_time`; PUT maps 409/404 instead of 500.
+   call, community stage, nearby audio and an RTMP stream on a scene screen. The Cast part runs:
+   `pnpm drive:cast` drives the streamer and watcher pages and a PDF presentation against
+   `catalyst serve`, its LiveKit (with the webhook) and `cast-bot`. It pushes no RTMP into the
+   ingress its stream link creates, and no explorer watches.
+9. **MV-9: `/scene-stream-access` details.** P2, S. Compare PUT's answer to a concurrent change (500 here) with upstream's.
 10. **MV-10: Kick and end report success when LiveKit fails.** P2, S. Return an error or retry the
     removal; today the user may stay connected.
 12. **MV-12: HTTP-level tests for the bearer voice routes.** P2, M. Only the 401 shapes are captured; those are replayed by `the_gatekeeper_answers_its_stateless_captures_as_production`.

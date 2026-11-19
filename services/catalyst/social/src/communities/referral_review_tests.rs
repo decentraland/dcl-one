@@ -14,7 +14,13 @@ async fn reward_database() -> Option<RewardDatabase> {
 }
 
 async fn reward_database_with_legacy_receipts(legacy: bool) -> Option<RewardDatabase> {
-    let Some(database) = RewardDatabase::new("referral", Schema::Blank, 12).await else {
+    let Some(database) = RewardDatabase::new(
+        "referral",
+        if legacy { Schema::Blank } else { Schema::Full },
+        12,
+    )
+    .await
+    else {
         eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
         return None;
     };
@@ -42,8 +48,6 @@ async fn reward_database_with_legacy_receipts(legacy: bool) -> Option<RewardData
             .await
             .unwrap();
         tx.commit().await.unwrap();
-    } else {
-        crate::db::apply_schema(pool).await.unwrap();
     }
     Some(database)
 }

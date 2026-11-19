@@ -480,7 +480,7 @@ impl Default for InputMap {
                     Action::System(SystemAction::HideNames),
                     vec![InputIdentifier::Key(KeyCode::KeyN)],
                 ),
-                // unbound by default: KeyT/KeyG are used for ChatPanel/Gallery
+                // unbound by default: KeyT/KeyG are used for Microphone/Gallery
                 (Action::System(SystemAction::RollLeft), vec![]),
                 (Action::System(SystemAction::RollRight), vec![]),
                 (
@@ -492,7 +492,7 @@ impl Default for InputMap {
                 ),
                 (
                     Action::System(SystemAction::Microphone),
-                    vec![InputIdentifier::Key(KeyCode::KeyV)],
+                    vec![InputIdentifier::Key(KeyCode::KeyT)],
                 ),
                 (
                     Action::System(SystemAction::Map),
@@ -662,10 +662,8 @@ impl Default for InputMap {
                     Action::System(SystemAction::Friends),
                     vec![InputIdentifier::Key(KeyCode::KeyL)],
                 ),
-                (
-                    Action::System(SystemAction::ChatPanel),
-                    vec![InputIdentifier::Key(KeyCode::KeyT)],
-                ),
+                // unbound by default: KeyT is the microphone, and Enter opens the chat
+                (Action::System(SystemAction::ChatPanel), vec![]),
                 // no pad button: nothing is reserved outside photo mode, so a scene reading the
                 // same button (East is IaSecondary) would open it from its own action
                 (

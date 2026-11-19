@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import { scheduleLine } from "../components/event-schedule";
 import { eventRecord, placeRecord } from "./fixtures";
 import {
   bucketByDay,
   closedHref,
   creatorWallets,
+  dayLabel,
   eventCreator,
   eventHref,
   eventPageShareUrl,
@@ -14,7 +16,6 @@ import {
   placeHref,
   readDayOffset,
   relativeStart,
-  scheduleLine,
   visibleDays,
 } from "./view";
 
@@ -185,6 +186,11 @@ describe("scheduleLine", () => {
   it("should have no schedule for an event without a valid start", () => {
     expect(scheduleLine(eventRecord({ start_at: null, next_start_at: "not a date" }), "UTC")).toBeUndefined();
   });
+
+  it.each([[1, "Every hour"], [3, "Every 3 hours"]] as const)("should label hourly recurrence with interval %i", (interval, label) => {
+    const hourly = eventRecord({ recurrent: true, recurrent_frequency: "HOURLY", recurrent_interval: interval });
+    expect(scheduleLine(hourly, "UTC")?.recurrence).toBe(label);
+  });
 });
 
 describe("creator faces", () => {
@@ -209,5 +215,15 @@ describe("creator faces", () => {
       wallet,
       wallet,
     ]);
+  });
+});
+
+describe("when the Events locale is Spanish", () => {
+  it("should translate Today in the calendar", () => {
+    expect(dayLabel(new Date(NOW), 0, "es")).toBe("Hoy");
+  });
+
+  it("should format a future start in the selected language and time convention", () => {
+    expect(relativeStart("2099-06-01T18:00:00Z", NOW, "UTC", "es")).toBe("Hoy 18:00");
   });
 });

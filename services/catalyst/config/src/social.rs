@@ -980,6 +980,39 @@ pub struct RoomAuthorityConfig {
     pub pulse_room_authority_key: Option<String>,
 }
 
+/// The community-chat message router's token route (`comms::gatekeeper::message_router`).
+#[derive(Args, Clone)]
+pub struct MessageRouterConfig {
+    /// 32 base64url bytes without padding (or _FILE), distinct from the
+    /// LiveKit secret; the message router process holds the same value. Unset,
+    /// POST /internal/message-router/token/v1 is not mounted and community
+    /// chat is not routed.
+    #[arg(long, env = "MESSAGE_ROUTER_KEY", hide_env_values = true)]
+    pub message_router_key: Option<String>,
+
+    /// The router's LiveKit identity is `<prefix>-<replica>`. The Explorer
+    /// addresses `message-router-dev-0`, or `message-router-prd-0` when its
+    /// base domain is decentraland.org. Required with MESSAGE_ROUTER_KEY, so
+    /// a node never mints an identity its Explorers do not trust.
+    #[arg(long, env = "MESSAGE_ROUTER_IDENTITY_PREFIX")]
+    pub message_router_identity_prefix: Option<String>,
+}
+
+impl std::fmt::Debug for MessageRouterConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MessageRouterConfig")
+            .field(
+                "message_router_key",
+                &self.message_router_key.as_ref().map(|_| "<set>"),
+            )
+            .field(
+                "message_router_identity_prefix",
+                &self.message_router_identity_prefix,
+            )
+            .finish()
+    }
+}
+
 /// A finite number above zero (upstream refuses to start otherwise).
 fn positive(raw: &str) -> Result<f64, String> {
     match raw.parse::<f64>() {

@@ -20,6 +20,9 @@ import { personalSign } from '@explorer-core/shell/sign'
 // has signed it is kept for the session, so signing out or in again in another tab doesn't pull it
 // from under the running engine. Until then (the login screen), or once it expires, storage is
 // read again.
+// The page as it was opened: the engine's URL sync later rewrites the query, which may drop
+// `?guestWallet=` (features/auth/guest.ts) before PLAY AS GUEST.
+const entryLocation = { hostname: location.hostname, search: location.search }
 let held: StoredLogin | null = null
 let pinned = false
 /** The login the shell holds now, key included: the in-world Shop's buyer (shop/purchase). */
@@ -51,7 +54,7 @@ export async function request(method: unknown, params: unknown): Promise<unknown
     // "Explore as guest": a guest account that persists across visits (features/auth/guest.ts), kept
     // here like a sign-in. A guest that signed out comes back the same.
     case 'createGuest': {
-      const { wallet, ...login } = await playAsGuest(webGuestBackendFor(location.hostname))
+      const { wallet, ...login } = await playAsGuest(webGuestBackendFor(entryLocation))
       held = login
       pinned = true
       return { ...publicLogin(held), wallet }

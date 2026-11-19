@@ -117,6 +117,9 @@ pub enum SystemApi {
         response: RpcResultSender<Result<Vec<(String, String)>, String>>,
     },
     SetAvatar(SetAvatarData, RpcResultSender<Result<u32, String>>),
+    /// Signs and deploys the local player's `outfits` entity. The address is the account the
+    /// caller expects; the engine refuses when another one is signed in.
+    DeployOutfits(String, OutfitsData, RpcResultSender<Result<(), String>>),
     GetNativeInput(RpcResultSender<InputIdentifier>),
     GetBindings(RpcResultSender<BindingsData>),
     SetBindings(BindingsData, RpcResultSender<()>),

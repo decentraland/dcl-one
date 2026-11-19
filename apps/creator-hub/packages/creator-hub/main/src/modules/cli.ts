@@ -24,7 +24,11 @@ import { qrCodeDataUrl } from './qr-code';
 import { getLanIp } from './network';
 import { getRealm } from './bevy-realm';
 import { NO_SERVER_FLAG } from './realm-server-logs';
-import { addDependencyOverrides, ensureEditorFilesNotDeployed } from './project-config-files';
+import {
+  addDependencyOverrides,
+  clearTemplateDescription,
+  ensureEditorFilesNotDeployed,
+} from './project-config-files';
 
 // `mobile` marks a preview that was started for the mobile-QR flow (`--mobile`): the
 // SDK runs the preview server but does NOT open the desktop client. It is tracked so a
@@ -552,13 +556,18 @@ async function doStart(path: string, opts: StartOptions, generation: number): Pr
 }
 
 // Templates ship editor and agent files (`cursor.config`, `cursorignore`) that no default deploy
-// rule covers. Run before every deploy so scenes created before this rule are covered too. A
-// `.dclignore` the Hub cannot write leaves the deploy to the scene's own rules.
+// rule covers, and the empty template describes itself. Run before every deploy so scenes created
+// before these fixes are covered too. A file the Hub cannot write leaves the scene as it is.
 function excludeEditorFiles(path: string) {
   try {
     ensureEditorFilesNotDeployed(path);
   } catch (error) {
     log.warn('[CLI] Could not add the editor files to .dclignore', { path, error });
+  }
+  try {
+    clearTemplateDescription(path);
+  } catch (error) {
+    log.warn('[CLI] Could not clear the template description from scene.json', { path, error });
   }
 }
 
