@@ -25,6 +25,12 @@ use scene_material::SceneMaterialExt;
 /// `mesh_renderer`'s test app with the material systems as `MaterialDefinitionPlugin` adds
 /// them, after `update_mesh`; the charges are recorded after both.
 fn material_app() -> (App, Entity) {
+    material_app_with(true)
+}
+
+/// `loading` off leaves a created material as it was built: `update_loading_materials` takes a
+/// texture that fails to load off it, and a test's textures have no file.
+fn material_app_with(loading: bool) -> (App, Entity) {
     let (mut app, root) = test_app();
     app.init_asset::<Image>()
         .init_asset::<StandardMaterial>()
@@ -38,7 +44,7 @@ fn material_app() -> (App, Entity) {
                 update_materials,
                 add_missing_tangents,
                 update_bias,
-                update_loading_materials,
+                update_loading_materials.run_if(move || loading),
             )
                 .chain()
                 .after(update_mesh)
@@ -853,5 +859,226 @@ mod definition {
             ..Default::default()
         });
         assert_eq!(plain.material.uv_transform, Affine2::IDENTITY);
+    }
+}
+
+/// A glTF material written to the scene and read back with that glTF as its base, as when a
+/// scene changes one field of the material it was given.
+mod readback {
+    use std::path::PathBuf;
+
+    use dcl_component::proto_components::sdk::components::pb_material::GltfMaterial;
+    use ipfs::ipfs_path::IpfsType;
+
+    use super::{super::*, container, material_app, material_app_with};
+
+    fn gltf() -> Option<GltfMaterial> {
+        Some(GltfMaterial {
+            gltf_src: "model.glb".to_owned(),
+            name: "material".to_owned(),
+        })
+    }
+
+    fn base(material: &StandardMaterial) -> BaseMaterial {
+        BaseMaterial {
+            material: material.clone(),
+            gltf: "model.glb".to_owned(),
+            name: "material".to_owned(),
+        }
+    }
+
+    fn written(material: &StandardMaterial) -> PbMaterial {
+        PbMaterial {
+            material: Some(dcl_material_from_standard_material(
+                material,
+                &Assets::<Image>::default(),
+            )),
+            gltf: gltf(),
+        }
+    }
+
+    fn read_back(material: &StandardMaterial) -> MaterialDefinition {
+        MaterialDefinition::from_base_and_material(Some(&base(material)), &written(material))
+    }
+
+    /// A handle with a content path, as a glTF's own textures have.
+    fn image(app: &App, file: &str) -> Handle<Image> {
+        let path = IpfsPath::new(IpfsType::new_content_file(
+            "bafyhash".to_owned(),
+            file.to_owned(),
+        ));
+        app.world()
+            .resource::<AssetServer>()
+            .load(PathBuf::from(&path))
+    }
+
+    fn close(a: LinearRgba, b: LinearRgba) -> bool {
+        (a.to_vec4() - b.to_vec4()).abs().max_element() < 1e-4
+    }
+
+    /// The shader reads an emissive's colour alone.
+    fn close_rgb(a: LinearRgba, b: LinearRgba) -> bool {
+        (a.to_vec3() - b.to_vec3()).abs().max_element() < 1e-4
+    }
+
+    #[test]
+    fn an_unlit_colour_is_kept() {
+        let material = StandardMaterial {
+            unlit: true,
+            base_color: Color::srgb(0.5, 0.25, 0.75),
+            ..Default::default()
+        };
+        let definition = read_back(&material);
+        assert!(
+            close(
+                definition.material.base_color.to_linear(),
+                material.base_color.to_linear()
+            ),
+            "{:?}",
+            definition.material.base_color
+        );
+        assert!(definition.material.unlit);
+    }
+
+    #[test]
+    fn a_lit_colour_is_kept() {
+        let material = StandardMaterial {
+            base_color: Color::srgba(0.5, 0.25, 0.75, 0.5),
+            alpha_mode: AlphaMode::Blend,
+            ..Default::default()
+        };
+        let definition = read_back(&material);
+        assert!(close(
+            definition.material.base_color.to_linear(),
+            material.base_color.to_linear()
+        ));
+        assert_eq!(definition.material.alpha_mode, AlphaMode::Blend);
+    }
+
+    #[test]
+    fn an_unlit_cutout_stays_a_cutout() {
+        let definition = read_back(&StandardMaterial {
+            unlit: true,
+            alpha_mode: AlphaMode::Mask(0.3),
+            ..Default::default()
+        });
+        assert_eq!(definition.material.alpha_mode, AlphaMode::Mask(0.3));
+    }
+
+    #[test]
+    fn an_unlit_blend_keeps_its_own_alpha() {
+        let (app, _) = material_app();
+        let textured = read_back(&StandardMaterial {
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            base_color_texture: Some(image(&app, "leaf.png")),
+            ..Default::default()
+        });
+        assert_eq!(textured.material.alpha_mode, AlphaMode::Blend);
+        // an alpha texture would scale the alpha by the texture's brightness
+        assert!(textured.alpha_texture.is_none());
+
+        let untextured = read_back(&StandardMaterial {
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            base_color: Color::srgba(1.0, 1.0, 1.0, 0.5),
+            ..Default::default()
+        });
+        assert_eq!(untextured.material.alpha_mode, AlphaMode::Blend);
+    }
+
+    #[test]
+    fn the_emissive_keeps_the_gltf_rules() {
+        let definition = read_back(&StandardMaterial {
+            emissive: LinearRgba::rgb(0.5, 0.25, 0.0),
+            ..Default::default()
+        });
+        assert!(!definition.plain_emissive);
+        assert!(close_rgb(
+            definition.material.emissive,
+            LinearRgba::rgb(0.5, 0.25, 0.0)
+        ));
+    }
+
+    #[test]
+    fn an_emissive_above_one_is_kept() {
+        let emissive = LinearRgba::rgb(4.0, 2.0, 0.0);
+        let definition = read_back(&StandardMaterial {
+            emissive,
+            ..Default::default()
+        });
+        assert!(
+            close_rgb(definition.material.emissive, emissive),
+            "{:?}",
+            definition.material.emissive
+        );
+    }
+
+    #[test]
+    fn a_texture_transform_is_kept() {
+        let (app, _) = material_app();
+        let uv_transform = Affine2 {
+            matrix2: Mat2::from_diagonal(Vec2::new(0.5, 0.25)),
+            translation: Vec2::new(0.1, 0.2),
+        };
+        let definition = read_back(&StandardMaterial {
+            base_color_texture: Some(image(&app, "bark.png")),
+            uv_transform,
+            ..Default::default()
+        });
+        let read = definition.material.uv_transform;
+        assert_eq!(read.matrix2, uv_transform.matrix2);
+        assert!(
+            (read.translation - uv_transform.translation).length() < 1e-6,
+            "{:?}",
+            read.translation
+        );
+    }
+
+    #[test]
+    fn an_emissive_texture_without_a_factor_stays_bound() {
+        let (mut app, root) = material_app_with(false);
+        let material = StandardMaterial {
+            emissive_texture: Some(image(&app, "glow.png")),
+            ..Default::default()
+        };
+        let written = written_with(&app, &material);
+        let entity = app
+            .world_mut()
+            .spawn((
+                container(root),
+                base(&material),
+                PbMaterialComponent(written),
+            ))
+            .id();
+        app.update();
+
+        let handle = app
+            .world()
+            .get::<MeshMaterial3dLoading>(entity)
+            .map(|loading| loading.0.id())
+            .or_else(|| {
+                app.world()
+                    .get::<MeshMaterial3d<SceneMaterial>>(entity)
+                    .map(|material| material.id())
+            })
+            .expect("the material was not created");
+        let created = app
+            .world()
+            .resource::<Assets<SceneMaterial>>()
+            .get(handle)
+            .unwrap();
+        assert!(created.base.emissive_texture.is_some());
+        assert_eq!(created.base.emissive, LinearRgba::BLACK);
+    }
+
+    fn written_with(app: &App, material: &StandardMaterial) -> PbMaterial {
+        PbMaterial {
+            material: Some(dcl_material_from_standard_material(
+                material,
+                app.world().resource::<Assets<Image>>(),
+            )),
+            gltf: gltf(),
+        }
     }
 }

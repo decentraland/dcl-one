@@ -61,7 +61,8 @@ pub struct BaseMaterial {
 pub struct MaterialDefinition {
     pub material: StandardMaterial,
     pub shadow_caster: bool,
-    /// An SDK PBR material, which has emissive rules of its own (`SCENE_PLAIN_EMISSIVE`).
+    /// An SDK PBR material without a glTF base, which has emissive rules of its own
+    /// (`SCENE_PLAIN_EMISSIVE`).
     pub plain_emissive: bool,
     pub base_color_texture: Option<TextureUnion>,
     pub emmissive_texture: Option<TextureUnion>,
@@ -118,6 +119,9 @@ fn texture_uv_transform(texture: &Option<TextureUnion>) -> Affine2 {
 
 impl MaterialDefinition {
     pub fn from_base_and_material(base: Option<&BaseMaterial>, pb_material: &PbMaterial) -> Self {
+        // a material that names a glTF keeps the glTF's alpha and emissive rules: what
+        // `dcl_material_from_standard_material` writes for one has to draw the same read back
+        let gltf_backed = base.is_some();
         let base = base
             .map(|b| &b.material)
             .unwrap_or(DEFAULT_BASE.get_or_init(|| StandardMaterial {
@@ -138,11 +142,12 @@ impl MaterialDefinition {
                     .map(Color4DclToBevy::convert_srgba)
                     .unwrap_or(base.base_color);
 
-                // `alpha_test` and the diffuse alpha leave an unlit material opaque
-                let alpha_mode = if tex_is_present(&unlit.alpha_texture) {
-                    AlphaMode::Blend
-                } else {
-                    AlphaMode::Opaque
+                let alpha_mode = match unlit.alpha_test {
+                    Some(alpha_test) if gltf_backed => AlphaMode::Mask(alpha_test),
+                    _ if tex_is_present(&unlit.alpha_texture) => AlphaMode::Blend,
+                    _ if gltf_backed && base_color.alpha() < 1.0 => AlphaMode::Blend,
+                    // `alpha_test` and the diffuse alpha leave an SDK unlit material opaque
+                    _ => AlphaMode::Opaque,
                 };
 
                 let uv_transform = texture_uv_transform(&unlit.texture);
@@ -222,7 +227,9 @@ impl MaterialDefinition {
                     pbr.texture.clone(),
                     // the shader reads a black emissive with a texture as "use the texture"
                     // (glTF materials rely on it), so a material that emits nothing binds none
-                    pbr.emissive_texture.clone().filter(|_| emits),
+                    pbr.emissive_texture
+                        .clone()
+                        .filter(|_| emits || gltf_backed),
                     pbr.bump_texture.clone(),
                 )
             }
@@ -243,7 +250,8 @@ impl MaterialDefinition {
             Some(pb_material::Material::Unlit(unlit)) => unlit
                 .alpha_texture
                 .clone()
-                .filter(|_| tex_is_present(&unlit.alpha_texture)),
+                // a glTF's alpha is its texture's own, not the brightness of one
+                .filter(|_| !gltf_backed && tex_is_present(&unlit.alpha_texture)),
             _ => None,
         };
 
@@ -251,7 +259,8 @@ impl MaterialDefinition {
             material,
             shadow_caster,
             alpha_texture,
-            plain_emissive: matches!(&pb_material.material, Some(pb_material::Material::Pbr(_))),
+            plain_emissive: !gltf_backed
+                && matches!(&pb_material.material, Some(pb_material::Material::Pbr(_))),
             base_color_texture,
             emmissive_texture,
             normal_map,
@@ -1013,10 +1022,11 @@ pub fn dcl_material_from_standard_material(
             &ImageSamplerDescriptor::default()
         };
 
+        // the inverse of `texture_uv_transform`
         let (scale, _, translation) = base.uv_transform.to_scale_angle_translation();
         let tiling = (scale != Vec2::ONE).then_some(Vector2::from(scale));
-        let offset = (translation != Vec2::ZERO)
-            .then_some(Vector2::from(translation * Vec2::new(1.0, -1.0)));
+        let offset = Vec2::new(translation.x, 1.0 - scale.y - translation.y);
+        let offset = (offset != Vec2::ZERO).then_some(Vector2::from(offset));
 
         TextureUnion {
             tex: Some(dcl_component::proto_components::common::texture_union::Tex::Texture(dcl_component::proto_components::common::Texture {
@@ -1049,12 +1059,20 @@ pub fn dcl_material_from_standard_material(
         None
     };
 
+    // a colour holds 0 to 1, so the intensity carries what an emissive has above it
+    let emissive_peak = base
+        .emissive
+        .red
+        .max(base.emissive.green)
+        .max(base.emissive.blue)
+        .max(1.0);
+
     if base.unlit {
         pb_material::Material::Unlit(pb_material::UnlitMaterial {
             texture: base.base_color_texture.as_ref().map(dcl_texture),
             alpha_test,
             cast_shadows: Some(false),
-            diffuse_color: Some(base.base_color.convert_linear_rgba()),
+            diffuse_color: Some(base.base_color.convert_srgba()),
             alpha_texture,
         })
     } else {
@@ -1067,7 +1085,9 @@ pub fn dcl_material_from_standard_material(
             bump_texture: base.normal_map_texture.as_ref().map(dcl_texture),
             // in the form an SDK material is read: sRGB albedo, linear emissive
             albedo_color: Some(base.base_color.convert_srgba()),
-            emissive_color: Some(Color::LinearRgba(base.emissive).convert_linear_rgb()),
+            emissive_color: Some(
+                Color::LinearRgba(base.emissive / emissive_peak).convert_linear_rgb(),
+            ),
             reflectivity_color: None,
             transparency_mode: Some(match base.alpha_mode() {
                 AlphaMode::Opaque => MaterialTransparencyMode::MtmOpaque,
@@ -1077,7 +1097,7 @@ pub fn dcl_material_from_standard_material(
             metallic: Some(base.metallic),
             roughness: Some(base.perceptual_roughness),
             specular_intensity: None,
-            emissive_intensity: Some(1.0 / SDK_EMISSIVE_SCALE),
+            emissive_intensity: Some(emissive_peak / SDK_EMISSIVE_SCALE),
             direct_intensity: None,
         })
     }

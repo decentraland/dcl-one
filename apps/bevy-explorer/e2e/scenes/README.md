@@ -81,7 +81,7 @@ and scene-departure reset through the native console. Captures are saved in `rep
 
 ## Material fidelity charts
 
-`material-fidelity`, parcels `0,26` to `9,26`, is a workspace fixture without a visual reference:
+`material-fidelity`, parcels `0,28` to `9,28`, is a workspace fixture without a visual reference:
 charts of the SDK material for viewing in two clients side by side. Eight boards stand in a row,
 20 m apart, each tilted 45 degrees towards the sky and holding a 6 by 6 grid of spheres. A row
 varies one value across its six columns and holds the rest, and the line under it names the
