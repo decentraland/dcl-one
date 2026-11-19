@@ -35,7 +35,7 @@ pub(crate) fn event_image_url(
 }
 
 /// Expand the bundled default for consumers that render a stored event.
-pub fn absolute_default_image(image: &str, events_asset_base: &str) -> String {
+fn absolute_default_image(image: &str, events_asset_base: &str) -> String {
     if image == DEFAULT_EVENT_IMAGE {
         format!("{}{image}", events_asset_base.trim_end_matches('/'))
     } else {
@@ -43,13 +43,15 @@ pub fn absolute_default_image(image: &str, events_asset_base: &str) -> String {
     }
 }
 
-/// An absolute image for a notice: posters on the node's poster mount.
-pub fn notice_image_url(image: &str, events_asset_base: &str) -> String {
+/// A notice's image: posters as the read projection serves them, other node paths on the asset mount.
+pub fn notice_image_url(
+    image: &str,
+    configured_public_base: Option<&str>,
+    events_asset_base: &str,
+) -> String {
     let assets = events_asset_base.trim_end_matches('/');
     if poster_path(image).is_some() {
-        // `Settings::events_asset_base_for` is the node origin plus `/events`.
-        let origin = assets.strip_suffix("/events").unwrap_or(assets);
-        return mounted_poster_url(image, Some(origin));
+        return mounted_poster_url(image, configured_public_base);
     }
     if image.starts_with('/') {
         format!("{assets}{image}")
@@ -379,6 +381,25 @@ mod tests {
         ] {
             assert_eq!(event_poster_input(url, &settings, "poster"), None, "{url}");
         }
+    }
+
+    #[test]
+    fn notice_posters_match_the_read_projection_under_a_prefixed_public_url() {
+        let public_url = "https://node.example.org/prefix/";
+        let rewrite = crate::Settings::asset_rewrite_base_for(Some(public_url));
+        let public = crate::Settings::configured_public_base_for(Some(public_url));
+        let assets = crate::Settings::events_asset_base_for(public_url);
+        for image in ["/poster/a.webp", "/poster-vertical/a.webp"] {
+            assert_eq!(
+                super::notice_image_url(image, public.as_deref(), &assets),
+                super::event_image_url(image, rewrite.as_deref(), public.as_deref(), &assets),
+                "{image}"
+            );
+        }
+        assert_eq!(
+            super::notice_image_url(super::DEFAULT_EVENT_IMAGE, public.as_deref(), &assets),
+            "https://node.example.org/prefix/events/assets/event-default.webp"
+        );
     }
 
     #[test]

@@ -25,12 +25,14 @@ pub struct Links {
     pub jump_in_site_url: String,
     /// The events asset mount (`<origin>/events`) that makes stored images absolute.
     pub asset_base: String,
+    /// `PUBLIC_URL` as the read projection uses it for poster URLs.
+    pub public_base: Option<String>,
 }
 
 impl Links {
     /// A stored image as the absolute URL the node serves it on.
     fn image(&self, image: &str) -> String {
-        crate::node_assets::notice_image_url(image, &self.asset_base)
+        crate::node_assets::notice_image_url(image, self.public_base.as_deref(), &self.asset_base)
     }
 
     /// `eventReviewSlackUrl` (`Slack/utils.ts:23-27`).
@@ -523,6 +525,7 @@ mod tests {
             base: "https://example.org".into(),
             jump_in_site_url: "https://decentraland.org/jump".into(),
             asset_base: "https://assets.example.org/events/".into(),
+            public_base: Some("https://assets.example.org".into()),
         }
     }
 

@@ -57,8 +57,10 @@ pub struct Links {
     /// The events site (`/whats-on/{id}`): the link of the notices the old
     /// service sent without one (rejected, deleted, community created).
     pub base: String,
-    /// Backend events asset mount (`<origin>/events`) for stored poster paths.
+    /// Backend events asset mount (`<origin>/events`) for stored image paths.
     pub asset_base: String,
+    /// `PUBLIC_URL` as the event read projection uses it for poster URLs.
+    pub public_base: Option<String>,
     /// `JUMP_IN_SITE_URL`: `buildEventLink` (`Notifications/index.ts:30-39`)
     /// for the reminder, start and approval notices.
     pub jump_in_site_url: String,
@@ -278,7 +280,7 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
         _ if name.is_empty() => ("Event".to_string(), description),
         _ => (name.to_string(), description),
     };
-    let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":catalyst_explore::events::posters::notice_image_url(text(&intent.event,"image"),&links.asset_base),"link":link,"occurredAt":intent.occurred_at.and_utc().to_rfc3339()});
+    let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":catalyst_explore::events::posters::notice_image_url(text(&intent.event,"image"),links.public_base.as_deref(),&links.asset_base),"link":link,"occurredAt":intent.occurred_at.and_utc().to_rfc3339()});
     if matches!(
         intent.kind.as_str(),
         "events_starts_soon" | "events_started" | "event_created"
@@ -626,6 +628,7 @@ mod tests {
         Links {
             base: link.into(),
             asset_base: assets.into(),
+            public_base: None,
             jump_in_site_url: "https://decentraland.org/jump".into(),
             community_cdn: CDN.into(),
             slack_notices: false,
@@ -1821,10 +1824,13 @@ mod tests {
             let payload = metadata(
                 &intent("event_approved", json!({"name":"Poster","image":stored})),
                 &recipient(false, false),
-                &origins(
-                    "https://web.example.org",
-                    "https://assets.example.org/events",
-                ),
+                &Links {
+                    public_base: Some("https://assets.example.org".into()),
+                    ..origins(
+                        "https://web.example.org",
+                        "https://assets.example.org/events",
+                    )
+                },
             );
             assert_eq!(payload["image"], absolute, "{stored}");
         }

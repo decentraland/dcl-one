@@ -502,6 +502,7 @@ impl ExploreState {
                     base: self.settings.events_base_url.clone(),
                     jump_in_site_url: self.settings.jump_in_site_url.clone(),
                     asset_base: self.settings.events_asset_base_url.clone(),
+                    public_base: self.settings.configured_public_base.clone(),
                 },
                 jobs,
             );
