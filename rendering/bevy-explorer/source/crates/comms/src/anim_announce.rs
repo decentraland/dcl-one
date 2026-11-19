@@ -17,9 +17,9 @@
 //! caller's send gate treat an owed repeat as a reason to send, which puts the repeats on the next
 //! regular sends.
 //!
-//! A movement send uses up a repeat even if LiveKit or WebSocket cannot carry the animation
-//! packet. If all announcements are missed, an active clip can recover at the next keepalive.
-//! A clear has only its initial announcement and repeats.
+//! Each movement send consumes a repeat even when no transport carries the animation packet.
+//! An active clip is announced again at the next keepalive. A clear has only its initial send
+//! and its repeats.
 //!
 //! A pure object, like the Pulse pacer: its times are `f64` seconds on the caller's clock and it
 //! knows nothing of Bevy or the connection, so a test drives it without an app.
