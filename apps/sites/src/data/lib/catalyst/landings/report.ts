@@ -4,7 +4,7 @@ import { catalystBase, postJSON } from "../client";
 import { signedFetch } from "../../auth/signer";
 import type { AuthIdentity } from "../../auth/types";
 
-const REPORT_REASONS = [
+export const REPORT_REASONS = [
   "scam_phishing",
   "illegal_content",
   "harassment",
