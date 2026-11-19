@@ -477,7 +477,7 @@ const defaultBindings = (): BindingEntry[] => [
   [{ System: 'PhotoTiltLeft' }, ['KeyQ', 'Gamepad DPadLeft']],
   [{ System: 'PhotoTiltRight' }, ['KeyE', 'Gamepad DPadRight']],
   [{ System: 'PointAt' }, ['Mouse Middle', 'KeyQ']],
-  [{ System: 'Microphone' }, ['KeyV']],
+  [{ System: 'Microphone' }, ['KeyT']],
   [{ System: 'Map' }, ['KeyM', 'Tab']],
   [{ System: 'Chat' }, ['Enter', 'NumpadEnter']],
   [{ System: 'CameraUp' }, ['ArrowUp']],
@@ -502,7 +502,7 @@ const defaultBindings = (): BindingEntry[] => [
   [{ System: 'Gallery' }, ['KeyG']],
   [{ System: 'Settings' }, ['KeyP']],
   [{ System: 'Friends' }, ['KeyL']],
-  [{ System: 'ChatPanel' }, ['KeyT']]
+  [{ System: 'ChatPanel' }, []]
 ]
 
 // Saved profile edits, in order. Applied over the mock's stock passport so an edit made in ?mock=1
