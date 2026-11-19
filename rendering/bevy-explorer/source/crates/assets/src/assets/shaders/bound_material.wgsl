@@ -10,7 +10,6 @@
     shadows,
     view_transformations,
 }
-#import bevy_core_pipeline::tonemapping::approximate_inverse_tone_mapping
 
 #import "embedded://shaders/simplex.wgsl"::simplex_noise_3d
 #import "embedded://shaders/bound_material_effect.wgsl"::{apply_outline, discard_dither, reveal_discard}
@@ -190,8 +189,8 @@ fn fragment(
             out.color = apply_pbr_lighting(pbr_input);
         }
     } else {
-        // invert tonemapping for unlit materials
-        out.color = approximate_inverse_tone_mapping(pbr_input.material.base_color, view.color_grading); 
+        // an unlit material shows its colour as it is, tonemapped with the frame like the rest
+        out.color = pbr_input.material.base_color;
     }
 
     if should_discard {
