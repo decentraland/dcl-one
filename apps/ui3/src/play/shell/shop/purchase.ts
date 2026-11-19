@@ -46,7 +46,7 @@ import type { CartLine, GroupProgress, GroupStatus, PurchaseOffer, PurchaseState
 import type { Session } from '@shop/model/settlement'
 import { loginExpired, rootAddress, type StoredLogin } from '@explorer-core/features/auth/sso'
 import type { ShopPurchaseItem, ShopPurchaseStep } from '@dcl/one-ui/apps/shop/ui'
-import { siteUrl } from '../../lib/baseDomain'
+import { checkoutSiteUrl } from '../../lib/baseDomain'
 import {
   parseBuyRequest,
   parseOperationRef,
@@ -295,7 +295,8 @@ const LIVE: ShellShopServices = {
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now: () => Date.now(),
   newId: () => crypto.randomUUID(),
-  creditsUrl: () => withUtm(siteUrl('/shop/credits')),
+  // The site whose node the checkout reads its balance from, whatever deployment the Explorer selected.
+  creditsUrl: () => withUtm(checkoutSiteUrl('/shop/credits')),
   namePrice: async (client) => {
     const quote = await quoteNameCredits(client, AbortSignal.timeout(NAME_READ_TIMEOUT_MS))
     return 'quoted' in quote ? quote.quoted : null
