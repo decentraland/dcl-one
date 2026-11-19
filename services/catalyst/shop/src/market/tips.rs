@@ -123,6 +123,9 @@ pub fn notification_id(transaction_hash: &str) -> Uuid {
 pub fn router(state: SharedState) -> Router {
     Router::new()
         .route("/forward-blockchain", post(forward))
+        .layer(axum::middleware::from_fn(
+            crate::shared::cors::events_notifier_cors,
+        ))
         .with_state(state)
 }
 
@@ -1422,6 +1425,49 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn a_cross_origin_forward_is_preflighted() {
+        use tower::ServiceExt;
+        let app = Router::new().nest(
+            "/events-notifier",
+            router(crate::market::tests::support::state_without_db()),
+        );
+        let requested = "content-type,x-identity-auth-chain-0,x-identity-auth-chain-1,x-identity-auth-chain-2,x-identity-timestamp,x-identity-metadata";
+        let res = app
+            .clone()
+            .oneshot(
+                axum::http::Request::options("/events-notifier/forward-blockchain")
+                    .header(header::ORIGIN, "https://auth.example.org")
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                    .header(header::ACCESS_CONTROL_REQUEST_HEADERS, requested)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NO_CONTENT);
+        let h = res.headers();
+        assert_eq!(h[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+        assert_eq!(
+            h[header::ACCESS_CONTROL_ALLOW_METHODS],
+            "GET,HEAD,OPTIONS,DELETE,POST,PUT"
+        );
+        assert_eq!(h[header::ACCESS_CONTROL_ALLOW_HEADERS], requested);
+        assert_eq!(h[header::ACCESS_CONTROL_MAX_AGE], "86400");
+
+        let res = app
+            .oneshot(
+                axum::http::Request::post("/events-notifier/forward-blockchain")
+                    .header(header::ORIGIN, "https://auth.example.org")
+                    .body(axum::body::Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(res.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
     }
 
     #[test]

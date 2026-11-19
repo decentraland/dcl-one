@@ -191,6 +191,22 @@ pub async fn registry_cors(req: Request, next: Next) -> Response {
     REGISTRY.run(req, next).await
 }
 
+/// The events-notifier's CORS, on the tips route the auth dApp posts to
+/// cross-origin: `@dcl/http-server` with the same methods and
+/// `maxAge: 86400` (`events-notifier` `src/components.ts`).
+const EVENTS_NOTIFIER: HttpServerCors = HttpServerCors {
+    methods: Some("GET,HEAD,OPTIONS,DELETE,POST,PUT"),
+    max_age: "86400",
+    nosniff: false,
+    preflight_echoes_request: false,
+};
+
+/// The events-notifier's CORS ([`EVENTS_NOTIFIER`]): preflights answer 204
+/// with origin `*` and the requested (signed-fetch) headers reflected.
+pub async fn events_notifier_cors(req: Request, next: Next) -> Response {
+    EVENTS_NOTIFIER.run(req, next).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
