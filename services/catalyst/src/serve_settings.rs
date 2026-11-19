@@ -116,6 +116,7 @@ pub(super) fn comms_settings(config: &Config) -> anyhow::Result<comms::gatekeepe
         gatekeeper_auth_token: non_empty(&config.social.comms_gatekeeper_auth_token),
         land_operators_url: non_empty(&config.social.comms_land_operators_url),
         lease_authorizations_url: Some(config.social.lease_authorizations_url.clone()),
+        lease_dev_entries: config.node.eth_network.trim() != "mainnet",
         voice_connection_interrupted_ttl_ms: config.social.voice_chat_connection_interrupted_ttl_ms,
         voice_initial_connection_ttl_ms: config.social.voice_chat_initial_connection_ttl_ms,
         community_voice_no_moderator_ttl_ms: config.social.community_voice_chat_no_moderator_ttl_ms,
@@ -180,5 +181,32 @@ pub(super) fn referral_settings(config: &Config) -> communities::referral::Setti
         .into_iter()
         .map(|(tier, key)| (tier, key.clone().unwrap_or_default()))
         .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::comms_settings;
+    use crate::config::Config;
+
+    #[test]
+    fn dev_only_lease_entries_count_only_off_mainnet() {
+        for (network, dev_entries) in [
+            (None, false),
+            (Some("mainnet"), false),
+            (Some("sepolia"), true),
+        ] {
+            let mut vars = vec![
+                ("DATABASE_URL", "postgres:///catalyst"),
+                ("LIVEKIT_ALLOW_DEV_CREDS", "true"),
+            ];
+            vars.extend(network.map(|network| ("ETH_NETWORK", network)));
+            let config = Config::parse_env_for_tests(vars).unwrap();
+            assert_eq!(
+                comms_settings(&config).unwrap().lease_dev_entries,
+                dev_entries,
+                "{network:?}"
+            );
+        }
     }
 }

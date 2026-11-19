@@ -535,9 +535,11 @@ pub struct SocialConfig {
     #[arg(long, env = "COMMS_LAND_OPERATORS_URL")]
     pub comms_land_operators_url: Option<String>,
 
-    /// The linker-server lease document (`[{addresses, plots}]`) whose
-    /// holders administer the scenes on their plots (the mirror posture's:
-    /// Decentraland's published list); empty lists no lease holder.
+    /// The linker-server lease document (`[{addresses, plots, startDate?,
+    /// endDate?, onlyDev?}]`) whose holders administer the scenes on their
+    /// plots while an entry is within its dates (`onlyDev` entries only off
+    /// `ETH_NETWORK=mainnet`; the mirror posture's: Decentraland's published
+    /// list); empty lists no lease holder.
     #[arg(long, env = "LEASE_AUTHORIZATIONS_URL", default_value = "")]
     pub lease_authorizations_url: String,
 
