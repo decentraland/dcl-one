@@ -983,13 +983,10 @@ pub struct MessageRouterConfig {
 
     /// The router's LiveKit identity is `<prefix>-<replica>`. The Explorer
     /// addresses `message-router-dev-0`, or `message-router-prd-0` when its
-    /// base domain is decentraland.org.
-    #[arg(
-        long,
-        env = "MESSAGE_ROUTER_IDENTITY_PREFIX",
-        default_value = "message-router-dev"
-    )]
-    pub message_router_identity_prefix: String,
+    /// base domain is decentraland.org. Required with MESSAGE_ROUTER_KEY, so
+    /// a node never mints an identity its Explorers do not trust.
+    #[arg(long, env = "MESSAGE_ROUTER_IDENTITY_PREFIX")]
+    pub message_router_identity_prefix: Option<String>,
 }
 
 impl std::fmt::Debug for MessageRouterConfig {

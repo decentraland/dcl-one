@@ -486,7 +486,7 @@ pub(super) async fn comms_states(
     .with_room_authority_key(non_empty(&config.room_authority.pulse_room_authority_key).as_deref())?
     .with_message_router_key(
         non_empty(&config.message_router.message_router_key).as_deref(),
-        &config.message_router.message_router_identity_prefix,
+        non_empty(&config.message_router.message_router_identity_prefix).as_deref(),
     )?
     .with_room_event_sink(room_events);
     let gatekeeper = match room_event_store {
