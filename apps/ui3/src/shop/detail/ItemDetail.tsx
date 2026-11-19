@@ -49,7 +49,6 @@ import { mergeSuggestions, SUGGESTIONS_TARGET } from "../discovery/lib/suggestio
 import { invalidateShopQueries, useShopQuery } from "../discovery/query";
 import {
   fetchClassicItemOrders,
-  fetchItemDescription,
   fetchItemMeta,
   fetchItemResales,
   fetchOwnedItemCount,
@@ -297,7 +296,6 @@ export default function ItemDetail() {
   const metaQ = useShopQuery(validContract && pageItemId ? ["item-meta", contractAddress, pageItemId] : null, (signal) => fetchItemMeta(contractAddress, pageItemId!, shopReads(signal)), { staleMs: 5 * 60_000 });
   const tokenQ = useShopQuery(isTokenRoute && validContract ? ["token", contractAddress, routeTokenId] : null, (signal) => fetchTokenById(contractAddress, routeTokenId!, shopReads(signal)), { staleMs: 0 });
   const ownedQ = useShopQuery(isTokenRoute && validContract && account ? ["owned-token", contractAddress, routeTokenId, account] : null, (signal) => fetchOwnedToken(account!, contractAddress, routeTokenId!, shopReads(signal)), { staleMs: 0 });
-  const descQ = useShopQuery(validContract && pageItemId ? ["item-desc", contractAddress, pageItemId] : null, (signal) => fetchItemDescription(contractAddress, pageItemId!, shopReads(signal)), { staleMs: 5 * 60_000 });
   const collectionQ = useShopQuery(validContract ? ["collection-meta", contractAddress] : null, (signal) => fetchCollection(contractAddress, shopReads(signal)), { staleMs: 5 * 60_000 });
   const resalesQ = useShopQuery(marketplace && validContract && pageItemId ? ["item-resales", contractAddress, pageItemId] : null, (signal) => fetchItemResales(contractAddress, pageItemId!, shopReads(signal)), { staleMs: 0 });
   const classicQ = useShopQuery(marketplace && validContract && pageItemId ? ["classic-orders", contractAddress, pageItemId] : null, (signal) => fetchClassicItemOrders(contractAddress, pageItemId!, shopReads(signal)), { staleMs: 0 });
@@ -551,7 +549,7 @@ export default function ItemDetail() {
   const unitsLeft = showCompareAt ? saleUnitsHint(current.saleUnitsLeft) : null;
   const owns = isTokenRoute && !!ownedQ.data;
   const ownedCount = ownedCountQ.data ?? 0;
-  const description = descQ.data ?? "";
+  const description = meta?.description ?? "";
   const utility = meta?.utility ?? null;
   const network = current.chainId === 1 || current.chainId === 11_155_111 ? "ethereum" : "polygon";
   const resales = (resalesQ.data ?? []).filter((r) => r.tokenId !== routeTokenId || !isTokenRoute);

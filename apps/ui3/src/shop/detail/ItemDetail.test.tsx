@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 
 import { shopCart } from "../cart/store";
 import { invalidateShopQueries } from "../discovery/query";
-import { COLLECTION, ITEM_ID, RESALE_WEARABLE, RESELLER, ShopHarness, TOKEN_ID, catalogClient, catalogTransport, defaultAnswers, fixtureHost, type CatalogAnswers, type CatalogScenario, type SessionKind } from "../discovery/fixtures";
+import { COLLECTION, ITEM_ID, ITEM_META, RESALE_WEARABLE, RESELLER, ShopHarness, TOKEN_ID, catalogClient, catalogTransport, defaultAnswers, fixtureHost, type CatalogAnswers, type CatalogScenario, type SessionKind } from "../discovery/fixtures";
 import type { TransportRequest } from "@shop/api/signer";
 import { encodeTokenId } from "./lib/token-id";
 import { createShopClient, type ShopClient } from "../api";
@@ -290,7 +290,7 @@ describe("the item route (a collection item, sold by its creator)", () => {
 
 describe("the description", () => {
   const LONG = "A hat for the discerning nacho, stitched by hand from the finest corn. ".repeat(3).trim();
-  const answers: CatalogAnswers = { "/v2/catalog": { data: [{ data: { wearable: { description: LONG } } }], total: 1 } };
+  const answers: CatalogAnswers = { "/v1/items": { data: [{ ...ITEM_META, data: { wearable: { ...ITEM_META.data.wearable, description: LONG } } }], total: 1 } };
 
   afterEach(() => {
     vi.restoreAllMocks();

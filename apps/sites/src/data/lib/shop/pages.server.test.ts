@@ -29,8 +29,7 @@ const request = (path: string) => new Request(`https://sites.test${path}`);
 const now = () => 1_700_000_000_000;
 
 const ITEM_ROUTES: Route[] = [
-  { path: "/shop-api/v1/items", body: { data: [{ name: "Pirate Hat", thumbnail: "https://img.test/hat.png", creator: "0x1", rarity: "rare", category: "wearable", chainId: 137, network: "MATIC", available: 3 }], total: 1 } },
-  { path: "/shop-api/v2/catalog", body: { data: [{ data: { wearable: { description: "A hat for pirates." } } }] } },
+  { path: "/shop-api/v1/items", body: { data: [{ name: "Pirate Hat", thumbnail: "https://img.test/hat.png", creator: "0x1", rarity: "rare", category: "wearable", chainId: 137, network: "MATIC", available: 3, data: { wearable: { description: " A hat for pirates. " } } }], total: 1 } },
   { path: "/shop-api/v1/collections", body: { data: [{ contractAddress: C, name: "Sea Things", creator: "0x1" }], total: 1 } },
   { path: "/shop-api/v3/catalog/unified", body: { data: [], total: 0 } },
 ];
@@ -44,9 +43,11 @@ describe("the item page's SSR data", () => {
     expect(data.queries.map(([key]) => key)).toEqual([
       ["shop-item", C, "7", "primary"],
       ["item-meta", C, "7"],
-      ["item-desc", C, "7"],
       ["collection-meta", C],
     ]);
+    expect(data.queries.find(([key]) => key[0] === "item-meta")?.[1]).toMatchObject({ description: "A hat for pirates." });
+    // The description comes with the item's metadata: no catalogue read for it.
+    expect(asked.some((u) => u.startsWith("/shop-api/v2/catalog"))).toBe(false);
     expect(data.queries.every(([, , at]) => at === now())).toBe(true);
     // The creator's sale only: a resale is the Marketplace's, decided on the client for a web3 session.
     const unified = asked.filter((u) => u.startsWith("/shop-api/v3/catalog/unified"));
@@ -66,7 +67,6 @@ describe("the item page's SSR data", () => {
       { path: "/shop-api/v1/items", body: { data: [], total: 0 } },
       { path: "/shop-api/v3/catalog/unified", body: { data: [], total: 0 } },
       { path: "/shop-api/v1/collections", body: { data: [], total: 0 } },
-      { path: "/shop-api/v2/catalog", body: { data: [] } },
     ]);
     const missing = await loadShopPage("itemDetail", { request: request(`/shop/item/${C}/9`), params: { contractAddress: C, itemId: "9" }, client: empty.client, now, env: {} });
     expect(missing.status).toBe(404);

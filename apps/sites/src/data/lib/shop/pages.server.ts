@@ -7,7 +7,7 @@
 
 import { createShopClient, hostApiOptions, type ShopClient } from "@ui/shop/api";
 import { fetchCollection } from "@shop/discovery/api";
-import { fetchItemDescription, fetchItemMeta, fetchPrimaryListingForItem, fetchTokenById, itemListingKey } from "@shop/detail/api";
+import { fetchItemMeta, fetchPrimaryListingForItem, fetchTokenById, itemListingKey } from "@shop/detail/api";
 import { LAND_NETWORKS } from "@shop/land/contracts";
 import { itemIdFromTokenId } from "@ui/shop/detail/lib/token-id";
 import { routeSegment } from "@ui/shop/discovery/lib/routes";
@@ -109,12 +109,11 @@ async function itemPage(input: Required<Pick<ShopLoadInput, "request" | "params"
 
   const signal = deadline(request);
   const opts = { client, creatorSales, signal };
-  const [listing, meta, desc, collection, owned] = await Promise.all([
+  const [listing, meta, collection, owned] = await Promise.all([
     // The creator's primary sale only: the page's first render reads it while the Marketplace (resales, for a web3
     // session with the rollout on) is still pending, so a resale is never server-rendered as the item's price.
     token ? Promise.resolve(null) : settle(fetchPrimaryListingForItem(contract, itemId!, opts)),
     itemId ? settle(fetchItemMeta(contract, itemId, opts)) : Promise.resolve(null),
-    itemId ? settle(fetchItemDescription(contract, itemId, opts)) : Promise.resolve(null),
     settle(fetchCollection(contract, opts)),
     token ? settle(fetchTokenById(contract, tokenId!, opts)) : Promise.resolve(null),
   ]);
@@ -123,14 +122,14 @@ async function itemPage(input: Required<Pick<ShopLoadInput, "request" | "params"
   const queries: PrimedQuery[] = [];
   if (listing?.ok) queries.push([[...itemListingKey(contract, itemId!, "primary")], listing.value, at]);
   if (meta?.ok) queries.push([["item-meta", contract, itemId], meta.value, at]);
-  if (desc?.ok) queries.push([["item-desc", contract, itemId], desc.value, at]);
   if (collection.ok) queries.push([["collection-meta", contract], collection.value, at]);
   if (owned?.ok) queries.push([["token", contract, tokenId], owned.value, at]);
 
   const name = (owned?.ok ? owned.value?.name : undefined) || (meta?.ok ? meta.value?.name : undefined) || (listing?.ok ? listing.value?.name : undefined);
   const image = (owned?.ok ? owned.value?.image : undefined) || (meta?.ok ? meta.value?.thumbnail : undefined) || (listing?.ok ? listing.value?.thumbnail : undefined);
   const collectionName = collection.ok ? collection.value?.name : undefined;
-  const description = desc?.ok && desc.value ? desc.value : name ? `${name}${collectionName ? ` from ${collectionName}` : ""} in the Decentraland Shop.` : seo.description;
+  const fallback = name ? `${name}${collectionName ? ` from ${collectionName}` : ""} in the Decentraland Shop.` : seo.description;
+  const description = (meta?.ok ? meta.value?.description : undefined) || fallback;
 
   // Missing only when every read answered and none knows the asset; an index outage is not a 404.
   const answered = [token ? owned : meta, token ? null : listing].filter((r) => r !== null);
