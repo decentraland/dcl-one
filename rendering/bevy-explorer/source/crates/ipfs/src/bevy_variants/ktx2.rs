@@ -54,12 +54,14 @@ const MAX_DIMENSION: u32 = 8192;
 const SUPERCOMPRESSION_ZSTD: u32 = 2;
 pub const DDS_HEADER_BYTES: usize = 4 + 124 + 20;
 
-fn u32_at(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+/// The little-endian u32 at `offset`; None past the end of `bytes`.
+fn u32_at(bytes: &[u8], offset: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(*bytes.get(offset..)?.first_chunk()?))
 }
 
-fn u64_at(bytes: &[u8], offset: usize) -> u64 {
-    u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap())
+/// The little-endian u64 at `offset`; None past the end of `bytes`.
+fn u64_at(bytes: &[u8], offset: usize) -> Option<u64> {
+    Some(u64::from_le_bytes(*bytes.get(offset..)?.first_chunk()?))
 }
 
 /// The BC format a KTX2 holds, from its header's vkFormat (UNORM only).
@@ -67,7 +69,7 @@ pub fn bc_format(bytes: &[u8]) -> Result<BcFormat, String> {
     if bytes.len() < LEVEL_INDEX || bytes[..12] != KTX2_IDENTIFIER {
         return Err("not a KTX2 file".to_owned());
     }
-    let vk_format = u32_at(bytes, 12);
+    let vk_format = u32_at(bytes, 12).ok_or("truncated KTX2 header")?;
     [BcFormat::Bc7, BcFormat::Bc1, BcFormat::Bc5]
         .into_iter()
         .find(|format| format.vk_formats().contains(&vk_format))
@@ -87,10 +89,12 @@ pub fn bc_ktx2_to_dds(bytes: &[u8], format: BcFormat) -> Result<Vec<u8>, String>
     if bytes.len() < LEVEL_INDEX || bytes[..12] != KTX2_IDENTIFIER {
         return Err("not a KTX2 file".to_owned());
     }
-    let header = |field: usize| u32_at(bytes, 12 + 4 * field);
-    let (vk_format, type_size, width, height) = (header(0), header(1), header(2), header(3));
+    let header = |field: usize| {
+        u32_at(bytes, 12 + 4 * field).ok_or_else(|| "truncated KTX2 header".to_owned())
+    };
+    let (vk_format, type_size, width, height) = (header(0)?, header(1)?, header(2)?, header(3)?);
     let (depth, layers, faces, levels, scheme) =
-        (header(4), header(5), header(6), header(7), header(8));
+        (header(4)?, header(5)?, header(6)?, header(7)?, header(8)?);
     if !format.vk_formats().contains(&vk_format) {
         return Err(format!("vkFormat {vk_format} is not {format:?} UNORM"));
     }
@@ -123,11 +127,13 @@ pub fn bc_ktx2_to_dds(bytes: &[u8], format: BcFormat) -> Result<Vec<u8>, String>
     let mut dds = dds_header(width, height, levels, format);
     for level in 0..levels {
         let entry = LEVEL_INDEX + level as usize * LEVEL_ENTRY;
-        let (offset, length, uncompressed) = (
+        let (Some(offset), Some(length), Some(uncompressed)) = (
             u64_at(bytes, entry),
             u64_at(bytes, entry + 8),
             u64_at(bytes, entry + 16),
-        );
+        ) else {
+            return Err("truncated level index".to_owned());
+        };
         let expected = format.level_bytes((width >> level).max(1), (height >> level).max(1));
         if uncompressed != expected {
             return Err(format!(
@@ -328,12 +334,12 @@ pub(crate) mod tests {
     fn bc1_and_bc5_take_their_own_block_size_and_dxgi_format() {
         let bc1 = ktx2(131, 4, 4, &[vec![7; 8]]);
         let dds = bc_ktx2_to_dds(&bc1, BcFormat::Bc1).unwrap();
-        assert_eq!(u32_at(&dds, 128), 71);
+        assert_eq!(u32_at(&dds, 128), Some(71));
         assert_eq!(&dds[DDS_HEADER_BYTES..], &[7; 8]);
         let bc5 = ktx2(141, 4, 4, &[vec![9; 16]]);
         assert_eq!(
             u32_at(&bc_ktx2_to_dds(&bc5, BcFormat::Bc5).unwrap(), 128),
-            83
+            Some(83)
         );
     }
 

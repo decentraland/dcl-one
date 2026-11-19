@@ -330,7 +330,10 @@ async fn next_global_update(
 pub async fn renderer_ipc_in(mut stream: RecvHalf) {
     while let Ok(len) = stream.read_u64_le().await {
         let mut buffer = vec![0u8; len as usize];
-        stream.read_exact(&mut buffer).await.unwrap();
+        if let Err(e) = stream.read_exact(&mut buffer).await {
+            warn!("renderer_ipc_in exit on truncated message: {e}");
+            break;
+        }
         let msg: SceneToEngine = rmp_serde::from_slice(&buffer).unwrap();
 
         match msg {

@@ -380,8 +380,11 @@ impl CrdtStore {
         // collect commands
         while stream.len() > CRDT_HEADER_SIZE {
             let pos = stream.pos();
-            let length = stream.read_u32().unwrap() as usize;
-            let crdt_type = stream.read_u32().unwrap();
+            let (Ok(length), Ok(crdt_type)) = (stream.read_u32(), stream.read_u32()) else {
+                error!("CRDT Header error: truncated header at {pos}");
+                break;
+            };
+            let length = length as usize;
 
             debug!("[{pos}] crdt_type: {crdt_type}, length: {length}");
             let mut message_stream = stream.take_reader(length.saturating_sub(8));
