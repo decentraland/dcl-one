@@ -85,7 +85,9 @@ let
       root = dir;
       fileset = lib.fileset.unions [ (dir + /Cargo.toml) (dir + /Cargo.lock) (dir + /build.rs) (dir + /src) (dir + /tests) ];
     };
-    nativeBuildInputs = common.nativeBuildInputs ++ [ pkgs.jq ];
+    # mkCargoDerivation, unlike buildPackage, does not bring the hook that defines
+    # removeReferencesToVendoredSources.
+    nativeBuildInputs = common.nativeBuildInputs ++ [ pkgs.jq crane.removeReferencesToVendoredSourcesHook ];
     doInstallCargoArtifacts = false;
     buildPhaseCargoCommand = ''
       cargo test --locked --release --no-run --message-format json-render-diagnostics > test-build.json

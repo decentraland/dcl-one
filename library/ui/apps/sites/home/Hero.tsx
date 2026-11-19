@@ -19,9 +19,14 @@ type HeroProps = {
   imageAlt: string
   /** Wide screens: the download actions. */
   actions?: DownloadActionsProps
-  /** Narrow screens: their own heading, a subtitle and one store badge instead of the actions. Both
+  /** Narrow screens: their own heading, subtitle and store badges. Both
       layouts render and the viewport width picks one, as source does, so SSR markup is stable. */
-  mobile?: { title: ReactNode; subtitle: ReactNode; store: StoreBadgeProps }
+  mobile?: {
+    title: ReactNode
+    subtitle: ReactNode
+    store: StoreBadgeProps
+    alternateStore?: StoreBadgeProps
+  }
   /** Dialogs the actions open (the phone QR codes). */
   children?: ReactNode
 }
@@ -113,7 +118,12 @@ function Hero({ title, imageAlt, actions, mobile, children }: HeroProps) {
           <div className={`${styles.layout} ${styles.narrowOnly}`}>
             <h1 className={styles.title}>{mobile.title}</h1>
             <p className={styles.subtitle}>{mobile.subtitle}</p>
-            <StoreBadge {...mobile.store} appearance="source" />
+            <div className={styles.stores}>
+              <StoreBadge {...mobile.store} appearance="source" />
+              {mobile.alternateStore ? (
+                <StoreBadge {...mobile.alternateStore} appearance="source" />
+              ) : null}
+            </div>
           </div>
         ) : null}
       </div>

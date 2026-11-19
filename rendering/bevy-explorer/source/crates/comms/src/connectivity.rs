@@ -339,7 +339,6 @@ fn collect_probes(
     }
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn sample_connectivity(
     time: Res<Time>,
     wallet: Res<Wallet>,

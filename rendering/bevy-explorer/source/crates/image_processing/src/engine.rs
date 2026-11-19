@@ -116,7 +116,6 @@ fn drop_ktx2_result(ty: ProcessingAssetType, path: &AssetPath) {
     }
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn check_assets(
     mut a: EventReader<AssetEvent<Image>>,
     mut failed_gltfs: EventReader<AssetLoadFailedEvent<Gltf>>,
@@ -347,7 +346,6 @@ fn check_assets(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn pipe_events(
     mut channels: ResMut<Channels>,
     mut events: EventReader<AssetForProcessing>,

@@ -9,6 +9,8 @@
 //!   desktop's file (`--csv`, `--log-file`) and the web's stream to the page, which sends it to
 //!   the benchmark runner (`perfStream`, `perfCsv`; [`stream`]).
 
+#![forbid(unsafe_code)]
+
 pub mod csv;
 pub mod format;
 pub mod gpu;

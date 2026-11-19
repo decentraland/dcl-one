@@ -246,7 +246,10 @@ class DevTest(unittest.TestCase):
                                      'FOUNDATION_DEV_STARTUP_TIMEOUT': '3600'},
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 42, result.stderr)
-        self.assertEqual(calls.read_text().splitlines(),
+        listed = calls.read_text().splitlines()
+        # The provisioned tests run beside the broad run, so either may log first.
+        listed[-3:-1] = sorted(listed[-3:-1], key=lambda call: call.startswith('make:'))
+        self.assertEqual(listed,
                          ['up --postgres-only', 'wait --postgres-only --timeout 3600', 'env',
                           'nats:--version',
                           "python:-m unittest discover -s tooling/tests -p test_catalyst_test_resources.py",
@@ -873,7 +876,8 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['VITE_SHOP_CHAIN_ID'], '80002')
         self.assertEqual(env['COLLECTIONS_CHAIN_ID'], '80002')
         self.assertEqual(env['CONTRACT_ADDRESSES_CHAIN_KEY'], 'amoy')
-        self.assertTrue(env['CONTRACT_ADDRESSES_URL'].startswith('https://'))
+        # Without a relayer key, the published list (see the relayer key test for the other case).
+        self.assertEqual(env['CONTRACT_ADDRESSES_URL'], 'https://contracts.decentraland.org/addresses.json')
         # On-chain cancels and executions close local trades: the trade-events index walks the testnets.
         self.assertEqual(env['MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'], 'true')
         self.assertEqual((env['MARKETPLACE_INDEX_CHAIN_ID_MATIC'], env['MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM']), ('80002', '11155111'))
@@ -946,6 +950,46 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['CREDITS_SIGNER_KEY_FILE'], str(key))
         # The file's path is passed, never its contents.
         self.assertNotIn('not a real key', '\n'.join(env.values()))
+
+    def test_the_testnet_relay_signs_its_own_transactions_only_with_a_relayer_key(self):
+        relayer = ('META_TX_BROADCAST_ENABLED', 'RELAYER_PRIVATE_KEY_FILE', 'RELAYER_MAX_FEE_PER_GAS_WEI', 'NAMES_SIGNER_ENABLED')
+        published = 'https://contracts.decentraland.org/addresses.json'
+        # Without a key the relay forwards to the .zone transactions API over the published list, which lacks
+        # dcl-one's manager, so the relay refuses that manager itself (marked not sent) instead of forwarding it.
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        for name in relayer:
+            self.assertNotIn(name, env, name)
+        self.assertIn('decentraland.zone', env['TRANSACTIONS_UPSTREAM_URL'])
+        self.assertEqual(env['CONTRACT_ADDRESSES_URL'], published)
+        key = self.state / 'relayer.key'
+        key.write_text('  \n')  # empty: the server would read no key, so the signer stays off
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        for name in relayer:
+            self.assertNotIn(name, env, name)
+        self.assertEqual(env['CONTRACT_ADDRESSES_URL'], published)
+        key.write_text('not a real key')
+        key.chmod(0o644)
+        warning = io.StringIO()
+        with contextlib.redirect_stderr(warning):
+            dev.runtime_env({**self.config, 'profile': 'testnet'})
+        self.assertIn('chmod 600', warning.getvalue())
+        key.chmod(0o600)
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        self.assertEqual(env['META_TX_BROADCAST_ENABLED'], 'true')
+        self.assertEqual(env['RELAYER_PRIVATE_KEY_FILE'], str(key))
+        # Capped: 200 gwei at most per gas.
+        self.assertEqual(env['RELAYER_MAX_FEE_PER_GAS_WEI'], '200000000000')
+        # The bundled `amoy` entry, which carries dcl-one's manager, so the relay admits it.
+        self.assertNotIn('CONTRACT_ADDRESSES_URL', env)
+        # The key signs on Amoy alone: never on the NAMEs chain, whose ETH_RPC_URL is Sepolia's here.
+        self.assertEqual(env['NAMES_SIGNER_ENABLED'], 'false')
+        self.assertTrue(env['ETH_RPC_URL'].endswith('/sepolia'))
+        # The file's path is passed, never its contents.
+        self.assertNotIn('not a real key', '\n'.join(env.values()))
+        # The mirror profile, which relays on Polygon mainnet, never reads it.
+        mirror = dev.runtime_env({**self.config, 'profile': 'mirror'})
+        for name in relayer:
+            self.assertNotIn(name, mirror, name)
 
     def test_testnet_data_never_shares_a_database_with_another_profile(self):
         (self.state / 'postgres').mkdir()
@@ -1122,6 +1166,56 @@ class DevTest(unittest.TestCase):
                 dev.wait_ready(10)
         sleep.assert_not_called()
 
+    def test_pulse_comes_back_with_a_fresh_generation_after_losing_its_lease(self):
+        processes = dev.project(self.config)['processes']
+        policy = processes['pulse']['availability']
+        self.assertEqual(policy['restart'], 'on_failure')
+        # Unlimited: the supervisor never resets the count, and a lease can be lost many times over a stack's life.
+        self.assertEqual(policy['max_restarts'], 0)
+        self.assertGreaterEqual(policy['backoff_seconds'], 1)
+        # The other tasks keep failing the wait on their first non-zero exit.
+        self.assertEqual([name for name, process in processes.items() if 'availability' in process], ['pulse'])
+
+    def test_wait_tolerates_pulse_between_restarts_and_fails_when_they_run_out(self):
+        api_url = f"http://127.0.0.1:{self.config['port']}"
+        restarting = json.dumps([{'name': 'pulse', 'status': 'Restarting', 'exit_code': 1, 'is_running': False}])
+        running = json.dumps([{'name': 'pulse', 'status': 'Running', 'exit_code': 1, 'is_running': True}])
+        about = []
+
+        def response(url, timeout):
+            # /about can still answer from the last heartbeat while Pulse waits for its restart.
+            if url == api_url + '/about':
+                about.append(url)
+            return contextlib.nullcontext(type('Response', (), {'status': 200})())
+
+        listings = iter([subprocess.CompletedProcess([], 0, restarting), subprocess.CompletedProcess([], 0, running)])
+        with patch.object(dev, 'pc', side_effect=lambda *a, **k: next(listings)), \
+                patch.object(dev.urllib.request, 'urlopen', side_effect=response), \
+                patch.object(dev, 'backoff_delays', return_value=iter([0])), \
+                patch.object(dev.time, 'sleep'), \
+                patch.object(dev, 'wait_first_mirror_pass', return_value=0), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(dev.wait_ready(10), 0)
+        # Ready only on the listing after the restart.
+        self.assertEqual(len(about), 1)
+        self.assertIsNone(next(listings, None))
+        exhausted = subprocess.CompletedProcess([], 0, json.dumps([
+            {'name': 'pulse', 'status': 'Completed', 'exit_code': 1, 'is_running': False, 'restarts': 10}]))
+        with patch.object(dev, 'pc', return_value=exhausted), patch.object(dev.time, 'sleep') as sleep, \
+                contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(RuntimeError, 'pulse failed'):
+                dev.wait_ready(10)
+        sleep.assert_not_called()
+
+    def test_a_wait_that_times_out_on_a_restarting_process_names_it(self):
+        restarting = subprocess.CompletedProcess([], 0, json.dumps(
+            [{'name': 'pulse', 'status': 'Restarting', 'exit_code': 1, 'is_running': False}]))
+        with patch.object(dev, 'pc', return_value=restarting), \
+                patch.object(dev, 'backoff_delays', return_value=iter([0, 0])), \
+                patch.object(dev.time, 'sleep'), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(RuntimeError, 'while pulse kept restarting. Inspect foundation-dev logs pulse'):
+                dev.wait_ready(10)
+
     def test_wait_narrates_progress_with_the_building_task_output(self):
         listing = subprocess.CompletedProcess([], 0, json.dumps([
             {'name': 'api-build', 'status': 'Running', 'is_running': True, 'exit_code': 0},
@@ -1282,6 +1376,45 @@ class DevTest(unittest.TestCase):
             finally:
                 dev.down()
             self.assertFalse((state / 'pc.sock').exists())
+
+    @unittest.skipUnless(shutil.which('process-compose'), 'process-compose is supplied by nix develop')
+    def test_the_supervisor_lists_pulse_between_restarts_as_wait_expects(self):
+        policy = {**dev.project(self.config)['processes']['pulse']['availability'], 'max_restarts': 1}
+        project = self.state / 'test.json'
+        project.write_text(json.dumps({'version': '0.5', 'processes': {
+            'hold': {'command': 'sleep 60'},
+            'pulse': {'command': 'exit 1', 'availability': policy}}}))
+        seen = []
+
+        def pulse():
+            result = dev.pc('process', 'list', '--output', 'json', capture_output=True, text=True)
+            if result.returncode:
+                return None
+            state = next((p for p in json.loads(result.stdout) if p['name'] == 'pulse'), None)
+            if state:
+                seen.append((state['status'], state['is_running'], state['exit_code'], state['restarts']))
+            return state
+
+        def until(predicate, seconds):
+            deadline = time.monotonic() + seconds
+            for delay in dev.backoff_delays(deadline, first=.05, maximum=.2):
+                if (state := pulse()) and predicate(state):
+                    return state
+                time.sleep(delay)
+            self.fail(f'pulse listings: {seen}')
+
+        try:
+            dev.pc('up', '--config', str(project), '--disable-dotenv', '--detached', '--tui=false',
+                   check=True, capture_output=True, text=True)
+            backoff = until(lambda s: s['status'] == 'Restarting', 15)
+            self.assertEqual((backoff['is_running'], backoff['exit_code']), (False, 1))
+            final = until(lambda s: s['restarts'] == 1 and s['status'] != 'Restarting' and not s['is_running'], 15)
+            self.assertEqual(final['exit_code'], 1)
+            with patch.object(dev.time, 'sleep'), contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(RuntimeError, 'pulse failed'):
+                    dev.wait_ready(10)
+        finally:
+            dev.down()
 
     def install_service(self, system):
         with patch.object(dev, 'DARWIN', system == 'Darwin'), \

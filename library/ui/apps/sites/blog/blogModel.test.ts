@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   blogAuthorHref,
   blogBadgeTone,
+  blogCardBadgeTone,
   blogCategoryHref,
   blogInitials,
   blogPostHref,
@@ -47,6 +48,13 @@ describe('badges and initials', () => {
     expect(blogBadgeTone('platform')).toBe('violet')
     expect(blogBadgeTone('announcements')).toBe('ruby')
     expect(blogBadgeTone('unknown')).toBe('ruby')
+  })
+
+  it('maps live CMS categories to the design tones used on cards', () => {
+    expect(blogCardBadgeTone('announcements')).toBe('updates')
+    expect(blogCardBadgeTone('community-highlights')).toBe('communities')
+    expect(blogCardBadgeTone('about-decentraland')).toBe('about')
+    expect(blogCardBadgeTone('unknown')).toBe('about')
   })
 
   it('takes up to two initials and handles blank names', () => {

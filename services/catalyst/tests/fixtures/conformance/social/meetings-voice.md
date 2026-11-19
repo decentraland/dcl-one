@@ -53,9 +53,9 @@ Cast publishes into the scene's own LiveKit room, the one `/get-scene-adapter` h
 |---|---|---|---|---|
 | `POST /cast/streamer-token` | `routes.ts:241`; `cast.ts:242-304` | `G/streaming_cast.rs` `streamer_token` | DIVERGENCE: identity names the credential, display name cleaned (below) | `a_streaming_key_admits_a_streamer_who_becomes_a_presenter` |
 | `GET /cast/generate-stream-link` | `routes.ts:252`; `cast.ts:185-233` | `G/streaming_cast.rs` `generate_stream_link` over `issue_access` | MATCH | `a_scene_admin_gets_a_stream_link_that_is_reused_until_it_expires` |
-| `GET /cast/stream-info/:streamingKey` | `routes.ts:253`; `get-stream-info-handler.ts:30-93` | `G/streaming_cast.rs` `stream_info` | MATCH | `stream_info_answers_the_place_behind_a_live_key` |
+| `GET /cast/stream-info/:streamingKey` | `routes.ts:253`; `get-stream-info-handler.ts:30-93` | `G/streaming_cast.rs` `stream_info` | MATCH | `stream_info_answers_the_place_behind_a_live_key`; capture `cast-stream-info-invalid-key` replayed by `the_gatekeeper_answers_its_stateless_captures_as_production` |
 | `POST /cast/watcher-token` | `routes.ts:246`; `cast.ts:368-443` | `G/streaming_cast.rs` `watcher_token` | DIVERGENCE: a world's access policy is checked, and the token carries the wallet and the world authorization proof (below) | `a_viewer_watches_a_parcel_or_world_stream_unless_banned`; `a_private_worlds_cast_refuses_watchers_the_world_does_not_admit` |
-| `GET/PUT/DELETE /cast/presenters[/:id]` | `routes.ts:291-293`; `cast.ts:512-614` | `G/streaming_cast.rs` `list_presenters`, `promote_presenter`, `demote_presenter` | MATCH | `scene_admins_list_promote_and_demote_presenters` |
+| `GET/PUT/DELETE /cast/presenters[/:id]` | `routes.ts:291-293`; `cast.ts:512-614` | `G/streaming_cast.rs` `list_presenters`, `promote_presenter`, `demote_presenter` | MATCH | `scene_admins_list_promote_and_demote_presenters`; capture `cast-presenters-unauth` replayed by `the_gatekeeper_answers_its_stateless_captures_as_production` |
 | `POST /cast/presentation-bot-token` | `routes.ts:286`; `cast.ts:455-500` | `G/streaming_cast.rs` `presentation_bot_token` | DIVERGENCE: identity names the credential | `a_streaming_key_admits_the_presentation_bot` |
 | `GET /scene-stream-access` | `list-scene-stream-access-handler.ts:62-80` | `G/streaming.rs:185-192` | MATCH, except no 404 on expiry and `ends_at` forced to `created_at + 4d` (MV-9) | `C/tests/gatekeeper_policy.rs` (PostgreSQL) |
 | `POST /scene-stream-access` | `add-…:80-130` | `G/streaming.rs:193-216,295-371` | MATCH | `C/tests/gatekeeper_policy.rs`; `canonical_rooms_tests.rs` |
@@ -148,8 +148,8 @@ MV-1 to MV-4 (Cast routes, watcher token, the `apps/sites` streamer and watcher,
    - Requests: multipart upload or JSON `url` (Google Slides and Drive links rewritten; HTTPS, public
      addresses only, pinned connection, 5 redirects, 100 MiB, 60 s); extension and magic bytes; JSON
      body 1 MiB; `MAX_CONCURRENT_PRESENTATIONS` (default 10, 0 unlimited) answers 429.
-   - Answers and statuses: `create-presentation-handler.ts:38-178`. A refused token answers 401 on
-     the JSON path, before the download, and 500 on the multipart path, as upstream.
+   - Answers and statuses: `create-presentation-handler.ts:38-178`. A token LiveKit refuses answers
+     401 on the JSON path, before the download, and 500 on the multipart path, as upstream.
    - Data channel: the RFC-4 `Packet.scene` framing on topic `presentation` (`comms.ts:1-86`), with
      commands only from the room metadata's `presenters`. `navigate`, `get-state`, `stop` and
      `overlay:update` are handled; the `presentation:state`, `presentation:stopped` and bot-metadata
@@ -160,6 +160,10 @@ MV-1 to MV-4 (Cast routes, watcher token, the `apps/sites` streamer and watcher,
    - Tests: `comms::cast_presenter::tests`, `C/cast-bot/tests/livekit.rs` against a local
      `livekit-server`, and `pnpm drive:cast` in `apps/sites` through the node (above).
    Divergences:
+   - Only the gatekeeper's presentation-bot tokens are taken: the node checks the signature with its
+     LiveKit key, the expiry, a `presentation-bot:` identity of the granted room and a grant that can
+     publish a screen share, before a slot or a bot. Any other token answers 401 on both paths.
+   - Multipart uploads are read at most `MAX_CONCURRENT_PRESENTATIONS` at once (429 past that).
    - PDFs render with hayro, not pdfjs: pixels differ, and annotation appearance streams are not drawn.
    - `ws://` LiveKit URLs are accepted on loopback hosts.
    - The SSRF resolver reads the hosts file.
@@ -185,4 +189,4 @@ MV-1 to MV-4 (Cast routes, watcher token, the `apps/sites` streamer and watcher,
    `expiration_time`; PUT maps 409/404 instead of 500.
 10. **MV-10: Kick and end report success when LiveKit fails.** P2, S. Return an error or retry the
     removal; today the user may stay connected.
-12. **MV-12: HTTP-level tests for the bearer voice routes.** P2, M. Only the 401 shapes are captured.
+12. **MV-12: HTTP-level tests for the bearer voice routes.** P2, M. Only the 401 shapes are captured; those are replayed by `the_gatekeeper_answers_its_stateless_captures_as_production`.

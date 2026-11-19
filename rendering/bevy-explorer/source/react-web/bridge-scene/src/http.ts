@@ -58,7 +58,7 @@ export async function getJson<T>(url: string): Promise<T | undefined> {
     init: { headers: { 'Content-Type': 'application/json' }, method: 'GET' },
     meta: META
   })
-  if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText ?? r.body}`)
+  if (!r.ok) throw new HttpError(r.status, r.body, r.statusText)
   if (!r.body) return undefined
   return JSON.parse(r.body) as T
 }

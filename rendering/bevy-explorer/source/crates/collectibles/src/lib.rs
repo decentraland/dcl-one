@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod base_wearables;
 pub mod emotes;
 pub mod ext;

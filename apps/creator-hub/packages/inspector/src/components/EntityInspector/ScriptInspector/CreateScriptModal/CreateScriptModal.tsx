@@ -86,12 +86,16 @@ export const CreateScriptModal: React.FC<Props> = ({ isOpen, onClose, onCreate, 
 
         <div className="actions">
           <Button
+            variant="secondary"
+            size="sm"
             className="cancel-button"
             onClick={handleClose}
           >
             CANCEL
           </Button>
           <Button
+            variant="secondary"
+            size="sm"
             className="create-button"
             onClick={handleCreate}
             disabled={!scriptName.trim() || !!error}

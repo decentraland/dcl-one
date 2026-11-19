@@ -2,7 +2,7 @@
 //! fake bot. Upstream references are `decentraland/cast-presenter-server`
 //! @ cae78612.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
@@ -32,9 +32,13 @@ enum Sent {
     Shutdown,
 }
 
+/// Run once, on the bot's first data packet.
+type OnFirstData = Box<dyn FnOnce() + Send>;
+
 #[derive(Default)]
 struct FakeBot {
     sent: Mutex<Vec<Sent>>,
+    on_first_data: Mutex<Option<OnFirstData>>,
 }
 
 #[async_trait::async_trait]
@@ -53,6 +57,10 @@ impl BotLink for FakeBot {
     }
     async fn publish_data(&self, packet: Vec<u8>) -> anyhow::Result<()> {
         self.sent.lock().unwrap().push(Sent::Data(packet));
+        let hook = self.on_first_data.lock().unwrap().take();
+        if let Some(hook) = hook {
+            hook();
+        }
         Ok(())
     }
     async fn update_metadata(&self, metadata: String) -> anyhow::Result<()> {
@@ -88,9 +96,13 @@ impl FakeRoom {
     }
 }
 
+/// A LiveKit that accepts any token but those whose identity ends in
+/// `:refused` (refused) or `:unavailable` (no answer): the node's own check
+/// runs before it.
 struct FakeLauncher {
-    accept_token: &'static str,
     room_metadata: String,
+    /// The room metadata once the bot sends its first data packet.
+    metadata_on_first_data: Option<String>,
     /// How long a connect takes.
     delay: Duration,
     /// The URLs bots were started for.
@@ -104,8 +116,8 @@ impl FakeLauncher {
     }
     fn slow(room_metadata: Value, delay: Duration) -> Arc<Self> {
         Arc::new(Self {
-            accept_token: "good-token",
             room_metadata: room_metadata.to_string(),
+            metadata_on_first_data: None,
             delay,
             dialed: Mutex::new(Vec::new()),
             bots: Mutex::new(Vec::new()),
@@ -127,12 +139,15 @@ impl BotLauncher for FakeLauncher {
     async fn connect(&self, url: &str, token: &str) -> Result<Connected, ConnectError> {
         self.dialed.lock().unwrap().push(url.to_string());
         tokio::time::sleep(self.delay).await;
-        match token {
-            "unavailable" => return Err(ConnectError::Unavailable("no bot".into())),
-            token if token != self.accept_token => {
-                return Err(ConnectError::Refused("unauthorized".into()));
-            }
-            _ => {}
+        let identity =
+            crate::shared::livekit::verify_access_token(API_KEY, API_SECRET, token, unix_now())
+                .and_then(|claims| claims.get("sub")?.as_str().map(str::to_string))
+                .unwrap_or_default();
+        if identity.ends_with(":unavailable") {
+            return Err(ConnectError::Unavailable("no bot".into()));
+        }
+        if identity.is_empty() || identity.ends_with(":refused") {
+            return Err(ConnectError::Refused("unauthorized".into()));
         }
         let bot = Arc::new(FakeBot::default());
         let (data_tx, data) = mpsc::channel(16);
@@ -140,9 +155,16 @@ impl BotLauncher for FakeLauncher {
             metadata: self.room_metadata.clone(),
             participants: 1,
         });
+        let state = Arc::new(state_tx);
+        if let Some(metadata) = self.metadata_on_first_data.clone() {
+            let state = state.clone();
+            *bot.on_first_data.lock().unwrap() = Some(Box::new(move || {
+                state.send_modify(|room| room.metadata = metadata);
+            }));
+        }
         let fake_room = FakeRoom {
             data: data_tx,
-            state: Arc::new(state_tx),
+            state,
         };
         self.bots
             .lock()
@@ -158,12 +180,68 @@ impl BotLauncher for FakeLauncher {
 
 /// The node's LiveKit in these tests.
 const OWN_LIVEKIT: &str = "wss://lk.example.org";
+const API_KEY: &str = "APIpresenter";
+const API_SECRET: &str = "presenter-test-secret";
 
 fn target() -> LiveKitTarget {
     LiveKitTarget {
         client_url: OWN_LIVEKIT.into(),
         connect_url: "ws://livekit.internal:7880".into(),
+        api_key: API_KEY.into(),
+        api_secret: API_SECRET.into(),
     }
+}
+
+fn unix_now() -> u64 {
+    crate::shared::livekit::unix_now().unwrap()
+}
+
+/// A token signed with `secret` carrying `claims`, valid for 10 minutes
+/// from now unless they say otherwise.
+fn token_with(secret: &str, mut claims: Value) -> String {
+    let now = unix_now();
+    let claims_map = claims.as_object_mut().unwrap();
+    for (key, value) in [
+        ("iss", json!(API_KEY)),
+        ("nbf", json!(now)),
+        ("exp", json!(now + 600)),
+    ] {
+        claims_map.entry(key).or_insert(value);
+    }
+    crate::shared::livekit::sign_hs256(
+        secret,
+        br#"{"alg":"HS256","typ":"JWT"}"#,
+        claims.to_string().as_bytes(),
+    )
+    .unwrap()
+}
+
+/// The gatekeeper's presentation-bot grant over `room`.
+fn bot_grant(room: &str) -> Value {
+    json!({"roomJoin": true, "room": room, "canPublish": true, "canSubscribe": true,
+           "canPublishData": true, "canUpdateOwnMetadata": true, "roomList": false})
+}
+
+/// A presentation-bot token of `scene:room` whose identity ends in `tail`
+/// (see [`FakeLauncher`]).
+fn bot_token(tail: &str) -> String {
+    token_with(
+        API_SECRET,
+        json!({"sub": format!("presentation-bot:scene:room:{tail}"), "video": bot_grant("scene:room")}),
+    )
+}
+
+/// A valid presentation-bot token LiveKit accepts.
+static GOOD: LazyLock<String> = LazyLock::new(|| bot_token("access:1"));
+
+/// A player's scene-room token, as admission mints it: microphone only.
+fn guest_token() -> String {
+    let mut grant = bot_grant("scene:room");
+    grant["canPublishSources"] = json!(["microphone"]);
+    token_with(
+        API_SECRET,
+        json!({"sub": "0x1111111111111111111111111111111111111111", "video": grant}),
+    )
 }
 
 // ── a PDF to present ──
@@ -488,6 +566,7 @@ fn livekit_urls_and_presenter_identities() {
     let local = LiveKitTarget {
         client_url: "ws://127.0.0.1:7880".into(),
         connect_url: "ws://127.0.0.1:7880".into(),
+        ..target()
     };
     assert_eq!(
         files::check_livekit_url("ws://127.0.0.1:7880", &local),
@@ -507,17 +586,24 @@ fn livekit_urls_and_presenter_identities() {
     );
     assert_eq!(check("nope"), Err("livekitUrl is not a valid URL"));
     // The bot dials the node's route: LIVEKIT_API_HOST (or LIVEKIT_HOST) as a ws URL.
+    let mut livekit = crate::shared::livekit::LiveKit {
+        api_key: API_KEY.into(),
+        api_secret: API_SECRET.into(),
+        client_url: "wss://lk.example.org".into(),
+        api_url: "http://livekit:7880".into(),
+        configured: true,
+    };
     assert_eq!(
-        LiveKitTarget::from_endpoints("wss://lk.example.org", "http://livekit:7880"),
+        LiveKitTarget::from_livekit(&livekit),
         Some(LiveKitTarget {
             client_url: "wss://lk.example.org".into(),
             connect_url: "ws://livekit:7880".into(),
+            ..target()
         })
     );
-    assert_eq!(
-        LiveKitTarget::from_endpoints("", "http://livekit:7880"),
-        None
-    );
+    assert!(!format!("{:?}", target()).contains(API_SECRET));
+    livekit.client_url.clear();
+    assert_eq!(LiveKitTarget::from_livekit(&livekit), None);
     assert_eq!(
         files::presenter_identity(Some("stream:place:1")).as_deref(),
         Some("stream:place:1")
@@ -580,6 +666,13 @@ fn private_addresses_are_refused() {
         "::7f00:1",
         "2002:a00:1::",
         "64:ff9b::a00:1",
+        // IPv4-translated.
+        "::ffff:0:a00:1",
+        "::ffff:0:7f00:1",
+        // Local-use NAT64, 10.0.0.1 in its /96, /64 and /48 layouts.
+        "64:ff9b:1::a00:1",
+        "64:ff9b:1:0:a:0:100::",
+        "64:ff9b:1:a00:0:100::",
         "fec0::1",
         "ff02::1",
         "2001:0:4136:e378::1",
@@ -598,6 +691,9 @@ fn private_addresses_are_refused() {
         "2002:808:808::",
         "192.0.1.1",
         "2001:4860::8888",
+        "::ffff:0:808:808",
+        "64:ff9b:1::808:808",
+        "64:ff9b:1:0:8:808:800::",
     ] {
         assert!(
             !ssrf::is_private_ip(ip.parse().unwrap()),
@@ -689,7 +785,7 @@ async fn presenting(pages: usize) -> (Arc<Presenter>, Arc<FakeLauncher>, Present
     let launcher = FakeLauncher::new(json!({"presenters": [PRESENTER.to_lowercase()]}));
     let presenter = Presenter::new(launcher.clone(), target(), 10);
     let info = presenter
-        .create(test_pdf(pages), "good-token", "Deck.pdf")
+        .create(test_pdf(pages), &GOOD, "Deck.pdf")
         .await
         .unwrap();
     (presenter, launcher, info)
@@ -778,6 +874,35 @@ async fn presenters_navigate_and_others_are_ignored() {
 }
 
 #[tokio::test]
+async fn a_presenter_added_during_creation_is_obeyed() {
+    // The room metadata changes after the session read its presenters and
+    // before its loop starts: the loop starts from the new list.
+    let launcher = Arc::new(FakeLauncher {
+        metadata_on_first_data: Some(r#"{"presenters":["0xlate"]}"#.into()),
+        ..Arc::try_unwrap(FakeLauncher::new(json!({"presenters": []})))
+            .ok()
+            .unwrap()
+    });
+    let presenter = Presenter::new(launcher.clone(), target(), 10);
+    presenter
+        .create(test_pdf(2), &GOOD, "Deck.pdf")
+        .await
+        .unwrap();
+    let (bot, events) = launcher.last();
+    events
+        .data(
+            "0xLATE",
+            command_packet(
+                json!({"type": "presentation:navigate", "action": "next"}),
+                "",
+            ),
+        )
+        .await;
+    settle().await;
+    assert_eq!(data_messages(&bot).last().unwrap().0["currentSlide"], 1);
+}
+
+#[tokio::test]
 async fn overlay_updates_coalesce_into_one_broadcast() {
     let (_presenter, launcher, _) = presenting(1).await;
     let (bot, events) = launcher.last();
@@ -854,12 +979,9 @@ async fn sessions_without_participants_stop_after_five_minutes() {
 async fn the_concurrency_limit_answers_before_connecting() {
     let launcher = FakeLauncher::new(json!({}));
     let presenter = Presenter::new(launcher.clone(), target(), 1);
-    presenter
-        .create(test_pdf(1), "good-token", "a.pdf")
-        .await
-        .unwrap();
+    presenter.create(test_pdf(1), &GOOD, "a.pdf").await.unwrap();
     let err = presenter
-        .create(test_pdf(1), "good-token", "b.pdf")
+        .create(test_pdf(1), &GOOD, "b.pdf")
         .await
         .unwrap_err();
     assert_eq!(
@@ -870,10 +992,7 @@ async fn the_concurrency_limit_answers_before_connecting() {
     // 0 is unlimited.
     let unlimited = Presenter::new(launcher.clone(), target(), 0);
     for _ in 0..3 {
-        unlimited
-            .create(test_pdf(1), "good-token", "c.pdf")
-            .await
-            .unwrap();
+        unlimited.create(test_pdf(1), &GOOD, "c.pdf").await.unwrap();
     }
 }
 
@@ -926,10 +1045,9 @@ fn multipart(file: Option<(&str, &[u8])>, fields: &[(&str, &str)]) -> (String, V
     (format!("multipart/form-data; boundary={boundary}"), body)
 }
 
-const CREDS: [(&str, &str); 2] = [
-    ("livekitToken", "good-token"),
-    ("livekitUrl", "wss://lk.example.org"),
-];
+fn creds() -> [(&'static str, &'static str); 2] {
+    [("livekitToken", GOOD.as_str()), ("livekitUrl", OWN_LIVEKIT)]
+}
 
 #[tokio::test]
 async fn the_route_answers_upstreams_errors() {
@@ -1013,13 +1131,23 @@ async fn the_route_answers_upstreams_errors() {
         .await,
         (StatusCode::UNAUTHORIZED, err("Invalid LiveKit credentials"))
     );
+    // A presentation-bot token LiveKit refuses (revoked, say) answers the same.
+    assert_eq!(
+        post(
+            app(),
+            "application/json",
+            body(&bot_token("access:refused"), OWN_LIVEKIT, "https://x")
+        )
+        .await,
+        (StatusCode::UNAUTHORIZED, err("Invalid LiveKit credentials"))
+    );
     // Another LiveKit: refused before any bot starts.
     let dialed = launcher.dialed.lock().unwrap().len();
     assert_eq!(
         post(
             app(),
             "application/json",
-            body("good-token", "wss://attacker.example", "https://x")
+            body(&GOOD, "wss://attacker.example", "https://x")
         )
         .await,
         (
@@ -1033,7 +1161,7 @@ async fn the_route_answers_upstreams_errors() {
         post(
             app(),
             "application/json",
-            body("unavailable", OWN_LIVEKIT, "https://x")
+            body(&bot_token("access:unavailable"), OWN_LIVEKIT, "https://x")
         )
         .await,
         (
@@ -1054,7 +1182,7 @@ async fn the_route_answers_upstreams_errors() {
         post(
             app(),
             "application/json",
-            body("good-token", OWN_LIVEKIT, "http://x/a.pdf")
+            body(&GOOD, OWN_LIVEKIT, "http://x/a.pdf")
         )
         .await,
         (
@@ -1066,7 +1194,7 @@ async fn the_route_answers_upstreams_errors() {
         post(
             app(),
             "application/json",
-            body("good-token", OWN_LIVEKIT, "https://10.0.0.1/a.pdf")
+            body(&GOOD, OWN_LIVEKIT, "https://10.0.0.1/a.pdf")
         )
         .await,
         (
@@ -1083,7 +1211,7 @@ async fn the_route_answers_upstreams_errors() {
         )
     );
 
-    let (ct, mp) = multipart(None, &CREDS);
+    let (ct, mp) = multipart(None, &creds());
     assert_eq!(
         post(app(), &ct, mp).await,
         (
@@ -1091,7 +1219,7 @@ async fn the_route_answers_upstreams_errors() {
             err("Missing file in multipart upload")
         )
     );
-    let (ct, mp) = multipart(Some(("a.pdf", b"%PDF")), &CREDS[..1]);
+    let (ct, mp) = multipart(Some(("a.pdf", b"%PDF")), &creds()[..1]);
     assert_eq!(
         post(app(), &ct, mp).await,
         (
@@ -1099,7 +1227,7 @@ async fn the_route_answers_upstreams_errors() {
             err("Missing livekitToken or livekitUrl")
         )
     );
-    let (ct, mp) = multipart(Some(("a.key", b"%PDF")), &CREDS);
+    let (ct, mp) = multipart(Some(("a.key", b"%PDF")), &creds());
     assert_eq!(
         post(app(), &ct, mp).await,
         (
@@ -1107,7 +1235,7 @@ async fn the_route_answers_upstreams_errors() {
             err("Unsupported file type. Only .pdf and .pptx files are supported.")
         )
     );
-    let (ct, mp) = multipart(Some(("a.pdf", b"PK\x03\x04")), &CREDS);
+    let (ct, mp) = multipart(Some(("a.pdf", b"PK\x03\x04")), &creds());
     assert_eq!(
         post(app(), &ct, mp).await,
         (
@@ -1115,7 +1243,7 @@ async fn the_route_answers_upstreams_errors() {
             err("File content does not match expected PDF format")
         )
     );
-    let (ct, mp) = multipart(Some(("a.pptx", b"PK\x03\x04")), &CREDS);
+    let (ct, mp) = multipart(Some(("a.pptx", b"PK\x03\x04")), &creds());
     assert_eq!(
         post(app(), &ct, mp).await,
         (
@@ -1123,17 +1251,18 @@ async fn the_route_answers_upstreams_errors() {
             err("Unable to render the presentation")
         )
     );
-    // A refused token on the multipart path is upstream's generic 500.
+    // A token LiveKit refuses on the multipart path is upstream's generic 500.
+    let refused = bot_token("access:refused");
     let (ct, mp) = multipart(
         Some(("a.pdf", &test_pdf(1))),
-        &[("livekitToken", "bad"), ("livekitUrl", OWN_LIVEKIT)],
+        &[("livekitToken", &refused), ("livekitUrl", OWN_LIVEKIT)],
     );
     assert_eq!(
         post(app(), &ct, mp).await,
         (StatusCode::INTERNAL_SERVER_ERROR, err("Internal error"))
     );
     // A body over 100 MiB: 413 by its declared length, or as it streams in.
-    let (ct, mut mp) = multipart(Some(("a.pdf", b"%PDF")), &CREDS);
+    let (ct, mut mp) = multipart(Some(("a.pdf", b"%PDF")), &creds());
     mp.resize(super::files::MAX_FILE_SIZE + 1, b' ');
     let declared = app()
         .oneshot(
@@ -1154,7 +1283,7 @@ async fn the_route_answers_upstreams_errors() {
         )
     );
     // An unreadable PDF too.
-    let (ct, mp) = multipart(Some(("a.pdf", b"%PDF-not really")), &CREDS);
+    let (ct, mp) = multipart(Some(("a.pdf", b"%PDF-not really")), &creds());
     assert_eq!(
         post(app(), &ct, mp).await,
         (StatusCode::INTERNAL_SERVER_ERROR, err("Internal error"))
@@ -1165,14 +1294,14 @@ async fn the_route_answers_upstreams_errors() {
 async fn a_multipart_upload_creates_a_presentation() {
     let launcher = FakeLauncher::new(json!({}));
     let presenter = Presenter::new(launcher.clone(), target(), 1);
-    let (ct, mp) = multipart(Some(("My Deck.pdf", &test_pdf(2))), &CREDS);
+    let (ct, mp) = multipart(Some(("My Deck.pdf", &test_pdf(2))), &creds());
     let (status, body) = post(super::router(Some(presenter.clone())), &ct, mp).await;
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(body["fileName"], "My_Deck");
     assert_eq!(body["slideCount"], 2);
     assert_eq!(body["currentSlide"], 0);
     assert_eq!(body["fileType"], "pdf");
-    let (ct, mp) = multipart(Some(("b.pdf", &test_pdf(1))), &CREDS);
+    let (ct, mp) = multipart(Some(("b.pdf", &test_pdf(1))), &creds());
     assert_eq!(
         post(super::router(Some(presenter)), &ct, mp).await,
         (
@@ -1189,7 +1318,7 @@ async fn a_dropped_request_still_finishes_its_presentation() {
         Duration::from_millis(100),
     );
     let presenter = Presenter::new(launcher.clone(), target(), 1);
-    let create = presenter.create(test_pdf(1), "good-token", "a.pdf");
+    let create = presenter.create(test_pdf(1), &GOOD, "a.pdf");
     assert!(
         tokio::time::timeout(Duration::from_millis(10), create)
             .await
@@ -1209,31 +1338,311 @@ async fn a_dropped_request_still_finishes_its_presentation() {
     assert_eq!(presenter.active_sessions(), 0);
     assert_eq!(bot.sent.lock().unwrap().last(), Some(&Sent::Shutdown));
     // Its slot is free again.
-    presenter
-        .create(test_pdf(1), "good-token", "b.pdf")
-        .await
-        .unwrap();
+    presenter.create(test_pdf(1), &GOOD, "b.pdf").await.unwrap();
 }
 
 #[tokio::test]
-async fn the_credential_check_holds_a_slot() {
-    let launcher = FakeLauncher::slow(json!({}), Duration::from_millis(100));
+async fn the_json_path_holds_one_slot_from_the_check_to_the_session() {
+    let launcher = FakeLauncher::new(json!({}));
     let presenter = Presenter::new(launcher.clone(), target(), 1);
-    let checking = crate::shared::task::spawn_with({
-        let presenter = presenter.clone();
-        async move { presenter.validate_credentials("good-token").await }
-    });
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    let slot = presenter.reserve().unwrap();
     assert!(matches!(
-        presenter.validate_credentials("good-token").await,
+        presenter.reserve(),
         Err(super::session::CreateError::MaxConcurrent(1))
     ));
-    checking.await.unwrap().unwrap();
-    presenter.validate_credentials("good-token").await.unwrap();
     assert!(matches!(
-        presenter.validate_credentials("bad").await,
+        presenter.create(test_pdf(1), &GOOD, "a.pdf").await,
+        Err(super::session::CreateError::MaxConcurrent(1))
+    ));
+    presenter.validate_credentials(&slot, &GOOD).await.unwrap();
+    assert!(matches!(
+        presenter
+            .validate_credentials(&slot, &bot_token("access:refused"))
+            .await,
         Err(super::session::CreateError::InvalidCredentials(_))
     ));
+    // Refused here, before a bot starts.
+    let dialed = launcher.dialed.lock().unwrap().len();
+    assert!(matches!(
+        presenter.validate_credentials(&slot, &guest_token()).await,
+        Err(super::session::CreateError::InvalidCredentials(_))
+    ));
+    assert_eq!(launcher.dialed.lock().unwrap().len(), dialed);
+    presenter
+        .create_reserved(slot, test_pdf(1), &GOOD, "a.pdf")
+        .await
+        .unwrap();
+    assert_eq!(presenter.active_sessions(), 1);
+    assert!(presenter.reserve().is_err());
+}
+
+#[test]
+fn only_presentation_bot_tokens_of_this_livekit_pass() {
+    let own = target();
+    let now = unix_now();
+    let check = |token: &str| own.check_bot_token(token, now);
+    assert_eq!(check(&GOOD), Ok(()));
+    // The gatekeeper's untagged form, and LiveKit's defaults for absent flags.
+    let untagged = token_with(
+        API_SECRET,
+        json!({"sub": "presentation-bot:scene:room:x", "video": {"roomJoin": true, "room": "scene:room"}}),
+    );
+    assert_eq!(check(&untagged), Ok(()));
+    let refused = "not a valid token of this node's LiveKit";
+    assert_eq!(check("bad"), Err(refused));
+    let other_key = token_with(
+        "another-secret",
+        json!({"sub": "presentation-bot:scene:room:x", "video": bot_grant("scene:room")}),
+    );
+    assert_eq!(check(&other_key), Err(refused));
+    let other_issuer = token_with(
+        API_SECRET,
+        json!({"iss": "APIother", "sub": "presentation-bot:scene:room:x", "video": bot_grant("scene:room")}),
+    );
+    assert_eq!(check(&other_issuer), Err(refused));
+    let expired = token_with(
+        API_SECRET,
+        json!({"sub": "presentation-bot:scene:room:x", "video": bot_grant("scene:room"),
+               "nbf": now - 900, "exp": now - 120}),
+    );
+    assert_eq!(check(&expired), Err(refused));
+    let not_yet = token_with(
+        API_SECRET,
+        json!({"sub": "presentation-bot:scene:room:x", "video": bot_grant("scene:room"),
+               "nbf": now + 120}),
+    );
+    assert_eq!(check(&not_yet), Err(refused));
+    // A player's scene token, and bot identities of another room.
+    let identity = "not a presentation-bot identity of the granted room";
+    assert_eq!(check(&guest_token()), Err(identity));
+    for sub in [
+        "presentation-bot:scene:other:x",
+        "presentation-bot:scene:room",
+        "presentation-bot:scene:roomy:x",
+        "stream:place:x:y",
+    ] {
+        let token = token_with(
+            API_SECRET,
+            json!({"sub": sub, "video": bot_grant("scene:room")}),
+        );
+        assert_eq!(check(&token), Err(identity), "{sub}");
+    }
+    let no_room = token_with(
+        API_SECRET,
+        json!({"sub": "presentation-bot:scene:room:x", "video": {"roomJoin": true}}),
+    );
+    assert_eq!(check(&no_room), Err("no room in the grant"));
+    let mut no_join = bot_grant("scene:room");
+    no_join["roomJoin"] = json!(false);
+    let no_join = token_with(
+        API_SECRET,
+        json!({"sub": "presentation-bot:scene:room:x", "video": no_join}),
+    );
+    assert_eq!(check(&no_join), Err("the grant does not join the room"));
+    let cannot_publish = "the grant cannot publish a screen share";
+    let mut no_publish = bot_grant("scene:room");
+    no_publish["canPublish"] = json!(false);
+    let mut microphone = bot_grant("scene:room");
+    microphone["canPublishSources"] = json!(["microphone"]);
+    let mut screen_share = bot_grant("scene:room");
+    screen_share["canPublishSources"] = json!(["microphone", "screen_share"]);
+    let as_bot = |grant: Value| {
+        token_with(
+            API_SECRET,
+            json!({"sub": "presentation-bot:scene:room:x", "video": grant}),
+        )
+    };
+    assert_eq!(check(&as_bot(no_publish)), Err(cannot_publish));
+    assert_eq!(check(&as_bot(microphone)), Err(cannot_publish));
+    assert_eq!(check(&as_bot(screen_share)), Ok(()));
+}
+
+#[tokio::test]
+async fn a_token_that_is_not_a_bot_token_starts_nothing() {
+    let launcher = FakeLauncher::new(json!({}));
+    let presenter = Presenter::new(launcher.clone(), target(), 1);
+    let app = || super::router(Some(presenter.clone()));
+    let invalid = (
+        StatusCode::UNAUTHORIZED,
+        json!({"error": "Invalid LiveKit credentials"}),
+    );
+    let other_key = token_with(
+        "another-secret",
+        json!({"sub": "presentation-bot:scene:room:x", "video": bot_grant("scene:room")}),
+    );
+    let expired = token_with(
+        API_SECRET,
+        json!({"sub": "presentation-bot:scene:room:x", "video": bot_grant("scene:room"),
+               "nbf": unix_now() - 900, "exp": unix_now() - 120}),
+    );
+    for token in [guest_token(), other_key, expired] {
+        let body = json!({"url": "https://example.org/a.pdf", "livekitToken": token, "livekitUrl": OWN_LIVEKIT});
+        assert_eq!(
+            post(app(), "application/json", body.to_string().into_bytes()).await,
+            invalid
+        );
+        let (ct, mp) = multipart(
+            Some(("a.pdf", &test_pdf(1))),
+            &[("livekitToken", &token), ("livekitUrl", OWN_LIVEKIT)],
+        );
+        assert_eq!(post(app(), &ct, mp).await, invalid);
+    }
+    // No bot started and no slot held.
+    assert!(launcher.dialed.lock().unwrap().is_empty());
+    let (ct, mp) = multipart(Some(("a.pdf", &test_pdf(1))), &creds());
+    assert_eq!(post(app(), &ct, mp).await.0, StatusCode::CREATED);
+    assert_eq!(launcher.dialed.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn uploads_are_read_under_a_permit() {
+    let launcher = FakeLauncher::new(json!({}));
+    let presenter = Presenter::new(launcher.clone(), target(), 1);
+    // An upload being read takes the only permit: the next is answered 429
+    // before its body is read.
+    let reading = presenter.upload_permit().unwrap();
+    let (ct, mp) = multipart(Some(("a.pdf", &test_pdf(1))), &creds());
+    assert_eq!(
+        post(super::router(Some(presenter.clone())), &ct, mp.clone()).await,
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            json!({"error": "Maximum concurrent presentations reached (1)"})
+        )
+    );
+    assert!(launcher.dialed.lock().unwrap().is_empty());
+    drop(reading);
+    // Every answer gives the permit back, an error included.
+    let (bad_ct, bad) = multipart(Some(("a.pdf", b"PK\x03\x04")), &creds());
+    assert_eq!(
+        post(super::router(Some(presenter.clone())), &bad_ct, bad)
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        post(super::router(Some(presenter.clone())), &ct, mp)
+            .await
+            .0,
+        StatusCode::CREATED
+    );
+    assert!(presenter.upload_permit().is_ok());
+    // Unlimited slots, unlimited uploads.
+    let unlimited = Presenter::new(launcher, target(), 0);
+    assert!(unlimited.upload_permit().unwrap().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn timed_out_renders_keep_their_thread_and_no_more_start() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let pool = Arc::new(super::session::RenderPool::new(
+        2,
+        Duration::from_millis(100),
+        Duration::from_millis(100),
+    ));
+    let release = Arc::new(AtomicBool::new(false));
+    let (running, started, finished) = (
+        Arc::new(AtomicUsize::new(0)),
+        Arc::new(AtomicUsize::new(0)),
+        Arc::new(AtomicUsize::new(0)),
+    );
+    let stuck = || {
+        let (release, running, started, finished) = (
+            release.clone(),
+            running.clone(),
+            started.clone(),
+            finished.clone(),
+        );
+        move || {
+            started.fetch_add(1, Ordering::SeqCst);
+            running.fetch_add(1, Ordering::SeqCst);
+            while !release.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            running.fetch_sub(1, Ordering::SeqCst);
+            finished.fetch_add(1, Ordering::SeqCst);
+        }
+    };
+    // Six renders that never end on their own, three rounds of two: the
+    // first two time out and keep their threads, the rest find none free.
+    for round in 0..3 {
+        let runs: Vec<_> = (0..2)
+            .map(|_| {
+                let pool = pool.clone();
+                let work = stuck();
+                tokio::spawn(async move { pool.run(work).await })
+            })
+            .collect();
+        for run in runs {
+            let outcome = run.await.unwrap();
+            if round == 0 {
+                assert!(matches!(
+                    outcome,
+                    Err(super::session::RenderError::TimedOut)
+                ));
+            } else {
+                assert!(matches!(outcome, Err(super::session::RenderError::Busy)));
+            }
+        }
+    }
+    // Only the first two ever ran: the rest were busy waiting for a thread.
+    assert_eq!(started.load(Ordering::SeqCst), 2);
+    assert_eq!(running.load(Ordering::SeqCst), 2);
+    // Once they return, their threads serve again.
+    release.store(true, Ordering::SeqCst);
+    while finished.load(Ordering::SeqCst) < 2 {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(matches!(pool.run(|| 7).await, Ok(7)));
+}
+
+#[tokio::test]
+async fn a_full_render_pool_drops_slide_changes_and_creations_but_stops_nothing() {
+    let (presenter, launcher, _) = presenting(3).await;
+    let (bot, events) = launcher.last();
+    let next = json!({"type": "presentation:navigate", "action": "next"});
+    // Stuck renders elsewhere hold every thread; the waits below run on
+    // paused time.
+    let threads = presenter.hold_render_threads().await;
+    tokio::time::pause();
+    let frames = |bot: &FakeBot| {
+        bot.sent
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|s| matches!(s, Sent::Frame(..)))
+            .count()
+    };
+    events
+        .data(PRESENTER, command_packet(next.clone(), "scene-1"))
+        .await;
+    tokio::time::sleep(super::session::RENDER_WAIT * 2).await;
+    settle().await;
+    // The slide change is dropped: the session runs on slide 0, re-pushes
+    // its frame and broadcasts that state.
+    assert_eq!(presenter.active_sessions(), 1);
+    assert!(!bot.sent.lock().unwrap().contains(&Sent::Shutdown));
+    assert_eq!(frames(&bot), 2);
+    let messages = data_messages(&bot);
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[1].0["currentSlide"], 0);
+    // A creation answers busy, not a load failure, and gives back its slot.
+    assert!(matches!(
+        presenter.create(test_pdf(1), &GOOD, "Other.pdf").await,
+        Err(super::session::CreateError::Busy)
+    ));
+    assert_eq!(presenter.active_sessions(), 1);
+    let (other, _) = launcher.last();
+    assert_eq!(other.sent.lock().unwrap().last(), Some(&Sent::Shutdown));
+    // With threads free again, the next slide change renders.
+    drop(threads);
+    tokio::time::resume();
+    events
+        .data(PRESENTER, command_packet(next, "scene-1"))
+        .await;
+    settle().await;
+    assert_eq!(data_messages(&bot).last().unwrap().0["currentSlide"], 1);
+    assert_eq!(frames(&bot), 3);
+    assert_eq!(presenter.active_sessions(), 1);
 }
 
 // ── downloads ──
@@ -1369,6 +1778,8 @@ async fn a_presentation_goes_live_on_a_real_livekit() {
         LiveKitTarget {
             client_url: url.clone(),
             connect_url: url.clone(),
+            api_key: key.into(),
+            api_secret: secret.into(),
         },
         10,
     );
@@ -1384,9 +1795,10 @@ async fn a_presentation_goes_live_on_a_real_livekit() {
         )
     );
     let token = signed_token(key, secret, "presentation-bot:room:access:1", "room");
-    presenter.validate_credentials(&token).await.unwrap();
+    let slot = presenter.reserve().unwrap();
+    presenter.validate_credentials(&slot, &token).await.unwrap();
     let info = presenter
-        .create(test_pdf(2), &token, "Live.pdf")
+        .create_reserved(slot, test_pdf(2), &token, "Live.pdf")
         .await
         .unwrap();
     assert_eq!((info.file_name.as_str(), info.slide_count), ("Live", 2));

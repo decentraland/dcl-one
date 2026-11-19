@@ -7,9 +7,9 @@ import { hoverKey, proximityKey } from '@explorer-core/engine/pointerKeys'
 import type { LoginDriver, NewAccountPick } from '@explorer-core/engine/driver'
 import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
 import { recordVisit } from '@explorer-core/features/lobby/lobbyApi'
-import type { PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
+import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
-import type { EngineViewportRegion, GiftingPageMessage, GiftingQueryRequest, PhotoModeSnapshot, PhotoModeSource, PreviewFocus } from '@explorer-core/engine/protocol'
+import { PLATFORM_BANNED_REFUSAL, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
 import { useStoredProfile } from '../login/useStoredProfile'
 import { inShell, postToShell } from '@explorer-core/lib/shell'
@@ -46,6 +46,7 @@ import { openProfileCard } from '../profileCard/ProfileCard'
 import { formatConsoleReply, parseChatCommand } from '@explorer-core/features/chat/chatCommands'
 import { applyLanguageSetting, clearAutoTranslate } from '@explorer-core/features/chat/translation'
 import { clearPingMode, shouldPing } from '../chat/ping'
+import { useAskBeforeLeaving } from '../settings/askBeforeLeaving'
 import { risingIds, rowKeys } from '@explorer-core/features/chat/lineIds'
 import { communityChannel, communityIdOf } from '@explorer-core/engine/communityChannel'
 import { mentionName, mentionsName } from '@explorer-core/engine/mention'
@@ -59,6 +60,7 @@ import { streamHere } from '../voiceChat/streamHere'
 import { receiveMapReply, setMapTransport } from '@explorer-core/features/map/mapApi'
 import { setNativeQuit } from '../gate/exitApplication'
 import { nearbyPlayers, travelCount } from '@explorer-core/features/map/mapPeople'
+import { mapPins } from '@explorer-core/features/map/mapPins'
 import { eventAnalytics } from '../events/eventFormat'
 import { useEventsData, type EventsData } from '../events/useEventsData'
 import { donatePlaceOf, donateSceneKey } from '@explorer-core/features/donate/place'
@@ -200,6 +202,13 @@ function parseTimeReply(reply: string): { hours: number; speed: number } | null 
 // Unity's wording (BackpackEquipStatusController's in-world warning) when a profile deploy fails.
 export const SAVE_FAILED_MESSAGE = 'There was an error updating your avatar profile. Please try again.'
 
+export const OUTFIT_FAILED_MESSAGE = {
+  save: "Couldn't save this outfit. Try again.",
+  delete: "Couldn't delete this outfit. Try again.",
+  deleteExtraWithoutName: "Couldn't clear the second row. Check your connection and try deleting from that row again.",
+  extraSlotWithoutName: 'Outfits in the second row need a NAME you own. Delete them before changing your other outfits.'
+} as const
+
 /** A gift picker page request, without the id the session adds. */
 export type GiftingQuery = Omit<GiftingQueryRequest, 'kind' | 'requestId'>
 
@@ -263,12 +272,16 @@ export interface BackpackState {
   outfits: OutfitSlot[]
   /** Number of outfit slots available (5 free + 1 per owned DCL name, capped at 10). */
   outfitSlots: number
+  warnAboutClearingExtraOutfits: boolean
   /** The saved outfits have arrived: until then every slot reads empty, saved or not. */
   outfitsLoaded: boolean
   /** Save the current look into a slot. */
   saveOutfit: (slot: number) => void
   /** Delete a saved outfit slot. */
   deleteOutfit: (slot: number) => void
+  /** Why the last outfit save or delete was refused, or null (until the outfits next arrive). */
+  outfitError: string | null
+  dismissOutfitError: () => void
   /** Equip a saved outfit (applies its body shape, colors and wearables). */
   equipOutfit: (slot: number) => void
   /** The randomize bar's state for this Backpack session. */
@@ -1121,6 +1134,9 @@ export interface EngineSession {
   /** Why the last in-world travel failed (the engine kept the player where they were), shown as a notice. */
   travelError: string | null
   dismissTravelError: () => void
+  /** The signed-in wallet's known platform ban (null when not banned, unknown or failed), and
+   *  whether the last travel was refused for it. */
+  platformBan: { notice: PlatformBanNotice | null; travelRefused: boolean; dismissTravelRefused: () => void }
   /** The realm a HUD-requested travel is heading to, until the engine reports the outcome. The
    *  loader shows meanwhile. */
   travellingTo: string | null
@@ -1372,6 +1388,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const travelSeq = useRef(0)
   const [travellingTo, setTravellingTo] = useState<string | null>(null)
   const [travelError, setTravelError] = useState<string | null>(null)
+  const [platformBan, setPlatformBan] = useState<PlatformBanNotice | null>(null)
+  const [banRefusedTravel, setBanRefusedTravel] = useState(false)
   const [editorMode, setEditorModeState] = useState<EditorHudMode>('off')
   const [playerReady, setPlayerReady] = useState(false)
   // Ref twin of playerReady: the destination pick runs in a callback that would close over a
@@ -1486,6 +1504,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [profileOpen, setProfileOpen] = useState(false)
   // Own-profile edit: the claimed names the picker offers, and the state of the save in flight.
   const [ownedNames, setOwnedNames] = useState<string[]>([])
+  const [ownedNamesKnown, setOwnedNamesKnown] = useState(false)
   const [profileSaving, setProfileSaving] = useState(false)
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null)
   // What the profile looked like before the in-flight save, to put back if the engine rejects it.
@@ -1533,6 +1552,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   useEffect(() => { catalogItemsRef.current = catalogItems }, [catalogItems])
   const [outfits, setOutfits] = useState<OutfitsMetadata>({ outfits: [], namesForExtraSlots: [] })
   const [outfitsLoaded, setOutfitsLoaded] = useState(false)
+  const [outfitFailure, setOutfitFailure] = useState<{ action: 'save' | 'delete'; slot: number } | null>(null)
   const [outfitHistory, setOutfitHistory] = useState<OutfitHistory>(NO_OUTFIT_HISTORY)
   const [backpackOpen, setBackpackOpen] = useState(false)
   const [communities, setCommunities] = useState<Community[]>([])
@@ -2073,6 +2093,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'ownedNames':
           setOwnedNames(msg.names)
+          setOwnedNamesKnown(msg.failed !== true)
           break
         case 'profileSaved':
           settleProfileSave(msg.ok, msg.error)
@@ -2173,6 +2194,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'outfits':
           setOutfits(msg.metadata)
           setOutfitsLoaded(true)
+          setOutfitFailure(null)
+          break
+        case 'outfitSaveFailed':
+          setOutfitFailure({ action: msg.action, slot: msg.slot })
+          console.error(`[outfits] ${msg.action} of slot ${msg.slot} failed:`, msg.message)
           break
         case 'outfitHistory':
           setOutfitHistory({ canUndo: msg.canUndo, canRedo: msg.canRedo, rolling: msg.rolling })
@@ -2438,7 +2464,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           if (msg.travelId !== travelSeq.current) break
           setTravellingTo(null)
           if (!msg.ok) {
-            setTravelError(`Couldn't travel to "${msg.realm}": ${msg.message ?? 'unknown error'}`)
+            if (msg.message === PLATFORM_BANNED_REFUSAL) setBanRefusedTravel(true)
+            else setTravelError(`Couldn't travel to "${msg.realm}": ${msg.message ?? 'unknown error'}`)
           }
           if (lobbyRef.current) {
             if (msg.ok) setLobby(false)
@@ -2574,6 +2601,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'mapPlayers':
           nearbyPlayers.receive(msg.players)
           break
+        case 'mapPins':
+          mapPins.receive(msg.pins)
+          break
         case 'gallery':
         case 'galleryWrite':
         case 'externalUrlOpened':
@@ -2622,6 +2652,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'worldPasswordWithdrawn':
           setWorldPassword(null)
+          break
+        case 'platformBan':
+          setPlatformBan(msg.ban.banned ? msg.ban : null)
           break
         case 'portables': {
           const before = portableStates.current
@@ -2680,6 +2713,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       setMapTransport(null)
       setNativeQuit(null)
       nearbyPlayers.setTransport(null)
+      mapPins.clear()
       driver.dispose()
       driverRef.current = null
     }
@@ -2806,6 +2840,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   }, [])
   const changeRealm = useCallback((realm: string) => travel({ kind: 'changeRealm', realm }), [travel])
   const dismissTravelError = useCallback(() => setTravelError(null), [])
+  const dismissBanRefusedTravel = useCallback(() => setBanRefusedTravel(false), [])
 
   // Reload the scene under the player: the `/reload` chat command and the minimap menu's Reload Scene.
   const reloadScene = useCallback(() => {
@@ -3896,6 +3931,25 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const deleteOutfit = useCallback((slot: number) => {
     driverRef.current?.send({ kind: 'deleteOutfit', slot })
   }, [])
+  const dismissOutfitError = useCallback(() => setOutfitFailure(null), [])
+  // The live names lookup decides; until it answers, the outfits read does. An occupied extra slot
+  // stays visible so the player can still delete it.
+  const extraSlotCount = outfits.outfits.filter((o) => o.slot >= 5).length
+  const extraOutfitSlots =
+    extraSlotCount > 0 || (ownedNamesKnown ? ownedNames.length > 0 : outfits.namesForExtraSlots.length > 0)
+  const extraSlotsWithoutName = ownedNamesKnown && ownedNames.length === 0 && extraSlotCount > 0
+  const warnAboutClearingExtraOutfits = extraSlotsWithoutName && extraSlotCount > 1
+  let outfitError: string | null = null
+  if (outfitFailure != null) {
+    outfitError = OUTFIT_FAILED_MESSAGE[outfitFailure.action]
+    if (extraSlotsWithoutName) {
+      if (outfitFailure.action !== 'delete' || outfitFailure.slot < 5) {
+        outfitError = OUTFIT_FAILED_MESSAGE.extraSlotWithoutName
+      } else if (warnAboutClearingExtraOutfits) {
+        outfitError = OUTFIT_FAILED_MESSAGE.deleteExtraWithoutName
+      }
+    }
+  }
   const equipOutfit = useCallback((slot: number) => {
     // The bridge resolves the outfit's wearables by urn and re-emits the full `wearables` set (incl.
     // items off the loaded catalog page), which becomes the authoritative equipped set — so no
@@ -4223,6 +4277,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setProfile(null)
     setPrevUserId(null)
     setOwnedNames([])
+    setOwnedNamesKnown(false)
     setProfileSaving(false)
     setProfileSaveError(null)
     setSaveError(null)
@@ -4268,6 +4323,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setPortables([])
     portableStates.current = null
     portableToasts.current = false
+    // clears the ban and the refused travel, and retires the travel id and loader in flight
+    setPlatformBan(null)
+    setBanRefusedTravel(false)
+    travelSeq.current++
+    setTravellingTo(null)
   }, [closeAllPanels, resetEvents])
   const logout = useCallback(() => signOut(true), [signOut])
   // Cancel on Verifying, or a sign-in that took too long (`error`): the first screen, the stored
@@ -4725,9 +4785,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     settleHudLogin(new Error(fatalError.message))
   }, [fatalError, settleHudLogin, restoreHudSignIn])
 
-  // The shell's question before the page goes (apps/ui3 shell/mount.ts) is for a session: the
-  // start screen has none to lose.
-  const sessionLive = phase !== 'login'
+  // The shell's question before the page goes (apps/ui3 shell/mount.ts) is for a session (the
+  // start screen has none to lose), and only for a player who turned it on in Settings.
+  const askBeforeLeaving = useAskBeforeLeaving()
+  const sessionLive = phase !== 'login' && askBeforeLeaving
   useEffect(() => {
     if (inShell) postToShell({ type: 'bevy-shell:session', live: sessionLive })
   }, [sessionLive])
@@ -4982,7 +5043,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       case 'ChatPanel': toggleChat(); break
       case 'Emote': toggleEmotes(); break
       // 'Microphone' is NOT handled here: MicUiPlugin isn't NativeUi-gated, so the engine
-      // itself still toggles the mic on that action (the mic relay updates the HUD icon).
+      // itself opens the mic on press and closes it on release (the mic relay updates the
+      // HUD icon).
       // 'Chat' (Enter) is NOT handled here: the bridge's chat domain turns it into the
       // dedicated 'focusChat' message (releasing the engine pointer lock scene-side too).
     }
@@ -5056,6 +5118,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     loadingProgress,
     travelError,
     dismissTravelError,
+    platformBan: { notice: platformBan, travelRefused: banRefusedTravel, dismissTravelRefused: dismissBanRefusedTravel },
     travellingTo,
     fatalError,
     reload: () => location.reload(),
@@ -5148,8 +5211,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     backpack: {
       list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
       equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, stage: stagePreview, emote: emotePreview, rotate: rotatePreview, zoom: zoomPreview, forceRender, setForceRender,
-      outfits: outfits.outfits, outfitSlots: ownedNames.length > 0 ? 10 : 5, outfitsLoaded,
-      saveOutfit, deleteOutfit, equipOutfit,
+      outfits: outfits.outfits, outfitSlots: extraOutfitSlots ? 10 : 5, outfitsLoaded, warnAboutClearingExtraOutfits,
+      saveOutfit, deleteOutfit, outfitError, dismissOutfitError, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
     communities: { list: communities, browse: communityBrowse, loadBrowse: loadCommunityBrowse, loadMoreBrowse: loadMoreCommunityBrowse, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity, invites: communityInvites, loadInvites: loadCommunityInvites, pendingCount, loadInvitesCount: loadCommunityInvitesCount, manageRequest: manageCommunityRequest, memberSections, cardOpen: setOpenCard, loadMemberSection, invitable, loadInvitable, invite: inviteToCommunity, unban: unbanCommunityMember, posts: communityPosts, loadPosts: loadCommunityPosts, loadMorePosts: loadMoreCommunityPosts, createPost: createCommunityPost, deletePost: deleteCommunityPost, likePost: likeCommunityPost },

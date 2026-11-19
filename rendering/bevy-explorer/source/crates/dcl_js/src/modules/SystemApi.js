@@ -121,6 +121,13 @@ module.exports.setAvatar = async function(avatar) {
     return await Deno.core.ops.op_set_avatar(avatar)
 }
 
+// signs and deploys the local player's catalyst `outfits` entity; refused when `address` is not
+// the signed-in account
+// outfits: { outfits: [{ slot, outfit: { bodyShape, eyes, hair, skin, wearables, forceRender } }], namesForExtraSlots }
+module.exports.deployOutfits = async function(address, outfits) {
+    return await Deno.core.ops.op_deploy_outfits(address, outfits)
+}
+
 // any user's full profile (own, nearby or remote), resolved through the engine's profile cache
 // and fetch cascade. Rejects if the address can't be resolved.
 // address: string => SerializedProfile
@@ -413,6 +420,22 @@ module.exports.getPortablesStream = async function() {
   return streamGenerator();
 }
 
+// stream of the map pins of portable-experience scenes, as a whole list on subscribe and on every
+// change: [{ id, x, y, title, icon? }]
+module.exports.getMapPinsStream = async function() {
+  const rid = await Deno.core.ops.op_get_map_pins_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_map_pins_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
 module.exports.getPermissionUsedStream = async function() {
   const rid = await Deno.core.ops.op_get_permission_used_stream();
 
@@ -533,6 +556,22 @@ module.exports.getWorldAccessStream = async function() {
   async function* streamGenerator() {
     while (true) {
       const next = await Deno.core.ops.op_read_world_access_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// the signed-in wallet's platform ban: now, then again on every change
+// type PlatformBanNotice = { banned: bool, reason: string, customMessage: string | null, expiresAt: string | null }
+module.exports.getPlatformBanStream = async function() {
+  const rid = await Deno.core.ops.op_get_platform_ban_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_platform_ban_stream(rid);
       if (next === null) break;
       yield next;
     }

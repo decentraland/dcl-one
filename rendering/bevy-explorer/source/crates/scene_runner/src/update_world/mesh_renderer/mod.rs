@@ -239,7 +239,6 @@ type PrimitiveData = (
     Has<PendingPrimitive>,
 );
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn update_mesh(
     mut commands: Commands,
     pending_primitives: Query<PrimitiveData, With<PendingPrimitive>>,

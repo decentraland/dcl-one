@@ -4,7 +4,8 @@
 Cargo decides whether a path dependency is fresh by file times, and a fresh checkout gives
 every file the current time, so path dependencies in a CI cache would be rebuilt by every job
 of every run, changed or not. Crates from git or crates.io are judged by version instead: Bevy
-and the forked crates are git dependencies; the one path copy is the Bevy tree of the Bevy crate tests.
+and the forked crates are git dependencies; the one path copy is the Bevy tree that the Bevy crate
+tests build and that `common`'s tests read.
 
   record <target-dir>   after the build: each build input's git blob id and mtime, and each
                         directory's mtime with the id of the input names it holds, into every
@@ -16,7 +17,7 @@ and the forked crates are git dependencies; the one path copy is the Bevy tree o
                         the checkout's time, so Cargo rebuilds what depends on it
 
 A tracked file's blob id comes from the index. The Bevy tree that `tooling/patched-sources.py` writes for
-the Bevy crate tests is not tracked, so its blob ids are those of the bytes on disk, stamp included.
+the Bevy crate tests and `common`'s tests is not tracked, so its blob ids are those of the bytes on disk, stamp included.
 
 To Cargo this is a checkout that never moved. Times are kept to the nanosecond: for a package
 whose build script names no input, Cargo stores the time of the newest file as it reads it, so a

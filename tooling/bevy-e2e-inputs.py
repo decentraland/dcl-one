@@ -19,8 +19,6 @@ or empty). `suite-changed` writes `changed` (true or false) instead.
   is skipped, saying so; a pull request whose CI built none, or that started no CI run, takes
   main's newest when it changes the suite, its workflow or its tooling, so its specs still run;
   one that changes neither is skipped.
-- `workflow_run` of Bevy Explorer / CI: a successful push to main, with the web app that run
-  built. A pull request's CI run is skipped here: its scenarios run from its own event.
 - `schedule`: main's newest web app and the commit that built it.
 - `workflow_dispatch`: `inputs.sha`'s suite, with the web app its CI run built, or main's newest
   when that run built none (a commit that changes the suite alone); else main's newest.
@@ -190,23 +188,6 @@ def resolve_pull_request(event, repo, wait):
 def resolve(event_name, event, repo, wait=None):
     if event_name == 'pull_request':
         return resolve_pull_request(event, repo, wait or (lambda repo_, sha: wait_for_ci(repo_, sha, DEFAULT_WAIT_SECONDS)))
-    if event_name == 'workflow_run':
-        trigger = event['workflow_run']
-        if (trigger.get('head_repository') or {}).get('full_name') != repo:
-            return skip('the CI run is not from this repository')
-        if trigger['event'] == 'pull_request':
-            return skip(f"CI run {trigger['id']} is a pull request's: its scenarios run from its own event once it is labelled `{RUN_LABEL}`")
-        if trigger['conclusion'] != 'success':
-            return skip(f"CI run {trigger['id']} did not succeed")
-        if trigger['event'] != 'push':
-            return skip(f"CI run {trigger['id']} was started by {trigger['event']}, not a push")
-        if trigger.get('head_branch') != 'main':
-            return skip(f"CI run {trigger['id']} is a push to {trigger.get('head_branch')}, not main")
-        sha = trigger['head_sha']
-        web = bench.named(bench.artifacts(repo, trigger['id']), bench.WEB)
-        if not web:
-            return skip(f"main's CI run {trigger['id']} built no web app")
-        return chosen(sha, web, trigger['id'], '', f"main at {sha}: the web app CI run {trigger['id']} built")
     if event_name in ('schedule', 'workflow_dispatch'):
         sha = ((event.get('inputs') or {}).get('sha') or '').strip()
         if sha:

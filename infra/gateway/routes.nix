@@ -4,6 +4,7 @@
     "/content/entities"
   ];
   internal = [
+    "/internal/message-router"
     "/internal/pulse"
     "/metrics"
   ];
