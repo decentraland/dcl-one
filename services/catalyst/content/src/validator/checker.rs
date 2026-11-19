@@ -256,19 +256,7 @@ pub fn validate_local_pointer_ownership(
             ValidationResponse::Ok
         }
         EntityType::Store => validate_store_access(deployment, deployer_address),
-        EntityType::Outfits => {
-            if let Some(p) = entity.pointers.first() {
-                let p = p.to_lowercase();
-                let addr = p.split(':').next().unwrap_or("");
-                if crate::auth::is_eth_address(addr) && addr != deployer {
-                    return ValidationResponse::fail(format!(
-                        "You can only alter your own outfits. The address of the pointer and \
-                         the signer address are different (pointer:{p} signer: {deployer})."
-                    ));
-                }
-            }
-            ValidationResponse::Ok
-        }
+        EntityType::Outfits => validate_outfits_pointer(&entity.pointers, deployer_address),
         _ => ValidationResponse::Ok,
     }
 }
@@ -311,14 +299,8 @@ pub fn validate_store_access(
     ValidationResponse::Ok
 }
 
-pub async fn validate_outfits_access(
-    deployment: &Deployment<'_>,
-    checker: &dyn BlockchainChecker,
-    deployer_address: &str,
-) -> ValidationResponse {
-    let entity = &deployment.entity;
-    let pointers = &entity.pointers;
-
+/// The outfits pointer must be the single `<signer>:outfits`.
+fn validate_outfits_pointer(pointers: &[String], deployer_address: &str) -> ValidationResponse {
     if pointers.len() != 1 {
         return ValidationResponse::fail(format!(
             "Only one pointer is allowed when you create an Outfits. Received: {pointers:?}"
@@ -353,6 +335,20 @@ pub async fn validate_outfits_access(
              address are different (pointer:{pointer} signer: {}).",
             deployer_address.to_lowercase()
         ));
+    }
+
+    ValidationResponse::Ok
+}
+
+pub async fn validate_outfits_access(
+    deployment: &Deployment<'_>,
+    checker: &dyn BlockchainChecker,
+    deployer_address: &str,
+) -> ValidationResponse {
+    let entity = &deployment.entity;
+    let pointer = validate_outfits_pointer(&entity.pointers, deployer_address);
+    if !matches!(pointer, ValidationResponse::Ok) {
+        return pointer;
     }
 
     if let Some(metadata) = &entity.metadata {

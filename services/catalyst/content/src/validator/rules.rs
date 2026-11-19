@@ -1468,6 +1468,41 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn outfits_pointer_rule_holds_with_chain_checks_ignored() {
+            let other = "0xbbbb000000000000000000000000000000000002";
+            let validator = &ContentValidator {
+                external_calls: &Calls::new(Duration::ZERO),
+                blockchain_checker: &SlowChecker(Duration::ZERO, false),
+                ignore_blockchain_access: true,
+                synced: false,
+                access_passed: false,
+            };
+            let access = |pointers: Vec<String>| {
+                let mut d = profile();
+                d.entity.entity_type = EntityType::Outfits;
+                d.entity.pointers = pointers;
+                d.entity.metadata = None;
+                async move {
+                    validator
+                        .validate_access(&d.view(), tokio::time::Instant::now() + ACCESS_DEADLINE)
+                        .await
+                }
+            };
+            let own = format!("{OWNER}:outfits");
+            assert!(access(vec![own.clone()]).await.is_ok());
+            for pointers in [
+                vec![own.clone(), format!("{other}:outfits")],
+                vec![format!("{other}:outfits")],
+                vec![format!("{OWNER}:profile")],
+                vec!["outfits".to_string()],
+                vec![format!("{OWNER}:outfits:extra")],
+            ] {
+                let response = access(pointers.clone()).await;
+                assert!(!response.is_ok(), "{pointers:?} must be refused");
+            }
+        }
+
+        #[tokio::test]
         async fn too_many_items_refuse_the_deploy() {
             let d = profile();
             let response = ContentValidator {
