@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import {
@@ -21,6 +21,8 @@ function personalHash(message: string): Uint8Array {
 const hexToBytes = (hex: string): Uint8Array => Uint8Array.from(hex.match(/../g) ?? [], (b) => parseInt(b, 16))
 
 describe('guest identity', () => {
+  afterEach(() => localStorage.clear())
+
   it('derives the checksummed address of a public key', () => {
     const publicKey = secp256k1.getPublicKey(hexToBytes('00'.repeat(31) + '01'), false)
     expect(publicKeyAddress(publicKey)).toBe('0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf')
@@ -91,6 +93,17 @@ describe('guest identity', () => {
     expect(webGuestBackendFor({ hostname: 'example.com', search: '?guestWallet=thirdweb' })).toBe(webGuestBackend)
     expect(webGuestBackendFor({ hostname: 'example.com', search: '?realm=x&guestWallet=thirdweb' })).toBe(webGuestBackend)
     expect(webGuestBackendFor({ hostname: 'example.com', search: '?guestWallet=local' })).toBe(localGuestBackend)
+  })
+
+  // a returning guest reaches the same wallet only through the session kept here
+  it('keeps the session id of a thirdweb login that succeeded', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ token: 't', walletAddress: '0x1' }), { status: 200 })))
+    try {
+      await expect(webGuestBackend.login('session-1')).resolves.toMatchObject({ walletAddress: '0x1' })
+      expect(localStorage.getItem(GUEST_SESSION_KEY)).toBe('session-1')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   // an origin thirdweb refuses: one visit with the parameter must not leave the next ones on thirdweb

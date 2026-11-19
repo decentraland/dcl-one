@@ -248,6 +248,10 @@
           "kind": "regular"
         },
         {
+          "name": "guestWalletParam.ts",
+          "kind": "regular"
+        },
+        {
           "name": "sso.ts",
           "kind": "regular"
         },
@@ -6073,7 +6077,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
-      "sha256": "7791923ac47aae937b11fe83f7c102ac72fd5fff189a9ad6adef0f5b13ff7f9c"
+      "sha256": "bf4bcd492de2de0e5f37885c6c72c281bdfbeeee0cae7fd58c285bbb396fd100"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/hudMainThreadCost.ts",
@@ -6109,7 +6113,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/shell/login.ts",
-      "sha256": "981434740fc38dbfc4cfa36fea453c2483944adfa63dc8183c54c70ab53b023d"
+      "sha256": "c581dbac6e181122d47bcbc6e40b0cdf6614311ae74e6d759df367231a728e97"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/shell/main.ts",
@@ -6261,7 +6265,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/entryParams.test.ts",
-      "sha256": "dd6509f375c6d660b6167a250d39e0fb7407986b4a7f2034937ad42ef957a87e"
+      "sha256": "a01b7167861f02650a779dd04256e7f2d2361f4859b1af85e452b144379b5f34"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/entryUrl.ts",
@@ -6556,11 +6560,15 @@
     },
     {
       "path": "library/explorer-core/features/auth/guest.ts",
-      "sha256": "113d596afaf406a22121e802fbba628b68b687be32d6cfcd19ad8fa0d2fc7492"
+      "sha256": "ad7ec55df2bd39f689f4cdd62f570bf0dc7f0ac930774ccedf2a15e10c9e4776"
     },
     {
       "path": "library/explorer-core/features/auth/guestWalletEvent.ts",
       "sha256": "d721c5beb8889e8979eba32eaae06210d9e10e550970da473c0ff700e57c42af"
+    },
+    {
+      "path": "library/explorer-core/features/auth/guestWalletParam.ts",
+      "sha256": "02dd9b5314845a375f1cde075a66ff847a4ab6e6c13dd76bf53e4b913be9795c"
     },
     {
       "path": "library/explorer-core/features/auth/sso.ts",
@@ -7028,7 +7036,7 @@
     },
     {
       "path": "library/explorer-core/test/guestIdentity.test.ts",
-      "sha256": "921ace9c6ca1915caf6b1d37a5431c1a65f8ca08c49f5342aacd22e155482188"
+      "sha256": "71df9737628f96ded881dfbafb3e5f676ba2ff3f0bbe9c3e0c1eae1332e28401"
     },
     {
       "path": "library/explorer-core/test/guestWalletEvent.test.ts",
@@ -11411,6 +11419,21 @@
     {
       "from": "library/explorer-core/engine/outfitRandomizer.ts",
       "to": "library/explorer-core/engine/bodyShape.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/auth/guest.ts",
+      "to": "library/explorer-core/features/auth/guestWalletParam.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/auth/guest.ts",
+      "to": "library/explorer-core/features/auth/guestWalletParam.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/auth/guest.ts",
+      "to": "library/explorer-core/features/auth/guestWalletParam.ts",
       "kind": "test:runtime"
     },
     {
@@ -44950,6 +44973,21 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
+      "to": "library/explorer-core/features/auth/guestWalletParam.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
+      "to": "library/explorer-core/features/auth/guestWalletParam.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
+      "to": "library/explorer-core/features/auth/guestWalletParam.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
       "to": "library/explorer-core/lib/analytics.ts",
       "kind": "native:runtime"
     },
@@ -45626,6 +45664,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/features/auth/guestWalletEvent.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/features/auth/guestWalletParam.ts",
       "kind": "type"
     },
     {

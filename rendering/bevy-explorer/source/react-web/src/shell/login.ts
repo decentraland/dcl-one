@@ -54,7 +54,8 @@ export async function request(method: unknown, params: unknown): Promise<unknown
     // "Explore as guest": a guest account that persists across visits (features/auth/guest.ts), kept
     // here like a sign-in. A guest that signed out comes back the same.
     case 'createGuest': {
-      // thirdweb serves its guest wallet only to Decentraland's domains; elsewhere it's a key made here
+      // thirdweb on Decentraland's domains, with ?guestWallet=thirdweb, or once this browser keeps a
+      // thirdweb session; elsewhere a key made here
       const { wallet, ...login } = await playAsGuest(webGuestBackendFor(entryLocation))
       held = login
       pinned = true

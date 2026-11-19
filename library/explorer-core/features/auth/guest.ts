@@ -8,6 +8,7 @@ import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
 import { personalSign } from '../../shell/sign'
 import type { AuthIdentity, StoredLogin } from './sso'
 import { EmailLoginError, GUEST_SESSION_KEY, guestLogin, guestSign, type GuestWallet } from './thirdweb'
+import { THIRDWEB_GUEST_PARAM } from './guestWalletParam'
 
 /** An email account's sign-in from the HUD lasts 7 days; the Sites sign-in page's own lasts 30. */
 export const EMAIL_IDENTITY_LIFETIME_MS = 7 * 24 * 3600 * 1000
@@ -52,9 +53,6 @@ export const localGuestBackend: GuestBackend = {
   sign: (token, message) => Promise.resolve(personalSign(token, message))
 }
 
-/** `/play?guestWallet=thirdweb` asks for the thirdweb guest on a host outside THIRDWEB_DOMAINS whose
- *  origin the thirdweb project allows too, so a test deployment's guests behave like Decentraland's. */
-export const THIRDWEB_GUEST_PARAM = 'guestWallet'
 
 /** The guest wallet a web page at `location` can reach: thirdweb on Decentraland's domains, when the
  *  page asks for it, or when this browser already keeps a thirdweb guest session (so the guest comes
@@ -64,7 +62,7 @@ export function webGuestBackendFor(location: { hostname: string; search: string 
   const thirdweb =
     THIRDWEB_DOMAINS.some((d) => hostname === d || hostname.endsWith(`.${d}`)) ||
     new URLSearchParams(search).get(THIRDWEB_GUEST_PARAM) === 'thirdweb' ||
-    webGuestBackend.keptSessionId?.() != null
+    localStorage.getItem(GUEST_SESSION_KEY) != null
   return thirdweb ? webGuestBackend : localGuestBackend
 }
 
