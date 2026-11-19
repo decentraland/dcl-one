@@ -120,7 +120,8 @@
   &::-webkit-slider-thumb {
     width: 8px;
     height: 32px;
-    margin-right: -3px;
+    /* Centred on the 2px track: in vertical writing mode the thumb hangs off the track's left edge. */
+    margin-left: -3px;
     border-radius: 4px;
     background: var(--dcl-neutrals-shadow);
     appearance: none;
