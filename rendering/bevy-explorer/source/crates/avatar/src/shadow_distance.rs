@@ -1,12 +1,13 @@
 //! Distant avatars cast no shadow.
 //!
 //! Every mesh of an avatar is drawn again into each shadow cascade it falls in, skinned again
-//! each time, as far as the Shadow Distance setting reaches (up to 200 m). An avatar's shadow is
+//! each time, as far as the Shadow Distance setting reaches (up to 300 m). An avatar's shadow is
 //! a few pixels at that range, so beyond [`AvatarShadowDistance`] from the local player an
 //! avatar's meshes are marked `NotShadowCaster`, and unmarked when it comes back within it. The
-//! local player's avatar always casts one.
+//! local player's avatar always casts one. The distance is from the player, not the camera, so
+//! with a camera away from the player the avatars near the camera may cast none.
 
-use bevy::{pbr::NotShadowCaster, prelude::*};
+use bevy::{pbr::NotShadowCaster, prelude::*, render::view::RenderLayers};
 use bevy_console::ConsoleCommand;
 use common::structs::PrimaryUser;
 use console::DoAddConsoleCommand;
@@ -61,20 +62,26 @@ fn set_avatar_shadows(
             Entity,
             &GlobalTransform,
             &ChildOf,
+            Option<&RenderLayers>,
             Option<&DistantShadowOff>,
         ),
         With<AvatarProcessed>,
     >,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
-    primary: Query<(), With<PrimaryUser>>,
     children: Query<&Children>,
     meshes: Query<(), (With<Mesh3d>, Without<NotShadowCaster>)>,
+    mut unmarked: Query<&mut Mesh3d>,
 ) {
     let Ok(player_pos) = player.single().map(GlobalTransform::translation) else {
         return;
     };
-    for (build, transform, parent, off) in &builds {
-        let casts = primary.contains(parent.parent())
+    let default_layer = RenderLayers::layer(0);
+    for (build, transform, parent, layers, off) in &builds {
+        // an avatar on a layer of its own (a preview) is lit by its own stage, wherever it stands
+        if layers.is_some_and(|layers| !layers.intersects(&default_layer)) {
+            continue;
+        }
+        let casts = player.contains(parent.parent())
             || casts_shadow(
                 transform.translation().distance(player_pos),
                 distance.0,
@@ -84,6 +91,11 @@ fn set_avatar_shadows(
             (true, Some(DistantShadowOff(marked))) => {
                 for mesh in marked {
                     commands.entity(*mesh).try_remove::<NotShadowCaster>();
+                    // bevy's mesh extraction doesn't watch the mark's removal (0.16); Mesh3d is
+                    // on its list
+                    if let Ok(mut mesh) = unmarked.get_mut(*mesh) {
+                        mesh.set_changed();
+                    }
                 }
                 commands.entity(build).try_remove::<DistantShadowOff>();
             }
@@ -171,5 +183,27 @@ mod tests {
             app.world().get::<NotShadowCaster>(never_cast).is_some(),
             "a mesh that never cast a shadow keeps its own mark"
         );
+    }
+
+    #[test]
+    fn an_avatar_on_a_layer_of_its_own_keeps_its_shadow() {
+        let mut app = App::new();
+        app.init_resource::<AvatarShadowDistance>()
+            .add_systems(Update, set_avatar_shadows);
+        let world = app.world_mut();
+        world.spawn((PrimaryUser::default(), GlobalTransform::default()));
+        let root = world.spawn_empty().id();
+        let build = world
+            .spawn((
+                AvatarProcessed,
+                GlobalTransform::from_translation(Vec3::X * 50.0),
+                RenderLayers::layer(1),
+                ChildOf(root),
+            ))
+            .id();
+        let mesh = world.spawn((Mesh3d::default(), ChildOf(build))).id();
+
+        app.update();
+        assert!(app.world().get::<NotShadowCaster>(mesh).is_none());
     }
 }

@@ -77,7 +77,7 @@ pub mod point_at_ik;
 #[cfg(feature = "explorer")]
 pub mod point_at_marker;
 #[cfg(feature = "explorer")]
-pub mod shadow_distance;
+mod shadow_distance;
 pub mod spring_bones;
 mod two_bone_ik;
 

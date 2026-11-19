@@ -252,6 +252,8 @@ State, in every build:
   reads it.
 - `/avatar_shadow_distance [metres]`: how far from the player other avatars cast shadows (20 by
   default; the player's own always does), as JSON `metres`; with a value, sets it for the session.
+  An avatar past it casts one again once it is within nine tenths of it (18 m), and an avatar on
+  a render layer of its own, such as the lobby preview, always casts one.
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
