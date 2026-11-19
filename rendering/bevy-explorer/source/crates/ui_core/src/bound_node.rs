@@ -132,7 +132,6 @@ impl UiMaterial for BoundedImageMaterial {
     }
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn update_bounded_nodes(
     mut commands: Commands,
     new_children: Query<

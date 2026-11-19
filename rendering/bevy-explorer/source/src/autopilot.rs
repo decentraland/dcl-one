@@ -65,7 +65,6 @@ struct Run {
     exit_requested: bool,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn drive_phase(
     autopilot: Res<Autopilot>,
     mut phase: ResMut<AutopilotPhase>,

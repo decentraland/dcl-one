@@ -52,11 +52,10 @@ impl StreamAssembler {
     /// buffered yet, `Err` if a frame declares a length past the cap (unrecoverable — the buffer is
     /// cleared so a stale header can't re-throw every chunk).
     pub(super) fn next_message(&mut self) -> Result<Option<Vec<u8>>, String> {
-        if self.buffer.len() < STREAM_HEADER_SIZE {
+        let Some(header) = self.buffer.first_chunk::<STREAM_HEADER_SIZE>() else {
             return Ok(None);
-        }
-        let length =
-            u32::from_be_bytes(self.buffer[..STREAM_HEADER_SIZE].try_into().unwrap()) as usize;
+        };
+        let length = u32::from_be_bytes(*header) as usize;
         if length > MAX_MESSAGE_BYTES {
             self.buffer.clear();
             return Err(format!(

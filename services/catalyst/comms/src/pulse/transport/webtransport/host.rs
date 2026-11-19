@@ -9,6 +9,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::pulse::transport::webtransport::quic::{
     Event as QuicEvent, Host as QuicHost, HostConfig as QuicConfig,
+    IDLE_TIMEOUT as QUIC_IDLE_TIMEOUT,
 };
 
 use crate::pulse::hardening::DisconnectReason;
@@ -83,6 +84,7 @@ impl WtHost {
             bind_addr: config.bind_addr,
             cert_pem: config.cert_pem.clone(),
             key_pem: config.key_pem.clone(),
+            idle_timeout: QUIC_IDLE_TIMEOUT,
         })
         .map_err(|e| anyhow::anyhow!("webtransport host bind: {e}"))?;
         let local_addr = quic.local_addr();
@@ -417,14 +419,21 @@ fn handle_stream(
                 )?;
             }
             Ok(None) => return Ok(()),
-            Err(_overrun) => {
+            Err(overrun) if overrun.ends_session() => {
                 return send_event(
                     events_tx,
-                    Event::Corrupt {
+                    Event::Oversized {
                         peer: peer as PeerId,
                     },
                 );
             }
+            // The reader skips the payload; the frames after it are still read.
+            Err(_overrun) => send_event(
+                events_tx,
+                Event::Corrupt {
+                    peer: peer as PeerId,
+                },
+            )?,
         }
     }
 }

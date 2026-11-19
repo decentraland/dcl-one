@@ -27,6 +27,8 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = pull_request ] && git diff --quiet HEAD^1 HEAD -- \
               'flake.*' 'rust-toolchain*' .cargo infra/packages infra/containers/images.nix \
               'services/catalyst/rust-toolchain*' 'services/catalyst/Cargo.*' 'services/catalyst/**/Cargo.toml' \
+              services/catalyst/cast-bot/Cargo.lock rendering/bevy-explorer/patches/client-sdk-rust \
+              tooling/patched-sources.py \
               'library/**/Cargo.toml' apps/dcl-scene-cli/Cargo.toml \
               apps/sites/package.json apps/sites/pnpm-lock.yaml apps/sites/pnpm-workspace.yaml \
               'tooling/image-*' .github/workflows/apis-sites-images.yml \
@@ -194,7 +196,7 @@ jobs:
         run: |
           # The same flake reference as the image build, so that build finds these derivations.
           targets=()
-          if [ "$APIS" != true ]; then targets+=('git+file:.?lfs=1#catalyst'); fi
+          if [ "$APIS" != true ]; then targets+=('git+file:.?lfs=1#catalyst' 'git+file:.?lfs=1#cast-bot'); fi
           if [ "$SITES_APP" != true ]; then
             targets+=('git+file:.?lfs=1#sites-app' 'git+file:.?lfs=1#sites-app-polygon-credits')
           fi
@@ -251,15 +253,18 @@ jobs:
       - name: Export the compiled APIs package
         if: steps.cache-writer.outputs.allowed == 'true' && steps.cache-saves.outputs.apis == 'true'
         run: |
-          cache_drv=$(nix eval --raw .#catalyst.drvPath)
-          image_drv=$(nix eval --raw --impure 'git+file:.?lfs=1#catalyst.drvPath')
-          if [ "$cache_drv" != "$image_drv" ]; then
-            echo '::error::Catalyst derivation differs between cache and image refs'
-            exit 1
-          fi
+          # The node and the cast-bot it starts (CAST_BOT_BIN), both in the APIs image.
+          for package in catalyst cast-bot; do
+            cache_drv=$(nix eval --raw ".#$package.drvPath")
+            image_drv=$(nix eval --raw --impure "git+file:.?lfs=1#$package.drvPath")
+            if [ "$cache_drv" != "$image_drv" ]; then
+              echo "::error::The $package derivation differs between cache and image refs"
+              exit 1
+            fi
+          done
           mkdir -p .cache/apis-nix
-          # Runtime closure only: no extra Cargo target tree or dependency build cache.
-          nix copy --to "file://$PWD/.cache/apis-nix?compression=zstd&compression-level=3" .#catalyst
+          # Runtime closures only: no extra Cargo target tree or dependency build cache.
+          nix copy --to "file://$PWD/.cache/apis-nix?compression=zstd&compression-level=3" .#catalyst .#cast-bot
           du -sh .cache/apis-nix
       - name: Save the compiled APIs package
         if: steps.cache-writer.outputs.allowed == 'true' && steps.cache-saves.outputs.apis == 'true'

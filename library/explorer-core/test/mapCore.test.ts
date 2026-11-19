@@ -4,6 +4,7 @@ import { clusterCellSize, clusterMarkers } from '../features/map/clusters'
 import { parcelCenter, parcelWithinBounds, playerMarkerPosition, positionToCoords } from '../features/map/mapCoords'
 import { createMapLayersStore } from '../features/map/mapLayersStore'
 import { liveEventMarkers, poiMarkers, resultMarkers } from '../features/map/mapMarkers'
+import { mapPins, pinMarkers } from '../features/map/mapPins'
 import type { DiscoverPlace } from '../features/places/placesApi'
 import type { EventData } from '../engine/protocol'
 import { eventOf, placeOf } from './mapFixtures'
@@ -175,10 +176,35 @@ describe('marker layers', () => {
   })
 })
 
+describe('quest pins', () => {
+  it('stand on the centre of their parcel, keep their icon and replace the whole list', () => {
+    expect(pinMarkers([{ id: 'px:1', x: -3, y: 7, title: 'Memory Grid', icon: null }])).toEqual([
+      { id: 'px:1', key: { x: -3, y: 7 }, position: parcelCenter({ x: -3, y: 7 }), title: 'Memory Grid', icon: null }
+    ])
+    let calls = 0
+    const off = mapPins.subscribe(() => calls++)
+    mapPins.receive([{ id: 'px:1', x: 0, y: 0, title: '', icon: 'https://content.test/a.png' }])
+    expect(mapPins.getSnapshot().map((p) => p.icon)).toEqual(['https://content.test/a.png'])
+    mapPins.clear()
+    mapPins.clear()
+    expect(mapPins.getSnapshot()).toEqual([])
+    expect(calls).toBe(2)
+    off()
+  })
+
+  it('drop a pin outside the city, where there is no parcel to pick', () => {
+    const pin = (id: string, x: number, y: number) => ({ id, x, y, title: id, icon: null })
+    expect(pinMarkers([pin('far', 5000, 5000), pin('west', -151, 0), pin('plaza', 0, 0), pin('north strip', 100, 155)]).map((p) => p.id)).toEqual([
+      'plaza',
+      'north strip'
+    ])
+  })
+})
+
 describe('map layers store', () => {
-  it('starts with the markers, people and satellite on and parcels off', () => {
+  it('starts with the markers, the quest pins, people and satellite on and parcels off', () => {
     const store = createMapLayersStore()
-    expect([...store.getSnapshot()].sort()).toEqual(['liveEvents', 'people', 'pois', 'satellite'])
+    expect([...store.getSnapshot()].sort()).toEqual(['liveEvents', 'people', 'pins', 'pois', 'satellite'])
   })
 
   it('tells subscribers of a change and keeps one map type on', () => {

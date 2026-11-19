@@ -47,10 +47,13 @@ impl VideoContext {
             .best(Type::Video)
             .ok_or(VideoError::NoStream)?;
 
-        let pixel_format: AVPixelFormat =
-            unsafe { std::mem::transmute((*input_stream.parameters().as_ptr()).format) };
+        // the stream's own format, before the decoder opens: some decoders (vp8) set one when
+        // they open, which would hide a failed probe from the download fallback.
+        // SAFETY: the parameters belong to the stream, which outlives this read. `format` is a
+        // plain int, compared as one: a value this build's enum doesn't know is not UB.
+        let pixel_format = unsafe { (*input_stream.parameters().as_ptr()).format };
 
-        if pixel_format == AVPixelFormat::AV_PIX_FMT_NONE {
+        if pixel_format == AVPixelFormat::AV_PIX_FMT_NONE as i32 {
             return Err(VideoError::BadPixelFormat);
         }
 

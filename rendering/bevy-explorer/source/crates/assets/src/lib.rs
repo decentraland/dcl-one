@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use bevy::{asset::io::embedded::EmbeddedAssetRegistry, prelude::*};
 
 include!(concat!(env!("OUT_DIR"), "/generated_asset_embedding.rs"));

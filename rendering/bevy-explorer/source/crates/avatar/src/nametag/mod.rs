@@ -488,7 +488,6 @@ impl ChatBubble {
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn resolve_content(
     mut commands: Commands,
     official: Res<OfficialWallets>,
@@ -513,7 +512,6 @@ fn resolve_content(
 /// [`AvatarSelection`] and gets no tag, and nor do the avatars the HUD previews, which a system
 /// scene makes. One the scene marks as talking is [`Speaking`], as in a call: a scene that
 /// turns nearby voice off leaves its bars up.
-#[allow(clippy::type_complexity)]
 fn resolve_scene_avatar_content(
     mut commands: Commands,
     avatars: Query<
@@ -643,7 +641,6 @@ fn voice_badge(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn resolve_voice(
     mic: Res<MicState>,
     mutes: Res<NearbyMutes>,
@@ -691,7 +688,6 @@ fn tag_scale(distance: f32, fov: f32) -> f32 {
 }
 
 /// Decide which names show. One that doesn't is only hidden: its tag, and its message, stay.
-#[allow(clippy::type_complexity)]
 fn show_tags(
     visible: Res<NametagsVisible>,
     camera: Query<(&Transform, &PrimaryCamera)>,
@@ -757,7 +753,6 @@ fn retext_from_bridge(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn show_chat_bubbles(
     mut commands: Commands,
     mut requests: EventReader<ChatBubbleRequest>,
@@ -903,7 +898,6 @@ impl TagBuilder<'_, '_> {
 
     /// Bring `tag` up to what `player` shows now. Returns whether the tag draws: it should
     /// show, and its mesh samples the atlas as it is.
-    #[allow(clippy::too_many_arguments)]
     fn build(
         &mut self,
         frame: &mut Frame,
@@ -1040,7 +1034,6 @@ impl TagBuilder<'_, '_> {
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn build_tags(
     time: Res<Time<Real>>,
     mut tags: Query<(Entity, &ChildOf, &mut Nametag, &mut Mesh3d, &mut Visibility)>,
@@ -1077,7 +1070,6 @@ fn blend(from: Color, to: Color, amount: f32) -> Color {
 }
 
 /// The tag's quads, back to front.
-#[allow(clippy::too_many_arguments)]
 fn tag_quads(
     tag: &TagLayout,
     mention: f32,

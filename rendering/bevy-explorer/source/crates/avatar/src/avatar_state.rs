@@ -265,7 +265,6 @@ fn hidden_slots<'a>(hides: impl IntoIterator<Item = &'a WearableCategory>) -> Ve
     slots
 }
 
-#[allow(clippy::type_complexity)]
 fn avatar_state_cmd(
     mut input: ConsoleCommand<AvatarStateCommand>,
     avatars: Query<(

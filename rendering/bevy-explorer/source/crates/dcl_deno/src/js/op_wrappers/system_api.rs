@@ -13,10 +13,10 @@ use system_bridge::{
     CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
     FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
     FriendshipEventUpdate, HomeScene, HoverEvent, ListenedCommunity, LiveSceneInfo, LobbyStage,
-    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PlatformBanNotice,
-    PortableInfo, ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi,
-    SetAvatarData, TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage,
-    WelcomeState, WorldAccessEvent, WorldAccessVerdict,
+    MapPinInfo, OutfitsData, PermanentPermissionItem, PermissionRequestEvent, PhotoModeState,
+    PlatformBanNotice, PortableInfo, ProfileChangedEvent, ProximityEvent, SatelliteView,
+    SceneLoadingUi, SetAvatarData, TextureOptimizationStatus, VoiceChatAction, VoiceChatState,
+    VoiceMessage, WelcomeState, WorldAccessEvent, WorldAccessVerdict,
 };
 
 // list of op declarations
@@ -37,6 +37,7 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_set_setting(),
             op_kernel_fetch_headers(),
             op_set_avatar(),
+            op_deploy_outfits(),
             op_native_input(),
             op_get_bindings(),
             op_set_bindings(),
@@ -99,6 +100,8 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_set_world_password(),
             op_get_portables_stream(),
             op_read_portables_stream(),
+            op_get_map_pins_stream(),
+            op_read_map_pins_stream(),
             op_get_profile_changed_stream(),
             op_read_profile_changed_stream(),
             op_get_scene_loading_ui_stream(),
@@ -1022,6 +1025,15 @@ pub async fn op_read_block_update_stream(
 }
 
 #[op2(async)]
+pub async fn op_deploy_outfits(
+    state: Rc<RefCell<OpState>>,
+    #[string] address: String,
+    #[serde] outfits: OutfitsData,
+) -> Result<(), anyhow::Error> {
+    dcl_js::system_api::op_deploy_outfits(state, address, outfits).await
+}
+
+#[op2(async)]
 pub async fn op_get_portables_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_portables_stream(state).await
 }
@@ -1033,4 +1045,18 @@ pub async fn op_read_portables_stream(
     rid: u32,
 ) -> Result<Option<Vec<PortableInfo>>, anyhow::Error> {
     dcl_js::system_api::op_read_portables_stream(state, rid).await
+}
+
+#[op2(async)]
+pub async fn op_get_map_pins_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_map_pins_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_map_pins_stream(
+    state: Rc<RefCell<OpState>>,
+    rid: u32,
+) -> Result<Option<Vec<MapPinInfo>>, anyhow::Error> {
+    dcl_js::system_api::op_read_map_pins_stream(state, rid).await
 }

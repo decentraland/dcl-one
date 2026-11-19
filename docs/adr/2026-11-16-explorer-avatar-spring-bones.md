@@ -1,6 +1,6 @@
 # ADR: Spring bones are simulated on the ten nearest avatars, in fixed steps
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-16
 
 ## Context
@@ -60,7 +60,9 @@ put back at rest.
 `TransformHelper`, as the IK systems do, and writes local rotations before the final propagate.
 
 **One setting turns it on:** `GraphicsSettings::spring_bones`, shown as "Jiggle Bones". It is off
-by default.
+by default and in the Low preset, and on in the Medium and High presets.
+A config saved before the presets carried the setting keeps it off: one that matched Medium or
+High then reads as Custom until the player picks the preset again.
 
 `gravityDir` is authored for a left-handed world and is read as `(x, y, -z)`, the mapping scene
 transforms use.
@@ -80,7 +82,50 @@ transforms use.
 - `/spring_bones` and the Spring bones debug section report the chains found and the avatars
   simulated.
 
-## Not yet measured
+## Measured cost
 
-The cost of ten simulated avatars on the web build, and the worst frames while avatars enter and
-leave the simulated set. The setting stays off by default until that is recorded.
+Measured on the web build on 2026-11-18, with CI's release builds (wasm-opt): main at `0180c200a`
+against a build whose presets carry the setting. Chrome 157 on an Apple
+M1 Pro (macOS 26.5), a 1600×900 window at a device pixel ratio of 2, a new account with the Medium
+preset picked in Settings, so main ran with the setting off and the change with it on. Each build
+then ran the same scenes with the setting turned the other way by hand. Three runs of each build,
+interleaved; a reading is 45 s of sampled frames, about 1,000, from `/performance_state`.
+
+The scenes are in a loopback realm and hold 12 or 14 `AvatarShape` avatars in live wearables that
+declare spring bones (hair, hats, earrings, wings, tails, a jacket, trousers, boots, gloves, a
+beard), up to nine on one avatar. Ten avatars were simulated, the player among them, with 180 to
+230 chains between them:
+
+- **steady**: 12 avatars swaying in place; the simulated ten never change.
+- **churn**: 14 avatars, seven of them walking 2.5 to 9.5 m from the camera and back every 4 s,
+  out of step, so the ten nearest change several times a second.
+- **flip**: the steady crowd, with the camera turning its back on it and facing it again every
+  2 s, so every simulated avatar but the player leaves the set at once and enters it again.
+
+| Scene | Frame, main (off) | Frame, change (on) | On − off, frame | On − off, main-world schedules |
+| --- | ---: | ---: | ---: | ---: |
+| steady | 43.05 ms | 43.34 ms | +0.41 ms (+0.16 to +0.53) | +0.44 ms (+0.06 to +0.58) |
+| churn | 45.39 ms | 46.00 ms | +0.77 ms (+0.35 to +0.84) | +0.49 ms (+0.23 to +0.75) |
+| flip | 44.51 ms | 44.79 ms | +0.14 ms (+0.04 to +0.34) | +0.03 ms (−0.60 to +0.74) |
+
+The frame columns are the median of each build's three runs of the mean frame time. The on − off
+columns pair the two settings within a run of one build, six runs in all, as median and range:
+a run's mean moves by more between runs (41.7 to 43.6 ms in steady) than the setting moves it.
+Ten simulated avatars cost about half a millisecond of the main world's schedules a frame: 1 to
+2 % of this frame, and about 3 % of the 16.7 ms frame of the 60 fps target.
+
+Worst frames, setting on against off, over the six runs:
+
+| Scene | Slowest frame of a run, on | off | Frames over 50 ms, on | off |
+| --- | ---: | ---: | ---: | ---: |
+| steady | 83.0 to 88.8 ms | 82.3 to 86.4 ms | 3.0 % | 2.9 % |
+| churn | 87.5 to 100.6 ms | 86.8 to 112.7 ms | 11.1 % | 8.1 % |
+| flip | 88.8 to 91.9 ms | 89.8 to 110.6 ms | 8.0 % | 7.8 % |
+
+Avatars entering and leaving the simulated set add no frame slower than the scenes already have
+with the setting off. In churn more frames pass 50 ms with the setting on: its 95th percentile
+frame is 50 ms either way, so the added time moves frames across that line.
+
+Limits of the measurement: one machine. Its frame here, 43 to 46 ms, is not bound by the main
+world, whose schedules take 13 ms of it, and Chrome reported no GPU time. The cost on a slower CPU,
+where the main world bounds the frame, is not measured.

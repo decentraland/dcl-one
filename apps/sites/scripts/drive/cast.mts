@@ -298,16 +298,15 @@ async function main(): Promise<number> {
   });
   children.push(chromium);
 
-  const controls = ".cast-console__controls";
+  const controls = ".stcast";
   const streamer = await openPage(cdp);
   // The first load lets Vite optimize the pages' dependencies, which reloads the page once.
   await streamer.navigate(`${site}/cast/s/${STREAMING_KEY}`, 8_000);
   await streamer.navigate(`${site}/cast/s/${STREAMING_KEY}`, 3_000);
-  const ready = await until(streamer, buttonExpr("Continue with these devices", controls), 120_000);
+  const ready = await until(streamer, buttonExpr("JOIN NOW", controls), 120_000);
   check("the stream link resolves its place", ready && (await streamer.ev(`document.body.innerText.includes(${JSON.stringify(PLACE_NAME)})`)));
   await fill(streamer, "Your name", "Ada");
-  await click(streamer, "Continue with these devices", controls);
-  await click(streamer, "Join now", controls);
+  await click(streamer, "JOIN NOW", controls);
   const joined = await until(streamer, buttonExpr("Share screen", controls), 30_000);
   const camera = joined && (await until(streamer, `[...document.querySelectorAll(".stcast__stage video")].some((v) => v.videoWidth > 0)`, 30_000));
   check("the streamer publishes its camera", camera, JSON.stringify(await streamer.ev(videos(".stcast__stage"))));

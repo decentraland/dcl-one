@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::sync::Arc;
 
 use alloy_core::primitives::Address;
@@ -151,6 +153,11 @@ impl Wallet {
     /// transactions with.
     pub fn is_guest_account(&self) -> bool {
         self.0.try_read().unwrap().guest_account
+    }
+
+    /// Either kind of guest: what a server is told as `isGuest`, as unity-explorer tells it.
+    pub fn is_any_guest(&self) -> bool {
+        self.is_guest() || self.is_guest_account()
     }
 }
 
