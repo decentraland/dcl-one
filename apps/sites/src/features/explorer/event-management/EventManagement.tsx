@@ -1,3 +1,4 @@
+import { sitesFooterCopy } from "@dcl/one-ui/apps/sites/chrome/footer-copy";
 import { EventDetailModal } from "@dcl/one-ui/apps/sites/events/DetailModal";
 import { Dialog } from "@dcl/one-ui/apps/sites/events/Dialog";
 import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
@@ -242,7 +243,7 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
   );
 
   return (
-    <SitesChrome active="whatson" headerSurface={mode === "pending" ? "overlay" : "solid"} overlayNav={mode === "pending"}>
+    <SitesChrome active="whatson" headerSurface={mode === "pending" ? "overlay" : "solid"} overlayNav={mode === "pending"} footerCopy={sitesFooterCopy[locale]}>
       <main className={mode === "pending" ? styles.pendingRoot : styles.root}>
         {mode !== "pending" && <EventNavigation profile={access.profile} canManageUsers={canManageUsers} />}
         <h1 id={mode === "pending" ? "pending-events-heading" : undefined}>{mode === "users" ? "User permissions" : text(mode === "mine" ? "My Hangouts" : "Pending Events")}</h1>

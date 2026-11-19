@@ -9,7 +9,7 @@ import SitesChrome from "@ui/web/frames/SitesChrome";
 import type { SitesLocaleHandle } from "@ui/web/frames/sites-locale";
 
 import { detectPlatform } from "@/features/download/options";
-import { EventsLocaleProvider } from "@/features/events/locale";
+import { EventsLocaleProvider, useEventsFooterCopy } from "@/features/events/locale";
 import { EventsView } from "@/features/events/EventsView";
 import { TAB_PARAM } from "@/features/events/view";
 import EventManagement from "@/features/explorer/event-management/EventManagement";
@@ -59,8 +59,13 @@ export function headers() {
   return { Vary: "User-Agent", "Cache-Control": "private, no-cache" };
 }
 
-export default function Events({ loaderData }: Route.ComponentProps) {
+export default function Events(props: Route.ComponentProps) {
+  return <EventsLocaleProvider><EventsRoute {...props} /></EventsLocaleProvider>;
+}
+
+function EventsRoute({ loaderData }: Route.ComponentProps) {
   const [params] = useSearchParams();
+  const footerCopy = useEventsFooterCopy();
   // A client navigation has no loader data: the session and device come from the browser instead.
   const [first] = useState(() => ({
     sid: loaderData?.sid ?? "",
@@ -76,9 +81,9 @@ export default function Events({ loaderData }: Route.ComponentProps) {
       ? { now: loaderData.now, unavailable: loaderData.unavailable }
       : null,
   }));
-  const content = params.get(TAB_PARAM) === "my" ? <EventManagement mode="mine" /> : (
+  return params.get(TAB_PARAM) === "my" ? <EventManagement mode="mine" /> : (
     <HydrationBoundary state={loaderData?.dehydratedState ?? undefined}>
-      <SitesChrome active="whatson" headerSurface="overlay" overlayNav>
+      <SitesChrome active="whatson" headerSurface="overlay" overlayNav footerCopy={footerCopy}>
         <EventsView
           sid={first.sid}
           platform={first.platform}
@@ -88,5 +93,4 @@ export default function Events({ loaderData }: Route.ComponentProps) {
       </SitesChrome>
     </HydrationBoundary>
   );
-  return <EventsLocaleProvider>{content}</EventsLocaleProvider>;
 }
