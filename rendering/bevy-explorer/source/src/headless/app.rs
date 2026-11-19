@@ -310,9 +310,7 @@ fn setup(
     wallet: Res<Wallet>,
     mut current_profile: ResMut<CurrentUserProfile>,
 ) {
-    // fake player: process_scene_lifecycle early-returns without a PrimaryUser,
-    // and the scene's player proxy follows no entity without the marker. Placed at the scene
-    // location so position-based loading picks up the parcel scene.
+    // Stand-in player: a `PrimaryUser` placed at the center of the home parcel.
     let player_pos = Vec3::new(
         8.0 + PARCEL_SIZE * config.home_location().x as f32,
         0.0,
