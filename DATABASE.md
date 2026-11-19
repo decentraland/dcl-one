@@ -1253,8 +1253,9 @@ supplying a confirmed response. A held claim with no stored response stays
 quarantined until an operator clears `reward_requested_at`. A successful reply
 `{"ok": true, "data": []}` confirms the beneficiary holds no reward under the
 tier's campaign key: the claim is cleared and every unclaimed row of that tier
-gets `reward_retry_at` one hour ahead, so one request per hour covers the tier
-until its campaign is restocked. After restocking, operators may clear
+without a stored response gets `reward_retry_at` one hour ahead (through the
+partial due index), so about one request per hour covers the tier until its
+campaign is restocked. After restocking, operators may clear
 `reward_retry_at` on those rows to retry sooner. Additive step `0024_social_referral_reward_receipt`
 imports previously confirmed object-valued `reward_paid` responses, including
 receipts with missing or invalid image metadata, and quarantines uncertain pending

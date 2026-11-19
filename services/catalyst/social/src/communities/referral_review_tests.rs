@@ -1452,6 +1452,15 @@ async fn an_empty_reward_supply_defers_its_whole_tier() {
             .bind(wallet()).bind(&user).bind(tier).execute(&pool).await.unwrap();
         invited.push(user);
     }
+    // A stored response completes locally even when its tier is empty.
+    let (stored_referrer, stored) = (wallet(), wallet());
+    sqlx::query("INSERT INTO social.referral_progress(referrer,invited_user,status,tier_granted,reward_tier,reward_response,reward_retry_at) VALUES($1,$2,'tier_granted',true,5,$3,timezone('UTC', now()) - interval '1 minute')")
+        .bind(&stored_referrer)
+        .bind(&stored)
+        .bind(json!({"image": "https://reward.example.org/tier.png"}))
+        .execute(&pool)
+        .await
+        .unwrap();
 
     referral.drain_pending_rewards().await.unwrap();
     assert_eq!(
@@ -1469,6 +1478,14 @@ async fn an_empty_reward_supply_defers_its_whole_tier() {
     .await
     .unwrap();
     assert_eq!(deferred, 4, "every row of both tiers waits unclaimed");
+    let completed: Option<i32> = sqlx::query_scalar(
+        "SELECT reward_tier FROM social.referral_progress WHERE invited_user = $1",
+    )
+    .bind(&stored)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(completed, None, "the stored response is delivered");
     server.abort();
     database.drop().await;
 }

@@ -497,7 +497,7 @@ impl Referral {
             tracing::warn!(%error, "login receipt cleanup failed; continuing reward delivery");
         }
         let rows: Vec<(String, String, i32, bool)> = sqlx::query_as(
-            "SELECT referrer,invited_user,reward_tier,reward_requested_at IS NULL FROM social.referral_progress \
+            "SELECT referrer,invited_user,reward_tier,reward_requested_at IS NULL AND reward_response IS NULL FROM social.referral_progress \
              WHERE reward_tier IS NOT NULL \
                AND (reward_requested_at IS NULL OR reward_response IS NOT NULL) \
                AND (reward_retry_at IS NULL OR reward_retry_at <= timezone('UTC',now())) \
@@ -621,8 +621,11 @@ impl Referral {
             // this tier's key: release the claim and defer every unclaimed row
             // of the tier, which shares that key and its supply.
             if value["ok"] == true && value["data"].as_array().is_some_and(Vec::is_empty) {
-                sqlx::query("UPDATE social.referral_progress SET reward_requested_at=NULL,reward_retry_at=timezone('UTC',now())+$3::interval WHERE reward_tier=$2 AND (invited_user=$1 OR reward_requested_at IS NULL)")
+                sqlx::query("UPDATE social.referral_progress SET reward_requested_at=NULL,reward_retry_at=timezone('UTC',now())+$3::interval WHERE invited_user=$1 AND reward_tier=$2")
                     .bind(invited).bind(total as i32).bind(EMPTY_SUPPLY_RETRY).execute(&mut *guard).await.map_err(database_error)?;
+                // The predicate implies referral_progress_reward_due_idx.
+                sqlx::query("UPDATE social.referral_progress SET reward_retry_at=timezone('UTC',now())+$2::interval WHERE reward_tier=$1 AND reward_requested_at IS NULL AND reward_response IS NULL")
+                    .bind(total as i32).bind(EMPTY_SUPPLY_RETRY).execute(&mut *guard).await.map_err(database_error)?;
                 return Ok(RewardAttempt::EmptySupply);
             }
             let reward = value["data"]
