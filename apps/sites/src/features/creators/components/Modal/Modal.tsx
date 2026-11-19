@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { portalRoot } from '../../portalRoot'
 import { CloseIcon } from '../Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { track } from '@/data/lib/creators/analytics'
@@ -179,6 +180,6 @@ export function Modal({
         </div>
       </div>
     </div>,
-    document.body
+    portalRoot()
   )
 }

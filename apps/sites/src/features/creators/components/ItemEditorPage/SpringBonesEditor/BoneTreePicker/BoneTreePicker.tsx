@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { portalRoot } from '../../../../portalRoot'
 import {
   ArrowDropDownIcon as ChevronIcon,
   ChevronRightIcon as CaretIcon,
@@ -174,7 +175,7 @@ export function BoneTreePicker({
               </li>
             ))}
           </ul>,
-          document.body
+          portalRoot()
         )}
     </div>
   )

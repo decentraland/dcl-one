@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { portalRoot } from '../../portalRoot'
 import { ArrowDropDownIcon as ChevronIcon, ExpandMoreIcon as CompactChevronIcon } from '../Icons'
 import styles from './Select.module.css'
 import { useListbox } from './useListbox'
@@ -128,7 +129,7 @@ export function Select<T extends string>({
               </li>
             ))}
           </ul>,
-          document.body
+          portalRoot()
         )}
     </div>
   )

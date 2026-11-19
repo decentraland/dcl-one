@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { createPortal } from 'react-dom'
+import { portalRoot } from '../../portalRoot'
 import { ArrowDropDownIcon as ChevronIcon, CheckIcon, ExpandMoreIcon as CompactChevronIcon } from '../Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
 import base from '../Select/Select.module.css'
@@ -117,7 +118,7 @@ export function MultiSelect<T extends string>({
               )
             })}
           </ul>,
-          document.body
+          portalRoot()
         )}
     </div>
   )

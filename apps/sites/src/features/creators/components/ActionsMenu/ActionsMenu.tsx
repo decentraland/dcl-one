@@ -9,6 +9,7 @@ import {
   type ReactNode
 } from 'react'
 import { createPortal } from 'react-dom'
+import { portalRoot } from '../../portalRoot'
 import { Button } from '../Button'
 import { MoreHorizIcon } from '../Icons'
 import styles from './ActionsMenu.module.css'
@@ -113,7 +114,7 @@ export function ActionsMenu({ label, variant = 'header', tone = 'default', testI
               {children}
             </div>
           </MenuContext.Provider>,
-          document.body
+          portalRoot()
         )}
     </div>
   )

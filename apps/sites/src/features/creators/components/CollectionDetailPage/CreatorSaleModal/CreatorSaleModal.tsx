@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { portalRoot } from '../../../portalRoot'
 import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, InfoOutlinedIcon } from '../../Icons'
 import { useIntl } from '@/data/lib/creators/intl'
 import { useTranslation, type Translate } from '@/data/lib/creators/intl'
@@ -902,7 +903,7 @@ export function CreatorSaleModal({
                         onClose={() => setWhenOpen(false)}
                       />
                     </div>,
-                    document.body
+                    portalRoot()
                   )
                 : null}
             </div>

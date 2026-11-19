@@ -10,6 +10,7 @@ import {
   type KeyboardEvent
 } from 'react'
 import { createPortal } from 'react-dom'
+import { portalRoot } from '../../../portalRoot'
 import { CloseIcon, ExpandMoreIcon as ChevronIcon } from '../../Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { useProfile } from '../../../hooks/useProfile'
@@ -346,7 +347,7 @@ export function BeneficiaryInput({
                 </li>
               )}
             </ul>,
-            document.body
+            portalRoot()
           )}
       </div>
       {listError ? (
