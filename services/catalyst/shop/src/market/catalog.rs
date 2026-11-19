@@ -70,10 +70,12 @@ pub const MAX_NUMERIC_NUMBER: &str =
 /// that gives an nft-order leg its item without an nft table.
 pub use crate::shared::collections::ITEM_SHIFT as ITEM_ID_SHIFT;
 
-/// The off-chain marketplace contracts (v2 and v3, both mainnets and
-/// testnets): a collection listing one of them as a minter is what the squid
-/// flagged `search_is_marketplace_v3_minter`.
-pub const OFFCHAIN_MARKETPLACE_MINTERS: [&str; 6] = [
+/// The off-chain marketplace contracts (v1 on Polygon, v2 and v3, both
+/// mainnets and testnets): a collection listing one of them as a minter is
+/// what the squid flagged `search_is_marketplace_v3_minter`.
+pub const OFFCHAIN_MARKETPLACE_MINTERS: [&str; 8] = [
+    "0x540fb08edb56aae562864b390542c97f562825ba",
+    "0x6ab20ae56673ed65f520b7be332aeb61b3ed727d",
     "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7",
     "0xa40b1d129b8906888720686f3a01921ddf37716f",
     "0x0f11d0d1671519683bd48abf3dbe779e300941cd",
@@ -1361,6 +1363,21 @@ mod tests {
             })
             .unwrap();
             assert_eq!(got, expected);
+        }
+    }
+
+    /// The squid's Polygon minter check takes OffChainMarketplace v1, v2 and v3, which
+    /// the contract map names MarketplaceV3, V4 and V5.
+    #[test]
+    fn every_polygon_offchain_marketplace_is_a_v3_minter() {
+        let map: serde_json::Value =
+            serde_json::from_slice(crate::evm::contracts::ADDRESSES_JSON).unwrap();
+        let expr = v3_minter_expr();
+        for network in ["matic", "amoy"] {
+            for key in ["MarketplaceV3", "MarketplaceV4", "MarketplaceV5"] {
+                let address = map[network][key].as_str().unwrap().to_lowercase();
+                assert!(expr.contains(&format!("'{address}'")), "{network} {key}");
+            }
         }
     }
 
