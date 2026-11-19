@@ -43,6 +43,10 @@ describe('when the Sites profile panel is open', () => {
     await user.click(screen.getByRole('button', { name: 'Copy user ID' }))
     expect(await navigator.clipboard.readText()).toBe('0x1234567890abcdef1234567890abcdef12345678')
     expect(screen.getByRole('status')).toHaveTextContent('User ID copied')
+    expect(screen.getByText('Copied')).toBeVisible()
+    await user.keyboard('{Escape}')
+    await user.click(trigger)
+    expect(screen.queryByText('Copied')).toBeNull()
   })
 
   it('should drop an unavailable body snapshot', () => {

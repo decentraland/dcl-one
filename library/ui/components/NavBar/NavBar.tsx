@@ -27,6 +27,7 @@ import {
 import { MenusCopy } from '../../foundations/icons/menus'
 import { ShopCredits } from '../../foundations/icons/shop'
 import { breakpoints } from '../../foundations/layout/layout'
+import { CopyFeedback } from '../CopyFeedback/CopyFeedback'
 import styles from './NavBar.module.css'
 import profileStyles from './NavBar.profile.module.css'
 
@@ -597,15 +598,6 @@ function AccountMenu({
   const sites = profile || appearance === 'sites'
   const [failedBodyUrl, setFailedBodyUrl] = useState<string>()
   const bodyUrl = account.bodyUrl === failedBodyUrl ? undefined : account.bodyUrl
-  const [copyStatus, setCopyStatus] = useState('')
-  const copyAddress = async () => {
-    try {
-      await navigator.clipboard.writeText(account.address)
-      setCopyStatus(labels.userIdCopied)
-    } catch {
-      setCopyStatus(labels.copyUserIdError)
-    }
-  }
   return (
     <div
       ref={rootRef}
@@ -621,10 +613,7 @@ function AccountMenu({
         aria-label={labels.account(displayName)}
         aria-expanded={open}
         aria-controls={menuId}
-        onClick={() => {
-          setCopyStatus('')
-          toggle()
-        }}
+        onClick={toggle}
       >
         <Avatar account={account} />
       </button>
@@ -654,21 +643,28 @@ function AccountMenu({
                 <div className={profile ? profileStyles.identity : styles.accountIdentity}>
                   <span className={profile ? profileStyles.identityLabel : undefined}>{labels.userId}</span>
                   <span title={account.address}>{shortAddress(account.address)}</span>
-                  <button
-                    type="button"
-                    aria-label={labels.copyUserId}
-                    className={styles.iconButton}
-                    onClick={() => void copyAddress()}
-                  >
-                    {profile ? (
-                      <MenusCopy size={16} aria-hidden="true" />
-                    ) : (
-                      <GeneralCopy size={16} aria-hidden="true" />
-                    )}
-                  </button>
-                  <span role="status" className={styles.visuallyHidden}>
-                    {copyStatus}
-                  </span>
+                  {open ? (
+                    <CopyFeedback
+                      value={account.address}
+                      successAnnouncement={labels.userIdCopied}
+                      errorAnnouncement={labels.copyUserIdError}
+                    >
+                      {(copy) => (
+                        <button
+                          type="button"
+                          aria-label={labels.copyUserId}
+                          className={styles.iconButton}
+                          onClick={copy}
+                        >
+                          {profile ? (
+                            <MenusCopy size={16} aria-hidden="true" />
+                          ) : (
+                            <GeneralCopy size={16} aria-hidden="true" />
+                          )}
+                        </button>
+                      )}
+                    </CopyFeedback>
+                  ) : null}
                 </div>
               ) : account.name ? (
                 <p className={styles.accountAddress} title={account.address}>
