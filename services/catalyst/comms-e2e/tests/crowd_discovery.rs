@@ -200,10 +200,10 @@ fn client(wallet: &str, island: &str, peers: &[&str], room: &[&str], pulse: usiz
 #[test]
 fn the_adapter_a_realm_names_is_dialed_as_it_says() {
     assert_eq!(
-        adapter_socket("archipelago:archipelago:wss://dcl.dev/ws")
+        adapter_socket("archipelago:archipelago:wss://realm.example/ws")
             .unwrap()
             .as_str(),
-        "wss://dcl.dev/ws"
+        "wss://realm.example/ws"
     );
     assert_eq!(
         adapter_socket("archipelago:archipelago:ws://127.0.0.1:6210/ws")
