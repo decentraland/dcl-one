@@ -300,7 +300,7 @@ fn auth_chain_is_valid(chain: Option<&AuthChain>, address: &str) -> bool {
     let Ok((_, ephemeral, _)) = parse_ephemeral_payload(&delegation.payload) else {
         return false;
     };
-    crate::auth::verify_auth_chain(chain, &ephemeral, None).is_ok()
+    crate::auth::verify_login_chain(chain, &ephemeral, None).is_ok()
 }
 
 #[cfg(test)]

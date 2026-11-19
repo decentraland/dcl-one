@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::auth::{
-    AuthChain, AuthLinkType, parse_ephemeral_payload, recover_address, verify_auth_chain,
+    AuthChain, AuthLinkType, parse_ephemeral_payload, recover_address, verify_login_chain,
 };
 
 use super::CreateRequestBody;
@@ -128,7 +128,7 @@ pub(super) fn validate_auth_chain(chain: &AuthChain) -> Result<VerifiedChain, St
         .map(|l| l.payload.clone())
         .ok_or_else(|| "Auth chain is required".to_string())?;
     let final_authority = derive_final_authority(chain)?;
-    verify_auth_chain(chain, &final_authority, None)
+    verify_login_chain(chain, &final_authority, None)
         .map(|_| ())
         .map_err(|e| e.to_string())?;
     Ok(VerifiedChain { sender })
@@ -164,7 +164,7 @@ pub(super) fn validate_identity_chain(chain: &AuthChain) -> Result<(String, Stri
     };
     let (_, final_authority, _) = parse_ephemeral_payload(&last.payload)
         .map_err(|_| "Could not get final authority from auth chain".to_string())?;
-    verify_auth_chain(chain, &final_authority, None)
+    verify_login_chain(chain, &final_authority, None)
         .map(|_| ())
         .map_err(|e| e.to_string())?;
     Ok((first.payload.clone(), final_authority))

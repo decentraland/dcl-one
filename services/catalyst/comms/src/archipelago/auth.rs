@@ -1,5 +1,5 @@
 use crate::auth::AuthChain;
-use crate::auth::{eip1654::Eip1654Validator, verify::verify_auth_chain_at_verification_time};
+use crate::auth::{eip1654::Eip1654Validator, verify::verify_login_chain_at_verification_time};
 use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
@@ -175,7 +175,7 @@ impl ChallengeStore {
             return Err(AuthError::ChallengeMismatch);
         }
 
-        verify_auth_chain_at_verification_time(
+        verify_login_chain_at_verification_time(
             chain,
             expected_payload,
             now.timestamp_millis(),

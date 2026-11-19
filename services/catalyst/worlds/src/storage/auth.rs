@@ -332,7 +332,7 @@ async fn chain_authority(
     now_ms: i64,
     validator: Option<&dyn Eip1654Validator>,
 ) -> Result<String, AuthChainError> {
-    match crate::auth::verify_auth_chain_async(chain, probe, Some(now_ms), validator).await {
+    match crate::auth::verify_login_chain_async(chain, probe, Some(now_ms), validator).await {
         Ok(()) => Ok(probe.to_string()),
         Err(AuthError::FinalAuthorityMismatch { actual, .. }) => Ok(actual),
         Err(e) => Err(map_auth_error(e)),

@@ -248,7 +248,7 @@ async fn validate_over_paths(
 ) -> Result<Address, SignedFetchRefusal> {
     let mut verdict = None;
     for payload in payloads {
-        match crate::auth::verify_auth_chain_async(chain, payload, Some(now * 1000), validator)
+        match crate::auth::verify_login_chain_async(chain, payload, Some(now * 1000), validator)
             .await
         {
             Ok(()) => {
