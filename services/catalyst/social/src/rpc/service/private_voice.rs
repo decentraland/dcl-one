@@ -80,8 +80,11 @@ pub(crate) async fn start_private_voice_chat(
     }
     // Upstream asks the gatekeeper about the callee before it writes anything,
     // and its adapter refuses a callee that is not a wallet: no pending call
-    // is created for one, and the caller is not held busy by it.
-    if crate::shared::identity::Address::parse(callee).is_err() {
+    // is created for one, and the caller is not held busy by it. The callee
+    // is stored as sent, so a padded address is not one either.
+    if !crate::shared::identity::Address::parse(callee)
+        .is_ok_and(|address| address.as_str().eq_ignore_ascii_case(callee))
+    {
         return Err(Refusal::Internal("Invalid Gatekeeper user address".into()));
     }
     // Community-call presence is disclosed only once block and privacy allow the call.

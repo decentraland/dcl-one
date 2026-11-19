@@ -504,7 +504,7 @@ async fn mint(
     // A world published here advertises its `/about` realm name without
     // `.dcl.eth` (`WORLDS_REALM_NAME_STRIP_ENS`), and an explorer builds the
     // scene-room mint from that name: a bare label no world is stored under
-    // names the `.dcl.eth` world, as the gatekeeper's scene routes read it.
+    // names the `.dcl.eth` world.
     let mut world = world;
     if matches!(admission, Some(WorldAdmission::Unknown))
         && !crate::world_identity::is_world_realm_name(world_name)

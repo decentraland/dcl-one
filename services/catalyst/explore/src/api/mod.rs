@@ -138,7 +138,8 @@ impl Sources {
 fn realm_comms_adapter(adapter: &str, fixed_adapter: Option<&str>) -> String {
     const OFFLINE: &str = "offline:offline";
     let adapter = value_or(adapter, OFFLINE.into());
-    let fixed = fixed_adapter.map(str::trim).unwrap_or_default();
+    let fixed = value_or(fixed_adapter.unwrap_or_default(), String::new());
+    let fixed = fixed.as_str();
     if adapter != OFFLINE || fixed.is_empty() || fixed == OFFLINE {
         adapter
     } else if fixed.starts_with("archipelago:") {

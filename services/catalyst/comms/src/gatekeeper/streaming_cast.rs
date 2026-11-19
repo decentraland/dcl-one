@@ -868,8 +868,10 @@ pub async fn generate_stream_link(
         .await?
         .ok_or_else(|| ApiError::not_found(PLACE_NOT_FOUND_MSG))?;
     // Explicit admins are stored under the bound scene's entity id
-    // (`/scene-admin`); the credential stays under the catalogue place.
-    match scene::scene_manager_decision(&state, &bound.place, &sf.signer).await {
+    // (`/scene-admin`); the credential stays under the catalogue place, and
+    // a world's one credential takes authority over the whole world.
+    let authority = super::key_authority(&state, &place_id, world, bound.place);
+    match scene::scene_manager_decision(&state, &authority, &sf.signer).await {
         PermissionDecision::Allowed => {}
         PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
             tracing::warn!(signer = %sf.signer, place_id, "stream link refused: not a scene admin");
@@ -1373,7 +1375,7 @@ pub async fn add_admin_presenter_on_join(
     };
     // The room's own scene: explicit admins are stored under its entity id.
     let place = match room_scene(state, room).await? {
-        Some(resolved) => super::scene_authority(state, &resolved, &access.place_id).await,
+        Some(resolved) => super::scene_authority(state, &resolved, &access.place_id).await?,
         None => None,
     }
     .unwrap_or_else(|| PlaceLookup::new(state, &access.place_id));

@@ -1011,6 +1011,28 @@ async fn the_concurrency_limit_answers_before_connecting() {
 
 // ── the route ──
 
+/// The Cast page posts the form cross-origin: the preflight is answered for
+/// any origin, without credentials.
+#[tokio::test]
+async fn the_route_answers_a_cors_preflight_for_any_origin_without_credentials() {
+    let response = super::router(None)
+        .oneshot(
+            Request::options("/presentations")
+                .header("origin", "https://cast.example")
+                .header("access-control-request-method", "POST")
+                .header("access-control-request-headers", "content-type")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let headers = response.headers();
+    assert_eq!(headers["access-control-allow-origin"], "*");
+    assert_eq!(headers["access-control-allow-headers"], "content-type");
+    assert!(!headers.contains_key("access-control-allow-credentials"));
+}
+
 async fn post(app: axum::Router, content_type: &str, body: Vec<u8>) -> (StatusCode, Value) {
     let response = app
         .oneshot(

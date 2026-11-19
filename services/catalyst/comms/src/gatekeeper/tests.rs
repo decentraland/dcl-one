@@ -639,6 +639,25 @@ async fn seed_device_ban(state: &CommsState) -> Seeded {
 }
 
 #[tokio::test]
+async fn a_ban_duration_past_the_timestamp_range_never_expires() {
+    let Some(pool) = scratch().await else { return };
+    let state = state_with(pool, Settings::for_tests());
+    let ban = state
+        .moderation
+        .create_ban(CreateBan {
+            banned_address: wallet(),
+            banned_by: "m".into(),
+            reason: "r".into(),
+            custom_message: None,
+            banned_device_id: None,
+            duration_ms: Some(i64::MAX),
+        })
+        .await
+        .expect("an overflowing duration is still a ban");
+    assert!(ban.expires_at.is_none());
+}
+
+#[tokio::test]
 async fn a_lookup_without_a_device_id_is_widened_to_the_recorded_device() {
     let Some(pool) = scratch().await else { return };
     let state = state_with(pool, Settings::for_tests());

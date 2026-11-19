@@ -1022,7 +1022,8 @@ mod stream_access {
         CreateBan, PLATFORM_BANNED_MSG, UpsertPlayerConnection,
     };
     use catalyst::comms::gatekeeper::streaming::{
-        FOUR_DAYS_MS, NOT_AUTHORIZED_TO_STREAM_MSG, PATH, STREAM_ACCESS_NOT_FOUND_MSG,
+        FOUR_DAYS_MS, NOT_AUTHORIZED_TO_STREAM_MSG, PATH, STREAM_ACCESS_EXPIRED_MSG,
+        STREAM_ACCESS_NOT_FOUND_MSG,
     };
     use catalyst::comms::gatekeeper::{CommsState, LiveKit, Settings, SharedState, router};
     use catalyst::http::Outbound;
@@ -1268,6 +1269,12 @@ mod stream_access {
             (status, body["error"].as_str()),
             (StatusCode::NOT_FOUND, Some(STREAM_ACCESS_NOT_FOUND_MSG))
         );
+        // A reset with nothing to reset is a 404, not the reset's 500.
+        let (status, body) = call(&app, &admin_key, "PUT", &metadata).await;
+        assert_eq!(
+            (status, body["error"].as_str()),
+            (StatusCode::NOT_FOUND, Some(STREAM_ACCESS_NOT_FOUND_MSG))
+        );
         let (status, minted) = call(&app, &admin_key, "POST", &metadata).await;
         assert_eq!(status, StatusCode::OK, "{minted}");
         assert_eq!(
@@ -1296,6 +1303,26 @@ mod stream_access {
         .await
         .unwrap();
         assert_eq!(room, format!("scene:main:{scene_id}"));
+
+        // A credential past its stored expiry that the expiry job has not
+        // retired yet is already gone for the listing.
+        for (shift, expected) in [("-", StatusCode::NOT_FOUND), ("+", StatusCode::OK)] {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE social.scene_stream_access SET expiration_time = expiration_time {shift} interval '5 days' \
+                 WHERE place_id = $1 AND active"
+            )))
+            .bind(&place_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+            let (status, body) = call(&app, &admin_key, "GET", &metadata).await;
+            assert_eq!(status, expected, "{body}");
+            if expected == StatusCode::NOT_FOUND {
+                assert_eq!(body["error"], STREAM_ACCESS_EXPIRED_MSG);
+            } else {
+                assert_eq!(body, minted, "the stored expiry is the one answered");
+            }
+        }
 
         // A scene deployed elsewhere cannot be streamed into from this parcel.
         let victim_parcel = format!("{},{}", if x < 0 { x + 151 } else { x - 151 }, y);
@@ -1683,7 +1710,6 @@ mod stream_access {
                 }
             }
         }
-        let _ = std::fs::remove_dir_all(&dir);
         assert!(refused.is_empty(), "{refused:#?}");
         let room: String = sqlx::query_scalar(
             "SELECT room_id FROM social.scene_stream_access WHERE place_id = $1 ORDER BY created_at DESC LIMIT 1",
@@ -1696,6 +1722,117 @@ mod stream_access {
             room, scene_room,
             "the credential is for the world scene's room"
         );
+
+        // The world has ONE credential. A second scene's own authorities (a
+        // grantee of its parcels only, an admin granted on it) never reach
+        // it; a grantee without a parcel restriction does.
+        let side_id = format!("SideScene{tag}");
+        let side_entity = serde_json::json!({
+            "type": "scene",
+            "timestamp": 2000,
+            "pointers": ["5,5"],
+            "metadata": {
+                "display": { "title": "Side" },
+                "scene": { "base": "5,5", "parcels": ["5,5"] },
+                "worldConfiguration": { "name": world.display() },
+            },
+        });
+        let side_parcels: ParcelSet = [Parcel::parse("5,5").unwrap()].into_iter().collect();
+        store::deploy_scene(
+            &pool,
+            &storage,
+            SceneDeployment {
+                world: &world,
+                name_owner: Some(&admin),
+                entity_id: &side_id,
+                deployer: &admin,
+                deployment_auth_chain: &serde_json::json!([{ "type": "SIGNER", "payload": admin.as_str() }]),
+                entity: &side_entity,
+                parcels: &side_parcels,
+                size: 1,
+                replacement: &Deploy::Owner,
+                forward_to: None,
+                quota: None,
+            },
+        )
+        .await
+        .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let scoped_key = random_key();
+        let side_admin_key = random_key();
+        let wide_key = random_key();
+        for (key, permission, parcel) in [
+            (&scoped_key, "deployment", Some("5,5")),
+            (&wide_key, "streaming", None),
+        ] {
+            sqlx::query("INSERT INTO worlds.world_permissions (world_name, permission, address) VALUES ($1, $2, $3)")
+                .bind(world.key())
+                .bind(permission)
+                .bind(address_of(key))
+                .execute(&pool)
+                .await
+                .unwrap();
+            if let Some(parcel) = parcel {
+                sqlx::query("INSERT INTO worlds.world_permission_parcels (world_name, permission, address, parcel) VALUES ($1, $2, $3, $4)")
+                    .bind(world.key())
+                    .bind(permission)
+                    .bind(address_of(key))
+                    .bind(parcel)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+        }
+        state
+            .moderation
+            .add_admin(
+                &side_id,
+                &Address::parse(&address_of(&side_admin_key)).unwrap(),
+                &admin,
+            )
+            .await
+            .unwrap();
+        let side_meta = serde_json::json!({
+            "signer": SCENE_SIGNER, "sceneId": side_id, "parcel": "5,5", "realm": realm,
+        })
+        .to_string();
+        let credential = || async {
+            sqlx::query_scalar::<_, Uuid>(
+                "SELECT id FROM social.scene_stream_access WHERE place_id = $1 AND active",
+            )
+            .bind(&place_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        let before = credential().await;
+        for (who, key) in [
+            ("parcel-scoped grantee", &scoped_key),
+            ("side scene admin", &side_admin_key),
+        ] {
+            for (method, path) in [
+                ("GET", PATH),
+                ("POST", PATH),
+                ("PUT", PATH),
+                ("DELETE", PATH),
+                ("GET", "/cast/generate-stream-link"),
+            ] {
+                let (status, body) = call_at(&app, key, method, path, &side_meta).await;
+                assert_eq!(
+                    status,
+                    StatusCode::FORBIDDEN,
+                    "{who} {method} {path}: {body}"
+                );
+            }
+        }
+        assert_eq!(credential().await, before, "the world's key is untouched");
+        let (status, body) = call_at(&app, &wide_key, "GET", PATH, &side_meta).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a grantee of the whole world reads the key: {body}"
+        );
+        assert!(body["streaming_key"].is_string(), "{body}");
     }
 }
 

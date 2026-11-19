@@ -66,6 +66,13 @@ Cast publishes into the scene's own LiveKit room, the one `/get-scene-adapter` h
 
 Cast differences from upstream (each pinned by a test in `G/cast_tests.rs`):
 
+- A world has one stream credential for all its scenes, so `/scene-stream-access` and
+  `/cast/generate-stream-link` take authority over the whole world there: its owner, an admin of the
+  world place, or a deployment or streaming grantee without a parcel restriction. An admin granted on
+  one scene through `/scene-admin`, or a grantee of some parcels, is refused (403) in a world; on a
+  Genesis place both are admitted. Pinned by
+  `a_world_published_here_answers_every_scene_route_under_its_stripped_realm_name`
+  (`C/tests/gatekeeper_policy.rs`).
 - Publisher identities name the credential that minted them (`stream:<place>:<access id>:<uuid>`,
   `presentation-bot:<room>:<access id>:<uuid>`). Revoking or replacing a key removes its WebRTC
   publishers from the room, and the `participant_joined` webhook removes one that joins later with a

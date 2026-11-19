@@ -112,11 +112,6 @@ pub async fn get_scene_adapter(
         .as_ref()
         .ok_or_else(|| ApiError::internal("scene resolution returned a lobby"))?
         .as_str();
-    // Where the scene's bans are stored (a world scene's under its world and
-    // base parcel): upstream answers a scene ban 403 before any world access.
-    let ban_key = resolved.ban_key().unwrap_or_else(|| {
-        crate::access::SceneBanKey::scene(resolved.scene_id.as_ref().expect("checked above"))
-    });
     let device_id = device_identifier(&sf.metadata);
     let secret = scene::meta_str(&sf.metadata, "secret");
     let started = if let Some(world) = resolved.realm.world() {
@@ -143,7 +138,7 @@ pub async fn get_scene_adapter(
             // Record only an admitted connection: a refused one must not replace the recorded device.
             let gate = state
                 .moderation
-                .connection_gate(&identity, device_id.as_deref(), ban_key.as_str())
+                .connection_gate(&identity, device_id.as_deref(), resolved_scene_id)
                 .await;
             if record && gate.is_allowed() {
                 record_connection(&state, &identity, &headers, device_id.as_deref()).await;
@@ -152,9 +147,9 @@ pub async fn get_scene_adapter(
         },
         async {
             if !is_world {
-                return Ok(true);
+                return Ok(scene::WorldAccess::Allowed);
             }
-            scene::has_world_access_permission(
+            scene::world_access(
                 &state,
                 &identity,
                 &realm_name,
@@ -167,10 +162,20 @@ pub async fn get_scene_adapter(
         },
     );
     gate.into_result()?;
-    if !world_allowed? {
-        return Err(unauthorized(
-            "Access denied, you are not authorized to access this world",
-        ));
+    match world_allowed? {
+        scene::WorldAccess::Allowed => {}
+        // A ban of the scene (under its own key or a successor's) is
+        // answered apart from the world's refusal, as upstream.
+        scene::WorldAccess::SceneBanned => {
+            return Err(crate::gatekeeper::errors::forbidden(
+                crate::gatekeeper::moderation::store::SCENE_BANNED_MSG,
+            ));
+        }
+        scene::WorldAccess::Refused => {
+            return Err(unauthorized(
+                "Access denied, you are not authorized to access this world",
+            ));
+        }
     }
     let mut grants = join_grants(&resolved.room);
     grants.can_update_own_metadata = true;

@@ -67,12 +67,7 @@ pub async fn private_messages_token(
         ))
     };
     let banned = banned.map_err(map_error)?;
-    // Upstream's token handler: an unreadable setting is shown as `all` and
-    // the token is still minted; only the ban read refuses.
-    let privacy = privacy.unwrap_or_else(|error| {
-        tracing::error!(%error, address = %identity, "private messages privacy unreadable; minting with the default");
-        "all".to_owned()
-    });
+    let privacy = privacy.map_err(map_error)?;
     if banned {
         return Err(forbidden(
             super::super::moderation::store::PLATFORM_BANNED_MSG,
@@ -104,14 +99,25 @@ pub(crate) async fn publish_private_messages_privacy(
     if !state.livekit.configured {
         return Ok(());
     }
-    let mut patch = serde_json::Map::new();
-    patch.insert("private_messages_privacy".into(), privacy.into());
-    state
-        .room_service()
-        .merge_participant_metadata(
-            &state.settings.private_messages_room_id,
-            &address.to_lowercase(),
-            patch,
+    let rooms = state.room_service();
+    let room = &state.settings.private_messages_room_id;
+    let identity = address.to_lowercase();
+    // Most wallets are not in the room when they change the setting.
+    let Some(participant) = rooms.get_participant(room, &identity).await? else {
+        return Ok(());
+    };
+    let mut metadata: serde_json::Map<String, serde_json::Value> = participant
+        .metadata
+        .as_deref()
+        .and_then(|raw| serde_json::from_str(raw).ok())
+        .unwrap_or_default();
+    metadata.insert("private_messages_privacy".into(), privacy.into());
+    rooms
+        .update_participant(
+            room,
+            &identity,
+            Some(&serde_json::Value::Object(metadata).to_string()),
+            None,
         )
         .await
 }

@@ -30,8 +30,34 @@ pub async fn has_world_access_permission(
     device_id: Option<&str>,
     caller: &str,
 ) -> Result<bool, ApiError> {
+    world_access(
+        state, identity, world_name, scene_id, secret, device_id, caller,
+    )
+    .await
+    .map(|access| access == WorldAccess::Allowed)
+}
+
+/// How a world answered a join: admitted, refused by a ban of the scene
+/// (its own key or a successor's, which upstream answers 403 apart from the
+/// world's 401), or refused otherwise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorldAccess {
+    Allowed,
+    SceneBanned,
+    Refused,
+}
+
+pub async fn world_access(
+    state: &CommsState,
+    identity: &Address,
+    world_name: &str,
+    scene_id: Option<&str>,
+    secret: Option<&str>,
+    device_id: Option<&str>,
+    caller: &str,
+) -> Result<WorldAccess, ApiError> {
     let Some(world) = world_of(world_name) else {
-        return Ok(false);
+        return Ok(WorldAccess::Refused);
     };
     let scene = scene_id.and_then(|id| SceneId::parse(id).ok());
     let now = chrono::Utc::now().naive_utc();
@@ -41,7 +67,7 @@ pub async fn has_world_access_permission(
         .await
         .map_err(|_| service_unavailable(WORLD_ACCESS_UNAVAILABLE_MSG))?;
     if !matches!(admission, WorldAdmission::Open(_)) {
-        return Ok(false);
+        return Ok(WorldAccess::Refused);
     }
     let throttle = super::super::world_mint::SecretThrottle {
         pool: &state.pool,
@@ -69,9 +95,12 @@ pub async fn has_world_access_permission(
             .await;
     }
     match access {
-        Ok(Access::Allowed(_)) => Ok(true),
-        Ok(Access::Banned(_) | Access::NotAllowed | Access::InvalidSecret) => Ok(false),
-        Err(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => Ok(false),
+        Ok(Access::Allowed(_)) => Ok(WorldAccess::Allowed),
+        Ok(Access::Banned(crate::access::Ban::Scene)) => Ok(WorldAccess::SceneBanned),
+        Ok(Access::Banned(_) | Access::NotAllowed | Access::InvalidSecret) => {
+            Ok(WorldAccess::Refused)
+        }
+        Err(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => Ok(WorldAccess::Refused),
         Err(why) => {
             tracing::error!(error = %why, world = %world, "world access could not be decided");
             Err(service_unavailable(WORLD_ACCESS_UNAVAILABLE_MSG))

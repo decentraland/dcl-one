@@ -4,8 +4,11 @@
 //! require the signed scene to be the current deployment on its parcel and
 //! authorize against that deployment: its footprint decides ownership and its
 //! entity id finds the explicit admins `/scene-admin` granted, while the
-//! credential is stored for the place based on its base parcel. Remove needs
-//! only the place (a world by its realm name, a Genesis place by its
+//! credential is stored for the place based on its base parcel. A world has
+//! one credential for all its scenes, so there only authority over the whole
+//! world counts: its owner, an admin of the world place, a deployment or
+//! streaming grantee without a parcel restriction. Remove needs
+//! only the place (a world by its realm, a Genesis place by its
 //! parcel), so a key can still be revoked after a redeploy, by the admins of
 //! the scene standing there now. List, add and reset are refused to
 //! a platform-banned wallet BEFORE that check, because LiveKit honours the
@@ -35,7 +38,7 @@ use super::moderation::store::PLATFORM_BANNED_MSG;
 use super::{CommsState, SharedState};
 use crate::rooms::{ResolvedRoom, RoomRequest};
 use crate::shared::signed_fetch::SignedPath;
-use crate::world_identity::{Parcel, RealmId, WorldName, is_world_realm_name};
+use crate::world_identity::{Parcel, RealmId, WorldName};
 use crate::{Address, AuthorityNotEstablished, PermissionDecision};
 
 #[path = "streaming_notifications.rs"]
@@ -132,7 +135,7 @@ pub async fn scene_stream_access(
         state.eip1654(),
     )
     .await?;
-    let realm_name = realm_name_from_metadata(&sf.metadata)
+    realm_name_from_metadata(&sf.metadata)
         .ok_or_else(|| ApiError::bad_request("invalid signed-fetch request, no realmName"))?;
     let device_id = device_identifier(&sf.metadata);
     if method != Method::DELETE {
@@ -142,15 +145,10 @@ pub async fn scene_stream_access(
         }
     }
     let (place_id, place, room) = if method == Method::DELETE {
-        // Revocation needs no current deployment: the place is found by the signed parcel alone.
-        let world = if is_world_realm_name(&realm_name) {
-            Some(
-                WorldName::parse(&realm_name)
-                    .map_err(|_| ApiError::bad_request("Invalid realm name"))?,
-            )
-        } else {
-            None
-        };
+        // Revocation needs no current deployment: the place is found by the
+        // signed realm and parcel alone, and the authority on that same realm.
+        let realm = Context::signed_realm(&sf.metadata)?;
+        let world = realm.world();
         let parcel = meta_str(&sf.metadata, "parcel");
         if world.is_none() && parcel.is_none() {
             return Err(ApiError::bad_request(
@@ -159,18 +157,15 @@ pub async fn scene_stream_access(
         }
         let place_id = resolve_place_id(
             &state.pool,
-            world.as_ref(),
+            world,
             parcel.as_deref().unwrap_or_default(),
             false,
         )
         .await?
         .ok_or_else(|| ApiError::not_found("place not found for this scene"))?;
-        let realm = match &world {
-            Some(world) => RealmId::World(world.clone()),
-            None => RealmId::Shared(realm_name.clone()),
-        };
         let place =
-            revocation_authority(&state, &sf.metadata, &realm, parcel.as_deref(), &place_id).await;
+            revocation_authority(&state, &sf.metadata, &realm, parcel.as_deref(), &place_id)
+                .await?;
         (place_id, place, None)
     } else {
         // One resolution binds the signed scene to its parcel; the room and the
@@ -184,7 +179,8 @@ pub async fn scene_stream_access(
         // The credential is stored under the catalogue place; the scene's
         // explicit admins are stored under its entity id (`/scene-admin`),
         // which `bound.place` carries with the deployment's footprint.
-        (place_id, bound.place, Some(bound.room))
+        let place = key_authority(&state, &place_id, world, bound.place);
+        (place_id, place, Some(bound.room))
     };
     match scene::scene_manager_decision(&state, &place, &sf.signer).await {
         PermissionDecision::Allowed => {}
@@ -226,12 +222,13 @@ pub async fn scene_stream_access(
 /// that decides ownership is the active deployment's, or `stored_place`'s row
 /// when the room names a scene this node did not resolve a deployment for.
 /// `None` when neither is known: the caller then asks the stored place alone,
-/// which admits its owner only.
+/// which admits its owner only. A catalogue that cannot be read is an error,
+/// never that narrower lookup.
 pub(super) async fn scene_authority<'a>(
     state: &'a CommsState,
     resolved: &ResolvedRoom,
     stored_place: &str,
-) -> Option<PlaceLookup<'a>> {
+) -> Result<Option<PlaceLookup<'a>>, ApiError> {
     if let Some(deployment) = resolved.deployment.as_ref() {
         let info = scene::PlaceInfo {
             world: resolved.realm.is_world(),
@@ -239,47 +236,92 @@ pub(super) async fn scene_authority<'a>(
             positions: deployment.parcels.iter().map(Parcel::canonical).collect(),
             base_position: Some(deployment.base.canonical()),
         };
-        return Some(PlaceLookup::resolved(
+        return Ok(Some(PlaceLookup::resolved(
             state,
             deployment.scene_id.as_str(),
             info,
-        ));
+        )));
     }
-    let scene = resolved.scene_id.as_ref()?;
+    let Some(scene) = resolved.scene_id.as_ref() else {
+        return Ok(None);
+    };
     let info = scene::try_load_place_info(&state.pool, stored_place)
         .await
-        .ok()??;
-    Some(PlaceLookup::resolved(state, scene.as_str(), info))
+        .map_err(|error| {
+            tracing::error!(%error, stored_place, "place lookup failed for a scene authority");
+            service_unavailable(scene::PLACE_LOOKUP_UNAVAILABLE_MSG)
+        })?;
+    Ok(info.map(|info| PlaceLookup::resolved(state, scene.as_str(), info)))
 }
 
-/// The lookup a revocation is authorized on. The signed scene when it is the
-/// current deployment, as for the other verbs; else the scene standing on the
-/// signed parcel now, with the catalogue place's footprint, so the admins of
-/// the scene that replaced it can still revoke the key; with neither, the
-/// place's owner alone.
+/// The lookup the stream-key verbs decide on. A world has ONE credential for
+/// all its scenes, so authority over one scene (its explicit admins, a
+/// grantee of some of its parcels) must not reach it: the world place with
+/// no footprint admits the owner, an admin of that place and a grantee whose
+/// grant has no parcel restriction. A Genesis place is its scene's.
+pub(super) fn key_authority<'a>(
+    state: &'a CommsState,
+    place_id: &str,
+    world: Option<&WorldName>,
+    scene: PlaceLookup<'a>,
+) -> PlaceLookup<'a> {
+    match world {
+        Some(world) => PlaceLookup::resolved(
+            state,
+            place_id,
+            scene::PlaceInfo {
+                world: true,
+                world_name: Some(world.key().to_owned()),
+                positions: Vec::new(),
+                base_position: None,
+            },
+        ),
+        None => scene,
+    }
+}
+
+/// The lookup a revocation is authorized on. A world's credential takes
+/// authority over the whole world ([`key_authority`]). A Genesis place: the
+/// signed scene when it is the current deployment, as for the other verbs;
+/// else the scene standing on the signed parcel now, so the admins of the
+/// scene that replaced it can still revoke the key; with no scene there, the
+/// place's owner alone. A resolver or catalogue that cannot be read is an
+/// error (503), never one of the narrower lookups.
 async fn revocation_authority<'a>(
     state: &'a CommsState,
     metadata: &serde_json::Value,
     realm: &RealmId,
     parcel: Option<&str>,
     place_id: &str,
-) -> PlaceLookup<'a> {
-    if let Ok(bound) = Context::resolve(state, metadata).await {
-        return bound.place;
+) -> Result<PlaceLookup<'a>, ApiError> {
+    let stored = PlaceLookup::new(state, place_id);
+    if let Some(world) = realm.world() {
+        return Ok(key_authority(state, place_id, Some(world), stored));
     }
-    let current = match parcel.and_then(|raw| Parcel::parse(raw).ok()) {
-        Some(parcel) => state
-            .scenes
-            .resolve(RoomRequest::Parcel { realm, parcel })
-            .await
-            .ok(),
-        None => None,
+    match Context::resolve(state, metadata).await {
+        Ok(bound) => return Ok(bound.place),
+        Err(error) if error.code >= 500 => return Err(error),
+        // Not the current deployment (or not a bindable scene): the parcel decides.
+        Err(_) => {}
+    }
+    let Some(parcel) = parcel.and_then(|raw| Parcel::parse(raw).ok()) else {
+        return Ok(stored);
     };
-    match current {
-        Some(current) => scene_authority(state, &current, place_id).await,
-        None => None,
-    }
-    .unwrap_or_else(|| PlaceLookup::new(state, place_id))
+    let current = match state
+        .scenes
+        .resolve(RoomRequest::Parcel { realm, parcel })
+        .await
+    {
+        Ok(current) => current,
+        Err(crate::rooms::ResolveError::NoSceneAtParcel { .. }) => return Ok(stored),
+        Err(error) => {
+            tracing::warn!(%error, place_id, "scene resolver unavailable for a stream key revocation");
+            return Err(service_unavailable("Scene identity is unavailable"));
+        }
+    };
+    Ok(scene_authority(state, &current, place_id)
+        .await?
+        .unwrap_or(stored))
 }
 
 /// The place's active credential when it is still valid for `room`, else a

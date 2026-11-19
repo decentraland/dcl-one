@@ -24,9 +24,7 @@ use crate::gatekeeper::auth::{
     authorize_moderator, require_service_token, service_token_error, validate_body,
     verify_signed_fetch,
 };
-use crate::gatekeeper::errors::{
-    ApiError, conflict, not_found_labeled, service_unavailable, unauthorized,
-};
+use crate::gatekeeper::errors::{ApiError, conflict, not_found_labeled, unauthorized};
 use crate::gatekeeper::{CommsState, SharedState};
 use crate::shared::signed_fetch::SignedPath;
 
@@ -368,29 +366,15 @@ async fn ensure_can_list_bans(
     place: &PlaceLookup<'_>,
     signer: &Address,
 ) -> Result<(), ApiError> {
-    match scene::scene_owner_or_admin_decision(state, place, signer).await {
-        crate::PermissionDecision::Allowed => return Ok(()),
+    match scene::scene_manager_decision(state, place, signer).await {
+        crate::PermissionDecision::Allowed => Ok(()),
         crate::PermissionDecision::Refused(
             crate::AuthorityNotEstablished::RefusedLacksAuthority { .. },
-        ) => {}
-        crate::PermissionDecision::Refused(why) => return Err(why.into()),
+        ) => Err(unauthorized(
+            "User does not have permission to list scene bans",
+        )),
+        crate::PermissionDecision::Refused(why) => Err(why.into()),
     }
-    let row = place.get().await.map_err(|error| {
-        tracing::error!(
-            error,
-            place_id = place.place_id(),
-            "places lookup failed while authorizing a ban listing"
-        );
-        service_unavailable(scene::PLACE_LOOKUP_UNAVAILABLE_MSG)
-    })?;
-    if let Some(row) = row
-        && scene::holds_extended_permission(state, row, signer).await?
-    {
-        return Ok(());
-    }
-    Err(unauthorized(
-        "User does not have permission to list scene bans",
-    ))
 }
 
 /// GET /scene-bans (scene signed): the banned wallets of the place with

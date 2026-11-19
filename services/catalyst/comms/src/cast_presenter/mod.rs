@@ -77,14 +77,22 @@ pub fn presenter(
 }
 
 /// `POST /presentations`, with upstream's security headers and its CORS
-/// (upstream's server is created with `cors`): the Cast page posts the JSON
-/// form cross-origin, which a browser sends only after a preflight.
+/// (any origin, no credentials: the request is authorized by the LiveKit
+/// token in its body): the Cast page posts the JSON form cross-origin, which
+/// a browser sends only after a preflight. This node also sends a max-age.
+const CORS: crate::shared::cors::HttpServerCors = crate::shared::cors::HttpServerCors {
+    methods: Some("GET,HEAD,PUT,PATCH,POST,DELETE"),
+    max_age: "86400",
+    nosniff: false,
+    preflight_echoes_request: false,
+};
+
 pub fn router(presenter: Option<Arc<Presenter>>) -> Router {
     Router::new()
         .route("/presentations", post(http::create_presentation))
         .layer(axum::middleware::from_fn(http::security_headers))
-        .layer(axum::middleware::from_fn(
-            crate::shared::cors::cors_middleware,
-        ))
+        .layer(axum::middleware::from_fn(|request, next| {
+            CORS.run(request, next)
+        }))
         .with_state(presenter)
 }
