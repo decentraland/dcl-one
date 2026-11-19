@@ -15,7 +15,8 @@ use ipfs::{
     IpfsAssetServer,
 };
 use scene_runner::{
-    renderer_context::RendererSceneContext, update_world::AddCrdtInterfaceExt, SceneEntity,
+    initialize_scene::SuperUserScene, renderer_context::RendererSceneContext,
+    update_world::AddCrdtInterfaceExt, SceneEntity,
 };
 
 #[derive(Component, Debug)]
@@ -68,10 +69,10 @@ fn map_scene_audio_sources(
         Changed<AudioSource>,
     >,
     ipfas: IpfsAssetServer,
-    scenes: Query<&RendererSceneContext>,
+    scenes: Query<(&RendererSceneContext, Has<SuperUserScene>)>,
 ) {
     for (ent, scene_ent, audio_source, maybe_emitter) in query.iter_mut() {
-        let Ok(scene) = scenes.get(scene_ent.root) else {
+        let Ok((scene, system_scene)) = scenes.get(scene_ent.root) else {
             warn!("failed to load audio source scene");
             continue;
         };
@@ -110,11 +111,32 @@ fn map_scene_audio_sources(
             volume: audio_source.0.volume.unwrap_or(1.0),
             global: audio_source.0.global(),
             seek_time,
-            ty: AudioType::Scene,
+            ty: scene_audio_type(system_scene),
         };
 
         debug!("emitter: {emitter:?}");
 
         commands.entity(ent).try_insert(emitter);
+    }
+}
+
+/// The volume group of a scene's audio source: the HUD's system scene plays interface sounds
+/// (chat pings), which follow the System slider; every other scene follows the Scene slider.
+fn scene_audio_type(system_scene: bool) -> AudioType {
+    if system_scene {
+        AudioType::System
+    } else {
+        AudioType::Scene
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_scene_audio_follows_the_system_slider() {
+        assert!(matches!(scene_audio_type(true), AudioType::System));
+        assert!(matches!(scene_audio_type(false), AudioType::Scene));
     }
 }

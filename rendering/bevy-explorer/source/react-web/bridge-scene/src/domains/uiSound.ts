@@ -1,6 +1,7 @@
 // UI sounds: the page decides when a chat line warrants a ping (the conversation's notification
 // ping setting, whether the line mentions the user, a debounce) and names the sound; this scene
 // plays the clip from its own content, through a scene audio source with no position (`global`).
+// The engine puts this scene's audio sources under the System volume slider, not Scene.
 //   to: AudioSource on an entity per clip
 import { AudioSource, engine, type Entity } from '@dcl/sdk/ecs'
 import type { Ctx } from '../bridge'
