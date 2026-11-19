@@ -57,7 +57,7 @@ pub struct Links {
     /// The events site (`/whats-on/{id}`): the link of the notices the old
     /// service sent without one (rejected, deleted, community created).
     pub base: String,
-    /// Backend asset origin and mount for relative default posters.
+    /// Backend events asset mount (`<origin>/events`) for stored poster paths.
     pub asset_base: String,
     /// `JUMP_IN_SITE_URL`: `buildEventLink` (`Notifications/index.ts:30-39`)
     /// for the reminder, start and approval notices.
@@ -278,7 +278,7 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
         _ if name.is_empty() => ("Event".to_string(), description),
         _ => (name.to_string(), description),
     };
-    let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":catalyst_explore::events::posters::absolute_default_image(text(&intent.event,"image"),&links.asset_base),"link":link,"occurredAt":intent.occurred_at.and_utc().to_rfc3339()});
+    let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":catalyst_explore::events::posters::notice_image_url(text(&intent.event,"image"),&links.asset_base),"link":link,"occurredAt":intent.occurred_at.and_utc().to_rfc3339()});
     if matches!(
         intent.kind.as_str(),
         "events_starts_soon" | "events_started" | "event_created"
@@ -1804,6 +1804,30 @@ mod tests {
             payload["image"],
             "https://assets.example.org/events/assets/event-default.webp"
         );
+        for (stored, absolute) in [
+            (
+                "/poster/a.webp",
+                "https://assets.example.org/events-assets-099ac00/poster/a.webp",
+            ),
+            (
+                "/poster-vertical/a.webp",
+                "https://assets.example.org/events-assets-099ac00/poster-vertical/a.webp",
+            ),
+            (
+                "https://img.example.org/p.png",
+                "https://img.example.org/p.png",
+            ),
+        ] {
+            let payload = metadata(
+                &intent("event_approved", json!({"name":"Poster","image":stored})),
+                &recipient(false, false),
+                &origins(
+                    "https://web.example.org",
+                    "https://assets.example.org/events",
+                ),
+            );
+            assert_eq!(payload["image"], absolute, "{stored}");
+        }
         assert_eq!(
             payload["link"], "https://decentraland.org/jump/events?id=legacy-event&position=0%2C0",
             "an approval links the jump-in site (`Notifications/index.ts:205`)"

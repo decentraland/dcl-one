@@ -43,6 +43,22 @@ pub fn absolute_default_image(image: &str, events_asset_base: &str) -> String {
     }
 }
 
+/// An absolute image for a notice (push, inbox, Slack): uploaded posters on
+/// the node's poster mount, other node paths under the events asset mount.
+pub fn notice_image_url(image: &str, events_asset_base: &str) -> String {
+    let assets = events_asset_base.trim_end_matches('/');
+    if poster_path(image).is_some() {
+        // `Settings::events_asset_base_for` is the node origin plus `/events`.
+        let origin = assets.strip_suffix("/events").unwrap_or(assets);
+        return mounted_poster_url(image, Some(origin));
+    }
+    if image.starts_with('/') {
+        format!("{assets}{image}")
+    } else {
+        image.to_owned()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PosterInput<'a> {
     Default,

@@ -29,13 +29,9 @@ pub struct Links {
 }
 
 impl Links {
-    /// A stored poster path on the asset mount; any other image as stored.
+    /// A stored image as the absolute URL the node serves it on.
     fn image(&self, image: &str) -> String {
-        if image.starts_with('/') {
-            format!("{}{image}", self.asset_base.trim_end_matches('/'))
-        } else {
-            image.to_owned()
-        }
+        crate::node_assets::notice_image_url(image, &self.asset_base)
     }
 
     /// `eventReviewSlackUrl` (`Slack/utils.ts:23-27`).
@@ -594,12 +590,17 @@ mod tests {
             block_text(&custom, 2),
             "at <https://example.org/whats-on/admin/pending-events?id=ev-2|Events page>\nat https://example.com/x?a=1&amp;b=&lt;2&gt;"
         );
-        // A stored poster is a path on the events mount (`/poster/<file>`,
-        // the default asset); Slack's `image_url` must be absolute.
+        // A stored poster (`/poster/<file>`) is served on the node's poster
+        // mount, the default asset on the events mount; Slack's `image_url`
+        // must be absolute.
         for (stored, absolute) in [
             (
                 "/poster/abc.webp",
-                "https://assets.example.org/events/poster/abc.webp",
+                "https://assets.example.org/events-assets-099ac00/poster/abc.webp",
+            ),
+            (
+                "/poster-vertical/abc.webp",
+                "https://assets.example.org/events-assets-099ac00/poster-vertical/abc.webp",
             ),
             (
                 "/assets/event-default.webp",
