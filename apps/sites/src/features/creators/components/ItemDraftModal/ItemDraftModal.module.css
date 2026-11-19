@@ -60,10 +60,13 @@
   position: relative;
 }
 
-.thumbnailBadge {
+.thumbnailBadgeSlot {
   position: absolute;
   top: 12px;
   right: 12px;
+}
+
+.thumbnailBadge {
   display: inline-flex;
   align-items: center;
   justify-content: center;

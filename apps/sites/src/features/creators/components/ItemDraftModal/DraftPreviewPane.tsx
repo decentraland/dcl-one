@@ -82,16 +82,19 @@ export function DraftPreviewPane({ draft, thumbnailLocked = false, onOpenThumbna
           </button>
         )}
         {isWearable && hasFacialExpressions(draft.contents) && (
-          <Tooltip content={t('add_items_modal.facial_expressions')} asChild>
-            <span
-              className={styles.thumbnailBadge}
-              tabIndex={0}
-              aria-label={t('add_items_modal.facial_expressions')}
-              data-testid="facial-expressions-badge"
-            >
-              <SmileIcon />
-            </span>
-          </Tooltip>
+          // The tooltip wraps its trigger in a positioned span, so the corner placement sits outside it.
+          <span className={styles.thumbnailBadgeSlot}>
+            <Tooltip content={t('add_items_modal.facial_expressions')} asChild>
+              <span
+                className={styles.thumbnailBadge}
+                tabIndex={0}
+                aria-label={t('add_items_modal.facial_expressions')}
+                data-testid="facial-expressions-badge"
+              >
+                <SmileIcon />
+              </span>
+            </Tooltip>
+          </span>
         )}
       </div>
       <div
