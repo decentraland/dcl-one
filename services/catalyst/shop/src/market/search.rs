@@ -19,6 +19,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Json;
 use axum::extract::{Query, State};
@@ -177,13 +178,45 @@ pub struct CreatorProfile {
     pub claimed: bool,
 }
 
-/// The cached directory, or `None` (logged) when it cannot be read: a feed
-/// then answers without inline profiles and the cards ask for them.
-pub async fn directory_snapshot(state: &MarketplaceState) -> Option<Arc<Value>> {
-    directory_value(state)
-        .await
-        .inspect_err(|e| tracing::warn!(error = ?e, "creator directory unavailable; feeds answer without creator profiles"))
-        .ok()
+/// How long a feed waits for a creator directory this node has not read yet.
+const DIRECTORY_WAIT: Duration = Duration::from_millis(500);
+/// How old an expired directory a feed still serves while it is refreshed (a failed refresh
+/// keeps it).
+const DIRECTORY_STALE_FOR: Duration = Duration::from_secs(3600);
+
+/// The creator directory for a feed, which it never holds up: the fresh copy; else an expired one
+/// (up to [`DIRECTORY_STALE_FOR`] old) while one background read refreshes it; else, with none
+/// yet, that read for at most [`DIRECTORY_WAIT`]. `None` answers without inline profiles, and the
+/// cards ask for them; a failed read is logged, and only one read runs at a time.
+pub async fn directory_snapshot(state: &SharedState) -> Option<Arc<Value>> {
+    let readers = &state.readers;
+    if let Some(fresh) = readers.fresh(Ttl::M15, CREATOR_DIRECTORY_KEY) {
+        return Some(fresh);
+    }
+    let refresh = readers.begin_refresh(CREATOR_DIRECTORY_KEY).then(|| {
+        let state = Arc::clone(state);
+        tokio::spawn(async move {
+            let read = directory_value(&state).await;
+            state.readers.end_refresh(CREATOR_DIRECTORY_KEY);
+            read.inspect_err(|e| tracing::warn!(error = ?e, "creator directory unavailable; feeds answer without creator profiles"))
+                .ok()
+        })
+    });
+    if let Some(stale) = readers.within(Ttl::M15, CREATOR_DIRECTORY_KEY, DIRECTORY_STALE_FOR) {
+        return Some(stale);
+    }
+    match refresh {
+        Some(read) => tokio::time::timeout(DIRECTORY_WAIT, read)
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .flatten(),
+        // Another feed's read is in flight: wait on it as long.
+        None => tokio::time::timeout(DIRECTORY_WAIT, directory_value(state))
+            .await
+            .ok()
+            .and_then(Result::ok),
+    }
 }
 
 /// The profile of each of `addresses` (lowercase) the directory holds, after
@@ -589,6 +622,69 @@ mod tests {
             items,
             collections: 1,
         }
+    }
+
+    /// A feed never waits long on the creator directory. With none read yet and that read held up
+    /// (the items table locked), it answers without profiles within `DIRECTORY_WAIT` while the
+    /// read carries on and fills the directory; once expired, the old copy answers at once while
+    /// one background read makes it fresh again.
+    #[tokio::test]
+    async fn a_feed_never_waits_long_on_the_creator_directory() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let state =
+            crate::market::tests::support::state_with_empty_readers(Some(pool.clone())).await;
+        let until_fresh = |state: SharedState| async move {
+            tokio::time::timeout(Duration::from_secs(20), async {
+                while !state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY) {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .expect("the background read fills the directory");
+        };
+
+        let mut lock = pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE shop.items IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+        let asked = std::time::Instant::now();
+        let held = tokio::time::timeout(Duration::from_secs(10), directory_snapshot(&state))
+            .await
+            .expect("the feed is not held up by the directory's read");
+        assert!(held.is_none());
+        assert!(
+            asked.elapsed() < DIRECTORY_WAIT + Duration::from_secs(5),
+            "{:?}",
+            asked.elapsed()
+        );
+        assert!(!state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
+        lock.rollback().await.unwrap();
+        until_fresh(state.clone()).await;
+        let read = directory_snapshot(&state)
+            .await
+            .expect("the fresh directory");
+
+        state.readers.backdate(
+            Ttl::M15,
+            CREATOR_DIRECTORY_KEY,
+            Ttl::M15.duration() + Duration::from_secs(60),
+        );
+        assert!(!state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
+        let mut lock = pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE shop.items IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+        assert_eq!(
+            directory_snapshot(&state).await,
+            Some(read),
+            "the expired copy answers while its refresh is held up"
+        );
+        lock.rollback().await.unwrap();
+        until_fresh(state.clone()).await;
     }
 
     #[test]
