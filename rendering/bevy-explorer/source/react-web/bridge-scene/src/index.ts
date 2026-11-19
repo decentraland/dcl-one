@@ -47,6 +47,7 @@ import { registerSystemAction } from './domains/systemAction'
 import { registerBindings } from './domains/bindings'
 import { registerAvatarPointer } from './domains/avatarPointer'
 import { registerPermissions } from './domains/permissions'
+import { registerMapPins } from './domains/mapPins'
 import { registerPortables } from './domains/portables'
 import { registerWorldAccess } from './domains/worldAccess'
 import { registerPlatformBan } from './domains/platformBan'
@@ -96,6 +97,7 @@ export function main(): void {
     registerAvatarPointer(ctx)
     registerPermissions(ctx)
     registerPortables(ctx)
+    registerMapPins(ctx)
     registerWorldAccess(ctx)
     registerPlatformBan(ctx)
     registerEditor(ctx)

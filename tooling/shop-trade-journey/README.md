@@ -132,8 +132,17 @@ The profile also runs the CreditsManager usage index on Amoy, from the block tha
 the stack signs only once it has caught up. `GET /credits/usage-index/status` reports both, and the primary
 preflight reads it. Without the key, the preflight says so and the full loop stops before the discount.
 
-A credits purchase through this manager is a transaction the buyer pays gas for: the relay doesn't admit
-the manager yet, so the Shop falls back to the wallet.
+Without a relayer key the relay forwards to the .zone transactions API, which doesn't know this manager, and
+admits the published contract list, which doesn't carry it: the relay refuses the manager itself, so a
+credits purchase is a transaction the buyer pays gas for (the Shop falls back to the wallet), and an in-app
+wallet can't buy with credits. With a testnet-only key of the stack's own, funded with Amoy POL, the relay
+admits the bundled list's `amoy` entry, which carries the manager, and the stack signs and pays every relayed
+transaction itself, on Amoy only and capped at 200 gwei per gas:
+
+```sh
+install -m 600 <key file outside the repo> .cache/dev/relayer.key
+foundation-dev down && foundation-dev up
+```
 
 ## The wallet
 

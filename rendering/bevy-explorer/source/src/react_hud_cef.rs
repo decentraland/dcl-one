@@ -381,32 +381,6 @@ fn hud_alpha_at(image: &Image, window_uv: Vec2) -> u8 {
 
 // Click cadence for CEF's click_count (2 = word select, 3 = paragraph select): with no OS window
 // under the webview, multi-click detection is the host's job.
-#[cfg(test)]
-mod hit_tests {
-    use super::*;
-
-    #[test]
-    fn samples_the_painted_pixel_at_fractional_dpi() {
-        // A 2×2 logical viewport at 150% has a 3×3 paint buffer. Only its
-        // bottom-right device pixel covers the world.
-        let mut pixels = vec![0; 3 * 3 * 4];
-        pixels[35] = 255;
-        let image = Image::new(
-            Extent3d {
-                width: 3,
-                height: 3,
-                depth_or_array_layers: 1,
-            },
-            TextureDimension::D2,
-            pixels,
-            TextureFormat::Bgra8UnormSrgb,
-            RenderAssetUsages::all(),
-        );
-        assert_eq!(hud_alpha_at(&image, Vec2::splat(0.75)), 255);
-        assert_eq!(hud_alpha_at(&image, Vec2::splat(0.25)), 0);
-    }
-}
-
 #[derive(Default)]
 struct MultiClick {
     button: Option<MouseButton>,
@@ -422,7 +396,6 @@ struct MultiClick {
 // is no cursor and the engine keeps everything. While a synthetic aim drives the pointer
 // (`/hover_entity`, `/click_entity`), its presses are meant for the aimed entity, not for the page
 // under the OS cursor, so button presses and releases are not forwarded (motion still is).
-#[allow(clippy::too_many_arguments)]
 fn route_mouse(
     state: Option<ResMut<ReactHudCef>>,
     images: Res<Assets<Image>>,
@@ -1011,5 +984,31 @@ fn push_text_focus(
             },
             state.hud,
         );
+    }
+}
+
+#[cfg(test)]
+mod hit_tests {
+    use super::*;
+
+    #[test]
+    fn samples_the_painted_pixel_at_fractional_dpi() {
+        // A 2×2 logical viewport at 150% has a 3×3 paint buffer. Only its
+        // bottom-right device pixel covers the world.
+        let mut pixels = vec![0; 3 * 3 * 4];
+        pixels[35] = 255;
+        let image = Image::new(
+            Extent3d {
+                width: 3,
+                height: 3,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            pixels,
+            TextureFormat::Bgra8UnormSrgb,
+            RenderAssetUsages::all(),
+        );
+        assert_eq!(hud_alpha_at(&image, Vec2::splat(0.75)), 255);
+        assert_eq!(hud_alpha_at(&image, Vec2::splat(0.25)), 0);
     }
 }

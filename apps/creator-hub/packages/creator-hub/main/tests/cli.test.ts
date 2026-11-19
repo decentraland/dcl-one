@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   dynamicImport: vi.fn(),
   runSdkCommand: vi.fn(),
   getRealm: vi.fn(),
+  ensureEditorFilesNotDeployed: vi.fn(),
+  addDependencyOverrides: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -38,6 +40,10 @@ vi.mock('../src/modules/mobile-debug-server', () => ({
 vi.mock('../src/modules/bevy-realm', () => ({ getRealm: mocks.getRealm }));
 vi.mock('../src/modules/network', () => ({ getLanIp: vi.fn(() => '192.168.0.10') }));
 vi.mock('/shared/dynamic-import', () => ({ dynamicImport: mocks.dynamicImport }));
+vi.mock('../src/modules/project-config-files', () => ({
+  ensureEditorFilesNotDeployed: mocks.ensureEditorFilesNotDeployed,
+  addDependencyOverrides: mocks.addDependencyOverrides,
+}));
 
 import {
   getMobilePreview,
@@ -48,6 +54,7 @@ import {
   getDeployCommandSupport,
   type DeployCommandSupport,
   deploy,
+  init,
 } from '../src/modules/cli';
 
 const BASE_OPTS: PreviewOptions = {
@@ -1134,6 +1141,12 @@ describe('deploy', () => {
     it('should read the deploy command once', () => {
       expect(mocks.readFile).toHaveBeenCalledTimes(1);
     });
+
+    it('should keep the editor files out of the scene before deploying it', () => {
+      expect(mocks.ensureEditorFilesNotDeployed).toHaveBeenCalledWith(
+        args[args.indexOf('--dir') + 1],
+      );
+    });
   });
 
   describe('when the CLI serves the deploy resource but takes no deploy token', () => {
@@ -1195,6 +1208,44 @@ describe('deploy', () => {
 
     it('should not pass a token to the CLI', () => {
       expect(args).not.toContain('--deploy-token');
+    });
+  });
+});
+
+describe('init', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.ensureEditorFilesNotDeployed.mockReset();
+    mocks.addDependencyOverrides.mockReset();
+  });
+
+  describe('when the template is downloaded', () => {
+    beforeEach(async () => {
+      await init('/scenes/new-scene', 'https://github.com/decentraland/sdk-empty-scene-template');
+    });
+
+    it('should keep the template’s editor files out of the scene’s deploys', () => {
+      expect(mocks.ensureEditorFilesNotDeployed).toHaveBeenCalledWith('/scenes/new-scene');
+    });
+
+    it('should add the dependency overrides before anything installs', () => {
+      expect(mocks.addDependencyOverrides).toHaveBeenCalledWith('/scenes/new-scene');
+    });
+  });
+
+  describe('when the .dclignore and package.json cannot be written', () => {
+    beforeEach(() => {
+      const denied = () => {
+        throw new Error('EACCES');
+      };
+      mocks.ensureEditorFilesNotDeployed.mockImplementation(denied);
+      mocks.addDependencyOverrides.mockImplementation(denied);
+    });
+
+    it('should still create the scene', async () => {
+      await expect(
+        init('/scenes/new-scene', 'https://github.com/decentraland/sdk-empty-scene-template'),
+      ).resolves.toBeUndefined();
     });
   });
 });

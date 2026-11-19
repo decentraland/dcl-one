@@ -22,7 +22,10 @@ export const defaultDclIgnore = [
   '*.fbx',
   '*.zip',
   '*.rar',
-  '*.map'
+  '*.map',
+  // editor and agent files scene templates ship without a leading dot
+  'cursor.config',
+  'cursorignore'
 ]
 
 export async function getDCLIgnoreFileContents(

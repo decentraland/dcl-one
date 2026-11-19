@@ -257,6 +257,9 @@ pub struct SceneLoopTiming {
     pub scene_schedule_run_count: u32,
     /// Scenes still eligible for a tick when the loop ended.
     pub eligible_scene_jobs_left_count: u32,
+    /// The monitor's refresh rate in whole hertz, rounded up past it (60 Hz gives 61), when winit
+    /// reports one (native only). See [`SessionGraphics::paced_fps`].
+    pub refresh_hz: Option<usize>,
 }
 
 #[derive(Resource)]
@@ -495,20 +498,13 @@ fn run_scene_loop(world: &mut World) {
         .and_then(|window_ent| winit_windows.and_then(|ww| ww.get_window(window_ent)))
         .and_then(|window| window.current_monitor())
         .and_then(|monitor| monitor.refresh_rate_millihertz());
-    let config = world.resource::<AppConfig>();
-    let fps_target = world
-        .get_resource::<SessionGraphics>()
-        .map_or(config.graphics.fps_target, |session| {
-            session.fps_target(config)
-        });
-    let fps = if config.graphics.vsync {
-        // TODO this should use video mode if we add fullscreen video modes
-        refresh_rate
-            .map(|rr| ((rr as f64 + 999.0) / 1000.0).ceil())
-            .unwrap_or(fps_target as f64)
-    } else {
-        fps_target as f64
-    };
+    // TODO this should use video mode if we add fullscreen video modes
+    let refresh_hz = refresh_rate.map(|rr| ((rr as f64 + 999.0) / 1000.0).ceil() as usize);
+    let fps = SessionGraphics::paced_fps(
+        world.get_resource::<SessionGraphics>(),
+        world.resource::<AppConfig>(),
+        refresh_hz,
+    ) as f64;
     let mut loop_schedule = world.resource_mut::<SceneLoopSchedule>();
     let mut schedule = std::mem::take(&mut loop_schedule.schedule);
 
@@ -562,6 +558,7 @@ fn run_scene_loop(world: &mut World) {
         frame_limiter_sleep_ms,
         scene_schedule_run_count,
         eligible_scene_jobs_left_count,
+        refresh_hz,
     });
 }
 
@@ -717,6 +714,12 @@ pub fn vec3_to_parcel(position: Vec3) -> IVec2 {
     (position.xz() * Vec2::new(1.0, -1.0) / PARCEL_SIZE)
         .floor()
         .as_ivec2()
+}
+
+/// The parcels within Chebyshev ring `ring` of `center`, `center` included: a square `2 * ring + 1`
+/// parcels a side. A negative ring gives none.
+pub fn ring_parcels(center: IVec2, ring: i32) -> impl Iterator<Item = IVec2> {
+    (-ring..=ring).flat_map(move |x| (-ring..=ring).map(move |y| center + IVec2::new(x, y)))
 }
 
 pub fn parcel_to_vec3(parcel: IVec2) -> Vec3 {

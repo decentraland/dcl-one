@@ -1265,7 +1265,7 @@ CREATE TABLE explore.poster (
     CONSTRAINT poster_kind_known CHECK (kind IN ('poster', 'poster-vertical')),
     CONSTRAINT poster_origin_known CHECK (origin IN ('upstream', 'local')),
     CONSTRAINT poster_file_plain CHECK (file ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$'),
-    CONSTRAINT poster_type_known CHECK (content_type IN ('image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/octet-stream')),
+    CONSTRAINT poster_type_known CHECK (content_type IN ('image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif', 'application/octet-stream')),
     CONSTRAINT poster_sized CHECK (byte_size > 0)
 );
 

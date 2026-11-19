@@ -41,7 +41,6 @@ impl From<PbAnimator> for Animator {
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn update_animations(
     mut animators: Query<
         (

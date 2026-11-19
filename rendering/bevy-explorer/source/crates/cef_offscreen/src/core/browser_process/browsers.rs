@@ -73,7 +73,6 @@ impl BrowsersInner {
 }
 
 impl BrowsersInner {
-    #[allow(clippy::too_many_arguments)]
     pub fn create_browser(
         &mut self,
         webview: Entity,
@@ -471,7 +470,6 @@ impl Default for Browsers {
 }
 
 impl Browsers {
-    #[allow(clippy::too_many_arguments)]
     pub fn create_browser(
         &mut self,
         webview: Entity,

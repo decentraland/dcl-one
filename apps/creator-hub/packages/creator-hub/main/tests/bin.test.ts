@@ -15,6 +15,7 @@ vi.mock('electron-log/main', () => ({
 }));
 vi.mock('../src/modules/path', () => ({
   APP_UNPACKED_PATH: '/fake/app',
+  getNodeShimDir: () => '/fake/user-data/bin',
   getBinPath: mocks.getBinPath,
   joinEnvPaths: (...paths: (string | undefined)[]) => paths.filter(Boolean).join(':'),
 }));
@@ -157,7 +158,7 @@ describe('when the resolved runtime is Electron', () => {
     mocks.resolveNodeRuntime.mockReturnValue({
       source: 'electron',
       node: process.execPath,
-      binDir: '/fake/app',
+      binDir: '/fake/user-data/bin',
       npmCli: '/fake/app/node_modules/npm/bin/npm-cli.js',
       npxCli: '/fake/app/node_modules/npm/bin/npx-cli.js',
     });
@@ -189,7 +190,7 @@ describe('when the resolved runtime is Electron', () => {
 
     const { env } = mocks.fork.mock.calls[0][2];
     expect(env.ELECTRON_RUN_AS_NODE).toBe('1');
-    expect(env.PATH.split(':')[0]).toBe('/fake/app');
+    expect(env.PATH.split(':')[0]).toBe('/fake/user-data/bin');
   });
 });
 

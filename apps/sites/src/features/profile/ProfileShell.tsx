@@ -5,6 +5,7 @@ import SitesChrome from "@ui/web/frames/SitesChrome";
 
 import { Button, Tabs, TabsBar, type TabsLinkProps } from "@dcl/one-ui";
 
+import { SHOP_BASE } from "@/core/lib/shop/redirects";
 import { shortAddress } from "@/data/lib/catalyst/format/address";
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
 
@@ -15,7 +16,7 @@ import styles from "./ProfileShell.module.css";
  * A NAME is bought in the Shop's NAMEs page; worlds are managed under Create. Both are the
  * canonical paths, not the redirects (`/shop/items?category=names`, the legacy `/builder/worlds`).
  */
-export const GET_A_NAME_HREF = "/shop/names";
+export const GET_A_NAME_HREF = `${SHOP_BASE}/names`;
 export const MANAGE_WORLD_HREF = "/create/worlds";
 
 export type ProfileShellTab = { id: string; label: string; href: string };

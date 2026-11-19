@@ -512,7 +512,7 @@ pub async fn ensure_cursor(pool: &PgPool, settings: &Settings) -> Result<Cursor,
         // A new network's cursor is admitted only to a database holding no
         // other network's ([`admit_network`]).
         let mut tx = pool.begin().await?;
-        if let Some(other) = admit_network(&mut tx, &settings.network)
+        if let Some(other) = admit_network(&mut tx, &settings.network, settings.rebind_lock_timeout)
             .await
             .context("admitting the land-authz cursor")?
         {
@@ -597,7 +597,7 @@ pub async fn set_cursor(
 /// Only a switch locks the cursor row explicitly (`FOR UPDATE`), the lock a
 /// fold of the old registries holds while it writes their links
 /// ([`fold_in_tx`]), so the links are deleted after that fold commits. The
-/// switch waits at most [`REBIND_LOCK_TIMEOUT`] for it, and otherwise defers
+/// switch waits at most [`Settings::rebind_lock_timeout`] for it, and otherwise defers
 /// to the next pass: a fold left running by a lost lease holds the row for
 /// up to its own statement timeout, and failing the pass would pause the
 /// indexer for its error backoff. A rewind on the same registries takes no
@@ -646,7 +646,10 @@ async fn rewind_for_replay(
         return Ok(ReplayStart::Refused);
     }
     let admitting = previous.is_none() || switch;
-    if admitting && let Some(other) = admit_network(&mut tx, &settings.network).await? {
+    if admitting
+        && let Some(other) =
+            admit_network(&mut tx, &settings.network, settings.rebind_lock_timeout).await?
+    {
         return Ok(ReplayStart::SharedDatabase { other });
     }
     if switch {
@@ -727,7 +730,7 @@ pub enum ReplayStart {
     /// was written.
     Refused,
     /// Nothing was written, and the next pass tries again: a lock was not
-    /// granted within [`REBIND_LOCK_TIMEOUT`] (another pass held
+    /// granted within [`Settings::rebind_lock_timeout`] (another pass held
     /// [`admit_network`]'s lock, a fold of the old registries held their
     /// cursor row, or another writer held the row being written), or the row
     /// was switched to other registries under an unadmitted rewind.
@@ -738,9 +741,14 @@ pub enum ReplayStart {
 }
 
 /// How long a cursor's creation or switch waits for [`admit_network`]'s lock,
-/// and a switch for a fold of the old registries to commit (a PostgreSQL
-/// interval, set as the transaction's `lock_timeout`).
-pub const REBIND_LOCK_TIMEOUT: &str = "5s";
+/// and a switch for a fold of the old registries to commit (set as the
+/// transaction's `lock_timeout`); [`Settings::rebind_lock_timeout`]'s default.
+pub const REBIND_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// `timeout` as a PostgreSQL `lock_timeout` value.
+fn lock_timeout_setting(timeout: std::time::Duration) -> String {
+    format!("{}ms", timeout.as_millis())
+}
 
 /// PostgreSQL's `lock_not_available`, raised when `lock_timeout` elapses.
 const LOCK_NOT_AVAILABLE: &str = "55P03";
@@ -756,16 +764,17 @@ const CURSOR_NETWORKS_LOCK: &str = "land-authz:cursor-networks";
 /// cursor is created ([`ensure_cursor`]) or rebound to other registries
 /// ([`begin_replay`], which deletes the estate links), and answers the other
 /// network whose cursor this database already holds, if any. Taken before
-/// any cursor row lock, and waited for at most [`REBIND_LOCK_TIMEOUT`] (the
-/// `lock_timeout` it sets stays for the rest of the transaction). A row lock
+/// any cursor row lock, and waited for at most `lock_timeout` (which stays
+/// set for the rest of the transaction). A row lock
 /// alone cannot do this: it protects a cursor that exists, not the absence
 /// of another network's. Readers and folds never take it.
 pub(crate) async fn admit_network(
     conn: &mut PgConnection,
     network: &str,
+    lock_timeout: std::time::Duration,
 ) -> Result<Option<String>, sqlx::Error> {
     sqlx::query("SELECT set_config('lock_timeout', $1, true)")
-        .bind(REBIND_LOCK_TIMEOUT)
+        .bind(lock_timeout_setting(lock_timeout))
         .execute(&mut *conn)
         .await?;
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
@@ -1397,7 +1406,7 @@ pub async fn rewind_reorg(
 ) -> Result<bool, sqlx::Error> {
     let mut tx = pool.begin().await?;
     sqlx::query("SELECT set_config('lock_timeout', $1, true)")
-        .bind(REBIND_LOCK_TIMEOUT)
+        .bind(lock_timeout_setting(settings.rebind_lock_timeout))
         .execute(&mut *tx)
         .await?;
     let locked: Option<i32> = sqlx::query_scalar(
@@ -1630,6 +1639,14 @@ pub const ESTATE_KINDS: [&str; 2] = [KIND_ADD_LAND, KIND_REMOVE_LAND];
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn production_rebind_lock_timeout_is_five_seconds() {
+        assert_eq!(REBIND_LOCK_TIMEOUT, std::time::Duration::from_secs(5));
+        let settings = Settings::for_network("mainnet", None).unwrap();
+        assert_eq!(settings.rebind_lock_timeout, REBIND_LOCK_TIMEOUT);
+        assert_eq!(lock_timeout_setting(REBIND_LOCK_TIMEOUT), "5000ms");
+    }
 
     #[test]
     fn index_readiness_requires_a_complete_recent_fold() {

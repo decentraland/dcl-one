@@ -140,6 +140,43 @@ class GitHubReadTests(unittest.TestCase):
             self.assertEqual(play.api('actions/runs/42/jobs'), {'jobs': []})
         sleep.assert_called_once_with(2)
 
+    def test_a_dropped_connection_retries_and_a_statusless_hard_error_does_not(self):
+        dropped = ['stream error: stream ID 1; CANCEL; received from peer\n',
+                   'error reading response body: unexpected EOF\n',
+                   'read tcp 10.0.0.1:1->10.0.0.2:443: read: connection reset by peer\n',
+                   'http2: server sent GOAWAY and closed the connection\n',
+                   'net/http: TLS handshake timeout\n',
+                   'Get "https://api.github.com/repos/o/r/actions/runs/42/jobs": EOF\n',
+                   'http2: client connection lost\n']
+        for text in dropped:
+            failure = subprocess.CalledProcessError(1, ['gh', 'api'], stderr=text)
+            with self.subTest(stderr=text), \
+                    patch.object(play.subprocess, 'check_output', side_effect=[failure, '{"jobs": []}']) as get, \
+                    patch.object(play.time, 'sleep') as sleep:
+                self.assertEqual(play.api('actions/runs/42/jobs?per_page=100'), {'jobs': []})
+                self.assertEqual(get.call_count, 2)
+                sleep.assert_called_once_with(2)
+        persistent = subprocess.CalledProcessError(1, ['gh', 'api'], stderr=dropped[0])
+        with patch.object(play.subprocess, 'check_output', side_effect=persistent) as get, \
+                patch.object(play.time, 'sleep') as sleep:
+            with self.assertRaises(subprocess.CalledProcessError):
+                play.api('actions/runs/42/jobs?per_page=100')
+            self.assertEqual(get.call_count, 5)
+        # No token, a usage error, no network, and a 4xx that mentions EOF stay single attempts.
+        for text in ('gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable.\n',
+                     'unknown flag: --methd\n',
+                     'dial tcp: lookup api.github.com: no such host\n',
+                     'dial tcp 140.82.112.6:443: connect: connection refused\n',
+                     'gh: Not Found (HTTP 404) unexpected EOF\n'):
+            failure = subprocess.CalledProcessError(1, ['gh', 'api'], stderr=text)
+            with self.subTest(stderr=text), \
+                    patch.object(play.subprocess, 'check_output', side_effect=failure) as get, \
+                    patch.object(play.time, 'sleep') as sleep:
+                with self.assertRaises(subprocess.CalledProcessError):
+                    play.api('actions/runs/42/jobs?per_page=100')
+                self.assertEqual(get.call_count, 1)
+                sleep.assert_not_called()
+
     def test_artifact_download_retries_a_transient_failure_from_a_clean_file(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -483,7 +520,10 @@ class PlayImportTests(unittest.TestCase):
             nonlocal bootstraps
             status, stdout = 0, ''
             if args[:2] == ('image', 'inspect'):
-                stdout = json.dumps([{'Config': {'User': '1000:1000'}}])
+                stdout = json.dumps([{'Config': {'User': '1000:1000',
+                                                 'Env': ['CAST_BOT_BIN=/nix/store/fixture-cast-bot/bin/cast-bot']}}])
+            elif args[0] == 'run' and '--entrypoint' in args:
+                requested.append(args[args.index('--entrypoint') + 1])
             elif args[0] == 'exec' and args[2] == 'node':
                 url, mode = args[-2:]
                 requested.append(url)
@@ -501,6 +541,7 @@ class PlayImportTests(unittest.TestCase):
                 patch('sys.argv', ['image-smoke', '--play', str(self.build)]), \
                 patch('sys.stdout', output):
             smoke.main()
+        self.assertIn('/nix/store/fixture-cast-bot/bin/cast-bot', requested)
         self.assertIn('http://sites:5212/play/bridge/about', requested)
         self.assertIn(f'http://sites:5212/play/bridge-scene/static/{entity}', requested)
         self.assertIn(f'Sites serves verified Bevy producer {SHA}', output.getvalue())

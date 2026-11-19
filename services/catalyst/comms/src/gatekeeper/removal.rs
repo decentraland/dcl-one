@@ -1639,16 +1639,12 @@ mod tests {
             .unwrap();
         let name = format!("dcl_island_job_{}", Uuid::new_v4().simple());
         assert!(name.bytes().all(|v| v.is_ascii_alphanumeric() || v == b'_'));
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(8)
             .connect_with(base.connect_options().as_ref().clone().database(&name))
             .await
             .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         let (state, fixture, server) = sfu_fixture(pool.clone()).await;
         let actor = wallet();
         let island = format!("island-{}", Uuid::new_v4());
@@ -2049,16 +2045,12 @@ mod tests {
             .await
             .unwrap();
         let name = format!("dcl_liveness_{}", uuid::Uuid::new_v4().simple());
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(8)
             .connect_with(base.connect_options().as_ref().clone().database(&name))
             .await
             .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         (pool, admin, name)
     }
     async fn liveness_drop_pool(pool: &sqlx::PgPool, admin: &sqlx::PgPool, name: &str) {

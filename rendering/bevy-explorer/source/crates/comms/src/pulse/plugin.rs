@@ -905,7 +905,6 @@ fn release_paced(session: &mut PulseSession, now: f64) {
 }
 
 /// Drain status + inbound bytes each frame; advance the connection; decode and dispatch.
-#[allow(clippy::too_many_arguments)]
 fn pump_pulse(
     session: Option<ResMut<PulseSession>>,
     realm: Res<CurrentRealm>,
@@ -1141,7 +1140,6 @@ fn drain_status(session: &mut PulseSession, sinks: &Query<&PulseSink>, now: f64)
 /// the transport-up status; signing waits additionally for an identity (`PulseConfig` may be present
 /// before login). A connection carries one handshake: a sign error or a response timeout closes it,
 /// as a rejection does, and the next attempt is a new connection.
-#[allow(clippy::too_many_arguments)]
 fn drive_connection(
     session: &mut PulseSession,
     sinks: &Query<&PulseSink>,
@@ -1458,7 +1456,6 @@ fn lost_connection(
 /// `TeleportRequest` announcing our realm + position, so the server begins streaming same-realm
 /// peers (peers in different realms never see each other) — unless the handshake's initial state
 /// has put us in this realm already. Then announce the profile version, once there is one.
-#[allow(clippy::too_many_arguments)]
 fn on_handshake_response(
     session: &mut PulseSession,
     sinks: &Query<&PulseSink>,
@@ -1524,7 +1521,6 @@ fn is_local_realm(realm: &CurrentRealm) -> bool {
 /// Keep a listening server's routing in step with the scenes it hosts: which context owns each
 /// hosted parcel, a Pulse `Transport` per context, and the AoI the whole lot adds up to.
 /// Registered in server mode only — a client has no listener and no server contexts.
-#[allow(clippy::too_many_arguments)]
 fn update_listener_aoi(
     mut commands: Commands,
     session: Option<ResMut<PulseSession>>,

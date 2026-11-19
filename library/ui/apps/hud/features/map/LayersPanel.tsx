@@ -37,6 +37,7 @@ export function LayersPanel(): React.JSX.Element {
         <h3 className={styles.layersHeading}>PINS</h3>
         <Row layer="liveEvents" label="Live Events" icon={MAP_ICONS.layerLive} layers={layers} />
         <Row layer="pois" label="Points of interest" icon={MAP_ICONS.layerPoi} layers={layers} />
+        <Row layer="pins" label="Quest Mini-Games" icon={MAP_ICONS.layerQuest} layers={layers} />
       </div>
       <hr className={styles.layersRule} />
       <div className={styles.layersSection}>

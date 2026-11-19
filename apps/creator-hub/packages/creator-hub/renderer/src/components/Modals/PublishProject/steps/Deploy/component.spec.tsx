@@ -324,6 +324,31 @@ describe('Deploy step', () => {
     });
   });
 
+  describe('when a World deployment completes for a project that had no world name yet', () => {
+    beforeEach(() => {
+      props.project = { ...PROJECT, worldConfiguration: { name: '' } } as unknown as Project;
+      props.deploymentMetadata = { worldName: 'plaza.dcl.eth' };
+      hooks.deployment = createDeployment({
+        status: 'complete',
+        phase: undefined,
+        componentsStatus: { catalyst: 'complete', assetBundle: 'complete' },
+        info: {
+          isWorld: true,
+          rootCID: 'bafy',
+          title: 'Example',
+          baseParcel: '0,0',
+          parcels: ['0,0'],
+        } as Deployment['info'],
+      });
+      mount();
+    });
+
+    it('should share the world the publish step chose, not a Genesis City position', () => {
+      expect(screen.getByText(/jump\?realm=plaza\.dcl\.eth$/)).toBeTruthy();
+      expect(screen.queryByText(/jump\?position=/)).toBeNull();
+    });
+  });
+
   describe('when a LAND deployment completes on a parcel other than the opened project base', () => {
     beforeEach(() => {
       hooks.deployment = createDeployment({

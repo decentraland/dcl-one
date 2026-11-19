@@ -298,7 +298,7 @@ impl UiPointerTargetValue {
 
     pub fn set_label(&mut self, label: Option<String>) {
         match self {
-            UiPointerTargetValue::None => todo!(),
+            UiPointerTargetValue::None => {}
             UiPointerTargetValue::Primary(_, ref mut l)
             | UiPointerTargetValue::World(_, ref mut l) => *l = label,
         }
@@ -338,7 +338,6 @@ pub struct ProximityCandidate {
     pub entity_position: Vec3,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update_pointer_target(
     camera: Query<(&Camera, &GlobalTransform), With<PrimaryCamera>>,
     player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,
@@ -1006,7 +1005,6 @@ fn debug_pointer(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn send_hover_events(
     new_target: Res<PointerTarget>,
     pointer_requests: Query<(Option<&SceneEntity>, Option<&ForeignPlayer>, &PointerEvents)>,
@@ -1220,7 +1218,6 @@ fn filtered_events<'a>(
 }
 
 /// Build and send a `PbPointerEventsResult` CRDT for a single matched entry.
-#[allow(clippy::too_many_arguments)]
 fn write_pointer_result(
     context: &mut RendererSceneContext,
     scene_transform: &GlobalTransform,
@@ -1283,7 +1280,6 @@ fn resolve_scene_entity_id(
 /// Walks all pointer-event entries on the target. Returns the first in-range
 /// configured button (used by the caller to reserve scene input priorities),
 /// and emits a hover CRDT for each entry whose `event_type` matches `ev_type`.
-#[allow(clippy::too_many_arguments)]
 fn send_hover_event(
     pointer_requests: &Query<(Option<&SceneEntity>, Option<&ForeignPlayer>, &PointerEvents)>,
     scenes: &mut Query<(&mut RendererSceneContext, &GlobalTransform)>,
@@ -1342,7 +1338,6 @@ fn send_hover_event(
 /// `interaction_type`, emitting a CRDT for each whose distance check passes.
 /// Returns the last-written scene as the "consuming" scene, which the caller uses
 /// to skip duplicate root-entity events.
-#[allow(clippy::too_many_arguments)]
 fn send_action_event(
     pointer_requests: &Query<(Option<&SceneEntity>, Option<&ForeignPlayer>, &PointerEvents)>,
     scenes: &mut Query<(Entity, &mut RendererSceneContext, &GlobalTransform)>,

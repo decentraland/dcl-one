@@ -188,7 +188,6 @@ fn placements(
 }
 
 /// Spawn and drop props around the player's parcel, and keep them on the terrain.
-#[allow(clippy::too_many_arguments)]
 fn update_props(
     mut commands: Commands,
     surface: Res<TerrainSurface>,

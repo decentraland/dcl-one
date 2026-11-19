@@ -157,6 +157,17 @@ across workers:
   keyframes use). `gltf` validates none of these, and upstream bevy panics on them. One warning per
   animation names the file, the number skipped and the first one's reason. Animating a
   pointed-to property (a material's emissive, say) is not supported.
+- **Throwaway**: `KHR_mesh_quantization` (upstream #25954, backported without its coordinate
+  conversion). A file that requires it loads: integer positions and texture coordinates are read
+  as the floats they stand for, normals and tangents only from the signed normalized formats the
+  extension allows (others warn, as upstream), integer morph targets are dequantized, and a
+  primitive's bounds follow its position accessor's normalization. Tangents are read only through
+  the attribute conversion, so a quantized tangent accessor is never read as floats. The meshes
+  hold floats on the GPU; upstream #26030 keeps them quantized there.
+- Morph target reads stop at the mesh's vertex count (patch 0118, on top of the backport above),
+  so a target accessor's declared `count` never sizes an allocation: a zero-filled or sparse
+  target holds at most one displacement per vertex. Upstream reads the full `count`; keep this
+  patch on migration until upstream bounds it too.
 - Texture decode is skipped when `load_materials` is empty, with a 1x1 placeholder under the
   normal label: headless servers keep geometry without pixels.
 - `Rgba16Unorm` textures are converted to 8-bit, preserving sampler and sRGB (the web can't
