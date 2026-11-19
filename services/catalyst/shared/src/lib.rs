@@ -1,5 +1,6 @@
 //! Vocabulary every domain shares: signed-fetch verification, identities,
-//! the dRPC framework, LiveKit tokens, the message router's token contract,
+//! the dRPC framework, LiveKit tokens, internal service request signatures,
+//! the message router's token contract,
 //! write gates, the descriptive-data `as_of` rule, the audit writer, caches
 //! and HTTP/upstream helpers. It sits below the domains and uses only the
 //! leaf crates.
@@ -35,6 +36,7 @@ pub mod rpc;
 pub mod segment_signature;
 pub mod send_sync;
 pub mod signed_fetch;
+pub mod signed_request;
 pub mod task;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_http;

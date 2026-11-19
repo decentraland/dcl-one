@@ -7,8 +7,7 @@
 //! track and never its own metadata. The route is mounted only when the key is configured;
 //! the gateway keeps `/internal/message-router` off the public front.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
@@ -23,6 +22,7 @@ use crate::shared::message_router::{
     TOKEN_PATH, TokenRequest, TokenResponse,
 };
 use crate::shared::routing::any;
+use crate::shared::signed_request::{self, Replay, ReplayCache, one_header};
 
 /// A nonce is remembered past both ends of the accepted clock window.
 const REPLAY_TTL: Duration = Duration::from_secs(2 * MAX_SKEW_SECS + 1);
@@ -34,7 +34,7 @@ pub struct MessageRouterAuthority {
     identity_prefix: String,
     room: String,
     livekit: LiveKit,
-    replays: Mutex<HashMap<[u8; 16], Instant>>,
+    replays: ReplayCache,
 }
 
 impl MessageRouterAuthority {
@@ -58,7 +58,7 @@ impl MessageRouterAuthority {
             identity_prefix: identity_prefix.to_owned(),
             room: room.to_owned(),
             livekit,
-            replays: Mutex::new(HashMap::new()),
+            replays: ReplayCache::new(REPLAY_TTL, MAX_REPLAYS),
         })
     }
 
@@ -127,30 +127,20 @@ impl MessageRouterAuthority {
         ) else {
             return Err(unauthorized());
         };
-        let fresh = timestamp
-            .parse::<u64>()
-            .is_ok_and(|secs| secs.to_string() == timestamp && secs.abs_diff(now) <= MAX_SKEW_SECS);
-        let Some(nonce) = contract::decode_nonce(nonce_text).filter(|_| fresh) else {
+        if !signed_request::fresh_timestamp(timestamp, now, MAX_SKEW_SECS) {
+            return Err(unauthorized());
+        }
+        let Some(nonce) = signed_request::decode_fixed::<16>(nonce_text) else {
             return Err(unauthorized());
         };
         if !contract::verify(&self.key, timestamp, nonce_text, body, signature) {
             return Err(unauthorized());
         }
-        let now = Instant::now();
-        let mut replays = self
-            .replays
-            .lock()
-            .map_err(|_| refusal(StatusCode::SERVICE_UNAVAILABLE, "unavailable"))?;
-        if replays.get(&nonce).is_some_and(|expires| *expires > now) {
-            return Err(unauthorized());
+        match self.replays.admit(nonce, Instant::now()) {
+            Ok(()) => {}
+            Err(Replay::Seen) => return Err(unauthorized()),
+            Err(Replay::Full) => return Err(refusal(StatusCode::SERVICE_UNAVAILABLE, "busy")),
         }
-        if replays.len() >= MAX_REPLAYS {
-            replays.retain(|_, expires| *expires > now);
-            if replays.len() >= MAX_REPLAYS {
-                return Err(refusal(StatusCode::SERVICE_UNAVAILABLE, "busy"));
-            }
-        }
-        replays.insert(nonce, now + REPLAY_TTL);
         Ok(())
     }
 }
@@ -184,12 +174,6 @@ pub fn router<S: Clone + Send + Sync + 'static>(
             async move { authority.handle(request).await }
         }),
     )
-}
-
-fn one_header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
-    let mut values = headers.get_all(name).iter();
-    let value = values.next()?.to_str().ok()?;
-    values.next().is_none().then_some(value)
 }
 
 fn refusal(status: StatusCode, message: &'static str) -> Response {
@@ -378,6 +362,35 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// With a key the identity prefix is required: a default would let a node mint an identity
+    /// its Explorers do not trust and drop community chat without a trace.
+    #[tokio::test]
+    async fn a_key_without_an_identity_prefix_refuses_to_start() {
+        use crate::gatekeeper::moderation::ban::test_support::{StubBanStatus, state};
+        let fresh = || {
+            state(
+                crate::interfaces::test_support::StubPolicy::default(),
+                StubBanStatus::default(),
+            )
+        };
+        let key = URL_SAFE_NO_PAD.encode(KEY);
+        for prefix in [None, Some(""), Some("  ")] {
+            let error = fresh()
+                .with_message_router_key(Some(&key), prefix)
+                .err()
+                .expect("refused")
+                .to_string();
+            assert!(error.contains("MESSAGE_ROUTER_IDENTITY_PREFIX"), "{error}");
+        }
+        assert!(
+            fresh()
+                .with_message_router_key(None, None)
+                .unwrap()
+                .message_router
+                .is_none()
+        );
     }
 
     #[test]
