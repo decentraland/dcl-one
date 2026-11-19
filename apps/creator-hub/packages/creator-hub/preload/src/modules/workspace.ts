@@ -219,7 +219,8 @@ export function initializeWorkspace(services: Services) {
     try {
       await fs.stat(appHome);
     } catch (error) {
-      await fs.mkdir(appHome);
+      // The default sits two levels deep in the home folder (Decentraland/Scenes).
+      await fs.mkdir(appHome, { recursive: true });
     }
     return appHome;
   }
