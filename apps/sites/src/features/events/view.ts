@@ -288,14 +288,18 @@ export function bucketByDay(
 }
 
 const FREQUENCY = {
+  HOURLY: ["Every hour", "Every {count} hours"],
   DAILY: ["Repeats daily", "Every {count} days"],
   WEEKLY: ["Repeats weekly", "Every {count} weeks"],
   MONTHLY: ["Repeats monthly", "Every {count} months"],
   YEARLY: ["Repeats yearly", "Every {count} years"],
 } as const;
 
+type Recurrence = Pick<Event, "recurrent" | "recurrent_frequency" | "recurrent_interval">;
+type DetailSchedule = Parameters<typeof eventOccurrence>[0] & Recurrence;
+
 export function recurrenceLabel(
-  event: Pick<Event, "recurrent" | "recurrent_frequency" | "recurrent_interval">,
+  event: Recurrence,
   locale: EventsLocale = "en",
 ): string | undefined {
   if (!event.recurrent || !event.recurrent_frequency) return undefined;
@@ -306,7 +310,7 @@ export function recurrenceLabel(
 }
 
 /** The hero line: "Wed, Nov 11 - 5:00 PM", or "Every Wednesday - 5:00 PM" for a weekly event. */
-export function heroWhen(event: Event, timeZone: Zone, locale: EventsLocale = "en"): EventCardTime | undefined {
+export function heroWhen(event: DetailSchedule, timeZone: Zone, locale: EventsLocale = "en"): EventCardTime | undefined {
   const { start } = eventOccurrence(event);
   if (!start || Number.isNaN(Date.parse(start))) return undefined;
   const time = formatTime(start, timeZone, locale);
@@ -321,7 +325,7 @@ export function heroWhen(event: Event, timeZone: Zone, locale: EventsLocale = "e
 }
 
 /** The schedule line: "Wed, Nov 11 · 5:00 PM – 7:00 PM", prefixed "Starting" for a recurring event. */
-export function scheduleLine(event: Event, timeZone: Zone, locale: EventsLocale = "en"): (EventCardTime & { recurrence?: string }) | undefined {
+export function scheduleLine(event: DetailSchedule, timeZone: Zone, locale: EventsLocale = "en"): (EventCardTime & { recurrence?: string }) | undefined {
   const { start, finish } = eventOccurrence(event);
   if (!start || Number.isNaN(Date.parse(start))) return undefined;
   const range = `${formatDate(start, timeZone, locale)} · ${formatTime(start, timeZone, locale)}${finish ? ` – ${formatTime(finish, timeZone, locale)}` : ""}`;
