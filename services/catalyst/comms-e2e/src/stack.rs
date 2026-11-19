@@ -301,8 +301,8 @@ impl Stack {
         hosts
     }
 
-    /// Refuses a hostile run (floods, malformed frames, bans) against a host that is neither
-    /// loopback nor private nor named in `allowed_hosts`.
+    /// Refuses a hostile run (floods, malformed frames, bans, restarts) against a host that is
+    /// neither loopback (`localhost` and `*.localhost` included) nor named in `allowed_hosts`.
     pub fn ensure_safe_for(&self, hostile: bool, allowed_hosts: &[String]) -> Result<()> {
         if !hostile {
             return Ok(());
@@ -312,8 +312,8 @@ impl Stack {
                 continue;
             }
             bail!(
-                "a hostile scenario will not run against {host}: it is not a loopback or private \
-                 address; name it with --allow-host if that is intended"
+                "a hostile scenario will not run against {host}: it is not a loopback address; \
+                 name it with --allow-host if that is intended"
             );
         }
         Ok(())
@@ -369,13 +369,9 @@ fn is_local(host: &str) -> bool {
     if host == "localhost" || host.ends_with(".localhost") {
         return true;
     }
+    // a private or link-local address can be anything on a network this machine reaches
     match host.parse::<IpAddr>() {
-        Ok(IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
-        Ok(IpAddr::V6(ip)) => {
-            ip.is_loopback()
-                || (ip.segments()[0] & 0xfe00) == 0xfc00
-                || (ip.segments()[0] & 0xffc0) == 0xfe80
-        }
+        Ok(ip) => ip.is_loopback(),
         Err(_) => false,
     }
 }
@@ -404,11 +400,30 @@ mod tests {
 
         for local in [
             "http://127.0.0.1:5210",
+            "http://127.4.5.6:5210",
             "http://localhost:5210",
-            "http://10.0.0.1",
+            "http://stack.localhost:5210",
             "http://[::1]:80",
         ] {
             stack_at(local).ensure_safe_for(true, &[]).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_private_or_link_local_address_needs_allow_host() {
+        for (url, host) in [
+            ("http://10.0.0.1", "10.0.0.1"),
+            ("http://192.168.1.20:5210", "192.168.1.20"),
+            ("http://172.16.0.5", "172.16.0.5"),
+            ("http://169.254.10.1", "169.254.10.1"),
+            ("http://[fd00::1]:80", "fd00::1"),
+            ("http://[fe80::1]:80", "fe80::1"),
+        ] {
+            let stack = stack_at(url);
+            let refusal = stack.ensure_safe_for(true, &[]).unwrap_err().to_string();
+            assert!(refusal.contains(host), "{refusal}");
+            assert!(refusal.contains("loopback"), "{refusal}");
+            stack.ensure_safe_for(true, &[host.to_owned()]).unwrap();
         }
     }
 

@@ -58,6 +58,22 @@ fn races_repeat_and_bans_are_hostile_and_slow() {
 }
 
 #[test]
+fn every_scenario_that_restarts_the_stack_is_hostile() {
+    let restarting: Vec<_> = catalyst_comms_e2e::scenarios::registry()
+        .into_iter()
+        .filter(|scenario| scenario.needs.restart)
+        .collect();
+    assert!(
+        restarting
+            .iter()
+            .any(|scenario| scenario.name == "stationary-credentials")
+    );
+    for scenario in restarting {
+        assert!(scenario.hostile, "{} restarts the stack", scenario.name);
+    }
+}
+
+#[test]
 fn a_scenario_that_restarts_the_stack_is_skipped_without_a_command() {
     let restart = connections::all()
         .into_iter()

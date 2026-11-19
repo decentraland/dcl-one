@@ -45,8 +45,9 @@ comms-e2e address --key-env <VARIABLE>
   (`--seed`), and the end of the timeline. `--report` writes every timeline in full.
 - A scenario whose prerequisite the stack file lacks is **skipped** with the reason. It is never
   counted as passed.
-- Hostile scenarios (floods, malformed frames, bans) refuse a target that is not a loopback or
-  private address unless `--allow-host` names it.
+- Hostile scenarios (floods, malformed frames, bans, a restart of a process of the stack) refuse
+  a target that is not loopback (`localhost` and `*.localhost` count as loopback) unless
+  `--allow-host` names it. A private or link-local address has to be named too.
 - `console` starts one explorer behind the fault links and runs console commands in it: the way
   to see what a build answers before writing a scenario.
 - One repeat may take `--deadline` seconds (300 unless given). A failure shows the last

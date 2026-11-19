@@ -52,7 +52,7 @@ enum Command {
         /// A skipped scenario fails the run
         #[arg(long)]
         strict: bool,
-        /// A host that hostile scenarios may target although it is not local
+        /// A host that hostile scenarios may target although it is not loopback
         #[arg(long = "allow-host", value_name = "host")]
         allowed_hosts: Vec<String>,
         /// Write the full report, timelines included, as JSON

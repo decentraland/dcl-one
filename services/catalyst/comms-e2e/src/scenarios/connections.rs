@@ -699,7 +699,7 @@ pub static STATIONARY_CREDENTIALS: Scenario = Scenario {
     guards: &["Pulse #48", "Pulse #51", "dcl-one #941"],
     summary: "A bot stands still while the gatekeeper's process restarts; when it connects again without moving, its credentials still arrive",
     needs: RESTART,
-    hostile: false,
+    hostile: true,
     default_repeat: 1,
     run: |ctx| -> ScenarioFuture { Box::pin(stationary_credentials(ctx)) },
 };

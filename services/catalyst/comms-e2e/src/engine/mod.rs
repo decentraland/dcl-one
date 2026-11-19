@@ -41,7 +41,9 @@ pub struct Scenario {
     pub guards: &'static [&'static str],
     pub summary: &'static str,
     pub needs: Needs,
-    /// Floods, sends malformed frames or creates bans: refused against a public host.
+    /// Floods, sends malformed frames, creates bans or restarts a process of the stack (the stack
+    /// file's `restart_command`): refused against a host that is not loopback unless the run
+    /// names it with `--allow-host`.
     pub hostile: bool,
     /// How many times a run repeats it unless told otherwise. Races repeat.
     pub default_repeat: u32,
