@@ -5896,6 +5896,10 @@
       "sha256": "64e12a926063646e95611a800647d1c5a72c71638c5d44e12aa5d54005c256ee"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bridge.ts",
+      "sha256": "e4096974a2b2aed1bc2587d866cd451ab0cb7e9aca5a7c8564d7f6a9035422c7"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/destinations.ts",
       "sha256": "ea1af6442252aa9733ecdcafb8954bb1b1a9b1cd3501ad53982a90753d4a2bde"
     },
@@ -5977,7 +5981,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/profile.ts",
-      "sha256": "67cc2e6f63d53cad69c9c69f9dbbab31f3be8743c0f2d96d274ebd1020bac994"
+      "sha256": "638e9603462e60efc67992c8e135c04384e38d24907c10041c3b87d3c3dfb07d"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/randomizer.ts",
@@ -6208,6 +6212,10 @@
       "sha256": "6445a90de94e25b7801cfabf86bce94022ae27551f7d99b09f80d255b1827040"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeProfileReads.test.ts",
+      "sha256": "870ec86f470b8f0bb9bfd848b24991fd37944438c99b93114f1a85b20c9a0ec9"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizer.test.ts",
       "sha256": "0aa0638ddd34ca4c07eb269dcc9691e5826fb9683554f6a73e33877bed95ba35"
     },
@@ -6361,7 +6369,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "4a0819b47fe59d74e624a3f904b4acf7fbddb7bc561c73b6091478fd414747df"
+      "sha256": "a5551a58354580d7e961bee44f8167c86c736c238eda6ce4ee05aa13e51517db"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -6418,6 +6426,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeNotifications.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeOutfits.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeProfileReads.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizer.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizerTokens.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRelay.test.ts",
@@ -6508,7 +6517,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "7bd5ec7d363aef8df713d284ebcdfb87a59fc15a7f627bd0327d1723a5934d92"
+      "sha256": "205d1cccfcac10152377bb62f031ac2c3ef820cdd5bd846d8c1eec2409b2d5e8"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -6548,7 +6557,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "387d9281537bea9a49bc932286dc3e43a46183902b769957146c1f9b30b7b2ae"
+      "sha256": "4809d12d4b9ee043db0cbdd48f166e9a101a97a1b74d07ad463144d7973ea45c"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -10072,7 +10081,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/profileStore.ts",
-      "sha256": "7d323fa38448852b90426840e8afe0e9c7fa89d5cdbc198272ee7ca1dd46680c"
+      "sha256": "6d38368c702b5da86982717763f6b0e4998777c61b053bb9983dfde5ebe356e3"
     },
     {
       "path": "library/ui/apps/hud/features/session/useConnectivity.ts",
@@ -10080,7 +10089,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "6de142d469f439a822565e5a26daf7cb49926e6a85792cdd82f65c6a339461e4"
+      "sha256": "a3f7da89efe121ec6486536ad7928dc04a5a19700ca19f0b7981c9f48b92a96c"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10740,7 +10749,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
-      "sha256": "f231731a5b7dd6644ed0509d22037821b227d0a5f12bcde69cceb94110993190"
+      "sha256": "74954fd0f3761c120a041ce0bd2bfc1cfd38a3d634c4b20be3bf31dcef274790"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/permissions.test.tsx",
@@ -10780,7 +10789,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/profile.test.tsx",
-      "sha256": "bdb9612830db6dae84b7afefbd62778e2917445bf5ce049c70f9d56ef6d05f4b"
+      "sha256": "5371f1db2b4d164739609f6d7f9053641450ef890082bf0d5d89e16e94ada682"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/profileCardContainer.test.tsx",
@@ -10920,7 +10929,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/profileStore.test.ts",
-      "sha256": "3c06294140f2f875b2a339e28966156aa9615942936b7f95a691c355ab2ffb98"
+      "sha256": "702bb335694208371b1944aa1575db8d9a27bc83312e31033b9d6b3c69af7736"
     },
     {
       "path": "library/ui/apps/hud/test/rail.test.tsx",
@@ -33136,6 +33145,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/session/profileStore.ts",
+      "to": "library/explorer-core/engine/requestIds.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/profileStore.ts",
+      "to": "library/explorer-core/engine/requestIds.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/profileStore.ts",
+      "to": "library/explorer-core/engine/requestIds.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/profileStore.ts",
       "to": "library/explorer-core/lib/identity.ts",
       "kind": "native:runtime"
     },
@@ -45377,6 +45401,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/test/bridgeProfileReads.test.ts",
+      "to": "library/explorer-core/test/console.ts",
       "kind": "test:runtime"
     },
     {
