@@ -2611,7 +2611,7 @@ async fn live_worlds_pass_against_places_decentraland_org() {
         &pool,
         &source,
         HOUR,
-        &RETRY,
+        &places_mirror::PAGE_RETRY_DELAYS,
         &CancellationToken::new(),
     )
     .await

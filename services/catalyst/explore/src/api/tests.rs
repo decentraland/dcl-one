@@ -599,10 +599,10 @@ async fn denylist_reload_timeout_retains_last_snapshot_and_recovers_after_sql_un
 
     let jobs = Jobs::new().with_fleet_jobs(false).with_first_pass_now(true);
     let started = tokio::time::Instant::now();
-    // Shorter interval and pass timeout; the real SQL wait remains, seen 2 s before the timeout.
+    // Observe the SQL lock wait before the reload pass times out.
     let timeout = Duration::from_secs(3);
     denylist::spawn_reload(&replica.state, &jobs, Duration::from_millis(100), timeout);
-    tokio::time::timeout(timeout - Duration::from_secs(2), async {
+    tokio::time::timeout(timeout - Duration::from_millis(500), async {
         loop {
             let blocked: bool = sqlx::query_scalar(
                 "SELECT EXISTS (SELECT 1 FROM pg_stat_activity

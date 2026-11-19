@@ -229,9 +229,13 @@ async fn valid_slow_provider_outlives_the_shared_readers_twenty_five_second_budg
     });
     // Once the request reaches the provider, only controlled time moves.
     let delayed = async {
-        while provider.calls.load(Ordering::SeqCst) == 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while provider.calls.load(Ordering::SeqCst) == 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("validation must call the provider");
         tokio::time::pause();
         tokio::time::advance(delay).await;
         tokio::time::resume();

@@ -46,7 +46,7 @@ pub const DEFAULT_TAKEOVER_RETRY_DELAY_MS: u64 = 100;
 /// no timeout of its own cannot hold shutdown open.
 pub const DEFAULT_DRAIN_TIMEOUT_MS: u64 = 5_000;
 /// Soft deadline for one reconnect recovery; committed cleanup still runs to settlement.
-pub const DEFAULT_RECOVERY_DEADLINE_MS: u64 = 10_000;
+const DEFAULT_RECOVERY_DEADLINE_MS: u64 = 10_000;
 
 #[derive(Debug, Clone)]
 pub struct ClusterConfig {
@@ -67,7 +67,7 @@ pub struct ClusterConfig {
     /// `ARCHIPELAGO_CONTROL_V4_AUDIENCE`: the realm-lane fence's audience (the old
     /// `COMMS_CONTROL_V4_AUDIENCE`, one value now that comms and archipelago share a process).
     pub control_v4_audience: Option<String>,
-    /// [`DEFAULT_RECOVERY_DEADLINE_MS`]; no environment variable sets it.
+    /// Soft recovery deadline in milliseconds. Defaults to 10 seconds.
     pub recovery_deadline_ms: u64,
 }
 
