@@ -7,7 +7,6 @@
   --report-text: rgb(240, 240, 240);
   --report-text-secondary: rgba(240, 240, 240, 0.7);
   --report-hover: rgba(255, 255, 255, 0.08);
-  --report-selected: rgba(255, 255, 255, 0.16);
 
   position: relative;
   width: 100%;
@@ -120,89 +119,36 @@
   color: var(--dcl-feedback-error);
 }
 
-/* MUI's outlined small input: the root holds the radius and an absolutely drawn outline; the field itself has none. */
 .control {
-  position: relative;
-  display: flex;
-  align-items: center;
-  border-radius: var(--dcl-radius-xs);
-  color: var(--report-text);
-  cursor: text;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 48px;
+  padding: var(--dcl-space-8) var(--dcl-space-16);
+  border: 1px solid var(--dcl-transparencies-white-20);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-white-10);
+  color: var(--dcl-text-primary);
+  color-scheme: dark;
+  font: inherit;
+  font-size: var(--dcl-font-size-body-md);
+  line-height: 1.5;
 }
 
-.control::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border: 1px solid var(--report-hover);
-  border-radius: inherit;
-  pointer-events: none;
+.control:focus-visible {
+  outline: 2px solid var(--dcl-primary-primary);
+  outline-offset: 2px;
 }
 
-.control:hover::after {
-  border-color: var(--report-selected);
-}
-
-.control:focus-within::after,
-.control.focused::after {
-  border-color: var(--dcl-primary-primary);
-  border-width: 2px;
-}
-
-.control.invalid::after {
+.control[aria-invalid="true"] {
   border-color: var(--dcl-feedback-error);
 }
 
-.control.disabled::after {
-  border-color: rgba(255, 255, 255, 0.38);
-}
-
-.multiline {
-  padding: 8.5px 14px;
-}
-
-.input,
 .textarea {
-  width: 100%;
-  box-sizing: border-box;
-  margin: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  font-size: var(--dcl-font-size-body-md);
-  line-height: 23px;
-  letter-spacing: inherit;
-  outline: none;
-  resize: none;
+  resize: vertical;
 }
 
-.input {
-  padding: 8.5px 14px;
-  height: 40px;
-}
-
-.textarea {
-  padding: 0;
-}
-
-.rows4 {
-  height: 92px;
-}
-
-.rows3 {
-  height: 69px;
-}
-
-.input::placeholder,
 .textarea::placeholder {
-  color: currentColor;
-  opacity: 0.5;
-}
-
-.input:disabled {
-  color: rgba(240, 240, 240, 0.38);
-  -webkit-text-fill-color: rgba(240, 240, 240, 0.38);
+  color: var(--dcl-neutrals-silver);
 }
 
 .inputGroup {
@@ -273,85 +219,6 @@
   letter-spacing: 0.01071em;
 }
 
-.select {
-  position: relative;
-}
-
-.selectLabel {
-  position: absolute;
-  top: 0;
-  left: 0;
-  z-index: 1;
-  transform: translate(14px, 9px);
-  font-size: var(--dcl-font-size-body-md);
-  line-height: 23px;
-  color: var(--report-text-secondary);
-  pointer-events: none;
-}
-
-.selectValue {
-  flex: 1;
-  min-width: 0;
-  box-sizing: border-box;
-  height: 40px;
-  padding: 8.5px 32px 8.5px 14px;
-  border-radius: var(--dcl-radius-xs);
-  font-size: var(--dcl-font-size-body-md);
-  line-height: 23px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
-  outline: none;
-  user-select: none;
-}
-
-.arrow {
-  position: absolute;
-  top: 8px;
-  right: 7px;
-  width: 24px;
-  height: 24px;
-  fill: rgba(255, 255, 255, 0.56);
-  pointer-events: none;
-}
-
-.focused .arrow {
-  transform: rotate(180deg);
-}
-
-.menu {
-  position: absolute;
-  top: calc(100% + var(--dcl-space-4));
-  left: 0;
-  right: 0;
-  z-index: 5;
-  margin: 0;
-  padding: var(--dcl-space-8) 0;
-  list-style: none;
-  background-color: #242129;
-  border-radius: var(--dcl-radius-xs);
-  /* reference MUI elevation 8; rgba(0,0,0,0.14) and rgba(0,0,0,0.12), no token */
-  box-shadow: 0 5px 5px -3px var(--dcl-transparencies-black-20), 0 8px 10px 1px rgba(0, 0, 0, 0.14), 0 3px 14px 2px rgba(0, 0, 0, 0.12);
-}
-
-.option {
-  padding: 6px var(--dcl-space-16);
-  font-size: var(--dcl-font-size-body-md);
-  line-height: 1.5;
-  cursor: pointer;
-}
-
-.option:hover,
-.option:focus-visible {
-  background-color: var(--report-hover);
-  outline: none;
-}
-
-.option[aria-selected="true"] {
-  background-color: var(--report-selected);
-}
-
 .upload {
   display: flex;
   flex-direction: column;
@@ -365,7 +232,10 @@
 .chips {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--dcl-space-16);
+  gap: var(--dcl-space-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .chip {
@@ -373,28 +243,24 @@
   align-items: center;
   gap: var(--dcl-space-4);
   background-color: var(--report-hover);
-  border-radius: 32px;
-  padding: var(--dcl-space-8) var(--dcl-space-24);
+  max-width: 100%;
+  box-sizing: border-box;
+  border-radius: var(--dcl-radius-md);
+  padding-inline-start: var(--dcl-space-12);
   font-size: var(--dcl-font-size-body-xs);
   line-height: 1.66;
   letter-spacing: 0.03333em;
   color: var(--report-text-secondary);
 }
 
-.chipRemove {
-  appearance: none;
-  background: transparent;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  color: var(--report-text-secondary);
-  font: inherit;
+.fileName {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
-.chipRemove:hover {
-  color: var(--report-text);
+.chipRemove {
+  flex-shrink: 0;
+  color: var(--report-text-secondary);
 }
 
 /* Button (md) from @dcl/one-ui, drawn as the reference's MUI contained small button. */
@@ -423,63 +289,6 @@
 
 .addFile:disabled {
   cursor: default;
-}
-
-.confirm {
-  display: flex;
-  align-items: center;
-  margin: 0 var(--dcl-space-16) 0 -11px;
-  cursor: pointer;
-  vertical-align: middle;
-}
-
-.checkbox {
-  position: relative;
-  display: inline-flex;
-  flex: 0 0 auto;
-  padding: 9px;
-  border-radius: 50%;
-  color: var(--report-text-secondary);
-}
-
-.checkbox:hover {
-  background-color: var(--report-hover);
-}
-
-.checkbox:has(:focus-visible) {
-  outline: 2px solid var(--dcl-primary-primary);
-}
-
-.checked {
-  color: var(--dcl-primary-primary);
-}
-
-.checkboxError {
-  color: var(--dcl-feedback-error);
-}
-
-.checkboxInput {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  opacity: 0;
-  cursor: inherit;
-}
-
-.checkboxIcon {
-  display: block;
-  width: 24px;
-  height: 24px;
-  fill: currentColor;
-}
-
-.confirmLabel {
-  font-size: var(--dcl-font-size-body-sm);
-  line-height: 1.43;
-  letter-spacing: 0.01071em;
 }
 
 .submitError {
@@ -521,7 +330,6 @@
 
 .footerLink:focus-visible,
 .signInButton:focus-visible,
-.selectValue:focus-visible,
 .addFile:focus-visible,
 .submit:focus-visible,
 .chipRemove:focus-visible {

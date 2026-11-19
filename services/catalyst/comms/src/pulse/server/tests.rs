@@ -1989,6 +1989,7 @@ fn pre_auth_release_credits_the_admitting_transport() {
 }
 
 mod scene_listener;
+mod socket_errors;
 
 #[tokio::test]
 async fn bans_snapshot_evicts_all_matching_peers_and_retains_other_players() {

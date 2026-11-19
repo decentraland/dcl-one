@@ -150,6 +150,8 @@ pub fn routes() -> Router<Shared> {
         .route("/about", get(main_about))
         .route("/realms", get(realms))
         .route("/status", get(status))
+        // Upstream's `/ping`: 200 with the path as its body.
+        .route("/ping", get(|| async { "/ping" }))
         .fallback(erase(not_found))
 }
 

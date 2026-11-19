@@ -10,7 +10,19 @@ const item = { name: 'Golden Armor', creator: 'Aurora', rarity: 'epic', credits:
 const name = { kind: 'name' as const, name: 'Mojito', creator: '', rarity: '', credits: 94 }
 
 function show(view: ShopPurchaseStep) {
-  const handlers = { onClose: vi.fn(), onConfirm: vi.fn(), onBuyCredits: vi.fn(), onBackpack: vi.fn(), onPreview: vi.fn(), onRetry: vi.fn(), onSignIn: vi.fn() }
+  const handlers = {
+    onClose: vi.fn(),
+    onConfirm: vi.fn(),
+    onBuyCredits: vi.fn(),
+    onBackpack: vi.fn(),
+    onPreview: vi.fn(),
+    onRetry: vi.fn(),
+    onSwitchNetwork: vi.fn(),
+    onSignIn: vi.fn(),
+    onPay: vi.fn(),
+    onAuthorize: vi.fn(),
+    onCheckAgain: vi.fn()
+  }
   render(<ShopPurchaseDialog view={view} {...handlers} />)
   return handlers
 }
@@ -72,6 +84,16 @@ describe('the purchase dialog', () => {
     show({ step: 'failed', message: 'The transaction failed on-chain. Nothing was bought.', retry: false })
     expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
+  it('the Error modal offers CANCEL and SWITCH TO … AND RETRY, in place of TRY AGAIN, when the wallet must move', () => {
+    const h = show({ step: 'failed', message: 'Your wallet has to send it on Polygon.', retry: true, switchTo: 'Polygon' })
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to Polygon and retry' }))
+    expect(h.onSwitchNetwork).toHaveBeenCalledTimes(1)
+    expect(h.onRetry).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(h.onClose).toHaveBeenCalled()
   })
 
   it('Buy N Items: every unit a row, counted in the title, the list scrolling past two', () => {
@@ -221,6 +243,183 @@ describe('the purchase dialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
     expect(h.onSignIn).toHaveBeenCalled()
   })
+
+  describe('Choose your payment method', () => {
+    const MANA = 10n ** 18n
+    const credits = { price: 500, balance: 700, pays: true }
+    const mana = { price: 12n * MANA + MANA / 2n, balance: 40n * MANA, pays: true }
+    const radio = (name: RegExp) => screen.getByRole('radio', { name }) as HTMLInputElement
+    const row = (name: RegExp) => radio(name).closest('label')?.textContent
+    const buy = () => screen.getByRole('button', { name: 'Buy item' }) as HTMLButtonElement
+    const arm = () => act(() => void vi.advanceTimersByTime(ARM_MS))
+
+    afterEach(() => vi.useRealTimers())
+
+    it('shows both ways to pay with their balances and amounts, the Credits picked first, and BUY pays with the row picked', () => {
+      vi.useFakeTimers()
+      const h = show({ step: 'method', items: [item], credits, mana })
+      const dialog = screen.getByRole('dialog', { name: 'Choose your payment method' })
+      expect(dialog.textContent).toContain('Golden Armor')
+      expect(screen.getByRole('radiogroup', { name: 'Payment method' })).toBeInTheDocument()
+      expect(row(/^Credits/)).toBe('CreditsCredits Balance:700500')
+      expect(row(/^Polygon MANA/)).toBe('Polygon MANAMANA Balance:4012.5')
+      // The item's row leaves the price to the rows: the Credits amount shows once.
+      expect(dialog.textContent?.split('500').length).toBe(2)
+      expect(radio(/^Credits/).checked).toBe(true)
+      fireEvent.click(radio(/^Polygon MANA/))
+      expect(radio(/^Polygon MANA/).checked).toBe(true)
+      expect(radio(/^Credits/).checked).toBe(false)
+      // Armed as BUY ITEM: a click the moment it appears pays nothing.
+      fireEvent.click(buy())
+      expect(h.onPay).not.toHaveBeenCalled()
+      arm()
+      fireEvent.click(buy())
+      expect(h.onPay).toHaveBeenCalledTimes(1)
+      expect(h.onPay).toHaveBeenCalledWith('mana')
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+      expect(h.onClose).toHaveBeenCalled()
+    })
+
+    it('keeps a Credits balance short of the price on screen, unpickable, and picks MANA', () => {
+      vi.useFakeTimers()
+      const h = show({ step: 'method', items: [item], credits: { price: 500, balance: 200, pays: false }, mana })
+      expect(radio(/^Credits/).disabled).toBe(true)
+      expect(row(/^Credits/)).toBe('CreditsCredits Balance:200Not enough Credits500')
+      expect(radio(/^Polygon MANA/).checked).toBe(true)
+      arm()
+      fireEvent.click(buy())
+      expect(h.onPay).toHaveBeenCalledWith('mana')
+    })
+
+    it('says the Credits can’t price it when there is no Credits price', () => {
+      show({ step: 'method', items: [item], credits: { price: null, balance: 700, pays: false }, mana })
+      expect(row(/^Credits/)).toBe('CreditsCredits Balance:700Not available with Credits')
+    })
+
+    it('keeps MANA that can’t pay on screen with its reason, and no MANA amount', () => {
+      vi.useFakeTimers()
+      const h = show({ step: 'method', items: [item], credits, mana: { ...mana, balance: 3n * MANA, pays: false } })
+      expect(radio(/^Polygon MANA/).disabled).toBe(true)
+      expect(row(/^Polygon MANA/)).toBe('Polygon MANAMANA Balance:3Not enough MANA')
+      expect(radio(/^Credits/).checked).toBe(true)
+      arm()
+      fireEvent.click(buy())
+      expect(h.onPay).toHaveBeenCalledWith('credits')
+    })
+
+    it('holds BUY while neither way pays', () => {
+      vi.useFakeTimers()
+      const h = show({ step: 'method', items: [item], credits: { ...credits, balance: 200, pays: false }, mana: { ...mana, pays: false } })
+      arm()
+      expect(buy().disabled).toBe(true)
+      fireEvent.click(buy())
+      expect(h.onPay).not.toHaveBeenCalled()
+    })
+
+    it('picks the buyer’s earlier pick again while it pays, and the Credits once it doesn’t', () => {
+      show({ step: 'method', items: [item], credits, mana, initial: 'mana' })
+      expect(radio(/^Polygon MANA/).checked).toBe(true)
+      cleanup()
+      show({ step: 'method', items: [item], credits, mana: { ...mana, pays: false }, initial: 'mana' })
+      expect(radio(/^Credits/).checked).toBe(true)
+    })
+
+    // A pick that stops paying is dropped, never moved: the same BUY must not spend another way than the buyer picked.
+    it.each([
+      { picked: 'credits' as const, other: 'mana' as const, picks: /^Credits/, otherRow: /^Polygon MANA/ },
+      { picked: 'mana' as const, other: 'credits' as const, picks: /^Polygon MANA/, otherRow: /^Credits/ }
+    ])('drops a $picked pick that stopped paying, with BUY armed, and spends only what the buyer picks next', ({ picked, other, picks, otherRow }) => {
+      vi.useFakeTimers()
+      const onPay = vi.fn()
+      const view = (pays: boolean): ShopPurchaseStep => ({
+        step: 'method',
+        items: [item],
+        credits: { ...credits, pays: picked === 'credits' ? pays : true },
+        mana: { ...mana, pays: picked === 'mana' ? pays : true }
+      })
+      const { rerender } = render(<ShopPurchaseDialog view={view(true)} onClose={vi.fn()} onPay={onPay} />)
+      // Picked by the buyer, the other row first, so the pick is theirs and not the step's opening one.
+      fireEvent.click(radio(otherRow))
+      fireEvent.click(radio(picks))
+      arm()
+      rerender(<ShopPurchaseDialog view={view(false)} onClose={vi.fn()} onPay={onPay} />)
+      expect(radio(/^Credits/).checked).toBe(false)
+      expect(radio(/^Polygon MANA/).checked).toBe(false)
+      expect(buy().disabled).toBe(true)
+      fireEvent.click(buy())
+      expect(onPay).not.toHaveBeenCalled()
+      // Paying again later doesn't pick it back.
+      rerender(<ShopPurchaseDialog view={view(true)} onClose={vi.fn()} onPay={onPay} />)
+      expect(radio(picks).checked).toBe(false)
+      expect(buy().disabled).toBe(true)
+      fireEvent.click(buy())
+      expect(onPay).not.toHaveBeenCalled()
+      fireEvent.click(radio(otherRow))
+      fireEvent.click(buy())
+      expect(onPay).toHaveBeenCalledTimes(1)
+      expect(onPay).toHaveBeenCalledWith(other)
+    })
+  })
+
+  describe('Authorize MANA', () => {
+    const view = { step: 'authorize' as const, venue: 'the Marketplace', network: 'Polygon', required: 12n * 10n ** 18n + 5n * 10n ** 17n }
+
+    afterEach(() => vi.useRealTimers())
+
+    it('names what may spend the MANA, where, and how much this purchase needs, and that the allowance is unlimited and stays', () => {
+      vi.useFakeTimers()
+      const h = show({ ...view, state: 'ready' })
+      const text = screen.getByRole('dialog', { name: 'Authorize MANA' }).textContent
+      expect(text).toContain('To buy with MANA, allow the Marketplace on Polygon to spend MANA from your wallet. This purchase needs 12.5 MANA.')
+      expect(text).toContain('The allowance is unlimited and stays after this purchase, so buying there again won’t ask for it.')
+      // It appears where BUY was: a click meant for that one doesn't authorize.
+      fireEvent.click(screen.getByRole('button', { name: 'Authorize' }))
+      expect(h.onAuthorize).not.toHaveBeenCalled()
+      act(() => void vi.advanceTimersByTime(ARM_MS))
+      fireEvent.click(screen.getByRole('button', { name: 'Authorize' }))
+      expect(h.onAuthorize).toHaveBeenCalledTimes(1)
+    })
+
+    it('waits for the authorization with AUTHORIZE held and CANCEL still live', () => {
+      const h = show({ ...view, state: 'waiting' })
+      expect(screen.getByRole('dialog', { name: 'Authorize MANA' }).getAttribute('aria-busy')).toBe('true')
+      expect((screen.getByRole('button', { name: 'Authorizing...' }) as HTMLButtonElement).disabled).toBe(true)
+      expect(screen.getByRole('status', { name: 'Waiting for the authorization to confirm' })).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+      expect(h.onClose).toHaveBeenCalled()
+    })
+
+    it('says why it didn’t go through, and TRY AGAIN authorizes again', () => {
+      vi.useFakeTimers()
+      const h = show({ ...view, state: 'failed', message: 'You declined the authorization in your wallet.' })
+      expect(screen.getByRole('alert').textContent).toBe('You declined the authorization in your wallet.')
+      act(() => void vi.advanceTimersByTime(ARM_MS))
+      fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+      expect(h.onAuthorize).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('a purchase still being confirmed', () => {
+    it('says it was sent, with nothing to check, by default', () => {
+      show({ step: 'pending' })
+      expect(screen.getByRole('dialog', { name: 'Purchase in progress' }).textContent).toContain('Your purchase was sent and is still being confirmed.')
+      expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull()
+    })
+
+    it('says what is known in its own words, and offers CHECK AGAIN', () => {
+      const h = show({ step: 'pending', message: 'We can’t tell yet whether your purchase went out.', check: 'ready' })
+      expect(screen.getByRole('dialog', { name: 'Purchase in progress' }).textContent).toContain('We can’t tell yet whether your purchase went out.')
+      fireEvent.click(screen.getByRole('button', { name: 'Check again' }))
+      expect(h.onCheckAgain).toHaveBeenCalledTimes(1)
+      fireEvent.click(screen.getByRole('button', { name: 'Continue shopping' }))
+      expect(h.onClose).toHaveBeenCalled()
+    })
+
+    it('holds CHECK AGAIN while it looks', () => {
+      show({ step: 'pending', check: 'checking' })
+      expect((screen.getByRole('button', { name: 'Checking...' }) as HTMLButtonElement).disabled).toBe(true)
+    })
+  })
 })
 
 describe('the purchase dialog over the app', () => {
@@ -307,6 +506,60 @@ describe('the purchase dialog over the app', () => {
     // The order is the dialog's: the row (it comes first), then the buttons again.
     expect(visited).toContain('row')
     expect(new Set(visited)).toEqual(new Set(['row', 'Continue shopping', 'Go to backpack']))
+  })
+
+  it('Choose your payment method: the first focus on CANCEL, and Tab stops once at the ways to pay, on the one picked', async () => {
+    const ui = createShopOverlay(vi.fn())
+    const MANA = 10n ** 18n
+    const view = { step: 'method' as const, items: [item], credits: { price: 500, balance: 700, pays: true }, mana: { price: 12n * MANA, balance: 40n * MANA, pays: true } }
+    await act(async () => ui.show(view, { onClose: vi.fn(), onPay: vi.fn() }))
+    const cancel = screen.getByRole('button', { name: 'Cancel' })
+    const credits = screen.getByRole('radio', { name: /^Credits/ })
+    const mana = screen.getByRole('radio', { name: /^Polygon MANA/ })
+    expect(document.activeElement).toBe(cancel)
+    const visited = new Set<Element | null>()
+    for (let i = 0; i < 3; i++) {
+      fireEvent.keyDown(document.activeElement!, { key: 'Tab' })
+      visited.add(document.activeElement)
+    }
+    expect(visited).toEqual(new Set([credits, cancel, screen.getByRole('button', { name: 'Buy item' })]))
+    // Picking MANA makes it the stop, in the dialog's order: just before CANCEL.
+    fireEvent.click(mana)
+    expect(document.activeElement).toBe(cancel)
+    fireEvent.keyDown(cancel, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(mana)
+  })
+
+  it('stops Tab once at the ways to pay while none is picked, on the first that can be', async () => {
+    const ui = createShopOverlay(vi.fn())
+    const MANA = 10n ** 18n
+    const both = { step: 'method' as const, items: [item], credits: { price: 500, balance: 700, pays: true }, mana: { price: 12n * MANA, balance: 40n * MANA, pays: true } }
+    const handlers = { onClose: vi.fn(), onPay: vi.fn() }
+    await act(async () => ui.show(both, handlers))
+    // The Credits pick dropped (they stopped paying), then both pay again: nothing is picked.
+    await act(async () => ui.show({ ...both, credits: { ...both.credits, pays: false } }, handlers))
+    await act(async () => ui.show(both, handlers))
+    const credits = screen.getByRole('radio', { name: /^Credits/ }) as HTMLInputElement
+    const mana = screen.getByRole('radio', { name: /^Polygon MANA/ }) as HTMLInputElement
+    expect(credits.checked || mana.checked).toBe(false)
+    const cancel = screen.getByRole('button', { name: 'Cancel' })
+    cancel.focus()
+    const visited = new Set<Element | null>()
+    for (let i = 0; i < 3; i++) {
+      fireEvent.keyDown(document.activeElement!, { key: 'Tab' })
+      visited.add(document.activeElement)
+    }
+    // BUY is held (nothing picked), so the stops are CANCEL and the group's first radio.
+    expect(visited).toEqual(new Set([credits, cancel]))
+  })
+
+  it('lets Escape cancel Authorize MANA while it confirms', async () => {
+    const ui = createShopOverlay(vi.fn())
+    const onClose = vi.fn()
+    await act(async () => ui.show({ step: 'authorize', venue: 'the Marketplace', network: 'Polygon', required: 10n ** 18n, state: 'waiting' }, { onClose, onAuthorize: vi.fn() }))
+    expect(document.activeElement?.textContent).toBe('Cancel')
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('keeps Tab within the dialog', async () => {

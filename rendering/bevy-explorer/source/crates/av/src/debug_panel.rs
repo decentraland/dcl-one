@@ -61,7 +61,6 @@ fn media_retry_delay(mut cmd: ConsoleCommand<MediaRetryDelay>) {
 #[command(name = "/media_state")]
 struct MediaState;
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn media_state(
     mut cmd: ConsoleCommand<MediaState>,
     video: Query<(

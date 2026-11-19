@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use bevy::{ecs::system::ScheduleSystem, prelude::*, scene::scene_spawner_system};
 use bevy_console::{
     Command, ConsoleCommand, ConsoleCommandEntered, ConsoleConfiguration, ConsoleResponder,

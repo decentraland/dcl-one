@@ -541,7 +541,6 @@ type MaterialData = (
     Has<PendingPrimitive>,
 );
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn update_materials(
     mut commands: Commands,
     prepaid_materials: Query<MaterialData, With<MaterialPrepaid>>,
@@ -923,7 +922,6 @@ fn update_loading_materials(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn update_bias(
     mut materials: ResMut<Assets<SceneMaterial>>,
     query: Query<

@@ -88,7 +88,6 @@ impl LoadingScreen {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn report_loading_screen(
     player: Query<(&Transform, Has<OutOfWorld>), With<PrimaryUser>>,
     wallet: Option<Res<Wallet>>,

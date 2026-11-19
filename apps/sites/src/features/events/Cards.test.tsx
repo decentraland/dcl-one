@@ -129,6 +129,43 @@ describe("when event cards reveal their actions", () => {
       screen.getByRole("button", { name: "Copy link: Poker Night" }),
     ).toBeDefined();
   });
+  describe("and a live event is in a desktop day column", () => {
+    const href = "/play?realm=gallery.dcl.eth";
+    const onJumpIn = vi.fn((event: { preventDefault: () => void }) =>
+      event.preventDefault(),
+    );
+    const onOpen = vi.fn();
+
+    beforeEach(() => {
+      onJumpIn.mockClear();
+      onOpen.mockClear();
+    });
+
+    it("should expose Jump In independently of the detail link", () => {
+      render(
+        <DayCard
+          {...props}
+          live
+          users={0}
+          jumpIn={{ href, onJumpIn }}
+          onOpen={onOpen}
+        />,
+      );
+      const link = screen.getByRole("link", { name: "Jump in: Poker Night" });
+      expect(link.getAttribute("href")).toBe(href);
+      fireEvent.click(link);
+      expect(onJumpIn).toHaveBeenCalledOnce();
+      expect(onOpen).not.toHaveBeenCalled();
+    });
+
+    it("should offer Copy link even if no launch destination was supplied", () => {
+      render(<DayCard {...props} live />);
+      expect(screen.queryByRole("link", { name: /Jump in/ })).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Copy link: Poker Night" }),
+      ).toBeDefined();
+    });
+  });
   it("should keep a live event without a jump target to Copy link, with no unknown count", () => {
     render(<UpcomingCard {...props} remind={undefined} live image={null} />);
     expect(screen.queryByRole("link", { name: /Jump in/ })).toBeNull();
@@ -159,7 +196,7 @@ describe("when event cards reveal their actions", () => {
       screen.getByRole("button", { name: "Copy link: Poker Night" }),
     );
     await waitFor(() =>
-      expect(screen.getByRole("status").textContent).toBe("Link copied."),
+      expect(screen.getByRole("status").textContent).toBe("Copied"),
     );
     expect(copy).toHaveBeenCalledWith(
       new URL(props.href, window.location.href).href,
@@ -199,7 +236,7 @@ describe("when event cards reveal their actions", () => {
     );
     fireEvent.click(button);
     await waitFor(() =>
-      expect(screen.getByRole("status").textContent).toBe("Link copied."),
+      expect(screen.getByRole("status").textContent).toBe("Copied"),
     );
   });
 });

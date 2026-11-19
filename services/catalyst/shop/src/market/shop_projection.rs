@@ -143,5 +143,6 @@ pub(super) fn map_unified_item(r: &PgRow) -> UnifiedItem {
         network: l.network,
         chain_id: l.chain_id,
         created_at: l.created_at,
+        creator_profile: None,
     }
 }

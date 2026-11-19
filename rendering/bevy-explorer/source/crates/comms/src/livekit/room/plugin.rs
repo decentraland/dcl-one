@@ -55,6 +55,7 @@ impl Plugin for LivekitRoomPlugin {
             Update,
             (
                 try_reconnect.run_if(not(in_state(ConnectionAvailability::Unavailable))),
+                close_conflicted_rooms,
                 poll_connecting_rooms,
                 (
                     process_room_events,
@@ -224,7 +225,6 @@ pub struct ServerRoomTerminal;
 /// (LiveKit announces a joiner within a couple of seconds of its data channel opening).
 const UNANNOUNCED_GRACE_SECS: f64 = 15.0;
 
-#[expect(clippy::type_complexity)]
 fn process_room_events(
     mut commands: Commands,
     livekit_rooms: Query<(
@@ -445,7 +445,6 @@ fn process_channel_control(
 
 /// Outgoing messages are published only while the room is connected; otherwise they wait in
 /// the transport's bounded channel and go out once it is (again).
-#[allow(clippy::type_complexity)]
 fn process_network_message(
     rooms: Query<
         (&mut LivekitRoom, &mut LivekitNetworkMessage),
@@ -693,12 +692,45 @@ fn record_disconnect(
         {
             // The island owner or the scene gatekeeper decides whether the player may return; a
             // scene ban comes back as a refusal that keeps checking for the unban.
-            // ConnectionStateChanged can already have started the backoff.
-            if recovery.failure != Some(FailureKind::Transient) {
+            // ConnectionStateChanged can already have started the backoff, and Pulse's
+            // `DuplicateSession` can already have ended the island for another device.
+            if !matches!(
+                recovery.failure,
+                Some(FailureKind::Transient | FailureKind::IdentityConflict)
+            ) {
                 recovery.fail(now, AdmissionError::new(FailureKind::Transient));
             }
         } else {
             recovery.failure = Some(FailureKind::Denied);
+        }
+    }
+}
+
+/// A room put in identity conflict while open or dialing (Pulse's `DuplicateSession` ends the
+/// realm's rooms) closes; the SDK's disconnect then retires its participants, and the conflict
+/// keeps it from dialing again.
+fn close_conflicted_rooms(
+    mut commands: Commands,
+    rooms: Query<
+        (Entity, &RoomRecovery, Option<&LivekitRoom>, Has<Connecting>),
+        Changed<RoomRecovery>,
+    >,
+    runtime: LivekitRuntimeRes,
+) {
+    for (entity, recovery, room, connecting) in &rooms {
+        if recovery.failure != Some(FailureKind::IdentityConflict) {
+            continue;
+        }
+        if connecting {
+            commands.entity(entity).try_remove::<Connecting>();
+        }
+        if let Some(room) = room.filter(|room| !room.closed) {
+            let room = room.room.clone();
+            runtime.spawn(async move {
+                if let Err(err) = room.close().await {
+                    warn!("Unable to close a room in identity conflict: {err}");
+                }
+            });
         }
     }
 }
@@ -816,6 +848,43 @@ mod disconnect_tests {
         world.run_system_once(try_reconnect).unwrap();
         assert!(world.get::<RefreshIsland>(owner).is_some());
         assert!(world.get::<RoomSuspended>(island).is_some());
+    }
+
+    /// The gatekeeper's removal can reach the island room after Pulse's `DuplicateSession` has
+    /// ended the island: the identity conflict holds, and nothing asks for a fresh assignment.
+    #[test]
+    fn participant_removed_after_a_takeover_keeps_the_identity_conflict() {
+        let mut world = World::new();
+        let owner = world.spawn_empty().id();
+        let island = world
+            .spawn((
+                IslandOwner(owner),
+                LivekitTransport {
+                    address: String::new(),
+                },
+            ))
+            .id();
+        let mut recovery = RoomRecovery {
+            failure: Some(FailureKind::IdentityConflict),
+            ..default()
+        };
+        record_disconnect(
+            &mut world.commands(),
+            island,
+            &mut recovery,
+            None,
+            DisconnectReason::ParticipantRemoved,
+            true,
+            0.0,
+        );
+        assert_eq!(recovery.failure, Some(FailureKind::IdentityConflict));
+        world.entity_mut(island).insert(recovery);
+        world.init_resource::<Time>();
+        world
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(60));
+        world.run_system_once(try_reconnect).unwrap();
+        assert!(world.get::<RefreshIsland>(owner).is_none());
     }
 
     #[test]

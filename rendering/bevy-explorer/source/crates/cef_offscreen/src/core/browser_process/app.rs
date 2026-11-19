@@ -26,7 +26,7 @@ impl BrowserProcessAppBuilder {
 impl Clone for BrowserProcessAppBuilder {
     fn clone(&self) -> Self {
         let object = unsafe {
-            let rc_impl = &mut *self.object;
+            let rc_impl = &*self.object;
             rc_impl.interface.add_ref();
             self.object
         };

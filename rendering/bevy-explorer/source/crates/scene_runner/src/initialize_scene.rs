@@ -54,6 +54,7 @@ use crate::{
         SCENE_JS_SPAWN_TICK,
     },
     ring_parcels,
+    scene_lod::SceneLod,
     scene_partition::camera_facing,
     update_world::{visibility::VisibilityComponent, ComponentTracker},
     vec3_to_parcel, ContainerEntity, DeletedSceneEntities, MobileUiEmulation, OutOfWorld,
@@ -279,7 +280,6 @@ pub(crate) fn load_scene_json(
 #[derive(Asset, Default, Clone, TypePath)]
 pub struct SerializedCrdtStore(pub Vec<u8>);
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn load_scene_javascript(
     mut commands: Commands,
     config: Res<AppConfig>,
@@ -675,7 +675,6 @@ pub struct TestingData {
 #[derive(Component)]
 pub struct SuperUserScene;
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(crate) fn initialize_scene(
     mut commands: Commands,
     scene_updates: Res<SceneUpdates>,
@@ -1268,7 +1267,6 @@ pub fn process_realm_change(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn load_active_entities(
     current_realm: Res<CurrentRealm>,
     player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,
@@ -1700,7 +1698,6 @@ const WAVE_SLOT_TIMEOUT: Duration = Duration::from_secs(20);
 #[derive(Component)]
 pub struct WaveSlotSince(Duration);
 
-#[expect(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn process_scene_lifecycle(
     mut commands: Commands,
     portables: Res<PortableScenes>,
@@ -2025,7 +2022,6 @@ pub struct SceneHash(pub String);
 #[derive(Component)]
 pub struct LoadingQuad(bool);
 
-#[allow(clippy::too_many_arguments)]
 fn animate_ready_scene(
     mut q: Query<(
         Entity,
@@ -2158,6 +2154,8 @@ fn animate_ready_scene(
 #[derive(Component)]
 pub struct LoadingMaterialHandle(pub Handle<LoadingMaterial>);
 
+/// Keeps each loading wall at the player's height and lights it near the player. A scene whose
+/// near LOD is shown raises no walls: the stand-in already stands on its parcels.
 fn update_loading_quads(
     mut q: Query<
         (
@@ -2165,10 +2163,14 @@ fn update_loading_quads(
             &mut Transform,
             &MeshMaterial3d<LoadingMaterial>,
             &LoadingQuad,
+            &ChildOf,
+            &mut Visibility,
         ),
         Without<PrimaryUser>,
     >,
     player: Query<&Transform, With<PrimaryUser>>,
+    scenes: Query<&RendererSceneContext>,
+    lods: Query<&SceneLod>,
     mut mats: ResMut<Assets<LoadingMaterial>>,
     mut local_prev_active: Local<HashSet<AssetId<LoadingMaterial>>>,
 ) {
@@ -2177,8 +2179,25 @@ fn update_loading_quads(
     };
 
     let prev_active = std::mem::take(&mut *local_prev_active);
+    let stood_in = lods
+        .iter()
+        .filter(|lod| lod.shown())
+        .map(|lod| lod.hash.as_str())
+        .collect::<HashSet<_>>();
 
-    for (gt, mut trans, h_mat, loading) in q.iter_mut() {
+    for (gt, mut trans, h_mat, loading, child_of, mut visibility) in q.iter_mut() {
+        let hidden = scenes
+            .get(child_of.parent())
+            .is_ok_and(|ctx| stood_in.contains(&*ctx.hash));
+        visibility.set_if_neq(if hidden {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        });
+        if hidden {
+            continue;
+        }
+
         let nearest_point = player_translation.xz().clamp(
             gt.translation().xz()
                 - if loading.0 {

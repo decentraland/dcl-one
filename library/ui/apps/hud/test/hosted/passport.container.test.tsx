@@ -41,7 +41,7 @@ describe('Passport container', () => {
   it('fetches the rich profile on open and renders it', async () => {
     receiveProfile('0xabc', RICH)
     await renderWithSession(<Passport userId="0xabc" onClose={vi.fn()} />)
-    expect(request).toHaveBeenCalledWith('0xabc', true)
+    expect(request).toHaveBeenCalledWith('0xabc', true, expect.any(Number))
     expect(screen.getByText('gm from the plaza')).toBeTruthy() // rich field from the fetched profile
     expect(screen.getByText('5 Mutual')).toBeTruthy()
   })
@@ -49,7 +49,7 @@ describe('Passport container', () => {
   it('renders identity-only from a roster seed while the fetch is in flight', async () => {
     seedProfiles([{ address: '0xabc', name: 'Alice', picture: 'a.png' }]) // no engine profile yet
     await renderWithSession(<Passport userId="0xabc" onClose={vi.fn()} />)
-    expect(request).toHaveBeenCalledWith('0xabc', true)
+    expect(request).toHaveBeenCalledWith('0xabc', true, expect.any(Number))
     expect(screen.getByText('Alice')).toBeTruthy() // resolved from the roster
   })
 

@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::{SceneCensus, SceneId};
 use dcl_component::SceneEntityId;
 
-type LiveTable = Vec<(u16, bool)>;
+// one slot per u16 id, so indexing with an id is always in bounds
+type LiveTable = Box<[(u16, bool); SceneEntityId::LIVE_TABLE_LEN]>;
 
 #[derive(Serialize, Deserialize)]
 pub struct CrdtContext {
@@ -31,7 +32,11 @@ pub struct CrdtContext {
 }
 
 fn default_live_entities() -> LiveTable {
+    // through a Vec: the 256 KiB array is never built on the stack
     vec![(0, false); SceneEntityId::LIVE_TABLE_LEN]
+        .into_boxed_slice()
+        .try_into()
+        .unwrap()
 }
 
 fn default_last_new() -> u16 {
@@ -63,8 +68,7 @@ impl CrdtContext {
     }
 
     fn entity_entry(&self, id: u16) -> &(u16, bool) {
-        // SAFETY: live_entities has LIVE_TABLE_LEN (u16::MAX + 1) entries, so any u16 index is in bounds
-        unsafe { self.live_entities.get_unchecked(id as usize) }
+        &self.live_entities[id as usize]
     }
 
     // queue an entity for creation if required
