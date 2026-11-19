@@ -236,17 +236,15 @@ pub fn update_friends(
     dui: Res<DuiRegistry>,
     mut friend_events: EventReader<FriendshipEvent>,
 ) {
-    let is_init = client.0.as_ref().is_some_and(|c| c.is_initialized);
+    let initialized_client = client.0.as_ref().filter(|c| c.is_initialized);
+    let is_init = initialized_client.is_some();
     if is_init != *init || friend_events.read().next().is_some() {
         *init = is_init;
         let Ok(components) = components.single() else {
             return;
         };
-        if !is_init {
-            // clean up, disconnected
-        } else {
-            //initialize
-            let client = client.0.as_ref().unwrap();
+        // without an initialized client the lists are left unchanged
+        if let Some(client) = initialized_client {
             let new_friends = client
                 .friends
                 .keys()

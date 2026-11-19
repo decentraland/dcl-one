@@ -285,11 +285,12 @@ pub fn update_camera_position(
     // the camera never carries scale; scenes may set arbitrary scale on virtual camera entities
     target_transform.scale = Vec3::ONE;
 
-    let changed = (prev_override.is_some() != options.scene_override.is_some())
-        || prev_override
-            .as_ref()
-            .is_some_and(|prev| !prev.effectively_equals(options.scene_override.as_ref().unwrap()))
-        || *prev_oow != is_oow;
+    let override_changed = match (prev_override.as_ref(), options.scene_override.as_ref()) {
+        (None, None) => false,
+        (Some(prev), Some(current)) => !prev.effectively_equals(current),
+        _ => true,
+    };
+    let changed = override_changed || *prev_oow != is_oow;
 
     if changed {
         debug!("changed cam to {:?}", options.scene_override);

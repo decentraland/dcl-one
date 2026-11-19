@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use bevy::log::{debug, error, warn};
+use bevy::log::{debug, error, warn, warn_once};
 use common::structs::SceneJsFile;
 use common::{
     rpc::{rmp_encode, IpcMessage, ResponseContext, ENGINE_IPC_CONTEXT},
@@ -204,10 +204,21 @@ pub fn init_runtime() -> anyhow::Result<()> {
 
 #[allow(clippy::type_complexity)]
 pub async fn renderer_ipc_out(
+    stream: SendHalf,
+    new_scene: tokio::sync::mpsc::UnboundedReceiver<NewSceneCommand>,
+    ipc_router: tokio::sync::mpsc::UnboundedReceiver<(u64, IpcMessage)>,
+) {
+    if let Err(e) = renderer_ipc_out_until_write_error(stream, new_scene, ipc_router).await {
+        warn!("renderer_ipc_out exit on write failure: {e}");
+    }
+}
+
+#[allow(clippy::type_complexity)]
+async fn renderer_ipc_out_until_write_error(
     mut stream: SendHalf,
     mut new_scene: tokio::sync::mpsc::UnboundedReceiver<NewSceneCommand>,
     mut ipc_router: tokio::sync::mpsc::UnboundedReceiver<(u64, IpcMessage)>,
-) {
+) -> std::io::Result<()> {
     let (renderer_sx, mut renderer_rx) = tokio::sync::mpsc::unbounded_channel();
 
     // one receiver per live presence context, drained into the pipe as tagged
@@ -228,7 +239,7 @@ pub async fn renderer_ipc_out(
             new_scene = new_scene.recv() => {
                 let Some(NewSceneCommand{id,info,mut renderer_channel, global_channel, response_channel, system_api_sender }) = new_scene else {
                     warn!("renderer_ipc_out exit on new scene closed");
-                    return;
+                    return Ok(());
                 };
 
                 RENDERER_SENDER.set(Some(response_channel.channel().clone()));
@@ -242,7 +253,7 @@ pub async fn renderer_ipc_out(
                     loop {
                         match old_rx.try_recv() {
                             Ok(data) => {
-                                write_msg(&mut stream, &EngineToScene::GlobalUpdate(presence_context, data)).await;
+                                write_msg(&mut stream, &EngineToScene::GlobalUpdate(presence_context, data)).await?;
                             }
                             Err(tokio::sync::broadcast::error::TryRecvError::Lagged(count)) => {
                                 error!("global crdt state lagged, dropping {count} messages");
@@ -262,19 +273,19 @@ pub async fn renderer_ipc_out(
                     let _ = renderer_sender.send(EngineToScene::KillScene(id));
                 });
 
-                write_msg(&mut stream, &EngineToScene::NewScene(id, Box::new(info))).await;
+                write_msg(&mut stream, &EngineToScene::NewScene(id, Box::new(info))).await?;
             }
             renderer_update = renderer_rx.recv() => {
                 let Some(engine_to_scene) = renderer_update else {
                     warn!("renderer_ipc_out exit on inbound closed");
-                    return;
+                    return Ok(());
                 };
-                write_msg(&mut stream, &engine_to_scene).await;
+                write_msg(&mut stream, &engine_to_scene).await?;
             }
             (presence_context, received) = next_global_update(&mut global_receivers) => {
                 match received {
                     Ok(data) => {
-                        write_msg(&mut stream, &EngineToScene::GlobalUpdate(presence_context, data)).await;
+                        write_msg(&mut stream, &EngineToScene::GlobalUpdate(presence_context, data)).await?;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
                         error!("global crdt state lagged, dropping {count} messages");
@@ -287,7 +298,7 @@ pub async fn renderer_ipc_out(
             ipc = ipc_router.recv() => {
                 let Some(ipc) = ipc else {
                     warn!("renderer_ipc_out exit on router closed");
-                    return;
+                    return Ok(());
                 };
                 debug!("ipc {} -> {}", ipc.0, !matches!(ipc.1, IpcMessage::Closed));
                 // the scene host doesn't echo our close back, so release the entry here
@@ -296,7 +307,7 @@ pub async fn renderer_ipc_out(
                         ctx.as_mut().unwrap().ipc_channel_registry.remove(&ipc.0)
                     });
                 }
-                write_msg(&mut stream, &EngineToScene::IpcMessage(ipc.0, ipc.1)).await;
+                write_msg(&mut stream, &EngineToScene::IpcMessage(ipc.0, ipc.1)).await?;
             }
         }
     }
@@ -327,7 +338,13 @@ async fn next_global_update(
     futures_util::future::select_all(recvs).await.0
 }
 
-pub async fn renderer_ipc_in(mut stream: RecvHalf) {
+pub async fn renderer_ipc_in(stream: RecvHalf) {
+    if let Err(e) = renderer_ipc_in_until_error(stream).await {
+        error!("renderer_ipc_in exit: {e}");
+    }
+}
+
+async fn renderer_ipc_in_until_error(mut stream: RecvHalf) -> std::io::Result<()> {
     while let Ok(len) = stream.read_u64_le().await {
         let mut buffer = vec![0u8; len as usize];
         stream.read_exact(&mut buffer).await.unwrap();
@@ -336,7 +353,9 @@ pub async fn renderer_ipc_in(mut stream: RecvHalf) {
         match msg {
             SceneToEngine::SceneResponse(id, scene_response) => RENDERER_SENDER.with(|sender| {
                 let mut sender = sender.borrow_mut();
-                let sender = sender.as_mut().unwrap();
+                let sender = sender.as_mut().ok_or_else(|| {
+                    std::io::Error::other("scene response before any scene was started")
+                })?;
                 // HEADLESS-ONLY: EXIT_ON_SIDECAR_LOSS marks the orchestrated headless server,
                 // where every scene shares one engine. There, a panic in this IPC task ends
                 // the loop and trips the process exit above — killing the whole engine and
@@ -350,7 +369,8 @@ pub async fn renderer_ipc_in(mut stream: RecvHalf) {
                 } else {
                     sender.try_send((id, scene_response)).unwrap();
                 }
-            }),
+                Ok::<_, std::io::Error>(())
+            })?,
             SceneToEngine::IpcMessage(id, ipc_message) => {
                 let IpcMessage::Closed = ipc_message else {
                     warn!("ignoring unexpected ipc data message for channel {id}");
@@ -359,23 +379,30 @@ pub async fn renderer_ipc_in(mut stream: RecvHalf) {
 
                 ENGINE_IPC_CONTEXT.with(|ctx| {
                     let mut ctx = ctx.borrow_mut();
-                    let ctx = ctx.as_mut().unwrap();
+                    let ctx = ctx
+                        .as_mut()
+                        .ok_or_else(|| std::io::Error::other("engine ipc context is not set"))?;
 
                     if let Some(token) = ctx.ipc_channel_registry.remove(&id) {
                         token.cancel();
                     }
-                })
+                    Ok::<_, std::io::Error>(())
+                })?
             }
             SceneToEngine::SystemApi(system_command) => {
                 SYSTEM_API_SENDER.with(|sender| {
                     let mut sender = sender.borrow_mut();
-                    let sender = sender.as_mut().unwrap();
+                    let Some(sender) = sender.as_mut() else {
+                        warn_once!("dropping system api command: system api sender is not set");
+                        return;
+                    };
 
                     let _ = sender.send(system_command);
                 });
             }
         }
     }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -430,13 +457,13 @@ pub fn spawn_scene(
     (main_sx, None)
 }
 
-pub async fn write_msg<T: Serialize>(stream: &mut SendHalf, value: &T) {
-    let bytes = rmp_encode(value).unwrap();
+/// Writes one length-prefixed message and returns the first write error.
+pub async fn write_msg<T: Serialize>(stream: &mut SendHalf, value: &T) -> std::io::Result<()> {
+    let bytes = rmp_encode(value).map_err(std::io::Error::other)?;
     stream
         .write_all(&(bytes.len() as u64).to_le_bytes())
-        .await
-        .unwrap();
-    stream.write_all(&bytes).await.unwrap();
+        .await?;
+    stream.write_all(&bytes).await
 }
 
 #[cfg(test)]

@@ -838,7 +838,10 @@ impl AtlasPage {
         let new_size = old_size * 2;
         let bpp = self.bytes_per_pixel as usize;
         let image = images.get_mut(&self.image).unwrap();
-        let old = image.data.take().unwrap();
+        // a page without main-world pixels cannot grow
+        let Some(old) = image.data.take() else {
+            return Err(AtlasFull);
+        };
         let mut data = vec![0u8; (new_size * new_size) as usize * bpp];
         let row = old_size as usize * bpp;
         for y in 0..old_size as usize {
@@ -858,7 +861,9 @@ impl AtlasPage {
         let bpp = self.bytes_per_pixel as usize;
         let row = width as usize * bpp;
         let image = images.get_mut(&self.image).unwrap();
-        let data = image.data.as_mut().unwrap();
+        let Some(data) = image.data.as_mut() else {
+            return;
+        };
         for y in 0..height as usize {
             let dst = ((pos.y as usize + y) * self.size as usize + pos.x as usize) * bpp;
             data[dst..dst + row].copy_from_slice(&src[y * row..(y + 1) * row]);
@@ -1029,10 +1034,14 @@ impl GlyphAtlas {
         for (key, slot) in inked {
             let (page, old) = match slot.page {
                 Page::Sdf => (&mut self.sdf, &old_sdf_data),
-                Page::Color => (
-                    self.color.as_mut().unwrap(),
-                    old_color_data.as_ref().unwrap(),
-                ),
+                // a colour glyph is dropped when either colour page is missing
+                Page::Color => {
+                    let (Some(page), Some(old)) = (self.color.as_mut(), old_color_data.as_ref())
+                    else {
+                        continue;
+                    };
+                    (page, old)
+                }
             };
             let raster = page.read(old, slot.rect);
             if !in_use.contains(&key) {

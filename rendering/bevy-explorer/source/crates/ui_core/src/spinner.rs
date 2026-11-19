@@ -30,7 +30,9 @@ fn setup(
 
 fn spin_spinners(mut q: Query<&mut ImageNode, With<Spinner>>, time: Res<Time>) {
     for mut t in q.iter_mut() {
-        t.texture_atlas.as_mut().unwrap().index = (time.elapsed_secs_f64() * 8.0) as usize % 8;
+        if let Some(atlas) = t.texture_atlas.as_mut() {
+            atlas.index = (time.elapsed_secs_f64() * 8.0) as usize % 8;
+        }
     }
 }
 

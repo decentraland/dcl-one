@@ -212,8 +212,11 @@ fn send_message_to_scene(
     };
 
     if input_manager.just_down(CommonInputAction::IaPointer, InputPriority::Scene) {
+        let Some(target_position) = target.position else {
+            return;
+        };
         let camera_position = camera.1.translation();
-        let direction = (target.position.unwrap() - camera_position).normalize();
+        let direction = (target_position - camera_position).normalize();
 
         // send event
         let event = json!({

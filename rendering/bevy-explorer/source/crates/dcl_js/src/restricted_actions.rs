@@ -5,7 +5,7 @@ use bevy::{
     transform::components::Transform,
 };
 use common::{
-    rpc::{OpenExplorerUiResult, RpcCall, RpcResultSender, RpcUiFocusAction},
+    rpc::{OpenExplorerUiResult, PlayerMoveTiming, RpcCall, RpcResultSender, RpcUiFocusAction},
     structs::EmoteMask,
 };
 use dcl_component::proto_components::common::Vector3 as DclVector3;
@@ -37,12 +37,16 @@ pub async fn op_move_player_to(
             .rotation
     });
 
-    let (response, rx) = duration
-        .map(|_| {
-            let (sx, rx) = RpcResultSender::<bool>::channel();
-            (Some(sx), Some(rx))
-        })
-        .unwrap_or((None, None));
+    let (timing, rx) = match duration {
+        Some(duration) => {
+            let (response, rx) = RpcResultSender::<bool>::channel();
+            (
+                PlayerMoveTiming::Interpolate { duration, response },
+                Some(rx),
+            )
+        }
+        None => (PlayerMoveTiming::Instant { response: None }, None),
+    };
 
     {
         let mut op_state = state.borrow_mut();
@@ -51,9 +55,8 @@ pub async fn op_move_player_to(
             .push(RpcCall::MovePlayer {
                 to,
                 looking_at,
-                duration,
                 camera_rotation,
-                response,
+                timing,
             })?;
     }
 

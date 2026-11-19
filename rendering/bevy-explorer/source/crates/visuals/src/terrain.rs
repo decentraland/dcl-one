@@ -556,8 +556,9 @@ fn update_texture(
         if !writes.writes.is_empty() {
             writes.writes.clear();
         }
-    } else if let Some((min, max)) = changes.targets {
-        let (bounds_min, bounds_max) = surface.bounds.unwrap();
+    } else if let (Some((min, max)), Some((bounds_min, bounds_max))) =
+        (changes.targets, surface.bounds)
+    {
         *writes = TerrainTextureWrites {
             size: bounds_max - bounds_min + 1,
             writes: vec![(

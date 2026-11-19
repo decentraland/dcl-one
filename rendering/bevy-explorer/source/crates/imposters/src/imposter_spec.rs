@@ -117,10 +117,10 @@ pub(crate) fn zip_path(
     id: &str,
     parcel: IVec2,
     level: usize,
-    crc: Option<u32>,
+    crc: u32,
 ) -> PathBuf {
     let mut path = file_root(cache_path, false, id, level);
-    path.push(format!("{},{}.{}.zip", parcel.x, parcel.y, crc.unwrap()));
+    path.push(format!("{},{}.{}.zip", parcel.x, parcel.y, crc));
     path
 }
 
@@ -146,10 +146,10 @@ pub async fn load_imposter(
     id: String,
     parcel: IVec2,
     level: usize,
-    required_crc: Option<u32>,
+    required_crc: u32,
     download: bool,
 ) -> Option<BakedScene> {
-    if required_crc.is_some_and(|crc| crc == 0) {
+    if required_crc == 0 {
         // crc==0 means the area has no scenes, so resolve directly to an empty
         // spec instead of falling through to remote fetch (which would 404) or
         // PendingRemote (which would re-trigger the bake every frame).
@@ -183,7 +183,7 @@ pub fn set_source(url: &str) {
     let _ = IMPOSTER_URL_BASE.set(url.trim_end_matches('/').to_owned());
 }
 
-fn remote_zip_url(base: &str, id: &str, parcel: IVec2, level: usize, crc: Option<u32>) -> String {
+fn remote_zip_url(base: &str, id: &str, parcel: IVec2, level: usize, crc: u32) -> String {
     let zip_file = zip_path(None, id, parcel, level, crc)
         .to_string_lossy()
         .into_owned()
@@ -198,7 +198,7 @@ pub async fn load_imposter_remote(
     id: &str,
     parcel: IVec2,
     level: usize,
-    crc: Option<u32>,
+    crc: u32,
 ) -> Result<(), anyhow::Error> {
     let client = ipfs.client();
     let base = IMPOSTER_URL_BASE
@@ -281,20 +281,19 @@ pub async fn load_imposter_local(
     id: &str,
     parcel: IVec2,
     level: usize,
-    required_crc: Option<u32>,
+    required_crc: u32,
 ) -> Option<BakedScene> {
     let path = spec_path(ipfs.cache_path(), id, parcel, level);
     if let Ok(mut file) = platform_fs::File::open(&path).await {
         let mut buf = Vec::default();
         if file.read_to_end(&mut buf).await.is_ok() {
             if let Ok(baked_scene) = serde_json::from_slice::<BakedScene>(&buf) {
-                if required_crc.is_none_or(|crc| crc == baked_scene.crc) {
+                if required_crc == baked_scene.crc {
                     return Some(baked_scene);
                 } else {
                     debug!(
                         "mismatched hash for {path:?} (expected {}, found {})",
-                        required_crc.unwrap(),
-                        baked_scene.crc
+                        required_crc, baked_scene.crc
                     );
                 }
             } else {
@@ -318,7 +317,7 @@ mod tests {
                 "https://realm-provider.decentraland.org/main",
                 IVec2::new(-29, 55),
                 3,
-                Some(12345)
+                12345
             ),
             "https://bevy-imposters.dclregenesislabs.xyz/imposters/realms/https%253A%252F%252Frealm-provider.decentraland.org%252Fmain/3/-29,55.12345.zip"
         );
@@ -332,7 +331,7 @@ mod tests {
                 "https://my-realm.example.test",
                 IVec2::new(1, -2),
                 0,
-                Some(7)
+                7
             ),
             "https://imposters.example.test/imposters/realms/https%253A%252F%252Fmy-realm.example.test/0/1,-2.7.zip"
         );

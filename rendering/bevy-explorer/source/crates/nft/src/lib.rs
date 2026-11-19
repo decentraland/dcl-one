@@ -176,6 +176,12 @@ fn load_frame(
             continue;
         };
 
+        let Some(frame_scene) = gltf.default_scene.clone() else {
+            error_once!("nft frame {:?} has no default scene", frame.frame_type);
+            commands.entity(ent).remove::<FrameLoading>();
+            continue;
+        };
+
         // \o/
         let transform = if frame.frame_type == NftFrameType::NftClassic {
             Transform::from_rotation(Quat::from_rotation_x(PI))
@@ -185,7 +191,7 @@ fn load_frame(
 
         let child = commands.spawn((transform, Visibility::default())).id();
 
-        let instance = scene_spawner.spawn_as_child(gltf.default_scene.clone().unwrap(), child);
+        let instance = scene_spawner.spawn_as_child(frame_scene, child);
         commands
             .entity(ent)
             .remove::<FrameLoading>()

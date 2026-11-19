@@ -891,11 +891,10 @@ fn animate(
             };
 
         // play requested emote
-        *active_emote = if let Some(requested_emote) = requested_emote {
+        *active_emote = if let (Some(requested_emote), Some(command)) = (requested_emote, emote) {
             if emote_changed {
                 dynamic_state.move_kind = MoveKind::Emote;
             }
-            let command = emote.unwrap();
             commands
                 .entity(avatar_ent)
                 .try_insert(LastEmoteCommand(command.clone()));
@@ -1438,17 +1437,21 @@ fn fire_slot_sound(
     let extras = extras
         .entry(avatar)
         .or_insert_with(|| SpawnedExtras::new(urn.clone()));
-    if let Some(mut existing_emitter) = extras
-        .audio
-        .as_ref()
-        .and_then(|(e, _)| params.emitters.get_mut(*e).ok())
+    if let Some((mut existing_emitter, audio_elapsed)) =
+        extras.audio.as_mut().and_then(|(e, audio_elapsed)| {
+            params
+                .emitters
+                .get_mut(*e)
+                .ok()
+                .map(|emitter| (emitter, audio_elapsed))
+        })
     {
         *existing_emitter = AudioEmitter {
             handle: sound,
             ty: AudioType::Avatar,
             ..Default::default()
         };
-        extras.audio.as_mut().unwrap().1 = elapsed;
+        *audio_elapsed = elapsed;
     } else {
         let audio_entity = commands
             .spawn((
@@ -1644,7 +1647,9 @@ fn play_slot(
     let now = params.time.elapsed_secs();
     let (clip_ix, restart) = match &mut slot {
         Slot::FullBody { .. } => {
-            let mut clips = clips.unwrap();
+            let Some(mut clips) = clips else {
+                return Err(Hold::NoPlayer);
+            };
             // the avatar's `Clips` durations (unused here) hold when each node was last played
             let clip_ix = graph
                 .and_then(|graph| {

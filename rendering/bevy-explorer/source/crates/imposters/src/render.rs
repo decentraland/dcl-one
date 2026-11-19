@@ -144,7 +144,7 @@ impl ImposterLoadTask {
             address.to_string(),
             parcel,
             level,
-            Some(crc),
+            crc,
             download,
         ));
         Self(task)

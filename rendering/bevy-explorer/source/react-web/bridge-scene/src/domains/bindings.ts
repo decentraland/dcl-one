@@ -47,6 +47,11 @@ export function registerBindings(ctx: Ctx): void {
       if (activeCaptureId !== msg.id) return // superseded — a stale resolve, drop it
       activeCaptureId = null
       ctx.send({ kind: 'inputCaptured', id: msg.id, input })
+    }).catch((err: unknown) => {
+      if (activeCaptureId !== msg.id) return
+      activeCaptureId = null
+      console.error('[bindings] captureInput failed', err)
+      ctx.send({ kind: 'requestFailed', request: 'captureInput', error: String(err) })
     })
   })
 

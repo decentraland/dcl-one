@@ -233,8 +233,9 @@ pub fn update_camera_mode_area(
                     camera.scene_override = Some(CameraOverride::Distance(1.0))
                 }
                 Some(CameraType::CtCinematic) => {
-                    let Some(cinematic_settings) =
-                        maybe_area.as_ref().unwrap().0.cinematic_settings.as_ref()
+                    let Some(cinematic_settings) = maybe_area
+                        .as_ref()
+                        .and_then(|area| area.0.cinematic_settings.as_ref())
                     else {
                         warn!("no cinematic settings");
                         return;

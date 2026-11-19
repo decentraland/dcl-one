@@ -346,10 +346,12 @@ fn gather_actions<M: ActionMarker>(
     mut new_actions: Query<(Entity, &mut On<M>), Without<ActionIndex<M>>>,
 ) {
     for (ent, mut action) in new_actions.iter_mut() {
+        let Some(mut action) = action.0.take() else {
+            continue;
+        };
         commands
             .entity(ent)
             .try_insert(ActionIndex::<M>(ui_actions.0.len(), Default::default()));
-        let mut action = action.0.take().unwrap();
         action.entity = ent;
         ui_actions.0.push(action);
     }

@@ -57,7 +57,7 @@ pub fn crash_batch(message: &str, source: &str) -> Option<(String, String)> {
         }),
         Utc::now(),
         uuid::Uuid::new_v4().to_string(),
-    );
+    )?;
     let item = serde_json::to_string(&item).ok()?;
     Some((
         SEGMENT_BATCH_URL.to_owned(),

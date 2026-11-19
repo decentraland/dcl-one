@@ -125,12 +125,17 @@ fn start_sound(
     sound_data: StreamingSoundData<AudioDecoderError>,
 ) {
     info!("{entity:?} received sound data!");
-    let handle = audio_manager
-        .manager
-        .as_mut()
-        .unwrap()
-        .play(sound_data)
-        .unwrap();
+    let Some(manager) = audio_manager.manager.as_mut() else {
+        warn_once!("sound not started: no audio output");
+        return;
+    };
+    let handle = match manager.play(sound_data) {
+        Ok(handle) => handle,
+        Err(e) => {
+            warn!("{entity:?} sound not started: {e}");
+            return;
+        }
+    };
     let orphan = match audio_sink.handle_sender.take() {
         Some(sender) => sender.send(handle).err(),
         None => Some(handle),
@@ -156,12 +161,17 @@ fn spawn_new_foreign_audio_sources(
             .and_then(|rx| rx.try_recv().ok())
         {
             info!("{entity:?} received foreign sound data!");
-            let handle = audio_manager
-                .manager
-                .as_mut()
-                .unwrap()
-                .play(sound_data)
-                .unwrap();
+            let Some(manager) = audio_manager.manager.as_mut() else {
+                warn_once!("foreign sound not started: no audio output");
+                continue;
+            };
+            let handle = match manager.play(sound_data) {
+                Ok(handle) => handle,
+                Err(e) => {
+                    warn!("{entity:?} foreign sound not started: {e}");
+                    continue;
+                }
+            };
 
             commands
                 .entity(entity)

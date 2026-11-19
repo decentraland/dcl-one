@@ -33,39 +33,30 @@ impl InputWrapper {
 
 impl InputWrapper {
     fn get_input(&mut self, blocking: bool) -> Option<&mut Input> {
-        if self.input.is_some() {
-            #[allow(clippy::unnecessary_unwrap)] // required for borrow split
-            return Some(self.input.as_mut().unwrap());
-        }
-
-        if blocking {
-            if let Some(pending_input) = self.pending_input.take() {
-                match pending_input.blocking_recv() {
-                    Ok(input) => {
-                        self.input = Some(input);
-                        return Some(self.input.as_mut().unwrap());
+        if self.input.is_none() {
+            if blocking {
+                if let Some(pending_input) = self.pending_input.take() {
+                    match pending_input.blocking_recv() {
+                        Ok(input) => self.input = Some(input),
+                        Err(_) => {
+                            self.is_eof = true;
+                            return None;
+                        }
                     }
-                    Err(_) => {
+                }
+            } else if let Some(pending_input) = self.pending_input.as_mut() {
+                match pending_input.try_recv() {
+                    Ok(input) => self.input = Some(input),
+                    Err(tokio::sync::oneshot::error::TryRecvError::Empty) => return None,
+                    Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
                         self.is_eof = true;
                         return None;
                     }
                 }
             }
-        } else if let Some(pending_input) = self.pending_input.as_mut() {
-            match pending_input.try_recv() {
-                Ok(input) => {
-                    self.input = Some(input);
-                    return Some(self.input.as_mut().unwrap());
-                }
-                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => return None,
-                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
-                    self.is_eof = true;
-                    return None;
-                }
-            }
         }
 
-        None
+        self.input.as_mut()
     }
 }
 

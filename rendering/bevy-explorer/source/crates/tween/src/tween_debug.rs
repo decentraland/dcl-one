@@ -400,15 +400,21 @@ fn axis_gizmos(mut gizmos: Gizmos, tweens: Query<(&Tween, &GlobalTransform)>) {
     for (tween, global_transform) in tweens {
         match &tween.0.mode {
             Some(Mode::Move(data)) => {
+                let Some(end) = data.end else {
+                    continue;
+                };
                 gizmos.arrow(
                     global_transform.translation(),
-                    data.end.unwrap().world_vec_to_vec3(),
+                    end.world_vec_to_vec3(),
                     palettes::tailwind::RED_700,
                 );
             }
             Some(Mode::Rotate(data)) => {
+                let Some(end) = data.end else {
+                    continue;
+                };
                 let start = global_transform.rotation();
-                let end = data.end.unwrap().to_bevy_normalized();
+                let end = end.to_bevy_normalized();
                 let angle = end.angle_between(start);
                 gizmos.arc_3d(
                     angle,
@@ -418,8 +424,11 @@ fn axis_gizmos(mut gizmos: Gizmos, tweens: Query<(&Tween, &GlobalTransform)>) {
                 );
             }
             Some(Mode::Scale(data)) => {
+                let Some(end) = data.end else {
+                    continue;
+                };
                 let start = global_transform.scale().length().sqrt();
-                let end = data.end.unwrap().world_vec_to_vec3().length().sqrt();
+                let end = end.world_vec_to_vec3().length().sqrt();
                 gizmos.sphere(
                     Isometry3d::from_translation(global_transform.translation()),
                     start,
@@ -432,11 +441,14 @@ fn axis_gizmos(mut gizmos: Gizmos, tweens: Query<(&Tween, &GlobalTransform)>) {
                 );
             }
             Some(Mode::RotateContinuous(data)) => {
+                let Some(direction) = data.direction else {
+                    continue;
+                };
                 gizmos.axes(
                     Isometry3d::from_translation(global_transform.translation()),
                     2.5,
                 );
-                let axis = crate::rotate_continuous_axis(data.direction.unwrap());
+                let axis = crate::rotate_continuous_axis(direction);
                 gizmos.arrow(
                     global_transform.translation(),
                     global_transform.translation() + axis * 2.5,
@@ -444,7 +456,10 @@ fn axis_gizmos(mut gizmos: Gizmos, tweens: Query<(&Tween, &GlobalTransform)>) {
                 );
             }
             Some(Mode::MoveContinuous(data)) => {
-                let direction = data.direction.unwrap().world_vec_to_vec3();
+                let Some(direction) = data.direction else {
+                    continue;
+                };
+                let direction = direction.world_vec_to_vec3();
                 let speed = data.speed;
                 gizmos.arrow(
                     global_transform.translation(),
@@ -453,7 +468,9 @@ fn axis_gizmos(mut gizmos: Gizmos, tweens: Query<(&Tween, &GlobalTransform)>) {
                 );
             }
             Some(Mode::TextureMoveContinuous(data)) => {
-                let dcl_vec2 = data.direction.unwrap();
+                let Some(dcl_vec2) = data.direction else {
+                    continue;
+                };
                 // The direction is in pixels, so we scale it down for the gizmo
                 let direction = Vec3::new(dcl_vec2.x, dcl_vec2.y, 0.) / 1024.;
                 let speed = data.speed;

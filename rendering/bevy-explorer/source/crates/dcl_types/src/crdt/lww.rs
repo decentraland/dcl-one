@@ -41,28 +41,23 @@ impl CrdtLWWState {
                     // update iff data is some
                     maybe_new_data.is_some()
                 } else {
-                    let current_len = entry.data.len() + 1;
-                    let new_len = match maybe_new_data.as_ref() {
-                        Some(new_data) => new_data.len() + 1,
-                        None => 0,
-                    };
-                    match current_len.cmp(&new_len) {
-                        // current is longer, don't update
-                        Ordering::Greater => false,
-                        // current is shorter
-                        Ordering::Less => true,
-                        Ordering::Equal => {
-                            // compare bytes
-                            match entry
-                                .data
-                                .as_slice()
-                                .cmp(maybe_new_data.as_ref().unwrap().as_slice())
-                            {
-                                Ordering::Less => true,
-                                Ordering::Equal => false,
-                                Ordering::Greater => false,
+                    match maybe_new_data.as_ref() {
+                        // current is some, new is none: current is longer, don't update
+                        None => false,
+                        Some(new_data) => match entry.data.len().cmp(&new_data.len()) {
+                            // current is longer, don't update
+                            Ordering::Greater => false,
+                            // current is shorter
+                            Ordering::Less => true,
+                            Ordering::Equal => {
+                                // compare bytes
+                                match entry.data.as_slice().cmp(new_data.as_slice()) {
+                                    Ordering::Less => true,
+                                    Ordering::Equal => false,
+                                    Ordering::Greater => false,
+                                }
                             }
-                        }
+                        },
                     }
                 }
             }

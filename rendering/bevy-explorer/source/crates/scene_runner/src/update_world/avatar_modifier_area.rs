@@ -233,8 +233,7 @@ fn update_avatar_modifier_area(
             let (_, scene_ent, maybe_area, maybe_modifier, _) =
                 areas.get(active_area.entity).unwrap();
 
-            if maybe_area.is_some_and(|area| !area.0.modifiers.is_empty()) {
-                let area = maybe_area.unwrap();
+            if let Some(area) = maybe_area.filter(|area| !area.0.modifiers.is_empty()) {
                 let permit = match active_hide_areas
                     .get(&scene_ent.root)
                     .unwrap_or(&PermissionState::NotRequested)

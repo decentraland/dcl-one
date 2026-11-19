@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use common::{
-    rpc::{RpcCall, RpcCallEvent, RpcResultSender},
+    rpc::{PlayerMoveTiming, RpcCall, RpcCallEvent, RpcResultSender},
     structs::PrimaryUser,
 };
 use console::{DoAddConsoleCommand, PendingConsoleResponses};
@@ -50,12 +50,17 @@ fn move_player_to_cmd(
     if let Some(Ok(command)) = input.take() {
         let to = DclTranslation([command.x, command.y, command.z]).to_bevy_translation();
         let (response, rx) = RpcResultSender::<bool>::channel();
+        let timing = match command.duration {
+            Some(duration) => PlayerMoveTiming::Interpolate { duration, response },
+            None => PlayerMoveTiming::Instant {
+                response: Some(response),
+            },
+        };
         events.write(RpcCallEvent::engine(RpcCall::MovePlayer {
             to,
             looking_at: None,
-            duration: command.duration,
             camera_rotation: None,
-            response: Some(response),
+            timing,
         }));
         let (x, y, z) = (command.x, command.y, command.z);
         let has_duration = command.duration.is_some();

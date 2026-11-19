@@ -127,13 +127,15 @@ impl Wallet {
         // meanwhile needs the write lock
         let (signer, root_address, delegates) = {
             let read = self.0.read().await;
-            let signer = read.inner.clone().ok_or_else(|| {
+            let not_connected = || {
                 WalletError::Other(Box::new(std::io::Error::new(
                     std::io::ErrorKind::NotConnected,
                     "wallet not connected",
                 )))
-            })?;
-            (signer, read.root_address.unwrap(), read.delegates.clone())
+            };
+            let signer = read.inner.clone().ok_or_else(not_connected)?;
+            let root_address = read.root_address.ok_or_else(not_connected)?;
+            (signer, root_address, read.delegates.clone())
         };
         signer.sign_message(message, root_address, &delegates).await
     }

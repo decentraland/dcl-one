@@ -1514,8 +1514,8 @@ fn render_debug_colliders<T: ColliderType>(
         return;
     }
 
-    if debug_materials.is_none() {
-        *debug_materials = Some((
+    let (primitive_material, gltf_material) = debug_materials.get_or_insert_with(|| {
+        (
             materials.add(StandardMaterial {
                 base_color: T::primitive_debug_color(),
                 alpha_mode: AlphaMode::Blend,
@@ -1534,8 +1534,8 @@ fn render_debug_colliders<T: ColliderType>(
                 cull_mode: None,
                 ..Default::default()
             }),
-        ));
-    }
+        )
+    });
 
     for collider in changed_collider.iter() {
         if let Some(debug_ent) = debug_entities.remove(&collider) {
@@ -1557,7 +1557,7 @@ fn render_debug_colliders<T: ColliderType>(
             let debug_ent = commands
                 .spawn((
                     Mesh3d(h_mesh),
-                    MeshMaterial3d(debug_materials.as_ref().unwrap().0.clone()),
+                    MeshMaterial3d(primitive_material.clone()),
                     Transform::from_translation(Vec3::Y),
                     Wireframe,
                     NotShadowCaster,
@@ -1604,7 +1604,7 @@ fn render_debug_colliders<T: ColliderType>(
                 commands
                     .spawn((
                         Mesh3d(h_mesh),
-                        MeshMaterial3d(debug_materials.as_ref().unwrap().1.clone()),
+                        MeshMaterial3d(gltf_material.clone()),
                         Wireframe,
                         NotShadowCaster,
                         NotShadowReceiver,
@@ -1614,7 +1614,7 @@ fn render_debug_colliders<T: ColliderType>(
                 commands
                     .spawn((
                         Mesh3d(h_mesh),
-                        MeshMaterial3d(debug_materials.as_ref().unwrap().0.clone()),
+                        MeshMaterial3d(primitive_material.clone()),
                         Wireframe,
                         NotShadowCaster,
                         NotShadowReceiver,

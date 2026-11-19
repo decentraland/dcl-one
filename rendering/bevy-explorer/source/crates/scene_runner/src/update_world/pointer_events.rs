@@ -76,16 +76,11 @@ impl PointerEvents {
         &self,
         default_scene: Option<Entity>,
     ) -> impl Iterator<Item = (Entity, &Entry)> {
-        self.msg.iter().flat_map(move |(scene, events)| {
-            events.pointer_events.iter().map(move |e| {
-                (
-                    *scene
-                        .as_ref()
-                        .unwrap_or_else(|| default_scene.as_ref().unwrap()),
-                    e,
-                )
-            })
-        })
+        // events keyed by no scene belong to `default_scene`; without one they are skipped
+        self.msg
+            .iter()
+            .filter_map(move |(scene, events)| Some((scene.or(default_scene)?, events)))
+            .flat_map(|(scene, events)| events.pointer_events.iter().map(move |e| (scene, e)))
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Entry> {

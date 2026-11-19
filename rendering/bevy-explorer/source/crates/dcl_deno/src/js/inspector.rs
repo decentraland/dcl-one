@@ -146,15 +146,12 @@ fn handle_ws_request(
     // run in a block to not hold borrow to `inspector_map` for too long
     let new_session_tx = {
         let inspector_map = inspector_map_rc.borrow();
-        let maybe_inspector_info = inspector_map.get(&maybe_uuid.unwrap());
-
-        if maybe_inspector_info.is_none() {
+        let Some(info) = inspector_map.get(&maybe_uuid.unwrap()) else {
             return http::Response::builder()
                 .status(http::StatusCode::NOT_FOUND)
                 .body("Invalid inspector UUID".into());
-        }
+        };
 
-        let info = maybe_inspector_info.unwrap();
         info.new_session_tx.clone()
     };
     let (parts, _) = req.into_parts();

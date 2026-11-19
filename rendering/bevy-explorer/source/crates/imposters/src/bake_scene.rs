@@ -117,16 +117,17 @@ fn make_scene_oven(
         return;
     };
 
-    if start_tick
-        .as_ref()
-        .is_none_or(|(start_tick_hash, _)| hash != start_tick_hash)
-    {
-        *start_tick = Some((hash.clone(), tick.0));
-    }
+    let mut start_tick_number = match start_tick.as_ref() {
+        Some((start_tick_hash, start_tick_number)) if start_tick_hash == hash => *start_tick_number,
+        _ => {
+            *start_tick = Some((hash.clone(), tick.0));
+            tick.0
+        }
+    };
 
     if let Some(entity) = live_scenes.scenes.get(hash) {
         let Ok((mut context, mut transform)) = scenes.get_mut(*entity) else {
-            if tick.0 > start_tick.as_ref().unwrap().1 + 10000 {
+            if tick.0 > start_tick_number + 10000 {
                 warn!("scene load failed, spawning dummy oven");
                 let Some(ImposterToBake::Scene(parcel, _)) = bake_list.0.last() else {
                     error!("bake list doesn't have a scene, scene entity is missing, but CurrentImposterScene is set?!");
@@ -187,8 +188,9 @@ fn make_scene_oven(
         // resolving. Equivalent to "10k frames since the last completion".
         if any_pending_asset {
             *start_tick = Some((hash.clone(), tick.0));
+            start_tick_number = tick.0;
         }
-        let spawning_forever = tick.0 > start_tick.as_ref().unwrap().1 + 10000;
+        let spawning_forever = tick.0 > start_tick_number + 10000;
 
         if context.tick_number < SCENE_BAKE_TICK && !context.broken() && !spawning_forever {
             return;
@@ -235,15 +237,14 @@ fn make_scene_oven(
 
         // first frame textures are all loaded; record the scene tick and let the
         // scene tick a few more times so dynamic state can settle before capture
-        if !spawning_forever
-            && settle_tick
-                .as_ref()
-                .is_none_or(|(settle_hash, _)| hash != settle_hash)
-        {
-            *settle_tick = Some((hash.clone(), context.tick_number));
-        }
         if !spawning_forever {
-            let ready_at = settle_tick.as_ref().unwrap().1;
+            let ready_at = match settle_tick.as_ref() {
+                Some((settle_hash, ready_at)) if settle_hash == hash => *ready_at,
+                _ => {
+                    *settle_tick = Some((hash.clone(), context.tick_number));
+                    context.tick_number
+                }
+            };
             if context.tick_number < ready_at.saturating_add(SCENE_BAKE_SETTLE_TICKS) {
                 return;
             }
@@ -352,7 +353,7 @@ fn bake_scene_imposters(
                             realm.clone(),
                             *parcel,
                             0,
-                            Some(scene_crc),
+                            scene_crc,
                         )(());
                     }
                 }
@@ -361,7 +362,9 @@ fn bake_scene_imposters(
                 commands.entity(current_scene_ent).despawn();
                 live_scenes.scenes.remove(&oven.hash);
 
-                current_imposter.0.as_mut().unwrap().1 = true;
+                if let Some((_, baked)) = current_imposter.0.as_mut() {
+                    *baked = true;
+                }
                 commands.entity(baking_ent).despawn();
                 return;
             };
@@ -495,7 +498,7 @@ fn bake_scene_imposters(
                         realm.clone(),
                         region.parcel_min(),
                         0,
-                        Some(oven.baked_scene.crc),
+                        oven.baked_scene.crc,
                     ));
                 } else {
                     camera.set_callback(save_asset_callback);
@@ -546,7 +549,7 @@ fn bake_scene_imposters(
                     realm.clone(),
                     region.parcel_min(),
                     0,
-                    Some(oven.baked_scene.crc),
+                    oven.baked_scene.crc,
                 ));
             } else {
                 top_down.set_callback(save_asset_callback);
@@ -615,7 +618,7 @@ fn save_and_zip_callback<T>(
     id: String,
     parcel: IVec2,
     level: usize,
-    crc: Option<u32>,
+    crc: u32,
 ) -> impl FnOnce(T) + Send + Sync + 'static {
     move |arg: T| {
         save_asset_callback(arg);
@@ -697,13 +700,12 @@ fn bake_imposter_imposter(
     plugin: Res<DclImposterPlugin>,
     mut manager: ImposterSpecManager,
 ) {
-    if baking.is_some() {
+    if let Some(&(bake_start_tick, _)) = baking.as_ref() {
         let all_cams_finished = all_baking_cams
             .iter()
             .all(|(_, cam)| cam.state == BakeState::Finished);
 
-        if all_cams_finished {
-            let (_, baking) = baking.take().unwrap();
+        if let Some((_, baking)) = baking.take_if(|_| all_cams_finished) {
             debug!("all cams done");
             let Some(CurrentImposterImposterDetail { parcel, level, .. }) = current_imposter.0
             else {
@@ -736,11 +738,13 @@ fn bake_imposter_imposter(
                     current_realm.about_url.clone(),
                     parcel,
                     level,
-                    Some(baking.crc),
+                    baking.crc,
                 )(());
             }
-            current_imposter.0.as_mut().unwrap().complete = true;
-        } else if tick.0 > baking.as_ref().unwrap().0 + 100 {
+            if let Some(detail) = current_imposter.0.as_mut() {
+                detail.complete = true;
+            }
+        } else if tick.0 > bake_start_tick + 100 {
             for (_, mut cam) in all_baking_cams.iter_mut() {
                 debug!("forcing failed imposter bake ...");
                 cam.wait_for_render = false;
@@ -868,7 +872,7 @@ fn bake_imposter_imposter(
                     current_realm.about_url.clone(),
                     *parcel,
                     *level,
-                    Some(*crc),
+                    *crc,
                 ));
             } else {
                 camera.set_callback(save_asset_callback);
@@ -928,7 +932,7 @@ fn bake_imposter_imposter(
                     current_realm.about_url.clone(),
                     *parcel,
                     *level,
-                    Some(*crc),
+                    *crc,
                 ));
             } else {
                 top_down.set_callback(save_asset_callback);
@@ -1052,14 +1056,16 @@ fn pick_imposter_to_bake(
 
             // delete prev zip if exists
             if let Some(output_path) = plugin.zip_output.clone() {
-                let path = zip_path(
-                    Some(&output_path),
-                    &current_realm.about_url,
-                    imposter.parcel,
-                    imposter.level,
-                    scene_pointers.crc(imposter.parcel, imposter.level),
-                );
-                let _ = std::fs::remove_file(path);
+                if let Some(crc) = scene_pointers.crc(imposter.parcel, imposter.level) {
+                    let path = zip_path(
+                        Some(&output_path),
+                        &current_realm.about_url,
+                        imposter.parcel,
+                        imposter.level,
+                        crc,
+                    );
+                    let _ = std::fs::remove_file(path);
+                }
             }
 
             break;
@@ -1197,10 +1203,8 @@ fn check_bake_state(
                     ) {
                         ImposterState::Ready(..) => (),
                         ImposterState::Missing => {
-                            if *level == 1 {
-                                baking
-                                    .0
-                                    .push(ImposterToBake::Scene(key.0, pointer.unwrap()));
+                            if let Some(pointer) = pointer {
+                                baking.0.push(ImposterToBake::Scene(key.0, pointer));
                             } else {
                                 baking.0.push(ImposterToBake::Mip(key.0, key.1));
                             }

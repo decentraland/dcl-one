@@ -16,15 +16,18 @@ pub enum LocalChannel<T> {
 }
 
 impl<T> LocalChannel<T> {
-    fn serialize_with<F: FnOnce(tokio::sync::oneshot::Sender<T>) -> u64>(&mut self, f: F) -> u64 {
+    fn serialize_with<F: FnOnce(tokio::sync::oneshot::Sender<T>) -> Result<u64, &'static str>>(
+        &mut self,
+        f: F,
+    ) -> Result<u64, &'static str> {
         let id = match std::mem::replace(self, LocalChannel::Used) {
-            LocalChannel::Channel(sender) => (f)(sender),
+            LocalChannel::Channel(sender) => (f)(sender)?,
             LocalChannel::Serialized(id) => id,
-            LocalChannel::Used => panic!(),
+            LocalChannel::Used => return Err("result sender already used"),
         };
 
         *self = LocalChannel::Serialized(id);
-        id
+        Ok(id)
     }
 
     fn take(&mut self) -> Option<tokio::sync::oneshot::Sender<T>> {
@@ -181,20 +184,24 @@ impl<T: 'static + Serialize + DeserializeOwned + Send> Serialize for RpcResultSe
             panic!();
         };
 
-        let id = channel.try_write().unwrap().serialize_with(|sender| {
-            let endpoint = IpcResultCallback {
-                sender: Some(sender),
-                _cancel_on_drop: cancel.clone().drop_guard(),
-            };
-            let (id, close_sender) = ipc_register(endpoint);
-            let cancel = cancel.clone();
-            tokio::spawn(async move {
-                cancel.cancelled().await;
-                let _ = close_sender.send(id);
-            });
-            debug!("created sender {id} -> {}", std::any::type_name::<T>());
-            id
-        });
+        let id = channel
+            .try_write()
+            .unwrap()
+            .serialize_with(|sender| {
+                let endpoint = IpcResultCallback {
+                    sender: Some(sender),
+                    _cancel_on_drop: cancel.clone().drop_guard(),
+                };
+                let (id, close_sender) = ipc_register(endpoint)?;
+                let cancel = cancel.clone();
+                tokio::spawn(async move {
+                    cancel.cancelled().await;
+                    let _ = close_sender.send(id);
+                });
+                debug!("created sender {id} -> {}", std::any::type_name::<T>());
+                Ok(id)
+            })
+            .map_err(serde::ser::Error::custom)?;
 
         serializer.serialize_u64(id)
     }

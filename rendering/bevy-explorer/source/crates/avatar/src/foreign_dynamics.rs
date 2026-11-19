@@ -347,15 +347,13 @@ fn update_foreign_user_target_position(
                     // Movement trigger: the first packet after an anim arrives arms it; the next one
                     // fires it, in sync with the motion (see `PendingSceneAnim`).
                     if let Some(mut pending) = maybe_pending {
-                        if pending.pending.is_some() {
-                            if pending.fire_on_next_movement {
-                                let anim = pending.pending.take().unwrap();
-                                commands
-                                    .entity(ev.player)
-                                    .try_insert(SceneDrivenAnim { active: anim });
-                            } else {
-                                pending.fire_on_next_movement = true;
-                            }
+                        let fire = pending.fire_on_next_movement;
+                        if let Some(anim) = pending.pending.take_if(|_| fire) {
+                            commands
+                                .entity(ev.player)
+                                .try_insert(SceneDrivenAnim { active: anim });
+                        } else if pending.pending.is_some() {
+                            pending.fire_on_next_movement = true;
                         }
                     }
                 }
@@ -597,10 +595,8 @@ fn update_foreign_user_actual_position(
         // static sender stops sending packets — so if `update_freq` elapses from receipt with no
         // trigger, apply it anyway rather than strand it.
         if let Some(mut pending) = maybe_pending {
-            if pending.pending.is_some()
-                && time.elapsed_secs_f64() >= pending.received_at + target.update_freq as f64
-            {
-                let anim = pending.pending.take().unwrap();
+            let due = time.elapsed_secs_f64() >= pending.received_at + target.update_freq as f64;
+            if let Some(anim) = pending.pending.take_if(|_| due) {
                 commands
                     .entity(foreign_ent)
                     .try_insert(SceneDrivenAnim { active: anim });

@@ -129,8 +129,7 @@ impl Plugin for VisualsPlugin {
         let snapshots_only = app
             .world()
             .resource::<scene_runner::initialize_scene::TestingData>()
-            .test_scenes
-            .is_some();
+            .scene_snapshots;
         let render_app = app.sub_app_mut(RenderApp);
         render_app.init_resource::<AtmosphereImageBindGroupLayout>();
         if snapshots_only {

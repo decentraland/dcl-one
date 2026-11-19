@@ -29,15 +29,18 @@ use ipfs::IpfsAssetServer;
 use wallet::Wallet;
 
 use crate::{
-    initialize_scene::{SceneLoading, TestingData, PARCEL_SIZE},
+    initialize_scene::{SceneLoading, TestScenes, PARCEL_SIZE},
     renderer_context::RendererSceneContext,
     ContainingScene, OutOfWorld, Toaster,
 };
 
-pub struct AutomaticTestingPlugin;
+pub struct AutomaticTestingPlugin {
+    pub test_scenes: TestScenes,
+}
 
 impl Plugin for AutomaticTestingPlugin {
     fn build(&self, app: &mut App) {
+        app.insert_resource(self.test_scenes.clone());
         let ready = SnapshotRenderReadiness::default();
         app.insert_resource(ready.clone());
         app.init_resource::<SnapshotInProgress>();
@@ -81,7 +84,7 @@ struct SnapshotResult {
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn automatic_testing(
     mut commands: Commands,
-    mut testing_data: ResMut<TestingData>,
+    mut test_scenes: ResMut<TestScenes>,
     player: Query<(Entity, Option<&OutOfWorld>), With<PrimaryUser>>,
     containing_scene: ContainingScene,
     mut toaster: Toaster,
@@ -96,9 +99,13 @@ fn automatic_testing(
         Local<Option<PendingCapture>>,
         Res<SnapshotRenderReadiness>,
     ),
-    (mut local_sender, mut local_receiver, mut screenshots, mut screenshot_in_progress): (
-        Local<Option<tokio::sync::mpsc::Sender<SnapshotResult>>>,
-        Local<Option<tokio::sync::mpsc::Receiver<SnapshotResult>>>,
+    (mut local_channel, mut screenshots, mut screenshot_in_progress): (
+        Local<
+            Option<(
+                tokio::sync::mpsc::Sender<SnapshotResult>,
+                tokio::sync::mpsc::Receiver<SnapshotResult>,
+            )>,
+        >,
         Local<Handle<LoadedFolder>>,
         ResMut<SnapshotInProgress>,
     ),
@@ -129,18 +136,13 @@ fn automatic_testing(
     }
 
     // init channels
-    if local_sender.is_none() {
-        let (sx, rx) = tokio::sync::mpsc::channel(10);
-        *local_sender = Some(sx);
-        *local_receiver = Some(rx);
-    }
+    let (local_sender, local_receiver) =
+        local_channel.get_or_insert_with(|| tokio::sync::mpsc::channel(10));
 
-    if pending_capture
-        .as_ref()
-        .is_some_and(|pending| render_ready.0.load(Ordering::Acquire) >= pending.ready_after)
+    if let Some(pending) = pending_capture
+        .take_if(|pending| render_ready.0.load(Ordering::Acquire) >= pending.ready_after)
     {
-        let pending = pending_capture.take().unwrap();
-        let sender = local_sender.as_ref().unwrap().clone();
+        let sender = local_sender.clone();
         commands.spawn(Screenshot::window(pending.window)).observe(
             move |mut trigger: Trigger<ScreenshotCaptured>| {
                 let _ = sender.blocking_send(SnapshotResult {
@@ -214,7 +216,7 @@ fn automatic_testing(
     }
 
     // process received snapshots
-    if let Ok(result) = local_receiver.as_mut().unwrap().try_recv() {
+    if let Ok(result) = local_receiver.try_recv() {
         let name = urlencoding::encode(&result.request.name);
         let screenshots: &LoadedFolder = folders.get(screenshots.id()).unwrap();
         let existing_image = screenshots
@@ -309,13 +311,7 @@ fn automatic_testing(
 
                 if !success {
                     if let Some(location) = scenes.get(*scene).ok().map(|ctx| ctx.base) {
-                        if let Some(scene) = testing_data
-                            .test_scenes
-                            .as_ref()
-                            .unwrap()
-                            .0
-                            .iter()
-                            .find(|ts| ts.location == location)
+                        if let Some(scene) = test_scenes.0.iter().find(|ts| ts.location == location)
                         {
                             let expected = scene.allow_failures.contains(name);
                             let location = format!("({},{})", location.x, location.y);
@@ -394,7 +390,7 @@ fn automatic_testing(
         return;
     }
 
-    let Some(next_test_scene) = testing_data.test_scenes.as_ref().unwrap().0.front() else {
+    let Some(next_test_scene) = test_scenes.0.front() else {
         if fails.is_empty() {
             info!("all tests passed!");
             std::process::exit(0);
@@ -441,7 +437,7 @@ fn automatic_testing(
                 .iter()
                 .any(|f| f == "scene load"),
         ));
-        testing_data.test_scenes.as_mut().unwrap().0.pop_front();
+        test_scenes.0.pop_front();
         return;
     }
 
@@ -452,7 +448,7 @@ fn automatic_testing(
 
     if plan.is_empty() {
         info!("plan completed for scene @ {:?}", context.base);
-        testing_data.test_scenes.as_mut().unwrap().0.pop_front();
+        test_scenes.0.pop_front();
     }
 }
 

@@ -258,7 +258,7 @@ fn update_running_clock(
 ) {
     // The test runner's speed must not change the sun between captures. Keep
     // scene-authored time overrides active; only the background clock is frozen.
-    if testing.test_scenes.is_some() {
+    if testing.scene_snapshots {
         return;
     }
     let speed = time_keeper.speed;

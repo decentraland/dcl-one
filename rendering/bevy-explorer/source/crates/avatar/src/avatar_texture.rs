@@ -224,30 +224,29 @@ fn add_booth_camera(
     avatar_texture.data = None;
     let avatar_texture = images.add(avatar_texture);
 
-    let mut camera = None;
-    commands.entity(entity).try_with_children(|c| {
-        let mut cmds = c.spawn((
-            Camera3d::default(),
-            Transform::from_translation(Vec3::Z * -1.0 + Vec3::Y * 1.8)
-                .looking_at(Vec3::Y * 1.8, Vec3::Y),
-            Camera {
-                // render before the "main pass" camera
-                order: -1,
-                target: RenderTarget::Image(avatar_texture.clone().into()),
-                is_active: true,
-                clear_color: ClearColorConfig::Custom(Color::NONE),
-                ..default()
-            },
-            render_layers.clone(),
-            default_camera_components(),
-        ));
-        // the avatar outline reads the depth and normal prepasses, which the settings only add
-        // to cameras they track; each booth open spawns its own camera, so it takes the setting
-        // here
-        sync_prepasses(&mut cmds, graphics);
-        camera = Some(cmds.id());
+    let mut cmds = commands.spawn((
+        Camera3d::default(),
+        Transform::from_translation(Vec3::Z * -1.0 + Vec3::Y * 1.8)
+            .looking_at(Vec3::Y * 1.8, Vec3::Y),
+        Camera {
+            // render before the "main pass" camera
+            order: -1,
+            target: RenderTarget::Image(avatar_texture.clone().into()),
+            is_active: true,
+            clear_color: ClearColorConfig::Custom(Color::NONE),
+            ..default()
+        },
+        render_layers.clone(),
+        default_camera_components(),
+    ));
+    // the avatar outline reads the depth and normal prepasses, which the settings only add
+    // to cameras they track; each booth open spawns its own camera, so it takes the setting
+    // here
+    sync_prepasses(&mut cmds, graphics);
+    let camera = cmds.id();
 
-        c.spawn((
+    let light = commands
+        .spawn((
             Transform::from_xyz(1.0, 2.0, -1.0).looking_at(Vec3::new(0.0, 1.8, 0.0), Vec3::Z),
             SpotLight {
                 intensity: 30000.0,
@@ -257,11 +256,13 @@ fn add_booth_camera(
                 outer_angle: 0.8,
                 ..default()
             },
-            render_layers.clone(),
-        ));
-    });
+            render_layers,
+        ))
+        .id();
 
-    (avatar_texture, camera.unwrap())
+    commands.entity(entity).try_push_children(&[camera, light]);
+
+    (avatar_texture, camera)
 }
 
 fn update_booth_image(

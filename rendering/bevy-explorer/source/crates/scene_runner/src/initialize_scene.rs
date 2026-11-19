@@ -622,7 +622,7 @@ pub(crate) fn load_scene_javascript(
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Resource)]
 pub struct TestScenes(pub VecDeque<TestScene>);
 
 #[derive(Clone)]
@@ -663,7 +663,8 @@ impl FromStr for TestScenes {
 pub struct TestingData {
     pub test_mode: bool,
     pub inspect_hash: Option<String>,
-    pub test_scenes: Option<TestScenes>,
+    /// The app runs the automated scene tests (`AutomaticTestingPlugin`).
+    pub scene_snapshots: bool,
 }
 
 #[derive(Component)]
@@ -1420,11 +1421,12 @@ fn load_active_entities(
         }
     };
 
-    let has_scene_urns = !current_realm
+    let scenes_urn = current_realm
         .config
         .scenes_urn
         .as_ref()
-        .is_none_or(Vec::is_empty);
+        .filter(|urns| !urns.is_empty());
+    let has_scene_urns = scenes_urn.is_some();
 
     if pointer_request.is_none()
         && !current_realm.address.is_empty()
@@ -1459,26 +1461,7 @@ fn load_active_entities(
             .map(|(_, parcel)| parcel)
             .collect::<HashSet<_>>();
 
-        if !has_scene_urns {
-            // load required pointers
-            let pointers = required_parcels
-                .iter()
-                .map(|parcel| format!("{},{}", parcel.x, parcel.y))
-                .collect::<Vec<_>>();
-
-            if !required_parcels.is_empty() {
-                info!("requesting {} parcels", pointers.len());
-
-                *pointer_request = Some((
-                    required_parcels,
-                    HashMap::default(),
-                    ipfas.ipfs().active_entities(
-                        ipfs::ActiveEntitiesRequest::Pointers(pointers),
-                        current_realm.config.city_loader_content_server.as_deref(),
-                    ),
-                ));
-            }
-        } else {
+        if let Some(scenes_urn) = scenes_urn {
             // TODO perf might be worth caching available and required
             let available_hashes = pointers
                 .pointers
@@ -1489,11 +1472,7 @@ fn load_active_entities(
                 })
                 .collect::<HashSet<_>>();
 
-            let required_hashes_and_urns = current_realm
-                .config
-                .scenes_urn
-                .as_ref()
-                .unwrap()
+            let required_hashes_and_urns = scenes_urn
                 .iter()
                 .flat_map(|urn| {
                     IpfsPath::new_from_urn::<EntityDefinition>(urn)
@@ -1529,10 +1508,35 @@ fn load_active_entities(
                     ),
                 ));
             }
+        } else {
+            // load required pointers
+            let pointers = required_parcels
+                .iter()
+                .map(|parcel| format!("{},{}", parcel.x, parcel.y))
+                .collect::<Vec<_>>();
+
+            if !required_parcels.is_empty() {
+                info!("requesting {} parcels", pointers.len());
+
+                *pointer_request = Some((
+                    required_parcels,
+                    HashMap::default(),
+                    ipfas.ipfs().active_entities(
+                        ipfs::ActiveEntitiesRequest::Pointers(pointers),
+                        current_realm.config.city_loader_content_server.as_deref(),
+                    ),
+                ));
+            }
         }
-    } else if let Some(task_result) = pointer_request.as_mut().and_then(|req| req.2.complete()) {
+    } else if let Some((mut requested_parcels, mut urn_lookup, task_result)) = pointer_request
+        .as_mut()
+        .and_then(|(parcels, lookup, task)| {
+            let task_result = task.complete()?;
+            Some((std::mem::take(parcels), std::mem::take(lookup), task_result))
+        })
+    {
         // process active scenes in the requested set
-        let (mut requested_parcels, mut urn_lookup, _) = pointer_request.take().unwrap();
+        *pointer_request = None;
 
         let retrieved_parcels = match task_result {
             Ok(res) => {
@@ -2037,8 +2041,8 @@ fn animate_ready_scene(
     asset_server: Res<AssetServer>,
     current_imposter_scene: Res<CurrentImposterScene>,
 ) {
-    if handles.is_none() {
-        *handles = Some((
+    let (grid_mesh, grid_material) = handles.get_or_insert_with(|| {
+        (
             meshes.add(
                 Rectangle::default()
                     .mesh()
@@ -2049,8 +2053,8 @@ fn animate_ready_scene(
                 base_color_texture: Some(asset_server.load("embedded://images/grid.png")),
                 ..Default::default()
             }),
-        ));
-    }
+        )
+    });
 
     for (root, mut transform, ctx, children) in q.iter_mut() {
         // skip animating imposters
@@ -2102,7 +2106,7 @@ fn animate_ready_scene(
                         children.push(
                             commands
                                 .spawn((
-                                    Mesh3d(handles.as_ref().unwrap().0.clone()),
+                                    Mesh3d(grid_mesh.clone()),
                                     MeshMaterial3d(
                                         loading_materials.add(LoadingMaterial::default()),
                                     ),
@@ -2127,8 +2131,8 @@ fn animate_ready_scene(
                                     Vec3::new(-PARCEL_SIZE / 2., -PARCEL_SIZE / 2., 0.),
                                     Vec3::new(PARCEL_SIZE / 2., PARCEL_SIZE / 2., 0.),
                                 ),
-                                Mesh3d(handles.as_ref().unwrap().0.clone()),
-                                MeshMaterial3d(handles.as_ref().unwrap().1.clone()),
+                                Mesh3d(grid_mesh.clone()),
+                                MeshMaterial3d(grid_material.clone()),
                                 Transform::from_translation(
                                     position
                                         + Vec3::new(PARCEL_SIZE * 0.5, -0.01, PARCEL_SIZE * -0.5),

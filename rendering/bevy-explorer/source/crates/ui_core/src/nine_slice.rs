@@ -231,13 +231,13 @@ impl DuiTemplate for Ui9SliceTemplate {
             .unwrap()
             .rect()
             .ok_or(anyhow!("failed to parse slice-border value `{border}`"))?;
-        let tint: Option<Color> = if let Some(color) = properties.get("color") {
-            Some(color.color().ok_or(anyhow!(
-                "failed to parse slice-color value `{}`",
-                tint.unwrap()
-            ))?)
-        } else {
-            None
+        let tint: Option<Color> = match (tint, properties.get("color")) {
+            (Some(tint), Some(color)) => Some(
+                color
+                    .color()
+                    .ok_or_else(|| anyhow!("failed to parse slice-color value `{tint}`"))?,
+            ),
+            _ => None,
         };
 
         debug!("border rect: {center_region:?}");

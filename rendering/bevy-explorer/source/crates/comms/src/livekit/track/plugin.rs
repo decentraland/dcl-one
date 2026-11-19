@@ -195,13 +195,7 @@ fn track_published(
     }
 
     let maybe_address = identity_str.as_h160();
-    if track.kind() == TrackKind::Audio && maybe_address.is_some() {
-        #[expect(
-            clippy::unnecessary_unwrap,
-            reason = "No let chains in current version."
-        )]
-        let address = maybe_address.unwrap();
-
+    if let (TrackKind::Audio, Some(address)) = (track.kind(), maybe_address) {
         let Some(sender) = transport_senders.get(room_entity) else {
             return;
         };
@@ -281,13 +275,7 @@ fn track_unpublished(
     commands.entity(entity).despawn();
 
     let maybe_address = participant.identity().as_str().as_h160();
-    if maybe_address.is_some() && track.kind() == TrackKind::Audio {
-        #[expect(
-            clippy::unnecessary_unwrap,
-            reason = "No let chains in current version."
-        )]
-        let address = maybe_address.unwrap();
-
+    if let (Some(address), TrackKind::Audio) = (maybe_address, track.kind()) {
         let Some(sender) = transport_senders.get(room_entity) else {
             return;
         };

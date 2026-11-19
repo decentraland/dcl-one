@@ -160,12 +160,7 @@ pub fn track_explorer_ui(
             continue;
         }
         // the scene-opened page went away (closed, or replaced by another page)
-        if state
-            .tracked
-            .as_ref()
-            .is_some_and(|t| open != Some(t.panel))
-        {
-            let closed = state.tracked.take().unwrap();
+        if let Some(closed) = state.tracked.take_if(|t| open != Some(t.panel)) {
             write_event(&mut scenes, &closed, UiEvent::Closed(UiClosed {}));
         }
         // a pending request is OPENED only if the HUD shows the page it asked for; any other
@@ -187,12 +182,7 @@ pub fn track_explorer_ui(
 
     // a dropped edge never produces a report: the HUD had a popup up or a text field focused, so
     // some HUD surface was in the way — the nearest verdict the protocol offers
-    if state
-        .pending
-        .as_ref()
-        .is_some_and(|p| time.elapsed_secs() > p.deadline)
-    {
-        let pending = state.pending.take().unwrap();
+    if let Some(pending) = state.pending.take_if(|p| time.elapsed_secs() > p.deadline) {
         pending.response.send(OpenExplorerUiResult::WasAlreadyOpen);
     }
 }

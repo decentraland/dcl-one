@@ -131,7 +131,10 @@ pub async fn op_login_new_code(
     let rx = {
         let mut state = state.borrow_mut();
         let login = new_login(&mut *state);
-        login.code.take().unwrap()
+        login
+            .code
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("login code already requested"))?
     };
 
     rx.await
@@ -146,7 +149,10 @@ pub async fn op_login_new_success(state: Rc<RefCell<impl State>>) -> Result<(), 
     let rx = {
         let mut state = state.borrow_mut();
         let login = new_login(&mut *state);
-        login.result.take().unwrap()
+        login
+            .result
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("login result already requested"))?
     };
 
     rx.await
@@ -245,7 +251,7 @@ pub async fn op_set_avatar(
     rx.await?.map_err(|e| anyhow::anyhow!(e))
 }
 
-pub async fn op_native_input(state: Rc<RefCell<impl State>>) -> String {
+pub async fn op_native_input(state: Rc<RefCell<impl State>>) -> Result<String, anyhow::Error> {
     let (sx, rx) = RpcResultSender::channel();
 
     state
@@ -254,14 +260,14 @@ pub async fn op_native_input(state: Rc<RefCell<impl State>>) -> String {
         .send(SystemApi::GetNativeInput(sx))
         .unwrap();
 
-    let identifier = rx.await.unwrap();
-    serde_json::to_string(&identifier)
+    let identifier = rx.await?;
+    Ok(serde_json::to_string(&identifier)
         .unwrap()
         .strip_prefix("\"")
         .unwrap()
         .strip_suffix("\"")
         .unwrap()
-        .to_owned()
+        .to_owned())
 }
 
 #[derive(Serialize, Deserialize)]

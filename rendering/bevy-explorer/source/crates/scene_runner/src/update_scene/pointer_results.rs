@@ -522,6 +522,9 @@ fn update_manual_cursor(
     let Some(world_target) = world_target.0.as_ref() else {
         return;
     };
+    let Some(target) = world_target.position else {
+        return;
+    };
 
     let Ok((gt, collider, render_mesh, resolve, container)) = uis.get(world_target.container)
     else {
@@ -571,7 +574,6 @@ fn update_manual_cursor(
             gt.transform_point(Vec3::from(posns[indices[1]])),
             gt.transform_point(Vec3::from(posns[indices[2]])),
         ];
-        let target = world_target.position.unwrap();
         barycentric_coords(&posns, target).map(|bary_coords| {
             Vec2::from(uvs[indices[0]]) * bary_coords.x
                 + Vec2::from(uvs[indices[1]]) * bary_coords.y
@@ -642,7 +644,6 @@ fn update_manual_cursor(
                         gt.transform_point(Vec3::from(posns[indices[1]])),
                         gt.transform_point(Vec3::from(posns[indices[2]])),
                     ];
-                    let target = world_target.position.unwrap();
                     barycentric_coords(&posns, target).map(|bary_coords| {
                         let uvs = Vec2::from(uvs[indices[0]]) * bary_coords.x
                             + Vec2::from(uvs[indices[1]]) * bary_coords.y
@@ -1274,10 +1275,10 @@ fn write_pointer_result(
 fn resolve_scene_entity_id(
     maybe_scene_entity: Option<&SceneEntity>,
     maybe_foreign_player: Option<&ForeignPlayer>,
-) -> SceneEntityId {
+) -> Option<SceneEntityId> {
     maybe_scene_entity
         .map(|se| se.id)
-        .unwrap_or_else(|| maybe_foreign_player.unwrap().scene_id)
+        .or_else(|| maybe_foreign_player.map(|player| player.scene_id))
 }
 
 /// Walks all pointer-event entries on the target. Returns the first in-range
@@ -1319,12 +1320,17 @@ fn send_hover_event(
         let Ok((mut context, scene_transform)) = scenes.get_mut(scene) else {
             continue;
         };
+        let Some(scene_entity_id) =
+            resolve_scene_entity_id(maybe_scene_entity, maybe_foreign_player)
+        else {
+            continue;
+        };
 
         write_pointer_result(
             &mut context,
             scene_transform,
             info,
-            resolve_scene_entity_id(maybe_scene_entity, maybe_foreign_player),
+            scene_entity_id,
             InputAction::IaPointer,
             ev_type,
             None,
@@ -1367,7 +1373,7 @@ fn send_action_event(
     potential_entries.peek()?;
 
     let mut consumer = None;
-    let scene_entity_id = resolve_scene_entity_id(maybe_scene_entity, maybe_foreign_player);
+    let scene_entity_id = resolve_scene_entity_id(maybe_scene_entity, maybe_foreign_player)?;
     for (scene, ev) in potential_entries {
         if !info.in_scene {
             continue;

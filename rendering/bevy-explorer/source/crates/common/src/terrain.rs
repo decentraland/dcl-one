@@ -334,7 +334,7 @@ impl TerrainTargets {
             }
         }
         self.steps = vec![ZERO; self.occupancy.len()];
-        self.chamfer(min, max, (min, max));
+        self.chamfer((min, max), min, max, (min, max));
     }
 
     fn resolve_rect(
@@ -372,7 +372,7 @@ impl TerrainTargets {
             (affected.0 - RESOLVE_RADIUS).max(min),
             (affected.1 + RESOLVE_RADIUS).min(max),
         );
-        self.chamfer(region.0, region.1, affected);
+        self.chamfer((min, max), region.0, region.1, affected);
         Some(TerrainChange::Rect(affected.0, affected.1))
     }
 
@@ -380,8 +380,13 @@ impl TerrainTargets {
     /// bounds are occupied; parcels outside `region` but inside the bounds are far, which is exact
     /// for `write` when it lies `RESOLVE_RADIUS` inside `region` (a chamfer path stays within the
     /// box spanned by its ends, and capped values only need distances up to that radius).
-    fn chamfer(&mut self, region_min: IVec2, region_max: IVec2, write: (IVec2, IVec2)) {
-        let (bounds_min, bounds_max) = self.bounds.unwrap();
+    fn chamfer(
+        &mut self,
+        (bounds_min, bounds_max): (IVec2, IVec2),
+        region_min: IVec2,
+        region_max: IVec2,
+        write: (IVec2, IVec2),
+    ) {
         let width = (region_max.x - region_min.x + 1) as usize;
         let height = (region_max.y - region_min.y + 1) as usize;
         let mut distances = vec![0u32; width * height];

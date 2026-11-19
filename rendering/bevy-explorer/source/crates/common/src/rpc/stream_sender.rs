@@ -30,17 +30,23 @@ fn warn_dropped<T: Serialize>(val: &T) {
 pub enum LocalChannel<T> {
     Channel(tokio::sync::mpsc::Sender<T>),
     Serialized(u64),
+    // registration failed while serializing; the sender is dropped
+    Failed,
 }
 
 impl<T> LocalChannel<T> {
-    fn serialize_with<F: FnOnce(tokio::sync::mpsc::Sender<T>) -> u64>(&mut self, f: F) -> u64 {
-        let id = match std::mem::replace(self, LocalChannel::Serialized(u64::MAX)) {
-            LocalChannel::Channel(sender) => (f)(sender),
+    fn serialize_with<F: FnOnce(tokio::sync::mpsc::Sender<T>) -> Result<u64, &'static str>>(
+        &mut self,
+        f: F,
+    ) -> Result<u64, &'static str> {
+        let id = match std::mem::replace(self, LocalChannel::Failed) {
+            LocalChannel::Channel(sender) => (f)(sender)?,
             LocalChannel::Serialized(id) => id,
+            LocalChannel::Failed => return Err("stream sender failed to serialize"),
         };
 
         *self = LocalChannel::Serialized(id);
-        id
+        Ok(id)
     }
 }
 
@@ -123,6 +129,7 @@ impl<T: Serialize> RpcStreamSender<T> {
                     }
                 },
                 LocalChannel::Serialized(_) => panic!(),
+                LocalChannel::Failed => Err(tokio::sync::mpsc::error::SendError(val)),
             },
             RpcStreamSender::Remote {
                 id,
@@ -146,6 +153,7 @@ impl<T: Serialize> RpcStreamSender<T> {
             RpcStreamSender::Local { channel, .. } => match &*channel.lock().unwrap() {
                 LocalChannel::Channel(sender) => sender.is_closed(),
                 LocalChannel::Serialized(_) => panic!(),
+                LocalChannel::Failed => true,
             },
             RpcStreamSender::Remote {
                 receiver_dropped: close_token,
@@ -183,21 +191,25 @@ impl<T: 'static + Serialize + DeserializeOwned + Send> Serialize for RpcStreamSe
             panic!();
         };
 
-        let id = channel.lock().unwrap().serialize_with(|sender| {
-            let endpoint = IpcStreamCallback {
-                sender,
-                _cancel_on_drop: cancel.clone().drop_guard(),
-            };
-            let (id, close_sender) = ipc_register(endpoint);
+        let id = channel
+            .lock()
+            .unwrap()
+            .serialize_with(|sender| {
+                let endpoint = IpcStreamCallback {
+                    sender,
+                    _cancel_on_drop: cancel.clone().drop_guard(),
+                };
+                let (id, close_sender) = ipc_register(endpoint)?;
 
-            let cancel = cancel.clone();
-            tokio::spawn(async move {
-                cancel.cancelled().await;
-                let _ = close_sender.send(id);
-            });
+                let cancel = cancel.clone();
+                tokio::spawn(async move {
+                    cancel.cancelled().await;
+                    let _ = close_sender.send(id);
+                });
 
-            id
-        });
+                Ok(id)
+            })
+            .map_err(serde::ser::Error::custom)?;
 
         serializer.serialize_u64(id)
     }

@@ -164,12 +164,13 @@ fn update_loading_backdrop(
     mut dialog: Local<Option<Entity>>,
     asset_server: Res<AssetServer>,
 ) {
-    match (oow.is_empty(), dialog.is_some()) {
-        (true, true) => {
+    match (oow.is_empty(), *dialog) {
+        (true, Some(shown)) => {
             // in world, dialog is showing, remove it
-            commands.entity(dialog.take().unwrap()).despawn();
+            *dialog = None;
+            commands.entity(shown).despawn();
         }
-        (false, false) => {
+        (false, None) => {
             // not in world, dialog is not showing, show it
             let ent = commands
                 .spawn((

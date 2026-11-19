@@ -495,7 +495,7 @@ impl DecentralandApp {
             .insert_resource(TestingData {
                 inspect_hash: decentraland_app_config.arguments.inspect.clone(),
                 test_mode: decentraland_app_config.arguments.test_mode(),
-                test_scenes: decentraland_app_config.arguments.test_scenes.clone(),
+                scene_snapshots: decentraland_app_config.arguments.test_scenes.is_some(),
             })
             .insert_resource(PrimaryPlayerRes(Entity::PLACEHOLDER))
             .insert_resource(PrimaryCameraRes(Entity::PLACEHOLDER))
@@ -770,8 +770,8 @@ impl DecentralandApp {
         // Analytics plugins
         app.add_plugins(MetricsPlugin);
 
-        if decentraland_app_config.arguments.test_scenes.is_some() {
-            app.add_plugins(AutomaticTestingPlugin);
+        if let Some(test_scenes) = decentraland_app_config.arguments.test_scenes.clone() {
+            app.add_plugins(AutomaticTestingPlugin { test_scenes });
         }
 
         // the GPU frame time (`common::gpu_time::GPU_FRAME_TIME`), in every build of the rendering
@@ -858,7 +858,7 @@ fn setup(
                 hdr: true,
                 // Scene tests keep the simulation camera but render only their
                 // explicit snapshot cameras, avoiding an unused software-rendered view.
-                is_active: testing.test_scenes.is_none(),
+                is_active: !testing.scene_snapshots,
                 ..Default::default()
             },
             default_camera_components(),

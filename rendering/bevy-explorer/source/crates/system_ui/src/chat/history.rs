@@ -121,7 +121,9 @@ fn update_chat_history(
             alpha = 0.3;
         }
         node.0.border_color.set_alpha(alpha * 2.0);
-        node.1.color.as_mut().unwrap().set_alpha(alpha);
+        if let Some(color) = node.1.color.as_mut() {
+            color.set_alpha(alpha);
+        }
 
         if *exp > time.elapsed_secs_f64() - 10.0 {
             break;

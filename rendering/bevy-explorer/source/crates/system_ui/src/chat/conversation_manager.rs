@@ -187,12 +187,8 @@ impl ConversationManager<'_, '_> {
         historic: bool,
     ) -> (Entity, Entity) {
         let me_speaking = sender.is_none() || self.wallet.address() == sender;
-        let (bubble, content) = self.get_bubble(
-            container,
-            (!me_speaking).then(|| sender.unwrap()),
-            color,
-            historic,
-        );
+        let (bubble, content) =
+            self.get_bubble(container, sender.filter(|_| !me_speaking), color, historic);
         debug!("container: {content:?}");
 
         let message_body = message.to_string();
