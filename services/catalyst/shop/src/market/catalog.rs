@@ -24,7 +24,7 @@
 //! (`mirrors::require_priced`).
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use axum::Json;
@@ -70,19 +70,22 @@ pub const MAX_NUMERIC_NUMBER: &str =
 /// that gives an nft-order leg its item without an nft table.
 pub use crate::shared::collections::ITEM_SHIFT as ITEM_ID_SHIFT;
 
-/// The off-chain marketplace contracts (v1 on Polygon, v2 and v3, both
-/// mainnets and testnets): a collection listing one of them as a minter is
-/// what the squid flagged `search_is_marketplace_v3_minter`.
-pub const OFFCHAIN_MARKETPLACE_MINTERS: [&str; 8] = [
-    "0x540fb08edb56aae562864b390542c97f562825ba",
-    "0x6ab20ae56673ed65f520b7be332aeb61b3ed727d",
-    "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7",
-    "0xa40b1d129b8906888720686f3a01921ddf37716f",
-    "0x0f11d0d1671519683bd48abf3dbe779e300941cd",
-    "0xe38ef22abe871513555cba89adfe45ab4f548ada",
-    "0x257db44ac97789c16ab277eae87dcde0c246cc9f",
-    "0x36fd1434a6c4b8ade80c9847c1d15033ce34488c",
-];
+/// The chains [`super::trade_events::deployments`] lists.
+const OFFCHAIN_MARKETPLACE_CHAINS: [i64; 4] = [1, 137, 80_002, 11_155_111];
+
+/// The off-chain marketplace contracts of every version, mainnets and
+/// testnets: a collection listing one of them as a minter is what the squid
+/// flagged `search_is_marketplace_v3_minter`.
+pub static OFFCHAIN_MARKETPLACE_MINTERS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    let mut minters: Vec<&str> = OFFCHAIN_MARKETPLACE_CHAINS
+        .iter()
+        .flat_map(|&chain| super::trade_events::deployments(chain))
+        .map(|&(address, _, _)| address)
+        .collect();
+    minters.sort_unstable();
+    minters.dedup();
+    minters
+});
 
 pub const HEAD_CATEGORIES: [&str; 5] = ["eyebrows", "eyes", "facial_hair", "hair", "mouth"];
 pub const ACCESSORY_CATEGORIES: [&str; 7] = [
@@ -1369,14 +1372,19 @@ mod tests {
     /// The squid's Polygon minter check takes OffChainMarketplace v1, v2 and v3, which
     /// the contract map names MarketplaceV3, V4 and V5.
     #[test]
-    fn every_polygon_offchain_marketplace_is_a_v3_minter() {
+    fn every_polygon_offchain_marketplace_version_is_a_minter() {
         let map: serde_json::Value =
             serde_json::from_slice(crate::evm::contracts::ADDRESSES_JSON).unwrap();
-        let expr = v3_minter_expr();
         for network in ["matic", "amoy"] {
             for key in ["MarketplaceV3", "MarketplaceV4", "MarketplaceV5"] {
-                let address = map[network][key].as_str().unwrap().to_lowercase();
-                assert!(expr.contains(&format!("'{address}'")), "{network} {key}");
+                let address = map[network][key]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{network} {key} missing"))
+                    .to_lowercase();
+                assert!(
+                    OFFCHAIN_MARKETPLACE_MINTERS.contains(&address.as_str()),
+                    "{network} {key}"
+                );
             }
         }
     }
