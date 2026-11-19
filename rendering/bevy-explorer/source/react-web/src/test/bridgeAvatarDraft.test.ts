@@ -3,10 +3,10 @@ import type { PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
 import type { SetAvatarData } from '@explorer-core/engine/generated'
 import type { Ctx } from '../../bridge-scene/src/bridge'
 
-function deferred() {
-  let resolve!: (value: number) => void
+function deferred<T = number>() {
+  let resolve!: (value: T) => void
   let reject!: (error: Error) => void
-  const promise = new Promise<number>((res, rej) => {
+  const promise = new Promise<T>((res, rej) => {
     resolve = res
     reject = rej
   })
@@ -24,38 +24,56 @@ const account = (userId: string) => ({
   forceRender: []
 })
 let player: ReturnType<typeof account> | null
+let equipped = true
+vi.mock('../../bridge-scene/node_modules/@dcl/sdk/ecs.js', () => ({
+  AvatarEquippedData: { has: () => equipped },
+  engine: { PlayerEntity: 1 }
+}))
+vi.mock('~system/RestrictedActions', () => ({ openExternalUrl: vi.fn() }))
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/players/index.js', () => ({ getPlayer: () => player }))
 
 const setAvatar = vi.fn<(data: SetAvatarData) => Promise<unknown>>()
 const getUserProfile = vi.fn()
 vi.mock('../../bridge-scene/src/bevy-api', () => ({
-  BevyApi: { setAvatar: (data: SetAvatarData) => setAvatar(data), getUserProfile: (address: string) => getUserProfile(address) }
+  BevyApi: {
+    setAvatar: (data: SetAvatarData) => setAvatar(data),
+    getUserProfile: (address: string) => getUserProfile(address),
+    logout: vi.fn()
+  }
 }))
 vi.mock('../../bridge-scene/src/http', () => ({ catalystBase: async () => 'https://catalyst.example', getJson: async () => null }))
 vi.mock('../../bridge-scene/src/domains/collections', () => ({ resolveDefsByUrn: async () => new Map() }))
 vi.mock('../../bridge-scene/src/domains/wearables', () => ({}))
 vi.mock('../../bridge-scene/src/domains/emotes', () => ({}))
 vi.mock('../../bridge-scene/src/domains/emoteSlots', () => ({}))
-vi.mock('../../bridge-scene/src/system-helpers', () => ({ relay: () => {} }))
+vi.mock('../../bridge-scene/src/domains/avatarPreview', () => ({ syncShape: () => {}, waitFrames: async () => {} }))
+const waitMs = vi.fn<(ms: number) => Promise<void>>()
+vi.mock('../../bridge-scene/src/system-helpers', () => ({ relay: () => {}, waitMs: (ms: number) => waitMs(ms) }))
 
 async function bridge() {
   vi.resetModules()
   const draft = await import('../../bridge-scene/src/domains/avatarDraft')
   const { registerProfile } = await import('../../bridge-scene/src/domains/profile')
   const { identity } = await import('../../bridge-scene/src/identity')
+  const { registerSession } = await import('../../bridge-scene/src/domains/session')
+  const { registerWelcome } = await import('../../bridge-scene/src/domains/welcome')
+  const frames: Array<(dt: number) => void> = []
   const handlers = new Map<string, (msg: PageToScene) => void | Promise<void>>()
   const sent: SceneToPage[] = []
   const ctx = {
     send: (msg: SceneToPage) => sent.push(msg),
     on: (kind: string, handler: (msg: PageToScene) => void | Promise<void>) => handlers.set(kind, handler),
-    push: () => {}
+    push: (frame: (dt: number) => void) => frames.push(frame)
   } as unknown as Ctx
   registerProfile(ctx)
+  registerSession(ctx)
+  registerWelcome(ctx)
   draft.registerAvatarDraft(ctx, async () => {})
   identity.observe(player?.userId ?? null)
   return {
     request: async (msg: PageToScene) => await handlers.get(msg.kind)?.(msg),
-    replies: () => sent.filter((msg) => msg.kind === 'profileSaved' || msg.kind === 'avatarSaveFailed'),
+    frame: () => frames.forEach((frame) => frame(1 / 60)),
+    replies: () => sent.filter((msg) => msg.kind === 'profileSaved' || msg.kind === 'avatarSaveFailed' || msg.kind === 'welcomeAccepted'),
     draft,
     identity
   }
@@ -63,6 +81,8 @@ async function bridge() {
 
 beforeEach(() => {
   player = account('0xabc')
+  equipped = true
+  waitMs.mockReset().mockImplementation(() => new Promise(() => {}))
   setAvatar.mockReset()
   getUserProfile.mockReset()
   getUserProfile.mockResolvedValue({ name: 'After', description: 'New', version: 7 })
@@ -135,6 +155,87 @@ describe('Passport and Backpack deployments', () => {
     expect(replies()).toEqual([{ kind: 'profileSaved', ok: false, error: 'failed to deploy to server.' }])
     await request({ kind: 'saveProfile', description: 'Retry' })
     expect(replies().at(-1)).toEqual({ kind: 'profileSaved', ok: true })
+  })
+
+  it('expires a queued save without dispatching it after a slow predecessor', async () => {
+    const { request, replies, draft } = await bridge()
+    const backpack = deferred()
+    const deadline = deferred<void>()
+    setAvatar.mockReturnValueOnce(backpack.promise).mockResolvedValueOnce(7)
+    waitMs.mockReturnValueOnce(deadline.promise)
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    draft.editLook({ wearables: ['urn:hat'] })
+    const close = request({ kind: 'commitAvatar' })
+    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
+    const save = request({ kind: 'saveProfile', description: 'New' })
+    deadline.resolve()
+    await save
+    expect(replies()).toEqual([{
+      kind: 'profileSaved', ok: false, error: 'A previous avatar save is taking too long. Try again.'
+    }])
+    const retry = request({ kind: 'saveProfile', description: 'Retry' })
+    await Promise.resolve()
+    expect(setAvatar).toHaveBeenCalledTimes(1)
+
+    backpack.resolve(6)
+    await Promise.all([close, retry])
+    expect(setAvatar.mock.calls.map(([data]) => data.profileExtras?.description)).toEqual([undefined, 'Retry'])
+    expect(replies().at(-1)).toEqual({ kind: 'profileSaved', ok: true })
+  }, 1_000)
+
+  it('lets Welcome deploy its name after Passport settles', async () => {
+    const { request, replies, draft } = await bridge()
+    const passport = deferred()
+    setAvatar.mockReturnValueOnce(passport.promise).mockResolvedValueOnce(7)
+
+    const save = request({ kind: 'saveProfile', description: 'New' })
+    draft.editLook({ wearables: ['urn:hat'] })
+    const welcome = request({ kind: 'acceptWelcome', name: 'Welcome name' })
+    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
+    expect(replies()).toEqual([])
+    passport.resolve(6)
+    await Promise.all([save, welcome])
+
+    expect(setAvatar.mock.lastCall?.[0].base?.name).toBe('Welcome name')
+    expect(replies()).toEqual([{ kind: 'profileSaved', ok: true }, { kind: 'welcomeAccepted', ok: true }])
+  })
+
+  it('answers Welcome when the player becomes visible during its deploy', async () => {
+    const { request, replies, frame, draft } = await bridge()
+    const look = draft.currentLook()!
+    player = null
+    equipped = false
+    frame()
+    await request({ kind: 'showLook', avatar: look })
+    frame()
+    const deploy = deferred()
+    setAvatar.mockReturnValueOnce(deploy.promise)
+
+    const accept = request({ kind: 'acceptWelcome', name: 'Welcome name' })
+    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
+    player = account('0xabc')
+    frame()
+    deploy.resolve(6)
+    await accept
+    expect(replies()).toEqual([{ kind: 'welcomeAccepted', ok: true }])
+  })
+
+  it('drops the old queue when the same wallet signs in again after logout', async () => {
+    const { request, replies, draft } = await bridge()
+    const old = deferred()
+    setAvatar.mockReturnValueOnce(old.promise).mockResolvedValueOnce(7)
+    const save = request({ kind: 'saveProfile', description: 'Before logout' })
+    draft.editLook({ wearables: ['urn:hat'] })
+    const close = request({ kind: 'commitAvatar' })
+    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
+    await request({ kind: 'rpc:req', id: 'logout', method: 'logout' })
+    await request({ kind: 'saveProfile', description: 'After sign-in' })
+    old.resolve(6)
+    await Promise.all([save, close])
+
+    expect(setAvatar.mock.calls.map(([data]) => data.profileExtras?.description)).toEqual(['Before logout', 'After sign-in'])
+    expect(replies()).toEqual([{ kind: 'profileSaved', ok: true }])
   })
 
   it('abandons queued writes and late results when the account changes', async () => {

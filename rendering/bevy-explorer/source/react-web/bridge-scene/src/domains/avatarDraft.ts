@@ -7,7 +7,7 @@
 //   to:   BevyApi.setAvatar; avatarSaveFailed to the page
 import { getPlayer } from '@dcl/sdk/players'
 import { BevyApi } from '../bevy-api'
-import { avatarSaveSession } from './avatarSaves'
+import { avatarSaveSession, type AvatarSaveSession } from './avatarSaves'
 import type { Ctx } from '../bridge'
 import { catalystBase } from '../http'
 import { resolveDefsByUrn } from './collections'
@@ -74,9 +74,9 @@ export function hasDraft(): boolean {
 }
 
 /** The welcome page's accept: the look (the draft, else the live one) under `name`, in one setAvatar
- *  that resolves once the deploy lands. Rejects with the engine's error. */
-export async function deployLookAs(name: string): Promise<boolean> {
-  const session = avatarSaveSession(getPlayer()?.userId ?? null)
+ *  that resolves once the deploy lands. A stale session drops its result. A failure in the
+ *  current session rejects so the Welcome page can offer a retry. */
+export async function deployLookAs(name: string, session: AvatarSaveSession): Promise<void> {
   const look = currentLook()
   if (look == null) throw new Error('no player')
   const edited = draft
@@ -96,13 +96,12 @@ export async function deployLookAs(name: string): Promise<boolean> {
       'avatar'
     )
   } catch (e) {
-    if (!session.isCurrent()) return false
+    if (!session.isCurrent()) return
     throw e
   }
-  if (!session.isCurrent()) return false
+  if (!session.isCurrent()) return
   deployed = look
   if (draft === edited) draft = null
-  return true
 }
 
 // The look as it deploys: without the wearables that can't render on its body shape (Unity unequips
@@ -125,33 +124,30 @@ export function registerAvatarDraft(ctx: Ctx, sendEquipped: () => Promise<void>)
     const me = getPlayer()
     if (edited == null || deployed == null || me == null) return
     const session = avatarSaveSession(me.userId)
-    const syncEquipped = await session.run(async () => {
-      const look = await fittingLook(edited)
-      if (!session.isCurrent()) return false
-      // A queued close may have changed the deployed look while this Backpack was open.
-      const from = deployed
-      if (from == null) return false
-      const dropped = look.wearables.length !== edited.wearables.length
-      if (sameLook(look, from)) {
+    let syncEquipped
+    try {
+      syncEquipped = await session.run(async () => {
+        const look = await fittingLook(edited)
+        if (!session.isCurrent()) return false
+        // A queued close may have changed the deployed look while this Backpack was open.
+        const from = deployed
+        if (from == null) return false
+        const dropped = look.wearables.length !== edited.wearables.length
+        if (!sameLook(look, from)) {
+          await BevyApi.setAvatar(lookDeploy(look, from))
+          if (!session.isCurrent()) return false
+          deployed = look
+        }
         if (draft === edited) draft = null
         return dropped
-      }
-      try {
-        await BevyApi.setAvatar(lookDeploy(look, from))
-      } catch (e) {
-        if (!session.isCurrent()) return false
-        // The later write owns the result when an overlapping commit replaces this one.
-        if (isCancelled(e)) return false
-        console.error('[avatar] deploy failed', e)
-        ctx.send({ kind: 'avatarSaveFailed', message: String(e) })
-        return false
-      }
-      if (!session.isCurrent()) return false
-      deployed = look
-      if (draft === edited) draft = null
-      return dropped
-    }, 'avatar')
-    if (syncEquipped) await sendEquipped()
+      }, 'avatar')
+    } catch (e) {
+      // The later write owns the result when an overlapping commit replaces this one.
+      if (!session.isCurrent() || isCancelled(e)) return
+      console.error('[avatar] deploy failed', e)
+      ctx.send({ kind: 'avatarSaveFailed', message: String(e) })
+    }
+    if (syncEquipped && session.isCurrent()) await sendEquipped()
   })
 
   // Give up on a look the server keeps rejecting (a bad item, say): drop the draft, so the stage shows

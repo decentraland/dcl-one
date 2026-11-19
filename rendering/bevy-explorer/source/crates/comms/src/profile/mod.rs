@@ -2699,31 +2699,39 @@ mod tests {
     }
 
     #[test]
-    fn backpack_body_edit_preserves_passport_name() {
+    fn avatar_base_preserves_or_renames_the_profile_as_requested() {
         use dcl_component::proto_components::sdk::components::PbAvatarBase;
 
-        let mut saves = Saves::new(web3(5, "New Passport name"));
-        let _result = saves.edit_with(system_bridge::SetAvatarData {
-            base: Some(PbAvatarBase {
-                name: String::new(),
-                body_shape_urn: "urn:body:new".to_owned(),
-                ..Default::default()
-            }),
-            preserve_name: Some(true),
-            equip: None,
-            has_claimed_name: None,
-            profile_extras: None,
-            name_color: None,
-        });
-        saves.0.update();
+        for (preserve_name, name, expected) in [
+            (Some(true), "", "Existing name"),
+            (None, "New name", "New name"),
+        ] {
+            let mut profile = web3(5, "Existing name");
+            profile.content.avatar.name = Some("Existing name".to_owned());
+            let mut saves = Saves::new(profile);
+            let _result = saves.edit_with(system_bridge::SetAvatarData {
+                base: Some(PbAvatarBase {
+                    name: name.to_owned(),
+                    body_shape_urn: "urn:body:new".to_owned(),
+                    ..Default::default()
+                }),
+                preserve_name,
+                equip: None,
+                has_claimed_name: None,
+                profile_extras: None,
+                name_color: None,
+            });
+            saves.0.update();
 
-        let current = saves.current();
-        let profile = current.profile.as_ref().unwrap();
-        assert_eq!(profile.content.name, "New Passport name");
-        assert_eq!(
-            profile.content.avatar.body_shape.as_deref(),
-            Some("urn:body:new")
-        );
+            let current = saves.current();
+            let profile = current.profile.as_ref().unwrap();
+            assert_eq!(profile.content.name, expected);
+            assert_eq!(profile.content.avatar.name.as_deref(), Some(expected));
+            assert_eq!(
+                profile.content.avatar.body_shape.as_deref(),
+                Some("urn:body:new")
+            );
+        }
     }
 
     #[test]

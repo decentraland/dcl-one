@@ -11,6 +11,7 @@ import { openExternalUrl } from '~system/RestrictedActions'
 import { BevyApi } from '../bevy-api'
 import type { Ctx } from '../bridge'
 import { deployLookAs, editLook, hasDraft, setStandInLook } from './avatarDraft'
+import { avatarSaveSession } from './avatarSaves'
 import { syncShape, waitFrames } from './avatarPreview'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import { sendEquipped } from './wearables'
@@ -59,6 +60,7 @@ export function registerWelcome(ctx: Ctx): void {
   })
 
   ctx.on('acceptWelcome', async (msg) => {
+    const session = avatarSaveSession(getPlayer()?.userId ?? null)
     try {
       // The terms first: a held new profile deploys with the first setAvatar after them (the guest
       // start page's accept carries its name for that).
@@ -66,11 +68,15 @@ export function registerWelcome(ctx: Ctx): void {
       if (msg.name != null || hasDraft()) {
         // the look deploys as the player wears it, which reaches the scene after the player's
         // identity (the sign-in's accept can land between): deployed before, it would be bare
-        for (let waited = 0; !AvatarEquippedData.has(engine.PlayerEntity) && waited < PLAYER_LOOK_FRAMES; waited++) await waitFrames(1)
-        if (!(await deployLookAs(msg.name ?? getPlayer()?.name ?? ''))) return
+        for (let waited = 0; session.isCurrent() && !AvatarEquippedData.has(engine.PlayerEntity) && waited < PLAYER_LOOK_FRAMES; waited++) {
+          await waitFrames(1)
+        }
+        if (!session.isCurrent()) return
+        await deployLookAs(msg.name ?? getPlayer()?.name ?? '', session)
       }
-      ctx.send({ kind: 'welcomeAccepted', ok: true })
+      if (session.isCurrent()) ctx.send({ kind: 'welcomeAccepted', ok: true })
     } catch (e) {
+      if (!session.isCurrent()) return
       console.error('[welcome] accept failed', e)
       ctx.send({ kind: 'welcomeAccepted', ok: false, error: String(e) })
     }

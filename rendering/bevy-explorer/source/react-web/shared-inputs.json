@@ -5893,7 +5893,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarDraft.ts",
-      "sha256": "0da47f7e2bfdade7c429913deec3fe324a21c1dcd6cba0e0c46578d41869ee1f"
+      "sha256": "6f2398a4287abbc189b3888e7a731948d7c70c8d4589afa9ca51f231cc32d789"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarPreview.tsx",
@@ -5901,7 +5901,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarSaves.ts",
-      "sha256": "959f2911375bcd1dcafb73482077cf9396fcfedd310377ccbadf20a3ca1a4755"
+      "sha256": "05aa8d4ae66a0eb5bd3bdb90734a40a56eaa4976c3835089cb9e89ef1645d6c2"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/chat.ts",
@@ -5981,7 +5981,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/session.ts",
-      "sha256": "f47ba94c7c93af15b0a74d8f0d01cfe9bc728ec47c5fa14d29e9b198d118e03c"
+      "sha256": "0a776933bf77c37e637dac390a7cf5e3e2c715334ffb9cc804d503faeaa7bde6"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/textureOptimization.ts",
@@ -6002,6 +6002,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/wearables.ts",
       "sha256": "1173e8bb8edc527060ec7417283d8ba00ada7f9deffaf9cd0d3e86cb7239c0ae"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/welcome.ts",
+      "sha256": "e9f095b250580f2163dcbef63c1c6ef71307e4031ebda9b773b260e9ec6e5077"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/http.ts",
@@ -6141,7 +6145,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeAvatarDraft.test.ts",
-      "sha256": "105bbf3ec4c5c367acb68b51fa7ccbcd0050c575ee77b3fe896bb11f94a1ca63"
+      "sha256": "180467331169b42e242725782caf110470113afcf90b6df20d0727beb5eef86c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeChat.test.ts",
