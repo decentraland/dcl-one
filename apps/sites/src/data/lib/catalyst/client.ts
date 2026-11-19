@@ -48,8 +48,6 @@ export function worldsBase(override?: string): string {
   return worldsUrl(override);
 }
 
-/** The worlds origin browsers can reach. `worldsBase()` may point the server at a loopback
-    twin (WORLDS_URL); links and thumbnails that ship to the page must not. */
 export type QueryValue = string | number | boolean | undefined | null;
 export type Query = Record<string, QueryValue>;
 

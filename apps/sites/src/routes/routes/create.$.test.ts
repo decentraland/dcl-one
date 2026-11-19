@@ -7,7 +7,13 @@ function load(splat: string) {
 }
 
 describe("/create/* outside the pages Sites serves", () => {
-  it.each(["home", "scenes", "scene-editor", "land", "names", "activity/example.dcl.eth"])(
+  it.each(["land", "names"])("/create/%s goes to the account's assets, like /builder/%s", (splat) => {
+    const res = load(splat) as Response;
+    expect(res.status).toBe(308);
+    expect(res.headers.get("Location")).toBe("/profile/me/assets");
+  });
+
+  it.each(["home", "scenes", "scene-editor", "activity/example.dcl.eth"])(
     "/create/%s goes to the Creator Hub download page",
     (splat) => {
       const res = load(splat) as Response;

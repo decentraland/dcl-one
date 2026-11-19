@@ -20,6 +20,20 @@ vi.mock("@/data/lib/download/creator-hub.server", async (actual) => ({
 
 beforeEach(() => vi.clearAllMocks());
 
+it("sends the dcl-scene-cli start link (?projectUrl=) to the Creator Hub download page", async () => {
+  const request = new Request("https://sites.test/create?projectUrl=http%3A%2F%2F127.0.0.1%3A8000%2F");
+  let thrown: unknown;
+  try {
+    await loader({ request, context: new RouterContextProvider() } as never);
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(Response);
+  expect((thrown as Response).status).toBe(302);
+  expect((thrown as Response).headers.get("location")).toBe("/download/creator-hub");
+  expect(fetchHotScenes).not.toHaveBeenCalled();
+});
+
 const WINDOWS = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
 const BASE = "https://github.com/decentraland/creator-hub/releases/download/1.2.3";
 const build = (os: string, osKey: string, arch: string, archLabel: string, fileName: string) => ({

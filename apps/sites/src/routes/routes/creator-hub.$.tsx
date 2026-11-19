@@ -2,12 +2,12 @@ import { redirect } from "react-router";
 
 import { ownedSessionCookies, requestSession } from "@/core/lib/telemetry/session";
 import { track } from "@/core/lib/telemetry/track";
-import { CREATOR_HUB_DOWNLOAD, isRetiredHubPage } from "@/features/lib/creator/retired-hub";
+import { retiredHubTarget } from "@/features/lib/creator/retired-hub";
 
 import type { Route } from "./+types/creator-hub.$";
 
 /** `/creator-hub/*` is the retired spelling of `/create/*`: one prefix. Pages that moved to the
-    desktop app go to its download page; everything else keeps its path and query. */
+    desktop app go to where that work lives now; everything else keeps its path and query. */
 const RENAMED: Record<string, string> = {
   "multiplayer-test": "preview",
 };
@@ -15,7 +15,8 @@ const RENAMED: Record<string, string> = {
 export function createPathFor(url: URL, splat: string | undefined): string {
   const path = (splat ?? "").replace(/^\/+|\/+$/g, "");
   const [head, ...rest] = path ? path.split("/") : [];
-  if (isRetiredHubPage(head)) return CREATOR_HUB_DOWNLOAD;
+  const retired = retiredHubTarget(head);
+  if (retired) return retired;
   const mapped = head ? [RENAMED[head] ?? head, ...rest].join("/") : "";
   return `/create${mapped ? `/${mapped}` : ""}${url.search}`;
 }

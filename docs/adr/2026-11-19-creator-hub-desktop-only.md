@@ -24,22 +24,24 @@ Every other web Creator Hub page is removed, with the code, data readers, teleme
 public assets and APIs only it used (`/api/creator-hub/*`, `/api/screens/v1/create`).
 
 - **Old links.** `/create/<page>` and `/creator-hub/<page>` for a removed page answer a permanent
-  redirect to `/download/creator-hub`; the list of pages is
-  `apps/sites/src/features/lib/creator/retired-hub.ts`. Any other unknown `/create/*` path is a 404.
+  redirect: `land` and `names` to the account's assets (`/profile/me/assets`), every other page to
+  `/download/creator-hub`; the list of pages is `apps/sites/src/features/lib/creator/retired-hub.ts`.
+  Any other unknown `/create/*` path is a 404. `/create?projectUrl=`, the link `dcl-scene-cli start`
+  prints, goes to `/download/creator-hub`.
 - **Builder links.** `/builder/scenes`, `/builder/worlds`, `/builder/pool` and the scene editor go to
   `/download/creator-hub`; `/builder/land` and `/builder/names` go to the account's assets
   (`/profile/me/assets`), and `/builder/land/:id` to that LAND's Shop manage page.
 - **Site links.** Links that sent people to build or publish a scene, or to manage a World, go to
-  `/download/creator-hub`: the navigation's Publish LAND, the profile's Manage World and the Shop's
-  LAND, rental and NAME pages. A NAME in the profile's assets opens its Shop token page.
+  `/download/creator-hub`: the navigation's Publish LAND, the profile's Manage World, the Shop's
+  LAND, rental and NAME pages and, outside the mobile app, the NAME purchase's "Use it for your
+  World". A NAME in the profile's assets opens its Shop token page.
 
 ## Consequences
 
 - No web page creates, edits or publishes a scene.
 - The Explorer's editor host (`library/explorer-core/features/editorHost`), the editor scene
   (`apps/ui3/editor-scene`, served at `/editor-scene/`) and the `dcl-scene-cli start` link to
-  `/create?projectUrl=` stay until they are removed or repointed with the Explorer and CLI owners;
-  that link now opens the landing.
+  `/create?projectUrl=` stay until they are removed or repointed with the Explorer and CLI owners.
 
 ## Follow-ups
 

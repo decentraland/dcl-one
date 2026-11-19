@@ -1,3 +1,4 @@
+import { redirect } from "react-router";
 import { dehydrate, HydrationBoundary, QueryClient } from "@tanstack/react-query";
 
 import SitesChrome from "@ui/web/frames/SitesChrome";
@@ -8,6 +9,7 @@ import { liveScenesQuery } from "@/data/lib/create-landing/live-scenes";
 import { heroDownloads, loadLatestRelease } from "@/data/lib/download/creator-hub.server";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import CreateLanding from "@/features/create-landing/CreateLanding";
+import { CREATOR_HUB_DOWNLOAD } from "@/features/lib/creator/retired-hub";
 
 import type { Route } from "./+types/create._index";
 
@@ -37,6 +39,10 @@ async function latestReleaseInTime() {
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
+  // `dcl-scene-cli start` still links here with `?projectUrl=`; scenes are edited in the desktop app.
+  if (new URL(request.url).searchParams.has("projectUrl")) {
+    throw redirect(CREATOR_HUB_DOWNLOAD, { headers: { "Cache-Control": "private, no-store" } });
+  }
   const { sid, wrap } = sidLoader(request, context);
   const queryClient = new QueryClient();
   const [release] = await Promise.all([

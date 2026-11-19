@@ -397,9 +397,11 @@ export default function NameBuyModal({ name, offer, onClose, client: givenClient
               <Button variant="secondary" onClick={() => navigate("/shop/my-items")}>
                 My items
               </Button>
-              <Button as="a" href="/download/creator-hub">
-                Use it for your World or avatar
-              </Button>
+              {iapMode ? null : (
+                <Button as="a" href="/download/creator-hub">
+                  Use it for your World
+                </Button>
+              )}
             </div>
           </>
         ) : null}

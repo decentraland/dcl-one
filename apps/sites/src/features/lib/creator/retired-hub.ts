@@ -1,4 +1,5 @@
 export const CREATOR_HUB_DOWNLOAD = "/download/creator-hub";
+export const ACCOUNT_ASSETS = "/profile/me/assets";
 
 // Web Creator Hub pages whose work moved to the desktop app, by first path segment under /create.
 const RETIRED_PAGES = new Set([
@@ -32,6 +33,11 @@ const RETIRED_PAGES = new Set([
   "map",
 ]);
 
-export function isRetiredHubPage(head: string | undefined): boolean {
-  return head !== undefined && RETIRED_PAGES.has(head);
+// The LAND and NAME lists match `/builder/land` and `/builder/names`: what was listed there is the account's assets.
+const OWNED_ASSET_PAGES = new Set(["land", "names"]);
+
+/** Where an old link to a retired page goes; `null` for a path that was never a hub page. */
+export function retiredHubTarget(head: string | undefined): string | null {
+  if (head === undefined || !RETIRED_PAGES.has(head)) return null;
+  return OWNED_ASSET_PAGES.has(head) ? ACCOUNT_ASSETS : CREATOR_HUB_DOWNLOAD;
 }
