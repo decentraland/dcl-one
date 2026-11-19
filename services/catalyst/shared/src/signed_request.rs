@@ -82,9 +82,9 @@ pub fn one_header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 
 /// Whether `timestamp` is canonical decimal seconds at most `max_skew_secs` from `now_secs`.
 pub fn fresh_timestamp(timestamp: &str, now_secs: u64, max_skew_secs: u64) -> bool {
-    timestamp.parse::<u64>().is_ok_and(|secs| {
-        secs.to_string() == timestamp && secs.abs_diff(now_secs) <= max_skew_secs
-    })
+    timestamp
+        .parse::<u64>()
+        .is_ok_and(|secs| secs.to_string() == timestamp && secs.abs_diff(now_secs) <= max_skew_secs)
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -190,7 +190,11 @@ mod tests {
         let signed = preimage("/p", "1", "n", None, b"body");
         let signature = sign(&KEY, &signed);
         assert!(verify(&KEY, &signed, &signature));
-        assert!(!verify(&KEY, &preimage("/p", "2", "n", None, b"body"), &signature));
+        assert!(!verify(
+            &KEY,
+            &preimage("/p", "2", "n", None, b"body"),
+            &signature
+        ));
         assert!(!verify(&[8; 32], &signed, &signature));
         assert!(!verify(&KEY, &signed, "not base64!"));
         assert!(!verify(&KEY, &signed, &format!("{signature}=")));
@@ -229,7 +233,10 @@ mod tests {
     fn keys_are_32_base64url_bytes_and_not_the_livekit_secret() {
         let encoded = URL_SAFE_NO_PAD.encode(KEY);
         assert_eq!(parse_key("K", &encoded, None), Ok(KEY));
-        assert_eq!(parse_key("K", &format!(" {encoded}\n"), Some(b"other")), Ok(KEY));
+        assert_eq!(
+            parse_key("K", &format!(" {encoded}\n"), Some(b"other")),
+            Ok(KEY)
+        );
         assert_eq!(
             parse_key("K", &encoded, Some(&KEY)),
             Err(KeyError::LivekitSecret("K"))

@@ -257,10 +257,12 @@ impl RelayAuthority {
         if !signed_request::verify(&self.service_key, &preimage, signature) {
             return Err(DenialReason::NotAuthorized);
         }
-        self.replays.admit(nonce, now).map_err(|replay| match replay {
-            Replay::Seen => DenialReason::NotAuthorized,
-            Replay::Full => DenialReason::Capacity,
-        })?;
+        self.replays
+            .admit(nonce, now)
+            .map_err(|replay| match replay {
+                Replay::Seen => DenialReason::NotAuthorized,
+                Replay::Full => DenialReason::Capacity,
+            })?;
         Ok(())
     }
 

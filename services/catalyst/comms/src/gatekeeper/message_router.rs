@@ -368,7 +368,7 @@ mod tests {
     /// its Explorers do not trust and drop community chat without a trace.
     #[tokio::test]
     async fn a_key_without_an_identity_prefix_refuses_to_start() {
-        use crate::gatekeeper::moderation::ban::test_support::{StubBanStatus, state};
+        use crate::gatekeeper::moderation::test_support::{StubBanStatus, state};
         let fresh = || {
             state(
                 crate::interfaces::test_support::StubPolicy::default(),

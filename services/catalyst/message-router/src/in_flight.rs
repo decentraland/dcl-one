@@ -42,7 +42,9 @@ impl InFlight {
     /// sit in a `select!` beside the room's events.
     pub async fn reap(&mut self) {
         match self.tasks.join_next().await {
-            Some(Err(e)) if e.is_panic() => tracing::error!(error = %e, "routing a packet panicked"),
+            Some(Err(e)) if e.is_panic() => {
+                tracing::error!(error = %e, "routing a packet panicked")
+            }
             Some(_) => {}
             None => std::future::pending().await,
         }
@@ -78,7 +80,10 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Work that never ends, counting how many run at once.
-    fn stuck(running: &Arc<AtomicUsize>, peak: &Arc<AtomicUsize>) -> impl Future<Output = ()> {
+    fn stuck(
+        running: &Arc<AtomicUsize>,
+        peak: &Arc<AtomicUsize>,
+    ) -> impl Future<Output = ()> + Send + use<> {
         let (running, peak) = (running.clone(), peak.clone());
         async move {
             let now = running.fetch_add(1, Ordering::SeqCst) + 1;

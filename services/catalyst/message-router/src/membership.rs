@@ -26,7 +26,11 @@ impl PgMembership {
 
     /// `None` when `sender` is not a member of `community`; otherwise the other members of the
     /// community when it is active and not suspended, none when it is not.
-    pub async fn audience(&self, community: Uuid, sender: &str) -> sqlx::Result<Option<Vec<String>>> {
+    pub async fn audience(
+        &self,
+        community: Uuid,
+        sender: &str,
+    ) -> sqlx::Result<Option<Vec<String>>> {
         let (member, recipients): (bool, Vec<String>) = sqlx::query_as(
             "SELECT EXISTS (SELECT 1 FROM social.community_members \
                             WHERE community_id = $1 AND member_address = $2), \
@@ -116,14 +120,29 @@ mod tests {
             })
         };
         let others = Some(vec![OWNER.to_owned(), OTHER.to_owned()]);
-        assert_eq!(sorted(members.audience(active, MEMBER).await.unwrap()), others);
+        assert_eq!(
+            sorted(members.audience(active, MEMBER).await.unwrap()),
+            others
+        );
         // the LiveKit identity may arrive checksummed
-        assert_eq!(sorted(members.audience(active, &checksummed).await.unwrap()), others);
+        assert_eq!(
+            sorted(members.audience(active, &checksummed).await.unwrap()),
+            others
+        );
         assert_eq!(members.audience(active, STRANGER).await.unwrap(), None);
         // a member of an inactive or suspended community has no one to send to, as upstream
-        assert_eq!(members.audience(inactive, MEMBER).await.unwrap(), Some(vec![]));
-        assert_eq!(members.audience(suspended, MEMBER).await.unwrap(), Some(vec![]));
-        assert_eq!(members.audience(Uuid::new_v4(), MEMBER).await.unwrap(), None);
+        assert_eq!(
+            members.audience(inactive, MEMBER).await.unwrap(),
+            Some(vec![])
+        );
+        assert_eq!(
+            members.audience(suspended, MEMBER).await.unwrap(),
+            Some(vec![])
+        );
+        assert_eq!(
+            members.audience(Uuid::new_v4(), MEMBER).await.unwrap(),
+            None
+        );
         let lone = community(&pool, true, &[(OWNER, "owner")]).await;
         assert_eq!(members.audience(lone, OWNER).await.unwrap(), Some(vec![]));
     }

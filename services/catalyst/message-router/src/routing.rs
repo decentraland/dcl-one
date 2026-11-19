@@ -145,8 +145,7 @@ pub fn stamp(mut packet: rfc4::Packet, sender: &str) -> Result<Vec<u8>, Failure>
 pub trait Membership: Send + Sync {
     /// `None` when `sender` is not a member of `community`; otherwise the lowercase addresses of
     /// the other members when the community is active and not suspended, none when it is not.
-    async fn audience(&self, community: Uuid, sender: &str)
-    -> Result<Option<Vec<String>>, String>;
+    async fn audience(&self, community: Uuid, sender: &str) -> Result<Option<Vec<String>>, String>;
 }
 
 /// The room, as routing uses it.

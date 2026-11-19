@@ -7,10 +7,10 @@ use super::{
 use crate::protocol::room_authority::{
     self as wire, AUTHORITY_PATH, MAX_BODY, MAX_LEASES, address_bytes,
 };
+use crate::shared::signed_request;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures::StreamExt;
 use prost::Message;
-use crate::shared::signed_request;
 use std::{
     collections::HashMap,
     future::Future,
@@ -493,9 +493,9 @@ impl HttpAuthority {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pulse::application_relay::PendingJoin;
     use hmac::{Hmac, KeyInit, Mac};
     use sha2::{Digest, Sha256};
-    use crate::pulse::application_relay::PendingJoin;
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     struct Generation {
