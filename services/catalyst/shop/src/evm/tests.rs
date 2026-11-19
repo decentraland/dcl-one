@@ -3848,6 +3848,81 @@ async fn a_trial_relays_meta_transactions_for_its_buyers_only() {
     cleanup_user(&pool, &stranger_address).await;
 }
 
+/// `CREDITS_TRIAL_RELAY_ALL_WALLETS` lifts the relay's buyer gate and nothing else: outside a
+/// trial there is no gate, a trial gates on its buyers, and a trial for every wallet has none
+/// while keeping its one capped route.
+#[test]
+fn a_trial_for_every_wallet_drops_only_the_relays_buyer_gate() {
+    let buyer = format!("{:#x}", PrivateKeySigner::random().address());
+    let gated = Settings {
+        trial_buyers: Some(crate::credits::trial::TrialBuyers::parse(Some(&buyer)).unwrap()),
+        ..trial_relay()
+    };
+    assert!(gated.relay_only_for().is_some_and(|b| b.admits(&buyer)));
+    let every_wallet = Settings {
+        trial_relay_all_wallets: true,
+        ..gated.clone()
+    };
+    assert!(every_wallet.relay_only_for().is_none());
+    assert!(
+        every_wallet.refuse_an_open_trial_relay().is_ok(),
+        "the trial's capped route is unchanged"
+    );
+    let no_buyers = Settings {
+        trial_buyers: None,
+        ..every_wallet
+    };
+    assert!(
+        no_buyers.refuse_an_open_trial_relay().is_err(),
+        "a trial still needs its buyers for the credits"
+    );
+    assert!(Settings::for_tests().relay_only_for().is_none());
+}
+
+/// With `CREDITS_TRIAL_RELAY_ALL_WALLETS` a trial's relayer pays gas for a wallet that is not
+/// among the buyers too: its meta-transaction relays, and is charged to its own daily quota.
+#[tokio::test]
+async fn a_trial_relay_for_every_wallet_relays_a_strangers_meta_transaction() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let (chain_url, raws) = spawn_fake_chain().await;
+    let buyer = format!("{:#x}", PrivateKeySigner::random().address());
+    let stranger = PrivateKeySigner::random();
+    let stranger_address = format!("{:#x}", stranger.address());
+    let settings = Settings {
+        trial_mode: true,
+        trial_buyers: Some(crate::credits::trial::TrialBuyers::parse(Some(&buyer)).unwrap()),
+        trial_relay_all_wallets: true,
+        meta_tx_broadcast_enabled: true,
+        relayer_private_key: Some(hex::encode(PrivateKeySigner::random().to_bytes())),
+        polygon_rpc_url: Some(chain_url),
+        relayer_max_fee_per_gas_wei: Some(500_000_000_000),
+        ..Settings::for_tests()
+    };
+    let app = router(state(pool.clone(), settings));
+
+    let (status, body) = post_transaction(
+        &app,
+        &stranger_address,
+        COLLECTION,
+        &signed_split_calldata(&stranger, FS),
+    )
+    .await;
+    assert_eq!(status, 200, "a wallet outside the buyers relays: {body}");
+    assert_eq!(raws.lock().unwrap().len(), 1);
+    assert_eq!(
+        row_count(&pool, &stranger_address).await,
+        1,
+        "charged to the wallet's own quota"
+    );
+    cleanup_user(&pool, &stranger_address).await;
+}
+
 /// A JSON-RPC chain whose failures a test scripts: the next `fail_nonce_reads`
 /// nonce reads fail (a failure before signing); after `pass_sends` accepted
 /// sends, the next `drop_sends` `eth_sendRawTransaction` calls fail without

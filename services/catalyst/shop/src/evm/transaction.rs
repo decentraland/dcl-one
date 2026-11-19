@@ -583,10 +583,11 @@ impl TransactionComponent {
         self.check_function_selector(tx)?;
         check_nested_meta_tx(tx)?;
         let sender = MetaTxSender::from_meta_tx_calldata(&tx.from, &tx.params[1])?;
-        // A trial's relayer pays gas for the trial's buyers only, judged on the userAddress the
-        // meta-transaction is signed for (its signature is checked below): any other wallet is
-        // refused before the daily quota or a broadcast.
-        if let Some(buyers) = &settings.trial_buyers
+        // A trial's relayer pays gas for the trial's buyers only (unless it relays for every
+        // wallet, CREDITS_TRIAL_RELAY_ALL_WALLETS), judged on the userAddress the meta-transaction
+        // is signed for (its signature is checked below): any other wallet is refused before the
+        // daily quota or a broadcast.
+        if let Some(buyers) = settings.relay_only_for()
             && !buyers.admits(sender.as_str())
         {
             return Err(ApiError::Forbidden(
