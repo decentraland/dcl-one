@@ -3,7 +3,7 @@ import { useContext, useEffect, useRef } from "react";
 import SitesChrome from "@ui/web/frames/SitesChrome";
 import { SitesLocaleContext, sitesLanguage, type SitesLocaleHandle } from "@ui/web/frames/sites-locale";
 import { homeCopy } from "@/features/home/locale";
-import { successCopy } from "@/features/download/success-copy";
+import { sitesFooterCopy } from "@dcl/one-ui/apps/sites/chrome/footer-copy";
 import { parseCookies } from "@/core/lib/telemetry/session";
 import AnimatedBackground from "@ui/shop/discovery/components/animated-background/AnimatedBackground";
 import { Hero } from "@dcl/one-ui/apps/sites/home/Hero";
@@ -101,7 +101,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
       active="play"
       overlayNav
       headerSurface="overlay"
-      footerCopy={successCopy[locale].footer}
+      footerCopy={sitesFooterCopy[locale]}
     >
       <main>
         <Hero

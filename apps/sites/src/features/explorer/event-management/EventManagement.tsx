@@ -1,6 +1,7 @@
 import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
+import { sitesFooterCopy } from "@dcl/one-ui/apps/sites/chrome/footer-copy";
 import SitesChrome from "@ui/web/frames/SitesChrome";
 import { useAuth } from "@/data/lib/auth/context";
 import { getIdentity } from "@/data/lib/auth/session";
@@ -165,7 +166,7 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
   }
 
   return (
-    <SitesChrome active="whatson">
+    <SitesChrome active="whatson" footerCopy={sitesFooterCopy[locale]}>
       <main className={styles.root}>
         <EventNavigation profile={access.profile} canManageUsers={canManageUsers} />
         <h1>{mode === "mine" ? text("My Hangouts") : TITLES[mode]}</h1>

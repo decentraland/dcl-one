@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
-import { EventsLocaleProvider } from "@/features/events/locale";
+import { EventsLocaleProvider, useEventsFooterCopy } from "@/features/events/locale";
 import LdSubmitHangoutView from "@ui/landings/pages/LdSubmitHangoutView";
 
 import { fetchEventCategories, type EventCategory } from "@/data/lib/catalyst/places/events";
@@ -87,6 +87,7 @@ export default function SubmitHangoutRoute(props: Route.ComponentProps) {
 }
 
 function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
+  const footerCopy = useEventsFooterCopy();
   const { text, errorText } = useEventsCopy();
   const d = loaderData as LoaderData;
   const auth = useAuth();
@@ -150,7 +151,7 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
   }
 
   return (
-    <SitesChromeMaybe active="whatson">
+    <SitesChromeMaybe active="whatson" footerCopy={footerCopy}>
     <LdSubmitHangoutView>
       {waiting ? <p role="status">{text("Loading your hangout…")}</p> : error ? <div><p role="alert">{errorText(error)}</p><Link to="/events?tab=my">{text("Back to My Hangouts")}</Link><button type="button" onClick={() => { setLoaded(null); setOptionsRead(null); setOptionsAttempt((previous) => previous + 1); }}>{text("Check access again")}</button></div> : <SubmitHangout
         key={`${auth.address ?? "signed-out"}:${d.eventId ?? "new"}`}
