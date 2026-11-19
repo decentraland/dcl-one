@@ -81,6 +81,21 @@ pub fn signed_path(route: &str) -> String {
     format!("{PREFIX}{route}")
 }
 
+/// Whether the moderator token may be sent to `url`: over https to any host, over plain http only
+/// to loopback. The error is the reason, for a ban or unban that is then not sent.
+pub fn token_may_travel_to(url: &Url) -> Result<(), String> {
+    let host = url.host_str().unwrap_or_default().trim_matches(['[', ']']);
+    if url.scheme() == "https" || crate::stack::is_loopback_host(host) {
+        Ok(())
+    } else {
+        Err(format!(
+            "the moderator token is not sent over plain {} to a host that is not loopback: \
+             give the stack file an https `api`",
+            url.scheme()
+        ))
+    }
+}
+
 #[derive(Clone)]
 pub struct Gatekeeper {
     http: reqwest::Client,
@@ -145,7 +160,9 @@ impl Gatekeeper {
             .ok_or_else(|| GatekeeperError::Unexpected("the reply has no `adapter`".to_owned()))
     }
 
-    fn moderator_token(&self) -> Result<String, GatekeeperError> {
+    /// The moderator token, for a request to `url`.
+    fn moderator_token(&self, url: &Url) -> Result<String, GatekeeperError> {
+        token_may_travel_to(url).map_err(GatekeeperError::Unexpected)?;
         self.moderator_token
             .clone()
             .map_err(GatekeeperError::Unexpected)
@@ -161,10 +178,12 @@ impl Gatekeeper {
     /// Bans `address` platform-wide (`POST /users/{address}/bans`) with the moderator token.
     /// Answers 409 when the wallet is already banned.
     pub async fn ban(&self, address: &str, reason: &str) -> Result<(), GatekeeperError> {
+        let url = self.ban_url(address)?;
+        let token = self.moderator_token(&url)?;
         let request = self
             .http
-            .post(self.ban_url(address)?)
-            .bearer_auth(self.moderator_token()?)
+            .post(url)
+            .bearer_auth(token)
             .json(&serde_json::json!({ "reason": reason }));
         let (status, body) = send(request).await?;
         match status {
@@ -176,10 +195,9 @@ impl Gatekeeper {
     /// Lifts the ban of `address` (`DELETE /users/{address}/bans`). Answers 404 when there is
     /// none, which a cleanup may ignore: see [`GatekeeperError::status`].
     pub async fn unban(&self, address: &str) -> Result<(), GatekeeperError> {
-        let request = self
-            .http
-            .delete(self.ban_url(address)?)
-            .bearer_auth(self.moderator_token()?);
+        let url = self.ban_url(address)?;
+        let token = self.moderator_token(&url)?;
+        let request = self.http.delete(url).bearer_auth(token);
         let (status, body) = send(request).await?;
         match status {
             200 | 204 => Ok(()),
@@ -246,6 +264,56 @@ pub fn refusal(status: u16, body: &str) -> GatekeeperError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_moderator_token_goes_only_over_https_or_to_loopback() {
+        for allowed in [
+            "https://203.0.113.5:5210/comms-gatekeeper/users/0xa/bans",
+            "https://stack.example/comms-gatekeeper/users/0xa/bans",
+            "http://127.0.0.1:5210/comms-gatekeeper/users/0xa/bans",
+            "http://localhost:5210/comms-gatekeeper/users/0xa/bans",
+            "http://[::1]:5210/comms-gatekeeper/users/0xa/bans",
+        ] {
+            assert!(
+                token_may_travel_to(&Url::parse(allowed).unwrap()).is_ok(),
+                "{allowed}"
+            );
+        }
+        for refused in [
+            "http://203.0.113.5:5210/comms-gatekeeper/users/0xa/bans",
+            "http://stack.example/comms-gatekeeper/users/0xa/bans",
+            "http://10.0.0.1:5210/comms-gatekeeper/users/0xa/bans",
+        ] {
+            let reason = token_may_travel_to(&Url::parse(refused).unwrap()).unwrap_err();
+            assert!(reason.contains("plain http"), "{refused}: {reason}");
+            assert!(reason.contains("not loopback"), "{refused}: {reason}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_ban_over_plain_http_to_another_host_sends_nothing() {
+        let mut stack = crate::stack::Stack::pulse_only("127.0.0.1:9".parse().unwrap());
+        stack.api = Some("http://203.0.113.5:5210".parse().unwrap());
+        stack.moderator_token_env = Some("CE2E_GATEKEEPER_TEST_TOKEN".to_owned());
+        stack.give_secret("CE2E_GATEKEEPER_TEST_TOKEN", "a-moderator-token");
+        let ctx = Ctx::new(
+            std::sync::Arc::new(stack),
+            "unit",
+            "gatekeeper-http",
+            0,
+            1,
+            std::env::temp_dir().join("comms-e2e-unit"),
+        );
+        let gatekeeper = Gatekeeper::new(&ctx).unwrap();
+        // refused before any connection is made: the reason is the scheme, not the network
+        for error in [
+            gatekeeper.ban("0xa", "test").await.unwrap_err(),
+            gatekeeper.unban("0xa").await.unwrap_err(),
+        ] {
+            assert!(error.to_string().contains("plain http"), "{error}");
+            assert!(!error.to_string().contains("a-moderator-token"), "{error}");
+        }
+    }
 
     #[test]
     fn the_scene_metadata_names_what_the_gatekeeper_reads() {
