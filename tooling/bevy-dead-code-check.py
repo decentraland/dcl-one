@@ -12,7 +12,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = 'rendering/bevy-explorer/source'
-SCANNED = ('build.rs', 'src', 'crates', 'local-harness')  # vendor/ holds upstream code
+SCANNED = ('build.rs', 'src', 'crates')  # vendor/ holds upstream code; local-harness/ is test tooling
 SKIP_DIRS = {'target'}
 SUPPRESSING = {'dead_code', 'unused', 'warnings'}
 SHADER_TYPE_REASON = 'the ShaderType derive emits a never-called check fn per field'

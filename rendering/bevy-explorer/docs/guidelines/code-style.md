@@ -5,7 +5,8 @@ the code. The one idea behind most of it: lean into the ECS. Bevy already gives 
 change tracking, ownership and cleanup. Code that reinvents those in a resource, a `Local` or a
 side map is not allowed and will fail a review.
 
-Unused code is deleted, used, or gated with `#[cfg]` to the builds that use it. No `allow`,
+In the root package and `crates/`, unused code is deleted, used, or gated with `#[cfg]` to the
+builds that use it. No `allow`,
 `expect` or `warn` covers `dead_code`, `unused` or `warnings`, except the ShaderType derive's
 never-called check fns: a module that holds only `use` items and ShaderType-derived structs
 takes `#![expect(dead_code, reason = …)]` with the reason that

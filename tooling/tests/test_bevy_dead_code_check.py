@@ -75,12 +75,13 @@ class DeadCodeCheckTest(unittest.TestCase):
                 self.assertEqual(len(self.offenders({f'crates/x/src/{name}.rs': text})), 1)
 
     def test_reports_the_attribute_line(self):
-        self.assertEqual(self.offenders({'local-harness/src/main.rs': 'use a;\n\n#[allow(\n    dead_code\n)]\nfn f() {}\n'}),
-                         [('local-harness/src/main.rs', 3)])
+        self.assertEqual(self.offenders({'src/main.rs': 'use a;\n\n#[allow(\n    dead_code\n)]\nfn f() {}\n'}),
+                         [('src/main.rs', 3)])
 
-    def test_vendor_and_target_are_not_scanned(self):
+    def test_vendor_local_harness_and_target_are_not_scanned(self):
         self.assertEqual(self.offenders({
             'vendor/basisu/src/lib.rs': '#[allow(dead_code)]\nfn f() {}\n',
+            'local-harness/benchmark/src/main.rs': '#[allow(dead_code)]\nfn f() {}\n',
             'crates/x/target/debug/build/out.rs': '#[allow(dead_code)]\nfn f() {}\n',
         }), [])
 
