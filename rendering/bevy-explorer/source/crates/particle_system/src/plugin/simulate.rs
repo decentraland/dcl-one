@@ -136,7 +136,6 @@ struct ParticleSimBatches {
     batches: Vec<SimBatch>,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn prepare_particle_sims(
     mut batches: ResMut<ParticleSimBatches>,
     emitters: Query<&ExtractedEmitter>,

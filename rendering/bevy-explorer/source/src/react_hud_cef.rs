@@ -396,7 +396,6 @@ struct MultiClick {
 // is no cursor and the engine keeps everything. While a synthetic aim drives the pointer
 // (`/hover_entity`, `/click_entity`), its presses are meant for the aimed entity, not for the page
 // under the OS cursor, so button presses and releases are not forwarded (motion still is).
-#[allow(clippy::too_many_arguments)]
 fn route_mouse(
     state: Option<ResMut<ReactHudCef>>,
     images: Res<Assets<Image>>,

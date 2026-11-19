@@ -179,7 +179,6 @@ fn spawn_jump_marker(
 /// `ground_height` is the player's distance above the ground (the movement system's downward
 /// shape cast, not a world height): 0 standing, whatever the platform's height.
 /// Shown, it inherits the player's visibility, so it hides with a hidden or out-of-world player.
-#[allow(clippy::type_complexity)]
 fn update_jump_marker(
     player: Single<&AvatarDynamicState, With<PrimaryUser>>,
     marker: Single<

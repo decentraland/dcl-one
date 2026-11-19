@@ -56,7 +56,6 @@ pub struct LastTextureOptimization {
     pub received: u32,
 }
 
-#[allow(clippy::type_complexity)]
 fn connect_preview_server(
     mut preview: ResMut<PreviewMode>,
     mut task: Local<

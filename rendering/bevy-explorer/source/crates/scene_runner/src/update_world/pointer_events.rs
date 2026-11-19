@@ -159,7 +159,6 @@ fn format_button_label(input_map: &InputMap, info: &Info) -> String {
         })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn hover_text(
     pointer_events: Query<(Option<&SceneEntity>, Option<&ForeignPlayer>, &PointerEvents)>,
     hover_target: Res<PointerTarget>,

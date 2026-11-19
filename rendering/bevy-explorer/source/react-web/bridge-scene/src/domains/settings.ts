@@ -33,6 +33,7 @@ const PRESET_VALUES: Record<string, [number | string, number | string, number | 
   'Distant Scene Rendering': ['Normal', 'Normal', 'Ultra'],
   'Empty Parcel Props': ['Low', 'Mid', 'High'],
   'Max Avatars': [20, 50, 100],
+  'Jiggle Bones': ['Off', 'On', 'On'],
   'Max Videos': [1, 2, 4]
 }
 

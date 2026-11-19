@@ -11,7 +11,6 @@
 //! from upstream's `cef_thread.rs` — marshalling all browser interaction onto the CEF UI thread
 //! on Windows/Linux, where `multi_threaded_message_loop` means off-thread calls like
 //! `CreateBrowserSync` silently fail).
-#![allow(clippy::type_complexity)]
 
 mod components;
 pub mod core;

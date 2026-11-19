@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod client_login_store;
 mod http_client;
 pub use http_client::http_client_builder;

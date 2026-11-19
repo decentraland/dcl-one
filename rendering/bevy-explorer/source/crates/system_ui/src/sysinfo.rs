@@ -219,7 +219,6 @@ pub struct Minimap;
 #[derive(Component)]
 pub struct Tracker(bool);
 
-#[allow(clippy::too_many_arguments)]
 fn update_scene_load_state(
     q: Query<Entity, With<SysInfoMarker>>,
     q_children: Query<&Children>,
@@ -446,7 +445,6 @@ fn setup_minimap(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update_minimap(
     q: Query<&DuiEntities, With<Minimap>>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
@@ -515,7 +513,6 @@ fn update_minimap(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update_tracker(
     mut commands: Commands,
     mut q: Query<(Ref<Tracker>, &DuiEntities)>,
@@ -669,9 +666,13 @@ fn set_sysinfo(
 ) {
     if let Some(Ok(command)) = input.take() {
         let on = command.on.unwrap_or(true);
+        let Ok(container) = q.single() else {
+            input.reply_failed("sysinfo panel not found");
+            return;
+        };
 
         commands
-            .entity(q.single().unwrap())
+            .entity(container)
             .modify_component(move |style: &mut Node| {
                 style.display = if on { Display::Flex } else { Display::None };
             });
@@ -705,7 +706,6 @@ fn update_map_visibilty(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn entity_count(
     q: Query<Entity>,
     f: Res<FrameCount>,

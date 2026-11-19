@@ -5,6 +5,8 @@
 //!   an rfc4 scene bus packet declaring `scene-hash` (equal to the room's scene for a
 //!   legitimate message, different for a forgery attempt)
 
+#![forbid(unsafe_code)]
+
 use anyhow::{anyhow, Context};
 
 fn seed_wallet(seed: u64) -> wallet::Wallet {

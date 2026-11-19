@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod crash;
 pub mod data_definition;
 pub mod frame;

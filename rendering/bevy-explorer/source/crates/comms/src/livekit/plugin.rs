@@ -412,7 +412,6 @@ fn respond_to_system_api(
     }
 }
 
-#[expect(clippy::type_complexity, reason = "Queries are complex")]
 fn respond_to_rpc_calls(
     mut rpc_calls: EventReader<RpcCallEvent>,
     participants: Query<(&LivekitParticipant, &Publishing)>,

@@ -4,6 +4,8 @@
 //! `ts-rs` (scripts/gen-ts-bindings.sh) to generate the TypeScript the react-web
 //! page and bridge scene consume. `system_bridge` re-exports everything here.
 
+#![forbid(unsafe_code)]
+
 pub mod languages;
 pub mod launch_options;
 pub mod services;
@@ -122,6 +124,22 @@ pub struct PortableInfo {
     pub reason: Option<String>,
     /// Smart wearables only: why the engine holds it.
     pub source: Option<SmartWearableSource>,
+}
+
+/// A map pin (`MapPin`) of a portable experience whose scene.json declares
+/// `isPortableExperience: true`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MapPinInfo {
+    /// `<scene hash>:<scene entity>`.
+    pub id: String,
+    pub x: i32,
+    pub y: i32,
+    /// At most 100 characters.
+    pub title: String,
+    /// A file of the scene's content; `None` draws the default pin.
+    pub icon: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, ts_rs::TS)]

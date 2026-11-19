@@ -5,13 +5,27 @@ are external. Explorer images: pipeline.
 
 | Output (local tag) | Command | State |
 | --- | --- | --- |
-| `image-apis` (`foundation-apis:nix`) | `catalyst serve`, `index`, `pulse`, `schema` | `/data`; PostgreSQL, blobs |
+| `image-apis` (`foundation-apis:nix`) | `catalyst serve`, `index`, `pulse`, `schema`; `cast-bot` | `/data`; PostgreSQL, blobs |
 | `image-sites` (`foundation-sites:nix`) | `sites-server` | `/data` |
 | `image-sites-polygon-credits` (`foundation-sites-polygon-credits:nix`) | `sites-server`, its Shop settling credits on Polygon through dcl-one's own CreditsManager | `/data` |
 | `image-gateway` (`foundation-gateway:nix`) | `gateway` (8080) | `/tmp` |
 
 - Run API, indexer, Pulse and migrations from one `apis` digest; domain crates are not separate services.
 - The APIs image has no SDK Play embed (`PLAY_EMBED_DIR` unset) and no `scene-build.wasm`.
+- The APIs image carries `cast-bot` (`.#cast-bot`, `infra/packages/cast-bot.nix`), the LiveKit
+  participant `serve` starts once per Cast presentation, and sets `CAST_BOT_BIN` to it, so
+  `POST /cast-presenter-service/presentations` does not answer 503
+  ([ADR](../../docs/adr/2026-11-17-cast-presenter-bot-process.md)). It is a package of its own:
+  `catalyst` never links libwebrtc. Its build takes the Explorer's patched LiveKit SDK
+  (`infra/packages/patched-source.nix`) and the prebuilt libwebrtc of the SDK's `WEBRTC_TAG`,
+  fetched ahead by hash and passed as `LK_CUSTOM_WEBRTC`; Linux compiles the bridge with
+  clang 21, as the Explorer's package does. The image smoke test runs it once.
+  That libwebrtc links Chromium's FFmpeg statically (LGPL-2.1-or-later, configured without its
+  GPL parts) and enables the H.264 and H.265 codecs, as the Explorer's own copy does. The image
+  carries the notices at `share/doc/cast-bot/libwebrtc-LICENSE.md` in the package. FFmpeg's
+  corresponding source is Chromium's `third_party/ffmpeg` at the revision the `DEPS` of WebRTC
+  commit `a545de4` pins (the archive's tag, `webrtc-a545de4-prefixed-2`). `cast-bot` itself is
+  built from this tree, so it can be relinked against a modified libwebrtc.
 - Workflows are `<component>-<task>.yml`; Quay variables `QUAY_<COMPONENT>_REPOSITORY` hold full destinations without tags.
 - Tags: `sha-<full-commit>[-<arch>]`, `main`, `v*` (not Bevy). Bevy SHA tags can change on replay: pin `repository@sha256:<digest>`.
 - `image-sites-polygon-credits` is the Sites build with `VITE_SHOP_CHAIN_ID=137` and `VITE_SHOP_CREDITS_MANAGER` set to dcl-one's Polygon manager (`infra/containers/images.nix`, `shopSettlement` in `infra/packages/sites.nix`); the plain `image-sites` is unchanged. It is published to the Sites repository under its own suffix only (`sha-<full-commit>-polygon-credits`, `main-polygon-credits`), and names its settlement in `/shop-settlement.json` and the `org.decentraland.shop.*` labels.
@@ -54,7 +68,7 @@ python3 tooling/image-smoke.py
   compiles, the build builds the Sites dependencies, so those failures report
   within minutes.
 - Image caches separate Catalyst dependencies, Sites dependencies/toolchain and
-  the compiled API and Sites app runtime closures, keyed by exact Nix derivation
+  the compiled API (`catalyst` and `cast-bot`) and Sites app runtime closures, keyed by exact Nix derivation
   identities and architecture. The Sites app (`sites-app`) is the compiled server and
   client with their production dependencies; the Explorer build and the docs media are
   assembled beside it as their own store paths, so neither changes its identity or its
@@ -62,7 +76,8 @@ python3 tooling/image-smoke.py
   (`sites-app-polygon-credits`), so an exact hit leaves neither Sites build to compile.
   A compiled closure restored under its exact identity skips that
   package's dependency restore, import and toolchain build: nothing is left to compile.
-  Container revision labels are still rebuilt for each commit.
+  Container revision labels are still rebuilt for each commit. `cast-bot` has no
+  dependency cache: when the APIs entry misses, it compiles whole beside `catalyst`.
 - In Bevy CI the compile job (`apis-sites-compile.yml`) runs beside the web build, and
   the image build starts after both. The compile job looks for the two compiled closures
   under their exact keys without a download. When one is missing and this run can save it

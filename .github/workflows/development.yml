@@ -148,6 +148,14 @@ jobs:
         run: |
           if [ -d services/catalyst/target/debug/deps ]; then restored=true; else restored=false; fi
           echo "restored=$restored" >> "$GITHUB_OUTPUT"
+          # The v8 build script copies the prebuilt library to target/debug/gn_out, which the
+          # dependency cache does not keep, while it keeps the script's fingerprint. When a
+          # changed Cargo.lock makes v8 itself recompile, the script counts as fresh and the
+          # link finds no rusty_v8; dropping its fingerprint makes it copy the library again.
+          # An exact cache hit has nothing to recompile, so it keeps the fingerprint.
+          if [ "$restored" = true ] && [ "${{ steps.deps.outputs.cache-hit }}" != true ] && ! compgen -G 'services/catalyst/target/debug/gn_out/obj/*rusty_v8*' > /dev/null; then
+            rm -rf services/catalyst/target/debug/build/v8-* services/catalyst/target/debug/.fingerprint/v8-*
+          fi
       # Optional: without the tool, or without its server, the tests compile as before.
       - name: Install the optional compiler cache
         id: compiler-cache
