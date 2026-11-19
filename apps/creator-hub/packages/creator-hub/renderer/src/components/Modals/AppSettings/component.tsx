@@ -128,7 +128,7 @@ export function AppSettings({
   }, [settings, handleUpdateSettings, validateScenesPathField]);
 
   const handleResetScenesFolder = useCallback(async () => {
-    const defaultPath = await settingsPreload.getDefaultScenesPath();
+    const defaultPath = await settingsPreload.createDefaultScenesFolder();
     const newSettings = { ...settings, scenesPath: defaultPath };
     handleUpdateSettings(newSettings);
     validateScenesPathField(defaultPath);

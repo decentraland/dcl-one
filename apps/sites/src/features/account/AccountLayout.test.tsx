@@ -115,16 +115,16 @@ describe("AccountLayout", () => {
     const onSignOut = vi.fn();
     show({ chrome: { ...signedOutChrome, signedIn: true, account: identity.signer, onSignOut } });
 
-    await user.click(screen.getByRole("button", { name: "Log out" }));
+    await user.click(screen.getByRole("button", { name: "Logout" }));
     expect(onSignOut).toHaveBeenCalledTimes(1);
 
     cleanup();
     show();
-    expect(screen.queryByRole("button", { name: "Log out" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Logout" })).toBeNull();
 
     cleanup();
     show({ chrome: { ...signedOutChrome, signedIn: true, account: "0x1111111111111111111111111111111111111111", onSignOut } });
-    expect(screen.queryByRole("button", { name: "Log out" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Logout" })).toBeNull();
   });
 
   it("shows the menu alone on /account, with no section header", () => {

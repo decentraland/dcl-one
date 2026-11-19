@@ -66,7 +66,7 @@ pub async fn op_get_user_data(state: Rc<RefCell<impl State>>) -> Result<UserData
         .borrow_mut()
         .put(UserEthAddress(profile.eth_address.clone()));
 
-    let user_data = profile.into();
+    let user_data = UserData::try_from(profile)?;
 
     debug!("[{scene:?}] <- get_user_data {user_data:?}");
     Ok(user_data)
@@ -91,13 +91,15 @@ pub async fn op_get_player_data(
 
     rx.await
         .map_err(|e| anyhow::anyhow!(e))?
-        .map(Into::into)
         .map_err(|_| anyhow::anyhow!("Not found"))
+        .and_then(|profile| Ok(UserData::try_from(profile)?))
 }
 
-impl From<SerializedProfile> for UserData {
-    fn from(profile: SerializedProfile) -> Self {
-        Self {
+impl TryFrom<SerializedProfile> for UserData {
+    type Error = serde_json::Error;
+
+    fn try_from(profile: SerializedProfile) -> Result<Self, Self::Error> {
+        Ok(Self {
             display_name: profile.name,
             public_key: Some(profile.eth_address.clone()),
             has_connected_web3: profile.has_connected_web3.unwrap_or_default(),
@@ -105,11 +107,9 @@ impl From<SerializedProfile> for UserData {
             version: profile.version,
             avatar: Some(AvatarForUserData {
                 body_shape: profile.avatar.body_shape.unwrap_or_default(),
-                skin_color: serde_json::to_string(&profile.avatar.skin.unwrap_or_default())
-                    .unwrap(),
-                hair_color: serde_json::to_string(&profile.avatar.hair.unwrap_or_default())
-                    .unwrap(),
-                eye_color: serde_json::to_string(&profile.avatar.eyes.unwrap_or_default()).unwrap(),
+                skin_color: serde_json::to_string(&profile.avatar.skin.unwrap_or_default())?,
+                hair_color: serde_json::to_string(&profile.avatar.hair.unwrap_or_default())?,
+                eye_color: serde_json::to_string(&profile.avatar.eyes.unwrap_or_default())?,
                 wearables: profile.avatar.wearables,
                 snapshots: profile.avatar.snapshots.map(|s| Snapshots {
                     face256: s.face256,
@@ -117,6 +117,6 @@ impl From<SerializedProfile> for UserData {
                 }),
             }),
             has_claimed_name: profile.has_claimed_name,
-        }
+        })
     }
 }

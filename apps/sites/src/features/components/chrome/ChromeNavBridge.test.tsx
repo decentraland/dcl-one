@@ -90,13 +90,14 @@ describe("ChromeNavBridge", () => {
       </MemoryRouter>,
     );
     expect(html).toContain("bridged");
-    expect(html).toMatch(/<a[^>]*data-discover="true"[^>]*href="\/shop"|<a[^>]*href="\/shop"[^>]*data-discover="true"/);
+    const shopAll = html.match(/<a[^>]*href="\/shop\/overview"[^>]*>Shop All<\/a>/)?.[0];
+    expect(shopAll).toContain('data-discover="true"');
   });
 
   it("renders plain anchors without the bridge", () => {
     const html = renderToString(<DclTopBar variant="sites" active="shop" signedIn={false} />);
     expect(html).not.toContain("data-discover");
-    expect(html).toContain('href="/shop"');
+    expect(html).toContain('href="/shop/overview"');
   });
 });
 

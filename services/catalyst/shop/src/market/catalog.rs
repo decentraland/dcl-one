@@ -563,6 +563,16 @@ pub fn uint_or_null(expr: &str) -> String {
 /// that network's trade-events index is published; and counted at
 /// `since_p` (a bound nullable timestamp, `trades::mirrored_since`).
 pub fn unified_trades_cte(now_p: &str, since_p: &str) -> String {
+    unified_trades_cte_of(now_p, since_p, None)
+}
+
+/// [`unified_trades_cte`]; with `contracts_p` (a bound `text[]`), only the
+/// trades that sell from those contracts, as a semi-join that stays hashed
+/// whatever the array's length.
+pub fn unified_trades_cte_of(now_p: &str, since_p: &str, contracts_p: Option<&str>) -> String {
+    let of = contracts_p
+        .map(|p| format!(" AND sent.contract_address IN (SELECT unnest({p}::text[]))"))
+        .unwrap_or_default();
     format!(
         "unified_trades AS ( \
            SELECT t.id, t.type::text AS type, t.signer, t.created_at, t.expires_at, t.network, t.chain_id, t.contract AS trade_contract, \
@@ -573,7 +583,7 @@ pub fn unified_trades_cte(now_p: &str, since_p: &str) -> String {
                   recv_erc20.amount AS amount_received, \
                   recv.beneficiary AS beneficiary \
            FROM shop.trades t \
-           JOIN shop.trade_assets sent ON sent.trade_id = t.id AND sent.direction = 'sent' \
+           JOIN shop.trade_assets sent ON sent.trade_id = t.id AND sent.direction = 'sent'{of} \
            LEFT JOIN shop.trade_assets_item sent_item ON sent_item.asset_id = sent.id \
            LEFT JOIN shop.trade_assets_erc721 sent_erc721 ON sent_erc721.asset_id = sent.id \
            JOIN shop.trade_assets recv ON recv.trade_id = t.id AND recv.direction = 'received' AND recv.asset_type IN (1, 2) \

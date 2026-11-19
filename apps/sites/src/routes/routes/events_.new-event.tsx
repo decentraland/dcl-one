@@ -1,10 +1,12 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
 import { EventsLocaleProvider, useEventsFooterCopy } from "@/features/events/locale";
 import LdSubmitHangoutView from "@ui/landings/pages/LdSubmitHangoutView";
 
 import { fetchEventCategories, type EventCategory } from "@/data/lib/catalyst/places/events";
+import { invalidateEventsAfterWrite } from "@/data/lib/catalyst/places/events-page";
 import { buildHangoutSubmit, deleteHangout, emptyDraft, eventToDraft, loadEditableHangout, uploadHangoutPoster, type EditableHangout } from "@/data/lib/catalyst/landings/submit-hangout";
 import { loadHangoutOptions, type HangoutOptions } from "@/data/lib/catalyst/landings/hangout-options";
 import { useAuth } from "@/data/lib/auth/context";
@@ -89,9 +91,12 @@ export default function SubmitHangoutRoute(props: Route.ComponentProps) {
 function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
   const footerCopy = useEventsFooterCopy();
   const { text, errorText } = useEventsCopy();
+  const queryClient = useQueryClient();
   const d = loaderData as LoaderData;
   const auth = useAuth();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const inline = !params.get("step")?.trim();
   const [loaded, setLoaded] = useState<{ account: string; id: string; event?: EditableHangout; error?: string } | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -142,6 +147,7 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
     setDeleteError(null);
     try {
       await deleteHangout(identity, original.id);
+      void invalidateEventsAfterWrite(queryClient);
       navigate("/events");
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : "Could not delete this hangout.");
@@ -150,8 +156,10 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
     }
   }
 
+  const submit = buildHangoutSubmit(getIdentity, original, () => optionsRef.current?.profile?.permissions.includes("edit_any_event") ?? false);
+
   return (
-    <SitesChromeMaybe active="whatson" footerCopy={footerCopy}>
+    <SitesChromeMaybe active="whatson" headerSurface={inline ? "overlay" : "solid"} overlayNav={inline} footerCopy={footerCopy}>
     <LdSubmitHangoutView>
       {waiting ? <p role="status">{text("Loading your hangout…")}</p> : error ? <div><p role="alert">{errorText(error)}</p><Link to="/events?tab=my">{text("Back to My Hangouts")}</Link><button type="button" onClick={() => { setLoaded(null); setOptionsRead(null); setOptionsAttempt((previous) => previous + 1); }}>{text("Check access again")}</button></div> : <SubmitHangout
         key={`${auth.address ?? "signed-out"}:${d.eventId ?? "new"}`}
@@ -160,11 +168,24 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
           story: STORY,
           variant: d.assignment.variant,
         }}
+        editor
+        reviewNotice={original?.rejected
+          ? original.rejection_reason
+            ? text("This event was rejected: {reason}", { reason: original.rejection_reason })
+            : text("This event was rejected.")
+          : original?.approved
+            ? text("Changes to approved events may require another review.")
+            : undefined}
         categories={d.categories}
         categoriesError={d.categoriesError}
         mode={d.mode}
         draft={original ? eventToDraft(original) : { ...emptyDraft(), communityId: d.communityId }}
-        submit={buildHangoutSubmit(getIdentity, original, () => optionsRef.current?.profile?.permissions.includes("edit_any_event") ?? false)}
+        originalSchedule={original}
+        submit={async (input) => {
+          const result = await submit(input);
+          void invalidateEventsAfterWrite(queryClient);
+          return result;
+        }}
         signedIn={auth.isConnected}
         onSignIn={openSignIn}
         options={options}
