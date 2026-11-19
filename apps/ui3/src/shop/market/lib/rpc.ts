@@ -1,14 +1,15 @@
 // from: shop@94584a5c:app/src/lib/authorizations.ts (readProvider)
 // Reads go to the TARGET chain's RPC, never the wallet's current network: a wallet on Ethereum must still
 // be able to see a Polygon approval, and the wallet's RPC is also the flakiest one in the path (upstream's
-// -32002 "too many errors"). One JSON-RPC URL per chain, overridable by the host
-// (`window.__SHOP_RPC__ = { 137: "https://…" }` or `setShopRpc`). The mainnet defaults are the public endpoints
+// -32002 "too many errors"). One JSON-RPC URL per chain, overridable by the host (`setShopRpc`), or by a test or a
+// local build from the page (`window.__SHOP_RPC__ = { 137: "https://…" }`, ../../pageOverride). The mainnet defaults are the public endpoints
 // the contract boundary reads used (tests/fixtures/shop/chain-reads.json); Amoy, which that fixture does not
 // cover, reads through Decentraland's relay.
 
 import { decodeFunctionResult, encodeFunctionData, type Abi, type ContractFunctionName } from "viem";
 
 import { CHAIN, type ChainId } from "@shop/model/chain";
+import { pageOverride } from "../../pageOverride";
 
 const DEFAULT_RPC: Partial<Record<ChainId, string>> = {
   [CHAIN.ETHEREUM]: "https://ethereum-rpc.publicnode.com",
@@ -17,8 +18,6 @@ const DEFAULT_RPC: Partial<Record<ChainId, string>> = {
   // Polygon's own Amoy endpoint no longer resolves; Decentraland's relay serves Amoy and allows browser origins.
   [CHAIN.AMOY]: "https://rpc.decentraland.org/amoy",
 };
-
-type RpcWindow = Window & { __SHOP_RPC__?: Partial<Record<number, string>> };
 
 const overrides = new Map<ChainId, string>();
 
@@ -42,7 +41,7 @@ export function setRpcTransport(next: RpcTransport | null): () => void {
 }
 
 export function rpcUrl(chainId: ChainId): string {
-  const fromWindow = typeof window !== "undefined" ? (window as RpcWindow).__SHOP_RPC__?.[chainId] : undefined;
+  const fromWindow = pageOverride<Partial<Record<number, string>>>("__SHOP_RPC__")?.[chainId];
   const url = overrides.get(chainId) ?? fromWindow ?? DEFAULT_RPC[chainId];
   if (!url) throw new Error(`No RPC is configured for chain ${chainId}`);
   return url;

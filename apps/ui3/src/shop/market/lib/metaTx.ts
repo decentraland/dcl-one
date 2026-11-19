@@ -11,6 +11,7 @@ import { encodeFunctionData, parseAbi } from "viem";
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
 import { catalystBase } from "../../../data/catalyst/client";
+import { pageOverride } from "../../pageOverride";
 import type { ContractData } from "@shop/market/lib/contracts";
 import { rpc } from "./rpc";
 import { chainSalt, signTypedData, walletAccount } from "./tx";
@@ -34,12 +35,12 @@ export class MetaTransactionError extends Error {
   }
 }
 
-type RelayWindow = Window & { __SHOP_RELAY__?: string };
-
-/** The relay's base; POSTs go to `${relayBase()}/transactions` (decentraland-transactions `serverURL`). */
+/**
+ * The relay's base; POSTs go to `${relayBase()}/transactions` (decentraland-transactions `serverURL`). A test or a
+ * local build may repoint it from the page (../../pageOverride).
+ */
 export function relayBase(): string {
-  const fromWindow = typeof window !== "undefined" ? (window as RelayWindow).__SHOP_RELAY__ : undefined;
-  return fromWindow ?? `${catalystBase()}/transactions-api/v1`;
+  return pageOverride<string>("__SHOP_RELAY__") ?? `${catalystBase()}/transactions-api/v1`;
 }
 
 /** Ledger answers v as 0/1; the contracts recover only 27/28. */

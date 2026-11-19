@@ -92,7 +92,11 @@ export const DEFAULT_BASE_DOMAIN =
 
 /**
  * A page of the web site around the Explorer (shop, terms, help): the same origin on dcl-one,
- * the apex of the base domain upstream.
+ * the apex of the base domain upstream. It follows the Explorer's selected website (?baseDomain=);
+ * a domain that isn't Decentraland's own (isTrustedBaseDomain) stops the boot on the
+ * UntrustedLaunchGate first. It doesn't follow the deployment whose Credits balance the in-world
+ * Shop's checkout reads (the page's own node, catalystBase), so with two trusted deployments
+ * selected apart, a funding link and the balance can name different ones.
  */
 export function siteUrl(path: string): string {
   return BASE_DOMAIN === ONE_GATEWAY_HOST ? `${window.location.origin}${path}` : `https://${BASE_DOMAIN}${path}`
