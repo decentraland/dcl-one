@@ -1905,6 +1905,42 @@ pub enum AppError {
     NetworkFailure(anyhow::Error),
 }
 
+/// The client's focus: one representation for the native window's focus and the browser page's
+/// focus.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientWindowFocus {
+    Focused,
+    NoFocus,
+}
+
+impl ClientWindowFocus {
+    /// From the OS's focus report for the window, not `Window::focused`, which also holds
+    /// unanswered focus requests.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn from_window_focused(window_focused: &bevy::window::WindowFocused) -> Self {
+        Self::from_has_focus(window_focused.focused)
+    }
+
+    /// `page_has_focus` is `document.hasFocus()`, not `Window::focused`.
+    #[cfg(target_arch = "wasm32")]
+    pub fn from_page_focus(page_has_focus: bool) -> Self {
+        Self::from_has_focus(page_has_focus)
+    }
+
+    fn from_has_focus(has_focus: bool) -> Self {
+        if has_focus {
+            Self::Focused
+        } else {
+            Self::NoFocus
+        }
+    }
+}
+
+/// Asks the OS to focus the primary window. [`ClientWindowFocus`] changes only once the OS
+/// reports the focus.
+#[derive(Event, Debug, Clone, Copy)]
+pub struct RequestClientWindowFocus;
+
 #[derive(Resource, Default, Serialize, Deserialize, Clone)]
 pub struct MicState {
     pub available: bool,
@@ -1926,7 +1962,16 @@ pub struct MicState {
 }
 
 impl MicState {
-    pub fn scene_blocked(&self) -> bool {
+    /// This state with `enabled` false while the client window lacks focus, since the mic is
+    /// paused then.
+    pub fn gated_by_client_window_focus(&self, focus: ClientWindowFocus) -> Self {
+        Self {
+            enabled: self.enabled && focus == ClientWindowFocus::Focused,
+            ..self.clone()
+        }
+    }
+
+    pub const fn scene_blocked(&self) -> bool {
         self.scene_blocked
     }
 

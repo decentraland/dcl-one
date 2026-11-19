@@ -156,6 +156,9 @@ this engine's design using its requirements and tests.
 - Hoist every third-party dependency to `[workspace.dependencies]` and use
   `{ workspace = true }` at the call site, even for a crate used in one place. Convert existing
   inline uses of the same crate in the same change.
+- Every package in the workspace declares `[lints] workspace = true`, so
+  `[workspace.lints]` reaches it; set a crate-specific level in the crate's source, not in
+  its manifest.
 - A change to bevy or to a forked crate is one more patch file under
   `rendering/bevy-explorer/patches/<name>/series` and a new `rev` in `source.toml` and both Cargo
   files. The tool writes all of them. Push the `rev` to your fork with `publish --remote`, and CI

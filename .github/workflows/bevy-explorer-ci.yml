@@ -11,6 +11,7 @@
       - tooling/bevy-ci.py
       - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
+      - tooling/bevy-workspace-lints.py
       - tooling/patched-sources.py
       - tooling/vendor-provenance.py
       - tooling/enet-provenance.py
@@ -59,6 +60,7 @@
       - tooling/bevy-ci.py
       - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
+      - tooling/bevy-workspace-lints.py
       - tooling/patched-sources.py
       - tooling/vendor-provenance.py
       - tooling/enet-provenance.py
@@ -863,6 +865,9 @@ jobs:
       - name: Taplo info
         if: failure()
         run: echo "Run taplo fmt to apply TOML formatting; taplo fmt --check --diff shows the changes."
+      - name: Check that every package inherits the workspace lints
+        if: ${{ !cancelled() }}
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-workspace-lints.py"
     defaults:
       run:
         working-directory: rendering/bevy-explorer/source

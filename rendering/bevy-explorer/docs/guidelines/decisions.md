@@ -119,7 +119,7 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     after a re-dial: what the user chose since then stands.
   - Don't keep a muted mic's track published. Muting unpublishes it, so no audio leaves a muted
     user. In a stream `MuteSpeakerFromCommunityVoiceChat` is still sent, so every client shows the
-    same state.
+    same state (a focus pause is the exception, below).
   - Don't play calls at the nearby-voice volume. Calls and streams follow `Voice Chat Volume` and
     nearby players `Voice Volume`, both scaled by `Master`. Capture uses the system's default
     microphone; a device picker is next work.
@@ -181,6 +181,17 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     too: the platform ban-status poll (every 300 s) reads the ban but never admits the room
     again. unity-explorer suppresses on any 401 or 403 from the scene room and lifts it on the
     room's next connect or disconnect; its scene room asks again every 5 s while refused.
+- **The mic pauses while the Explorer lacks focus** (the primary window natively,
+  `document.hasFocus()` on the web), so it never captures while the player is in another app
+  or tab: it stops capturing and publishing for nearby voice and calls alike, and resumes when
+  focus returns. The mic setting does not change, and neither pause nor resume plays the mic
+  on/off sound. The HUD shows the paused mic off: the call panel at once, the nearby mic toggle
+  at its next mic state poll (up to 1 s).
+  - In a community stream no `MuteSpeakerFromCommunityVoiceChat` is sent for the pause, so
+    other clients keep showing the paused speaker unmuted while no audio arrives; the mute
+    entry above holds only for a mute the player chooses.
+  - unity-explorer pauses only the nearby mic and lets the player turn the pause off in
+    settings ("mute mic in background", on by default); the Explorer has no such setting.
 - **Blocked and scene-banned players are not heard nearby.** A player blocked in either
   direction, or banned by the connected scene room, carries `BlockedOrBanned`, and their nearby
   voice track is unsubscribed while it lasts; unity-explorer keeps the track and creates no audio
