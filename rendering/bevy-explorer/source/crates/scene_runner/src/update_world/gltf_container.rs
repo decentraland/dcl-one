@@ -279,7 +279,6 @@ fn extras_collider_mask(extras: &str) -> Option<u32> {
 #[derive(Component)]
 pub struct GltfHandle(Handle<Gltf>);
 
-/// The visible model instance, retained while a replacement source loads.
 #[derive(Component, Deref)]
 pub struct GltfReady(pub(super) InstanceId);
 
