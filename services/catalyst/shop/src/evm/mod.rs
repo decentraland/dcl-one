@@ -37,6 +37,8 @@
 //!   (`CATALYRST_ECONOMY_ADMIN_TOKEN`; the old loopback exemption is gone
 //!   with the per-service listener) and the write gate.
 //! - `broker-reconcile` job: the three ledgers' unsettled rows -> receipts.
+//! - `relayer-accounts` job (every process): the OZ relayer's account list,
+//!   which `POST /v1/transactions` refuses as the user.
 //!
 //! Every write is local authority behind `DATA_WRITES_ENABLED`
 //! (`crate::shared::writes::DataWrites`, the social switch's twin): off, every
@@ -398,6 +400,29 @@ pub struct State {
 }
 
 pub type SharedState = Arc<State>;
+
+/// Starts this process's `relayer-accounts` job, which keeps the OZ relayer's account list (the
+/// accounts a relay refuses as the user) current, so a relay request never waits for that read.
+pub fn spawn_jobs(state: &SharedState, jobs: &crate::jobs::Jobs) {
+    if !state.transaction.has_oz_relayer() {
+        return;
+    }
+    let state = state.clone();
+    jobs.spawn_periodic(
+        "relayer-accounts",
+        crate::jobs::PeriodicCfg::every(relayer::ACCOUNTS_RETRY),
+        move |_ctx| {
+            let state = state.clone();
+            async move {
+                state
+                    .transaction
+                    .refresh_relayer_accounts()
+                    .await
+                    .map_err(anyhow::Error::msg)
+            }
+        },
+    );
+}
 
 impl State {
     /// Provisions the broadcast providers the settings describe (the old

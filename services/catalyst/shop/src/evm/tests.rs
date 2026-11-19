@@ -1413,7 +1413,7 @@ async fn spawn_oz_listing(account: String) -> (String, Arc<std::sync::atomic::At
 
 /// With only the OZ relayer provisioned (no direct signer), a meta-transaction whose
 /// `userAddress` is any account the relayer's API key lists is answered 400 before the contract,
-/// quota or broadcast steps; another signer passes that step.
+/// quota or broadcast steps.
 #[tokio::test]
 async fn a_relayer_account_is_refused_as_the_user_with_only_the_oz_relayer() {
     let relayer_key = PrivateKeySigner::random();
@@ -1442,15 +1442,61 @@ async fn a_relayer_account_is_refused_as_the_user_with_only_the_oz_relayer() {
         assert_eq!(body["not_sent"], true, "{body}");
     }
     assert_eq!(submissions.load(std::sync::atomic::Ordering::Relaxed), 0);
-    let other = PrivateKeySigner::random();
-    let (_, body) = post_transaction(
-        &app,
-        &format!("{:#x}", other.address()),
-        COLLECTION,
-        &signed_split_calldata(&other, FS),
-    )
-    .await;
-    assert_ne!(body["message"], "Invalid transaction data.", "{body}");
+}
+
+/// A user that is not a listed relayer account passes that step and reaches the OZ relayer.
+#[tokio::test]
+async fn an_unlisted_user_reaches_the_oz_relayer() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let listed = PrivateKeySigner::random().address().to_checksum(None);
+    let (relayer_url, submissions) = spawn_oz_listing(listed).await;
+    let app = oz_app_over(&pool, relayer_url).await;
+    let key = PrivateKeySigner::random();
+    let user = format!("{:#x}", key.address());
+    let (status, body) =
+        post_transaction(&app, &user, COLLECTION, &signed_split_calldata(&key, FS)).await;
+    cleanup_user(&pool, &user).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(submissions.load(std::sync::atomic::Ordering::Relaxed), 1);
+}
+
+/// With both the direct signer and the OZ relayer provisioned, the signer's address and every
+/// account the OZ relayer lists are refused as the user.
+#[tokio::test]
+async fn relayer_accounts_are_refused_with_both_the_signer_and_the_oz_relayer() {
+    let signer_key = PrivateKeySigner::random();
+    let listed_key = PrivateKeySigner::random();
+    let (relayer_url, submissions) = spawn_oz_listing(listed_key.address().to_checksum(None)).await;
+    let (chain_url, raws) = spawn_fake_chain().await;
+    let state = state(
+        lazy_pool(),
+        Settings {
+            oz_relayer_url: Some(relayer_url),
+            oz_relayer_id: Some("relayer-under-test".into()),
+            oz_relayer_api_key: Some("api-key-under-test".into()),
+            polygon_rpc_url: Some(chain_url),
+            meta_tx_broadcast_enabled: true,
+            relayer_private_key: Some(hex::encode(signer_key.to_bytes())),
+            ..Settings::for_tests()
+        },
+    );
+    assert!(state.transaction.has_oz_relayer() && state.transaction.has_direct_signer());
+    let app = router(state);
+    for key in [&signer_key, &listed_key] {
+        let user = format!("{:#x}", key.address());
+        let (status, body) =
+            post_transaction(&app, &user, COLLECTION, &signed_split_calldata(key, FS)).await;
+        assert_eq!(status, 400, "{body}");
+        assert_eq!(body["message"], "Invalid transaction data.", "{body}");
+    }
+    assert_eq!(submissions.load(std::sync::atomic::Ordering::Relaxed), 0);
+    assert!(raws.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

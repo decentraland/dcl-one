@@ -236,6 +236,10 @@ impl MetaTxSender {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    pub fn address(&self) -> Address {
+        self.0.parse().expect("built from an Address")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -626,16 +630,13 @@ impl TransactionComponent {
     /// whichever route broadcasts: the direct signer's and every account the OZ relayer's API
     /// key lists ([`Relayer::accounts`]).
     async fn check_self_relay(&self, sender: &MetaTxSender) -> Result<(), ApiError> {
-        let direct = self.signer.as_ref().is_some_and(|s| {
-            sender
-                .as_str()
-                .eq_ignore_ascii_case(&format!("{:#x}", s.relayer_address()))
-        });
+        let user = sender.address();
+        let direct = self
+            .signer
+            .as_ref()
+            .is_some_and(|s| s.relayer_address() == user);
         let listed = match self.relayer.as_ref() {
-            Some(relayer) => relayer
-                .accounts()
-                .await
-                .contains(&sender.as_str().to_ascii_lowercase()),
+            Some(relayer) => relayer.accounts().await.contains(&user),
             None => false,
         };
         if direct || listed {
@@ -644,6 +645,15 @@ impl TransactionComponent {
             ));
         }
         Ok(())
+    }
+
+    /// One pass of the background read of the OZ relayer's accounts ([`Relayer::refresh_accounts`]);
+    /// nothing to do without an OZ relayer.
+    pub async fn refresh_relayer_accounts(&self) -> Result<(), String> {
+        match self.relayer.as_ref() {
+            Some(relayer) => relayer.refresh_accounts().await,
+            None => Ok(()),
+        }
     }
 
     /// Recovers the EIP-712 signature carried in the executeMetaTransaction

@@ -714,6 +714,7 @@ pub async fn serve(
         shop::evm::State::new(pool.clone(), http_client.clone(), economy_settings)
             .context("provisioning the economy relayers")?,
     );
+    shop::evm::spawn_jobs(&economy_state, &jobs);
     shop::checkout::spawn_jobs(&economy_state, &jobs);
 
     let price = Arc::new(price::State::new(
