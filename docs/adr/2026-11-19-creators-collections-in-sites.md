@@ -43,8 +43,8 @@ The creators pages move into `apps/sites` from `decentraland/creators-website` `
 - **Copy.** English only, through a local `t()` over one message file. Sites has no i18n to join.
 - **Telemetry and errors.** Events are typed in the catalogue under the `bd_` prefix, one story per
   page (`creator-hub/<page>`), and the save, publish, curation and listing steps feed the creator
-  funnel. Unexpected failures, failed queries and mutations included, go to
-  `/internal/client-error`.
+  funnel. Unexpected failures, failed queries and mutations included, are logged redacted with
+  `console.error`, which the site reports to `/internal/client-error` like any other page's.
 - **Styling.** CSS Modules over the shared `--dcl-*` tokens, with the creators base styles scoped to
   `[data-creators]`. The pages keep their own components for now; moving them to `@dcl/one-ui` is a
   separate change.

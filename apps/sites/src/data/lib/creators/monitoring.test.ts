@@ -2,7 +2,7 @@
 import './test/setup'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TransactionExecutionError, UnknownRpcError } from 'viem'
-import { captureError, clientErrorForwarder, redact, rpcFactsFrom, setErrorForwarder, toReportable } from './monitoring'
+import { captureError, redact, rpcFactsFrom, toReportable } from './monitoring'
 
 const SIGNATURE = `0x${'a'.repeat(130)}`
 const HEX32 = `0x${'b'.repeat(64)}`
@@ -13,52 +13,46 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  setErrorForwarder(null)
   vi.restoreAllMocks()
 })
 
+const logged = () => vi.mocked(console.error).mock.calls.map(args => args.join(' ')).join('\n')
+
 describe('captureError', () => {
-  it('always logs the failure and hands it to the reporter with the flow that produced it', () => {
-    const reported = vi.fn()
-    setErrorForwarder(reported)
+  it('logs the failure with the flow that produced it and the plain facts of its context', () => {
+    captureError(new TypeError('upload failed'), { flow: 'add-items', http_status: 500, item: { id: 'x' } })
 
-    captureError(new Error('publish reverted'), { flow: 'publish-collection', collectionId: 'col-1' })
-
-    expect(console.error).toHaveBeenCalled()
-    expect(reported).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'publish reverted' }),
-      expect.objectContaining({ flow: 'publish-collection', collectionId: 'col-1' })
-    )
+    expect(console.error).toHaveBeenCalledTimes(1)
+    expect(logged()).toContain('[creators] error in add-items: TypeError: upload failed [http_status=500]')
   })
 
-  it('does not throw back into the caller when reporting itself fails', () => {
-    setErrorForwarder(() => {
-      throw new Error('sentry is down')
-    })
+  it('never logs a signature or a sensitive context value', () => {
+    captureError(new Error(`bad signature ${SIGNATURE}`), { flow: 'publish', auth_token: 'abc', note: HEX32 })
 
-    expect(() => captureError(new Error('boom'), { flow: 'sell-item' })).not.toThrow()
-    // A broken forwarder loses every report, so it has to be visible somewhere.
-    expect(console.warn).toHaveBeenCalled()
+    expect(logged()).not.toContain(SIGNATURE)
+    expect(logged()).not.toContain('abc')
+    expect(logged()).not.toContain(HEX32)
   })
 
-  it('reports a wallet failure that is not an Error with a readable name and its rpc facts', () => {
-    const reported = vi.fn()
-    setErrorForwarder(reported)
-
+  it('reports a wallet failure that is not an Error with a readable message and its rpc facts', () => {
     captureError({ code: -32603, message: 'Failed to fetch', data: { httpStatus: 401 } }, { flow: 'send-items' })
 
-    const [error, context] = reported.mock.calls[0]
-    expect((error as Error).message).toBe('Failed to fetch (code -32603)')
-    expect(context).toMatchObject({ rpc_code: -32603, http_status: 401, flow: 'send-items' })
+    expect(logged()).toContain('Failed to fetch (code -32603)')
+    expect(logged()).toContain('rpc_code=-32603 http_status=401')
   })
 
   it('lets the caller override a fact read off the thrown value', () => {
-    const reported = vi.fn()
-    setErrorForwarder(reported)
-
     captureError({ code: 1 }, { rpc_code: 'known-better' })
 
-    expect(reported.mock.calls[0][1]).toMatchObject({ rpc_code: 'known-better' })
+    expect(logged()).toContain('rpc_code=known-better')
+  })
+
+  it('does not throw back into the caller when logging itself fails', () => {
+    vi.mocked(console.error).mockImplementation(() => {
+      throw new Error('console is gone')
+    })
+
+    expect(() => captureError(new Error('boom'), { flow: 'sell-item' })).not.toThrow()
   })
 })
 
@@ -88,8 +82,6 @@ describe('rpcFactsFrom', () => {
   })
 })
 
-
-
 describe('redact', () => {
   it('leaves ordinary copy alone', () => {
     expect(redact('the collection is locked')).toBe('the collection is locked')
@@ -99,51 +91,5 @@ describe('redact', () => {
     const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIweGNyZWF0b3IifQ.c2lnbmF0dXJl'
 
     expect(redact(`request failed with ${jwt}`)).toBe('request failed with <jwt>')
-  })
-})
-
-describe('clientErrorForwarder', () => {
-  const posted = () => vi.mocked(fetch).mock.calls.map(([, init]) => JSON.parse(String(init?.body)))
-
-  beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response()))
-  })
-
-  afterEach(() => vi.unstubAllGlobals())
-
-  it('reports the error with the flow that produced it and the plain facts of its context', () => {
-    clientErrorForwarder(new TypeError('upload failed'), { flow: 'add-items', http_status: 500, item: { id: 'x' } })
-
-    expect(fetch).toHaveBeenCalledWith('/internal/client-error', expect.objectContaining({ method: 'POST' }))
-    expect(posted()[0]).toMatchObject({
-      name: 'TypeError',
-      message: 'upload failed [http_status=500]',
-      source: 'creators:add-items'
-    })
-  })
-
-  it('never sends a signature or a sensitive context value', () => {
-    clientErrorForwarder(new Error(`bad signature ${SIGNATURE}`), { flow: 'publish', auth_token: 'abc', note: HEX32 })
-
-    const report = JSON.stringify(posted()[0])
-    expect(report).not.toContain(SIGNATURE)
-    expect(report).not.toContain('abc')
-    expect(report).not.toContain(HEX32)
-  })
-
-  it('reports the same error once within a minute', () => {
-    clientErrorForwarder(new Error('same failure twice'), { flow: 'save-item' })
-    clientErrorForwarder(new Error('same failure twice'), { flow: 'save-item' })
-
-    expect(fetch).toHaveBeenCalledTimes(1)
-  })
-
-  it('keeps a long error report under the size the endpoint accepts', () => {
-    const error = new Error(`rpc failed ${'x'.repeat(20_000)}`)
-    error.stack = '"'.repeat(10_000)
-    window.history.replaceState(null, '', `/create/collections/editor?item=${'"'.repeat(5_000)}`)
-    clientErrorForwarder(error, { flow: 'publish' })
-
-    expect(new TextEncoder().encode(JSON.stringify(posted()[0])).length).toBeLessThan(16 * 1024)
   })
 })

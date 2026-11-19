@@ -31,8 +31,8 @@ suite drives these pages with every service faked; see its README.
   otherwise they go through the relayer as a gasless meta-transaction signed by the session's account. A wallet on
   another account is refused before anything is signed. A dismissed wallet prompt returns to the form, and a wallet
   on the wrong account or network gets the shared wallet message with a retry; neither is reported as an error.
-- **Raw errors never reach the user.** Failures show friendly copy and are reported to the site's client-error
-  endpoint with a `flow`; a retry is offered only when it can succeed. Curators are the exception: the approval flow
+- **Raw errors never reach the user.** Failures show friendly copy and are logged with a `flow`, which the site
+  reports to its client-error endpoint; a retry is offered only when it can succeed. Curators are the exception: the approval flow
   shows them the raw error with a Copy button for support.
 - **Phones are viewers.** At 900px and below the collection management actions are hidden; at 768px and below the
   editor is preview-only. Curation actions are desktop-only.
