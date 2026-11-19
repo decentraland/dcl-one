@@ -377,6 +377,7 @@ fn apply_player_move(
     now: f64,
 ) {
     let Ok((_, mut player_transform, mut dynamics, maybe_active)) = player.single_mut() else {
+        pending.send_fail();
         return;
     };
     if let Some(active) = maybe_active {
