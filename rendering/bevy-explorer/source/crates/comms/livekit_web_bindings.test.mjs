@@ -253,3 +253,133 @@ test('repeat subscribe disposes the previous rig and streaming attachment', asyn
   assert.equal(attached.size, 0);
   assert.equal(connected.size, 0);
 });
+
+function fakeDocument() {
+  const listeners = new Map();
+  return {
+    listeners,
+    addEventListener(event, listener) {
+      if (!listeners.has(event)) listeners.set(event, new Set());
+      listeners.get(event).add(listener);
+    },
+    removeEventListener(event, listener) { listeners.get(event)?.delete(listener); },
+    dispatch(event) { [...(listeners.get(event) ?? [])].forEach(listener => listener()); },
+    count() { return [...listeners.values()].reduce((sum, set) => sum + set.size, 0); },
+  };
+}
+
+function withPageGlobals(t, globals) {
+  const names = Object.keys(globals);
+  const previous = names.map(name => globalThis[name]);
+  t.after(() => names.forEach((name, i) => { globalThis[name] = previous[i]; }));
+  Object.assign(globalThis, globals);
+}
+
+test('refused audio playback starts on the first gesture, once', async (t) => {
+  const { room_connect, room_drop } = await import('./livekit_web_bindings.js?audio-unlock');
+  const roomEvent = new Proxy({}, { get: (_, name) => name });
+  class Room extends EventEmitter {
+    canPlaybackAudio = true;
+    startAudioCalls = 0;
+    async connect() {}
+    async disconnect() {}
+    async startAudio() { this.startAudioCalls++; }
+  }
+  const document = fakeDocument();
+  withPageGlobals(t, { LivekitClient: { Room, RoomEvent: roomEvent }, document });
+
+  const room = await room_connect('wss://room.example', 'token', {}, {}, () => {});
+  room.canPlaybackAudio = false;
+  room.emit(roomEvent.AudioPlaybackStatusChanged, false);
+  room.emit(roomEvent.AudioPlaybackStatusChanged, false);
+  assert.equal(document.count(), 2, 'one pointerdown and one keydown listener for the room');
+
+  document.dispatch('pointerdown');
+  assert.equal(room.startAudioCalls, 1);
+  assert.equal(document.count(), 0);
+  document.dispatch('keydown');
+  assert.equal(room.startAudioCalls, 1);
+
+  // a later refusal arms it again; dropping the room removes it unfired
+  room.emit(roomEvent.AudioPlaybackStatusChanged, false);
+  assert.equal(document.count(), 2);
+  room_drop(room);
+  assert.equal(document.count(), 0);
+  document.dispatch('pointerdown');
+  assert.equal(room.startAudioCalls, 1);
+});
+
+test('allowed playback disarms a pending gesture listener', async (t) => {
+  const { room_connect } = await import('./livekit_web_bindings.js?audio-allowed');
+  const roomEvent = new Proxy({}, { get: (_, name) => name });
+  class Room extends EventEmitter {
+    canPlaybackAudio = false;
+    startAudioCalls = 0;
+    async connect() {}
+    async startAudio() { this.startAudioCalls++; }
+  }
+  const document = fakeDocument();
+  withPageGlobals(t, { LivekitClient: { Room, RoomEvent: roomEvent }, document });
+
+  const room = await room_connect('wss://room.example', 'token', {}, {}, () => {});
+  room.emit(roomEvent.AudioPlaybackStatusChanged, false);
+  assert.equal(document.count(), 2);
+  room.canPlaybackAudio = true;
+  room.emit(roomEvent.AudioPlaybackStatusChanged, true);
+  assert.equal(document.count(), 0);
+  document.dispatch('keydown');
+  assert.equal(room.startAudioCalls, 0);
+});
+
+test('a suspended voice audio context resumes on the next gesture', async (t) => {
+  const { room_connect } = await import('./livekit_web_bindings.js?context-resume');
+  const roomEvent = new Proxy({}, { get: (_, name) => name });
+  class Room extends EventEmitter {
+    async connect() {}
+  }
+  const contexts = [];
+  const node = () => ({ connect() {}, disconnect() {} });
+  class AudioContext {
+    state = 'suspended';
+    destination = {};
+    resumeCalls = 0;
+    constructor() { contexts.push(this); }
+    addEventListener() {}
+    createMediaStreamSource() { return node(); }
+    createStereoPanner() { return { ...node(), pan: { value: 0 } }; }
+    createGain() { return { ...node(), gain: { value: 1 } }; }
+    async resume() { this.resumeCalls++; this.state = 'running'; }
+  }
+  const document = fakeDocument();
+  withPageGlobals(t, {
+    LivekitClient: { Room, RoomEvent: roomEvent },
+    window: { AudioContext },
+    MediaStream: class {},
+    document,
+  });
+
+  const room = await room_connect('wss://room.example', 'token', {}, {}, () => {});
+  const voice = (sid) => ({
+    sid,
+    kind: 'audio',
+    mediaStreamTrack: {},
+    attach() { return { muted: false, play() {}, pause() {} }; },
+    detach() {},
+  });
+  room.emit(roomEvent.TrackSubscribed, voice('a'), {}, { sid: 'p1', identity: 'player-a' });
+  room.emit(roomEvent.TrackSubscribed, voice('b'), {}, { sid: 'p2', identity: 'player-b' });
+  assert.equal(contexts.length, 1);
+  assert.equal(document.count(), 2, 'one gesture listener for the shared context');
+
+  document.dispatch('pointerdown');
+  assert.equal(contexts[0].resumeCalls, 1);
+  assert.equal(document.count(), 0);
+  document.dispatch('pointerdown');
+  assert.equal(contexts[0].resumeCalls, 1);
+
+  // a context the browser suspends again (an interruption) is armed by the next rig
+  contexts[0].state = 'suspended';
+  room.emit(roomEvent.TrackSubscribed, voice('c'), {}, { sid: 'p3', identity: 'player-c' });
+  document.dispatch('keydown');
+  assert.equal(contexts[0].resumeCalls, 2);
+});

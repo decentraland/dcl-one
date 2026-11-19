@@ -11,6 +11,88 @@ function error(...args) {
 var audioContext = null;
 var microphonePermission = "denied";
 const roomPlayback = new WeakMap();
+// A room's pending gesture listener, armed while the browser refuses its audio playback.
+const roomAudioUnlocks = new WeakMap();
+// The gesture listener armed while the shared voice AudioContext is suspended.
+var audioContextUnlock = null;
+
+const GESTURE_EVENTS = ["pointerdown", "keydown"];
+
+/**
+ * Calls `on_gesture` once, on the next pointer or key press on the page.
+ * @param {function} on_gesture
+ * @returns {function} removes the listener before it fires
+ */
+function on_next_gesture(on_gesture) {
+    if (typeof document === "undefined") return () => {};
+    const remove = () => {
+        for (const event of GESTURE_EVENTS) document.removeEventListener(event, listener, true);
+    };
+    const listener = () => {
+        remove();
+        on_gesture();
+    };
+    for (const event of GESTURE_EVENTS) document.addEventListener(event, listener, true);
+    return remove;
+}
+
+/**
+ * The AudioContext of the nearby voice rigs. A context the browser created or left suspended
+ * (no user gesture yet, or an interruption) is resumed on the next gesture.
+ */
+function shared_audio_context() {
+    if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        audioContext.addEventListener?.("statechange", resume_audio_context_on_gesture);
+    }
+    resume_audio_context_on_gesture();
+    return audioContext;
+}
+
+function resume_audio_context_on_gesture() {
+    if (audioContext?.state !== "suspended" || audioContextUnlock) return;
+    warn("Audio context suspended; resuming it on the next user gesture.");
+    audioContextUnlock = on_next_gesture(() => {
+        audioContextUnlock = null;
+        resume_audio_context();
+    });
+}
+
+function resume_audio_context() {
+    if (audioContext?.state === "suspended") {
+        audioContext.resume().catch((err) => warn("Could not resume the audio context:", err));
+    }
+}
+
+/**
+ * The browser refuses audio playback before a user gesture (autoplay policy): LiveKit then
+ * reports `canPlaybackAudio` false and its audio elements stay paused. A gesture restarts them.
+ * @param {livekit.Room} room
+ */
+function watch_audio_playback(room) {
+    let warned = false;
+    room.on(LivekitClient.RoomEvent.AudioPlaybackStatusChanged, () => {
+        if (room.canPlaybackAudio) {
+            release_audio_unlock(room);
+            return;
+        }
+        if (!warned) {
+            warned = true;
+            warn(`Audio playback blocked in room ${room.name}; starting it on the next user gesture.`);
+        }
+        if (roomAudioUnlocks.has(room)) return;
+        roomAudioUnlocks.set(room, on_next_gesture(() => {
+            roomAudioUnlocks.delete(room);
+            resume_audio_context();
+            room.startAudio().catch((err) => warn("Could not start audio playback:", err));
+        }));
+    });
+}
+
+function release_audio_unlock(room) {
+    roomAudioUnlocks.get(room)?.();
+    roomAudioUnlocks.delete(room);
+}
 
 /**
  * @param {function} on_change called with the permission state now and whenever it changes
@@ -71,6 +153,7 @@ export async function room_connect(url, token, room_options, room_connect_option
     const tracks = new Set();
     roomPlayback.set(room, tracks);
     set_room_event_handler(room, handler, tracks);
+    watch_audio_playback(room);
 
     try {
         await room.connect(url, token, room_connect_options);
@@ -87,6 +170,7 @@ export async function room_connect(url, token, room_options, room_connect_option
  * @param {livekit.Room} room
  */
 export async function room_close(room) {
+    release_audio_unlock(room);
     await room.disconnect();
 }
 
@@ -106,6 +190,7 @@ function release_room_playback(room) {
     const tracks = roomPlayback.get(room);
     if (tracks === null) return false;
     roomPlayback.set(room, null);
+    release_audio_unlock(room);
     // Disconnect may emit unsubscribe events after the Rust event closure is gone.
     room.removeAllListeners();
     tracks?.forEach(drop_track_playback);
@@ -262,10 +347,6 @@ function set_room_event_handler(room, handler, tracks) {
             }
             tracks.add(remote_track);
             if (remote_track.kind === "audio") {
-                if (!audioContext) {
-                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                }
-
                 if (remote_participant.identity.endsWith("-streamer") || remote_participant.identity.startsWith("stream:") || remote_participant.identity.startsWith("presentation-bot:")) {
                     const audioElement = remote_track.attach();
                     audioElement.volume = 0;
@@ -550,16 +631,17 @@ function track_rig_new(remote_track) {
 
     // use the track internal stream in playback
     const stream = new MediaStream([remote_track.mediaStreamTrack]);
-    const source = audioContext.createMediaStreamSource(stream);
-    const pannerNode = audioContext.createStereoPanner();
-    const gainNode = audioContext.createGain();
+    const context = shared_audio_context();
+    const source = context.createMediaStreamSource(stream);
+    const pannerNode = context.createStereoPanner();
+    const gainNode = context.createGain();
     // The engine applies playback gain after subscription arrives.
     gainNode.gain.value = 0;
 
     // Connect the audio graph: source -> panner -> gain -> destination
     source.connect(pannerNode);
     pannerNode.connect(gainNode);
-    gainNode.connect(audioContext.destination);
+    gainNode.connect(context.destination);
 
     // Store the nodes for later control
     remote_track.trackRig = {
