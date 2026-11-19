@@ -201,17 +201,16 @@ async fn bootstrap_callbacks_require_success_and_keep_parent_cancellation_scope(
     use crate::sync_deployer::{LiveSyncDeployer, SyncValidation};
     use std::sync::atomic::AtomicUsize;
 
-    for (state, cancelled, expected) in [
-        (SyncState::Syncing, false, 1),
-        (
-            SyncState::PartiallySynced {
-                ready_types: vec!["scene".into()],
-            },
-            false,
-            1,
-        ),
-        (SyncState::Failed, false, 0),
-        (SyncState::Syncing, true, 0),
+    // A partially synced node is still bootstrapping profiles: the callback (the
+    // failed-deployments retry) waits for `Syncing`.
+    let partial = SyncState::PartiallySynced {
+        ready_types: vec!["scene".into()],
+    };
+    for (states, cancelled, expected) in [
+        (vec![SyncState::Syncing], false, 1),
+        (vec![partial, SyncState::Syncing], false, 1),
+        (vec![SyncState::Failed], false, 0),
+        (vec![SyncState::Syncing], true, 0),
     ] {
         let (storage, temp) = crate::sync_test_support::temp_storage("bootstrap-callback").await;
         let pool = sqlx::postgres::PgPoolOptions::new()
@@ -279,7 +278,14 @@ async fn bootstrap_callbacks_require_success_and_keep_parent_cancellation_scope(
         if cancelled {
             cancellation.cancel();
         }
-        orchestrator.inner.set_state(state);
+        for state in states {
+            let partial = matches!(state, SyncState::PartiallySynced { .. });
+            orchestrator.inner.set_state(state);
+            if partial {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                assert_eq!(calls.load(SeqCst), 0, "no callback while partially synced");
+            }
+        }
         if !cancelled {
             assert!(
                 crate::shared::test_wait::until(async || jobs.report().iter().any(|job| job.name
@@ -367,10 +373,11 @@ fn stream_backoff_needs_the_longer_of_the_poll_wait_and_the_base_delay() {
 }
 
 /// An in-process peer: `/snapshots` answers `snapshots`, `/pointer-changes` the deltas at or
-/// after `from`, `/contents/{id}` the entity files. With `down`, every answer is a 500.
+/// after `from`, `/contents/{id}` the entity files. While `down` is set, every answer is a 500.
 struct TestPeer {
     url: String,
     http: tokio::task::JoinHandle<()>,
+    down: Arc<AtomicBool>,
 }
 
 impl Drop for TestPeer {
@@ -387,6 +394,7 @@ async fn spawn_test_peer(
     down: bool,
 ) -> (TestPeer, Vec<String>) {
     use axum::extract::{Path, Query, State};
+    use axum::response::IntoResponse;
     use axum::routing::get;
     use axum::{Json, Router};
     use serde_json::json;
@@ -411,9 +419,9 @@ async fn spawn_test_peer(
         }));
         ids.push(id);
     }
-    let app = if down {
-        Router::new().fallback(|| async { axum::http::StatusCode::INTERNAL_SERVER_ERROR })
-    } else {
+    let down = Arc::new(AtomicBool::new(down));
+    let app = {
+        let down = down.clone();
         Router::new()
             .route("/snapshots", get(move || async move { Json(snapshots) }))
             .route(
@@ -434,17 +442,34 @@ async fn spawn_test_peer(
                 "/contents/{id}",
                 get(
                     |State(files): State<Arc<HashMap<String, Vec<u8>>>>,
-                     Path(id): Path<String>| async move { files[&id].clone() },
+                     Path(id): Path<String>| async move {
+                        files
+                            .get(&id)
+                            .cloned()
+                            .ok_or(axum::http::StatusCode::NOT_FOUND)
+                    },
                 ),
             )
             .with_state(Arc::new(files))
+            .layer(axum::middleware::from_fn(
+                move |request: axum::extract::Request, next: axum::middleware::Next| {
+                    let down = down.load(SeqCst);
+                    async move {
+                        if down {
+                            axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                        } else {
+                            next.run(request).await
+                        }
+                    }
+                },
+            ))
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let http = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    (TestPeer { url, http }, ids)
+    (TestPeer { url, http, down }, ids)
 }
 
 /// An orchestrator over the test database, wired as the sync leader wires it.
@@ -564,5 +589,76 @@ async fn a_new_peer_starts_from_its_own_history_not_the_global_frontier() {
     assert!(
         cursor.is_some_and(|c| c < now - POINTER_CHANGES_SHIFT_MS),
         "the peer's own cursor follows its history, not the frontier: {cursor:?}"
+    );
+}
+
+/// One unreachable peer does not hold the node: once the bootstrap pass over both peers ends,
+/// the node is `Syncing` (phased: through `PartiallySynced`) while the dead peer, which never
+/// got a cursor, is retried in the background. A restart over the same database bootstraps
+/// again, and the dead peer, reachable by then, is caught up from its own history although
+/// the frontier has moved past it.
+#[tokio::test]
+async fn an_unreachable_peer_does_not_hold_the_node_in_bootstrap() {
+    let Some(pool) = crate::sync_test_support::test_pool(8).await else {
+        return;
+    };
+    let now = chrono::Utc::now().timestamp_millis();
+    let (good, good_ids) = spawn_test_peer(
+        &[("profile", now - 3_600_000), ("scene", now - 60_000)],
+        serde_json::json!([]),
+        false,
+    )
+    .await;
+    let (dead, dead_ids) = spawn_test_peer(
+        &[("scene", now - 4 * 3_600_000)],
+        serde_json::json!([]),
+        true,
+    )
+    .await;
+    let peers: HashSet<String> = [good.url.clone(), dead.url.clone()].into_iter().collect();
+
+    let (first, repo, temp) = test_orchestrator(&pool, fast_config()).await;
+    let _handle = first.sync_with_servers(peers.clone()).await.unwrap();
+    wait_until("the steady state with a dead peer", async || {
+        first.state() == SyncState::Syncing
+    })
+    .await;
+    let good_deployed = deployed(&pool, &good_ids).await;
+    let dead_deployed = deployed(&pool, &dead_ids).await;
+    let dead_cursor = repo.get_server_sync_cursor(&dead.url).await.unwrap();
+    let good_cursor = repo.get_server_sync_cursor(&good.url).await.unwrap();
+    first.stop().await;
+    let _ = std::fs::remove_dir_all(&temp);
+    assert_eq!(
+        good_deployed,
+        good_ids.len(),
+        "the reachable peer bootstrapped"
+    );
+    assert_eq!(dead_deployed, 0);
+    assert_eq!(dead_cursor, None, "a held peer's cursor is never published");
+    assert!(good_cursor.is_some());
+
+    dead.down.store(false, SeqCst);
+    let (second, repo, temp) = test_orchestrator(&pool, fast_config()).await;
+    assert_eq!(
+        second.state(),
+        SyncState::Bootstrapping,
+        "a restart bootstraps again"
+    );
+    let _handle = second.sync_with_servers(peers).await.unwrap();
+    wait_until("the recovered peer's old entity", async || {
+        deployed(&pool, &dead_ids).await == dead_ids.len()
+    })
+    .await;
+    wait_until("the steady state after the restart", async || {
+        second.state() == SyncState::Syncing
+    })
+    .await;
+    let good_cursor_after = repo.get_server_sync_cursor(&good.url).await.unwrap();
+    second.stop().await;
+    let _ = std::fs::remove_dir_all(temp);
+    assert!(
+        good_cursor_after >= good_cursor,
+        "the reachable peer's cursor survived the restart"
     );
 }

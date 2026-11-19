@@ -1025,9 +1025,9 @@ catalyst list and its `/about` is healthy.
     - Left: without `ETH_RPC_URL`, or on a network other than mainnet and sepolia, the node syncs from
       `SYNC_SOURCE` only; `lastSyncWithDAO` stays the sync heartbeat (CS-15). Difference: upstream
       applies a changed list only after the bootstrap; dcl-one also applies it during the bootstrap
-      (which restarts from the persisted cursors), so a registry catalyst that never answers stops
-      holding the node in `Bootstrapping` once the registry drops it. While it is listed, it holds the
-      node there, as any `SYNC_SOURCE` peer does.
+      (which restarts from the persisted cursors). As upstream, a peer that never answers does not
+      hold the node in `Bootstrapping`: the node leaves it once a bootstrap pass over every listed
+      peer ended, and the peers that did not finish are retried in the background.
     - Severity: none (closed).
 
 ## Endpoints dcl-one serves in this area that upstream does not

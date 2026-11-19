@@ -5,9 +5,12 @@
 //! the shared [`SyncStatus`] and persisted as the global frontier plus one
 //! cursor per peer, and a peer whose snapshots did not fully deploy is held
 //! back and retried rather than advanced past the entities it still owes.
-//! While any peer is held back the node stays `Bootstrapping` (`/about` 503):
-//! a replica that owes a peer's snapshots is not ready, however far the
-//! other peers got.
+//! The node leaves `Bootstrapping` (`/about` 503) once a bootstrap pass over
+//! every peer finished, whatever each peer's outcome: a peer that is
+//! unreachable or did not fully deploy stays in bootstrap and is retried in
+//! the background without holding the node, so one dead DAO peer cannot keep
+//! a node unready. Deploys of a type are taken only once that type is ready
+//! ([`SyncStatus::takes_deploys_of`]).
 
 use futures::StreamExt;
 use std::collections::{HashMap, HashSet};
@@ -288,12 +291,14 @@ impl SyncOrchestrator {
 /// The sync job for [`crate::jobs::Jobs`]: starts sync against `peers` and holds until the job
 /// is cancelled, then stops the orchestrator. A bootstrap task that dies (panics) marks the node
 /// `Failed`; that is what `/status` 503s on. The bootstrap task ends once every peer streams (the
-/// streams are their own tasks), so the job keeps running without it.
+/// streams are their own tasks), so the job keeps running without it. `on_bootstrap` (what starts
+/// the failed-deployments retry) runs once the node is `Syncing`, every type bootstrapped; a
+/// `PartiallySynced` node is still deploying profile snapshots.
 ///
 /// A changed `peers` set (the DAO list refresh) is handed to
 /// [`SyncOrchestrator::sync_with_servers`] at any time, during the first bootstrap too: a new
 /// peer bootstraps beside the others while the node keeps its state, a dropped peer's stream
-/// stops and it no longer holds the node in bootstrap, and `retry_peers` (where the
+/// stops, and `retry_peers` (where the
 /// failed-deployments retry fetches from) follows.
 pub async fn run_sync_job(
     orchestrator: Arc<SyncOrchestrator>,
@@ -324,9 +329,9 @@ pub async fn run_sync_job(
         tokio::select! {
             biased;
             _ = ctx.cancel.cancelled() => break,
-            _ = signal.wait(), if !bootstrapped => {
+            _ = signal.wait_settled(), if !bootstrapped => {
                 bootstrapped = true;
-                if !ctx.cancel.is_cancelled() && matches!(status.state(), SyncState::Syncing | SyncState::PartiallySynced { .. }) {
+                if !ctx.cancel.is_cancelled() && status.state() == SyncState::Syncing {
                     on_bootstrap.take().unwrap()();
                 }
                 info!("Bootstrap complete, sync is now in steady state");
@@ -518,25 +523,25 @@ impl SyncOrchestratorRefs {
             .await
     }
 
-    /// Publishes `state` only when every peer reached steady state; otherwise the node stays
-    /// where it is and the straggler retry publishes once the held peers catch up.
-    /// A node already `Syncing` (a peer added by a DAO list refresh re-runs the bootstrap) is
-    /// never sent back to `PartiallySynced`.
-    async fn announce_if_every_server_synced(&self, state: SyncState, message: &str) {
+    /// Publishes `state` once a bootstrap pass over every peer finished. A peer that failed in
+    /// the pass (unreachable, an unreadable snapshot list, a snapshot or pointer-changes run that
+    /// did not fully deploy) does not hold the node: it stays in bootstrap and the straggler
+    /// retry keeps working on it. A node already `Syncing` (a peer added by a DAO list refresh
+    /// re-runs the bootstrap) is never sent back to `PartiallySynced`.
+    async fn announce(&self, state: SyncState, message: &str) {
         if self.status.state() == SyncState::Syncing && state != SyncState::Syncing {
             return;
         }
         let held = self.servers_not_syncing().await;
         if held.is_empty() {
             info!("{message}");
-            self.set_state(state);
         } else {
-            info!(
+            warn!(
                 servers = ?held,
-                "{message}, but held-back peers keep the node in bootstrap until their \
-                 snapshots are fully deployed"
+                "{message}; peers that did not finish bootstrap are retried in the background"
             );
         }
+        self.set_state(state);
     }
 
     async fn run_bootstrap(&self) -> Result<(), SyncError> {
@@ -654,7 +659,7 @@ impl SyncOrchestratorRefs {
         info!("Resolving deleter_deployment for overwritten entities");
         self.resolve_deleters().await;
 
-        self.announce_if_every_server_synced(
+        self.announce(
             SyncState::Syncing,
             "Bootstrap complete, entering steady-state sync",
         )
@@ -689,7 +694,7 @@ impl SyncOrchestratorRefs {
 
         let mut ready_types: Vec<String> = non_profile_filter.iter().cloned().collect();
         ready_types.sort();
-        self.announce_if_every_server_synced(
+        self.announce(
             SyncState::PartiallySynced { ready_types },
             "Phase 3: Partially synced \u{2014} non-profile types ready, starting to serve queries",
         )
@@ -713,7 +718,7 @@ impl SyncOrchestratorRefs {
         info!("Phase 6: Resolving deleter_deployment for overwritten entities");
         self.resolve_deleters().await;
 
-        self.announce_if_every_server_synced(
+        self.announce(
             SyncState::Syncing,
             "Bootstrap complete, entering steady-state sync",
         )
@@ -1231,11 +1236,23 @@ pub struct BootstrapSignal {
 
 impl BootstrapSignal {
     pub async fn wait(&self) {
+        self.wait_for(|state| *state != SyncState::Bootstrapping)
+            .await
+    }
+
+    /// Resolves once every type bootstrapped (`Syncing`) or the sync failed: a
+    /// `PartiallySynced` node is still bootstrapping its profiles.
+    pub async fn wait_settled(&self) {
+        self.wait_for(|state| matches!(state, SyncState::Syncing | SyncState::Failed))
+            .await
+    }
+
+    async fn wait_for(&self, done: impl Fn(&SyncState) -> bool) {
         loop {
             let notified = self.bootstrap_done.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
-            if self.status.state() != SyncState::Bootstrapping {
+            if done(&self.status.state()) {
                 return;
             }
             notified.await;
