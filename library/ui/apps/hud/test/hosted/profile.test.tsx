@@ -71,6 +71,40 @@ describe('profile domain', () => {
     expect(peekProfile(address)?.badges).toMatchObject([{ name: 'Current tier' }])
   })
 
+  it('discards the old badge tiers when a profile change refreshes an open passport', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const address = '0xabc'
+    const passport = { ...profile, address, version: 3 }
+    const badge = { id: 'badge', name: 'Badge' }
+    const tier = (name: string) => ({ id: 'tier', name, description: '' })
+    const unsubscribe = subscribeProfile(address, () => {})
+    act(() => requestPassport(address))
+    const firstId = h.driver.last('getUserProfile')?.requestId
+    h.driver.emit({ kind: 'userProfile', address, requestId: firstId, profile: { ...passport, badges: [badge] } })
+    expect(peekProfile(address)?.badges).toEqual([badge])
+
+    h.driver.emit({ kind: 'profileChanged', address, version: 4 })
+    const refresh = h.driver.last('getUserProfile')
+    expect(refresh).toMatchObject({ address, extras: true, requestId: expect.any(Number) })
+    expect(refresh?.requestId).not.toBe(firstId)
+    h.driver.emit({
+      kind: 'userProfile', address, requestId: firstId,
+      profile: { ...passport, badges: [{ ...badge, tiers: [tier('Old tier')] }] }
+    })
+    expect(peekProfile(address)?.badges).toEqual([badge])
+
+    const updated = { ...passport, version: 4, picture: 'updated.png', badges: [badge] }
+    h.driver.emit({ kind: 'userProfile', address, requestId: refresh?.requestId, profile: updated })
+    expect(peekProfile(address)).toMatchObject({ version: 4, picture: 'updated.png', badges: [badge] })
+    h.driver.emit({
+      kind: 'userProfile', address, requestId: refresh?.requestId,
+      profile: { ...updated, badges: [{ ...badge, tiers: [tier('Current tier')] }] }
+    })
+    expect(peekProfile(address)?.badges).toMatchObject([{ tiers: [{ name: 'Current tier' }] }])
+    unsubscribe()
+  })
+
   it('ignores a response after its unobserved profile was invalidated', async () => {
     const h = renderSession()
     await enterAsGuest(h)

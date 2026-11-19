@@ -6545,7 +6545,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "ffd4e3e5de502deba99a656ef644294ac50b73d22e86ee4e29962cde2cb1ae8f"
+      "sha256": "4edebfb1292dceed7b76dfc9b3baf04fce202dd229ffe2bfd4f09f0c618e4efc"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -10065,7 +10065,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/profileStore.ts",
-      "sha256": "6ac2876121e74f8f1d010ef13dbdf185c467f6396d67e8f8bbb24c9fddf1d7ad"
+      "sha256": "04c9b579d9ee4a6fb48ff15bc756792cc731aa295d518e01b6ef0c7600a9d249"
     },
     {
       "path": "library/ui/apps/hud/features/session/useConnectivity.ts",
@@ -10769,7 +10769,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/profile.test.tsx",
-      "sha256": "d05ce57b7c70e68d4ed2fea16a1c0895707672fd83cc3c38da5512f778c0987b"
+      "sha256": "3f6e376eabdd48fb0a32635985b70c8307bc7970945f3e7a56d16996e3d70969"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/profileCardContainer.test.tsx",
@@ -10909,7 +10909,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/profileStore.test.ts",
-      "sha256": "a0cd6a9e1d84fe9421aef68ad825ca0fd0b1c22dde9af53e140b97e8d4324b83"
+      "sha256": "6e764098994685003b181bb4eca6dbc2e05edff27b5dcb9f827ec6c380eb380e"
     },
     {
       "path": "library/ui/apps/hud/test/rail.test.tsx",
@@ -33106,6 +33106,21 @@
     {
       "from": "library/ui/apps/hud/features/session/profileStore.ts",
       "to": "library/explorer-core/engine/mention.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/profileStore.ts",
+      "to": "library/explorer-core/engine/requestIds.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/profileStore.ts",
+      "to": "library/explorer-core/engine/requestIds.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/profileStore.ts",
+      "to": "library/explorer-core/engine/requestIds.ts",
       "kind": "test:runtime"
     },
     {

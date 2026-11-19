@@ -3,6 +3,7 @@ import { act, renderHook } from '@testing-library/react'
 import {
   peekProfile,
   profileChanged,
+  receiveOwnProfile,
   receiveProfile,
   requestPassport,
   resetProfileStore,
@@ -127,7 +128,7 @@ describe('profile store', () => {
 // A Backpack edit of your own profile whose deploy fails: the engine puts the profile from before it
 // back and announces that version, lower than the edit's. The passport and the profile card both
 // read useProfile; the passport also asks for the extras (the equipped set the Backpack changes).
-describe('profile store: legacy replies after a rejected own edit', () => {
+describe('profile store: untagged profiles after a rejected own edit', () => {
   const hat: Wearable = { urn: 'urn:test:hat', name: 'Hat', rarity: 'base', category: 'hat', equipped: true }
   const cap: Wearable = { urn: 'urn:test:cap', name: 'Cap', rarity: 'base', category: 'hat', equipped: true }
   const mine = (version: number, worn: Wearable): Profile => ({
@@ -140,6 +141,17 @@ describe('profile store: legacy replies after a rejected own edit', () => {
   })
   // the session tells the store whose profile is the local player's
   beforeEach(() => setOwnProfile('0xme'))
+
+  it('drops a delayed own-profile message for a rejected edit', () => {
+    receiveOwnProfile(mine(3, hat))
+    const unsubscribe = subscribeProfile('0xme', vi.fn())
+    profileChanged('0xme', 4)
+    profileChanged('0xme', 3)
+
+    receiveOwnProfile(mine(4, cap))
+    expect(peekProfile('0xme')).toMatchObject({ version: 3, equippedWearables: [hat] })
+    unsubscribe()
+  })
 
   it('re-reads the lower version, and what the engine put back reaches the passport and profile card', () => {
     const { result } = renderHook(() => useProfile('0xme'))

@@ -10,6 +10,7 @@
 // entry nobody has shown for a while is swept. The engine announces profile changes (the
 // `profileChanged` stream); an entry someone is still showing is re-read, the rest forget their copy.
 import { looksClaimed } from '@explorer-core/engine/mention'
+import { nextRequestId } from '@explorer-core/engine/requestIds'
 import { useCallback, useSyncExternalStore } from 'react'
 import type { Profile } from '@explorer-core/engine/protocol'
 import { userColor } from '@explorer-core/lib/identity'
@@ -69,7 +70,6 @@ const EXTRAS = ['badges', 'equippedWearables', 'equippedEmotes'] as const
 const entries = new Map<string, Entry>()
 const listeners = new Map<string, Set<() => void>>()
 let request: (address: string, extras: boolean, requestId: number) => void = () => {}
-let nextRequestId = 0
 let lastSweep = 0
 /** The local player's address, the one profile the engine can put back to an earlier version. */
 let own: string | undefined
@@ -115,7 +115,7 @@ function sweep(now: number): void {
 }
 
 function readProfile(key: string, e: Entry, extras: boolean): void {
-  e.requestId = ++nextRequestId
+  e.requestId = nextRequestId()
   e.pending = true
   e.missingAt = undefined
   request(key, extras, e.requestId)
@@ -301,7 +301,6 @@ export function resetProfileStore(): void {
   entries.clear()
   listeners.clear()
   request = () => {}
-  nextRequestId = 0
   lastSweep = 0
   own = undefined
 }

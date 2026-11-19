@@ -760,6 +760,7 @@ export interface GetUserProfileRequest {
 export interface UserProfileMessage {
   kind: 'userProfile'
   address: string
+  /** Echoed from the read it answers. Older bridges omit it. */
   requestId?: number
   profile: Profile | null
 }
