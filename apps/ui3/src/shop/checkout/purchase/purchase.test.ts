@@ -32,7 +32,7 @@ import {
 import { getCouponManagerForTrade } from "../lib/marketplace";
 import type { ListingCoupon } from "./encoding";
 import { reviewCart, resolveLine, partitionReservations, couponForTrade, classifyTrade, classifyStoreMint, isLineBuyable, type ResolvedLine, type SettlementResolvers } from "./cart";
-import { resumeCheckout, runGroup, watchGroup, type CheckoutDeps } from "./executor";
+import { AFTER_PENDING, resumeCheckout, runGroup, runGroups, watchGroup, type CheckoutDeps } from "./executor";
 import { computePaymentOptions, distributeCreditsAcrossUnits, findOption, hasPayableOption } from "./payment-options";
 import type { RailContext } from "./rail";
 import { createSpendGuard } from "@shop/checkout/purchase/spend-guard";
@@ -398,6 +398,102 @@ describe("running a credits group through the state machine", () => {
     expect(web3Wallet.relay.posts).toHaveLength(1);
     expect(web3Wallet.wallet.sent).toHaveLength(0);
     expect(web3Wallet.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
+  });
+});
+
+/** Two credits groups through the one CreditsManager (a store mint and a creator order), each credit its own. */
+async function pairHarness(opts: { confirm?: "success" | "none" } = {}) {
+  const session = web3();
+  const offers = [
+    { offer: storeMint(session), name: "Hat" },
+    { offer: creatorOrder(session), tradeId: "trade-creator-1", name: "Order" },
+  ];
+  const { store, lines, storage } = cartWith(offers);
+  const chain = createFakeChain();
+  let confirm = opts.confirm ?? "success";
+  const relay = createFakeRelay({ mode: "ok", onRelay: (hash) => void (confirm === "success" && chain.receipts.set(hash.toLowerCase(), "success")) });
+  let credits = 0;
+  const shop = createFakeShop({
+    authorizeCreditBatch: ({ body }) => batchAuthorization((body as { items: { usdPriceCents: number }[] }).items, `0x${(++credits).toString(16).padStart(2, "0").repeat(32)}`),
+    cancelCreditAuthorizations: ({ body }) => ({ released: (body as { salts: string[] }).salts.length, retired: 0, spendableAtSeconds: null }),
+    reportCreditSubmission: () => ({ recorded: 1 }),
+  });
+  let clock = 0;
+  const ctx: RailContext = {
+    buyer: BOOK.buyer,
+    provider: createFakeWallet(),
+    reader: chain,
+    client: shop.client,
+    walletKind: "web3",
+    relayerUrl: "https://node.test/transactions-api/v1",
+    fetchImpl: relay.fetchImpl,
+    gasless: true,
+    wait: { timeoutMs: 30, pollMs: 10, now: () => clock, sleep: async (ms) => void (clock += ms) },
+  };
+  const pairs = lines.map((line, i) => ({ line, offer: offers[i]!.offer }));
+  const part = partitionCart(pairs, session, { report: noop });
+  const review = await reviewCart(pairs, session, BOOK.buyer, resolvers());
+  store.startCheckout(part.groups);
+  return {
+    deps: { ctx, store, guard: createSpendGuard() } as CheckoutDeps,
+    store,
+    groups: part.groups,
+    resolved: new Map(review.buyable.map((r) => [r.line.id, r])),
+    shop,
+    chain,
+    relay,
+    storage,
+    confirmFromNowOn: () => void (confirm = "success"),
+  };
+}
+
+const authorizations = (shop: ReturnType<typeof createFakeShop>) => shop.log.filter((r) => r.name === "authorizeCreditBatch").length;
+
+describe("a checkout's groups, while one of them is in flight", () => {
+  it("holds the next group while the first is handed off but not mined: no second credit, no second signature", async () => {
+    const h = await pairHarness({ confirm: "none" });
+    expect(h.groups.map((g) => g.key.method)).toEqual(["credits", "credits"]);
+    const [first, second] = h.groups as [CartGroup, CartGroup];
+    const seen: string[] = [];
+    const results = await runGroups(h.deps, h.groups, h.resolved, (group, result) => seen.push(`${group.keyId}:${result.status}`));
+    expect(results[first.keyId]).toMatchObject({ status: "pending" });
+    expect(results[second.keyId]).toEqual({ status: "skipped", reason: AFTER_PENDING });
+    expect(seen).toEqual([`${first.keyId}:pending`, `${second.keyId}:skipped`]);
+    expect(authorizations(h.shop)).toBe(1);
+    expect(h.relay.posts).toHaveLength(1);
+    // The held group is still ready to run: nothing was reserved for it.
+    expect(h.store.getSnapshot().checkout!.groups.find((g) => g.keyId === second.keyId)!.status).toBe("idle");
+
+    // Confirmed again while the first is still in flight, in either order: the held group waits again.
+    expect((await runGroups(h.deps, [second, first], h.resolved))[second.keyId]).toEqual({ status: "skipped", reason: AFTER_PENDING });
+    expect(authorizations(h.shop)).toBe(1);
+
+    // Once the first is mined and seen, the next confirmation runs the second.
+    const progress = h.store.getSnapshot().checkout!.groups.find((g) => g.keyId === first.keyId)!;
+    h.chain.receipts.set(progress.txHash!.toLowerCase(), "success");
+    expect(await watchGroup(h.deps, progress)).toMatchObject({ status: "confirmed" });
+    h.confirmFromNowOn();
+    expect((await runGroups(h.deps, [second], h.resolved))[second.keyId]).toMatchObject({ status: "confirmed" });
+    expect(authorizations(h.shop)).toBe(2);
+    expect(h.relay.posts).toHaveLength(2);
+  });
+
+  it("runs every group in turn when none is left in flight", async () => {
+    const h = await pairHarness();
+    const results = await runGroups(h.deps, h.groups, h.resolved);
+    expect(Object.values(results).map((r) => r.status)).toEqual(["confirmed", "confirmed"]);
+    expect(authorizations(h.shop)).toBe(2);
+  });
+
+  it("on resume, runs nothing new while a watched group is still in flight", async () => {
+    const h = await pairHarness({ confirm: "none" });
+    const [first, second] = h.groups as [CartGroup, CartGroup];
+    await runGroup(h.deps, first, h.resolved);
+    const results = await resumeCheckout(h.deps, h.store.getSnapshot().checkout!, h.groups, h.resolved);
+    expect(results[first.keyId]).toMatchObject({ status: "pending" });
+    expect(results[second.keyId]).toEqual({ status: "skipped", reason: AFTER_PENDING });
+    expect(authorizations(h.shop)).toBe(1);
+    expect(h.relay.posts).toHaveLength(1);
   });
 });
 

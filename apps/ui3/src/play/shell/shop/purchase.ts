@@ -386,6 +386,8 @@ const NOT_BOUGHT = "This purchase didn't go through. Nothing was bought."
 /** How a checkout says one of its transactions ended. */
 const NEVER_WENT = 'one of its transactions never went out.'
 const PART_FAILED = 'one of its transactions didn’t go through.'
+/** How a checkout says the rest waited for a part still being confirmed. */
+const AFTER_PENDING_PART = 'the rest wasn’t sent while an earlier part was still being confirmed.'
 // A reverted transaction's credits are retired, not handed back: they come back with the expiry sweep (as the
 // checkout's own reverted failure says), so the copy never claims they were returned.
 const REVERTED_PART = 'one of its transactions failed on-chain; the Credits it held come back on their own.'
@@ -1097,7 +1099,15 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           break
         }
         const outcome = await runPart(run, part, quote, wallet, current, reviewed.get(part))
-        if (outcome.kind === 'pending') follow.push(run)
+        if (outcome.kind === 'pending') {
+          follow.push(run)
+          // A group handed off but not yet mined holds the rest: signed meanwhile, the next could take the same
+          // meta-transaction nonce, and one of the two would revert. What comes after it never starts.
+          if (i < quote.parts.length - 1) {
+            co!.failures.push(AFTER_PENDING_PART)
+            break
+          }
+        }
         if (outcome.kind !== 'failed') continue
         if (i > 0) {
           // Nothing of this group went out; what came before stands, and what comes after never starts.

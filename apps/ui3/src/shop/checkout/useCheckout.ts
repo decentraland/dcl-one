@@ -22,7 +22,7 @@ import { stashResumeIntent, takeResumeIntent } from "./lib/auth-return";
 import { invalidateAfterPurchase } from "./lib/after-purchase";
 import { setAuthorization, type ShopAuthorization } from "./lib/authorizations";
 import { RESUME_CART_KEY, reviewCart, type CartReview, type ResolvedLine } from "./purchase/cart";
-import { releaseAuthorizing, resumeCheckout, runGroup, watchGroup, type ApprovalRequest, type CheckoutDeps, type GroupResult } from "./purchase/executor";
+import { releaseAuthorizing, resumeCheckout, runGroups, watchGroup, type ApprovalRequest, type CheckoutDeps, type GroupResult } from "./purchase/executor";
 import type { RailContext } from "./purchase/rail";
 import { createSpendGuard } from "@shop/checkout/purchase/spend-guard";
 import { useShopServices } from "./services";
@@ -412,16 +412,14 @@ export function useCheckout(
         const started = services.cart.startCheckout(fresh);
         services.cart.replaceCheckout({ ...started, groups: [...keep, ...started.groups] });
       }
-      const next: Record<string, GroupResult> = {};
-      for (const group of runnable) {
-        const result = await runGroup(d, group, resolved);
-        next[group.keyId] = result;
+      // One group at a time, none while another is in flight (runGroups).
+      const next = await runGroups(d, runnable, resolved, (group, result) => {
         setResults((prev) => ({ ...prev, [group.keyId]: result }));
         if (result.status === "failed" && result.topUp) {
           const short = Math.max(0, result.topUp.requiredCents - result.topUp.balanceCents);
           setTopUp({ shortCents: short as UsdCents });
         }
-      }
+      });
       finish(runnable, next, resolved);
     } finally {
       confirming.current = false;
