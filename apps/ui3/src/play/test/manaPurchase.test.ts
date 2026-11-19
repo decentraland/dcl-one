@@ -223,6 +223,26 @@ describe('a MANA purchase’s attempt', () => {
     expect(a.record.sends[1]).toMatchObject({ stage: 'dispatched', payload: keccak256(PAYLOAD as Hex), hash: HASH })
   })
 
+  it('hands a retry off only once the wait since the latest request passed, a request the relay refused included', async () => {
+    const clock = { now: 5_000 }
+    const a = attempt(keeper(), { now: () => clock.now, retryAfterMs: 1_000 })
+    a.handOff({ rail: 'relay', nonce: 3n, data: CALL })
+    await expect(a.relay((async () => Promise.reject(new TypeError('Failed to fetch'))) as unknown as typeof fetch)('https://relay/transactions', post(STORE))).rejects.toThrow()
+    a.retry()
+    expect(a.handOff({ rail: 'relay', nonce: 3n, data: CALL })).toBe(false)
+    clock.now += 1_000
+    expect(a.handOff({ rail: 'relay', nonce: 3n, data: CALL })).toBe(true)
+    // The retry is refused; dropped from the record, its request still counts.
+    await a.relay(sent({ ok: false, not_sent: true }) as unknown as typeof fetch)('https://relay/transactions', post(STORE))
+    expect(a.retire()).toBe(true)
+    expect(a.record.sends.map((x) => x.stage)).toEqual(['dispatched'])
+    expect(manaLastDispatch(a.record)).toBe(6_000)
+    a.retry()
+    expect(a.handOff({ rail: 'relay', nonce: 3n, data: CALL })).toBe(false)
+    clock.now += 1_000
+    expect(a.handOff({ rail: 'relay', nonce: 3n, data: CALL })).toBe(true)
+  })
+
   it('sends only the signed execution once the sale was signed: other bytes are answered as never sent', async () => {
     const a = attempt()
     a.handOff({ rail: 'relay', nonce: 3n, data: CALL })
@@ -331,6 +351,8 @@ describe('a MANA purchase’s attempt', () => {
     expect(isManaAttempt({ ...good, signed: undefined })).toBe(false)
     expect(isManaAttempt({ ...good, sends: [good.sends[0], { ...good.sends[1], payload: keccak256('0x01') }] })).toBe(false)
     expect(isManaAttempt({ ...good, signed: '0x' })).toBe(false)
+    expect(isManaAttempt({ ...good, lastSent: 2 })).toBe(true)
+    expect(isManaAttempt({ ...good, lastSent: -1 })).toBe(false)
     expect(manaDispatched(good)).toBe(true)
     expect(isManaAttempt({ ...good, venue: 'nope' })).toBe(false)
     expect(isManaAttempt({ ...good, fingerprint: '0x12' })).toBe(false)

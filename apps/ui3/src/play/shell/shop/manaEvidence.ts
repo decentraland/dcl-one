@@ -1,22 +1,28 @@
 // What the chain says about a MANA sale this page sent through the relay (./manaPurchase): whether it executed, and
-// where, attributed to the very execution this page signed. The sale is a meta-transaction at the venue (a Polygon
-// marketplace, or the CollectionStore), signed with the buyer's meta-transaction nonce N.
+// where. The sale is a meta-transaction at the venue (a Polygon marketplace, or the CollectionStore), signed with the
+// buyer's meta-transaction nonce N.
 //
 // The venues it settles on are pinned (VERIFIED_VENUES), each one's runtime code checked against verified source. In
 // that source (NativeMetaTransaction), executeMetaTransaction checks the signature over nonces[user], increments it (the
 // only write to it), emits MetaTransactionExecuted(user, relayer, call bytes) and reverts everything if the call fails.
-// So a successful execution always logs its call, N is consumed once and never again, and the code can't change (no
-// proxy, no delegatecall, no selfdestruct). For a venue not pinned there, nothing is ever ended as not bought.
+// So each successful execution consumes its signer's nonce once and logs its call, nothing else moves that nonce, and
+// the code can't change (no proxy, no delegatecall, no selfdestruct). The buyer's executions, in chain order, are
+// therefore their nonces in order: the block where the nonce first reads past N holds the execution that consumed N, at
+// place N − (the nonce before that block) among the buyer's executions there, whatever transaction carried it (the
+// relay's own, or a forwarder its upstream uses). A block's logs are read whole only when they hold exactly as many of
+// the buyer's executions as the nonce moved in it (a repeated log counted once); any other read decides nothing.
 //
 // It settles only on evidence read through one finalized block F:
-//  - succeeded: a successful receipt, at or before F, of a transaction whose input is exactly a signed execution this
-//    page sent (its digest kept at dispatch). Identical call bytes alone don't attribute it: the same sale may run at
-//    another nonce, signed elsewhere;
-//  - failed: at a pinned venue, N was consumed by F, and the venue's executions from the checkpoint kept before the
-//    first dispatch (a finalized block, so no reorg can move the sale below it) through F hold no possible match (the
-//    buyer and the exact call bytes). Then this sale ran at no nonce up to N, and can't run later;
+//  - succeeded: at a pinned venue, the execution that consumed N is this call; or a successful receipt, at or before
+//    F, of a transaction whose input is exactly the signed execution this page sent;
+//  - failed: at a pinned venue, the execution that consumed N is another call. Then no send of this sale can ever run;
 //  - waiting: anything else. N not consumed yet (the sale may still run), a nonce read below N (a lagging node), a
-//    range that reads backwards, a match it can't attribute, a read that fails, or a record without what this needs.
+//    finalized block below the checkpoint, a block read that isn't whole, a read that fails, or a record without what
+//    this needs. At a venue not pinned, only a transaction that is exactly the signed execution ends it, as bought.
+//
+// The block that consumed N is found from the nonce alone (it only grows), by halving between the checkpoint kept
+// before the first dispatch and F, and reaching back past the checkpoint when N was consumed before it (another call
+// ran at N while the wallet's prompt was open, or N was read from a lagging node).
 
 import { decodeAbiParameters, decodeEventLog, keccak256, parseAbiItem, type Hex } from 'viem'
 import type { ChainId } from '@shop/model/chain'
@@ -52,6 +58,8 @@ export interface ManaEvidence {
 const EXECUTED = parseAbiItem('event MetaTransactionExecuted(address indexed userAddress, address indexed relayerAddress, bytes functionData)')
 /** keccak256("MetaTransactionExecuted(address,address,bytes)"): the same topic whether the addresses are indexed or not. */
 const EXECUTED_TOPIC = '0x5845892132946850460bff5a0083f71031bc5bf9aadcd40f1de79423eac9b10b'
+/** How far back past the checkpoint the block that consumed N is looked for: a step this long (in blocks) ends the reach. */
+const MAX_REACH_BACK = 1n << 24n
 /** Blocks per log request: under what the configured RPCs take in one range. */
 const LOG_SPAN = 5000n
 
@@ -225,6 +233,26 @@ export async function resolveMana(
   const call = keccak256(attempt.data)
   const verified = verifiedVenue(chainId, venue)
   const finalized = await evidence.finalized(chainId)
+  /**
+   * The first block whose nonce reads past N, given that F's does: halving between `from` and `to`, after reaching back
+   * from `from` in doubling steps while the block before it already reads past N.
+   */
+  const consumingBlock = async (from: bigint, to: bigint): Promise<bigint> => {
+    // Kept: nonceAt(hi) > N; and once the reach back stops, nonceAt(lo − 1) <= N.
+    let lo = from
+    let hi = to
+    for (let step = 1n; lo > 0n && (await evidence.nonceAt(chainId, ctx.venue, buyer, lo - 1n)) > nonce; step *= 2n) {
+      if (step > MAX_REACH_BACK) throw new Error('The block that consumed the nonce is too far back to look for')
+      hi = lo - 1n
+      lo = lo > step ? lo - step : 0n
+    }
+    while (lo < hi) {
+      const mid = (lo + hi) / 2n
+      if ((await evidence.nonceAt(chainId, ctx.venue, buyer, mid)) > nonce) hi = mid
+      else lo = mid + 1n
+    }
+    return hi
+  }
   /** The execution that consumed N, from a whole read of [from, to]; null when the read isn't whole or N isn't in it. */
   const consumedN = async (from: bigint, to: bigint): Promise<ManaExecution | null> => {
     const start = await evidence.nonceAt(chainId, ctx.venue, buyer, from - 1n)
@@ -237,18 +265,15 @@ export async function resolveMana(
     return mine[Number(nonce - start)] ?? null
   }
   /**
-   * Whether `hash` is this sale, finalized and successful: a transaction whose input is exactly a signed execution this
-   * page sent (its signature names N), or, at a verified venue, the transaction of the execution that consumed N, with
-   * this call.
+   * Whether `hash` is this sale, finalized and successful, by its bytes alone: a transaction whose input is exactly the
+   * signed execution this page sent (its signature names N). Any other carrier (a forwarder's) is found below, by the
+   * execution that consumed N.
    */
   const ours = async (hash: string): Promise<boolean> => {
     const receipt = await evidence.receipt(chainId, hash)
     if (!receipt || receipt.status !== 'success' || receipt.blockNumber > finalized) return false
     const tx = await evidence.transaction(chainId, hash)
-    if (tx && tx.to?.toLowerCase() === venue && payloads.has(keccak256(tx.input))) return true
-    if (!verified) return false
-    const at = await consumedN(receipt.blockNumber, receipt.blockNumber)
-    return !!at && at.txHash.toLowerCase() === hash.toLowerCase() && keccak256(at.call) === call
+    return !!tx && tx.to?.toLowerCase() === venue && payloads.has(keccak256(tx.input))
   }
   // The relay's own answers first: a hash it gave for one of these sends.
   for (const send of attempt.sends) {
@@ -263,7 +288,8 @@ export async function resolveMana(
   // N was consumed by F. At a verified venue, the execution that consumed it decides: this call is the sale, bought;
   // any other means none of these sends can ever run.
   if (verified) {
-    const at = await consumedN(fromBlock, finalized)
+    const block = await consumingBlock(fromBlock, finalized)
+    const at = await consumedN(block, block)
     if (!at) return { kind: 'waiting', retry: false }
     return keccak256(at.call) === call ? { kind: 'succeeded', txHash: at.txHash } : { kind: 'failed' }
   }

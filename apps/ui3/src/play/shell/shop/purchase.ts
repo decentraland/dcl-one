@@ -477,6 +477,7 @@ const MANA_NOT_SENT_PART = 'one of its transactions couldn’t go out; no MANA w
 /** A MANA sale sent through the relay, not yet found on chain. */
 const MANA_CHECKING = 'Checking your purchase. You can close this window.'
 /** RETRY: the signed execution of the sale, sent again. */
+const MANA_SIGN_IN_TO_RETRY = 'Sign in again with the same account to retry this purchase.'
 const MANA_RETRY = 'You can retry this same purchase fee-free. It can complete only once.'
 /** No room left for another send's evidence: no more retries, and the chain still decides. */
 const MANA_NO_MORE_RETRIES = "This purchase can't be retried again here. We're still checking it on chain, and it will show up here once it settles."
@@ -529,7 +530,7 @@ type Operation = OperationRecord & {
   /** Paid in MANA: one of its sends is being signed or sent by this page right now. */
   manaSending?: boolean
   /** Paid in MANA: what its Purchase in progress shows now. */
-  manaShown?: 'check' | 'retry' | 'capped'
+  manaShown?: 'check' | 'retry' | 'signin' | 'capped'
 }
 
 export interface ShellShop {
@@ -683,15 +684,19 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       show(op, { step: 'pending', message: MANA_RETRY, retry: true }, { onClose: () => hide(op), onRetry: () => void retryMana(op) })
       return
     }
-    const view = (check: 'ready' | 'checking'): void =>
-      show(op, { step: 'pending', check, message: kind === 'capped' ? MANA_NO_MORE_RETRIES : MANA_CHECKING }, { onClose: () => hide(op), onCheckAgain: () => void checkAgain(op, view) })
+    const message = kind === 'capped' ? MANA_NO_MORE_RETRIES : kind === 'signin' ? MANA_SIGN_IN_TO_RETRY : MANA_CHECKING
+    const view = (check: 'ready' | 'checking'): void => show(op, { step: 'pending', check, message }, { onClose: () => hide(op), onCheckAgain: () => void checkAgain(op, view) })
     view('ready')
   }
-  /** What a MANA purchase's Purchase in progress offers now: RETRY once it may and the wait passed, else CHECK AGAIN. */
-  const manaPendingKind = (op: Operation): 'check' | 'retry' | 'capped' => {
+  /**
+   * What a MANA purchase's Purchase in progress offers now: RETRY once it may and the wait passed, and only for its buyer
+   * signed in here (anyone else is asked to sign in as them), else CHECK AGAIN.
+   */
+  const manaPendingKind = (op: Operation): 'check' | 'retry' | 'signin' | 'capped' => {
     const latest = op.mana ? manaLastDispatch(op.mana) : null
     if (!op.mana || !manaRetryable(op) || latest == null || svc.now() - latest < RETRY_AFTER_MS) return 'check'
-    return manaHasRoom(compactManaAttempt(op.mana)) ? 'retry' : 'capped'
+    if (!manaHasRoom(compactManaAttempt(op.mana))) return 'capped'
+    return signedIn()?.buyer === op.buyer ? 'retry' : 'signin'
   }
   /** Whether this page may retry the MANA purchase now: it holds it, nothing runs, and the chain read last allows it. */
   const manaRetryable = (op: Operation): boolean =>
@@ -1719,14 +1724,30 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   /**
    * RETRY: the signed execution of the sale, sent again through the relay, inside the same operation and its lock. No
    * new signature and no wallet: only what the buyer signed goes, at the nonce it names, so it can complete only once.
-   * If the chain no longer reads that nonce (the first send, or anything else, ran meanwhile), nothing is sent and the
-   * chain decides. A refused or lost retry ends only itself: the purchase is still followed to its end.
+   * It goes only for the buyer signed in here (at the click, and again right before it is handed off), only once the
+   * wait since the latest request passed (the attempt holds it to that too), and only while the chain still reads that
+   * nonce: otherwise nothing is sent and the chain decides. A refused or lost retry ends only itself: the purchase is
+   * still followed to its end.
    */
   const retryMana = async (op: Operation): Promise<void> => {
     const record = op.mana
-    if (!record || !manaRetryable(op) || !op.buyer || !op.chainId || !record.nonce || !record.data || !record.signed) return
+    if (!record || !op.buyer || !op.chainId || !record.nonce || !record.data || !record.signed) return
+    // A RETRY pressed once it no longer holds (the buyer signed out, say): what it shows follows what it offers now.
+    if (manaPendingKind(op) !== 'retry') {
+      if (slot.holds(op) && !running && !TERMINAL_STATES.includes(op.state)) showPending(op)
+      return
+    }
     const chainId = op.chainId
     const buyer = op.buyer
+    // `retry` holds only for its buyer signed in here.
+    const who = signedIn()
+    if (!who) return
+    const login = loginKey(who.login)
+    /** The same login, still the buyer's, signed in here. */
+    const sameBuyer = (): boolean => {
+      const now = signedIn()
+      return !!now && now.buyer === buyer && loginKey(now.login) === login
+    }
     const signed = record.signed
     const terms = storedManaTerms(record)
     const nonce = BigInt(record.nonce)
@@ -1747,6 +1768,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         checkpoint: () => svc.manaEvidence().finalized(chainId),
         now: svc.now,
         sendMs: svc.manaTimeouts().sendMs,
+        retryAfterMs: RETRY_AFTER_MS,
         from: record,
         load: () => op.mana,
         // Kept as gone: in progress from here, closable, and followed by the watch, however long the relay takes.
@@ -1772,7 +1794,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       // Only while the chain still reads the sale's nonce: past it, the signed execution can never run.
       const timeouts = svc.manaTimeouts()
       const read = await deadline(readMetaTxNonce(svc.reader(), { address: venue.address as `0x${string}`, chainId: chainId as Parameters<ChainReader['receipt']>[0], metaTx }, buyer), timeouts.readMs)
-      if (read === nonce) {
+      // The sign-in may have changed while the nonce was read: then nothing goes.
+      if (read === nonce && sameBuyer()) {
         attempt.retry()
         if (attempt.handOff({ rail: 'relay', nonce, data: record.data })) {
           const send = attempt.relay(rail.fetchImpl ?? ((...a: Parameters<typeof fetch>) => fetch(...a)))
@@ -1791,6 +1814,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     }
     op.manaRetry = undefined
     // Shown as still in progress at once, closable; the chain is read in the background, by the watch and one look now.
+    // Signed out meanwhile: what it shows asks to sign in as the buyer, once a look allows RETRY again.
     if (slot.holds(op) && !TERMINAL_STATES.includes(op.state)) showPending(op)
     void reconcile(op)
     void check(op as Operation & { buyer: string }, (op.store ??= ledger.storeFor(op))).catch(() => false)

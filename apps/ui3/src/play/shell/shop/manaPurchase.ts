@@ -71,6 +71,8 @@ export interface ManaAttemptRecord {
   fromBlock?: string
   /** The signed execution (executeMetaTransaction's call data) every send carries: a retry sends exactly this. */
   signed?: Hex
+  /** When the latest relay request of the sale left (ms), kept whatever the relay answered for it and through compaction. */
+  lastSent?: number
   /** Each send, in order: the first, then any retries. */
   sends: ManaSend[]
 }
@@ -125,6 +127,7 @@ export function isManaAttempt(v: unknown): v is ManaAttemptRecord {
     (v.data === undefined || (typeof v.data === 'string' && HEX.test(v.data))) &&
     (v.fromBlock === undefined || (typeof v.fromBlock === 'string' && DECIMAL.test(v.fromBlock))) &&
     (v.signed === undefined || (typeof v.signed === 'string' && HEX.test(v.signed) && v.signed.length > 2)) &&
+    (v.lastSent === undefined || (typeof v.lastSent === 'number' && Number.isFinite(v.lastSent) && v.lastSent >= 0)) &&
     Array.isArray(sends) &&
     sends.length <= MAX_SENDS &&
     sends.every(isSend) &&
@@ -158,9 +161,13 @@ export function manaHasRoom(record: ManaAttemptRecord): boolean {
   return !record.sends.some((s) => s.stage === 'signing') && record.sends.filter((s) => s.stage === 'dispatched').length < MAX_SENDS
 }
 
-/** When the latest send that went, went (ms), or null: a retry waits from there, not from the first. */
+/**
+ * When the latest relay request of the sale left (ms), or null: a retry waits from there, not from the first, and a
+ * request the relay refused (dropped from the record since) still counts.
+ */
 export function manaLastDispatch(attempt: ManaAttemptRecord): number | null {
   const at = attempt.sends.flatMap((s) => (s.stage === 'dispatched' && s.at != null ? [s.at] : []))
+  if (attempt.lastSent != null) at.push(attempt.lastSent)
   return at.length > 0 ? Math.max(...at) : null
 }
 
@@ -288,6 +295,8 @@ export function createManaAttempt(
     load?: () => ManaAttemptRecord | undefined
     onDispatch?: () => void
     sendMs?: number
+    /** How long after the latest relay request a retry may be handed off (ms). */
+    retryAfterMs?: number
   }
 ): ManaAttempt {
   let local: ManaAttemptRecord = opts.from
@@ -365,6 +374,9 @@ export function createManaAttempt(
       // A retry: the buyer's own, of the signed execution (its call, at its nonce), while no send is on its way to its
       // request and the record has room.
       if (!retrying || !manaHasRoom(compactManaAttempt(now)) || now.sends.some((x) => x.stage === 'signing')) return false
+      // Only once the wait since the latest request passed, as the record holds it now.
+      const latest = manaLastDispatch(now)
+      if (latest != null && opts.now() - latest < (opts.retryAfterMs ?? 0)) return false
       if (attempt.nonce.toString() !== now.nonce || attempt.data.toLowerCase() !== now.data?.toLowerCase()) return false
       retrying = false
       const kept = compactManaAttempt(now)
@@ -399,7 +411,8 @@ export function createManaAttempt(
         }
         const now = read()
         const at = now.sends.findIndex((x) => x.id === id)
-        if (at < 0 || !move({ ...now, fromBlock, signed: request.payload, sends: now.sends.map((x, i) => (i === at ? { ...x, stage: 'dispatched', payload: keccak256(request.payload), at: opts.now() } : x)) })) {
+        const sentAt = opts.now()
+        if (at < 0 || !move({ ...now, fromBlock, signed: request.payload, lastSent: sentAt, sends: now.sends.map((x, i) => (i === at ? { ...x, stage: 'dispatched', payload: keccak256(request.payload), at: sentAt } : x)) })) {
           return notSent("This browser couldn't keep a record of the purchase, so it wasn't sent.")
         }
         current = null

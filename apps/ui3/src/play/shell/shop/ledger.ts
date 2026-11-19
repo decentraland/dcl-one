@@ -172,13 +172,16 @@ export function createLedger(storage: () => Storage | null): Ledger {
     }
   }
   /**
-   * Operation `id` of `buyer`'s. Its record moves between the two prefixes when its payment changes, and the key it
-   * left may still be there (its removal threw): the one written last is it, and on the same instant, the MANA one.
+   * Operation `id` of `buyer`'s. Its record moves between the two prefixes when its payment changes, and a key left
+   * behind may still be there (written by another build, or its removal threw). A MANA record with a send that went is
+   * the purchase, whatever the other says: nothing else may end a sale that may have left. Otherwise the one written
+   * last is it, and on the same instant, the MANA one.
    */
   const pick = (s: Storage, buyer: string, id: string): OperationRecord | null => {
     const mana = parse(s, manaKey(buyer, id), buyer, id)
     const credits = parse(s, recordKey(buyer, id), buyer, id)
     if (!mana || !credits) return mana ?? credits
+    if (mana.mana?.sends.some((x) => x.stage === 'dispatched')) return mana
     return credits.updatedAt > mana.updatedAt ? credits : mana
   }
   /** `buyer`'s operations, oldest first. */
@@ -247,11 +250,19 @@ export function createLedger(storage: () => Storage | null): Ledger {
         console.warn('[shell/shop] could not keep the purchase record', e)
         return false
       }
-      // Under the other prefix it is gone; a removal that throws leaves an older copy, which reads as older.
+      // Under the other prefix it is gone, or this write didn't stick: a copy left there could be read as the purchase
+      // (by a build that doesn't know MANA, the Credits one), so the purchase goes no further until it is gone.
       try {
         s.removeItem(left)
       } catch {
-        // Read past by `pick`.
+        // Checked below.
+      }
+      try {
+        if (s.getItem(left) !== null) throw new Error('A copy of the record under the other key is still there')
+      } catch (e) {
+        failures.add(record.id)
+        console.warn('[shell/shop] could not keep the purchase record', e)
+        return false
       }
       // Settled operations beyond KEEP go, oldest first; an unsettled one, or this one, is never dropped.
       try {

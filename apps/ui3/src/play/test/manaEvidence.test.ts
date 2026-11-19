@@ -73,11 +73,11 @@ describe('a MANA sale on chain', () => {
   it('ends not bought when the execution that consumed the nonce is another call', async () => {
     const evidence = chain({ now: 8n, executions: [execution({ user: '0x' + '22'.repeat(20) }), execution({ call: '0xbeef', logIndex: 1 })] })
     expect(await resolve(record(), evidence)).toEqual({ kind: 'failed' })
-    // Read from the first dispatch's checkpoint through the very block the nonce was read at, and the nonce on both
-    // sides of that range.
-    expect(evidence.executions).toHaveBeenCalledWith(137, STORE, 100n, F)
+    // The nonce read at F and from the checkpoint on; the logs of the one block that consumed N, never the range.
     expect(evidence.nonceAt).toHaveBeenCalledWith(137, { address: STORE, metaTx: 'functionSignature' }, BUYER, F)
     expect(evidence.nonceAt).toHaveBeenCalledWith(137, { address: STORE, metaTx: 'functionSignature' }, BUYER, 99n)
+    expect(evidence.executions).toHaveBeenCalledWith(137, STORE, 200n, 200n)
+    expect(evidence.executions).toHaveBeenCalledTimes(1)
   })
 
   it('ends bought on the execution that consumed the nonce, with this call, whatever transaction carried it', async () => {
@@ -88,35 +88,48 @@ describe('a MANA sale on chain', () => {
     expect(await resolve(record({ nonce: '7' }), evidence)).toEqual({ kind: 'failed' })
   })
 
-  it('keeps waiting on a log read that doesn’t hold every execution the nonce moved by', async () => {
-    // N went to another call at 150, which the node leaves out: the read holds one execution where the nonce moved
-    // twice, so the one it shows (this call, at N+1) says nothing about N. And no RETRY: the nonce is gone.
-    const unlogged = [execution({ call: '0xbeef', blockNumber: 150n, txHash: OTHER_HASH })]
-    expect(await resolve(record(), chain({ now: 9n, executions: [execution()], unlogged }))).toEqual({ kind: 'waiting', retry: false })
+  it('keeps waiting on a block’s log read that doesn’t hold every execution the nonce moved by', async () => {
+    // N went to another call at block 200, which the node leaves out: the block's read holds one execution where the
+    // nonce moved twice, so the one it shows (this call, at N+1) says nothing about N. And no RETRY: the nonce is gone.
+    const unlogged = [execution({ call: '0xbeef', logIndex: 1, txHash: OTHER_HASH })]
+    expect(await resolve(record(), chain({ now: 9n, executions: [execution({ logIndex: 2 })], unlogged }))).toEqual({ kind: 'waiting', retry: false })
     // A log the node repeats never stands in for the one it left out.
-    expect(await resolve(record(), chain({ now: 9n, executions: [execution(), execution()], unlogged }))).toEqual({ kind: 'waiting', retry: false })
+    expect(await resolve(record(), chain({ now: 9n, executions: [execution({ logIndex: 2 }), execution({ logIndex: 2 })], unlogged }))).toEqual({ kind: 'waiting', retry: false })
   })
 
-  it('ends bought on the relay’s hash carried by a forwarder, when the execution that consumed N in its block is it', async () => {
+  it('ends bought on a forwarder’s transaction, by the execution that consumed N, and only that one', async () => {
     const rec = record({ sends: [{ id: 's6', stage: 'dispatched', payload: keccak256(SIGNED), at: 1, hash: RELAY_HASH }] })
     const forwarded = { [RELAY_HASH]: { to: '0x' + '99'.repeat(20), input: OTHER_SIGNED } }
     const final = { [RELAY_HASH]: { status: 'success' as const, blockNumber: 300n } }
-    // Another of the buyer's executions in that block first (N−1), then ours (N). An execution at 150 the node leaves
-    // out keeps the range read from deciding, so only the receipt's block can.
+    // Another of the buyer's executions in that block first (N−1), then ours (N). One at 150 the node leaves out is
+    // never read: only the block that consumed N is.
     const block = [execution({ call: '0xbeef', blockNumber: 300n, logIndex: 1, txHash: OTHER_HASH }), execution({ blockNumber: 300n, logIndex: 2, txHash: RELAY_HASH })]
     const unlogged = [execution({ call: '0xbeef', blockNumber: 150n })]
     expect(await resolve(rec, chain({ now: 8n, executions: block, unlogged, txs: forwarded, receipts: final }))).toEqual({ kind: 'succeeded', txHash: RELAY_HASH })
-    // At N, this call from another transaction (the relay's ran it at N−1); at N, another call; that block read missing
-    // one; reverted; at an unverified venue.
+    // At N, this call from another transaction (the relay's ran it at N−1): bought, by that other transaction, never
+    // the relay's. At N, another call from the relay's: not bought. That block's read missing one: no word.
     const earlier = [execution({ blockNumber: 300n, logIndex: 1, txHash: RELAY_HASH }), execution({ blockNumber: 300n, logIndex: 2, txHash: OTHER_HASH })]
-    expect(await resolve(rec, chain({ now: 8n, executions: earlier, unlogged, txs: forwarded, receipts: final }))).toMatchObject({ kind: 'waiting' })
+    expect(await resolve(rec, chain({ now: 8n, executions: earlier, unlogged, txs: forwarded, receipts: final }))).toEqual({ kind: 'succeeded', txHash: OTHER_HASH })
     const otherCall = [block[0], execution({ call: '0xbeef', blockNumber: 300n, logIndex: 2, txHash: RELAY_HASH })]
-    expect(await resolve(rec, chain({ now: 8n, executions: otherCall, unlogged, txs: forwarded, receipts: final }))).toMatchObject({ kind: 'waiting' })
+    expect(await resolve(rec, chain({ now: 8n, executions: otherCall, unlogged, txs: forwarded, receipts: final }))).toEqual({ kind: 'failed' })
     expect(await resolve(rec, chain({ now: 8n, executions: [block[1]], unlogged: [...unlogged, block[0]], txs: forwarded, receipts: final }))).toMatchObject({ kind: 'waiting' })
-    expect(await resolve(rec, chain({ now: 8n, executions: block, unlogged, txs: forwarded, receipts: { [RELAY_HASH]: { status: 'reverted', blockNumber: 300n } } }))).toMatchObject({ kind: 'waiting' })
+    // At an unverified venue, place proves nothing: only the signed execution itself would.
     const other = '0x' + '77'.repeat(20)
     const out = await resolveMana(record({ venue: other, sends: rec.sends }), { chainId: 137, buyer: BUYER, venue: { address: other, metaTx: 'functionData' }, evidence: chain({ now: 8n, executions: block, unlogged, txs: forwarded, receipts: final }) })
     expect(out).toEqual({ kind: 'waiting', retry: false })
+  })
+
+  it('finds the execution that consumed N before the checkpoint, reaching back past it', async () => {
+    // N went at block 98, before the checkpoint at 100 (another call while the wallet's prompt was open); ours at 98 too.
+    for (const [call, out] of [['0xbeef', { kind: 'failed' }], [CALL, { kind: 'succeeded', txHash: HASH }]] as const) {
+      const evidence = chain({ now: 8n, executions: [execution({ call, blockNumber: 98n })] })
+      expect(await resolve(record(), evidence)).toEqual(out)
+      expect(evidence.executions).toHaveBeenCalledWith(137, STORE, 98n, 98n)
+    }
+    // And far back, in as few reads as halving takes.
+    const far = chain({ now: 8n, executions: [execution({ call: '0xbeef', blockNumber: 3n })] })
+    expect(await resolve(record({ fromBlock: '400' }), far)).toEqual({ kind: 'failed' })
+    expect((far.nonceAt as ReturnType<typeof vi.fn>).mock.calls.length).toBeLessThan(30)
   })
 
   it('keeps waiting, with no RETRY, on a nonce read below the sale’s (a lagging node)', async () => {
