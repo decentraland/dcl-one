@@ -8,6 +8,7 @@ import { WrongAccountError, isWalletRejection } from '../walletErrors'
 import { TEST_SIGNER, testAccount } from '../test/chain'
 import type { Session } from './auth'
 import { sendContractTransaction } from '.'
+import { managedShopProvider } from '../../auth/shop-wallet'
 
 vi.mock('decentraland-connect', () => ({ getRpcUrls: () => ({ 80002: 'https://rpc.example.com' }) }))
 
@@ -82,7 +83,8 @@ function world(scenario: Scenario = {}) {
       }
       const body = JSON.parse(init.body as string) as { id: number; method: string; params: unknown[] }
       nodeCalls.push({ method: body.method, params: body.params })
-      return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: NONCE }))
+      const result = body.method === 'eth_getCode' ? '0x' : NONCE
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }))
     })
   )
   const session = { address: TEST_SIGNER, provider: { request } } as unknown as Session
@@ -270,5 +272,23 @@ describe('when a call goes gasless through the relayer', () => {
     expect(error).toBeInstanceOf(WrongAccountError)
     expect(w.walletLog.map(({ method }) => method)).not.toContain('eth_signTypedData_v4')
     expect(w.relayed).toHaveLength(0)
+  })
+
+  it('should relay for an email or social account, whose in-app signer only signs typed data', async () => {
+    const { relayed, nodeCalls } = world()
+    const sign = async (typedData: unknown) => {
+      const { types, domain, primaryType, message } = JSON.parse(JSON.stringify(typedData))
+      const withoutDomain = Object.fromEntries(Object.entries(types).filter(([name]) => name !== 'EIP712Domain'))
+      return testAccount.signTypedData({ types: withoutDomain, domain, primaryType, message })
+    }
+    const session: Session = {
+      address: TEST_SIGNER.toLowerCase(),
+      kind: 'managed',
+      provider: managedShopProvider(TEST_SIGNER, sign)
+    }
+    const hash = await sendContractTransaction(session, { contract: transfer[0], method: transfer[1], args: [...transfer[2]] })
+    expect(hash).toBe(HASH)
+    expect(nodeCalls.map(({ method }) => method)).toEqual(['eth_getCode', 'eth_call'])
+    expect(relayed).toHaveLength(1)
   })
 })

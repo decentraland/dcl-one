@@ -90,12 +90,6 @@
     "why": "exclude_from_ranking is an additive moderation flag; a peer whose place records omit it predates the field and so has excluded nothing from ranking -- false is the real reading of its absence, not a guess. The generated PlaceRowSchema stays strict for current peers; only this compat wrapper supplies the default, and the Rust ingest in catalyrst-places (catalog/sync.rs reads the column with unwrap_or(false)) treats the same absence the same way, so both halves agree."
   },
   {
-    "file": "src/data/lib/catalyst/builder/drafts.ts",
-    "rule": "fabricated-default",
-    "text": "z.string().nullish().transform(value => value ?? \"\")",
-    "why": "The builder stores a missing item description as null and the editor's text field holds it as the empty string; both mean 'no description', so nothing is invented. The schema can still fail: id, name, type, data and contents are all required, so an error body or a truncated response is rejected."
-  },
-  {
     "file": "src/data/lib/help/status.ts",
     "rule": "fabricating-catch",
     "text": "return \"down\";",

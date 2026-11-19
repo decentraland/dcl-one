@@ -1,7 +1,7 @@
 // Measures the link with one fixed, incompressible download. Resource timings are no substitute: on a
 // warm cache every bundle is a 304 (300 bytes on the wire) or a cache hit (0 bytes), so nothing is measurable,
 // and the CDN sends no Timing-Allow-Origin, so the probe's own entry has no response timings cross-origin.
-export const PROBE_URL = `${import.meta.env.BASE_URL}speed-probe.bin`
+export const PROBE_URL = '/internal/creators-speed-probe'
 // A probe still running after this long is on a slow link whatever the final number would have been.
 export const PROBE_TIMEOUT_MS = 2_000
 // Below this the transfer is latency, not throughput.

@@ -65,9 +65,12 @@ export async function readContract<T>(contract: ContractData, method: string, ar
 
 /** Sends the call and resolves with the transaction hash (not the receipt). */
 export async function sendContractTransaction(session: Session, call: ContractCall): Promise<string> {
-  const chainId = await readWalletChainId(session)
-  if (chainId === Number(call.contract.chainId)) return sendFromWallet(session, chainId, call)
-  const wallet = metaTransactionWallet(session)
+  // The in-app signer of email and social accounts only signs typed data, so it always goes through the relayer.
+  if (session.kind !== 'managed') {
+    const chainId = await readWalletChainId(session)
+    if (chainId === Number(call.contract.chainId)) return sendFromWallet(session, chainId, call)
+  }
+  const wallet = metaTransactionWallet(session, call.contract.chainId)
   // The account checked here is the one that signs, as the wallet spelled it (the relayed calldata keeps its case).
   const [active = ''] = await wallet.accounts()
   if (active.toLowerCase() !== session.address.toLowerCase()) {
@@ -87,7 +90,10 @@ export async function sendContractTransaction(session: Session, call: ContractCa
 }
 
 // An empty answer counts as a failed request, and legacy providers wrap theirs in `result`.
-function metaTransactionWallet(session: Session): MetaTransactionWallet & { accounts: () => Promise<string[]> } {
+function metaTransactionWallet(
+  session: Session,
+  chainId: number
+): MetaTransactionWallet & { accounts: () => Promise<string[]> } {
   const request = async (method: string, params: unknown[]) => {
     const answer = await session.provider.request({ method, params })
     if (!answer) throw new Error(`The wallet gave no answer to ${method}`)
@@ -102,7 +108,10 @@ function metaTransactionWallet(session: Session): MetaTransactionWallet & { acco
         return (await request('eth_accounts', [])) as string[]
       }
     },
-    code: async address => (await request('eth_getCode', [address, 'latest'])) as string,
+    code: async address =>
+      session.kind === 'managed'
+        ? ((await (await getReadClient(chainId)).getCode({ address: address as Address })) ?? '0x')
+        : ((await request('eth_getCode', [address, 'latest'])) as string),
     signTypedData: async (address, typedData) => (await request('eth_signTypedData_v4', [address, typedData])) as string
   }
 }

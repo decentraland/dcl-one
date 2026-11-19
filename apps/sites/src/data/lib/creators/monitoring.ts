@@ -96,6 +96,9 @@ export function redact(input: string): string {
 const CLIENT_ERROR_ENDPOINT = '/internal/client-error'
 const REPORT_BUDGET = 10
 const DEDUPE_MS = 60_000
+// The endpoint refuses bodies over 16 KB and clips to these lengths itself.
+const MAX_MESSAGE = 2000
+const MAX_STACK = 8000
 
 const lastReported = new Map<string, number>()
 let reported = 0
@@ -126,13 +129,15 @@ export function clientErrorForwarder(error: unknown, context: ErrorContext): voi
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       name,
-      message,
-      stack: redact(error instanceof Error ? (error.stack ?? '') : ''),
+      message: message.slice(0, MAX_MESSAGE),
+      stack: redact(error instanceof Error ? (error.stack ?? '') : '').slice(0, MAX_STACK),
       source: `creators:${typeof context.flow === 'string' ? context.flow : 'unknown'}`,
       url: window.location.href,
       ua: navigator.userAgent,
       ts: new Date(now).toISOString()
     }),
     keepalive: true
-  }).catch(() => undefined)
+  })
+    .then(response => response.body?.cancel())
+    .catch(() => undefined)
 }

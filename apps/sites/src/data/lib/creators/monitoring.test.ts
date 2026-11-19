@@ -137,4 +137,12 @@ describe('clientErrorForwarder', () => {
 
     expect(fetch).toHaveBeenCalledTimes(1)
   })
+
+  it('keeps a long error report under the size the endpoint accepts', () => {
+    const error = new Error(`rpc failed ${'x'.repeat(20_000)}`)
+    error.stack = 'at '.repeat(10_000)
+    clientErrorForwarder(error, { flow: 'publish' })
+
+    expect(new TextEncoder().encode(JSON.stringify(posted()[0])).length).toBeLessThan(16 * 1024)
+  })
 })

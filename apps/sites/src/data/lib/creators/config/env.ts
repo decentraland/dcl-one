@@ -20,7 +20,8 @@ const ENV_BY_NAME: Record<string, Env> = {
 
 /** The environment a Decentraland host serves: `.org` production, `.today` staging, `.zone` development. */
 function envOfHost(host: string): Env | undefined {
-  const labels = host.split(':')[0].toLowerCase().split('.')
+  // A fully qualified host (decentraland.org.) is the same site.
+  const labels = host.split(':')[0].toLowerCase().replace(/\.$/, '').split('.')
   const tld = labels[labels.length - 1]
   return labels[labels.length - 2] === DOMAIN ? ENV_BY_NAME[tld] : undefined
 }

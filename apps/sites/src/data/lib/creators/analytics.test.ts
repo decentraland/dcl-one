@@ -32,6 +32,17 @@ describe('track', () => {
     track('bd_item_editor_saved', { item_id: 'i1' } as never)
     expect(send.mock.calls.map(([event]) => event)).toEqual(['bd_item_editor_saved', 'creator_item_edited'])
   })
+
+  it('counts a first listing in the creator funnel but not a price update', () => {
+    setTrackContext({ sid: 's1', story: 'creator-hub/collection' })
+    track('bd_item_listing_set', { is_update: false } as never)
+    track('bd_item_listing_set', { is_update: true } as never)
+    expect(send.mock.calls.map(([event]) => event)).toEqual([
+      'bd_item_listing_set',
+      'creator_item_listed',
+      'bd_item_listing_set'
+    ])
+  })
 })
 
 describe('errorCode', () => {

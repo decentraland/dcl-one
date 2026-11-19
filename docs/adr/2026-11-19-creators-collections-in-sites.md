@@ -65,3 +65,6 @@ The creators pages move into `apps/sites` from `decentraland/creators-website` `
 1. Replace the local components with `@dcl/one-ui` (Button, Switch, Spinner, Skeleton, SearchBar,
    inputs, TabsBar), adding the variants the creators pages need.
 2. Move each flow to the Rust builder service as its endpoints land.
+3. Bring the server state fully under TanStack Query: the feature flags' module-level cache and the
+   module-level copies in the roles, sales and discounts hooks become queries, and the inline query keys
+   move to key factories (`docs/web-app-standards.md`).

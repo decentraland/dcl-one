@@ -23,7 +23,7 @@ export function TranslationControls({ previewId, controller: shared, className, 
             min={-2}
             max={2}
             step={0.1}
-            onChange={event => void controller?.scene.panCamera({ y: Number(event.target.value) * -1 })}
+            onChange={event => void controller?.scene.panCamera({ y: Number(event.target.value) * -1 })?.catch(() => undefined)}
           />
         </div>
       )}

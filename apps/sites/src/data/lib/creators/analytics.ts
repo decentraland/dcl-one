@@ -1,6 +1,6 @@
 import type { TelemetryEvents } from '@/core/lib/telemetry/events'
 import { withCreatorFunnel } from '@/core/lib/telemetry/creator-funnel'
-import type { TrackContext } from '@/core/lib/telemetry/track'
+import { track as sendPlain, type TrackContext } from '@/core/lib/telemetry/track'
 import { isWalletRejection, isWalletStateError } from './walletErrors'
 
 const send = withCreatorFunnel()
@@ -23,7 +23,10 @@ export function track<K extends CreatorsEvent>(
   props: TelemetryEvents[K],
   context: TrackContext = pageContext
 ): void {
-  if (context.sid) send(event, props, context)
+  if (!context.sid) return
+  // A repricing is not a new listing, so it stays out of the creator funnel.
+  const isUpdate = (props as { is_update?: boolean }).is_update === true
+  ;(isUpdate ? sendPlain : send)(event, props, context)
 }
 
 /**

@@ -25,8 +25,9 @@ export const REDIRECTS = {
   },
   "publish-collection": {
     from: "publish-collection",
-    to: "/create/collections",
+    to: "/create/collections/:collection",
     carry: [],
+    param: { name: "collection" },
   },
   curation: {
     from: "curation",
@@ -57,13 +58,13 @@ export function buildDestination(
   const out = new URLSearchParams();
 
   for (const key of rule.carry) {
-    const v = url.searchParams.get(key);
-    if (v != null && v !== "") out.set(key, v);
+    for (const v of url.searchParams.getAll(key)) if (v !== "") out.append(key, v);
   }
 
   let to = rule.to;
   if (rule.param) {
-    const raw = params[rule.param.name];
+    // The legacy page takes it in the path or, like publish-collection, in the query.
+    const raw = params[rule.param.name] ?? url.searchParams.get(rule.param.name);
     if (raw != null && raw !== "") {
       if (rule.param.queryKey) out.set(rule.param.queryKey, raw);
       else to = to.replace(`:${rule.param.name}`, encodeURIComponent(raw));

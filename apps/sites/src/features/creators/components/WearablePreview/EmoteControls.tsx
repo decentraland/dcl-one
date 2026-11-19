@@ -29,7 +29,7 @@ export function EmoteControls({ previewId, controller: shared, className, hideFr
     const { events } = controller.emote
     const onPlay = async () => {
       if (seeking.current.active) return
-      const emoteLength = lengthRef.current || (await controller.emote.getLength())
+      const emoteLength = lengthRef.current || (await controller.emote.getLength().catch(() => undefined))
       setIsPlaying(true)
       setLength(emoteLength)
     }
@@ -80,7 +80,7 @@ export function EmoteControls({ previewId, controller: shared, className, hideFr
   }
 
   const toggleSound = () => {
-    void (isSoundEnabled ? controller?.emote.disableSound() : controller?.emote.enableSound())
+    void (isSoundEnabled ? controller?.emote.disableSound() : controller?.emote.enableSound())?.catch(() => undefined)
     setIsSoundEnabled(!isSoundEnabled)
   }
 

@@ -5,6 +5,7 @@ describe('resolveEnv', () => {
   it('ignores ?env= on a production hostname', () => {
     expect(resolveEnv({ host: 'decentraland.org', search: '?env=dev' }, Env.STAGING)).toBe(Env.PRODUCTION)
     expect(resolveEnv({ host: 'play.decentraland.org:443', search: '?env=dev' }, Env.STAGING)).toBe(Env.PRODUCTION)
+    expect(resolveEnv({ host: 'decentraland.org.', search: '?env=dev' }, Env.STAGING)).toBe(Env.PRODUCTION)
   })
 
   it('honours ?env= on hosts that are not ours', () => {

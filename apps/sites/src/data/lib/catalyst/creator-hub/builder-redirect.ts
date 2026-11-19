@@ -44,9 +44,9 @@ export const REDIRECT_DASHBOARD: RedirectFixture = {
     {
       from: "publish-collection",
       legacyPath: "/builder/publish-collection",
-      to: "/create/collections",
+      to: "/create/collections/:collection",
       carry: [],
-      param: null,
+      param: { name: "collection", queryKey: null },
     },
     {
       from: "curation",
