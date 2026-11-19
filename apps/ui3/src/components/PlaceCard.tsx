@@ -1,5 +1,5 @@
 import CoverImage from "./CoverImage";
-import { publicThumbnail } from "../data/thumbnail";
+import { publicThumbnail, useThumbnailPublicBase } from "../data/thumbnail";
 import "./surface.css";
 import "./placecard.css";
 
@@ -35,9 +35,10 @@ type CardBodyProps = {
 };
 
 function CardBody({ title, image, players, rating, coords, live, featured, creator, priority }: CardBodyProps) {
+  const thumbnailBase = useThumbnailPublicBase();
   return (
     <>
-      <CoverImage className="pl__thumb" src={publicThumbnail(image)} fallbackSrc={image} alt=""
+      <CoverImage className="pl__thumb" src={publicThumbnail(image, undefined, thumbnailBase)} fallbackSrc={image} alt=""
         loading={priority ? "eager" : "lazy"} fetchPriority={priority ? "high" : undefined} />
 
       <div className="pl__badges">

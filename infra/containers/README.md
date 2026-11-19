@@ -161,6 +161,8 @@ describes cache scope, trust boundaries, stale-entry replacement and retention.
 - Scene streaming keys (`/scene-stream-access`, the Admin Toolkit's "Live stream") are LiveKit Ingress RTMP endpoints: the APIs ask the external LiveKit's Ingress service for one and hand out the `url` and `stream_key` it answers. The deployment runs [LiveKit Ingress](https://github.com/livekit/ingress) beside its LiveKit server, both on one Redis: the server's config sets `redis` and `ingress.rtmp_base_url` (the public `rtmp://<host>:<port>/x` a streaming app pushes to), and the ingress config sets the same `api_key`/`api_secret` and `redis`, `ws_url` (the server's signaling URL), `rtmp_port` (public TCP) and `whip_port: -1` (the APIs create RTMP ingresses only). Without Redis, `/scene-stream-access` answers 500 (`ingress not connected (redis required)`); with Redis but no ingress process, it hands out keys that nothing listens for. The ingress refuses a stream with `server capacity exceeded` unless `cpu_cost.min_idle_ratio` of the machine's CPU (default 30%) stays idle after the stream's `rtmp_cpu_cost`. `tooling/dev.py` runs the same pair locally.
 - Run `schema apply` (empty) or `schema migrate` as a job before the new API. Never reset an existing database.
 
+Event poster upgrade: run `catalyst schema migrate` before deploying the API. Step `0050_explore_poster_avif` allows mirrored AVIF posters to be stored with their detected media type and preserves existing poster rows.
+
 World-admission upgrade: the release script
 `schemas/releases/world-scene-ban-keys.sql` requires a maintenance window. Stop old API and
 scene-host replicas before `catalyst schema migrate`; the object pass installs the durable queue.

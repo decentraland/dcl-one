@@ -381,32 +381,6 @@ fn hud_alpha_at(image: &Image, window_uv: Vec2) -> u8 {
 
 // Click cadence for CEF's click_count (2 = word select, 3 = paragraph select): with no OS window
 // under the webview, multi-click detection is the host's job.
-#[cfg(test)]
-mod hit_tests {
-    use super::*;
-
-    #[test]
-    fn samples_the_painted_pixel_at_fractional_dpi() {
-        // A 2×2 logical viewport at 150% has a 3×3 paint buffer. Only its
-        // bottom-right device pixel covers the world.
-        let mut pixels = vec![0; 3 * 3 * 4];
-        pixels[35] = 255;
-        let image = Image::new(
-            Extent3d {
-                width: 3,
-                height: 3,
-                depth_or_array_layers: 1,
-            },
-            TextureDimension::D2,
-            pixels,
-            TextureFormat::Bgra8UnormSrgb,
-            RenderAssetUsages::all(),
-        );
-        assert_eq!(hud_alpha_at(&image, Vec2::splat(0.75)), 255);
-        assert_eq!(hud_alpha_at(&image, Vec2::splat(0.25)), 0);
-    }
-}
-
 #[derive(Default)]
 struct MultiClick {
     button: Option<MouseButton>,
@@ -1011,5 +985,31 @@ fn push_text_focus(
             },
             state.hud,
         );
+    }
+}
+
+#[cfg(test)]
+mod hit_tests {
+    use super::*;
+
+    #[test]
+    fn samples_the_painted_pixel_at_fractional_dpi() {
+        // A 2×2 logical viewport at 150% has a 3×3 paint buffer. Only its
+        // bottom-right device pixel covers the world.
+        let mut pixels = vec![0; 3 * 3 * 4];
+        pixels[35] = 255;
+        let image = Image::new(
+            Extent3d {
+                width: 3,
+                height: 3,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            pixels,
+            TextureFormat::Bgra8UnormSrgb,
+            RenderAssetUsages::all(),
+        );
+        assert_eq!(hud_alpha_at(&image, Vec2::splat(0.75)), 255);
+        assert_eq!(hud_alpha_at(&image, Vec2::splat(0.25)), 0);
     }
 }

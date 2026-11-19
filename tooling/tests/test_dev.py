@@ -246,7 +246,10 @@ class DevTest(unittest.TestCase):
                                      'FOUNDATION_DEV_STARTUP_TIMEOUT': '3600'},
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 42, result.stderr)
-        self.assertEqual(calls.read_text().splitlines(),
+        listed = calls.read_text().splitlines()
+        # The provisioned tests run beside the broad run, so either may log first.
+        listed[-3:-1] = sorted(listed[-3:-1], key=lambda call: call.startswith('make:'))
+        self.assertEqual(listed,
                          ['up --postgres-only', 'wait --postgres-only --timeout 3600', 'env',
                           'nats:--version',
                           "python:-m unittest discover -s tooling/tests -p test_catalyst_test_resources.py",

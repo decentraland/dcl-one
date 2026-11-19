@@ -233,8 +233,10 @@ async fn forward_upstream(
 /// and even a 500/503 can be emitted by the origin after it already submitted
 /// the transaction. A kept slot merely ages out of the 24h quota window; a
 /// false refund breaks the daily-quota invariant, so every 5xx keeps the slot.
+/// So do a 408 and a 499 (`a_hop_gave_up`): a proxy can answer either after it
+/// forwarded the request, and the status does not say who answered.
 fn refunds_quota_slot(status: u16) -> bool {
-    (400..500).contains(&status)
+    (400..500).contains(&status) && !crate::evm::relayer::a_hop_gave_up(status)
 }
 
 async fn release_quota_slot(state: &SharedState, session_id: &str, sender: &MetaTxSender) {
@@ -292,13 +294,13 @@ mod tests {
 
     #[test]
     fn only_4xx_upstream_statuses_refund_the_quota_slot() {
-        for status in [400u16, 404, 422, 429, 499] {
+        for status in [400u16, 404, 422, 429] {
             assert!(
                 refunds_quota_slot(status),
                 "{status} is a pre-broadcast rejection and refunds the slot"
             );
         }
-        for status in [500u16, 501, 502, 503, 504, 520, 522, 524] {
+        for status in [408u16, 499, 500, 501, 502, 503, 504, 520, 522, 524] {
             assert!(
                 !refunds_quota_slot(status),
                 "{status} is broadcast-indeterminate and keeps the slot"

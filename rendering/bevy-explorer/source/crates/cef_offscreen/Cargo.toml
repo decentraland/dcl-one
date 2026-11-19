@@ -6,6 +6,9 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "CEF offscreen-rendered webview for bevy: OSR into Images, cef:// asset scheme, js/host IPC. Derived from not-elm/bevy_cef."
 
+[lints]
+workspace = true
+
 [dependencies]
 bevy = { workspace = true }
 cef = { workspace = true }
