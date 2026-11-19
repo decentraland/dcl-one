@@ -332,9 +332,9 @@ const mockWearables: Wearable[] = BASE.map((b, i) => {
 const BASE_MALE = 'urn:decentraland:off-chain:base-avatars:BaseMale'
 const mockOutfit = (urns: string[]): Outfit => ({
   bodyShape: BASE_MALE,
-  eyes: { color: { r: 0.37, g: 0.22, b: 0.19 } },
-  hair: { color: { r: 0.6, g: 0.36, b: 0.2 } },
-  skin: { color: { r: 0.8, g: 0.6, b: 0.47 } },
+  eyes: { color: { r: 0.37, g: 0.22, b: 0.19, a: 1 } },
+  hair: { color: { r: 0.6, g: 0.36, b: 0.2, a: 1 } },
+  skin: { color: { r: 0.8, g: 0.6, b: 0.47, a: 1 } },
   wearables: urns,
   forceRender: []
 })

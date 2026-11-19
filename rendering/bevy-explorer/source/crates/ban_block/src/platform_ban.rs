@@ -282,7 +282,6 @@ pub fn due(now: f64, last_checked: Option<f64>, retry_after: Option<f64>) -> boo
 /// Polls the one request in flight, dropping an answer for an address that is no longer the
 /// wallet's, and starts the next one when a check is due or a known ban's expiry has passed. A
 /// trigger that lands while a request is in flight starts another as soon as it completes.
-#[allow(clippy::too_many_arguments)]
 fn check_platform_ban(
     mut status: ResMut<PlatformBanStatus>,
     wallet: Res<Wallet>,

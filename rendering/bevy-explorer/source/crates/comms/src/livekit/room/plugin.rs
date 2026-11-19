@@ -224,7 +224,6 @@ pub struct ServerRoomTerminal;
 /// (LiveKit announces a joiner within a couple of seconds of its data channel opening).
 const UNANNOUNCED_GRACE_SECS: f64 = 15.0;
 
-#[expect(clippy::type_complexity)]
 fn process_room_events(
     mut commands: Commands,
     livekit_rooms: Query<(
@@ -445,7 +444,6 @@ fn process_channel_control(
 
 /// Outgoing messages are published only while the room is connected; otherwise they wait in
 /// the transport's bounded channel and go out once it is (again).
-#[allow(clippy::type_complexity)]
 fn process_network_message(
     rooms: Query<
         (&mut LivekitRoom, &mut LivekitNetworkMessage),

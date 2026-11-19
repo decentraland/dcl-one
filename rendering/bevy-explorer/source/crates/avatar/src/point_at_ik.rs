@@ -148,7 +148,6 @@ const FINGER_CURLS: &[(&str, f32, Vec3)] = &[
     ("avatar_righthandpinky3", 80.0, Vec3::Z),
 ];
 
-#[allow(clippy::type_complexity)]
 fn cache_point_at_rig(
     mut commands: Commands,
     needs_rig: Query<Entity, (With<AvatarShape>, Without<PointAtIkRig>)>,
@@ -198,7 +197,6 @@ fn cache_point_at_rig(
     }
 }
 
-#[allow(clippy::type_complexity)]
 pub(crate) fn apply_point_at_ik(
     time: Res<Time>,
     mut avatars: Query<

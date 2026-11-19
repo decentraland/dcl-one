@@ -357,7 +357,6 @@ pub fn scene_gltf_loader_settings(
     }
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_gltf(
     mut commands: Commands,
     mut commands2: Commands,
@@ -1172,7 +1171,6 @@ impl NodeProcessing<'_, '_> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn update_ready_gltfs(
     mut commands: Commands,
     mut models: Query<UnprocessedGltf, Without<GltfProcessed>>,
@@ -1456,7 +1454,7 @@ fn check_gltfs_ready(
 }
 
 // debug show the gltf graph
-#[allow(clippy::type_complexity, deprecated)]
+#[allow(deprecated)]
 fn _node_graph(
     scene_entity_query: &Query<(
         Entity,

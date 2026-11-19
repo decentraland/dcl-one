@@ -72,7 +72,6 @@ pub struct ExplorerUiState {
 
 pub type OpenRequest = (SceneOpen, RpcResultSender<OpenExplorerUiResult>);
 
-#[allow(clippy::too_many_arguments)]
 pub fn open_explorer_ui(
     mut events: EventReader<RpcCallEvent>,
     mut perms: Permission<OpenRequest>,

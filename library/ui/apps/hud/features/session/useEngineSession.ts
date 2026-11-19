@@ -202,6 +202,13 @@ function parseTimeReply(reply: string): { hours: number; speed: number } | null 
 // Unity's wording (BackpackEquipStatusController's in-world warning) when a profile deploy fails.
 export const SAVE_FAILED_MESSAGE = 'There was an error updating your avatar profile. Please try again.'
 
+export const OUTFIT_FAILED_MESSAGE = {
+  save: "Couldn't save this outfit. Try again.",
+  delete: "Couldn't delete this outfit. Try again.",
+  deleteExtraWithoutName: "Couldn't clear the second row. Check your connection and try deleting from that row again.",
+  extraSlotWithoutName: 'Outfits in the second row need a NAME you own. Delete them before changing your other outfits.'
+} as const
+
 /** A gift picker page request, without the id the session adds. */
 export type GiftingQuery = Omit<GiftingQueryRequest, 'kind' | 'requestId'>
 
@@ -265,12 +272,16 @@ export interface BackpackState {
   outfits: OutfitSlot[]
   /** Number of outfit slots available (5 free + 1 per owned DCL name, capped at 10). */
   outfitSlots: number
+  warnAboutClearingExtraOutfits: boolean
   /** The saved outfits have arrived: until then every slot reads empty, saved or not. */
   outfitsLoaded: boolean
   /** Save the current look into a slot. */
   saveOutfit: (slot: number) => void
   /** Delete a saved outfit slot. */
   deleteOutfit: (slot: number) => void
+  /** Why the last outfit save or delete was refused, or null (until the outfits next arrive). */
+  outfitError: string | null
+  dismissOutfitError: () => void
   /** Equip a saved outfit (applies its body shape, colors and wearables). */
   equipOutfit: (slot: number) => void
   /** The randomize bar's state for this Backpack session. */
@@ -1493,6 +1504,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [profileOpen, setProfileOpen] = useState(false)
   // Own-profile edit: the claimed names the picker offers, and the state of the save in flight.
   const [ownedNames, setOwnedNames] = useState<string[]>([])
+  const [ownedNamesKnown, setOwnedNamesKnown] = useState(false)
   const [profileSaving, setProfileSaving] = useState(false)
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null)
   // What the profile looked like before the in-flight save, to put back if the engine rejects it.
@@ -1540,6 +1552,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   useEffect(() => { catalogItemsRef.current = catalogItems }, [catalogItems])
   const [outfits, setOutfits] = useState<OutfitsMetadata>({ outfits: [], namesForExtraSlots: [] })
   const [outfitsLoaded, setOutfitsLoaded] = useState(false)
+  const [outfitFailure, setOutfitFailure] = useState<{ action: 'save' | 'delete'; slot: number } | null>(null)
   const [outfitHistory, setOutfitHistory] = useState<OutfitHistory>(NO_OUTFIT_HISTORY)
   const [backpackOpen, setBackpackOpen] = useState(false)
   const [communities, setCommunities] = useState<Community[]>([])
@@ -2080,6 +2093,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'ownedNames':
           setOwnedNames(msg.names)
+          setOwnedNamesKnown(msg.failed !== true)
           break
         case 'profileSaved':
           settleProfileSave(msg.ok, msg.error)
@@ -2180,6 +2194,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'outfits':
           setOutfits(msg.metadata)
           setOutfitsLoaded(true)
+          setOutfitFailure(null)
+          break
+        case 'outfitSaveFailed':
+          setOutfitFailure({ action: msg.action, slot: msg.slot })
+          console.error(`[outfits] ${msg.action} of slot ${msg.slot} failed:`, msg.message)
           break
         case 'outfitHistory':
           setOutfitHistory({ canUndo: msg.canUndo, canRedo: msg.canRedo, rolling: msg.rolling })
@@ -3912,6 +3931,25 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const deleteOutfit = useCallback((slot: number) => {
     driverRef.current?.send({ kind: 'deleteOutfit', slot })
   }, [])
+  const dismissOutfitError = useCallback(() => setOutfitFailure(null), [])
+  // The live names lookup decides; until it answers, the outfits read does. An occupied extra slot
+  // stays visible so the player can still delete it.
+  const extraSlotCount = outfits.outfits.filter((o) => o.slot >= 5).length
+  const extraOutfitSlots =
+    extraSlotCount > 0 || (ownedNamesKnown ? ownedNames.length > 0 : outfits.namesForExtraSlots.length > 0)
+  const extraSlotsWithoutName = ownedNamesKnown && ownedNames.length === 0 && extraSlotCount > 0
+  const warnAboutClearingExtraOutfits = extraSlotsWithoutName && extraSlotCount > 1
+  let outfitError: string | null = null
+  if (outfitFailure != null) {
+    outfitError = OUTFIT_FAILED_MESSAGE[outfitFailure.action]
+    if (extraSlotsWithoutName) {
+      if (outfitFailure.action !== 'delete' || outfitFailure.slot < 5) {
+        outfitError = OUTFIT_FAILED_MESSAGE.extraSlotWithoutName
+      } else if (warnAboutClearingExtraOutfits) {
+        outfitError = OUTFIT_FAILED_MESSAGE.deleteExtraWithoutName
+      }
+    }
+  }
   const equipOutfit = useCallback((slot: number) => {
     // The bridge resolves the outfit's wearables by urn and re-emits the full `wearables` set (incl.
     // items off the loaded catalog page), which becomes the authoritative equipped set — so no
@@ -4239,6 +4277,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setProfile(null)
     setPrevUserId(null)
     setOwnedNames([])
+    setOwnedNamesKnown(false)
     setProfileSaving(false)
     setProfileSaveError(null)
     setSaveError(null)
@@ -5172,8 +5211,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     backpack: {
       list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
       equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, stage: stagePreview, emote: emotePreview, rotate: rotatePreview, zoom: zoomPreview, forceRender, setForceRender,
-      outfits: outfits.outfits, outfitSlots: ownedNames.length > 0 ? 10 : 5, outfitsLoaded,
-      saveOutfit, deleteOutfit, equipOutfit,
+      outfits: outfits.outfits, outfitSlots: extraOutfitSlots ? 10 : 5, outfitsLoaded, warnAboutClearingExtraOutfits,
+      saveOutfit, deleteOutfit, outfitError, dismissOutfitError, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
     communities: { list: communities, browse: communityBrowse, loadBrowse: loadCommunityBrowse, loadMoreBrowse: loadMoreCommunityBrowse, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity, invites: communityInvites, loadInvites: loadCommunityInvites, pendingCount, loadInvitesCount: loadCommunityInvitesCount, manageRequest: manageCommunityRequest, memberSections, cardOpen: setOpenCard, loadMemberSection, invitable, loadInvitable, invite: inviteToCommunity, unban: unbanCommunityMember, posts: communityPosts, loadPosts: loadCommunityPosts, loadMorePosts: loadMoreCommunityPosts, createPost: createCommunityPost, deletePost: deleteCommunityPost, likePost: likeCommunityPost },

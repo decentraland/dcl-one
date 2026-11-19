@@ -134,7 +134,6 @@ fn foot_ik_console_command(
     }
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn cache_foot_ik_rig(
     mut commands: Commands,
     config: Res<FootIkConfig>,
@@ -351,7 +350,6 @@ fn read_avatar_globals(
     })
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn apply_foot_ik(
     config: Res<FootIkConfig>,
     time: Res<Time>,
@@ -651,7 +649,6 @@ fn apply_foot_ik(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn plan_leg(
     label: &str,
     config: &FootIkConfig,
