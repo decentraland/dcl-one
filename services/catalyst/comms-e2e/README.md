@@ -140,9 +140,18 @@ The LiveKit SDK brings libwebrtc, which stays out of this workspace.
 |---|---|---|
 | `pulse` | Smoke, refusal codes, the authentication timeout, rate limits, the same-wallet race, the handshake swarm, churn, a realm round trip, the emote lifecycle, resync requests, stall and resume, the scene listener, bursts over WebTransport | Pulse. All but the last run on either transport (`--transport`). |
 | `connections` | The full stack for one wallet, a second device (Pulse ends the older one; the archipelago keeps one socket per session key and leaves the older socket open), a stale socket, assignment order, mints under churn, ban eviction, credentials across a restart, two LiveKit joins with one identity | The API, and LiveKit for the joins |
-| `explorer` | An uplink stall while teleporting, off the north edge of the grid, off the east edge, a stale archipelago socket, an unreachable Pulse port, two explorers with one wallet and one signing key, packets from Pulse out of order. Probes (`probe`): another device of the explorer's wallet signing in after it or before it, an uplink stall longer than the transport waits, a reconnect outside the grid | The API and a headless explorer build |
+| `explorer` | An uplink stall while teleporting, off the north edge of the grid, off the east edge, a stale archipelago socket, an unreachable Pulse port, two explorers with one wallet and one signing key, packets from Pulse out of order. Probes (`probe`): another device of the explorer's wallet signing in after it or before it, an uplink stall longer than the transport waits, a reconnect outside the grid. The uplink over a slow path (`uplink`): the check of the uplink measure on a plain link, a walk at an 800 ms and at a 1.2 s round trip, a walk for a minute on a lossy link, an uplink stall that queues at a 1.2 s and at a 2 s round trip | The API and a headless explorer build |
 
 Races repeat by default and take their order and gaps from the seed, so a failure replays.
+
+The `uplink` scenarios walk the explorer back and forth and read its movement from the Pulse
+link's history, not from the explorer: datagrams of 20 bytes or more are messages (movement while
+it walks), smaller ones the transport's own. A gap between two of them longer than one and a half
+beats of the walk (and 180 ms) is a silence. Each scenario walks on the plain link first, as its
+own control, and samples `/pulse_state` while it walks, so a report puts each silence beside what
+the explorer said its uplink gate did. The measure cannot tell movement from another message of
+the same size, nor a silence a long frame made from one the gate made: the readout says which.
+`explorer-uplink-cadence` checks the measure itself, walking and then standing still.
 
 ### What the explorer answers
 
@@ -152,10 +161,10 @@ they use and the shape of each answer:
 | Command | Answer |
 |---|---|
 | `/world_state` | JSON: `inWorld`, `address`, `realmName`, `position` (`[x, y, z]`), `outOfWorld`, `arrivals` |
-| `/pulse_state` | JSON: `state` (`authenticated`, `connecting`, `waiting`, `terminal disconnect`, …), `resyncs`, traffic per second |
+| `/pulse_state` | JSON: `state` (`authenticated`, `connecting`, `waiting`, `terminal disconnect`, …), `resyncs`, traffic per second, and `uplink`: `stalled`, `held` (teleport, emote, input), `unacknowledgedReliable`, `probes` |
 | `/connectivity_state` | JSON: `rooms`, each with a `scope` (`realm`, `private_chat`) and a `state` (`connected`, `connecting`, `identity_conflict`, …) |
 | `/transport_state` | JSON: `total` and `transports`, each with a `type` (`Pulse`, `Archipelago`) and its `players` |
-| `/move_player_to x y z` | Text. Moves the player at once, which Pulse sees as a teleport. Preview mode only, so the scenarios that move the player start the explorer with `--preview`. |
+| `/move_player_to x y z [seconds]` | Text. Moves the player at once, which Pulse sees as a teleport, or over the seconds given, which it sees as movement. Preview mode only, so the scenarios that move the player start the explorer with `--preview`. |
 | `/connected_players`, `/player_position`, `/get_user_data` | Text |
 
 A player in the headless explorer cannot play an emote from the console, so the emote limits are

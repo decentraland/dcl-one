@@ -5,6 +5,7 @@ pub mod connections_support;
 pub mod crowd;
 pub mod crowd_discovery;
 pub mod explorer;
+pub mod explorer_uplink;
 pub mod livekit;
 pub mod pulse;
 pub mod support;

@@ -34,9 +34,12 @@ pub fn all() -> Vec<&'static Scenario> {
         &LONG_UPLINK_STALL,
         &RECONNECT_OUTSIDE_GRID,
     ]
+    .into_iter()
+    .chain(crate::scenarios::explorer_uplink::all())
+    .collect()
 }
 
-const NEEDS: Needs = Needs {
+pub(super) const NEEDS: Needs = Needs {
     api: true,
     explorer: true,
     ..Needs::NONE
@@ -189,13 +192,13 @@ const LONG_OUTAGE: Duration = Duration::from_secs(8);
 const CONSOLE_TICK: Duration = Duration::from_millis(200);
 
 /// The explorer under test, the links in front of it and what it says about itself.
-struct Subject {
-    fronts: Fronts,
-    explorer: Explorer,
-    wallet: String,
+pub(super) struct Subject {
+    pub(super) fronts: Fronts,
+    pub(super) explorer: Explorer,
+    pub(super) wallet: String,
     /// The realm the explorer announces to Pulse.
-    realm: String,
-    position: [f32; 3],
+    pub(super) realm: String,
+    pub(super) position: [f32; 3],
 }
 
 /// A wallet seed no other run, scenario or repeat uses: explorers all enter the realm the stack
@@ -214,7 +217,7 @@ fn vector(value: &Value) -> Option<[f32; 3]> {
     ])
 }
 
-async fn start(ctx: &Ctx, preview: bool) -> Result<Subject> {
+pub(super) async fn start(ctx: &Ctx, preview: bool) -> Result<Subject> {
     start_seeded(ctx, preview, wallet_seed(ctx, 0)).await
 }
 
@@ -349,7 +352,7 @@ async fn pulse_stays(ctx: &Ctx, explorer: &Explorer, what: &str, window: Duratio
 }
 
 /// A bot standing next to the explorer, in its realm, that has seen it.
-async fn observer(ctx: &Ctx, subject: &Subject) -> Result<PulseBot> {
+pub(super) async fn observer(ctx: &Ctx, subject: &Subject) -> Result<PulseBot> {
     let bot = PulseBot::enter(ctx, "observer", &ctx.identity(0)).await?;
     let beside = [subject.position[0] + 2.0, 0.0, subject.position[2] + 2.0];
     bot.teleport(&subject.realm, beside)?;
@@ -1227,7 +1230,7 @@ async fn listed(ctx: &Ctx, wallet: &str) -> Value {
 }
 
 /// The last `count` lines of the explorer's log that contain `needle`.
-fn last_log_lines(explorer: &Explorer, needle: &str, count: usize) -> Vec<String> {
+pub(super) fn last_log_lines(explorer: &Explorer, needle: &str, count: usize) -> Vec<String> {
     let mut lines = explorer.log_lines(needle);
     let skip = lines.len().saturating_sub(count);
     lines.split_off(skip)

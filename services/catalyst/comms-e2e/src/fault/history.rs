@@ -177,10 +177,25 @@ pub struct Silences {
 }
 
 impl Cadence {
-    /// The threshold a gap must pass to count as a silence: twice the regular beat, and never
-    /// less than `floor`. A sender that sends on a slower beat throughout has no silences.
+    /// The threshold a gap must pass to count as a silence: one and a half regular beats, so a
+    /// beat missed is one, and never less than `floor`. A sender that sends on a slower beat
+    /// throughout has no silences.
     pub fn silence_threshold(&self, floor: Duration) -> Duration {
-        (self.median_gap * 2).max(floor)
+        (self.median_gap * 3 / 2).max(floor)
+    }
+
+    /// What all the gaps last beyond the regular beat, as a share of the spans' length: the
+    /// time the sender was later than its beat, silences or not.
+    pub fn beyond_beat_share(&self) -> f64 {
+        if self.span.is_zero() {
+            return 0.0;
+        }
+        let late: Duration = self
+            .gaps
+            .iter()
+            .map(|gap| gap.length.saturating_sub(self.median_gap))
+            .sum();
+        late.as_secs_f64() / self.span.as_secs_f64()
     }
 
     /// The gaps longer than `longer_than`.
@@ -278,6 +293,13 @@ mod tests {
         assert!(silences.gaps.is_empty());
         assert_eq!(silences.share, 0.0);
         assert_eq!(silences.period, None);
+        assert_eq!(cadence.beyond_beat_share(), 0.0);
+        // one beat missed is a silence
+        let missed = sender(100, 2000, &[(1000, 1100)]);
+        let cadence = super::cadence(&missed, &[(ms(0), ms(2000))], 40);
+        let silences = cadence.silences(cadence.silence_threshold(ms(120)));
+        assert_eq!(silences.gaps.len(), 1);
+        assert_eq!(silences.longest, ms(200));
     }
 
     #[test]
@@ -300,6 +322,7 @@ mod tests {
         // beyond the beat each stop lasts 200 ms: 1.8 s of 8 s
         assert_eq!(silences.silent, ms(1800));
         assert!((silences.share - 0.225).abs() < 1e-9, "{}", silences.share);
+        assert!((cadence.beyond_beat_share() - 0.225).abs() < 1e-9);
     }
 
     #[test]

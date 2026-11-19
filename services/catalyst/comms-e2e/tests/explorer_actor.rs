@@ -311,6 +311,52 @@ async fn a_child_that_never_opens_its_console_fails_at_the_deadline_and_is_gone(
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn every_explorer_scenario_is_registered_with_its_tags_guards_and_summary() {
+    let all = catalyst_comms_e2e::scenarios::explorer::all();
+    let names: std::collections::HashSet<&str> = all.iter().map(|scenario| scenario.name).collect();
+    assert_eq!(names.len(), all.len(), "names are unique");
+    assert_eq!(all.len(), 17);
+    let uplink = [
+        "explorer-uplink-cadence",
+        "explorer-walk-800ms-round-trip",
+        "explorer-walk-1200ms-round-trip",
+        "explorer-walk-lossy-link",
+        "explorer-queued-stall-1200ms-round-trip",
+        "explorer-queued-stall-2000ms-round-trip",
+    ];
+    let registry = catalyst_comms_e2e::scenarios::registry();
+    for scenario in &all {
+        assert!(scenario.tags.contains(&"explorer"), "{}", scenario.name);
+        assert!(scenario.needs.explorer, "{}", scenario.name);
+        assert!(
+            !scenario.guards.is_empty(),
+            "{} names no guard",
+            scenario.name
+        );
+        assert!(
+            !scenario.summary.is_empty(),
+            "{} has no summary",
+            scenario.name
+        );
+        assert!(
+            !scenario.hostile,
+            "{} only disturbs the link",
+            scenario.name
+        );
+        assert_eq!(
+            scenario.tags.contains(&"uplink"),
+            uplink.contains(&scenario.name),
+            "{}",
+            scenario.name
+        );
+        assert!(registry.iter().any(|known| known.name == scenario.name));
+    }
+    for name in uplink {
+        assert!(names.contains(name), "{name} is missing");
+    }
+}
+
 #[tokio::test]
 async fn without_an_explorer_in_the_stack_file_the_actor_says_so() {
     let ctx = ctx(support::stack_at("127.0.0.1:9".parse().unwrap()), "none");
