@@ -1811,7 +1811,7 @@ without parcels once the index head is newer than the listing. The index
 reads run only on a published land-authz snapshot. The refresh route
 (`PATCH /v1/rentals-listings/{id}`) applies the fold and the same cancellation
 rules to one listing, using the asset row that the marketplace subgraph reader
-returned.
+returned when that row is newer than `rental_assets.nft_updated_at`.
 
 Workload: mainnet holds thousands of listings, of which hundreds are open
 (an estimate, not a measurement). Each pass does the following:
@@ -1827,11 +1827,12 @@ Workload: mainnet holds thousands of listings, of which hundreds are open
 Invariants:
 
 - `cancel_reason` is NULL unless the status is `cancelled` (a row `CHECK`).
-- A cancellation for an unknown cause keeps NULL. This covers rows imported
-  from signatures-server, which records no cause, and rows that the fold
-  cancelled before the column existed.
+- A cancellation with no recorded cause keeps NULL. Rows imported from
+  signatures-server, which records no cause, are of this kind.
 - The fold reopens a cancelled listing only when its reason is `nonce`. Any
-  reason gives way to a rent of the listing.
+  reason gives way to a rent of the listing: an incremental fold also
+  revisits a cancelled listing whose own `rented` log is past its block, one
+  `rental_event_signature_idx` probe per cancelled listing of the venue.
 - A cancellation that is not a nonce move is never undone, so an unknown never
   cancels. No published index, no indexed token, or an indexed transfer older
   than the listing all leave the listing open.

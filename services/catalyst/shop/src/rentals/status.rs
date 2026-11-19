@@ -226,7 +226,9 @@ pub async fn run_pass(
 /// The refresh route's status sync of one listing: its own Rentals logs
 /// first (while the rentals index is published), then, if it is still
 /// open, expiry and the asset row the route has just read (`nft`; `None`
-/// when the reader found no such token, which decides nothing).
+/// when the reader found no such token, which decides nothing). The asset
+/// row counts only when its `updated_at` is newer than the stored
+/// `rental_assets.nft_updated_at`, which the route refreshes after this.
 pub async fn sync_listing(
     pool: &PgPool,
     id: Uuid,
@@ -247,8 +249,11 @@ pub async fn sync_listing(
     }
     let row = sqlx::query(
         "SELECT r.status::text AS status, r.expiration < $2 AS expired, l.lessor, \
-                r.contract_address, r.token_id::text AS token_id \
-         FROM signatures.rentals r JOIN signatures.rental_listings l ON l.id = r.id WHERE r.id = $1",
+                r.contract_address, r.token_id::text AS token_id, \
+                extract(epoch FROM a.nft_updated_at)::bigint AS stored_at \
+         FROM signatures.rentals r JOIN signatures.rental_listings l ON l.id = r.id \
+         JOIN signatures.rental_assets a ON a.contract_address = r.contract_address AND a.token_id = r.token_id \
+         WHERE r.id = $1",
     )
     .bind(id)
     .bind(now.naive_utc())
@@ -261,6 +266,10 @@ pub async fn sync_listing(
         return Ok(());
     }
     let lessor: String = row.get("lessor");
+    // The asset row decides only when it is newer than the stored one: a
+    // reader answering from an older block must not close the listing.
+    let stored_at: i64 = row.get("stored_at");
+    let nft = nft.filter(|n| n.updated_at > stored_at);
     let owner = nft.map(|n| n.owner_address.as_str());
     let custody: Option<String> = match owner {
         Some(o) if rentals_ready && o.eq_ignore_ascii_case(&venue) => {
@@ -525,7 +534,8 @@ mod tests {
             adjacent_to_road: None,
             estate_size,
             created_at: 0,
-            updated_at: 0,
+            // Newer than the seeded `nft_updated_at`.
+            updated_at: Utc::now().timestamp() + 60,
         };
         let now = Utc::now();
 
@@ -539,6 +549,16 @@ mod tests {
             state_of(pool, held).await,
             open(),
             "no asset row decides nothing"
+        );
+        let older = LandNft {
+            updated_at: 1_600_000_000,
+            ..row(OTHER, "parcel", None)
+        };
+        sync_listing(pool, held, Some(&older), now).await.unwrap();
+        assert_eq!(
+            state_of(pool, held).await,
+            open(),
+            "an asset row older than the stored one decides nothing"
         );
         sync_listing(pool, held, Some(&row(OTHER, "parcel", None)), now)
             .await
@@ -617,6 +637,36 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(state_of(pool, bumped).await, cancelled(index::CANCEL_NONCE));
+
+        // A rent of the expired listing indexed after its cancellation
+        // executes it.
+        let rent = index::decode_log(
+            &index::tests::rented_log(
+                LAND_REGISTRY_MAINNET,
+                alloy_primitives::U256::from(2u8),
+                LESSOR,
+                OTHER,
+                7,
+                alloy_primitives::U256::from(5u8),
+                &[3u8; 65],
+                50,
+                1,
+            ),
+            1_700_000_000,
+        )
+        .unwrap()
+        .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        index::insert_events(
+            &mut conn,
+            crate::market::chain_walk::ChainNet::Ethereum,
+            &[rent],
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        sync_listing(pool, stale, None, Utc::now()).await.unwrap();
+        assert_eq!(state_of(pool, stale).await, ("executed".into(), None));
         db.drop().await;
     }
 }

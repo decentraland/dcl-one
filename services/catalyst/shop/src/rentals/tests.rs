@@ -821,6 +821,26 @@ async fn create_refresh_and_list_over_the_stub_subgraph() {
         "signed over the route-local path behind the proxy's x-original-path: {out}"
     );
 
+    // Refresh after a transfer: a newer reader row with another owner
+    // cancels the listing, and the route answers the synced status.
+    *graph.answer.lock().unwrap() = nft_row(&format!("0x{}", "c3".repeat(20)), "parcel", None);
+    graph.answer.lock().unwrap()["data"]["nfts"][0]["updatedAt"] = json!("1700000100");
+    let state6 = state_over(
+        pool.clone(),
+        Some(market_with(Some(graph.url.clone()))),
+        true,
+    );
+    let (status, _, out) = send(
+        router(state6),
+        "PATCH",
+        &format!("/v1/rentals-listings/{id}"),
+        vec![],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(out["data"]["status"], "cancelled", "{out}");
+
     cleanup(&pool, &[token]).await;
 }
 

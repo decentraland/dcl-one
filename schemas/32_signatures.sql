@@ -55,9 +55,9 @@ CREATE TABLE signatures.rentals (
     -- Why a cancelled listing closed: `nonce` (the rentals index saw a signed
     -- nonce move), `transferred` (the lessor no longer holds the asset),
     -- `dissolved` (an estate without parcels), `expired`. NULL on every other
-    -- status, and on a cancellation whose cause is unknown (rows imported or
-    -- cancelled before the reason was kept). Only a `nonce` cancellation may
-    -- reopen, when a rebuild of the index no longer sees the nonce move.
+    -- status, and on a cancellation with no recorded cause (an imported row).
+    -- Only a `nonce` cancellation may reopen, when a rebuild of the index no
+    -- longer sees the nonce move; a rent of the listing overrides any reason.
     cancel_reason text,
     FOREIGN KEY (contract_address, token_id) REFERENCES signatures.rental_assets(contract_address, token_id) ON DELETE CASCADE,
     CONSTRAINT rentals_nonces_three CHECK (array_length(nonces, 1) = 3),

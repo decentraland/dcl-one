@@ -291,7 +291,10 @@ pub async fn insert_events(
 /// The verdict of every touched listing of the venue: the listings whose
 /// asset, lessor or contract index saw an event past `$1` (every listing of
 /// the venue when `$1 < 0`, the rebuild, which also revisits closed rows so
-/// a reorg's rewind restores what the remaining log says). `$2` is the
+/// a reorg's rewind restores what the remaining log says). An incremental
+/// fold also revisits a cancelled listing whose own rent is past `$1`
+/// (`rental_event_signature_idx`): a rent indexed after an expiry or
+/// transfer cancellation still executes it. `$2` is the
 /// Rentals address, lowercase; the nonces are `[contract, signer, asset]`.
 /// `$3`, when set, narrows it to one listing (the refresh route).
 const VERDICT_SQL: &str = "
@@ -302,7 +305,10 @@ WITH listing AS (
            l.lessor, l.tenant
     FROM signatures.rentals r JOIN signatures.rental_listings l ON l.id = r.id
     WHERE upper(r.network) = 'ETHEREUM' AND r.rental_contract_address = $2
-      AND ($1 < 0 OR r.status IN ('open', 'executed'))
+      AND ($1 < 0 OR r.status IN ('open', 'executed')
+           OR (r.status = 'cancelled' AND EXISTS (
+               SELECT 1 FROM shop.rental_event e WHERE e.signature = lower(r.signature) AND e.kind = 'rented'
+                 AND e.network = 'ethereum' AND e.rentals_address = $2 AND e.block_number > $1)))
       AND ($3::uuid IS NULL OR r.id = $3)
 ),
 touched AS (
@@ -1288,7 +1294,8 @@ pub(crate) mod tests {
             );
         }
 
-        // A rent of a transfer-cancelled listing is the chain's truth.
+        // A rent of a transfer-cancelled listing is the chain's truth, on an
+        // incremental fold too.
         let mut conn = pool.acquire().await.unwrap();
         insert_events(
             &mut conn,
@@ -1308,7 +1315,10 @@ pub(crate) mod tests {
         .await
         .unwrap();
         drop(conn);
-        assert_eq!(fold(&pool, &venue, None, Utc::now()).await.unwrap(), 1);
+        assert_eq!(
+            fold(&pool, &venue, Some(9_110), Utc::now()).await.unwrap(),
+            1
+        );
         assert_eq!(reason_of(transferred).await, ("executed".into(), None));
 
         sqlx::query(
