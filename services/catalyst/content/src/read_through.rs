@@ -735,6 +735,7 @@ impl Upstream {
             .send()
             .await?
             .error_for_status()?;
+        let resp = crate::sync_types::refuse_redirect(resp, "/entities/active")?;
         match read_json(resp).await? {
             Value::Array(docs) => Ok(docs),
             _ => Err(SyncError::Other(
@@ -757,10 +758,12 @@ impl Upstream {
                 .send()
                 .await
                 .and_then(reqwest::Response::error_for_status)
+                .map_err(SyncError::from)
+                .and_then(|resp| crate::sync_types::refuse_redirect(resp, "/audit"))
             {
                 Ok(resp) => resp,
                 Err(e) => {
-                    last = e.into();
+                    last = e;
                     continue;
                 }
             };

@@ -133,6 +133,21 @@ impl From<crate::http::SendError> for SyncError {
     }
 }
 
+/// `resp`, or an error naming `what` when it is a redirect: the sync client
+/// follows none, and a JSON read refuses it instead of parsing its body.
+pub(crate) fn refuse_redirect(
+    resp: reqwest::Response,
+    what: &str,
+) -> Result<reqwest::Response, SyncError> {
+    if resp.status().is_redirection() {
+        return Err(SyncError::Other(format!(
+            "{what}: refusing to follow a {} redirect",
+            resp.status()
+        )));
+    }
+    Ok(resp)
+}
+
 impl SyncError {
     /// The reason a failed deployment is recorded under.
     pub fn failure_reason(&self) -> FailureReason {

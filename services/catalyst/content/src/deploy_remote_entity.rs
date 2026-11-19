@@ -761,39 +761,11 @@ pub(crate) async fn fetch_verified(
 mod tests {
     use super::*;
 
-    /// A loopback peer whose `/{redirect}` answers 302 to `target(port)`, and
-    /// the number of requests the redirect target received.
-    async fn redirecting_peer(
-        redirect: &'static str,
-        target: impl Fn(u16) -> String + Send + Sync + 'static,
-    ) -> (u16, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
-        use axum::routing::get;
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let counted = hits.clone();
-        let location = target(port);
-        let app = axum::Router::new()
-            .route(
-                redirect,
-                get(move || async move { axum::response::Redirect::temporary(&location) }),
-            )
-            .route(
-                "/target",
-                get(move || async move {
-                    counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    "[]"
-                }),
-            );
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        (port, hits)
-    }
-
     #[tokio::test]
     async fn the_sync_client_dials_private_addresses_only_for_configured_sources() {
         let hash = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenosa7776";
         // `peer.localhost` answers the loopback without DNS and is no configured source.
-        let (port, hits) = redirecting_peer("/contents/{hash}", |port| {
+        let (port, hits) = crate::sync_test_support::redirecting_peer("/contents/{hash}", |port| {
             format!("http://peer.localhost:{port}/target")
         })
         .await;
@@ -828,7 +800,7 @@ mod tests {
     #[tokio::test]
     async fn a_snapshot_list_is_never_followed_through_a_redirect() {
         // A same-origin target on a configured source: only the redirect policy refuses it.
-        let (port, hits) = redirecting_peer("/snapshots", |port| {
+        let (port, hits) = crate::sync_test_support::redirecting_peer("/snapshots", |port| {
             format!("http://localhost:{port}/target")
         })
         .await;
@@ -853,7 +825,9 @@ mod tests {
     #[tokio::test]
     async fn a_file_download_redirect_to_a_private_address_is_refused() {
         use crate::http::{PublicAddressResolver, ReservedNamesResolver};
-        // Every name answers the loopback, as a public-looking name can.
+        // Every name the peer's client asks answers the loopback, as a
+        // public-looking name can; a hop to another origin goes through a client
+        // that trusts no name, so `.invalid` keeps it off real DNS.
         let loopback = ReservedNamesResolver::over(|_| {
             Box::pin(async {
                 let addrs = [std::net::SocketAddr::from(([127, 0, 0, 1], 0))];
@@ -870,10 +844,11 @@ mod tests {
             .unwrap();
         let hash = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenosa7776";
         for target in [
-            |port: u16| format!("http://public.example:{port}/target"),
+            |port: u16| format!("http://public.invalid:{port}/target"),
             |port: u16| format!("http://127.0.0.1:{port}/target"),
         ] {
-            let (port, hits) = redirecting_peer("/contents/{hash}", target).await;
+            let (port, hits) =
+                crate::sync_test_support::redirecting_peer("/contents/{hash}", target).await;
             let server = format!("http://peer.example:{port}");
             assert!(
                 fetch_verified(&client, hash, &server, 0, None)

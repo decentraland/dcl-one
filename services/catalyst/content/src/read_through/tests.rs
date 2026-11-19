@@ -1075,3 +1075,54 @@ fn a_long_key_enters_the_negative_cache_as_its_digest() {
     assert_eq!(key, negative_key(&long));
     assert_ne!(key, negative_key(&"b".repeat(10_000)));
 }
+
+#[tokio::test]
+async fn upstream_json_reads_refuse_a_redirect() {
+    let (storage, tmp) = temp_storage("redirect").await;
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .connect_lazy("postgres://nobody@127.0.0.1:1/nowhere")
+        .unwrap();
+    for path in ["/entities/active", "/audit/scene/{id}"] {
+        // A same-origin target on a configured source: only the refusal stops it.
+        let (port, hits) = crate::sync_test_support::redirecting_peer(path, |port| {
+            format!("http://localhost:{port}/target")
+        })
+        .await;
+        let server = format!("http://localhost:{port}");
+        let config = crate::config::Config::parse_for_tests(&[
+            "x",
+            "--database-url",
+            "postgres:///catalyst",
+            "--sync-source",
+            &server,
+        ])
+        .unwrap();
+        let read_through = ReadThrough::new(
+            pool.clone(),
+            storage.clone(),
+            crate::sync::sync_http_client(&config).unwrap(),
+            vec![server.clone()],
+            None,
+            Fills::new(1, Duration::from_secs(1)),
+            SyncValidation::AuthChainOnly,
+        );
+        let upstream = &read_through.upstream;
+        let err = if path == "/entities/active" {
+            upstream
+                .active_upstream(&server, true, &["bafy".to_string()])
+                .await
+                .unwrap_err()
+        } else {
+            upstream
+                .audit_chain(std::slice::from_ref(&server), "scene", "bafy")
+                .await
+                .unwrap_err()
+        };
+        assert!(
+            matches!(&err, SyncError::Other(e) if e.contains("refusing to follow")),
+            "{path}: {err:?}"
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0, "{path}");
+    }
+    let _ = std::fs::remove_dir_all(tmp);
+}
