@@ -427,6 +427,8 @@ export function registerBevyRenderer(): void {
           // A rebooted agent starts with editing on; restate the Interact toggle so
           // it neither draws the gizmo nor intercepts clicks while Interact is on.
           cameraBridge.setEditingEnabled(bevy.interaction.isEditingEnabled());
+          // Its boot also pinned the day clock at noon, which a running scene must not keep.
+          forwardBridge?.syncSceneClock();
         },
       });
       // The player's avatar is hidden while the scene is stopped and the user drives

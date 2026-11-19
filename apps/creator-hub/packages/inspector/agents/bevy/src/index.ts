@@ -254,6 +254,12 @@ async function boot(): Promise<void> {
   void sceneUi.reassert();
   await autoLogin();
   const sceneLocalCenter = await pinInspectedScene();
+  // Freeze the day/night clock at noon so the skybox doesn't drift into night
+  // while the scene sits open (the day/night clock advances with the wall clock
+  // even while the scene is frozen — freezing the SCENE doesn't freeze TIME).
+  // Before `editor-ready`: the host answers that with the clock a running scene
+  // needs (syncSceneClock in forward-edits.ts), which this pin must not undo.
+  await pinSkyboxTime();
   // Announce we're listening + the scene offset is known, so the host (re)sends
   // one-shot pushed state — the spawn areas especially. This MUST come AFTER
   // pinInspectedScene: it sets the scene→world offset the agent adds when placing
@@ -286,10 +292,6 @@ async function boot(): Promise<void> {
   // block avatar walking (bevy-editor walks while frozen).
   if (!ENGINE_AUTO_FREEZES_EDITOR_SCENE) await setSceneFrozen(true);
   else await sceneUi.reassert();
-  // Freeze the day/night clock at noon so the skybox doesn't drift into night
-  // while the scene sits open (the day/night clock advances with the wall clock
-  // even while the scene is frozen — freezing the SCENE doesn't freeze TIME).
-  await pinSkyboxTime();
 }
 
 /**
@@ -361,8 +363,9 @@ async function applyFreeze(frozen: boolean): Promise<void> {
  * (real-seconds → in-world advance); `speed 0` freezes it. Noon (12h) gives even,
  * neutral lighting. This targets the shared global TimeKeeper, so it affects the
  * whole editor view. A stopped clock also overrides a scene's SkyboxTime and
- * scene.json fixed time; the host's forward bridge runs the clock again on Play
- * and pins it on Stop/Pause (applySceneLighting in forward-edits.ts). Best-effort:
+ * scene.json fixed time; the host's forward bridge runs the clock again on Play,
+ * or when this boot finds the scene already running, and pins it on Stop/Pause
+ * (applySceneLighting and syncSceneClock in forward-edits.ts). Best-effort:
  * a failure just leaves the clock running.
  */
 async function pinSkyboxTime(): Promise<void> {

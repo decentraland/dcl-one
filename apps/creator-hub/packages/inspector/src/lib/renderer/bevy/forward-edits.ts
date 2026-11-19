@@ -146,15 +146,14 @@ export interface ForwardEditBridgeOptions {
   /**
    * Whether the scene is currently frozen (paused). Read when forwarding arms so
    * animations that loaded playing are paused to match the editor's default-frozen
-   * state (#1382), and to decide whether editor Placeholders are shown (only while
-   * frozen). Defaults to frozen (the editor boots static).
+   * state (#1382). Defaults to frozen (the editor boots static).
    */
   isFrozen?: () => boolean;
   /**
    * Whether the scene is frozen at its initial state: since it loaded or was
    * stopped, before any Play. While stopped the viewport keeps the editor's
-   * lighting (see applySceneLighting); a Pause is frozen but not stopped, so it
-   * keeps the scene's own. Defaults to `isFrozen`.
+   * lighting (see applySceneLighting) and shows editor Placeholders; a Pause is
+   * frozen but not stopped, so it keeps what Play showed. Defaults to `isFrozen`.
    */
   isStopped?: () => boolean;
   /**
@@ -197,9 +196,13 @@ export interface ForwardEditBridge {
   /** Apply the scene run/freeze toggle to what the engine renders: pause
    * (frozen=true) or resume (false) time-based playback by forwarding each
    * Animator/video/audio/particle component with its paused override or the
-   * authored value (#1382), and show editor Placeholders only while frozen, so
-   * Play shows the scene as players will see it. */
+   * authored value (#1382). Play also swaps editor Placeholders for what the scene
+   * has, so it shows the scene as players will see it, and a Pause keeps that. */
   setSceneFrozen(frozen: boolean): void;
+  /** Run the day clock again when the scene is running. Call once the editor agent
+   * is ready: its boot pins the clock at noon, also under a scene that is playing
+   * (an engine reboot while playing, or a Play pressed while the agent logged in). */
+  syncSceneClock(): void;
   /** Re-evaluate which camera-attached entities are hidden (see
    * `hideCameraAttachments`). Call when its inputs change: the camera mode or the
    * run state. */
@@ -264,9 +267,10 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
         }
       }
     }
-    // A reloaded or rebooted engine has no placeholder GLTFs, so a running scene
-    // needs nothing removed.
-    if (isFrozen()) {
+    // A reloaded or rebooted engine has no placeholder GLTFs, so a scene that is
+    // running or paused needs nothing removed.
+    placeholdersShown = false;
+    if (isStopped()) {
       for (const [entity] of context.engine.getEntitiesWith(context.editorComponents.Placeholder)) {
         forwardPlaceholder(entity, false);
       }
@@ -305,10 +309,15 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
     // playing — pause them to match the frozen state (setPlaybackFrozen forwards
     // playing:false; the toolbar toggle later resumes/re-pauses).
     if (isFrozen()) setPlaybackFrozen(true);
+    // The scene's code ran again from the saved composite: from here on, a parent
+    // or AvatarAttach that differs from these is an edit made in the inspector.
+    captureLoadedAttachments();
     // What the scene's code made in main() (camera attachments, root lighting) is
     // only in the engine. The first load and a Stop both land here, so both keep
     // the editor's lighting and hide the attachments the same way.
     void scanEngineScene();
+    // A Play pressed before forwarding armed never reached the clock.
+    syncSceneClock();
   };
 
   // Arm after a delay so the initial CRDT load burst is not forwarded (see
@@ -397,25 +406,28 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
   // Placeholder component, so translate it to a `GltfContainer` pointed at the
   // placeholder src. Editor-only: the CRDT keeps just the Placeholder component,
   // so preview (which ignores editor components) never shows it — and neither
-  // does Play: the placeholder shows only while the scene is frozen.
+  // does Play or a Pause, which keeps what Play showed: the placeholder shows only
+  // while the scene is stopped.
   //
   // An entity can also carry an AUTHORED GltfContainer: the invisible smart items
   // pair a collider-only model (nothing to see, so nothing to click) with a
-  // Placeholder. The engine holds one GltfContainer per entity, so while frozen
+  // Placeholder. The engine holds one GltfContainer per entity, so while stopped
   // the placeholder replaces the authored model, and Play forwards the authored
-  // model back. This only sees the editor's data: a GltfContainer that scene code
-  // adds to a Placeholder entity at runtime is replaced on Pause and removed on
-  // the next Play, until Stop reloads the scene.
+  // model back, colliders included. A Pause changes nothing: the invisible wall
+  // stays invisible and keeps blocking the player.
   const GLTF_CONTAINER = 'core::GltfContainer';
-  const shownPlaceholderSrc = (entity: Entity, frozen = isFrozen()): string | null => {
-    if (!frozen) return null;
+  // Whether the engine may hold placeholder GLTFs that the next Play must swap out.
+  let placeholdersShown = false;
+  const shownPlaceholderSrc = (entity: Entity, stopped = isStopped()): string | null => {
+    if (!stopped) return null;
     const placeholder = context.editorComponents.Placeholder.getOrNull(entity) as {
       src?: string;
     } | null;
     return placeholder?.src || null;
   };
-  const forwardPlaceholder = (entity: Entity, deleted: boolean, frozen = isFrozen()) => {
-    const src = deleted ? null : shownPlaceholderSrc(entity, frozen);
+  const forwardPlaceholder = (entity: Entity, deleted: boolean, stopped = isStopped()) => {
+    const src = deleted ? null : shownPlaceholderSrc(entity, stopped);
+    if (src) placeholdersShown = true;
     enqueue(entity, async () => {
       await ensureInstantiated(entity);
       const authored = (
@@ -447,8 +459,11 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
   // The editor's ECS only holds the authored composite; entities the scene's code
   // creates (a flashlight parented to the camera in main()) exist only in the
   // engine, so their parents and attachments come from its snapshot
-  // (engineScene, refreshed by scanEngineScene). Where both know an entity, the
-  // editor's data wins: it carries edits the frozen snapshot does not show yet.
+  // (engineScene, refreshed by scanEngineScene). The scene's code can also attach
+  // an authored entity (main() parents a torch from the composite to the camera),
+  // so where both know an entity the engine's data is used, unless the entity's
+  // parent or AvatarAttach was edited in the inspector since the scene loaded:
+  // the frozen snapshot does not show that edit yet (loadedAttachments).
   let hiddenCameraAttachments = new Set<Entity>();
   // Each entity's Transform parent as of the last scan, so a Transform write that
   // keeps its parent (a move) skips the rescan. Empty while not hiding.
@@ -457,25 +472,44 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
   const AVATAR_ATTACH = 'core::AvatarAttach';
   const isEditorEntity = (entity: Entity) =>
     context.Name.getOrNull(entity) != null || context.Transform.getOrNull(entity) != null;
+  const editorLocalAvatarAttached = (): Set<Entity> => {
+    const attached = new Set<Entity>();
+    const avatarAttach = context.getForwardableComponent(AVATAR_ATTACH);
+    if (!avatarAttach) return attached;
+    for (const [entity, value] of context.engine.getEntitiesWith(avatarAttach)) {
+      if ((value as { avatarId?: string } | null)?.avatarId == null) attached.add(entity);
+    }
+    return attached;
+  };
+  // The editor's parents and local AvatarAttach entities as of the last scene load.
+  let loadedAttachments = {
+    parents: new Map<Entity, Entity | undefined>(),
+    localAvatarAttached: new Set<Entity>(),
+  };
+  const captureLoadedAttachments = () => {
+    const parents = new Map<Entity, Entity | undefined>();
+    for (const [entity, transform] of context.engine.getEntitiesWith(context.Transform)) {
+      parents.set(entity, transform.parent);
+    }
+    loadedAttachments = { parents, localAvatarAttached: editorLocalAvatarAttached() };
+  };
   const findCameraAttachments = (): Set<Entity> => {
     const parents = new Map<Entity, Entity | undefined>();
     knownParents = parents;
     if (!hideCameraAttachments()) return new Set();
     for (const [entity, parent] of engineScene.parents) parents.set(entity, parent);
     for (const [entity, transform] of context.engine.getEntitiesWith(context.Transform)) {
-      parents.set(entity, transform.parent);
+      const edited =
+        !loadedAttachments.parents.has(entity) ||
+        loadedAttachments.parents.get(entity) !== transform.parent;
+      if (edited || !engineScene.parents.has(entity)) parents.set(entity, transform.parent);
     }
-    const localAvatarAttached = new Set<Entity>();
+    const editorAttached = editorLocalAvatarAttached();
+    const localAvatarAttached = new Set<Entity>(editorAttached);
     for (const entity of engineScene.localAvatarAttached) {
-      if (!isEditorEntity(entity)) localAvatarAttached.add(entity);
-    }
-    const avatarAttach = context.getForwardableComponent(AVATAR_ATTACH);
-    if (avatarAttach) {
-      for (const [entity, value] of context.engine.getEntitiesWith(avatarAttach)) {
-        if ((value as { avatarId?: string } | null)?.avatarId == null) {
-          localAvatarAttached.add(entity);
-        }
-      }
+      const edited =
+        loadedAttachments.localAvatarAttached.has(entity) !== editorAttached.has(entity);
+      if (!isEditorEntity(entity) || !edited) localAvatarAttached.add(entity);
     }
     return findPlayerAttachments(
       parents,
@@ -589,6 +623,13 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
         onError('time', error);
       }
     });
+  };
+  // The agent's boot pins the clock at noon (pinSkyboxTime). When that lands under
+  // a scene that is already running, nothing else would start the clock again.
+  const syncSceneClock = () => {
+    if (isStopped() || isFrozen()) return;
+    editorLightingShown = false;
+    resumeSceneClock();
   };
   // Pause: stop the day cycle where the sky is. `/time` with no arguments replies
   // with the current time in seconds (`elapsed: <s>`), and speed 0 holds it there.
@@ -728,8 +769,8 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
         // unless Hidden) — overriding any authored VisibilityComponent{false}.
         forwardEditorVisibility(entity);
         // A new entity that carries a Placeholder — render its placeholder GLTF (a
-        // dropped Trigger Area, an invisible wall etc.) while frozen.
-        if (isFrozen() && context.editorComponents.Placeholder.getOrNull(entity) != null) {
+        // dropped Trigger Area, an invisible wall etc.) while stopped.
+        if (isStopped() && context.editorComponents.Placeholder.getOrNull(entity) != null) {
           forwardPlaceholder(entity, false);
         }
         return;
@@ -765,7 +806,7 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
       // Deferred (custom/schema) components: skip rather than mis-address them.
       if (!engineName) return;
 
-      // While frozen a placeholder stands in for the authored model; Play forwards
+      // While stopped a placeholder stands in for the authored model; Play forwards
       // the authored value as it is then (see forwardPlaceholder).
       if (engineName === 'GltfContainer' && shownPlaceholderSrc(entity) != null) return;
 
@@ -968,8 +1009,13 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
 
   const setSceneFrozen = (frozen: boolean) => {
     setPlaybackFrozen(frozen);
-    for (const [entity] of context.engine.getEntitiesWith(context.editorComponents.Placeholder)) {
-      forwardPlaceholder(entity, false, frozen);
+    // Play swaps the placeholders a stopped scene showed for what the scene has. A
+    // Pause, and a Play that follows one, leave the models as they are.
+    if (frozen ? isStopped() : placeholdersShown) {
+      for (const [entity] of context.engine.getEntitiesWith(context.editorComponents.Placeholder)) {
+        forwardPlaceholder(entity, false, frozen);
+      }
+      if (!frozen) placeholdersShown = false;
     }
     if (!shouldForward()) return;
     if (!frozen) {
@@ -1016,6 +1062,7 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
       instantiated.clear();
     },
     setSceneFrozen,
+    syncSceneClock,
     refreshCameraAttachments: () => {
       // Before arming, the arm reconcile applies it once the scene is loaded.
       if (shouldForward()) refreshCameraAttachments();

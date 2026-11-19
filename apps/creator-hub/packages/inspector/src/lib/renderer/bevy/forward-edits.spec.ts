@@ -1347,6 +1347,135 @@ describe('createForwardEditBridge', () => {
       });
     });
 
+    describe('and an invisible item pairs a collider model with a placeholder', () => {
+      let wall: number;
+      const gltfWrites = () =>
+        sent.filter(
+          s =>
+            (s.cmd === 'set_component' || s.cmd === 'delete_component') &&
+            s.args[0] === String(wall) &&
+            s.args[1] === 'GltfContainer',
+        );
+
+      beforeEach(async () => {
+        const GltfContainer = components.GltfContainer(ctx.engine);
+        const entity = ctx.engine.addEntity();
+        wall = entity;
+        ctx.Name.create(entity, { value: 'Invisible Wall' });
+        GltfContainer.create(entity, {
+          src: 'assets/wall_collider.glb',
+          invisibleMeshesCollisionMask: 2,
+        });
+        ctx.editorComponents.Placeholder.create(entity, { src: 'assets/wall.glb' });
+        await ctx.engine.update(1);
+        await drain();
+        play();
+        await drain();
+        sent.length = 0;
+      });
+
+      describe('and the scene is paused after running', () => {
+        beforeEach(async () => {
+          pause();
+          await drain();
+        });
+
+        it('should leave the collider model in place, not the placeholder', () => {
+          expect(gltfWrites()).toEqual([]);
+        });
+
+        describe('and it plays again', () => {
+          beforeEach(async () => {
+            play();
+            await drain();
+          });
+
+          it('should not reload the model', () => {
+            expect(gltfWrites()).toEqual([]);
+          });
+        });
+
+        describe('and the scene is stopped', () => {
+          beforeEach(async () => {
+            stop();
+            await drain();
+          });
+
+          it('should show the placeholder again', () => {
+            expect(gltfWrites().map(s => JSON.parse(s.args[2]).src)).toEqual(['assets/wall.glb']);
+          });
+        });
+      });
+    });
+
+    describe('and the editor agent finishes booting', () => {
+      describe('and the scene is running', () => {
+        beforeEach(async () => {
+          play();
+          await drain();
+          sent.length = 0;
+          bridge.syncSceneClock();
+          await drain();
+        });
+
+        it('should run the day clock again', () => {
+          expect(clock()).toEqual(['--resume']);
+        });
+      });
+
+      describe('and the scene is stopped', () => {
+        beforeEach(async () => {
+          bridge.syncSceneClock();
+          await drain();
+        });
+
+        it('should leave the clock to the editor lighting', () => {
+          expect(clock()).toEqual([]);
+        });
+      });
+    });
+
+    describe('and the scene code parents an authored entity to the camera', () => {
+      let torch: number;
+
+      beforeEach(async () => {
+        const entity = ctx.engine.addEntity();
+        torch = entity;
+        ctx.Name.create(entity, { value: 'Torch' });
+        ctx.Transform.create(entity, {
+          ...IDENTITY,
+          position: { x: 4, y: 1, z: 4 },
+          parent: ctx.engine.RootEntity,
+        });
+        await ctx.engine.update(1);
+        snapshot = {
+          ...NIGHT,
+          [String(entity)]: {
+            Transform: { ...IDENTITY, position: { x: 0, y: 0, z: 0 }, parent: 2 },
+          },
+        };
+        stop();
+        await drain();
+      });
+
+      it('should hide it while stopped with the free camera', () => {
+        expect(lastVisibility(torch)).toBe(false);
+      });
+
+      describe('and the entity is then reparented in the inspector', () => {
+        beforeEach(async () => {
+          const other = ctx.engine.addEntity();
+          ctx.Transform.getMutable(torch as never).parent = other;
+          await ctx.engine.update(1);
+          await drain();
+        });
+
+        it('should show it where the inspector put it', () => {
+          expect(lastVisibility(torch)).toBe(true);
+        });
+      });
+    });
+
     describe('and the scene is stopped and reset (Stop)', () => {
       it('should apply the editor lighting and hide the attachments again on the reloaded scene', async () => {
         bridge.refreshEngineScene();
