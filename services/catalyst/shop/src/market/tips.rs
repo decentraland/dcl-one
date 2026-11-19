@@ -19,6 +19,8 @@
 //! by /64) may send [`PREAUTH_PER_MINUTE`], an IPv6 /48
 //! [`PREAUTH_PER_MINUTE_PER_48`]; a private or loopback peer (an unlisted
 //! gateway) is not limited before it.
+//! The auth dApp posts cross-origin with signed-fetch headers, so the route
+//! answers the browser's preflight with the events-notifier's CORS ([`CORS`]).
 //! A transfer below the minimum amount, or mined longer than the maximum age
 //! before its claim, is rejected (`TipSettings`). The notification id is a
 //! uuid v5 of the transaction hash.
@@ -120,12 +122,20 @@ pub fn notification_id(transaction_hash: &str) -> Uuid {
     )
 }
 
+/// The events-notifier's `@dcl/http-server` CORS (`src/components.ts`: these
+/// methods, `maxAge: 86400`, no origin list): a preflight answers 204 with
+/// origin `*` and the requested signed-fetch headers reflected.
+const CORS: crate::shared::cors::HttpServerCors = crate::shared::cors::HttpServerCors {
+    methods: Some("GET,HEAD,OPTIONS,DELETE,POST,PUT"),
+    max_age: "86400",
+    nosniff: false,
+    preflight_echoes_request: false,
+};
+
 pub fn router(state: SharedState) -> Router {
     Router::new()
         .route("/forward-blockchain", post(forward))
-        .layer(axum::middleware::from_fn(
-            crate::shared::cors::events_notifier_cors,
-        ))
+        .layer(axum::middleware::from_fn(|req, next| CORS.run(req, next)))
         .with_state(state)
 }
 
@@ -1456,6 +1466,7 @@ mod tests {
         );
         assert_eq!(h[header::ACCESS_CONTROL_ALLOW_HEADERS], requested);
         assert_eq!(h[header::ACCESS_CONTROL_MAX_AGE], "86400");
+        assert_eq!(h[header::VARY], "Access-Control-Request-Headers");
 
         let res = app
             .oneshot(
