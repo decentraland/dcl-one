@@ -90,7 +90,8 @@ pub struct PrivateMessagesPrivacyBody {
 /// address, { private_messages_privacy })`: the wallet's participant in the
 /// private-messages room, when it is there, shows the new setting to its
 /// peers at once instead of on its next token. A wallet that is not in the
-/// room is left alone: its next token carries the stored value.
+/// room is left alone: its next token carries the stored value. Each failure
+/// counts in `comms_private_messages_privacy_room_failures_total`.
 pub(crate) async fn publish_private_messages_privacy(
     state: &CommsState,
     address: &str,
@@ -99,6 +100,18 @@ pub(crate) async fn publish_private_messages_privacy(
     if !state.livekit.configured {
         return Ok(());
     }
+    let result = update_private_messages_participant(state, address, privacy).await;
+    if result.is_err() {
+        metrics::counter!("comms_private_messages_privacy_room_failures_total").increment(1);
+    }
+    result
+}
+
+async fn update_private_messages_participant(
+    state: &CommsState,
+    address: &str,
+    privacy: &str,
+) -> Result<(), crate::shared::livekit::RoomServiceError> {
     let rooms = state.room_service();
     let room = &state.settings.private_messages_room_id;
     let identity = address.to_lowercase();
@@ -123,9 +136,13 @@ pub(crate) async fn publish_private_messages_privacy(
 }
 
 /// PATCH /users/{address}/private-messages-privacy (service token): writes
-/// the ONE `social.user_settings` row the friends module reads too, then
-/// shows the change in the private-messages room (a failure there is logged:
-/// the stored row is what the wallet's next token carries).
+/// the ONE `social.user_settings` row the friends module reads too and shows
+/// the change in the private-messages room. Tightening to `only_friends`
+/// reaches the room before it is stored and is refused, storing nothing, when
+/// the room cannot be updated (including while LiveKit is unreachable); it is
+/// shown again after the write for a wallet that joined in between. Loosening
+/// is stored first and a room failure is only logged: the room keeps the
+/// stricter value until the wallet's next token.
 pub async fn patch_private_messages_privacy(
     State(state): State<SharedState>,
     Path(address): Path<String>,
@@ -138,6 +155,13 @@ pub async fn patch_private_messages_privacy(
         .map(|s| s.to_lowercase())
         .filter(|s| s == "all" || s == "only_friends")
         .ok_or_else(|| ApiError::bad_request("Invalid private_messages_privacy"))?;
+    if privacy == "only_friends"
+        && let Err(error) =
+            publish_private_messages_privacy(&state, address.as_str(), &privacy).await
+    {
+        tracing::warn!(%error, %address, "private messages privacy not shown in the room; not stored");
+        return Err(ApiError::internal("Internal Server Error"));
+    }
     state
         .social
         .set_private_messages_privacy(&address, &privacy)

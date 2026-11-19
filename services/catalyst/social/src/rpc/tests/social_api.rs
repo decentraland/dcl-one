@@ -1152,9 +1152,8 @@ async fn a_community_room_runs_through_the_http_routes() {
 }
 
 /// A private-messages privacy change reaches the live room on the HTTP
-/// route: tightening refused by the room stores only the other settings and
-/// answers 500; loosening is stored and still answers 500 when the room
-/// refuses it.
+/// route: a tightening the room refuses stores nothing and answers 500; a
+/// loosening the room refuses is stored and answers 200.
 #[tokio::test]
 async fn the_settings_route_shows_privacy_changes_in_the_room() {
     let Some(rig) = Rig::new().await else {
@@ -1195,7 +1194,7 @@ async fn the_settings_route_shows_privacy_changes_in_the_room() {
             &data["privateMessagesPrivacy"],
             &data["showSituationReactions"]
         ),
-        (&json!("all"), &json!("hide"))
+        (&json!("all"), &json!("show"))
     );
 
     rig.voice
@@ -1209,7 +1208,7 @@ async fn the_settings_route_shows_privacy_changes_in_the_room() {
         .fail_actions
         .store(true, std::sync::atomic::Ordering::SeqCst);
     let (status, _) = patch(json!({ "privateMessagesPrivacy": "all" })).await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(status, StatusCode::OK);
     assert_eq!(stored().await["privateMessagesPrivacy"], "all");
     sqlx::query("DELETE FROM social.user_settings WHERE address = $1")
         .bind(&me)

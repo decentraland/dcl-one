@@ -103,6 +103,53 @@ async fn webhook_voice_settings() -> (Settings, tokio::task::JoinHandle<()>) {
     (settings, task)
 }
 
+/// The private-messages room as a Twirp fixture: GetParticipant answers
+/// `participant` (not found while `None`) or a 500 while `fail` is set, and
+/// every UpdateParticipant body is recorded.
+#[derive(Default)]
+struct PrivateRoomFixture {
+    participant: parking_lot::Mutex<Option<serde_json::Value>>,
+    fail: std::sync::atomic::AtomicBool,
+    updates: parking_lot::Mutex<Vec<serde_json::Value>>,
+}
+
+async fn private_room_settings(
+    fixture: Arc<PrivateRoomFixture>,
+) -> (Settings, tokio::task::JoinHandle<()>) {
+    let read = fixture.clone();
+    let router = axum::Router::new()
+        .route(
+            "/twirp/livekit.RoomService/GetParticipant",
+            axum::routing::post(move || async move {
+                if read.fail.load(std::sync::atomic::Ordering::SeqCst) {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({})),
+                    );
+                }
+                match read.participant.lock().clone() {
+                    Some(participant) => (StatusCode::OK, Json(participant)),
+                    None => (
+                        StatusCode::NOT_FOUND,
+                        Json(serde_json::json!({ "code": "not_found" })),
+                    ),
+                }
+            }),
+        )
+        .route(
+            "/twirp/livekit.RoomService/UpdateParticipant",
+            axum::routing::post(move |Json(body): Json<serde_json::Value>| async move {
+                fixture.updates.lock().push(body);
+                Json(serde_json::json!({}))
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut settings = Settings::for_tests();
+    settings.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (settings, task)
+}
+
 async fn body_json(resp: axum::response::Response) -> (StatusCode, serde_json::Value) {
     let status = resp.status();
     let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
@@ -1819,10 +1866,75 @@ async fn the_moderator_routes_need_the_token_or_a_listed_wallet() {
     assert_eq!(body["error"], "Not Found");
 }
 
+/// The service route shows a privacy change in the private-messages room:
+/// a present participant gets its metadata merged, before and after the
+/// write when tightening; a tightening the room refuses stores nothing; a
+/// loosening the room refuses is stored.
+#[tokio::test]
+async fn the_private_messages_privacy_patch_reaches_the_room_or_is_refused() {
+    let room = Arc::new(PrivateRoomFixture::default());
+    let (settings, _room_task) = private_room_settings(room.clone()).await;
+    let state = lazy_state(settings);
+    let me = wallet();
+    let patch = |privacy: &str| {
+        voice::patch_private_messages_privacy(
+            State(state.clone()),
+            Path(me.as_str().into()),
+            Json(voice::PrivateMessagesPrivacyBody {
+                private_messages_privacy: Some(privacy.into()),
+            }),
+        )
+    };
+    let stored = || async { state.social.private_messages_privacy(&me).await.unwrap() };
+
+    *room.participant.lock() = Some(serde_json::json!({
+        "identity": me.as_str(),
+        "metadata": r#"{"name":"peer","private_messages_privacy":"all"}"#,
+    }));
+    let Json(tightened) = patch("only_friends").await.unwrap();
+    assert_eq!(tightened["private_messages_privacy"], "only_friends");
+    assert_eq!(stored().await, "only_friends");
+    let updates = std::mem::take(&mut *room.updates.lock());
+    assert_eq!(updates.len(), 2, "shown before and after the write");
+    for update in &updates {
+        assert_eq!(update["room"], "private-messages");
+        assert_eq!(update["identity"], me.as_str());
+        let metadata: serde_json::Value =
+            serde_json::from_str(update["metadata"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            metadata,
+            serde_json::json!({ "name": "peer", "private_messages_privacy": "only_friends" })
+        );
+    }
+
+    let Json(_) = patch("all").await.unwrap();
+    room.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+    room.updates.lock().clear();
+    let refused = patch("only_friends").await.unwrap_err();
+    assert_eq!(refused.code, 500);
+    assert_eq!(stored().await, "all", "a refused tightening stores nothing");
+
+    state
+        .social
+        .set_private_messages_privacy(&me, "only_friends")
+        .await
+        .unwrap();
+    let Json(loosened) = patch("all").await.unwrap();
+    assert_eq!(loosened["private_messages_privacy"], "all");
+    assert_eq!(
+        stored().await,
+        "all",
+        "a loosening the room refuses is stored"
+    );
+    assert!(room.updates.lock().is_empty());
+}
+
 #[tokio::test]
 async fn the_private_messages_token_carries_the_merged_privacy_default_and_the_patch_moves_it() {
     let Some(pool) = scratch().await else { return };
-    let state = state_with(pool.clone(), Settings::for_tests());
+    let room = Arc::new(PrivateRoomFixture::default());
+    let (settings, _room_task) = private_room_settings(room.clone()).await;
+    let state = state_with(pool.clone(), settings);
     let key = random_key();
     let me = Address::parse(&address_of(&key)).unwrap();
     let headers = signed(
@@ -1864,6 +1976,10 @@ async fn the_private_messages_token_carries_the_merged_privacy_default_and_the_p
     .await
     .unwrap();
     assert_eq!(patched["private_messages_privacy"], "only_friends");
+    assert!(
+        room.updates.lock().is_empty(),
+        "a wallet outside the room is stored without a room update"
+    );
     let Json(resp) = voice::private_messages_token(
         State(state.clone()),
         at("/private-messages/token"),

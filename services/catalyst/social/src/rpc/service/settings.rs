@@ -23,10 +23,12 @@ pub(crate) async fn private_messages_settings(
 }
 
 /// Stores the settings and shows a private-messages privacy change in the
-/// live room, for both transports. Tightening to `only_friends` reaches the
-/// room first: when that fails only the other settings are stored (a new
-/// row takes its `only_friends` default) and the change is refused. Loosening is stored first; a room failure then refuses
-/// the change too, and the room keeps the stricter value.
+/// live room, for both transports. An error means nothing was stored.
+/// Tightening to `only_friends` reaches the room first and is refused when
+/// the room cannot be updated (including while LiveKit is unreachable); it is
+/// shown again after the write for a wallet that joined in between. Loosening
+/// is stored first and a room failure is only logged: the room keeps the
+/// stricter value until the wallet's next token.
 pub(crate) async fn update_social_settings(
     ctx: &Context,
     me: &str,
@@ -34,36 +36,22 @@ pub(crate) async fn update_social_settings(
     blocked_visibility: Option<&str>,
     reactions: Option<&str>,
 ) -> Result<SocialSettingsRow, String> {
-    let db = ctx.db();
+    let voice = ctx.voice();
     if let Some(privacy @ "only_friends") = privacy {
-        if let Err(error) = ctx
-            .voice()
-            .publish_private_messages_privacy(me, privacy)
-            .await
-        {
-            if blocked_visibility.is_some() || reactions.is_some() {
-                db.upsert_social_settings(me, None, blocked_visibility, reactions)
-                    .await
-                    .map_err(|e| e.to_string())?;
-            }
-            return Err(format!(
-                "private messages privacy not shown in the room: {error}"
-            ));
-        }
-        return db
-            .upsert_social_settings(me, Some(privacy), blocked_visibility, reactions)
-            .await
-            .map_err(|e| e.to_string());
-    }
-    let row = db
-        .upsert_social_settings(me, privacy, blocked_visibility, reactions)
-        .await
-        .map_err(|e| e.to_string())?;
-    if let Some(privacy) = privacy {
-        ctx.voice()
+        voice
             .publish_private_messages_privacy(me, privacy)
             .await
             .map_err(|error| format!("private messages privacy not shown in the room: {error}"))?;
+    }
+    let row = ctx
+        .db()
+        .upsert_social_settings(me, privacy, blocked_visibility, reactions)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(privacy) = privacy
+        && let Err(error) = voice.publish_private_messages_privacy(me, privacy).await
+    {
+        tracing::warn!(%error, address = %me, "private messages privacy not shown in the room");
     }
     Ok(row)
 }
