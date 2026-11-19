@@ -917,6 +917,8 @@ fn process_login_bridge(
                 current_profile.profile = Some(profile);
                 current_profile.is_deployed = deployed;
                 if deployed && resave {
+                    // as any deploying edit: peers hear the saved version until this one lands
+                    current_profile.snapshot_for_revert();
                     current_profile.bump_version();
                     current_profile.is_deployed = false;
                 }

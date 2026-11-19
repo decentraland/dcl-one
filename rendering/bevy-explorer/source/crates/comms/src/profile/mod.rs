@@ -167,8 +167,9 @@ impl ProfileEntry {
     }
 
     /// nothing better to look for. A compact reader takes any data; a full reader takes
-    /// the catalyst's answer, or a guest peer's own answer (a throwaway guest's profile is
-    /// never on the catalyst; a guest account's is), at the announced version
+    /// the catalyst's answer, or a throwaway guest's own answer, at the announced version: a
+    /// throwaway guest's profile is never on the catalyst, and says nothing about web3. A guest
+    /// account's is on the catalyst, so its own answer is only a stand-in, as any account's.
     fn satisfied(&self) -> bool {
         if self.wanted == ProfileTier::Compact {
             return self.data.is_some() || self.compact.is_some();
@@ -176,7 +177,8 @@ impl ProfileEntry {
         self.data.as_ref().is_some_and(|(profile, source)| {
             profile.version >= self.announced
                 && (*source == ProfileSource::Catalyst
-                    || (*source == ProfileSource::Peer && profile_is_guest(profile)))
+                    || (*source == ProfileSource::Peer
+                        && profile.content.has_connected_web3.is_none()))
         })
     }
 
@@ -2184,6 +2186,26 @@ mod tests {
         connected.content.has_connected_web3 = Some(true);
         peer.apply(connected, ProfileSource::Peer);
         assert!(!peer.satisfied());
+
+        // so is a guest account's: its profile is on the catalyst too
+        let mut account = ProfileEntry {
+            announced: 5,
+            wanted: ProfileTier::Full,
+            ..Default::default()
+        };
+        let mut guest_account = profile(5, "guest account");
+        guest_account.content.has_connected_web3 = Some(false);
+        account.apply(guest_account, ProfileSource::Peer);
+        assert!(!account.satisfied());
+
+        // a throwaway guest's own answer is final: the catalyst never holds it
+        let mut throwaway = ProfileEntry {
+            announced: 5,
+            wanted: ProfileTier::Full,
+            ..Default::default()
+        };
+        throwaway.apply(profile(5, "throwaway"), ProfileSource::Peer);
+        assert!(throwaway.satisfied());
     }
 
     fn profile_of(address: Address, version: u32, name: &str) -> UserProfile {
