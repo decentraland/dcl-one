@@ -876,7 +876,8 @@ async fn toolkit_ban_listings_need_the_scene_owner_or_an_admin() {
 
 /// Upstream's `isSceneOwnerOrAdmin` also admits the place's extended
 /// holders to the ban listings: a world deployment or streaming grantee, a
-/// LAND operator and a lease holder reach the store, an outsider and a
+/// LAND operator, update operator, update manager or approved-for-all
+/// address and a lease holder reach the store, an outsider and a
 /// stale stored owner still get 401, and grants that cannot be read are 503.
 #[tokio::test]
 async fn toolkit_ban_listings_admit_extended_holders() {
@@ -924,6 +925,25 @@ async fn toolkit_ban_listings_admit_extended_holders() {
         })))),
         ..StubPolicy::default()
     };
+    let land = |doc: LandOperators| StubPolicy {
+        land: Ok(Some(Arc::new(Some(LandOperators {
+            owner: "0x000000000000000000000000000000000000dead".into(),
+            ..doc
+        })))),
+        ..StubPolicy::default()
+    };
+    let update_operator = land(LandOperators {
+        update_operator: Some(holder.clone()),
+        ..Default::default()
+    });
+    let update_manager = land(LandOperators {
+        update_managers: vec![holder.clone()],
+        ..Default::default()
+    });
+    let approved_for_all = land(LandOperators {
+        approved_for_all: vec![holder.clone()],
+        ..Default::default()
+    });
     let unreadable = StubPolicy {
         grantees: Err(AuthorityNotEstablished::UndeterminedStoreUnavailable {
             store: "world permissions",
@@ -941,6 +961,24 @@ async fn toolkit_ban_listings_admit_extended_holders() {
         (
             "LAND operator",
             app(operator, None),
+            &genesis,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ),
+        (
+            "update operator",
+            app(update_operator, None),
+            &genesis,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ),
+        (
+            "update manager",
+            app(update_manager, None),
+            &genesis,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ),
+        (
+            "approved for all",
+            app(approved_for_all, None),
             &genesis,
             StatusCode::INTERNAL_SERVER_ERROR,
         ),
