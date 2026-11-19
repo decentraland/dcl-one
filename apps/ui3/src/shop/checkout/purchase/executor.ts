@@ -262,13 +262,6 @@ async function runManaGroup(deps: CheckoutDeps, group: CartGroup, lines: Resolve
   };
   const units = toUnits(lines);
   const required = spenders.reduce((sum, s) => sum + s.requiredWei, 0n);
-  // The fee-free way couldn't run, so the wallet sends it instead, and why, when the relay said (its daily limits).
-  let fellBack = false;
-  let feeFreeNote: string | null = null;
-  const onFallback = (e: unknown) => {
-    fellBack = true;
-    feeFreeNote = relayLimitText(e);
-  };
   try {
     let hash: Hex;
     if (group.key.call.kind === "storeBuy") {
@@ -277,12 +270,12 @@ async function runManaGroup(deps: CheckoutDeps, group: CartGroup, lines: Resolve
         if (t.kind !== "store") throw new Error("A store group holds only mints");
         return t.mint;
       });
-      hash = await mintPayingMana(ctx, { mints, chainId: group.key.chainId, requiredManaWei: required, onSigned, onBroadcast, onFallback });
+      hash = await mintPayingMana(ctx, { mints, chainId: group.key.chainId, requiredManaWei: required, onSigned, onBroadcast });
     } else {
       const targets = units.map(purchaseTargetFor);
       const trades = targets.flatMap((t) => (t.kind === "trade" ? [t.trade] : []));
       const coupons = targets.flatMap((t) => (t.kind === "trade" && t.coupon ? [t.coupon] : []));
-      hash = await acceptPayingMana(ctx, { trades, coupons: coupons.length ? coupons : undefined, requiredManaWei: required, onSigned, onBroadcast, onFallback });
+      hash = await acceptPayingMana(ctx, { trades, coupons: coupons.length ? coupons : undefined, requiredManaWei: required, onSigned, onBroadcast });
     }
     if (!txHash) onBroadcast(hash);
     dispatchSafe(store, keyId, { type: "confirmed", txHash: hash });
@@ -296,15 +289,6 @@ async function runManaGroup(deps: CheckoutDeps, group: CartGroup, lines: Resolve
     if (isMetaTxPending(e) || isPendingTxError(e) || txHash) return { status: "pending", txHash };
     if (isGaslessUnavailable(e) && e.reason === "relayer-unreachable" && handedOff) return { status: "pending", txHash: null };
     const failure = handedOff ? { ...failureFor(e), kind: "rejected" as const } : failureFor(e);
-    // The wallet's own transaction found it on another network (before it was asked to send), as for a Credits group.
-    if (isWrongNetworkError(e)) {
-      failure.message = friendlyError(e, FALLBACK);
-      failure.switchTo = e.required;
-      if (fellBack) {
-        failure.feeFreeUnavailable = true;
-        if (feeFreeNote) failure.feeFreeNote = feeFreeNote;
-      }
-    }
     dispatchSafe(store, keyId, { type: "failed", failure });
     return { status: "failed", failure, released: [] };
   }

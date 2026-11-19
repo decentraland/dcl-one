@@ -415,6 +415,18 @@ describe('the purchase dialog', () => {
       expect(h.onClose).toHaveBeenCalled()
     })
 
+    it('offers an armed RETRY in place of CHECK AGAIN when it may be retried', () => {
+      vi.useFakeTimers()
+      const h = show({ step: 'pending', message: 'You can retry this same purchase fee-free. It can complete only once.', retry: true, check: 'ready' })
+      expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+      expect(h.onRetry).not.toHaveBeenCalled()
+      act(() => void vi.advanceTimersByTime(ARM_MS))
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+      vi.useRealTimers()
+      expect(h.onRetry).toHaveBeenCalledTimes(1)
+    })
+
     it('holds CHECK AGAIN while it looks', () => {
       show({ step: 'pending', check: 'checking' })
       expect((screen.getByRole('button', { name: 'Checking...' }) as HTMLButtonElement).disabled).toBe(true)

@@ -19,7 +19,8 @@
 //  - Authorize MANA: the allowance a self-custody wallet grants the sale's venue before its first MANA purchase there.
 //    It says that it is unlimited and stays after this purchase. CANCEL stays live while it confirms: whoever shows
 //    the step decides what a late confirmation may still do.
-// A purchase still being confirmed may offer CHECK AGAIN, and say in its own words what is known about it.
+// A purchase still being confirmed may offer CHECK AGAIN, or RETRY (armed, as BUY), and say in its own words what is
+// known about it.
 //
 // Every unit is one row (two of an item are two rows), and the title counts them. Past two rows the list
 // scrolls, with the Shop's scroll thumb beside it, as the Cart flow draws it. Purchase successful shows
@@ -111,9 +112,10 @@ export type ShopPurchaseStep =
   | { step: 'authorize'; venue: string; network: string; required: bigint; state: 'ready' | 'waiting' | 'failed'; message?: string }
   /**
    * Still being confirmed. `message`: what is known about it, in place of the step's own words. `check`: CHECK AGAIN
-   * is offered (`checking` while it looks).
+   * is offered (`checking` while it looks). `retry`: RETRY is offered in its place (the same purchase sent again, which
+   * whoever shows the step makes safe).
    */
-  | { step: 'pending'; message?: string; check?: 'ready' | 'checking' }
+  | { step: 'pending'; message?: string; check?: 'ready' | 'checking'; retry?: boolean }
   /** `switchTo`: the network the wallet must move to, named, for SWITCH TO … AND RETRY in place of TRY AGAIN. */
   | ({ step: 'failed'; message: string; retry: boolean; switchTo?: string } & Simulated)
   | { step: 'signIn' }
@@ -344,10 +346,16 @@ export function ShopPurchaseDialog({
               <Button variant="tint" size="modal" onClick={onClose}>
                 Continue shopping
               </Button>
-              {view.check && (
-                <Button size="modal" disabled={view.check === 'checking'} onClick={onCheckAgain}>
-                  {view.check === 'checking' ? 'Checking...' : 'Check again'}
-                </Button>
+              {view.retry ? (
+                <ArmedButton size="modal" onClick={onRetry}>
+                  Retry
+                </ArmedButton>
+              ) : (
+                view.check && (
+                  <Button size="modal" disabled={view.check === 'checking'} onClick={onCheckAgain}>
+                    {view.check === 'checking' ? 'Checking...' : 'Check again'}
+                  </Button>
+                )
               )}
             </>
           }

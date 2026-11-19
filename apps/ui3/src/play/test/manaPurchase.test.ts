@@ -1,13 +1,15 @@
-// A MANA purchase's attempt (shell/shop/manaPurchase): which ways the sale may go, and when, and what its record keeps.
+// A MANA purchase's attempt (shell/shop/manaPurchase): when each send of the sale may go, and what its record keeps.
 import { describe, expect, it, vi } from 'vitest'
-import type { Hex } from 'viem'
-import { createManaAttempt, isManaAttempt, manaDispatched, manaFingerprint, type ManaAttemptRecord } from '../shell/shop/manaPurchase'
+import { keccak256, type Hex } from 'viem'
+import { createManaAttempt, isManaAttempt, manaDispatched, manaFingerprint, manaFirstDispatch, type ManaAttemptRecord } from '../shell/shop/manaPurchase'
 import type { ManaSaleTerms } from '../shell/shop/manaGuard'
 
 const STORE = '0x214ffc0f0103735728dc66b61a22e4f163e275ae'
 const MANA = '0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4'
 const BUYER = '0x' + '0b'.repeat(20)
 const TERMS: ManaSaleTerms = { kind: 'mints', venue: STORE, units: [{ contract: '0x' + 'c0'.repeat(20), itemId: '7' }], maxWei: 2_300_000_000_000_000_000n }
+const CALL = '0xa4fdc78a00' as Hex
+const PAYLOAD = '0x0c53c51c' + 'ab'.repeat(40)
 
 /** What `keep` stored, in order; `refuse` makes chosen ones fail. */
 function keeper(refuse: (record: ManaAttemptRecord) => boolean = () => false) {
@@ -22,93 +24,102 @@ function keeper(refuse: (record: ManaAttemptRecord) => boolean = () => false) {
   }
 }
 
-const post = (target: string) => ({ method: 'POST', body: JSON.stringify({ transactionData: { from: BUYER, params: [target, '0x'] } }) })
+const attempt = (k = keeper(), opts: Partial<Parameters<typeof createManaAttempt>[2]> = {}) =>
+  createManaAttempt(TERMS, k.keep, { mana: MANA, checkpoint: async () => 1000n, now: () => 5_000, ...opts })
+const post = (target: string, payload = PAYLOAD) => ({ method: 'POST', body: JSON.stringify({ transactionData: { from: BUYER, params: [target, payload] } }) })
 const answer = (body: unknown, status = 200) => async () => new Response(JSON.stringify(body), { status })
+const HASH = '0x' + 'f'.repeat(64)
+const sent = (body: unknown = { ok: true, txHash: HASH }) => vi.fn(answer(body))
 
 describe('a MANA purchase’s attempt', () => {
-  it('keeps the relay’s signature, then its dispatch right before the relay request carries the sale', async () => {
+  it('keeps the nonce and the call before the signature, then the checkpoint, payload and time before the relay request', async () => {
     const k = keeper()
-    const a = createManaAttempt(TERMS, k.keep, { mana: MANA })
-    expect(a.handOff({ rail: 'relay', nonce: 41n })).toBe(true)
-    expect(k.kept.at(-1)?.rails).toEqual([{ rail: 'relay', nonce: '41', stage: 'signing' }])
-    expect(a.dispatched()).toBe(false)
-    const send = vi.fn(answer({ ok: true, txHash: '0x' + 'f'.repeat(64) }))
+    const a = attempt(k)
+    expect(a.handOff({ rail: 'relay', nonce: 41n, data: CALL })).toBe(true)
+    expect(k.kept.at(-1)).toMatchObject({ nonce: '41', data: CALL, sends: [{ stage: 'signing' }] })
+    expect(k.kept.at(-1)?.fromBlock).toBeUndefined()
+    const send = sent()
     await a.relay(send as unknown as typeof fetch)('https://relay/transactions', post(STORE))
     expect(send).toHaveBeenCalledTimes(1)
-    expect(k.kept.at(-1)?.rails).toEqual([{ rail: 'relay', nonce: '41', stage: 'dispatched' }])
+    expect(k.kept.at(-2)).toMatchObject({ fromBlock: '1000', sends: [{ stage: 'dispatched', payload: keccak256(PAYLOAD as Hex), at: 5_000 }] })
+    // The relay's hash for what went, kept after.
+    expect(k.kept.at(-1)?.sends[0]).toMatchObject({ stage: 'dispatched', hash: HASH })
     expect(a.dispatched()).toBe(true)
+    expect(manaFirstDispatch(a.record)).toBe(5_000)
   })
 
-  it('takes one signature for the relay, and no second way after a dispatch', () => {
-    const a = createManaAttempt(TERMS, keeper().keep, { mana: MANA })
-    expect(a.handOff({ rail: 'relay', nonce: 1n })).toBe(true)
-    expect(a.handOff({ rail: 'relay', nonce: 2n })).toBe(false)
-    a.record.rails[0].stage = 'dispatched'
+  it('never sends the sale from the wallet', () => {
+    const a = attempt()
+    expect(a.handOff({ rail: 'direct' })).toBe(false)
+    expect(a.handOff({ rail: 'relay', nonce: 1n, data: CALL })).toBe(true)
     expect(a.handOff({ rail: 'direct' })).toBe(false)
   })
 
-  it('lets the wallet send it once after the relay proved it sent nothing, and the relay is marked refused first', async () => {
-    const k = keeper()
-    const a = createManaAttempt(TERMS, k.keep, { mana: MANA })
-    a.handOff({ rail: 'relay', nonce: 1n })
-    await a.relay(answer({ ok: false, not_sent: true, error: 'invalid_transaction' }, 400) as unknown as typeof fetch)('https://relay/transactions', post(STORE))
-    expect(k.kept.at(-1)?.rails).toEqual([{ rail: 'relay', nonce: '1', stage: 'refused' }])
+  it('takes one signature, and a second only through RETRY, of the same call at the same nonce', async () => {
+    const a = attempt()
+    a.handOff({ rail: 'relay', nonce: 7n, data: CALL })
+    await a.relay(sent({ ok: false, error: 'unknown' }) as unknown as typeof fetch)('https://relay/transactions', post(STORE))
+    expect(a.handOff({ rail: 'relay', nonce: 7n, data: CALL })).toBe(false)
+    a.retry()
+    expect(a.handOff({ rail: 'relay', nonce: 8n, data: CALL })).toBe(false)
+    expect(a.handOff({ rail: 'relay', nonce: 7n, data: '0xdead' })).toBe(false)
+    expect(a.handOff({ rail: 'relay', nonce: 7n, data: CALL })).toBe(true)
+    expect(a.record.sends.map((s) => s.stage)).toEqual(['dispatched', 'signing'])
+    // One RETRY, one send; and none while one is being signed.
+    a.retry()
+    expect(a.handOff({ rail: 'relay', nonce: 7n, data: CALL })).toBe(false)
+  })
+
+  it('marks a send the relay refused, and keeps the checkpoint the first request took', async () => {
+    const checkpoint = vi.fn(async () => 1000n)
+    const a = attempt(keeper(), { checkpoint })
+    a.handOff({ rail: 'relay', nonce: 1n, data: CALL })
+    await a.relay(sent({ ok: false, not_sent: true, error: 'quota_reached' }) as unknown as typeof fetch)('https://relay/transactions', post(STORE))
+    expect(a.record.sends).toMatchObject([{ stage: 'refused' }])
     expect(a.dispatched()).toBe(false)
-    expect(a.handOff({ rail: 'direct' })).toBe(true)
-    expect(k.kept.at(-1)?.rails.map((r) => `${r.rail}:${r.stage}`)).toEqual(['relay:refused', 'direct:dispatched'])
-    expect(a.handOff({ rail: 'direct' })).toBe(false)
+    a.retry()
+    a.handOff({ rail: 'relay', nonce: 1n, data: CALL })
+    await a.relay(sent() as unknown as typeof fetch)('https://relay/transactions', post(STORE))
+    expect(checkpoint).toHaveBeenCalledTimes(1)
+    expect(a.record.fromBlock).toBe('1000')
   })
 
-  it.each([
-    ['a refusal without its evidence', answer({ ok: false, error: 'invalid_transaction' }, 400)],
-    ['an error after the relay took it', answer({ ok: false, error: 'unknown' }, 504)]
-  ])('keeps the wallet closed after %s', async (_what, reply) => {
-    const a = createManaAttempt(TERMS, keeper().keep, { mana: MANA })
-    a.handOff({ rail: 'relay', nonce: 1n })
-    await a.relay(reply as unknown as typeof fetch)('https://relay/transactions', post(STORE))
-    expect(a.dispatched()).toBe(true)
-    expect(a.handOff({ rail: 'direct' })).toBe(false)
-  })
-
-  it('lets the wallet send it when the relay never got a signature (the wallet couldn’t sign typed data)', () => {
-    const a = createManaAttempt(TERMS, keeper().keep, { mana: MANA })
-    a.handOff({ rail: 'relay', nonce: 1n })
-    expect(a.handOff({ rail: 'direct' })).toBe(true)
-  })
-
-  it('answers the sale’s relay request as never sent, and sends nothing more, when its dispatch can’t be kept', async () => {
-    const a = createManaAttempt(TERMS, keeper((r) => r.rails.some((x) => x.stage === 'dispatched')).keep, { mana: MANA })
-    a.handOff({ rail: 'relay', nonce: 1n })
-    const send = vi.fn(answer({ ok: true, txHash: '0x' + 'f'.repeat(64) }))
-    const res = await a.relay(send as unknown as typeof fetch)('https://relay/transactions', post(STORE))
-    expect(send).not.toHaveBeenCalled()
-    expect(await res.json()).toMatchObject({ ok: false, not_sent: true })
-    expect(a.record.rails).toEqual([{ rail: 'relay', nonce: '1', stage: 'signing' }])
-    expect(a.handOff({ rail: 'direct' })).toBe(false)
+  it('answers the sale’s relay request as never sent, and sends nothing more, when a checkpoint can’t be kept or read', async () => {
+    for (const make of [
+      () => attempt(keeper((r) => r.sends.some((x) => x.stage === 'dispatched'))),
+      () =>
+        attempt(keeper(), {
+          checkpoint: async () => {
+            throw new Error('rpc down')
+          }
+        })
+    ]) {
+      const a = make()
+      a.handOff({ rail: 'relay', nonce: 1n, data: CALL })
+      const send = sent()
+      const res = await a.relay(send as unknown as typeof fetch)('https://relay/transactions', post(STORE))
+      expect(send).not.toHaveBeenCalled()
+      expect(await res.json()).toMatchObject({ ok: false, not_sent: true })
+      expect(a.dispatched()).toBe(false)
+      a.retry()
+      expect(a.handOff({ rail: 'relay', nonce: 1n, data: CALL })).toBe(false)
+    }
   })
 
   it('refuses the hand-off when its checkpoint can’t be kept, and every one after', () => {
     let fail = true
-    const a = createManaAttempt(TERMS, keeper(() => fail).keep, { mana: MANA })
-    expect(a.handOff({ rail: 'relay', nonce: 1n })).toBe(false)
+    const a = attempt(keeper(() => fail))
+    expect(a.handOff({ rail: 'relay', nonce: 1n, data: CALL })).toBe(false)
     fail = false
-    expect(a.handOff({ rail: 'direct' })).toBe(false)
-    expect(a.record.rails).toEqual([])
-  })
-
-  it('keeps the wallet closed when the relay’s refusal can’t be kept', async () => {
-    const a = createManaAttempt(TERMS, keeper((r) => r.rails.some((x) => x.stage === 'refused')).keep, { mana: MANA })
-    a.handOff({ rail: 'relay', nonce: 1n })
-    await a.relay(answer({ ok: false, not_sent: true }, 400) as unknown as typeof fetch)('https://relay/transactions', post(STORE))
-    expect(a.handOff({ rail: 'direct' })).toBe(false)
+    expect(a.handOff({ rail: 'relay', nonce: 1n, data: CALL })).toBe(false)
+    expect(a.record.sends).toEqual([])
   })
 
   it('lets MANA’s approve through the relay only while the buyer authorizes it, and never once closed', async () => {
     const k = keeper()
-    const a = createManaAttempt(TERMS, k.keep, { mana: MANA })
-    const send = vi.fn(answer({ ok: true, txHash: '0x' + 'f'.repeat(64) }))
+    const a = attempt(k)
+    const send = sent()
     const relay = a.relay(send as unknown as typeof fetch)
-    // On the rails' own initiative (no AUTHORIZE running): answered as never sent.
     expect(a.approving()).toBe(false)
     expect(await (await relay('https://relay/transactions', post(MANA))).json()).toMatchObject({ ok: false, not_sent: true })
     expect(send).not.toHaveBeenCalled()
@@ -125,18 +136,18 @@ describe('a MANA purchase’s attempt', () => {
       expect(await (await relay('https://relay/transactions', post(MANA))).json()).toMatchObject({ ok: false, not_sent: true })
     })
     expect(send).toHaveBeenCalledTimes(1)
-    expect(a.handOff({ rail: 'relay', nonce: 1n })).toBe(false)
+    expect(a.handOff({ rail: 'relay', nonce: 1n, data: CALL })).toBe(false)
   })
 
   it('answers any other relay request as never sent: another contract, an unreadable body, a Request', async () => {
-    const a = createManaAttempt(TERMS, keeper().keep, { mana: MANA })
-    a.handOff({ rail: 'relay', nonce: 1n })
-    const send = vi.fn(answer({ ok: true, txHash: '0x' + 'f'.repeat(64) }))
+    const a = attempt()
+    a.handOff({ rail: 'relay', nonce: 1n, data: CALL })
+    const send = sent()
     const relay = a.relay(send as unknown as typeof fetch)
     for (const res of [
       await relay('https://relay/transactions', post('0x' + '99'.repeat(20))),
       await relay('https://relay/transactions', { method: 'POST', body: 'not json' }),
-      await relay(new Request('https://relay/transactions', { method: 'POST', body: JSON.stringify({ transactionData: { from: BUYER, params: [STORE, '0x'] } }) }))
+      await relay(new Request('https://relay/transactions', { method: 'POST', body: JSON.stringify({ transactionData: { from: BUYER, params: [STORE, PAYLOAD] } }) }))
     ]) {
       expect(await res.json()).toMatchObject({ ok: false, not_sent: true })
     }
@@ -144,48 +155,50 @@ describe('a MANA purchase’s attempt', () => {
     expect(a.dispatched()).toBe(false)
   })
 
-  it('ends the attempt when the buyer declines the sale’s relay signature: nothing more goes', async () => {
+  it('ends a send whose signature the buyer declines in the wallet, and only for the sale’s signature', async () => {
     const reject = Object.assign(new Error('User rejected the request.'), { code: 4001 })
-    const a = createManaAttempt(TERMS, keeper().keep, { mana: MANA })
-    a.handOff({ rail: 'relay', nonce: 1n })
     const wallet = { request: vi.fn(async () => Promise.reject(reject)) }
-    const typed = JSON.stringify({ domain: { verifyingContract: STORE }, message: {} })
-    await expect(a.observe(wallet).request({ method: 'eth_signTypedData_v4', params: [BUYER, typed] })).rejects.toBe(reject)
-    expect(a.record.rails).toEqual([{ rail: 'relay', nonce: '1', stage: 'declined' }])
-    expect(a.handOff({ rail: 'direct' })).toBe(false)
+    const a = attempt()
+    a.handOff({ rail: 'relay', nonce: 1n, data: CALL })
+    const approve = JSON.stringify({ domain: { verifyingContract: MANA }, message: {} })
+    await expect(a.observe(wallet).request({ method: 'eth_signTypedData_v4', params: [BUYER, approve] })).rejects.toBe(reject)
+    expect(a.record.sends).toEqual([{ stage: 'signing' }])
+    const sale = JSON.stringify({ domain: { verifyingContract: STORE }, message: {} })
+    await expect(a.observe(wallet).request({ method: 'eth_signTypedData_v4', params: [BUYER, sale] })).rejects.toBe(reject)
+    expect(a.record.sends).toEqual([{ stage: 'declined' }])
+    expect(a.dispatched()).toBe(false)
   })
 
-  it('ends the wallet’s send as declined when the buyer declines it there, and not for any other error', async () => {
-    const reject = Object.assign(new Error('User rejected the request.'), { code: 4001 })
-    const declined = createManaAttempt(TERMS, keeper().keep, { mana: MANA })
-    declined.handOff({ rail: 'direct' })
-    const wallet = { request: vi.fn(async () => Promise.reject(reject)) }
-    await expect(declined.observe(wallet).request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: STORE, data: '0x' }] })).rejects.toBe(reject)
-    expect(declined.record.rails).toEqual([{ rail: 'direct', stage: 'declined' }])
-    expect(declined.dispatched()).toBe(false)
-
-    const lost = createManaAttempt(TERMS, keeper().keep, { mana: MANA })
-    lost.handOff({ rail: 'direct' })
-    const broken = { request: vi.fn(async () => Promise.reject(new Error('internal error'))) }
-    await expect(lost.observe(broken).request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: STORE, data: '0x' }] })).rejects.toThrow('internal error')
-    expect(lost.dispatched()).toBe(true)
-
-    // An approve the buyer declines leaves the sale's rails alone.
-    const approve = createManaAttempt(TERMS, keeper().keep, { mana: MANA })
-    approve.handOff({ rail: 'direct' })
-    await expect(approve.observe(wallet).request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: MANA, data: '0x' }] })).rejects.toBe(reject)
-    expect(approve.record.rails).toEqual([{ rail: 'direct', stage: 'dispatched' }])
+  it('takes a kept record up again for a retry, and only for the same sale', () => {
+    const a = attempt()
+    a.handOff({ rail: 'relay', nonce: 3n, data: CALL })
+    const again = attempt(keeper(), { from: a.record })
+    expect(again.record).toEqual(a.record)
+    expect(() => createManaAttempt({ ...TERMS, maxWei: 1n } as ManaSaleTerms, keeper().keep, { mana: MANA, checkpoint: async () => 1n, now: () => 1, from: a.record })).toThrow()
   })
 
   it('reads a stored attempt only in the shape it writes', () => {
-    const good: ManaAttemptRecord = { venue: STORE, fingerprint: manaFingerprint(TERMS), rails: [{ rail: 'relay', nonce: '3', stage: 'refused' }, { rail: 'direct', stage: 'dispatched' }] }
+    const good: ManaAttemptRecord = {
+      venue: STORE,
+      terms: { kind: 'mints', venue: STORE, units: [{ contract: '0x' + 'c0'.repeat(20), itemId: '7' }], maxWei: '2300000000000000000' },
+      fingerprint: manaFingerprint(TERMS),
+      nonce: '3',
+      data: CALL,
+      fromBlock: '99',
+      sends: [
+        { stage: 'refused', payload: keccak256(PAYLOAD as Hex), at: 1 },
+        { stage: 'dispatched', payload: keccak256('0x01'), at: 2, hash: HASH }
+      ]
+    }
     expect(isManaAttempt(good)).toBe(true)
     expect(manaDispatched(good)).toBe(true)
     expect(isManaAttempt({ ...good, venue: 'nope' })).toBe(false)
     expect(isManaAttempt({ ...good, fingerprint: '0x12' })).toBe(false)
-    expect(isManaAttempt({ ...good, rails: [{ rail: 'direct', stage: 'refused' }] })).toBe(false)
-    expect(isManaAttempt({ ...good, rails: [{ rail: 'relay', stage: 'later' }] })).toBe(false)
-    expect(isManaAttempt({ ...good, rails: [...good.rails, { rail: 'direct', stage: 'dispatched' }] })).toBe(false)
+    expect(isManaAttempt({ ...good, nonce: undefined })).toBe(false)
+    expect(isManaAttempt({ ...good, fromBlock: undefined })).toBe(false)
+    expect(isManaAttempt({ ...good, sends: [{ stage: 'dispatched' }] })).toBe(false)
+    expect(isManaAttempt({ ...good, sends: [{ stage: 'later' }] })).toBe(false)
+    expect(isManaAttempt({ ...good, terms: { ...good.terms, venue: MANA } })).toBe(false)
   })
 
   it('tells two sales apart by their exact bytes or units and ceiling', () => {

@@ -2,7 +2,7 @@
 // runManaGroup, its relayed and direct paths, the MANA guard, and the attempt kept at each checkpoint
 // (shell/shop/manaPurchase). The Shop server, the chain, the relay and the wallet are the checkout's fakes.
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { maxUint256, type Hex } from 'viem'
+import { decodeFunctionData, maxUint256, parseAbi, type Hex } from 'viem'
 import { createFakeChain, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade } from '../../shop/checkout/fakes'
 import { ASSET_TYPE } from '../../shop/checkout/purchase/encoding'
 import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
@@ -14,7 +14,8 @@ import { itemAsset } from '@shop/model/asset'
 import { CHAIN } from '@shop/model/chain'
 import type { StoredLogin } from '@explorer-core/features/auth/sso'
 import { SHOP_PROTOCOL, type ShopOperationEvent } from '@dcl/one-ui/apps/shop/shopProtocol'
-import { createShellShop, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices } from '../shell/shop/purchase'
+import { createShellShop, RETRY_AFTER_MS, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices } from '../shell/shop/purchase'
+import type { ManaEvidence, ManaExecution } from '../shell/shop/manaEvidence'
 
 const BUYER = BOOK.buyer.toLowerCase()
 const CONTRACT = BOOK.collection.toLowerCase()
@@ -22,6 +23,7 @@ const MANA = BOOK.mana.toLowerCase()
 const STORE = BOOK.store.contract.toLowerCase()
 const PRICE = '2300000000000000000'
 const WEI = 10n ** 18n
+const EXECUTE_ABI = parseAbi(['function executeMetaTransaction(address userAddress, bytes functionSignature, bytes32 sigR, bytes32 sigS, uint8 sigV) payable returns (bytes)'])
 
 const LOGIN: StoredLogin = {
   address: BUYER,
@@ -89,7 +91,33 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
   vi.stubEnv('VITE_SHOP_CHAIN_ID', '137')
   const chain = createFakeChain()
   if (opts.allowance != null) chain.allowances.set(`137:${BUYER}:${STORE}`, opts.allowance)
-  const relay = createFakeRelay({ chain, confirm: 'success' })
+  // What the relay put on chain: each hash's target and signed input, as the chain would answer for it.
+  const txs = new Map<string, { to: string; input: Hex }>()
+  const relay = createFakeRelay({
+    chain,
+    confirm: 'success',
+    onRelay: (hash, body) => {
+      const [to, input] = (body as { transactionData: { params: [string, Hex] } }).transactionData.params
+      txs.set(hash.toLowerCase(), { to, input })
+    }
+  })
+  /** The chain as the evidence reads it: the nonce the fake chain holds, the executions given, the relay's transactions. */
+  const onChain = { executions: [] as ManaExecution[], fail: false }
+  const evidence: ManaEvidence = {
+    finalized: async () => 1000n,
+    latest: async () => 1000n,
+    nonceAt: async (_c, venue, user) => chain.nonces.get(`${venue.address.toLowerCase()}:${user.toLowerCase()}`) ?? 0n,
+    executions: async () => {
+      if (onChain.fail) throw new Error('range too large')
+      return onChain.executions
+    },
+    transaction: async (_c, hash) => txs.get(hash.toLowerCase()) ?? null,
+    receipt: async (_c, hash) => {
+      const status = chain.receipts.get(hash.toLowerCase())
+      return status ? { transactionHash: hash as Hex, status, blockNumber: 900n } : null
+    }
+  }
+  const clock = { now: 1_000_000 }
   const shop = createFakeShop({})
   const wallet = createFakeWallet({
     ...(opts.walletChain != null ? { chainId: opts.walletChain } : {}),
@@ -101,7 +129,7 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
       return hash
     }
   })
-  return { chain, relay, shop, wallet, storage: memoryStorage(), gasless: opts.gasless ?? true }
+  return { chain, relay, shop, wallet, storage: memoryStorage(), gasless: opts.gasless ?? true, txs, onChain, evidence, clock }
 }
 
 function page(
@@ -117,6 +145,10 @@ function page(
     storage?: Storage
     services?: Partial<ShellShopServices>
     creditsBalance?: () => Promise<{ balanceCents: UsdCents; credits: number }>
+    /** Another live tab holds every operation's lock. */
+    foreign?: boolean
+    /** The page's own flag reading (a host's `__SHOP_FLAGS__`, else the flags file), not a stub. */
+    liveFlag?: boolean
   } = {}
 ) {
   const shown: { view: ShellPurchaseView; handlers: ShellPurchaseHandlers }[] = []
@@ -139,7 +171,7 @@ function page(
       resolvers: () => ({ trade: async () => opts.trade?.() ?? null, store: async () => ({ priceWei: opts.priceWei?.() ?? PRICE, available: 10 }) }),
       reader: () => w.chain,
       primeFlags: async () => {},
-      claim: async () => () => {},
+      claim: async () => (opts.foreign ? null : () => {}),
       creatorName: async () => null,
       manager: (chainId) => ({ chainId, address: '0x' + 'de'.repeat(20), name: 'Decentraland Credits', version: '1.0.0' }),
       rail: () => ({
@@ -150,7 +182,9 @@ function page(
       }),
       storage: () => opts.storage ?? w.storage,
       sleep: () => new Promise(() => {}),
-      manaInWorld: () => opts.flag ?? true,
+      now: () => w.clock.now,
+      manaEvidence: () => w.evidence,
+      ...(opts.liveFlag ? {} : { manaInWorld: () => opts.flag ?? true }),
       manaBalance: async (_buyer, chainId) => {
         manaReads.push(chainId)
         if (opts.manaBalance === 'fail') throw new Error('rpc down')
@@ -184,6 +218,22 @@ describe('the in-world purchase with MANA', () => {
       await p.until('confirm')
       expect(p.manaReads).toEqual([])
       expect(p.shown.some((s) => s.view.step === 'method')).toBe(false)
+    })
+
+    it('reads the flag as a page does: off by default, on when the host declares it', async () => {
+      const w = world()
+      const off = page(w, { liveFlag: true })
+      await off.open()
+      await off.until('confirm')
+      expect(off.manaReads).toEqual([])
+      ;(window as Window & { __SHOP_FLAGS__?: Record<string, boolean> }).__SHOP_FLAGS__ = { manaInWorld: true }
+      try {
+        const on = page(world(), { liveFlag: true })
+        await on.open()
+        await on.until('method')
+      } finally {
+        delete (window as Window & { __SHOP_FLAGS__?: unknown }).__SHOP_FLAGS__
+      }
     })
 
     it.each([
@@ -405,90 +455,55 @@ describe('the in-world purchase with MANA', () => {
   })
 
   describe('sending the sale', () => {
-    it('sends it once from the wallet after the relay proves it sent nothing', async () => {
+    it('isn’t offered with the relay off: the sale goes only through the relay', async () => {
+      const w = world({ gasless: false })
+      const p = page(w)
+      await p.open()
+      await p.until('confirm')
+    })
+
+    it('sends nothing from the wallet when the relay refuses it, and says why, with TRY AGAIN', async () => {
       const w = world({ allowance: maxUint256 })
-      w.relay.state.mode = 'refuse'
-      const p = page(w)
-      await p.payMana()
-      await p.until('success')
-      expect(relayedTo(w)).toEqual([STORE])
-      expect(w.wallet.sent.map((t) => t.to.toLowerCase())).toEqual([STORE])
-    })
-
-    it('offers a funded wallet on another network the switch after the relay’s quota refusal, saying why', async () => {
-      const w = world({ allowance: maxUint256, walletChain: 1 })
       Object.assign(w.relay.state, { mode: 'refuse', refuseStatus: 429, refuseBody: { error: 'quota_reached', quota: 30 } })
       const p = page(w)
       await p.payMana()
       const failed = await p.until('failed')
-      expect(failed.view).toMatchObject({ step: 'failed', retry: true, switchTo: 'Polygon' })
-      expect((failed.view as { message: string }).message).toBe(
-        "You've used all 30 fee-free transactions this account gets in 24 hours. Try again later. You can switch to Polygon and pay the network fee with your wallet. Nothing was bought."
-      )
-      expect(w.wallet.sent).toHaveLength(0)
-    })
-
-    it('tells an unfunded wallet on another network the relay’s reason, with no talk of networks', async () => {
-      const w = world({ allowance: maxUint256, walletChain: 1 })
-      Object.assign(w.relay.state, { mode: 'refuse', refuseStatus: 429, refuseBody: { error: 'quota_reached', quota: 30 } })
-      w.chain.balance = async () => 10n ** 16n
-      const p = page(w)
-      await p.payMana()
-      const failed = await p.until('failed')
-      expect(failed.view).toMatchObject({ step: 'failed', retry: true, message: "You've used all 30 fee-free transactions this account gets in 24 hours. Try again later. Nothing was bought." })
+      expect(failed.view).toMatchObject({ step: 'failed', retry: true })
+      expect((failed.view as { message: string }).message).toContain("You've used all 30 fee-free transactions this account gets in 24 hours.")
       expect(failed.view).not.toHaveProperty('switchTo')
+      expect(w.wallet.sent).toHaveLength(0)
+      expect(relayedTo(w)).toEqual([STORE])
     })
 
     it.each([
       ['a refusal without the relay’s evidence', (w: World) => Object.assign(w.relay.state, { mode: 'refuse', refuseEvidence: false })],
       ['an answer lost after the relay took it', (w: World) => Object.assign(w.relay.state, { mode: 'fail-after-send', failStatus: 504 })],
       ['a relay that doesn’t answer', (w: World) => Object.assign(w.relay.state, { mode: 'down' })]
-    ])('follows a sale after %s, and never sends it from the wallet', async (_what, set) => {
+    ])('follows a sale after %s, checking it on chain, and never sends it from the wallet', async (_what, set) => {
       const w = world({ allowance: maxUint256 })
       set(w)
       const p = page(w)
       await p.payMana()
       const pending = await p.until('pending')
-      expect(pending.view).toMatchObject({ step: 'pending', check: 'ready' })
+      expect(pending.view).toMatchObject({ step: 'pending', check: 'ready', message: 'Checking your purchase. You can close this window.' })
       expect(w.wallet.sent).toHaveLength(0)
       expect(relayedTo(w)).toEqual([STORE])
     })
 
-    it('follows a direct send whose answer was lost through a reload, and a second BUY sends nothing more', async () => {
-      const w = world({ gasless: false, allowance: maxUint256 })
-      const first = page(w)
-      w.wallet.next = 'fail'
-      await first.payMana()
-      const pending = await first.until('pending')
-      expect(pending.view).toMatchObject({ step: 'pending', check: 'ready', message: expect.stringContaining('may have gone out') })
-      const op = first.events.at(-1)!.operation
-      expect(first.events.at(-1)).toMatchObject({ state: 'pending' })
-      const sends = w.wallet.requests.filter((q) => q.method === 'eth_sendTransaction').length
-      // CHECK AGAIN has nothing to read for it: it stays.
-      pending.handlers.onCheckAgain?.()
-      await vi.waitFor(() => expect(first.shown.at(-1)?.view).toMatchObject({ step: 'pending', check: 'ready' }))
-      // A reload, even with the flag off: the same purchase, still pending, and nothing sent again.
-      const again = page(w, { flag: false })
-      const answer = await again.open()
-      expect(answer).toMatchObject({ operation: op, state: 'pending' })
-      expect(again.shown.at(-1)?.view).toMatchObject({ step: 'pending', check: 'ready' })
-      expect(w.wallet.requests.filter((q) => q.method === 'eth_sendTransaction')).toHaveLength(sends)
-    })
-
-    it('ends a direct send the buyer declined in the wallet as not bought, with TRY AGAIN', async () => {
-      const w = world({ gasless: false, allowance: maxUint256 })
+    it('ends a sale whose signature the buyer declined as not bought, with TRY AGAIN', async () => {
+      const w = world({ allowance: maxUint256 })
       const p = page(w)
       w.wallet.next = 'reject'
       await p.payMana()
       const failed = await p.until('failed')
       expect(failed.view).toMatchObject({ step: 'failed', retry: true })
-      expect(p.events.at(-1)).toMatchObject({ state: 'reviewing' })
+      expect(relayedTo(w)).toEqual([])
     })
 
     it.each([
       ['the signature’s checkpoint', '"stage":"signing"'],
       ['the relay request’s checkpoint', '"stage":"dispatched"']
-    ])('sends nothing on either way when %s can’t be kept', async (_what, marker) => {
+    ])('sends nothing when %s can’t be kept', async (_what, marker) => {
       const w = world({ allowance: maxUint256 })
       const storage = memoryStorage((key, value) => key.includes(':record:') && value.includes(marker))
       const p = page(w, { storage })
@@ -537,22 +552,162 @@ describe('the in-world purchase with MANA', () => {
     })
   })
 
-  describe('a reload', () => {
-    it('ends a purchase whose sale never left the page (only its signature was kept) as cancelled', async () => {
+  describe('a sale whose answer was lost', () => {
+    const NONCE_KEY = `${STORE}:${BUYER}`
+    /** The typed data's nonce of each sale signature the wallet was asked for. */
+    const signedNonces = (w: World) =>
+      signatures(w)
+        .map((q) => JSON.parse(String(q.params?.[1])) as { domain: { verifyingContract: string }; message: { nonce: string } })
+        .filter((t) => t.domain.verifyingContract.toLowerCase() === STORE)
+        .map((t) => t.message.nonce)
+    /** The first send, lost; then CHECK AGAIN past RETRY_AFTER_MS: the page now offers RETRY. */
+    const lost = async (w: World, p: ReturnType<typeof page>) => {
+      w.relay.state.mode = 'down'
+      await p.payMana()
+      const pending = await p.until('pending')
+      w.relay.state.mode = 'ok'
+      w.clock.now += RETRY_AFTER_MS
+      pending.handlers.onCheckAgain?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', retry: true }))
+      return p.shown.at(-1)!
+    }
+
+    it('ends bought once the chain shows the very execution it signed, and not bought once its nonce went elsewhere', async () => {
       const w = world({ allowance: maxUint256 })
-      // The relay request's checkpoint never sticks: the page goes with the signature kept and nothing sent.
-      const storage = memoryStorage((key, value) => key.includes(':record:') && value.includes('"stage":"dispatched"'))
-      const first = page(w, { storage })
-      await first.payMana()
-      await first.until('failed')
-      const op = first.events.at(-1)!.operation
-      const again = page(w, { storage })
-      const list = (await again.shell.request('shop.status', {})) as { operation: string; state: string }[]
-      expect(list.find((o) => o.operation === op)?.state).not.toBe('pending')
+      const p = page(w)
+      w.relay.state.mode = 'fail-after-send'
+      await p.payMana()
+      const pending = await p.until('pending')
+      // The relay ran it at N after all: the nonce moved, and the venue logged our call from the transaction we signed.
+      const [hash, tx] = [...w.txs.entries()][0]
+      w.chain.nonces.set(NONCE_KEY, 1n)
+      w.onChain.executions = [{ user: BUYER, call: decodeCall(tx.input), txHash: hash as Hex, blockNumber: 950n }]
+      pending.handlers.onCheckAgain?.()
+      await p.until('success')
+      expect(p.events.at(-1)).toMatchObject({ state: 'succeeded', txHash: hash })
+
+      const w2 = world({ allowance: maxUint256 })
+      const p2 = page(w2)
+      w2.relay.state.mode = 'down'
+      await p2.payMana()
+      const pending2 = await p2.until('pending')
+      // N went to something else, and the venue logged nothing of ours: it can never run.
+      w2.chain.nonces.set(NONCE_KEY, 1n)
+      pending2.handlers.onCheckAgain?.()
+      const failed = await p2.until('failed')
+      expect(failed.view).toMatchObject({ message: "This purchase didn't go through. Nothing was bought and no MANA was spent." })
     })
 
+    it('keeps checking while the chain can’t say: a range it can’t read, the same call it can’t attribute', async () => {
+      const w = world({ allowance: maxUint256 })
+      const p = page(w)
+      w.relay.state.mode = 'down'
+      await p.payMana()
+      const pending = await p.until('pending')
+      w.chain.nonces.set(NONCE_KEY, 2n)
+      w.onChain.fail = true
+      pending.handlers.onCheckAgain?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', check: 'ready' }))
+      // The same call by the buyer, at N+1, signed elsewhere: not ours, and no RETRY (N is gone).
+      w.onChain.fail = false
+      w.onChain.executions = [{ user: BUYER, call: decodeCall((w.relay.posts[0] as { transactionData: { params: [string, Hex] } }).transactionData.params[1]), txHash: ('0x' + 'ab'.repeat(32)) as Hex, blockNumber: 960n }]
+      w.clock.now += RETRY_AFTER_MS
+      p.shown.at(-1)!.handlers.onCheckAgain?.()
+      await new Promise((r) => setTimeout(r, 30))
+      expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', check: 'ready' })
+      expect(p.events.at(-1)).toMatchObject({ state: 'pending' })
+    })
+
+    it('offers RETRY only after RETRY_AFTER_MS, and retries the same sale at the same nonce, through the relay only', async () => {
+      const w = world({ allowance: maxUint256 })
+      const p = page(w)
+      w.relay.state.mode = 'down'
+      await p.payMana()
+      const pending = await p.until('pending')
+      pending.handlers.onCheckAgain?.()
+      await new Promise((r) => setTimeout(r, 30))
+      expect(p.shown.at(-1)?.view).not.toHaveProperty('retry')
+      w.relay.state.mode = 'ok'
+      w.clock.now += RETRY_AFTER_MS
+      p.shown.at(-1)!.handlers.onCheckAgain?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', retry: true, message: 'You can retry this same purchase fee-free. It can complete only once.' }))
+      const op = p.events.at(-1)!.operation
+      p.shown.at(-1)!.handlers.onRetry?.()
+      await p.until('success')
+      // Two signatures of the same sale, both at the first nonce; the second relayed; nothing from the wallet.
+      expect(signedNonces(w)).toEqual(['0', '0'])
+      expect(relayedTo(w)).toEqual([STORE, STORE])
+      expect(w.wallet.sent).toHaveLength(0)
+      expect(p.events.at(-1)).toMatchObject({ operation: op, state: 'succeeded' })
+    })
+
+    it('signs nothing when the first send landed just before the retry, and ends bought by it', async () => {
+      const w = world({ allowance: maxUint256 })
+      const p = page(w)
+      const retry = await lost(w, p)
+      // The first send ran meanwhile: the nonce moved, and its execution is the one this page signed.
+      const firstPayload = (w.relay.posts[0] as { transactionData: { params: [string, Hex] } }).transactionData.params[1]
+      const landed = ('0x' + '5a'.repeat(32)) as Hex
+      w.txs.set(landed, { to: STORE, input: firstPayload })
+      w.chain.receipts.set(landed, 'success')
+      w.chain.nonces.set(NONCE_KEY, 1n)
+      w.onChain.executions = [{ user: BUYER, call: decodeCall(firstPayload), txHash: landed, blockNumber: 950n }]
+      retry.handlers.onRetry?.()
+      await p.until('success')
+      expect(signedNonces(w)).toEqual(['0'])
+      expect(relayedTo(w)).toEqual([STORE])
+      expect(p.events.at(-1)).toMatchObject({ state: 'succeeded', txHash: landed })
+    })
+
+    it('settles a refused retry alone, and still ends bought by the first send', async () => {
+      const w = world({ allowance: maxUint256 })
+      // The watch reads the chain again on its own, every few milliseconds here.
+      const p = page(w, { services: { sleep: () => new Promise((r) => setTimeout(r, 20)) } })
+      const retry = await lost(w, p)
+      w.relay.state.mode = 'refuse'
+      retry.handlers.onRetry?.()
+      await vi.waitFor(() => expect(relayedTo(w)).toEqual([STORE, STORE]))
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view.step).toBe('pending'))
+      expect(p.events.at(-1)).toMatchObject({ state: 'pending' })
+      // Later the first send turns up on chain.
+      const firstPayload = (w.relay.posts[0] as { transactionData: { params: [string, Hex] } }).transactionData.params[1]
+      const landed = ('0x' + '6b'.repeat(32)) as Hex
+      w.txs.set(landed, { to: STORE, input: firstPayload })
+      w.chain.receipts.set(landed, 'success')
+      w.chain.nonces.set(NONCE_KEY, 1n)
+      w.onChain.executions = [{ user: BUYER, call: decodeCall(firstPayload), txHash: landed, blockNumber: 950n }]
+      await p.until('success')
+      expect(p.events.at(-1)).toMatchObject({ state: 'succeeded', txHash: landed })
+    })
+
+    it('offers RETRY after a reload, from what the record kept, and never to a tab that doesn’t hold the purchase', async () => {
+      const w = world({ allowance: maxUint256 })
+      const first = page(w)
+      w.relay.state.mode = 'down'
+      await first.payMana()
+      await first.until('pending')
+      const op = first.events.at(-1)!.operation
+      w.relay.state.mode = 'ok'
+      w.clock.now += RETRY_AFTER_MS
+      // Another tab, the purchase's lock held elsewhere: shown, never retried.
+      const other = page(w, { foreign: true, flag: false })
+      expect(await other.open()).toMatchObject({ operation: op })
+      await new Promise((r) => setTimeout(r, 30))
+      expect(other.shown.some((x) => (x.view as { retry?: boolean }).retry)).toBe(false)
+      // A reload that holds it, with the flag off: the same purchase, RETRY open, the same nonce.
+      const again = page(w, { flag: false })
+      expect(await again.open()).toMatchObject({ operation: op })
+      await vi.waitFor(() => expect(again.shown.at(-1)?.view).toMatchObject({ step: 'pending', retry: true }))
+      again.shown.at(-1)!.handlers.onRetry?.()
+      await again.until('success')
+      expect(signedNonces(w)).toEqual(['0', '0'])
+    })
+  })
+
+  describe('a reload', () => {
+    const FINGERPRINT = '0x' + 'ab'.repeat(32)
     /** A MANA purchase this browser kept mid-way, as a page that went would leave it. */
-    const seed = (w: World, id: string, rails: { rail: 'relay' | 'direct'; nonce?: string; stage: string }[], txHash?: string) =>
+    const seed = (w: World, id: string, sends: Record<string, unknown>[]) =>
       w.storage.setItem(
         `dcl-inworld-shop:record:v1:${BUYER}:${id}`,
         JSON.stringify({
@@ -561,41 +716,38 @@ describe('the in-world purchase with MANA', () => {
           items: [{ contract: CONTRACT, itemId: String(ITEM), quantity: 1 }],
           state: 'processing',
           chainId: 137,
-          ...(txHash ? { txHash } : {}),
-          mana: { venue: STORE, fingerprint: '0x' + 'ab'.repeat(32), rails },
+          mana: {
+            venue: STORE,
+            terms: { kind: 'mints', venue: STORE, units: [{ contract: CONTRACT, itemId: String(ITEM) }], maxWei: PRICE },
+            fingerprint: FINGERPRINT,
+            nonce: '0',
+            data: '0xa4fdc78a',
+            fromBlock: '900',
+            sends
+          },
           createdAt: 1,
           updatedAt: 1
         })
       )
 
-    it('ends a purchase none of whose ways was dispatched as cancelled: it provably sent nothing', async () => {
+    it('ends a purchase none of whose sends was dispatched as cancelled: it provably sent nothing', async () => {
       const w = world()
-      seed(w, '0000000a-0000-0000-0000-000000000001', [{ rail: 'relay', nonce: '0', stage: 'signing' }])
+      seed(w, '0000000a-0000-0000-0000-000000000001', [{ stage: 'signing' }])
       const p = page(w)
       await p.shell.request('shop.status', {})
       await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ operation: '0000000a-0000-0000-0000-000000000001', state: 'cancelled' }))
     })
 
-    it('keeps a dispatched purchase with no hash as it is, and a BUY of its item shows it', async () => {
+    it('keeps a dispatched purchase the chain can’t settle yet, and a BUY of its item shows it', async () => {
       const w = world()
-      seed(w, '0000000a-0000-0000-0000-000000000002', [{ rail: 'relay', nonce: '0', stage: 'dispatched' }])
+      seed(w, '0000000a-0000-0000-0000-000000000002', [{ stage: 'dispatched', payload: '0x' + 'cd'.repeat(32), at: w.clock.now }])
       const p = page(w)
       const answer = await p.open()
       expect(answer).toMatchObject({ operation: '0000000a-0000-0000-0000-000000000002', state: 'processing' })
-      expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', check: 'ready', message: expect.stringContaining('may have gone out') })
+      expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', message: 'Checking your purchase. You can close this window.' })
       await new Promise((r) => setTimeout(r, 30))
       expect(p.events.some((e) => e.operation === '0000000a-0000-0000-0000-000000000002' && e.state !== 'processing')).toBe(false)
       expect(w.wallet.requests.some((q) => q.method === 'eth_signTypedData_v4' || q.method === 'eth_sendTransaction')).toBe(false)
-    })
-
-    it('ends a purchase by the receipt of its own hash', async () => {
-      const w = world()
-      const hash = '0x' + 'f'.repeat(63) + '3'
-      w.chain.receipts.set(hash, 'success')
-      seed(w, '0000000a-0000-0000-0000-000000000003', [{ rail: 'relay', nonce: '0', stage: 'dispatched' }], hash)
-      const p = page(w)
-      await p.shell.request('shop.status', {})
-      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ operation: '0000000a-0000-0000-0000-000000000003', state: 'succeeded', txHash: hash }))
     })
 
     it('keeps reading a Credits purchase’s record, which has no MANA attempt, as before', async () => {
@@ -612,3 +764,8 @@ describe('the in-world purchase with MANA', () => {
     })
   })
 })
+
+/** The venue's call inside a signed executeMetaTransaction (the CollectionStore's: from, call, r, s, v). */
+function decodeCall(payload: Hex): Hex {
+  return decodeFunctionData({ abi: EXECUTE_ABI, data: payload }).args[1] as Hex
+}
