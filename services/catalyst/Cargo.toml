@@ -69,6 +69,7 @@ members = [
     "fed",
     "jobs",
     "land-authz",
+    "message-router",
     "price",
     "shared",
     "shop",
@@ -79,7 +80,7 @@ members = [
     "../../library/dcl-*",
     "../../apps/dcl-scene-cli",
 ]
-exclude = ["../../library/vendor/rusty_enet"]
+exclude = ["../../library/vendor/rusty_enet", "cast-bot"]
 # The upstream Explorer, vendored ENet and asset converter build independently.
 
 [workspace.package]
@@ -136,6 +137,8 @@ url = "2.5.8"
 feruca = "0.12.0"
 regex = "1.13.1"
 tiny-skia = "0.12.0"
+# The Cast presenter's PDF renderer (comms/src/cast_presenter/render.rs), pure Rust.
+hayro = "0.9.0"
 prost = "0.14.4"
 # build-time proto codegen without protoc (comms; the scene crates pin their own)
 prost-build = "0.14"
@@ -175,6 +178,11 @@ openmls_rust_crypto = "0.6.0"
 openmls_traits = "0.6.0"
 tls_codec = "0.5.0"
 ts-rs = "12"
+# The message router's LiveKit participant: the Explorer's patched client-sdk-rust, the same
+# commit of this repository that rendering/bevy-explorer/source/Cargo.toml names
+# (rendering/bevy-explorer/patches/client-sdk-rust/source.toml `rev`; a test of the router
+# checks both name it). Its DataReceived event carries the sender's identity.
+livekit = { git = "https://github.com/decentraland/dcl-one", rev = "b2f8bc84000333ea843578959c9d11caccaa9474", features = ["rustls-tls-webpki-roots"] }
 
 # Dev-only, shared by the member crates' tests.
 tokio-tungstenite = "0.30.0"
@@ -245,7 +253,7 @@ tikv-jemallocator = "0.7"
 
 [dev-dependencies]
 bcrypt.workspace = true
-catalyst-db = { path = "db", features = ["scratch"] }
+catalyst-db = { path = "db", features = ["test-support"] }
 catalyst-fed = { path = "fed", features = ["test-support"] }
 catalyst-shop = { path = "shop", features = ["test-support"] }
 catalyst-camera-reel = { path = "camera-reel", features = ["test-support"] }

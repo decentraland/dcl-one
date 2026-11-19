@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use bevy::{platform::collections::HashSet, prelude::Entity};
 use common::rpc::{CompareSnapshot, RpcCall};
 
@@ -173,46 +175,6 @@ pub const MAX_TOPIC_BYTES: usize = 512;
 /// Longest `CommsApi` topic message, including the type byte and the topic length prefix.
 pub const MAX_TOPIC_MESSAGE_BYTES: usize = 13 * 1024;
 
-#[cfg(test)]
-mod rpc_calls_tests {
-    use super::*;
-    use bevy::prelude::Quat;
-
-    fn a_call() -> RpcCall {
-        RpcCall::MoveCamera {
-            facing: Quat::IDENTITY,
-        }
-    }
-
-    // push accepts up to the per-tick ceiling then rejects, without enqueuing the rejected call;
-    // draining (the flush) resets the count so the next tick accepts again.
-    #[test]
-    fn push_is_bounded_and_resets_on_drain() {
-        let mut calls = RpcCalls::default();
-        for _ in 0..MAX_RPC_CALLS_PER_TICK {
-            calls.push(a_call()).unwrap();
-        }
-        assert_eq!(calls.len(), MAX_RPC_CALLS_PER_TICK);
-
-        assert!(
-            calls.push(a_call()).is_err(),
-            "over-budget push is rejected"
-        );
-        assert_eq!(
-            calls.len(),
-            MAX_RPC_CALLS_PER_TICK,
-            "a rejected call must not be enqueued"
-        );
-
-        let drained = std::mem::take(&mut calls);
-        assert_eq!(drained.len(), MAX_RPC_CALLS_PER_TICK);
-        assert!(
-            calls.push(a_call()).is_ok(),
-            "a fresh tick accepts calls again"
-        );
-    }
-}
-
 #[allow(clippy::large_enum_variant)] // we don't care since the error case is very rare
 // data from scene to renderer
 #[derive(Debug, Serialize, Deserialize)]
@@ -329,4 +291,44 @@ pub struct SceneLogMessage {
     pub timestamp: f64, // scene local time
     pub level: SceneLogLevel,
     pub message: String,
+}
+
+#[cfg(test)]
+mod rpc_calls_tests {
+    use super::*;
+    use bevy::prelude::Quat;
+
+    fn a_call() -> RpcCall {
+        RpcCall::MoveCamera {
+            facing: Quat::IDENTITY,
+        }
+    }
+
+    // push accepts up to the per-tick ceiling then rejects, without enqueuing the rejected call;
+    // draining (the flush) resets the count so the next tick accepts again.
+    #[test]
+    fn push_is_bounded_and_resets_on_drain() {
+        let mut calls = RpcCalls::default();
+        for _ in 0..MAX_RPC_CALLS_PER_TICK {
+            calls.push(a_call()).unwrap();
+        }
+        assert_eq!(calls.len(), MAX_RPC_CALLS_PER_TICK);
+
+        assert!(
+            calls.push(a_call()).is_err(),
+            "over-budget push is rejected"
+        );
+        assert_eq!(
+            calls.len(),
+            MAX_RPC_CALLS_PER_TICK,
+            "a rejected call must not be enqueued"
+        );
+
+        let drained = std::mem::take(&mut calls);
+        assert_eq!(drained.len(), MAX_RPC_CALLS_PER_TICK);
+        assert!(
+            calls.push(a_call()).is_ok(),
+            "a fresh tick accepts calls again"
+        );
+    }
 }

@@ -39,7 +39,6 @@ struct EntityScreenPositionCommand {
     bounds: bool,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn entity_screen_position_cmd(
     mut input: ConsoleCommand<EntityScreenPositionCommand>,
     resolver: SceneResolver,

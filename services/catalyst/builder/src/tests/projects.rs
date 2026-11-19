@@ -1001,16 +1001,12 @@ async fn an_existing_database_gains_the_project_tables_in_place() {
         std::process::id(),
         &Uuid::new_v4().simple().to_string()[..8]
     );
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-        .execute(&admin)
-        .await
-        .unwrap();
+    crate::db::scratch::create_database_with_schema(&admin, &name).await;
     let mut own = url::Url::parse(&url).unwrap();
     own.set_path(&format!("/{name}"));
     let pool = crate::db::connect_pool(own.as_str(), &crate::db::PoolSettings::default())
         .await
         .unwrap();
-    crate::db::apply_schema(&pool).await.unwrap();
     sqlx::raw_sql(
         "DROP TABLE builder.asset_contents, builder.assets, builder.asset_packs, \
          builder.project_files, builder.project_manifests, builder.projects; \

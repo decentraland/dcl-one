@@ -46,7 +46,6 @@ fn setup_chat_history(mut commands: Commands, root: Res<SystemUiRoot>, dui: Res<
         .try_insert(ChatHistory::default());
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update_chat_history(
     mut commands: Commands,
     mut q: Query<(Entity, &mut ChatHistory)>,

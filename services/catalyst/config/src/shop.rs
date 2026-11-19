@@ -228,7 +228,7 @@ pub struct EconomyConfig {
     )]
     pub max_relayed_transactions_per_day: i64,
 
-    /// The dApps' contract-addresses JSON (public https); unset, only the collections mirror admits.
+    /// The dApps' contract-addresses JSON (public https); unset, the copy this node serves. The collections mirror admits too.
     #[arg(long, env = "CONTRACT_ADDRESSES_URL")]
     pub contract_addresses_url: Option<String>,
 
@@ -310,6 +310,10 @@ pub struct EconomyConfig {
 
     #[arg(long, env = "NAMES_CHAIN_ID", default_value_t = 1)]
     pub names_chain_id: u64,
+
+    /// The NAMEs chain signer: the relayer key on ETH_RPC_URL, signing on NAMES_CHAIN_ID. False keeps ETH_RPC_URL for its readers and signs nothing on that chain.
+    #[arg(long, env = "NAMES_SIGNER_ENABLED", default_value_t = true, action = clap::ArgAction::Set)]
+    pub names_signer_enabled: bool,
 
     /// Decimal wei; unset leaves the NAME purchases uncapped.
     #[arg(long, env = "NAMES_MAX_PRICE_WEI")]
@@ -643,6 +647,10 @@ mod tests {
                 c.economy.broker_reconcile_interval_ms
             ),
             (1, 3_000, 180_000, 60_000)
+        );
+        assert!(
+            c.economy.names_signer_enabled,
+            "the NAMEs chain signer is on unless turned off"
         );
         assert!(c.economy.mana_usd_aggregator_address.is_none());
         assert_eq!(

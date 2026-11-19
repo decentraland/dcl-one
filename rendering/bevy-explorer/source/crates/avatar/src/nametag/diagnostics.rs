@@ -59,7 +59,6 @@ pub const SECTION: DebugSection = DebugSection {
 #[command(name = "/nametag_state")]
 pub struct NametagStateCommand;
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn nametag_state(
     mut cmd: ConsoleCommand<NametagStateCommand>,
     visible: Res<NametagsVisible>,

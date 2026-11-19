@@ -90,8 +90,10 @@ mod tests {
             ("http://localhost:8000/login", false),
         ] {
             let mut app = App::new();
-            let mut realm = CurrentRealm::default();
-            realm.address = "https://realm.example".into();
+            let realm = CurrentRealm {
+                address: "https://realm.example".into(),
+                ..Default::default()
+            };
             app.insert_resource(realm)
                 .init_resource::<Wallet>()
                 .init_resource::<AppConfig>()

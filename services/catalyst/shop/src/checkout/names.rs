@@ -26,11 +26,16 @@ fn name_mint_price() -> U256 {
 
 fn eth_signer(state: &SharedState) -> Result<&DirectSigner, ApiError> {
     require_broadcast_enabled(state, "name operations")?;
-    state.eth_signer.as_ref().map(|s| s.as_ref()).ok_or_else(|| {
-        ApiError::RelayerUnavailable(
-            "Name operations require the Ethereum signer (set META_TX_BROADCAST_ENABLED=true with RELAYER_PRIVATE_KEY_FILE + ETH_RPC_URL); nothing was broadcast.".into(),
-        )
-    })
+    state
+        .eth_signer
+        .as_ref()
+        .map(|s| s.as_ref())
+        .ok_or_else(|| {
+            ApiError::RelayerUnavailable(format!(
+                "Name operations require the Ethereum signer, which is {}; nothing was broadcast.",
+                state.settings.names_signer_absence()
+            ))
+        })
 }
 
 fn name_contracts(state: &SharedState) -> Result<NameContracts, ApiError> {

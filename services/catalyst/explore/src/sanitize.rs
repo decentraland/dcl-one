@@ -1002,18 +1002,8 @@ pub fn sanitize_asset_url(url: &str) -> Result<String, String> {
     if trimmed == crate::events::posters::DEFAULT_EVENT_IMAGE {
         return Ok(trimmed.to_owned());
     }
-    if let Some(hash) = ["/poster/", "/poster-vertical/"]
-        .iter()
-        .find_map(|prefix| trimmed.strip_prefix(prefix))
-    {
-        if !hash.is_empty()
-            && hash
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-'))
-        {
-            return Ok(trimmed.to_owned());
-        }
-        return Err("image must be a /poster/<hash> path or a safe http(s) URL".into());
+    if crate::node_assets::poster_path(trimmed).is_some() {
+        return Ok(trimmed.to_owned());
     }
     if is_safe_link_target(trimmed) {
         return Ok(trimmed.to_owned());
@@ -1210,7 +1200,7 @@ mod url_tests {
     fn accepts_poster_paths_and_safe_absolute_asset_urls() {
         for url in [
             "/poster/bafkreiabc123",
-            "/poster/hash-with.dots-1",
+            "/poster/hash_with.dots-1",
             "https://decentraland.org/poster.png",
         ] {
             assert_eq!(sanitize_asset_url(url), Ok(url.to_owned()), "{url}");
@@ -1218,6 +1208,7 @@ mod url_tests {
         for url in [
             "/poster/",
             "/poster/../etc/passwd",
+            "/poster/_not-a-node-key",
             "/poster/a/b",
             "/other/hash",
             "javascript:alert(1)",
