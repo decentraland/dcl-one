@@ -282,3 +282,110 @@ async fn private_message_settings_read_per_address_with_friendship() {
     forget(&db, &strict).await;
     cleanup_pair(&db, &me, &friend).await;
 }
+
+/// The procedure shows a private-messages privacy change in the live room and
+/// answers an internal error when the room refuses it; a refused tightening
+/// stores only the other settings.
+#[tokio::test]
+async fn upserting_privacy_reaches_the_room_or_is_refused() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let db = Db::new(pool.clone());
+    let voice = Arc::new(FakeVoiceRooms::new(pool));
+    let ctx = test_ctx(db.clone(), voice.clone());
+    let me = addr("ss-room");
+    let attempt = |payload: UpsertSocialSettingsPayload| {
+        let ctx = &ctx;
+        let me = &me;
+        async move {
+            SocialServiceImpl
+                .upsert_social_settings(payload, procedure_ctx(ctx, me, 43))
+                .await
+                .unwrap()
+                .response
+        }
+    };
+
+    upsert(
+        &ctx,
+        &me,
+        UpsertSocialSettingsPayload {
+            private_messages_privacy: Some(PrivateMessagePrivacySetting::All as i32),
+            ..Default::default()
+        },
+    )
+    .await;
+    voice
+        .fail_actions
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let refused = attempt(UpsertSocialSettingsPayload {
+        private_messages_privacy: Some(PrivateMessagePrivacySetting::OnlyFriends as i32),
+        show_situation_reactions: Some(SituationReactionsVisibility::Hide as i32),
+        ..Default::default()
+    })
+    .await;
+    assert!(
+        matches!(
+            refused,
+            Some(upsert_social_settings_response::Response::InternalServerError(_))
+        ),
+        "{refused:?}"
+    );
+    assert!(
+        voice
+            .calls
+            .lock()
+            .contains(&format!("private-messages-privacy {me} only_friends"))
+    );
+    let after = read(&ctx, &me).await;
+    assert_eq!(
+        (
+            after.private_messages_privacy,
+            after.show_situation_reactions
+        ),
+        (
+            PrivateMessagePrivacySetting::All as i32,
+            SituationReactionsVisibility::Hide as i32
+        )
+    );
+
+    voice
+        .fail_actions
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let written = upsert(
+        &ctx,
+        &me,
+        UpsertSocialSettingsPayload {
+            private_messages_privacy: Some(PrivateMessagePrivacySetting::OnlyFriends as i32),
+            ..Default::default()
+        },
+    )
+    .await;
+    assert_eq!(
+        written.private_messages_privacy,
+        PrivateMessagePrivacySetting::OnlyFriends as i32
+    );
+
+    voice
+        .fail_actions
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let refused = attempt(UpsertSocialSettingsPayload {
+        private_messages_privacy: Some(PrivateMessagePrivacySetting::All as i32),
+        ..Default::default()
+    })
+    .await;
+    assert!(
+        matches!(
+            refused,
+            Some(upsert_social_settings_response::Response::InternalServerError(_))
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(
+        read(&ctx, &me).await.private_messages_privacy,
+        PrivateMessagePrivacySetting::All as i32,
+        "a loosening is stored before the room is told"
+    );
+    forget(&db, &me).await;
+}
