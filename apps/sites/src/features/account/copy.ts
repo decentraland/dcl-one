@@ -3,7 +3,7 @@ import type { SubscriptionGroupKey } from "@/data/lib/account/notifications";
 /** The account settings' wording, as decentraland.org's account pages have it. */
 export const ACCOUNT_COPY = {
   title: "Account Settings",
-  sections: { notifications: "Notifications", credits: "Credits Settings" },
+  sections: { wallets: "Wallets", notifications: "Notifications", credits: "Credits Settings" },
   logout: "Log out",
   back: "back to Account Settings",
   close: "Close",
@@ -106,4 +106,22 @@ export const CREDITS_COPY = {
   cancel: "Cancel",
   close: "Close",
   confirm: "Leave Program",
+} as const;
+
+export const WALLETS_COPY = {
+  address: "Wallet address",
+  networks: { ethereum: "Ethereum MANA", polygon: "Polygon MANA" },
+  unit: "MANA",
+  balanceUnavailable: "Balance not available. This node cannot read this network right now.",
+  retry: "Try again",
+  transactions: {
+    title: "Transactions",
+    empty: "No transactions yet.",
+    unavailable: "Transaction history is not available on this node.",
+    loadError: "We couldn't load your transactions. Please try again later.",
+    moreError: "We couldn't load more transactions. Please try again.",
+    loadMore: "Load more",
+    direction: { sent: "Sent", received: "Received" },
+    counterparty: { sent: "To", received: "From" },
+  },
 } as const;

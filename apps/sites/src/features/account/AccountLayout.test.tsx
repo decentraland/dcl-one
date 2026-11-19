@@ -78,8 +78,9 @@ describe("AccountLayout", () => {
     show();
 
     const links = screen.getAllByRole("link").filter((link) => link.closest("nav"));
-    expect(links.map((link) => link.textContent)).toEqual(["Notifications", "Credits Settings"]);
-    expect(links[0]!.getAttribute("aria-current")).toBe("page");
+    expect(links.map((link) => link.textContent)).toEqual(["Wallets", "Notifications", "Credits Settings"]);
+    expect(links.map((link) => link.getAttribute("href"))).toEqual(["/account/wallets", "/account/notifications", "/account/credits"]);
+    expect(links.map((link) => link.getAttribute("aria-current"))).toEqual([null, "page", null]);
     expect(screen.getByText(`Settings for ${identity.signer}`)).toBeTruthy();
   });
 

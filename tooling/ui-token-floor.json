@@ -23,6 +23,18 @@
     "primitives": 0,
     "tokens": 24
   },
+  "apps/sites/src/features/account/WalletBalanceCard.module.css": {
+    "primitives": 0,
+    "tokens": 14
+  },
+  "apps/sites/src/features/account/WalletTransactions.module.css": {
+    "primitives": 0,
+    "tokens": 15
+  },
+  "apps/sites/src/features/account/WalletsSettings.module.css": {
+    "primitives": 0,
+    "tokens": 8
+  },
   "apps/sites/src/features/components/CopyAddress.module.css": {
     "primitives": 0,
     "tokens": 12
