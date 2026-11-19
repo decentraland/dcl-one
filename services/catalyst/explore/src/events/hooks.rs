@@ -23,8 +23,7 @@ pub struct Links {
     /// `JUMP_IN_SITE_URL` (`:13-16`): a stored url under it is the generated
     /// jump-in link the submission notice labels with the place.
     pub jump_in_site_url: String,
-    /// The events asset mount a stored poster path (`/poster/<file>`, the
-    /// default asset) is served under: Slack's `image_url` must be absolute.
+    /// The events asset mount (`<origin>/events`) that makes stored images absolute.
     pub asset_base: String,
 }
 
@@ -590,9 +589,7 @@ mod tests {
             block_text(&custom, 2),
             "at <https://example.org/whats-on/admin/pending-events?id=ev-2|Events page>\nat https://example.com/x?a=1&amp;b=&lt;2&gt;"
         );
-        // A stored poster (`/poster/<file>`) is served on the node's poster
-        // mount, the default asset on the events mount; Slack's `image_url`
-        // must be absolute.
+        // Slack's `image_url` must be absolute: posters on the node's poster mount.
         for (stored, absolute) in [
             (
                 "/poster/abc.webp",

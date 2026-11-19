@@ -43,8 +43,7 @@ pub fn absolute_default_image(image: &str, events_asset_base: &str) -> String {
     }
 }
 
-/// An absolute image for a notice (push, inbox, Slack): uploaded posters on
-/// the node's poster mount, other node paths under the events asset mount.
+/// An absolute image for a notice: posters on the node's poster mount.
 pub fn notice_image_url(image: &str, events_asset_base: &str) -> String {
     let assets = events_asset_base.trim_end_matches('/');
     if poster_path(image).is_some() {
