@@ -34,8 +34,7 @@ fn send_animator(app: &mut App, root: Entity, id: SceneEntityId, message: Option
         });
 }
 
-#[test]
-fn sdk_animator_transitions_sample_the_default_pose_and_release_playback() {
+fn scene_fixture() -> (App, Entity, SceneEntityId, Entity) {
     let mut app = App::new();
     app.add_plugins((
         MinimalPlugins,
@@ -90,7 +89,10 @@ fn sdk_animator_transitions_sample_the_default_pose_and_release_playback() {
     app.world_mut()
         .entity_mut(root)
         .insert((context, DeletedSceneEntities::default()));
+    (app, root, id, container)
+}
 
+fn load_model(app: &mut App, container: Entity) -> Entity {
     let mut world = World::new();
     world.spawn_empty();
     let model = app
@@ -155,15 +157,48 @@ fn sdk_animator_transitions_sample_the_default_pose_and_release_playback() {
         AnimationGraphHandle(graph),
         AnimationPlayer::default(),
     ));
-    app.update();
-    assert!(app.world().get::<Transform>(bone).unwrap().translation.x > 1.0);
+    bone
+}
 
-    let control = PbAnimator {
+fn swim_animator() -> PbAnimator {
+    PbAnimator {
         states: vec![PbAnimationState {
             clip: "swim".into(),
             ..Default::default()
         }],
-    };
+    }
+}
+
+#[test]
+fn sdk_animator_before_model_load_samples_the_default_pose_and_plays_swim() {
+    let (mut app, root, id, container) = scene_fixture();
+    send_animator(&mut app, root, id, Some(&swim_animator()));
+    app.update();
+
+    let bone = load_model(&mut app, container);
+    assert_eq!(
+        app.world().get::<Transform>(bone).unwrap().translation,
+        Vec3::ZERO
+    );
+    app.update();
+    let first = *app.world().get::<Transform>(bone).unwrap();
+    assert_eq!(first.translation, Vec3::ONE);
+    assert!(first.scale.x > 1.0);
+
+    app.update();
+    let next = app.world().get::<Transform>(bone).unwrap();
+    assert_eq!(next.translation, Vec3::ONE);
+    assert!(next.scale.x > first.scale.x);
+}
+
+#[test]
+fn sdk_animator_transitions_sample_the_default_pose_and_release_playback() {
+    let (mut app, root, id, container) = scene_fixture();
+    let bone = load_model(&mut app, container);
+    app.update();
+    assert!(app.world().get::<Transform>(bone).unwrap().translation.x > 1.0);
+
+    let control = swim_animator();
     send_animator(&mut app, root, id, Some(&control));
     app.update();
     let first_swim = *app.world().get::<Transform>(bone).unwrap();
