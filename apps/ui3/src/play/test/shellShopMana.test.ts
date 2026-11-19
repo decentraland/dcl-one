@@ -965,6 +965,52 @@ describe('the in-world purchase with MANA', () => {
       expect(p.events.filter((e) => e.operation === op && (e.state === 'failed' || e.state === 'cancelled')).map((e) => e.state)).toEqual(['failed'])
     })
 
+    it.each([
+      ['on the dialog still up for it, with TRY AGAIN', true],
+      ['quietly when the dialog was closed', false]
+    ])('ends a sale the relay refused past the send’s deadline as failed %s, never as cancelled', async (_what, open) => {
+      const w = world({ allowance: maxUint256 })
+      let release!: () => void
+      const held = new Promise<void>((r) => (release = r))
+      const slow = (async (url: string, init?: RequestInit) => {
+        const res = await w.relay.fetchImpl(url, init)
+        await held
+        return res
+      }) as unknown as typeof fetch
+      const sleepers: (() => void)[] = []
+      const wake = () => sleepers.splice(0).forEach((r) => r())
+      w.relay.state.mode = 'refuse'
+      const p = page(w, {
+        services: {
+          rail: () => ({ relayerUrl: 'https://node.test/transactions-api/v1', fetchImpl: slow, gasless: true, wait: { timeoutMs: 30, pollMs: 10 } }),
+          sleep: () => new Promise<void>((r) => sleepers.push(r)),
+          manaTimeouts: () => ({ sendMs: 50, readMs: 50 })
+        }
+      })
+      await p.payMana()
+      const pending = await p.until('pending')
+      const op = p.events.at(-1)!.operation
+      if (!open) pending.handlers.onClose()
+      // Past the deadline: the rails took it as a relay that didn't answer; then the refusal comes back.
+      await new Promise((r) => setTimeout(r, 120))
+      release()
+      await new Promise((r) => setTimeout(r, 30))
+      wake()
+      await vi.waitFor(() => expect(p.events.filter((e) => e.operation === op).at(-1)?.state).toMatch(open ? /reviewing/ : /failed/))
+      expect(p.events.filter((e) => e.operation === op).map((e) => e.state)).not.toContain('cancelled')
+      if (open) {
+        expect(p.shown.at(-1)?.view).toMatchObject({ step: 'failed', retry: true, message: 'This purchase couldn’t go out. Nothing was bought and no MANA was spent.' })
+        wake()
+        await new Promise((r) => setTimeout(r, 30))
+        expect(p.shown.at(-1)?.view).toMatchObject({ step: 'failed', retry: true })
+        p.shown.at(-1)!.handlers.onRetry?.()
+        await p.until('method')
+        expect(p.events.filter((e) => e.operation === op && (e.state === 'failed' || e.state === 'cancelled')).map((e) => e.state)).toEqual(['failed'])
+      } else {
+        expect((await p.open()) as { operation: string }).not.toMatchObject({ operation: op })
+      }
+    })
+
     it('keeps the relay’s late refusal with the purchase it answers: closed meanwhile, it ends unbought and frees the item', async () => {
       const w = world({ allowance: maxUint256 })
       let release!: () => void

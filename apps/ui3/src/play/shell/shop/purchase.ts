@@ -471,6 +471,9 @@ const FEE_FREE_UNAVAILABLE = 'Fee-free checkout is unavailable right now. Nothin
 /** A MANA sale the chain says can no longer run: it never did. */
 const MANA_NOT_BOUGHT = "This purchase didn't go through. Nothing was bought and no MANA was spent."
 const MANA_NOT_BOUGHT_PART = 'one of its transactions didn’t go through; no MANA was spent for it.'
+/** A MANA sale the relay answered, late, that it didn't send. */
+const MANA_NOT_SENT = 'This purchase couldn’t go out. Nothing was bought and no MANA was spent.'
+const MANA_NOT_SENT_PART = 'one of its transactions couldn’t go out; no MANA was spent for it.'
 /** A MANA sale sent through the relay, not yet found on chain. */
 const MANA_CHECKING = 'Checking your purchase. You can close this window.'
 /** RETRY: the same sale, at the same nonce. */
@@ -822,6 +825,17 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     // Back to reviewing: its sale provably didn't go (a marked refusal), and the dialog up for it says so with TRY AGAIN.
     // That dialog ends it (failed, or a fresh attempt); the watch stops here.
     if (op.state === 'reviewing') return true
+    // The relay refused the only send that went, answering after the send's deadline: proven unsent, it ends failed (on
+    // the dialog still up for it, with TRY AGAIN; quietly when that was closed), not as a send that never left.
+    if (!op.manaSending && !manaDispatched(record) && record.sends.some((s) => s.stage === 'refused') && !record.sends.some((s) => s.stage === 'signing')) {
+      if (slot.holds(op)) {
+        op.state = 'reviewing'
+        publish(op)
+        const req: ShopBuyRequest = { v: SHOP_PROTOCOL, items: op.items, method: 'credits', ...(op.cart ? { cart: true as const } : {}), ...(op.input ? { input: op.input } : {}) }
+        fail(op, MANA_NOT_SENT, () => restart(op, req, 'failed'))
+      } else settled(op, 'failed', {}, MANA_NOT_SENT, MANA_NOT_SENT_PART)
+      return true
+    }
     // Held here, with no send of it in flight on this page: a send left `signing` has no sender to finish it (the page
     // that signed it went, or its retry ended before its request), so what can't be evidence is dropped.
     let attempt = record
