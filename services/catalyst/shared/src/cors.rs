@@ -9,6 +9,9 @@
 //! Registry gateway, the social API and `/lambdas/`. The content routes keep
 //! their own `content_cors` (`content/src/routing.rs`), which also exposes
 //! headers and is not covered by it.
+//! [`decentraland_cors`] is the same answer for the Decentraland front-end
+//! origins only ([`is_decentraland_origin`]); any other origin gets no
+//! allow-origin or credentials, and its preflight no methods or headers.
 
 use axum::body::Body;
 use axum::extract::Request;
@@ -22,7 +25,61 @@ const ALLOW_HEADERS: &str = "Cache-Control,Content-Type,Origin,Accept,User-Agent
 const MAX_AGE: &str = "86400";
 
 pub async fn cors_middleware(req: Request, next: Next) -> Response {
-    let origin = req.headers().get(header::ORIGIN).cloned();
+    cors(req, next, |_| true).await
+}
+
+/// [`cors_middleware`] for the origins [`is_decentraland_origin`] lists: a
+/// listed origin is echoed with credentials and its preflight reflects the
+/// requested headers; any other origin gets a 204 preflight without
+/// allow-origin, methods or headers, and no allow-origin on other answers.
+pub async fn decentraland_cors(req: Request, next: Next) -> Response {
+    cors(req, next, is_decentraland_origin).await
+}
+
+/// The Decentraland front-end origins (the `CORS_ORIGIN` list the old relay,
+/// rentals and Shop services shared): `http://localhost:<port>`,
+/// `https://decentraland.{zone,today,org}` and their subdomains,
+/// `https://[<name>-]decentraland1.vercel.app`, and the Shop's
+/// `https://tools.decentraland.systems`.
+pub fn is_decentraland_origin(origin: &str) -> bool {
+    if origin == "https://tools.decentraland.systems" {
+        return true;
+    }
+    if let Some(port) = origin.strip_prefix("http://localhost:") {
+        return (1..=10).contains(&port.len()) && port.bytes().all(|b| b.is_ascii_digit());
+    }
+    let Some(host) = origin.strip_prefix("https://") else {
+        return false;
+    };
+    // A non-empty prefix of up to 50 host characters ending in `separator`, or none.
+    let prefixed = |rest: Option<&str>, separator: char| {
+        rest.is_some_and(|rest| {
+            rest.is_empty()
+                || rest.strip_suffix(separator).is_some_and(|label| {
+                    (1..=50).contains(&label.len())
+                        && label
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+                })
+        })
+    };
+    [
+        "decentraland.zone",
+        "decentraland.today",
+        "decentraland.org",
+    ]
+    .iter()
+    .any(|apex| prefixed(host.strip_suffix(apex), '.'))
+        || prefixed(host.strip_suffix("decentraland1.vercel.app"), '-')
+}
+
+async fn cors(req: Request, next: Next, allows: impl Fn(&str) -> bool) -> Response {
+    let origin = req
+        .headers()
+        .get(header::ORIGIN)
+        .filter(|o| allows(o.to_str().unwrap_or_default()))
+        .cloned();
+    let has_origin = req.headers().contains_key(header::ORIGIN);
     let is_preflight = req.method() == Method::OPTIONS;
     let requested_headers = req
         .headers()
@@ -35,14 +92,18 @@ pub async fn cors_middleware(req: Request, next: Next) -> Response {
             .body(Body::empty())
             .unwrap();
         let h = resp.headers_mut();
-        h.insert(
-            header::ACCESS_CONTROL_ALLOW_METHODS,
-            HeaderValue::from_static(ALLOW_METHODS),
-        );
-        h.insert(
-            header::ACCESS_CONTROL_ALLOW_HEADERS,
-            requested_headers.unwrap_or(HeaderValue::from_static(ALLOW_HEADERS)),
-        );
+        // An unlisted origin is granted no method or header: the gateway adds
+        // `*` to an answer without an allow-origin.
+        if origin.is_some() || !has_origin {
+            h.insert(
+                header::ACCESS_CONTROL_ALLOW_METHODS,
+                HeaderValue::from_static(ALLOW_METHODS),
+            );
+            h.insert(
+                header::ACCESS_CONTROL_ALLOW_HEADERS,
+                requested_headers.unwrap_or(HeaderValue::from_static(ALLOW_HEADERS)),
+            );
+        }
         h.insert(
             header::ACCESS_CONTROL_MAX_AGE,
             HeaderValue::from_static(MAX_AGE),
@@ -57,10 +118,13 @@ pub async fn cors_middleware(req: Request, next: Next) -> Response {
 
     let mut resp = next.run(req).await;
 
+    if has_origin {
+        resp.headers_mut()
+            .insert(header::VARY, HeaderValue::from_static("Origin"));
+    }
     if let Some(origin) = origin {
         allow_origin(&mut resp, origin);
         let h = resp.headers_mut();
-        h.insert(header::VARY, HeaderValue::from_static("Origin"));
         if !h.contains_key(header::ACCESS_CONTROL_EXPOSE_HEADERS) {
             h.insert(
                 header::ACCESS_CONTROL_EXPOSE_HEADERS,
@@ -318,6 +382,105 @@ mod tests {
                 .is_none()
         );
         assert_eq!(resp.headers().get(header::VARY).unwrap(), "Origin");
+    }
+
+    #[test]
+    fn the_decentraland_origins_are_the_legacy_list() {
+        for listed in [
+            "http://localhost:5173",
+            "https://decentraland.org",
+            "https://decentraland.zone",
+            "https://decentraland.today",
+            "https://market.decentraland.org",
+            "https://a.b.decentraland.org",
+            "https://decentraland1.vercel.app",
+            "https://shop-git-main-decentraland1.vercel.app",
+            "https://tools.decentraland.systems",
+        ] {
+            assert!(is_decentraland_origin(listed), "{listed}");
+        }
+        for unlisted in [
+            "http://localhost",
+            "http://localhost:",
+            "http://localhost:12345678901",
+            "https://localhost:5173",
+            "http://decentraland.org",
+            "https://notdecentraland.org",
+            "https://decentraland.org.example.com",
+            "https://decentraland.org:8443",
+            "https://.decentraland.org",
+            "https://a_b.decentraland.org",
+            "https://example.org",
+            "https://decentraland1.vercel.app.example.com",
+            "https://xdecentraland1.vercel.app",
+            "https://-decentraland1.vercel.app",
+            "https://other.decentraland.systems",
+        ] {
+            assert!(!is_decentraland_origin(unlisted), "{unlisted}");
+        }
+    }
+
+    fn decentraland_app() -> Router {
+        Router::new()
+            .route("/x", axum::routing::post(|| async { "ok" }))
+            .layer(axum::middleware::from_fn(decentraland_cors))
+    }
+
+    /// A listed origin's signed preflight is answered 204 with the origin,
+    /// credentials and the requested `x-identity-*` headers; an unlisted
+    /// origin gets the 204 without allow-origin, credentials, methods or headers.
+    #[tokio::test]
+    async fn decentraland_cors_answers_only_listed_origins() {
+        let requested = "content-type,x-identity-auth-chain-0,x-identity-auth-chain-1,x-identity-auth-chain-2,x-identity-metadata,x-identity-timestamp";
+        for (origin, listed) in [
+            ("https://decentraland.org", true),
+            ("https://example.org", false),
+        ] {
+            let preflight = Request::builder()
+                .method(Method::OPTIONS)
+                .uri("/x")
+                .header(header::ORIGIN, origin)
+                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                .header(header::ACCESS_CONTROL_REQUEST_HEADERS, requested)
+                .body(Body::empty())
+                .unwrap();
+            let resp = decentraland_app().oneshot(preflight).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::NO_CONTENT, "{origin}");
+            let h = resp.headers();
+            assert_eq!(
+                h.get(header::ACCESS_CONTROL_ALLOW_HEADERS)
+                    .map(|v| v.to_str().unwrap()),
+                listed.then_some(requested),
+            );
+            assert_eq!(h.contains_key(header::ACCESS_CONTROL_ALLOW_METHODS), listed);
+            assert_eq!(h[header::VARY], "Origin");
+            assert_eq!(
+                h.get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                    .map(|v| v.to_str().unwrap()),
+                listed.then_some(origin),
+            );
+            assert_eq!(
+                h.contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS),
+                listed
+            );
+
+            let resp = decentraland_app()
+                .oneshot(req(Method::POST, Some(origin)))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK, "{origin}");
+            let h = resp.headers();
+            assert_eq!(h[header::VARY], "Origin");
+            assert_eq!(
+                h.get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                    .map(|v| v.to_str().unwrap()),
+                listed.then_some(origin),
+            );
+            assert_eq!(
+                h.contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS),
+                listed
+            );
+        }
     }
 
     const REGISTRY: HttpServerCors = HttpServerCors {

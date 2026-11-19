@@ -567,7 +567,7 @@ pub fn router(state: SharedState) -> Router {
             post(handlers::admin::relayer_signer),
         )
         .with_state(state);
-    if trial {
+    let guarded = if trial {
         crate::shared::writes::guard_with(
             api,
             crate::shared::writes::Gate {
@@ -578,7 +578,11 @@ pub fn router(state: SharedState) -> Router {
         )
     } else {
         DataWrites::guard(api, data_writes)
-    }
+    };
+    // Outside the gate, so a refused write still carries the CORS headers.
+    guarded.layer(axum::middleware::from_fn(
+        crate::shared::cors::decentraland_cors,
+    ))
 }
 
 /// The relayer controls: process-local atomics behind the admin bearer, open
