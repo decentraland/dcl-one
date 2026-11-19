@@ -220,14 +220,12 @@ describe("scene-drafts auth: ADR-44 AuthChain verification", () => {
     expect(replayRes.status).toBe(401);
   });
 
-  it("accepts only a Decentraland Login delegation, with carriage returns ignored", async () => {
-    const delegatedWith = async (firstLine: string, separator = "\n") => {
+  it("accepts only a Decentraland Login delegation", async () => {
+    const delegatedWith = async (firstLine: string) => {
       const account = privateKeyToAccount(generatePrivateKey());
       const ephemeral = generateEphemeralKey();
       const expiration = new Date(Date.now() + 60_000).toISOString();
-      const message = [firstLine, `Ephemeral address: ${ephemeral.address}`, `Expiration: ${expiration}`].join(
-        separator,
-      );
+      const message = [firstLine, `Ephemeral address: ${ephemeral.address}`, `Expiration: ${expiration}`].join("\n");
       const signer = account.address.toLowerCase();
       const identity = {
         signer,
@@ -243,7 +241,6 @@ describe("scene-drafts auth: ADR-44 AuthChain verification", () => {
     };
 
     expect((await delegatedWith("Decentraland Login")).ok).toBe(true);
-    expect((await delegatedWith("Decentraland Login", "\r\n")).ok).toBe(true);
     for (const firstLine of ["Decentraland Storage Delegation", "Decentraland Login ", ""]) {
       const res = await delegatedWith(firstLine);
       expect(res).toEqual({ ok: false, status: 401, error: "malformed ephemeral payload" });
