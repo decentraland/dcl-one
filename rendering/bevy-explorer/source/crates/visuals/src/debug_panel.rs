@@ -540,7 +540,6 @@ struct RenderView {
     enabled: Option<bool>,
 }
 
-#[allow(clippy::type_complexity)]
 fn render_view(
     mut cmd: ConsoleCommand<RenderView>,
     preview: Option<Res<common::structs::PreviewMode>>,

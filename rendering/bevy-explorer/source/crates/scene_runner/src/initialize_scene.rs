@@ -279,7 +279,6 @@ pub(crate) fn load_scene_json(
 #[derive(Asset, Default, Clone, TypePath)]
 pub struct SerializedCrdtStore(pub Vec<u8>);
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn load_scene_javascript(
     mut commands: Commands,
     config: Res<AppConfig>,
@@ -675,7 +674,6 @@ pub struct TestingData {
 #[derive(Component)]
 pub struct SuperUserScene;
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(crate) fn initialize_scene(
     mut commands: Commands,
     scene_updates: Res<SceneUpdates>,
@@ -1268,7 +1266,6 @@ pub fn process_realm_change(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn load_active_entities(
     current_realm: Res<CurrentRealm>,
     player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,
@@ -1700,7 +1697,6 @@ const WAVE_SLOT_TIMEOUT: Duration = Duration::from_secs(20);
 #[derive(Component)]
 pub struct WaveSlotSince(Duration);
 
-#[expect(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn process_scene_lifecycle(
     mut commands: Commands,
     portables: Res<PortableScenes>,
@@ -2025,7 +2021,6 @@ pub struct SceneHash(pub String);
 #[derive(Component)]
 pub struct LoadingQuad(bool);
 
-#[allow(clippy::too_many_arguments)]
 fn animate_ready_scene(
     mut q: Query<(
         Entity,

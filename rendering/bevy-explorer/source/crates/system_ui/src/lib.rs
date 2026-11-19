@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod change_realm;
 pub mod chat;
 pub mod crash_report;
@@ -62,7 +64,6 @@ impl Plugin for SystemUiPlugin {
 #[derive(Resource)]
 struct SystemUiRoot(Entity);
 
-#[allow(clippy::type_complexity)]
 fn setup(mut commands: Commands, mut ui_root: ResMut<SystemUiRoot>, native_ui: Res<NativeUi>) {
     let show = native_ui.login;
 
@@ -118,7 +119,6 @@ fn toggle_system_ui(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn handle_scene_permissions(
     mut manager: ResMut<PermissionManager>,
     mut config: ResMut<AppConfig>,
