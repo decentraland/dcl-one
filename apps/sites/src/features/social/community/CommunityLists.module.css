@@ -196,15 +196,6 @@
   flex-shrink: 0;
 }
 
-.role {
-  padding: var(--dcl-space-4);
-  border-radius: var(--dcl-radius-xs);
-  background: var(--dcl-transparencies-white-10);
-  color: var(--dcl-text-primary);
-  font-size: var(--dcl-font-size-body-xs);
-  line-height: normal;
-}
-
 /* Cards of at least 300px fill the column, as source; on a phone one card spans it. */
 .events {
   display: grid;

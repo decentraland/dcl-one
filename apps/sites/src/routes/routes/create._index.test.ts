@@ -2,7 +2,7 @@ import { RouterContextProvider } from "react-router";
 import { beforeEach, expect, it, vi } from "vitest";
 import { fetchHotScenes } from "@/data/lib/create-landing/live-scenes";
 import { loadLatestRelease } from "@/data/lib/download/creator-hub.server";
-import { loader } from "./create._index";
+import { loader, meta } from "./create._index";
 
 vi.mock("@/data/lib/create-landing/live-scenes", async (actual) => ({
   ...(await actual<typeof import("@/data/lib/create-landing/live-scenes")>()),
@@ -74,4 +74,16 @@ it("does not hold the landing for a release that is slow to read", async () => {
   vi.mocked(loadLatestRelease).mockReturnValue(new Promise(() => {}));
   const { downloads } = await landingData(WINDOWS);
   expect(downloads).toBeNull();
+});
+
+it("should carry the title, the description and the canonical path", () => {
+  expect(meta()).toEqual([
+    { title: "Create in Decentraland | Wearables, Emotes, Scenes & Worlds" },
+    {
+      name: "description",
+      content:
+        "Everything you need to create in Decentraland: build Wearables, Emotes, Scenes and Worlds, manage your collections and join the creator community.",
+    },
+    { tagName: "link", rel: "canonical", href: "/create" },
+  ]);
 });

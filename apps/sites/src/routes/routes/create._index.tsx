@@ -15,11 +15,13 @@ import { SubNav } from "@/features/creators/components/SubNav";
 import type { Route } from "./+types/create._index";
 
 export const meta = () => [
-  { title: "Create in Decentraland | Decentraland" },
+  { title: "Create in Decentraland | Wearables, Emotes, Scenes & Worlds" },
   {
     name: "description",
-    content: "Download the Creator Hub to start building immersive scenes and interactive experiences in Decentraland.",
+    content:
+      "Everything you need to create in Decentraland: build Wearables, Emotes, Scenes and Worlds, manage your collections and join the creator community.",
   },
+  { tagName: "link", rel: "canonical", href: "/create" },
 ];
 
 // The landing never waits long for the release: without it the hero links to the download page, which does.

@@ -8,7 +8,11 @@ import { blogHeaders, blogResponse } from "../lib/blog";
 import type { Route } from "./+types/blog._index";
 
 export function meta() {
-  return [{ title: "Decentraland Blog" }, { name: "description", content: "News, creator stories, events, and updates from the Decentraland community." }];
+  return [
+    { title: "Blog | Decentraland" },
+    { name: "description", content: "News, creator stories, events, and updates from the Decentraland community." },
+    { tagName: "link", rel: "canonical", href: "/blog" },
+  ];
 }
 
 export const handle = { agentMarkdown: "blogIndex" } satisfies AgentMarkdownHandle;

@@ -8,7 +8,11 @@ import DownloadPage from "@/features/download/DownloadPage";
 import type { Route } from "./+types/download";
 
 export function meta() {
-  return [{ title: "Download Decentraland" }];
+  return [
+    { title: "Download Decentraland | Decentraland" },
+    { name: "description", content: "Download Decentraland and start exploring the metaverse — events, communities, voice chat and more." },
+    { tagName: "link", rel: "canonical", href: "/download" },
+  ];
 }
 
 // A deep link (`?position=` or `?realm=`) opens that place in the web Explorer at /play; without one, the page

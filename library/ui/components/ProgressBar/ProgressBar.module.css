@@ -1,0 +1,80 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+/* Figma `ProgressBar` (Status=0/3|1/3|2/3|Completed): a 10px track at white 10% with a Flare fill and
+ * the count 10px after it; Completed is the check mark and its label, with no track. */
+@layer dcl.components {
+  .root {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: 22px;
+    color: var(--dcl-neutrals-snow);
+  }
+
+  .track {
+    flex: 1 1 0;
+    display: block;
+    overflow: hidden;
+    min-width: 0;
+    height: 10px;
+    border-radius: var(--dcl-radius-full);
+    background: var(--dcl-transparencies-white-10);
+  }
+
+  /* The capture's two stops (#ff2d55 to #ffbc5b) run along the bar; the Flare token holds the same
+   * stops at its own angle. */
+  .fill {
+    display: block;
+    width: var(--progress-bar-share, 0%);
+    height: 100%;
+    border-radius: var(--dcl-radius-full);
+    background: var(--dcl-gradient-flare);
+  }
+
+  .value {
+    composes: text626f64792f6d64 from '../../foundations/typography/text-styles.module.css';
+    flex: none;
+    line-height: 22px;
+    white-space: nowrap;
+  }
+
+  /* The capture's completed green (#28ac00) has no token. */
+  .completed {
+    composes: text6c6162656c2f78732d63617073 from '../../foundations/typography/text-styles.module.css';
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #28ac00;
+    line-height: 22px;
+    text-transform: uppercase;
+  }
+
+  .check {
+    flex: none;
+    overflow: visible;
+    width: 9px;
+    height: 6px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.77;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .fill {
+      transition: width 200ms ease-out;
+    }
+  }
+
+  @media (forced-colors: active) {
+    .track {
+      border: 1px solid CanvasText;
+    }
+
+    .fill {
+      background: Highlight;
+    }
+  }
+}

@@ -16,7 +16,8 @@ const FALLBACK: PageDefaults = { variant: "config_driven" };
 export function meta() {
   return [
     { title: HELP_COPY.pageTitle },
-    { name: "description", content: HELP_COPY.description },
+    { name: "description", content: HELP_COPY.pageDescription },
+    { tagName: "link", rel: "canonical", href: "/help" },
   ];
 }
 

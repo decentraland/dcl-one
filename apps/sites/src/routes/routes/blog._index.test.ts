@@ -78,8 +78,9 @@ describe("blog routes", () => {
 
   it("title each page, including a missing or unavailable one", () => {
     expect(meta()).toEqual([
-      { title: "Decentraland Blog" },
+      { title: "Blog | Decentraland" },
       { name: "description", content: "News, creator stories, events, and updates from the Decentraland community." },
+      { tagName: "link", rel: "canonical", href: "/blog" },
     ]);
     expect(categoryMeta({ loaderData: { state: "ok", title: "Platform", subtitle: "About" } } as never)).toEqual([
       { title: "Platform | Decentraland Blog" },
