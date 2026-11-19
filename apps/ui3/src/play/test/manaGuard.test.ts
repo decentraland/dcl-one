@@ -5,7 +5,7 @@
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeFunctionData, maxUint256, type Hex } from 'viem'
 import { ERC20_ABI } from '@shop/checkout/chain/abi'
 import { BOOK, CREATOR_COUPON_ADDRESS, ITEM } from '@shop/payment/fixtures'
@@ -199,6 +199,14 @@ function guarded(
 const reached = (w: ReturnType<typeof wallet>, method: string) => w.requests.filter((r) => r.method === method)
 
 describe('the MANA guard’s provider', () => {
+  // The listing fixtures stamp their checks from now: a test that builds the terms and then the request it signs builds
+  // the listing twice, which must read the same clock, however long the gap between them.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(NOW_MS))
+  })
+  afterEach(() => void vi.useRealTimers())
+
   it('refuses terms it can’t bound before asking the wallet anything: a USD-priced listing, an unlisted venue', () => {
     expect(() => guarded(listings(encodeMarketplaceCall([creatorTrade()], BUYER)))).toThrow(WalletRefusal)
     expect(() => guarded(listings(undefined, { venue: OTHER }))).toThrow(WalletRefusal)
