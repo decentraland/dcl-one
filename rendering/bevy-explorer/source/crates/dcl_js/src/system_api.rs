@@ -110,10 +110,9 @@ pub fn new_login(state: &mut impl State) -> &mut NewLogin {
     if login.code.is_none() && login.result.is_none() {
         let (sc, code) = RpcResultSender::channel();
         let (sx, result) = RpcResultSender::channel();
-        state
+        let _ = state
             .borrow_mut::<SuperUserScene>()
-            .send(SystemApi::LoginNew(false, sc, sx))
-            .unwrap();
+            .send(SystemApi::LoginNew(false, sc, sx));
 
         login.code = Some(code);
         login.result = Some(result);
@@ -156,26 +155,21 @@ pub async fn op_login_new_success(state: Rc<RefCell<impl State>>) -> Result<(), 
 
 pub fn op_login_guest(state: &mut impl State) {
     debug!("op_login_guest");
-    state
+    let _ = state
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::LoginGuest)
-        .unwrap();
+        .send(SystemApi::LoginGuest);
 }
 
 pub fn op_login_cancel(state: &mut impl State) {
     debug!("op_login_cancel");
-    state
+    let _ = state
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::LoginCancel)
-        .unwrap();
+        .send(SystemApi::LoginCancel);
 }
 
 pub fn op_logout(state: &mut impl State) {
     debug!("op_logout");
-    state
-        .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::Logout)
-        .unwrap();
+    let _ = state.borrow_mut::<SuperUserScene>().send(SystemApi::Logout);
 }
 
 pub async fn op_settings(
@@ -248,11 +242,10 @@ pub async fn op_set_avatar(
 pub async fn op_native_input(state: Rc<RefCell<impl State>>) -> String {
     let (sx, rx) = RpcResultSender::channel();
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetNativeInput(sx))
-        .unwrap();
+        .send(SystemApi::GetNativeInput(sx));
 
     let identifier = rx.await.unwrap();
     serde_json::to_string(&identifier)
@@ -277,8 +270,7 @@ pub async fn op_get_bindings(
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetBindings(sx))
-        .unwrap();
+        .send(SystemApi::GetBindings(sx))?;
 
     rx.await.map_err(|e| anyhow::anyhow!(e)).map(|bd| {
         let mut bindings: Vec<_> = bd.bindings.into_iter().collect();
@@ -300,8 +292,7 @@ pub async fn op_set_bindings(
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::SetBindings(bindings, sx))
-        .unwrap();
+        .send(SystemApi::SetBindings(bindings, sx))?;
 
     rx.await.map_err(|e| anyhow::anyhow!(e))
 }
@@ -337,8 +328,7 @@ pub async fn op_console_command(
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::ConsoleCommand(format!("/{cmd}"), args, sx))
-        .unwrap();
+        .send(SystemApi::ConsoleCommand(format!("/{cmd}"), args, sx))?;
 
     rx.await
         .map_err(|e| anyhow::anyhow!(e))?
@@ -353,8 +343,7 @@ pub async fn op_live_scene_info(
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::LiveSceneInfo(sx))
-        .unwrap();
+        .send(SystemApi::LiveSceneInfo(sx))?;
 
     rx.await.map_err(|e| anyhow::anyhow!(e))
 }
@@ -365,8 +354,7 @@ pub async fn op_get_home_scene(state: Rc<RefCell<impl State>>) -> Result<HomeSce
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetHomeScene(sx))
-        .unwrap();
+        .send(SystemApi::GetHomeScene(sx))?;
 
     rx.await.map_err(|e| anyhow::anyhow!(e))
 }
@@ -379,8 +367,7 @@ pub async fn op_get_service_urls(
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetServiceUrls(sx))
-        .unwrap();
+        .send(SystemApi::GetServiceUrls(sx))?;
 
     rx.await.map_err(|e| anyhow::anyhow!(e))
 }
@@ -391,8 +378,7 @@ pub async fn op_get_welcome(state: Rc<RefCell<impl State>>) -> Result<WelcomeSta
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetWelcome(sx))
-        .unwrap();
+        .send(SystemApi::GetWelcome(sx))?;
 
     rx.await.map_err(|e| anyhow::anyhow!(e))
 }
@@ -403,8 +389,7 @@ pub async fn op_accept_terms(state: Rc<RefCell<impl State>>) -> Result<(), anyho
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::AcceptTerms(sx))
-        .unwrap();
+        .send(SystemApi::AcceptTerms(sx))?;
 
     rx.await.map_err(|e| anyhow::anyhow!(e))
 }
@@ -417,8 +402,7 @@ pub async fn op_get_satellite_view(
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetSatelliteView(sx))
-        .unwrap();
+        .send(SystemApi::GetSatelliteView(sx))?;
 
     rx.await.map_err(|e| anyhow::anyhow!(e))
 }
@@ -438,19 +422,17 @@ pub async fn op_get_world_access(
 }
 
 pub fn op_set_lobby_stage(state: Rc<RefCell<impl State>>, stage: Option<LobbyStage>) {
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::SetLobbyStage(stage))
-        .unwrap();
+        .send(SystemApi::SetLobbyStage(stage));
 }
 
 pub fn op_set_home_scene(state: Rc<RefCell<impl State>>, realm: String, parcel: Vector2) {
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::SetHomeScene(HomeScene { realm, parcel }))
-        .unwrap();
+        .send(SystemApi::SetHomeScene(HomeScene { realm, parcel }));
 }
 
 /// A scene's open engine streams of one item type, by stream id. A scene may open the same
@@ -568,11 +550,10 @@ pub async fn op_get_system_action_stream(state: Rc<RefCell<impl State>>) -> u32 
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetSystemActionStream(sx))
-        .unwrap();
+        .send(SystemApi::GetSystemActionStream(sx));
 
     rid
 }
@@ -588,11 +569,10 @@ pub async fn op_get_chat_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetChatStream(sx))
-        .unwrap();
+        .send(SystemApi::GetChatStream(sx));
 
     rid
 }
@@ -605,11 +585,10 @@ pub async fn op_read_chat_stream(
 }
 
 pub fn op_send_chat(state: Rc<RefCell<impl State>>, message: String, channel: String) {
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::SendChat(message, channel))
-        .unwrap();
+        .send(SystemApi::SendChat(message, channel));
 }
 
 pub fn op_set_chat_bubble_text(
@@ -631,11 +610,10 @@ pub async fn op_get_chat_reaction_stream(state: Rc<RefCell<impl State>>) -> u32 
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetChatReactionStream(sx))
-        .unwrap();
+        .send(SystemApi::GetChatReactionStream(sx));
 
     rid
 }
@@ -668,22 +646,20 @@ pub fn op_send_chat_reaction(
 
 // Native super-user bridge transport (backs a BroadcastChannel polyfill). scene -> page:
 pub fn op_bridge_to_page(state: Rc<RefCell<impl State>>, msg: String) {
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::BridgeToPage(msg))
-        .unwrap();
+        .send(SystemApi::BridgeToPage(msg));
 }
 
 // page -> scene: subscribe once, then read repeatedly (mirrors the chat stream).
 pub async fn op_get_bridge_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetBridgeStream(sx))
-        .unwrap();
+        .send(SystemApi::GetBridgeStream(sx));
     rid
 }
 
@@ -770,11 +746,10 @@ pub async fn op_get_compact_profiles(
 }
 
 pub fn op_quit(state: Rc<RefCell<impl State>>) {
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::Quit)
-        .unwrap();
+        .send(SystemApi::Quit);
 }
 
 pub async fn op_get_permission_request_stream(state: Rc<RefCell<impl State>>) -> u32 {
@@ -782,11 +757,10 @@ pub async fn op_get_permission_request_stream(state: Rc<RefCell<impl State>>) ->
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetPermissionRequestStream(sx))
-        .unwrap();
+        .send(SystemApi::GetPermissionRequestStream(sx));
 
     rid
 }
@@ -803,11 +777,10 @@ pub async fn op_get_permission_used_stream(state: Rc<RefCell<impl State>>) -> u3
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetPermissionUsedStream(sx))
-        .unwrap();
+        .send(SystemApi::GetPermissionUsedStream(sx));
 
     rid
 }
@@ -834,11 +807,10 @@ pub async fn op_get_portables_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetPortablesStream(sx))
-        .unwrap();
+        .send(SystemApi::GetPortablesStream(sx));
 
     rid
 }
@@ -854,11 +826,10 @@ pub async fn op_get_world_access_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetWorldAccessStream(sx))
-        .unwrap();
+        .send(SystemApi::GetWorldAccessStream(sx));
 
     rid
 }
@@ -874,11 +845,10 @@ pub async fn op_get_platform_ban_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetPlatformBanStream(sx))
-        .unwrap();
+        .send(SystemApi::GetPlatformBanStream(sx));
 
     rid
 }
@@ -891,13 +861,12 @@ pub async fn op_read_platform_ban_stream(
 }
 
 pub fn op_set_world_password(state: Rc<RefCell<impl State>>, password: Option<String>) {
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
         .send(SystemApi::SetWorldPassword(
             password.map(system_bridge::world_access::WorldPassword),
-        ))
-        .unwrap();
+        ));
 }
 
 fn get_permanent_level(
@@ -984,11 +953,10 @@ pub fn op_set_interactable_area(
 }
 
 pub async fn op_set_mic_enabled(state: Rc<RefCell<impl State>>, enabled: bool) {
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::SetMicEnabled(enabled))
-        .unwrap();
+        .send(SystemApi::SetMicEnabled(enabled));
 }
 
 pub async fn op_get_mic_state(state: Rc<RefCell<impl State>>) -> Result<MicState, anyhow::Error> {
@@ -997,8 +965,7 @@ pub async fn op_get_mic_state(state: Rc<RefCell<impl State>>) -> Result<MicState
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetMicState(sx))
-        .unwrap();
+        .send(SystemApi::GetMicState(sx))?;
 
     Ok(rx.await?)
 }
@@ -1007,11 +974,10 @@ pub async fn op_get_voice_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetVoiceStream(sx))
-        .unwrap();
+        .send(SystemApi::GetVoiceStream(sx));
 
     rid
 }
@@ -1044,11 +1010,10 @@ pub async fn op_get_nearby_mute_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetNearbyMuteStream(sx))
-        .unwrap();
+        .send(SystemApi::GetNearbyMuteStream(sx));
 
     rid
 }
@@ -1064,11 +1029,10 @@ pub async fn op_get_hover_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetHoverStream(sx))
-        .unwrap();
+        .send(SystemApi::GetHoverStream(sx));
 
     rid
 }
@@ -1083,11 +1047,10 @@ pub async fn op_read_hover_stream(
 pub async fn op_get_connectivity_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sender, receiver) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), receiver);
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetConnectivityStream(sender))
-        .unwrap();
+        .send(SystemApi::GetConnectivityStream(sender));
     rid
 }
 
@@ -1103,22 +1066,20 @@ pub fn op_close_connectivity_stream(state: Rc<RefCell<impl State>>, rid: u32) {
 }
 
 pub fn op_retry_connectivity(state: Rc<RefCell<impl State>>) {
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::RetryConnectivity)
-        .unwrap();
+        .send(SystemApi::RetryConnectivity);
 }
 
 pub async fn op_get_proximity_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetProximityStream(sx))
-        .unwrap();
+        .send(SystemApi::GetProximityStream(sx));
 
     rid
 }
@@ -1134,11 +1095,10 @@ pub async fn op_get_photo_mode_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetPhotoModeStream(sx))
-        .unwrap();
+        .send(SystemApi::GetPhotoModeStream(sx));
 
     rid
 }
@@ -1154,11 +1114,10 @@ pub async fn op_get_profile_changed_stream(state: Rc<RefCell<impl State>>) -> u3
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetProfileChangedStream(sx))
-        .unwrap();
+        .send(SystemApi::GetProfileChangedStream(sx));
 
     rid
 }
@@ -1174,11 +1133,10 @@ pub async fn op_get_scene_loading_ui_stream(state: Rc<RefCell<impl State>>) -> u
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetSceneLoadingUiStream(sx))
-        .unwrap();
+        .send(SystemApi::GetSceneLoadingUiStream(sx));
 
     rid
 }
@@ -1194,11 +1152,10 @@ pub async fn op_get_analytics_event_stream(state: Rc<RefCell<impl State>>) -> u3
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetAnalyticsEventStream(sx))
-        .unwrap();
+        .send(SystemApi::GetAnalyticsEventStream(sx));
 
     rid
 }
@@ -1214,11 +1171,10 @@ pub async fn op_get_texture_optimization_stream(state: Rc<RefCell<impl State>>) 
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetTextureOptimizationStream(sx))
-        .unwrap();
+        .send(SystemApi::GetTextureOptimizationStream(sx));
 
     rid
 }
@@ -1249,11 +1205,10 @@ pub async fn op_get_friendship_event_stream(state: Rc<RefCell<impl State>>) -> u
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetFriendshipEventStream(sx))
-        .unwrap();
+        .send(SystemApi::GetFriendshipEventStream(sx));
 
     rid
 }
@@ -1348,11 +1303,10 @@ pub async fn op_get_friend_connectivity_stream(state: Rc<RefCell<impl State>>) -
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetFriendConnectivityStream(sx))
-        .unwrap();
+        .send(SystemApi::GetFriendConnectivityStream(sx));
 
     rid
 }
@@ -1513,10 +1467,9 @@ pub fn op_get_dm_user_state_stream(state: Rc<RefCell<impl State>>, address: Stri
     let mut state = state.borrow_mut();
     let rid = open_stream(&mut *state, rx);
 
-    state
+    let _ = state
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetDmUserStateStream(address, sx))
-        .unwrap();
+        .send(SystemApi::GetDmUserStateStream(address, sx));
 
     rid
 }
@@ -1541,10 +1494,9 @@ pub fn op_get_voice_chat_state_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let mut state = state.borrow_mut();
     let rid = open_stream(&mut *state, rx);
 
-    state
+    let _ = state
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetVoiceChatStateStream(sx))
-        .unwrap();
+        .send(SystemApi::GetVoiceChatStateStream(sx));
 
     rid
 }
@@ -1567,10 +1519,9 @@ pub fn op_get_community_voice_update_stream(state: Rc<RefCell<impl State>>) -> u
     let mut state = state.borrow_mut();
     let rid = open_stream(&mut *state, rx);
 
-    state
+    let _ = state
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetCommunityVoiceUpdateStream(sx))
-        .unwrap();
+        .send(SystemApi::GetCommunityVoiceUpdateStream(sx));
 
     rid
 }
@@ -1611,22 +1562,20 @@ pub async fn op_get_dm_history(
 }
 
 pub fn op_delete_dm_history(state: Rc<RefCell<impl State>>, address: String) {
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::DeleteDmHistory(address))
-        .unwrap();
+        .send(SystemApi::DeleteDmHistory(address));
 }
 
 pub async fn op_get_community_connectivity_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetCommunityConnectivityStream(sx))
-        .unwrap();
+        .send(SystemApi::GetCommunityConnectivityStream(sx));
 
     rid
 }
@@ -1642,22 +1591,20 @@ pub fn op_set_community_channels(
     state: Rc<RefCell<impl State>>,
     communities: Vec<ListenedCommunity>,
 ) {
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::SetCommunityChannels(communities))
-        .unwrap();
+        .send(SystemApi::SetCommunityChannels(communities));
 }
 
 pub async fn op_get_block_update_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
 
-    state
+    let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetBlockUpdateStream(sx))
-        .unwrap();
+        .send(SystemApi::GetBlockUpdateStream(sx));
 
     rid
 }

@@ -334,23 +334,28 @@ pub async fn renderer_ipc_in(mut stream: RecvHalf) {
         let msg: SceneToEngine = rmp_serde::from_slice(&buffer).unwrap();
 
         match msg {
-            SceneToEngine::SceneResponse(id, scene_response) => RENDERER_SENDER.with(|sender| {
-                let mut sender = sender.borrow_mut();
-                let sender = sender.as_mut().unwrap();
-                // HEADLESS-ONLY: EXIT_ON_SIDECAR_LOSS marks the orchestrated headless server,
-                // where every scene shares one engine. There, a panic in this IPC task ends
-                // the loop and trips the process exit above — killing the whole engine and
-                // every co-tenant scene. So shed the response instead of panicking: a scene
-                // that outruns the bevy-side drain only stalls itself. Desktop and tests
-                // (flag unset) keep the original panic-on-failure behavior unchanged.
-                if EXIT_ON_SIDECAR_LOSS.load(Ordering::SeqCst) {
-                    if let Err(e) = sender.try_send((id, scene_response)) {
+            SceneToEngine::SceneResponse(id, scene_response) => {
+                let delivered = RENDERER_SENDER.with(|sender| {
+                    let mut sender = sender.borrow_mut();
+                    let sender = sender.as_mut().unwrap();
+                    let Err(e) = sender.try_send((id, scene_response)) else {
+                        return true;
+                    };
+                    // With EXIT_ON_SIDECAR_LOSS set, drop this response and keep reading, so
+                    // one undeliverable response does not end the loop. With it unset, stop
+                    // the loop.
+                    if EXIT_ON_SIDECAR_LOSS.load(Ordering::SeqCst) {
                         warn!("dropping scene response: renderer channel unavailable ({e})");
+                        true
+                    } else {
+                        error!("renderer channel unavailable ({e}); stopping scene IPC input");
+                        false
                     }
-                } else {
-                    sender.try_send((id, scene_response)).unwrap();
+                });
+                if !delivered {
+                    return;
                 }
-            }),
+            }
             SceneToEngine::IpcMessage(id, ipc_message) => {
                 let IpcMessage::Closed = ipc_message else {
                     warn!("ignoring unexpected ipc data message for channel {id}");
