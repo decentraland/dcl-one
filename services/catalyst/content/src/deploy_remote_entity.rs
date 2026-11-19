@@ -632,6 +632,9 @@ fn extract_hash_from_snapshot_value(s: &str) -> &str {
     }
 }
 
+/// Redirects a content file download follows (a peer may serve its files elsewhere).
+pub(crate) const MAX_FILE_REDIRECTS: usize = 2;
+
 /// Tries up to [`MAX_DOWNLOAD_RETRIES`] peers, starting at a random one, and stores the file
 /// only once its decoded bytes hash to `hash`. With a `budget`, the decoded body is held
 /// against it from its first chunk until the file is stored.
@@ -688,10 +691,12 @@ pub(crate) async fn fetch_verified(
     budget: Option<&ByteBudget>,
 ) -> Result<(Vec<u8>, Option<ByteReservation>), SyncError> {
     let url = format!("{}/contents/{}", server, hash);
-    let resp = client.get(&url).send().await.map_err(|e| {
-        warn!(hash, %server, error = %e, attempt, "Download request failed");
-        SyncError::Http(e)
-    })?;
+    let resp = crate::http::get_following_checked_redirects(client, &url, MAX_FILE_REDIRECTS)
+        .await
+        .map_err(|e| {
+            warn!(hash, %server, error = %e, attempt, "Download request failed");
+            SyncError::from(e)
+        })?;
     if resp.status().as_u16() == 404 {
         return Err(SyncError::Other(format!(
             "404 fetching {} from {}",
@@ -755,6 +760,120 @@ pub(crate) async fn fetch_verified(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A loopback peer whose `/{redirect}` answers 302 to `target(port)`, and
+    /// the number of requests the redirect target received.
+    async fn redirecting_peer(
+        redirect: &'static str,
+        target: impl Fn(u16) -> String + Send + Sync + 'static,
+    ) -> (u16, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use axum::routing::get;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = hits.clone();
+        let location = target(port);
+        let app = axum::Router::new()
+            .route(
+                redirect,
+                get(move || async move { axum::response::Redirect::temporary(&location) }),
+            )
+            .route(
+                "/target",
+                get(move || async move {
+                    counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    "[]"
+                }),
+            );
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (port, hits)
+    }
+
+    #[tokio::test]
+    async fn the_sync_client_dials_private_addresses_only_for_configured_sources() {
+        let hash = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenosa7776";
+        // `peer.localhost` answers the loopback without DNS and is no configured source.
+        let (port, hits) = redirecting_peer("/contents/{hash}", |port| {
+            format!("http://peer.localhost:{port}/target")
+        })
+        .await;
+        let source = format!("http://localhost:{port}");
+        let config = crate::config::Config::parse_for_tests(&[
+            "x",
+            "--database-url",
+            "postgres:///catalyst",
+            "--sync-source",
+            &source,
+        ])
+        .unwrap();
+        let client = crate::sync::sync_http_client(&config).unwrap();
+        assert!(
+            fetch_verified(&client, hash, &source, 0, None)
+                .await
+                .is_err()
+        );
+        assert!(
+            client
+                .get(format!("http://peer.localhost:{port}/target"))
+                .send()
+                .await
+                .is_err()
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let direct = client.get(format!("{source}/target")).send().await.unwrap();
+        assert_eq!(direct.status(), 200);
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_snapshot_list_is_never_followed_through_a_redirect() {
+        let (port, hits) = redirecting_peer("/snapshots", |port| {
+            format!("http://127.0.0.1:{port}/target")
+        })
+        .await;
+        let client = crate::http::HttpClientCfg::default().build().unwrap();
+        let server = format!("http://127.0.0.1:{port}");
+        assert!(
+            crate::sync::snapshots::fetch_snapshots(&client, &server, 1)
+                .await
+                .is_err()
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_file_download_redirect_to_a_private_address_is_refused() {
+        use crate::http::{PublicAddressResolver, ReservedNamesResolver};
+        // Every name answers the loopback, as a public-looking name can.
+        let loopback = ReservedNamesResolver::over(|_| {
+            Box::pin(async {
+                let addrs = [std::net::SocketAddr::from(([127, 0, 0, 1], 0))];
+                Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+            })
+        });
+        let client = crate::http::HttpClientCfg::default()
+            .builder()
+            .dns_resolver(PublicAddressResolver::over(
+                loopback,
+                ["peer.example".to_string()],
+            ))
+            .build()
+            .unwrap();
+        let hash = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenosa7776";
+        for target in [
+            |port: u16| format!("http://public.example:{port}/target"),
+            |port: u16| format!("http://127.0.0.1:{port}/target"),
+        ] {
+            let (port, hits) = redirecting_peer("/contents/{hash}", target).await;
+            let server = format!("http://peer.example:{port}");
+            assert!(
+                fetch_verified(&client, hash, &server, 0, None)
+                    .await
+                    .is_err()
+            );
+            assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+        }
+    }
     use crate::auth::{hash_bytes, hash_bytes_v1};
     #[cfg(unix)]
     use crate::storage::hex_prefix;

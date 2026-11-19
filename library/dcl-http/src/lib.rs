@@ -1,7 +1,8 @@
 //! The default outbound HTTP handle: a hardened [`reqwest::Client`] built through
 //! [`HttpClientCfg`] and wrapped in the shared [`Outbound`] `serve` hands to
-//! readers (peer sync and the RPC validator take its `raw` client; mirrors and
-//! upstream readers send through the guard). Provider adapters that construct
+//! readers (the RPC validator takes its `raw` client; mirrors and upstream
+//! readers send through the guard; peer sync builds its own client over
+//! [`PublicAddressResolver`]). Provider adapters that construct
 //! an Outbound with distinct transport settings own separate HTTP pools. The SSRF guard
 //! ([`is_safe_http_url`] on the string, [`resolve_and_pin`] on the socket),
 //! the retry ladder ([`retry_with_backoff`]) and the capped body reader.
@@ -200,6 +201,98 @@ impl reqwest::dns::Resolve for ReservedNamesResolver {
             None => (self.system)(host),
         }
     }
+}
+
+/// A resolver that answers only public addresses, except for the `trusted`
+/// names (operator-configured hosts, which may be private): a name with any
+/// non-public address fails, so a connection is only opened to addresses
+/// this check accepted, on the same lookup.
+#[derive(Clone)]
+pub struct PublicAddressResolver {
+    inner: ReservedNamesResolver,
+    trusted: Arc<std::collections::HashSet<String>>,
+}
+
+impl PublicAddressResolver {
+    pub fn trusting(hosts: impl IntoIterator<Item = String>) -> Self {
+        Self::over(ReservedNamesResolver::default(), hosts)
+    }
+
+    pub fn over(inner: ReservedNamesResolver, hosts: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            inner,
+            trusted: Arc::new(
+                hosts
+                    .into_iter()
+                    .map(|h| h.trim_end_matches('.').to_ascii_lowercase())
+                    .collect(),
+            ),
+        }
+    }
+}
+
+impl reqwest::dns::Resolve for PublicAddressResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().trim_end_matches('.').to_ascii_lowercase();
+        let lookup = self.inner.resolve(name);
+        if self.trusted.contains(&host) {
+            return lookup;
+        }
+        Box::pin(async move {
+            let addrs: Vec<SocketAddr> = lookup.await?.collect();
+            if addrs.is_empty() || addrs.iter().any(|a| is_blocked_ip(a.ip())) {
+                return Err(format!("{host} does not resolve to a public address only").into());
+            }
+            Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
+}
+
+/// `GET url` on `client` (built without redirects), following at most `max`
+/// redirects by hand: a hop to another host must be a public http(s) URL
+/// whose name resolves to public addresses only, even when the client's
+/// resolver trusts it, and the client's resolver decides the addresses every
+/// hop dials.
+pub async fn get_following_checked_redirects(
+    client: &reqwest::Client,
+    url: &str,
+    max: usize,
+) -> Result<reqwest::Response, SendError> {
+    let mut url = reqwest::Url::parse(url)
+        .map_err(|e| SendError::Refused(format!("{url:?} is not a URL: {e}")))?;
+    let first_host = url.host_str().map(str::to_ascii_lowercase);
+    for hop in 0..=max {
+        let resp = client.get(url.clone()).send().await?;
+        if !resp.status().is_redirection() {
+            return Ok(resp);
+        }
+        let Some(location) = resp
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+        else {
+            return Ok(resp);
+        };
+        if hop == max {
+            return Err(SendError::Refused(format!("more than {max} redirects")));
+        }
+        let next = url.join(location).map_err(|e| {
+            SendError::Refused(format!("redirect target {location:?} is not a URL: {e}"))
+        })?;
+        let same_host = next.host_str().map(str::to_ascii_lowercase) == first_host
+            && matches!(next.scheme(), "http" | "https");
+        // Another host is never trusted: it must resolve to public addresses only.
+        if !same_host
+            && (!is_safe_http_url(next.as_str()) || resolve_and_pin(&next).await.is_none())
+        {
+            let host = next.host_str().unwrap_or("?").to_string();
+            return Err(SendError::Refused(format!(
+                "redirect to {host} refused: not a public http(s) host"
+            )));
+        }
+        url = next;
+    }
+    unreachable!("the loop returns on its last hop")
 }
 
 /// Follows at most `max` hops, and only to a public http(s) host once the
@@ -756,9 +849,8 @@ impl Outbound {
         self.allow_private
     }
 
-    /// The shared pooled client, unguarded: for peer sync, whose sources are
-    /// operator-configured content servers (a development peer may be on the
-    /// loopback), and the RPC validator.
+    /// The shared pooled client, unguarded: for operator-configured endpoints
+    /// such as the RPC validator.
     pub fn raw(&self) -> &reqwest::Client {
         &self.shared
     }
@@ -1115,6 +1207,90 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), 204);
+    }
+
+    #[tokio::test]
+    async fn only_trusted_names_may_resolve_to_private_addresses_on_any_hop() {
+        use axum::response::Redirect;
+        use axum::routing::get;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let app =
+            axum::Router::new()
+                .route("/ok", get(|| async { "ok" }))
+                .route(
+                    "/to-name",
+                    get(move || async move {
+                        Redirect::temporary(&format!("http://public.example:{port}/ok"))
+                    }),
+                )
+                .route(
+                    "/to-ip",
+                    get(move || async move {
+                        Redirect::temporary(&format!("http://127.0.0.1:{port}/ok"))
+                    }),
+                )
+                .route(
+                    "/to-trusted",
+                    get(move || async move {
+                        Redirect::temporary(&format!("http://other.example:{port}/ok"))
+                    }),
+                )
+                .route("/same", get(|| async { Redirect::temporary("/ok") }))
+                .route("/loop", get(|| async { Redirect::temporary("/loop") }));
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        // Every name answers the loopback, as a public-looking name can.
+        let inner = ReservedNamesResolver::over(|_| {
+            Box::pin(async {
+                let addrs = [SocketAddr::from(([127, 0, 0, 1], 0))];
+                Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+            })
+        });
+        let client = HttpClientCfg::default()
+            .builder()
+            .dns_resolver(PublicAddressResolver::over(
+                inner,
+                ["peer.example".to_string(), "other.example".to_string()],
+            ))
+            .build()
+            .unwrap();
+        let peer = |path: &str| format!("http://peer.example:{port}{path}");
+
+        assert!(
+            client
+                .get(format!("http://public.example:{port}/ok"))
+                .send()
+                .await
+                .is_err()
+        );
+        let ok = get_following_checked_redirects(&client, &peer("/ok"), 2)
+            .await
+            .unwrap();
+        assert_eq!(ok.text().await.unwrap(), "ok");
+        let same = get_following_checked_redirects(&client, &peer("/same"), 2)
+            .await
+            .unwrap();
+        assert_eq!(same.status(), 200);
+        // A trusted name is trusted only as the host first asked for.
+        assert_eq!(
+            client
+                .get(format!("http://other.example:{port}/ok"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            200
+        );
+        for path in ["/to-name", "/to-ip", "/to-trusted", "/loop"] {
+            assert!(
+                get_following_checked_redirects(&client, &peer(path), 2)
+                    .await
+                    .is_err(),
+                "{path}"
+            );
+        }
+        let not_followed = client.get(peer("/to-name")).send().await.unwrap();
+        assert!(not_followed.status().is_redirection());
     }
 
     #[tokio::test]

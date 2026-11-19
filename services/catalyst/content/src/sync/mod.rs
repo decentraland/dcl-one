@@ -138,6 +138,34 @@ pub fn parse_entity_types(raw: &str) -> Result<Option<HashSet<String>>, SyncConf
     Ok((!set.is_empty()).then_some(set))
 }
 
+/// The client for peer sync, the read-through and the failed-deployments
+/// retries: it follows no redirect on its own (file downloads follow theirs
+/// through [`crate::http::get_following_checked_redirects`]) and dials only
+/// public addresses, except for the hosts the operator configured
+/// (`SYNC_SOURCE`, `WORLDS_CONTENT_MIRROR_SOURCE`, the DAO list's RPC), which
+/// may be private. Peers read from the DAO list are not among them.
+pub fn sync_http_client(config: &crate::config::Config) -> anyhow::Result<reqwest::Client> {
+    let mut trusted: Vec<String> = [
+        config.content.sync_source.as_str(),
+        config.worlds_content.worlds_content_mirror_source.as_str(),
+    ]
+    .iter()
+    .flat_map(|raw| raw.split(','))
+    .chain(config.content.eth_rpc_url()?.as_deref())
+    .filter_map(|entry| url::Url::parse(normalize_source(entry).as_str()).ok())
+    .filter_map(|url| url.host_str().map(str::to_string))
+    .collect();
+    trusted.sort();
+    trusted.dedup();
+    Ok(crate::http::HttpClientCfg {
+        max_redirects: None,
+        ..crate::http::HttpClientCfg::serve(config.content.connections_max_idle)
+    }
+    .builder()
+    .dns_resolver(crate::http::PublicAddressResolver::trusting(trusted))
+    .build()?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

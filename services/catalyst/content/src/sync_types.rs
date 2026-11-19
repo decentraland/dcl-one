@@ -124,6 +124,15 @@ pub enum SyncError {
     Other(String),
 }
 
+impl From<crate::http::SendError> for SyncError {
+    fn from(e: crate::http::SendError) -> Self {
+        match e {
+            crate::http::SendError::Http(e) => Self::Http(e),
+            refused @ crate::http::SendError::Refused(_) => Self::Other(refused.to_string()),
+        }
+    }
+}
+
 impl SyncError {
     /// The reason a failed deployment is recorded under.
     pub fn failure_reason(&self) -> FailureReason {

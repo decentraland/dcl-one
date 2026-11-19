@@ -954,7 +954,13 @@ async fn download_snapshot_file(
         let server = server_list[retry as usize % server_list.len()];
         let url = format!("{}/contents/{}", server, snapshot_hash);
 
-        match client.get(&url).send().await {
+        match crate::http::get_following_checked_redirects(
+            client,
+            &url,
+            crate::deploy_remote_entity::MAX_FILE_REDIRECTS,
+        )
+        .await
+        {
             Ok(resp) => {
                 if resp.status().is_success() {
                     let expected_len = resp.content_length();
@@ -1019,7 +1025,7 @@ async fn download_snapshot_file(
             }
             Err(e) => {
                 warn!(snapshot_hash, %server, error = %e, retry, "Snapshot download request failed");
-                last_error = Some(SyncError::Http(e));
+                last_error = Some(SyncError::from(e));
             }
         }
 

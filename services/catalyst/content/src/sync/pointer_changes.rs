@@ -192,6 +192,12 @@ async fn fetch_page(
     url: &str,
 ) -> Result<(Vec<serde_json::Value>, bool), SyncError> {
     let resp = client.get(url).send().await?.error_for_status()?;
+    if resp.status().is_redirection() {
+        return Err(SyncError::Other(format!(
+            "pointer-changes page {url}: refusing to follow a {} redirect",
+            resp.status()
+        )));
+    }
     let body = crate::http::read_body_capped(resp, MAX_PAGE_BYTES)
         .await
         .map_err(|e| SyncError::Other(format!("pointer-changes page {url}: {e}")))?;
@@ -426,6 +432,49 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A loopback peer whose `/{redirect}` answers 302 to `target(port)`, and
+    /// the number of requests the redirect target received.
+    async fn redirecting_peer(
+        redirect: &'static str,
+        target: impl Fn(u16) -> String + Send + Sync + 'static,
+    ) -> (u16, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use axum::routing::get;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = hits.clone();
+        let location = target(port);
+        let app = axum::Router::new()
+            .route(
+                redirect,
+                get(move || async move { axum::response::Redirect::temporary(&location) }),
+            )
+            .route(
+                "/target",
+                get(move || async move {
+                    counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    "[]"
+                }),
+            );
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (port, hits)
+    }
+
+    #[tokio::test]
+    async fn a_pointer_changes_page_is_never_followed_through_a_redirect() {
+        let (port, hits) = redirecting_peer("/pointer-changes", |port| {
+            format!("http://127.0.0.1:{port}/target")
+        })
+        .await;
+        let client = crate::http::HttpClientCfg::default().build().unwrap();
+        let page = fetch_page(&client, &format!("http://127.0.0.1:{port}/pointer-changes")).await;
+        assert!(
+            matches!(&page, Err(SyncError::Other(e)) if e.contains("refusing to follow")),
+            "{page:?}"
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
 
     fn delta(local_timestamp: serde_json::Value) -> serde_json::Value {
         serde_json::json!({

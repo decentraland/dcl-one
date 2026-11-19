@@ -188,8 +188,9 @@ pub async fn serve(
         &content.settings.content_public_url,
     );
 
-    // ONE outbound client: peer sync and the RPC validator use it as is
-    // (`raw`), every mirror and upstream reader through the guard.
+    // ONE outbound client: the RPC validator uses it as is (`raw`), every
+    // mirror and upstream reader through the guard; peer sync has its own
+    // (`content::sync::sync_http_client`).
     let http_client = http::Outbound::new(http::HttpClientCfg::serve(
         config.content.connections_max_idle,
     ))
@@ -289,12 +290,14 @@ pub async fn serve(
     // READ_THROUGH_ENABLED: a local miss (entities, content files, profiles) is
     // filled from SYNC_SOURCE, verified and stored as a synced deployment; a
     // world not held is mirrored on first read when the worlds mirror is on.
+    let sync_http =
+        content::sync::sync_http_client(&config).context("building the sync HTTP client")?;
     let read_through = content::read_through::ReadThrough::from_config(
         &config,
         &local_urls,
         pool.clone(),
         storage.clone(),
-        http_client.raw().clone(),
+        sync_http.clone(),
         content_validator.clone(),
     )?
     .map(Arc::new);
@@ -1244,7 +1247,7 @@ pub async fn serve(
                 .context("connecting the sync pool to DATABASE_URL")?,
                 storage.clone(),
                 sync_status,
-                http_client.raw().clone(),
+                sync_http.clone(),
                 content::sync_deployer::SyncValidation::Content(content_validator.clone()),
                 &jobs,
             )
@@ -1278,7 +1281,7 @@ pub async fn serve(
             read_through.sources().to_vec(),
             pool.clone(),
             storage.clone(),
-            http_client.raw().clone(),
+            sync_http.clone(),
             content::sync_deployer::SyncValidation::Content(content_validator.clone()),
             &jobs,
         );
