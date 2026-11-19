@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 default-run = "decentra-bevy"
 
+[lints]
+workspace = true
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 name = "webgpu_build"
@@ -100,6 +103,8 @@ opt-level = 3
 [workspace.lints.clippy]
 too_many_arguments = "allow"
 type_complexity = "allow"
+todo = "deny"
+unimplemented = "deny"
 
 [workspace]
 resolver = "2"

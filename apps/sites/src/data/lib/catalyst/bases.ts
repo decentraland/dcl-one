@@ -130,6 +130,10 @@ export function siteUrl(path: string, env: BaseEnv = processEnv()): string {
  * The explorer entry every jump-in link targets: BEVY_PLAY_URL (default /play;
  * a path on this origin, or an absolute URL) with the launch parameters.
  * `playUrl({ position: "-3,-2" })` -> `/play/?position=-3%2C-2`.
+ * An absolute URL on another origin still works as a link, but a dcl-one /play
+ * may be framed only by its own origin (routes/lib/play-framing.ts), so the
+ * pages that frame BEVY_PLAY_URL (Place detail's watcher, the scene editor)
+ * show an empty frame for one.
  */
 export function playUrl(
   params?: Record<string, string | undefined> | URLSearchParams,

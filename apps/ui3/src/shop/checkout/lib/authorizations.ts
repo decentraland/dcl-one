@@ -129,6 +129,9 @@ export async function setAuthorization(opts: AuthorizationContext & { auth: Shop
       // Unlike a purchase, this falls back to the wallet even when the relay may have sent the
       // call (`relayer-unreachable`): setting an authorization twice leaves it set once, so the
       // cost is a second prompt and its gas, and a web3 buyer can still approve while the relay is down.
+      // The risk taken: the relayed call may still land later, after a revoke the wallet sent
+      // meanwhile (the wallet's own transaction does not consume the meta-transaction nonce), and
+      // turn the authorization back on. Accepted, not handled.
       const fallback = canPayGasItself(opts.walletKind) && (await onChain(provider, auth.chainId));
       if (!fallback) throw e;
     }

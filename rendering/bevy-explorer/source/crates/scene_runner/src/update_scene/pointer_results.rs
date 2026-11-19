@@ -298,7 +298,7 @@ impl UiPointerTargetValue {
 
     pub fn set_label(&mut self, label: Option<String>) {
         match self {
-            UiPointerTargetValue::None => todo!(),
+            UiPointerTargetValue::None => {}
             UiPointerTargetValue::Primary(_, ref mut l)
             | UiPointerTargetValue::World(_, ref mut l) => *l = label,
         }

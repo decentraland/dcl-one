@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -219,6 +219,26 @@ describe("profile assets", () => {
     await act(async () => fail(new Error("503")));
     expect(await screen.findByText("These assets could not be read right now. Trying again failed.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Try again" }).getAttribute("aria-busy")).not.toBe("true");
+  });
+
+  it("keeps the first result's copy for a re-read the reader did not ask for", async () => {
+    let fail: (reason: Error) => void = () => {};
+    net.fetchProfileAssets
+      .mockResolvedValueOnce({ items: [], received: 3, total: 3 })
+      .mockReturnValueOnce(new Promise((_, reject) => (fail = reject)));
+    const { client } = show();
+    await screen.findByText("These assets could not be read right now.");
+
+    // A background re-read, e.g. on window focus.
+    act(() => void client.refetchQueries());
+    await waitFor(() => expect(net.fetchProfileAssets).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("Reading the assets again.")).toBeNull();
+    expect(screen.getByText("These assets could not be read right now.")).toBeTruthy();
+
+    await act(async () => fail(new Error("503")));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(screen.queryByText(/Trying again failed/)).toBeNull();
+    expect(screen.getByText("These assets could not be read right now.")).toBeTruthy();
   });
 
   it("opens a card's action and a NAME's Transfer in place, through the router", async () => {
