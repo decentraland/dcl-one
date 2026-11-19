@@ -141,34 +141,76 @@ pub fn parse_entity_types(raw: &str) -> Result<Option<HashSet<String>>, SyncConf
 /// The client for peer sync, the read-through and the failed-deployments
 /// retries: it follows no redirect on its own (file downloads follow theirs
 /// through [`crate::http::get_following_checked_redirects`]), uses no proxy
-/// and dials only public addresses, except for the hosts the operator
-/// configured (`SYNC_SOURCE`, `WORLDS_CONTENT_MIRROR_SOURCE`, the DAO list's
-/// RPC), which this client reads and which may be private. Peers read from the
-/// DAO list are not among them.
+/// and dials only public addresses, except for the [`trusted_hosts`].
 pub fn sync_http_client(config: &crate::config::Config) -> anyhow::Result<reqwest::Client> {
-    let rpc = config.content.eth_rpc_url()?;
-    let trusted = [
-        config.content.sync_source.as_str(),
-        config.worlds_content.worlds_content_mirror_source.as_str(),
-    ]
-    .into_iter()
-    .flat_map(|raw| raw.split(','))
-    .chain(rpc.as_deref())
-    .filter_map(|entry| url::Url::parse(normalize_source(entry).as_str()).ok())
-    .filter_map(|url| url.host_str().map(str::to_string));
     Ok(crate::http::HttpClientCfg {
         max_redirects: None,
         ..crate::http::HttpClientCfg::serve(config.content.connections_max_idle)
     }
     .builder()
-    .dns_resolver(crate::http::PublicAddressResolver::trusting(trusted))
+    .dns_resolver(crate::http::PublicAddressResolver::trusting(trusted_hosts(
+        config,
+    )?))
     .no_proxy()
     .build()?)
+}
+
+/// The operator-configured hosts the sync client reads, which may be private:
+/// `SYNC_SOURCE`, plus `WORLDS_CONTENT_MIRROR_SOURCE` when the read-through is
+/// on and the DAO list's RPC when `SYNC_FROM_DAO` is. Peers read from the DAO
+/// list are not among them.
+fn trusted_hosts(config: &crate::config::Config) -> anyhow::Result<Vec<String>> {
+    let content = &config.content;
+    let mirror = if content.read_through_enabled {
+        config.worlds_content.worlds_content_mirror_source.as_str()
+    } else {
+        ""
+    };
+    let rpc = if content.sync_from_dao {
+        content.eth_rpc_url()?
+    } else {
+        None
+    };
+    Ok([content.sync_source.as_str(), mirror]
+        .into_iter()
+        .flat_map(|raw| raw.split(','))
+        .chain(rpc.as_deref())
+        .filter_map(|entry| url::Url::parse(normalize_source(entry).as_str()).ok())
+        .filter_map(|url| url.host_str().map(str::to_string))
+        .collect())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_sources_in_use_are_trusted() {
+        let hosts = |flags: &[&str]| {
+            let mut argv = vec![
+                "x",
+                "--database-url",
+                "postgres:///catalyst",
+                "--sync-source",
+                "https://peer.example/content",
+                "--worlds-content-mirror-source",
+                "https://mirror.example",
+                "--eth-rpc-url",
+                "https://rpc.example",
+            ];
+            argv.extend_from_slice(flags);
+            trusted_hosts(&crate::config::Config::parse_for_tests(&argv).unwrap()).unwrap()
+        };
+        assert_eq!(hosts(&[]), ["peer.example"]);
+        assert_eq!(
+            hosts(&["--read-through-enabled", "true"]),
+            ["peer.example", "mirror.example"]
+        );
+        assert_eq!(
+            hosts(&["--sync-from-dao", "true"]),
+            ["peer.example", "rpc.example"]
+        );
+    }
 
     #[test]
     fn sources_are_normalized_deduplicated_and_ordered() {
