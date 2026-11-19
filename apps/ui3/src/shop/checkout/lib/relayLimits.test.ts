@@ -37,7 +37,7 @@ describe("the relay's limits, said to the buyer", () => {
   });
 
   it("says an account with a quota of none has no fee-free transactions, rather than promising one", () => {
-    expect(relayLimitText(quota({ quota: 0, retryAt: secs(at(14)) }), NOW)).toBe("Fee-free transactions aren't available for this account.");
+    expect(relayLimitText(quota({ quota: 0, retryAt: secs(at(14)) }), NOW)).toBe("Fee-free transactions are currently unavailable for this account.");
   });
 
   it("says the relay's shared limit on operations that aren't sales, and when it frees up when the relay says so", () => {

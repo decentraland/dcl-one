@@ -48,7 +48,7 @@ export function relayLimitText(e: unknown, now: Date = new Date()): string | nul
   if (!refusal) return null;
   const when = retryWhen(refusal.retryAt, now);
   if (refusal.error === "quota_reached") {
-    if (refusal.quota === 0) return "Fee-free transactions aren't available for this account.";
+    if (refusal.quota === 0) return "Fee-free transactions are currently unavailable for this account.";
     const used = typeof refusal.quota === "number" ? `all ${refusal.quota} fee-free transactions` : "all the fee-free transactions";
     // "Try again at": the relay's time estimates the next opening, which another request can take first.
     return `You've used ${used} this account gets in 24 hours. ${when ? `Try again ${when}.` : "Try again later."}`;
