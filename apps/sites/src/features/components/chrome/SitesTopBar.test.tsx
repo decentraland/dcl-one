@@ -316,6 +316,53 @@ describe("when a Sites page reports its area", () => {
   });
 });
 
+describe("when the signed-in web visitor opens the profile", () => {
+  const logout = vi.fn();
+  const switchAccount = vi.fn();
+
+  beforeEach(() => {
+    logout.mockReset();
+    switchAccount.mockReset();
+    render(
+      <Host pathname="/events" auth={{
+        ...baseAuth, signedIn: true, account: "0xA", name: "Ada",
+        onSignOut: logout, onSwitchAccount: switchAccount,
+      }} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Account: Ada" }));
+  });
+
+  it("should show the profile links in order and keep the logout action", () => {
+    const profile = screen.getByRole("link", { name: "View Profile" });
+    const panel = profile.closest("[tabindex='-1']")!;
+    expect(within(panel as HTMLElement).getAllByRole("link").map((link) => link.getAttribute("href")))
+      .toEqual(["/profile/0xa", "/shop/my-items", "/account", "/shop/settings"]);
+    expect(screen.queryByRole("button", { name: "Switch account" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Logout" }));
+    expect(logout).toHaveBeenCalledOnce();
+  });
+});
+
+describe("when the embedded creator host owns the account", () => {
+  const switchAccount = vi.fn();
+
+  beforeEach(() => {
+    switchAccount.mockReset();
+    render(
+      <Host pathname="/create/home" auth={{
+        ...baseAuth, signedIn: true, account: "0xA", name: "Ada", onSwitchAccount: switchAccount,
+      }} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Account: Ada" }));
+  });
+
+  it("should keep the host switch action available", () => {
+    expect(screen.queryByRole("button", { name: "Logout" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Switch account" }));
+    expect(switchAccount).toHaveBeenCalledOnce();
+  });
+});
+
 it("restores the actual bell opener after pointer activation and dialog dismissal", async () => {
   render(
     <Host
