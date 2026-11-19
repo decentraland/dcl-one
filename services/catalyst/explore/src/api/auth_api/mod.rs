@@ -2237,9 +2237,9 @@ mod tests {
     }
 
     /// An identity bound to a deep-link request is served to the verifier it
-    /// was derived from, from any network; a wrong verifier (401) or a pickup
-    /// from another network without one (403) leaves it parked. With
-    /// `require_identity_verifier`, a pickup without one is refused (401).
+    /// was derived from, from any network; a pickup with a wrong verifier or
+    /// none, from the same IP, another network or a mobile create, is refused
+    /// (401) and leaves it parked.
     #[tokio::test]
     async fn a_bound_identity_is_served_only_to_its_verifier() {
         let Some(db) = scratch_database().await else {
@@ -2275,11 +2275,14 @@ mod tests {
             (status, body["error"].as_str()),
             (StatusCode::UNAUTHORIZED, Some("Invalid identity verifier"))
         );
-        let (status, body) = call(&main, pickup(&id, "198.51.100.7", None)).await;
-        assert_eq!(
-            (status, body["error"].as_str()),
-            (StatusCode::FORBIDDEN, Some("IP address mismatch"))
-        );
+        for ip in ["203.0.113.9", "198.51.100.7"] {
+            let (status, body) = call(&main, pickup(&id, ip, None)).await;
+            assert_eq!(
+                (status, body["error"].as_str()),
+                (StatusCode::UNAUTHORIZED, Some("Invalid identity verifier")),
+                "{ip}"
+            );
+        }
         let (status, body) = call(&main, pickup(&id, "198.51.100.7", Some(VERIFIER))).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let (status, body) = call(&main, pickup(&id, "203.0.113.9", Some(VERIFIER))).await;
@@ -2302,14 +2305,14 @@ mod tests {
             )
         );
 
-        let mut settings = crate::api::Settings::for_tests(crate::api::Sources::defaults());
-        settings.require_identity_verifier = true;
-        let required = app(&crate::api::tests::node_on_pool_state(settings, db.pool.clone()).await);
-        let (_, created) = call(&required, identity_post_with(bound).await).await;
+        // A mobile create skips the IP check but not the verifier.
+        let mut mobile = bound.clone();
+        mobile["isMobile"] = json!(true);
+        let (_, created) = call(&main, identity_post_with(mobile).await).await;
         let id = created["identityId"].as_str().unwrap().to_string();
-        let (status, _) = call(&required, pickup(&id, "203.0.113.9", None)).await;
+        let (status, _) = call(&main, pickup(&id, "198.51.100.7", None)).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
-        let (status, body) = call(&required, pickup(&id, "203.0.113.9", Some(VERIFIER))).await;
+        let (status, body) = call(&main, pickup(&id, "198.51.100.7", Some(VERIFIER))).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         db.teardown().await;
     }

@@ -401,27 +401,19 @@ fn derive_auth_request_id(verifier: &str) -> Option<String> {
 enum Verification {
     /// The verifier matches: the IP check is skipped.
     Verified,
-    /// No binding, or no verifier while none is required: the IP check applies.
-    Unverified,
-    /// A wrong or malformed verifier, or none while one is required.
+    /// No binding: the IP check applies.
+    Unbound,
+    /// A bound identity with a wrong, malformed or missing verifier.
     Refused,
 }
 
-fn verify_pickup(
-    auth_request_id: Option<&str>,
-    verifier: Option<&str>,
-    required: bool,
-) -> Verification {
+fn verify_pickup(auth_request_id: Option<&str>, verifier: Option<&str>) -> Verification {
     let Some(bound) = auth_request_id else {
-        return Verification::Unverified;
+        return Verification::Unbound;
     };
-    match verifier {
-        None if required => Verification::Refused,
-        None => Verification::Unverified,
-        Some(verifier) if derive_auth_request_id(verifier).as_deref() == Some(bound) => {
-            Verification::Verified
-        }
-        Some(_) => Verification::Refused,
+    match verifier.and_then(derive_auth_request_id) {
+        Some(derived) if derived == bound => Verification::Verified,
+        _ => Verification::Refused,
     }
 }
 
@@ -437,10 +429,10 @@ fn error_response(status: StatusCode, error: &str) -> Response {
 
 /// Consumes the identity once. The row is locked while the pickup is
 /// decided, and deleted with its tombstone's reason in the same transaction
-/// only when it is served, expired or refused for its IP without a binding,
-/// so a concurrent pickup on any replica waits on the row, finds it gone and
-/// reads the reason. A refused verifier, or an IP mismatch on an identity
-/// bound to a deep-link request, keeps the identity for its own client.
+/// when it is served, expired or refused for its IP, so a concurrent pickup
+/// on any replica waits on the row, finds it gone and reads the reason. A
+/// bound identity is served only to its verifier, from any network; a pickup
+/// without it (401) keeps the identity for its own client.
 async fn pick_up_identity(
     state: &AppState,
     headers: &HeaderMap,
@@ -476,11 +468,7 @@ async fn pick_up_identity(
             error_response(StatusCode::GONE, "Identity has expired"),
         )
     } else {
-        let verification = verify_pickup(
-            auth_request_id.as_deref(),
-            verifier,
-            state.settings.require_identity_verifier,
-        );
+        let verification = verify_pickup(auth_request_id.as_deref(), verifier);
         if verification == Verification::Refused {
             tracing::warn!(%signer, "identity pickup with a missing or wrong verifier; identity kept");
             tx.commit().await?;
@@ -489,12 +477,7 @@ async fn pick_up_identity(
                 "Invalid identity verifier",
             ));
         }
-        if verification == Verification::Unverified && !is_mobile && ip_mismatch {
-            if auth_request_id.is_some() {
-                tracing::warn!(%signer, "identity pickup from another IP without a verifier; identity kept");
-                tx.commit().await?;
-                return Ok(error_response(StatusCode::FORBIDDEN, "IP address mismatch"));
-            }
+        if verification == Verification::Unbound && !is_mobile && ip_mismatch {
             (
                 DeletionReason::IpMismatch,
                 error_response(StatusCode::FORBIDDEN, "IP address mismatch"),
@@ -645,23 +628,11 @@ mod verifier_tests {
     fn a_bound_pickup_needs_the_matching_verifier() {
         use Verification::*;
         let other = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
-        for required in [false, true] {
-            assert_eq!(verify_pickup(None, None, required), Unverified);
-            assert_eq!(verify_pickup(None, Some(other), required), Unverified);
-            assert_eq!(
-                verify_pickup(Some(REQUEST_ID), Some(VERIFIER), required),
-                Verified
-            );
-            assert_eq!(
-                verify_pickup(Some(REQUEST_ID), Some(other), required),
-                Refused
-            );
-            assert_eq!(
-                verify_pickup(Some(REQUEST_ID), Some("short"), required),
-                Refused
-            );
-        }
-        assert_eq!(verify_pickup(Some(REQUEST_ID), None, false), Unverified);
-        assert_eq!(verify_pickup(Some(REQUEST_ID), None, true), Refused);
+        assert_eq!(verify_pickup(None, None), Unbound);
+        assert_eq!(verify_pickup(None, Some(other)), Unbound);
+        assert_eq!(verify_pickup(Some(REQUEST_ID), Some(VERIFIER)), Verified);
+        assert_eq!(verify_pickup(Some(REQUEST_ID), Some(other)), Refused);
+        assert_eq!(verify_pickup(Some(REQUEST_ID), Some("short")), Refused);
+        assert_eq!(verify_pickup(Some(REQUEST_ID), None), Refused);
     }
 }

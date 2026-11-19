@@ -144,12 +144,6 @@ pub struct ExploreConfig {
     #[arg(long, env = "EXPLORER_MIRRORS_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub explorer_mirrors_enabled: bool,
 
-    /// Refuse (401) the `/auth-api` pickup of an identity bound to a deep-link
-    /// request (`authRequestId`) that presents no `x-identity-verifier`. Off,
-    /// such a pickup falls back to the IP check, for clients that send none.
-    #[arg(long, env = "REQUIRE_IDENTITY_VERIFIER", default_value_t = false, action = clap::ArgAction::Set)]
-    pub require_identity_verifier: bool,
-
     /// The bounded on-disk cache behind `/ab-cdn/*` (`explore::api::ab_cdn`);
     /// a dev `serve` points it at a writable directory.
     #[arg(
