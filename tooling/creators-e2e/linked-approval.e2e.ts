@@ -37,8 +37,8 @@ async function curatedHashes(a: App): Promise<string[]> {
   const hashes = await a.page.evaluate(`(async () => {
     const { collection, items } = ${rows};
     const [{ fromRemoteCollection, fromRemoteItem }, { computeLinkedItemContentHash }] = await Promise.all([
-      import('/src/lib/builder/mappers.ts'),
-      import('/src/lib/catalystEntity.ts')
+      import('/src/data/lib/creators/builder/mappers.ts'),
+      import('/src/data/lib/creators/catalystEntity.ts')
     ]);
     return items.map(item => computeLinkedItemContentHash(fromRemoteCollection(collection), fromRemoteItem(item)));
   })()`)
@@ -81,7 +81,7 @@ describe('linked collection approval', () => {
       chequeWasConsumed: false
     })
 
-    await page.goto(new URL(`/collections/editor?collection=${submitted.id}&reviewing=true`, page.url()).href)
+    await page.goto(new URL(`/create/collections/editor?collection=${submitted.id}&reviewing=true`, page.url()).href)
     await waitForTestId(page, 'review-bar', 30_000)
     // Approval waits until the curator has looked at every item.
     await clickTestId(page, 'review-linked-next')
@@ -102,6 +102,6 @@ describe('linked collection approval', () => {
     await waitForTestId(page, 'success-modal-modal', 60_000)
     expect(app.writes.filter(write => write === 'POST /content/entities')).toHaveLength(items.length)
     expect(items.map(item => app!.builder.itemCurations.get(item.id)?.status)).toEqual(['approved', 'approved'])
-    await app.waitForEvent('Approve TP Collection', { collectionId: submitted.id, items: items.length })
+    await app.waitForEvent('bd_linked_collection_approved', { collection_id: submitted.id, items: items.length })
   })
 })

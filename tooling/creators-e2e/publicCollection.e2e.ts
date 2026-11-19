@@ -41,7 +41,7 @@ describe('a published collection opened by link without a role on it', () => {
   it('takes a curator back to the curation list', async () => {
     app = await launchApp({ path: editorPath, builder: { ...seed, committee: [TEST_ADDRESS] } })
     const back = await waitForTestId(app.page, 'items-sidebar-back')
-    expect(await back.evaluate(el => new URL((el as HTMLAnchorElement).href).pathname)).toBe('/curation')
+    expect(await back.evaluate(el => new URL((el as HTMLAnchorElement).href).pathname)).toBe('/create/curation')
     expect(await back.evaluate(el => el.getAttribute('aria-label'))).toBe('Back to curation')
   })
 })
@@ -74,7 +74,7 @@ describe('a published linked collection', () => {
     })
     const back = await waitForTestId(app.page, 'items-sidebar-back')
     expect(await back.evaluate(el => new URL((el as HTMLAnchorElement).href).pathname)).toBe(
-      `/collections/${linked.id}`
+      `/create/collections/${linked.id}`
     )
   })
 

@@ -34,7 +34,7 @@ describe('collection roles', () => {
     await clickTestId(page, 'role-1-clear')
     await page.waitForFunction(() => !document.querySelector('[data-testid="role-row"]'))
     await page.type(byTestId('role-new-input'), ALICE)
-    await page.waitForSelector('[data-testid="role-row"]')
+    await page.waitForSelector('[data-testid="role-row"]', { state: 'attached' })
     await waitForEnabled(page, 'role-save')
     await clickTestId(page, 'role-save')
 
@@ -44,7 +44,7 @@ describe('collection roles', () => {
     // Removals first, then additions, in a single call.
     expect((sent?.args?.minters as string[]).map(a => a.toLowerCase())).toEqual([CAROL, ALICE])
     expect(sent?.args?.[1]).toEqual([false, true])
-    await app.waitForEvent('Set minters', { collectionId: live.id })
+    await app.waitForEvent('bd_collection_senders_set', { collection_id: live.id })
 
     await clickTestId(page, 'success-modal-done')
     await openSenders(app)

@@ -42,15 +42,14 @@ describe('my collections', () => {
 
     await clickTestId(page, 'status-filter-all')
     await page.type(byTestId('collections-search'), 'winter')
-    await page.waitForFunction(() => document.querySelectorAll('[data-testid="collection-card"]').length === 1)
-    expect(await cards(app)).toEqual(['Winter Drafts: draft'])
+    await expect.poll(() => cards(app!), { timeout: 15_000 }).toEqual(['Winter Drafts: draft'])
   })
 
   it('counts a Linked chip pick', async () => {
     app = await launchApp({ path: '/collections', builder: seed })
     await waitForTestId(app.page, 'collections-grid')
     await clickTestId(app.page, 'status-filter-linked')
-    await app.waitForEvent('Filter linked collections', { count: 0 })
+    await app.waitForEvent('bd_linked_collections_filtered', { count: 0 })
   })
 
   it('fits a phone screen', async () => {

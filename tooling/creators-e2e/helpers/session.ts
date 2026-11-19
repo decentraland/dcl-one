@@ -1,4 +1,3 @@
-import { Authenticator } from '@dcl/crypto'
 import type { Hex } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 
@@ -11,38 +10,36 @@ export type TestSession = { address: string; identityJson: string }
 
 let cached: Promise<TestSession> | undefined
 
-/** A real AuthIdentity for the test wallet, so signed builder-server requests are well formed. */
+/** A real signed identity for the test wallet, in the shape the site keeps, so signed requests are well formed. */
 export function testSession(): Promise<TestSession> {
   cached ??= (async () => {
     const user = privateKeyToAccount(TEST_PRIVATE_KEY)
     const ephemeralKey = generatePrivateKey()
     const ephemeral = privateKeyToAccount(ephemeralKey)
-    const identity = await Authenticator.initializeAuthChain(
-      user.address,
-      {
-        address: ephemeral.address,
-        publicKey: ephemeral.publicKey,
-        privateKey: ephemeralKey
-      },
-      31 * 24 * 60,
-      message => user.signMessage({ message })
-    )
+    const expiration = new Date(Date.now() + 31 * 24 * 60 * 60_000).toISOString()
+    const payload = `Decentraland Login\nEphemeral address: ${ephemeral.address}\nExpiration: ${expiration}`
+    const identity = {
+      signer: user.address,
+      ephemeral: { address: ephemeral.address, publicKey: ephemeral.publicKey, privateKey: ephemeralKey },
+      expiration,
+      authChain: [
+        { type: 'SIGNER', payload: user.address, signature: '' },
+        { type: 'ECDSA_EPHEMERAL', payload, signature: await user.signMessage({ message: payload }) }
+      ]
+    }
     return { address: TEST_ADDRESS, identityJson: JSON.stringify(identity) }
   })()
   return cached
 }
 
 /**
- * Seeds what `lib/auth#restoreSession` reads (decentraland-connect's last connection and the SSO identity)
- * and installs a mock EIP-1193 provider, so the app restores a session through its production code path.
- * Requests go to node (`__e2eWallet`), where the fake chain signs with the test key and logs transactions.
+ * Seeds the session the site restores on load and installs a mock EIP-1193 provider, so the pages sign in through
+ * their production code path, as a browser wallet. Requests go to node (`__e2eWallet`), where the fake chain signs
+ * with the test key and logs transactions.
  */
 export function sessionInitScript(session: TestSession, chainId: number): string {
   return `(() => {
-    localStorage.setItem('decentraland-connect-storage-key', ${JSON.stringify(
-      JSON.stringify({ providerType: 'injected', chainId })
-    )});
-    localStorage.setItem('single-sign-on-${session.address}', ${JSON.stringify(session.identityJson)});
+    localStorage.setItem('dcl:auth:identity:v1', ${JSON.stringify(session.identityJson)});
     const CHAIN = '0x${chainId.toString(16)}';
     const handle = (method, params) => {
       if (method === 'eth_chainId') return Promise.resolve(CHAIN);
@@ -66,7 +63,7 @@ export function sessionInitScript(session: TestSession, chainId: number): string
 
 /**
  * Request interception can't see WebSockets, so the social RPC (friends) would reach the real service.
- * Off-origin sockets fail at once instead, the way an unreachable host does; Vite's own HMR socket is kept.
+ * Off-origin sockets fail at once instead, the way an unreachable host does; the dev server's own socket is kept.
  */
 export const OFFLINE_WEBSOCKET_SCRIPT = `(() => {
   const RealWebSocket = window.WebSocket;

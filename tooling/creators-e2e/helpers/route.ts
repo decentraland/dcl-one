@@ -1,8 +1,27 @@
-import { type HTTPRequest } from 'puppeteer'
+import { type Route } from 'playwright-core'
 import { type BuilderServer } from './builderServer'
 import { type Market } from './market'
 import { previewPageHtml, type PreviewOptions } from './preview'
 import { type Chain } from './rpc'
+
+/** The part of an intercepted request the fakes read and answer. */
+export type Req = {
+  url: () => string
+  method: () => string
+  postData: () => string | null
+  resourceType: () => string
+  respond: (response: { status: number; headers?: Record<string, string>; body?: string | Buffer }) => Promise<void>
+  continue: () => Promise<void>
+}
+
+export const requestOf = (intercepted: Route): Req => ({
+  url: () => intercepted.request().url(),
+  method: () => intercepted.request().method(),
+  postData: () => intercepted.request().postData(),
+  resourceType: () => intercepted.request().resourceType(),
+  respond: response => intercepted.fulfill(response),
+  continue: () => intercepted.continue()
+})
 
 export const CORS = {
   'access-control-allow-origin': '*',
@@ -103,13 +122,13 @@ const ANALYTICS_JS = `(function () {
   }
 })();`
 
-const json = (req: HTTPRequest, body: unknown, status = 200) =>
+const json = (req: Req, body: unknown, status = 200) =>
   req.respond({ status, headers: { 'content-type': 'application/json', ...CORS }, body: JSON.stringify(body) })
 
-const empty = (req: HTTPRequest, contentType = 'text/plain') =>
+const empty = (req: Req, contentType = 'text/plain') =>
   req.respond({ status: 200, headers: { 'content-type': contentType, ...CORS }, body: '' })
 
-function parseBody(req: HTTPRequest): unknown {
+function parseBody(req: Req): unknown {
   const raw = req.postData()
   if (!raw) return undefined
   try {
@@ -120,7 +139,7 @@ function parseBody(req: HTTPRequest): unknown {
 }
 
 /** Answers every request the page makes: the app's own assets pass through, everything else is mocked. */
-export function route(req: HTTPRequest, ctx: RouteContext): Promise<void> {
+export function route(req: Req, ctx: RouteContext): Promise<void> {
   const url = new URL(req.url())
   const { hostname, pathname } = url
   const method = req.method()
@@ -146,6 +165,11 @@ export function route(req: HTTPRequest, ctx: RouteContext): Promise<void> {
       body: '<!doctype html><title>auth</title>'
     })
   }
+  // The site reads the flag service on its server; the page only ever asks the site.
+  if (url.origin === ctx.appOrigin && pathname === '/internal/creators-flags') return json(req, { flags: ctx.flags })
+  if (url.origin === ctx.appOrigin && pathname === '/internal/client-error') return req.respond({ status: 204 })
+  // The site's own chrome reads the signed-in account's profile and credits through its server: neither exists here.
+  if (url.origin === ctx.appOrigin && /^\/(shop-api|lambdas)\//.test(pathname)) return json(req, {}, 404)
   if (url.origin === ctx.appOrigin || url.protocol === 'data:' || url.protocol === 'blob:') return req.continue()
   // A failed preflight would surface as "Failed to fetch" and hide the forced error the spec asked for.
   if (method === 'OPTIONS') return req.respond({ status: 204, headers: CORS })

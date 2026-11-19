@@ -56,7 +56,7 @@ describe('phones view collections without managing them', () => {
 
   it('hides management between the phone and desktop breakpoints too', async () => {
     app = await launchApp({ path: `/collections/${draft.id}`, builder })
-    await app.page.setViewport({ width: 820, height: 1000 })
+    await app.page.setViewportSize({ width: 820, height: 1000 })
     await waitForTestId(app.page, 'item-row')
     await app.page.waitForFunction(() => {
       const button = document.querySelector('[data-testid="publish-collection"]')

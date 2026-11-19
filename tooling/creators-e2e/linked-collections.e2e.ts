@@ -23,7 +23,11 @@ describe('linked collections', () => {
     expect(await page.$eval(byTestId('linked-contract-address'), el => el.textContent?.toLowerCase())).toContain(
       LINKED_CONTRACT.slice(0, 6)
     )
-    await app.waitForEvent('View linked collection', { collectionId: published.id, item_count: 1, network: 'amoy' })
+    await app.waitForEvent('bd_linked_collection_viewed', {
+      collection_id: published.id,
+      item_count: 1,
+      network: 'amoy'
+    })
   })
 
   it('submits mapped items for review with a signed slots cheque', async () => {
@@ -42,7 +46,7 @@ describe('linked collections', () => {
     await waitForTestId(page, 'publish-linked-modal')
 
     await waitForTestId(page, 'publish-name-step')
-    await page.waitForSelector(byTestId('publish-name-loading'), { hidden: true })
+    await page.waitForSelector(byTestId('publish-name-loading'), { state: 'hidden' })
     await page.type(byTestId('publish-email-input'), 'jane.doe@example.com')
     await check(page, 'publish-name-accept')
     await clickTestId(page, 'publish-name-confirm')
@@ -62,6 +66,6 @@ describe('linked collections', () => {
     expect(items.map(item => app!.builder.itemCurations.get(item.id)?.status)).toEqual(['pending', 'pending'])
     expect(app.builder.slots[THIRD_PARTY_ID]).toBe(8)
     expect(app.writes).toContain(`POST /v1/collections/${draft.id}/tos`)
-    await app.waitForEvent('Publish TP Items', { collectionId: draft.id, items: 2 })
+    await app.waitForEvent('bd_linked_items_published', { collection_id: draft.id, items: 2 })
   })
 })

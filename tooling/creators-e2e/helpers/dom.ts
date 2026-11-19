@@ -1,18 +1,20 @@
-import { type ElementHandle, type Page } from 'puppeteer'
+import { type ElementHandle, type Page } from 'playwright-core'
 
 export const byTestId = (id: string) => `[data-testid="${id}"]`
 
 /** Case-insensitive, so it matches text-transformed UI. */
 export async function waitForText(page: Page, text: string, timeout = 20_000): Promise<void> {
-  await page.waitForFunction(
-    (t: string) => document.body.innerText.toLowerCase().includes(t.toLowerCase()),
-    { timeout },
-    text
-  )
+  await page.waitForFunction((t: string) => document.body.innerText.toLowerCase().includes(t.toLowerCase()), text, {
+    timeout
+  })
 }
 
-export async function waitForTestId(page: Page, id: string, timeout = 20_000): Promise<ElementHandle<Element>> {
-  const handle = await page.waitForSelector(byTestId(id), { timeout, visible: true })
+export async function waitForTestId(
+  page: Page,
+  id: string,
+  timeout = 20_000
+): Promise<ElementHandle<SVGElement | HTMLElement>> {
+  const handle = await page.waitForSelector(byTestId(id), { timeout, state: 'visible' })
   if (!handle) throw new Error(`[data-testid="${id}"] never appeared`)
   return handle
 }
@@ -40,7 +42,7 @@ async function openSelect(page: Page, testId: string, timeout = 20_000): Promise
     if (await page.$(listbox)) return
     await clickTestId(page, testId, Math.max(deadline - Date.now(), 1))
     try {
-      await page.waitForSelector(listbox, { visible: true, timeout: 2_000 })
+      await page.waitForSelector(listbox, { state: 'visible', timeout: 2_000 })
       return
     } catch (error) {
       if (Date.now() >= deadline) throw error
@@ -69,8 +71,8 @@ export async function waitForEnabled(page: Page, id: string, timeout = 20_000): 
       const el = document.querySelector(selector)
       return !!el && !el.hasAttribute('disabled') && el.getAttribute('aria-disabled') !== 'true'
     },
-    { timeout },
-    byTestId(id)
+    byTestId(id),
+    { timeout }
   )
 }
 
@@ -82,12 +84,15 @@ export async function isHidden(page: Page, id: string): Promise<boolean> {
 
 /** Waits for a toast of the given type, without depending on its copy. */
 export async function waitForToast(page: Page, type: 'success' | 'warn' | 'error' | 'info' = 'success') {
-  await page.waitForSelector(`[data-testid="toast"][data-type="${type}"]`, { timeout: 20_000 })
+  await page.waitForSelector(`[data-testid="toast"][data-type="${type}"]`, { timeout: 20_000, state: 'attached' })
 }
 
 /** Waits until the item editor has loaded an item in edit mode. */
 export async function waitForEditor(page: Page): Promise<void> {
-  await page.waitForSelector('[data-testid="item-editor-page"][data-mode="edit"]', { timeout: 30_000 })
+  await page.waitForSelector('[data-testid="item-editor-page"][data-mode="edit"]', {
+    timeout: 30_000,
+    state: 'attached'
+  })
 }
 
 /** Whether an element with the test id is on the page and visible (not `display: none`, zero-sized or hidden). */
@@ -98,12 +103,12 @@ export async function isShown(page: Page, id: string): Promise<boolean> {
 
 /** Toggles a `~/components/Checkbox`, whose input is visually hidden behind its label. */
 export async function check(page: Page, testId: string): Promise<void> {
-  await page.waitForSelector(byTestId(testId))
+  await page.waitForSelector(byTestId(testId), { state: 'attached' })
   await page.$eval(byTestId(testId), el => (el as HTMLInputElement).click())
 }
 
 /** Picks files in the next file chooser the page opens after `trigger`. */
 export async function uploadFiles(page: Page, trigger: () => Promise<void>, paths: string[]): Promise<void> {
-  const [chooser] = await Promise.all([page.waitForFileChooser({ timeout: 10_000 }), trigger()])
-  await chooser.accept(paths)
+  const [chooser] = await Promise.all([page.waitForEvent('filechooser', { timeout: 10_000 }), trigger()])
+  await chooser.setFiles(paths)
 }

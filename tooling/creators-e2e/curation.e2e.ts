@@ -61,7 +61,7 @@ describe('curation', () => {
     await clickTestId(page, 'assign-curator-submit')
     await waitForTestId(page, 'curation-row-curator')
     expect(app.builder.curations.get(submitted.id)).toMatchObject({ status: 'pending', assignee: TEST_ADDRESS })
-    await app.waitForEvent('Assign curator', { collectionId: submitted.id })
+    await app.waitForEvent('bd_curator_assigned', { collection_id: submitted.id })
 
     await clickTestId(page, 'curation-row-link')
     await waitForTestId(page, 'review-bar', 30_000)
@@ -79,7 +79,7 @@ describe('curation', () => {
     expect(String(approval?.args?.collection).toLowerCase()).toBe(submitted.contract_address)
     expect(app.builder.collections.get(submitted.id)?.is_approved).toBe(true)
     expect(app.builder.curations.get(submitted.id)?.status).toBe('approved')
-    await app.waitForEvent('Approve collection', { collectionId: submitted.id })
+    await app.waitForEvent('bd_collection_approved', { collection_id: submitted.id })
     await clickTestId(page, 'success-modal-done')
     await page.waitForFunction(
       () =>
@@ -106,17 +106,18 @@ describe('curation', () => {
         document
           .querySelector('[data-testid="review-bar"] [data-testid="curation-state"]')
           ?.getAttribute('data-state') === 'rejected',
+      undefined,
       { timeout: 15_000 }
     )
     expect(app.builder.curations.get(submitted.id)).toMatchObject({ status: 'rejected', assignee: TEST_ADDRESS })
     expect(await curationState(app)).toBe('rejected')
-    await app.waitForEvent('Reject curation', { collectionId: submitted.id })
+    await app.waitForEvent('bd_curation_rejected', { collection_id: submitted.id })
   })
 
   it('is not there for anyone off the committee', async () => {
     app = await launchApp({ path: '/curation', builder: { ...builder, committee: [] } })
-    await waitForTestId(app.page, 'not-found-page')
-    expect(await isShown(app.page, 'nav-curation')).toBe(false)
+    await app.page.waitForSelector('main[data-status="404"]', { state: 'attached' })
+    expect(await app.page.$('[data-testid="nav-curation"]')).toBeNull()
   })
 })
 
@@ -151,8 +152,8 @@ describe('curation of a collection already approved once', () => {
         document
           .querySelector('[data-testid="review-bar"] [data-testid="curation-state"]')
           ?.getAttribute('data-state') === expected,
-      { timeout: 30_000 },
-      state
+      state,
+      { timeout: 30_000 }
     )
 
   it('rescues changed items on chain before deploying them', async () => {
@@ -199,7 +200,7 @@ describe('curation of a collection already approved once', () => {
     expect(app.writes.filter(write => write === 'POST /content/entities')).toHaveLength(changed.length)
     expect(app.transactions.filter(tx => tx.fn === 'manageCollection')).toHaveLength(1)
     expect(app.builder.curations.get(updated.id)?.status).toBe('approved')
-    await app.waitForEvent('Rescue items', { collectionId: updated.id, item_count: changed.length })
+    await app.waitForEvent('bd_items_rescued', { collection_id: updated.id, item_count: changed.length })
   })
 
   it('disables an approved collection on chain', async () => {
@@ -221,7 +222,7 @@ describe('curation of a collection already approved once', () => {
     await reviewState(app, 'disabled')
     expect(app.builder.collections.get(approved.id)?.is_approved).toBe(false)
     expect(app.transactions.map(tx => tx.fn)).toEqual(['manageCollection'])
-    await app.waitForEvent('Reject collection', { collectionId: approved.id })
+    await app.waitForEvent('bd_collection_rejected', { collection_id: approved.id })
   })
 
   it('enables a disabled collection again', async () => {
@@ -247,6 +248,6 @@ describe('curation of a collection already approved once', () => {
     expect(app.writes).not.toContain('POST /content/entities')
 
     expect(app.builder.collections.get(disabled.id)?.is_approved).toBe(true)
-    await app.waitForEvent('Enable collection', { collectionId: disabled.id })
+    await app.waitForEvent('bd_collection_enabled', { collection_id: disabled.id })
   })
 })

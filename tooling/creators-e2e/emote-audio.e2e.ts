@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { type ElementHandle } from 'puppeteer'
+import { type ElementHandle } from 'playwright-core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { collection, emote as silentEmote } from './fixtures'
 import { launchApp, type App } from './helpers/app'
@@ -21,13 +21,15 @@ describe('emote audio', () => {
     const { page } = app
     await waitForTestId(page, 'collection-empty')
     const input = (await page.$(byTestId('add-items-input'))) as ElementHandle<HTMLInputElement>
-    await input.uploadFile(await emoteWithAudioZip())
+    await input.setInputFiles(await emoteWithAudioZip())
 
     await waitForTestId(page, 'draft-form', 30_000)
     await selectOption(page, 'item-category', 'fun')
     await waitForProcessedAction(app, 'add-items-finish')
     await clickTestId(page, 'add-items-finish')
-    await page.waitForFunction(() => !document.querySelector('[data-testid="add-items-modal"]'), { timeout: 30_000 })
+    await page.waitForFunction(() => !document.querySelector('[data-testid="add-items-modal"]'), undefined, {
+      timeout: 30_000
+    })
 
     const [emote] = [...app.builder.items.values()]
     expect(emote.type).toBe('emote')
@@ -37,11 +39,11 @@ describe('emote audio', () => {
     const audio = readFileSync(FIXTURE.emoteWithPropsAudio)
     for (const path of sounds) expect(app.storage[emote.contents[path]]?.equals(audio)).toBe(true)
 
-    await page.goto(new URL(`/collections/editor?collection=${draft.id}&item=${emote.id}`, page.url()).href)
+    await page.goto(new URL(`/create/collections/editor?collection=${draft.id}&item=${emote.id}`, page.url()).href)
     await waitForEditor(page)
     await waitForTestId(page, 'playback-bar-sound', 30_000)
     await clickTestId(page, 'playback-bar-sound')
-    await page.waitForSelector('[data-testid="playback-bar-sound"][data-muted]')
+    await page.waitForSelector('[data-testid="playback-bar-sound"][data-muted]', { state: 'attached' })
   })
 
   it('offers no mute control for a silent emote', async () => {

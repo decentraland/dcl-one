@@ -38,6 +38,6 @@ describe('meta-transactions', () => {
     const [sent] = app.transactions
     expect(sent).toMatchObject({ fn: 'issueTokens', to: live.contract_address, relayed: true })
     expect((sent.args?.beneficiaries as string[]).map(a => a.toLowerCase())).toEqual([ALICE])
-    await app.waitForEvent('Mint items', { collectionId: live.id, copies: 1 })
+    await app.waitForEvent('bd_items_sent', { collection_id: live.id, copies: 1 })
   })
 })

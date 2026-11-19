@@ -29,11 +29,11 @@ describe('forum post', () => {
     await waitForTestId(page, 'forum-post', 30_000)
     const link = app.builder.collections.get(pending.id)?.forum_link
     expect(link).toMatch(/^https:\/\/forum\.decentraland\.org\//)
-    await app.waitForEvent('Create forum post', { collectionId: pending.id, trigger: 'recovery', existing: false })
+    await app.waitForEvent('bd_forum_post_created', { collection_id: pending.id, trigger: 'recovery', existing: false })
 
     await clickTestId(page, 'forum-post')
     // The page's window.open reaches node asynchronously.
     await vi.waitFor(() => expect(app!.openedUrls).toEqual([link]), { timeout: 10_000 })
-    await app.waitForEvent('Forum post opened', { collectionId: pending.id, surface: 'detail' })
+    await app.waitForEvent('bd_forum_post_opened', { collection_id: pending.id, surface: 'detail' })
   })
 })

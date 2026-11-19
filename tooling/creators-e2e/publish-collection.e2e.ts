@@ -29,7 +29,7 @@ async function publishThroughWizard({ page }: App, method: 'mana' | 'credits' = 
   await clickTestId(page, 'publish-collection')
 
   await waitForTestId(page, 'publish-name-step', 30_000)
-  await page.waitForSelector(byTestId('publish-name-loading'), { hidden: true })
+  await page.waitForSelector(byTestId('publish-name-loading'), { state: 'hidden' })
   await page.type(byTestId('publish-email-input'), 'jane.doe@example.com')
   await check(page, 'publish-name-accept')
   await clickTestId(page, 'publish-name-confirm')
@@ -39,7 +39,7 @@ async function publishThroughWizard({ page }: App, method: 'mana' | 'credits' = 
   await clickTestId(page, 'publish-items-confirm')
 
   await waitForTestId(page, 'publish-payment-step')
-  await page.waitForSelector(`[data-testid="payment-method-${method}"][data-selected]`)
+  await page.waitForSelector(`[data-testid="payment-method-${method}"][data-selected]`, { state: 'attached' })
   await check(page, 'publish-terms-accept')
   await waitForEnabled(page, 'publish-submit')
   await clickTestId(page, 'publish-submit')
@@ -64,7 +64,7 @@ describe('publish a collection', () => {
     await clickTestId(page, 'publish-collection')
 
     await waitForTestId(page, 'publish-name-step', 30_000)
-    await page.waitForSelector(byTestId('publish-name-loading'), { hidden: true })
+    await page.waitForSelector(byTestId('publish-name-loading'), { state: 'hidden' })
     await page.type(byTestId('publish-email-input'), 'jane.doe@example.com')
     await check(page, 'publish-name-accept')
     await clickTestId(page, 'publish-name-confirm')
@@ -75,13 +75,17 @@ describe('publish a collection', () => {
     await clickTestId(page, 'publish-items-confirm')
 
     await waitForTestId(page, 'publish-payment-step')
-    await page.waitForSelector('[data-testid="payment-method-mana"][data-selected]')
+    await page.waitForSelector('[data-testid="payment-method-mana"][data-selected]', { state: 'attached' })
     await check(page, 'publish-terms-accept')
     await waitForEnabled(page, 'publish-submit')
     await clickTestId(page, 'publish-submit')
 
     await waitForTestId(page, 'publish-success-modal', 30_000)
-    await app.waitForEvent('Publish collection', { collectionId: draft.id, usedCredits: false, item_count: 2 })
+    await app.waitForEvent('bd_publish_collection_submitted', {
+      collection_id: draft.id,
+      used_credits: false,
+      item_count: 2
+    })
     const publish = app.transactions.find(tx => tx.fn === 'createCollection')
     // The salt the server derived on the save right before publishing.
     expect(publish?.args?.salt).toBe(app.builder.collections.get(draft.id)?.salt)
@@ -91,7 +95,10 @@ describe('publish a collection', () => {
 
     // Once mined, the server learns about the publication and the first review request opens.
     await clickTestId(page, 'publish-success-done')
-    await page.waitForSelector('[data-testid="collection-status"][data-status="under_review"]', { timeout: 30_000 })
+    await page.waitForSelector('[data-testid="collection-status"][data-status="under_review"]', {
+      state: 'attached',
+      timeout: 30_000
+    })
     const published = app.builder.collections.get(draft.id)!
     expect(published).toMatchObject({ is_published: true, lock: expect.any(String) as string })
     expect(published.forum_link).toBeTruthy()
@@ -111,7 +118,11 @@ describe('publish a collection', () => {
     // Two items at 1 USD (10 credits) each.
     await publishThroughWizard(app, 'credits')
 
-    await app.waitForEvent('Publish collection', { collectionId: draft.id, usedCredits: true, creditsAmount: 20 })
+    await app.waitForEvent('bd_publish_collection_submitted', {
+      collection_id: draft.id,
+      used_credits: true,
+      credits_amount: 20
+    })
     expect(app.writes).toContain('POST /credits/authorize-publication')
     // The credits manager runs the publish itself: no createCollection is sent from the wallet.
     expect(app.transactions.map(tx => tx.fn)).toEqual(['useCredits'])
@@ -126,7 +137,10 @@ describe('publish a collection', () => {
     expect(publish.args?.name).toBe('Summer Drop')
 
     await clickTestId(page, 'publish-success-done')
-    await page.waitForSelector('[data-testid="collection-status"][data-status="under_review"]', { timeout: 30_000 })
+    await page.waitForSelector('[data-testid="collection-status"][data-status="under_review"]', {
+      state: 'attached',
+      timeout: 30_000
+    })
   })
 
   it('publishes again, without edits, after the publish transaction reverted', async () => {
@@ -141,8 +155,9 @@ describe('publish a collection', () => {
     await clickTestId(page, 'publish-success-done')
 
     // The revert leaves the collection locked but publishable again.
-    await app.waitForEvent('Publish collection reverted', { collectionId: draft.id, usedCredits: false })
+    await app.waitForEvent('bd_publish_collection_reverted', { collection_id: draft.id, used_credits: false })
     await page.waitForSelector('[data-testid="publish-collection"][data-retry="true"]:not([aria-disabled])', {
+      state: 'attached',
       timeout: 30_000
     })
     expect(await statusOf(app)).toBe('publishing')
@@ -153,14 +168,17 @@ describe('publish a collection', () => {
     expect(await page.$eval(byTestId('publish-name-input'), el => (el as HTMLInputElement).disabled)).toBe(true)
     await clickTestId(page, 'publish-cancel')
     await publishThroughWizard(app)
-    await app.waitForEvent('Publish collection', { collectionId: draft.id, isRetry: true })
+    await app.waitForEvent('bd_publish_collection_submitted', { collection_id: draft.id, is_retry: true })
 
     const sent = app.transactions.filter(tx => tx.fn === 'createCollection')
     expect(sent).toHaveLength(2)
     expect(sent[1].args?.salt).toBe(sent[0].args?.salt)
 
     await clickTestId(page, 'publish-success-done')
-    await page.waitForSelector('[data-testid="collection-status"][data-status="under_review"]', { timeout: 30_000 })
+    await page.waitForSelector('[data-testid="collection-status"][data-status="under_review"]', {
+      state: 'attached',
+      timeout: 30_000
+    })
     expect(app.builder.collections.get(draft.id)?.is_published).toBe(true)
   })
 
@@ -172,7 +190,7 @@ describe('publish a collection', () => {
     })
     await app.page.waitForSelector(
       '[data-testid="publish-collection"][data-blocker="has_invalid_items"][aria-disabled="true"]',
-      { timeout: 30_000 }
+      { state: 'attached', timeout: 30_000 }
     )
   })
 })

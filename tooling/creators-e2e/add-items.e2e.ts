@@ -1,4 +1,4 @@
-import { type ElementHandle } from 'puppeteer'
+import { type ElementHandle } from 'playwright-core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { collection } from './fixtures'
 import { launchApp, type App, type LaunchOptions } from './helpers/app'
@@ -24,7 +24,7 @@ async function openWithFiles(paths: string[], opts: Partial<LaunchOptions> = {})
   const launched = await launchApp({ path: `/collections/${draft.id}`, builder: { collections: [draft] }, ...opts })
   await waitForTestId(launched.page, 'collection-empty')
   const input = (await launched.page.$(byTestId('add-items-input'))) as ElementHandle<HTMLInputElement>
-  await input.uploadFile(...paths)
+  await input.setInputFiles(paths)
   await waitForTestId(launched.page, 'add-items-modal')
   return launched
 }
@@ -39,7 +39,9 @@ async function readyDraft(a: App): Promise<string> {
 }
 
 async function savedItems(a: App) {
-  await a.page.waitForFunction(() => !document.querySelector('[data-testid="add-items-modal"]'), { timeout: 30_000 })
+  await a.page.waitForFunction(() => !document.querySelector('[data-testid="add-items-modal"]'), undefined, {
+    timeout: 30_000
+  })
   return [...a.builder.items.values()].filter(item => item.collection_id === draft.id)
 }
 
@@ -71,7 +73,6 @@ describe('add items to a collection', () => {
           (previous: string) =>
             document.querySelector('[data-testid^="draft-"][data-selected]')?.getAttribute('data-file-name') !==
             previous,
-          {},
           file
         )
       }
@@ -95,7 +96,7 @@ describe('add items to a collection', () => {
     expect(items.every(item => uploaded(app!, item.contents))).toBe(true)
 
     await waitForToast(app.page)
-    await app.waitForEvent('Add items', { collectionId: draft.id, item_count: 3, failed_count: 0 })
+    await app.waitForEvent('bd_items_added', { collection_id: draft.id, item_count: 3, failed_count: 0 })
     await app.page.waitForFunction(() => document.querySelectorAll('[data-testid="item-row"]').length === 3)
   })
 
@@ -160,7 +161,7 @@ describe('add items to a collection', () => {
     expect(await app.page.$eval(byTestId('add-items-finish'), el => (el as HTMLButtonElement).disabled)).toBe(true)
 
     const video = (await app.page.$(byTestId('draft-video-input'))) as ElementHandle<HTMLInputElement>
-    await video.uploadFile(FIXTURE.previewVideo)
+    await video.setInputFiles(FIXTURE.previewVideo)
     await waitForTestId(app.page, 'draft-video-preview')
     await waitForProcessedAction(app, 'add-items-finish')
     await clickTestId(app.page, 'add-items-finish')

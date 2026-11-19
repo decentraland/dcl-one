@@ -1,6 +1,9 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { resolve } from 'node:path'
-import { BASE, hermeticViteEnv } from './helpers/env'
+import { fileURLToPath } from 'node:url'
+import { BASE, hermeticEnv } from './helpers/env'
+
+const SITES = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../apps/sites')
 
 let child: ChildProcess | undefined
 
@@ -17,7 +20,7 @@ async function isUp(): Promise<boolean> {
 async function waitForServer(server: ChildProcess, output: () => string, timeoutMs = 90_000): Promise<void> {
   let exited: Error | undefined
   server.once('error', error => (exited = error))
-  server.once('exit', code => (exited = new Error(`Vite exited with code ${code}:\n${output()}`)))
+  server.once('exit', code => (exited = new Error(`The Sites dev server exited with code ${code}:\n${output()}`)))
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (exited) throw exited
@@ -33,11 +36,15 @@ export async function setup(): Promise<void> {
     throw new Error(`${BASE} is already in use. Stop that server or run with E2E_PORT=<free port>.`)
   }
   const port = new URL(BASE).port
-  child = spawn(resolve(process.cwd(), 'node_modules/.bin/vite'), ['--port', port, '--strictPort'], {
-    cwd: process.cwd(),
-    stdio: ['ignore', 'ignore', 'pipe'],
-    env: hermeticViteEnv()
-  })
+  child = spawn(
+    resolve(SITES, 'node_modules/.bin/react-router'),
+    ['dev', '--port', port, '--strictPort', '--host', 'localhost'],
+    {
+      cwd: SITES,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: { ...hermeticEnv(), PORT: port, HOST: 'localhost' }
+    }
+  )
   let stderr = ''
   child.stderr?.on('data', (chunk: Buffer) => (stderr = (stderr + chunk.toString()).slice(-4000)))
   await waitForServer(child, () => stderr)

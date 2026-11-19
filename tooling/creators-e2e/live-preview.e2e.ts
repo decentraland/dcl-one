@@ -31,9 +31,12 @@ describe('Blender live preview', () => {
       waitUntil: 'domcontentloaded'
     })
     const { page } = app
-    await page.waitForSelector('[data-testid="live-preview-status"][data-status="connected"]', { timeout: 30_000 })
+    await page.waitForSelector('[data-testid="live-preview-status"][data-status="connected"]', {
+      state: 'attached',
+      timeout: 30_000
+    })
     await waitForTestId(page, 'live-preview-updated', 30_000)
-    await app.waitForEvent('Live preview model', { item_type: 'wearable', category: 'hat' })
+    await app.waitForEvent('bd_live_preview_model_received', { item_type: 'wearable', category: 'hat' })
 
     await waitForEnabled(page, 'live-preview-add')
     await clickTestId(page, 'live-preview-add')
@@ -47,13 +50,11 @@ describe('Blender live preview', () => {
     await waitForProcessedAction(app, 'add-items-finish', 30_000)
     await clickTestId(page, 'add-items-finish')
 
-    await page.waitForFunction(
-      (id: string) => location.pathname === `/collections/${id}`,
-      { timeout: 30_000 },
-      draft.id
-    )
+    await page.waitForFunction((id: string) => location.pathname === `/create/collections/${id}`, draft.id, {
+      timeout: 30_000
+    })
     const [item] = [...app.builder.items.values()]
     expect(item).toMatchObject({ name: 'Bandana', collection_id: draft.id, data: { category: 'hat' } })
-    await app.waitForEvent('Add items', { collectionId: draft.id, origin: 'live_preview' })
+    await app.waitForEvent('bd_items_added', { collection_id: draft.id, origin: 'live_preview' })
   })
 })

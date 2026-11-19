@@ -1,10 +1,11 @@
-import puppeteer, { type Browser, type Page } from 'puppeteer'
+import { chromium, type Browser, type Page } from 'playwright-core'
 import { createBuilderServer, type BuilderSeed, type BuilderServer } from './builderServer'
-import { BASE } from './env'
+import { APP_PATH, BASE, chromiumPath, SEGMENT_HOST } from './env'
 import { fixtureStorage } from './files'
 import { createMarket, type Market, type MarketSeed } from './market'
 import {
   DEFAULT_EXTERNAL_DATA,
+  requestOf,
   route,
   type Bridge,
   type Credits,
@@ -19,7 +20,7 @@ import { OFFLINE_WEBSOCKET_SCRIPT, POLYGON_AMOY, sessionInitScript, testSession 
 
 export const VIEWPORTS = {
   desktop: { width: 1280, height: 900 },
-  mobile: { width: 390, height: 844, isMobile: true, hasTouch: true }
+  mobile: { width: 390, height: 844 }
 } as const
 
 export type TrackedEvent = { event: string; props: Record<string, unknown> }
@@ -43,10 +44,8 @@ export type App = {
   dialogs: string[]
   /** The page's console errors and uncaught exceptions, across reloads, for failure reports. */
   consoleErrors: string[]
-  /** The Segment `track` calls made so far, across reloads. */
+  /** The telemetry events the page sent so far, across reloads. */
   events: () => Promise<TrackedEvent[]>
-  /** The Segment page view names, across reloads. */
-  pageViews: () => string[]
   /** Resolves with the first tracked `event` whose props match, polling until `timeout`. */
   waitForEvent: (event: string, match?: Record<string, unknown>, timeout?: number) => Promise<TrackedEvent>
   close: () => Promise<void>
@@ -71,7 +70,7 @@ export type LaunchOptions = {
   data?: Partial<ExternalData>
   chainId?: number
   viewport?: keyof typeof VIEWPORTS
-  waitUntil?: 'load' | 'domcontentloaded' | 'networkidle0' | 'networkidle2'
+  waitUntil?: 'load' | 'domcontentloaded' | 'networkidle'
 }
 
 /**
@@ -101,13 +100,15 @@ const UPLOAD_CAPTURE_SCRIPT = `(() => {
 // The page has no tab to open, and a real one would escape the request mocks.
 const WINDOW_OPEN_SCRIPT = `window.open = function (url) { window.__e2eOpen && window.__e2eOpen(String(url)); return null; };`
 
+// A beacon's body is a Blob the request interception cannot read; refused, the page posts the same text with fetch.
+const NO_BEACON_SCRIPT = `navigator.sendBeacon = () => false;`
+
 /** A headless page on the e2e dev server with the wallet and every off-origin request mocked. */
 export async function launchApp(opts: LaunchOptions = {}): Promise<App> {
-  const browser = await puppeteer.launch({
+  const browser = await chromium.launch({
+    executablePath: chromiumPath(),
     headless: true,
     args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
       // CI machines report no hover and a coarse pointer, which would run every hover rule's touch branch.
       '--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4',
       // Software WebGL, for the posed thumbnail render on machines without a GPU.
@@ -131,11 +132,14 @@ async function openPage(browser: Browser, opts: LaunchOptions): Promise<App> {
   const market = createMarket(opts.market)
   chain.onTransaction(tx => market.applyTransaction(tx))
 
-  await browser.defaultBrowserContext().overridePermissions(BASE, ['clipboard-read', 'clipboard-write'])
-  const page = await browser.newPage()
-  await page.setViewport(VIEWPORTS[opts.viewport ?? 'desktop'])
-  // isbot reads "HeadlessChrome" as a crawler, and the app turns analytics off for crawlers.
-  await page.setUserAgent((await browser.userAgent()).replace('HeadlessChrome', 'Chrome'))
+  const mobile = opts.viewport === 'mobile'
+  const context = await browser.newContext({
+    viewport: VIEWPORTS[opts.viewport ?? 'desktop'],
+    isMobile: mobile,
+    hasTouch: mobile,
+    permissions: ['clipboard-read', 'clipboard-write']
+  })
+  const page = await context.newPage()
   // Leaving a page with unsaved work asks first; specs that reload mean to, and can assert what was asked.
   const dialogs: string[] = []
   page.on('dialog', dialog => {
@@ -145,7 +149,6 @@ async function openPage(browser: Browser, opts: LaunchOptions): Promise<App> {
 
   const storage = { ...fixtureStorage(), ...opts.storage }
   const tracked: TrackedEvent[] = []
-  const pages: string[] = []
   const openedUrls: string[] = []
   await page.exposeFunction('__e2eWallet', (method: string, params: unknown[]) => chain.walletRequest(method, params))
   await page.exposeFunction('__e2eUpload', (itemId: string, name: string, base64: string) => {
@@ -154,16 +157,12 @@ async function openPage(browser: Browser, opts: LaunchOptions): Promise<App> {
     storage[hash] = Buffer.from(base64, 'base64')
   })
   await page.exposeFunction('__e2eOpen', (url: string) => void openedUrls.push(url))
-  await page.exposeFunction('__e2eAnalytics', (method: string, args: unknown[]) => {
-    if (method === 'track')
-      tracked.push({ event: args[0] as string, props: (args[1] ?? {}) as Record<string, unknown> })
-    if (method === 'page') pages.push(args[0] as string)
-  })
-  await page.evaluateOnNewDocument(OFFLINE_WEBSOCKET_SCRIPT)
-  await page.evaluateOnNewDocument(WINDOW_OPEN_SCRIPT)
-  await page.evaluateOnNewDocument(UPLOAD_CAPTURE_SCRIPT)
+  await page.addInitScript(OFFLINE_WEBSOCKET_SCRIPT)
+  await page.addInitScript(NO_BEACON_SCRIPT)
+  await page.addInitScript(WINDOW_OPEN_SCRIPT)
+  await page.addInitScript(UPLOAD_CAPTURE_SCRIPT)
   if (!opts.signedOut) {
-    await page.evaluateOnNewDocument(sessionInitScript(await testSession(), opts.chainId ?? POLYGON_AMOY))
+    await page.addInitScript(sessionInitScript(await testSession(), opts.chainId ?? POLYGON_AMOY))
   }
 
   const writes: string[] = []
@@ -186,38 +185,40 @@ async function openPage(browser: Browser, opts: LaunchOptions): Promise<App> {
     if (message.type() === 'error') consoleErrors.push(message.text().slice(0, 300))
   })
   page.on('pageerror', error => consoleErrors.push(`uncaught: ${String(error).slice(0, 300)}`))
-  await page.setRequestInterception(true)
-  page.on('request', req => {
+  await context.route('**/*', intercepted => {
+    const req = requestOf(intercepted)
     const url = new URL(req.url())
     const body = req.postData() ?? ''
-    if (url.hostname.startsWith('api.e.') && url.pathname.endsWith('/track')) {
-      // Direct HTTP beacons (the overview's events). A sendBeacon body is a Blob, which Chrome doesn't inline.
-      void (req.hasPostData() && !body ? req.fetchPostData() : Promise.resolve(body))
-        .then(raw => {
-          const call = JSON.parse(raw || '{}') as { event?: string; properties?: Record<string, unknown> }
-          if (call.event) tracked.push({ event: call.event, props: call.properties ?? {} })
-        })
-        .catch((error: unknown) => process.stderr.write(`[e2e] unreadable analytics beacon: ${String(error)}\n`))
-    } else if (
+    if (url.hostname === SEGMENT_HOST) {
+      try {
+        const call = JSON.parse(body || '{}') as { event?: string; properties?: Record<string, unknown> }
+        if (call.event) tracked.push({ event: call.event, props: call.properties ?? {} })
+      } catch (error) {
+        process.stderr.write(`[e2e] unreadable telemetry event: ${String(error)}\n`)
+      }
+      return req.respond({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: '' })
+    }
+    if (
       !['GET', 'HEAD', 'OPTIONS'].includes(req.method()) &&
       url.origin !== ctx.appOrigin &&
-      !body.includes('"jsonrpc"') &&
-      !url.hostname.startsWith('api.e.') &&
-      !url.hostname.endsWith('sentry.io')
+      !body.includes('"jsonrpc"')
     ) {
       writes.push(`${req.method()} ${url.pathname}`)
     }
     // A throw inside the router would otherwise leave the request unanswered until the spec times out.
-    Promise.resolve()
+    return Promise.resolve()
       .then(() => route(req, ctx))
       .catch(async (error: unknown) => {
         process.stderr.write(`[e2e] router failed on ${req.method()} ${req.url()}: ${String(error)}\n`)
-        if (!req.isInterceptResolutionHandled()) await req.respond({ status: 500, body: String(error) })
+        await req.respond({ status: 500, body: String(error) }).catch(() => {})
       })
-      .catch(() => {})
   })
 
-  await page.goto(`${BASE}${opts.path ?? '/'}`, { waitUntil: opts.waitUntil ?? 'networkidle2', timeout: 45_000 })
+  await page.goto(`${BASE}${APP_PATH}${opts.path ?? '/collections'}`, {
+    // The editor keeps the preview and the chain busy, so the network seldom goes quiet: specs wait for what they need.
+    waitUntil: opts.waitUntil ?? 'load',
+    timeout: 45_000
+  })
 
   const events = () => Promise.resolve([...tracked])
 
@@ -249,7 +250,6 @@ async function openPage(browser: Browser, opts: LaunchOptions): Promise<App> {
     dialogs,
     consoleErrors,
     events,
-    pageViews: () => [...pages],
     waitForEvent,
     close: () => browser.close()
   }

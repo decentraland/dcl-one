@@ -34,12 +34,12 @@ describe('replace a model', () => {
     await uploadFiles(page, () => clickTestId(page, 'change-file-browse'), [FIXTURE.poloMale])
     await waitForTestId(page, 'change-file-form', 30_000)
     await clickTestId(page, 'body-shape-male')
-    await page.waitForSelector('[data-testid="change-file-effect"][data-mode="replace_shape"]')
+    await page.waitForSelector('[data-testid="change-file-effect"][data-mode="replace_shape"]', { state: 'attached' })
     await waitForProcessedAction(app, 'change-file-save')
     await clickTestId(page, 'change-file-save')
 
     await waitForToast(page)
-    await app.waitForEvent('Change item file', { itemId: shirt.id, bodyShape: 'male', mode: 'replace_shape' })
+    await app.waitForEvent('bd_item_file_changed', { item_id: shirt.id, body_shape: 'male', mode: 'replace_shape' })
     const after = app.builder.items.get(shirt.id)!
     const representations = (item: typeof after) =>
       Object.fromEntries((item.data.representations as Representation[]).map(r => [shapeOf(r), r]))

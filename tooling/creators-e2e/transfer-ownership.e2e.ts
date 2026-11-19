@@ -34,13 +34,13 @@ describe('transfer ownership', () => {
     const sent = app.transactions.find(tx => tx.fn === 'transferCreatorship')
     expect(sent?.to).toBe(live.contract_address)
     expect(String(sent?.args?.creator).toLowerCase()).toBe(BOB)
-    await app.waitForEvent('Transfer collection ownership', { collectionId: live.id })
+    await app.waitForEvent('bd_collection_ownership_transferred', { collection_id: live.id })
     // The server learns the new owner from the chain.
     expect(app.writes).toContain(`POST /v1/collections/${live.id}/owner/sync`)
 
     // Back on the list, the collection belongs to someone else now.
     await clickTestId(page, 'success-modal-done')
     await waitForTestId(page, 'collections-empty')
-    expect(new URL(page.url()).pathname).toBe('/collections')
+    expect(new URL(page.url()).pathname).toBe('/create/collections')
   })
 })

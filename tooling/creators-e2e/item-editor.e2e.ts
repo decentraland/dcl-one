@@ -1,4 +1,4 @@
-import { type ElementHandle } from 'puppeteer'
+import { type ElementHandle } from 'playwright-core'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   collection,
@@ -39,7 +39,10 @@ const metricsText = (a: App) =>
   a.page.$eval(byTestId('properties-panel-metrics'), el => el.textContent ?? '').catch(() => '')
 
 const badgeStatus = (a: App, status: string) =>
-  a.page.waitForSelector(`[data-testid="validation-badge"][data-status="${status}"]`, { timeout: 30_000 })
+  a.page.waitForSelector(`[data-testid="validation-badge"][data-status="${status}"]`, {
+    state: 'attached',
+    timeout: 30_000
+  })
 
 describe('item editor', () => {
   it('saves name, category and hides, and keeps them after a reload', async () => {
@@ -47,7 +50,7 @@ describe('item editor', () => {
     const { page } = app
     await badgeStatus(app, 'pass')
 
-    await page.click(byTestId('properties-panel-name'), { count: 3 })
+    await page.click(byTestId('properties-panel-name'), { clickCount: 3 })
     await page.keyboard.type('Bandana Deluxe')
     await selectOption(page, 'properties-panel-category', 'helmet')
     await clickTestId(page, 'properties-panel-hides-categories')
@@ -56,7 +59,7 @@ describe('item editor', () => {
     await clickTestId(page, 'properties-panel-save')
 
     await waitForToast(page)
-    await app.waitForEvent('Save item', { itemId: hat.id })
+    await app.waitForEvent('bd_item_editor_saved', { item_id: hat.id })
     const saved = app.builder.items.get(hat.id)!
     expect(saved).toMatchObject({ name: 'Bandana Deluxe', data: { category: 'helmet' } })
     expect(saved.data.hides).toContain('eyewear')
@@ -65,12 +68,11 @@ describe('item editor', () => {
       expect(representation.overrideHides).toContain('eyewear')
     }
 
-    await page.reload({ waitUntil: 'networkidle2' })
+    await page.reload({ waitUntil: 'networkidle' })
     await waitForEditor(page)
     expect(await page.$eval(byTestId('properties-panel-name'), el => (el as HTMLInputElement).value)).toBe(
       'Bandana Deluxe'
     )
-    expect(app.pageViews()).toEqual(['item_editor', 'item_editor'])
   })
 
   it('saves a new thumbnail as soon as it is confirmed, leaving unsaved details pending', async () => {
@@ -78,14 +80,14 @@ describe('item editor', () => {
     const { page } = app
     const before = app.builder.items.get(hat.id)!.contents['thumbnail.png']
 
-    await page.click(byTestId('properties-panel-name'), { count: 3 })
+    await page.click(byTestId('properties-panel-name'), { clickCount: 3 })
     await page.keyboard.type('Unsaved Name')
     await clickTestId(page, 'properties-panel-thumbnail')
     await waitForTestId(page, 'thumbnail-modal')
     const input = (await page.$(byTestId('thumbnail-file-input'))) as ElementHandle<HTMLInputElement>
-    await input.uploadFile(FIXTURE.thumbnail)
+    await input.setInputFiles(FIXTURE.thumbnail)
 
-    await app.waitForEvent('Save item', { itemId: hat.id })
+    await app.waitForEvent('bd_item_editor_saved', { item_id: hat.id })
     const saved = app.builder.items.get(hat.id)!
     expect(saved.contents['thumbnail.png']).not.toBe(before)
     expect(saved.name).toBe(hat.name)
@@ -101,9 +103,14 @@ describe('item editor', () => {
     await clickTestId(app.page, 'validation-badge')
     await waitForTestId(app.page, 'validation-badge-modal')
     await app.page.waitForSelector(
-      '[data-testid="validation-badge-modal"] [data-severity="error"][data-code="texture-size"]'
+      '[data-testid="validation-badge-modal"] [data-severity="error"][data-code="texture-size"]',
+      { state: 'attached' }
     )
-    await app.waitForEvent('Item Validation Details Opened', { itemId: polo.id, status: 'errors', trigger: 'editor' })
+    await app.waitForEvent('bd_item_validation_details_opened', {
+      item_id: polo.id,
+      status: 'errors',
+      trigger: 'editor'
+    })
   })
 
   it('counts the metrics of a wearable saved without geometry and stores them', async () => {
@@ -111,7 +118,7 @@ describe('item editor', () => {
     app = await launchApp({ path: editorPath(zeroed.id), builder: { collections: [draft], items: [zeroed] } })
     await waitForEditor(app.page)
 
-    await app.waitForEvent('Item metrics repaired', { itemId: zeroed.id, saved: true })
+    await app.waitForEvent('bd_item_metrics_repaired', { item_id: zeroed.id, saved: true })
     expect(await metricsText(app)).toContain('540')
     await expect.poll(() => app!.builder.items.get(zeroed.id)!.metrics).toEqual(HAT_METRICS)
   })
@@ -127,7 +134,7 @@ describe('item editor', () => {
     const { page } = app
     await waitForEditor(page)
 
-    await app.waitForEvent('Item metrics repaired', { itemId: zeroed.id, saved: false })
+    await app.waitForEvent('bd_item_metrics_repaired', { item_id: zeroed.id, saved: false })
     expect(await metricsText(app)).toContain('540')
     expect(app.builder.items.get(zeroed.id)!.metrics).toEqual(BOOT_SCENE_METRICS)
 
@@ -157,7 +164,7 @@ describe('item editor', () => {
     const { page } = app
     await waitForEditor(page)
 
-    await app.waitForEvent('Item metrics repaired', { itemId: zeroed.id, saved: false })
+    await app.waitForEvent('bd_item_metrics_repaired', { item_id: zeroed.id, saved: false })
     expect(await metricsText(app)).toContain('540')
 
     await page.type(byTestId('properties-panel-utility'), 'Glows in the dark')

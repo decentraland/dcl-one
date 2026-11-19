@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { type Page } from 'puppeteer'
+import { type Page } from 'playwright-core'
 import { type App } from './app'
 import { waitForEnabled } from './dom'
 import { FIXTURE } from './files'

@@ -31,7 +31,7 @@ describe('create a collection', () => {
     expect(await app.page.$eval(byTestId('collection-name'), el => el.textContent?.trim())).toBe('Summer Drop')
     expect(await app.page.$eval(byTestId('collection-status'), el => el.getAttribute('data-status'))).toBe('draft')
     expect(app.builder.collections.get(id!)?.name).toBe('Summer Drop')
-    await app.waitForEvent('Save collection', { collectionId: id, item_count: 0 })
+    await app.waitForEvent('bd_collection_saved', { collection_id: id, item_count: 0 })
   })
 
   it('keeps the modal open when the name is taken', async () => {

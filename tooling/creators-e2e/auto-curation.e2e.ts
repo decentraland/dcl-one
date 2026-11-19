@@ -87,7 +87,7 @@ describe('automated review', () => {
     await page.waitForFunction(() => !document.querySelector('[data-testid="automated-issues-modal"]'))
 
     // Seen once: while the rejection still stands, a reload shows the page, not the same verdict again.
-    await page.reload({ waitUntil: 'networkidle2' })
+    await page.reload({ waitUntil: 'networkidle' })
     await waitForTestId(page, 'review-notice', 30_000)
     expect(await isShown(page, 'automated-issues-modal')).toBe(false)
 
@@ -102,7 +102,7 @@ describe('automated review', () => {
     await waitForTestId(page, 'sent-for-review-modal-modal')
     expect(app.builder.curations.get(collection.id)?.status).toBe('pending')
     expect(app.builder.events.map(row => row.type)).toContain('review.appeal_requested')
-    await app.waitForEvent('Appeal curation', { collectionId: collection.id })
+    await app.waitForEvent('bd_curation_appealed', { collection_id: collection.id })
   })
 
   it('pauses item editing while the automated review runs', async () => {
@@ -210,6 +210,6 @@ describe('automated review', () => {
       actor: 'creator',
       payload: { message: 'Yes, it replaces the hair on purpose.' }
     })
-    await app.waitForEvent('Post review comment', { collectionId: collection.id, role: 'creator' })
+    await app.waitForEvent('bd_review_comment_posted', { collection_id: collection.id, role: 'creator' })
   })
 })

@@ -51,17 +51,17 @@ describe('collection discounts', () => {
     await clickTestId(page, 'creator-sale-continue')
     await waitForTestId(page, 'creator-sale-review')
     await clickTestId(page, 'creator-sale-submit')
-    await page.waitForSelector('[data-testid^="creator-sale-success"]', { timeout: 30_000 })
+    await page.waitForSelector('[data-testid^="creator-sale-success"]', { state: 'attached', timeout: 30_000 })
 
     expect(app.market.coupons).toHaveLength(1)
     const [coupon] = app.market.coupons
     // 30% in parts per million, over this collection only, signed by the creator.
     expect(coupon).toMatchObject({ signer: TEST_ADDRESS, discount: 300_000, collections: [contractAddress] })
     expect(app.transactions).toHaveLength(0)
-    await app.waitForEvent('Create collection discount', { collectionId: live.id, discountPct: 30 })
+    await app.waitForEvent('bd_discount_created', { collection_id: live.id, discount_pct: 30 })
 
     await page.keyboard.press('Escape')
-    await page.goto(page.url(), { waitUntil: 'networkidle2' })
+    await page.goto(page.url(), { waitUntil: 'networkidle' })
     await waitForTestId(page, 'collection-discounts')
     expect(await page.$$eval(byTestId('collection-discount'), chips => chips.length)).toBe(1)
 
@@ -71,9 +71,9 @@ describe('collection discounts', () => {
     await waitForTestId(page, 'success-modal-modal', 30_000)
     const ended = app.transactions.find(tx => tx.fn === 'cancelSignature')
     expect(ended?.to).toBe(COUPON_MANAGER_V3)
-    await app.waitForEvent('End collection discount', { collectionId: live.id })
+    await app.waitForEvent('bd_discount_ended', { collection_id: live.id })
     await clickTestId(page, 'success-modal-done')
-    await page.waitForFunction(() => !document.querySelector('[data-testid="collection-discount"]'), {
+    await page.waitForFunction(() => !document.querySelector('[data-testid="collection-discount"]'), undefined, {
       timeout: 15_000
     })
   })
