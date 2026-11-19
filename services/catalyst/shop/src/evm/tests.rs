@@ -1444,6 +1444,47 @@ async fn a_relayer_account_is_refused_as_the_user_with_only_the_oz_relayer() {
     assert_eq!(submissions.load(std::sync::atomic::Ordering::Relaxed), 0);
 }
 
+/// The `relayer-accounts` job reads the OZ relayer's list on its own, before any relay request.
+#[tokio::test]
+async fn the_relayer_accounts_job_reads_the_list_at_start() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let reads = Arc::new(AtomicUsize::new(0));
+    let counted = reads.clone();
+    let app = axum::Router::new().route(
+        "/api/v1/relayers/",
+        axum::routing::get(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            async { Json(json!({ "success": true, "data": [] })) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake relayer");
+    let addr = listener.local_addr().expect("relayer addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let state = state(
+        lazy_pool(),
+        Settings {
+            oz_relayer_url: Some(format!("http://{addr}")),
+            oz_relayer_id: Some("relayer-under-test".into()),
+            oz_relayer_api_key: Some("api-key-under-test".into()),
+            ..Settings::for_tests()
+        },
+    );
+    let jobs = crate::jobs::Jobs::new();
+    super::spawn_jobs(&state, &jobs);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while reads.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the job reads the list");
+    jobs.shutdown(std::time::Duration::from_secs(5)).await;
+}
+
 /// A user that is not a listed relayer account passes that step and reaches the OZ relayer.
 #[tokio::test]
 async fn an_unlisted_user_reaches_the_oz_relayer() {

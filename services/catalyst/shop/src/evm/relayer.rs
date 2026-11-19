@@ -120,8 +120,14 @@ impl OzAccount {
     }
 }
 
-/// The accounts list and the instant after which [`Relayer::refresh_accounts`] reads it again.
-type StoredAccounts = (Instant, Arc<HashSet<Address>>);
+#[derive(Clone)]
+struct StoredAccounts {
+    /// When [`Relayer::refresh_accounts`] reads the list again.
+    until: Instant,
+    /// Whether `accounts` came from a complete list read, not only the configured relayer.
+    listed: bool,
+    accounts: Arc<HashSet<Address>>,
+}
 
 pub struct Relayer {
     http: Outbound,
@@ -164,14 +170,14 @@ impl Relayer {
     /// anything is stored, waits for a read; later ones answer the stored list, which
     /// [`Relayer::refresh_accounts`] keeps current. Concurrent callers share one read.
     pub async fn accounts(&self) -> Arc<HashSet<Address>> {
-        if let Some((_, accounts)) = self.accounts.lock().clone() {
-            return accounts;
+        if let Some(stored) = self.accounts.lock().as_ref() {
+            return stored.accounts.clone();
         }
         let _ = self.read_accounts_if(|stored| stored.is_none()).await;
         self.accounts
             .lock()
             .as_ref()
-            .map(|(_, accounts)| accounts.clone())
+            .map(|stored| stored.accounts.clone())
             .unwrap_or_default()
     }
 
@@ -179,7 +185,7 @@ impl Relayer {
     /// before the next pass.
     pub async fn refresh_accounts(&self) -> Result<(), String> {
         self.read_accounts_if(|stored| {
-            stored.is_none_or(|(until, _)| *until <= Instant::now() + ACCOUNTS_RETRY)
+            stored.is_none_or(|s| s.until <= Instant::now() + ACCOUNTS_RETRY)
         })
         .await
     }
@@ -197,29 +203,40 @@ impl Relayer {
         }
         let error = match self.fetch_accounts().await {
             Ok(accounts) => {
-                *self.accounts.lock() =
-                    Some((Instant::now() + ACCOUNTS_REFRESH, Arc::new(accounts)));
+                *self.accounts.lock() = Some(StoredAccounts {
+                    until: Instant::now() + ACCOUNTS_REFRESH,
+                    listed: true,
+                    accounts: Arc::new(accounts),
+                });
                 return Ok(());
             }
             Err(e) => e,
         };
-        let last = self.accounts.lock().as_ref().map(|(_, a)| a.clone());
-        let kept = match last {
-            Some(last) => {
+        let last = self.accounts.lock().clone();
+        let (listed, accounts) = match last {
+            Some(last) if last.listed => {
                 tracing::warn!(error = %error, "economy: could not read the relayer accounts; the last list stays");
-                last
+                (true, last.accounts)
             }
-            None => {
+            last => {
                 let own = self.fetch_own_account().await;
                 tracing::error!(
                     error = %error,
                     own_account_read = own.is_ok(),
                     "economy: could not read the relayer accounts; only the configured relayer's own account is refused until a read succeeds"
                 );
-                Arc::new(own.ok().flatten().into_iter().collect())
+                let accounts = match own {
+                    Ok(own) => Arc::new(own.into_iter().collect()),
+                    Err(_) => last.map(|l| l.accounts).unwrap_or_default(),
+                };
+                (false, accounts)
             }
         };
-        *self.accounts.lock() = Some((Instant::now(), kept));
+        *self.accounts.lock() = Some(StoredAccounts {
+            until: Instant::now(),
+            listed,
+            accounts,
+        });
         Err(error)
     }
 
@@ -801,8 +818,8 @@ mod tests {
         let relayer = relayer(&url);
         assert!(relayer.accounts().await.contains(&account(1)));
         down.store(true, Ordering::SeqCst);
-        if let Some((until, _)) = relayer.accounts.lock().as_mut() {
-            *until = Instant::now();
+        if let Some(stored) = relayer.accounts.lock().as_mut() {
+            stored.until = Instant::now();
         }
         assert!(relayer.accounts().await.contains(&account(1)));
         assert_eq!(
@@ -833,6 +850,42 @@ mod tests {
         let (url, server) = serve(app).await;
         let accounts = relayer(&url).accounts().await;
         assert_eq!(*accounts, HashSet::from([account(7)]), "{accounts:?}");
+        server.abort();
+    }
+
+    /// Until a list is read, each pass reads the configured relayer's own account again, so a
+    /// first failure of that read does not leave it unrefused.
+    #[tokio::test]
+    async fn the_configured_relayer_is_read_again_until_a_list_is_read() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let own_reads = Arc::new(AtomicUsize::new(0));
+        let counted = own_reads.clone();
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/relayers/",
+                axum::routing::get(|| async { axum::http::StatusCode::FORBIDDEN }),
+            )
+            .route(
+                "/api/v1/relayers/rid",
+                axum::routing::get(move || {
+                    let first = counted.fetch_add(1, Ordering::SeqCst) == 0;
+                    async move {
+                        if first {
+                            Err(axum::http::StatusCode::SERVICE_UNAVAILABLE)
+                        } else {
+                            Ok(axum::Json(
+                                serde_json::json!({ "success": true, "data": evm(account(7)) }),
+                            ))
+                        }
+                    }
+                }),
+            );
+        let (url, server) = serve(app).await;
+        let relayer = relayer(&url);
+        assert!(relayer.accounts().await.is_empty());
+        assert!(relayer.refresh_accounts().await.is_err());
+        assert_eq!(*relayer.accounts().await, HashSet::from([account(7)]));
+        assert_eq!(own_reads.load(Ordering::SeqCst), 2);
         server.abort();
     }
 
