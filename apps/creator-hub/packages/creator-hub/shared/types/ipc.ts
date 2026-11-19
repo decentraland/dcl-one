@@ -177,6 +177,7 @@ export interface MobileDebugBroadcastResult {
 export interface Ipc {
   'electron.getEnvOverride': () => Env | null;
   'electron.getUserDataPath': () => string;
+  'electron.getDefaultScenesPath': () => string;
   'electron.getAppVersion': () => Promise<string>;
   'updater.getDownloadedVersion': () => string | null;
   'updater.setupUpdaterEvents': () => void;
@@ -203,7 +204,9 @@ export interface Ipc {
   'landUnpublish.prepare': (parcel: string) => Promise<EmptySceneDraft>;
   'landUnpublish.deploy': (request: EmptySceneDeploy) => Promise<void>;
   'electron.openExternal': (url: string) => Promise<void>;
+  'electron.openDeepLink': (url: string) => Promise<boolean>;
   'electron.logDeployment': (entry: DeploymentLogEntry) => Promise<void>;
+  'electron.logRendererError': (entry: RendererErrorLogEntry) => Promise<void>;
   'electron.copyToClipboard': (text: string) => Promise<void>;
   'oxc.parse': (filename: string, source: string) => Promise<OxcParseResult>;
   'optimizer.scan': (path: string) => Promise<OptimizeScanResult>;
@@ -357,3 +360,12 @@ export type DeploymentLogEntry =
       baseParcel: string;
     }
   | { outcome: 'failed'; error: string };
+
+/** An error a screen crashed on, written to main.log so a user's log shows it. */
+export type RendererErrorLogEntry = {
+  /** The error boundary that caught it. */
+  boundary: string;
+  /** The error's stack, or its message when it has none. */
+  error: string;
+  componentStack?: string;
+};

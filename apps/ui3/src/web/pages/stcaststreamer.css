@@ -128,6 +128,8 @@
   min-width: 0;
 }
 .stcast__devbtn:hover { background: rgba(255, 255, 255, 0.08); }
+.stcast__devbtn--static { cursor: default; }
+.stcast__devbtn--static:hover { background: transparent; }
 .stcast__devlabel {
   text-align: left;
   font-size: 14px;
@@ -158,6 +160,7 @@
   box-shadow: 0 4px 12px rgba(255, 45, 85, 0.3);
 }
 .stcast__join:active { transform: translateY(0); }
+.stcast__join:disabled { opacity: 0.6; cursor: default; transform: none; box-shadow: none; }
 
 .stcast__joining {
   position: relative;
@@ -343,6 +346,9 @@
 }
 .stcast__circle:hover { background: rgba(255, 255, 255, 0.9); }
 .stcast__circle:active { transform: scale(0.95); }
+.stcast__circle--off { background: var(--stcast-ruby); color: #fff; }
+.stcast__circle--off:hover { background: var(--stcast-ruby-hover); }
+.stcast__circle:disabled { opacity: 0.6; cursor: default; transform: none; }
 .stcast__chev {
   background: none;
   border: none;
@@ -374,6 +380,7 @@
   transition: background 0.12s ease;
 }
 .stcast__leave:hover { background: var(--stcast-ruby-hover); }
+.stcast__leave:disabled { opacity: 0.6; cursor: default; }
 
 .stcast__iconbtn {
   position: relative;
@@ -390,6 +397,10 @@
   transition: background 0.2s ease;
 }
 .stcast__iconbtn:hover { background: rgba(255, 255, 255, 0.1); }
+.stcast__iconbtn:disabled,
+.stcast__iconbtn--static { cursor: default; }
+.stcast__iconbtn:disabled:hover,
+.stcast__iconbtn--static:hover { background: transparent; }
 .stcast__badge {
   position: absolute;
   top: -4px;

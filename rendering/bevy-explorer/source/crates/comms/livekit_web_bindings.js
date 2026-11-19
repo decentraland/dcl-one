@@ -11,6 +11,101 @@ function error(...args) {
 var audioContext = null;
 var microphonePermission = "denied";
 const roomPlayback = new WeakMap();
+// Stream and transmitter audio elements whose play() the browser refused, with their room.
+const refusedStreams = new Map();
+const warnedRooms = new WeakSet();
+var gestureListenerArmed = false;
+
+// The events that can carry user activation: a touch or pen grants it on release, a mouse on
+// press, a key on press (Escape excepted).
+const GESTURE_EVENTS = ["pointerdown", "pointerup", "touchend", "keydown", "click"];
+
+/**
+ * Plays a stream's audio element (`TrackSubscribed`). A refusal by the autoplay policy is
+ * retried on every later gesture until it plays, as the media host does for scene media
+ * (`crates/media/src/html/host.rs`). The voice rigs' elements stay muted and are not played
+ * here: their sound goes through the panner and gain graph.
+ * @param {livekit.Room} room
+ * @param {livekit.RemoteAudioTrack} track
+ */
+function play_stream_audio(room, track) {
+    const element = track.audioElement;
+    if (!element || !roomPlayback.get(room)?.has(track)) return;
+    Promise.resolve()
+        .then(() => element.play())
+        .then(
+            () => {
+                if (refusedStreams.delete(track)) {
+                    log(`Stream audio ${track.sid} started.`);
+                    update_gesture_listener();
+                }
+            },
+            (err) => {
+                // a room dropped or a track rebuilt meanwhile is not retried
+                const current = roomPlayback.get(room)?.has(track) && track.audioElement === element;
+                if (current && err?.name === "NotAllowedError") {
+                    if (!warnedRooms.has(room)) {
+                        warnedRooms.add(room);
+                        warn(`Audio playback blocked in room ${room.name}; retrying on the next user gesture.`);
+                    }
+                    refusedStreams.set(track, room);
+                } else {
+                    refusedStreams.delete(track);
+                }
+                update_gesture_listener();
+            },
+        );
+}
+
+function forget_refused_stream(track) {
+    if (refusedStreams.delete(track)) update_gesture_listener();
+}
+
+/**
+ * The AudioContext of the nearby voice rigs. While it is not running (created before a user
+ * gesture, or suspended by the browser later) every gesture tries to resume it.
+ */
+function shared_audio_context() {
+    if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        audioContext.addEventListener?.("statechange", update_gesture_listener);
+    }
+    update_gesture_listener();
+    return audioContext;
+}
+
+function audio_context_waiting() {
+    return !!audioContext && audioContext.state !== "running" && audioContext.state !== "closed";
+}
+
+function on_gesture() {
+    for (const [track, room] of refusedStreams) {
+        if (roomPlayback.get(room)?.has(track)) {
+            play_stream_audio(room, track);
+        } else {
+            refusedStreams.delete(track);
+        }
+    }
+    if (audio_context_waiting()) {
+        audioContext.resume().then(update_gesture_listener, (err) => warn("Could not resume the audio context:", err));
+    }
+    update_gesture_listener();
+}
+
+/** Keeps one page gesture listener registered while any audio waits for user activation. */
+function update_gesture_listener() {
+    if (typeof document === "undefined") return;
+    const wanted = refusedStreams.size > 0 || audio_context_waiting();
+    if (wanted === gestureListenerArmed) return;
+    gestureListenerArmed = wanted;
+    for (const event of GESTURE_EVENTS) {
+        if (wanted) {
+            document.addEventListener(event, on_gesture, true);
+        } else {
+            document.removeEventListener(event, on_gesture, true);
+        }
+    }
+}
 
 /**
  * @param {function} on_change called with the permission state now and whenever it changes
@@ -264,14 +359,11 @@ function set_room_event_handler(room, handler, tracks) {
             }
             tracks.add(remote_track);
             if (remote_track.kind === "audio") {
-                if (!audioContext) {
-                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                }
-
                 if (remote_participant.identity.endsWith("-streamer") || remote_participant.identity.startsWith("stream:") || remote_participant.identity.startsWith("presentation-bot:")) {
                     const audioElement = remote_track.attach();
                     audioElement.volume = 0;
                     remote_track.audioElement = audioElement;
+                    play_stream_audio(room, remote_track);
                 } else {
                     track_rig_new(remote_track);
                 }
@@ -555,16 +647,17 @@ function track_rig_new(remote_track) {
 
     // use the track internal stream in playback
     const stream = new MediaStream([remote_track.mediaStreamTrack]);
-    const source = audioContext.createMediaStreamSource(stream);
-    const pannerNode = audioContext.createStereoPanner();
-    const gainNode = audioContext.createGain();
+    const context = shared_audio_context();
+    const source = context.createMediaStreamSource(stream);
+    const pannerNode = context.createStereoPanner();
+    const gainNode = context.createGain();
     // The engine applies playback gain after subscription arrives.
     gainNode.gain.value = 0;
 
     // Connect the audio graph: source -> panner -> gain -> destination
     source.connect(pannerNode);
     pannerNode.connect(gainNode);
-    gainNode.connect(audioContext.destination);
+    gainNode.connect(context.destination);
 
     // Store the nodes for later control
     remote_track.trackRig = {
@@ -597,6 +690,7 @@ function track_rig_drop(remote_track) {
 }
 
 function drop_track_playback(track) {
+    forget_refused_stream(track);
     track_rig_drop(track);
     for (const key of ["audioElement", "videoElement"]) {
         const element = track[key];
