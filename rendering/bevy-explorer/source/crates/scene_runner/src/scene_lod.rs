@@ -35,7 +35,7 @@ use common::{
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use dcl_component::{
     proto_components::sdk::components::PbGltfContainer,
-    transform_and_parent::{DclQuat, DclTranslation},
+    transform_and_parent::{DclQuat, DclTransformAndParent, DclTranslation},
     SceneEntityId,
 };
 use dcl_types::SceneId;
@@ -339,27 +339,21 @@ struct Xyzw {
 }
 
 impl DescriptorAsset {
-    /// The same conversion a scene's `Transform` component gets.
+    /// The conversion a scene's `Transform` component gets, its guards included: a value that
+    /// is not finite (an out-of-range number reads as infinity) falls back as it does there.
     fn transform(&self) -> Transform {
-        let rotation = DclQuat([
-            self.rotation.x,
-            self.rotation.y,
-            self.rotation.z,
-            self.rotation.w,
-        ])
-        .to_bevy_quat()
-        .normalize();
-        let scale = Vec3::new(self.scale.x, self.scale.y, self.scale.z);
-        Transform {
-            translation: DclTranslation([self.position.x, self.position.y, self.position.z])
-                .to_bevy_translation(),
-            rotation: if rotation.is_finite() {
-                rotation
-            } else {
-                Quat::IDENTITY
-            },
-            scale: if scale.is_finite() { scale } else { Vec3::ONE },
+        DclTransformAndParent {
+            translation: DclTranslation([self.position.x, self.position.y, self.position.z]),
+            rotation: DclQuat([
+                self.rotation.x,
+                self.rotation.y,
+                self.rotation.z,
+                self.rotation.w,
+            ]),
+            scale: Vec3::new(self.scale.x, self.scale.y, self.scale.z),
+            parent: SceneEntityId::ROOT,
         }
+        .to_bevy_transform()
     }
 }
 
@@ -438,7 +432,7 @@ fn update_scene_lods(
     pointers: Res<ScenePointers>,
     live_scenes: Res<LiveScenes>,
     contexts: Query<(&RendererSceneContext, Has<ContentWasShown>)>,
-    lods: Query<(Entity, &SceneLod)>,
+    mut lods: Query<(Entity, &mut SceneLod)>,
 ) {
     let Ok(focus) = focus.single() else {
         return;
@@ -474,10 +468,16 @@ fn update_scene_lods(
             .is_some_and(|(context, was_shown)| was_shown || context.content_shown())
     };
 
-    let mut existing: HashSet<&str> = HashSet::new();
-    for (entity, lod) in &lods {
-        if wanted.contains_key(lod.hash.as_str()) && !shown(&lod.hash) {
-            existing.insert(lod.hash.as_str());
+    let mut existing: HashSet<String> = HashSet::new();
+    for (entity, mut lod) in &mut lods {
+        if let Some((_, parcels)) = wanted.get(lod.hash.as_str()).filter(|_| !shown(&lod.hash)) {
+            // until its entity definition gives all of them, a stand-in's parcels are those
+            // within the keep ring now: its partition, and so whether it starts, reads them
+            let unknown = matches!(lod.state, LodState::Pending | LodState::Definition(_));
+            if unknown && lod.parcels != *parcels {
+                lod.parcels = parcels.clone();
+            }
+            existing.insert(lod.hash.clone());
             continue;
         }
         // its containers go with it, and release their models (`gltf_container`'s observers)
@@ -713,26 +713,7 @@ fn start_scene_lods(
                     lod.state = LodState::Nothing;
                     continue;
                 };
-                let mut models = Vec::new();
-                for asset in &descriptor.assets {
-                    // the descriptor names the file by its content hash
-                    let Some((file, _)) = definition
-                        .content
-                        .values()
-                        .find(|(_, hash)| **hash == asset.hash)
-                    else {
-                        // a model the scene does not deploy, such as one it loads from a url
-                        debug!(
-                            "{}: near LOD skips {}: not a file the scene deployed",
-                            lod.hash, asset.hash
-                        );
-                        continue;
-                    };
-                    models.push(StandInModel {
-                        file: file.clone(),
-                        transform: asset.transform(),
-                    });
-                }
+                let models = stand_in_models(&lod.hash, definition, descriptor);
                 if models.is_empty() {
                     lod.state = LodState::Nothing;
                     continue;
@@ -756,6 +737,60 @@ fn start_scene_lods(
             _ => (),
         }
     }
+}
+
+/// The most models a stand-in places; past it the rest are skipped, with a warning. Each model
+/// is a container in each part.
+const MAX_STAND_IN_MODELS: usize = 2048;
+
+/// The models a descriptor places among the files the scene deployed. The descriptor names each
+/// by its content hash; a hash the scene deployed under several names is taken under the first in
+/// name order. An entry the scene did not deploy is skipped (a model it loads from a url), as is
+/// one repeated at the same transform.
+fn stand_in_models(
+    scene: &str,
+    definition: &EntityDefinition,
+    descriptor: &Descriptor,
+) -> Vec<StandInModel> {
+    let mut files: HashMap<&str, &str> = HashMap::new();
+    for (file, hash) in definition.content.values() {
+        files
+            .entry(hash.as_str())
+            .and_modify(|first| *first = (*first).min(file.as_str()))
+            .or_insert(file.as_str());
+    }
+    let mut placed = HashSet::new();
+    let mut models = Vec::new();
+    for asset in &descriptor.assets {
+        let Some(file) = files.get(asset.hash.as_str()) else {
+            debug!(
+                "{scene}: near LOD skips {}: not a file the scene deployed",
+                asset.hash
+            );
+            continue;
+        };
+        let transform = asset.transform();
+        let bits = [
+            transform.translation.to_array(),
+            transform.scale.to_array(),
+            transform.rotation.xyz().to_array(),
+        ]
+        .map(|v| v.map(f32::to_bits));
+        if !placed.insert((asset.hash.as_str(), bits, transform.rotation.w.to_bits())) {
+            continue;
+        }
+        if models.len() == MAX_STAND_IN_MODELS {
+            warn!(
+                "{scene}: near LOD places its first {MAX_STAND_IN_MODELS} models and skips the rest"
+            );
+            break;
+        }
+        models.push(StandInModel {
+            file: (*file).to_owned(),
+            transform,
+        });
+    }
+    models
 }
 
 /// One container per model under `root`, each taking `part` of its model.
@@ -1094,6 +1129,120 @@ mod tests {
             vec![colliders]
         );
         assert_eq!(world.get::<Visibility>(root), Some(&Visibility::Hidden));
+    }
+
+    /// The player standing in `parcel`.
+    fn player_at(parcel: IVec2) -> GlobalTransform {
+        GlobalTransform::from_translation(Vec3::new(
+            parcel.x as f32 * PARCEL_SIZE + 8.0,
+            0.0,
+            -(parcel.y as f32 * PARCEL_SIZE + 8.0),
+        ))
+    }
+
+    /// A waiting stand-in follows the parcels within the keep ring as the player moves, so a
+    /// long scene first seen at one end starts once its nearest parcel is in range, however the
+    /// player came at it.
+    #[test]
+    fn a_waiting_stand_in_follows_its_parcels_in_range() {
+        let mut world = World::new();
+        world.init_resource::<PreviewMode>();
+        world.init_resource::<LiveScenes>();
+        let mut pointers = ScenePointers::default();
+        pointers.set_realm(IVec2::splat(-20), IVec2::splat(20));
+        for x in 0..=10 {
+            pointers.insert(
+                IVec2::new(x, 0),
+                PointerResult::Exists {
+                    hash: "long".to_owned(),
+                    urn: None,
+                },
+            );
+        }
+        world.insert_resource(pointers);
+        let player = world
+            .spawn((PrimaryUser::default(), player_at(IVec2::new(-4, 0))))
+            .id();
+        let parcels = |world: &mut World| {
+            let mut parcels = world
+                .query::<&SceneLod>()
+                .single(world)
+                .unwrap()
+                .parcels
+                .clone();
+            parcels.sort_by_key(|parcel| parcel.x);
+            parcels
+        };
+
+        world.run_system_once(update_scene_lods).unwrap();
+        assert_eq!(parcels(&mut world), vec![IVec2::ZERO]);
+
+        world
+            .entity_mut(player)
+            .insert(player_at(IVec2::new(6, -3)));
+        world.run_system_once(update_scene_lods).unwrap();
+        assert_eq!(
+            parcels(&mut world),
+            (2..=10).map(|x| IVec2::new(x, 0)).collect::<Vec<_>>()
+        );
+    }
+
+    fn asset(hash: &str, x: f32) -> DescriptorAsset {
+        DescriptorAsset {
+            hash: hash.to_owned(),
+            position: Xyz { x, y: 0.0, z: 0.0 },
+            rotation: Xyzw {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+                w: 1.0,
+            },
+            scale: Xyz {
+                x: 1.0,
+                y: 1.0,
+                z: 1.0,
+            },
+        }
+    }
+
+    /// The descriptor's entries become models by the files the scene deployed: an entry the
+    /// scene did not deploy and one repeated at the same transform are skipped, a file deployed
+    /// under two names takes the first, and a non-finite translation falls back to the origin.
+    #[test]
+    fn descriptor_entries_become_the_scenes_models() {
+        let definition = EntityDefinition {
+            content: ipfs::ContentMap::from_content(
+                [
+                    ("models/b.glb", "tree"),
+                    ("models/a.glb", "tree"),
+                    ("models/rock.glb", "rock"),
+                ]
+                .map(|(file, hash)| (file.to_owned(), hash.to_owned())),
+            ),
+            ..Default::default()
+        };
+        let descriptor = Descriptor {
+            assets: vec![
+                asset("tree", 1.0),
+                asset("tree", 1.0),
+                asset("tree", 2.0),
+                asset("url-model", 3.0),
+                asset("rock", f32::INFINITY),
+            ],
+        };
+        let models = stand_in_models("scene", &definition, &descriptor);
+        let placed = models
+            .iter()
+            .map(|model| (model.file.as_str(), model.transform.translation))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            placed,
+            vec![
+                ("models/a.glb", Vec3::X),
+                ("models/a.glb", Vec3::X * 2.0),
+                ("models/rock.glb", Vec3::ZERO),
+            ]
+        );
     }
 
     /// A world with the player in parcel (0,0) and one scene there, live but not yet shown.
