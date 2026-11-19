@@ -306,3 +306,28 @@ async fn bootstrap_callbacks_require_success_and_keep_parent_cancellation_scope(
         let _ = std::fs::remove_dir_all(temp);
     }
 }
+
+#[test]
+fn stream_backoff_resets_after_a_healthy_run_and_grows_after_a_short_failure() {
+    let cfg = SyncOrchestratorConfig::default();
+    let base = cfg.syncing_reconnect_time_ms as f64;
+    let short = Duration::from_millis(10);
+    let healthy = Duration::from_millis(cfg.pointer_changes_wait_time_ms);
+
+    let mut delay = base;
+    for _ in 0..100 {
+        delay = cfg.next_syncing_backoff(delay, true, short);
+    }
+    assert_eq!(
+        delay, 3_600_000.0,
+        "short failures grow up to the one-hour cap"
+    );
+    assert_eq!(cfg.next_syncing_backoff(base, true, short), base * 1.2);
+
+    assert_eq!(
+        cfg.next_syncing_backoff(delay, true, healthy),
+        base,
+        "a failure after a full poll cycle reconnects at the base delay"
+    );
+    assert_eq!(cfg.next_syncing_backoff(delay, false, short), base);
+}
