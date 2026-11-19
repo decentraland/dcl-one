@@ -32,7 +32,7 @@ vi.mock('../../bridge-scene/node_modules/@dcl/sdk/ecs.js', () => ({
 vi.mock('~system/RestrictedActions', () => ({ openExternalUrl: vi.fn() }))
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/players/index.js', () => ({ getPlayer: () => player }))
 
-const setAvatar = vi.fn<(data: SetAvatarData) => Promise<unknown>>()
+const setAvatar = vi.fn<(data: SetAvatarData) => Promise<number>>()
 const getUserProfile = vi.fn()
 vi.mock('../../bridge-scene/src/bevy-api', () => ({
   BevyApi: {
@@ -42,13 +42,14 @@ vi.mock('../../bridge-scene/src/bevy-api', () => ({
   }
 }))
 vi.mock('../../bridge-scene/src/http', () => ({ catalystBase: async () => 'https://catalyst.example', getJson: async () => null }))
-vi.mock('../../bridge-scene/src/domains/collections', () => ({ resolveDefsByUrn: async () => new Map() }))
+const resolveDefs = vi.fn<() => Promise<Map<string, unknown>>>()
+vi.mock('../../bridge-scene/src/domains/collections', () => ({ resolveDefsByUrn: () => resolveDefs() }))
 vi.mock('../../bridge-scene/src/domains/wearables', () => ({}))
 vi.mock('../../bridge-scene/src/domains/emotes', () => ({}))
 vi.mock('../../bridge-scene/src/domains/emoteSlots', () => ({}))
-vi.mock('../../bridge-scene/src/domains/avatarPreview', () => ({ syncShape: () => {}, waitFrames: async () => {} }))
-const waitMs = vi.fn<(ms: number) => Promise<void>>()
-vi.mock('../../bridge-scene/src/system-helpers', () => ({ relay: () => {}, waitMs: (ms: number) => waitMs(ms) }))
+const waitFrame = vi.fn<() => Promise<void>>()
+vi.mock('../../bridge-scene/src/domains/avatarPreview', () => ({ syncShape: () => {}, waitFrames: () => waitFrame() }))
+vi.mock('../../bridge-scene/src/system-helpers', () => ({ relay: () => {} }))
 
 async function bridge() {
   vi.resetModules()
@@ -82,171 +83,97 @@ async function bridge() {
 beforeEach(() => {
   player = account('0xabc')
   equipped = true
-  waitMs.mockReset().mockImplementation(() => new Promise(() => {}))
+  waitFrame.mockReset().mockResolvedValue(undefined)
+  resolveDefs.mockReset().mockResolvedValue(new Map())
   setAvatar.mockReset()
   getUserProfile.mockReset()
   getUserProfile.mockResolvedValue({ name: 'After', description: 'New', version: 7 })
 })
 
 describe('Passport and Backpack deployments', () => {
-  it('waits for the Passport result before submitting Backpack closes from the same turn', async () => {
+  it.each(['0xAaA', ''])('refuses a Passport edit for a different or unknown account (%s)', async (address) => {
+    const { request, replies } = await bridge()
+    await request({ kind: 'saveProfile', requestId: 12, address, description: 'Account A only' })
+    expect(setAvatar).not.toHaveBeenCalled()
+    expect(getUserProfile).not.toHaveBeenCalled()
+    expect(replies()).toEqual([{ kind: 'profileSaved', requestId: 12, ok: false, error: 'The active account changed.' }])
+  })
+
+  it('submits Backpack during Passport and relays the success of the deploy that carried both', async () => {
     const { request, replies, draft } = await bridge()
     const passport = deferred()
     const backpack = deferred()
-    setAvatar.mockReturnValueOnce(passport.promise).mockReturnValueOnce(backpack.promise).mockResolvedValueOnce(8)
-
-    const save = request({ kind: 'saveProfile', description: 'New' })
-    draft.editLook({ wearables: ['urn:shirt', 'urn:hat'] })
-    const firstClose = request({ kind: 'commitAvatar' })
-    draft.editLook({ wearables: ['urn:shirt', 'urn:hat', 'urn:glasses'], hair: { r: 1, g: 0, b: 0 } })
-    const secondClose = request({ kind: 'commitAvatar' })
-    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
-    expect(replies()).toEqual([])
-
-    passport.resolve(6)
-    await save
+    setAvatar.mockReturnValueOnce(passport.promise).mockReturnValueOnce(backpack.promise)
+    const save = request({ kind: 'saveProfile', requestId: 42, address: '0xABC', description: 'New' })
+    draft.editLook({ wearables: ['urn:hat'] })
+    const close = request({ kind: 'commitAvatar' })
     await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(2))
-    expect(replies()).toEqual([{ kind: 'profileSaved', ok: true }])
+    expect(setAvatar.mock.calls.map(([patch]) => patch)).toEqual([
+      { profileExtras: { description: 'New' } },
+      { equip: { wearableUrns: ['urn:hat'], emoteUrns: [], forceRender: [] } }
+    ])
+    expect(replies()).toEqual([])
     backpack.resolve(7)
-    await Promise.all([firstClose, secondClose])
-    expect(setAvatar).toHaveBeenCalledTimes(3)
-    expect(setAvatar.mock.lastCall?.[0]).toMatchObject({
-      preserveName: true,
-      equip: { wearableUrns: ['urn:shirt', 'urn:hat', 'urn:glasses'] }
-    })
+    passport.resolve(7)
+    await Promise.all([save, close])
+    expect(replies()).toMatchObject([{ kind: 'profileSaved', requestId: 42, ok: true, profile: { description: 'New', version: 7 } }])
     expect(draft.hasDraft()).toBe(false)
   })
 
-  it('keeps a queued Backpack close that restores the earlier look', async () => {
+  it('reports the committed profile when the later Passport deployment fails and Backpack is still pending', async () => {
+    const { request, replies, draft } = await bridge()
+    const backpack = deferred()
+    setAvatar.mockReturnValueOnce(backpack.promise).mockRejectedValueOnce(Object.assign(
+      new Error('deploy failed'), { profile: { name: 'Last good', version: 5, description: 'Committed' } }
+    ))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    draft.editLook({ wearables: ['urn:hat'] })
+    const close = request({ kind: 'commitAvatar' })
+    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
+    await request({ kind: 'saveProfile', requestId: 12, description: 'New' })
+    expect(replies()).toMatchObject([{ kind: 'profileSaved', requestId: 12, ok: false, error: 'deploy failed',
+      profile: { version: 5, description: 'Committed' } }])
+    expect(getUserProfile).not.toHaveBeenCalled()
+    backpack.resolve(6)
+    await close
+    expect(draft.hasDraft()).toBe(false)
+  })
+
+  it('preserves an explicitly absent committed profile on the first deploy failure', async () => {
+    const { request, replies } = await bridge()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    setAvatar.mockRejectedValueOnce(Object.assign(new Error('first deploy failed'), { profile: null }))
+    await request({ kind: 'saveProfile', description: 'First edit' })
+    expect(replies()).toMatchObject([{ kind: 'profileSaved', ok: false, profile: null }])
+    expect(getUserProfile).not.toHaveBeenCalled()
+  })
+
+  it('submits independent about-me fields and explicit clears, including both birthday spellings', async () => {
+    const { request } = await bridge()
+    setAvatar.mockResolvedValue(7)
+    await request({ kind: 'saveProfile', name: '', info: { country: 'Canada', realName: '' } })
+    await request({ kind: 'saveProfile', info: { birthdate: '' } })
+    expect(setAvatar.mock.calls.map(([patch]) => patch)).toEqual([
+      { profileExtras: { country: 'Canada', realName: null } },
+      { profileExtras: { birthDate: null, birthdate: null } }
+    ])
+  })
+
+  it.each([undefined, 'Welcome name'])('only names the Welcome look when supplied (%s)', async (name) => {
     const { request, draft } = await bridge()
     const passport = deferred()
-    setAvatar.mockReturnValueOnce(passport.promise).mockResolvedValue(7)
-
-    const save = request({ kind: 'saveProfile', description: 'New' })
-    draft.editLook({ wearables: ['urn:shirt', 'urn:hat'] })
-    const equip = request({ kind: 'commitAvatar' })
-    draft.editLook({ wearables: ['urn:shirt'] })
-    const undo = request({ kind: 'commitAvatar' })
-
-    passport.resolve(6)
-    await Promise.all([save, equip, undo])
-    expect(setAvatar.mock.calls.slice(1).map(([data]) => data.equip?.wearableUrns))
-      .toEqual([['urn:shirt', 'urn:hat'], ['urn:shirt']])
-    expect(draft.hasDraft()).toBe(false)
-  })
-
-  it('waits for an existing Backpack write and reports a genuine Passport failure', async () => {
-    const { request, replies, draft } = await bridge()
-    const backpack = deferred()
-    setAvatar.mockReturnValueOnce(backpack.promise)
-      .mockRejectedValueOnce(new Error('failed to deploy to server.'))
-      .mockResolvedValueOnce(8)
-    vi.spyOn(console, 'error').mockImplementation(() => {})
-
-    draft.editLook({ wearables: ['urn:shirt', 'urn:hat'] })
-    const close = request({ kind: 'commitAvatar' })
-    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
-    const save = request({ kind: 'saveProfile', description: 'New' })
-    await Promise.resolve()
-    expect(setAvatar).toHaveBeenCalledTimes(1)
-
-    backpack.resolve(6)
-    await Promise.all([close, save])
-    expect(replies()).toEqual([{ kind: 'profileSaved', ok: false, error: 'failed to deploy to server.' }])
-    await request({ kind: 'saveProfile', description: 'Retry' })
-    expect(replies().at(-1)).toEqual({ kind: 'profileSaved', ok: true })
-  })
-
-  it('expires a queued save without dispatching it after a slow predecessor', async () => {
-    const { request, replies, draft } = await bridge()
-    const backpack = deferred()
-    const deadline = deferred<void>()
-    setAvatar.mockReturnValueOnce(backpack.promise).mockResolvedValueOnce(7)
-    waitMs.mockReturnValueOnce(deadline.promise)
-    vi.spyOn(console, 'error').mockImplementation(() => {})
-
-    draft.editLook({ wearables: ['urn:hat'] })
-    const close = request({ kind: 'commitAvatar' })
-    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
-    const save = request({ kind: 'saveProfile', description: 'New' })
-    deadline.resolve()
-    await save
-    expect(replies()).toEqual([{
-      kind: 'profileSaved', ok: false, error: 'A previous avatar save is taking too long. Try again.'
-    }])
-    const retry = request({ kind: 'saveProfile', description: 'Retry' })
-    await Promise.resolve()
-    expect(setAvatar).toHaveBeenCalledTimes(1)
-
-    backpack.resolve(6)
-    await Promise.all([close, retry])
-    expect(setAvatar.mock.calls.map(([data]) => data.profileExtras?.description)).toEqual([undefined, 'Retry'])
-    expect(replies().at(-1)).toEqual({ kind: 'profileSaved', ok: true })
-  }, 1_000)
-
-  it.each([
-    { kind: 'commitAvatar', failure: 'avatarSaveFailed' },
-    { kind: 'acceptWelcome', failure: 'welcomeAccepted' }
-  ] as const)('keeps the draft after $kind expires and deploys it on retry', async ({ kind, failure }) => {
-    const { request, replies, draft } = await bridge()
-    const passport = deferred()
-    const deadline = deferred<void>()
     setAvatar.mockReturnValueOnce(passport.promise).mockResolvedValueOnce(7)
-    waitMs.mockReturnValueOnce(deadline.promise)
-    vi.spyOn(console, 'error').mockImplementation(() => {})
-
-    const save = request({ kind: 'saveProfile', description: 'New' })
-    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
-    draft.editLook({ wearables: ['urn:hat'] })
-    const queued = request({ kind })
-    await vi.waitFor(() => expect(waitMs).toHaveBeenCalledTimes(1))
-    deadline.resolve()
-    await queued
-
-    expect(replies()[0]?.kind).toBe(failure)
-    expect(draft.hasDraft()).toBe(true)
-    expect(setAvatar).toHaveBeenCalledTimes(1)
-    passport.resolve(6)
-    await save
-    await request({ kind })
-    expect(setAvatar).toHaveBeenCalledTimes(2)
-    expect(setAvatar.mock.lastCall?.[0].equip?.wearableUrns).toEqual(['urn:hat'])
-    expect(draft.hasDraft()).toBe(false)
-  })
-
-  it.each([
-    { name: undefined, expected: 'Passport name' },
-    { name: 'Welcome name', expected: 'Welcome name' }
-  ])('deploys a queued Welcome draft under $expected', async ({ name, expected }) => {
-    const { request, replies, draft } = await bridge()
-    const passport = deferred()
-    let deployedName = player?.name
-    const applyName = (data: SetAvatarData): void => {
-      if (!data.preserveName && data.base != null) deployedName = data.base.name
-    }
-    setAvatar.mockImplementationOnce(async (data) => {
-      const version = await passport.promise
-      applyName(data)
-      return version
-    }).mockImplementationOnce(async (data) => {
-      applyName(data)
-      return 7
-    })
-
     const save = request({ kind: 'saveProfile', name: 'Passport name' })
     await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
     draft.editLook({ wearables: ['urn:hat'] })
-    const welcome = request({ kind: 'acceptWelcome', name })
-    expect(replies()).toEqual([])
-    passport.resolve(6)
-    await Promise.all([save, welcome])
-
-    expect(setAvatar.mock.lastCall?.[0].equip?.wearableUrns).toEqual(['urn:hat'])
-    expect(deployedName).toBe(expected)
-    expect(replies()).toEqual([{ kind: 'profileSaved', ok: true }, { kind: 'welcomeAccepted', ok: true }])
+    await request({ kind: 'acceptWelcome', name })
+    expect(setAvatar.mock.calls[1][0]).toMatchObject({ base: { name: name ?? '' }, equip: { wearableUrns: ['urn:hat'] } })
+    expect(setAvatar.mock.calls[1][0].hasClaimedName).toBeUndefined()
+    passport.resolve(7)
+    await save
   })
 
-  it('answers Welcome when the player becomes visible during its deploy', async () => {
+  it('waits for a signed-in player before submitting the Welcome stand-in', async () => {
     const { request, replies, frame, draft } = await bridge()
     const look = draft.currentLook()!
     player = null
@@ -257,23 +184,26 @@ describe('Passport and Backpack deployments', () => {
     const deploy = deferred()
     setAvatar.mockReturnValueOnce(deploy.promise)
 
+    const nextFrame = deferred<void>()
+    waitFrame.mockReturnValueOnce(nextFrame.promise)
     const accept = request({ kind: 'acceptWelcome', name: 'Welcome name' })
-    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(waitFrame).toHaveBeenCalledTimes(1))
+    expect(setAvatar).not.toHaveBeenCalled()
     player = account('0xabc')
+    equipped = true
     frame()
+    nextFrame.resolve()
+    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
     deploy.resolve(6)
     await accept
     expect(replies()).toEqual([{ kind: 'welcomeAccepted', ok: true }])
   })
 
-  it.each(['logout RPC', 'engine clearing the player'])('drops the old queue on %s even for the same wallet', async (signal) => {
-    const { request, replies, draft, frame } = await bridge()
+  it.each(['logout RPC', 'engine clearing the player'])('ignores late engine failures after %s even for the same wallet', async (signal) => {
+    const { request, replies, frame } = await bridge()
     const old = deferred()
     setAvatar.mockReturnValueOnce(old.promise).mockResolvedValueOnce(7)
     const save = request({ kind: 'saveProfile', description: 'Before logout' })
-    draft.editLook({ wearables: ['urn:hat'] })
-    const close = request({ kind: 'commitAvatar' })
-    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
     if (signal === 'logout RPC') {
       await request({ kind: 'rpc:req', id: 'logout', method: 'logout' })
     } else {
@@ -283,82 +213,101 @@ describe('Passport and Backpack deployments', () => {
       frame()
     }
     await request({ kind: 'saveProfile', description: 'After sign-in' })
-    old.resolve(6)
-    await Promise.all([save, close])
-
-    expect(setAvatar.mock.calls.map(([data]) => data.profileExtras?.description)).toEqual(['Before logout', 'After sign-in'])
-    expect(replies()).toEqual([{ kind: 'profileSaved', ok: true }])
+    old.reject(new Error('old account'))
+    await save
+    expect(replies()).toMatchObject([{ kind: 'profileSaved', ok: true }])
   })
 
-  it('abandons queued writes and late results when the account changes', async () => {
-    const { request, replies, draft, identity } = await bridge()
-    const oldSave = deferred()
-    setAvatar.mockReturnValueOnce(oldSave.promise).mockResolvedValueOnce(7)
+  it('sends an undo against an in-flight hat change, including when the undo settles first', async () => {
+    const { request, replies, draft } = await bridge()
+    const hat = deferred()
+    const undo = deferred()
+    setAvatar.mockReturnValueOnce(hat.promise).mockReturnValueOnce(undo.promise)
+    draft.editLook({ wearables: ['urn:shirt', 'urn:hat'] })
+    const add = request({ kind: 'commitAvatar' })
+    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
+    draft.editLook({ wearables: ['urn:shirt'] })
+    const remove = request({ kind: 'commitAvatar' })
+    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(2))
+    expect(setAvatar.mock.calls.map(([patch]) => patch.equip?.wearableUrns)).toEqual([['urn:shirt', 'urn:hat'], ['urn:shirt']])
+    undo.resolve(7)
+    await remove
+    hat.resolve(7)
+    await add
+    expect(replies()).toEqual([])
+    expect(draft.hasDraft()).toBe(false)
+  })
 
-    const save = request({ kind: 'saveProfile', description: 'Old account' })
+  it('drops an older fitting result that arrives after the player undoes the unsent edit', async () => {
+    const { request, draft } = await bridge()
+    const fit = deferred<Map<string, unknown>>()
+    resolveDefs.mockReturnValueOnce(fit.promise)
+    draft.editLook({ wearables: ['urn:hat'] })
+    const add = request({ kind: 'commitAvatar' })
+    await vi.waitFor(() => expect(resolveDefs).toHaveBeenCalledTimes(1))
+    draft.editLook({ wearables: ['urn:shirt'] })
+    await request({ kind: 'commitAvatar' })
+    fit.resolve(new Map())
+    await add
+    expect(setAvatar).not.toHaveBeenCalled()
+    expect(draft.hasDraft()).toBe(false)
+  })
+
+  it('discards an unsent fitting result when the player reverts the draft', async () => {
+    const { request, draft } = await bridge()
+    const fit = deferred<Map<string, unknown>>()
+    resolveDefs.mockReturnValueOnce(fit.promise)
     draft.editLook({ wearables: ['urn:hat'] })
     const close = request({ kind: 'commitAvatar' })
-    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
-
-    player = account('0xdef')
-    identity.observe(player.userId)
-    await request({ kind: 'saveProfile', description: 'New account' })
-    oldSave.resolve(6)
-    await Promise.all([save, close])
-    expect(setAvatar.mock.calls.map(([data]) => data.profileExtras?.description)).toEqual(['Old account', 'New account'])
-    expect(replies()).toEqual([{ kind: 'profileSaved', ok: true }])
-  })
-})
-
-describe('a Backpack commit that a later save replaced', () => {
-  async function overlap() {
-    const { draft, replies, request } = await bridge()
-    const close = async () => await request({ kind: 'commitAvatar' })
-    const first = deferred()
-    const later = deferred()
-    setAvatar.mockReturnValueOnce(first.promise).mockReturnValueOnce(later.promise)
-
-    draft.editLook({ wearables: ['urn:shirt', 'urn:hat'] })
-    const firstClose = close()
-    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
-    const secondClose = close()
-    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(2))
-    first.reject(new Error('cancelled'))
-    await firstClose
-    expect(draft.hasDraft()).toBe(true)
-    expect(replies()).toEqual([])
-    return { draft, replies, close, later, secondClose }
-  }
-
-  it('clears the draft when the later close deploys', async () => {
-    const { draft, later, secondClose, close } = await overlap()
-    later.resolve(7)
-    await secondClose
+    await vi.waitFor(() => expect(resolveDefs).toHaveBeenCalledTimes(1))
+    await request({ kind: 'revertAvatar' })
+    fit.resolve(new Map())
+    await close
+    expect(setAvatar).not.toHaveBeenCalled()
     expect(draft.hasDraft()).toBe(false)
-    await close()
-    expect(setAvatar).toHaveBeenCalledTimes(2)
   })
 
-  it('retains the draft and reports the failure of the later close', async () => {
-    const { draft, replies, later, secondClose, close } = await overlap()
+  it('carries an unconfirmed hat into a later color save even when the hat deployment fails', async () => {
+    const { request, draft } = await bridge()
+    const hat = deferred()
+    const color = deferred()
+    setAvatar.mockReturnValueOnce(hat.promise).mockReturnValueOnce(color.promise)
     vi.spyOn(console, 'error').mockImplementation(() => {})
-    later.reject(new Error('failed to deploy to server.'))
-    await secondClose
-    expect(draft.hasDraft()).toBe(true)
-    expect(replies()).toEqual([{ kind: 'avatarSaveFailed', message: 'Error: failed to deploy to server.' }])
-
-    setAvatar.mockResolvedValueOnce(8)
-    await close()
-    expect(setAvatar).toHaveBeenCalledTimes(3)
+    draft.editLook({ wearables: ['urn:hat'] })
+    const add = request({ kind: 'commitAvatar' })
+    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
+    draft.editLook({ hair: { r: 1, g: 0, b: 0 } })
+    const tint = request({ kind: 'commitAvatar' })
+    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(2))
+    expect(setAvatar.mock.calls[1][0]).toMatchObject({
+      equip: { wearableUrns: ['urn:hat'] }, base: { hairColor: { r: 1, g: 0, b: 0 }, eyesColor: null, bodyShapeUrn: '' }
+    })
+    hat.reject(new Error('deploy failed'))
+    await add
+    color.resolve(7)
+    await tint
     expect(draft.hasDraft()).toBe(false)
   })
 
-  it('keeps edits made while the later close was deploying', async () => {
-    const { draft, later, secondClose } = await overlap()
-    draft.editLook({ wearables: ['urn:shirt', 'urn:hat', 'urn:glasses'] })
-    later.resolve(7)
-    await secondClose
+  it('retries from the last successful look after both overlapping changes fail', async () => {
+    const { request, draft } = await bridge()
+    const hat = deferred()
+    const color = deferred()
+    setAvatar.mockReturnValueOnce(hat.promise).mockReturnValueOnce(color.promise).mockResolvedValueOnce(8)
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    draft.editLook({ wearables: ['urn:hat'] })
+    const add = request({ kind: 'commitAvatar' })
+    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
+    draft.editLook({ hair: { r: 1, g: 0, b: 0 } })
+    const tint = request({ kind: 'commitAvatar' })
+    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(2))
+    expect(setAvatar.mock.calls[1][0].equip?.wearableUrns).toEqual(['urn:hat'])
+    color.reject(new Error('deploy failed'))
+    hat.reject(new Error('deploy failed'))
+    await Promise.all([add, tint])
     expect(draft.hasDraft()).toBe(true)
-    expect(draft.currentLook()?.wearables).toEqual(['urn:shirt', 'urn:hat', 'urn:glasses'])
+    await request({ kind: 'commitAvatar' })
+    expect(setAvatar.mock.calls[2][0]).toMatchObject({ base: { hairColor: { r: 1, g: 0, b: 0 } }, equip: { wearableUrns: ['urn:hat'] } })
+    expect(draft.hasDraft()).toBe(false)
   })
 })

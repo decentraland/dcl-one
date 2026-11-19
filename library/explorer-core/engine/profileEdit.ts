@@ -13,7 +13,7 @@ export const addressSuffix = (address: string): string => (address === '' ? '' :
  *  answers with the same, so the passport must not flash a bare name in between. */
 export function applyProfileEdit(profile: Profile, edit: ProfileEdit, ownedNames: readonly string[]): Profile {
   const next = { ...profile }
-  if (edit.name !== undefined) {
+  if (edit.name) {
     const name = edit.name
     const claimed = ownedNames.some((n) => n.toLowerCase() === name.toLowerCase())
     next.name = claimed ? name : `${name}${addressSuffix(profile.address)}`
@@ -22,9 +22,10 @@ export function applyProfileEdit(profile: Profile, edit: ProfileEdit, ownedNames
   if (edit.description !== undefined) next.description = edit.description.trim() || undefined
   if (edit.links !== undefined) next.links = edit.links.length > 0 ? edit.links : undefined
   if (edit.info !== undefined) {
-    const info: ProfileInfo = {}
+    const info: ProfileInfo = { ...profile.info }
     for (const [key, value] of Object.entries(edit.info) as [keyof ProfileInfo, string | undefined][]) {
-      if (value != null && value !== '') info[key] = value
+      if (value === '') delete info[key]
+      else if (value !== undefined) info[key] = value
     }
     next.info = Object.keys(info).length > 0 ? info : undefined
   }

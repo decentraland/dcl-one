@@ -15,8 +15,8 @@ use system_bridge::{
     FriendshipEventUpdate, HomeScene, HoverEvent, ListenedCommunity, LiveSceneInfo, LobbyStage,
     MapPinInfo, OutfitsData, PermanentPermissionItem, PermissionRequestEvent, PhotoModeState,
     PlatformBanNotice, PortableInfo, ProfileChangedEvent, ProximityEvent, SatelliteView,
-    SceneLoadingUi, SetAvatarData, TextureOptimizationStatus, VoiceChatAction, VoiceChatState,
-    VoiceMessage, WelcomeState, WorldAccessEvent, WorldAccessVerdict,
+    SceneLoadingUi, SetAvatarData, SetAvatarResult, TextureOptimizationStatus, VoiceChatAction,
+    VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent, WorldAccessVerdict,
 };
 
 // list of op declarations
@@ -242,11 +242,13 @@ pub async fn op_kernel_fetch_headers(
 }
 
 #[op2(async)]
+#[serde]
 pub async fn op_set_avatar(
     state: Rc<RefCell<OpState>>,
+    #[string] owner: String,
     #[serde] avatar: SetAvatarData,
-) -> Result<u32, anyhow::Error> {
-    dcl_js::system_api::op_set_avatar(state, avatar).await
+) -> Result<SetAvatarResult, anyhow::Error> {
+    dcl_js::system_api::op_set_avatar(state, owner, avatar).await
 }
 
 #[op2(async)]

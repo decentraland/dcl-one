@@ -7,7 +7,6 @@
 //   to:   BevyApi.setAvatar; avatarSaveFailed to the page
 import { getPlayer } from '@dcl/sdk/players'
 import { BevyApi } from '../bevy-api'
-import { avatarSaveSession, type AvatarSaveSession } from './avatarSaves'
 import type { Ctx } from '../bridge'
 import { catalystBase } from '../http'
 import { resolveDefsByUrn } from './collections'
@@ -24,13 +23,25 @@ let deployed: AvatarLook | null = null
 // The look the stage wears before there is a player: a new account's pick, which the sign-in then
 // carries, so the player arrives already wearing it.
 let standIn: AvatarLook | null = null
-identity.onChange(() => {
+// Compare a close against the latest look sent to the engine, including an in-flight close
+// that the player is undoing. Finish replies can arrive in either order.
+const submitted = new Map<number, AvatarLook>()
+let latestClose = 0
+let committedClose = 0
+let latestSubmission = 0
+let draftAccount: (() => boolean) | undefined
+function clearAccountLook(): void {
   draft = null
   deployed = null
   standIn = null
-})
+  submitted.clear()
+  draftAccount = undefined
+}
+identity.onChange(clearAccountLook)
 
-const isCancelled = (e: unknown): boolean => String(e).includes('cancelled')
+function checkDraftAccount(): void {
+  if (draftAccount && !draftAccount()) clearAccountLook()
+}
 
 function playerLook(): AvatarLook | null {
   const p = getPlayer()
@@ -48,6 +59,7 @@ function playerLook(): AvatarLook | null {
 
 /** What the stage shows: the draft, else the live player, else the stand-in. */
 export function currentLook(): AvatarLook | null {
+  checkDraftAccount()
   return draft ?? playerLook() ?? standIn
 }
 
@@ -55,51 +67,45 @@ export function currentLook(): AvatarLook | null {
  *  (its deploy failed, or sign-out beat it) is not this one's: without it the stage would keep
  *  showing it, and never take up the pick. */
 export function setStandInLook(look: AvatarLook): void {
+  clearAccountLook()
   standIn = look
-  draft = null
-  deployed = null
 }
 
 /** Change the draft (seeded from the live player on the first edit). Nothing deploys until commit. */
 export function editLook(change: Partial<AvatarLook>): void {
   const from = currentLook()
   if (from == null) return
-  if (draft == null) deployed = from
+  if (draft == null) {
+    deployed = from
+    draftAccount = identity.session(() => getPlayer()?.userId ?? null)
+  }
   draft = { ...from, ...change }
 }
 
 /** Whether the look has unsaved edits. */
 export function hasDraft(): boolean {
+  checkDraftAccount()
   return draft != null
 }
 
 /** Deploy the Welcome look and apply a name only when Welcome supplies one. A stale session
  *  drops its result. A failure in the current session rejects so Welcome can offer a retry. */
-export async function deployLookAs(name: string | undefined, session: AvatarSaveSession): Promise<void> {
+export async function deployLookAs(name: string | undefined, isCurrent: () => boolean): Promise<void> {
   const look = currentLook()
   if (look == null) throw new Error('no player')
   const edited = draft
-  try {
-    await session.run(
-      async () => await BevyApi.setAvatar({
-        ...(name == null && { preserveName: true }),
-        base: {
-          name: name ?? '',
-          bodyShapeUrn: look.bodyShape,
-          eyesColor: look.eyes,
-          hairColor: look.hair,
-          skinColor: look.skin,
-          talking: null
-        },
-        equip: { wearableUrns: look.wearables, emoteUrns: look.emotes, forceRender: look.forceRender }
-      }),
-      'avatar'
-    )
-  } catch (e) {
-    if (!session.isCurrent()) return
-    throw e
-  }
-  if (!session.isCurrent()) return
+  await BevyApi.setAvatar({
+    base: {
+      name: name ?? '',
+      bodyShapeUrn: look.bodyShape,
+      eyesColor: look.eyes,
+      hairColor: look.hair,
+      skinColor: look.skin,
+      talking: null
+    },
+    equip: { wearableUrns: look.wearables, emoteUrns: look.emotes, forceRender: look.forceRender }
+  })
+  if (!isCurrent()) return
   deployed = look
   if (draft === edited) draft = null
 }
@@ -120,40 +126,47 @@ async function fittingLook(look: AvatarLook): Promise<AvatarLook> {
 // sendEquipped (./wearables) is passed in: it reads this module, so importing it here would be a cycle.
 export function registerAvatarDraft(ctx: Ctx, sendEquipped: () => Promise<void>): void {
   ctx.on('commitAvatar', async () => {
+    checkDraftAccount()
     const edited = draft
-    const me = getPlayer()
-    if (edited == null || deployed == null || me == null) return
-    const session = avatarSaveSession(me.userId)
-    let syncEquipped
+    if (edited == null || deployed == null || getPlayer() == null) return
+    const isCurrent = identity.session(() => getPlayer()?.userId ?? null)
+    const close = ++latestClose
     try {
-      syncEquipped = await session.run(async () => {
-        const look = await fittingLook(edited)
-        if (!session.isCurrent()) return false
-        // A queued close may have changed the deployed look while this Backpack was open.
-        const from = deployed
-        if (from == null) return false
-        const dropped = look.wearables.length !== edited.wearables.length
-        if (!sameLook(look, from)) {
-          await BevyApi.setAvatar(lookDeploy(look, from))
-          if (!session.isCurrent()) return false
-          deployed = look
-        }
-        if (draft === edited) draft = null
-        return dropped
-      }, 'avatar')
+      const from = Array.from(submitted.values()).pop() ?? deployed
+      const changedWearables = edited.bodyShape !== from.bodyShape ||
+        JSON.stringify(edited.wearables) !== JSON.stringify(from.wearables)
+      const look = changedWearables ? await fittingLook(edited) : edited
+      // A newer close can finish fitting before this one. Only submit the latest intent.
+      if (!isCurrent() || close !== latestClose) return
+      const pending = Array.from(submitted.values())
+      const last = pending[pending.length - 1]
+      if (last && sameLook(look, last)) return // Its engine reply owns this same draft.
+      const patch = lookDeploy(look, deployed, ...pending)
+      if (patch.base || patch.equip) {
+        latestSubmission = close
+        submitted.set(close, look)
+        await BevyApi.setAvatar(patch)
+        if (!isCurrent() || close < committedClose) return
+        committedClose = close
+        deployed = look
+        for (const id of submitted.keys()) if (id <= close) submitted.delete(id)
+      }
+      if (draft && sameLook(draft, edited)) draft = null
+      if (look.wearables.length !== edited.wearables.length) await sendEquipped()
     } catch (e) {
-      // The later write owns the result when an overlapping commit replaces this one.
-      if (!session.isCurrent() || isCancelled(e)) return
+      if (!isCurrent() || close < latestSubmission) return
       console.error('[avatar] deploy failed', e)
       ctx.send({ kind: 'avatarSaveFailed', message: String(e) })
+    } finally {
+      submitted.delete(close)
     }
-    if (syncEquipped && session.isCurrent()) await sendEquipped()
   })
 
   // Give up on a look the server keeps rejecting (a bad item, say): drop the draft, so the stage shows
   // the player again. The engine put the deployed look back on the player when the deploy failed, so
   // nothing deploys; the page re-reads the equipped sets straight after sending this.
   ctx.on('revertAvatar', () => {
+    latestClose++ // A fit still in progress belongs to the discarded draft.
     draft = null
   })
 }

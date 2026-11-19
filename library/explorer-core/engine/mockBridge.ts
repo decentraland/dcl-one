@@ -1867,16 +1867,19 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'saveProfile') {
-      const { kind: _kind, ...edit } = msg
+      const { kind: _kind, requestId, address, ...edit } = msg
+      if (address !== undefined && address.toLowerCase() !== o.userId.toLowerCase()) {
+        reply({ kind: 'profileSaved', requestId, ok: false, error: 'The active account changed.' })
+        return
+      }
       // `robtfmfail` is the mock's failure switch: renaming to it exercises the error path (the
       // engine rejects a deploy the same way) without needing a broken catalyst.
       if (edit.name === 'robtfmfail') {
-        reply({ kind: 'profileSaved', ok: false, error: 'failed to deploy to server.' })
+        reply({ kind: 'profileSaved', requestId, ok: false, error: 'failed to deploy to server.', profile: ownProfile(o) })
         return
       }
       ownEdits.push(edit)
-      reply({ kind: 'profileSaved', ok: true })
-      reply({ kind: 'profile', profile: ownProfile(o) })
+      reply({ kind: 'profileSaved', requestId, ok: true, profile: ownProfile(o) })
       return
     }
     if (msg.kind === 'getUserProfile') {

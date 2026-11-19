@@ -11,7 +11,7 @@ import { openExternalUrl } from '~system/RestrictedActions'
 import { BevyApi } from '../bevy-api'
 import type { Ctx } from '../bridge'
 import { deployLookAs, editLook, hasDraft, setStandInLook } from './avatarDraft'
-import { avatarSaveSession } from './avatarSaves'
+import { identity } from '../identity'
 import { syncShape, waitFrames } from './avatarPreview'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import { sendEquipped } from './wearables'
@@ -60,7 +60,7 @@ export function registerWelcome(ctx: Ctx): void {
   })
 
   ctx.on('acceptWelcome', async (msg) => {
-    const session = avatarSaveSession(getPlayer()?.userId ?? null)
+    const isCurrent = identity.session(() => getPlayer()?.userId ?? null)
     try {
       // The terms first: a held new profile deploys with the first setAvatar after them (the guest
       // start page's accept carries its name for that).
@@ -68,15 +68,16 @@ export function registerWelcome(ctx: Ctx): void {
       if (msg.name != null || hasDraft()) {
         // the look deploys as the player wears it, which reaches the scene after the player's
         // identity (the sign-in's accept can land between): deployed before, it would be bare
-        for (let waited = 0; session.isCurrent() && !AvatarEquippedData.has(engine.PlayerEntity) && waited < PLAYER_LOOK_FRAMES; waited++) {
+        for (let waited = 0; isCurrent() && (getPlayer() == null || !AvatarEquippedData.has(engine.PlayerEntity)) && waited < PLAYER_LOOK_FRAMES; waited++) {
           await waitFrames(1)
         }
-        if (!session.isCurrent()) return
-        await deployLookAs(msg.name, session)
+        if (!isCurrent()) return
+        if (getPlayer() == null) throw new Error('Player is not ready yet. Try again.')
+        await deployLookAs(msg.name, isCurrent)
       }
-      if (session.isCurrent()) ctx.send({ kind: 'welcomeAccepted', ok: true })
+      if (isCurrent()) ctx.send({ kind: 'welcomeAccepted', ok: true })
     } catch (e) {
-      if (!session.isCurrent()) return
+      if (!isCurrent()) return
       console.error('[welcome] accept failed', e)
       ctx.send({ kind: 'welcomeAccepted', ok: false, error: String(e) })
     }

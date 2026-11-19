@@ -246,7 +246,7 @@ export type BevyApiInterface = {
   /** The current realm's satellite map tiles (`configurations.map.satelliteView` in its
    *  `/about`), null or undefined when it advertises none — only Genesis City realms do. */
   getSatelliteView: () => Promise<SatelliteView | null | undefined>
-  setAvatar: (data: SetAvatarData) => Promise<unknown>
+  setAvatar: (data: SetAvatarData) => Promise<number>
   /** Signs and deploys the player's catalyst `outfits` entity; rejects for a guest, when `address`
    *  is not the signed-in account, or when the catalyst refuses it. */
   deployOutfits: (address: string, outfits: OutfitsData) => Promise<void>

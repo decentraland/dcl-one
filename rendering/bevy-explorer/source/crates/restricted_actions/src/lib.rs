@@ -1304,10 +1304,25 @@ fn get_user_data(
     mut profile_manager: ProfileManager,
     contexts: Res<CrdtContexts>,
 ) {
-    for (user, scene, response) in events.read().filter_map(|ev| match &ev.call {
-        RpcCall::GetUserData { user, response } => Some((user, ev.origin.scene(), response)),
-        _ => None,
-    }) {
+    for event in events.read() {
+        let (user, response) = match &event.call {
+            RpcCall::GetUserData { user, response } => (user.as_ref(), response),
+            RpcCall::GetUserProfile { address, response } => {
+                if let Some(owner) = me
+                    .address()
+                    .filter(|owner| address.as_h160() == Some(*owner))
+                {
+                    let committed = profile
+                        .peer_profile()
+                        .filter(|profile| profile.content.eth_address.as_h160() == Some(owner));
+                    response.send(committed.map(|profile| profile.content.clone()).ok_or(()));
+                    continue;
+                }
+                (Some(address), response)
+            }
+            _ => continue,
+        };
+        let scene = event.origin.scene();
         debug!("process get_user_data for {:?}", scene);
         match user {
             None => match profile.profile.as_ref() {

@@ -60,16 +60,17 @@ old content again or reusing a version that another peer may already have observ
   answered 404 or 405 (Decentraland's catalysts answer 405: their `/lambdas/profiles/{id}` takes
   the path) makes every fetch full for the rest of the session; a compact POST that fails any other
   way has its addresses read whole.
-- **Other players only hear versions the server holds.** While an edit of our own profile deploys,
-  the version announcement, its keepalive, the Pulse handshake, the ws-room's first announcement
-  and the answer to a peer's `ProfileRequest` carry the profile from before the edit; the new
-  version is announced once the deploy lands. A failed deploy puts that profile back in the world
-  (the player's avatar, scenes' `PLAYER` data, the profile cache, the HUD's profile-changed stream)
-  without deploying again.
-- **A newer edit does not cancel an older one still deploying.** Both deploys run to the end. If
-  the older one lands while the newer one still deploys, it is what peers hear and what a failure
-  of the newer one puts back; if it lands after the newer one failed, the engine takes it, since
-  the server holds it.
+- **Peers and the HUD read confirmed profile versions.** The version announcement, its keepalive,
+  the Pulse handshake, the ws-room's first announcement, peer `ProfileRequest` replies and the
+  HUD's own-profile read use the last profile the client confirmed. A successful upload advances
+  that profile and the HUD's local profile-change stream. The local avatar previews edits
+  immediately. Throwaway guests accept changes locally.
+- **The engine owns local profile saves.** Editors send the fields the player changed. The engine
+  applies each patch in arrival order and uploads one full profile at a time for the account.
+  Edits arriving together or during an upload can share the next upload. On success, each caller
+  in that upload receives the version it published. On failure, those callers receive the error and the last
+  confirmed profile. The engine applies later patches to that confirmed profile before its next
+  upload, so a later edit can still succeed independently.
 - **An edit's version is new for the session.** It goes above every version this session gave the
   account, not just above the profile held: a deploy that failed here may still have reached the
   server (an error after the catalyst took it), and a peer that read that version skips any other

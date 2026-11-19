@@ -11,7 +11,6 @@ import { catalystBase, getJson, serviceBase } from '../http'
 import { resolveEquippedSet, resolveWearables } from './wearables'
 import { resolveEquippedEmotes } from './emotes'
 import { equippedSlots } from './emoteSlots'
-import { avatarSaveSession } from './avatarSaves'
 import type { Badge, Profile, ProfileInfo, SaveProfileRequest } from '@explorer-core/engine/protocol'
 import type { SetAvatarData } from '@explorer-core/engine/generated'
 // Not via the generated barrel: it only re-exports the top-level files, not serde_json/.
@@ -355,12 +354,12 @@ function toProfileExtras(msg: SaveProfileRequest): Record<string, JsonValue> {
   }
   if (msg.info !== undefined) {
     for (const [wireKey, profileKey] of Object.entries(INFO_KEYS) as Array<[keyof ProfileInfo, string]>) {
-      set(profileKey, msg.info[wireKey]?.trim())
+      if (msg.info[wireKey] !== undefined) set(profileKey, msg.info[wireKey].trim())
     }
-    set('birthDate', fromIsoDate(msg.info.birthdate))
-    // Drop the all-lowercase key an earlier build of this HUD may have written, so a stale value
-    // can't sit alongside the one unity-explorer reads.
-    extras.birthdate = null
+    if (msg.info.birthdate !== undefined) {
+      set('birthDate', fromIsoDate(msg.info.birthdate))
+      extras.birthdate = null // Also clear the legacy spelling when editing the birthday.
+    }
   }
   return extras
 }
@@ -375,17 +374,20 @@ export function registerProfile(ctx: Ctx): void {
   ctx.on('saveProfile', async (msg) => {
     const player = getPlayer()
     if (player == null) {
-      ctx.send({ kind: 'profileSaved', ok: false, error: 'Not signed in yet.' })
+      ctx.send({ kind: 'profileSaved', requestId: msg.requestId, ok: false, error: 'Not signed in yet.' })
       return
     }
 
+    if (msg.address !== undefined && profileKey(msg.address) !== profileKey(player.userId)) {
+      ctx.send({ kind: 'profileSaved', requestId: msg.requestId, ok: false, error: 'The active account changed.' })
+      return
+    }
     // the account can change while this waits; the edit and its answers belong to this one only
-    const session = avatarSaveSession(player.userId)
-    const signedOut = (): boolean => !session.isCurrent()
+    const isCurrent = identity.session(() => getPlayer()?.userId ?? null)
     const data: SetAvatarData = {}
-    if (msg.name !== undefined) {
+    if (msg.name) {
       const owned = await fetchOwnedNames(player.userId).catch(() => [])
-      if (signedOut()) return
+      if (!isCurrent()) return
       // An empty bodyShapeUrn and null colors mean "leave the avatar alone" — the name is the only
       // thing this edit touches, and the Backpack owns the rest.
       data.base = { skinColor: null, eyesColor: null, hairColor: null, bodyShapeUrn: '', name: msg.name, talking: null }
@@ -395,28 +397,31 @@ export function registerProfile(ctx: Ctx): void {
     if (Object.keys(extras).length > 0) data.profileExtras = extras
     if (msg.nameColor !== undefined) data.nameColor = { ...msg.nameColor, clear: false }
     if (data.base == null && data.profileExtras == null && data.nameColor == null) {
-      ctx.send({ kind: 'profileSaved', ok: true })
+      ctx.send({ kind: 'profileSaved', requestId: msg.requestId, ok: true })
       return
     }
 
     try {
-      // setAvatar confirms the deployment for persisted profiles and applies throwaway guest
-      // edits locally. A queue expiry or engine rejection rolls back the optimistic HUD change.
-      await session.run(async () => await BevyApi.setAvatar(data), 'passport')
+      await BevyApi.setAvatar(data)
     } catch (e) {
-      if (signedOut()) return
+      if (!isCurrent()) return
       console.error('[profile] save failed', e)
-      ctx.send({ kind: 'profileSaved', ok: false, error: e instanceof Error ? e.message : String(e) })
+      const committed = e != null && typeof e === 'object' && 'profile' in e
+        ? (e as { profile: SerializedProfile | null }).profile
+        : await fetchProfile(player.userId)
+      if (!isCurrent()) return
+      ctx.send({
+        kind: 'profileSaved', requestId: msg.requestId, ok: false, error: e instanceof Error ? e.message : String(e),
+        profile: committed && toProfile(committed, player.userId, player.isGuest, player.name)
+      })
       return
     }
 
-    if (signedOut()) return
-    ctx.send({ kind: 'profileSaved', ok: true })
-    // setAvatar amends the engine's own copy of the profile before it resolves, so re-reading it
-    // is the post-save state — no need to fold the edit in by hand.
+    if (!isCurrent()) return
     const av = await fetchProfile(player.userId)
-    if (signedOut()) return
-    ctx.send({ kind: 'profile', profile: toProfile(av, player.userId, player.isGuest, player.name) })
+    if (isCurrent()) ctx.send({
+      kind: 'profileSaved', requestId: msg.requestId, ok: true, profile: av && toProfile(av, player.userId, player.isGuest, player.name)
+    })
   })
 
   // The page marks its world-entry profile fetch done as soon as it ASKS, so an answer of `null`
@@ -431,8 +436,9 @@ export function registerProfile(ctx: Ctx): void {
     wanted = false
     inFlight = true
     try {
+      const isCurrent = identity.session(() => getPlayer()?.userId ?? null)
       const av = await fetchProfile(player.userId)
-      ctx.send({ kind: 'profile', profile: toProfile(av, player.userId, player.isGuest, player.name) })
+      if (isCurrent()) ctx.send({ kind: 'profile', profile: toProfile(av, player.userId, player.isGuest, player.name) })
     } finally {
       inFlight = false
     }
@@ -472,16 +478,13 @@ export function registerProfile(ctx: Ctx): void {
       reply(null)
       return
     }
-    // Your OWN passport: read the live avatar (getPlayer()) so it matches the Backpack exactly.
-    // Other users have no live source (getPlayer(userId) only resolves nearby avatars), so they
-    // read the equipment their deployed profile lists.
-    const wearableUrns = isSelf ? (me.wearables ?? []).map(String) : (av?.avatar?.wearables ?? [])
-    // Through equippedSlots, not me.emotes: the bevy runtime leaves a fresh profile's wheel empty
-    // and the emote wheel fills it with the 10 base emotes, so reading the raw array would show an
-    // empty Equipped Emotes section in your own passport while the wheel shows ten.
-    const emoteEntries = isSelf
-      ? equippedSlots(me.emotes).map((urn, slot) => ({ slot, urn }))
-      : (av?.avatar?.emotes ?? [])
+    const wearableUrns = av?.avatar?.wearables ?? []
+    // A fresh player's empty wheel shows the base emotes. Use the committed slots even while
+    // the live avatar previews an equipment change.
+    const slots = av?.avatar?.emotes ?? []
+    const emoteEntries = isSelf && !slots.some(({ urn }) => urn !== '')
+      ? equippedSlots([]).map((urn, slot) => ({ slot, urn }))
+      : slots
     const [equippedWearables, equippedEmotes] = await Promise.all([
       // Only our OWN urns go through resolveEquippedSet (it indexes tokens for the equip handler);
       // shopUrls because the passport is the only surface that renders a SHOP action.

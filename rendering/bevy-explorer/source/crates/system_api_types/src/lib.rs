@@ -71,8 +71,8 @@ impl ClearableColor3 {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(export)]
 pub struct SetAvatarData {
-    /// Body shape, colors and name. An empty `body_shape_urn` and absent colors are "unchanged",
-    /// so a name-only edit needn't restate the avatar.
+    /// An empty body shape or name and absent colors keep their current values.
+    /// Only a nonempty name can change the claimed-name flag.
     #[ts(optional)]
     pub base: Option<PbAvatarBase>,
     #[ts(optional)]
@@ -85,9 +85,6 @@ pub struct SetAvatarData {
     pub profile_extras: Option<std::collections::HashMap<String, serde_json::Value>>,
     #[ts(optional)]
     pub name_color: Option<ClearableColor3>,
-    /// Keep the existing profile name when applying `base`. Ignored without `base`.
-    #[ts(optional)]
-    pub preserve_name: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

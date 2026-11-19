@@ -774,10 +774,13 @@ export interface ProfileChangedMessage {
 }
 
 /** Edit the local player's own profile (passport edit mode). Every field is optional and an
- *  omitted one is left as it is, so this carries one save, not the whole profile. `links` and
- *  `info`, when present, replace their whole section — that's how a link or a field is cleared. */
+ *  omitted one is left as it is, so this carries one save. Links replace the list; each about-me key is a patch and an
+ *  empty string clears that field. */
 export interface SaveProfileRequest {
   kind: 'saveProfile'
+  requestId?: number
+  /** Account whose Passport was edited. Older HUDs omit it. */
+  address?: string
   /** Display name. The bridge resolves whether it's a claimed (owned NFT) name. */
   name?: string
   description?: string
@@ -792,12 +795,15 @@ export interface SaveProfileRequest {
  *  reported rather than silently leaving the HUD showing something that was never stored. */
 export interface ProfileSavedMessage {
   kind: 'profileSaved'
+  requestId?: number
   ok: boolean
+  /** Latest committed own profile, or null when the engine has none. */
+  profile?: Profile | null
   error?: string
 }
 
 /** A `saveProfile` without the wire tag — what the UI hands the session. */
-export type ProfileEdit = Omit<SaveProfileRequest, 'kind'>
+export type ProfileEdit = Omit<SaveProfileRequest, 'kind' | 'requestId' | 'address'>
 
 /** The claimed (NFT) names this account owns — the display-name picker's options. */
 export interface GetOwnedNamesRequest {
@@ -1306,6 +1312,7 @@ export interface RequestFailedMessage {
   error: string
   /** Correlation for a failed getUserProfile request that carried a request ID. */
   profileRead?: { address: string; requestId: number }
+  profileSaveId?: number
 }
 
 /** Deploying the Backpack's look was rejected (scene → page). */

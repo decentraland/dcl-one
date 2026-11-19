@@ -116,9 +116,16 @@ module.exports.kernelFetch = async function (body) {
 //   profileExtras?: {field: value}
 //   nameColor: Color3
 // }
-// => deployed version
+// Resolves with the saved version. An engine rejection carries its last confirmed profile.
 module.exports.setAvatar = async function(avatar) {
-    return await Deno.core.ops.op_set_avatar(avatar)
+    const owner = op_get_current_login()
+    if (!owner) throw new Error("No player profile to edit")
+    const result = await Deno.core.ops.op_set_avatar(owner, avatar)
+    if ('Err' in result) {
+        const { message, profile } = result.Err
+        throw Object.assign(new Error(message), { profile })
+    }
+    return result.Ok
 }
 
 // signs and deploys the local player's catalyst `outfits` entity; refused when `address` is not

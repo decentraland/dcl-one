@@ -26,14 +26,22 @@ describe('look deploy', () => {
   it('updates body and colors without changing the name', () => {
     expect(lookDeploy(look({ wearables: [] }), look()).base).toBeUndefined()
     const patch = lookDeploy(look({ hair: { r: 0, g: 1, b: 0 } }), look())
-    expect(patch.preserveName).toBe(true)
+    expect(patch.equip).toBeUndefined()
     expect(patch.base).toEqual({
       name: '',
-      bodyShapeUrn: 'urn:body:a',
-      eyesColor: { r: 0, g: 0, b: 1 },
+      bodyShapeUrn: '',
+      eyesColor: null,
       hairColor: { r: 0, g: 1, b: 0 },
-      skinColor: { r: 1, g: 1, b: 1 },
+      skinColor: null,
       talking: null
+    })
+  })
+
+  it('submits the fitting equipped set together with a changed body', () => {
+    const changed = look({ bodyShape: 'urn:body:b' })
+    expect(lookDeploy(changed, look())).toMatchObject({
+      base: { bodyShapeUrn: 'urn:body:b', eyesColor: null, hairColor: null, skinColor: null },
+      equip: { wearableUrns: changed.wearables, emoteUrns: changed.emotes, forceRender: changed.forceRender }
     })
   })
 
