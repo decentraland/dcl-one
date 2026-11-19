@@ -506,16 +506,55 @@ describe('placeAnalytics watchlist', () => {
   });
 
   describe('when reading the stored watchlist fails', () => {
+    let toggled: { type: string };
+
     beforeEach(async () => {
       vi.mocked(settingsPreload.getAnalyticsWatchlist).mockRejectedValue(new Error('no config'));
       await load(WALLET_KEY);
-      await store.dispatch(actions.togglePin(NIGHTMARE.placeId));
+      toggled = await store.dispatch(actions.togglePin(NIGHTMARE.placeId));
     });
 
     it('should still pin in the store without saving over what may be stored', () => {
       expect(store.getState().placeAnalytics.watchlist.status).toBe('failed');
       expect(store.getState().placeAnalytics.pinnedPlaceIds).toEqual([NIGHTMARE.placeId]);
       expect(settingsPreload.setAnalyticsWatchlist).not.toHaveBeenCalled();
+    });
+
+    it('should read the stored list again before the toggle', () => {
+      expect(settingsPreload.getAnalyticsWatchlist).toHaveBeenCalledTimes(2);
+    });
+
+    it('should report that the pin was not saved', () => {
+      expect(toggled.type).toBe(actions.togglePin.rejected.type);
+    });
+  });
+
+  describe('when reading the stored watchlist fails once and a place is then toggled', () => {
+    beforeEach(async () => {
+      stored = withWatchlist(undefined, WALLET, [BANANARAMA.placeId]);
+      vi.mocked(settingsPreload.getAnalyticsWatchlist).mockRejectedValueOnce(
+        new Error('no config'),
+      );
+      await load(WALLET_KEY);
+      await store.dispatch(actions.togglePin(NIGHTMARE.placeId));
+    });
+
+    it('should add the pin to the stored list and save it', () => {
+      expect(watchlistFor(stored, WALLET)).toEqual([BANANARAMA.placeId, NIGHTMARE.placeId]);
+    });
+  });
+
+  describe('when saving the watchlist fails', () => {
+    let toggled: { type: string };
+
+    beforeEach(async () => {
+      await load(WALLET_KEY);
+      vi.mocked(settingsPreload.setAnalyticsWatchlist).mockRejectedValue(new Error('disk full'));
+      toggled = await store.dispatch(actions.togglePin(NIGHTMARE.placeId));
+    });
+
+    it('should report that the pin was not saved', () => {
+      expect(toggled.type).toBe(actions.togglePin.rejected.type);
     });
   });
 

@@ -56,6 +56,7 @@
       }
     },
     "realm_server_restarting": "El servidor multijugador se detuvo inesperadamente. Se está reiniciando, lo que recarga el editor.",
+    "realm_server_unavailable": "El servidor multijugador no puede ejecutarse en este equipo, así que la escena funciona sin él.",
     "realm_restarted": "La escena se detuvo inesperadamente y se recargó. Es posible que los cambios de los últimos segundos no se hayan guardado.",
     "header": {
       "actions": {
@@ -867,6 +868,7 @@
     "generic": {
       "import_scene": "Importando escena...",
       "import_scene_failed": "Error al importar escena",
+      "watchlist_not_saved": "No se pudo guardar tu lista de seguimiento. Este cambio se perderá al cerrar la aplicación.",
       "import_scene_already_imported": "La escena ya fue importada",
       "duplicate_scene": "Duplicando escena...",
       "duplicate_scene_failed": "Error al duplicar escena",

@@ -56,6 +56,7 @@
       }
     },
     "realm_server_restarting": "The Multiplayer Server stopped unexpectedly. Restarting it, which reloads the editor.",
+    "realm_server_unavailable": "The Multiplayer Server cannot run on this computer, so the scene runs without it.",
     "realm_restarted": "The scene stopped unexpectedly and was reloaded. Changes from the last few seconds may not have been saved.",
     "header": {
       "actions": {
@@ -867,6 +868,7 @@
     "generic": {
       "import_scene": "Importing scene...",
       "import_scene_failed": "Failed importing scene",
+      "watchlist_not_saved": "Couldn't save your Watchlist. This change will be lost when you close the app.",
       "import_scene_already_imported": "Scene already imported",
       "duplicate_scene": "Duplicating scene...",
       "duplicate_scene_failed": "Failed duplicating scene",

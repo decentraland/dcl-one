@@ -169,13 +169,20 @@ const slice = createSlice({
  * Pins or unpins a place, then saves the account's whole list. The list in the store is the one
  * saved, pins of places the last fetch did not return included, so a failed or empty fetch never
  * removes them. Nothing is saved before the stored list has loaded: that save would replace it.
+ * A stored list that could not be read is read again first. The thunk rejects when the pin is
+ * not on disk (the list still unread, or the save failed), which the snackbar slice reports.
  * Writes run one after another (`setConfig`), so the last toggle's list is the one on disk.
  */
 export const togglePin = createAsyncThunk(
   'placeAnalytics/togglePin',
   async (placeId: string, { dispatch, getState }) => {
+    const unread = getState().placeAnalytics.watchlist;
+    if (unread.status === 'failed' && unread.address) {
+      await dispatch(loadPinnedPlaces({ address: unread.address }));
+    }
     dispatch(slice.actions.togglePinnedPlace(placeId));
     const { pinnedPlaceIds, watchlist } = getState().placeAnalytics;
+    if (watchlist.status === 'failed') throw new Error('The stored watchlist could not be read');
     if (watchlist.status !== 'succeeded' || !watchlist.address) return;
     await dispatch(
       savePinnedPlaces({ address: watchlist.address, placeIds: pinnedPlaceIds }),
