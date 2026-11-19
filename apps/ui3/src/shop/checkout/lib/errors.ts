@@ -16,37 +16,39 @@ type Refused = { refusal?: { error?: unknown; retryAt?: unknown; quota?: unknown
 const QUOTA_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * When a spent quota frees its next slot, as the buyer reads it: "You can buy fee-free again at HH:MM" (or "tomorrow
- * at HH:MM"), the minute rounded up so the time shown is never too early; else "Try again later." The bounds are
- * checked on the number before any date is made: a time already past, or past the window, says nothing reliable.
+ * When a limit frees up (`retryAt`, unix seconds), as the buyer reads it: "at HH:MM" or "tomorrow at HH:MM", the
+ * minute rounded up so the time shown is never too early; null when there's no usable time. The bounds are checked
+ * on the number before any date is made: a time already past, or past the window, says nothing reliable.
  */
-function quotaWhen(retryAt: unknown, now: Date): string {
-  const later = "Try again later.";
-  if (typeof retryAt !== "number" || !Number.isSafeInteger(retryAt)) return later;
+function retryWhen(retryAt: unknown, now: Date): string | null {
+  if (typeof retryAt !== "number" || !Number.isSafeInteger(retryAt)) return null;
   const ms = retryAt * 1000;
-  if (!(ms > now.getTime() && ms - now.getTime() <= QUOTA_WINDOW_MS + 60_000)) return later;
+  if (!(ms > now.getTime() && ms - now.getTime() <= QUOTA_WINDOW_MS + 60_000)) return null;
   const at = new Date(Math.ceil(ms / 60_000) * 60_000);
   try {
     const time = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(at);
-    return at.toDateString() === now.toDateString() ? `You can buy fee-free again at ${time}.` : `You can buy fee-free again tomorrow at ${time}.`;
+    return at.toDateString() === now.toDateString() ? `at ${time}` : `tomorrow at ${time}`;
   } catch {
-    return later;
+    return null;
   }
 }
 
 /**
- * The relay's own limits, as the buyer reads them: the account's fee-free quota over its rolling 24 hours is spent
- * (and when it frees up), or the relay's shared limit on fee-free operations that aren't sales (approvals, ...) is.
- * Null for any other refusal. Never throws: it runs while a failed purchase is still being wound down.
+ * The relay's own limits, as the buyer reads them, each over a rolling 24 hours (nothing resets at midnight): the
+ * account's fee-free quota is spent, or the relay's shared limit on fee-free operations that aren't sales (approvals,
+ * ...) is, which is no limit of the account's. Each says when it frees up when the relay said so. Null for any other
+ * refusal. Never throws: it runs while a failed purchase is still being wound down.
  */
 export function relayLimitText(e: unknown, now: Date = new Date()): string | null {
   const refusal = e && typeof e === "object" ? (e as Refused).refusal : undefined;
-  if (refusal?.error === "quota_reached") {
+  if (!refusal) return null;
+  const when = retryWhen(refusal.retryAt, now);
+  if (refusal.error === "quota_reached") {
     if (refusal.quota === 0) return "Fee-free transactions aren't available for this account.";
     const used = typeof refusal.quota === "number" ? `all ${refusal.quota} fee-free transactions` : "all the fee-free transactions";
-    return `You've used ${used} this account gets in 24 hours. ${quotaWhen(refusal.retryAt, now)}`;
+    return `You've used ${used} this account gets in 24 hours. ${when ? `You can buy fee-free again ${when}.` : "Try again later."}`;
   }
-  if (refusal?.error === "relay_budget_spent") return "The shared fee-free limit for this operation has been reached. Try again later.";
+  if (refusal.error === "relay_budget_spent") return `The shared fee-free limit for this operation has been reached. ${when ? `Try again ${when}.` : "Try again later."}`;
   return null;
 }
 

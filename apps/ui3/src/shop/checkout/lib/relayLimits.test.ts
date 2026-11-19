@@ -31,8 +31,10 @@ describe("the relay's limits, said to the buyer", () => {
     expect(relayLimitText(quota({ quota: 0, retryAt: secs(at(14)) }), NOW)).toBe("Fee-free transactions aren't available for this account.");
   });
 
-  it("says the relay's shared limit on operations that aren't sales", () => {
+  it("says the relay's shared limit on operations that aren't sales, and when it frees up when the relay says so", () => {
     expect(relayLimitText(new GaslessUnavailableError("spent", "relayer-rejected", { error: "relay_budget_spent" }), NOW)).toBe("The shared fee-free limit for this operation has been reached. Try again later.");
+    expect(relayLimitText(new GaslessUnavailableError("spent", "relayer-rejected", { error: "relay_budget_spent", retryAt: secs(at(11, 30, 1)) }), NOW)).toBe(`The shared fee-free limit for this operation has been reached. Try again at ${time(at(11, 31))}.`);
+    expect(relayLimitText(new GaslessUnavailableError("spent", "relayer-rejected", { error: "relay_budget_spent", retryAt: Number.MAX_SAFE_INTEGER }), NOW)).toBe("The shared fee-free limit for this operation has been reached. Try again later.");
   });
 
   it("reads the marketplace client's refusals the same way", () => {
