@@ -83,7 +83,13 @@ describe.each(INVISIBLE_ITEMS)('when loading the %s smart item', item => {
 
   it('should load a model whose every mesh node is a collider', () => {
     const buffer = readFileSync(localFile(item, gltf!.src));
-    if (isLfsPointer(buffer)) return;
+    // A checkout without the media cannot check the model; CI fetches it and must not skip.
+    if (isLfsPointer(buffer)) {
+      expect(process.env.REQUIRE_COLLIDER_MODELS, 'the collider model is an LFS pointer').toBe(
+        undefined,
+      );
+      return;
+    }
     const json = readGlbJson(buffer);
     const meshNodes = (json.nodes ?? []).filter(node => node.mesh !== undefined);
     expect(meshNodes.length).toBeGreaterThan(0);
