@@ -77,6 +77,9 @@ pub struct ArchipelagoView {
     pub already_connected: Option<bool>,
     /// Every island assignment, in the order received.
     pub assignments: Vec<Assignment>,
+    /// The peers of the latest island, sorted: those its assignment listed, then those the
+    /// connector said joined or left that island.
+    pub island_peers: Vec<String>,
     /// The reason of a kick (`KICKED_NEW_SESSION` is the only one defined).
     pub kicked: Option<i32>,
     /// Control errors and frames that did not decode, as text without any token.
@@ -148,11 +151,39 @@ impl Shared {
                         "connection_string": change.conn_str,
                     }),
                 );
-                self.view.lock().assignments.push(Assignment {
+                let mut peers: Vec<String> = change.peers.into_keys().collect();
+                peers.sort();
+                let mut view = self.view.lock();
+                view.island_peers = peers;
+                view.assignments.push(Assignment {
                     island: change.island_id,
                     connection_string: change.conn_str,
                     at_ms,
                 });
+            }
+            server_packet::Message::JoinIsland(joined) => {
+                self.record(
+                    "peer joined the island",
+                    serde_json::json!({ "island": joined.island_id, "peer": joined.peer_id }),
+                );
+                let mut view = self.view.lock();
+                let current = view.assignments.last().map(|held| held.island.clone());
+                if current.as_deref() == Some(joined.island_id.as_str())
+                    && let Err(at) = view.island_peers.binary_search(&joined.peer_id)
+                {
+                    view.island_peers.insert(at, joined.peer_id);
+                }
+            }
+            server_packet::Message::LeftIsland(left) => {
+                self.record(
+                    "peer left the island",
+                    serde_json::json!({ "island": left.island_id, "peer": left.peer_id }),
+                );
+                let mut view = self.view.lock();
+                let current = view.assignments.last().map(|held| held.island.clone());
+                if current.as_deref() == Some(left.island_id.as_str()) {
+                    view.island_peers.retain(|peer| *peer != left.peer_id);
+                }
             }
             server_packet::Message::Kicked(kicked) => {
                 self.record("kicked", kicked.reason);
@@ -163,9 +194,7 @@ impl Shared {
                 self.record("control error", &text);
                 self.view.lock().errors.push(text);
             }
-            server_packet::Message::LeftIsland(_)
-            | server_packet::Message::JoinIsland(_)
-            | server_packet::Message::Ack(_) => {}
+            server_packet::Message::Ack(_) => {}
         }
     }
 

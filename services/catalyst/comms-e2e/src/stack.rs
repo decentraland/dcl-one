@@ -43,6 +43,11 @@ pub struct Stack {
     /// the scenarios that restart it are skipped.
     #[serde(default)]
     pub restart_command: Option<Vec<String>>,
+    /// The LiveKit client (`harness-util`) for a stack that gives no room-service keys, so no
+    /// `[livekit]` section: clients join the rooms their island assignments name. `[livekit]
+    /// client` is used when both are set.
+    #[serde(default)]
+    pub livekit_client: Option<PathBuf>,
     #[serde(default)]
     pub grid: Grid,
     #[serde(default)]
@@ -255,6 +260,7 @@ impl Stack {
             explorer: None,
             scene_listener_key_env: None,
             restart_command: None,
+            livekit_client: None,
             grid: Grid::default(),
             limits: Limits::default(),
             given: GivenSecrets::default(),

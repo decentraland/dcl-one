@@ -3,6 +3,7 @@
 pub mod connections;
 pub mod connections_support;
 pub mod crowd;
+pub mod crowd_discovery;
 pub mod explorer;
 pub mod livekit;
 pub mod pulse;
@@ -18,6 +19,7 @@ pub fn registry() -> Vec<&'static Scenario> {
     all.extend(webtransport::all());
     all.extend(connections::all());
     all.extend(livekit::all());
+    all.extend(crowd_discovery::all());
     all.extend(explorer::all());
     all
 }

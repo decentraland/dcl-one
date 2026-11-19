@@ -182,6 +182,9 @@ pub async fn examine(stack: Arc<Stack>) -> Vec<Check> {
         }
         None => checks.push(Check::absent("LiveKit", "livekit")),
     }
+    if let Some(path) = &stack.livekit_client {
+        checks.push(Check::new("LiveKit client (no keys)", file(path)));
+    }
 
     match &stack.moderator_token_env {
         Some(name) => checks.push(Check::new("Moderator token", variable(&stack, name))),
