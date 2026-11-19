@@ -7,7 +7,7 @@ import {
 } from "react";
 import { useLocation } from "react-router";
 import {
-  decentralandNavSections,
+  decentralandPublicNavSections,
   NavBar,
   GeneralLock,
   GeneralLogout,
@@ -17,6 +17,7 @@ import {
   MenusEditProfile,
   type NavBarLinkProps,
 } from "@dcl/one-ui";
+import { useWalletAccount } from "@ui/shop/wallet/context";
 import type { DclTopBarProps } from "@ui/web/frames/DclTopBar";
 import { useChromeAuth } from "@ui/web/frames/chrome-auth";
 import ChromeLink from "@ui/web/frames/ChromeLink";
@@ -32,6 +33,8 @@ import SitesNotificationsDialog from "@dcl/one-ui/apps/sites/chrome/SitesNotific
 import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
 import wordmark from "@dcl/one-ui/apps/sites/assets/dcl_name.svg?url";
 import { SitesLocaleContext } from "@ui/web/frames/sites-locale";
+import { browserProvider } from "@/data/lib/auth/shop-wallet";
+import { useMarketplaceHere } from "@/data/lib/shop/marketplace-access";
 import { homeCopy } from "../../home/locale";
 import { useChromeNotifications } from "./useChromeNotifications";
 import styles from "./SitesTopBar.module.css";
@@ -108,7 +111,8 @@ export default function SitesTopBar({
   );
   const auth = useChromeAuth();
   const layout = useSiteLayout();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
+  const marketplaceAvailable = useMarketplaceHere();
   const landing = pathname === "/";
   const locale = useContext(SitesLocaleContext)?.locale ?? "en";
   const isIn = signedIn ?? auth.signedIn;
@@ -128,6 +132,9 @@ export default function SitesTopBar({
     pathname: string;
   } | null>(null);
   const identity = isIn && address ? address.toLowerCase() : null;
+  const marketplaceWallet = marketplaceAvailable && identity ? browserProvider() : null;
+  const walletAccount = useWalletAccount(marketplaceWallet);
+  const marketplaceEligible = marketplaceWallet !== null && identity !== null && walletAccount === identity;
   const notificationsOpen =
     identity !== null &&
     notificationOwner?.account === identity &&
@@ -232,6 +239,9 @@ export default function SitesTopBar({
   // The landing page's nav, as decentraland.org's Layout derives it from the path: signed out it is
   // bare (logo, wordmark, Sign in); signed out or in, the desktop bar floats transparent over the hero.
   const bare = landing && !isIn;
+  const { desktop, mobile } = bare
+    ? { desktop: [], mobile: [] }
+    : decentralandPublicNavSections(active, pathname, { search, marketplaceEligible });
   const avatarColor = profileMatches ? auth.avatarColor : undefined;
   return (
     <>
@@ -250,7 +260,8 @@ export default function SitesTopBar({
         }
       >
         <NavBar
-          sections={bare ? [] : decentralandNavSections(active, pathname)}
+          sections={desktop}
+          mobileSections={mobile}
           brand={
             bare ? (
               <img
