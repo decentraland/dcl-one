@@ -14,6 +14,8 @@ const sources = ROOTS.flatMap(root =>
 
 // Set by Sites' frame around the page, not by this app.
 const FROM_SITES = new Set(['--site-header-h'])
+// The shared foundations' tokens, loaded once by Sites.
+const SHARED = '--dcl-'
 
 const tokens = [...read(TOKENS).matchAll(/^\s*(--[\w-]+):/gm)].map(match => match[1])
 const used = new Set(sources.flatMap(path => [...read(path).matchAll(/var\((--[\w-]+)/g)].map(match => match[1])))
@@ -27,7 +29,7 @@ const local = new Set(
 describe('tokens.css', () => {
   it('declares every custom property the app reads', () => {
     expect(used.size).toBeGreaterThan(0)
-    const undeclared = [...used].filter(name => !tokens.includes(name) && !local.has(name) && !FROM_SITES.has(name))
+    const undeclared = [...used].filter(name => !tokens.includes(name) && !local.has(name) && !FROM_SITES.has(name) && !name.startsWith(SHARED))
     expect(undeclared, 'Declare the token in tokens.css, or fix the name').toEqual([])
   })
 

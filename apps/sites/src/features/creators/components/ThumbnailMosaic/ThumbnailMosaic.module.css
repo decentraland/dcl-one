@@ -5,7 +5,7 @@
   grid-template-rows: repeat(2, minmax(0, 1fr));
   width: 100%;
   height: 100%;
-  background: var(--color-media);
+  background: var(--dcl-neutrals-pearl);
   overflow: hidden;
 
   &[data-empty] {
@@ -44,7 +44,7 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  color: var(--color-muted);
+  color: var(--dcl-neutrals-cloudy-sky);
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.04em;

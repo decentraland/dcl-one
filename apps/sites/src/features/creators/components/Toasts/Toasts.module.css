@@ -21,9 +21,9 @@
   align-items: center;
   gap: 16px;
   padding: 12px;
-  border-radius: var(--radius-card-lg);
+  border-radius: var(--dcl-radius-lg);
   background: var(--color-text2);
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   font-size: 16px;
   font-weight: 400;
   line-height: 1.5;
@@ -34,11 +34,11 @@
   flex-shrink: 0;
 
   &[data-type="success"] {
-    color: var(--color-success);
+    color: var(--dcl-system-green-dark-1);
   }
 
   &[data-type="error"] {
-    color: var(--color-err-light);
+    color: var(--dcl-system-red);
   }
 
   &[data-type="warn"] {
@@ -46,7 +46,7 @@
   }
 
   &[data-type="info"] {
-    color: var(--color-info-light);
+    color: var(--dcl-system-blue-light-1);
   }
 }
 
@@ -59,10 +59,10 @@
   border: 0;
   border-radius: var(--radius-pill);
   background: none;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   cursor: pointer;
 
   &:hover {
-    background: var(--color-glass-faint);
+    background: var(--dcl-transparencies-white-10);
   }
 }

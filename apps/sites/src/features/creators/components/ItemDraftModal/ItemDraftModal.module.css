@@ -47,8 +47,8 @@
   max-width: 50%;
   flex-shrink: 0;
   padding: 24px;
-  border-radius: var(--radius-banner);
-  background: var(--color-overlay-light);
+  border-radius: var(--dcl-radius-xl);
+  background: var(--dcl-transparencies-black-20);
 
   @media (max-width: 768px) {
     width: 100%;
@@ -70,8 +70,8 @@
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: var(--color-overlay-strong);
-  color: var(--color-white);
+  background: var(--dcl-transparencies-black-60);
+  color: var(--dcl-neutrals-white);
   cursor: default;
 
   & svg {
@@ -86,7 +86,7 @@
   aspect-ratio: 1;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-banner);
+  border-radius: var(--dcl-radius-xl);
   overflow: hidden;
   cursor: pointer;
 
@@ -107,13 +107,13 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-overlay-strong);
+  background: var(--dcl-transparencies-black-60);
   opacity: 0;
   transition: opacity 0.3s ease;
 
   & svg {
     font-size: 60px;
-    color: var(--color-white);
+    color: var(--dcl-neutrals-white);
   }
 }
 
@@ -128,7 +128,7 @@
   &[data-compact] > * {
     gap: 4px;
     font-size: 12px;
-    color: var(--color-gray4);
+    color: var(--dcl-neutrals-gray);
 
     & svg {
       width: 16px;
@@ -140,7 +140,7 @@
 /* Same box as a MetricPill, so the row keeps its height when the metrics land. */
 .metricSkeleton {
   height: 40px;
-  border-radius: var(--radius-btn-sm);
+  border-radius: var(--dcl-radius-sm);
 }
 
 .metricPill {
@@ -149,9 +149,9 @@
   justify-content: center;
   gap: 4px;
   padding: 8px;
-  border-radius: var(--radius-btn-sm);
-  background: var(--color-glass-faint);
-  color: var(--color-soft-white);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-transparencies-white-10);
+  color: var(--dcl-neutrals-snow);
   font-size: 14px;
   line-height: 1.5;
   white-space: nowrap;
@@ -174,7 +174,7 @@
   align-items: center;
   gap: 8px;
   padding: 12px 8px;
-  border-radius: var(--radius-btn-sm);
+  border-radius: var(--dcl-radius-sm);
   background: var(--color-warning-overlay);
   color: var(--color-warning-text);
   font-size: 12px;
@@ -202,7 +202,7 @@
   font-size: 24px;
   font-weight: 500;
   line-height: 1.334;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 }
 
 .field {
@@ -212,7 +212,7 @@
   font-size: 14px;
   font-weight: 400;
   line-height: 1.57;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 
   &[data-hinted] {
     gap: 12px;
@@ -231,7 +231,7 @@
   gap: 4px;
   font-size: 12px;
   line-height: normal;
-  color: var(--color-muted2);
+  color: var(--dcl-neutrals-silver);
 
   & svg {
     width: 15px;
@@ -257,10 +257,10 @@
       margin-left: -1px;
     }
     & > :first-of-type {
-      border-radius: var(--radius-input) 0 0 var(--radius-input);
+      border-radius: var(--dcl-radius-xs) 0 0 var(--dcl-radius-xs);
     }
     & > :last-of-type {
-      border-radius: 0 var(--radius-input) var(--radius-input) 0;
+      border-radius: 0 var(--dcl-radius-xs) var(--dcl-radius-xs) 0;
     }
   }
 }
@@ -272,10 +272,10 @@
   gap: 8px;
   height: 48px;
   padding: 0 16px 0 12px;
-  border: 1px solid var(--color-muted2);
-  border-radius: var(--radius-input);
+  border: 1px solid var(--dcl-neutrals-silver);
+  border-radius: var(--dcl-radius-xs);
   background: none;
-  color: var(--color-muted2);
+  color: var(--dcl-neutrals-silver);
   font: inherit;
   font-size: 16px;
   font-weight: 600;
@@ -285,14 +285,14 @@
   /* The 2px selected stroke is border + inset shadow so the box never grows. */
   &[data-selected] {
     z-index: 1;
-    border-color: var(--color-white);
-    box-shadow: inset 0 0 0 1px var(--color-white);
-    background: var(--color-glass-faint);
-    color: var(--color-white);
+    border-color: var(--dcl-neutrals-white);
+    box-shadow: inset 0 0 0 1px var(--dcl-neutrals-white);
+    background: var(--dcl-transparencies-white-10);
+    color: var(--dcl-neutrals-white);
   }
 
   &:hover:not([aria-disabled]) {
-    background: var(--color-glass-faint);
+    background: var(--dcl-transparencies-white-10);
   }
 
   &[aria-disabled] {
@@ -323,7 +323,7 @@
   gap: 6px;
   margin: 0;
   font-size: 13px;
-  color: var(--color-muted2);
+  color: var(--dcl-neutrals-silver);
 
   & strong {
     font-weight: 600;
@@ -342,7 +342,7 @@
   justify-content: space-between;
   gap: 16px;
   padding-top: 24px;
-  border-top: 1px solid var(--color-gray4);
+  border-top: 1px solid var(--dcl-neutrals-gray);
 
   [data-flush] & {
     padding: 24px;
@@ -366,7 +366,7 @@
   align-items: center;
   justify-content: center;
   gap: 24px;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
   font-size: 16px;
   text-align: center;
   flex: 1;
@@ -378,8 +378,8 @@
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  border: 3px solid var(--color-glass-faint);
-  border-top-color: var(--color-dcl-red);
+  border: 3px solid var(--dcl-transparencies-white-10);
+  border-top-color: var(--dcl-brand-ruby);
   animation: spin 0.8s linear infinite;
 }
 

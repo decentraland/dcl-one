@@ -5,7 +5,7 @@
 }
 
 .learnMore {
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   text-decoration: underline;
   white-space: nowrap;
 }

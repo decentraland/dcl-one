@@ -1,12 +1,12 @@
 /* The bubble is drawn in a portal on <body>; the app's tokens are declared on :root, so they reach it. */
 .tip {
   --tooltip-pad: 10px 12px;
-  --tooltip-radius: var(--radius-btn-sm);
+  --tooltip-radius: var(--dcl-radius-sm);
   --tooltip-bg: var(--color-text2);
-  --tooltip-text: var(--color-white);
+  --tooltip-text: var(--dcl-neutrals-white);
   --tooltip-size: 13px;
   --tooltip-weight: 400;
-  --tooltip-shadow: 0 8px 24px var(--color-overlay-strong);
+  --tooltip-shadow: 0 8px 24px var(--dcl-transparencies-black-60);
 
   z-index: var(--creators-z-tooltip);
   font-family: var(--creators-font);
@@ -31,6 +31,6 @@
 }
 
 .content {
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
   font-size: 16px;
 }

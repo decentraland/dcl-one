@@ -5,9 +5,9 @@
   gap: 12px;
   position: relative;
   padding: 12px 24px 12px 12px;
-  border-radius: var(--radius-card);
-  background: var(--color-overlay);
-  color: var(--color-soft-white);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-40);
+  color: var(--dcl-neutrals-snow);
   transition:
     background 0.15s ease,
     box-shadow 0.15s ease;
@@ -15,7 +15,7 @@
   &:hover,
   &:focus-within {
     background: var(--color-overlay-hover);
-    box-shadow: 0 0 8px var(--color-brand-violet);
+    box-shadow: 0 0 8px var(--dcl-brand-violet);
   }
 
   @media (max-width: 991px) {
@@ -90,7 +90,7 @@
 
 .sub {
   font-size: 12px;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 }
 
 .cell {
@@ -161,7 +161,7 @@
 .cellLabel {
   font-size: 12px;
   font-weight: 400;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 }
 
 .assigneeCell {
@@ -187,12 +187,12 @@
     grid-area: assignee;
     justify-content: space-between;
     padding-top: 8px;
-    border-top: 1px solid var(--color-glass-faint);
+    border-top: 1px solid var(--dcl-transparencies-white-10);
   }
 }
 
 .unassigned {
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
   font-weight: 400;
 }
 
@@ -206,11 +206,11 @@
   border: 0;
   border-radius: 50%;
   background: transparent;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 
   &:hover,
   &:focus-visible {
-    background: var(--color-glass-faint);
+    background: var(--dcl-transparencies-white-10);
   }
 }
 
@@ -219,7 +219,7 @@
   padding: 0 8px;
   border: 0;
   background: transparent;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   font-size: 14px;
   font-weight: 600;
   text-decoration: underline;

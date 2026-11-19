@@ -13,7 +13,7 @@
   border: 1px solid var(--editor-line);
   border-radius: var(--radius-chip);
   background: var(--editor-bg);
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   font: inherit;
   font-size: 12px;
   text-align: left;
@@ -66,7 +66,7 @@
   }
   &:hover,
   &:focus-visible {
-    color: var(--color-white);
+    color: var(--dcl-neutrals-white);
   }
 }
 
@@ -80,9 +80,9 @@
   padding: 6px;
   list-style: none;
   border: 1px solid var(--editor-line);
-  border-radius: var(--radius-btn-sm);
+  border-radius: var(--dcl-radius-sm);
   background: var(--editor-surface);
-  box-shadow: 0 8px 32px var(--color-overlay-strong);
+  box-shadow: 0 8px 32px var(--dcl-transparencies-black-60);
 }
 
 .row {
@@ -92,7 +92,7 @@
   min-height: 32px;
   padding-right: 8px;
   border-radius: var(--radius-chip);
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   font-size: 12px;
   cursor: pointer;
 

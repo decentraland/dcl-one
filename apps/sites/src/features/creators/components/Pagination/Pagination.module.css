@@ -11,9 +11,9 @@
   width: 32px;
   height: 32px;
   border: 0;
-  border-radius: var(--radius-btn-sm);
+  border-radius: var(--dcl-radius-sm);
   background: none;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.46px;
@@ -22,11 +22,11 @@
     border: 0.5px solid var(--color-glass-line);
   }
   &:hover:not(:disabled):not([data-current]) {
-    background: var(--color-glass-faint);
+    background: var(--dcl-transparencies-white-10);
   }
   &[data-current] {
-    background: var(--color-soft-white);
-    color: var(--color-text);
+    background: var(--dcl-neutrals-snow);
+    color: var(--dcl-neutrals-shadow);
   }
   &:disabled {
     opacity: 0.4;

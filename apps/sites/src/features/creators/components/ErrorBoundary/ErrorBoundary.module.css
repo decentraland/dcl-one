@@ -13,7 +13,7 @@
   font-weight: 700;
   line-height: 1.2;
   letter-spacing: 0.46px;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 }
 
 .text {
@@ -21,7 +21,7 @@
   max-width: 640px;
   font-size: 16px;
   line-height: 1.6;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 }
 
 .retryButton {
@@ -32,9 +32,9 @@
   min-width: 180px;
   padding: 0 12px;
   border: 0;
-  border-radius: var(--radius-btn);
-  background: var(--color-dcl-red);
-  color: var(--color-white);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-brand-ruby);
+  color: var(--dcl-neutrals-white);
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.46px;

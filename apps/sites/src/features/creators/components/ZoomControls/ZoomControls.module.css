@@ -16,14 +16,14 @@
     height: 36px;
     border: 1px solid var(--editor-line);
     background: var(--editor-surface);
-    color: var(--color-white);
+    color: var(--dcl-neutrals-white);
     cursor: pointer;
 
     &:first-of-type {
-      border-radius: var(--radius-btn-sm) var(--radius-btn-sm) 0 0;
+      border-radius: var(--dcl-radius-sm) var(--dcl-radius-sm) 0 0;
     }
     &:last-of-type {
-      border-radius: 0 0 var(--radius-btn-sm) var(--radius-btn-sm);
+      border-radius: 0 0 var(--dcl-radius-sm) var(--dcl-radius-sm);
     }
     &:hover:not(:disabled) {
       background: var(--editor-surface-hover);

@@ -16,9 +16,9 @@
   height: 44px;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-btn);
-  background: var(--color-overlay);
-  color: var(--color-white);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-40);
+  color: var(--dcl-neutrals-white);
   cursor: pointer;
 
   &[data-muted] {
@@ -36,20 +36,20 @@
     outline: none;
   }
   &:focus-visible::-webkit-slider-thumb {
-    outline: 2px solid var(--color-white);
+    outline: 2px solid var(--dcl-neutrals-white);
   }
   &::-webkit-slider-runnable-track {
     height: 15px;
     border: 0;
     border-radius: 10px;
-    background: var(--color-glass);
+    background: var(--dcl-transparencies-white-20);
   }
   &::-webkit-slider-thumb {
     width: 24px;
     height: 24px;
     margin-top: -4px;
     border-radius: 10px;
-    background: var(--color-muted);
+    background: var(--dcl-neutrals-cloudy-sky);
     cursor: pointer;
     appearance: none;
   }
@@ -57,7 +57,7 @@
     width: 100%;
     height: 15px;
     border-radius: 10px;
-    background: var(--color-glass);
+    background: var(--dcl-transparencies-white-20);
     cursor: pointer;
   }
   &::-moz-range-thumb {
@@ -65,7 +65,7 @@
     height: 24px;
     border: 0;
     border-radius: 20px;
-    background: var(--color-muted);
+    background: var(--dcl-neutrals-cloudy-sky);
     cursor: pointer;
   }
 }
@@ -73,10 +73,10 @@
 .frame {
   width: 56px;
   height: 44px;
-  border: 1px solid var(--color-glass);
+  border: 1px solid var(--dcl-transparencies-white-20);
   border-radius: 5px;
   background: transparent;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   text-align: center;
 }
 
@@ -100,7 +100,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  color: var(--color-muted);
+  color: var(--dcl-neutrals-cloudy-sky);
 }
 
 .panSlider {
@@ -115,25 +115,25 @@
 
   &::-webkit-slider-runnable-track {
     width: 2px;
-    background: var(--color-overlay-light);
+    background: var(--dcl-transparencies-black-20);
   }
   &::-webkit-slider-thumb {
     width: 8px;
     height: 32px;
     margin-right: -3px;
     border-radius: 4px;
-    background: var(--color-text);
+    background: var(--dcl-neutrals-shadow);
     appearance: none;
   }
   &::-moz-range-track {
     width: 2px;
-    background: var(--color-overlay-light);
+    background: var(--dcl-transparencies-black-20);
   }
   &::-moz-range-thumb {
     width: 8px;
     height: 32px;
     border: 0;
     border-radius: 4px;
-    background: var(--color-text);
+    background: var(--dcl-neutrals-shadow);
   }
 }

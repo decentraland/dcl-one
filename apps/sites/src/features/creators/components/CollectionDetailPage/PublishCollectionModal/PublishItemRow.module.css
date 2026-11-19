@@ -13,14 +13,14 @@
   gap: 12px;
   padding: 12px;
   border: 2px solid transparent;
-  border-radius: var(--radius-btn);
-  background: var(--color-overlay);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-40);
   font-size: 13px;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 
   &[data-editing] {
-    border-color: var(--color-soft-white);
-    background: var(--color-overlay-strong);
+    border-color: var(--dcl-neutrals-snow);
+    background: var(--dcl-transparencies-black-60);
   }
 
   & > *:not(:first-child) {
@@ -49,15 +49,15 @@
   min-width: 0;
   height: 30px;
   padding: 4px 8px;
-  border: 1px solid var(--color-soft-white);
+  border: 1px solid var(--dcl-neutrals-snow);
   border-radius: var(--radius-chip);
-  background: var(--color-glass-faint);
-  color: var(--color-soft-white);
+  background: var(--dcl-transparencies-white-10);
+  color: var(--dcl-neutrals-snow);
   font-size: 13px;
   outline: none;
 
   &[data-invalid] {
-    border-color: var(--color-err-light);
+    border-color: var(--dcl-system-red);
   }
   &:disabled {
     opacity: 0.6;
@@ -73,12 +73,12 @@
     gap: 4px;
     font-size: 12px;
     border-radius: 4px;
-    border-color: var(--color-soft-white);
+    border-color: var(--dcl-neutrals-snow);
 
     /* The Select's own focus/open border; layered now, it would otherwise lose to the line above. */
     &:focus-visible,
     &[aria-expanded="true"] {
-      border-color: var(--color-white);
+      border-color: var(--dcl-neutrals-white);
     }
 
     & span {
@@ -102,27 +102,27 @@
   width: 32px;
   height: 32px;
   border: 0;
-  border-radius: var(--radius-btn-sm);
+  border-radius: var(--dcl-radius-sm);
   background: none;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 
   & svg {
     font-size: 20px;
   }
 
   &:hover {
-    background: var(--color-glass-faint);
+    background: var(--dcl-transparencies-white-10);
   }
   &[data-variant="cancel"] {
-    background: var(--color-overlay);
-    border: 1px solid var(--color-muted1);
+    background: var(--dcl-transparencies-black-40);
+    border: 1px solid var(--dcl-neutrals-graffito);
 
     &:hover {
-      border-color: var(--color-muted2);
+      border-color: var(--dcl-neutrals-silver);
     }
   }
   &[data-variant="save"] {
-    background: var(--color-dcl-red);
+    background: var(--dcl-brand-ruby);
 
     &:hover {
       background: var(--color-dcl-red-hover);
@@ -139,7 +139,7 @@
   margin: 0;
   font-size: 13px;
   font-weight: 400;
-  color: var(--color-err-light);
+  color: var(--dcl-system-red);
   justify-self: start !important;
   text-align: left !important;
 }
@@ -157,7 +157,7 @@
     cursor: default;
   }
   &:focus-visible {
-    outline: 2px solid var(--color-white);
+    outline: 2px solid var(--dcl-neutrals-white);
     outline-offset: 2px;
   }
 }
@@ -172,8 +172,8 @@
   width: 24px;
   height: 24px;
   border-radius: 6px;
-  background: var(--color-white);
-  color: var(--color-muted);
+  background: var(--dcl-neutrals-white);
+  color: var(--dcl-neutrals-cloudy-sky);
 
   & svg {
     font-size: 16px;

@@ -39,12 +39,12 @@
 
 .row {
   padding: 12px 24px 12px 12px;
-  border-radius: var(--radius-card);
-  background: var(--color-overlay);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-40);
 
   /* Inset shadows, not borders, so flagged rows stay aligned with the header's columns. */
   &[data-validation="errors"] {
-    box-shadow: inset 3px 0 0 var(--color-error-accent);
+    box-shadow: inset 3px 0 0 var(--dcl-system-red-dark-1);
     background: var(--color-error-surface);
   }
 
@@ -94,7 +94,7 @@
   font-size: 14px;
   font-weight: 700;
   line-height: 1.2;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -119,7 +119,7 @@
   gap: 6px;
   height: 32px;
   border: 0;
-  border-radius: var(--radius-btn-sm);
+  border-radius: var(--dcl-radius-sm);
   background: none;
   color: inherit;
   font: inherit;
@@ -143,10 +143,10 @@
   }
   &:hover,
   &:focus-visible {
-    background: var(--color-glass-faint);
+    background: var(--dcl-transparencies-white-10);
   }
   &:focus-visible {
-    outline: 2px solid var(--color-white);
+    outline: 2px solid var(--dcl-neutrals-white);
     outline-offset: 2px;
   }
   &:hover > svg,
@@ -170,16 +170,16 @@
   min-width: 0;
   height: 32px;
   padding: 4px 8px;
-  border: 1px solid var(--color-soft-white);
+  border: 1px solid var(--dcl-neutrals-snow);
   border-radius: var(--radius-chip);
-  background: var(--color-glass-faint);
-  color: var(--color-soft-white);
+  background: var(--dcl-transparencies-white-10);
+  color: var(--dcl-neutrals-snow);
   font-size: 14px;
   font-weight: 700;
   outline: none;
 
   &[data-invalid] {
-    border-color: var(--color-err-light);
+    border-color: var(--dcl-system-red);
   }
   &:disabled {
     opacity: 0.6;
@@ -196,24 +196,24 @@
   margin-left: 8px;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-btn-sm);
+  border-radius: var(--dcl-radius-sm);
   background: none;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   cursor: pointer;
 
   & svg {
     font-size: 20px;
   }
   &[data-variant="cancel"] {
-    background: var(--color-overlay);
-    border: 1px solid var(--color-muted1);
+    background: var(--dcl-transparencies-black-40);
+    border: 1px solid var(--dcl-neutrals-graffito);
 
     &:hover {
-      border-color: var(--color-muted2);
+      border-color: var(--dcl-neutrals-silver);
     }
   }
   &[data-variant="save"] {
-    background: var(--color-dcl-red);
+    background: var(--dcl-brand-ruby);
 
     &:hover {
       background: var(--color-dcl-red-hover);
@@ -224,7 +224,7 @@
     cursor: default;
   }
   &:focus-visible {
-    outline: 2px solid var(--color-white);
+    outline: 2px solid var(--dcl-neutrals-white);
     outline-offset: 2px;
   }
 }
@@ -240,7 +240,7 @@
   cursor: pointer;
 
   &:focus-visible {
-    outline: 2px solid var(--color-white);
+    outline: 2px solid var(--dcl-neutrals-white);
     outline-offset: -2px;
   }
 }
@@ -255,8 +255,8 @@
   width: 24px;
   height: 24px;
   border-radius: 6px;
-  background: var(--color-white);
-  color: var(--color-muted);
+  background: var(--dcl-neutrals-white);
+  color: var(--dcl-neutrals-cloudy-sky);
   opacity: 0;
   transition: opacity 0.15s ease;
 
@@ -276,7 +276,7 @@
   gap: 6px;
   height: 32px;
   border: 0;
-  border-radius: var(--radius-btn-sm);
+  border-radius: var(--dcl-radius-sm);
   background: none;
   color: inherit;
   font: inherit;
@@ -296,10 +296,10 @@
   }
   &:hover,
   &:focus-visible {
-    background: var(--color-glass-faint);
+    background: var(--dcl-transparencies-white-10);
   }
   &:focus-visible {
-    outline: 2px solid var(--color-white);
+    outline: 2px solid var(--dcl-neutrals-white);
     outline-offset: 2px;
   }
   &:hover > svg,
@@ -311,7 +311,7 @@
 
 .smartBadge {
   display: inline-flex;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
   background: var(--color-glass-hover);
   border-radius: var(--radius-chip);
   padding: 1px;
@@ -339,7 +339,7 @@
 
   &[data-status="errors"] {
     background: var(--color-error-overlay);
-    color: var(--color-err-light);
+    color: var(--dcl-system-red);
   }
 
   & svg {
@@ -353,7 +353,7 @@
   font-size: 14px;
   font-weight: 600;
   line-height: 1.57;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
   display: flex;
   justify-content: center;
 
@@ -380,12 +380,12 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
   font-weight: 700;
 }
 
 .originalPrice {
-  color: var(--color-muted2);
+  color: var(--dcl-neutrals-silver);
   font-size: 12px;
   font-weight: 600;
 }

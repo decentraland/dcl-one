@@ -17,8 +17,8 @@
     background: var(--color-green-tint);
   }
   &[data-status="modified"] {
-    color: var(--color-info-lighter);
-    border-color: var(--color-info-light);
+    color: var(--dcl-system-blue-light-2);
+    border-color: var(--dcl-system-blue-light-1);
     background: var(--color-info-tint);
   }
   &[data-status="under_review"] {

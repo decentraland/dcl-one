@@ -10,7 +10,7 @@
   gap: 8px;
   font-size: 16px;
   line-height: 1.5;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 }
 
 .box {
@@ -19,13 +19,13 @@
   gap: 8px;
   height: 54px;
   padding: 0 16px;
-  border: 1.5px solid var(--color-white);
+  border: 1.5px solid var(--dcl-neutrals-white);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.05);
 
   &[data-invalid] {
     background: var(--color-err-overlay);
-    border-color: var(--color-err-light);
+    border-color: var(--dcl-system-red);
   }
 
   & input {
@@ -37,11 +37,11 @@
     font: inherit;
     font-size: 20px;
     font-weight: 600;
-    color: var(--color-white);
+    color: var(--dcl-neutrals-white);
 
     &::placeholder {
       font-weight: 400;
-      color: var(--color-gray4);
+      color: var(--dcl-neutrals-gray);
     }
   }
 }
@@ -49,14 +49,14 @@
 .charCount {
   flex: none;
   font-size: 14px;
-  color: var(--color-media);
+  color: var(--dcl-neutrals-pearl);
 }
 
 .errorText {
   margin: 0;
   font-size: 13px;
   line-height: 1.4;
-  color: var(--color-err-light);
+  color: var(--dcl-system-red);
 }
 
 .hintText {
@@ -66,7 +66,7 @@
   margin: 0;
   font-size: 13px;
   line-height: 1.4;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 
   & svg {
     flex: none;

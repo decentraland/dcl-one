@@ -12,11 +12,11 @@
   flex-direction: column;
   gap: 4px;
   padding: 10px 12px;
-  border-radius: var(--radius-btn-sm);
-  background: var(--color-overlay-light);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-transparencies-black-20);
   font-size: 14px;
   line-height: 1.43;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 
   &[data-severity="error"] {
     border-left: 3px solid var(--color-red-bright);
@@ -51,21 +51,21 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   font-weight: 600;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 }
 
 .bodyShapes {
   padding: 0 6px;
   border-radius: var(--radius-pill);
-  background: var(--color-overlay);
+  background: var(--dcl-transparencies-black-40);
   font-size: 11px;
   font-weight: 600;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 }
 
 .where {
   font-size: 12px;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
   overflow-wrap: anywhere;
 }
 
@@ -80,23 +80,23 @@
   gap: 4px 12px;
   margin: 0;
   font-size: 12px;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 }
 
 .fix {
   margin: 0;
   font-size: 13px;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 
   & strong {
-    color: var(--color-soft-white);
+    color: var(--dcl-neutrals-snow);
     font-weight: 600;
   }
 }
 
 .docsLink {
   font-size: 12px;
-  color: var(--color-info-lighter);
+  color: var(--dcl-system-blue-light-2);
   text-decoration: underline;
 }
 
@@ -112,7 +112,7 @@
   gap: 8px;
   font-size: 14px;
   font-weight: 600;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 }
 
 .itemThumb {
@@ -120,7 +120,7 @@
   width: 32px;
   height: 32px;
   border-radius: 6px;
-  background: var(--color-overlay);
+  background: var(--dcl-transparencies-black-40);
   object-fit: cover;
 }
 
@@ -150,11 +150,11 @@
 .summary {
   margin: 0;
   padding: 10px 12px;
-  border-radius: var(--radius-btn-sm);
-  background: var(--color-overlay-light);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-transparencies-black-20);
   font-size: 14px;
   line-height: 1.5;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
   white-space: pre-wrap;
 }
 

@@ -34,7 +34,7 @@
   border: 0;
   border-radius: var(--radius-pill);
   background: none;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 
   & svg {
     width: 24px;
@@ -42,7 +42,7 @@
   }
 
   &:hover {
-    background: var(--color-glass-faint);
+    background: var(--dcl-transparencies-white-10);
   }
 }
 
@@ -66,7 +66,7 @@
   font-weight: 700;
   line-height: 1.2;
   letter-spacing: 0.46px;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -87,7 +87,7 @@
   border: 0;
   border-radius: var(--radius-pill);
   background: none;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
   opacity: 0;
   overflow: hidden;
   transition:
@@ -96,8 +96,8 @@
     opacity 0.15s ease;
 
   &:hover {
-    background: var(--color-glass-faint);
-    color: var(--color-white);
+    background: var(--dcl-transparencies-white-10);
+    color: var(--dcl-neutrals-white);
   }
 
   @media (max-width: 900px) {
@@ -168,8 +168,8 @@
   padding: 0 16px;
   border: 0;
   border-radius: var(--radius-pill);
-  background: var(--color-glass-faint);
-  color: var(--color-soft-white);
+  background: var(--dcl-transparencies-white-10);
+  color: var(--dcl-neutrals-snow);
   font-size: 13px;
   font-weight: 600;
   line-height: 1;
@@ -189,8 +189,8 @@
     background: var(--color-glass-hover);
   }
   &[data-active] {
-    background: var(--color-soft-white);
-    color: var(--color-text);
+    background: var(--dcl-neutrals-snow);
+    color: var(--dcl-neutrals-shadow);
   }
 }
 
@@ -214,12 +214,12 @@
 
 .listHeader {
   padding: 12px 24px 12px 12px;
-  border-radius: var(--radius-card);
-  background: var(--color-overlay-strong);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-60);
   font-size: 14px;
   font-weight: 600;
   line-height: 1.57;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 
   & > span:first-of-type {
     grid-column: span 2;
@@ -252,12 +252,12 @@
   padding: 48px 24px;
   border: 2px dashed var(--color-glass-line);
   border-radius: var(--radius-dropzone);
-  background: var(--color-glass-faint);
+  background: var(--dcl-transparencies-white-10);
   text-align: center;
 
   &[data-dragging] {
-    border-color: var(--color-white);
-    background: var(--color-glass);
+    border-color: var(--dcl-neutrals-white);
+    background: var(--dcl-transparencies-white-20);
   }
 
   @media (max-width: 768px) {
@@ -265,7 +265,7 @@
     min-height: 0;
     padding: 48px 16px;
     border: 0;
-    background: var(--color-overlay-light);
+    background: var(--dcl-transparencies-black-20);
   }
 }
 
@@ -275,7 +275,7 @@
   background: none;
   font: inherit;
   font-weight: 700;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   text-decoration: underline;
   cursor: pointer;
 }
@@ -290,7 +290,7 @@
   font-size: 20px;
   font-weight: 600;
   line-height: 1.5;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
   margin: 20px auto;
 
   &[data-mobile] {
@@ -314,11 +314,11 @@
   margin: 0;
   font-size: 16px;
   line-height: 1.6;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 
   & u {
     font-weight: 700;
-    color: var(--color-white);
+    color: var(--dcl-neutrals-white);
   }
 
   &[data-mobile] {
@@ -340,7 +340,7 @@
 .dropFormats {
   margin: -8px 0 0;
   font-size: 14px;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 
   @media (max-width: 768px) {
     display: none;
@@ -356,7 +356,7 @@
   width: 320px;
   max-width: 100%;
   height: 46px;
-  border-radius: var(--radius-btn);
+  border-radius: var(--dcl-radius-md);
 
   @media (max-width: 768px) {
     width: 60%;
@@ -367,7 +367,7 @@
 .skeletonButton {
   width: 180px;
   height: 46px;
-  border-radius: var(--radius-btn);
+  border-radius: var(--dcl-radius-md);
 
   &[data-compact] {
     width: 150px;
@@ -385,7 +385,7 @@
 
 .skeletonListHeader {
   height: 49px;
-  border-radius: var(--radius-card);
+  border-radius: var(--dcl-radius-md);
 
   @media (max-width: 768px) {
     display: none;
@@ -394,7 +394,7 @@
 
 .skeletonRow {
   height: 98px;
-  border-radius: var(--radius-card);
+  border-radius: var(--dcl-radius-md);
 
   @media (max-width: 768px) {
     height: 74px;
@@ -403,7 +403,7 @@
 
 .signInIconWrap {
   display: flex;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 
   & svg {
     width: 72px;

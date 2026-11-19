@@ -5,7 +5,7 @@ import { formatRarityLabel, isRarity } from '@/data/lib/creators/rarities'
 import styles from './RarityPill.module.css'
 
 const LIGHT_OVERRIDES: Partial<Record<string, string>> = {
-  legendary: 'var(--color-rarity-legendary-light)'
+  legendary: 'var(--dcl-rarities-legendary-light)'
 }
 
 type Props = {

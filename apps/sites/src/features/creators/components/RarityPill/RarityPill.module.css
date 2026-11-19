@@ -5,9 +5,9 @@
     align-items: center;
     padding: 2px 8px;
     border-radius: var(--radius-pill);
-    border: 0.5px solid var(--rarity-light, var(--color-gray4));
-    background: color-mix(in srgb, var(--rarity-color, var(--color-gray4)) 33%, transparent);
-    color: var(--rarity-light, var(--color-gray4));
+    border: 0.5px solid var(--rarity-light, var(--dcl-neutrals-gray));
+    background: color-mix(in srgb, var(--rarity-color, var(--dcl-neutrals-gray)) 33%, transparent);
+    color: var(--rarity-light, var(--dcl-neutrals-gray));
     font-size: 13px;
     font-weight: 500;
     line-height: 18px;

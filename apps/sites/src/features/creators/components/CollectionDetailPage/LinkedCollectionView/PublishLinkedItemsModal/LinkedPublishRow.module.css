@@ -8,10 +8,10 @@
   align-items: center;
   gap: 12px;
   padding: 12px;
-  border-radius: var(--radius-btn);
-  background: var(--color-overlay);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-40);
   font-size: 13px;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 
   & > span {
     display: flex;
@@ -59,7 +59,7 @@
   font-size: 13px;
   line-height: 1.5;
   text-align: center;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 }
 
 .kindCards {
@@ -74,22 +74,22 @@
   gap: 8px;
   padding: 20px;
   border: 2px solid var(--color-glass-line);
-  border-radius: var(--radius-card);
-  background: var(--color-overlay);
-  color: var(--color-soft-white);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-40);
+  color: var(--dcl-neutrals-snow);
   font: inherit;
   text-align: left;
   cursor: pointer;
 
   &:hover {
-    border-color: var(--color-white);
+    border-color: var(--dcl-neutrals-white);
   }
   &[data-selected] {
-    border-color: var(--color-white);
-    background: var(--color-overlay-strong);
+    border-color: var(--dcl-neutrals-white);
+    background: var(--dcl-transparencies-black-60);
   }
   &:focus-visible {
-    outline: 2px solid var(--color-white);
+    outline: 2px solid var(--dcl-neutrals-white);
     outline-offset: 2px;
   }
 }
@@ -102,7 +102,7 @@
 .kindText {
   font-size: 13px;
   line-height: 1.5;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 }
 
 .kindPrice {

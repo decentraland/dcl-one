@@ -8,8 +8,8 @@
   position: relative;
   width: 500px;
   height: 350px;
-  border-radius: var(--radius-card-lg);
-  background: var(--color-media);
+  border-radius: var(--dcl-radius-lg);
+  background: var(--dcl-neutrals-pearl);
   overflow: hidden;
 
   & iframe {
@@ -27,7 +27,7 @@
     padding-left: 8px;
 
     & svg {
-      fill: var(--color-muted);
+      fill: var(--dcl-neutrals-cloudy-sky);
     }
   }
 }
@@ -39,7 +39,7 @@
   left: 50%;
   aspect-ratio: 1;
   transform: translateX(-50%);
-  border: 2px dashed var(--color-overlay);
+  border: 2px dashed var(--dcl-transparencies-black-40);
   pointer-events: none;
 }
 
@@ -64,9 +64,9 @@
     min-width: 0;
     margin: 0;
     padding: 0;
-    border-radius: var(--radius-btn);
-    background: var(--color-overlay) !important;
-    color: var(--color-white);
+    border-radius: var(--dcl-radius-md);
+    background: var(--dcl-transparencies-black-40) !important;
+    color: var(--dcl-neutrals-white);
     opacity: 1;
 
     &:hover {
@@ -74,7 +74,7 @@
     }
     & svg {
       margin: 0;
-      fill: var(--color-white);
+      fill: var(--dcl-neutrals-white);
     }
   }
 
@@ -87,7 +87,7 @@
       width: auto;
       height: 6px;
       border-radius: var(--radius-pill);
-      background: var(--color-glass);
+      background: var(--dcl-transparencies-white-20);
     }
     &::-webkit-slider-thumb {
       width: 18px;
@@ -95,20 +95,20 @@
       margin-top: -6px;
       padding: 0;
       border-radius: 50%;
-      background: var(--color-white);
-      box-shadow: 0 2px 6px var(--color-overlay);
+      background: var(--dcl-neutrals-white);
+      box-shadow: 0 2px 6px var(--dcl-transparencies-black-40);
     }
     &::-moz-range-track {
       height: 6px;
       border-radius: var(--radius-pill);
-      background: var(--color-glass);
+      background: var(--dcl-transparencies-white-20);
     }
     &::-moz-range-thumb {
       width: 18px;
       height: 18px;
       border-radius: 50%;
-      background: var(--color-white);
-      box-shadow: 0 2px 6px var(--color-overlay);
+      background: var(--dcl-neutrals-white);
+      box-shadow: 0 2px 6px var(--dcl-transparencies-black-40);
     }
     &:focus-visible {
       outline: 2px solid var(--color-glass-line);
@@ -119,8 +119,8 @@
   && input[type="number"] {
     height: 46px;
     border: 1px solid var(--color-glass-line);
-    border-radius: var(--radius-btn-sm);
-    background: var(--color-glass-faint);
+    border-radius: var(--dcl-radius-sm);
+    background: var(--dcl-transparencies-white-10);
     font: inherit;
     font-size: 14px;
     appearance: textfield;
@@ -159,8 +159,8 @@
   height: 32px;
   margin: -16px 0 0 -16px;
   border-radius: 50%;
-  border: 3px solid var(--color-glass);
-  border-top-color: var(--color-text);
+  border: 3px solid var(--dcl-transparencies-white-20);
+  border-top-color: var(--dcl-neutrals-shadow);
   animation: spin 0.8s linear infinite;
 }
 

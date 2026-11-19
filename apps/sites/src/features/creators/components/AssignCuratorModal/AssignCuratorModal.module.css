@@ -9,11 +9,11 @@
   margin: 0;
   font-size: 16px;
   line-height: 1.5;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 }
 
 .error {
   margin: 0;
   font-size: 14px;
-  color: var(--color-err-light);
+  color: var(--dcl-system-red);
 }

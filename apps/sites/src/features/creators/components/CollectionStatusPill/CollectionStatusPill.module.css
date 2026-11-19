@@ -27,8 +27,8 @@
   &[data-status="publishing"],
   &[data-status="not_published"],
   &[data-status="ready_to_publish"] {
-    color: var(--color-info-lighter);
-    border-color: var(--color-info-light);
+    color: var(--dcl-system-blue-light-2);
+    border-color: var(--dcl-system-blue-light-1);
     background: var(--color-info-tint);
   }
   &[data-status="rejected"] {
@@ -43,13 +43,13 @@
     background: var(--color-warning-overlay);
   }
   &[data-status="disabled"] {
-    color: var(--color-gray4);
-    border-color: var(--color-muted2);
+    color: var(--dcl-neutrals-gray);
+    border-color: var(--dcl-neutrals-silver);
     background: var(--color-muted-tint);
   }
   &[data-status="linked"] {
-    color: var(--color-rarity-legendary-light);
-    border-color: var(--color-rarity-legendary-light);
+    color: var(--dcl-rarities-legendary-light);
+    border-color: var(--dcl-rarities-legendary-light);
     background: var(--color-violet-tint);
 
     & svg {

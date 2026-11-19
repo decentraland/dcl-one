@@ -18,10 +18,10 @@
   height: max-content;
   max-height: 90vh;
   padding: 32px;
-  border-radius: var(--radius-modal);
-  background: var(--color-modal-surface);
-  color: var(--color-white);
-  box-shadow: 0 16px 48px var(--color-overlay-strong);
+  border-radius: var(--dcl-radius-lg);
+  background: var(--dcl-brand-purple-dark);
+  color: var(--dcl-neutrals-white);
+  box-shadow: 0 16px 48px var(--dcl-transparencies-black-60);
   overflow: hidden;
   outline: none;
 
@@ -73,7 +73,7 @@
   font-size: 20px;
   font-weight: 600;
   line-height: 1.6;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 }
 
 .closeButton {
@@ -83,12 +83,12 @@
   width: 32px;
   height: 32px;
   border: 0;
-  border-radius: var(--radius-btn);
+  border-radius: var(--dcl-radius-md);
   background: none;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 
   &:hover {
-    background: var(--color-glass-faint);
+    background: var(--dcl-transparencies-white-10);
   }
   &:disabled {
     opacity: 0.4;

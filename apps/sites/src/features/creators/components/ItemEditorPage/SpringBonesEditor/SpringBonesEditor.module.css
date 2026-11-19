@@ -19,7 +19,7 @@
   border: 1px solid var(--editor-line);
   border-radius: var(--radius-chip);
   background: transparent;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   font: inherit;
   font-size: 13px;
 
@@ -39,7 +39,7 @@
   color: var(--editor-label);
 
   &[data-over] {
-    color: var(--color-err-light);
+    color: var(--dcl-system-red);
   }
 }
 
@@ -60,7 +60,7 @@
   min-height: 32px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 
   & > span:first-of-type {
     flex: 1;
@@ -97,12 +97,12 @@
   & input[type="range"]::-webkit-slider-runnable-track {
     height: 4px;
     border-radius: var(--radius-chip);
-    background: linear-gradient(to right, var(--editor-accent) var(--fill, 0%), var(--color-muted) var(--fill, 0%));
+    background: linear-gradient(to right, var(--editor-accent) var(--fill, 0%), var(--dcl-neutrals-cloudy-sky) var(--fill, 0%));
   }
   & input[type="range"]::-moz-range-track {
     height: 4px;
     border-radius: var(--radius-chip);
-    background: var(--color-muted);
+    background: var(--dcl-neutrals-cloudy-sky);
   }
   & input[type="range"]::-moz-range-progress {
     height: 4px;
@@ -140,7 +140,7 @@
   border: 1px solid var(--editor-line);
   border-radius: var(--radius-chip);
   background: var(--editor-surface);
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   font: inherit;
   font-size: 12px;
 

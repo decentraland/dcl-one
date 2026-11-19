@@ -5,9 +5,9 @@
   height: 48px;
   padding: 0 14px;
   border: 1px solid var(--editor-line);
-  border-radius: var(--radius-btn-sm);
+  border-radius: var(--dcl-radius-sm);
   background: var(--editor-surface);
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   font: inherit;
   font-size: 14px;
 
@@ -28,16 +28,16 @@
   padding: 8px 12px 12px;
   border-top: 1px solid var(--editor-line);
   background: var(--editor-surface);
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 
   @media (max-width: 768px) {
     position: fixed;
     inset: auto 0 0 0;
     z-index: 2;
     max-height: 70vh;
-    border-radius: var(--radius-card-lg) var(--radius-card-lg) 0 0;
+    border-radius: var(--dcl-radius-lg) var(--dcl-radius-lg) 0 0;
     padding-bottom: 24px;
-    box-shadow: 0 -8px 24px var(--color-overlay-strong);
+    box-shadow: 0 -8px 24px var(--dcl-transparencies-black-60);
   }
 }
 
@@ -65,7 +65,7 @@
   border: 0;
   border-radius: var(--radius-chip);
   background: transparent;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 
   &:hover {
     background: var(--editor-surface-hover);
@@ -103,7 +103,7 @@
 
   height: 40px;
   border: 1px solid var(--editor-line);
-  border-radius: var(--radius-input);
+  border-radius: var(--dcl-radius-xs);
   background: var(--editor-bg);
 }
 
@@ -130,7 +130,7 @@
   border: 1px solid var(--editor-line);
   border-radius: var(--radius-pill);
   background: transparent;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   font: inherit;
   font-size: 14px;
 
@@ -166,17 +166,17 @@
   }
 
   &[data-fade-start] {
-    mask-image: linear-gradient(to right, transparent, var(--color-text) 20px);
+    mask-image: linear-gradient(to right, transparent, var(--dcl-neutrals-shadow) 20px);
   }
   &[data-fade-end] {
-    mask-image: linear-gradient(to left, transparent, var(--color-text) 20px);
+    mask-image: linear-gradient(to left, transparent, var(--dcl-neutrals-shadow) 20px);
   }
   &[data-fade-start][data-fade-end] {
     mask-image: linear-gradient(
       to right,
       transparent,
-      var(--color-text) 20px,
-      var(--color-text) calc(100% - 20px),
+      var(--dcl-neutrals-shadow) 20px,
+      var(--dcl-neutrals-shadow) calc(100% - 20px),
       transparent
     );
   }
@@ -187,12 +187,12 @@
   width: 20px;
   height: 20px;
   padding: 0;
-  border: 1px solid var(--color-glass);
+  border: 1px solid var(--dcl-transparencies-white-20);
   border-radius: 50%;
   cursor: pointer;
 
   &[data-selected] {
-    border-color: var(--color-white);
+    border-color: var(--dcl-neutrals-white);
     outline: 2px solid var(--editor-accent);
   }
 }

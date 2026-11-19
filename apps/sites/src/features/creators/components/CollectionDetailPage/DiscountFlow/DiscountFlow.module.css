@@ -14,10 +14,10 @@
   min-height: 44px;
   padding: 4px 4px 4px 16px;
   border: 1px solid var(--color-glass-hover);
-  border-radius: var(--radius-btn);
-  background: var(--color-overlay-light);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-20);
   font-size: 14px;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 
   /* The tight right edge is sized for the End button; without it the terms need the same room as the left. */
   &:not(:has(> button)) {
@@ -25,7 +25,7 @@
   }
 
   & span {
-    color: var(--color-gray4);
+    color: var(--dcl-neutrals-gray);
     font-size: 13px;
   }
 
@@ -47,7 +47,7 @@
   border: 0;
   background: none;
   font: inherit;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
   text-decoration: underline;
   cursor: pointer;
 }

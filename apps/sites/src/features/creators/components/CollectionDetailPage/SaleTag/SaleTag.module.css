@@ -13,7 +13,7 @@
       linear-gradient(var(--color-sale-tag), var(--color-sale-tag)) padding-box,
       var(--gradient-flare) border-box;
     border: 0.5px solid transparent;
-    color: var(--color-text);
+    color: var(--dcl-neutrals-shadow);
     font-size: 12px;
     font-weight: 400;
     line-height: 12px;
@@ -22,6 +22,6 @@
 
   .pct {
     font-weight: 700;
-    color: var(--color-sale-tag-ink);
+    color: var(--dcl-system-red-dark-1);
   }
 }

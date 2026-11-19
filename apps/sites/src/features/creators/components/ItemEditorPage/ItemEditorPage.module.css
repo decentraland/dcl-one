@@ -4,7 +4,7 @@
   height: 100vh;
   height: 100dvh;
   background: var(--editor-bg);
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 }
 
 .columns {
@@ -102,7 +102,7 @@
 .stateTitle {
   font-size: 20px;
   font-weight: 700;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 }
 
 .stateText {
@@ -135,7 +135,7 @@
   padding: 0 12px;
   border: 0;
   background: transparent;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   font: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -231,9 +231,9 @@
   width: 100%;
   padding: 0 12px;
   border: 1px solid var(--editor-line);
-  border-radius: var(--radius-input);
+  border-radius: var(--dcl-radius-xs);
   background: var(--editor-bg);
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   font: inherit;
   font-size: 16px;
   line-height: 24px;
@@ -252,7 +252,7 @@
   }
 
   &[data-invalid] {
-    border-color: var(--color-err-light);
+    border-color: var(--dcl-system-red);
   }
 }
 
@@ -263,9 +263,9 @@
   width: 100%;
   padding: 0 12px;
   border: 1px solid var(--editor-line);
-  border-radius: var(--radius-input);
+  border-radius: var(--dcl-radius-xs);
   background: var(--editor-bg);
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   font: inherit;
   font-size: 16px;
   line-height: 24px;
@@ -284,7 +284,7 @@
   }
 
   &[data-invalid] {
-    border-color: var(--color-err-light);
+    border-color: var(--dcl-system-red);
   }
 }
 
@@ -296,7 +296,7 @@
 
 .errorText {
   font-size: 12px;
-  color: var(--color-err-light);
+  color: var(--dcl-system-red);
 }
 
 .toggle {
@@ -306,7 +306,7 @@
   gap: 12px;
   min-height: 40px;
   font-size: 14px;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 
   & > span {
     display: inline-flex;
@@ -329,9 +329,9 @@
   height: 46px;
   padding: 0 12px;
   border: 1px solid var(--editor-line);
-  border-radius: var(--radius-input);
+  border-radius: var(--dcl-radius-xs);
   background: var(--editor-bg);
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   font: inherit;
   font-size: 16px;
   line-height: 24px;
@@ -387,7 +387,7 @@
   white-space: nowrap;
   font-size: 16px;
   font-weight: 600;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 }
 
 .panelTitleRow {
@@ -404,7 +404,7 @@
   padding: 1px;
   border-radius: var(--radius-chip);
   background: var(--color-glass-hover);
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 
   & svg {
     width: 18px;
@@ -425,7 +425,7 @@
   height: 96px;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-btn-sm);
+  border-radius: var(--dcl-radius-sm);
   background: transparent;
   overflow: hidden;
   cursor: pointer;
@@ -445,8 +445,8 @@
   inset: 0;
   display: grid;
   place-items: center;
-  background: var(--color-overlay);
-  color: var(--color-white);
+  background: var(--dcl-transparencies-black-40);
+  color: var(--dcl-neutrals-white);
   opacity: 0;
   transition: opacity 120ms;
 
@@ -474,7 +474,7 @@
   gap: 8px;
   min-width: 0;
   font-size: 13px;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 
   & > svg {
     flex: none;
@@ -485,7 +485,7 @@
 
   &[data-exceeded],
   &[data-exceeded] > svg {
-    color: var(--color-err-light);
+    color: var(--dcl-system-red);
   }
 }
 
@@ -533,8 +533,8 @@
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: var(--color-overlay-strong);
-  color: var(--color-white);
+  background: var(--dcl-transparencies-black-60);
+  color: var(--dcl-neutrals-white);
   transform: translate(-50%, -50%);
   pointer-events: none;
 
@@ -590,7 +590,7 @@
   padding: 0 4px 0 10px;
   border-radius: var(--radius-pill);
   background: var(--editor-surface-hover);
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   font-size: 13px;
 
   & button {
@@ -628,10 +628,10 @@
   background: var(--color-error-overlay);
   font-size: 13px;
   line-height: 1.4;
-  color: var(--color-err-light);
+  color: var(--dcl-system-red);
 
   & q {
-    color: var(--color-soft-white);
+    color: var(--dcl-neutrals-snow);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
@@ -644,7 +644,7 @@
   color: var(--editor-label);
 
   & strong {
-    color: var(--color-white);
+    color: var(--dcl-neutrals-white);
     font-weight: 600;
   }
 }
@@ -653,7 +653,7 @@
   padding: 0;
   border: 0;
   background: none;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   font: inherit;
   font-weight: 600;
   cursor: pointer;
@@ -664,7 +664,7 @@
   }
 
   &:focus-visible {
-    outline: 2px solid var(--color-white);
+    outline: 2px solid var(--dcl-neutrals-white);
     outline-offset: 2px;
     border-radius: 2px;
   }
@@ -677,7 +677,7 @@
   height: 100vh;
   height: 100dvh;
   background: var(--editor-bg);
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 }
 
 .mobileEditorHeader {
@@ -698,7 +698,7 @@
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 }
 
 .mobileCollectionName {
@@ -706,7 +706,7 @@
   min-width: 0;
   margin: 0;
   overflow: hidden;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   font-size: 16px;
   font-weight: 600;
   text-overflow: ellipsis;
@@ -728,7 +728,7 @@
   padding: 8px 12px;
   background: var(--editor-surface);
   font-size: 13px;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 
   & > span {
     flex: 1;
@@ -761,7 +761,7 @@
   height: 64px;
   padding: 0;
   border: 2px solid transparent;
-  border-radius: var(--radius-btn-sm);
+  border-radius: var(--dcl-radius-sm);
   background: transparent;
   overflow: hidden;
 

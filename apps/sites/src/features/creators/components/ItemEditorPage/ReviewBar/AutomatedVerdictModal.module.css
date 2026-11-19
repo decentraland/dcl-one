@@ -11,11 +11,11 @@
   gap: 4px;
   margin: 0;
   padding: 12px 16px;
-  border-radius: var(--radius-btn-sm);
+  border-radius: var(--dcl-radius-sm);
   background: var(--color-error-overlay);
   font-size: 16px;
   font-weight: 600;
-  color: var(--color-error-text);
+  color: var(--dcl-system-red-light-2);
 
   & svg {
     flex: none;
@@ -43,14 +43,14 @@
   margin: 0 0 0 32px;
   font-size: 14px;
   font-weight: 400;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 }
 
 .time {
   margin-left: auto;
   font-size: 13px;
   font-weight: 400;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
   white-space: nowrap;
 }
 
@@ -63,7 +63,7 @@
 .item,
 .group {
   border: 1px solid var(--color-card-line);
-  border-radius: var(--radius-btn-sm);
+  border-radius: var(--dcl-radius-sm);
 
   &[open] > summary::after {
     transform: rotate(-135deg);
@@ -72,7 +72,7 @@
 }
 
 .item {
-  background: var(--color-overlay-light);
+  background: var(--dcl-transparencies-black-20);
 }
 
 .itemSummary,
@@ -94,14 +94,14 @@
     width: 8px;
     height: 8px;
     margin: 0 4px 4px auto;
-    border-right: 2px solid var(--color-gray4);
-    border-bottom: 2px solid var(--color-gray4);
+    border-right: 2px solid var(--dcl-neutrals-gray);
+    border-bottom: 2px solid var(--dcl-neutrals-gray);
     transform: rotate(45deg);
     transition: transform 0.15s;
   }
 
   &:focus-visible {
-    outline: 2px solid var(--color-white);
+    outline: 2px solid var(--dcl-neutrals-white);
     outline-offset: 2px;
   }
 }
@@ -118,7 +118,7 @@
 .groupSummary {
   font-size: 14px;
   font-weight: 600;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 }
 
 .thumb,
@@ -126,7 +126,7 @@
   flex: none;
   width: 36px;
   height: 36px;
-  border-radius: var(--radius-input);
+  border-radius: var(--dcl-radius-xs);
   background: var(--color-chip-dark);
 }
 
@@ -141,7 +141,7 @@
   white-space: nowrap;
   font-size: 15px;
   font-weight: 600;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 }
 
 .status {
@@ -157,10 +157,10 @@
   gap: 3px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 
   &[data-kind="error"] svg {
-    color: var(--color-err-light);
+    color: var(--dcl-system-red);
   }
   &[data-kind="warning"] svg,
   &[data-kind="unchecked"] svg {
@@ -181,7 +181,7 @@
 .note {
   margin: 0;
   padding: 8px 12px;
-  border-radius: var(--radius-btn-sm);
+  border-radius: var(--dcl-radius-sm);
   background: var(--color-warning-overlay);
   font-size: 14px;
   color: var(--color-warning-text);
@@ -192,11 +192,11 @@
   flex-direction: column;
   gap: 4px;
   padding: 10px 12px;
-  border-radius: var(--radius-btn-sm);
-  background: var(--color-overlay);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-transparencies-black-40);
   font-size: 14px;
   line-height: 1.5;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 }
 
 .visualTitle {
@@ -204,7 +204,7 @@
   font-weight: 600;
   letter-spacing: 0.15px;
   text-transform: uppercase;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 }
 
 .visualLine {

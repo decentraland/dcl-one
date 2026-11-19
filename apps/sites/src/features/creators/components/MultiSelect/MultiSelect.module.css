@@ -24,7 +24,7 @@
     & svg {
       width: 14px;
       height: 14px;
-      color: var(--color-white);
+      color: var(--dcl-neutrals-white);
     }
   }
 }

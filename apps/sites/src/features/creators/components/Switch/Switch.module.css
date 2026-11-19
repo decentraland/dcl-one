@@ -31,15 +31,15 @@
     width: 24px;
     height: 24px;
     border-radius: 50%;
-    background: var(--color-white);
-    box-shadow: 0 2px 4px var(--color-overlay);
+    background: var(--dcl-neutrals-white);
+    box-shadow: 0 2px 4px var(--dcl-transparencies-black-40);
     transition:
       transform 0.15s ease,
       background 0.15s ease;
 
     [data-checked] > & {
       transform: translateX(20px);
-      background: var(--color-dcl-red);
+      background: var(--dcl-brand-ruby);
     }
   }
 }

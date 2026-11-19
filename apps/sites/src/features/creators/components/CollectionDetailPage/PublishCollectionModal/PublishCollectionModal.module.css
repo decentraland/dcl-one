@@ -28,7 +28,7 @@
     margin-top: auto;
     padding-top: 24px;
     border-top: 1px solid var(--color-glass-hover);
-    background: var(--color-modal-surface);
+    background: var(--dcl-brand-purple-dark);
     position: sticky;
     bottom: 0;
     [data-testid="checkbox-label"] ~ & {
@@ -53,11 +53,11 @@
     align-items: center;
     gap: 12px;
     padding: 12px;
-    border-radius: var(--radius-btn);
-    background: var(--color-overlay-strong);
+    border-radius: var(--dcl-radius-md);
+    background: var(--dcl-transparencies-black-60);
     font-size: 13px;
     line-height: 1.2;
-    color: var(--color-soft-white);
+    color: var(--dcl-neutrals-snow);
     margin-top: 16px;
 
     & > span:not(:first-of-type) {
@@ -84,7 +84,7 @@
   font-size: 24px;
   font-weight: 700;
   line-height: 1.5;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 }
 
 .lead {
@@ -92,14 +92,14 @@
   font-size: 16px;
   font-weight: 600;
   line-height: 1.5;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 }
 
 .text {
   margin: 0;
   font-size: 16px;
   line-height: 1.5;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 }
 
 /* The "publication fee" term in the step intro: highlighted, with its info tooltip glued to it. */
@@ -107,7 +107,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 
   & svg {
     font-size: 16px;
@@ -127,7 +127,7 @@
   gap: 8px;
   font-size: 16px;
   line-height: 1.5;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 }
 
 .emailInput {
@@ -139,20 +139,20 @@
   background: rgba(255, 255, 255, 0.05);
   font: inherit;
   font-size: 18px;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 
   &::placeholder {
-    color: var(--color-muted2);
+    color: var(--dcl-neutrals-silver);
   }
 
   &:focus {
-    border: 1.5px solid var(--color-white);
+    border: 1.5px solid var(--dcl-neutrals-white);
     padding: 0 15.5px;
   }
 
   &[data-invalid] {
     background: var(--color-err-overlay);
-    border-color: var(--color-err-light);
+    border-color: var(--dcl-system-red);
   }
 }
 
@@ -160,7 +160,7 @@
   margin: 0;
   font-size: 13px;
   line-height: 1.4;
-  color: var(--color-err-light);
+  color: var(--dcl-system-red);
 }
 
 .tableBody {
@@ -183,10 +183,10 @@
   align-items: center;
   gap: 12px;
   padding: 12px;
-  border-radius: var(--radius-btn);
-  background: var(--color-overlay);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-40);
   font-size: 14px;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 
   & > *:not(:first-child) {
     display: inline-flex;
@@ -249,5 +249,5 @@
   margin: 20px 0;
   font-size: 14px;
   line-height: 1.4;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 }

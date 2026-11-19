@@ -25,10 +25,10 @@
   padding: 10px 12px;
   border: 1px solid var(--color-glass-line);
   border-radius: 8px;
-  background: var(--color-glass-faint);
+  background: var(--dcl-transparencies-white-10);
   font: inherit;
   font-size: 14px;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   resize: vertical;
 
   &::placeholder {
@@ -36,7 +36,7 @@
   }
 
   &:focus-visible {
-    outline: 2px solid var(--color-white);
+    outline: 2px solid var(--dcl-neutrals-white);
     outline-offset: -1px;
   }
 
@@ -46,7 +46,7 @@
   }
 
   &[data-invalid] {
-    border-color: var(--color-err-light);
+    border-color: var(--dcl-system-red);
     background: var(--color-err-overlay);
   }
 
@@ -63,29 +63,29 @@
 
   [data-tone="dark"] & {
     background: var(--color-chip-dark);
-    border-color: var(--color-gray0);
+    border-color: var(--dcl-neutrals-pale-black);
   }
 
   /* Full-size on the default surface (the add-items form): the same box as that form's other text fields. */
   [data-tone="default"]:not([data-compact]) & {
     min-height: 56px;
     padding: 0 12px;
-    border-color: var(--color-muted2);
-    border-radius: var(--radius-input);
+    border-color: var(--dcl-neutrals-silver);
+    border-radius: var(--dcl-radius-xs);
     background: transparent;
     font-size: 16px;
     font-weight: 600;
     line-height: 24px;
-    color: var(--color-soft-white);
+    color: var(--dcl-neutrals-snow);
 
     &::placeholder {
-      color: var(--color-muted2);
+      color: var(--dcl-neutrals-silver);
       font-weight: 600;
     }
 
     &:focus-visible {
       outline: 0;
-      border-color: var(--color-white);
+      border-color: var(--dcl-neutrals-white);
     }
 
     &[data-invalid] {
@@ -119,7 +119,7 @@
   margin: 0;
   font-size: 13px;
   line-height: 1.4;
-  color: var(--color-err-light);
+  color: var(--dcl-system-red);
 }
 
 .help {

@@ -6,7 +6,7 @@
     gap: 12px;
     font-size: 14px;
     line-height: 1.5;
-    color: var(--color-soft-white);
+    color: var(--dcl-neutrals-snow);
     cursor: pointer;
 
     /* Visually hidden but still the real, focusable control (no pointer-events: none). Contained by the
@@ -25,7 +25,7 @@
       text-underline-offset: 2px;
 
       &:hover {
-        color: var(--color-dcl-red);
+        color: var(--dcl-brand-ruby);
       }
     }
 
@@ -43,16 +43,16 @@
     width: 20px;
     height: 20px;
     margin-top: 1px;
-    border: 1.5px solid var(--color-gray4);
+    border: 1.5px solid var(--dcl-neutrals-gray);
     border-radius: 4px;
-    color: var(--color-white);
+    color: var(--dcl-neutrals-white);
     transition:
       background 0.15s ease,
       border-color 0.15s ease;
 
     input:checked + & {
-      border-color: var(--color-dcl-red);
-      background: var(--color-dcl-red);
+      border-color: var(--dcl-brand-ruby);
+      background: var(--dcl-brand-ruby);
     }
     input:focus-visible + & {
       box-shadow: 0 0 0 2px var(--color-glass-line);

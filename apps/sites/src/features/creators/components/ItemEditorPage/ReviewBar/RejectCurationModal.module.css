@@ -10,7 +10,7 @@
   font-size: 24px;
   font-weight: 700;
   line-height: 1.5;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 }
 
 .field {
@@ -22,7 +22,7 @@
 .label {
   font-size: 14px;
   line-height: 1.57;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 }
 
 .pills {
@@ -40,10 +40,10 @@
   gap: 8px;
   padding: 4px 4px 4px 8px;
   border-radius: var(--radius-chip);
-  background: var(--color-overlay);
+  background: var(--dcl-transparencies-black-40);
   font-size: 14px;
   font-weight: 600;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 }
 
 .pillRemove {
@@ -76,11 +76,11 @@
   margin: 24px 0 0;
   padding: 0 12px 12px;
   min-width: 0;
-  border: 1px solid var(--color-muted2);
-  border-radius: var(--radius-input);
+  border: 1px solid var(--dcl-neutrals-silver);
+  border-radius: var(--dcl-radius-xs);
 
   &:focus-within {
-    border-color: var(--color-white);
+    border-color: var(--dcl-neutrals-white);
   }
 }
 
@@ -91,7 +91,7 @@
   line-height: 1;
   letter-spacing: 0.15px;
   text-transform: uppercase;
-  color: var(--color-muted2);
+  color: var(--dcl-neutrals-silver);
 }
 
 .textArea {
@@ -101,14 +101,14 @@
   padding: 8px 0 0;
   border: 0;
   background: none;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   font: inherit;
   font-size: 16px;
   line-height: 1.5;
   resize: vertical;
 
   &::placeholder {
-    color: var(--color-muted2);
+    color: var(--dcl-neutrals-silver);
   }
   &:focus {
     outline: 0;
@@ -122,11 +122,11 @@
   align-self: flex-end;
   margin-top: -16px;
   font-size: 12px;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 }
 
 .error {
   margin: 0;
   font-size: 14px;
-  color: var(--color-err-light);
+  color: var(--dcl-system-red);
 }

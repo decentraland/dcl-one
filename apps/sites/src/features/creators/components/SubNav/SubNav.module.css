@@ -72,16 +72,16 @@
     letter-spacing: 0.03em;
     font-size: 15px;
     font-weight: 600;
-    color: var(--color-muted2);
+    color: var(--dcl-neutrals-silver);
     text-decoration: none;
     border-bottom: 4px solid transparent;
   }
   & a:hover {
-    color: var(--color-white);
+    color: var(--dcl-neutrals-white);
   }
   & a[aria-current="page"] {
-    color: var(--color-white);
-    border-bottom-color: var(--color-orange);
+    color: var(--dcl-neutrals-white);
+    border-bottom-color: var(--dcl-brand-orange);
   }
 
   @media (max-width: 768px) {

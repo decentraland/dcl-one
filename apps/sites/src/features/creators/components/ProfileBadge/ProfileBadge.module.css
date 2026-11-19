@@ -19,7 +19,7 @@
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: var(--gradient-amethyst);
+  background: var(--dcl-gradient-amethyst);
 }
 
 .name {
@@ -31,6 +31,6 @@
 
 .you {
   flex: none;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
   font-weight: 400;
 }

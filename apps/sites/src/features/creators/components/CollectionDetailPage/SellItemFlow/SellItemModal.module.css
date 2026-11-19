@@ -43,8 +43,8 @@
 .card {
   display: flex;
   gap: 20px;
-  border-radius: var(--radius-card);
-  background: var(--color-overlay-light);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-20);
   overflow: hidden;
 }
 
@@ -56,7 +56,7 @@
   & > * {
     width: 100%;
     height: 100%;
-    border-radius: var(--radius-card);
+    border-radius: var(--dcl-radius-md);
   }
 }
 
@@ -74,7 +74,7 @@
   font-size: 14px;
   font-weight: 600;
   line-height: 1.4;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -82,7 +82,7 @@
 
 .availability {
   font-size: 13px;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 }
 
 .badges {
@@ -101,7 +101,7 @@
   padding: 0 6px;
   border-radius: var(--radius-chip);
   background: var(--color-chip-dark);
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 
   & > span,
   & > svg {
@@ -115,7 +115,7 @@
   font-size: 16px;
   font-weight: 500;
   line-height: 1.4;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 }
 
 .field {
@@ -127,7 +127,7 @@
 .label {
   font-size: 13px;
   line-height: 1.5;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 }
 
 .row {
@@ -155,17 +155,17 @@
   gap: 8px;
   min-height: 54px;
   padding: 0 16px 0 12px;
-  border: 1.5px solid var(--color-white);
-  border-radius: var(--radius-btn-sm);
+  border: 1.5px solid var(--dcl-neutrals-white);
+  border-radius: var(--dcl-radius-sm);
   background: rgba(255, 255, 255, 0.05);
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 
   &:focus-within {
     box-shadow: 0 0 0 2px var(--color-glass-line);
   }
   &[data-invalid] {
     background: var(--color-err-overlay);
-    border-color: var(--color-err-light);
+    border-color: var(--dcl-system-red);
   }
   &[data-disabled] {
     opacity: 0.5;
@@ -175,7 +175,7 @@
     min-height: 0;
     padding: 8px;
     border: 0;
-    background: var(--color-overlay);
+    background: var(--dcl-transparencies-black-40);
   }
 
   & input {
@@ -187,15 +187,15 @@
     font: inherit;
     font-size: 14px;
     font-weight: 600;
-    color: var(--color-white);
+    color: var(--dcl-neutrals-white);
     color-scheme: dark;
 
     &::placeholder {
       font-weight: 400;
-      color: var(--color-gray4);
+      color: var(--dcl-neutrals-gray);
     }
     &:disabled {
-      color: var(--color-gray4);
+      color: var(--dcl-neutrals-gray);
     }
   }
 
@@ -224,11 +224,11 @@
   & :global(.react-datepicker) {
     font-family: var(--creators-font);
     font-size: 13px;
-    color: var(--color-white);
-    background: var(--color-modal-surface);
+    color: var(--dcl-neutrals-white);
+    background: var(--dcl-brand-purple-dark);
     border: 1px solid var(--color-glass-hover);
-    border-radius: var(--radius-btn);
-    box-shadow: 0 12px 32px var(--color-overlay-strong);
+    border-radius: var(--dcl-radius-md);
+    box-shadow: 0 12px 32px var(--dcl-transparencies-black-60);
     overflow: hidden;
   }
   & :global(.react-datepicker__header) {
@@ -237,67 +237,67 @@
     padding-top: 12px;
   }
   & :global(.react-datepicker__current-month) {
-    color: var(--color-white);
+    color: var(--dcl-neutrals-white);
     font-weight: 600;
     font-size: 14px;
   }
   & :global(.react-datepicker__day-name) {
-    color: var(--color-gray4);
+    color: var(--dcl-neutrals-gray);
   }
   & :global(.react-datepicker__day) {
-    color: var(--color-white);
-    border-radius: var(--radius-btn-sm);
+    color: var(--dcl-neutrals-white);
+    border-radius: var(--dcl-radius-sm);
   }
   & :global(.react-datepicker__day):hover {
-    background: var(--color-glass-faint);
+    background: var(--dcl-transparencies-white-10);
   }
   & :global(.react-datepicker__day--selected),
   & :global(.react-datepicker__day--keyboard-selected) {
-    background: var(--color-dcl-red);
-    color: var(--color-white);
+    background: var(--dcl-brand-ruby);
+    color: var(--dcl-neutrals-white);
   }
   & :global(.react-datepicker__day--today) {
     font-weight: 700;
   }
   & :global(.react-datepicker__day--disabled),
   & :global(.react-datepicker__day--disabled):hover {
-    color: var(--color-gray4);
+    color: var(--dcl-neutrals-gray);
     background: none;
     opacity: 0.4;
   }
   & :global(.react-datepicker__navigation-icon)::before {
-    border-color: var(--color-white);
+    border-color: var(--dcl-neutrals-white);
   }
 }
 
 .usd {
   flex: none;
   font-size: 13px;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 }
 
 .rate {
   align-self: flex-end;
   font-size: 12px;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 }
 
 .errorText {
   margin: 0;
   font-size: 13px;
   line-height: 1.4;
-  color: var(--color-err-light);
+  color: var(--dcl-system-red);
 }
 
 .note {
   display: flex;
   gap: 8px;
   padding: 12px 16px;
-  border-radius: var(--radius-btn);
-  background: var(--color-overlay-light);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-20);
   font-size: 13px;
   line-height: 1.5;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 
   & > svg {
     flex: none;
@@ -313,7 +313,7 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    color: var(--color-soft-white);
+    color: var(--dcl-neutrals-snow);
     font-weight: 600;
   }
 
@@ -323,7 +323,7 @@
 
   &[data-variant="warning"] {
     border: 1px solid var(--color-amber);
-    color: var(--color-soft-white);
+    color: var(--dcl-neutrals-snow);
 
     & > svg {
       color: var(--color-amber);
@@ -366,13 +366,13 @@
   height: 40px;
   margin-right: -10px;
   border: 0;
-  border-radius: var(--radius-btn-sm);
+  border-radius: var(--dcl-radius-sm);
   background: none;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   cursor: pointer;
 
   &:hover {
-    background: var(--color-glass-faint);
+    background: var(--dcl-transparencies-white-10);
   }
   &[data-open] > svg {
     transform: rotate(180deg);
@@ -386,9 +386,9 @@
   margin: 0;
   padding: 4px;
   list-style: none;
-  border-radius: var(--radius-btn-sm);
-  background: var(--color-modal-surface);
-  box-shadow: 0 8px 24px var(--color-overlay-strong);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-brand-purple-dark);
+  box-shadow: 0 8px 24px var(--dcl-transparencies-black-60);
   border: 1px solid var(--color-glass-hover);
   overflow-y: auto;
 }
@@ -401,12 +401,12 @@
   padding: 4px 10px;
   border-radius: var(--radius-chip);
   font-size: 14px;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   cursor: pointer;
 
   &:hover,
   &[data-active] {
-    background: var(--color-glass-faint);
+    background: var(--dcl-transparencies-white-10);
   }
 
   & > span:nth-of-type(1) {
@@ -423,7 +423,7 @@
   min-height: 40px;
   padding: 4px 10px;
   font-size: 13px;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 }
 
 .youTag {
@@ -434,14 +434,14 @@
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 }
 
 .optionAddress {
   margin-left: auto;
   flex: none;
   font-size: 12px;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 }
 
 .avatar {
@@ -464,7 +464,7 @@
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: var(--gradient-amethyst);
+  background: var(--dcl-gradient-amethyst);
 
   [data-variant="compact"] > & {
     width: 26px;
@@ -477,7 +477,7 @@
   flex: none;
   font-size: 14px;
   font-weight: 600;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 
   [data-variant="compact"] > & {
     flex: 0 1 auto;
@@ -494,7 +494,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 14px;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
 
   [data-variant="compact"] > & {
     flex: none;
@@ -512,13 +512,13 @@
   margin-left: auto;
   margin-right: -10px;
   border: 0;
-  border-radius: var(--radius-btn-sm);
+  border-radius: var(--dcl-radius-sm);
   background: none;
-  color: var(--color-white);
+  color: var(--dcl-neutrals-white);
   cursor: pointer;
 
   &:hover {
-    background: var(--color-glass-faint);
+    background: var(--dcl-transparencies-white-10);
   }
   &:disabled {
     opacity: 0.5;

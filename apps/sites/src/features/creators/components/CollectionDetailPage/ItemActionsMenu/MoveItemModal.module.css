@@ -9,7 +9,7 @@
   margin: 0;
   font-size: 20px;
   line-height: 1.4;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 
   &[data-testid="move-item-empty"] {
     font-size: 16px;
@@ -24,7 +24,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.02em;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 }
 
 .loading {
@@ -33,5 +33,5 @@
   gap: 10px;
   min-height: 46px;
   font-size: 14px;
-  color: var(--color-gray4);
+  color: var(--dcl-neutrals-gray);
 }

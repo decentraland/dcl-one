@@ -11,13 +11,13 @@
   white-space: nowrap;
 
   &[data-type="new"] {
-    color: var(--color-rarity-legendary-light);
-    border-color: var(--color-magenta);
+    color: var(--dcl-rarities-legendary-light);
+    border-color: var(--dcl-brand-lavender);
     background: var(--color-violet-tint);
   }
   &[data-type="updates"] {
-    color: var(--color-soft-white);
+    color: var(--dcl-neutrals-snow);
     border-color: var(--color-glass-line);
-    background: var(--color-glass-faint);
+    background: var(--dcl-transparencies-white-10);
   }
 }

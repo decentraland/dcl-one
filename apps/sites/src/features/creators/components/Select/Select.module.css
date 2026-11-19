@@ -11,10 +11,10 @@
     width: 100%;
     height: 56px;
     padding: 0 12px;
-    border: 1px solid var(--color-muted2);
-    border-radius: var(--radius-input);
+    border: 1px solid var(--dcl-neutrals-silver);
+    border-radius: var(--dcl-radius-xs);
     background: transparent;
-    color: var(--color-soft-white);
+    color: var(--dcl-neutrals-snow);
     font: inherit;
     font-size: 16px;
     font-weight: 600;
@@ -24,7 +24,7 @@
 
     &:focus-visible,
     &[aria-expanded="true"] {
-      border-color: var(--color-white);
+      border-color: var(--dcl-neutrals-white);
       outline: 0;
     }
 
@@ -45,7 +45,7 @@
     &[data-tone="dark"] {
       border-color: var(--editor-line);
       background: var(--editor-bg);
-      color: var(--color-white);
+      color: var(--dcl-neutrals-white);
 
       &:focus-visible,
       &[aria-expanded="true"] {
@@ -57,9 +57,9 @@
       height: 40px;
       padding: 0 12px 0 16px;
       border-color: var(--color-glass-line);
-      border-radius: var(--radius-btn-sm);
+      border-radius: var(--dcl-radius-sm);
       background: var(--color-subnav-overlay-scrolled);
-      color: var(--color-white);
+      color: var(--dcl-neutrals-white);
       font-size: 14px;
       letter-spacing: 0.46px;
       text-transform: uppercase;
@@ -80,7 +80,7 @@
       padding: 0;
       border: 0;
       border-radius: var(--radius-chip);
-      background: var(--color-glass);
+      background: var(--dcl-transparencies-white-20);
       font-size: 20px;
       line-height: 1;
       transition: width 0.15s ease;
@@ -120,7 +120,7 @@
     min-width: 0;
 
     &[data-placeholder] {
-      color: var(--color-muted2);
+      color: var(--dcl-neutrals-silver);
     }
 
     &[data-align="end"] {
@@ -171,9 +171,9 @@
     padding: 6px;
     list-style: none;
     border: 1px solid var(--color-glass-line);
-    border-radius: var(--radius-btn);
-    background: var(--color-modal-surface);
-    box-shadow: 0 8px 32px var(--color-overlay-strong);
+    border-radius: var(--dcl-radius-md);
+    background: var(--dcl-brand-purple-dark);
+    box-shadow: 0 8px 32px var(--dcl-transparencies-black-60);
 
     &[data-tone="dark"] {
       border-color: var(--editor-line);
@@ -205,27 +205,27 @@
     gap: 12px;
     min-height: 44px;
     padding: 0 12px;
-    border-radius: var(--radius-btn-sm);
-    color: var(--color-soft-white);
+    border-radius: var(--dcl-radius-sm);
+    color: var(--dcl-neutrals-snow);
     font-size: 15px;
     cursor: pointer;
 
     &[data-active] {
-      background: var(--color-glass-faint);
-      color: var(--color-white);
+      background: var(--dcl-transparencies-white-10);
+      color: var(--dcl-neutrals-white);
     }
     &[aria-selected="true"] {
-      background: var(--color-glass);
-      color: var(--color-white);
+      background: var(--dcl-transparencies-white-20);
+      color: var(--dcl-neutrals-white);
     }
   }
 
   .trailing {
     flex: none;
     padding: 4px 10px;
-    border-radius: var(--radius-btn-sm);
-    background: var(--color-glass);
-    color: var(--color-white);
+    border-radius: var(--dcl-radius-sm);
+    background: var(--dcl-transparencies-white-20);
+    color: var(--dcl-neutrals-white);
     font-size: 13px;
     font-weight: 700;
     line-height: 1.4;

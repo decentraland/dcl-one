@@ -10,15 +10,15 @@
   margin: 0;
   font-size: 14px;
   line-height: 1.5;
-  color: var(--color-soft-white);
+  color: var(--dcl-neutrals-snow);
 }
 
 .player {
   display: block;
   width: 100%;
   max-height: 60vh;
-  border-radius: var(--radius-card-lg);
-  background: var(--color-text);
+  border-radius: var(--dcl-radius-lg);
+  background: var(--dcl-neutrals-shadow);
 }
 
 .loading {
