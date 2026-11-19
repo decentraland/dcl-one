@@ -57,6 +57,12 @@ impl AppSetting for RenderScaleSetting {
     }
 }
 
+/// Moves a saved render scale to the step the slider shows, so a value saved off-step
+/// (e.g. 0.97) renders at the value the player sees.
+pub fn snap_saved_render_scale(config: &mut AppConfig) {
+    RenderScaleSetting::load(config).save(config);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -88,14 +94,15 @@ mod tests {
     }
 
     #[test]
-    fn shows_an_off_step_value_at_the_nearest_step_and_keeps_it_saved() {
-        for (saved, shown) in [(0.97, 100.0), (0.3, 50.0)] {
+    fn snaps_an_off_step_saved_value_to_the_shown_step() {
+        for (saved, snapped, shown) in [(0.97, 1.0, 100.0), (0.53, 0.5, 50.0), (0.3, 0.5, 50.0)] {
             let mut config = AppConfig::default();
             config.graphics.render_scale = saved;
+            snap_saved_render_scale(&mut config);
+            assert_eq!(SessionGraphics::default().render_scale(&config), snapped);
             let mut settings = Settings { settings: vec![] };
             settings.add_int_setting::<RenderScaleSetting>(&config);
             assert_eq!(render_resolution(&settings).value, shown);
-            assert_eq!(SessionGraphics::default().render_scale(&config), saved);
         }
     }
 }

@@ -170,6 +170,9 @@ impl Plugin for SettingBridgePlugin {
         app.add_systems(Update, handle_settings);
 
         let mut schedule = Schedule::new(ApplyAppSettingsLabel);
+        render_scale_setting::snap_saved_render_scale(
+            &mut app.world_mut().resource_mut::<AppConfig>(),
+        );
         let config = app.world().resource::<AppConfig>().clone();
 
         add_int_setting::<ShadowDistanceSetting>(app, &mut settings, &mut schedule, &config);
