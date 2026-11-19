@@ -1280,30 +1280,69 @@ pub async fn get_legacy_catalog(
     }
 }
 
-/// The memo key of a browse read (the overview rails, the browse pages),
-/// built from the parsed filters so that parameter order, spelling and
-/// unknown keys share one entry. A read that names a collection, an item, a
-/// creator or a search (item pages, checkout, creator pages, typed searches)
-/// has no key and reads fresh.
-fn unified_browse_key(group_by: UnifiedGroupBy, f: &UnifiedCatalogFilters) -> Option<String> {
+/// Whether a read names what it reads (a collection, an item, a creator or a search): an item
+/// page, checkout, the cart's price read, a creator page or a typed search. It reads fresh and
+/// carries no creator profiles, so it never waits on the creator directory.
+fn names_its_rows(f: &UnifiedCatalogFilters) -> bool {
     let b = &f.base;
-    let named = f.contract_addresses.is_some()
+    f.contract_addresses.is_some()
         || f.item_ids.is_some()
         || b.contract_address.is_some()
         || b.item_id.is_some()
         || !b.creator.is_empty()
-        || b.search.is_some();
-    (!named).then(|| format!("unified:{group_by:?}:{f:?}"))
+        || b.search.is_some()
+}
+
+/// The largest page the 30 s memo keeps: the overview's rails ask for 12 rows and the browse
+/// grid's default page is [`SHOP_DEFAULT_PAGE_SIZE`].
+const MEMO_MAX_ROWS: i64 = SHOP_DEFAULT_PAGE_SIZE;
+
+/// Whether a read's filters are the rails' own shape, which the memo keeps: none of the free
+/// text a client can vary at will (a category, rarities, wearable categories or genders, price
+/// bounds, emote filters). Every other value is an enum or a flag, so the keys stay few.
+fn rail_filters(b: &ShopCatalogFilters) -> bool {
+    b.category.is_none()
+        && b.rarities.is_empty()
+        && b.wearable_categories.is_empty()
+        && b.wearable_genders.is_empty()
+        && b.min_price_credits.is_none()
+        && b.max_price_credits.is_none()
+        && !b.is_smart
+        && b.emote_loop.is_none()
+        && !b.emote_has_sound
+        && !b.emote_has_geometry
+}
+
+/// The memo key of a browse read (the overview rails), built from the parsed filters with the
+/// page size clamped, so that parameter order, spelling and unknown keys share one entry. Only a
+/// first page of at most [`MEMO_MAX_ROWS`] rows over [`rail_filters`] has one: another page,
+/// size or filter reads fresh, so a client cannot fill the memo with full-size pages under keys
+/// it makes up. A read that names a collection, an item, a creator or a search (item pages,
+/// checkout, creator pages, typed searches) has no key either.
+fn unified_browse_key(group_by: UnifiedGroupBy, f: &UnifiedCatalogFilters) -> Option<String> {
+    let b = &f.base;
+    let named = names_its_rows(f);
+    let rows = b
+        .first
+        .unwrap_or(SHOP_DEFAULT_PAGE_SIZE)
+        .clamp(SHOP_MIN_PAGE_SIZE, SHOP_MAX_PAGE_SIZE);
+    let first_page = b.skip.unwrap_or(0) <= 0;
+    if named || !first_page || rows > MEMO_MAX_ROWS || !rail_filters(b) {
+        return None;
+    }
+    let mut keyed = f.clone();
+    (keyed.base.first, keyed.base.skip) = (Some(rows), None);
+    Some(format!("unified:{group_by:?}:{keyed:?}"))
 }
 
 fn body_of(v: impl Serialize) -> Result<Value, ApiError> {
     serde_json::to_value(v).map_err(|e| ApiError::Internal(e.to_string()))
 }
 
-/// Served from a 30 s memo for a browse read, which then carries its creators' profiles, added to
-/// each response under the content denylist as it stands (never memoized). The readiness gates
-/// and the MANA rate read still run per request, while a memo hit keeps the prices it was built
-/// with (at most 30 s old).
+/// A browse read (one that names none of its rows) carries its creators' profiles, added to each
+/// response under the content denylist as it stands (never memoized); the rails' shapes are also
+/// served from a 30 s memo ([`unified_browse_key`]). The readiness gates and the MANA rate read
+/// still run per request, while a memo hit keeps the prices it was built with (at most 30 s old).
 pub async fn get_unified_catalog(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
@@ -1318,9 +1357,9 @@ pub async fn get_unified_catalog(
         Err(envelope) => return envelope,
     };
     let browse_key = unified_browse_key(group_by, &filters);
-    // Only a browse read carries its creators' profiles: a read that names its item (an item
-    // page, the cart's price read, checkout) never waits on the creator directory's refresh.
-    let with_profiles = browse_key.is_some();
+    // Every browse read carries its creators' profiles, memoized or not; a read that names its
+    // rows never waits on the creator directory.
+    let with_profiles = !names_its_rows(&filters);
     let read = || async {
         match group_by {
             UnifiedGroupBy::Item => unified_items(&state, &filters, rate)
@@ -1430,12 +1469,20 @@ pub async fn get_trending_catalog(
         trending_clamp_first(req.first),
         trending_clamp_days(req.days),
     );
-    let key = format!("trending:{first}:{days}:{:?}", req.filters);
+    let read = || async {
+        let data = trending_items(&state, Some(first), Some(days), &req.filters, rate).await?;
+        body_of(TrendingResponseBody { data }).map_err(IntoResponse::into_response)
+    };
+    // As the browse memo, only over the rails' filters: free text a client varies reads fresh.
+    let key = rail_filters(&req.filters.base)
+        .then(|| format!("trending:{first}:{days}:{:?}", req.filters));
     let (body, directory) = tokio::join!(
-        memoized(&state, Ttl::S30, key, || async {
-            let data = trending_items(&state, Some(first), Some(days), &req.filters, rate).await?;
-            body_of(TrendingResponseBody { data }).map_err(IntoResponse::into_response)
-        }),
+        async {
+            match key {
+                Some(key) => memoized(&state, Ttl::S30, key, read).await,
+                None => read().await.map(Arc::new),
+            }
+        },
         directory_snapshot(&state)
     );
     match body {
@@ -1691,6 +1738,28 @@ mod tests {
             ]),
             "grouped by listing"
         );
+        assert_eq!(
+            key(&[("groupBy", "item")]),
+            key(&[("groupBy", "item"), ("first", "48"), ("skip", "0")]),
+            "the default page and an explicit one share the entry"
+        );
+        // Only the rails' shapes are kept: a larger page, a later page or free text reads fresh,
+        // so a client cannot fill the memo with full-size pages under made-up keys.
+        for fresh in [
+            vec![("first", "49")],
+            vec![("first", "1000")],
+            vec![("first", "5095")],
+            vec![("first", "12"), ("skip", "12")],
+            vec![("first", "12"), ("category", "wearable")],
+            vec![("first", "12"), ("rarity", "mythic")],
+            vec![("first", "12"), ("wearableCategory", "hat")],
+            vec![("first", "12"), ("wearableGender", "female")],
+            vec![("first", "12"), ("minPriceCredits", "1")],
+            vec![("first", "12"), ("isSmart", "true")],
+            vec![("first", "12"), ("emoteHasSound", "true")],
+        ] {
+            assert_eq!(key(&fresh), None, "{fresh:?}");
+        }
         let c = "0x1111111111111111111111111111111111111111";
         let item = format!("{c}-1");
         for named in [
