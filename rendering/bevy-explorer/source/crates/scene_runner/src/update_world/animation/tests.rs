@@ -234,6 +234,24 @@ fn sdk_animator_controls_the_visible_model_during_a_source_swap() {
     let stopped = app.world().get::<Transform>(bone).unwrap();
     assert_eq!(stopped.translation, Vec3::ONE);
     assert_eq!(stopped.scale, moving.scale);
+
+    // Keep the SDK Animator attached as the new instance takes over.
+    send_animator(&mut app, root, id, Some(&swim_animator()));
+    app.update();
+    let replacement_bone = load_model(&mut app, container);
+    app.update();
+    let first = *app.world().get::<Transform>(replacement_bone).unwrap();
+    assert_eq!(first.translation, Vec3::ONE);
+    assert!(first.scale.x > 1.0);
+    app.update();
+    assert!(
+        app.world()
+            .get::<Transform>(replacement_bone)
+            .unwrap()
+            .scale
+            .x
+            > first.scale.x
+    );
 }
 
 #[test]

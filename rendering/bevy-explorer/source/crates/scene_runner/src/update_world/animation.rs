@@ -97,7 +97,7 @@ fn sample_default_pose(
 fn update_animations(
     mut commands: Commands,
     // GltfReady follows the visible instance while a replacement source loads.
-    changed: Query<Entity, Or<(Changed<Animator>, Changed<GltfReady>)>>,
+    changed: Query<Entity, (With<Clips>, Or<(Changed<Animator>, Changed<GltfReady>)>)>,
     mut removed: RemovedComponents<Animator>,
     mut players: Query<(
         &SceneEntity,
