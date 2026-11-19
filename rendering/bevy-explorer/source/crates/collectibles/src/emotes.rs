@@ -96,7 +96,6 @@ enum AnimLoadState {
 #[derive(Resource, Default)]
 pub struct BaseEmotes(pub HashSet<CollectibleUrn<Emote>>);
 
-#[allow(clippy::type_complexity)]
 fn load_animations(
     asset_server: Res<AssetServer>,
     mut gltfs: ResMut<Assets<Gltf>>,

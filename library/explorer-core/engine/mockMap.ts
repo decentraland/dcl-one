@@ -5,6 +5,7 @@ import { serviceUrl } from '@hud-host'
 import type { Peer } from '../features/map/mapApi'
 import type { DiscoverPlace } from '../features/places/placesApi'
 import type { Vec2 } from '../features/map/mapCoords'
+import type { MapPinInfo } from './generated/index'
 import type { EventData, MapPlayer, PageToScene, SceneToPage, SearchPlacesRequest } from './protocol'
 
 const image = (x: number, y: number): string => `${serviceUrl('mapApi')}/v2/parcels/${x}/${y}/map.png?width=512&height=256&size=16`
@@ -113,6 +114,11 @@ export const MOCK_PEERS: Peer[] = [
   { address: '0x9f8c2a1b4d6e7f0a3b5c8d9e1f2a4b6c8d0e1f23', x: 960, z: -480 },
   { address: '0x3a1b2c4d5e6f7081920a3b4c5d6e7f8091a2b3c4', x: -1100, z: 300 },
   { address: '0x77a0b1c2d3e4f5061728394a5b6c7d8e9f001122', x: 1600, z: 1600 }
+]
+
+export const MOCK_MAP_PINS: MapPinInfo[] = [
+  { id: 'bafymockpx:512', x: 3, y: 2, title: 'Memory Grid', icon: null },
+  { id: 'bafymockpx:513', x: -4, y: 5, title: 'Tile Tally', icon: 'https://content.invalid/images/icons/tile_tally.png' }
 ]
 
 /** Players the mock engine holds near the player, in world metres. */

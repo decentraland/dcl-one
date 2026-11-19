@@ -195,6 +195,46 @@ fn normalize_integers(body: &mut Map<String, Value>) {
     }
 }
 
+const POSTER_FIELDS: [(&str, &str); 2] =
+    [("image", "poster"), ("image_vertical", "poster-vertical")];
+
+fn absolute_schema_posters(raw: &mut Map<String, Value>, settings: &crate::Settings) {
+    for (field, _) in POSTER_FIELDS {
+        if let Some(path) = raw.get(field).and_then(Value::as_str)
+            && path.starts_with('/')
+            && !path.starts_with("//")
+        {
+            let absolute = format!(
+                "{}{path}",
+                settings.events_asset_base_url.trim_end_matches('/')
+            );
+            raw.insert(field.into(), json!(absolute));
+        }
+    }
+}
+
+fn same_form_value(field: &str, value: &Value, stored: Option<&Value>) -> bool {
+    if stored == Some(value) || (stored.is_none() && value.is_null()) {
+        return true;
+    }
+    match field {
+        "start_at" | "recurrent_until" => {
+            let utc = |v: &Value| v.as_str().and_then(parse_rfc3339);
+            utc(value).is_some_and(|date| stored.and_then(utc) == Some(date))
+        }
+        "recurrent_interval" => {
+            value.as_i64() == Some(1) && stored.and_then(Value::as_i64).unwrap_or(0) == 0
+        }
+        "recurrent_weekday_mask" | "recurrent_month_mask" => {
+            value.as_i64() == Some(0) && stored.is_none_or(Value::is_null)
+        }
+        "contact" | "details" | "featured_item" | "server" => {
+            value.is_null() && stored.and_then(Value::as_str) == Some("")
+        }
+        _ => false,
+    }
+}
+
 fn pick(source: &Map<String, Value>, keys: &[&str], into: &mut Map<String, Value>) {
     for key in keys {
         if let Some(value) = source.get(*key) {
@@ -389,9 +429,11 @@ pub async fn create_event(
             json!(super::metadata::jump_in_url(server.as_deref(), x, y)),
         );
     }
+    let mut schema_body = data.clone();
+    absolute_schema_posters(&mut schema_body, &state.settings);
     validate::validate(
         &validate::NEW_EVENT_BODY,
-        &Value::Object(data.clone()),
+        &Value::Object(schema_body),
         Flavour::Gatsby,
     )?;
     validate::validate(
@@ -814,6 +856,45 @@ async fn update_event(
         body.insert("featured_item".into(), Value::Null);
     }
 
+    // Restore read projections before comparing authored values or assigning provenance.
+    let mut restored_projection = false;
+    let base = state.settings.asset_rewrite_base.as_deref();
+    for field in ["image", "image_vertical", "url"] {
+        let (Some(submitted), Some(stored)) = (
+            body.get(field).and_then(Value::as_str),
+            before.get(field).and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        if submitted == stored {
+            continue;
+        }
+        let projected = match field {
+            "url" => super::project_event_url(stored, base),
+            _ => super::project_event_image(
+                stored,
+                base,
+                state.settings.configured_public_base.as_deref(),
+                &state.settings.events_asset_base_url,
+            ),
+        };
+        if projected.as_deref() == Some(submitted) {
+            body.insert(field.into(), json!(stored));
+            restored_projection = true;
+        }
+    }
+    if restored_projection
+        && body
+            .iter()
+            .all(|(field, value)| same_form_value(field, value, before.get(field)))
+    {
+        tx.commit().await?;
+        return match editor {
+            Editor::Admin { .. } => answer_admin(state, event_id).await,
+            Editor::Wallet { signer, .. } => answer(state, event_id, Some(&signer)).await,
+        };
+    }
+
     // updateEvent.ts:183-236: the picked attribute sets.
     let mut updated: Map<String, Value> = Map::new();
     pick(&before, EDIT_EVENT_ATTRIBUTES, &mut updated);
@@ -904,17 +985,7 @@ async fn update_event(
     }
     let mut echo = updated.clone();
     echo.remove("_image_source");
-    for field in ["image", "image_vertical"] {
-        if let Some(path) = echo.get(field).and_then(Value::as_str)
-            && path.starts_with('/')
-        {
-            let absolute = format!(
-                "{}{path}",
-                state.settings.events_asset_base_url.trim_end_matches('/')
-            );
-            echo.insert(field.into(), json!(absolute));
-        }
-    }
+    absolute_schema_posters(&mut echo, &state.settings);
     validate::validate(
         &validate::NEW_EVENT_BODY,
         &Value::Object(echo.clone()),
@@ -944,34 +1015,42 @@ async fn update_event(
         return Err(refuse(super::recurrence::TOO_MANY_PAST_ITERATIONS_MESSAGE));
     }
     // updateEvent.ts:291-300: a changed poster must be one this node serves.
-    for (field, kind) in [("image", "poster"), ("image_vertical", "poster-vertical")] {
+    for (field, kind) in POSTER_FIELDS {
         let next = body
             .get(field)
             .and_then(Value::as_str)
-            .filter(|v| !v.is_empty());
+            .filter(|value| !value.is_empty());
         let stored = before.get(field).and_then(Value::as_str);
         if let Some(next) = next
             && stored != Some(next)
         {
-            let spelled = |value: &str| {
-                super::posters::normalize_image_input(value, &state.settings, kind).ok()
-            };
-            let same_poster = matches!(
-                (stored.and_then(spelled), spelled(next)),
-                (Some(stored), Some(next)) if stored == next
-            );
-            if same_poster {
-                // The same poster spelled absolutely: not a change.
-                updated.insert(field.into(), json!(stored));
-                if field == "image" {
-                    updated.remove("_image_source");
-                }
-            } else {
-                let normalized = resolve_poster(&mut *tx, next, &state.settings, kind).await?;
-                updated.insert(field.into(), json!(normalized));
+            let normalized = resolve_poster(
+                &mut *tx,
+                next,
+                &state.settings,
+                kind,
+                super::posters::PosterWrite::Replace(stored),
+            )
+            .await?;
+            if field == "image" && Some(normalized.as_str()) == stored {
+                updated.remove("_image_source");
             }
+            updated.insert(field.into(), json!(normalized));
         }
     }
+    // Metadata enrichment can refresh generated artwork independently of an edit.
+    let moderated_content_changed = EDIT_EVENT_ATTRIBUTES
+        .iter()
+        .filter(|field| !NON_MODERATED_EDITABLE_FIELDS.contains(field))
+        .any(|field| {
+            body.get(*field).is_some_and(|submitted| {
+                let next = match *field {
+                    "image" | "image_vertical" => updated.get(*field).unwrap_or(&Value::Null),
+                    _ => submitted,
+                };
+                moderated_field_changed(field, next, before.get(*field).unwrap_or(&Value::Null))
+            })
+        });
     // updateEvent.ts:302-323
     if let Some(Value::Array(schedules)) = updated.get("schedules") {
         let mut seen = std::collections::HashSet::new();
@@ -1123,14 +1202,6 @@ async fn update_event(
     // updateEvent.ts:452-477: re-queue changed content unless the actor may approve.
     let actor_can_approve =
         admin || moderator || permissions.approve_any || (is_owner && permissions.approve_own);
-    let moderated_content_changed = EDIT_EVENT_ATTRIBUTES
-        .iter()
-        .filter(|field| !NON_MODERATED_EDITABLE_FIELDS.contains(field))
-        .any(|field| {
-            body.get(*field).is_some_and(|next| {
-                moderated_field_changed(field, next, before.get(*field).unwrap_or(&Value::Null))
-            })
-        });
     if flag(&before, "approved") && moderated_content_changed && !actor_can_approve {
         raw.insert("approved".into(), json!(false));
         raw.insert("approved_by".into(), Value::Null);
@@ -1573,6 +1644,7 @@ mod tests {
         pool: &sqlx::PgPool,
         app: &axum::Router,
         vertical: bool,
+        public_base: Option<&str>,
     ) -> (String, Vec<u8>) {
         if super::super::profiles::local_profile(pool, &address())
             .await
@@ -1606,14 +1678,13 @@ mod tests {
             .unwrap();
         let body: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(status, StatusCode::CREATED, "{body}");
-        let url = body["data"]["url"].as_str().unwrap();
-        let segment = format!("{}/", path.replace("/api", ""));
-        let local = url
-            .find(&segment)
-            .filter(|_| url.starts_with("http"))
-            .map(|at| &url[at..])
-            .unwrap_or_else(|| panic!("poster url is absolute on the asset base: {url}"));
-        (local.to_owned(), png)
+        let filename = body["data"]["filename"].as_str().unwrap();
+        let local = format!("/{filename}");
+        assert_eq!(
+            body["data"]["url"],
+            format!("{}/events-assets-099ac00{local}", public_base.unwrap_or(""))
+        );
+        (local, png)
     }
 
     /// `withAuthProfile()`: the test wallet needs a profile this node holds to
@@ -2237,6 +2308,248 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unchanged_projected_posters_and_jump_url_preserve_the_adopted_event() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        ensure_profile(&pool).await;
+        let settings = Settings {
+            asset_rewrite_base: Some("https://node.example".into()),
+            configured_public_base: Some("https://node.example".into()),
+            events_asset_base_url: Settings::events_asset_base_for("https://node.example"),
+            user_writes_enabled: true,
+            operator_writes_enabled: true,
+            events_admin_token: Some("admin-test".into()),
+            ..Settings::for_tests()
+        };
+        let dir =
+            std::env::temp_dir().join(format!("event-poster-policy-{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        let app = router(Arc::new(
+            ExploreState::new(pool.clone(), settings.clone(), None).with_storage(storage),
+        ));
+        let (status, created) = call(
+            &app,
+            "POST",
+            "/api/events",
+            Some("signed"),
+            Some(new_event()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        let id = created["data"]["id"].as_str().unwrap();
+        let path = format!("/api/events/{id}");
+        sqlx::query("UPDATE explore.event SET raw = raw || $2 WHERE id=$1")
+            .bind(id)
+            .bind(json!({
+                "image": "https://events-assets-099ac00.decentraland.org/poster/copy.png",
+                "image_vertical": "https://events-assets-099ac00.decentraland.org/poster-vertical/copy.png",
+                "url": "https://decentraland.org/jump/events?position=10%2C-20"
+            }))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, approved) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("admin-test"),
+            Some(json!({"approved":true})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{approved}");
+        assert_eq!(approved["data"]["approved"], true);
+        let read_raw = || async {
+            sqlx::query_scalar::<_, Value>("SELECT raw FROM explore.event WHERE id=$1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+        let before = read_raw().await;
+        let (status, view) = call(&app, "GET", &path, Some("signed"), None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        let fields = json!({
+            "image": view["data"]["image"],
+            "image_vertical": view["data"]["image_vertical"],
+            "url": view["data"]["url"]
+        });
+        assert_eq!(
+            fields["image"],
+            "https://node.example/events-assets-099ac00/poster/copy.png"
+        );
+        let (status, edited) = call(&app, "PATCH", &path, Some("admin-test"), Some(fields)).await;
+        assert_eq!(status, StatusCode::CREATED, "{edited}");
+        assert_eq!(read_raw().await, before);
+
+        assert_eq!(edited["data"]["approved"], true);
+
+        let (status, other) = call(
+            &app,
+            "POST",
+            "/api/events",
+            Some("signed"),
+            Some(new_event()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{other}");
+        let other_id = other["data"]["id"].as_str().unwrap();
+        sqlx::query("UPDATE explore.event SET raw = raw || $2 WHERE id=$1")
+            .bind(other_id)
+            .bind(
+                json!({"image": "https://events-assets-099ac00.decentraland.org/poster/other_copy.png"}),
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO explore.poster (kind, file, blob_cid, content_type, byte_size, origin, fetched_at)
+             VALUES ('poster','other_copy.png','fixture','image/png',1,'upstream',now()),
+                    ('poster','copy.png','fixture','image/png',1,'upstream',now()),
+                    ('poster','replacement.png','fixture','image/png',1,'local',now())",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (status, other) = call(
+            &app,
+            "GET",
+            &format!("/api/events/{other_id}"),
+            Some("signed"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{other}");
+        for body in [
+            json!({"image":other["data"]["image"]}),
+            json!({"image":"/events-assets-099ac00/poster/copy.png"}),
+            json!({"image":"https://events-assets-099ac00.decentraland.org/poster/other_copy.png"}),
+            json!({"image":"https://other.example/events-assets-099ac00/poster/copy.png"}),
+            json!({"image":"https://node.example.other.test/events-assets-099ac00/poster/copy.png"}),
+            json!({"image_vertical":"https://node.example/events-assets-099ac00/poster/copy.png"}),
+            json!({"image":"https://node.example/events-assets-099ac00/not-a-poster.png"}),
+        ] {
+            let (status, rejected) =
+                call(&app, "PATCH", &path, Some("admin-test"), Some(body.clone())).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {rejected}");
+            assert_eq!(read_raw().await, before);
+        }
+
+        for (image, expected) in [
+            (
+                "https://events-assets-099ac00.decentraland.org/poster/other_copy.png",
+                StatusCode::CREATED,
+            ),
+            (
+                "https://node.example/events-assets-099ac00/poster/other_copy.png",
+                StatusCode::CREATED,
+            ),
+            (
+                "https://events-assets-099ac00.decentraland.org/poster/uncached.png",
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                "https://node.example/events-assets-099ac00/poster/uncached.png",
+                StatusCode::BAD_REQUEST,
+            ),
+        ] {
+            let mut body = new_event();
+            body["image"] = json!(image);
+            let (status, reply) =
+                call(&app, "POST", "/api/events", Some("signed"), Some(body)).await;
+            assert_eq!(status, expected, "{image}: {reply}");
+            if status == StatusCode::CREATED {
+                let copied: String =
+                    sqlx::query_scalar("SELECT raw->>'image' FROM explore.event WHERE id=$1")
+                        .bind(reply["data"]["id"].as_str().unwrap())
+                        .fetch_one(&pool)
+                        .await
+                        .unwrap();
+                assert_eq!(copied, "/poster/other_copy.png");
+                assert_eq!(
+                    reply["data"]["image"],
+                    "https://node.example/events-assets-099ac00/poster/other_copy.png"
+                );
+            }
+        }
+
+        let no_domain = router(Arc::new(ExploreState::new(
+            pool.clone(),
+            Settings {
+                asset_rewrite_base: None,
+                configured_public_base: None,
+                events_asset_base_url: Settings::events_asset_base_for("http://localhost:8080"),
+                ..settings
+            },
+            None,
+        )));
+        let (status, view) = call(&no_domain, "GET", &path, Some("signed"), None).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        let mut body = serde_json::Map::new();
+        for field in ["image", "image_vertical", "url"] {
+            assert_eq!(view["data"][field], before[field]);
+            body.insert(field.into(), view["data"][field].clone());
+        }
+        let (status, saved) = call(
+            &no_domain,
+            "PATCH",
+            &path,
+            Some("admin-test"),
+            Some(Value::Object(body)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{saved}");
+        assert_eq!(saved["data"]["approved"], true);
+        let saved = read_raw().await;
+        for field in ["image", "image_vertical", "url"] {
+            assert_eq!(saved[field], before[field]);
+        }
+
+        let (status, changed) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("signed"),
+            Some(json!({
+                "image": "https://node.example/events-assets-099ac00/poster/copy.png",
+                "image_vertical": "https://node.example/events-assets-099ac00/poster-vertical/copy.png",
+                "name": "A new moderated title",
+            })),
+        ).await;
+        assert_eq!(status, StatusCode::CREATED, "{changed}");
+        assert_eq!(changed["data"]["approved"], false);
+        let changed_raw = read_raw().await;
+        for field in ["image", "image_vertical", "url"] {
+            assert_eq!(changed_raw[field], before[field]);
+        }
+        let (status, approved) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("admin-test"),
+            Some(json!({"approved":true})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{approved}");
+        assert_eq!(approved["data"]["approved"], true);
+
+        let (status, replaced) = call(
+            &app, "PATCH", &path, Some("signed"),
+            Some(json!({"image":"https://node.example/events-assets-099ac00/poster/replacement.png"})),
+        ).await;
+        assert_eq!(status, StatusCode::CREATED, "{replaced}");
+        assert_eq!(
+            replaced["data"]["approved"], false,
+            "a real change still reopens moderation"
+        );
+        let after = read_raw().await;
+        assert_eq!(after["image"], "/poster/replacement.png");
+        assert_eq!(after["image_vertical"], before["image_vertical"]);
+        drop(app);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
     async fn generated_defaults_use_the_node_asset_mount_without_persisting_its_origin() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
@@ -2373,6 +2686,8 @@ mod tests {
             pool.clone(),
             Settings {
                 user_writes_enabled: true,
+                operator_writes_enabled: true,
+                events_admin_token: Some("admin-test".into()),
                 events_asset_base_url: "https://native.example.org/events".into(),
                 ..Settings::for_tests()
             },
@@ -2389,7 +2704,17 @@ mod tests {
         let id = created["data"]["id"].as_str().unwrap();
         let path = format!("/api/events/{id}");
         sqlx::query(r#"UPDATE explore.event SET raw=raw || '{"image":"/poster/legacy.webp","_image_source":"explicit"}'::jsonb WHERE id=$1"#).bind(id).execute(&pool).await.unwrap();
-        let (status, _) = call(
+        let (status, approved) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("admin-test"),
+            Some(json!({"approved":true})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(approved["data"]["approved"], true);
+        let (status, saved) = call(
             &app,
             "PATCH",
             &path,
@@ -2398,6 +2723,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(saved["data"]["approved"], true);
         sqlx::query(r#"UPDATE explore.event SET raw=raw || '{"image":"https://third.example.org/scene.png","_image_source":"generated"}'::jsonb WHERE id=$1"#).bind(id).execute(&pool).await.unwrap();
         let (status, _) = call(
             &app,
@@ -2423,6 +2749,108 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn uploaded_and_copied_posters_round_trip_with_each_public_base() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        ensure_profile(&pool).await;
+        let dir = std::env::temp_dir().join(format!("poster-base-{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        sqlx::query(
+            "INSERT INTO explore.poster (kind,file,blob_cid,content_type,byte_size,origin,fetched_at)
+             VALUES ('poster','copied.png','fixture','image/png',1,'upstream',now()),
+                    ('poster-vertical','copied.png','fixture','image/png',1,'upstream',now())",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        for public_url in super::super::POSTER_PUBLIC_URLS {
+            let settings = Settings {
+                asset_rewrite_base: Settings::asset_rewrite_base_for(public_url),
+                configured_public_base: Settings::configured_public_base_for(public_url),
+                events_asset_base_url: Settings::events_asset_base_for(
+                    public_url.unwrap_or("http://127.0.0.1:5210"),
+                ),
+                user_writes_enabled: true,
+                operator_writes_enabled: true,
+                events_admin_token: Some("admin-test".into()),
+                ..Settings::for_tests()
+            };
+            let app = router(Arc::new(
+                ExploreState::new(pool.clone(), settings, None).with_storage(storage.clone()),
+            ));
+            let (uploaded, _) = upload_native_poster(&pool, &app, false, public_url).await;
+            let (vertical, _) = upload_native_poster(&pool, &app, true, public_url).await;
+            let mounted =
+                |key: &str| format!("{}/events-assets-099ac00{key}", public_url.unwrap_or(""));
+            for (key, vertical_key, image, image_vertical) in [
+                (
+                    uploaded.as_str(),
+                    vertical.as_str(),
+                    mounted(&uploaded),
+                    mounted(&vertical),
+                ),
+                (
+                    "/poster/copied.png",
+                    "/poster-vertical/copied.png",
+                    "https://events-assets-099ac00.decentraland.org/poster/copied.png".into(),
+                    "https://events-assets-099ac00.decentraland.org/poster-vertical/copied.png"
+                        .into(),
+                ),
+            ] {
+                let mut body = new_event();
+                body["image"] = json!(image);
+                body["image_vertical"] = json!(image_vertical);
+                let (status, created) =
+                    call(&app, "POST", "/api/events", Some("signed"), Some(body)).await;
+                assert_eq!(status, StatusCode::CREATED, "{public_url:?}: {created}");
+                let id = created["data"]["id"].as_str().unwrap();
+                let path = format!("/api/events/{id}");
+                let (status, approved) = call(
+                    &app,
+                    "PATCH",
+                    &path,
+                    Some("admin-test"),
+                    Some(json!({"approved":true})),
+                )
+                .await;
+                assert_eq!(status, StatusCode::CREATED, "{approved}");
+                let stored = || async {
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT row_to_json(e)::text FROM explore.event e WHERE id=$1",
+                    )
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap()
+                };
+                let before = stored().await;
+                let raw: Value = serde_json::from_str(&before).unwrap();
+                assert_eq!(raw["raw"]["image"], key);
+                assert_eq!(raw["raw"]["image_vertical"], vertical_key);
+                let (status, view) = call(&app, "GET", &path, Some("signed"), None).await;
+                assert_eq!(status, StatusCode::OK, "{view}");
+                for envelope in [&created, &view] {
+                    assert_eq!(envelope["data"]["image"], mounted(key));
+                    assert_eq!(envelope["data"]["image_vertical"], mounted(vertical_key));
+                }
+                let echo = json!({
+                    "image": view["data"]["image"],
+                    "image_vertical": view["data"]["image_vertical"],
+                    "url": view["data"]["url"],
+                });
+                let (status, saved) =
+                    call(&app, "PATCH", &path, Some("admin-test"), Some(echo)).await;
+                assert_eq!(status, StatusCode::CREATED, "{saved}");
+                assert_eq!(saved["data"]["approved"], true);
+                assert_eq!(stored().await, before, "{public_url:?}");
+            }
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
     async fn native_uploaded_posters_and_broad_admin_fields_preserve_privilege_boundaries() {
         let Some(pool) = crate::db::scratch::pool(6).await else {
             return;
@@ -2441,8 +2869,8 @@ mod tests {
         let app = router(Arc::new(
             ExploreState::new(pool.clone(), settings.clone(), None).with_storage(storage.clone()),
         ));
-        let (poster, bytes) = upload_native_poster(&pool, &app, false).await;
-        let (vertical, _) = upload_native_poster(&pool, &app, true).await;
+        let (poster, bytes) = upload_native_poster(&pool, &app, false, None).await;
+        let (vertical, _) = upload_native_poster(&pool, &app, true, None).await;
         let cid: String = sqlx::query_scalar(
             "SELECT blob_cid FROM explore.poster WHERE kind='poster' AND file=$1",
         )
@@ -2455,8 +2883,12 @@ mod tests {
             bytes.as_slice()
         );
         let mut event = new_event();
-        event["image"] = json!(format!("https://native.example.org{poster}"));
-        event["image_vertical"] = json!(format!("https://content.example.org{vertical}"));
+        event["image"] = json!(format!(
+            "https://native.example.org/events-assets-099ac00{poster}"
+        ));
+        event["image_vertical"] = json!(format!(
+            "https://content.example.org/events-assets-099ac00{vertical}"
+        ));
         let mut invalid = event.clone();
         invalid["image_vertical"] = json!(poster);
         assert_eq!(
@@ -2474,9 +2906,32 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::CREATED, "{created}");
-        assert_eq!(created["data"]["image"], poster);
-        assert_eq!(created["data"]["image_vertical"], vertical);
+        assert_eq!(
+            created["data"]["image"],
+            format!("/events-assets-099ac00{poster}")
+        );
+        assert_eq!(
+            created["data"]["image_vertical"],
+            format!("/events-assets-099ac00{vertical}")
+        );
         let path = format!("/api/events/{}", created["data"]["id"].as_str().unwrap());
+        let (status, echoed) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("signed"),
+            Some(json!({
+                "image": event["image"],
+                "image_vertical": event["image_vertical"],
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{echoed}");
+        assert_eq!(echoed["data"]["image"], created["data"]["image"]);
+        assert_eq!(
+            echoed["data"]["image_vertical"],
+            created["data"]["image_vertical"]
+        );
         let schedule = uuid::Uuid::new_v4().to_string();
         sqlx::query("INSERT INTO explore.schedules_local (id,name) VALUES ($1,'Native calendar')")
             .bind(&schedule)
@@ -2528,7 +2983,10 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::CREATED, "{approved}");
         assert_eq!(edited["data"]["duration"], 7200000);
-        assert_eq!(edited["data"]["image_vertical"], vertical);
+        assert_eq!(
+            edited["data"]["image_vertical"],
+            format!("/events-assets-099ac00{vertical}")
+        );
         assert_eq!(edited["data"]["categories"], json!(["art"]));
         assert_eq!(edited["data"]["schedules"], json!([schedule]));
         assert_eq!(edited["data"]["url"], "https://example.org/join");
@@ -2794,7 +3252,7 @@ mod tests {
             )
             .with_storage(storage),
         ));
-        let (poster, _) = upload_native_poster(&pool, &app, false).await;
+        let (poster, _) = upload_native_poster(&pool, &app, false, None).await;
         let mut event = new_event();
         event["x"] = json!(41);
         event["y"] = json!(42);
@@ -2839,12 +3297,83 @@ mod tests {
             Value::Null,
             "unknown estate facts are never inferred from the scene name"
         );
-        assert_eq!(moved["data"]["image"], poster);
+        assert_eq!(
+            moved["data"]["image"],
+            format!("/events-assets-099ac00{poster}")
+        );
         assert_eq!(
             moved["data"]["url"],
             "https://decentraland.org/jump/events?position=43%2C44"
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn generated_poster_refresh_keeps_approval_on_a_time_only_edit() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        ensure_profile(&pool).await;
+        sqlx::query(
+            "INSERT INTO explore.place (id,base_position,title,raw)
+             VALUES ('generated-poster-place','142,-139','Known scene',$1)",
+        )
+        .bind(json!({"positions":["142,-139"]}))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let app = router(Arc::new(ExploreState::new(
+            pool.clone(),
+            Settings {
+                user_writes_enabled: true,
+                operator_writes_enabled: true,
+                events_admin_token: Some("admin-test".into()),
+                ..Settings::for_tests()
+            },
+            None,
+        )));
+        let mut draft = new_event();
+        draft["x"] = json!(142);
+        draft["y"] = json!(-139);
+        let (status, created) =
+            call(&app, "POST", "/api/events", Some("signed"), Some(draft)).await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        let original = "https://api.decentraland.org/v1/parcels/142/-139/map.png";
+        assert_eq!(created["data"]["image"], original);
+        let path = format!("/api/events/{}", created["data"]["id"].as_str().unwrap());
+        let (status, approved) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("admin-test"),
+            Some(json!({"approved":true})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{approved}");
+        assert_eq!(approved["data"]["approved"], true);
+        sqlx::query(
+            "UPDATE explore.place
+             SET raw = raw || $1
+             WHERE id = 'generated-poster-place'",
+        )
+        .bind(json!({"estate_id":"123","estate_name":"Known Estate"}))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (status, edited) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("signed"),
+            Some(json!({"image":original,"start_at":"2099-06-01T18:30:00Z"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{edited}");
+        assert_eq!(
+            edited["data"]["image"],
+            "https://api.decentraland.org/v1/estates/123/map.png"
+        );
+        assert_eq!(edited["data"]["approved"], true, "{edited}");
     }
 
     #[tokio::test]
@@ -2914,7 +3443,7 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::CREATED, "{moved}");
         assert!(moved["data"]["image"].is_null());
-        let (uploaded, _) = upload_native_poster(&pool, &app, false).await;
+        let (uploaded, _) = upload_native_poster(&pool, &app, false, None).await;
         let (status, poster) = call(
             &app,
             "PATCH",
@@ -2924,9 +3453,15 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::CREATED, "{poster}");
-        assert_eq!(poster["data"]["image"], uploaded);
+        assert_eq!(
+            poster["data"]["image"],
+            format!("/events-assets-099ac00{uploaded}")
+        );
         let (_, moved) = call(&app, "PATCH", &path, Some("signed"), Some(json!({"y":126}))).await;
-        assert_eq!(moved["data"]["image"], uploaded);
+        assert_eq!(
+            moved["data"]["image"],
+            format!("/events-assets-099ac00{uploaded}")
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

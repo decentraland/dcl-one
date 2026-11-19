@@ -44,7 +44,6 @@ pub struct PausedAnimation {
     bones: Vec<(Entity, AnimationTarget)>,
 }
 
-#[allow(clippy::type_complexity)]
 fn pause_hidden_avatar_animation(
     mut commands: Commands,
     builds: Query<

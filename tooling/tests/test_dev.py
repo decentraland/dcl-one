@@ -246,7 +246,10 @@ class DevTest(unittest.TestCase):
                                      'FOUNDATION_DEV_STARTUP_TIMEOUT': '3600'},
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 42, result.stderr)
-        self.assertEqual(calls.read_text().splitlines(),
+        listed = calls.read_text().splitlines()
+        # The provisioned tests run beside the broad run, so either may log first.
+        listed[-3:-1] = sorted(listed[-3:-1], key=lambda call: call.startswith('make:'))
+        self.assertEqual(listed,
                          ['up --postgres-only', 'wait --postgres-only --timeout 3600', 'env',
                           'nats:--version',
                           "python:-m unittest discover -s tooling/tests -p test_catalyst_test_resources.py",
@@ -873,7 +876,8 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['VITE_SHOP_CHAIN_ID'], '80002')
         self.assertEqual(env['COLLECTIONS_CHAIN_ID'], '80002')
         self.assertEqual(env['CONTRACT_ADDRESSES_CHAIN_KEY'], 'amoy')
-        self.assertTrue(env['CONTRACT_ADDRESSES_URL'].startswith('https://'))
+        # Without a relayer key, the published list (see the relayer key test for the other case).
+        self.assertEqual(env['CONTRACT_ADDRESSES_URL'], 'https://contracts.decentraland.org/addresses.json')
         # On-chain cancels and executions close local trades: the trade-events index walks the testnets.
         self.assertEqual(env['MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'], 'true')
         self.assertEqual((env['MARKETPLACE_INDEX_CHAIN_ID_MATIC'], env['MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM']), ('80002', '11155111'))
@@ -946,6 +950,46 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['CREDITS_SIGNER_KEY_FILE'], str(key))
         # The file's path is passed, never its contents.
         self.assertNotIn('not a real key', '\n'.join(env.values()))
+
+    def test_the_testnet_relay_signs_its_own_transactions_only_with_a_relayer_key(self):
+        relayer = ('META_TX_BROADCAST_ENABLED', 'RELAYER_PRIVATE_KEY_FILE', 'RELAYER_MAX_FEE_PER_GAS_WEI', 'NAMES_SIGNER_ENABLED')
+        published = 'https://contracts.decentraland.org/addresses.json'
+        # Without a key the relay forwards to the .zone transactions API over the published list, which lacks
+        # dcl-one's manager, so the relay refuses that manager itself (marked not sent) instead of forwarding it.
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        for name in relayer:
+            self.assertNotIn(name, env, name)
+        self.assertIn('decentraland.zone', env['TRANSACTIONS_UPSTREAM_URL'])
+        self.assertEqual(env['CONTRACT_ADDRESSES_URL'], published)
+        key = self.state / 'relayer.key'
+        key.write_text('  \n')  # empty: the server would read no key, so the signer stays off
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        for name in relayer:
+            self.assertNotIn(name, env, name)
+        self.assertEqual(env['CONTRACT_ADDRESSES_URL'], published)
+        key.write_text('not a real key')
+        key.chmod(0o644)
+        warning = io.StringIO()
+        with contextlib.redirect_stderr(warning):
+            dev.runtime_env({**self.config, 'profile': 'testnet'})
+        self.assertIn('chmod 600', warning.getvalue())
+        key.chmod(0o600)
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        self.assertEqual(env['META_TX_BROADCAST_ENABLED'], 'true')
+        self.assertEqual(env['RELAYER_PRIVATE_KEY_FILE'], str(key))
+        # Capped: 200 gwei at most per gas.
+        self.assertEqual(env['RELAYER_MAX_FEE_PER_GAS_WEI'], '200000000000')
+        # The bundled `amoy` entry, which carries dcl-one's manager, so the relay admits it.
+        self.assertNotIn('CONTRACT_ADDRESSES_URL', env)
+        # The key signs on Amoy alone: never on the NAMEs chain, whose ETH_RPC_URL is Sepolia's here.
+        self.assertEqual(env['NAMES_SIGNER_ENABLED'], 'false')
+        self.assertTrue(env['ETH_RPC_URL'].endswith('/sepolia'))
+        # The file's path is passed, never its contents.
+        self.assertNotIn('not a real key', '\n'.join(env.values()))
+        # The mirror profile, which relays on Polygon mainnet, never reads it.
+        mirror = dev.runtime_env({**self.config, 'profile': 'mirror'})
+        for name in relayer:
+            self.assertNotIn(name, mirror, name)
 
     def test_testnet_data_never_shares_a_database_with_another_profile(self):
         (self.state / 'postgres').mkdir()

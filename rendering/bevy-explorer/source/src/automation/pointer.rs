@@ -229,7 +229,6 @@ impl Job {
 /// release, once the release has been played and the pointer pipeline has run after it
 /// ([`settle_release`]), so the release lands on the aimed entity and no new command takes the aim
 /// before it does.
-#[allow(clippy::too_many_arguments)]
 fn wind_down(
     jobs: &mut PointerJob,
     synthetic: &mut SyntheticPointer,
@@ -685,7 +684,6 @@ fn target_seen(
 
 /// Follows the running job each frame after the pointer pipeline: snapshots what the pipeline
 /// saw, steps the machine, plays its presses and releases, and answers when it finishes.
-#[allow(clippy::too_many_arguments)]
 fn drive_pointer_job(
     mut jobs: ResMut<PointerJob>,
     frame: Res<FrameCount>,

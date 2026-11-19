@@ -196,6 +196,21 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertEqual(found, {'bevy-explorer-e2e.yml:scenarios'})
         self.assertEqual(unset, set())
 
+    def test_the_tooling_tests_run_beside_smoke_on_the_same_platforms(self):
+        # They need only the dev shell, so smoke does not wait for them and they skip its caches.
+        found = jobs()
+        smoke, tooling = found['smoke'], found['tooling']
+        suite = 'nix develop --command python3 -m unittest discover -s tooling/tests -v\n'
+        self.assertEqual(sum(body.count('unittest discover -s tooling/tests -v') for body in found.values()), 1)
+        self.assertIn(suite, tooling)
+        self.assertIn('    name: Tooling tests\n', tooling)
+        self.assertIn('    needs: changes\n', tooling)
+        head = lambda body: body.split('    timeout-minutes:', 1)[0].split('    if:', 1)[1]
+        self.assertEqual(head(tooling), head(smoke))
+        for cache in ('Restore Rust build cache', 'Restore the pnpm store', 'Reserve disk space', 'cargo-mtimes.py'):
+            self.assertNotIn(cache, tooling)
+        self.assertNotRegex(tooling, r'(?m)^    (env|permissions):')
+
     def test_smoke_gives_unchanged_sources_the_snapshot_file_times(self):
         # Cargo decides by file time. The snapshot is of no use to Cargo unless the checkout's
         # unchanged files get the times they had when the snapshot was built.
@@ -242,7 +257,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     self.assertIn('nix flake archive --json', roots)
                     for command in re.findall(r'nix develop(?: \.#\w+)?', job):
                         self.assertEqual(command, 'nix develop .#ci' if shell == 'ci' else 'nix develop', name)
-        self.assertEqual(installs, 4)
+        self.assertEqual(installs, 5)
 
     def test_smoke_snapshots_are_saved_only_from_passing_main_pushes(self):
         def allowed(event, ref, platform, passed=True, hit=False):

@@ -45,7 +45,6 @@ pub fn scene_is_ready(context: &RendererSceneContext) -> bool {
     context.tick_number >= 5 || context.broken() || context.blocked.contains(FROZEN_BLOCK)
 }
 
-#[allow(clippy::type_complexity)]
 pub fn report_scene_load_times(
     mut commands: Commands,
     player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,

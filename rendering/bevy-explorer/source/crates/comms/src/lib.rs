@@ -599,7 +599,6 @@ pub struct DisableRealmComms(pub bool);
 #[derive(Resource, Default)]
 pub struct SceneRoomAdapterOverride(pub Option<String>);
 
-#[allow(clippy::too_many_arguments)]
 fn connect_scene_room(
     mut commands: Commands,
     mut manager: AdapterManager,

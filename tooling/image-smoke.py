@@ -47,6 +47,11 @@ def main():
         if args.revision:
             assert config['Labels']['org.opencontainers.image.revision'] == args.revision
             assert f'COMMIT_HASH={args.revision}' in config['Env'], 'Images must report their build revision'
+    # The Cast presenter's process (CAST_BOT_BIN) loads in the APIs image: on an empty stdin it exits 0.
+    apis_env = dict(item.split('=', 1) for item in
+                    json.loads(docker('image', 'inspect', args.apis).stdout)[0]['Config']['Env'])
+    assert 'CAST_BOT_BIN' in apis_env, 'The APIs image must name its cast-bot'
+    docker('run', '--rm', '--read-only', '--network', 'none', '--entrypoint', apis_env['CAST_BOT_BIN'], args.apis)
 
     name = 'foundation-image-smoke-' + secrets.token_hex(5)
     db, api, sites = (name + suffix for suffix in ('-db', '-api', '-sites'))

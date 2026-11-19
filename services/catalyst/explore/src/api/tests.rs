@@ -447,16 +447,12 @@ pub(crate) async fn scratch_database() -> Option<ScratchDb> {
         .await
         .unwrap();
     let name = format!("catalyst_test_{}", uuid::Uuid::new_v4().simple());
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-        .execute(&admin)
-        .await
-        .unwrap();
+    crate::db::scratch::create_database_with_schema(&admin, &name).await;
     let pool = PgPoolOptions::new()
         .max_connections(6)
         .connect_with(base.database(&name).options([("TimeZone", "UTC")]))
         .await
         .unwrap();
-    crate::db::apply_schema(&pool).await.unwrap();
     Some(ScratchDb { pool, admin, name })
 }
 
@@ -534,7 +530,12 @@ async fn every_replica_reloads_the_shared_denylist() {
     let wallet = "0x00000000000000000000000000000000000000fe";
     assert!(!replica.state.denylist.contains(wallet));
     let jobs = Jobs::new();
-    denylist::spawn_reload(&replica.state, &jobs, std::time::Duration::from_millis(20));
+    denylist::spawn_reload(
+        &replica.state,
+        &jobs,
+        std::time::Duration::from_millis(20),
+        denylist::RELOAD_TIMEOUT,
+    );
     denylist::set_local(&db.pool, wallet, true).await.unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         while !replica.state.denylist.contains(wallet) {
@@ -594,10 +595,10 @@ async fn denylist_reload_timeout_retains_last_snapshot_and_recovers_after_sql_un
 
     let jobs = Jobs::new().with_fleet_jobs(false).with_first_pass_now(true);
     let started = tokio::time::Instant::now();
-    // Only shorten the interval between passes; the production five-second
-    // pass timeout and real SQL wait remain unchanged.
-    denylist::spawn_reload(&replica.state, &jobs, Duration::from_millis(100));
-    tokio::time::timeout(Duration::from_secs(3), async {
+    // Observe the SQL lock wait before the reload pass times out.
+    let timeout = Duration::from_secs(3);
+    denylist::spawn_reload(&replica.state, &jobs, Duration::from_millis(100), timeout);
+    tokio::time::timeout(timeout - Duration::from_millis(500), async {
         loop {
             let blocked: bool = sqlx::query_scalar(
                 "SELECT EXISTS (SELECT 1 FROM pg_stat_activity
@@ -617,14 +618,14 @@ async fn denylist_reload_timeout_retains_last_snapshot_and_recovers_after_sql_un
     .expect("the real snapshot query must reach PostgreSQL and wait for the table lock");
     assert_eq!(jobs.report()[0].passes, 0);
 
-    tokio::time::timeout_at(started + Duration::from_secs(8), async {
+    tokio::time::timeout_at(started + timeout + Duration::from_secs(3), async {
         while jobs.report()[0].passes == 0 {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("the five-second reload deadline must finish a pass despite the SQL lock");
-    assert!(started.elapsed() >= Duration::from_secs(5));
+    .expect("the reload deadline must finish a pass despite the SQL lock");
+    assert!(started.elapsed() >= timeout);
     let failed = &jobs.report()[0];
     assert!(
         failed
@@ -663,6 +664,12 @@ async fn denylist_reload_timeout_retains_last_snapshot_and_recovers_after_sql_un
     assert_eq!(body, json!({"users": [{"wallet": "0xReplacement"}]}));
     assert!(jobs.shutdown(Duration::from_secs(2)).await.is_empty());
     db.teardown().await;
+}
+
+#[test]
+fn production_denylist_reload_has_thirty_second_interval_and_five_second_budget() {
+    assert_eq!(denylist::RELOAD_INTERVAL, Duration::from_secs(30));
+    assert_eq!(denylist::RELOAD_TIMEOUT, Duration::from_secs(5));
 }
 
 async fn job_ctx() -> (Jobs, crate::jobs::JobContext) {

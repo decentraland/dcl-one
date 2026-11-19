@@ -3,7 +3,7 @@ use common::{
     debug_panic,
     inputs::SystemAction,
     rpc::{RpcCall, RpcCallEvent, RpcOrigin},
-    structs::MicState,
+    structs::{ClientWindowFocus, MicState},
 };
 use dcl_component::proto_components::kernel::apis::{
     VideoTrackSourceType, VideoTracksActiveStreamsData, VideoTracksActiveStreamsResponse,
@@ -386,11 +386,23 @@ fn handle_input(
     }
 }
 
-fn respond_to_system_api(mut events: EventReader<SystemApi>, mut mic: ResMut<MicState>) {
+fn respond_to_system_api(
+    mut events: EventReader<SystemApi>,
+    mut mic: ResMut<MicState>,
+    focus: Option<Res<ClientWindowFocus>>,
+) {
     for ev in events.read() {
         match ev {
+            // headless has no client window focus and never pauses the mic
             SystemApi::GetMicState(rpc_result_sender) => {
-                rpc_result_sender.send(mic.clone());
+                rpc_result_sender.send(
+                    mic.gated_by_client_window_focus(
+                        focus
+                            .as_deref()
+                            .copied()
+                            .unwrap_or(ClientWindowFocus::Focused),
+                    ),
+                );
             }
             SystemApi::SetMicEnabled(enabled) => {
                 mic.request_enabled(*enabled);
@@ -400,7 +412,6 @@ fn respond_to_system_api(mut events: EventReader<SystemApi>, mut mic: ResMut<Mic
     }
 }
 
-#[expect(clippy::type_complexity, reason = "Queries are complex")]
 fn respond_to_rpc_calls(
     mut rpc_calls: EventReader<RpcCallEvent>,
     participants: Query<(&LivekitParticipant, &Publishing)>,

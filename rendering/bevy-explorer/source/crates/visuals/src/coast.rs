@@ -214,7 +214,6 @@ fn setup(
     commands.insert_resource(CoastAssets { cliff, water });
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update(
     mut commands: Commands,
     surface: Res<TerrainSurface>,

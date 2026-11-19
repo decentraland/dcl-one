@@ -34,7 +34,12 @@ use crate::shared::cache::TtlMap;
 const WHITELIST_BODY_CAP: usize = 4 * 1024 * 1024;
 
 /// The contract map the old main vhost served at `= /contracts/addresses.json`
-/// (`catalyrst/nixos/contracts/addresses.json`, a copy).
+/// (`catalyrst/nixos/contracts/addresses.json`, a copy), with dcl-one's own
+/// `CreditsManager_DCL_ONE` under `matic` and `amoy`. The `amoy` entry is
+/// otherwise contracts.decentraland.org's as published on 2026-11-18
+/// (MarketplaceV5, the current CouponManager and CollectionDiscountCoupon): the
+/// testnet development profile relays through it when it signs with a relayer key
+/// of its own.
 pub const ADDRESSES_JSON: &[u8] = include_bytes!("addresses.json");
 const WHITELIST_TIMEOUT: Duration = Duration::from_secs(20);
 /// Anchors are stable by construction (a beacon upgrade repoints the beacon,
@@ -340,18 +345,20 @@ mod tests {
     /// A `CreditsManager_DCL_ONE` this map admits to the relay is, on that chain, a
     /// CreditsManager the guard judges and a contract with an audited domain, so the
     /// map never widens the relay to a manager the policy doesn't decode. On Polygon
-    /// it is `DCL_ONE_POLYGON_MANAGER`.
+    /// it is `DCL_ONE_POLYGON_MANAGER`, on Amoy `DCL_ONE_AMOY_MANAGER`.
     #[test]
     fn dcl_ones_managers_in_the_map_are_guarded_and_audited_on_their_chain() {
-        use crate::policy_entry::{DCL_ONE_POLYGON_MANAGER, is_credits_manager};
+        use crate::policy_entry::{
+            DCL_ONE_AMOY_MANAGER, DCL_ONE_POLYGON_MANAGER, is_credits_manager,
+        };
         use crate::types::ChainId;
         let json: Value = serde_json::from_slice(ADDRESSES_JSON).unwrap();
-        let mut found = 0;
-        for (key, chain) in [("matic", ChainId::POLYGON), ("amoy", ChainId::AMOY)] {
-            let Some(listed) = json[key]["CreditsManager_DCL_ONE"].as_str() else {
-                continue;
-            };
-            found += 1;
+        for (key, chain, ours) in [
+            ("matic", ChainId::POLYGON, DCL_ONE_POLYGON_MANAGER),
+            ("amoy", ChainId::AMOY, DCL_ONE_AMOY_MANAGER),
+        ] {
+            let listed = json[key]["CreditsManager_DCL_ONE"].as_str().unwrap();
+            assert_eq!(listed, format!("{ours:#x}"), "{key}");
             let manager: Address = listed.parse().unwrap();
             assert!(is_credits_manager(chain, manager), "{key}: {listed}");
             assert_eq!(
@@ -360,16 +367,33 @@ mod tests {
                 "{key}: {listed}"
             );
         }
-        assert!(found >= 1);
-        assert_eq!(
-            json["matic"]["CreditsManager_DCL_ONE"].as_str(),
-            Some(format!("{DCL_ONE_POLYGON_MANAGER:#x}").as_str())
-        );
         for chain in ["mainnet", "sepolia", "arbitrum", "goerli", "mumbai"] {
             assert!(
                 json[chain].get("CreditsManager_DCL_ONE").is_none(),
                 "{chain}"
             );
+        }
+    }
+
+    /// The testnet development profile, with a relayer key, relays through the `amoy`
+    /// entry (`CONTRACT_ADDRESSES_URL` unset): it admits dcl-one's Amoy manager, which the
+    /// published list never carries, and MarketplaceV5, whose `cancelSignature` the
+    /// Shop relays.
+    #[test]
+    fn the_amoy_whitelist_admits_dcl_ones_manager_and_marketplace_v5() {
+        let json: Value = serde_json::from_slice(ADDRESSES_JSON).unwrap();
+        let amoy = chain_addresses(&json, "amoy");
+        for (name, address) in [
+            (
+                "CreditsManager_DCL_ONE",
+                format!("{:#x}", crate::policy_entry::DCL_ONE_AMOY_MANAGER),
+            ),
+            (
+                "MarketplaceV5",
+                "0x36fd1434a6c4b8ade80c9847c1d15033ce34488c".to_string(),
+            ),
+        ] {
+            assert!(amoy.contains(&address), "{name}: {address}");
         }
     }
 

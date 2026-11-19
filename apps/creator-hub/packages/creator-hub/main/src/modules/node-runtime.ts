@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import log from 'electron-log/main';
-import { APP_UNPACKED_PATH, getBinPath, joinEnvPaths } from './path';
+import { getBinPath, getNodeShimDir, joinEnvPaths } from './path';
 
 export type NodeRuntimeSource = 'bundled' | 'system' | 'electron';
 
@@ -35,7 +35,7 @@ function getNodeRuntime(source: 'bundled' | 'system', node: string): NodeRuntime
 
 function findNodeOnPath(): string | null {
   for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
-    if (!dir || path.resolve(dir) === path.resolve(APP_UNPACKED_PATH)) continue;
+    if (!dir || path.resolve(dir) === path.resolve(getNodeShimDir())) continue;
     const candidate = path.join(dir, NODE_BINARY);
     try {
       if (fs.statSync(candidate).isFile()) return candidate;
@@ -83,7 +83,7 @@ function getElectronRuntime(): NodeRuntime {
   return {
     source: 'electron',
     node: process.execPath,
-    binDir: APP_UNPACKED_PATH,
+    binDir: getNodeShimDir(),
     npmCli: getBinPath('npm', 'npm'),
     npxCli: getBinPath('npm', 'npx'),
   };
@@ -100,7 +100,7 @@ export function getChildEnv(
   const env: Record<string, string | undefined> = {
     ...process.env,
     ...extra,
-    PATH: joinEnvPaths(runtime.binDir, APP_UNPACKED_PATH, process.env.PATH),
+    PATH: joinEnvPaths(runtime.binDir, getNodeShimDir(), process.env.PATH),
   };
   if (runtime.source === 'electron') {
     env.ELECTRON_RUN_AS_NODE = '1';

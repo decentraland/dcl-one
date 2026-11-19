@@ -8,7 +8,7 @@
   padding: 10px 0;
 }
 
-.menu.menu [role='option'] {
+.menu.menu [role="option"] {
   justify-content: flex-start;
   min-height: 38px;
   margin: 0 10px;
@@ -19,18 +19,18 @@
   color: var(--palette-neutral-softWhite);
 }
 
-.menu.menu [role='option'] svg {
+.menu.menu [role="option"] svg {
   flex-shrink: 0;
   color: var(--palette-neutral-softWhite);
   font-size: 1rem;
 }
 
-.menu.menu [role='option']:hover,
-.menu.menu [role='option'][aria-selected='true'] {
+.menu.menu [role="option"]:hover,
+.menu.menu [role="option"][aria-selected="true"] {
   background-color: var(--dark-gray);
 }
 
-.menu.menu [role='option']:active {
+.menu.menu [role="option"]:active {
   background-color: var(--dark-gray);
   background-image: linear-gradient(
     var(--palette-whiteTransparent-subtle),
@@ -39,7 +39,7 @@
 }
 
 /* The row ring shows only after an arrow key moved the highlight. */
-.menu.menu:global(.ArrowKeyed) [role='option'][data-active] {
+.menu.menu:global(.ArrowKeyed) [role="option"][data-active] {
   background-color: var(--dark-gray);
   outline: 2px solid var(--palette-info-light);
   outline-offset: -2px;
@@ -101,6 +101,14 @@
 .searchBox.searchBox:focus-within,
 .searchBox.searchBox:has(input:not(:placeholder-shown)) {
   border-color: var(--palette-neutral-softWhite);
+}
+
+/* The pill draws the outline, so the inner field's own square one would show inside it on hover
+   and focus. */
+.searchBox.searchBox > div,
+.searchBox.searchBox > div:hover,
+.searchBox.searchBox > div:focus-within {
+  box-shadow: none;
 }
 
 .searchBox.searchBox input {

@@ -240,17 +240,6 @@ fn update_comboboxen(
                         (0.0, v_space_above)
                     };
 
-                    // dbg!(ui_size);
-                    // dbg!(v_space_required);
-                    // dbg!(node_bottom);
-                    // dbg!(node_top);
-                    // dbg!(v_space_below);
-                    // dbg!(v_space_above);
-                    // dbg!(top);
-                    // dbg!(height);
-                    // dbg!(gt.translation());
-                    // dbg!(node.size());
-
                     let text_lightness =
                         Lcha::from(cbox.style.as_ref().map(|s| s.1 .0).unwrap_or(Color::WHITE))
                             .lightness;
