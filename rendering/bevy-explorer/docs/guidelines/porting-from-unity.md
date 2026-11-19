@@ -65,7 +65,7 @@ checking its licence and provenance.
 | A feature flag plus an `--arg` | A `GraphicsSettings` field in `crates/common/src/structs.rs` with a default, an `EnumAppSetting` in `crates/system_bridge/src/settings/`, registered in `settings/mod.rs`; the HUD lists it on its own. A launch-time switch is a `LaunchOptions` field; a web-only one is a page param ([recipes](recipes.md#a-new-engine-parameter)) |
 | `Profile.UserNameColor` | `comms::profile::UserProfile::name_color()` |
 | `IProfileRepository.GetCompactAsync`, `ProfileTier.Kind.Compact` | `comms::profile::ProfileManager::get_compact` (`common::profile::CompactProfile`); `get_data` is the full tier |
-| `SelfProfile.UpdateProfileAsync`'s revert, `ProfilePropagated` after the save | `comms::profile::CurrentUserProfile::finish_deploy`; peers hear `peer_profile()`, a version once it deploys |
+| `SelfProfile.UpdateProfileAsync`'s revert, `ProfilePropagated` after the save | `system_bridge::SystemApi::SetAvatar`; peers hear `peer_profile()`, a version once it deploys |
 | Skipping `CharacterPreviewComponent` | `resolve_content` names players only (`Or<(With<ForeignPlayer>, With<PrimaryUser>)>`), which leaves out photo-booth previews; `resolve_scene_avatar_content` names scene `AvatarShape` avatars and skips those of a `SuperUserScene`, the HUD's previews |
 | `AvatarBase` anchor points, `GetAdaptiveNametagPosition` | `AttachPoints`; `crates/avatar/src/dynamic_nametag.rs` |
 | `NametagElement`, `NametagPlacementSystem`, the `NametagHolder` pool | `crates/avatar/src/nametag`: `layout.rs` (boxes), `animation.rs` (the bubble's transitions), `mod.rs` (each player's tag and whether it shows); placed, sized, faded and drawn by `nametag.wgsl` |

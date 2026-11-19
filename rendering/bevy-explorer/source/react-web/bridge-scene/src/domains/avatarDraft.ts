@@ -76,7 +76,8 @@ export function editLook(change: Partial<AvatarLook>): void {
   const from = currentLook()
   if (from == null) return
   if (draft == null) {
-    deployed = from
+    // An in-flight close may already be visible on the live player when Revert drops the draft.
+    if (submitted.size === 0) deployed = from
     draftAccount = identity.session(() => getPlayer()?.userId ?? null)
   }
   draft = { ...from, ...change }

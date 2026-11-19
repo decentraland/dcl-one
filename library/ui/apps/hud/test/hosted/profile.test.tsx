@@ -28,6 +28,24 @@ describe('profile domain', () => {
     expect(h.session().profile.data).toMatchObject({ address: '0xme', name: 'Tester' })
   })
 
+  it('recovers the initial session profile when the store already knows a newer version', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const address = profile.address
+    const unsubscribe = subscribeProfile(address, () => {})
+    h.driver.emit({ kind: 'profileChanged', address, version: 5 })
+    const newer = { ...profile, version: 5, description: 'latest' }
+    h.driver.emit({ kind: 'userProfile', address, requestId: h.driver.last('getUserProfile')?.requestId, profile: newer })
+    const reads = h.driver.sentOf('getProfile').length
+    h.driver.emit({ kind: 'profile', profile: { ...profile, version: 4 } })
+    expect(h.session().profile.data?.address).toBe(address)
+    expect(peekProfile(address)?.version).toBe(5)
+    expect(h.driver.sentOf('getProfile')).toHaveLength(reads + 1)
+    h.driver.emit({ kind: 'profile', profile: newer })
+    expect(h.session().profile.data).toEqual(newer)
+    unsubscribe()
+  })
+
   it('a passport request goes to the bridge with extras, and the reply lands in the profile store', async () => {
     const h = renderSession()
     await enterAsGuest(h)
@@ -243,6 +261,26 @@ describe('profile domain', () => {
     expect(h.driver.last('saveProfile')).toMatchObject({ info: { realName: '', language: 'French' } })
     expect(h.session().profile.data).toMatchObject({ description: 'server update', info: { country: 'US', language: 'French' } })
     expect(h.session().profile.data?.info?.realName).toBeUndefined()
+  })
+
+  it.each(['0xme', '0xother'])('releases an invalidated form and discards its queued edit before reading %s', async (address) => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile })
+    act(() => h.session().profile.save({ description: 'old session submit' }))
+    const requestId = h.driver.last('saveProfile')?.requestId
+    act(() => h.session().profile.save({ info: { realName: 'old queued value' } }))
+    const reads = h.driver.sentOf('getProfile').length
+    h.driver.emit({ kind: 'profileSaved', ok: false, accountChanged: true, requestId })
+    expect(h.driver.sentOf('saveProfile')).toHaveLength(1)
+    expect(h.session().profile.saving).toBe(false)
+    expect(h.session().profile.data).toBeNull()
+    expect(peekProfile(profile.address)).toBeUndefined()
+    expect(h.driver.sentOf('getProfile')).toHaveLength(reads + 1)
+    h.driver.emit({ kind: 'profile', profile: { ...profile, address, description: 'current account' } })
+    expect(peekProfile(address)?.description).toBe('current account')
+    act(() => h.session().profile.save({ description: 'fresh edit' }))
+    expect(h.driver.last('saveProfile')).toMatchObject({ address, description: 'fresh edit' })
   })
 
   it('discards a previous sign-in’s save rejection while the same player is saving again', async () => {

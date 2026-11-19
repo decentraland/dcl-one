@@ -1869,7 +1869,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     if (msg.kind === 'saveProfile') {
       const { kind: _kind, requestId, address, ...edit } = msg
       if (address !== undefined && address.toLowerCase() !== o.userId.toLowerCase()) {
-        reply({ kind: 'profileSaved', requestId, ok: false, error: 'The active account changed.' })
+        reply({ kind: 'profileSaved', requestId, ok: false, accountChanged: true, error: 'The active account changed.' })
         return
       }
       // `robtfmfail` is the mock's failure switch: renaming to it exercises the error path (the

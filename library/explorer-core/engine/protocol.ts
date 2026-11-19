@@ -796,6 +796,8 @@ export interface SaveProfileRequest {
 export interface ProfileSavedMessage {
   kind: 'profileSaved'
   requestId?: number
+  /** The edited login ended; discard any edits queued for that session. */
+  accountChanged?: true
   ok: boolean
   /** Latest committed own profile, or null when the engine has none. */
   profile?: Profile | null

@@ -1287,6 +1287,8 @@ fn list_portables(
 }
 
 fn get_user_data(
+    mut system_events: EventReader<SystemApi>,
+    system_scene: Query<Entity, With<SuperUserScene>>,
     profile: Res<CurrentUserProfile>,
     others: Query<(&ForeignPlayer, &UserProfile)>,
     me: Res<Wallet>,
@@ -1304,25 +1306,29 @@ fn get_user_data(
     mut profile_manager: ProfileManager,
     contexts: Res<CrdtContexts>,
 ) {
-    for event in events.read() {
-        let (user, response) = match &event.call {
-            RpcCall::GetUserData { user, response } => (user.as_ref(), response),
-            RpcCall::GetUserProfile { address, response } => {
-                if let Some(owner) = me
-                    .address()
-                    .filter(|owner| address.as_h160() == Some(*owner))
-                {
-                    let committed = profile
-                        .peer_profile()
-                        .filter(|profile| profile.content.eth_address.as_h160() == Some(owner));
-                    response.send(committed.map(|profile| profile.content.clone()).ok_or(()));
-                    continue;
-                }
-                (Some(address), response)
-            }
-            _ => continue,
+    let scene_reads = events.read().filter_map(|event| match &event.call {
+        RpcCall::GetUserData { user, response } => {
+            Some((user.as_ref(), event.origin.scene(), response))
+        }
+        _ => None,
+    });
+    let system_reads = system_events.read().filter_map(|event| {
+        let SystemApi::GetUserProfile { address, response } = event else {
+            return None;
         };
-        let scene = event.origin.scene();
+        if let Some(owner) = me
+            .address()
+            .filter(|owner| address.as_h160() == Some(*owner))
+        {
+            let committed = profile
+                .peer_profile()
+                .filter(|profile| profile.content.eth_address.as_h160() == Some(owner));
+            response.send(committed.map(|profile| profile.content.clone()).ok_or(()));
+            return None;
+        }
+        Some((Some(address), system_scene.single().ok(), response))
+    });
+    for (user, scene, response) in scene_reads.chain(system_reads) {
         debug!("process get_user_data for {:?}", scene);
         match user {
             None => match profile.profile.as_ref() {

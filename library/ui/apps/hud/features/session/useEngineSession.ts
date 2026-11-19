@@ -121,6 +121,7 @@ import type {
   ProximityTip,
   Profile,
   ProfileEdit,
+  ProfileSavedMessage,
   CommunitySaveResultMessage,
   CommunityPlaceOptionsMessage,
   UpdateCommunityRequest,
@@ -1705,10 +1706,21 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
 
     // The engine's answer to the profile save in flight, or the bridge failing to handle it (then no
     // answer ever comes, so it counts as a failure rather than leaving every later save queued).
-    const settleProfileSave = (ok: boolean, error?: string, committed?: Profile | null, requestId?: number): void => {
+    const settleProfileSave = ({ ok, error, profile: committed, requestId, accountChanged }: Omit<ProfileSavedMessage, 'kind'>): void => {
       const submit = profileSubmit.current
       if (!submit || (requestId !== undefined && requestId !== submit.requestId) || (committed && committed.address.toLowerCase() !== submit.address)) return
       profileSubmit.current = null
+      if (accountChanged) {
+        queuedProfileEditRef.current = null
+        confirmedProfile.current = null
+        profileRef.current = null
+        setOwnProfile(null)
+        setProfile(null)
+        setProfileSaving(false)
+        setProfileSaveError(null)
+        driver.send({ kind: 'getProfile' })
+        return
+      }
       // Older bridges can omit the snapshot. Keep their confirmed edit on success and use the
       // last engine profile on transport failure until the next read arrives.
       const next = committed !== undefined ? committed : (ok ? profileRef.current : confirmedProfile.current)
@@ -2070,7 +2082,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             source: 'bridge'
           })
           break
-        case 'profile':
+        case 'profile': {
           if (profileSubmit.current && (!msg.profile || msg.profile.address.toLowerCase() === profileSubmit.current.address)) break
           if (profileSubmit.current) {
             profileSubmit.current = null
@@ -2079,11 +2091,15 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             setProfileSaveError(null)
           }
           setOwnProfile(msg.profile?.address ?? null)
-          if (msg.profile && !receiveOwnProfile(msg.profile)) break
+          const stale = msg.profile != null && !receiveOwnProfile(msg.profile)
+          if (stale && profileRef.current?.address.toLowerCase() === msg.profile?.address.toLowerCase()) break
           confirmedProfile.current = msg.profile
           profileRef.current = msg.profile
           setProfile(msg.profile)
+          // The first reply identifies this login even if its version trails a chat announcement.
+          if (stale) driver.send({ kind: 'getProfile' })
           break
+        }
         case 'userProfile':
           receiveProfile(msg.address, msg.profile, msg.requestId)
           break
@@ -2095,7 +2111,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setOwnedNamesKnown(msg.failed !== true)
           break
         case 'profileSaved':
-          settleProfileSave(msg.ok, msg.error, msg.profile, msg.requestId)
+          settleProfileSave(msg)
           break
         case 'notifications':
           setNotifications(msg.notifications)
@@ -2151,7 +2167,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'requestFailed':
           fetchedRef.current.delete(msg.request)
           console.error(`[bridge] ${msg.request} failed:`, msg.error)
-          if (msg.request === 'saveProfile' && profileSubmit.current) settleProfileSave(false, undefined, undefined, msg.profileSaveId)
+          if (msg.request === 'saveProfile' && profileSubmit.current) settleProfileSave({ ok: false, requestId: msg.profileSaveId })
           if (msg.request === 'getUserProfile' && msg.profileRead != null) {
             profileReadFailed(msg.profileRead.address, msg.profileRead.requestId)
           }

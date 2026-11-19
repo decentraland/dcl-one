@@ -67,27 +67,28 @@ impl Plugin for UserProfilePlugin {
             )
                 .before(process_transport_updates), // .in_set(TODO)
         );
-        app.add_systems(
-            Update,
-            (
-                pipe_profile_changes_to_scene
-                    .after(setup_primary_profile)
-                    .after(process_profile),
-                process_profile,
-                outfits::process_outfits,
-            ),
-        );
-        app.init_resource::<outfits::OutfitsState>();
-
-        // a server has no real local player: never insert/announce/deploy the fake
-        // player's profile or write PLAYER identity into scene crdts
-        if !common::structs::server_mode() {
+        app.add_systems(Update, outfits::process_outfits)
+            .init_resource::<outfits::OutfitsState>();
+        if common::structs::server_mode() {
+            // A server never publishes or deploys a local player.
             app.add_systems(
                 Update,
-                (drive_profile_deploys, setup_primary_profile)
+                (process_profile, pipe_profile_changes_to_scene)
                     .chain()
-                    .after(process_profile)
-                    .in_set(SceneSets::RestrictedActions), // in restricted actions so we get profile updates from login before a scene tick runs
+                    .in_set(SceneSets::RestrictedActions),
+            );
+        } else {
+            // Queue edits, settle the upload and refresh PLAYER before notifying scene readers.
+            app.add_systems(
+                Update,
+                (
+                    process_profile,
+                    drive_profile_deploys,
+                    setup_primary_profile,
+                    pipe_profile_changes_to_scene,
+                )
+                    .chain()
+                    .in_set(SceneSets::RestrictedActions),
             );
         }
 
@@ -813,15 +814,28 @@ pub struct ProfileSaves {
     base: Option<UserProfile>,
     base_published: bool,
     active: Option<u32>,
-    queued: Vec<AvatarEdit>,
+    queued: Vec<ProfileEdit>,
 }
 
 type AvatarReply = RpcResultSender<SetAvatarResult>;
 
-struct AvatarEdit {
+struct ProfileEdit {
     version: u32,
-    patch: SetAvatarData,
-    sender: AvatarReply,
+    patch: ProfilePatch,
+}
+
+enum ProfilePatch {
+    Avatar(Box<SetAvatarData>, AvatarReply),
+    MarkGuestAccount,
+}
+
+impl ProfilePatch {
+    fn into_sender(self) -> Option<AvatarReply> {
+        match self {
+            Self::Avatar(_, sender) => Some(sender),
+            Self::MarkGuestAccount => None,
+        }
+    }
 }
 
 struct SubmittedProfile {
@@ -852,13 +866,31 @@ impl CurrentUserProfile {
         }
     }
 
+    /// Login marks authenticated guest profiles locally before persisting that classification.
+    pub fn queue_guest_resave(&mut self) {
+        self.begin_edits();
+        self.bump_version();
+        let Some(profile) = self.profile.as_ref() else {
+            return;
+        };
+        self.saves.queued.push(ProfileEdit {
+            version: profile.version,
+            patch: ProfilePatch::MarkGuestAccount,
+        });
+        self.is_deployed = false;
+    }
+
     /// Account transitions discard unsent patches. Submitted writes keep their original signer
     /// and receive the result of the request that owns them.
     pub fn reset_saves(&mut self) {
         let previous = std::mem::take(&mut self.saves);
         self.saves.session = previous.session.wrapping_add(1);
-        for edit in previous.queued {
-            edit.sender.send(Err(SetAvatarError {
+        for sender in previous
+            .queued
+            .into_iter()
+            .filter_map(|edit| edit.patch.into_sender())
+        {
+            sender.send(Err(SetAvatarError {
                 message: "Account changed before the profile was submitted.".to_owned(),
                 profile: None,
             }));
@@ -879,7 +911,7 @@ impl CurrentUserProfile {
                 .saves
                 .queued
                 .drain(..)
-                .map(|edit| edit.sender)
+                .filter_map(|edit| edit.patch.into_sender())
                 .collect(),
         })
     }
@@ -896,7 +928,10 @@ impl CurrentUserProfile {
     fn rebase_queued(&mut self) {
         let mut shown = self.saves.base.as_ref().unwrap().clone();
         for edit in &mut self.saves.queued {
-            apply_avatar_patch(&mut shown, &edit.patch);
+            match &edit.patch {
+                ProfilePatch::Avatar(patch, _) => apply_avatar_patch(&mut shown, patch),
+                ProfilePatch::MarkGuestAccount => shown.content.has_connected_web3 = Some(false),
+            }
             edit.version = edit.version.max(shown.version + 1);
             shown.version = edit.version;
             shown.content.version = i64::from(edit.version);
@@ -941,7 +976,10 @@ impl CurrentUserProfile {
                 self.saves.base = None;
             }
         } else if result.is_ok() && same_account {
-            // The same account signed in again before its earlier write finished.
+            // The prior login supplied the payload. The current login supplies its account kind.
+            let mut profile = profile;
+            profile.content.has_connected_web3 =
+                self.profile.as_ref().unwrap().content.has_connected_web3;
             self.adopt_server_profile(profile);
         }
         for sender in senders {
@@ -2024,10 +2062,9 @@ fn process_profile(
         current.bump_version();
         if deploys {
             let version = current.profile.as_ref().unwrap().version;
-            current.saves.queued.push(AvatarEdit {
+            current.saves.queued.push(ProfileEdit {
                 version,
-                patch: patch.clone(),
-                sender: sender.clone(),
+                patch: ProfilePatch::Avatar(Box::new(patch.clone()), sender.clone()),
             });
             current.is_deployed = false;
         } else {
@@ -2811,6 +2848,72 @@ mod tests {
                 next.poll_once().unwrap().unwrap().unwrap(),
                 expected_version
             );
+        }
+    }
+
+    #[test]
+    fn guest_login_resave_survives_an_old_upload_or_a_realm_read() {
+        for old_upload in [true, false] {
+            for edit_look in [false, true] {
+                let mut saves = Saves::new();
+                saves
+                    .current()
+                    .profile
+                    .as_mut()
+                    .unwrap()
+                    .content
+                    .has_connected_web3 = Some(true);
+                let old = old_upload.then(|| {
+                    let reply = saves.edit(patch("earlier", ""));
+                    (saves.submit(), reply)
+                });
+
+                saves.current().reset_saves();
+                let mut login = own(5, "login");
+                login.content.has_connected_web3 = Some(false);
+                saves.current().profile = Some(login);
+                saves.current().is_deployed = true;
+                saves.current().queue_guest_resave();
+                let mut look = edit_look.then(|| saves.edit(patch("", "body:b")));
+                saves.0.update();
+
+                let (base_version, name) = if let Some((batch, mut reply)) = old {
+                    saves.finish(batch, true);
+                    assert_eq!(reply.poll_once().unwrap().unwrap().unwrap(), 6);
+                    (6, "earlier")
+                } else {
+                    let mut read = own(10, "realm");
+                    read.content.has_connected_web3 = Some(false);
+                    saves.current().adopt_server_profile(read);
+                    (10, "realm")
+                };
+                let batch = saves.submit();
+                assert_eq!(batch.profile.content.name, name);
+                assert_eq!(batch.profile.content.has_connected_web3, Some(false));
+                assert_eq!(
+                    saves
+                        .current()
+                        .peer_profile()
+                        .unwrap()
+                        .content
+                        .has_connected_web3,
+                    Some(false)
+                );
+                let version = base_version + 1 + u32::from(edit_look);
+                assert_eq!(batch.profile.version, version);
+                assert_eq!(batch.profile.content.version, i64::from(version));
+                if edit_look {
+                    assert_eq!(
+                        batch.profile.content.avatar.body_shape.as_deref(),
+                        Some("body:b")
+                    );
+                }
+                saves.finish(batch, true);
+                if let Some(reply) = look.as_mut() {
+                    assert_eq!(reply.poll_once().unwrap().unwrap().unwrap(), version);
+                }
+                assert_eq!(saves.current().peer_profile().unwrap().version, version);
+            }
         }
     }
 

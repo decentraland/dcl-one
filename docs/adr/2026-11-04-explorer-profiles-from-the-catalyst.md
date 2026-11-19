@@ -64,12 +64,14 @@ old content again or reusing a version that another peer may already have observ
   the Pulse handshake, the ws-room's first announcement, peer `ProfileRequest` replies and the
   HUD's own-profile read use the last profile the client confirmed. A successful upload advances
   that profile and the HUD's local profile-change stream. The local avatar previews edits
-  immediately. Throwaway guests accept changes locally.
+  immediately. Throwaway guests accept changes locally. For a signed-in account creating its
+  first profile, peers receive the first announcement after an upload succeeds. If the initial
+  upload fails, the unpublished draft stays local. Welcome reports the failure for its save and lets the player retry.
 - **The engine owns local profile saves.** Editors send the fields the player changed. The engine
   applies each patch in arrival order and uploads one full profile at a time for the account.
   Edits arriving together or during an upload can share the next upload. On success, each caller
-  in that upload receives the version it published. On failure, those callers receive the error and the last
-  confirmed profile. The engine applies later patches to that confirmed profile before its next
+  in that upload receives the version it published. On failure, those callers receive the error
+  and the last confirmed profile. The engine applies later patches to that profile before its next
   upload, so a later edit can still succeed independently.
 - **An edit's version is new for the session.** It goes above every version this session gave the
   account, not just above the profile held: a deploy that failed here may still have reached the

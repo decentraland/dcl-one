@@ -921,9 +921,7 @@ fn process_login_bridge(
                 if deployed && resave {
                     // as any deploying edit: peers hear the saved version number (already marked
                     // as a guest's here) until the re-save lands, and a failed one goes back to it
-                    current_profile.begin_edits();
-                    current_profile.bump_version();
-                    current_profile.is_deployed = false;
+                    current_profile.queue_guest_resave();
                 }
 
                 sender.send(Ok(()));

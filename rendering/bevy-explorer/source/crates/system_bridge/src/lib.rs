@@ -126,6 +126,11 @@ pub enum SystemApi {
         meta: Option<String>,
         response: RpcResultSender<Result<Vec<(String, String)>, String>>,
     },
+    /// Full system-scene view. The local player is read at the last confirmed version.
+    GetUserProfile {
+        address: String,
+        response: RpcResultSender<Result<SerializedProfile, ()>>,
+    },
     /// The address belongs to the player the system scene observed when it submitted the edit.
     SetAvatar(String, SetAvatarData, RpcResultSender<SetAvatarResult>),
     /// Signs and deploys the local player's `outfits` entity. The address is the account the

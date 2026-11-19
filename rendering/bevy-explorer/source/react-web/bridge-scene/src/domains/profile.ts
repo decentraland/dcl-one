@@ -372,22 +372,25 @@ export function registerProfile(ctx: Ctx): void {
   })
 
   ctx.on('saveProfile', async (msg) => {
+    const accountChanged = (): void => ctx.send({
+      kind: 'profileSaved', requestId: msg.requestId, ok: false, accountChanged: true, error: 'The active account changed.'
+    })
     const player = getPlayer()
     if (player == null) {
+      if (msg.address !== undefined) return accountChanged()
       ctx.send({ kind: 'profileSaved', requestId: msg.requestId, ok: false, error: 'Not signed in yet.' })
       return
     }
 
     if (msg.address !== undefined && profileKey(msg.address) !== profileKey(player.userId)) {
-      ctx.send({ kind: 'profileSaved', requestId: msg.requestId, ok: false, error: 'The active account changed.' })
-      return
+      return accountChanged()
     }
     // the account can change while this waits; the edit and its answers belong to this one only
     const isCurrent = identity.session(() => getPlayer()?.userId ?? null)
     const data: SetAvatarData = {}
     if (msg.name) {
       const owned = await fetchOwnedNames(player.userId).catch(() => [])
-      if (!isCurrent()) return
+      if (!isCurrent()) return accountChanged()
       // An empty bodyShapeUrn and null colors mean "leave the avatar alone" — the name is the only
       // thing this edit touches, and the Backpack owns the rest.
       data.base = { skinColor: null, eyesColor: null, hairColor: null, bodyShapeUrn: '', name: msg.name, talking: null }
@@ -404,12 +407,12 @@ export function registerProfile(ctx: Ctx): void {
     try {
       await BevyApi.setAvatar(data)
     } catch (e) {
-      if (!isCurrent()) return
+      if (!isCurrent()) return accountChanged()
       console.error('[profile] save failed', e)
       const committed = e != null && typeof e === 'object' && 'profile' in e
         ? (e as { profile: SerializedProfile | null }).profile
         : await fetchProfile(player.userId)
-      if (!isCurrent()) return
+      if (!isCurrent()) return accountChanged()
       ctx.send({
         kind: 'profileSaved', requestId: msg.requestId, ok: false, error: e instanceof Error ? e.message : String(e),
         profile: committed && toProfile(committed, player.userId, player.isGuest, player.name)
@@ -417,9 +420,10 @@ export function registerProfile(ctx: Ctx): void {
       return
     }
 
-    if (!isCurrent()) return
+    if (!isCurrent()) return accountChanged()
     const av = await fetchProfile(player.userId)
-    if (isCurrent()) ctx.send({
+    if (!isCurrent()) return accountChanged()
+    ctx.send({
       kind: 'profileSaved', requestId: msg.requestId, ok: true, profile: av && toProfile(av, player.userId, player.isGuest, player.name)
     })
   })
@@ -439,6 +443,7 @@ export function registerProfile(ctx: Ctx): void {
       const isCurrent = identity.session(() => getPlayer()?.userId ?? null)
       const av = await fetchProfile(player.userId)
       if (isCurrent()) ctx.send({ kind: 'profile', profile: toProfile(av, player.userId, player.isGuest, player.name) })
+      else wanted = true
     } finally {
       inFlight = false
     }

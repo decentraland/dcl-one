@@ -379,11 +379,6 @@ pub enum RpcCall {
         urn: String,
         response: RpcResultSender<Option<EntityDefinitionResponse>>,
     },
-    /// Full system-scene view. The local player is read at the last confirmed version.
-    GetUserProfile {
-        address: String,
-        response: RpcResultSender<Result<SerializedProfile, ()>>,
-    },
     ActiveVideoStreams {
         response: RpcResultSender<VideoTracksActiveStreamsResponse>,
     },

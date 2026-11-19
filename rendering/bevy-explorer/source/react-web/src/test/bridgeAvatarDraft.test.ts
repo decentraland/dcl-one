@@ -96,7 +96,7 @@ describe('Passport and Backpack deployments', () => {
     await request({ kind: 'saveProfile', requestId: 12, address, description: 'Account A only' })
     expect(setAvatar).not.toHaveBeenCalled()
     expect(getUserProfile).not.toHaveBeenCalled()
-    expect(replies()).toEqual([{ kind: 'profileSaved', requestId: 12, ok: false, error: 'The active account changed.' }])
+    expect(replies()).toEqual([{ kind: 'profileSaved', requestId: 12, ok: false, accountChanged: true, error: 'The active account changed.' }])
   })
 
   it('submits Backpack during Passport and relays the success of the deploy that carried both', async () => {
@@ -199,11 +199,11 @@ describe('Passport and Backpack deployments', () => {
     expect(replies()).toEqual([{ kind: 'welcomeAccepted', ok: true }])
   })
 
-  it.each(['logout RPC', 'engine clearing the player'])('ignores late engine failures after %s even for the same wallet', async (signal) => {
+  it.each(['logout RPC', 'engine clearing the player'])('answers the invalidated save after %s even for the same wallet', async (signal) => {
     const { request, replies, frame } = await bridge()
     const old = deferred()
     setAvatar.mockReturnValueOnce(old.promise).mockResolvedValueOnce(7)
-    const save = request({ kind: 'saveProfile', description: 'Before logout' })
+    const save = request({ kind: 'saveProfile', requestId: 21, address: '0xabc', description: 'Before logout' })
     if (signal === 'logout RPC') {
       await request({ kind: 'rpc:req', id: 'logout', method: 'logout' })
     } else {
@@ -212,10 +212,49 @@ describe('Passport and Backpack deployments', () => {
       player = account('0xabc')
       frame()
     }
-    await request({ kind: 'saveProfile', description: 'After sign-in' })
+    await request({ kind: 'saveProfile', requestId: 22, address: '0xabc', description: 'After sign-in' })
     old.reject(new Error('old account'))
     await save
-    expect(replies()).toMatchObject([{ kind: 'profileSaved', ok: true }])
+    expect(replies()).toMatchObject([
+      { kind: 'profileSaved', requestId: 22, ok: true },
+      { kind: 'profileSaved', requestId: 21, ok: false, accountChanged: true }
+    ])
+  })
+
+  it('answers a successful save whose confirming read outlives the login', async () => {
+    const { request, replies, frame } = await bridge()
+    const oldRead = deferred<{ name: string }>()
+    setAvatar.mockResolvedValue(7)
+    getUserProfile.mockReturnValueOnce(oldRead.promise)
+    const save = request({ kind: 'saveProfile', address: '0xabc', requestId: 23, description: 'old edit' })
+    await vi.waitFor(() => expect(getUserProfile).toHaveBeenCalledWith('0xabc'))
+    player = account('0xdef')
+    frame()
+    oldRead.resolve({ name: 'old account' })
+    await save
+    expect(replies()).toEqual([{ kind: 'profileSaved', ok: false, requestId: 23,
+      accountChanged: true, error: 'The active account changed.' }])
+  })
+
+  it('saves a re-seeded draft relative to confirmed colors after an outstanding close fails', async () => {
+    const { request, draft } = await bridge()
+    const close = deferred()
+    setAvatar.mockReturnValueOnce(close.promise).mockResolvedValueOnce(7)
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const red = { r: 1, g: 0, b: 0 }
+    draft.editLook({ hair: red })
+    const first = request({ kind: 'commitAvatar' })
+    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
+    Object.assign(player!.avatar, { hairColor: red })
+    await request({ kind: 'revertAvatar' })
+    draft.editLook({ wearables: ['urn:hat'] })
+    close.reject(new Error('deploy failed'))
+    await first
+    player!.avatar.hairColor = null
+    await request({ kind: 'commitAvatar' })
+    expect(setAvatar.mock.calls[1][0]).toMatchObject({
+      base: { hairColor: red }, equip: { wearableUrns: ['urn:hat'] }
+    })
   })
 
   it('sends an undo against an in-flight hat change, including when the undo settles first', async () => {

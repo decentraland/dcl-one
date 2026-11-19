@@ -732,8 +732,8 @@ pub async fn op_get_user_profile(
 
     state
         .borrow_mut()
-        .borrow_mut::<RpcCalls>()
-        .push(RpcCall::GetUserProfile {
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetUserProfile {
             address,
             response: sx,
         })?;
@@ -1758,7 +1758,7 @@ mod profile_read_tests {
     use crate::test_state::TestState;
     use futures_lite::future::{block_on, poll_once};
 
-    fn scene(system: bool) -> Rc<RefCell<TestState>> {
+    fn ordinary_scene() -> Rc<RefCell<TestState>> {
         let mut state = TestState::default();
         state.put(RpcCalls::default());
         state.put(CrdtContext::new(
@@ -1769,29 +1769,36 @@ mod profile_read_tests {
             false,
             false,
         ));
-        if system {
-            state.put(SuperUserScene(tokio::sync::mpsc::unbounded_channel().0));
-        }
         Rc::new(RefCell::new(state))
     }
 
     #[test]
     fn the_system_scene_reads_profiles() {
-        let state = scene(true);
-        let full = op_get_user_profile(state.clone(), "0x1".to_owned());
-        assert!(block_on(poll_once(full)).is_none());
+        let state = ordinary_scene();
+        let (system, mut events) = tokio::sync::mpsc::unbounded_channel();
+        state.borrow_mut().put(SuperUserScene(system));
+        let mut full = std::pin::pin!(op_get_user_profile(state.clone(), "0x1".to_owned()));
+        assert!(block_on(poll_once(full.as_mut())).is_none());
+        assert!(state.borrow().borrow::<RpcCalls>().is_empty());
+        let SystemApi::GetUserProfile { address, response } = events.try_recv().unwrap() else {
+            panic!("expected a profile read on the system channel");
+        };
+        assert_eq!(address, "0x1");
+        let profile = SerializedProfile::default();
+        response.send(Ok(profile.clone()));
+        assert_eq!(block_on(full).unwrap(), profile);
+
         let compact = op_get_compact_profiles(state.clone(), vec!["0x1".to_owned()]);
         assert!(block_on(poll_once(compact)).is_none());
 
         let state = state.borrow();
         let calls = state.borrow::<RpcCalls>();
-        assert!(matches!(calls[0], RpcCall::GetUserProfile { .. }));
-        assert!(matches!(calls[1], RpcCall::GetCompactProfiles { .. }));
+        assert!(matches!(calls[0], RpcCall::GetCompactProfiles { .. }));
     }
 
     #[test]
     fn a_save_preserves_the_observed_owner_and_serializes_a_committed_profile_on_failure() {
-        let state = scene(false);
+        let state = ordinary_scene();
         let (system, mut events) = tokio::sync::mpsc::unbounded_channel();
         state.borrow_mut().put(SuperUserScene(system));
         let owner = "0xabcdef0000000000000000000000000000000001";
@@ -1821,7 +1828,7 @@ mod profile_read_tests {
 
     #[test]
     fn ordinary_identity_reads_keep_the_scene_profile() {
-        let state = scene(false);
+        let state = ordinary_scene();
         let own = crate::user_identity::op_get_user_data(state.clone());
         let player = crate::user_identity::op_get_player_data(state.clone(), "0x1".into());
         assert!(block_on(poll_once(own)).is_none());
@@ -1834,7 +1841,7 @@ mod profile_read_tests {
 
     #[test]
     fn an_ordinary_scene_reads_no_profiles() {
-        let state = scene(false);
+        let state = ordinary_scene();
         let address = || "0x1".to_owned();
         assert!(block_on(op_get_user_profile(state.clone(), address())).is_err());
         assert!(block_on(op_get_compact_profiles(state.clone(), vec![address()])).is_err());
