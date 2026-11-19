@@ -117,6 +117,12 @@
   border-radius: 6px;
   background: var(--editor-surface);
 
+  /* Icon-only, the header sits in its tooltip's inline-flex wrapper: a column stretches that wrapper to full width. */
+  [data-collapsed] & {
+    display: flex;
+    flex-direction: column;
+  }
+
   &:last-of-type {
     margin-bottom: 12px;
   }

@@ -241,6 +241,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  /* A row with a tooltip sits in the tooltip's inline-flex wrapper, where it would shrink to its content. */
+  width: 100%;
   min-height: 48px;
   padding: 0 0 0 4px;
   border-radius: 6px;
