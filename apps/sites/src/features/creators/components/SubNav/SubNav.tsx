@@ -42,8 +42,10 @@ export function SubNav({ landing = false }: Props) {
             <CurationTab current={current('/create/curation')} />
           </Suspense>
         )}
-        <Link to="/create/scenes">Scenes</Link>
-        <Link to="/create/land">Land/World</Link>
+        {/* Land and Worlds are built in the desktop Creator Hub. */}
+        <Link to="/download/creator-hub" aria-current={current('/download/creator-hub')}>
+          Land/World
+        </Link>
       </nav>
     </div>
   )
