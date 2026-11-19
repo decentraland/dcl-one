@@ -254,8 +254,8 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
 (loopback), with no marker in the text. Arguments split on whitespace, and a double-quoted run is
 one argument (`/chat nearby "two words"`), in the chat input as over a transport; a command that
 takes JSON takes the rest of the line, split on whitespace alone. A reply with a screen position carries `screen` (`width`, `height` in logical pixels, `scale`);
-the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.md) has the rest
-(normalized coordinates, `--seconds`, refusals that name their cause).
+the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.md) has the rules
+(quoting, normalized coordinates, names).
 
 - State: `/world_state` (`inWorld`, `arrivals`, which grows on every return to the world, so a wait
   after a teleport reads it first; `keyboardClaimed`, true while a text field holds the keys),

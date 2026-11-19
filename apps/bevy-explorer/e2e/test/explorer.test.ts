@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { ConsoleError, FakeConsole, commandOf, redactLine } from '../driver/console.ts'
-import { type CommandRecord, Explorer, parseLiveScenes, parsePortables, parseSmartWearables, quoteWord, type WorldState } from '../driver/explorer.ts'
+import { type CommandRecord, Explorer, parseLiveScenes, parsePortables, parseSmartWearables, type WorldState } from '../driver/explorer.ts'
 import { enterWorld } from '../driver/session.ts'
 
 function world(overrides: Partial<WorldState> = {}): string {
@@ -400,16 +400,6 @@ describe('Explorer', () => {
     const fake = new FakeConsole({ hud_wait: control(), hud_read: control(), click_at: '{"x":30,"y":35,"normalized":{"x":0.02,"y":0.04},"button":"left","screen":{"width":1600,"height":900,"scale":2}}' })
     await new Explorer(fake).hud.hover('Backpack')
     assert.deepEqual(fake.sent('click_at'), ['/click_at 30 35'])
-  })
-
-  test('chat quotes its message so the engine splits it back whole', async () => {
-    const fake = new FakeConsole({ chat: '[Nearby] ok' })
-    const explorer = new Explorer(fake)
-    await explorer.chat('Nearby', 'one')
-    await explorer.chat('Nearby', 'two  words')
-    await explorer.chat('Nearby', 'say "hi" \\o/')
-    assert.deepEqual(fake.lines, ['/chat Nearby one', '/chat Nearby "two  words"', '/chat Nearby "say \\"hi\\" \\\\o/"'])
-    assert.equal(quoteWord(''), '""')
   })
 
   test('key, escape and clickAt compose the lines', async () => {

@@ -375,10 +375,14 @@ export function start(options = {}) {
   };
 
   // A word the engine splits back into the same argument (crates/console/src/line.rs): quoted
-  // when it is empty or holds whitespace or a double quote. A command that takes the rest of the
-  // line (`rest`) is split on whitespace alone, quotes kept, so its words go unquoted.
+  // when it is empty or holds a double quote or whitespace as the engine counts it (Unicode's
+  // White_Space: `\s` lacks U+0085). A command that takes the rest of the line (`rest`) is split
+  // on whitespace alone, quotes kept, and a page command splits its own line, so their words go
+  // unquoted.
   const quoteWord = (word) =>
-    word === "" || /[\s"]/.test(word) ? `"${word.replace(/[\\"]/g, "\\$&")}"` : word;
+    word === "" || /[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000"]/.test(word)
+      ? `"${word.replace(/[\\"]/g, "\\$&")}"`
+      : word;
 
   // Callback invoked by Rust once console command metadata is available.
   window._buildEngineApi = (json) => {
@@ -387,6 +391,7 @@ export function start(options = {}) {
         cmd,
         args: command.args,
         help: command.help,
+        rest: true,
       }));
       const api = JSON.parse(json).concat(pageApi);
       window.engine = {};

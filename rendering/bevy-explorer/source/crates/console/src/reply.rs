@@ -15,7 +15,7 @@ pub struct Screen {
 }
 
 impl Screen {
-    pub fn of(window: &Window) -> Self {
+    fn of(window: &Window) -> Self {
         Self {
             width: window.width(),
             height: window.height(),
@@ -37,9 +37,11 @@ impl Screen {
         })
     }
 
-    /// A normalized point (0 to 1 from the top left) in logical pixels.
+    /// A normalized point (0 to 1 from the top left) in logical pixels, kept inside the window:
+    /// 1 is its last pixel, not the one past it, where nothing would take a click.
     pub fn to_pixels(&self, normalized: Vec2) -> Vec2 {
-        normalized * Vec2::new(self.width, self.height)
+        let size = Vec2::new(self.width, self.height);
+        (normalized * size).min(size - 1.0).max(Vec2::ZERO)
     }
 
     /// A point in logical pixels, normalized (0 to 1 from the top left).
@@ -85,6 +87,8 @@ mod tests {
             SCREEN.to_pixels(Vec2::new(0.5, 0.25)),
             Vec2::new(640.0, 180.0)
         );
+        assert_eq!(SCREEN.to_pixels(Vec2::ONE), Vec2::new(1279.0, 719.0));
+        assert_eq!(SCREEN.to_pixels(Vec2::ZERO), Vec2::ZERO);
         assert_eq!(
             SCREEN.to_normalized(Vec2::new(640.0, 180.0)),
             Vec2::new(0.5, 0.25)

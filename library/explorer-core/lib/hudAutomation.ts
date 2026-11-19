@@ -968,8 +968,9 @@ export const PAGE_COMMANDS: Record<string, PageCommand> = {
       if (normalized && !(given.x >= 0 && given.x <= 1 && given.y >= 0 && given.y <= 1)) {
         throw new Error(`normalized coordinates run from 0 to 1 from the top left; got (${given.x}, ${given.y})`)
       }
-      const x = normalized ? given.x * screen.width : given.x
-      const y = normalized ? given.y * screen.height : given.y
+      // 1 is the page's last pixel, not the one past it, where no element is
+      const x = normalized ? Math.max(0, Math.min(given.x * screen.width, screen.width - 1)) : given.x
+      const y = normalized ? Math.max(0, Math.min(given.y * screen.height, screen.height - 1)) : given.y
       const input = await clickAt(x, y, button)
       return JSON.stringify(clickAtReply(x, y, button ?? 'left', screen, input))
     }
@@ -978,7 +979,7 @@ export const PAGE_COMMANDS: Record<string, PageCommand> = {
 
 /** /click_at's reply, as the engine words it natively (src/automation.rs, click_at_reply): where
  *  it clicked, in pixels and normalized, and on what page; and how. */
-export function clickAtReply(
+function clickAtReply(
   x: number,
   y: number,
   button: MouseButtonName,

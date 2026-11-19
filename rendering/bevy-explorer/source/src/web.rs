@@ -694,17 +694,18 @@ fn extract_js_api(config: Res<ConsoleConfiguration>, _js: JsThread) {
         .commands
         .iter()
         .map(|(name, cmd)| {
-            let trailing = cmd.is_trailing_var_arg_set();
+            // the predicate the engine splits the line by: the page sends such a command's words
+            // unquoted
+            let rest = console::line::takes_rest(cmd);
             let positional: Vec<_> = cmd
                 .get_arguments()
                 .filter(|a| a.get_long().is_none() && a.get_short().is_none())
                 .collect();
-            let last_id = positional.last().map(|a| a.get_id().as_str());
             let args: Vec<serde_json::Value> = positional
                 .iter()
                 .map(|arg| {
                     let id = arg.get_id().as_str();
-                    let kind = if (trailing && Some(id) == last_id) || id == "json" {
+                    let kind = if id == "json" {
                         "json"
                     } else if id == "entity" {
                         "entity"
@@ -722,9 +723,7 @@ fn extract_js_api(config: Res<ConsoleConfiguration>, _js: JsThread) {
                     arg_json
                 })
                 .collect();
-            // `rest`: the arguments are split on whitespace alone (`console::line`), so the
-            // page sends its words unquoted
-            let mut cmd_json = serde_json::json!({ "cmd": name, "args": args, "rest": trailing });
+            let mut cmd_json = serde_json::json!({ "cmd": name, "args": args, "rest": rest });
             if let Some(about) = cmd.get_about() {
                 cmd_json["help"] = serde_json::Value::String(about.to_string());
             }

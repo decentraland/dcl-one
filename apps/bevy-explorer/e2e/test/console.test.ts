@@ -20,6 +20,11 @@ describe('normalizeLine', () => {
     assert.equal(normalizeLine('hud_read {"name": "Two  Words"}'), '/hud_read {"name": "Two  Words"}')
   })
 
+  test('counts whitespace as the engine does', () => {
+    assert.equal(normalizeLine('chat\u0085Nearby\u3000hi'), '/chat Nearby hi')
+    assert.equal(normalizeLine('chat Nearby a\ufeffb'), '/chat Nearby a\ufeffb')
+  })
+
   test('commandOf is the name without the slash', () => {
     assert.equal(commandOf('/hud_click Backpack'), 'hud_click')
     assert.equal(commandOf('world_state'), 'world_state')

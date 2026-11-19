@@ -5,7 +5,7 @@
 // `Chat` button, whose `checked` is the panel's open state. A message's text and the Nearby title
 // are text without a role, so a sent message is verified in `/chat_history` (the engine's record,
 // with the player's own address from `/world_state`); a link is a `link` control. The message goes
-// through the input, as a player sends it; `explorer.chat` sends one without the HUD.
+// through the input, which takes several words where `/chat <channel> <message>` takes one.
 //
 // | Unity test                                  | Here                                                                                                 | Class   |
 // | TestOpenAndCloseChatFromSidebar             | the rail's Chat button opens the chat with the input focused and a second click closes it             | Port    |

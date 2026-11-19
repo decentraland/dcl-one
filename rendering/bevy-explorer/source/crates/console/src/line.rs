@@ -9,7 +9,9 @@
 //! last argument takes the rest of the line (`trailing_var_arg`, how the JSON commands take their
 //! JSON) gets its arguments split on whitespace alone, quotes kept: the command joins them with
 //! one space, so its JSON arrives as sent except that a run of whitespace inside one of its
-//! strings becomes a single space.
+//! strings becomes a single space. Whitespace is `char::is_whitespace`, Unicode's White_Space; a
+//! sender that quotes a word (`quoteWord` in the engine's `engine.js`, `normalizeLine` in the e2e
+//! driver) names the same set.
 
 use bevy_console::ConsoleConfiguration;
 
@@ -38,8 +40,10 @@ fn split_name(line: &str) -> Option<(String, &str)> {
     Some((name, rest))
 }
 
-/// Whether a command's last argument takes the rest of the line.
-fn takes_rest(command: &clap::Command) -> bool {
+/// Whether a command's last argument takes the rest of the line. The web page's command
+/// functions read the same answer (`rest`, `extract_js_api`) to send such a command's words
+/// unquoted.
+pub fn takes_rest(command: &clap::Command) -> bool {
     command
         .get_arguments()
         .any(clap::Arg::is_trailing_var_arg_set)
@@ -168,6 +172,36 @@ mod tests {
         config.commands.insert("/chat", Words::command());
         config.commands.insert("/set", Rest::command());
         config
+    }
+
+    #[test]
+    fn a_command_takes_the_rest_when_an_argument_is_marked_so() {
+        use clap::CommandFactory;
+        assert!(takes_rest(&Rest::command()));
+        assert!(!takes_rest(&Words::command()));
+    }
+
+    /// What a sender does for a command that takes the rest: its words unquoted, one space apart.
+    #[test]
+    fn a_rest_command_gets_back_the_words_a_sender_joined_unquoted() {
+        let config = config();
+        let words = ["512", "hello", "world"];
+        assert_eq!(
+            split(&format!("/set {}", words.join(" ")), &config)
+                .unwrap()
+                .1
+                .join(" "),
+            "512 hello world"
+        );
+    }
+
+    /// The set the JavaScript senders spell out (`CONSOLE_SPACE`).
+    #[test]
+    fn whitespace_is_unicodes_white_space() {
+        let spaces = "\t\n\u{b}\u{c}\r \u{85}\u{a0}\u{1680}\u{2000}\u{200a}\u{2028}\u{2029}\u{202f}\u{205f}\u{3000}";
+        assert!(words(spaces).is_empty());
+        assert_eq!(words("a\u{85}b"), ["a", "b"]);
+        assert_eq!(words("a\u{feff}b\u{200b}c"), ["a\u{feff}b\u{200b}c"]);
     }
 
     #[test]

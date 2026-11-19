@@ -54,7 +54,6 @@ clap = { workspace = true }
 web-time = { workspace = true }
 copypwasmta = { workspace = true }
 
-
 [dev-dependencies]
 # the embedded shaders, for the GPU shader test
 assets = { workspace = true }

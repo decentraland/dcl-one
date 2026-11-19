@@ -529,12 +529,6 @@ export const KEYBOARD_TIMEOUT_MS = 10_000
 
 export type MouseButton = 'left' | 'right' | 'middle'
 
-/** A console word the engine splits back into the same argument (`crates/console/src/line.rs`):
- *  quoted when it is empty or holds whitespace or a double quote. */
-export function quoteWord(word: string): string {
-  return word === '' || /[\s"]/.test(word) ? `"${word.replace(/[\\"]/g, '\\$&')}"` : word
-}
-
 /** Why a client whose `/world_state` has no `keyboardClaimed` cannot run the scenarios. */
 export const OLDER_CLIENT =
   "the client's /world_state has no keyboardClaimed: it is older than this suite, which waits on it; run the suite against a web build of its own commit"
@@ -830,12 +824,6 @@ export class Explorer {
 
   chatHistory(count = 50): Promise<ChatHistory> {
     return this.json<ChatHistory>(`/chat_history ${count}`)
-  }
-
-  /** A chat message on a channel (`Nearby`), quoted so it arrives as written, runs of spaces
-   *  included. Not a delivery confirmation: `chatHistory` records it. */
-  async chat(channel: string, message: string): Promise<void> {
-    await this.run(`/chat ${quoteWord(channel)} ${quoteWord(message)}`)
   }
 
   /** A direct message; `/dm` takes the rest of the line, so runs of spaces collapse to one. Not a

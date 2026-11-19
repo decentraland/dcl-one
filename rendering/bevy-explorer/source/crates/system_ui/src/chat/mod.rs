@@ -548,6 +548,34 @@ pub struct ChatInput;
 #[derive(Event)]
 pub struct PrivateChatEntered(pub String);
 
+/// Why a `/command` typed as chat did not run.
+enum CommandFault {
+    /// the line does not split: empty, or a double quote left open
+    Split(String),
+    /// the console has no such command
+    Unknown,
+}
+
+/// Run a chat line that starts with `/` as a console command, split as every console line is
+/// (`console::line`).
+fn enter_command(
+    line: &str,
+    config: &ConsoleConfiguration,
+    command_entered: &mut EventWriter<ConsoleCommandEntered>,
+) -> Result<(), CommandFault> {
+    let (command_name, args) = console::line::split(line, config).map_err(CommandFault::Split)?;
+    debug!("Command entered: `{command_name}`, with args: `{args:?}`");
+    if !config.commands.contains_key(command_name.as_str()) {
+        return Err(CommandFault::Unknown);
+    }
+    command_entered.write(ConsoleCommandEntered {
+        command_name,
+        args,
+        responder: None,
+    });
+    Ok(())
+}
+
 fn emit_user_chat(
     mut commands: Commands,
     mut chats: EventWriter<ChatEvent>,
@@ -608,23 +636,20 @@ fn emit_user_chat(
             });
 
             if message.starts_with('/') {
-                match console::line::split(message, &console_config) {
-                    Ok((command_name, args)) => {
-                        debug!("Command entered: `{command_name}`, with args: `{args:?}`");
-                        if console_config.commands.contains_key(command_name.as_str()) {
-                            command_entered.write(ConsoleCommandEntered {
-                                command_name,
-                                args,
-                                responder: None,
-                            });
-                        } else {
-                            debug!(
-                                "Command not recognized, recognized commands: `{:?}`",
-                                console_config.commands.keys().collect::<Vec<_>>()
-                            );
-                        }
+                match enter_command(message, &console_config, &mut command_entered) {
+                    Ok(()) => {}
+                    Err(CommandFault::Unknown) => debug!(
+                        "Command not recognized, recognized commands: `{:?}`",
+                        console_config.commands.keys().collect::<Vec<_>>()
+                    ),
+                    Err(CommandFault::Split(fault)) => {
+                        chats.write(ChatEvent {
+                            timestamp: time.elapsed_secs_f64(),
+                            sender: Entity::PLACEHOLDER,
+                            channel: "System".to_owned(),
+                            message: format!("Command not run: {fault}"),
+                        });
                     }
-                    Err(e) => debug!("Command not run: {e}"),
                 }
             }
         }
@@ -1088,24 +1113,13 @@ fn pipe_chats_from_scene(
                 message: message.clone(),
             });
 
-            let reply = match console::line::split(&message, &console_config) {
-                Ok((command_name, args)) => {
-                    debug!("Command entered: `{command_name}`, with args: `{args:?}`");
-                    if console_config.commands.contains_key(command_name.as_str()) {
-                        command_entered.write(ConsoleCommandEntered {
-                            command_name,
-                            args,
-                            responder: None,
-                        });
-                        None
-                    } else {
-                        Some(format!(
-                            "Command not recognized, recognized commands: `{:?}`",
-                            console_config.commands.keys().collect::<Vec<_>>()
-                        ))
-                    }
-                }
-                Err(e) => Some(format!("Command not run: {e}")),
+            let reply = match enter_command(&message, &console_config, &mut command_entered) {
+                Ok(()) => None,
+                Err(CommandFault::Unknown) => Some(format!(
+                    "Command not recognized, recognized commands: `{:?}`",
+                    console_config.commands.keys().collect::<Vec<_>>()
+                )),
+                Err(CommandFault::Split(fault)) => Some(format!("Command not run: {fault}")),
             };
             if let Some(message) = reply {
                 sender.write(ChatEvent {
