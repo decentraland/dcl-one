@@ -111,7 +111,7 @@ fn map_scene_audio_sources(
             volume: audio_source.0.volume.unwrap_or(1.0),
             global: audio_source.0.global(),
             seek_time,
-            // the HUD's system scene plays interface sounds (chat pings): System slider
+            // super-user (system) scenes play interface sounds: they follow the System slider
             ty: if system_scene {
                 AudioType::System
             } else {
