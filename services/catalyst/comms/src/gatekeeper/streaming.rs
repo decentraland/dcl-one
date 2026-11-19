@@ -38,7 +38,6 @@ use super::moderation::store::PLATFORM_BANNED_MSG;
 use super::{CommsState, SharedState};
 use crate::rooms::{ResolvedRoom, RoomRequest};
 use crate::shared::signed_fetch::SignedPath;
-use crate::access::SceneRef;
 use crate::world_identity::{Parcel, RealmId, SceneId, WorldName};
 use crate::{Address, AuthorityNotEstablished, PermissionDecision};
 
@@ -167,15 +166,12 @@ pub async fn scene_stream_access(
         let place =
             revocation_authority(&state, &sf.metadata, &realm, parcel.as_deref(), &place_id)
                 .await?;
-        // A world's scene admin may revoke the key it may reset: the signed
-        // scene when it is the world's current deployment.
+        // In a world, the signed scene is resolved only if the world-wide
+        // decision refuses (see below), so a revocation by the owner never
+        // waits on the resolver.
         let scene = match realm.world() {
-            Some(_) => match Context::resolve(&state, &sf.metadata).await {
-                Ok(bound) => bound.world_scene,
-                Err(error) if error.code >= 500 => return Err(error),
-                Err(_) => None,
-            },
-            None => None,
+            Some(_) => KeyScene::Signed,
+            None => KeyScene::None,
         };
         (place_id, place, None, scene)
     } else {
@@ -191,9 +187,30 @@ pub async fn scene_stream_access(
         // explicit admins are stored under its entity id (`/scene-admin`),
         // which `bound.place` carries with the deployment's footprint.
         let place = key_authority(&state, &place_id, world, bound.place);
-        (place_id, place, Some(bound.room), bound.world_scene)
+        let scene = match bound.world_scene {
+            Some((_, scene)) => KeyScene::Bound(scene),
+            None => KeyScene::None,
+        };
+        (place_id, place, Some(bound.room), scene)
     };
-    match key_decision(&state, &place, scene.as_ref(), &sf.signer).await {
+    let mut decision = scene::scene_manager_decision(&state, &place, &sf.signer).await;
+    if lacks_authority(&decision) {
+        // A world's scene admin may revoke the key it may reset: the signed
+        // scene when it is the world's current deployment.
+        let world_scene = match scene {
+            KeyScene::None => None,
+            KeyScene::Bound(scene) => Some(scene),
+            KeyScene::Signed => match Context::resolve(&state, &sf.metadata).await {
+                Ok(bound) => bound.world_scene.map(|(_, scene)| scene),
+                Err(error) if error.code >= 500 => return Err(error),
+                Err(_) => None,
+            },
+        };
+        if let Some(world_scene) = world_scene {
+            decision = world_scene_admin(&state, &place, &world_scene, &sf.signer, decision).await;
+        }
+    }
+    match decision {
         PermissionDecision::Allowed => {}
         PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
             return Err(forbidden(NOT_AUTHORIZED_TO_STREAM_MSG));
@@ -266,10 +283,11 @@ pub(super) async fn scene_authority<'a>(
 }
 
 /// The lookup the stream-key verbs decide on. A world has ONE credential for
-/// all its scenes, so authority over one scene (its explicit admins, a
-/// grantee of some of its parcels) must not reach it: the world place with
-/// no footprint admits the owner, an admin of that place and a grantee whose
-/// grant has no parcel restriction. A Genesis place is its scene's.
+/// all its scenes, so authority over one scene (a grantee of some of its
+/// parcels) must not reach it: the world place with no footprint admits the
+/// owner, an admin of that place and a grantee whose grant has no parcel
+/// restriction. A Genesis place is its scene's. The one scene-level grant
+/// that reaches a world's key is decided apart, in [`world_scene_admin`].
 pub(super) fn key_authority<'a>(
     state: &'a CommsState,
     place_id: &str,
@@ -291,12 +309,8 @@ pub(super) fn key_authority<'a>(
     }
 }
 
-/// The decision for a stream-key verb on `authority` ([`key_authority`]).
-/// In a world, an explicit admin of the scene the request is bound to also
-/// holds the world's one credential: `/scene-admin` keys that grant on the
-/// scene's entity id, so no admin of the world place can be granted, and
-/// upstream's admin of a world's place holds its stream key. A grantee
-/// restricted to some parcels still does not.
+/// The decision for a stream-key verb on `authority` ([`key_authority`]),
+/// with the world scene the request is bound to, if any.
 pub(super) async fn key_decision(
     state: &CommsState,
     authority: &PlaceLookup<'_>,
@@ -304,18 +318,59 @@ pub(super) async fn key_decision(
     signer: &Address,
 ) -> PermissionDecision {
     let decision = scene::scene_manager_decision(state, authority, signer).await;
-    let Some((world, scene)) = world_scene else {
-        return decision;
-    };
-    match decision {
-        PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
-            state
-                .policy
-                .is_admin(&SceneRef::World { world, scene }, signer)
-                .await
+    match world_scene {
+        Some((_, scene)) if lacks_authority(&decision) => {
+            world_scene_admin(state, authority, scene, signer, decision).await
         }
-        decided => decided,
+        _ => decision,
     }
+}
+
+pub(super) fn lacks_authority(decision: &PermissionDecision) -> bool {
+    matches!(
+        decision,
+        PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. })
+    )
+}
+
+/// After the world-wide decision `refused` the signer for lack of authority:
+/// an explicit admin of the world `scene` holds the world's one credential
+/// when whoever granted it still holds world-wide authority. `/scene-admin`
+/// keys that grant on the scene's entity id, so no admin of the world place
+/// can be granted, and upstream's admin of a world's place holds its stream
+/// key. A grantee restricted to some parcels may grant `/scene-admin` on its
+/// scene, so an admin it granted (or one granted by another scene admin)
+/// stays refused: the grant never widens its granter's authority.
+async fn world_scene_admin(
+    state: &CommsState,
+    authority: &PlaceLookup<'_>,
+    scene: &SceneId,
+    signer: &Address,
+    refused: PermissionDecision,
+) -> PermissionDecision {
+    let granter = match state
+        .moderation
+        .active_admin_granter(scene.as_str(), signer)
+        .await
+    {
+        Ok(Some(granter)) => granter,
+        Ok(None) => return refused,
+        Err(error) => return PermissionDecision::undetermined("social.scene_admins", &error),
+    };
+    match scene::scene_manager_decision(state, authority, &granter).await {
+        PermissionDecision::Allowed => PermissionDecision::Allowed,
+        decision if lacks_authority(&decision) => refused,
+        undetermined => undetermined,
+    }
+}
+
+/// The world scene a stream-key verb may fall back to ([`world_scene_admin`]).
+enum KeyScene {
+    None,
+    /// The scene the request is bound to.
+    Bound(SceneId),
+    /// A revocation: the signed scene, resolved only when needed.
+    Signed,
 }
 
 /// The lookup a revocation is authorized on. A world's credential takes
