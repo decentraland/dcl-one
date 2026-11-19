@@ -1,6 +1,6 @@
 //! The builder's on-chain reads: an address's published collections and
 //! items (`GET /v1/{address}/collections`, `/v1/{address}/items`) and the
-//! curation console's committee and under-review listings. The old crate
+//! curation console's under-review listing. The old crate
 //! read the marketplace squid over a side pool; v2 runs no squid, so these
 //! are the L1/L2 collections subgraph readers (`marketplace::graph`, the
 //! ONE guarded client with its retry ladder and body cap), shaped exactly as
@@ -183,8 +183,6 @@ pub struct OrphanItemOut {
 
 const MAX_ROWS: usize = 1000;
 const MAX_REVIEW_ROWS: usize = 1000;
-/// Curation pages walked for the committee before the answer is cut off.
-const MAX_CURATION_PAGES: usize = 10;
 /// Collections per `collection_in` chunk of the latest-curation lookup.
 const CURATION_CHUNK: usize = 100;
 pub const MARKETPLACE_DOWN: &str = "marketplace data unavailable";
@@ -361,10 +359,6 @@ const ITEMS_QUERY: &str = "query builderItems($address: String!, $first: Int!) {
   }\
 }";
 
-const CURATORS_QUERY: &str = "query curators($idFrom: ID!, $first: Int!) {\
-  curations(first: $first, where: { id_gt: $idFrom }, orderBy: id, orderDirection: asc) { id curator { id } }\
-}";
-
 const UNDER_REVIEW_QUERY: &str = "query underReview($first: Int!) {\
   collections(first: $first, where: { isCompleted: true, isApproved: false }, orderBy: createdAt, orderDirection: desc) {\
     id name creator itemsCount isCompleted isApproved createdAt reviewedAt\
@@ -459,52 +453,8 @@ pub async fn items_for_address(
     Ok(rows.into_iter().map(item_out).collect())
 }
 
-/// Every wallet that ever curated, as the squid's `DISTINCT curator_id`
-/// listed them: the curations walked in id order, at most
-/// [`MAX_CURATION_PAGES`] pages per network.
-pub async fn committee_members(market: &ChainIndex) -> Result<Vec<CommitteeMemberOut>, ApiError> {
-    let mut addresses: Vec<String> = Vec::new();
-    for reader in &READERS {
-        let Some(url) = (reader.url_of)(market) else {
-            continue;
-        };
-        let mut id_from = String::new();
-        for _ in 0..MAX_CURATION_PAGES {
-            let data = graph_query(
-                market,
-                url,
-                CURATORS_QUERY,
-                json!({ "idFrom": id_from, "first": THE_GRAPH_PAGE_SIZE }),
-            )
-            .await
-            .map_err(upstream)?;
-            let page: Vec<&Value> = list(&data, "curations").collect();
-            for c in &page {
-                if let Some(addr) = c
-                    .get("curator")
-                    .and_then(|c| c.get("id"))
-                    .and_then(Value::as_str)
-                {
-                    addresses.push(addr.to_string());
-                }
-            }
-            if page.len() < THE_GRAPH_PAGE_SIZE as usize {
-                break;
-            }
-            match page
-                .last()
-                .and_then(|c| c.get("id"))
-                .and_then(Value::as_str)
-            {
-                Some(id) => id_from = id.to_string(),
-                None => break,
-            }
-        }
-    }
-    Ok(shape_committee(addresses))
-}
-
-fn shape_committee(addresses: Vec<String>) -> Vec<CommitteeMemberOut> {
+/// The committee's console rows: distinct lowercase addresses, sorted.
+pub(crate) fn shape_committee(addresses: Vec<String>) -> Vec<CommitteeMemberOut> {
     let mut distinct: Vec<String> = addresses
         .into_iter()
         .filter_map(|addr| {
@@ -1035,7 +985,6 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        assert!(committee_members(&market).await.unwrap().is_empty());
         assert!(collections_under_review(&market).await.unwrap().is_empty());
     }
 }

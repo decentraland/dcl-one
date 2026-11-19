@@ -3008,6 +3008,7 @@ async fn api_jobs_never_attach_market_indexing_even_when_enabled() {
     let mut settings = index_settings(100, 1000);
     settings.mana_transfers_enabled = true;
     settings.sales_enabled = true;
+    settings.committee_enabled = true;
     let mut state = state_over(db.pool.clone(), "https://rpc.example.org/", settings, false);
     let inner = Arc::get_mut(&mut state).unwrap();
     inner.settings.market.mirrors_enabled = true;
@@ -3019,6 +3020,7 @@ async fn api_jobs_never_attach_market_indexing_even_when_enabled() {
         "nft-index",
         "trade-events-index",
         "mana-transfers-index",
+        "committee-index",
         "sales-index",
         "collections-mirror",
         "items-mirror",
@@ -3037,6 +3039,7 @@ async fn api_jobs_never_attach_market_indexing_even_when_enabled() {
         "nft-index",
         "trade-events-index",
         "mana-transfers-index",
+        "committee-index",
         "sales-index",
         "collections-mirror",
         "items-mirror",
@@ -3323,5 +3326,64 @@ async fn a_reorg_rewind_replays_the_notification_producers() {
         "the replacing gift is read again below the old cursor"
     );
     assert_eq!(notified().await, vec![BOB.to_string(), CARL.to_string()]);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn committee_index_keeps_member_set_logs_of_both_contracts() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    use super::committee_index::{CONTRACTS, CommitteeIndex, MEMBER_SET, START_BLOCK};
+    let event =
+        |block: u64, contract: &str, member: &str, set: bool| crate::chain_index::rpc::RpcLog {
+            address: contract.into(),
+            topics: vec![MEMBER_SET.into(), format!("0x{:0>64}", &member[2..])],
+            data: format!("0x{:064x}", u8::from(set)),
+            block_number: format!("0x{block:x}"),
+            log_index: "0x0".into(),
+            block_timestamp: Some(format!("0x{:x}", time_of(block))),
+            block_hash: None,
+            transaction_hash: Some(format!("0x{block:064x}")),
+        };
+    let s = START_BLOCK;
+    let chain = FakeChain::new(
+        s + 100,
+        vec![
+            event(s + 1, CONTRACTS[0], ALICE, true),
+            event(s + 2, CONTRACTS[1], ALICE, false),
+            event(s + 3, CONTRACTS[1], BOB, true),
+        ],
+        10_000,
+        1000,
+    );
+    chain.finalized_lag.store(2, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let st = state_over(db.pool.clone(), &url, index_settings(100, 10_000), false);
+    let out = pass(&st, &url, &CommitteeIndex).await;
+    assert!(out.published, "{out:?}");
+    let rows: Vec<(String, String, bool)> = sqlx::query_as(
+        "SELECT contract_address, member, is_member FROM shop.committee_event ORDER BY block_number",
+    )
+    .fetch_all(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (CONTRACTS[0].to_string(), ALICE.to_string(), true),
+            (CONTRACTS[1].to_string(), ALICE.to_string(), false),
+            (CONTRACTS[1].to_string(), BOB.to_string(), true),
+        ]
+    );
+    assert_eq!(pass(&st, &url, &CommitteeIndex).await.rows_written, 0);
+    chain
+        .forks
+        .lock()
+        .insert(s + 98, format!("0x{}", "ee".repeat(32)));
+    chain.logs.lock().clear();
+    let rewound = pass(&st, &url, &CommitteeIndex).await;
+    assert!(rewound.reorg_rewound_to.is_some());
+    assert!(!rewound.published || pass(&st, &url, &CommitteeIndex).await.published);
     db.drop().await;
 }

@@ -165,6 +165,8 @@ describes cache scope, trust boundaries, stale-entry replacement and retention.
 
 Event poster upgrade: run `catalyst schema migrate` before deploying the API. Step `0050_explore_poster_avif` allows mirrored AVIF posters to be stored with their detected media type and preserves existing poster rows.
 
+Curation committee upgrade: run `catalyst schema migrate` before deploying the API. Step `0051_shop_committee_index` admits the `committee` index in `shop.chain_cursor`. Builder's committee routes admit only `BUILDER_ADMIN_ADDRESSES` until `MARKETPLACE_COMMITTEE_INDEX_ENABLED` (on under the mirror posture) has walked and published the Polygon committee.
+
 World-admission upgrade: the release script
 `schemas/releases/world-scene-ban-keys.sql` requires a maintenance window. Stop old API and
 scene-host replicas before `catalyst schema migrate`; the object pass installs the durable queue.

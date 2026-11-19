@@ -60,6 +60,7 @@ pub mod bids;
 pub mod catalog;
 pub mod chain_walk;
 pub mod collections;
+pub mod committee_index;
 pub mod contracts;
 pub mod definitions;
 pub mod features;
@@ -774,8 +775,8 @@ pub(crate) async fn ensure_chain(
     Ok(())
 }
 
-/// Attaches `nft-index`, `trade-events-index` and `mana-transfers-index`
-/// when their switches are on: one periodic job each, a pass walking both
+/// Attaches `nft-index`, `trade-events-index`, `mana-transfers-index` and
+/// `committee-index` (Polygon only) when their switches are on: one periodic job each, a pass walking both
 /// networks in turn (the budget is per network), the nft walk of a network
 /// waiting for the collections mirror's first complete pass (its address
 /// set); then `sales-index` (`sales_index::spawn_job`, Polygon only).
@@ -789,11 +790,14 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
         ),
         (settings.nft_enabled, chain_walk::INDEXER_NFT),
         (settings.mana_transfers_enabled, chain_walk::INDEXER_MANA),
+        (settings.committee_enabled, chain_walk::INDEXER_COMMITTEE),
     ] {
         let job = if name == chain_walk::INDEXER_NFT {
             "nft-index"
         } else if name == chain_walk::INDEXER_MANA {
             "mana-transfers-index"
+        } else if name == chain_walk::INDEXER_COMMITTEE {
+            "committee-index"
         } else {
             "trade-events-index"
         };
@@ -815,6 +819,7 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
         let nets: Vec<chain_walk::ChainNet> = chain_walk::ChainNet::ALL
             .into_iter()
             .filter(|n| rpc_url(state, *n).is_some())
+            .filter(|n| name != chain_walk::INDEXER_COMMITTEE || *n == chain_walk::ChainNet::Matic)
             .collect();
         if nets.is_empty() {
             tracing::warn!(
@@ -844,6 +849,8 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
                                     return Ok(());
                                 }
                                 chain_walk::run_pass(&state.pool, &rpc, &nft_indexes[i], &state.settings.market.indexes, Some(&ctx.cancel), &progress).await
+                            } else if name == chain_walk::INDEXER_COMMITTEE {
+                                chain_walk::run_pass(&state.pool, &rpc, &committee_index::CommitteeIndex, &state.settings.market.indexes, Some(&ctx.cancel), &progress).await
                             } else if name == chain_walk::INDEXER_MANA {
                                 chain_walk::run_pass(&state.pool, &rpc, &mana_transfers::ManaTransfersIndex { net: *net }, &state.settings.market.indexes, Some(&ctx.cancel), &progress).await
                             } else {

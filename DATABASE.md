@@ -2021,6 +2021,23 @@ each publication or archive transition appends a row to
 `social.badge_catalog_audit`; `badge_admin_audit` keeps per-wallet grants and
 revokes, whose `address` a catalog write does not have.
 
+## Curation committee
+
+Builder's committee routes (the drafts and items of every wallet, another
+wallet's collections and items, the curation console's committee list)
+admit `BUILDER_ADMIN_ADDRESSES` and the current members of the Polygon
+curation committee. Shop's `committee` index
+(`MARKETPLACE_COMMITTEE_INDEX_ENABLED`) walks the two Committee contracts'
+`MemberSet` logs from the first one's deployment into `shop.committee_event`
+(tens of rows, appended with the cursor advance in `shop.chain_cursor`,
+deleted past a reorg rewind). Builder reads, never writes, both tables by
+shared SQL in one statement: a wallet is a member when its latest event
+(block, log index) at or below the published block (`folded_block`) set it,
+so rows a pass adds before its publish wait for it. An index that is off,
+not yet published or published more than 30 minutes ago admits only the
+configured addresses. Changing a column builder reads updates this section
+and the AGENTS.md "Ownership" entry in the same change.
+
 ## Auth API relay state workload
 
 `/auth-api` (`services/catalyst/explore/src/api/auth_api/`) is the sign-in
