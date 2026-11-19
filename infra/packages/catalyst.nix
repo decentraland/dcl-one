@@ -48,11 +48,19 @@ let
   };
   # The lock's one git source: the message router's LiveKit SDK, the commit of this repository
   # that rendering/bevy-explorer/patches/client-sdk-rust/source.toml names. With its hash crane
-  # fetches that commit alone instead of every ref of the repository; `catalyst` does not compile
-  # it, the vendor directory only has to hold it.
+  # fetches that commit alone instead of every ref of the repository. The commit holds only the
+  # patched source's `paths` while its root Cargo.toml still lists upstream's members, so its
+  # crates are vendored without loading that workspace (git-crates.nix, as bevy-explorer.nix
+  # does for the same commit). `catalyst` does not compile them; the vendor directory only has
+  # to hold them.
   outputHashes."git+https://github.com/decentraland/dcl-one?rev=b2f8bc84000333ea843578959c9d11caccaa9474#b2f8bc84000333ea843578959c9d11caccaa9474" =
     "sha256-pu+EoXyqMEQ/N5Wx9r4x2K/3o6HGBhZtDcg7GTP26Vk=";
-  cargoVendorDir = craneLib.vendorCargoDeps (common // { inherit outputHashes; });
+  gitCrates = import ./git-crates.nix { inherit pkgs; };
+  cargoVendorDir = craneLib.vendorCargoDeps (common // {
+    inherit outputHashes;
+    overrideVendorGitCheckout = crates: fetched:
+      gitCrates.checkout { inherit (craneLib) craneUtils; tree = fetched; inherit crates fetched; };
+  });
   cargoArtifacts = craneLib.buildDepsOnly (common // { inherit cargoVendorDir; });
 in craneLib.buildPackage (common // {
   inherit cargoArtifacts cargoVendorDir;

@@ -160,37 +160,7 @@ let
   bevySrc = assemble dummyRepo inTree;
   src = repoFiles;
 
-  gitCrates = pkgs.writeText "git-crates.py" ''
-    import os, pathlib, re, shutil, subprocess, sys, tomllib
-
-    tree, out, *wanted = sys.argv[1:]
-    manifests = {path.parent: tomllib.loads(path.read_text()) for path in pathlib.Path(tree).rglob("Cargo.toml")}
-    crates = {}
-    for crate, manifest in manifests.items():
-        if "package" in manifest:
-            root = next((above for above in [crate, *crate.parents] if "workspace" in manifests.get(above, {})), crate)
-            resolved = subprocess.run(["crane-resolve-workspace-inheritance", crate / "Cargo.toml"], check=True,
-                stdout=subprocess.PIPE, text=True, env=os.environ | {"WORKSPACE_ROOT": str(root)}).stdout
-            package = tomllib.loads(resolved).get("package", {})
-            crates.setdefault(f"{package.get('name')}-{package.get('version', '0.0.0')}", []).append((crate, resolved))
-    for name in wanted:
-        found = crates.get(name, [])
-        if len(found) != 1:
-            sys.exit(f"{name}: {len(found)} crates of this name and version in {tree}")
-        crate, resolved = found[0]
-        target = pathlib.Path(out, name)
-        shutil.copytree(crate, target, ignore=lambda directory, names: [
-            entry for entry in names if pathlib.Path(directory, entry) in manifests])
-        subprocess.run(["chmod", "-R", "u+w", target], check=True)
-        library = tomllib.loads(resolved).get("lib", {}).get("path", "")
-        inside = re.sub(r"^(\.\./)+", "", library)
-        if inside != library:
-            shutil.copytree((crate / library).parent, (target / inside).parent, dirs_exist_ok=True)
-            resolved = resolved.replace(f'"{library}"', f'"{inside}"')
-        (target / "Cargo.toml").write_text(resolved)
-        (target / ".cargo-checksum.json").write_text('{"files":{}, "package":null}')
-  '';
-  workspaceRootOnly = pkgs.writeShellScriptBin "cargo" ''echo "{\"workspace_root\":\"$WORKSPACE_ROOT\"}"'';
+  gitCrates = import ./git-crates.nix { inherit pkgs; };
   hashOfUnpatchedGitSource."git+https://github.com/gltf-rs/gltf?rev=50d65229#50d65229477fe5f785c2c90df21eb59c93ea2261" =
     "sha256-nSlREMX9EKNpBFAXMA9PUj2FeLEr9Yh8UayEzrJIUBQ=";
   vendor = checkoutsByRev: packages: crane.vendorCargoDeps {
@@ -202,9 +172,7 @@ let
         src = checkoutsByRev.${commitOf package} or null;
       in if src == null then lib.throwIfNot (hashOfUnpatchedGitSource ? ${package.source})
         "${package.name}: ${package.source} is not the rev of a patched source and has no hash in hashOfUnpatchedGitSource" fetched
-      else pkgs.runCommand fetched.name {
-        nativeBuildInputs = [ pkgs.python3 crane.craneUtils workspaceRootOnly ];
-      } "python3 ${gitCrates} ${src} $out ${lib.escapeShellArgs (map (crate: "${crate.name}-${crate.version}") crates)}";
+      else gitCrates.checkout { inherit (crane) craneUtils; tree = src; inherit crates fetched; };
   };
   earlyVendor = vendor (byRev patchedSources) earlyPackages;
   lateVendor = vendor latePatchedByRev (lib.filter inLatePatched lock.package);
