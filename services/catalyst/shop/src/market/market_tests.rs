@@ -1949,6 +1949,19 @@ async fn a_signed_item_order_is_stored_once_and_only_behind_the_write_switch() {
     assert_eq!(status, StatusCode::CREATED, "{body}");
     assert_eq!(body["ok"], true);
     let created = body["data"]["id"].as_str().unwrap().to_string();
+    // The 201 carries the stored trade, `received` included, as the read answers it.
+    assert_eq!(
+        body["data"]["received"].as_array().map(Vec::len),
+        Some(1),
+        "{body}"
+    );
+    let (status, read) = get(
+        market_router(state.clone()),
+        &format!("/v1/trades/{created}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(body["data"], read["data"]);
     let (status, body) = call(
         market_router(state.clone()),
         "POST",

@@ -774,6 +774,8 @@ pub enum TradeCreationError {
     },
     InvalidStructure(String),
     InvalidSignature(String),
+    /// Signed against an off-chain marketplace other than the chain's current one.
+    RetiredMarketplace,
     OwnershipUnverifiable(i64),
     OwnershipLookupFailed(String),
     NotTheOwner {
@@ -815,6 +817,10 @@ impl std::fmt::Display for TradeCreationError {
             }
             Self::InvalidStructure(why) => write!(f, "invalid trade structure: {why}"),
             Self::InvalidSignature(why) => write!(f, "{why}"),
+            Self::RetiredMarketplace => write!(
+                f,
+                "Trades signed on OffChainMarketplaceV2 are no longer accepted, sign it on OffChainMarketplaceV3"
+            ),
             Self::OwnershipUnverifiable(chain) => write!(
                 f,
                 "ownership cannot be verified: no rpc endpoint is configured for chain {chain}"
@@ -1206,6 +1212,10 @@ pub async fn create_trade(
     validate_structure(trade)?;
     let matched = resolve_signature(trade, &candidates)
         .map_err(|e| TradeCreationError::InvalidSignature(e.to_string()))?;
+    // Older versions still verify, so a trade signed on one is told where to sign instead.
+    if Some(matched.marketplace) != offchain_marketplace_v3(trade.chain_id) {
+        return Err(TradeCreationError::RetiredMarketplace);
+    }
     verify_sent_ownership(state, trade).await?;
     verify_estate_fingerprint(state, trade).await?;
     if trade.trade_type == TRADE_TYPE_PUBLIC_ITEM_ORDER {
@@ -1422,9 +1432,25 @@ async fn post_trade_inner(
         Err(e) => return Err(creation_error_to_api(e)),
     };
     state.catalog_cache.invalidate();
+    // The stored trade as `GET /v1/trades/{id}` answers it; its id alone if that read fails.
+    let data = match super::trades::get_trade_by_id(
+        &state.pool,
+        &id,
+        None,
+        super::trades::TradeScope::Any,
+    )
+    .await
+    {
+        Ok(Some(trade)) => json!(trade),
+        Ok(None) => json!({ "id": id }),
+        Err(e) => {
+            tracing::warn!(error = %e, trade_id = %id, "created trade could not be read back");
+            json!({ "id": id })
+        }
+    };
     Ok((
         StatusCode::CREATED,
-        Json(json!({ "ok": true, "data": { "id": id } })),
+        Json(json!({ "ok": true, "data": data })),
     )
         .into_response())
 }
@@ -1507,7 +1533,7 @@ pub(crate) mod test_support {
     pub fn signed_trade() -> TradeCreation {
         signed_trade_on(
             MATIC_MAINNET,
-            &offchain_marketplace_v2(MATIC_MAINNET).unwrap(),
+            &offchain_marketplace_v3(MATIC_MAINNET).unwrap(),
         )
     }
 }
@@ -1737,6 +1763,44 @@ mod tests {
         assert_ne!(status("[2001:db8:7:2::1]").await, 429, "another /64 posts");
     }
 
+    /// A trade that verifies only against an older off-chain marketplace is answered 400 naming
+    /// the contract to sign on, before ownership or the database is consulted.
+    #[tokio::test]
+    async fn a_trade_signed_on_an_older_marketplace_is_refused() {
+        let state = crate::market::tests::support::state_without_db();
+        for chain_id in [
+            MATIC_MAINNET,
+            ETHEREUM_MAINNET,
+            MATIC_AMOY,
+            ETHEREUM_SEPOLIA,
+        ] {
+            let mut trade = signed_trade_on(chain_id, &offchain_marketplace_v2(chain_id).unwrap());
+            if network_for_chain(chain_id) == Some("ETHEREUM") {
+                trade.network = "ETHEREUM".into();
+                sign(&mut trade, &offchain_marketplace_v2(chain_id).unwrap());
+            }
+            let err = create_trade(&state.pool, None, &trade, &trade.signer.clone(), 1_000)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, TradeCreationError::RetiredMarketplace),
+                "{chain_id}: {err}"
+            );
+            let response = creation_error_to_api(err).into_response();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let body: serde_json::Value = serde_json::from_slice(
+                &axum::body::to_bytes(response.into_body(), 1 << 16)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                body["message"],
+                "Trades signed on OffChainMarketplaceV2 are no longer accepted, sign it on OffChainMarketplaceV3"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn the_policy_refuses_before_any_signature_or_database_work() {
         let state = crate::market::tests::support::state_without_db();
@@ -1908,7 +1972,7 @@ mod tests {
         pegged.received[0].asset_type = ASSET_TYPE_USD_PEGGED_MANA;
         pegged.received[0].contract_address = NOT_MANA.into();
         for mut trade in [checksummed, pegged] {
-            sign(&mut trade, &offchain_marketplace_v2(MATIC_MAINNET).unwrap());
+            sign(&mut trade, &offchain_marketplace_v3(MATIC_MAINNET).unwrap());
             assert!(matches!(
                 create_trade(pool, None, &trade, &address, 1_000)
                     .await
