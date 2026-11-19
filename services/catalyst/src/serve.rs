@@ -667,6 +667,7 @@ pub async fn serve(
                 )
             })
             .transpose()?,
+        trial_relay_all_wallets: config.shop.credits_trial_relay_all_wallets,
         oz_relayer_url: Config::non_empty(&config.economy.oz_relayer_url),
         oz_relayer_id: Config::non_empty(&config.economy.oz_relayer_id),
         oz_relayer_api_key: Config::non_empty(&config.economy.oz_relayer_api_key),

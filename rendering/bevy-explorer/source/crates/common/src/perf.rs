@@ -96,11 +96,11 @@ impl FrameTimeSampleSummary {
             p99_ms: percentile(99),
             hiccup_threshold_ms,
             frames_over_hiccup_threshold_count: over.len() as u32,
-            frames_over_hiccup_threshold_time_sum_ms: over.iter().sum(),
+            frames_over_hiccup_threshold_time_sum_ms: over.iter().fold(0.0, |sum, ms| sum + ms),
             frames_over_hiccup_threshold_excess_sum_ms: over
                 .iter()
                 .map(|ms| ms - hiccup_threshold_ms)
-                .sum(),
+                .fold(0.0, |sum, ms| sum + ms),
         })
     }
 
@@ -392,6 +392,14 @@ mod tests {
         assert_eq!(summary.p1_ms, 16.0);
         assert_eq!(summary.p99_ms, 16.0);
         assert_eq!(summary.frames_over_hiccup_threshold_count, 0);
+        assert_eq!(
+            summary.frames_over_hiccup_threshold_time_sum_ms.to_bits(),
+            0.0_f32.to_bits()
+        );
+        assert_eq!(
+            summary.frames_over_hiccup_threshold_excess_sum_ms.to_bits(),
+            0.0_f32.to_bits()
+        );
     }
 
     #[test]

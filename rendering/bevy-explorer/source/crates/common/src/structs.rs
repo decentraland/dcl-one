@@ -680,7 +680,7 @@ pub struct AppConfig {
 
 /// bump to run one-time migrations of the preset-managed settings in existing configs
 /// (see [`AppConfig::reset_outdated_settings`])
-pub const SETTINGS_GENERATION: u32 = 4;
+pub const SETTINGS_GENERATION: u32 = 5;
 
 /// bump to run one-time migrations of saved input binding tables
 /// (see [`AppConfig::migrate_inputs`])
@@ -779,6 +779,8 @@ impl AppConfig {
     /// gen 3: native gpu uploads became capped by default; move configs still uncapped (0).
     /// gen 4: the defaults became the Medium graphics preset; reset the settings the presets set,
     /// so every saved config lands on Medium.
+    /// gen 5: Render Resolution moves in 10% steps; move a value saved between steps to its
+    /// nearest step.
     pub fn reset_outdated_settings(&mut self) {
         if self.settings_generation >= SETTINGS_GENERATION {
             return;
@@ -795,6 +797,10 @@ impl AppConfig {
         }
         if self.settings_generation < 4 {
             self.graphics.reset_quality_preset(&default.graphics);
+        }
+        if self.settings_generation < 5 {
+            self.graphics
+                .set_render_scale_steps(self.graphics.render_scale_steps());
         }
         self.settings_generation = SETTINGS_GENERATION;
     }
@@ -1038,6 +1044,26 @@ pub struct GraphicsSettings {
 /// The ambient brightness setting at which the Trilight ambient is the sky preset's
 /// (visuals::sky_envmap).
 pub const AMBIENT_BRIGHTNESS_DEFAULT: i32 = 50;
+
+impl GraphicsSettings {
+    /// Render Resolution steps in a render scale of 1: one step is 10%.
+    pub const RENDER_SCALE_STEPS: i32 = 10;
+    /// The lowest Render Resolution a player can choose, in steps (50%). Hosts may go lower for
+    /// the session ([`SessionGraphics::MIN_RENDER_SCALE`]).
+    pub const MIN_PLAYER_RENDER_SCALE_STEPS: i32 = 5;
+
+    /// The saved render scale at its nearest Render Resolution step within the player's range.
+    pub fn render_scale_steps(&self) -> i32 {
+        ((self.render_scale * Self::RENDER_SCALE_STEPS as f32).round() as i32).clamp(
+            Self::MIN_PLAYER_RENDER_SCALE_STEPS,
+            Self::RENDER_SCALE_STEPS,
+        )
+    }
+
+    pub fn set_render_scale_steps(&mut self, steps: i32) {
+        self.render_scale = steps as f32 / Self::RENDER_SCALE_STEPS as f32;
+    }
+}
 
 /// The defaults are the Medium graphics preset, the one a new install gets: the HUD's Graphics
 /// Preset (`react-web/bridge-scene/src/domains/graphicsPresets.ts`) reads Medium off each
@@ -2728,6 +2754,25 @@ mod tests {
         assert_eq!(uncapped.graphics.gpu_bytes_per_frame, 10_000_000);
         assert_eq!(uncapped.settings_generation, SETTINGS_GENERATION);
         assert_eq!(saved(500_000).graphics.gpu_bytes_per_frame, 500_000);
+    }
+
+    #[test]
+    fn reset_outdated_settings_moves_render_scale_to_a_ten_percent_step() {
+        for (saved, migrated) in [
+            (0.97, 1.0),
+            (0.84, 0.8),
+            (0.53, 0.5),
+            (0.3, 0.5),
+            (0.7, 0.7),
+        ] {
+            let mut config = AppConfig {
+                settings_generation: 4,
+                ..Default::default()
+            };
+            config.graphics.render_scale = saved;
+            config.reset_outdated_settings();
+            assert_eq!(config.graphics.render_scale, migrated);
+        }
     }
 
     #[test]
