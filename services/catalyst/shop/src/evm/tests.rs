@@ -3542,6 +3542,136 @@ async fn a_trial_never_reuses_the_relayer_key_on_the_names_chain() {
     assert_eq!(open.eth_signer.as_ref().unwrap().max_fee_per_gas(), None);
 }
 
+/// A contract map served at a URL, as `CONTRACT_ADDRESSES_URL` points at one.
+async fn spawn_contract_map(map: Value) -> String {
+    let app = axum::Router::new().route(
+        "/addresses.json",
+        axum::routing::get(move || {
+            let map = map.clone();
+            async move { Json(map) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind contract map");
+    let addr = listener.local_addr().expect("contract map addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    format!("http://{addr}/addresses.json")
+}
+
+/// The testnet development profile without a relayer key: the relay forwards to an upstream
+/// (the .zone transactions API) and admits the published contract map, whose `amoy` entry never
+/// carries dcl-one's own CreditsManager. A meta-transaction to that manager is refused here,
+/// marked not sent, and never reaches the upstream, so the Shop falls back to the wallet instead
+/// of waiting on a forward the upstream would reject unmarked. A collection the relay admits
+/// still goes upstream.
+#[tokio::test]
+async fn without_a_relayer_key_dcl_ones_manager_is_refused_here_and_never_forwarded() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let map = spawn_contract_map(json!({
+        "amoy": { "MarketplaceV5": "0x36fd1434a6c4b8ade80c9847c1d15033ce34488c" }
+    }))
+    .await;
+    let seen: Seen = Arc::new(Mutex::new(None));
+    let upstream = spawn_mock_upstream(
+        MockBehaviour {
+            status: 200,
+            body: r#"{"ok":true,"txHash":"0x00000000000000000000000000000000000000000000000000000000000000aa"}"#,
+            stall: None,
+        },
+        seen.clone(),
+    )
+    .await;
+    let app = router(state(
+        pool.clone(),
+        Settings {
+            transactions_upstream_url: Some(upstream),
+            contract_addresses_url: Some(map),
+            contract_addresses_chain_key: "amoy".into(),
+            ..Settings::for_tests()
+        },
+    ));
+    let buyer = unique_address();
+    let manager = format!("{:#x}", crate::policy_entry::DCL_ONE_AMOY_MANAGER);
+    let (status, text) = post_with_auth(
+        &app,
+        &tx_body(&buyer, &manager, &split_sig_calldata(&buyer)),
+    )
+    .await;
+    let forwarded_the_manager = seen.lock().unwrap().is_some();
+    let manager_rows = row_count(&pool, &buyer).await;
+    let other = unique_address();
+    let (collection_status, collection_text) = post_with_auth(
+        &app,
+        &tx_body(&other, COLLECTION, &split_sig_calldata(&other)),
+    )
+    .await;
+    let forwarded_the_collection = seen.lock().unwrap().is_some();
+    cleanup_user(&pool, &buyer).await;
+    cleanup_user(&pool, &other).await;
+
+    let body: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(status, 400, "{text}");
+    assert_eq!(body["error"], json!("invalid_contract_address"), "{text}");
+    assert_eq!(body["not_sent"], json!(true), "{text}");
+    assert!(
+        !forwarded_the_manager,
+        "the manager never reaches the upstream"
+    );
+    assert_eq!(manager_rows, 0, "a refusal consumes no quota slot");
+    assert_eq!(collection_status, 200, "{collection_text}");
+    assert!(
+        forwarded_the_collection,
+        "a collection the relay admits still goes upstream"
+    );
+}
+
+/// The testnet development profile with a relayer key: the key signs on Amoy alone, capped, and
+/// `NAMES_SIGNER_ENABLED=false` keeps it off the NAMEs chain although `ETH_RPC_URL` is set (Sepolia's
+/// there, while `NAMES_CHAIN_ID` stays mainnet's). The relay broadcasts itself rather than
+/// forwarding, and the bundled `amoy` entry admits dcl-one's manager.
+#[tokio::test]
+async fn with_a_relayer_key_the_testnet_relay_signs_on_amoy_alone_and_admits_dcl_ones_manager() {
+    use super::transaction::BroadcastRoute;
+    let testnet = |names_signer_enabled: bool| Settings {
+        meta_tx_broadcast_enabled: true,
+        relayer_private_key: Some(hex::encode(PrivateKeySigner::random().to_bytes())),
+        polygon_rpc_url: Some("http://127.0.0.1:1/".into()),
+        eth_rpc_url: Some("http://127.0.0.1:1/".into()),
+        collections_chain_id: 80_002,
+        relayer_max_fee_per_gas_wei: Some(200_000_000_000),
+        transactions_upstream_url: Some("http://127.0.0.1:1/".into()),
+        contract_addresses_url: None,
+        contract_addresses_chain_key: "amoy".into(),
+        names_signer_enabled,
+        ..Settings::for_tests()
+    };
+    let keyed = State::new(lazy_pool(), Outbound::for_tests(), testnet(false))
+        .expect("the testnet relay starts");
+    let signer = keyed
+        .transaction
+        .direct_signer()
+        .expect("the collections chain signer");
+    assert_eq!(signer.chain_id(), 80_002);
+    assert_eq!(signer.max_fee_per_gas(), Some(200_000_000_000));
+    assert!(keyed.eth_signer.is_none(), "no NAMEs chain signer");
+    assert_eq!(keyed.transaction.broadcast_route(), BroadcastRoute::Direct);
+    let manager = format!("{:#x}", crate::policy_entry::DCL_ONE_AMOY_MANAGER);
+    assert!(keyed.contracts.is_whitelisted(&manager).await.unwrap());
+    // The flag is what keeps it off: on, the same key would sign on NAMES_CHAIN_ID over ETH_RPC_URL.
+    let named =
+        State::new(lazy_pool(), Outbound::for_tests(), testnet(true)).expect("the relay starts");
+    assert_eq!(named.eth_signer.as_ref().map(|s| s.chain_id()), Some(1));
+}
+
 /// Under a trial the MANA payment routes refuse before any work: `config` would hand a client the
 /// relay's own signer as the pay-to address of a top-up the credits lane then refuses.
 #[tokio::test]

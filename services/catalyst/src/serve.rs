@@ -685,6 +685,7 @@ pub async fn serve(
         landiler_escrow_address: Config::non_empty(&config.economy.landiler_escrow_address),
         names_chain_id: config.economy.names_chain_id,
         eth_rpc_url: config.content.eth_rpc_url()?,
+        names_signer_enabled: config.economy.names_signer_enabled,
         names_max_price_wei: Config::non_empty(&config.economy.names_max_price_wei)
             .map(|s| alloy_primitives::U256::from_str_radix(s.trim(), 10))
             .transpose()
