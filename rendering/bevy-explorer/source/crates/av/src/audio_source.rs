@@ -111,7 +111,7 @@ fn map_scene_audio_sources(
             volume: audio_source.0.volume.unwrap_or(1.0),
             global: audio_source.0.global(),
             seek_time,
-            // super-user (system) scenes play interface sounds: they follow the System slider
+            // a super-user (system) scene's audio goes in the System group
             ty: if system_scene {
                 AudioType::System
             } else {
