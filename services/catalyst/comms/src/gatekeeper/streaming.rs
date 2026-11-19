@@ -38,7 +38,8 @@ use super::moderation::store::PLATFORM_BANNED_MSG;
 use super::{CommsState, SharedState};
 use crate::rooms::{ResolvedRoom, RoomRequest};
 use crate::shared::signed_fetch::SignedPath;
-use crate::world_identity::{Parcel, RealmId, WorldName};
+use crate::access::SceneRef;
+use crate::world_identity::{Parcel, RealmId, SceneId, WorldName};
 use crate::{Address, AuthorityNotEstablished, PermissionDecision};
 
 #[path = "streaming_notifications.rs"]
@@ -144,7 +145,7 @@ pub async fn scene_stream_access(
             return Err(forbidden(NOT_AUTHORIZED_TO_STREAM_MSG));
         }
     }
-    let (place_id, place, room) = if method == Method::DELETE {
+    let (place_id, place, room, scene) = if method == Method::DELETE {
         // Revocation needs no current deployment: the place is found by the
         // signed realm and parcel alone, and the authority on that same realm.
         let realm = Context::signed_realm(&sf.metadata)?;
@@ -166,7 +167,17 @@ pub async fn scene_stream_access(
         let place =
             revocation_authority(&state, &sf.metadata, &realm, parcel.as_deref(), &place_id)
                 .await?;
-        (place_id, place, None)
+        // A world's scene admin may revoke the key it may reset: the signed
+        // scene when it is the world's current deployment.
+        let scene = match realm.world() {
+            Some(_) => match Context::resolve(&state, &sf.metadata).await {
+                Ok(bound) => bound.world_scene,
+                Err(error) if error.code >= 500 => return Err(error),
+                Err(_) => None,
+            },
+            None => None,
+        };
+        (place_id, place, None, scene)
     } else {
         // One resolution binds the signed scene to its parcel; the room and the
         // authorizing footprint both come from it.
@@ -180,9 +191,9 @@ pub async fn scene_stream_access(
         // explicit admins are stored under its entity id (`/scene-admin`),
         // which `bound.place` carries with the deployment's footprint.
         let place = key_authority(&state, &place_id, world, bound.place);
-        (place_id, place, Some(bound.room))
+        (place_id, place, Some(bound.room), bound.world_scene)
     };
-    match scene::scene_manager_decision(&state, &place, &sf.signer).await {
+    match key_decision(&state, &place, scene.as_ref(), &sf.signer).await {
         PermissionDecision::Allowed => {}
         PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
             return Err(forbidden(NOT_AUTHORIZED_TO_STREAM_MSG));
@@ -277,6 +288,33 @@ pub(super) fn key_authority<'a>(
             },
         ),
         None => scene,
+    }
+}
+
+/// The decision for a stream-key verb on `authority` ([`key_authority`]).
+/// In a world, an explicit admin of the scene the request is bound to also
+/// holds the world's one credential: `/scene-admin` keys that grant on the
+/// scene's entity id, so no admin of the world place can be granted, and
+/// upstream's admin of a world's place holds its stream key. A grantee
+/// restricted to some parcels still does not.
+pub(super) async fn key_decision(
+    state: &CommsState,
+    authority: &PlaceLookup<'_>,
+    world_scene: Option<&(WorldName, SceneId)>,
+    signer: &Address,
+) -> PermissionDecision {
+    let decision = scene::scene_manager_decision(state, authority, signer).await;
+    let Some((world, scene)) = world_scene else {
+        return decision;
+    };
+    match decision {
+        PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
+            state
+                .policy
+                .is_admin(&SceneRef::World { world, scene }, signer)
+                .await
+        }
+        decided => decided,
     }
 }
 

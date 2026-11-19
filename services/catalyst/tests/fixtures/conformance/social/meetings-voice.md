@@ -66,11 +66,12 @@ Cast publishes into the scene's own LiveKit room, the one `/get-scene-adapter` h
 
 Cast differences from upstream (each pinned by a test in `G/cast_tests.rs`):
 
-- A world has one stream credential for all its scenes, so `/scene-stream-access` and
-  `/cast/generate-stream-link` take authority over the whole world there: its owner, an admin of the
-  world place, or a deployment or streaming grantee without a parcel restriction. An admin granted on
-  one scene through `/scene-admin`, or a grantee of some parcels, is refused (403) in a world; on a
-  Genesis place both are admitted. Pinned by
+- A world has one stream credential for all its scenes. `/scene-stream-access` and
+  `/cast/generate-stream-link` admit there its owner, an admin of the world place, a deployment or
+  streaming grantee without a parcel restriction, and an admin granted through `/scene-admin` on the
+  scene the request is signed from (that grant is keyed on the scene's entity id, as upstream keys
+  it on the world's place). A grantee of some parcels is refused (403) in a world; on a Genesis
+  place it is admitted. Pinned by
   `a_world_published_here_answers_every_scene_route_under_its_stripped_realm_name`
   (`C/tests/gatekeeper_policy.rs`).
 - Publisher identities name the credential that minted them (`stream:<place>:<access id>:<uuid>`,

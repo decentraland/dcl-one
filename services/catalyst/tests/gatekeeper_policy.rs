@@ -1723,9 +1723,10 @@ mod stream_access {
             "the credential is for the world scene's room"
         );
 
-        // The world has ONE credential. A second scene's own authorities (a
-        // grantee of its parcels only, an admin granted on it) never reach
-        // it; a grantee without a parcel restriction does.
+        // The world has ONE credential. A grantee of a second scene's parcels
+        // only never reaches it; a grantee without a parcel restriction and
+        // an admin granted on that scene (`/scene-admin` keys it on the
+        // scene's entity id) do.
         let side_id = format!("SideScene{tag}");
         let side_entity = serde_json::json!({
             "type": "scene",
@@ -1806,24 +1807,19 @@ mod stream_access {
             .unwrap()
         };
         let before = credential().await;
-        for (who, key) in [
-            ("parcel-scoped grantee", &scoped_key),
-            ("side scene admin", &side_admin_key),
+        for (method, path) in [
+            ("GET", PATH),
+            ("POST", PATH),
+            ("PUT", PATH),
+            ("DELETE", PATH),
+            ("GET", "/cast/generate-stream-link"),
         ] {
-            for (method, path) in [
-                ("GET", PATH),
-                ("POST", PATH),
-                ("PUT", PATH),
-                ("DELETE", PATH),
-                ("GET", "/cast/generate-stream-link"),
-            ] {
-                let (status, body) = call_at(&app, key, method, path, &side_meta).await;
-                assert_eq!(
-                    status,
-                    StatusCode::FORBIDDEN,
-                    "{who} {method} {path}: {body}"
-                );
-            }
+            let (status, body) = call_at(&app, &scoped_key, method, path, &side_meta).await;
+            assert_eq!(
+                status,
+                StatusCode::FORBIDDEN,
+                "parcel-scoped grantee {method} {path}: {body}"
+            );
         }
         assert_eq!(credential().await, before, "the world's key is untouched");
         let (status, body) = call_at(&app, &wide_key, "GET", PATH, &side_meta).await;
@@ -1833,6 +1829,22 @@ mod stream_access {
             "a grantee of the whole world reads the key: {body}"
         );
         assert!(body["streaming_key"].is_string(), "{body}");
+        for (method, path, expected) in [
+            ("GET", PATH, StatusCode::OK),
+            ("DELETE", PATH, StatusCode::NO_CONTENT),
+            ("GET", "/cast/generate-stream-link", StatusCode::OK),
+        ] {
+            let mut answer = call_at(&app, &side_admin_key, method, path, &side_meta).await;
+            for _ in 0..40 {
+                if answer.0 != StatusCode::CONFLICT {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                answer = call_at(&app, &side_admin_key, method, path, &side_meta).await;
+            }
+            let (status, body) = answer;
+            assert_eq!(status, expected, "side scene admin {method} {path}: {body}");
+        }
     }
 }
 
