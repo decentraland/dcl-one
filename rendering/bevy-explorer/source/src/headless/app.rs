@@ -311,7 +311,7 @@ fn setup(
     mut current_profile: ResMut<CurrentUserProfile>,
 ) {
     // fake player: process_scene_lifecycle early-returns without a PrimaryUser,
-    // and PrimaryEntities::player() panics without the marker. Placed at the scene
+    // and the scene's player proxy follows no entity without the marker. Placed at the scene
     // location so position-based loading picks up the parcel scene.
     let player_pos = Vec3::new(
         8.0 + PARCEL_SIZE * config.home_location().x as f32,

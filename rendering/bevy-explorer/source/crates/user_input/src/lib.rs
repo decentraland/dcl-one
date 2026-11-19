@@ -145,7 +145,10 @@ pub(crate) fn speed_cmd(
     mut user: Query<&mut PrimaryUser>,
 ) {
     if let Some(Ok(command)) = input.take() {
-        let mut user = user.single_mut().unwrap();
+        let Ok(mut user) = user.single_mut() else {
+            input.reply_failed("player not found");
+            return;
+        };
         user.run_speed = command.run;
         user.walk_speed = command.walk;
         user.jog_speed = command.jog;
@@ -166,7 +169,10 @@ pub(crate) struct JumpCommand {
 
 pub(crate) fn jump_cmd(mut input: ConsoleCommand<JumpCommand>, mut user: Query<&mut PrimaryUser>) {
     if let Some(Ok(command)) = input.take() {
-        let mut user = user.single_mut().unwrap();
+        let Ok(mut user) = user.single_mut() else {
+            input.reply_failed("player not found");
+            return;
+        };
         user.jump_height = command.jump_height;
         user.run_jump_height = command.run_jump_height;
         input.reply_ok(format!(

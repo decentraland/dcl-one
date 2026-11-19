@@ -423,7 +423,9 @@ pub fn update_conversations(
         *last_chat = Some(private_chat.address);
 
         conversation.clear(chatbox);
-        text_entry.single_mut().unwrap().enabled = true;
+        if let Ok(mut text_entry) = text_entry.single_mut() {
+            text_entry.enabled = true;
+        }
 
         if private_chat.wants_history_count == 0
             && !(private_chat.history_receiver.is_closed()

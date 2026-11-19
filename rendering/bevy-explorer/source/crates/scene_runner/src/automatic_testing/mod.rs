@@ -388,7 +388,9 @@ fn automatic_testing(
         return;
     }
 
-    let (player_ent, oow) = player.single().unwrap();
+    let Ok((player_ent, oow)) = player.single() else {
+        return;
+    };
 
     if oow.is_some() {
         return;

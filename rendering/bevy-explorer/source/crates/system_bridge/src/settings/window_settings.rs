@@ -63,7 +63,9 @@ impl AppSetting for WindowSetting {
     }
 
     fn apply(&self, mut window: SystemParamItem<Self::Param>, _: Commands, _: &HashSet<Entity>) {
-        let mut window = window.single_mut().unwrap();
+        let Ok(mut window) = window.single_mut() else {
+            return;
+        };
         window.mode = match self {
             #[cfg(not(target_arch = "wasm32"))]
             WindowSetting::Fullscreen => bevy::window::WindowMode::Fullscreen(
@@ -147,7 +149,9 @@ impl AppSetting for FullscreenResSetting {
     }
 
     fn apply(&self, mut window: SystemParamItem<Self::Param>, _: Commands) {
-        let mut window = window.single_mut().unwrap();
+        let Ok(mut window) = window.single_mut() else {
+            return;
+        };
         window.resolution = WindowResolution::new(self.0.x as f32, self.0.y as f32);
     }
 }

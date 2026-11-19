@@ -224,17 +224,19 @@ fn debug_chat(
                 setup_chat_popup(commands, root, dui);
             }
             "add" => {
-                tab.single_mut()
-                    .unwrap()
-                    .add(
-                        &mut commands,
-                        &dui,
-                        Some(3),
-                        DuiButton::new_enabled("new tab", || {}),
-                        false,
-                        None,
-                    )
-                    .unwrap();
+                let Ok(mut tab) = tab.single_mut() else {
+                    input.reply_failed("chat tabs not found");
+                    return;
+                };
+                tab.add(
+                    &mut commands,
+                    &dui,
+                    Some(3),
+                    DuiButton::new_enabled("new tab", || {}),
+                    false,
+                    None,
+                )
+                .unwrap();
             }
             _ => (),
         }
@@ -721,9 +723,13 @@ pub(crate) fn select_chat_tab(
                     false,
                 );
             }
-            text_entry.single_mut().unwrap().enabled = true;
+            if let Ok(mut text_entry) = text_entry.single_mut() {
+                text_entry.enabled = true;
+            }
         } else if tab == "Scene Log" {
-            text_entry.single_mut().unwrap().enabled = false;
+            if let Ok(mut text_entry) = text_entry.single_mut() {
+                text_entry.enabled = false;
+            }
         }
 
         debug!("tab set to {}", tab);

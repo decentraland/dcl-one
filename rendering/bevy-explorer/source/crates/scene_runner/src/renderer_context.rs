@@ -357,17 +357,18 @@ impl RendererSceneContext {
             container_id: id,
         });
 
-        if id == SceneEntityId::CAMERA {
-            commands.entity(spawned).try_insert((
-                ParentPositionSync::<SceneProxyStage>::new(primaries.camera()),
-                DisableCollisions,
-            ));
-        }
-        if id == SceneEntityId::PLAYER {
-            commands.entity(spawned).try_insert((
-                ParentPositionSync::<SceneProxyStage>::new(primaries.player()),
-                DisableCollisions,
-            ));
+        if id == SceneEntityId::CAMERA || id == SceneEntityId::PLAYER {
+            commands.entity(spawned).try_insert(DisableCollisions);
+            let primary = if id == SceneEntityId::CAMERA {
+                primaries.camera()
+            } else {
+                primaries.player()
+            };
+            if let Some(primary) = primary {
+                commands
+                    .entity(spawned)
+                    .try_insert(ParentPositionSync::<SceneProxyStage>::new(primary));
+            }
         }
 
         commands.entity(root).add_child(spawned);

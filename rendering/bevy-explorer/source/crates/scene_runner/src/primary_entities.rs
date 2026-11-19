@@ -11,12 +11,12 @@ pub struct PrimaryEntities<'w, 's> {
 }
 
 impl PrimaryEntities<'_, '_> {
-    pub fn player(&self) -> Entity {
-        self.player.single().unwrap()
+    pub fn player(&self) -> Option<Entity> {
+        self.player.single().ok()
     }
 
-    pub fn camera(&self) -> Entity {
-        self.camera.single().unwrap()
+    pub fn camera(&self) -> Option<Entity> {
+        self.camera.single().ok()
     }
 
     pub fn primary_or_scene(
@@ -25,8 +25,8 @@ impl PrimaryEntities<'_, '_> {
         context: &RendererSceneContext,
     ) -> Option<Entity> {
         match id {
-            SceneEntityId::PLAYER => Some(self.player()),
-            SceneEntityId::CAMERA => Some(self.camera()),
+            SceneEntityId::PLAYER => self.player(),
+            SceneEntityId::CAMERA => self.camera(),
             _ => context.bevy_entity(id),
         }
     }

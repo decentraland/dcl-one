@@ -376,7 +376,9 @@ fn apply_player_move(
     teleport_events: &mut EventWriter<PlayerTeleported>,
     now: f64,
 ) {
-    let (_, mut player_transform, mut dynamics, maybe_active) = player.single_mut().unwrap();
+    let Ok((_, mut player_transform, mut dynamics, maybe_active)) = player.single_mut() else {
+        return;
+    };
     if let Some(active) = maybe_active {
         cancel_active_move(
             commands,
@@ -625,7 +627,9 @@ pub fn move_camera(
 
         let (yaw, pitch, roll) = facing.to_euler(EulerRot::YXZ);
 
-        let mut camera = camera.single_mut().unwrap();
+        let Ok(mut camera) = camera.single_mut() else {
+            return;
+        };
         camera.yaw = yaw;
         camera.pitch = pitch;
         camera.roll = roll;
