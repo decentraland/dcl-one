@@ -320,6 +320,7 @@
       "more": "Más"
     },
     "earn_not_joined": "EARN, aún no te uniste",
+    "earn_payout_pending": "EARN, configuración de pagos sin terminar",
     "feedback": "Darnos feedback",
     "user_menu": {
       "sign_in": "Iniciar Sesión",
@@ -1735,7 +1736,8 @@
         "my_places": "Mis lugares",
         "leaderboard": "Clasificación",
         "payouts": "Pagos",
-        "home": "Inicio"
+        "home": "Inicio",
+        "payouts_pending": "PAGOS, configuración sin terminar"
       },
       "title_prefix": "Ganar",
       "title": "Creator Fund",
