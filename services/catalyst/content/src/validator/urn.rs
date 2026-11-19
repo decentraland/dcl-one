@@ -48,11 +48,18 @@ pub fn parse(input: &str) -> Option<UrnType> {
     resolved(input).map(|(kind, _)| kind)
 }
 
-/// `input` as the resolver reads it: `urn:` and the URL path (no
-/// surrounding whitespace, tab or newline, query or fragment), a legacy
-/// `dcl://` address as its URN; `None` when it does not resolve.
-pub fn canonical(input: &str) -> Option<String> {
-    resolved(input).map(|(_, urn)| urn)
+/// `input`'s segments as the resolver reads them: `urn`, then each URL path
+/// segment percent-decoded (no surrounding whitespace, tab or newline, query
+/// or fragment), a legacy `dcl://` address as its URN; `None` when it does
+/// not resolve.
+pub fn segments(input: &str) -> Option<Vec<String>> {
+    let (_, urn) = resolved(input)?;
+    let path = urn.strip_prefix("urn:")?;
+    let mut segments = vec!["urn".to_string()];
+    for part in path.split(':') {
+        segments.push(decode(part)?);
+    }
+    Some(segments)
 }
 
 fn resolved(input: &str) -> Option<(UrnType, String)> {
@@ -372,6 +379,38 @@ mod tests {
         for (urn, expected) in cases {
             assert_eq!(parse(urn), Some(expected), "{urn}");
         }
+    }
+
+    #[test]
+    fn percent_encoded_groups_resolve_decoded() {
+        let urn = format!("urn:decentraland:%6datic:collections-v2:{C}:1:42");
+        assert_eq!(parse(&urn), Some(CollectionV2Item));
+        assert_eq!(
+            segments(&urn),
+            Some(
+                [
+                    "urn",
+                    "decentraland",
+                    "matic",
+                    "collections-v2",
+                    C,
+                    "1",
+                    "42"
+                ]
+                .map(String::from)
+                .to_vec()
+            )
+        );
+        let by_name = "urn:decentraland:ethereum:collections-v1:halloween%5F2019:hat";
+        assert_eq!(parse(by_name), Some(CollectionV1Asset));
+        assert_eq!(
+            segments(by_name).as_deref().map(|s| s[4].as_str()),
+            Some("halloween_2019")
+        );
+        assert_eq!(
+            segments(&format!("urn:decentraland:matic:collections-v2:{C}:%zz:2")),
+            None
+        );
     }
 
     #[test]

@@ -125,11 +125,13 @@ fn token_ref(l1: bool, contract: Option<Address>, id: &str) -> ItemRef {
 }
 
 pub fn item_ref(urn: &str) -> ItemRef {
-    // Classify what the content step resolved, not the raw spelling.
-    let urn = super::super::urn::canonical(urn)
-        .unwrap_or_else(|| urn.to_string())
-        .to_lowercase();
-    let parts: Vec<&str> = urn.split(':').collect();
+    // Classify the decoded segments the content step resolved, not the raw spelling.
+    let segments: Vec<String> = super::super::urn::segments(urn)
+        .unwrap_or_else(|| urn.split(':').map(str::to_string).collect())
+        .into_iter()
+        .map(|s| s.to_lowercase())
+        .collect();
+    let parts: Vec<&str> = segments.iter().map(String::as_str).collect();
     let ["urn", "decentraland", network, kind, rest @ ..] = &parts[..] else {
         return ItemRef::NotAsked;
     };
@@ -218,6 +220,57 @@ mod tests {
             );
             assert_eq!(item_ref(&urn), asked, "{urn:?}");
         }
+    }
+
+    #[test]
+    fn percent_encoded_segments_are_asked_as_the_resolver_decodes_them() {
+        let addr: Address = A.parse().unwrap();
+        let urn = format!("urn:decentraland:%6datic:collections-v2:{A}:1:42");
+        assert_eq!(
+            crate::validator::urn::parse(&urn),
+            Some(crate::validator::urn::UrnType::CollectionV2Item)
+        );
+        assert_eq!(
+            item_ref(&urn),
+            ItemRef::Token {
+                l1: false,
+                contract: Some(addr),
+                token: U256::from(42u8)
+            }
+        );
+        assert!(!super::super::is_malformed_item(&urn));
+        let by_name = "urn:decentraland:ethereum:collections-v1:halloween%5F2019:hat:12";
+        assert_eq!(
+            crate::validator::urn::parse(by_name),
+            Some(crate::validator::urn::UrnType::CollectionV1Item)
+        );
+        assert_eq!(
+            item_ref(by_name),
+            ItemRef::Token {
+                l1: true,
+                contract: "0xc1f4b0eea2bd6690930e6c66efd3e197d620b9c2".parse().ok(),
+                token: U256::from(12u8)
+            }
+        );
+        assert_eq!(
+            item_ref(&format!(
+                "urn:decentraland:matic:collections-thirdparty:tp:c:i:%6dainnet:{A}:5"
+            )),
+            ItemRef::ThirdParty {
+                l1: true,
+                contract: addr,
+                token: U256::from(5u8)
+            }
+        );
+        assert_eq!(
+            item_ref("urn:decentraland:ethereum:collections-v1:halloween%3A2019:hat:12"),
+            ItemRef::Token {
+                l1: true,
+                contract: None,
+                token: U256::from(12u8)
+            },
+            "a decoded colon stays inside its segment"
+        );
     }
 
     #[test]
