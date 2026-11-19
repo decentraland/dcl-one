@@ -476,37 +476,47 @@
   }
 
   .drawer[data-compact] {
+    --drawer-motion-duration: 280ms;
+    --drawer-hidden-opacity: 0;
+    left: max(var(--dcl-space-16), env(safe-area-inset-left));
+    right: max(var(--dcl-space-16), env(safe-area-inset-right));
     bottom: auto;
-    max-height: 100%;
+    width: auto;
+    max-height: calc(100% - max(var(--dcl-space-16), env(safe-area-inset-bottom)));
+    overscroll-behavior: contain;
   }
 
   @keyframes drawerReveal {
     from {
       clip-path: inset(0 0 100% 0);
+      opacity: var(--drawer-hidden-opacity, 1);
     }
     to {
       clip-path: inset(0);
+      opacity: 1;
     }
   }
 
   @keyframes drawerConceal {
     from {
       clip-path: var(--drawer-exit-from, inset(0));
+      opacity: var(--drawer-exit-opacity, 1);
     }
     to {
       clip-path: inset(0 0 100% 0);
+      opacity: var(--drawer-hidden-opacity, 1);
     }
   }
 
   @media (prefers-reduced-motion: no-preference) {
     .drawer {
-      animation: drawerReveal 180ms ease-out both;
+      animation: drawerReveal var(--drawer-motion-duration, 180ms) ease-out both;
     }
     .drawer[data-entry-revealed] {
       animation: none;
     }
     .drawer[data-exiting] {
-      animation: drawerConceal 180ms ease-in both;
+      animation: drawerConceal var(--drawer-motion-duration, 180ms) ease-in both;
     }
   }
 
@@ -526,10 +536,6 @@
   .drawerItems {
     gap: var(--dcl-space-4);
     padding-bottom: var(--dcl-space-12);
-  }
-
-  .drawerItems[hidden] {
-    display: none;
   }
 
   .drawerGroup,
@@ -564,7 +570,38 @@
   }
 
   .drawerSection[data-expanded] .drawerToggle {
-    padding-block: var(--dcl-space-12) var(--dcl-space-4);
+    padding-block-end: var(--dcl-space-8);
+  }
+
+  .drawerDisclosure {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+
+  .drawerSection[data-expanded] .drawerDisclosure {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+
+  .drawerDisclosureClip {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .drawerDisclosure .drawerItems {
+    padding: var(--dcl-space-4) var(--dcl-space-16) var(--dcl-space-16);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .drawerToggle {
+      transition: padding-block-end 220ms ease-in-out;
+    }
+    .drawerDisclosure {
+      transition:
+        grid-template-rows 220ms ease-in-out,
+        opacity 180ms ease-in-out;
+    }
   }
 
   .drawerToggle[aria-expanded='true'] .chevron {
@@ -580,9 +617,14 @@
     text-decoration: none;
   }
 
-  .drawerSection[data-expanded] .drawerItemLink {
-    padding-block: var(--dcl-space-8);
+  .drawerDisclosure .drawerItemLink {
+    padding-inline: var(--dcl-space-16);
     color: var(--dcl-text-secondary);
+  }
+
+  .drawerDisclosure .drawerItemLink[aria-current='page'] {
+    background: var(--dcl-bg-hover);
+    color: var(--dcl-text-primary);
   }
 
   .drawerAccount {

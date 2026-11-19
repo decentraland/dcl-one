@@ -254,8 +254,62 @@ describe('when the public Sites navigation runs with browser input', () => {
     await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
     expect(
       await evaluate(
-        `(()=>{const panel=document.querySelector('[data-testid="navbar-panel"]');const link=panel.querySelector('a[href="/places"]');return !link.closest('ul').hidden&&panel.getBoundingClientRect().bottom<=innerHeight})()`
+        `(()=>{const panel=document.querySelector('[data-testid="navbar-panel"]');const link=panel.querySelector('a[href="/places"]');return !link.closest('[inert]')&&panel.getBoundingClientRect().bottom<=innerHeight})()`
       )
     ).toBe(true)
   }, 60_000)
+
+  for (const preference of ['no-preference', 'reduce']) {
+    it(`should inset the Pixel-width drawer and honor ${preference} motion`, async () => {
+      await session.send('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-reduced-motion', value: preference }]
+      })
+      await session.send('Animation.enable')
+      await session.send('Animation.setPlaybackRate', { playbackRate: 0 })
+      try {
+        await openCase('out-solid-0', 485, true)
+        await click('button[aria-label="Open menu"]')
+        const reduced = preference === 'reduce'
+        expect(
+          await evaluate(
+            `(()=>{const p=document.querySelector('[data-testid="navbar-panel"]'),b=p.getBoundingClientRect();return{left:b.left,right:innerWidth-b.right,opacity:Number(getComputedStyle(p).opacity),animations:p.getAnimations().length}})()`
+          )
+        ).toEqual({ left: 16, right: 16, opacity: reduced ? 1 : 0, animations: reduced ? 0 : 1 })
+        await evaluate(
+          `document.querySelector('[data-testid="navbar-panel"]').getAnimations().forEach(a=>a.finish())`
+        )
+        await click('[data-testid="navbar-panel"] button[aria-expanded="false"]')
+        const disclosure = `(()=>{const p=document.querySelector('[data-testid="navbar-panel"]'),btn=p.querySelector('button');return document.getElementById(btn.getAttribute('aria-controls'))})()`
+        expect(await evaluate(`${disclosure}.getAnimations().length>0`)).toBe(!reduced)
+        await evaluate(`${disclosure}.getAnimations().forEach(a=>a.finish())`)
+        expect(
+          await evaluate(
+            `(()=>{const p=document.querySelector('[data-testid="navbar-panel"]'),link=p.querySelector('a[href="/events"]'),b=link.getBoundingClientRect(),list=${disclosure};return{inset:b.left-p.getBoundingClientRect().left,active:link.getAttribute('aria-current'),height:b.height,clipped:list.getBoundingClientRect().height===0}})()`
+          )
+        ).toEqual({ inset: 28, active: 'page', height: 48, clipped: false })
+        await click('[data-testid="navbar-panel"] button[aria-expanded="true"]')
+        expect(await evaluate(`${disclosure}.inert`)).toBe(true)
+        expect(await evaluate(`${disclosure}.getAnimations().length>0`)).toBe(!reduced)
+        await evaluate(`${disclosure}.getAnimations().forEach(a=>a.finish())`)
+        expect(await evaluate(`${disclosure}.getBoundingClientRect().height`)).toBe(0)
+        await click('button[aria-label="Close menu"]')
+        if (!reduced) {
+          expect(
+            await evaluate(
+              `(()=>{const p=document.querySelector('[data-testid="navbar-panel"]'),a=p.getAnimations()[0];a.currentTime=140;return p.inert&&Number(getComputedStyle(p).opacity)<1})()`
+            )
+          ).toBe(true)
+          await evaluate(
+            `document.querySelector('[data-testid="navbar-panel"]').getAnimations().forEach(a=>a.finish());new Promise(r=>requestAnimationFrame(r))`
+          )
+        }
+        expect(await evaluate(`document.activeElement.getAttribute('aria-label')`)).toBe(
+          'Open menu'
+        )
+      } finally {
+        await session.send('Animation.setPlaybackRate', { playbackRate: 1 })
+        await session.send('Emulation.setEmulatedMedia', { features: [] })
+      }
+    }, 60_000)
+  }
 })

@@ -372,35 +372,52 @@ function DrawerSection({
   onNavigate: () => void
 }) {
   const listId = useId()
+  const items = (
+    <ul className={styles.drawerItems}>
+      {section.items.map((item, index) => (
+        <li key={index}>
+          {renderLink({
+            href: item.href,
+            className: styles.drawerItemLink,
+            'aria-current': item.active ? 'page' : undefined,
+            onClick: onNavigate,
+            children: item.label
+          })}
+        </li>
+      ))}
+    </ul>
+  )
+  if (!onToggle)
+    return (
+      <>
+        <p className={styles.drawerGroup}>{section.label}</p>
+        {items}
+      </>
+    )
+
   return (
     <>
-      {onToggle ? (
-        <button
-          type="button"
-          className={styles.drawerToggle}
-          aria-expanded={expanded}
-          aria-controls={listId}
-          onClick={onToggle}
-        >
-          {section.label}
-          <GeneralDownArrow className={styles.chevron} size={20} aria-hidden="true" />
-        </button>
-      ) : (
-        <p className={styles.drawerGroup}>{section.label}</p>
-      )}
-      <ul id={listId} className={styles.drawerItems} hidden={!expanded}>
-        {section.items.map((item, index) => (
-          <li key={index}>
-            {renderLink({
-              href: item.href,
-              className: styles.drawerItemLink,
-              'aria-current': item.active ? 'page' : undefined,
-              onClick: onNavigate,
-              children: item.label
-            })}
-          </li>
-        ))}
-      </ul>
+      <button
+        type="button"
+        className={styles.drawerToggle}
+        aria-expanded={expanded}
+        aria-controls={listId}
+        onClick={(event) => {
+          event.currentTarget.focus({ preventScroll: true })
+          onToggle()
+        }}
+      >
+        {section.label}
+        <GeneralDownArrow className={styles.chevron} size={20} aria-hidden="true" />
+      </button>
+      <div
+        id={listId}
+        className={styles.drawerDisclosure}
+        inert={!expanded}
+        aria-hidden={!expanded || undefined}
+      >
+        <div className={styles.drawerDisclosureClip}>{items}</div>
+      </div>
     </>
   )
 }
@@ -633,6 +650,8 @@ function AccountMenu({
   )
 }
 
+type DrawerExitFrame = { clipPath: string; opacity: string }
+
 function Drawer({
   compact,
   closingFrom,
@@ -646,7 +665,7 @@ function Drawer({
   children
 }: {
   compact: boolean
-  closingFrom: string | null
+  closingFrom: DrawerExitFrame | null
   panelRef: RefObject<HTMLDivElement | null>
   onExited: () => void
   scopeRef: RefObject<HTMLDivElement | null>
@@ -786,11 +805,16 @@ function Drawer({
         style={
           closingFrom === null
             ? undefined
-            : ({ '--drawer-exit-from': closingFrom } as CSSProperties)
+            : ({
+                '--drawer-exit-from': closingFrom.clipPath,
+                '--drawer-exit-opacity': closingFrom.opacity
+              } as CSSProperties)
         }
         data-testid="navbar-panel"
         data-entry-revealed={entryRevealed || undefined}
-        onFocusCapture={() => setEntryRevealed(true)}
+        onFocusCapture={(event) => {
+          if (!compact || event.target.matches(':focus-visible')) setEntryRevealed(true)
+        }}
         onAnimationEnd={(event) => {
           if (event.target === event.currentTarget) setEntryRevealed(true)
         }}
@@ -837,7 +861,7 @@ export function NavBar({
     index: number
     activation: SectionActivation
   }>()
-  const [drawerClosingFrom, setDrawerClosingFrom] = useState<string | null>(null)
+  const [drawerClosingFrom, setDrawerClosingFrom] = useState<DrawerExitFrame | null>(null)
   const drawerPanelRef = useRef<HTMLDivElement>(null)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const drawerId = useId()
@@ -851,8 +875,12 @@ export function NavBar({
   }, [])
   const requestDrawerExit = useCallback(() => {
     const panel = drawerPanelRef.current
-    const clip = panel ? getComputedStyle(panel).clipPath : 'none'
-    setDrawerClosingFrom((current) => current ?? (clip === 'none' ? 'inset(0)' : clip))
+    const style = panel ? getComputedStyle(panel) : undefined
+    const clip = style?.clipPath
+    const opacity = style?.opacity || '1'
+    setDrawerClosingFrom(
+      (current) => current ?? { clipPath: !clip || clip === 'none' ? 'inset(0)' : clip, opacity }
+    )
     menuButtonRef.current?.focus({ preventScroll: true })
   }, [])
   const closeDrawer = useCallback(() => {
