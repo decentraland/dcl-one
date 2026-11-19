@@ -297,8 +297,7 @@ fn get_previous_login(config: &AppConfig) -> Option<PreviousLogin> {
         for link in &prev.auth {
             if link.ty == "ECDSA_EPHEMERAL" {
                 for line in link.payload.lines() {
-                    if line.starts_with("Expiration:") {
-                        let exp = line.split_once(':').unwrap().1;
+                    if let Some(exp) = line.strip_prefix("Expiration:") {
                         if let Ok(exp) = chrono::DateTime::<chrono::Utc>::from_str(exp.trim()) {
                             let now: chrono::DateTime<chrono::Utc> =
                                 chrono::DateTime::from_timestamp_millis(

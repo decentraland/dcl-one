@@ -282,10 +282,9 @@ impl RaycastJob {
                 RaycastQueryType::RqtHitFirst => {
                     let mut scenes = scenes.iter().peekable();
                     let mut best_result: Option<(Entity, RaycastResult)> = None;
-                    while scenes.peek().is_some_and(|(_, closest)| {
+                    while let Some(&(scene, _)) = scenes.next_if(|(_, closest)| {
                         best_result.as_ref().is_none_or(|(_, br)| br.toi > *closest)
                     }) {
-                        let scene = scenes.next().unwrap().0;
                         let Some(colliders) = scene_colliders(scene) else {
                             continue;
                         };

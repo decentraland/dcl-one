@@ -162,10 +162,9 @@ fn transport_on_add(
 
     let next_row = transport_columns
         .iter_many(children.collection())
-        .map(|node| node.grid_row.get_start().unwrap())
+        .filter_map(|node| node.grid_row.get_start())
         .max()
-        .map(|i| i + 1)
-        .unwrap();
+        .map_or(1, |last_row| last_row + 1);
 
     commands
         .entity(transport_debug_ui_entity)

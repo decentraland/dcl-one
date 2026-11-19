@@ -346,9 +346,7 @@ pub use system_api_types::{NamedVariant, SettingInfo};
 
 pub struct Setting {
     pub info: SettingInfo,
-    apply: Option<
-        Box<dyn Fn(&mut AppConfig, f32) -> Result<f32, anyhow::Error> + Send + Sync + 'static>,
-    >,
+    apply: Box<dyn Fn(&mut AppConfig, f32) -> Result<f32, anyhow::Error> + Send + Sync + 'static>,
     /// The displayed value for the current config, for settings changed outside `set_value`.
     load: Box<dyn Fn(&AppConfig) -> f32 + Send + Sync + 'static>,
 }
@@ -369,23 +367,12 @@ impl Settings {
         name: &str,
         value: f32,
     ) -> Result<(), anyhow::Error> {
-        let apply = self
-            .settings
-            .iter_mut()
-            .find(|s| s.info.name == name)
-            .ok_or(anyhow!(format!("{name} not found")))?
-            .apply
-            .take()
-            .unwrap();
-        let res = (apply)(config, value)?;
         let setting = self
             .settings
             .iter_mut()
             .find(|s| s.info.name == name)
-            .unwrap();
-
-        setting.apply = Some(apply);
-        setting.info.value = res;
+            .ok_or(anyhow!(format!("{name} not found")))?;
+        setting.info.value = (setting.apply)(config, value)?;
         Ok(())
     }
 
@@ -410,13 +397,13 @@ impl Settings {
                 default: S::load(&AppConfig::default()).value() as f32 * S::scale(),
                 step_size: S::scale().abs(),
             },
-            apply: Some(Box::new(
+            apply: Box::new(
                 |config: &mut AppConfig, value: f32| -> Result<f32, anyhow::Error> {
                     let new_value = S::from_int((value / S::scale()).round() as i32);
                     new_value.save(config);
                     Ok(new_value.value() as f32 * S::scale())
                 },
-            )),
+            ),
             load: Box::new(|config: &AppConfig| S::load(config).value() as f32 * S::scale()),
         });
     }
@@ -452,7 +439,7 @@ impl Settings {
                 default: default_index as f32,
                 step_size: 1.0,
             },
-            apply: Some(Box::new(
+            apply: Box::new(
                 |config: &mut AppConfig, value: f32| -> Result<f32, anyhow::Error> {
                     S::variants()
                         .get(value as usize)
@@ -460,7 +447,7 @@ impl Settings {
                         .save(config);
                     Ok(value as usize as f32)
                 },
-            )),
+            ),
             load: Box::new(|config: &AppConfig| displayed::<S>(config)),
         });
     }

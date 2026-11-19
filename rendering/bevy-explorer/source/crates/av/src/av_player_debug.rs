@@ -148,10 +148,9 @@ fn av_player_on_add<T: AVPlayer>(
 
     let next_row = av_player_columns
         .iter_many(children.collection())
-        .map(|node| node.grid_row.get_start().unwrap())
+        .filter_map(|node| node.grid_row.get_start())
         .max()
-        .map(|i| i + 1)
-        .unwrap();
+        .map_or(1, |last_row| last_row + 1);
 
     commands
         .entity(av_player_debug_ui_entity)

@@ -26,8 +26,12 @@ impl CrdtGOState {
             return false;
         }
 
-        let new_slot = if queue.len() == SET_SIZE {
-            let mut slot = queue.pop_front().unwrap();
+        let recycled = if queue.len() == SET_SIZE {
+            queue.pop_front()
+        } else {
+            None
+        };
+        let new_slot = if let Some(mut slot) = recycled {
             slot.data.clear();
             slot.data.extend_from_slice(new_data.as_slice());
             // slot.timestamp = timestamp;

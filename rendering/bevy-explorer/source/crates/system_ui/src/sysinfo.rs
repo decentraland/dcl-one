@@ -610,10 +610,11 @@ fn update_tracker(
             .filter(|(_, c, v)| &c.root == scene && !matches!(v, Visibility::Hidden))
             .flat_map(|(h, _, _)| meshes.get(h.id()))
             .map(|mesh| {
-                mesh.indices()
-                    .map(Indices::len)
-                    .unwrap_or_else(|| mesh.attributes().next().unwrap().1.len())
-                    / 3
+                mesh.indices().map(Indices::len).unwrap_or_else(|| {
+                    mesh.attributes()
+                        .next()
+                        .map_or(0, |(_, values)| values.len())
+                }) / 3
             })
             .sum::<usize>(),
     );

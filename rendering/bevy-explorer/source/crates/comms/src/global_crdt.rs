@@ -1386,12 +1386,12 @@ fn process_messagebus(
     scene_rooms: &SceneRooms,
     scene_topics: &mut SceneTopicRouter,
 ) {
-    if scene.data.is_empty() {
+    let Some(&first_byte) = scene.data.first() else {
         warn!("empty scene message");
         return;
-    }
+    };
 
-    let comms_type = match *scene.data.first().unwrap() {
+    let comms_type = match first_byte {
         c if c == CommsMessageType::String as u8 => {
             scene.data.remove(0);
             CommsMessageType::String

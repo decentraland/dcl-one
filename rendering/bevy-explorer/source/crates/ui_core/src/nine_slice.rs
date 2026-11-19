@@ -224,7 +224,11 @@ impl DuiTemplate for Ui9SliceTemplate {
         };
 
         let sheet = StyleSheetAsset::parse("", &border_sheet);
-        let properties = &sheet.iter().next().unwrap().properties;
+        let properties = &sheet
+            .iter()
+            .next()
+            .ok_or_else(|| anyhow!("failed to parse slice-border value `{border}`"))?
+            .properties;
 
         let center_region = properties
             .get("border")

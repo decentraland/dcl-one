@@ -622,7 +622,8 @@ pub(crate) fn load_scene_javascript(
     }
 }
 
-#[derive(Clone)]
+/// The scenes a scene-test run visits, in order.
+#[derive(Clone, Resource)]
 pub struct TestScenes(pub VecDeque<TestScene>);
 
 #[derive(Clone)]
@@ -663,7 +664,8 @@ impl FromStr for TestScenes {
 pub struct TestingData {
     pub test_mode: bool,
     pub inspect_hash: Option<String>,
-    pub test_scenes: Option<TestScenes>,
+    /// True for a scene-test run.
+    pub scene_test_run: bool,
 }
 
 #[derive(Component)]

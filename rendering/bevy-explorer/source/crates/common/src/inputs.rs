@@ -237,6 +237,13 @@ pub const CAMERA_ZOOM: InputDirectionalSet = InputDirectionalSet {
     ],
 };
 
+/// The contents of a serialized JSON string, without its quotes.
+fn unquote<E: serde::ser::Error>(json: &str) -> Result<&str, E> {
+    json.strip_prefix('"')
+        .and_then(|unquoted| unquoted.strip_suffix('"'))
+        .ok_or_else(|| E::custom(format!("expected a JSON string, got `{json}`")))
+}
+
 impl serde::Serialize for InputIdentifier {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -245,46 +252,21 @@ impl serde::Serialize for InputIdentifier {
         match *self {
             InputIdentifier::Key(ref key) => {
                 let string = serde_json::to_string(key).unwrap();
-                string
-                    .strip_prefix("\"")
-                    .unwrap()
-                    .strip_suffix("\"")
-                    .unwrap()
-                    .serialize(serializer)
+                unquote::<S::Error>(&string)?.serialize(serializer)
             }
             InputIdentifier::Mouse(ref button) => {
                 let string = serde_json::to_string(button).unwrap();
-                format!(
-                    "Mouse {}",
-                    string
-                        .strip_prefix("\"")
-                        .unwrap()
-                        .strip_suffix("\"")
-                        .unwrap()
-                )
-                .serialize(serializer)
+                format!("Mouse {}", unquote::<S::Error>(&string)?).serialize(serializer)
             }
             InputIdentifier::Gamepad(ref button) => {
                 let string = serde_json::to_string(button).unwrap();
-                format!(
-                    "Gamepad {}",
-                    string
-                        .strip_prefix("\"")
-                        .unwrap()
-                        .strip_suffix("\"")
-                        .unwrap()
-                )
-                .serialize(serializer)
+                format!("Gamepad {}", unquote::<S::Error>(&string)?).serialize(serializer)
             }
             InputIdentifier::Analog(ident, dir) => {
                 let ident = serde_json::to_string(&ident).unwrap();
-                let ident = ident
-                    .strip_prefix("\"")
-                    .unwrap()
-                    .strip_suffix("\"")
-                    .unwrap();
+                let ident = unquote::<S::Error>(&ident)?;
                 let dir = serde_json::to_string(&dir).unwrap();
-                let dir = dir.strip_prefix("\"").unwrap().strip_suffix("\"").unwrap();
+                let dir = unquote::<S::Error>(&dir)?;
                 format!("{ident} {dir}").serialize(serializer)
             }
         }

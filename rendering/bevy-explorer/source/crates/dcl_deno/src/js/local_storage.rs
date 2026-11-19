@@ -23,7 +23,10 @@ fn address(state: &OpState) -> Result<String, AnyError> {
 }
 
 fn strip_prefix(key: impl AsRef<str>) -> String {
-    key.as_ref().split_once(':').unwrap().1.to_owned()
+    let key = key.as_ref();
+    key.split_once(':')
+        .map_or(key, |(_, unprefixed)| unprefixed)
+        .to_owned()
 }
 
 // returns filtered keys matching current user, including the prefix

@@ -351,7 +351,7 @@ impl TextPositionFinder<'_, '_> {
             let entity_line_offset: usize = parts.by_ref().take(line).map(|text| text.len()).sum();
             line = 0;
 
-            let len = parts.next().unwrap().len();
+            let len = parts.next()?.len();
             if len > index || parts.next().is_some() {
                 return Some((entity, span_index, entity_line_offset + index.min(len)));
             } else {

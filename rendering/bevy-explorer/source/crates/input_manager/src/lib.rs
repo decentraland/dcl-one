@@ -373,11 +373,11 @@ impl InputManager<'_, '_> {
     }
 
     pub fn get_analog(&self, set: InputDirectionalSet, priority: InputPriority) -> Vec2 {
-        let mut amts = set.actions.iter().map(|a| {
+        let [right, left, up, down] = set.actions.map(|a| {
             let Some(a) = a else {
                 return 0.0;
             };
-            self.inputs(*a)
+            self.inputs(a)
                 .map(|item| match item {
                     InputIdentifier::Key(k) => {
                         if self.key_input.pressed(*k) && self.check_priority(item, priority) {
@@ -424,11 +424,7 @@ impl InputManager<'_, '_> {
             Vec2::ZERO
         };
 
-        (mouse
-            + Vec2::new(
-                amts.next().unwrap() - amts.next().unwrap(),
-                amts.next().unwrap() - amts.next().unwrap(),
-            ))
+        (mouse + Vec2::new(right - left, up - down))
             * self.map.sensitivities.get(&set.label).unwrap_or(&1.0)
     }
 

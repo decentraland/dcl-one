@@ -209,7 +209,9 @@ fn address(state: &WorkerContext) -> Result<String, WasmError> {
 }
 
 fn strip_prefix(key: &mut String) {
-    *key = key.split_once(':').unwrap().1.to_owned()
+    if let Some((_, unprefixed)) = key.split_once(':') {
+        *key = unprefixed.to_owned();
+    }
 }
 
 fn with_storage<R>(state: &WorkerContext, f: impl Fn(&mut HashMap<String, String>) -> R) -> R {

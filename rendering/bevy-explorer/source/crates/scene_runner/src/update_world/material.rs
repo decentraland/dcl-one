@@ -880,8 +880,7 @@ fn update_loading_materials(
                 bevy::asset::LoadState::Failed(_) => State::Failed,
             }
         })
-        .reduce(State::max)
-        .unwrap();
+        .fold(State::Ok, State::max);
 
         let ready = match state {
             State::Ok => true,

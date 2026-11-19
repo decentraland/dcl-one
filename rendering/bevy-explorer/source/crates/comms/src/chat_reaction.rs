@@ -130,14 +130,23 @@ pub fn received_emoji(emoji: &str, wire_index: i32, remove: bool) -> Option<(Str
 }
 
 /// `double.ToString(CultureInfo.InvariantCulture)` as Unity's Mono runtime prints it: "G" with
-/// 15 significant digits, trailing zeros dropped, scientific below 1e-4 and from 1e15.
+/// 15 significant digits, trailing zeros dropped, scientific below 1e-4 and from 1e15;
+/// non-finite values print as the invariant culture's `NaN`, `Infinity` and `-Infinity`.
 fn dotnet_double_string(value: f64) -> String {
+    if value.is_nan() {
+        return "NaN".to_owned();
+    }
+    if value.is_infinite() {
+        return if value < 0.0 { "-Infinity" } else { "Infinity" }.to_owned();
+    }
     if value == 0.0 {
         return "0".to_owned();
     }
     let sign = if value < 0.0 { "-" } else { "" };
     let scientific = format!("{:.14e}", value.abs());
-    let (mantissa, exponent) = scientific.split_once('e').unwrap();
+    let Some((mantissa, exponent)) = scientific.split_once('e') else {
+        return value.to_string();
+    };
     let exponent = exponent.parse::<i32>().unwrap();
     let digits = mantissa.replace('.', "");
     let digits = digits.trim_end_matches('0');
@@ -217,6 +226,9 @@ mod tests {
         assert_eq!(dotnet_double_string(1e20), "1E+20");
         assert_eq!(dotnet_double_string(123456789012345.0), "123456789012345");
         assert_eq!(dotnet_double_string(-1.5), "-1.5");
+        assert_eq!(dotnet_double_string(f64::NAN), "NaN");
+        assert_eq!(dotnet_double_string(f64::INFINITY), "Infinity");
+        assert_eq!(dotnet_double_string(f64::NEG_INFINITY), "-Infinity");
     }
 
     #[test]

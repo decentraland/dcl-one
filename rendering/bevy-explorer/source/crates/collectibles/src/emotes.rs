@@ -397,10 +397,12 @@ impl Emote {
             .cloned()
         {
             Ok(Some(anim))
-        } else if gltf.named_animations.len() == 1 {
-            Ok(Some(gltf.named_animations.iter().next().unwrap().1.clone()))
         } else {
-            Ok(None)
+            let mut animations = gltf.named_animations.values();
+            match (animations.next(), animations.next()) {
+                (Some(only), None) => Ok(Some(only.clone())),
+                _ => Ok(None),
+            }
         }
     }
 

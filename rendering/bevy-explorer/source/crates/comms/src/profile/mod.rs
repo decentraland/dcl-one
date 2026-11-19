@@ -1895,7 +1895,8 @@ fn process_profile(
                         (!e.is_empty()).then_some(AvatarEmote {
                             slot: ix as u32,
                             urn: if e.starts_with("urn:decentraland:off-chain:base-emotes") {
-                                e.rsplit_once(':').unwrap().1.to_string()
+                                e.rsplit_once(':')
+                                    .map_or_else(|| e.clone(), |(_, name)| name.to_owned())
                             } else {
                                 e.clone()
                             },

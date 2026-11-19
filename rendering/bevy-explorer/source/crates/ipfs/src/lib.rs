@@ -153,7 +153,7 @@ impl EntityDefinitionLoader {
         &self,
         reader: &mut dyn Reader,
         _settings: &(),
-        id_fn: impl FnOnce() -> String + Send + Sync,
+        id_fn: impl FnOnce() -> Result<String, anyhow::Error> + Send + Sync,
     ) -> Result<EntityDefinition, anyhow::Error> {
         let mut bytes = Vec::default();
         reader.read_to_end(&mut bytes).await?;
@@ -180,7 +180,10 @@ impl EntityDefinitionLoader {
                 .into_iter()
                 .map(|ipfs| (ipfs.file, ipfs.hash)),
         );
-        let id = definition_json.id.unwrap_or_else(id_fn);
+        let id = match definition_json.id {
+            Some(id) => id,
+            None => id_fn()?,
+        };
 
         let definition = EntityDefinition {
             id,
@@ -205,16 +208,12 @@ impl AssetLoader for EntityDefinitionLoader {
     ) -> impl ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
         let id_fn = || {
             // we must have been loaded as an entity with the format "$ipfs/$entity/{hash}.entity_type" - use the ipfs path to resolve the id
-            load_context
-                .path()
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .split_once('.')
-                .unwrap()
-                .0
-                .to_owned()
+            let path = load_context.path();
+            path.file_name()
+                .and_then(|file_name| file_name.to_str())
+                .and_then(|file_name| file_name.split_once('.'))
+                .map(|(id, _)| id.to_owned())
+                .ok_or_else(|| anyhow::anyhow!("entity path {path:?} names no entity id"))
         };
 
         self.load_internal(reader, settings, id_fn)
@@ -902,7 +901,9 @@ pub fn change_realm(
             }
         } else {
             let mut requests = change_realm_requests.read().collect::<Vec<_>>();
-            let request = requests.pop().unwrap();
+            let Some(request) = requests.pop() else {
+                return;
+            };
             for superseded in requests {
                 superseded
                     .response
@@ -1651,7 +1652,7 @@ impl IpfsIo {
                             continue;
                         };
 
-                        if let Ok(ent) = loader.load_internal(&mut reader, &(), || hash).await {
+                        if let Ok(ent) = loader.load_internal(&mut reader, &(), || Ok(hash)).await {
                             results.push(ent)
                         }
                     }

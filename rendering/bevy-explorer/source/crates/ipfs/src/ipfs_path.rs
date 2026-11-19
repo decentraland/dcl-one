@@ -318,10 +318,10 @@ where
                     .next()
                     .ok_or(anyhow::anyhow!("content file specifier missing file path"))?;
                 // pass through folders
-                while components.peek().is_some() {
+                for next_component in components.by_ref() {
                     file_path.push_str(file_component);
                     file_path.push('/');
-                    file_component = components.next().unwrap();
+                    file_component = next_component;
                 }
                 // remove the leading '.' from the last component (the file name)
                 let stripped_file_name = if let Some(stripped) = file_component.strip_prefix('.') {

@@ -455,11 +455,8 @@ fn display_chat(
     };
 
     if let Some(children) = maybe_children {
-        if children.len() > 255 {
-            let mut iter = children.iter();
-            for _ in 0..children.len() - 255 {
-                commands.entity(iter.next().unwrap()).despawn();
-            }
+        for oldest in children.iter().take(children.len().saturating_sub(255)) {
+            commands.entity(oldest).despawn();
         }
     }
 
