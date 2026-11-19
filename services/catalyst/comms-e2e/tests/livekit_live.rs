@@ -156,14 +156,18 @@ async fn a_joined_client_becomes_active_for_the_server() {
     .await
     .unwrap();
     println!("connected after {} ms", started.elapsed().as_millis());
-    loop {
+    let state = loop {
         let listed = service.participants(&room).await.unwrap();
         let state = listed.first().map(|p| p.state.clone()).unwrap_or_default();
         println!("{} ms: {state}", started.elapsed().as_millis());
         if state == "active" || started.elapsed() > Duration::from_secs(20) {
-            break;
+            break state;
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
-    }
+    };
     join.leave().await.unwrap();
+    assert_eq!(
+        state, "active",
+        "the server never listed the joined client as active"
+    );
 }

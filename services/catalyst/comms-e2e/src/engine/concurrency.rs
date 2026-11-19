@@ -77,25 +77,40 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     async fn together_releases_all_at_once() {
-        let releases = together(32, |index| async move {
-            // each step notes when it was let go
-            (index, Instant::now())
+        const STEPS: u32 = 32;
+        let prepared = Arc::new(AtomicU32::new(0));
+        let started = Arc::new(AtomicU32::new(0));
+        let releases = together(STEPS as usize, |index| {
+            // preparing a step takes a while, so a step let go early would see the count short
+            std::thread::sleep(Duration::from_millis(5));
+            prepared.fetch_add(1, Ordering::SeqCst);
+            let (prepared, started) = (prepared.clone(), started.clone());
+            async move {
+                // how many steps existed when this one was let go: all of them
+                let prepared_when_released = prepared.load(Ordering::SeqCst);
+                // and none waits for another to finish: every step is running at once
+                started.fetch_add(1, Ordering::SeqCst);
+                let deadline = Instant::now() + Duration::from_secs(30);
+                while started.load(Ordering::SeqCst) < STEPS && Instant::now() < deadline {
+                    tokio::task::yield_now().await;
+                }
+                (
+                    index,
+                    prepared_when_released,
+                    started.load(Ordering::SeqCst),
+                )
+            }
         })
         .await;
-        assert_eq!(releases.len(), 32);
-        assert!(
-            releases
-                .iter()
-                .enumerate()
-                .all(|(position, (index, _))| position == *index)
-        );
-        let first = releases.iter().map(|(_, at)| *at).min().unwrap();
-        let last = releases.iter().map(|(_, at)| *at).max().unwrap();
-        assert!(
-            last - first < Duration::from_millis(50),
-            "spread {:?}",
-            last - first
-        );
+        assert_eq!(releases.len(), STEPS as usize);
+        for (position, (index, prepared_when_released, running)) in releases.iter().enumerate() {
+            assert_eq!(position, *index);
+            assert_eq!(
+                *prepared_when_released, STEPS,
+                "step {index} began before every step was ready"
+            );
+            assert_eq!(*running, STEPS, "step {index} never saw every step running");
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
