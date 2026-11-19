@@ -619,25 +619,21 @@ impl SyncOrchestratorRefs {
 
     /// From ITS OWN persisted cursor (`resume_point` is the rule): a server whose cursor lags the
     /// global frontier resumes from the lag, because the frontier is max-over-servers and riding it
-    /// would skip that server's not-yet-deployed entities until the re-snapshot pass.
+    /// would skip that server's not-yet-deployed entities. A server with no cursor row keeps the
+    /// configured floor, so its own snapshots (or, with none, its earliest pointer change) set
+    /// where it starts.
     async fn resume_servers_from_cursors(&self) -> Result<(), SyncError> {
-        let frontier = self.deployment_repo.get_sync_frontier().await?;
-        let mut resume_by_url: HashMap<String, (Timestamp, bool)> = HashMap::new();
+        let mut resume_by_url: HashMap<String, Timestamp> = HashMap::new();
         for url in self.server_urls().await {
             let cursor = self.deployment_repo.get_server_sync_cursor(&url).await?;
-            resume_by_url.insert(url, (resume_point(cursor, frontier), cursor.is_some()));
+            resume_by_url.insert(url, resume_point(cursor));
         }
         for (url, state) in self.servers.lock().await.iter_mut() {
-            let Some(&(resume, own_cursor)) = resume_by_url.get(url) else {
+            let Some(&resume) = resume_by_url.get(url) else {
                 continue;
             };
             if resume > 0 {
-                info!(
-                    server = %url,
-                    resume,
-                    own_cursor,
-                    "Resuming server from persisted cursor"
-                );
+                info!(server = %url, resume, "Resuming server from its persisted cursor");
                 state.last_snapshot_timestamp = state.last_snapshot_timestamp.max(resume);
             }
         }
@@ -1287,12 +1283,12 @@ fn apply_snapshot_fetch(
     }
 }
 
-/// Its OWN persisted cursor when one exists -- even when that lags the global frontier, the
-/// invariant this function carries -- the global frontier for a server with no cursor row (never
-/// synced, or persisted by a build predating per-server cursors), and zero when neither exists,
-/// leaving the caller's in-memory floor (config.from_timestamp) in charge.
-pub fn resume_point(own_cursor: Option<Timestamp>, global_frontier: Timestamp) -> Timestamp {
-    own_cursor.unwrap_or(global_frontier)
+/// Its OWN persisted cursor, even when that lags the global frontier, and zero for a server with
+/// no cursor row (never synced, or newly added), leaving the caller's in-memory floor
+/// (config.from_timestamp) in charge. The global frontier is never a starting point: it is
+/// max-over-servers, so a new peer's entities older than it would never be requested.
+pub fn resume_point(own_cursor: Option<Timestamp>) -> Timestamp {
+    own_cursor.unwrap_or(0)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
