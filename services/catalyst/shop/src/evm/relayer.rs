@@ -18,6 +18,8 @@ const OZ_BODY_CAP: usize = 256 * 1024;
 const ACCOUNTS_REQUEST_TIMEOUT: Duration = Duration::from_millis(5000);
 /// How long a fetched list of the relayer accounts is reused before it is read again.
 const ACCOUNTS_REFRESH: Duration = Duration::from_secs(60 * 60);
+/// How long a failed read of the relayer accounts waits before it is tried again.
+const ACCOUNTS_RETRY: Duration = Duration::from_secs(30);
 
 const BROADCAST_STATUSES: [&str; 3] = ["submitted", "mined", "confirmed"];
 const FAILED_STATUSES: [&str; 3] = ["canceled", "failed", "expired"];
@@ -80,8 +82,11 @@ pub struct Relayer {
     speed: String,
     max_status_checks: u32,
     sleep: Duration,
-    /// The last list of every relayer account the API key sees, lowercase, and when it was read.
+    /// The last list of every relayer account the API key sees, lowercase, and until when it is
+    /// reused.
     accounts: parking_lot::Mutex<Option<(std::time::Instant, Arc<HashSet<String>>)>>,
+    /// Held while the list is read, so concurrent requests wait for one read.
+    accounts_read: tokio::sync::Mutex<()>,
 }
 
 impl Relayer {
@@ -103,29 +108,39 @@ impl Relayer {
             max_status_checks,
             sleep,
             accounts: parking_lot::Mutex::new(None),
+            accounts_read: tokio::sync::Mutex::new(()),
         }
     }
 
     /// Every relayer account (`GET /api/v1/relayers/`), lowercase, reused for an hour. A failed
-    /// read keeps the last list, or answers an empty one when none was read yet.
+    /// read keeps the last list, or answers an empty one when none was read yet, and is tried
+    /// again after [`ACCOUNTS_RETRY`]; concurrent callers share one read.
     pub async fn accounts(&self) -> Arc<HashSet<String>> {
-        let cached = self.accounts.lock().clone();
-        if let Some((read_at, accounts)) = &cached
-            && read_at.elapsed() < ACCOUNTS_REFRESH
-        {
-            return accounts.clone();
+        if let Some(accounts) = self.fresh_accounts() {
+            return accounts;
         }
-        match self.fetch_accounts().await {
-            Ok(accounts) => {
-                let accounts = Arc::new(accounts);
-                *self.accounts.lock() = Some((std::time::Instant::now(), accounts.clone()));
-                accounts
-            }
+        let _reading = self.accounts_read.lock().await;
+        if let Some(accounts) = self.fresh_accounts() {
+            return accounts;
+        }
+        let (accounts, reuse) = match self.fetch_accounts().await {
+            Ok(accounts) => (Arc::new(accounts), ACCOUNTS_REFRESH),
             Err(e) => {
                 tracing::warn!(error = %e, "economy: could not read the relayer accounts");
-                cached.map(|(_, accounts)| accounts).unwrap_or_default()
+                let last = self.accounts.lock().as_ref().map(|(_, a)| a.clone());
+                (last.unwrap_or_default(), ACCOUNTS_RETRY)
             }
-        }
+        };
+        *self.accounts.lock() = Some((std::time::Instant::now() + reuse, accounts.clone()));
+        accounts
+    }
+
+    fn fresh_accounts(&self) -> Option<Arc<HashSet<String>>> {
+        self.accounts
+            .lock()
+            .as_ref()
+            .filter(|(until, _)| std::time::Instant::now() < *until)
+            .map(|(_, accounts)| accounts.clone())
     }
 
     async fn fetch_accounts(&self) -> Result<HashSet<String>, String> {
@@ -477,6 +492,32 @@ mod tests {
             3,
             Duration::from_millis(10),
         )
+    }
+
+    /// While the accounts list cannot be read, concurrent and following callers share one read
+    /// per retry interval instead of each reading it again.
+    #[tokio::test]
+    async fn a_failed_accounts_read_is_shared_and_not_repeated_per_call() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counted = reads.clone();
+        let app = axum::Router::new().route(
+            "/api/v1/relayers/",
+            axum::routing::get(move || {
+                counted.fetch_add(1, Ordering::SeqCst);
+                async {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE
+                }
+            }),
+        );
+        let (url, server) = serve(app).await;
+        let relayer = relayer(&url);
+        let (a, b) = tokio::join!(relayer.accounts(), relayer.accounts());
+        assert!(a.is_empty() && b.is_empty());
+        assert!(relayer.accounts().await.is_empty());
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+        server.abort();
     }
 
     const HASH: &str = "0x00000000000000000000000000000000000000000000000000000000000000ab";
