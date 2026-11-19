@@ -220,9 +220,9 @@ pub fn router(state: SharedState) -> Router {
     let router = Router::new()
         .nest("/v1", v1)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
-        .layer(axum::middleware::from_fn(
-            crate::shared::cors::decentraland_cors,
-        ))
         .with_state(state);
-    DataWrites::guard(router, writes_enabled)
+    // Outside the gate, so a refused write still carries the CORS headers.
+    DataWrites::guard(router, writes_enabled).layer(axum::middleware::from_fn(
+        crate::shared::cors::decentraland_cors,
+    ))
 }

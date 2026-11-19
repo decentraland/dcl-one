@@ -15,6 +15,24 @@ pub(super) fn economy_routes(state: &Arc<shop::evm::State>) -> axum::Router {
         .merge(shop::treasury::router(state.clone()))
 }
 
+/// The Shop's signed-write mounts: the canonical tree under `/shop-api`, the
+/// relay with checkout and treasury ([`economy_routes`]) at the root and under
+/// `/transactions-api` (with the old health routes there only), and the
+/// rentals store at the root and under `/signatures-api`.
+pub(super) fn shop_routes(states: shop::States) -> axum::Router {
+    let economy = states.economy.clone();
+    let signatures = states.signatures.clone();
+    axum::Router::new()
+        .nest("/shop-api", shop::router(states))
+        .merge(economy_routes(&economy))
+        .nest(
+            "/transactions-api",
+            economy_routes(&economy).merge(shop::evm::health_router(economy)),
+        )
+        .merge(shop::rentals::router(signatures.clone()))
+        .nest("/signatures-api", shop::rentals::router(signatures))
+}
+
 /// The live presence's two routes where the worlds core routers held them:
 /// at the root and under `/worlds-content-server`, each behind the worlds
 /// writes gate (`WORLDS_WRITES_ENABLED`) as those routers were, applied
@@ -134,18 +152,15 @@ pub(super) fn build_routes(
     let report_storage = blobs.storage.clone();
     let app = content::build_router(content)
         .merge(shop::market::router(market.clone()))
-        .nest(
-            "/shop-api",
-            shop::router(shop::States {
-                market: market.clone(),
-                credits: stage5_ops.credits.clone(),
-                economy: economy_state.clone(),
-                signatures: signatures.clone(),
-                outfits: outfits.clone(),
-                subscriptions: subscriptions.clone(),
-                mana,
-            }),
-        )
+        .merge(shop_routes(shop::States {
+            market: market.clone(),
+            credits: stage5_ops.credits.clone(),
+            economy: economy_state,
+            signatures,
+            outfits,
+            subscriptions,
+            mana,
+        }))
         .merge(shop::campaigns::builder_alias_router(market.clone()))
         // events-notifier.<domain> reaches /events-notifier (gateway subdomain rule).
         .nest(
@@ -155,16 +170,9 @@ pub(super) fn build_routes(
         .merge(registry_profiles(market.clone()))
         .nest("/marketplace-api", shop::market::market_router(market))
         .merge(land_authz::router(land))
-        .merge(economy_routes(&economy_state))
         .merge(shop::evm::contracts_document_router())
-        .nest(
-            "/transactions-api",
-            economy_routes(&economy_state).merge(shop::evm::health_router(economy_state)),
-        )
         .merge(price::router(price.clone()))
         .nest("/price", price::router(price))
-        .merge(shop::rentals::router(signatures.clone()))
-        .nest("/signatures-api", shop::rentals::router(signatures))
         .nest("/presence", presence::router(presence))
         .merge(explore::router(explore.clone()))
         .nest("/places", explore::router(explore.clone()))

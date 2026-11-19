@@ -40,7 +40,15 @@ pub async fn decentraland_cors(req: Request, next: Next) -> Response {
 /// rentals and Shop services shared): `http://localhost:<port>`,
 /// `https://decentraland.{zone,today,org}` and their subdomains,
 /// `https://[<name>-]decentraland1.vercel.app`, and the Shop's
-/// `https://tools.decentraland.systems`.
+/// `https://tools.decentraland.systems`. A subdomain or preview prefix is at
+/// most 50 characters of `[A-Za-z0-9-]` labels joined by single dots.
+///
+/// This is the list for the Shop's signed routes. The places and events
+/// lists (`explore::cors`) are separate ports of those services' own
+/// configurations and differ on purpose: they add `dcl-preview.vercel.app`
+/// and other hosts and require a preview name, while this list, like the
+/// old services, also accepts the bare `decentraland1.vercel.app`. Change
+/// one list without the other only when its old service differed.
 pub fn is_decentraland_origin(origin: &str) -> bool {
     if origin == "https://tools.decentraland.systems" {
         return true;
@@ -51,15 +59,19 @@ pub fn is_decentraland_origin(origin: &str) -> bool {
     let Some(host) = origin.strip_prefix("https://") else {
         return false;
     };
-    // A non-empty prefix of up to 50 host characters ending in `separator`, or none.
+    // A prefix of up to 50 host characters ending in `separator`, or none:
+    // non-empty labels of letters, digits and `-`, joined by single dots.
     let prefixed = |rest: Option<&str>, separator: char| {
         rest.is_some_and(|rest| {
             rest.is_empty()
-                || rest.strip_suffix(separator).is_some_and(|label| {
-                    (1..=50).contains(&label.len())
-                        && label
-                            .bytes()
-                            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+                || rest.strip_suffix(separator).is_some_and(|prefix| {
+                    prefix.len() <= 50
+                        && prefix.split('.').all(|label| {
+                            !label.is_empty()
+                                && label
+                                    .bytes()
+                                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                        })
                 })
         })
     };
@@ -409,6 +421,9 @@ mod tests {
             "https://decentraland.org.example.com",
             "https://decentraland.org:8443",
             "https://.decentraland.org",
+            "https://.a.decentraland.org",
+            "https://a..decentraland.org",
+            "https://a..b-decentraland1.vercel.app",
             "https://a_b.decentraland.org",
             "https://example.org",
             "https://decentraland1.vercel.app.example.com",
@@ -480,6 +495,73 @@ mod tests {
                 h.contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS),
                 listed
             );
+        }
+    }
+
+    /// A request without `Origin` gets no allow-origin, credentials or `Vary`;
+    /// its preflight still answers 204 with the methods and headers.
+    #[tokio::test]
+    async fn decentraland_cors_without_an_origin() {
+        let resp = decentraland_app()
+            .oneshot(req(Method::POST, None))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let h = resp.headers();
+        for absent in [
+            header::ACCESS_CONTROL_ALLOW_ORIGIN,
+            header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+            header::ACCESS_CONTROL_EXPOSE_HEADERS,
+            header::VARY,
+        ] {
+            assert!(h.get(&absent).is_none(), "{absent}");
+        }
+        assert_eq!(h[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+
+        let resp = decentraland_app()
+            .oneshot(req(Method::OPTIONS, None))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        let h = resp.headers();
+        assert!(h.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+        assert!(h.get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none());
+        assert_eq!(h[header::ACCESS_CONTROL_ALLOW_METHODS], ALLOW_METHODS);
+        assert_eq!(h[header::ACCESS_CONTROL_ALLOW_HEADERS], ALLOW_HEADERS);
+    }
+
+    /// `Origin: null` and an origin that is not UTF-8 are unlisted origins.
+    #[tokio::test]
+    async fn decentraland_cors_treats_null_and_non_utf8_origins_as_unlisted() {
+        for origin in [
+            HeaderValue::from_static("null"),
+            HeaderValue::from_bytes(b"https://\xffdecentraland.org").unwrap(),
+        ] {
+            for method in [Method::OPTIONS, Method::POST] {
+                let request = Request::builder()
+                    .method(method.clone())
+                    .uri("/x")
+                    .header(header::ORIGIN, origin.clone())
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                    .header(
+                        header::ACCESS_CONTROL_REQUEST_HEADERS,
+                        "x-identity-metadata",
+                    )
+                    .body(Body::empty())
+                    .unwrap();
+                let resp = decentraland_app().oneshot(request).await.unwrap();
+                assert!(resp.status().is_success(), "{origin:?} {method}");
+                let h = resp.headers();
+                for absent in [
+                    header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                    header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+                    header::ACCESS_CONTROL_ALLOW_METHODS,
+                    header::ACCESS_CONTROL_ALLOW_HEADERS,
+                ] {
+                    assert!(h.get(&absent).is_none(), "{origin:?} {method} {absent}");
+                }
+                assert_eq!(h[header::VARY], "Origin", "{origin:?} {method}");
+            }
         }
     }
 
