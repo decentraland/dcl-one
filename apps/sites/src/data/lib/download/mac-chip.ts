@@ -28,3 +28,17 @@ export function detectMacChip(): MacChip {
   }
   return macChipFromRenderer(renderer);
 }
+
+type Build = { osKey: string; arch: string };
+
+/**
+ * Puts the build for a Mac's chip first where it differs from the server's pick, which assumes Apple Silicon.
+ * Other systems, and a Mac whose chip is unknown, keep the order they came in.
+ */
+export function preferChip<T extends Build>(chip: MacChip, primary: T, others: T[]): { primary: T; others: T[] } {
+  if (primary.osKey !== "macos") return { primary, others };
+  const arch = chip === "intel" ? "amd64" : chip === "apple_silicon" ? "arm64" : null;
+  const match = arch && arch !== primary.arch ? others.find((o) => o.osKey === "macos" && o.arch === arch) : undefined;
+  if (!match) return { primary, others };
+  return { primary: match, others: others.map((o) => (o === match ? primary : o)) };
+}

@@ -1,5 +1,6 @@
 import type { MouseEvent } from "react";
 import SitesChrome from "../frames/SitesChrome";
+import Tooltip from "../../atoms/Tooltip";
 import { asset } from "../../asset";
 import logo from "../../atoms/assets/decentraland-logo.svg?url";
 import styles from "./StCreatorHubDownload.module.css";
@@ -28,7 +29,11 @@ export type DownloadOption = {
   image: string;
   link: string;
   arch: string;
+  /** Tells two builds of one system apart, e.g. "Apple Silicon"; shown next to the glyph. */
+  variant?: string;
 };
+
+const buildName = (option: DownloadOption) => (option.variant ? `${option.text} (${option.variant})` : option.text);
 
 const PRIMARY: DownloadOption = {
   text: "macOS",
@@ -97,16 +102,19 @@ export default function StCreatorHubDownload({
                   <div className={styles.also}>
                     <span className={styles.alsoText}>{L.alsoAvailable}</span>
                     {secondaryOptions.map((option) => (
-                      <a
-                        key={option.text}
-                        className={styles.altIcon}
-                        href={option.link}
-                        data-os={option.text}
-                        aria-label={L.downloadFor(option.text)}
-                        onClick={onDownload && ((e) => onDownload(option, e))}
-                      >
-                        <img src={option.image} alt="" width="20" height="20" />
-                      </a>
+                      <Tooltip key={`${option.text}-${option.arch}`} label={L.downloadFor(buildName(option))} side="top" labelChild>
+                        <a
+                          className={styles.altIcon}
+                          href={option.link}
+                          data-os={option.text}
+                          data-arch={option.arch}
+                          aria-label={L.downloadFor(buildName(option))}
+                          onClick={onDownload && ((e) => onDownload(option, e))}
+                        >
+                          <img src={option.image} alt="" width="20" height="20" />
+                          {option.variant && <span>{option.variant}</span>}
+                        </a>
+                      </Tooltip>
                     ))}
                   </div>
                 )}

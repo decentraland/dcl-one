@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { redirect } from "react-router";
 
 import LdCreatorHubDownloadPage from "@ui/landings/pages/LdCreatorHubDownloadPage";
@@ -9,6 +9,7 @@ import {
   useCreatorHubDownloadClick,
 } from "@/data/lib/download/creator-hub-click";
 import { loadLatestRelease, resolveDownload, type OsKey } from "@/data/lib/download/creator-hub.server";
+import { detectMacChip, preferChip } from "@/data/lib/download/mac-chip";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
 
@@ -46,14 +47,20 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 export default function CreatorHubDownloadRoute({ loaderData }: Route.ComponentProps) {
   const d = loaderData;
   const onDownload = useCreatorHubDownloadClick(d.sid);
+  const [offered, setOffered] = useState({ primary: d.primary, others: d.secondary });
+  useEffect(() => {
+    const server = { primary: d.primary, others: d.secondary };
+    // A system or chip named in the link is the visitor's choice and stays first.
+    setOffered(d.primary?.osKey === "macos" && !d.overridden ? preferChip(detectMacChip(), d.primary, d.secondary) : server);
+  }, [d.primary, d.secondary, d.overridden]);
 
   useDownloadView(d.sid, d.detectedOs, d.detectedArch, d.version, d.overridden);
   return (
     <LdCreatorHubDownloadPage
       version={d.version}
-      primary={d.primary}
-      secondary={d.secondary}
-      onDownload={(option, event) => onDownload(option, option === d.primary ? "primary" : "secondary", event)}
+      primary={offered.primary}
+      secondary={offered.others}
+      onDownload={(option, event) => onDownload(option, option === offered.primary ? "primary" : "secondary", event)}
     />
   );
 }

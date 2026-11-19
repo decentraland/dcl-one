@@ -117,18 +117,27 @@
 }
 .alsoText {
   font-size: var(--dcl-font-size-body-sm);
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--dcl-neutrals-pearl);
 }
 
 .altIcon {
   background: none;
   border: none;
   cursor: pointer;
-  padding: var(--dcl-space-4);
   display: flex;
   align-items: center;
+  justify-content: center;
+  gap: var(--dcl-space-4);
+  min-width: 44px;
+  height: 44px;
+  padding: 0 10px;
+  border-radius: 22px;
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-body-sm);
+  text-decoration: none;
   outline: none;
 }
+.altIcon:hover { background: var(--dcl-bg-hover); }
 .altIcon:focus-visible {
   outline: 2px solid var(--dcl-primary-primary);
   outline-offset: 2px;

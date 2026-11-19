@@ -16,7 +16,10 @@ vi.hoisted(() => {
   });
 });
 vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
-vi.mock("@/data/lib/download/mac-chip", () => ({ detectMacChip: vi.fn(() => "unknown") }));
+vi.mock("@/data/lib/download/mac-chip", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/data/lib/download/mac-chip")>()),
+  detectMacChip: vi.fn(() => "unknown"),
+}));
 
 const BASE = "https://github.com/decentraland/creator-hub/releases/download/1.2.3";
 const option = (osKey: "macos" | "windows", arch: "arm64" | "amd64", archLabel: string, fileName: string): DownloadOption => ({

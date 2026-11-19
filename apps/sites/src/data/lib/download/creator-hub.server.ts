@@ -129,8 +129,7 @@ function detectOs(userAgent: string | null | undefined): OsKey | undefined {
 function detectArch(userAgent: string | null | undefined, os: OsKey): ArchKey {
   const ua = (userAgent ?? "").toLowerCase();
   if (/arm64|aarch64/.test(ua)) return "arm64";
-  if (os === "windows") return "amd64";
-  if (/intel/.test(ua) && !/apple/.test(ua)) return "amd64";
+  // Every Mac's User-Agent says "Intel", whatever its chip: a Mac gets the Apple Silicon build unless told otherwise.
   return os === "macos" ? "arm64" : "amd64";
 }
 
@@ -185,15 +184,13 @@ export function resolveDownload(
   const primaryKey = pickKey(options, detectedOs, detectedArch) ?? DEFAULT_OPTION;
   const primary = options[primaryKey] ?? FALLBACK.options[DEFAULT_OPTION];
 
+  // Every other installer, once per link: before a release is read they all lead to the releases page.
   const secondary: DownloadOption[] = [];
-  const seenOs = new Set<OsKey>([primary.osKey]);
-  for (const key of Object.keys(options)) {
-    const opt = options[key];
-    if (seenOs.has(opt.osKey)) continue;
-    const altKey = pickKey(options, opt.osKey, detectedArch);
-    const chosen = (altKey && options[altKey]) || opt;
-    secondary.push(chosen);
-    seenOs.add(opt.osKey);
+  const seenUrls = new Set<string>();
+  for (const opt of Object.values(options)) {
+    if (opt === primary || seenUrls.has(opt.url)) continue;
+    secondary.push(opt);
+    seenUrls.add(opt.url);
   }
 
   return {
@@ -217,13 +214,9 @@ export type HeroDownloads = {
 /**
  * The installers a page offers in place: the one for the system the User-Agent names, then the rest. Null when
  * that system has no installer, or when the release could not be read and only the releases page is known.
- * Every Mac gets the Apple Silicon build first: its User-Agent says "Intel" on either chip.
  */
 export function heroDownloads(release: DownloadRelease, userAgent: string | null | undefined): HeroDownloads | null {
-  const resolved = resolveDownload(release, userAgent);
-  const { installable } = resolved;
-  const primary = (resolved.primary.osKey === "macos" && release.options[DEFAULT_OPTION]) || resolved.primary;
+  const { installable, primary, secondary } = resolveDownload(release, userAgent);
   if (!installable || !primary.fileName) return null;
-  const others = Object.values(release.options).filter((option) => option !== primary && option.fileName);
-  return { primary, others };
+  return { primary, others: secondary };
 }

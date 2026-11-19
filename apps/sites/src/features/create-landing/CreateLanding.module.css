@@ -104,7 +104,7 @@
   justify-content: center;
   gap: var(--dcl-space-4);
   margin-top: var(--dcl-space-8);
-  color: var(--dcl-transparencies-white-60);
+  color: var(--dcl-neutrals-white);
   font-size: var(--dcl-font-size-body-sm);
 }
 .otherBuild {

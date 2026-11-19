@@ -10,6 +10,8 @@ type LdChdOption = {
   osKey: LdChdOsKey;
   url: string;
   arch: string;
+  /** The chip a Mac build is for, shown next to its glyph. */
+  archLabel?: string;
 };
 
 // The page's own white glyphs: one source, so the CTA and the "Also available on" icons cannot drift apart.
@@ -19,7 +21,13 @@ const OS_GLYPH: Record<LdChdOsKey, string> = {
 };
 
 function toUiOption(opt: LdChdOption) {
-  return { text: opt.os, image: OS_GLYPH[opt.osKey], link: opt.url, arch: opt.arch };
+  return {
+    text: opt.os,
+    image: OS_GLYPH[opt.osKey],
+    link: opt.url,
+    arch: opt.arch,
+    variant: opt.osKey === "macos" ? opt.archLabel : undefined,
+  };
 }
 
 type LdCreatorHubDownloadPageProps<O extends LdChdOption> = {

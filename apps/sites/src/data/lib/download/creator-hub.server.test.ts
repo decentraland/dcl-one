@@ -78,6 +78,14 @@ describe("the latest Creator Hub release", () => {
     expect(d.secondary.map((o) => o.url)).toEqual([RELEASES_PAGE]);
   });
 
+  it("offers the download page every other installer, the other Mac build included", async () => {
+    answer(release("0.42.0"));
+    const mac = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:130.0) Gecko/20100101 Firefox/130.0";
+    const d = resolveDownload(await loadLatestRelease(), mac);
+    expect(d.primary).toMatchObject({ osKey: "macos", arch: "arm64" });
+    expect(d.secondary.map((o) => `${o.osKey}-${o.arch}`)).toEqual(["macos-amd64", "windows-amd64"]);
+  });
+
   it("asks again a minute after a failed read, not before", async () => {
     fetchMock.mockRejectedValueOnce(new Error("network"));
     await loadLatestRelease();

@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 
+import Tooltip from "@ui/atoms/Tooltip";
+
 import type { DownloadOption, HeroDownloads } from "@/data/lib/download/creator-hub.server";
 import { useCreatorHubDownloadClick } from "@/data/lib/download/creator-hub-click";
-import { detectMacChip } from "@/data/lib/download/mac-chip";
+import { detectMacChip, preferChip } from "@/data/lib/download/mac-chip";
 
 import { copy } from "./content";
 import styles from "./CreateLanding.module.css";
@@ -26,19 +28,10 @@ function OsIcon({ os }: { os: DownloadOption["osKey"] }) {
 /** A Mac build is named by its chip; Windows has one build. */
 const buildName = (option: DownloadOption) => (option.osKey === "macos" ? `${option.os} (${option.archLabel})` : option.os);
 
-/**
- * The server picks the Apple Silicon build for every Mac, whose User-Agent hides its chip. Where the browser
- * can tell the Mac is an Intel one, the Intel build comes first. An iPad names itself a Mac and has no installer.
- */
+/** An iPad names itself a Mac and has no installer; elsewhere the build for this Mac's chip comes first. */
 function forThisDevice(downloads: HeroDownloads): HeroDownloads | null {
-  if (downloads.primary.osKey !== "macos") return downloads;
-  if (navigator.maxTouchPoints > 1) return null;
-  const chip = detectMacChip();
-  const arch = chip === "intel" ? "amd64" : chip === "apple_silicon" ? "arm64" : null;
-  if (!arch || arch === downloads.primary.arch) return downloads;
-  const match = downloads.others.find((option) => option.osKey === "macos" && option.arch === arch);
-  if (!match) return downloads;
-  return { primary: match, others: downloads.others.map((option) => (option === match ? downloads.primary : option)) };
+  if (downloads.primary.osKey === "macos" && navigator.maxTouchPoints > 1) return null;
+  return downloads.primary.osKey === "macos" ? preferChip(detectMacChip(), downloads.primary, downloads.others) : downloads;
 }
 
 type Props = {
@@ -79,19 +72,19 @@ export default function HeroDownload({ downloads, sid }: Props) {
         <div className={`${styles.otherBuilds} ${styles.desktopOnly}`}>
           {copy.alsoAvailableOn}
           {others.map((option) => (
-            <a
-              key={`${option.osKey}-${option.arch}`}
-              className={styles.otherBuild}
-              href={option.url}
-              title={copy.downloadFor(buildName(option))}
-              aria-label={copy.downloadFor(buildName(option))}
-              data-os={option.osKey}
-              data-arch={option.arch}
-              onClick={(event) => onDownload(option, "secondary", event)}
-            >
-              <OsIcon os={option.osKey} />
-              {option.osKey === "macos" && <span>{option.archLabel}</span>}
-            </a>
+            <Tooltip key={`${option.osKey}-${option.arch}`} label={copy.downloadFor(buildName(option))} side="top" labelChild>
+              <a
+                className={styles.otherBuild}
+                href={option.url}
+                aria-label={copy.downloadFor(buildName(option))}
+                data-os={option.osKey}
+                data-arch={option.arch}
+                onClick={(event) => onDownload(option, "secondary", event)}
+              >
+                <OsIcon os={option.osKey} />
+                {option.osKey === "macos" && <span>{option.archLabel}</span>}
+              </a>
+            </Tooltip>
           ))}
         </div>
       )}
