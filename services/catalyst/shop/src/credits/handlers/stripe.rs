@@ -8,12 +8,16 @@
 //! PaymentIntent, and a grant that lands after it applies it in the same
 //! transaction; both serialize on the PaymentIntent. An event whose
 //! `livemode` differs from the secret key's mode is refused before its id is
-//! claimed, and a dispute opened as an inquiry (`warning_*`) revokes nothing
-//! until `charge.dispute.funds_withdrawn`.
+//! claimed; without a secret key there is no mode to compare, and the
+//! endpoint's signing secret alone decides. A dispute opened as an inquiry
+//! (`warning_*`) revokes nothing until `charge.dispute.funds_withdrawn`.
 //!
 //! The Stripe endpoint must deliver every event handled below, among them
 //! `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
-//! `checkout.session.async_payment_failed` and `payment_intent.succeeded`. A
+//! `checkout.session.async_payment_failed`, `payment_intent.succeeded`,
+//! `charge.refunded`, `charge.dispute.created` and
+//! `charge.dispute.funds_withdrawn` (without it an inquiry that escalates is
+//! never revoked). A
 //! delayed payment method completes its session unpaid, which records the
 //! session's payment intent on the order. When the payment clears, whichever
 //! of `async_payment_succeeded` and `payment_intent.succeeded` lands first
@@ -84,9 +88,11 @@ pub async fn webhook(
         .to_string();
 
     // Before the claim, so a refused event never consumes its id; an event without `livemode` is not live.
+    // Without a secret key (a node only settling payments already started) there is no mode to compare.
     let event_live = event.get("livemode").and_then(JsonValue::as_bool) == Some(true);
-    let server_live = is_live_key(state.settings.stripe_secret_key.as_deref());
-    if event_live != server_live {
+    if let Some(server_live) = state.settings.stripe_secret_key.as_deref().map(is_live_key)
+        && event_live != server_live
+    {
         tracing::error!(event_id = %event_id, event_type = %event_type, event_live, server_live, "refusing a Stripe event from the other mode: check STRIPE_SECRET_KEY and the webhook endpoint");
         return Err(ApiError::bad_request(
             "Event mode does not match the server configuration",
@@ -380,8 +386,8 @@ async fn mark_session_terminal(
 }
 
 /// A live secret key (`sk_live_`, or a restricted `rk_live_`) serves live events only; any other serves test events.
-pub(crate) fn is_live_key(secret_key: Option<&str>) -> bool {
-    secret_key.is_some_and(|k| k.starts_with("sk_live_") || k.starts_with("rk_live_"))
+pub(crate) fn is_live_key(secret_key: &str) -> bool {
+    secret_key.starts_with("sk_live_") || secret_key.starts_with("rk_live_")
 }
 
 /// A dispute opened as an inquiry (`warning_*` status): no funds are withdrawn while it stays one.

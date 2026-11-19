@@ -379,24 +379,35 @@ async fn resume(
 
 /// `GET /credits/orders/{id}/cancel-return`: Stripe's `cancel_url` landing,
 /// unauthenticated (a browser redirect), so nothing is taken on the
-/// client's word: the order's session is expired at Stripe first (as
-/// `cancel`; a paid or already closed one stays as it is) and read back, and the order retired only when Stripe says it
-/// is not paid and no longer open; then the buyer is sent to the Shop's
-/// cancel page.
+/// client's word. For a pending order the session is expired at Stripe
+/// first, as `cancel` does: leaving the hosted page through its cancel link
+/// ends that checkout, whoever follows the link (the order id is 128-bit
+/// random). The session is then read back (also when the expire fails), and
+/// the order retired only when Stripe says it is not paid and no longer
+/// open (Stripe leaves a paid or already closed session as it is). An order
+/// that is no longer pending costs no Stripe call. The buyer is then sent
+/// to the Shop's cancel page.
 pub async fn cancel_return(
     State(state): State<SharedState>,
     Path(order_id): Path<String>,
 ) -> Response {
     let cancel_url = state.settings.checkout_cancel_url.clone();
     if let Some(stripe) = state.stripe.as_ref()
-        && let Ok(Some((_, session))) = state.credits.get_order_with_session_any(&order_id).await
+        && let Ok(Some((status, session))) =
+            state.credits.get_order_with_session_any(&order_id).await
+        && status == "pending"
         && let Some(session) = session.as_deref()
-        && let Ok(expired) = stripe
+        && let Some(s) = match stripe
             .expire_checkout_session(session, &format!("expire:{session}"))
             .await
-        && let Ok(Some(s)) = match expired {
-            Some(s) => Ok(Some(s)),
-            None => stripe.retrieve_checkout_session(session).await,
+        {
+            Ok(Some(s)) => Some(s),
+            // Already closed (400/404), or the expire failed: Stripe's current state decides.
+            Ok(None) | Err(_) => stripe
+                .retrieve_checkout_session(session)
+                .await
+                .ok()
+                .flatten(),
         }
         && !s.is_paid()
         && !s.is_payable()

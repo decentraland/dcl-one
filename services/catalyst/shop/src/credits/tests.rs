@@ -305,6 +305,7 @@ struct StateCfg {
     mock_card: bool,
     fulfillment_mode: &'static str,
     stripe_webhook_secret: Option<&'static str>,
+    stripe_secret_key: Option<&'static str>,
     onchain_authorize_enabled: bool,
     require_purchase_intent: bool,
     admin_token: Option<&'static str>,
@@ -317,6 +318,7 @@ impl Default for StateCfg {
             mock_card: false,
             fulfillment_mode: "secondary",
             stripe_webhook_secret: None,
+            stripe_secret_key: None,
             onchain_authorize_enabled: false,
             require_purchase_intent: false,
             admin_token: None,
@@ -337,6 +339,7 @@ fn state_with(pool: PgPool, cfg: StateCfg, market: FakeMarket, broker: MockBroke
         },
         checkout_fulfillment_mode: cfg.fulfillment_mode.to_string(),
         stripe_webhook_secret: cfg.stripe_webhook_secret.map(str::to_string),
+        stripe_secret_key: cfg.stripe_secret_key.map(str::to_string),
         credits_onchain_authorize_enabled: cfg.onchain_authorize_enabled,
         require_purchase_intent: cfg.require_purchase_intent,
         admin_token: cfg.admin_token.map(str::to_string),
@@ -9808,25 +9811,104 @@ async fn a_trial_refuses_mana_top_ups_and_the_broker_checkout_before_any_work() 
 #[test]
 fn only_a_live_secret_key_serves_live_events() {
     use super::handlers::stripe::is_live_key;
-    assert!(is_live_key(Some("sk_live_x")));
-    assert!(is_live_key(Some("rk_live_x")));
-    for key in [
-        None,
-        Some("sk_test_x"),
-        Some("rk_test_x"),
-        Some("sk"),
-        Some(""),
-    ] {
+    assert!(is_live_key("sk_live_x"));
+    assert!(is_live_key("rk_live_x"));
+    for key in ["sk_test_x", "rk_test_x", "sk", ""] {
         assert!(!is_live_key(key), "{key:?}");
     }
 }
 
-/// An event from the other Stripe mode is refused before its id is claimed, so it grants nothing and a
-/// correctly configured redelivery of the same id still processes.
+/// Delivers a `payment_intent.succeeded` in the given mode for a fresh 50-credit purchase, then answers the
+/// status, whether its id was claimed, and the buyer's balance.
+async fn deliver_in_mode(
+    pool: &PgPool,
+    secret_key: Option<&'static str>,
+    livemode: bool,
+) -> (StatusCode, i64, String) {
+    let state = test_state(
+        pool.clone(),
+        StateCfg {
+            stripe_webhook_secret: Some(WEBHOOK_SECRET),
+            stripe_secret_key: secret_key,
+            ..StateCfg::default()
+        },
+    );
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let pack = PackRow {
+        sku: "mode-pack".into(),
+        title: "Mode".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let pi = unique("pi_mode");
+    state
+        .credits
+        .insert_pending_purchase(&addr, &pack, &pi)
+        .await
+        .unwrap();
+    let evt = unique("evt_mode");
+    let body = json!({ "id": evt, "type": "payment_intent.succeeded", "livemode": livemode, "data": { "object": { "id": pi, "amount": 500, "currency": "usd" } } }).to_string();
+    let (status, _) = deliver(&app, &body).await;
+    let claimed: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM credits.stripe_events WHERE event_id = $1")
+            .bind(&evt)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    (status, claimed, available(pool, &addr).await)
+}
+
+/// A live key serves live events only and a test key test events only; the other mode is refused before
+/// its id is claimed, so it grants nothing.
 #[tokio::test]
 async fn a_webhook_event_from_the_other_stripe_mode_is_refused_unclaimed() {
     let Some(pool) = pool().await else { return };
-    let state = webhook_state(&pool);
+    let refused = (StatusCode::BAD_REQUEST, 0, "0".to_string());
+    let processed = (StatusCode::OK, 1, "50".to_string());
+    for (key, livemode, expected) in [
+        (Some("sk_live_x"), true, &processed),
+        (Some("sk_live_x"), false, &refused),
+        (Some("sk_test_x"), false, &processed),
+        (Some("sk_test_x"), true, &refused),
+    ] {
+        assert_eq!(
+            &deliver_in_mode(&pool, key, livemode).await,
+            expected,
+            "key {key:?}, livemode {livemode}"
+        );
+    }
+}
+
+/// A node with the webhook secret and no secret key (settling payments already started) has no mode to
+/// compare: the signed event of either mode is processed, so refunds and disputes still revoke.
+#[tokio::test]
+async fn a_webhook_without_a_secret_key_processes_events_of_either_mode() {
+    let Some(pool) = pool().await else { return };
+    for livemode in [true, false] {
+        assert_eq!(
+            deliver_in_mode(&pool, None, livemode).await,
+            (StatusCode::OK, 1, "50".to_string()),
+            "livemode {livemode}"
+        );
+    }
+}
+
+/// A refused event leaves its id unclaimed, so the same id redelivered to a correctly configured node
+/// still processes.
+#[tokio::test]
+async fn a_refused_mode_leaves_the_event_id_for_a_redelivery() {
+    let Some(pool) = pool().await else { return };
+    let state = test_state(
+        pool.clone(),
+        StateCfg {
+            stripe_webhook_secret: Some(WEBHOOK_SECRET),
+            stripe_secret_key: Some("sk_test_x"),
+            ..StateCfg::default()
+        },
+    );
     let app = app(state.clone());
     let addr = scratch_wallet().address;
     let pack = PackRow {
@@ -9850,15 +9932,6 @@ async fn a_webhook_event_from_the_other_stripe_mode_is_refused_unclaimed() {
 
     let (status, out) = deliver(&app, &paid(true)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{out}");
-    assert_eq!(available(&pool, &addr).await, "0");
-    let claimed: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM credits.stripe_events WHERE event_id = $1")
-            .bind(&evt)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(claimed, 0, "a refused event leaves its id unclaimed");
-
     let (status, out) = deliver(&app, &paid(false)).await;
     assert_eq!(
         (status, out["detail"].as_str()),
@@ -9929,20 +10002,28 @@ async fn a_dispute_inquiry_revokes_nothing_until_funds_are_withdrawn() {
     assert_eq!(available(&pool, &addr).await, "0");
 }
 
-/// A stub of Stripe's checkout session endpoints: `expire` answers the session expired and is counted.
-async fn stub_stripe() -> (String, Arc<AtomicUsize>) {
+/// A stub of Stripe's checkout session endpoints. `expire` answers `expire_status`, with an expired unpaid
+/// session on 200; a read answers `session`. Both are counted.
+async fn stub_stripe(
+    expire_status: StatusCode,
+    session: Value,
+) -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>) {
     let expired = Arc::new(AtomicUsize::new(0));
-    let count = expired.clone();
+    let read = Arc::new(AtomicUsize::new(0));
+    let (expire_count, read_count) = (expired.clone(), read.clone());
     let app = Router::new()
         .route(
             "/v1/checkout/sessions/{id}/expire",
             axum::routing::post(
                 move |axum::extract::Path(id): axum::extract::Path<String>| {
-                    let count = count.clone();
+                    let count = expire_count.clone();
                     async move {
                         count.fetch_add(1, Ordering::SeqCst);
-                        axum::Json(
-                            json!({ "id": id, "status": "expired", "payment_status": "unpaid" }),
+                        (
+                            expire_status,
+                            axum::Json(
+                                json!({ "id": id, "status": "expired", "payment_status": "unpaid" }),
+                            ),
                         )
                     }
                 },
@@ -9951,23 +10032,32 @@ async fn stub_stripe() -> (String, Arc<AtomicUsize>) {
         .route(
             "/v1/checkout/sessions/{id}",
             axum::routing::get(
-                |axum::extract::Path(id): axum::extract::Path<String>| async move {
-                    axum::Json(json!({ "id": id, "status": "open", "payment_status": "unpaid" }))
+                move |axum::extract::Path(id): axum::extract::Path<String>| {
+                    let count = read_count.clone();
+                    let mut session = session.clone();
+                    async move {
+                        count.fetch_add(1, Ordering::SeqCst);
+                        session["id"] = json!(id);
+                        axum::Json(session)
+                    }
                 },
             ),
         );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    (url, expired)
+    (url, expired, read)
 }
 
-/// Stripe's cancel landing expires the open session before the order is retired, so the hosted page the buyer
-/// left can no longer be paid.
-#[tokio::test]
-async fn the_cancel_return_expires_the_checkout_session() {
-    let Some(pool) = pool().await else { return };
-    let (stripe_url, expired) = stub_stripe().await;
+/// Lands on `cancel-return` for a session order (pending, or retired first) against a stubbed Stripe, and
+/// answers the order's status and the expire and read counts.
+async fn cancel_return_with(
+    pool: &PgPool,
+    expire_status: StatusCode,
+    session_at_stripe: Value,
+    retire_first: bool,
+) -> (String, usize, usize) {
+    let (stripe_url, expired, read) = stub_stripe(expire_status, session_at_stripe).await;
     let mut settings = Settings::parse(RawSettings {
         writes_enabled: true,
         usage_chain_id: super::usage::CHAIN_POLYGON,
@@ -9990,6 +10080,13 @@ async fn the_cancel_return_expires_the_checkout_session() {
     let app = app(state.clone());
     let addr = scratch_wallet().address;
     let (order_id, session) = session_order_fixture(&state, &addr).await;
+    if retire_first {
+        state
+            .credits
+            .mark_order_status_by_session(&session, "abandoned", Some("cancelled by the buyer"))
+            .await
+            .unwrap();
+    }
 
     let resp = app
         .clone()
@@ -10006,10 +10103,88 @@ async fn the_cancel_return_expires_the_checkout_session() {
         "{}",
         resp.status()
     );
-    assert_eq!(
+    (
+        session_order_row(pool, &session).await.0,
         expired.load(Ordering::SeqCst),
-        1,
-        "the session is expired at Stripe"
+        read.load(Ordering::SeqCst),
+    )
+}
+
+/// Stripe's cancel landing expires the open session before the order is retired, so the hosted page the buyer
+/// left can no longer be paid.
+#[tokio::test]
+async fn the_cancel_return_expires_the_checkout_session() {
+    let Some(pool) = pool().await else { return };
+    let open = json!({ "status": "open", "payment_status": "unpaid", "url": "https://checkout.example/x" });
+    assert_eq!(
+        cancel_return_with(&pool, StatusCode::OK, open, false).await,
+        ("abandoned".to_string(), 1, 0)
     );
-    assert_eq!(session_order_row(&pool, &session).await.0, "abandoned");
+}
+
+/// A session Stripe will not expire (400: already closed) is read back: a paid or complete one leaves the
+/// order to the webhook, an expired unpaid one retires it.
+#[tokio::test]
+async fn the_cancel_return_reads_back_a_session_stripe_did_not_expire() {
+    let Some(pool) = pool().await else { return };
+    for (session, status) in [
+        (
+            json!({ "status": "complete", "payment_status": "paid" }),
+            "pending",
+        ),
+        (
+            json!({ "status": "complete", "payment_status": "unpaid" }),
+            "pending",
+        ),
+        (
+            json!({ "status": "expired", "payment_status": "unpaid" }),
+            "abandoned",
+        ),
+    ] {
+        assert_eq!(
+            cancel_return_with(&pool, StatusCode::BAD_REQUEST, session.clone(), false).await,
+            (status.to_string(), 1, 1),
+            "{session}"
+        );
+    }
+}
+
+/// A failed expire (a 5xx, or one replayed under the same idempotency key) still reads the session back, so
+/// a closed unpaid session retires the order and an open one keeps it.
+#[tokio::test]
+async fn the_cancel_return_reads_back_after_a_failed_expire() {
+    let Some(pool) = pool().await else { return };
+    for (session, status) in [
+        (
+            json!({ "status": "expired", "payment_status": "unpaid" }),
+            "abandoned",
+        ),
+        (
+            json!({ "status": "open", "payment_status": "unpaid", "url": "https://checkout.example/x" }),
+            "pending",
+        ),
+    ] {
+        assert_eq!(
+            cancel_return_with(
+                &pool,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                session.clone(),
+                false
+            )
+            .await,
+            (status.to_string(), 1, 1),
+            "{session}"
+        );
+    }
+}
+
+/// An order that is no longer pending costs no Stripe call.
+#[tokio::test]
+async fn the_cancel_return_calls_stripe_only_for_a_pending_order() {
+    let Some(pool) = pool().await else { return };
+    let open = json!({ "status": "open", "payment_status": "unpaid", "url": "https://checkout.example/x" });
+    assert_eq!(
+        cancel_return_with(&pool, StatusCode::OK, open, true).await,
+        ("abandoned".to_string(), 0, 0)
+    );
 }
