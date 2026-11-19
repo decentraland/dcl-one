@@ -2311,6 +2311,19 @@ fn calculate_local_aabb(
 #[derive(Component)]
 pub struct BeyondMaxAvatars;
 
+/// Max Avatars for this session, when `/avatar_demo cap` has set one: it wins over the player's
+/// setting, takes values past the setting's range and is never saved.
+#[derive(Resource, Default)]
+pub(crate) struct SessionMaxAvatars(pub(crate) Option<usize>);
+
+impl SessionMaxAvatars {
+    pub(crate) fn effective(session: Option<&Self>, config: &AppConfig) -> usize {
+        session
+            .and_then(|session| session.0)
+            .unwrap_or(config.max_avatars)
+    }
+}
+
 fn set_avatar_visibility(
     mut commands: Commands,
     mut q: Query<
@@ -2325,10 +2338,12 @@ fn set_avatar_visibility(
     beyond_max: Query<(), With<BeyondMaxAvatars>>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
     config: Res<AppConfig>,
+    session_max: Option<Res<SessionMaxAvatars>>,
 ) {
     let Ok(player_pos) = player.single().map(|gt| gt.translation()) else {
         return;
     };
+    let max_avatars = SessionMaxAvatars::effective(session_max.as_deref(), &config);
 
     let default_layer = RenderLayers::layer(0);
     let mut distances = q
@@ -2339,9 +2354,9 @@ fn set_avatar_visibility(
         .map(|(t, ..)| (t.translation() - player_pos).length_squared())
         .collect::<Vec<_>>();
     // only the (max_avatars)-th distance matters; partition instead of sorting
-    let cutoff = if distances.len() > config.max_avatars {
+    let cutoff = if distances.len() > max_avatars {
         *distances
-            .select_nth_unstable_by(config.max_avatars, |a, b| {
+            .select_nth_unstable_by(max_avatars, |a, b| {
                 a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less)
             })
             .1

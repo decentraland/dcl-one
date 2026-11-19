@@ -11,13 +11,16 @@ use dcl_component::proto_components::sdk::components::PbAvatarShape;
 use rand::{rngs::StdRng, seq::IteratorRandom, Rng, SeedableRng};
 use serde_json::json;
 
-use crate::{nametag::NametagContent, AvatarProcessed, AvatarSelection, AvatarShape};
+use crate::{
+    nametag::NametagContent, AvatarProcessed, AvatarSelection, AvatarShape, SessionMaxAvatars,
+};
 
 /// Enough to find where frame time breaks down, well past the Max Avatars setting's range.
 const MAX_DEMOS: usize = 1024;
 /// The highest session cap `/avatar_demo cap` takes: every demo avatar and the player.
 const MAX_CAP: usize = MAX_DEMOS + 1;
-/// Demo avatars stand in a square grid in front of the player, this many to a row.
+/// Demo avatars stand in a square grid in front of the player, this many to a row. A row fills
+/// from its centre outwards, so the first avatar stands straight ahead.
 const GRID_COLUMNS: u64 = 32;
 const GRID_SPACING: f32 = 1.6;
 /// The turn between one demo avatar and the next in the `around` layout: the golden angle, which
@@ -27,11 +30,16 @@ const AROUND_TURN: f32 = 2.399_963;
 /// Where the demo avatar in `slot` stands, relative to the player.
 fn demo_offset(layout: DemoLayout, slot: u64) -> Vec3 {
     match layout {
-        DemoLayout::Grid => Vec3::new(
-            ((slot % GRID_COLUMNS) as f32 - (GRID_COLUMNS - 1) as f32 / 2.0) * GRID_SPACING,
-            0.0,
-            -((slot / GRID_COLUMNS) as f32) * GRID_SPACING - 2.0,
-        ),
+        DemoLayout::Grid => {
+            // columns 0, 1, -1, 2, -2, ... from straight ahead
+            let column = slot % GRID_COLUMNS;
+            let side = if column % 2 == 1 { 1.0 } else { -1.0 };
+            Vec3::new(
+                side * column.div_ceil(2) as f32 * GRID_SPACING,
+                0.0,
+                -((slot / GRID_COLUMNS) as f32) * GRID_SPACING - 2.0,
+            )
+        }
         // one avatar per GRID_SPACING squared, the nearest first
         DemoLayout::Around => {
             let radius = GRID_SPACING * ((slot + 1) as f32 / std::f32::consts::PI).sqrt();
@@ -44,7 +52,7 @@ fn demo_offset(layout: DemoLayout, slot: u64) -> Vec3 {
 /// How demo avatars are placed.
 #[derive(clap::ValueEnum, Clone, Copy, Default, Debug, PartialEq, Eq)]
 enum DemoLayout {
-    /// a grid in front of the player: every avatar in view
+    /// a grid in front of the player, each row filled from its centre outwards
     #[default]
     Grid,
     /// a disc centred on the player, filled from the centre: a crowd on every side
@@ -86,6 +94,7 @@ impl Plugin for DebugAvatarsPlugin {
             return;
         }
         app.init_resource::<Creator>()
+            .init_resource::<SessionMaxAvatars>()
             .add_preview_console_command::<DemoCommand, _>(demo_command)
             .add_preview_console_command::<LookCommand, _>(look_command)
             .add_observer(clear_on_logout)
@@ -108,6 +117,7 @@ impl Plugin for DebugAvatarsPlugin {
                     ("Max avatars this session", "cap"),
                 ],
                 actions: &[
+                    ("Use the Max Avatars setting", "/avatar_demo cap"),
                     ("Destroy demo avatars", "/avatar_demo clear"),
                     ("Destroy random number", "/avatar_demo remove-random"),
                     ("Randomize demo wearables", "/avatar_demo randomize"),
@@ -214,6 +224,12 @@ struct Creator {
     next: u64,
 }
 
+/// The seed of the look at `index` in the crowd `seed` names. The two are mixed, so one seed's
+/// crowd is not the next seed's moved along by one.
+fn look_seed(seed: u64, index: u64) -> u64 {
+    seed ^ index.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+}
+
 /// A random demo avatar's look: whether it is male, and eight base wearables.
 fn random_look(rng: &mut impl Rng, male_only: bool) -> (bool, Vec<String>) {
     let male = male_only || rng.gen_bool(0.5);
@@ -251,9 +267,10 @@ enum DemoAction {
     Emote {
         name: String,
     },
-    /// Set Max Avatars for this session only, past the setting's range, to measure crowds.
+    /// Set Max Avatars for this session only, past the setting's range, to measure crowds; no
+    /// value goes back to the setting.
     Cap {
-        max: usize,
+        max: Option<usize>,
     },
     /// Where new demo avatars stand: `grid` in front of the player, or `around` them.
     Layout {
@@ -276,7 +293,8 @@ fn demo_command(
     mut creator: ResMut<Creator>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
     mut demos: Query<(Entity, &mut AvatarSelection), With<DemoAvatar>>,
-    mut config: ResMut<AppConfig>,
+    config: Res<AppConfig>,
+    mut session_max: ResMut<SessionMaxAvatars>,
     (children, processed, drawn_meshes): (
         Query<&Children>,
         Query<&InheritedVisibility, With<AvatarProcessed>>,
@@ -297,12 +315,12 @@ fn demo_command(
             creator.wearables = wearables;
         }
         Some(DemoAction::Cap { max }) => {
-            if !(1..=MAX_CAP).contains(&max) {
+            if max.is_some_and(|max| !(1..=MAX_CAP).contains(&max)) {
                 cmd.reply_failed(format!("choose a cap from 1 to {MAX_CAP}"));
                 return;
             }
-            // not through the setting, so nothing writes it to the stored config
-            config.max_avatars = max;
+            // beside the config, not in it: a change to the config is written to the stored one
+            session_max.0 = max;
         }
         Some(DemoAction::Layout { layout }) => creator.layout = layout,
         Some(DemoAction::Seed { seed }) => creator.seed = seed,
@@ -359,7 +377,7 @@ fn demo_command(
                 let (male, wearables) = if matches!(action, DemoAction::Spawn { .. }) {
                     match creator.seed {
                         Some(seed) => random_look(
-                            &mut StdRng::seed_from_u64(seed.wrapping_add(index)),
+                            &mut StdRng::seed_from_u64(look_seed(seed, index)),
                             creator.male_only,
                         ),
                         None => random_look(&mut rng, creator.male_only),
@@ -450,7 +468,7 @@ fn demo_command(
             }
         }
     }
-    cmd.reply_ok(json!({"count":count, "built":built, "shown":shown, "drawn":drawn, "cap":config.max_avatars, "layout":creator.layout.name(), "seed":creator.seed, "maleOnly":creator.male_only, "wearables":creator.wearables.join(","), "emote":creator.emote.as_deref().unwrap_or("none")}).to_string());
+    cmd.reply_ok(json!({"count":count, "built":built, "shown":shown, "drawn":drawn, "cap":SessionMaxAvatars::effective(Some(&*session_max), &config), "sessionCap":session_max.0, "layout":creator.layout.name(), "seed":creator.seed, "maleOnly":creator.male_only, "wearables":creator.wearables.join(","), "emote":creator.emote.as_deref().unwrap_or("none")}).to_string());
 }
 
 /// Temporarily render a fetched profile's appearance on the local player.
@@ -572,9 +590,33 @@ mod tests {
     }
 
     #[test]
+    fn neighbouring_seeds_are_different_crowds() {
+        assert_eq!(look_seed(1, 0), 1);
+        assert_ne!(look_seed(1, 1), look_seed(2, 0));
+        assert_ne!(look_seed(1, 2), look_seed(2, 1));
+    }
+
+    #[test]
     fn the_grid_stands_in_front_of_the_player() {
         for slot in 0..MAX_DEMOS as u64 {
             assert!(demo_offset(DemoLayout::Grid, slot).z <= -2.0);
+        }
+    }
+
+    #[test]
+    fn a_grid_row_fills_from_straight_ahead_outwards() {
+        let row: Vec<_> = (0..GRID_COLUMNS)
+            .map(|slot| demo_offset(DemoLayout::Grid, slot).x)
+            .collect();
+        assert!(row[0].abs() < 0.01);
+        assert!(row[1] > 0.0 && row[2] < 0.0);
+        // no avatar stands closer to the centre than the one before it
+        assert!(row.windows(2).all(|pair| pair[0].abs() <= pair[1].abs()));
+        // and no two share a place
+        for (i, a) in row.iter().enumerate() {
+            assert!(row[i + 1..]
+                .iter()
+                .all(|b| (a - b).abs() > GRID_SPACING / 2.0));
         }
     }
 
