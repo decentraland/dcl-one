@@ -173,6 +173,7 @@ fn participant_connected(
     commands.trigger(ParticipantMetadataChanged {
         room: *room_entity,
         participant: participant.clone(),
+        metadata: participant.metadata(),
     });
 }
 

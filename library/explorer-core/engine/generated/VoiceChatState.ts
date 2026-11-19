@@ -35,6 +35,10 @@ localSpeaker: boolean,
  */
 localRole: VoiceChatRole, localRequestingToSpeak: boolean, 
 /**
+ * The local user's room metadata reads muted, by their own toggle or a moderator.
+ */
+localMuted: boolean, 
+/**
  * Why the last action failed, why the call ended in busy / error, or how the call room
  * went away.
  */

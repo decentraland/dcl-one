@@ -384,6 +384,8 @@ pub struct VoiceChatState {
     /// The local user's role in the community.
     pub local_role: VoiceChatRole,
     pub local_requesting_to_speak: bool,
+    /// The local user's room metadata reads muted, by their own toggle or a moderator.
+    pub local_muted: bool,
     /// Why the last action failed, why the call ended in busy / error, or how the call room
     /// went away.
     pub error: Option<String>,

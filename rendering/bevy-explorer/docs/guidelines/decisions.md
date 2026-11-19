@@ -120,6 +120,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   - Don't keep a muted mic's track published. Muting unpublishes it, so no audio leaves a muted
     user. In a stream `MuteSpeakerFromCommunityVoiceChat` is still sent, so every client shows the
     same state (a focus pause is the exception, below).
+  - Don't leave a speaker's mic up when a moderator mutes it. The gatekeeper's mute only sets
+    `muted` in the speaker's room metadata and leaves the track published, so this client takes
+    the mic down when its own metadata turns muted, and keeps it down across a re-dial. The
+    speaker may raise it again. `decentraland/unity-explorer` at
+    `9bc94865ce347f29ae47f5db907d7fa57603e42c` only shows the muted icon, so a speaker it runs
+    keeps publishing.
   - Don't play calls at the nearby-voice volume. Calls and streams follow `Voice Chat Volume` and
     nearby players `Voice Volume`, both scaled by `Master`. Capture uses the system's default
     microphone; a device picker is next work.

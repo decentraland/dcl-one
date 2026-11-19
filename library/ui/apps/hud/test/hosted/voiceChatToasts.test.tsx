@@ -28,6 +28,7 @@ const idle: VoiceChatState = {
   localSpeaker: false,
   localRole: 'none',
   localRequestingToSpeak: false,
+  localMuted: false,
   error: null,
   errorIsNotice: false,
   errorSeq: 0

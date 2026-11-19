@@ -6500,7 +6500,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "d270d306799f200151402123c75e748dedaef63d532ab1558a3f82c366fc1b4c"
+      "sha256": "d1d3f4693828fa1bcf18181859c4502853071a7e85102ec7505d72b18920fb43"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -10404,7 +10404,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "6c9de22db64bdd036494d411f8afdcf1dfaae30224151ff5d99e6de8247b55d2"
+      "sha256": "80078121355517a43d29a9078af9c5ea9c2175fe42fc2f8a51a5fb1867100c3b"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -10816,11 +10816,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
-      "sha256": "f33f6ccb840dd127a1b323a4a50db9f08e60916da1d048ffeafee37ad0593ccc"
+      "sha256": "0fcf7c391157932e7be6ec6f14835942b341fcd33d5ca61733431dac657e07ea"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/voiceChatToasts.test.tsx",
-      "sha256": "b95d3adc81a300ef491e2730eed01e0b999b6775f8354e318878e97eafbf48f9"
+      "sha256": "2d40b07857ab178bac360e1b704ea3200c68756813f0df73e1ba48b212717015"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/voiceSpeaking.test.tsx",

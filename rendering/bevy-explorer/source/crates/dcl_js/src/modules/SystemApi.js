@@ -871,7 +871,8 @@ module.exports.social = {
 // change; actions are fire-and-forget and their outcome shows on it.
 // type VoiceChatState = { status: string, kind: string, callId: string | null, communityId: string | null,
 //   peer: string | null, connection: string, participants: VoiceChatParticipant[], micEnabled: boolean,
-//   localSpeaker: boolean, localRole: string, localRequestingToSpeak: boolean, error: string | null }
+//   localSpeaker: boolean, localRole: string, localRequestingToSpeak: boolean, localMuted: boolean,
+//   error: string | null }
 // type CommunityVoiceUpdate = { communityId: string, status: 'started' | 'ended', createdAt: number,
 //   endedAt: number | null, positions: string[], worlds: string[], isMember: boolean,
 //   communityName: string, communityImage: string | null }

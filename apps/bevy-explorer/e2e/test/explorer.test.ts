@@ -151,7 +151,7 @@ describe('Explorer', () => {
         connected: true,
         rooms: [],
         speakers: [],
-        call: { status: 'receivedCall', kind: 'private', callId: 'c1', communityId: null, peer: '0xabc', connection: 'none', participants: [], micEnabled: false, localSpeaker: false, localRole: 'none', localRequestingToSpeak: false, error: null, errorIsNotice: false }
+        call: { status: 'receivedCall', kind: 'private', callId: 'c1', communityId: null, peer: '0xabc', connection: 'none', participants: [], micEnabled: false, localSpeaker: false, localRole: 'none', localRequestingToSpeak: false, localMuted: false, error: null, errorIsNotice: false }
       })
     })
     const state = await new Explorer(fake).voiceState()

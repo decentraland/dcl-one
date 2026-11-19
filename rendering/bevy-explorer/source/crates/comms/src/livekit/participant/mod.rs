@@ -115,6 +115,9 @@ pub struct ParticipantPayload {
 pub struct ParticipantMetadataChanged {
     pub room: Entity,
     pub participant: LivekitParticipant,
+    /// The metadata this change set. The participant handle reads the latest, which may already
+    /// be a later change still queued.
+    pub metadata: String,
 }
 
 #[derive(Component)]

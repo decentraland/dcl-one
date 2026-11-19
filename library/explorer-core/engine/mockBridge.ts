@@ -268,7 +268,7 @@ const MOCK_ME = '0x0000000000000000000000000000000000000001'
 function mockParticipant(address: string, name: string, picture: string | undefined, role: VoiceChatRole, isSpeaker: boolean, extra: Partial<VoiceChatParticipant> = {}): VoiceChatParticipant {
   return { address, name, hasClaimedName: !/\d/.test(name), profilePictureUrl: picture ?? '', role, isSpeaker, isRequestingToSpeak: false, isMuted: false, isSpeaking: false, ...extra }
 }
-const idleVoice: VoiceChatState = { status: 'disconnected', kind: 'none', callId: null, communityId: null, peer: null, connection: 'none', participants: [], micEnabled: false, localSpeaker: false, localRole: 'none', localRequestingToSpeak: false, error: null, errorIsNotice: false, errorSeq: 0 }
+const idleVoice: VoiceChatState = { status: 'disconnected', kind: 'none', callId: null, communityId: null, peer: null, connection: 'none', participants: [], micEnabled: false, localSpeaker: false, localRole: 'none', localRequestingToSpeak: false, localMuted: false, error: null, errorIsNotice: false, errorSeq: 0 }
 let voice: VoiceChatState = { ...idleVoice }
 let mockVoiceAction: ((action: VoiceChatActionWire) => void) | null = null
 const voiceTimers: ReturnType<typeof setTimeout>[] = []

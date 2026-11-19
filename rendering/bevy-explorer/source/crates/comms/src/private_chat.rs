@@ -318,7 +318,11 @@ fn participant_metadata_changed(
     mut participants: Query<&mut PrivateChatPrivacy>,
     mut presence: EventWriter<PrivateChatPresenceChanged>,
 ) {
-    let ParticipantMetadataChanged { participant, room } = trigger.event();
+    let ParticipantMetadataChanged {
+        participant,
+        room,
+        metadata,
+    } = trigger.event();
     let Ok(index) = rooms.get(*room) else {
         return;
     };
@@ -331,7 +335,7 @@ fn participant_metadata_changed(
     let Ok(mut privacy) = participants.get_mut(entity) else {
         return;
     };
-    privacy.0 = privacy_from_metadata(&participant.metadata());
+    privacy.0 = privacy_from_metadata(metadata);
     debug!(target: "comms::private_chat", "{} privacy {:?}", participant.identity(), privacy.0);
     if let Some(address) = participant.identity().as_str().as_h160() {
         presence.write(PrivateChatPresenceChanged { address });

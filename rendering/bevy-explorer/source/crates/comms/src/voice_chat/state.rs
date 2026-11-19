@@ -169,9 +169,12 @@ pub enum Reply {
     JoinCommunity(String, u64, Result<String, VoiceRefusal>),
     /// With the community it ends: ending an abandoned start must not drop the current stream.
     EndCommunity(String, Result<(), VoiceRefusal>),
-    /// Raise hand, promote, demote, kick, reject, mute: fire and forget, the result only shown as
-    /// the last error.
+    /// Raise hand, promote, demote, kick, reject: fire and forget, the result only shown as the
+    /// last error.
     Moderation(Result<(), VoiceRefusal>),
+    /// The local speaker's mute toggle, with whether it muted: as `Moderation`, and a mute the
+    /// server refused is not echoed.
+    MuteSpeaker(bool, Result<(), VoiceRefusal>),
 }
 
 /// Everything that moves the state.
@@ -250,6 +253,8 @@ pub struct CallState {
     pub local_speaker: bool,
     pub local_role: Role,
     pub local_requesting_to_speak: bool,
+    /// The local participant's metadata says muted: by the user's own toggle or a moderator.
+    local_muted: bool,
     /// Why the last action failed or the call could not happen; cleared by the next call or
     /// stream. Set through [`Self::set_error`].
     pub error: Option<String>,
@@ -262,6 +267,9 @@ pub struct CallState {
     mic_wanted: bool,
     /// The room has connected once in this call; later connects are re-dials.
     connected_once: bool,
+    /// Mutes the user sent while the room read unmuted and the server has not refused: while any
+    /// is left, the next `muted: true` is their echo, not a moderator's mute.
+    mutes_unechoed: u8,
     deferred: Option<(Deferred, f64)>,
     /// Ends a private call the server still has open after the social link dropped while it
     /// rang; sent when the link is back.
@@ -333,6 +341,10 @@ impl CallState {
 
     pub fn error_seq(&self) -> u32 {
         self.error_seq
+    }
+
+    pub fn local_muted(&self) -> bool {
+        self.local_muted
     }
 
     fn set_call_mic(&mut self, enabled: bool, effects: &mut Vec<Effect>) {
@@ -536,6 +548,10 @@ impl CallState {
                         // tell the server, so the others see the speaker muted or not
                         if let (Some(community_id), Some(me)) = (self.community_id.clone(), self.me)
                         {
+                            // a room that reads muted already does not echo another mute
+                            if !enabled && !self.local_muted {
+                                self.mutes_unechoed = self.mutes_unechoed.saturating_add(1);
+                            }
                             effects.push(Effect::Rpc(Rpc::MuteSpeaker {
                                 community_id,
                                 address: me,
@@ -741,12 +757,24 @@ impl CallState {
             return;
         }
         let was_speaker = self.local_speaker;
+        let was_muted = self.local_muted;
         self.local_role = Role::parse(&metadata.role);
         self.local_requesting_to_speak = metadata.is_requesting_to_speak;
         self.local_speaker = self.kind == Kind::Private || metadata.is_speaker;
+        self.local_muted = metadata.muted;
         // a demoted speaker's mic goes down; a promoted one's
         // comes up muted (here: stays down until toggled)
-        if was_speaker && !self.local_speaker {
+        let mut mic_down = was_speaker && !self.local_speaker;
+        // The gatekeeper's mute only marks the metadata, so the client enforces it; the speaker
+        // may raise the mic again.
+        if metadata.muted && !was_muted && self.kind == Kind::Community {
+            if self.mutes_unechoed > 0 {
+                self.mutes_unechoed = 0;
+            } else {
+                mic_down = true;
+            }
+        }
+        if mic_down {
             if self.mic_enabled {
                 effects.push(Effect::SetCallMic(false));
             }
@@ -870,6 +898,22 @@ impl CallState {
             }
             Reply::Moderation(result) => {
                 if let Err(e) = result {
+                    self.set_error(e.message());
+                }
+            }
+            Reply::MuteSpeaker(muted, result) => {
+                if let Err(e) = result {
+                    if muted {
+                        // only this mute will not be echoed; another may still be
+                        self.mutes_unechoed = self.mutes_unechoed.saturating_sub(1);
+                    } else if self.local_muted && self.kind == Kind::Community {
+                        // the room still reads muted, so a moderator's mute would change nothing
+                        // there and never reach this client: keep the mic as the room shows it
+                        if self.mic_enabled {
+                            effects.push(Effect::SetCallMic(false));
+                        }
+                        self.mic_wanted = false;
+                    }
                     self.set_error(e.message());
                 }
             }
@@ -1855,6 +1899,217 @@ mod tests {
             s.apply(Input::RoomConnected, 0.0),
             vec![Effect::Sound(Sound::Join)]
         );
+    }
+
+    /// A community speaker in the room with the mic up.
+    fn speaking(s: &mut CallState) {
+        s.apply(Input::JoinCommunity("c1".to_owned()), 0.0);
+        s.apply(
+            Input::Reply(Reply::JoinCommunity(
+                "c1".to_owned(),
+                s.attempt,
+                Ok("livekit:c".to_owned()),
+            )),
+            0.0,
+        );
+        s.apply(own_metadata(true, false), 0.0);
+        s.apply(Input::RoomConnected, 0.0);
+        s.apply(Input::CallMicChanged(true), 0.0);
+        assert!(s.local_speaker && s.mic_enabled);
+    }
+
+    fn own_metadata(is_speaker: bool, muted: bool) -> Input {
+        Input::ParticipantMetadata {
+            address: me(),
+            metadata: Metadata {
+                role: "member".to_owned(),
+                is_speaker,
+                muted,
+                ..Default::default()
+            },
+            raised_hand: false,
+        }
+    }
+
+    #[test]
+    fn a_moderator_mute_takes_the_speakers_mic_down_until_raised_again() {
+        let mut s = state();
+        speaking(&mut s);
+        let effects = s.apply(own_metadata(true, true), 0.0);
+        assert_eq!(effects, vec![Effect::SetCallMic(false)]);
+        assert!(s.local_muted && s.local_speaker);
+        s.apply(Input::CallMicChanged(false), 0.0);
+        // a re-dial keeps it down
+        s.apply(
+            Input::RoomDisconnected {
+                terminal: false,
+                ending: CallEnding::ConnectionLost,
+            },
+            0.0,
+        );
+        assert_eq!(
+            s.apply(Input::RoomConnected, 0.0),
+            vec![Effect::Sound(Sound::Join)]
+        );
+        // the speaker may raise it again, and tells the room
+        assert_eq!(
+            s.apply(Input::SetMic(true), 0.0),
+            vec![
+                Effect::SetCallMic(true),
+                Effect::Rpc(Rpc::MuteSpeaker {
+                    community_id: "c1".to_owned(),
+                    address: me(),
+                    muted: false
+                })
+            ]
+        );
+        s.apply(Input::CallMicChanged(true), 0.0);
+        assert!(s.apply(own_metadata(true, false), 0.0).is_empty());
+        assert!(!s.local_muted);
+    }
+
+    #[test]
+    fn a_moderator_mute_reaches_a_promoted_speaker_who_unmuted() {
+        let mut s = state();
+        s.apply(Input::JoinCommunity("c1".to_owned()), 0.0);
+        s.apply(
+            Input::Reply(Reply::JoinCommunity(
+                "c1".to_owned(),
+                s.attempt,
+                Ok("livekit:c".to_owned()),
+            )),
+            0.0,
+        );
+        s.apply(own_metadata(false, false), 0.0);
+        s.apply(Input::RoomConnected, 0.0);
+        // promoted: the room has read `muted: false` since the join, so the unmutes change nothing
+        // there and are never echoed
+        s.apply(own_metadata(true, false), 0.0);
+        s.apply(Input::SetMic(true), 0.0);
+        s.apply(Input::CallMicChanged(true), 0.0);
+        s.apply(Input::SetMic(true), 0.0);
+        assert_eq!(
+            s.apply(own_metadata(true, true), 0.0),
+            vec![Effect::SetCallMic(false)]
+        );
+    }
+
+    /// The user mutes and unmutes; a moderator's mute lands at the server before the unmute (the
+    /// room ends unmuted) or after it (the room ends muted). The mic ends as the room does.
+    #[test]
+    fn a_moderator_mute_around_the_speakers_unmute_ends_where_the_room_does() {
+        for (mute_echoed_first, room, mic_up) in [
+            (true, &[false][..], true),
+            (true, &[false, true][..], false),
+            (false, &[true, false][..], true),
+            (false, &[true, false, true][..], false),
+        ] {
+            let mut s = state();
+            speaking(&mut s);
+            s.apply(Input::SetMic(false), 0.0);
+            s.apply(Input::CallMicChanged(false), 0.0);
+            if mute_echoed_first {
+                assert!(s.apply(own_metadata(true, true), 0.0).is_empty());
+            }
+            s.apply(Input::SetMic(true), 0.0);
+            s.apply(Input::CallMicChanged(true), 0.0);
+            for &muted in room {
+                for effect in s.apply(own_metadata(true, muted), 0.0) {
+                    if let Effect::SetCallMic(enabled) = effect {
+                        s.apply(Input::CallMicChanged(enabled), 0.0);
+                    }
+                }
+            }
+            assert_eq!(s.mic_enabled, mic_up, "{mute_echoed_first} {room:?}");
+        }
+    }
+
+    #[test]
+    fn a_mute_the_server_refused_does_not_hide_a_moderators() {
+        let mut s = state();
+        speaking(&mut s);
+        s.apply(Input::SetMic(false), 0.0);
+        s.apply(Input::CallMicChanged(false), 0.0);
+        s.apply(
+            Input::Reply(Reply::MuteSpeaker(
+                true,
+                Err(VoiceRefusal::Transport("down".to_owned())),
+            )),
+            0.0,
+        );
+        s.apply(Input::SetMic(true), 0.0);
+        s.apply(Input::CallMicChanged(true), 0.0);
+        assert_eq!(
+            s.apply(own_metadata(true, true), 0.0),
+            vec![Effect::SetCallMic(false)]
+        );
+    }
+
+    /// Mute #1 is accepted but not yet echoed when mute #2 is refused: #1's echo is still the
+    /// user's own, so the mic the user raised since stays up.
+    #[test]
+    fn a_refused_mute_leaves_an_earlier_mutes_echo_expected() {
+        let mut s = state();
+        speaking(&mut s);
+        for enabled in [false, true, false] {
+            s.apply(Input::SetMic(enabled), 0.0);
+            s.apply(Input::CallMicChanged(enabled), 0.0);
+        }
+        s.apply(
+            Input::Reply(Reply::MuteSpeaker(
+                true,
+                Err(VoiceRefusal::Transport("down".to_owned())),
+            )),
+            0.0,
+        );
+        s.apply(Input::SetMic(true), 0.0);
+        s.apply(Input::CallMicChanged(true), 0.0);
+        assert!(s.apply(own_metadata(true, true), 0.0).is_empty());
+        assert!(s.mic_enabled);
+    }
+
+    /// After a moderator's mute the speaker raises the mic, but the unmute fails: the room still
+    /// reads muted, so the mic goes back down rather than publish unseen.
+    #[test]
+    fn a_failed_unmute_after_a_moderator_mute_takes_the_mic_down_again() {
+        let mut s = state();
+        speaking(&mut s);
+        s.apply(own_metadata(true, true), 0.0);
+        s.apply(Input::CallMicChanged(false), 0.0);
+        s.apply(Input::SetMic(true), 0.0);
+        s.apply(Input::CallMicChanged(true), 0.0);
+        let effects = s.apply(
+            Input::Reply(Reply::MuteSpeaker(
+                false,
+                Err(VoiceRefusal::Transport("down".to_owned())),
+            )),
+            0.0,
+        );
+        assert!(effects.contains(&Effect::SetCallMic(false)), "{effects:?}");
+        assert!(s.error.is_some());
+        // a failed unmute while the room reads unmuted leaves the mic alone
+        let mut s = state();
+        speaking(&mut s);
+        let effects = s.apply(
+            Input::Reply(Reply::MuteSpeaker(
+                false,
+                Err(VoiceRefusal::Transport("down".to_owned())),
+            )),
+            0.0,
+        );
+        assert!(!effects.contains(&Effect::SetCallMic(false)), "{effects:?}");
+    }
+
+    #[test]
+    fn a_muted_flag_does_not_touch_a_private_call() {
+        let mut s = state();
+        ring(&mut s);
+        let mut accepted = update("call-1", PrivateVoiceStatus::Accepted);
+        accepted.connection_url = Some("livekit:p".to_owned());
+        s.apply(Input::PrivateUpdate(accepted), 0.0);
+        s.apply(Input::RoomConnected, 0.0);
+        s.apply(Input::CallMicChanged(true), 0.0);
+        assert!(s.apply(own_metadata(false, true), 0.0).is_empty());
     }
 
     #[test]
