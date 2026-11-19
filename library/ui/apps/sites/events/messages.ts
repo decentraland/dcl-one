@@ -1050,7 +1050,87 @@ const messages = {
     '将图片拖到这里，或选择不超过 500 KiB 的文件。',
     '이미지를 여기로 끌어오거나 500 KiB 이하의 파일을 선택하세요.',
     '画像をここにドロップするか、500 KiB 以下のファイルを選択してください。'
-  ]
+  ],
+  'Submit an Event': [
+    'Enviar un evento',
+    'Soumettre un événement',
+    '提交活动',
+    '이벤트 제출',
+    'イベントを申請'
+  ],
+  'Edit Event': [
+    'Editar evento',
+    'Modifier l’événement',
+    '编辑活动',
+    '이벤트 편집',
+    'イベントを編集'
+  ],
+  'Event Name': [
+    'Nombre del evento',
+    'Nom de l’événement',
+    '活动名称',
+    '이벤트 이름',
+    'イベント名'
+  ],
+  'Event Description': [
+    'Descripción del evento',
+    'Description de l’événement',
+    '活动说明',
+    '이벤트 설명',
+    'イベントの説明'
+  ],
+  "The event submission will be reviewed by our team, you'll be notified by email": [
+    'Nuestro equipo revisará tu evento y te avisará por correo electrónico',
+    'Notre équipe examinera votre événement et vous en informera par e-mail',
+    '我们的团队将审核活动，并通过电子邮件通知你',
+    '팀이 이벤트를 검토한 후 이메일로 알려 드려요',
+    'チームがイベントを審査し、メールで結果をお知らせします'
+  ],
+  'Submit Event': [
+    'Enviar evento',
+    'Soumettre l’événement',
+    '提交活动',
+    '이벤트 제출',
+    'イベントを申請'
+  ],
+  'Add Vertical Cover': [
+    'Agregar portada vertical',
+    'Ajouter une couverture verticale',
+    '添加竖版封面',
+    '세로 커버 추가',
+    '縦長カバーを追加'
+  ],
+  '(recommended)': ['(recomendado)', '(recommandé)', '（推荐）', '(권장)', '（推奨）'],
+  'Pending Events': [
+    'Eventos pendientes',
+    'Événements en attente',
+    '待审核活动',
+    '승인 대기 이벤트',
+    '承認待ちのイベント'
+  ],
+  'No events waiting for approval': [
+    'No hay eventos pendientes de aprobación',
+    'Aucun événement en attente d’approbation',
+    '没有等待审核的活动',
+    '승인 대기 중인 이벤트가 없어요',
+    '承認待ちのイベントはありません'
+  ],
+  Pending: ['Pendiente', 'En attente', '待审核', '대기 중', '承認待ち'],
+  'Recently Approved': [
+    'Aprobados recientemente',
+    'Approuvés récemment',
+    '最近批准的活动',
+    '최근 승인된 이벤트',
+    '最近承認されたイベント'
+  ],
+  '(Last 24hs)': [
+    '(Últimas 24 h)',
+    '(Dernières 24 h)',
+    '（过去 24 小时）',
+    '(최근 24시간)',
+    '（過去24時間）'
+  ],
+  Reject: ['Rechazar', 'Refuser', '拒绝', '거부', '却下する']
 } as const
 
 export { messages }
