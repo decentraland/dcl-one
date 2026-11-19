@@ -905,7 +905,7 @@ fn meta(realm: &str, scene: &str, device: Option<&str>) -> String {
 #[tokio::test]
 async fn the_scene_adapter_records_the_pinned_client_ip_not_a_client_set_header() {
     let Some(pool) = scratch().await else { return };
-    let state = state_with(pool.clone(), Settings::for_tests());
+    let state = genesis_state(pool.clone());
     let key = random_key();
     let me = Address::parse(&address_of(&key)).unwrap();
     let scene_id = format!("bafkrei{}", tag());
@@ -942,7 +942,7 @@ async fn the_scene_adapter_records_the_pinned_client_ip_not_a_client_set_header(
 #[tokio::test]
 async fn the_scene_adapter_route_records_an_untrusted_peer_by_its_socket_address() {
     let Some(pool) = scratch().await else { return };
-    let state = state_with(pool.clone(), Settings::for_tests());
+    let state = genesis_state(pool.clone());
     let peer: std::net::SocketAddr = "203.0.113.50:40000".parse().unwrap();
     let router = crate::shared::client_ip::pin_client_headers(super::router(state), Vec::new())
         .layer(axum::Extension(crate::writes::Switch(true)));
@@ -979,10 +979,55 @@ async fn the_scene_adapter_route_records_an_untrusted_peer_by_its_socket_address
     assert_eq!(recorded.as_deref(), Some("203.0.113.50"));
 }
 
+/// A Genesis scene token names a scene active here: an unknown id is 404 and an unreadable
+/// catalogue 503, before any ban or connection work.
+#[tokio::test]
+async fn the_scene_adapter_refuses_a_genesis_scene_that_is_not_deployed() {
+    let mut state = comms_state(lazy_pool(), Settings::for_tests());
+    state.scenes = Arc::new(DeployedGenesis {
+        inner: StubScenes::default(),
+        only: Some(vec!["bafkreideployed".to_string()]),
+    });
+    let state = Arc::new(state);
+    let key = random_key();
+    let path = "/get-scene-adapter";
+    let error = handlers::get_scene_adapter(
+        State(state.clone()),
+        at(path),
+        signed(&key, "post", path, &meta("main", "bafkreiinvented", None)).await,
+        writes_on(),
+        axum::body::Bytes::new(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, 404);
+    assert!(
+        error.message.contains("bafkreiinvented"),
+        "{}",
+        error.message
+    );
+
+    let unreadable = lazy_state(Settings::for_tests());
+    let error = handlers::get_scene_adapter(
+        State(unreadable),
+        at(path),
+        signed(&key, "post", path, &meta("main", "bafkreideployed", None)).await,
+        writes_on(),
+        axum::body::Bytes::new(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, 503);
+    assert_eq!(
+        error.message,
+        "Scene verification is temporarily unavailable"
+    );
+}
+
 #[tokio::test]
 async fn the_scene_adapter_mints_for_a_clean_wallet_and_refuses_platform_and_scene_bans() {
     let Some(pool) = scratch().await else { return };
-    let state = state_with(pool.clone(), Settings::for_tests());
+    let state = genesis_state(pool.clone());
     let key = random_key();
     let me = Address::parse(&address_of(&key)).unwrap();
     let scene_id = format!("bafkrei{}", tag());
@@ -1228,6 +1273,87 @@ async fn the_scene_adapter_room_comes_from_signed_metadata_not_the_body() {
         .unwrap_err();
         assert_eq!(err.code, code, "{metadata}");
     }
+}
+
+/// A catalogue holding Genesis deployments: an adapter request in a shared realm resolves to an
+/// active deployment when `only` is `None` or lists the id; every other request goes to `inner`.
+struct DeployedGenesis {
+    inner: StubScenes,
+    only: Option<Vec<String>>,
+}
+
+impl DeployedGenesis {
+    fn every_scene() -> Self {
+        Self::over(StubScenes::default())
+    }
+
+    fn over(inner: StubScenes) -> Self {
+        Self { inner, only: None }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::interfaces::SceneIdentity for DeployedGenesis {
+    async fn classify_room(
+        &self,
+        room: &str,
+    ) -> Result<crate::rooms::RoomClassification, crate::rooms::ResolveError> {
+        self.inner.classify_room(room).await
+    }
+
+    async fn resolve(
+        &self,
+        request: crate::rooms::RoomRequest<'_>,
+    ) -> Result<crate::rooms::ResolvedRoom, crate::rooms::ResolveError> {
+        use crate::rooms::{ActiveDeployment, ResolvedRoom, RoomRequest};
+        use crate::world_identity::{Parcel, RealmId};
+        let RoomRequest::Adapter {
+            realm: realm @ RealmId::Shared(name),
+            scene,
+        } = request
+        else {
+            return self.inner.resolve(request).await;
+        };
+        let deployed = self
+            .only
+            .as_ref()
+            .is_none_or(|only| only.iter().any(|id| id == scene.as_str()));
+        let base = Parcel::parse("0,0").unwrap();
+        Ok(ResolvedRoom {
+            realm: realm.clone(),
+            scene_id: Some(scene.clone()),
+            deployment: deployed.then(|| ActiveDeployment {
+                scene_id: scene.clone(),
+                title: None,
+                parcels: [base].into_iter().collect(),
+                base,
+                namespace: None,
+                local: true,
+            }),
+            room: crate::rooms::gatekeeper_scene_room(name, scene.as_str()),
+        })
+    }
+
+    async fn world_scene(
+        &self,
+        world: &crate::world_identity::WorldName,
+        scene: &crate::world_identity::SceneId,
+    ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
+        self.inner.world_scene(world, scene).await
+    }
+
+    async fn world_active_scene(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
+        self.inner.world_active_scene(world).await
+    }
+}
+
+fn genesis_state(pool: PgPool) -> SharedState {
+    let mut state = comms_state(pool, Settings::for_tests());
+    state.scenes = Arc::new(DeployedGenesis::every_scene());
+    Arc::new(state)
 }
 
 /// A two-scene resolver that rejects any request other than a parcel of this world.
@@ -1986,7 +2112,7 @@ async fn the_private_messages_token_records_the_connection_only_while_social_wri
 #[tokio::test]
 async fn the_scene_adapter_records_the_connection_only_while_social_writes_go_through() {
     let Some(pool) = scratch().await else { return };
-    let state = state_with(pool.clone(), Settings::for_tests());
+    let state = genesis_state(pool.clone());
     let key = random_key();
     let me = Address::parse(&address_of(&key)).unwrap();
     let scene_id = format!("bafkrei{}", tag());
@@ -3423,7 +3549,7 @@ async fn deny_listed_wallet_is_refused_by_every_world_mint_and_private_messages(
             None,
             None,
             Arc::new(StubPolicy::default()),
-            Arc::new(scenes),
+            Arc::new(DeployedGenesis::over(scenes)),
             Arc::new(crate::presence::Presence::new()),
             Arc::new(crate::interfaces::test_support::StubDirectory::default()),
         )
@@ -3519,7 +3645,7 @@ async fn deny_listed_wallet_is_refused_by_every_world_mint_and_private_messages(
 #[tokio::test]
 async fn a_refused_scene_adapter_retry_keeps_the_recorded_banned_device() {
     let Some(pool) = scratch().await else { return };
-    let state = state_with(pool.clone(), Settings::for_tests());
+    let state = genesis_state(pool.clone());
     let key = random_key();
     let me = Address::parse(&address_of(&key)).unwrap();
     let device = format!("banned-device-{}", tag());

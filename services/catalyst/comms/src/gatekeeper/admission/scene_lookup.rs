@@ -179,6 +179,39 @@ pub(crate) async fn resolve_adapter_room(
         })
 }
 
+/// A client's Genesis scene token names a scene deployed and active on this
+/// node, looked up by its entity id (upstream asked the content server):
+/// an unknown id is 404 and an unreadable catalogue 503, never a mint.
+pub(crate) async fn require_genesis_deployment(
+    state: &CommsState,
+    resolved: &ResolvedRoom,
+) -> Result<(), ApiError> {
+    let scene = resolved
+        .scene_id
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("scene resolution returned a lobby"))?;
+    match state
+        .scenes
+        .resolve(RoomRequest::Adapter {
+            realm: &resolved.realm,
+            scene,
+        })
+        .await
+    {
+        Ok(found) if found.deployment.is_some() => Ok(()),
+        Ok(_) | Err(ResolveError::NoParcels { .. }) => Err(ApiError::not_found(format!(
+            "No scene entity found for scene ID {scene}"
+        ))),
+        Err(error) => {
+            tracing::error!(%error, scene = %scene, "genesis scene lookup failed");
+            Err(ApiError::http(
+                503,
+                "Scene verification is temporarily unavailable",
+            ))
+        }
+    }
+}
+
 /// The scene-bans listing key: an explicit `place_id`, else the metadata's,
 /// with a world name resolved to its active scene.
 pub async fn resolve_listing_place_id(
