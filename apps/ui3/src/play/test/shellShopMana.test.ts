@@ -114,8 +114,12 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
     executions: [] as ManaExecution[],
     unlogged: [] as ManaExecution[],
     fail: false,
-    finalized: 1000n,
-    receiptBlock: 900n,
+    /** The finalized block the first read answers: the pre-dispatch checkpoint. */
+    checkpoint: 1000n,
+    /** The finalized block every later read answers. */
+    finalized: 1100n,
+    /** Where the relay's transactions land: past the checkpoint, and final. */
+    receiptBlock: 1050n,
     foreignHash: false,
     /** Holds every finalized-block read after the first (the pre-dispatch checkpoint) until released. */
     hold: null as Promise<void> | null,
@@ -130,7 +134,7 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
       onChain.holdNext = null
       if (next) await next
       if (onChain.hold && onChain.finalizedReads > 1) await onChain.hold
-      return onChain.finalized
+      return onChain.finalizedReads === 1 ? onChain.checkpoint : onChain.finalized
     },
     nonceAt: async (_c, venue, user, block) => {
       const now = chain.nonces.get(`${venue.address.toLowerCase()}:${user.toLowerCase()}`) ?? 0n
@@ -1427,6 +1431,8 @@ describe('the in-world purchase with MANA', () => {
       const hash = ('0x' + '9a'.repeat(32)) as Hex
       w.txs.set(hash, { to: STORE, input })
       w.chain.receipts.set(hash, 'success')
+      // Landed past the record's checkpoint (900), and final at the first look.
+      w.onChain.receiptBlock = 950n
       seed(
         w,
         id,

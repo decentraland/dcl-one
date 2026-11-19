@@ -13,8 +13,9 @@
 // the buyer's executions as the nonce moved in it (a repeated log counted once); any other read decides nothing.
 //
 // It settles only on evidence read through one finalized block F:
-//  - succeeded: at a pinned venue, the execution that consumed N is this call; or a successful receipt, at or before
-//    F, of a transaction whose input is exactly the signed execution this page sent;
+//  - succeeded: at a pinned venue, the execution that consumed N past the checkpoint is this call; or a successful
+//    receipt, past the checkpoint and at or before F, of a transaction whose input is exactly the signed execution this
+//    page sent;
 //  - failed: at a pinned venue, N was consumed by the checkpoint, or the execution that consumed it past the checkpoint
 //    is another call. Then no send of this sale can ever run;
 //  - waiting: anything else. N not consumed yet (the sale may still run), a nonce read below N (a lagging node), a
@@ -231,6 +232,7 @@ export async function resolveMana(
   const nonce = BigInt(attempt.nonce)
   const call = keccak256(attempt.data)
   const verified = verifiedVenue(chainId, venue)
+  const fromBlock = BigInt(attempt.fromBlock)
   const finalized = await evidence.finalized(chainId)
   /** The first block in (`after`, `to`] whose nonce reads past N, given that `after`'s doesn't and `to`'s does: by halving. */
   const consumingBlock = async (after: bigint, to: bigint): Promise<bigint> => {
@@ -256,13 +258,14 @@ export async function resolveMana(
     return mine[Number(nonce - start)] ?? null
   }
   /**
-   * Whether `hash` is this sale, finalized and successful, by its bytes alone: a transaction whose input is exactly the
-   * signed execution this page sent (its signature names N). Any other carrier (a forwarder's) is found below, by the
-   * execution that consumed N.
+   * Whether `hash` is this sale, finalized and successful, by its bytes alone: a transaction past the checkpoint whose
+   * input is exactly the signed execution this page sent (its signature names N). The same bytes at or before the
+   * checkpoint are never a send of this sale (a mint signed identically at a stale nonce, say): the nonce decides those.
+   * Any other carrier (a forwarder's) is found below, by the execution that consumed N.
    */
   const ours = async (hash: string): Promise<boolean> => {
     const receipt = await evidence.receipt(chainId, hash)
-    if (!receipt || receipt.status !== 'success' || receipt.blockNumber > finalized) return false
+    if (!receipt || receipt.status !== 'success' || receipt.blockNumber <= fromBlock || receipt.blockNumber > finalized) return false
     const tx = await evidence.transaction(chainId, hash)
     return !!tx && tx.to?.toLowerCase() === venue && payloads.has(keccak256(tx.input))
   }
@@ -271,7 +274,6 @@ export async function resolveMana(
     if (send.hash && (await ours(send.hash))) return { kind: 'succeeded', txHash: send.hash as Hex }
   }
   // A finalized block below the checkpoint (a lagging node) says nothing yet, neither about N nor about a retry.
-  const fromBlock = BigInt(attempt.fromBlock)
   if (finalized < fromBlock) return { kind: 'waiting', retry: false }
   const read = await evidence.nonceAt(chainId, ctx.venue, buyer, finalized)
   if (read === nonce) return { kind: 'waiting', retry: idle }

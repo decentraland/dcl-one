@@ -65,6 +65,23 @@ describe('a MANA sale on chain', () => {
     expect(await resolve(rec, chain({ txs: { [RELAY_HASH]: { to: STORE, input: SIGNED } }, receipts: { [RELAY_HASH]: { status: 'success', blockNumber: F + 1n } } }))).toMatchObject({ kind: 'waiting' })
   })
 
+  it('takes the relay’s hash only past the checkpoint: the same signed bytes at or before it are another purchase', async () => {
+    // A second identical mint signed at a stale nonce has the first one's bytes; the relay answers the first one's hash.
+    const rec = record({ sends: [{ id: 's7', stage: 'dispatched', payload: keccak256(SIGNED), at: 1, hash: RELAY_HASH }] })
+    for (const [block, out] of [
+      [99n, { kind: 'failed' }],
+      [100n, { kind: 'failed' }],
+      [101n, { kind: 'succeeded', txHash: RELAY_HASH }]
+    ] as const) {
+      const evidence = chain({ now: 8n, executions: [execution({ blockNumber: block, txHash: RELAY_HASH })], txs: { [RELAY_HASH]: { to: STORE, input: SIGNED } }, receipts: { [RELAY_HASH]: { status: 'success', blockNumber: block } } })
+      expect(await resolve(rec, evidence)).toEqual(out)
+    }
+    // At a venue whose evidence isn't verified, a hash at or before the checkpoint ends nothing.
+    const other = '0x' + '77'.repeat(20)
+    const before = chain({ now: 8n, executions: [execution({ blockNumber: 100n, txHash: RELAY_HASH })], txs: { [RELAY_HASH]: { to: other, input: SIGNED } }, receipts: { [RELAY_HASH]: { status: 'success', blockNumber: 100n } } })
+    expect(await resolveMana(record({ venue: other, sends: rec.sends }), { chainId: 137, buyer: BUYER, venue: { address: other, metaTx: 'functionData' }, evidence: before })).toEqual({ kind: 'waiting', retry: false })
+  })
+
   it('keeps waiting while the nonce isn’t consumed at the finalized block, open to RETRY unless a send is on its way', async () => {
     expect(await resolve(record(), chain({ now: 7n }))).toEqual({ kind: 'waiting', retry: true })
     expect(await resolve(record({ sends: [{ id: 's3', stage: 'dispatched', payload: keccak256(SIGNED), at: 1 }, { id: 's4', stage: 'signing' }] }), chain({ now: 7n }))).toEqual({ kind: 'waiting', retry: false })
