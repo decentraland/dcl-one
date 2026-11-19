@@ -11,7 +11,9 @@ use prost::Message;
 
 use super::*;
 use crate::{
-    update_world::{CrdtExtractors, CrdtStateComponent, TrackComponents},
+    update_world::{
+        gltf_container::GltfProcessed, CrdtExtractors, CrdtStateComponent, TrackComponents,
+    },
     DeletedSceneEntities, RendererSceneContext, SceneLoopLabel, SceneLoopSchedule,
 };
 
@@ -143,6 +145,7 @@ fn load_model(app: &mut App, container: Entity) -> Entity {
         .resource_mut::<Assets<AnimationGraph>>()
         .add(graph);
     app.world_mut().entity_mut(container).insert((
+        GltfReady(instance),
         GltfProcessed {
             instance_id: Some(instance),
             ..Default::default()
@@ -189,6 +192,48 @@ fn sdk_animator_before_model_load_samples_the_default_pose_and_plays_swim() {
     let next = app.world().get::<Transform>(bone).unwrap();
     assert_eq!(next.translation, Vec3::ONE);
     assert!(next.scale.x > first.scale.x);
+}
+
+#[test]
+fn sdk_animator_controls_the_visible_model_during_a_source_swap() {
+    let (mut app, root, id, container) = scene_fixture();
+    let bone = load_model(&mut app, container);
+    app.update();
+    assert!(app.world().get::<Transform>(bone).unwrap().translation.x > 1.0);
+
+    // The visible instance stays ready while the replacement source is loading.
+    app.world_mut()
+        .entity_mut(container)
+        .remove::<GltfProcessed>();
+    send_animator(&mut app, root, id, Some(&swim_animator()));
+    app.update();
+    let swimming = *app.world().get::<Transform>(bone).unwrap();
+    assert_eq!(swimming.translation, Vec3::ONE);
+    assert!(swimming.scale.x > 1.0);
+
+    let mut both = swim_animator();
+    both.states.push(PbAnimationState {
+        clip: "bite".into(),
+        ..Default::default()
+    });
+    send_animator(&mut app, root, id, Some(&both));
+    app.update();
+    let moving = *app.world().get::<Transform>(bone).unwrap();
+    assert!(moving.translation.x > 1.0);
+    assert!(moving.scale.x > swimming.scale.x);
+
+    send_animator(&mut app, root, id, None);
+    app.update();
+    assert!(app
+        .world()
+        .get::<AnimationPlayer>(container)
+        .unwrap()
+        .playing_animations()
+        .next()
+        .is_none());
+    let stopped = app.world().get::<Transform>(bone).unwrap();
+    assert_eq!(stopped.translation, Vec3::ONE);
+    assert_eq!(stopped.scale, moving.scale);
 }
 
 #[test]
@@ -249,7 +294,7 @@ fn sdk_animator_transitions_sample_the_default_pose_and_release_playback() {
 
     // A model-ready notification in the removal update must also leave playback stopped.
     app.world_mut()
-        .get_mut::<GltfProcessed>(container)
+        .get_mut::<GltfReady>(container)
         .unwrap()
         .set_changed();
     send_animator(&mut app, root, id, None);

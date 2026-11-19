@@ -17,7 +17,7 @@ use dcl_types::interface::ComponentPosition;
 
 use crate::SceneEntity;
 
-use super::{gltf_container::GltfProcessed, AddCrdtInterfaceExt};
+use super::{gltf_container::GltfReady, AddCrdtInterfaceExt};
 
 pub struct AnimatorPlugin;
 
@@ -96,12 +96,12 @@ fn sample_default_pose(
 
 fn update_animations(
     mut commands: Commands,
-    changed: Query<Entity, Or<(Changed<Animator>, Changed<GltfProcessed>)>>,
+    changed: Query<Entity, Or<(Changed<Animator>, Changed<GltfReady>)>>,
     mut removed: RemovedComponents<Animator>,
     mut players: Query<(
         &SceneEntity,
         Option<Ref<Animator>>,
-        Ref<GltfProcessed>,
+        Ref<GltfReady>,
         &mut AnimationPlayer,
         &AnimationGraphHandle,
         &Clips,
@@ -113,20 +113,20 @@ fn update_animations(
         .filter(|e| !removed.contains(e))
         .chain(removed.iter().copied())
     {
-        let Ok((scene_ent, maybe_animator, model, mut player, graph, clips)) = players.get_mut(ent)
+        let Ok((scene_ent, maybe_animator, ready, mut player, graph, clips)) = players.get_mut(ent)
         else {
             continue;
         };
         if removed.contains(&ent)
             || maybe_animator
                 .as_ref()
-                .is_some_and(|a| a.is_added() || model.is_changed())
+                .is_some_and(|a| a.is_added() || ready.is_changed())
         {
             player.stop_all();
-            if let (Some(instance), Some(default)) = (model.instance_id, clips.default) {
+            if let Some(default) = clips.default {
                 commands.run_system_cached_with(
                     sample_default_pose,
-                    (ent, instance, graph.0.clone(), default),
+                    (ent, ready.0, graph.0.clone(), default),
                 );
             }
             if maybe_animator.is_none() {
