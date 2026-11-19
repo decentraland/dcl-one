@@ -300,6 +300,14 @@ impl Settings {
                 "CREDITS_TRIAL_MODE needs the relay to know the trial's buyers (CREDITS_TRIAL_BUYERS)"
             );
         }
+        // A relay for every wallet is bounded per address, and new addresses are free: only the
+        // budget across addresses caps how many free calls it reserves in 24 hours (the relayer's
+        // balance can still run out first).
+        if self.trial_relay_all_wallets && self.max_relayed_transactions_per_day <= 0 {
+            anyhow::bail!(
+                "CREDITS_TRIAL_RELAY_ALL_WALLETS needs a positive MAX_RELAYED_TRANSACTIONS_PER_DAY (0 is no limit across wallets)"
+            );
+        }
         Ok(())
     }
 
@@ -561,7 +569,10 @@ impl State {
 /// signer ([`Settings::refuse_an_open_trial_relay`],
 /// `TransactionComponent::check_data`): it is how those buyers spend their
 /// credits, so it opens with the credits switch, `OPS_WRITES_ENABLED`, and
-/// answers the credits 503. The relayer controls stay open on both gates.
+/// answers the credits 503. With `CREDITS_TRIAL_RELAY_ALL_WALLETS` that gate
+/// is deliberate too: the trial's relay is then a public relay for every
+/// wallet's admitted operations, open with the operator plane whatever
+/// `DATA_WRITES_ENABLED` says. The relayer controls stay open on both gates.
 pub fn router(state: SharedState) -> Router {
     let settings = &state.settings;
     let (trial, data_writes, ops_writes) = (

@@ -3868,6 +3868,27 @@ fn a_trial_for_every_wallet_drops_only_the_relays_buyer_gate() {
         every_wallet.refuse_an_open_trial_relay().is_ok(),
         "the trial's capped route is unchanged"
     );
+    for uncapped in [0, -1] {
+        let without_a_total = Settings {
+            max_relayed_transactions_per_day: uncapped,
+            ..every_wallet.clone()
+        };
+        let refusal = without_a_total.refuse_an_open_trial_relay().unwrap_err();
+        assert!(
+            refusal
+                .to_string()
+                .contains("MAX_RELAYED_TRANSACTIONS_PER_DAY"),
+            "{refusal}"
+        );
+    }
+    let buyers_only_uncapped = Settings {
+        max_relayed_transactions_per_day: 0,
+        ..gated.clone()
+    };
+    assert!(
+        buyers_only_uncapped.refuse_an_open_trial_relay().is_ok(),
+        "a buyers-only trial keeps accepting 0"
+    );
     let no_buyers = Settings {
         trial_buyers: None,
         ..every_wallet
