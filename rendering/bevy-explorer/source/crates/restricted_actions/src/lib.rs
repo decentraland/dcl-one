@@ -377,6 +377,10 @@ fn apply_player_move(
     teleport_events: &mut EventWriter<PlayerTeleported>,
     now: f64,
 ) {
+    #[allow(
+        clippy::unwrap_used,
+        reason = "PrimaryUser is a mandatory singleton; a missing player is an engine bug"
+    )]
     let (_, mut player_transform, mut dynamics, maybe_active) = player.single_mut().unwrap();
     if let Some(active) = maybe_active {
         cancel_active_move(
@@ -625,6 +629,10 @@ pub fn move_camera(
 
         let (yaw, pitch, roll) = facing.to_euler(EulerRot::YXZ);
 
+        #[allow(
+            clippy::unwrap_used,
+            reason = "PrimaryCamera is a mandatory singleton; a missing camera is an engine bug"
+        )]
         let mut camera = camera.single_mut().unwrap();
         camera.yaw = yaw;
         camera.pitch = pitch;
