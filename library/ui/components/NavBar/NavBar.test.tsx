@@ -14,6 +14,7 @@ import {
   type MockInstance
 } from 'vitest'
 import { NavBar, type NavBarLinkProps, type NavBarProps, type NavBarSection } from './NavBar'
+import { decentralandPublicNavSections } from './NavBar.navigation'
 
 const sections: NavBarSection[] = [
   {
@@ -919,6 +920,26 @@ describe('NavBar', () => {
       expect(LinkComponent.mock.calls.map(([props]) => props.href)).not.toContain(
         'https://docs.example.com/'
       )
+    })
+  })
+
+  describe.each(['desktop', 'mobile'])('when Shop is open on %s', (viewport) => {
+    beforeEach(async () => {
+      const { desktop, mobile } = decentralandPublicNavSections('events', '/events')
+      render(<NavBar sections={desktop} mobileSections={mobile} />)
+      if (viewport === 'mobile') await user.click(screen.getByRole('button', { name: 'Open menu' }))
+      await user.click(screen.getByRole('button', { name: 'Shop' }))
+    })
+
+    it('should open Merch in a new tab without sharing the opener or referrer', () => {
+      const merch = screen.getByRole('link', { name: 'Merch' })
+      expect(merch).toHaveAttribute('href', 'https://store.decentraland.org/')
+      expect(merch).toHaveAttribute('target', '_blank')
+      expect(merch).toHaveAttribute('rel', 'noopener noreferrer')
+    })
+
+    it('should keep Shop All in the same tab', () => {
+      expect(screen.getByRole('link', { name: 'Shop All' })).not.toHaveAttribute('target')
     })
   })
 
