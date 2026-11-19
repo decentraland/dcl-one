@@ -11,7 +11,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use tokio::process::{Child, Command};
 
 use crate::engine::{Ctx, Timeline};
@@ -153,8 +152,7 @@ pub struct ExplorerOptions {
     pub wallet_seed: u64,
     /// The parcel to start at.
     pub position: (i32, i32),
-    /// The loopback port of the console. Absent: one derived from the run, the name and the
-    /// wallet seed, so explorers of one machine do not collide.
+    /// The loopback port of the console. Absent: one the operating system says is free.
     pub automation_port: Option<u16>,
     /// Arguments after the ones the actor sets.
     pub extra: Vec<String>,
@@ -210,11 +208,7 @@ impl Explorer {
             .with_context(|| format!("creating {}", work_dir.display()))?;
         let log = work_dir.join(format!("{name}.log"));
         let token = console_token();
-        let port = options.automation_port.unwrap_or_else(|| {
-            let digest =
-                Sha256::digest(format!("{}/{}/{}", ctx.run_id(), name, options.wallet_seed));
-            20_000 + (u16::from_be_bytes([digest[0], digest[1]]) % 20_000)
-        });
+        let port = console_port(&options)?;
         let mut command = explorer_command(ctx.stack(), target, &options, port, &token);
         command
             .stdin(Stdio::null())
@@ -518,6 +512,18 @@ impl Explorer {
     }
 }
 
+/// The loopback port an explorer's console listens on: the one the scenario names, or one the
+/// operating system says nothing listens on. An explorer that cannot bind its console port keeps
+/// running without it, so a port chosen blind would fail the start only at its deadline.
+fn console_port(options: &ExplorerOptions) -> Result<u16> {
+    if let Some(port) = options.automation_port {
+        return Ok(port);
+    }
+    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .context("asking the operating system for a free loopback port")?;
+    Ok(listener.local_addr()?.port())
+}
+
 /// A token for one explorer: random, from the operating system.
 fn console_token() -> String {
     let key = dcl_auth::Wallet::random()
@@ -529,6 +535,26 @@ fn console_token() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_explorer_is_not_given_a_console_port_something_listens_on() {
+        let options = ExplorerOptions::default();
+        let first = console_port(&options).unwrap();
+        // something else on the machine takes that port before the explorer starts
+        let _held = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, first)).unwrap();
+        let second = console_port(&options).unwrap();
+        assert_ne!(first, second, "the port in use was chosen again");
+        assert!(
+            std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, second)).is_ok(),
+            "port {second} is in use"
+        );
+        // a port the scenario names is taken as it is
+        let named = ExplorerOptions {
+            automation_port: Some(first),
+            ..ExplorerOptions::default()
+        };
+        assert_eq!(console_port(&named).unwrap(), first);
+    }
 
     #[test]
     fn the_explorer_is_started_without_the_stacks_secrets() {
