@@ -56,8 +56,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   while the avatar outline is on or the camera has SSAO (native only).
 - **Render Resolution stops at 100%.** Unity's Resolution Scale moves in the same 10% steps
   but reaches 120%. The compositor only upscales, so the range is 50–100%. A saved value
-  between steps moves to the nearest step once, when the saved settings are migrated, so the
-  slider shows what is rendered.
+  between steps or outside that range moves to the nearest step in it once, when the saved
+  settings are migrated, so the slider shows what is rendered.
 - **Sun shadows keep bevy's default bias.** Unity's `DepthBias` (1.75 or 1.56 texels, times
   URP's soft kernel radius 2.5) is a depth bias, not a normal bias, and carried over as bevy's
   normal bias it offset each lookup about half a metre on Low at 60 m, dropping thin and contact
