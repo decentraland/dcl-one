@@ -183,6 +183,11 @@ const DIRECTORY_WAIT: Duration = Duration::from_millis(500);
 /// How old a kept directory a feed still serves while it is refreshed (a failed refresh keeps
 /// the copy).
 const DIRECTORY_STALE_FOR: Duration = Duration::from_secs(3600);
+/// The longest a feed-started directory read may take before it ends as failed.
+#[cfg(not(test))]
+const DIRECTORY_READ_LIMIT: Duration = Duration::from_secs(60);
+#[cfg(test)]
+const DIRECTORY_READ_LIMIT: Duration = Duration::from_secs(2);
 /// How long after a failed directory read the next one waits, so a failing database sees one
 /// directory read per this period rather than one per feed.
 const DIRECTORY_RETRY_AFTER: Duration = Duration::from_secs(30);
@@ -200,11 +205,20 @@ pub async fn directory_snapshot(state: &SharedState) -> Option<Arc<Value>> {
     let refresh = readers
         .begin_refresh(CREATOR_DIRECTORY_KEY, DIRECTORY_RETRY_AFTER)
         .then(|| {
+            // Released however the read ends, a panic included, and even when the task never
+            // runs (a runtime shutting down drops it).
+            let mut claim = RefreshClaim::new(Arc::clone(state), CREATOR_DIRECTORY_KEY);
             let state = Arc::clone(state);
             tokio::spawn(async move {
-                // Released however the read ends, a panic included.
-                let mut claim = RefreshClaim::new(Arc::clone(&state), CREATOR_DIRECTORY_KEY);
-                let read = directory_value(&state).await;
+                // A read that hangs (a stuck connection, a lock) ends as failed at the limit, so
+                // the claim falls to the backoff instead of being held until a restart.
+                let read = tokio::time::timeout(DIRECTORY_READ_LIMIT, directory_value(&state))
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(ApiError::Internal(format!(
+                            "the creator directory read took over {DIRECTORY_READ_LIMIT:?}"
+                        )))
+                    });
                 match &read {
                     Ok(_) => claim.succeeded(),
                     Err(e) => tracing::warn!(error = ?e, "creator directory unavailable; feeds answer without creator profiles"),
@@ -723,6 +737,43 @@ mod tests {
         assert!(held.is_none(), "a copy older than the hour is not served");
         lock.rollback().await.unwrap();
         until_fresh(state.clone()).await;
+    }
+
+    /// A feed-started directory read that hangs ends as failed at its limit and releases its claim
+    /// to the backoff: a stuck read never holds the refresh until a restart.
+    #[tokio::test]
+    async fn a_hung_directory_read_releases_its_claim() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let state =
+            crate::market::tests::support::state_with_empty_readers(Some(pool.clone())).await;
+        let mut lock = pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE shop.items IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+        let started = std::time::Instant::now();
+        assert!(directory_snapshot(&state).await.is_none());
+        // With the table still locked the read cannot succeed, so a claim this test can take
+        // means the read ended as failed and released it.
+        tokio::time::timeout(Duration::from_secs(20), async {
+            while !state
+                .readers
+                .begin_refresh(CREATOR_DIRECTORY_KEY, Duration::ZERO)
+            {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("the hung read releases its claim");
+        assert!(
+            started.elapsed() >= DIRECTORY_READ_LIMIT,
+            "{:?}",
+            started.elapsed()
+        );
+        state.readers.end_refresh(CREATOR_DIRECTORY_KEY, true);
+        lock.rollback().await.unwrap();
     }
 
     #[test]

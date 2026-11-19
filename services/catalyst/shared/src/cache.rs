@@ -117,7 +117,9 @@ where
     }
 
     /// Drops `key`'s entry, as an eviction would (an expiry keeps the value for
-    /// [`TtlMap::get_stale`]), without moving any clock.
+    /// [`TtlMap::get_stale`]), without moving any clock. For tests only: dropping a slot whose
+    /// fetch is in flight would drop its waiters' wake-up too.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn remove(&self, key: &K) {
         self.map.remove(key);
     }
