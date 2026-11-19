@@ -29,6 +29,10 @@ pub const APP: &str = "dapps";
 /// Shop's paths would leave the same writes open one path over.
 pub const MARKETPLACE_FEATURES: &str = "shop-marketplace-features";
 
+/// The outfit authoring allowlist (`shop::outfits`): the variant payload of `dapps-shop-outfit-creators`, the flag
+/// the Shop's pages read to show the studio.
+pub const OUTFIT_CREATORS: &str = "shop-outfit-creators";
+
 const TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How many refresh periods a failed read keeps the last answer for.
@@ -107,6 +111,19 @@ impl MarketplaceState {
         self.dapps_flags.enabled(MARKETPLACE_FEATURES)
     }
 
+    /// A `dapps` variant's payload value while its flag is on (`@dcl/features-component` `getFeatureVariant`);
+    /// `None` while the flag is off, unset, or the document is not held (see the module doc).
+    pub fn dapps_variant(&self, feature: &str) -> Option<String> {
+        let key = format!("{APP}-{feature}");
+        let doc = self.dapps_flags.snapshot.document();
+        if doc["flags"][&key].as_bool() != Some(true) {
+            return None;
+        }
+        doc["variants"][&key]["payload"]["value"]
+            .as_str()
+            .map(str::to_string)
+    }
+
     /// Refuses one of the Marketplace's calls while its rollout is off: a 403 that names the flag.
     pub(crate) fn require_marketplace(&self) -> Result<(), super::wire::ApiError> {
         if self.marketplace_features() {
@@ -172,6 +189,10 @@ impl MarketplaceState {
 impl MarketplaceState {
     pub fn set_marketplace_features(&self, on: bool) {
         self.dapps_flags.snapshot.replace(document(on));
+    }
+
+    pub fn set_dapps_document(&self, doc: Value) {
+        self.dapps_flags.snapshot.replace(doc);
     }
 }
 

@@ -147,22 +147,23 @@ fn item_uniqueness_publish_bar_and_visibility_follow_logic_outfits_ts() {
         created_at: 1,
         updated_at: 1,
     };
-    assert!(!can_read(&draft, None, &settings));
+    let settings = |c: &str| settings.is_creator(c);
+    assert!(!can_read(&draft, None, settings));
     assert!(!can_read(
         &draft,
         Some("0x00000000000000000000000000000000000000bb"),
-        &settings
+        settings
     ));
     assert!(can_read(
         &draft,
         Some("0x00000000000000000000000000000000000000AA"),
-        &settings
+        settings
     ));
     let published = Outfit {
         published: true,
         ..draft
     };
-    assert!(can_read(&published, None, &settings));
+    assert!(can_read(&published, None, settings));
 }
 
 #[test]
@@ -619,4 +620,60 @@ async fn the_write_gate_holds_the_writes_and_leaves_the_reads_open() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert!(v["outfits"].is_array());
+}
+
+/// Without the local override the allowlist is the `dapps-shop-outfit-creators` variant as held now: a wallet
+/// added to it may author on its next request, and one removed (or the flag switched off) is refused on its next.
+#[tokio::test]
+async fn the_creator_allowlist_follows_the_flag_on_every_request() {
+    let Some(pool) = crate::db::scratch::pool(4).await else {
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!(
+        "catalyst-outfits-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = Arc::new(Storage::from_config(&dir).await.unwrap());
+    let creator = scratch_wallet();
+    let market = Arc::new(crate::market::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        crate::market::Settings::for_tests(),
+    ));
+    let flags = |on: bool, value: &str| {
+        json!({
+            "flags": { "dapps-shop-outfit-creators": on },
+            "variants": { "dapps-shop-outfit-creators": { "name": "creators", "enabled": true, "payload": { "type": "string", "value": value } } }
+        })
+    };
+    let settings = Settings {
+        creators: vec![],
+        writes_enabled: true,
+    };
+    let state = Arc::new(State::new(pool, storage, settings, None).with_flags(market.clone()));
+    let app = Router::new().nest("/shop-api", shop_router(state));
+    let path = "/shop-api/v1/outfits/all";
+    let get_all = || async {
+        let h = signed_headers(&creator, "get", path).await;
+        send(&app, "GET", path, h, None).await.0
+    };
+
+    assert_eq!(get_all().await, StatusCode::FORBIDDEN, "no flags held yet");
+    market.set_dapps_document(flags(
+        true,
+        &format!(
+            "0x00000000000000000000000000000000000000aa,\n{}",
+            creator.address.to_uppercase().replace("0X", "0x")
+        ),
+    ));
+    assert_eq!(get_all().await, StatusCode::OK);
+    market.set_dapps_document(flags(true, "0x00000000000000000000000000000000000000aa"));
+    assert_eq!(
+        get_all().await,
+        StatusCode::FORBIDDEN,
+        "removed from the variant"
+    );
+    market.set_dapps_document(flags(false, &creator.address));
+    assert_eq!(get_all().await, StatusCode::FORBIDDEN, "the flag is off");
+    let _ = std::fs::remove_dir_all(&dir);
 }
