@@ -86,15 +86,23 @@ describe('a purchase a scene asked for', () => {
     expect(await outcome).toBe('dismissed')
   })
 
-  it.each([
-    ['processing', 'dismissed'],
-    ['pending', 'dismissed'],
-    ['succeeded', 'purchased']
-  ])('does not follow an earlier purchase of the item the shell answers with (%s)', async (state, expected) => {
+  it.each(['processing', 'pending', 'succeeded', 'failed', 'cancelled'])('dismisses an earlier purchase of the item the shell answers with (%s)', async (state) => {
     const s = fakeShell()
     const outcome = purchaseSceneItem(ITEM, s.shell)
     s.answer(operation(state))
-    expect(await outcome).toBe(expected)
+    expect(await outcome).toBe('dismissed')
+    expect(s.listening()).toBe(0)
+  })
+
+  it.each([
+    ['another item', { items: [{ contract: CONTRACT, itemId: '8', quantity: 1 }] }],
+    ['another collection', { items: [{ contract: '0x' + 'cd'.repeat(20), itemId: '7', quantity: 1 }] }],
+    ['more than the item', { items: [{ contract: CONTRACT, itemId: '7', quantity: 1 }, { contract: CONTRACT, itemId: '8', quantity: 1 }] }]
+  ])('fails when the shell answers with a purchase of %s', async (_, other) => {
+    const s = fakeShell()
+    const outcome = purchaseSceneItem(ITEM, s.shell)
+    s.answer({ ...operation('reviewing'), ...other })
+    expect(await outcome).toBe('failed')
     expect(s.listening()).toBe(0)
   })
 

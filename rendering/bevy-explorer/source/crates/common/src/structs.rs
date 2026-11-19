@@ -1586,7 +1586,7 @@ impl PermissionStrings for PermissionType {
             PermissionType::Websocket => "Open Websocket",
             PermissionType::OpenUrl => "Open Url",
             PermissionType::CopyToClipboard => "Copy to Clipboard",
-            PermissionType::OpenExplorerUi => "Open Explorer Menu",
+            PermissionType::OpenExplorerUi => "Open Explorer Menu or Item Purchase",
         }
     }
 

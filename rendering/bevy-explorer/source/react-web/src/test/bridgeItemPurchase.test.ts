@@ -11,13 +11,14 @@ const REQUEST: ItemPurchaseRequest = { id: 3, item: { contract: '0x' + 'ab'.repe
 const MESSAGE = { kind: 'itemPurchaseRequest', id: 3, item: REQUEST.item }
 
 /** The domain, with the engine's stream (`engine`) and the page's messages (`page`) in the test's hands. */
-async function domain(): Promise<{ sent: SceneToPage[]; engine: (request: ItemPurchaseRequest) => void; page: (msg: PageToScene) => void }> {
+async function domain(): Promise<{ sent: SceneToPage[]; engine: (request: ItemPurchaseRequest) => void; page: (msg: PageToScene) => void; reopen: () => Promise<unknown> }> {
   const { registerItemPurchase } = await import('../../bridge-scene/src/domains/itemPurchase')
   const sent: SceneToPage[] = []
   const handlers = new Map<string, (msg: PageToScene) => void>()
   registerItemPurchase({ send: (msg) => sent.push(msg), on: (kind, handler) => handlers.set(kind, handler as never), push: vi.fn() })
   const engine = relay.mock.calls.at(-1)![2] as (request: ItemPurchaseRequest) => void
-  return { sent, engine, page: (msg) => handlers.get(msg.kind)!(msg) }
+  const reopen = relay.mock.calls.at(-1)![1] as () => Promise<unknown>
+  return { sent, engine, page: (msg) => handlers.get(msg.kind)!(msg), reopen }
 }
 
 describe('bridge scene: the item purchase domain', () => {
@@ -51,6 +52,17 @@ describe('bridge scene: the item purchase domain', () => {
     page({ kind: 'hello' } as PageToScene)
     expect(sent).toEqual([MESSAGE])
     expect(api.setItemPurchaseState.mock.calls).toEqual([[{ id: 3, state: 'accepted' }], [{ id: 3, state: 'dismissed' }]])
+  })
+
+  it.each([false, true])('forgets the request in flight when the stream is opened again (accepted: %s)', async (accepted) => {
+    const { sent, engine, page, reopen } = await domain()
+    engine(REQUEST)
+    if (accepted) page({ kind: 'itemPurchaseState', id: 3, state: 'accepted' })
+    api.setItemPurchaseState.mockClear()
+    await reopen()
+    page({ kind: 'hello' } as PageToScene)
+    expect(sent).toEqual([MESSAGE])
+    expect(api.setItemPurchaseState).not.toHaveBeenCalled()
   })
 
   it.each(['unavailable', 'purchased', 'dismissed', 'failed'] as const)('keeps nothing once the page reported %s', async (state) => {

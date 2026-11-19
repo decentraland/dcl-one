@@ -67,13 +67,17 @@ export function purchaseSceneItem(item: { contract: string; itemId: string }, sh
       const outcome = sceneOutcome(op.state)
       if (outcome) end(outcome)
     }
-    const request: ShopBuyRequest = { v: SHOP_PROTOCOL, items: [{ contract: item.contract.toLowerCase(), itemId: item.itemId, quantity: 1 }], method: 'credits' }
+    const wanted = { contract: item.contract.toLowerCase(), itemId: item.itemId, quantity: 1 }
+    const request: ShopBuyRequest = { v: SHOP_PROTOCOL, items: [wanted], method: 'credits' }
     shell.request<ShopOperation>(SHOP_METHODS.buy, request, REQUEST_TIMEOUT_MS).then(
       (opened) => {
         const parsed = opened != null && typeof opened === 'object' ? parseOperationEvent({ ...opened, type: SHOP_EVENT }) : null
         if (!parsed) return end('failed')
+        // The shell's answer must be a purchase of this item, and nothing else.
+        const [line, ...others] = parsed.items
+        if (line === undefined || others.length > 0 || line.contract !== wanted.contract || line.itemId !== wanted.itemId) return end('failed')
         // A purchase this request opened starts in review; anything else is an earlier one of the item.
-        if (parsed.state !== 'reviewing') return end(sceneOutcome(parsed.state) ?? 'dismissed')
+        if (parsed.state !== 'reviewing') return end('dismissed')
         clearTimeout(silent)
         operation = parsed.operation
         for (const op of early) follow(op)

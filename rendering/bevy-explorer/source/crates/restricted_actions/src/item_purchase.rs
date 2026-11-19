@@ -157,6 +157,26 @@ struct ItemPurchases {
     last_id: u32,
     active: Option<Active>,
     last: Option<Ended>,
+    /// verdicts written whose `closed` event is still owed
+    closing: Vec<Closing>,
+}
+
+/// A `closed` event owed to a scene whose verdict was written at `result_tick`. The two are
+/// different grow-only components, and a scene receives the components of one tick in no set
+/// order, so `closed` waits for a later tick: a scene that stops waiting on `closed` has the
+/// verdict by then.
+struct Closing {
+    scene: Entity,
+    request_id: u32,
+    result_tick: u32,
+}
+
+/// Whether a `closed` event may follow a verdict written at `result_tick`. The scene's tick
+/// number advances when a tick's reply arrives, and a tick already running when the verdict was
+/// written does not carry it, so one tick later is not enough: by two, the verdict went out with
+/// an earlier tick than `closed` will.
+fn closed_is_due(result_tick: u32, tick: u32) -> bool {
+    tick.wrapping_sub(result_tick) >= 2
 }
 
 impl ItemPurchases {
@@ -362,8 +382,9 @@ fn open_item_purchase(
             response.send(OpenExplorerUiResult::RejectedFeatureDisabled);
             continue;
         }
-        // refused before any prompt: the player is not asked about a request that cannot open
-        if purchases.active.is_some() {
+        // refused before any prompt: the player is not asked about a request that cannot open,
+        // nor asked twice while an earlier request's prompt is still up
+        if purchases.active.is_some() || perms.iter_pending().next().is_some() {
             response.send(OpenExplorerUiResult::WasAlreadyOpen);
             continue;
         }
@@ -420,7 +441,7 @@ fn track_item_purchase(
             }
             SystemApi::SetItemPurchaseState(SetItemPurchaseState { id, state }) => {
                 if let Some(change) = purchases.report(*id, *state) {
-                    apply(&mut scenes, change);
+                    apply(&mut scenes, &mut purchases.closing, change);
                 }
             }
             _ => (),
@@ -428,16 +449,41 @@ fn track_item_purchase(
     }
 
     if let Some(change) = purchases.hud_gone() {
-        apply(&mut scenes, change);
+        apply(&mut scenes, &mut purchases.closing, change);
     }
+
+    purchases.closing.retain(|closing| {
+        // the scene may have unloaded since its verdict
+        let Ok(mut context) = scenes.get_mut(closing.scene) else {
+            return false;
+        };
+        if !closed_is_due(closing.result_tick, context.tick_number) {
+            return true;
+        }
+        write_event(
+            &mut context,
+            ExplorerUi::EuItemPurchase as i32,
+            closing.request_id,
+            UiEvent::Closed(UiClosed {}),
+        );
+        false
+    });
 }
 
-/// Writes a transition's events to the requesting scene, the verdict before `closed`.
-fn apply(scenes: &mut Query<&mut RendererSceneContext>, change: Change) {
+/// Writes a transition's events to the requesting scene. A verdict's `closed` event is owed, not
+/// written: see [`Closing`].
+fn apply(
+    scenes: &mut Query<&mut RendererSceneContext>,
+    closing: &mut Vec<Closing>,
+    change: Change,
+) {
     let ui = ExplorerUi::EuItemPurchase as i32;
     match change {
         Change::Opened(request) => {
             if let Ok(mut context) = scenes.get_mut(request.scene) {
+                // the player action that opened the confirmation is spent: the scene cannot
+                // open another on it once this one closes
+                context.last_action_event = None;
                 write_event(
                     &mut context,
                     ui,
@@ -467,12 +513,11 @@ fn apply(scenes: &mut Query<&mut RendererSceneContext>, change: Change) {
                     }),
                 },
             );
-            write_event(
-                &mut context,
-                ui,
-                request.request_id,
-                UiEvent::Closed(UiClosed {}),
-            );
+            closing.push(Closing {
+                scene: request.scene,
+                request_id: request.request_id,
+                result_tick: timestamp,
+            });
         }
     }
 }
@@ -507,7 +552,7 @@ fn item_purchase_cancel(
             return;
         }
         if let Some(change) = purchases.cancel() {
-            apply(&mut scenes, change);
+            apply(&mut scenes, &mut purchases.closing, change);
         }
         input.reply_ok("cancelled");
     }
@@ -542,6 +587,18 @@ mod tests {
         let (sender, receiver) = RpcResultSender::channel();
         purchases.begin(request(urn), sender);
         receiver
+    }
+
+    #[test]
+    fn closed_follows_the_verdict_by_two_ticks() {
+        // the tick running when the verdict was written does not carry it
+        assert!(!closed_is_due(7, 7));
+        assert!(!closed_is_due(7, 8));
+        assert!(closed_is_due(7, 9));
+        assert!(closed_is_due(7, 20));
+        // the tick counter wraps
+        assert!(!closed_is_due(u32::MAX, 0));
+        assert!(closed_is_due(u32::MAX, 1));
     }
 
     #[test]

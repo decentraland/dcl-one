@@ -7,7 +7,8 @@
 // scene's stream, not the page. So the request in flight is kept here and settled when a page says
 // `hello` (it started late or reloaded): one the page never answered is sent again, and one a
 // previous page accepted is reported `dismissed`, since the page that followed its purchase is gone
-// and `dismissed` claims nothing about it.
+// and `dismissed` claims nothing about it. A request the engine has ended is forgotten when the
+// stream is opened again.
 //   from: SystemApi.getItemPurchaseRequestStream / setItemPurchaseState.
 import { BevyApi } from '../bevy-api'
 import { relay } from '../system-helpers'
@@ -20,10 +21,19 @@ export function registerItemPurchase(ctx: Ctx): void {
   let inFlight: { request: ItemPurchaseRequest; accepted: boolean } | null = null
   const send = (request: ItemPurchaseRequest): void => ctx.send({ kind: 'itemPurchaseRequest', id: request.id, item: request.item })
 
-  relay('itemPurchase', async () => await open(), (request) => {
-    inFlight = { request, accepted: false }
-    send(request)
-  })
+  relay(
+    'itemPurchase',
+    async () => {
+      // A stream opened again is a new subscription: the engine ended whatever the last one left
+      // in flight, so nothing of it is sent again.
+      inFlight = null
+      return await open()
+    },
+    (request) => {
+      inFlight = { request, accepted: false }
+      send(request)
+    }
+  )
 
   ctx.on('hello', () => {
     if (inFlight == null) return

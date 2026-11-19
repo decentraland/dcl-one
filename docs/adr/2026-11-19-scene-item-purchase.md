@@ -49,6 +49,12 @@ A scene's item purchase reuses that path, in three parts with one owner each.
 The scene learns a verdict and nothing else: `Purchased`, `Dismissed` or `Failed`, with its urn and
 `request_id`. No price, balance, transaction or reason crosses back.
 
+The verdict and the `closed` event are different grow-only components, and a scene receives the
+components written in one tick in no set order. A scene that stops waiting on `closed`, as
+`openExplorerUiAndWait` does, would lose a verdict that arrived after it. So the engine writes the
+verdict when the purchase ends and `closed` two scene ticks later; the request's slot is free
+from the verdict on.
+
 ## Consequences
 
 - No purchase from a scene on desktop, in the `react-web` host or on a headless server. A scene
@@ -68,6 +74,10 @@ The scene learns a verdict and nothing else: `Purchased`, `Dismissed` or `Failed
 - The urn's network is checked for its form and not carried further: the shell buys on the chain
   it was built for. A urn of the other network opens the shell's dialog, which finds no such item
   to buy, and the scene reads `Failed` when it closes.
+- The player action that opened a confirmation is spent when it opens: the scene needs a new one
+  to open another, so a dismissal cannot be answered with the same click.
+- While a request's permission prompt is up, another request is `WAS_ALREADY_OPEN` without a
+  second prompt.
 - An item purchase shares the `OpenExplorerUi` permission with the menu pages; the purchase
   dialog is the confirmation, so there is no second permission type. The permission's description
   names the purchase confirmation, and a prompt for it names the parsed item (its id and

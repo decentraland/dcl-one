@@ -5966,7 +5966,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/itemPurchase.ts",
-      "sha256": "99775104f822d3b93074c6ece4f7f0911e7308f845f316601a9a4d2bd1dfae14"
+      "sha256": "81b0e053bb81d115c1740cdde7ea8e6b93b18ae5e47f4b3abf05674c77cc74b2"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/marketplace.ts",
@@ -6206,7 +6206,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeItemPurchase.test.ts",
-      "sha256": "b57526c27e327c3875a51951991678a7d98f390b2bf3a2cfe600608e9cd3f231"
+      "sha256": "3b9c665ddb1f9a2920b2a3ebd0a367af94b98147b18562aa2088ed85e167bdf8"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeNearbyMutes.test.ts",
