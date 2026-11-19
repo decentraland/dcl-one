@@ -2414,12 +2414,10 @@ fn handle_sign_request(
                 .filter(|_| wallet::delegation::is_storage_request(&uri))
                 .and_then(|d| d.get(scene))
                 .filter(|d| {
-                    !d.is_expired(
-                        web_time::SystemTime::now()
-                            .duration_since(web_time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_millis() as i64,
-                    )
+                    // a clock before the epoch filters the delegation out
+                    web_time::SystemTime::now()
+                        .duration_since(web_time::UNIX_EPOCH)
+                        .is_ok_and(|now| !d.is_expired(now.as_millis() as i64))
                 })
             {
                 let method = method.clone();

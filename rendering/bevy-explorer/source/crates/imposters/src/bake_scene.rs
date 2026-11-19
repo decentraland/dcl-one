@@ -484,7 +484,9 @@ fn bake_scene_imposters(
                 };
 
                 let path = texture_path(ipfas.ipfs_cache_path(), realm, region.parcel_min(), 0);
-                let _ = std::fs::create_dir_all(path.parent().unwrap());
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
                 let save_asset_callback = make_save_callback(&camera, &path);
 
                 if let Some(output_path) = plugin.zip_output.clone() {
@@ -624,7 +626,12 @@ fn save_and_zip_callback<T>(
         let target_file = path.file_name().unwrap().to_string_lossy().into_owned();
 
         // create folder if required
-        std::fs::create_dir_all(output_path.parent().unwrap()).unwrap();
+        if let Some(parent) = output_path.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                warn!("failed to create {parent:?}, {target_file} not added: {e}");
+                return;
+            }
+        }
 
         // lock
         let touch = output_path.clone().with_extension("touch");
@@ -633,56 +640,71 @@ fn save_and_zip_callback<T>(
             std::thread::sleep(Duration::ZERO);
         }
 
-        // move and read prev version
-        let mut old_path = output_path.clone();
-        old_path.set_extension(".old");
-        let prev_archive = if std::fs::exists(&output_path).unwrap() {
-            std::fs::rename(&output_path, &old_path).unwrap();
-            let old_file = std::fs::File::open(&old_path).unwrap();
-            Some(zip::ZipArchive::new(old_file).unwrap())
-        } else {
-            None
-        };
-
-        // create new
-        let output = std::fs::File::create_new(&output_path).unwrap();
-        let mut archive = ZipWriter::new(output);
-
-        // copy contents (except current file)
-        if let Some(mut prev_archive) = prev_archive {
-            let file_names = prev_archive
-                .file_names()
-                .map(ToOwned::to_owned)
-                .collect::<Vec<_>>();
-            for file in file_names {
-                if file != target_file {
-                    archive
-                        .raw_copy_file(prev_archive.by_name(&file).unwrap())
-                        .unwrap();
-                }
-            }
-
-            // delete prev
-            std::fs::remove_file(&old_path).unwrap();
+        match add_to_zip(&path, &output_path, &target_file) {
+            Ok(()) => debug!("added {target_file} to {output_path:?}"),
+            Err(e) => warn!("failed to add {target_file} to {output_path:?}: {e}"),
         }
 
-        // write
-        let mut file = std::fs::File::open(&path).unwrap();
-        let mut data = Vec::default();
-        file.read_to_end(&mut data).unwrap();
-        archive
-            .start_file(
-                &target_file,
-                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored),
-            )
-            .unwrap();
-        archive.write_all(&data).unwrap();
-        archive.finish().unwrap();
-        debug!("added {target_file} to {output_path:?}");
-
         // unlock
-        std::fs::remove_file(touch).unwrap();
+        if let Err(e) = std::fs::remove_file(&touch) {
+            warn!("failed to remove lock {touch:?}: {e}");
+        }
     }
+}
+
+/// Writes `path` into the archive at `output_path` as `target_file`, keeping the archive's other
+/// files. Takes no lock on the archive.
+fn add_to_zip(
+    path: &std::path::Path,
+    output_path: &std::path::Path,
+    target_file: &str,
+) -> std::io::Result<()> {
+    // move and read prev version
+    let mut old_path = output_path.to_owned();
+    old_path.set_extension(".old");
+    let prev_archive = if std::fs::exists(output_path)? {
+        std::fs::rename(output_path, &old_path)?;
+        let old_file = std::fs::File::open(&old_path)?;
+        Some(zip::ZipArchive::new(old_file).unwrap())
+    } else {
+        None
+    };
+
+    // create new
+    let output = std::fs::File::create_new(output_path)?;
+    let mut archive = ZipWriter::new(output);
+
+    // copy contents (except current file)
+    if let Some(mut prev_archive) = prev_archive {
+        let file_names = prev_archive
+            .file_names()
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        for file in file_names {
+            if file != target_file {
+                archive
+                    .raw_copy_file(prev_archive.by_name(&file).unwrap())
+                    .unwrap();
+            }
+        }
+
+        // delete prev
+        std::fs::remove_file(&old_path)?;
+    }
+
+    // write
+    let mut file = std::fs::File::open(path)?;
+    let mut data = Vec::default();
+    file.read_to_end(&mut data).unwrap();
+    archive
+        .start_file(
+            target_file,
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored),
+        )
+        .unwrap();
+    archive.write_all(&data)?;
+    archive.finish().unwrap();
+    Ok(())
 }
 
 fn bake_imposter_imposter(
@@ -857,7 +879,9 @@ fn bake_imposter_imposter(
                 *parcel,
                 *level,
             );
-            let _ = std::fs::create_dir_all(path.parent().unwrap());
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
             let save_asset_callback = make_save_callback(&camera, &path);
 
             if let Some(output_path) = plugin.zip_output.clone() {

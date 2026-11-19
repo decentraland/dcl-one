@@ -300,15 +300,7 @@ fn get_previous_login(config: &AppConfig) -> Option<PreviousLogin> {
                     if line.starts_with("Expiration:") {
                         let exp = line.split_once(':').unwrap().1;
                         if let Ok(exp) = chrono::DateTime::<chrono::Utc>::from_str(exp.trim()) {
-                            let now: chrono::DateTime<chrono::Utc> =
-                                chrono::DateTime::from_timestamp_millis(
-                                    web_time::SystemTime::now()
-                                        .duration_since(web_time::UNIX_EPOCH)
-                                        .unwrap()
-                                        .as_millis() as i64,
-                                )
-                                .unwrap();
-                            if now > exp {
+                            if chrono::Utc::now() > exp {
                                 warn!("previous login expired, removing");
                                 expired = true;
                             }
@@ -793,10 +785,7 @@ fn process_login_bridge(
                     platform::write_config_file(&*config);
                 }
                 let root_address = root.address();
-                let now_millis = web_time::SystemTime::now()
-                    .duration_since(web_time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as i64;
+                let now_millis = chrono::Utc::now().timestamp_millis();
                 *login_task = Some(IoTaskPool::get().spawn_compat(async move {
                     let (ephemeral, delegates) = match local_guest::sign_identity(&root, now_millis)
                     {

@@ -259,7 +259,7 @@ impl AssetLoader for NftLoader {
         let res = serde_json::from_reader::<_, NftWrapper>(bytes.as_slice())
             .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e));
         if res.is_err() {
-            debug!("errored nft bytes: {}", String::from_utf8(bytes).unwrap());
+            debug!("errored nft bytes: {}", String::from_utf8_lossy(&bytes));
         }
         res.map(|wrapper| wrapper.nft)
     }

@@ -507,12 +507,8 @@ impl IpfsPath {
         components.next();
 
         let mut key_values = BTreeMap::default();
-        while components
-            .peek()
-            .map(|c| c.starts_with('&'))
-            .unwrap_or_default()
-        {
-            let key: IpfsKey = components.next().unwrap().try_into()?;
+        while let Some(key) = components.next_if(|c| c.starts_with('&')) {
+            let key: IpfsKey = key.try_into()?;
             let value = components
                 .next()
                 .and_then(|value| urlencoding::decode(value).ok())

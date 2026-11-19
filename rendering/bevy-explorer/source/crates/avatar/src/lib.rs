@@ -2442,7 +2442,10 @@ fn debug_dump_avatar(
                 .join("scene_dump")
                 .join(folder)
                 .join(&scene_hash);
-            std::fs::create_dir_all(&dump_folder).unwrap();
+            if let Err(e) = std::fs::create_dir_all(&dump_folder) {
+                input.reply_failed(format!("can't create {dump_folder:?}: {e}"));
+                continue;
+            }
 
             // total / succeed / fail
             let count = std::sync::Arc::new(std::sync::Mutex::new((0, 0, 0)));

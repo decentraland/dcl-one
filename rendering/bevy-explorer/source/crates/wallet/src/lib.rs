@@ -400,8 +400,7 @@ async fn sign_path(
     meta: String,
 ) -> Result<Vec<(String, String)>, anyhow::Error> {
     let unix_time = web_time::SystemTime::now()
-        .duration_since(web_time::UNIX_EPOCH)
-        .unwrap()
+        .duration_since(web_time::UNIX_EPOCH)?
         .as_millis();
 
     let payload = format!(

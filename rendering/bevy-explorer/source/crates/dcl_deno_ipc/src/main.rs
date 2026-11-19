@@ -84,7 +84,10 @@ async fn scene_ipc_out(
                     warn!("scene_ipc_out exit on scene_rx closed");
                     return;
                 };
-                write_msg(&mut stream, &SceneToEngine::SceneResponse(scene_id, response)).await;
+                if let Err(e) = write_msg(&mut stream, &SceneToEngine::SceneResponse(scene_id, response)).await {
+                    warn!("scene_ipc_out exit on write: {e}");
+                    return;
+                }
             }
             close_rx = close_rx.recv() => {
                 let Some(close_id) = close_rx else {
@@ -99,7 +102,10 @@ async fn scene_ipc_out(
                 });
 
                 if was_open {
-                    write_msg(&mut stream, &SceneToEngine::IpcMessage(close_id, IpcMessage::Closed)).await;
+                    if let Err(e) = write_msg(&mut stream, &SceneToEngine::IpcMessage(close_id, IpcMessage::Closed)).await {
+                        warn!("scene_ipc_out exit on write: {e}");
+                        return;
+                    }
                 }
             },
             system_api_rx = system_api_rx.recv() => {
@@ -107,7 +113,10 @@ async fn scene_ipc_out(
                     warn!("scene_ipc_out exit on system_api_rx closed");
                     return;
                 };
-                write_msg(&mut stream, &SceneToEngine::SystemApi(system_api)).await;
+                if let Err(e) = write_msg(&mut stream, &SceneToEngine::SystemApi(system_api)).await {
+                    warn!("scene_ipc_out exit on write: {e}");
+                    return;
+                }
             }
         }
     }

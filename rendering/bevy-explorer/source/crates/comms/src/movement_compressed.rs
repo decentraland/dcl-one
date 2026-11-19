@@ -13,14 +13,13 @@ use num_traits::AsPrimitive;
 #[inline(always)]
 fn quantize<T: Specifier>(uncompressed: f32, min: f32, max: f32) -> T::InOut
 where
-    <T as Specifier>::InOut: TryFrom<u32>,
-    <<T as Specifier>::InOut as TryFrom<u32>>::Error: core::fmt::Debug,
+    <T as Specifier>::InOut: Copy + 'static,
+    u32: AsPrimitive<<T as Specifier>::InOut>,
 {
     let max_step: u32 = (1 << T::BITS) - 1;
     let normalized_value: f32 = (uncompressed - min) / (max - min);
-    ((normalized_value.clamp(0.0, 1.0) * max_step as f32) as u32)
-        .try_into()
-        .unwrap()
+    // at most `max_step`, which fits `T::BITS`
+    ((normalized_value.clamp(0.0, 1.0) * max_step as f32) as u32).as_()
 }
 
 #[inline(always)]

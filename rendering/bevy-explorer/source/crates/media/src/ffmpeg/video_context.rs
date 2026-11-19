@@ -130,7 +130,7 @@ impl FfmpegContext for VideoContext {
     }
 
     fn receive_packet(&mut self, packet: Packet) -> Result<(), anyhow::Error> {
-        self.decoder.send_packet(&packet).unwrap();
+        self.decoder.send_packet(&packet)?;
         let mut decoded = frame::Video::empty();
         if let Ok(()) = self.decoder.receive_frame(&mut decoded) {
             let mut rgb_frame = frame::Video::empty();

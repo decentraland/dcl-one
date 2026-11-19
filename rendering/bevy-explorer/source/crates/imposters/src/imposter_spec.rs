@@ -132,7 +132,9 @@ pub(crate) fn write_imposter(
     baked_scene: &BakedScene,
 ) {
     let path = spec_path(cache_path, id, parcel, level);
-    let _ = std::fs::create_dir_all(path.parent().unwrap());
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     if let Err(e) = std::fs::File::create(path)
         .map_err(|e| e.to_string())
         .and_then(|f| serde_json::to_writer(f, baked_scene).map_err(|e| e.to_string()))

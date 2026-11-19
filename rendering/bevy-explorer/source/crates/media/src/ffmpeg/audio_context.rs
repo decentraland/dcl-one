@@ -310,7 +310,7 @@ impl FfmpegContext for AudioContext {
     }
 
     fn receive_packet(&mut self, packet: Packet) -> Result<(), anyhow::Error> {
-        self.decoder.send_packet(&packet).unwrap();
+        self.decoder.send_packet(&packet)?;
         let mut decoded = frame::Audio::empty();
         if let Ok(()) = self
             .decoder

@@ -460,7 +460,7 @@ impl HostMedia {
         let handle_clone = callback_handle.clone();
         let rvc_clone = rvc_fn.clone();
 
-        *callback.borrow_mut() = Some(Closure::wrap(Box::new({
+        let closure: Closure<dyn FnMut(f64, JsValue)> = Closure::wrap(Box::new({
             let video = video.clone();
             move |_now: f64, metadata: JsValue| {
                 let media_time = Reflect::get(&metadata, &"mediaTime".into())
@@ -502,14 +502,15 @@ impl HostMedia {
                     debug!("no cb - dropping");
                 }
             }
-        }) as Box<dyn FnMut(f64, JsValue)>));
-        let initial_handle = rvc_fn
-            .call1(
-                &video,
-                callback.borrow().as_ref().unwrap().as_ref().unchecked_ref(),
-            )
-            .unwrap();
-        *callback_handle.borrow_mut() = initial_handle.as_f64().map(|f| f as u32);
+        })
+            as Box<dyn FnMut(f64, JsValue)>);
+        match rvc_fn.call1(&video, closure.as_ref().unchecked_ref()) {
+            Ok(initial_handle) => {
+                *callback_handle.borrow_mut() = initial_handle.as_f64().map(|f| f as u32);
+            }
+            Err(e) => warn!("media {id}: requestVideoFrameCallback failed: {e:?}"),
+        }
+        *callback.borrow_mut() = Some(closure);
 
         self.frame_closure = callback;
         self.frame_callback_handle = callback_handle;

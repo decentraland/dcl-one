@@ -1437,8 +1437,7 @@ async fn deploy_profile(
     mut profile: UserProfile,
 ) -> Result<(), anyhow::Error> {
     let unix_time = web_time::SystemTime::now()
-        .duration_since(web_time::UNIX_EPOCH)
-        .unwrap()
+        .duration_since(web_time::UNIX_EPOCH)?
         .as_millis();
 
     profile.content.avatar.snapshots = None;

@@ -242,7 +242,10 @@ pub async fn renderer_ipc_out(
                     loop {
                         match old_rx.try_recv() {
                             Ok(data) => {
-                                write_msg(&mut stream, &EngineToScene::GlobalUpdate(presence_context, data)).await;
+                                if let Err(e) = write_msg(&mut stream, &EngineToScene::GlobalUpdate(presence_context, data)).await {
+                                    warn!("renderer_ipc_out exit on write: {e}");
+                                    return;
+                                }
                             }
                             Err(tokio::sync::broadcast::error::TryRecvError::Lagged(count)) => {
                                 error!("global crdt state lagged, dropping {count} messages");
@@ -262,19 +265,28 @@ pub async fn renderer_ipc_out(
                     let _ = renderer_sender.send(EngineToScene::KillScene(id));
                 });
 
-                write_msg(&mut stream, &EngineToScene::NewScene(id, Box::new(info))).await;
+                if let Err(e) = write_msg(&mut stream, &EngineToScene::NewScene(id, Box::new(info))).await {
+                    warn!("renderer_ipc_out exit on write: {e}");
+                    return;
+                }
             }
             renderer_update = renderer_rx.recv() => {
                 let Some(engine_to_scene) = renderer_update else {
                     warn!("renderer_ipc_out exit on inbound closed");
                     return;
                 };
-                write_msg(&mut stream, &engine_to_scene).await;
+                if let Err(e) = write_msg(&mut stream, &engine_to_scene).await {
+                    warn!("renderer_ipc_out exit on write: {e}");
+                    return;
+                }
             }
             (presence_context, received) = next_global_update(&mut global_receivers) => {
                 match received {
                     Ok(data) => {
-                        write_msg(&mut stream, &EngineToScene::GlobalUpdate(presence_context, data)).await;
+                        if let Err(e) = write_msg(&mut stream, &EngineToScene::GlobalUpdate(presence_context, data)).await {
+                            warn!("renderer_ipc_out exit on write: {e}");
+                            return;
+                        }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
                         error!("global crdt state lagged, dropping {count} messages");
@@ -296,7 +308,10 @@ pub async fn renderer_ipc_out(
                         ctx.as_mut().unwrap().ipc_channel_registry.remove(&ipc.0)
                     });
                 }
-                write_msg(&mut stream, &EngineToScene::IpcMessage(ipc.0, ipc.1)).await;
+                if let Err(e) = write_msg(&mut stream, &EngineToScene::IpcMessage(ipc.0, ipc.1)).await {
+                    warn!("renderer_ipc_out exit on write: {e}");
+                    return;
+                }
             }
         }
     }
@@ -430,13 +445,12 @@ pub fn spawn_scene(
     (main_sx, None)
 }
 
-pub async fn write_msg<T: Serialize>(stream: &mut SendHalf, value: &T) {
+pub async fn write_msg<T: Serialize>(stream: &mut SendHalf, value: &T) -> std::io::Result<()> {
     let bytes = rmp_encode(value).unwrap();
     stream
         .write_all(&(bytes.len() as u64).to_le_bytes())
-        .await
-        .unwrap();
-    stream.write_all(&bytes).await.unwrap();
+        .await?;
+    stream.write_all(&bytes).await
 }
 
 #[cfg(test)]

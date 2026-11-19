@@ -537,12 +537,13 @@ async fn run_script(
         let scope = &mut runtime.handle_scope();
         let script_this = v8::Local::new(scope, script.clone());
         // get module
-        let script = v8::Local::<v8::Object>::try_from(script_this).unwrap();
+        let script = v8::Local::<v8::Object>::try_from(script_this)
+            .map_err(|_| AnyError::msg("scene module is not an object"))?;
 
         // get function
         let target_function =
             v8::String::new_from_utf8(scope, fn_name.as_bytes(), v8::NewStringType::Internalized)
-                .unwrap();
+                .ok_or_else(|| AnyError::msg(format!("{fn_name} is not a valid v8 string")))?;
         let Some(target_function) = script.get(scope, target_function.into()) else {
             // function not define, is that an error ?
             // debug!("{fn_name} is not defined");

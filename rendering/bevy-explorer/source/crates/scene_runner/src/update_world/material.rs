@@ -703,23 +703,24 @@ pub fn update_materials(
                 };
 
                 let defn = MaterialDefinition::from_base_and_material(base, &mat.0);
-                let textures: Result<Vec<_>, _> = [
-                    &defn.base_color_texture,
-                    &defn.emmissive_texture,
-                    &defn.normal_map,
-                ]
-                .into_iter()
-                .map(
-                    |texture| match texture.as_ref().and_then(|t| t.tex.as_ref()) {
-                        Some(texture) => match resolver.resolve_texture(&scene, texture) {
-                            Ok(resolved) => Ok(Some(resolved)),
-                            Err(TextureResolveError::SourceNotReady) => Err(()),
-                            Err(_) => Ok(None),
-                        },
-                        None => Ok(None),
+                let mut resolve = |texture: &Option<TextureUnion>| match texture
+                    .as_ref()
+                    .and_then(|t| t.tex.as_ref())
+                {
+                    Some(texture) => match resolver.resolve_texture(&scene, texture) {
+                        Ok(resolved) => Ok(Some(resolved)),
+                        Err(TextureResolveError::SourceNotReady) => Err(()),
+                        Err(_) => Ok(None),
                     },
-                )
-                .collect();
+                    None => Ok(None),
+                };
+                let textures = resolve(&defn.base_color_texture).and_then(|base_color| {
+                    Ok([
+                        base_color,
+                        resolve(&defn.emmissive_texture)?,
+                        resolve(&defn.normal_map)?,
+                    ])
+                });
 
                 let textures = match textures {
                     Ok(textures) => textures,
@@ -743,10 +744,7 @@ pub fn update_materials(
                     .filter_map(|t| t.source_entity)
                     .next();
 
-                let [mut base_color_texture, emissive_texture, normal_map_texture]: [Option<
-                    ResolvedTexture,
-                >;
-                    3] = textures.try_into().unwrap();
+                let [mut base_color_texture, emissive_texture, normal_map_texture] = textures;
 
                 let cursor = base_color_texture
                     .as_mut()

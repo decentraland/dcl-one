@@ -53,7 +53,11 @@ fn main() {
     }
 
     decentraland_log_file();
-    create_logs_folder();
+    let log_dir = data_local_dir();
+    if let Err(e) = std::fs::create_dir_all(&log_dir) {
+        eprintln!("startup error: failed to create the log folder {log_dir:?}: {e}");
+        std::process::exit(1);
+    }
     create_log_files();
 
     let decentraland_app = DecentralandApp::new(LogPlugin {
@@ -311,18 +315,15 @@ fn data_local_dir() -> PathBuf {
     dirs.data_local_dir().to_owned()
 }
 
-fn create_logs_folder() {
-    let log_dir = data_local_dir();
-    std::fs::create_dir_all(log_dir).unwrap();
-}
-
 fn create_log_files() {
     File::create(SESSION_LOG.get().unwrap())
         .expect("failed to create log file")
         .write_all(format!("{}\n\n", SESSION_LOG.get().unwrap()).as_bytes())
         .expect("failed to create log file");
 
-    File::create(crash_marker()).unwrap();
+    if let Err(e) = File::create(crash_marker()) {
+        eprintln!("failed to create crash marker: {e}");
+    }
     println!("log file: {}", SESSION_LOG.get().unwrap());
 }
 
@@ -330,13 +331,7 @@ fn create_log_files() {
 /// and saves it to [`SESSION_LOG`]
 fn decentraland_log_file() {
     let log_dir = data_local_dir();
-    let session_time: chrono::DateTime<chrono::Utc> = chrono::DateTime::from_timestamp_millis(
-        web_time::SystemTime::now()
-            .duration_since(web_time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64,
-    )
-    .unwrap();
+    let session_time = chrono::Utc::now();
     let session_log = log_dir.join(format!("{}.log", session_time.format("%Y%m%d-%H%M%S")));
     SESSION_LOG
         .set(session_log.to_string_lossy().into_owned())

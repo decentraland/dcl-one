@@ -104,7 +104,10 @@ fn debug_dump_scene(
                 .to_owned()
                 .join("scene_dump")
                 .join(&*scene.hash);
-            std::fs::create_dir_all(&dump_folder).unwrap();
+            if let Err(e) = std::fs::create_dir_all(&dump_folder) {
+                input.reply_failed(format!("can't create {dump_folder:?}: {e}"));
+                return;
+            }
 
             // total / succeed / fail
             let count = Arc::new(Mutex::new((0, 0, 0)));

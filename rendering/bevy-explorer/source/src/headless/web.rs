@@ -3,7 +3,7 @@
 //! server flag (`common::structs::set_server_mode`) holds for this instance only. It has no
 //! render worker, no winit and no asset loader worker (assets load on the engine worker).
 
-use std::{cell::RefCell, rc::Rc, str::FromStr, time::Duration};
+use std::{str::FromStr, time::Duration};
 
 use bevy::{
     app::{PluginsState, TaskPoolThreadAssignmentPolicy},
@@ -133,7 +133,7 @@ pub fn headless_run(options: JsValue) -> Result<(), JsValue> {
 }
 
 /// `ScheduleRunnerPlugin`'s loop for a worker: bevy's reads `window`, which a worker doesn't
-/// have. Returns once the first tick is scheduled. The timer paces the ticks: the scene loop's
+/// have. Returns once the tick loop is spawned. The timer paces the ticks: the scene loop's
 /// own frame sleep is native-only (the web client is paced by its display).
 fn run_on_worker_timer(mut app: App) -> AppExit {
     if app.plugins_state() != PluginsState::Cleaned {
@@ -142,31 +142,38 @@ fn run_on_worker_timer(mut app: App) -> AppExit {
     }
     let interval = Duration::from_secs(1) / TICK_HZ;
     let global: web_sys::DedicatedWorkerGlobalScope = js_sys::global().unchecked_into();
-    let schedule = move |tick: &Closure<dyn FnMut()>, delay: Duration| {
+    wasm_bindgen_futures::spawn_local(async move {
+        // Each tick is due an interval after the last was DUE, not after it ran, so a timer that
+        // fires late (they do, by a millisecond or several) is repaid by a shorter wait and the
+        // rate holds; as the scene loop's `next_frame_end` does for its native sleep.
+        let mut due = Instant::now();
+        let mut delay = Duration::ZERO;
+        loop {
+            sleep(&global, delay).await;
+            app.update();
+            if app.should_exit().is_some() {
+                break;
+            }
+            let now = Instant::now();
+            due = (due + interval).max(now);
+            delay = due - now;
+        }
+    });
+    AppExit::Success
+}
+
+/// Resolves after `delay` on the worker's timer.
+async fn sleep(global: &web_sys::DedicatedWorkerGlobalScope, delay: Duration) {
+    let timer = js_sys::Promise::new(&mut |resolve, _reject| {
         global
             .set_timeout_with_callback_and_timeout_and_arguments_0(
-                tick.as_ref().unchecked_ref(),
+                &resolve,
                 delay.as_millis() as i32,
             )
             .expect("setTimeout");
-    };
-    let tick: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::default();
-    let next = tick.clone();
-    let reschedule = schedule.clone();
-    // Each tick is due an interval after the last was DUE, not after it ran, so a timer that
-    // fires late (they do, by a millisecond or several) is repaid by a shorter wait and the
-    // rate holds; as the scene loop's `next_frame_end` does for its native sleep.
-    let mut due = Instant::now();
-    *tick.borrow_mut() = Some(Closure::new(move || {
-        app.update();
-        if app.should_exit().is_none() {
-            let now = Instant::now();
-            due = (due + interval).max(now);
-            reschedule(next.borrow().as_ref().unwrap(), due - now);
-        }
-    }));
-    schedule(tick.borrow().as_ref().unwrap(), Duration::ZERO);
-    AppExit::Success
+    });
+    // the promise only resolves
+    let _ = wasm_bindgen_futures::JsFuture::from(timer).await;
 }
 
 /// Each scene's console output, posted to the page (headless.js) for the editor to show, as the

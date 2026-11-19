@@ -617,8 +617,8 @@ pub fn parse_certificate_hash(text: &str) -> Result<[u8; 32], String> {
     let bytes = if text.len() == 64 && text.bytes().all(|b| b.is_ascii_hexdigit()) {
         (0..64)
             .step_by(2)
-            .map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap())
-            .collect()
+            .map(|i| u8::from_str_radix(&text[i..i + 2], 16).map_err(|_| invalid()))
+            .collect::<Result<_, _>>()?
     } else {
         BASE64_STANDARD.decode(text).map_err(|_| invalid())?
     };
