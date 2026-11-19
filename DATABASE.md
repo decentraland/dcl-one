@@ -1239,7 +1239,8 @@ Admitted effects retain the ten-second deadline. Reward requests run in the exis
 leased worker after login recording commits; they do not delay login acknowledgement. One nullable receipt per milestone stores a
 pre-POST `reward_requested_at`, confirmed provider `reward_response` and
 `reward_retry_at`. The expected workload is at most one receipt per milestone,
-with a 64-row due batch every minute; this bound is not a throughput measurement.
+with a 64-row due batch every minute; a tier with an empty supply is asked again
+about once an hour; this bound is not a throughput measurement.
 The partial due index excludes completed and ambiguous requests. A session
 advisory guard serializes attempts without an open transaction across HTTP; its
 connection closes on cancellation.
@@ -1248,9 +1249,13 @@ Configuration failures leave the request unclaimed. After the POST claim commits
 transport errors, non-success statuses, malformed replies and a crash before
 response persistence leave an ambiguous receipt that is never automatically
 reissued. Operators must reconcile the outcome before restoring it to pending or
-supplying a confirmed response. A successful reply whose `data` is an empty array confirms that
-nothing was assigned: the claim is cleared and `reward_retry_at` moves one hour
-ahead, so the worker asks for the tier again then. Additive step `0024_social_referral_reward_receipt`
+supplying a confirmed response. A held claim with no stored response stays
+quarantined until an operator clears `reward_requested_at`. A successful reply
+`{"ok": true, "data": []}` confirms the beneficiary holds no reward under the
+tier's campaign key: the claim is cleared and every unclaimed row of that tier
+gets `reward_retry_at` one hour ahead, so one request per hour covers the tier
+until its campaign is restocked. After restocking, operators may clear
+`reward_retry_at` on those rows to retry sooner. Additive step `0024_social_referral_reward_receipt`
 imports previously confirmed object-valued `reward_paid` responses, including
 receipts with missing or invalid image metadata, and quarantines uncertain pending
 markers. A confirmed receipt with unusable image metadata remains confirmed and

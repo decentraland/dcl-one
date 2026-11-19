@@ -58,6 +58,15 @@ const LOGIN_FUTURE_SKEW_MS: i64 = 300_000;
 /// asked again.
 const EMPTY_SUPPLY_RETRY: &str = "1 hour";
 
+/// How a reward attempt ended without an error.
+#[derive(Debug, PartialEq)]
+enum RewardAttempt {
+    /// Completed, already handled, or left for reconciliation.
+    Settled,
+    /// The provider had no supply for the tier; it is asked again later.
+    EmptySupply,
+}
+
 /// node-pg sends a JavaScript numeric parameter as Number.toString(). In
 /// particular fractional MAX values reach bigint parsing and are refused; they
 /// must not silently round, and Infinity must not become an unbounded quota.
@@ -487,8 +496,8 @@ impl Referral {
             .execute(&self.pool).await {
             tracing::warn!(%error, "login receipt cleanup failed; continuing reward delivery");
         }
-        let rows: Vec<(String, String, i32)> = sqlx::query_as(
-            "SELECT referrer,invited_user,reward_tier FROM social.referral_progress \
+        let rows: Vec<(String, String, i32, bool)> = sqlx::query_as(
+            "SELECT referrer,invited_user,reward_tier,reward_requested_at IS NULL FROM social.referral_progress \
              WHERE reward_tier IS NOT NULL \
                AND (reward_requested_at IS NULL OR reward_response IS NOT NULL) \
                AND (reward_retry_at IS NULL OR reward_retry_at <= timezone('UTC',now())) \
@@ -497,7 +506,13 @@ impl Referral {
         .fetch_all(&self.pool)
         .await
         .map_err(database_error)?;
-        for (referrer, invited, tier) in rows {
+        // Tiers whose supply was empty in this pass; their unclaimed rows wait
+        // without another POST.
+        let mut empty_tiers = std::collections::HashSet::new();
+        for (referrer, invited, tier, unclaimed) in rows {
+            if unclaimed && empty_tiers.contains(&tier) {
+                continue;
+            }
             // The request path checks this too; a later ban also stops retries.
             if let Err(error) = self.assert_not_banned(&referrer, None).await {
                 tracing::warn!(?error, "pending referral reward is blocked");
@@ -505,8 +520,13 @@ impl Referral {
                     .bind(&invited).execute(&self.pool).await.map_err(database_error)?;
                 continue;
             }
-            if let Err(error) = self.reward(&referrer, &invited, tier.into()).await {
-                tracing::warn!(?error, "pending referral reward failed");
+            match self.reward(&referrer, &invited, tier.into()).await {
+                Ok(RewardAttempt::Settled) => {}
+                Ok(RewardAttempt::EmptySupply) => {
+                    tracing::warn!(tier, "referral reward supply is empty; retrying later");
+                    empty_tiers.insert(tier);
+                }
+                Err(error) => tracing::warn!(?error, "pending referral reward failed"),
             }
         }
         Ok(())
@@ -515,7 +535,12 @@ impl Referral {
     /// Commit a claim before the non-idempotent provider POST and retain its
     /// response before attempting any downstream effect. A lost response is
     /// ambiguous and must never automatically reissue a reward.
-    async fn reward(&self, referrer: &str, invited: &str, total: i64) -> Result<(), CommError> {
+    async fn reward(
+        &self,
+        referrer: &str,
+        invited: &str,
+        total: i64,
+    ) -> Result<RewardAttempt, CommError> {
         let mut connection = self.pool.acquire().await.map_err(database_error)?;
         // Closing this infrequent worker connection also releases a lock when
         // cancellation interrupts acquisition (SQLx try_acquire is not cancel safe).
@@ -527,7 +552,7 @@ impl Referral {
             .map_err(database_error)?
             .left()
         else {
-            return Ok(());
+            return Ok(RewardAttempt::Settled);
         };
         let state: Option<(Option<chrono::NaiveDateTime>, Option<Value>, Option<Value>)> =
             sqlx::query_as(
@@ -542,7 +567,7 @@ impl Referral {
             .await
             .map_err(database_error)?;
         let Some((requested, stored, paid)) = state else {
-            return Ok(());
+            return Ok(RewardAttempt::Settled);
         };
         let reward = if let Some(reward) = stored {
             reward
@@ -551,7 +576,7 @@ impl Referral {
                 // The original failed attempt reports the error. A later login
                 // cannot resolve this receipt, so leave it for reconciliation
                 // without treating every login as another provider failure.
-                return Ok(());
+                return Ok(RewardAttempt::Settled);
             }
             // Configuration failures happen before claiming and remain retryable.
             let url = self.settings.reward_server_url.as_deref().ok_or_else(|| {
@@ -577,7 +602,7 @@ impl Referral {
             let claimed = sqlx::query("UPDATE social.referral_progress SET reward_requested_at=timezone('UTC',now()) WHERE invited_user=$1 AND reward_tier=$2 AND reward_requested_at IS NULL")
                 .bind(invited).bind(total as i32).execute(&mut *guard).await.map_err(database_error)?.rows_affected();
             if claimed == 0 {
-                return Ok(());
+                return Ok(RewardAttempt::Settled);
             }
             let response = self
                 .http
@@ -592,15 +617,13 @@ impl Referral {
                 .error_for_status()
                 .map_err(|_| CommError::Internal)?;
             let value: Value = response.json().await.map_err(|_| CommError::Internal)?;
-            // A confirmed empty supply assigned nothing, so the claim is
-            // released and the tier is asked again after a delay.
-            if value["data"].as_array().is_some_and(Vec::is_empty) {
-                sqlx::query("UPDATE social.referral_progress SET reward_requested_at=NULL,reward_retry_at=timezone('UTC',now())+$3::interval WHERE invited_user=$1 AND reward_tier=$2")
+            // `{ok: true, data: []}` means the beneficiary holds no reward for
+            // this tier's key: release the claim and defer every unclaimed row
+            // of the tier, which shares that key and its supply.
+            if value["ok"] == true && value["data"].as_array().is_some_and(Vec::is_empty) {
+                sqlx::query("UPDATE social.referral_progress SET reward_requested_at=NULL,reward_retry_at=timezone('UTC',now())+$3::interval WHERE reward_tier=$2 AND (invited_user=$1 OR reward_requested_at IS NULL)")
                     .bind(invited).bind(total as i32).bind(EMPTY_SUPPLY_RETRY).execute(&mut *guard).await.map_err(database_error)?;
-                return Err(CommError::MessageOnly(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    format!("Reward supply is empty for tier {total}"),
-                ));
+                return Ok(RewardAttempt::EmptySupply);
             }
             let reward = value["data"]
                 .as_array()
@@ -637,7 +660,7 @@ impl Referral {
         sqlx::query("UPDATE social.referral_progress SET reward_tier=NULL,reward_paid=NULL,reward_retry_at=NULL WHERE invited_user=$1 AND reward_tier=$2")
             .bind(invited).bind(total as i32).execute(&mut *tx).await.map_err(database_error)?;
         tx.commit().await.map_err(database_error)?;
-        Ok(())
+        Ok(RewardAttempt::Settled)
     }
     #[cfg(test)]
     async fn accepted(&self, referrer: &str) -> Result<i64, CommError> {
