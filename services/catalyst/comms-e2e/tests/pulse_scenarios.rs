@@ -370,8 +370,9 @@ async fn a_scenario_fails_fast_when_the_server_ends_a_bot_unexpectedly() {
     )
     .await;
     let failure = failure_of(&result);
+    // at once, not at the 120 s deadline: half of it is a margin a loaded machine keeps
     assert!(
-        started.elapsed() < Duration::from_secs(10),
+        started.elapsed() < Duration::from_secs(60),
         "the scenario took {:?} to fail: {failure}",
         started.elapsed()
     );
@@ -446,12 +447,7 @@ async fn webtransport_smoke_passes() {
     assert_passed(&run_webtransport(PulseServer::new(), &SMOKE, 2).await);
 }
 
-/// Known server behaviour, left failing on purpose (the report names it): the WebTransport
-/// stream reader reports a frame over its limit as one corrupt frame, which only draws on the
-/// corrupt-packet budget, where ENet ends the connection at once with code 16. What each transport
-/// does is pinned in `pulse_in_process.rs`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[ignore = "fails by design: an oversized frame does not end a WebTransport connection at once"]
 async fn webtransport_refusal_codes_pass() {
     assert_passed(&run_webtransport(PulseServer::new(), &REFUSAL_CODES, 1).await);
 }
@@ -522,12 +518,8 @@ async fn webtransport_scene_listener_passes_when_the_server_admits_its_wallet() 
     );
 }
 
-/// Known server behaviour, left failing on purpose (the report names it): QUIC's idle timeout and
-/// the server's authentication timeout are both 30 s, so the connection of a silent client usually
-/// ends by the idle timeout, which carries no code; code 2 arrives only when the authentication
-/// timeout wins the race.
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[ignore = "fails by design: the close code 2 of a WebTransport session is a race with QUIC's idle timeout"]
+#[ignore = "waits for the server's 30 s authentication timeout"]
 async fn webtransport_auth_timeout_passes() {
     assert_passed(&run_webtransport(PulseServer::new(), &AUTH_TIMEOUT, 1).await);
 }

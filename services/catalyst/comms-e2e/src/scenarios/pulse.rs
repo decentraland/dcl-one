@@ -1859,11 +1859,12 @@ const OBSERVER_KEEP_ALIVE: Duration = Duration::from_secs(10);
 
 /// What differs between the transports while the walker is stalled for longer than the transport
 /// timeout. The observer is quiet then: nobody moves, so Pulse sends it nothing. ENet pings keep a
-/// quiet peer connected for as long as it hears the server. A WebTransport session has no
-/// keep-alive on either side, and QUIC's idle timeout (30 s, stated in the server's QUIC
-/// configuration) ends a session that neither sends nor receives for that long, with no close
-/// code. So on WebTransport the observer repeats its position every [`OBSERVER_KEEP_ALIVE`]; on
-/// ENet this never returns and sends nothing. Returns only if the observer's connection has ended.
+/// quiet peer connected for as long as it hears the server. On WebTransport, QUIC's idle timeout
+/// (30 s, stated in the server's QUIC configuration) ends a session on which nothing is sent for
+/// that long, with no close code; a server that pings a silent session keeps it open, one that
+/// does not lets it end. So on WebTransport the observer repeats its position every
+/// [`OBSERVER_KEEP_ALIVE`], which holds against either server; on ENet this never returns and
+/// sends nothing. Returns only if the observer's connection has ended.
 async fn keep_quiet_observer_connected(
     ctx: &Ctx,
     observer: &PulseBot,

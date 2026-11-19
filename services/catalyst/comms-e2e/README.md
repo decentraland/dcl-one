@@ -67,11 +67,15 @@ one address, against a stack that is not on loopback, and for WebTransport witho
 certificate hash. The explorer always dials from the ordinary address.
 
 **Transports.** `--transport webtransport` runs the Pulse scenarios again over WebTransport. The
-expectations are the same on both: the same limits, the same disconnect codes. One thing a
-scenario does differently: a WebTransport session has no keep-alive of its own and QUIC ends an
-idle one after 30 seconds, so during a stall longer than that a quiet observer repeats its
-position (`pulse-stall-and-resume`). A session the server ends without a Pulse disconnect code
-reaching the client fails the scenario that expected the code, on either transport.
+expectations are the same on both: the same limits, the same disconnect codes. A server ends a
+WebTransport session as it ends an ENet one: a frame over twice the message cap ends it with 16,
+and a silent session stays open until the authentication timeout ends it with 2. Against a
+server built before that change, `pulse-refusal-codes` and `pulse-auth-timeout` fail over
+WebTransport. One thing a scenario does differently: QUIC ends a session nobody sends on for 30
+seconds, so during a stall longer than that a quiet observer repeats its position
+(`pulse-stall-and-resume`), which keeps the session open whether or not the server pings it. A
+session the server ends without a Pulse disconnect code reaching the client fails the scenario
+that expected the code, on either transport.
 
 ## The stack file
 

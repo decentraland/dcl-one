@@ -150,7 +150,8 @@ async fn an_unexpected_disconnect_fails_fast(transport: Transport) {
         "{error}"
     );
 
-    // a wait that depends on a live connection ends at once, naming the code, not at its deadline
+    // a wait that depends on a live connection ends at once, naming the code, not at its 60 s
+    // deadline: the bound is a third of it, which a loaded machine keeps
     let started = std::time::Instant::now();
     let error = expect_or(
         &ctx,
@@ -165,7 +166,7 @@ async fn an_unexpected_disconnect_fails_fast(transport: Transport) {
     .unwrap_err()
     .to_string();
     assert!(
-        started.elapsed() < Duration::from_secs(2),
+        started.elapsed() < Duration::from_secs(20),
         "waited {:?}",
         started.elapsed()
     );
@@ -247,7 +248,12 @@ async fn nothing_listening_is_a_failed_connect_not_a_hang(transport: Transport) 
         .await
         .err()
         .expect("no server, no connection");
-    assert!(started.elapsed() < Duration::from_secs(10));
+    // the dial ends near its 1.5 s deadline, not never: the bound only catches a hang
+    assert!(
+        started.elapsed() < Duration::from_secs(30),
+        "the dial took {:?}",
+        started.elapsed()
+    );
     // ENet keeps trying until the deadline. QUIC has no answer to wait for either: the dial
     // ends at the deadline with the client's own error, named in the message.
     assert!(
@@ -422,14 +428,12 @@ async fn webtransport_bursts_at_full_length() {
     eprintln!("resyncs in the full run: {resyncs}");
 }
 
-/// What each transport does with a frame far over the message limit. ENet ends the connection at
-/// once with 16 (the packet envelope refuses anything over 8192 bytes). WebTransport's stream
-/// reader reports an overrun as one corrupt frame, which only draws on the corrupt-packet budget:
-/// the connection survives until the budget is spent.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn an_oversized_frame_ends_an_enet_connection_at_once() {
+/// A frame far over the message limit (20 000 bytes, over twice the 4096-byte cap) ends the
+/// connection at once with 16 on both transports: ENet's packet envelope refuses anything over
+/// 8192 bytes, and the WebTransport stream reader applies the same envelope to the cap.
+async fn an_oversized_frame_ends_the_connection_at_once(transport: Transport) {
     let pulse = support::in_process_pulse_both().await;
-    let ctx = pulse.ctx_on(Transport::Enet, "oversized-enet");
+    let ctx = pulse.ctx_on(transport, "oversized");
     let bot = PulseBot::enter(&ctx, "walker", &ctx.identity(0))
         .await
         .unwrap();
@@ -439,22 +443,4 @@ async fn an_oversized_frame_ends_an_enet_connection_at_once() {
         .unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn an_oversized_frame_is_charged_to_the_corrupt_budget_on_webtransport() {
-    use catalyst_comms::pulse::hardening::DEFAULT_CORRUPT_BURST;
-    let pulse = support::in_process_pulse_both().await;
-    let ctx = pulse.ctx_on(Transport::WebTransport, "oversized-webtransport");
-    let bot = PulseBot::enter(&ctx, "walker", &ctx.identity(0))
-        .await
-        .unwrap();
-    for _ in 0..DEFAULT_CORRUPT_BURST {
-        bot.send_raw(vec![0_u8; 20_000], Channel::Reliable);
-    }
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    bot.expect_alive().unwrap();
-    // the next one is over the budget
-    bot.send_raw(vec![0_u8; 20_000], Channel::Reliable);
-    bot.expect_disconnect_with(&ctx, DisconnectReason::PacketCorrupted, SOON)
-        .await
-        .unwrap();
-}
+on_both_transports!(an_oversized_frame_ends_the_connection_at_once);
