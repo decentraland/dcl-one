@@ -826,8 +826,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **A download checked against its content hash fails on a mismatch.** The failure follows
   the 10 s retry window for dropped transfers. The read that starts the download determines
   whether to check its bytes. Other reads joining the same URL share its result, which can be
-  unchecked if the first read used a URL key or a name the check cannot verify. Only matching
-  downloads can populate the content-hash cache. All 4574 sampled files from live scenes, worlds,
+  unchecked if the first read used a URL key or a name the check cannot verify. A read under an
+  unverifiable content name stays uncached. The content-hash cache serves every origin, so it
+  accepts only verified bytes. All 4574 sampled files from live scenes, worlds,
   wearables and emotes matched.
 - **Camera layers are identified by entity**, not by an explicit layer number; the cleanup in
   #1320 waits on the protocol change.

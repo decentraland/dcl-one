@@ -508,7 +508,7 @@ mod io {
     }
 
     /// Stores verified `data` under the shared key when `url` names `hash`, then removes
-    /// any entry under the url's own key. The caller checks the bytes against `hash`.
+    /// a redundant URL entry left by an older worker. The caller checks the bytes against `hash`.
     pub(crate) async fn share(url: &str, hash: &str, data: &[u8]) -> Result<(), JsValue> {
         if !names(url, hash) {
             return Ok(());

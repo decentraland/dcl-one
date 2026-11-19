@@ -428,6 +428,7 @@ impl IpfsIo {
         let data = SharedBytes(Arc::new(fetched.body));
 
         // The starting read's key determines the check for every reader sharing the download.
+        // A cached content hash answers for every server, so only verified bytes belong under it.
         let verified = match &cache_key {
             Some(CacheKey::Content(hash)) => match content_hash::check_content_hash(hash, &data) {
                 content_hash::Check::Matches => true,
