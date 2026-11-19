@@ -1,8 +1,15 @@
+import { privateKey } from '@/data/lib/creators/queryKeys'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { errorCode, track } from '@/data/lib/creators/analytics'
 import { sendContractTransaction, waitForTransaction, type Session } from '@/data/lib/creators/auth'
 import type { Collection } from '@/data/lib/creators/collections'
-import { buildSetRolesCall, diffRoles, getRoleAddresses, withRoles, type RoleKind } from '@/data/lib/creators/collectionRoles'
+import {
+  buildSetRolesCall,
+  diffRoles,
+  getRoleAddresses,
+  withRoles,
+  type RoleKind
+} from '@/data/lib/creators/collectionRoles'
 import { getMaticChainId } from '@/data/lib/creators/publishCollection'
 import { SellItemError } from '@/data/lib/creators/sales'
 
@@ -53,7 +60,7 @@ export function useSetCollectionRoles(session: Session | null) {
       track(roleEvent(kind), { collectionId: collection.id, count: next.length })
       if (!session) return
       savedInSession.set(sessionKey(session.address, collection, kind), next)
-      queryClient.setQueryData(['collection', session.address, collection.id], collection)
+      queryClient.setQueryData(privateKey(session.address, 'collection', collection.id), collection)
     },
     onError: (error, { collection, kind }) =>
       track(`${roleEvent(kind)} error`, { collectionId: collection.id, error: errorCode(error) })

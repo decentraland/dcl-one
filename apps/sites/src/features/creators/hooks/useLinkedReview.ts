@@ -1,3 +1,4 @@
+import { privateKey, privateDomain } from '@/data/lib/creators/queryKeys'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { errorCode, track } from '@/data/lib/creators/analytics'
@@ -34,7 +35,7 @@ import { itemCurationsKey, thirdPartyKey } from './useLinkedCollection'
 import { invalidateCollectionItems } from './usePublishCollection'
 
 export function pendingLinkedItemsKey(address: string | undefined, collectionId: string | undefined) {
-  return ['linked-pending-items', address, collectionId] as const
+  return privateKey(address, 'linked-pending-items', collectionId)
 }
 
 /** Every item of a linked collection waiting for review (committee and managers). */
@@ -104,8 +105,8 @@ export function useLinkedApprovalFlow(
     void queryClient.invalidateQueries({ queryKey: itemCurationsKey(address, collection.id) })
     void queryClient.invalidateQueries({ queryKey: pendingLinkedItemsKey(address, collection.id) })
     void queryClient.invalidateQueries({ queryKey: thirdPartyKey(address, thirdParty.id) })
-    void queryClient.invalidateQueries({ queryKey: ['curations'] })
-    void queryClient.invalidateQueries({ queryKey: ['curation-collections'] })
+    void queryClient.invalidateQueries(privateDomain('curations'))
+    void queryClient.invalidateQueries(privateDomain('curation-collections'))
   }, [queryClient, address, collection.id, thirdParty.id])
 
   const fail = useCallback(
@@ -318,7 +319,7 @@ export function useReviewThirdParty(session: Session | null) {
       track(approved ? 'Enable third party' : 'Disable third party', { thirdPartyId: thirdParty.id, txHash })
       if (!session) return
       queryClient.setQueryData(thirdPartyKey(session.address, thirdParty.id), indexed)
-      void queryClient.invalidateQueries({ queryKey: ['curation-collections'] })
+      void queryClient.invalidateQueries(privateDomain('curation-collections'))
     },
     onError: (error, { thirdParty, approved }) => {
       track(approved ? 'Enable third party error' : 'Disable third party error', {

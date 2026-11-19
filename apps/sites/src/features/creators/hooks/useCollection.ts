@@ -1,3 +1,4 @@
+import { privateKey, privateDomain } from '@/data/lib/creators/queryKeys'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { errorCode, track } from '@/data/lib/creators/analytics'
 import { fetchAllCollectionItems, fetchCollection, saveCollection, deleteCollection } from '@/data/lib/creators/builder'
@@ -15,7 +16,7 @@ export const ITEMS_PAGE_SIZE = 20
 
 export function useCollection(address: string | undefined, collectionId: string | undefined) {
   return useQuery({
-    queryKey: ['collection', address, collectionId],
+    queryKey: privateKey(address, 'collection', collectionId),
     queryFn: () => fetchCollection(address!, collectionId!),
     enabled: !!address && !!collectionId,
     staleTime: 30_000
@@ -41,7 +42,7 @@ export function useCollectionStatus(
 /** Every item of the collection: the detail page filters and pages them client-side. */
 /** The cache key of the all-items query, so callers can read or patch it without restating it. */
 export function allCollectionItemsKey(address: string | undefined, collectionId: string | undefined) {
-  return ['collection-items-all', address, collectionId] as const
+  return privateKey(address, 'collection-items-all', collectionId)
 }
 
 export function useAllCollectionItems(address: string | undefined, collectionId: string | undefined) {
@@ -71,8 +72,8 @@ export function useSaveCollection(address: string | undefined) {
     },
     onSuccess: saved => {
       track('Save collection', { collectionId: saved.id, item_count: saved.itemCount })
-      queryClient.setQueryData(['collection', address, saved.id], saved)
-      void queryClient.invalidateQueries({ queryKey: ['collections'] })
+      queryClient.setQueryData(privateKey(address, 'collection', saved.id), saved)
+      void queryClient.invalidateQueries(privateDomain('collections'))
     },
     onError: (error, collection) =>
       track('Save collection error', { collectionId: collection.id, error: errorCode(error) })
@@ -89,16 +90,16 @@ export function useDeleteCollection(address: string | undefined) {
     },
     onSuccess: async collectionId => {
       track('Delete collection', { collectionId })
-      queryClient.removeQueries({ queryKey: ['collection', address, collectionId] })
-      queryClient.removeQueries({ queryKey: ['collection-preview', address, collectionId] })
+      queryClient.removeQueries({ queryKey: privateKey(address, 'collection', collectionId) })
+      queryClient.removeQueries({ queryKey: privateKey(address, 'collection-preview', collectionId) })
       // The lists keep their previous data on screen while they refetch: drop the deleted collection from them
       // first, or its row mounts again and its cover requests previews of a collection that is gone (a 404).
       // A list fetch that started before the delete would write the old page back, so cancel it first.
-      await queryClient.cancelQueries({ queryKey: ['collections', address] })
-      queryClient.setQueriesData({ queryKey: ['collections', address] }, (data: unknown) =>
+      await queryClient.cancelQueries({ queryKey: privateKey(address, 'collections') })
+      queryClient.setQueriesData({ queryKey: privateKey(address, 'collections') }, (data: unknown) =>
         withoutCollection(data, collectionId)
       )
-      void queryClient.invalidateQueries({ queryKey: ['collections'] })
+      void queryClient.invalidateQueries(privateDomain('collections'))
     },
     onError: (error, collectionId) => track('Delete collection error', { collectionId, error: errorCode(error) })
   })

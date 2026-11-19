@@ -1,3 +1,4 @@
+import { privateKey, privateDomain } from '@/data/lib/creators/queryKeys'
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Button } from '../../Button'
@@ -25,7 +26,13 @@ import type { SpringBoneParamsByName } from '@/data/lib/creators/springBones'
 import { errorCode, track } from '@/data/lib/creators/analytics'
 import { captureError } from '@/data/lib/creators/monitoring'
 import type { ItemSize } from '@/data/lib/creators/itemSize'
-import { executeUpload, findDuplicateUrns, planDraftUpload, planUpload, type UploadDraft } from '@/data/lib/creators/uploadItems'
+import {
+  executeUpload,
+  findDuplicateUrns,
+  planDraftUpload,
+  planUpload,
+  type UploadDraft
+} from '@/data/lib/creators/uploadItems'
 import {
   addItemsReducer,
   createDraft,
@@ -363,9 +370,9 @@ export function AddItemsModal({ collection, address, files, prefill, onClose, up
         )
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: allCollectionItemsKey(address, collection.id) }),
-          queryClient.invalidateQueries({ queryKey: ['collection', address, collection.id] }),
-          queryClient.invalidateQueries({ queryKey: ['collection-preview', address, collection.id] }),
-          queryClient.invalidateQueries({ queryKey: ['collections'] }),
+          queryClient.invalidateQueries({ queryKey: privateKey(address, 'collection', collection.id) }),
+          queryClient.invalidateQueries({ queryKey: privateKey(address, 'collection-preview', collection.id) }),
+          queryClient.invalidateQueries(privateDomain('collections')),
           // Linked collections page their items and curations server-side under their own keys.
           queryClient.invalidateQueries({ queryKey: linkedItemsKey(address, collection.id) }),
           queryClient.invalidateQueries({ queryKey: itemCurationsKey(address, collection.id) })

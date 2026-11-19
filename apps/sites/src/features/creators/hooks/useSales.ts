@@ -1,3 +1,4 @@
+import { privateKey } from '@/data/lib/creators/queryKeys'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { TradeCreation } from '@dcl/schemas'
 import {
@@ -15,7 +16,13 @@ import { fetchFriends } from '@/data/lib/creators/friends'
 import type { Item } from '@/data/lib/creators/items'
 import { fetchItemTradeId, type ItemListing } from '@/data/lib/creators/listings'
 import { fetchManaUsdRate } from '@/data/lib/creators/manaRate'
-import { buildIssueTokensCall, copiesPerItem, flattenTransfers, sendBatchSize, type Transfer } from '@/data/lib/creators/mint'
+import {
+  buildIssueTokensCall,
+  copiesPerItem,
+  flattenTransfers,
+  sendBatchSize,
+  type Transfer
+} from '@/data/lib/creators/mint'
 import { captureError } from '@/data/lib/creators/monitoring'
 import { isExpectedWalletError } from '@/data/lib/creators/walletErrors'
 import { getMaticChainId } from '@/data/lib/creators/publishCollection'
@@ -65,7 +72,7 @@ export function useEnableSales(session: Session | null) {
     onSuccess: collection => {
       track('Enable sales', { collectionId: collection.id })
       enabledInSession.add(collection.id)
-      queryClient.setQueryData(['collection', session?.address, collection.id], collection)
+      queryClient.setQueryData(privateKey(session?.address, 'collection', collection.id), collection)
     },
     onError: (error, { collection }) =>
       track('Enable sales error', { collectionId: collection.id, error: errorCode(error) })
@@ -293,7 +300,7 @@ export function useManaUsdRate(enabled: boolean) {
 /** The creator's friends, loaded once the beneficiary picker needs them. */
 export function useFriends(session: Session | null, enabled: boolean) {
   return useQuery({
-    queryKey: ['friends', session?.address],
+    queryKey: privateKey(session?.address, 'friends'),
     queryFn: () => fetchFriends(session!.address),
     enabled: !!session && enabled,
     staleTime: 5 * 60_000

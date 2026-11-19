@@ -1,3 +1,4 @@
+import { privateKey } from '@/data/lib/creators/queryKeys'
 import { useCallback, useMemo } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import {
@@ -48,7 +49,7 @@ export function useFetchLinkedItems(address: string, collectionId: string) {
 export const LINKED_ITEMS_PAGE_SIZE = 50
 
 export function itemCurationsKey(address: string | undefined, collectionId: string | undefined) {
-  return ['item-curations', address, collectionId] as const
+  return privateKey(address, 'item-curations', collectionId)
 }
 
 /** The latest curation of each item of a linked collection, keyed by item id. */
@@ -64,7 +65,7 @@ export function useItemCurations(address: string | undefined, collection: Collec
 }
 
 export function thirdPartyKey(address: string | undefined, thirdPartyId: string | undefined) {
-  return ['third-party', address, thirdPartyId] as const
+  return privateKey(address, 'third-party', thirdPartyId)
 }
 
 /** The linked collection's third party: its name for the header, its managers for access, its kind and root. */
@@ -80,11 +81,11 @@ export function useThirdParty(address: string | undefined, collection: Collectio
 }
 
 export function thirdPartySlotsKey(address: string | undefined, thirdPartyId: string | undefined) {
-  return ['third-party-slots', address, thirdPartyId] as const
+  return privateKey(address, 'third-party-slots', thirdPartyId)
 }
 
 export function linkedItemsKey(address: string | undefined, collectionId: string | undefined) {
-  return ['linked-items', address, collectionId] as const
+  return privateKey(address, 'linked-items', collectionId)
 }
 
 /** One server-filtered page of a linked collection's items. */

@@ -1,3 +1,4 @@
+import { privateKey } from '@/data/lib/creators/queryKeys'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { fetchCollectionItemPreviews, fetchCollections } from '@/data/lib/creators/builder'
 import {
@@ -26,7 +27,7 @@ export function useCollections(
   { page, search, status, sort, limit = COLLECTIONS_PAGE_SIZE, includeLinked = false }: CollectionsFilters
 ) {
   return useQuery({
-    queryKey: ['collections', address, page, search, status, sort, limit, includeLinked],
+    queryKey: privateKey(address, 'collections', page, search, status, sort, limit, includeLinked),
     queryFn: () =>
       fetchCollections(address!, {
         page,
@@ -50,7 +51,7 @@ export function useCollections(
  */
 export function useCollectionsSummary(address: string | undefined, search: string) {
   return useQuery({
-    queryKey: ['collections', address, 'summary', search],
+    queryKey: privateKey(address, 'collections', 'summary', search),
     queryFn: () => fetchCollections(address!, { page: 1, limit: 1, q: search || undefined }),
     enabled: !!address,
     placeholderData: keepPreviousData,
@@ -62,7 +63,7 @@ export function useCollectionsSummary(address: string | undefined, search: strin
 /** First 4 item thumbnails of a collection, for the 2x2 mosaic cover. */
 export function useCollectionPreview(address: string | undefined, collectionId: string, itemCount: number) {
   return useQuery({
-    queryKey: ['collection-preview', address, collectionId],
+    queryKey: privateKey(address, 'collection-preview', collectionId),
     queryFn: () => fetchCollectionItemPreviews(address, collectionId),
     enabled: !!address && itemCount > 0,
     staleTime: 5 * 60_000
@@ -75,7 +76,7 @@ const ALL_DRAFTS_LIMIT = 1000
 /** Every draft standard collection of the creator, for picking where to move an item. */
 export function useDraftCollections(address: string | undefined, enabled = true) {
   return useQuery({
-    queryKey: ['collections', address, 'drafts'],
+    queryKey: privateKey(address, 'collections', 'drafts'),
     queryFn: () =>
       fetchCollections(address!, {
         page: 1,

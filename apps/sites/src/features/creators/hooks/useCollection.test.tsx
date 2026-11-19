@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { privateKey } from '@/data/lib/creators/queryKeys'
 import '@/data/lib/creators/test/setup'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHook, waitFor } from '@testing-library/react'
@@ -8,7 +9,10 @@ import type { Collection, CollectionsList } from '@/data/lib/creators/collection
 
 const api = vi.hoisted(() => ({ deleteCollection: vi.fn() }))
 vi.mock('@/data/lib/creators/builder', async importOriginal => ({ ...(await importOriginal<object>()), ...api }))
-vi.mock('@/data/lib/creators/analytics', async importOriginal => ({ ...(await importOriginal<object>()), track: vi.fn() }))
+vi.mock('@/data/lib/creators/analytics', async importOriginal => ({
+  ...(await importOriginal<object>()),
+  track: vi.fn()
+}))
 
 const { useDeleteCollection } = await import('./useCollection')
 
@@ -35,8 +39,8 @@ beforeEach(() => {
 })
 
 describe('when a collection is deleted', () => {
-  const listKey = ['collections', OWNER, 1, '', 'all', undefined, 8, false]
-  const previewKey = ['collection-preview', OWNER, 'deleted']
+  const listKey = privateKey(OWNER, 'collections', 1, '', 'all', undefined, 8, false)
+  const previewKey = privateKey(OWNER, 'collection-preview', 'deleted')
 
   beforeEach(() => {
     client.setQueryData(listKey, page([kept, deleted]))
@@ -71,7 +75,7 @@ describe('when a collection is deleted', () => {
 describe('when the delete fails', () => {
   it('keeps the collection in the cached lists', async () => {
     api.deleteCollection.mockRejectedValue(new Error('boom'))
-    const listKey = ['collections', OWNER, 1, '', 'all', undefined, 8, false]
+    const listKey = privateKey(OWNER, 'collections', 1, '', 'all', undefined, 8, false)
     client.setQueryData(listKey, page([kept, deleted]))
     const { result } = renderDelete(client)
 

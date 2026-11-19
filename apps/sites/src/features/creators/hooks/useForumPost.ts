@@ -1,3 +1,4 @@
+import { privateKey, privateDomain } from '@/data/lib/creators/queryKeys'
 import { useEffect } from 'react'
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { createCollectionForumPost, createCurationForumReply, fetchCollection } from '@/data/lib/creators/builder'
@@ -19,7 +20,7 @@ export function postToForum(
   collection: Collection,
   source: ForumPostSource
 ): Promise<void> {
-  const key = ['collection', address, collection.id]
+  const key = privateKey(address, 'collection', collection.id)
   return postCollectionToForum(collection, source, {
     createPost: id => createCollectionForumPost(address, id),
     fetchForumLink: async id => (await fetchCollection(address, id)).forumLink,
@@ -31,8 +32,8 @@ export function postToForum(
       if (forumLink) queryClient.setQueryData<Collection>(key, current => current && { ...current, forumLink })
       else void queryClient.invalidateQueries({ queryKey: key })
       // Lists show the link too (curation's Discussion column).
-      void queryClient.invalidateQueries({ queryKey: ['curation-collections'] })
-      void queryClient.invalidateQueries({ queryKey: ['collections'] })
+      void queryClient.invalidateQueries(privateDomain('curation-collections'))
+      void queryClient.invalidateQueries(privateDomain('collections'))
     }
   })
 }

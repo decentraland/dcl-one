@@ -1,3 +1,4 @@
+import { privateKey } from '@/data/lib/creators/queryKeys'
 import { useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
@@ -21,7 +22,7 @@ export function useCollectionByContractLink(address: string | undefined): { isRe
 
   // Always refetched on mount, since a cached answer may predate the collection's deployment.
   const collections = useQuery({
-    queryKey: ['collections', address, 'contract', contract?.toLowerCase()],
+    queryKey: privateKey(address, 'collections', 'contract', contract?.toLowerCase()),
     queryFn: async () => (await fetchCollections(address!, { contractAddress: contract!, page: 1, limit: 1 })).results,
     enabled: !!address && isValid,
     refetchOnMount: 'always',

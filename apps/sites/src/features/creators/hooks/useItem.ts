@@ -1,3 +1,4 @@
+import { privateDomain } from '@/data/lib/creators/queryKeys'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Entity } from '@dcl/schemas'
 import { errorCode, track } from '@/data/lib/creators/analytics'
@@ -18,9 +19,9 @@ export function useMoveItem(address: string | undefined) {
     // Both collections change, so every collection query is refetched rather than the two by id.
     onSuccess: (_, { item, collectionId }) => {
       track('Move item', { itemId: item.id, collectionId })
-      void queryClient.invalidateQueries({ queryKey: ['collection-items-all'] })
-      void queryClient.invalidateQueries({ queryKey: ['collection'] })
-      void queryClient.invalidateQueries({ queryKey: ['collections'] })
+      void queryClient.invalidateQueries(privateDomain('collection-items-all'))
+      void queryClient.invalidateQueries(privateDomain('collection'))
+      void queryClient.invalidateQueries(privateDomain('collections'))
     },
     onError: (error, { item }) => track('Move item error', { itemId: item.id, error: errorCode(error) })
   })

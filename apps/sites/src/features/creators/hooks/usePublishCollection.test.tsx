@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { privateKey } from '@/data/lib/creators/queryKeys'
 import '@/data/lib/creators/test/setup'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -30,13 +31,13 @@ const other = { collectionId: 'c9', status: 'approved', assignee: null } as Coll
 let queryClient: QueryClient
 
 const shownCuration = () => queryClient.getQueryData(collectionCurationKey(address, collection.id))
-const listedCurations = () => queryClient.getQueryData<CollectionCuration[]>(['curations', address])
+const listedCurations = () => queryClient.getQueryData<CollectionCuration[]>(privateKey(address, 'curations'))
 
 beforeEach(() => {
   vi.clearAllMocks()
   queryClient = new QueryClient()
   queryClient.setQueryData(collectionCurationKey(address, collection.id), null)
-  queryClient.setQueryData(['curations', address], [other])
+  queryClient.setQueryData(privateKey(address, 'curations'), [other])
   api.fetchCollectionCuration.mockResolvedValue(null)
 })
 

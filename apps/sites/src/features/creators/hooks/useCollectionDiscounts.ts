@@ -1,3 +1,4 @@
+import { privateKey } from '@/data/lib/creators/queryKeys'
 import { useEffect, useMemo, useState } from 'react'
 import { useIsMutating, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import {
@@ -158,7 +159,7 @@ export function useDiscountInFlight({ collectionId, discountId }: { collectionId
   return { creating: creating > 0, ending: ending > 0 }
 }
 
-const discountsKey = (address: string | undefined) => ['collection-discounts', address?.toLowerCase()]
+const discountsKey = (address: string | undefined) => privateKey(address, 'collection-discounts')
 
 // What the server itself last answered, per account, apart from the query cache this app patches for display:
 // only a real server read may settle a recorded cancellation.
@@ -206,7 +207,7 @@ export function useCollectionDiscounts(address: string | undefined, contractAddr
   }, [])
   // Polled while any cancellation is unsettled, including one sent before a reload; re-run on every server read.
   const reconcile = useQuery({
-    queryKey: ['collection-discount-ends', address?.toLowerCase(), query.dataUpdatedAt],
+    queryKey: privateKey(address, 'collection-discount-ends', query.dataUpdatedAt),
     queryFn: () => reconcilePendingEnds(address!, serverReads.get(address!.toLowerCase())?.rows),
     enabled: !!address && !!contractAddress && query.isSuccess,
     refetchInterval: () => (address ? pollEvery(pendingEnds(address).filter(end => !end.minedAt)) : false)
@@ -408,7 +409,7 @@ export function useEndDiscount(session: Session | null) {
       if (session) {
         if (toDiscountError(error).reason !== 'pending') clearPendingEnd(session.address, discount.id)
         updateDiscounts(queryClient, session.address, current => [...current])
-        void queryClient.invalidateQueries({ queryKey: ['collection-discount-ends', session.address.toLowerCase()] })
+        void queryClient.invalidateQueries({ queryKey: privateKey(session.address, 'collection-discount-ends') })
       }
       if (isReportable(error)) {
         captureError(error, { flow: 'end_collection_discount', collectionId: collection.id, discountId: discount.id })

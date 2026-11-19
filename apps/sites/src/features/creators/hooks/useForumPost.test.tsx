@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { privateKey } from '@/data/lib/creators/queryKeys'
 import '@/data/lib/creators/test/setup'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
@@ -45,14 +46,15 @@ beforeEach(() => {
 
 describe('postToForum', () => {
   it('writes the new topic link into the cached collection and refreshes the lists', async () => {
-    const invalidate = vi.spyOn(client, 'invalidateQueries')
-    client.setQueryData(['collection', OWNER, 'h1'], collection('h1'))
+    const queue = privateKey(OWNER, 'curation-collections', {})
+    client.setQueryData(queue, [])
+    client.setQueryData(privateKey(OWNER, 'collection', 'h1'), collection('h1'))
 
     await postToForum(client, OWNER, collection('h1'), 'publish')
 
     expect(api.createCollectionForumPost).toHaveBeenCalledWith(OWNER, 'h1')
-    expect(client.getQueryData<Collection>(['collection', OWNER, 'h1'])?.forumLink).toBe(LINK)
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['curation-collections'] })
+    expect(client.getQueryData<Collection>(privateKey(OWNER, 'collection', 'h1'))?.forumLink).toBe(LINK)
+    expect(client.getQueryState(queue)?.isInvalidated).toBe(true)
   })
 })
 

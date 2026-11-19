@@ -1,3 +1,4 @@
+import { privateKey, privateDomain } from '@/data/lib/creators/queryKeys'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { errorCode, track } from '@/data/lib/creators/analytics'
 import {
@@ -113,8 +114,8 @@ export function usePublishLinkedItems(session: Session, collection: Collection) 
     })
     void queryClient.invalidateQueries({ queryKey: thirdPartyKey(address, variables.thirdParty.id) })
     void queryClient.invalidateQueries({ queryKey: thirdPartySlotsKey(address, variables.thirdParty.id) })
-    void queryClient.invalidateQueries({ queryKey: ['collections'] })
-    void queryClient.invalidateQueries({ queryKey: ['mana-balance', address] })
+    void queryClient.invalidateQueries(privateDomain('collections'))
+    void queryClient.invalidateQueries({ queryKey: privateKey(address, 'mana-balance') })
     invalidateCollectionItems(queryClient, collection.id)
   }
   return useMutation({
@@ -139,7 +140,8 @@ export function usePublishLinkedItems(session: Session, collection: Collection) 
         }
       ),
     onSuccess: (result, variables) => {
-      if (result.collection) queryClient.setQueryData(['collection', address, collection.id], result.collection)
+      if (result.collection)
+        queryClient.setQueryData(privateKey(address, 'collection', collection.id), result.collection)
       published(variables, result.txHash)
     },
     onError: (error, variables) => {

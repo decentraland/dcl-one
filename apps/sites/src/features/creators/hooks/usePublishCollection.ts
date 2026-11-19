@@ -1,5 +1,6 @@
+import { privateKey, privateDomain } from '@/data/lib/creators/queryKeys'
 import { useEffect, useMemo } from 'react'
-import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient, type Query, type QueryClient } from '@tanstack/react-query'
 import { ContractName, getContract } from '@/data/lib/creators/chain/contracts'
 import { errorCode, track } from '@/data/lib/creators/analytics'
 import { captureError } from '@/data/lib/creators/monitoring'
@@ -67,21 +68,11 @@ export function useApproveMana(session: Session | null) {
 }
 
 export function invalidateCollectionItems(queryClient: ReturnType<typeof useQueryClient>, collectionId: string) {
-  void queryClient.invalidateQueries({
-    queryKey: ['collection-items-all'],
-    predicate: q => q.queryKey.includes(collectionId)
-  })
-  void queryClient.invalidateQueries({ queryKey: ['collection'], predicate: q => q.queryKey.includes(collectionId) })
-  void queryClient.invalidateQueries({
-    queryKey: ['collection-preview'],
-    predicate: q => q.queryKey.includes(collectionId)
-  })
+  const ofCollection = (query: Query) => query.queryKey.includes(collectionId)
   // Linked collections page their items and curations server-side under their own keys.
-  void queryClient.invalidateQueries({ queryKey: ['linked-items'], predicate: q => q.queryKey.includes(collectionId) })
-  void queryClient.invalidateQueries({
-    queryKey: ['item-curations'],
-    predicate: q => q.queryKey.includes(collectionId)
-  })
+  for (const domain of ['collection-items-all', 'collection', 'collection-preview', 'linked-items', 'item-curations']) {
+    void queryClient.invalidateQueries(privateDomain(domain, ofCollection))
+  }
 }
 
 export function useDeleteItem(address: string | undefined) {
@@ -151,10 +142,10 @@ export function usePublishCollection(session: Session | null) {
         isRetry: isCollectionLocked(submitted)
       })
       const address = session?.address
-      queryClient.setQueryData(['collection', address, collection.id], collection)
-      void queryClient.invalidateQueries({ queryKey: ['collections'] })
-      void queryClient.invalidateQueries({ queryKey: ['credits-balance', address] })
-      void queryClient.invalidateQueries({ queryKey: ['mana-balance', address] })
+      queryClient.setQueryData(privateKey(address, 'collection', collection.id), collection)
+      void queryClient.invalidateQueries(privateDomain('collections'))
+      void queryClient.invalidateQueries({ queryKey: privateKey(address, 'credits-balance') })
+      void queryClient.invalidateQueries({ queryKey: privateKey(address, 'mana-balance') })
       // Detached on purpose: the modal closes right away and the server catches up on its own.
       usePublishSyncStore.getState().start(collection.id)
       const { contractAddress } = collection

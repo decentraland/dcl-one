@@ -1,3 +1,4 @@
+import { privateKey, privateDomain } from '@/data/lib/creators/queryKeys'
 import { useMemo } from 'react'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
@@ -53,11 +54,11 @@ export function useCuratorOptions(address: string | undefined, leading: CuratorO
 }
 
 export function collectionCurationKey(address: string | undefined, collectionId: string | undefined) {
-  return ['collection-curation', address, collectionId] as const
+  return privateKey(address, 'collection-curation', collectionId)
 }
 
 export function collectionEventsKey(address: string | undefined, collectionId: string | undefined) {
-  return ['collection-events', address, collectionId] as const
+  return privateKey(address, 'collection-events', collectionId)
 }
 
 /** The collection's latest review request, `null` when it was never requested. */
@@ -74,7 +75,7 @@ export function useCollectionCuration(address: string | undefined, collection: C
 /** Every collection's latest review request, keyed by collection id; the list endpoint doesn't carry them. */
 export function useCurationsByCollection(address: string | undefined, enabled: boolean) {
   const query = useQuery({
-    queryKey: ['curations', address],
+    queryKey: privateKey(address, 'curations'),
     queryFn: () => fetchCurations(address!),
     enabled: !!address && enabled,
     staleTime: 30_000
@@ -88,7 +89,7 @@ export function useCurationsByCollection(address: string | undefined, enabled: b
 
 export function useCurationCollections(address: string | undefined, filters: CurationFilters, enabled: boolean) {
   return useQuery({
-    queryKey: ['curation-collections', address, filters],
+    queryKey: privateKey(address, 'curation-collections', filters),
     queryFn: () => fetchCurationCollections(address!, filters),
     enabled: !!address && enabled,
     placeholderData: keepPreviousData,
@@ -100,16 +101,16 @@ export function useCurationCollections(address: string | undefined, filters: Cur
 export function refreshReview(queryClient: QueryClient, address: string | undefined, collectionId: string) {
   void queryClient.invalidateQueries({ queryKey: collectionEventsKey(address, collectionId) })
   void queryClient.invalidateQueries({ queryKey: collectionCurationKey(address, collectionId) })
-  void queryClient.invalidateQueries({ queryKey: ['curations', address] })
+  void queryClient.invalidateQueries({ queryKey: privateKey(address, 'curations') })
 }
 
 /** Shows a collection's new latest curation everywhere it is read, without refetching. */
 export function storeCuration(queryClient: QueryClient, address: string | undefined, curation: CollectionCuration) {
   queryClient.setQueryData(collectionCurationKey(address, curation.collectionId), curation)
-  queryClient.setQueryData<CollectionCuration[]>(['curations', address], current =>
+  queryClient.setQueryData<CollectionCuration[]>(privateKey(address, 'curations'), current =>
     current ? [...current.filter(existing => existing.collectionId !== curation.collectionId), curation] : current
   )
-  void queryClient.invalidateQueries({ queryKey: ['curation-collections'] })
+  void queryClient.invalidateQueries(privateDomain('curation-collections'))
   void queryClient.invalidateQueries({ queryKey: collectionEventsKey(address, curation.collectionId) })
 }
 
@@ -185,7 +186,7 @@ export function useRejectCuration(address: string | undefined) {
     onError: (error, { collection }) => {
       // The request may have been opened before the rejection failed; a retry must PATCH it, not POST again.
       void queryClient.invalidateQueries({ queryKey: collectionCurationKey(address, collection.id) })
-      void queryClient.invalidateQueries({ queryKey: ['curations', address] })
+      void queryClient.invalidateQueries({ queryKey: privateKey(address, 'curations') })
       track('Reject curation error', { collectionId: collection.id, error: errorCode(error) })
       captureError(error, { flow: 'curation_reject', collectionId: collection.id })
     }
@@ -252,8 +253,8 @@ export function useDisableCollection(session: Session | null) {
       // The legacy builder named the on-chain disable "Reject collection".
       track('Reject collection', { collectionId: collection.id, txHash })
       if (!session) return
-      queryClient.setQueryData<Collection>(['collection', session.address, collection.id], indexed)
-      void queryClient.invalidateQueries({ queryKey: ['curation-collections'] })
+      queryClient.setQueryData<Collection>(privateKey(session.address, 'collection', collection.id), indexed)
+      void queryClient.invalidateQueries(privateDomain('curation-collections'))
     },
     onError: (error, { collection }) => {
       track('Reject collection error', { collectionId: collection.id, error: errorCode(error) })

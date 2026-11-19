@@ -1,3 +1,4 @@
+import { privateKey, privateDomain } from '@/data/lib/creators/queryKeys'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { Entity } from '@dcl/schemas'
@@ -220,8 +221,8 @@ export function useApprovalFlow(
     void queryClient.invalidateQueries({ queryKey: allCollectionItemsKey(address, collection.id) })
     void queryClient.invalidateQueries({ queryKey: collectionCurationKey(address, collection.id) })
     void queryClient.invalidateQueries({ queryKey: ['item-entities', collection.id] })
-    void queryClient.invalidateQueries({ queryKey: ['curations'] })
-    void queryClient.invalidateQueries({ queryKey: ['curation-collections'] })
+    void queryClient.invalidateQueries(privateDomain('curations'))
+    void queryClient.invalidateQueries(privateDomain('curation-collections'))
   }, [queryClient, address, collection.id])
 
   // Legacy left a pending request open after approving on chain, so the collection kept asking to be approved.
@@ -413,7 +414,7 @@ export function useApprovalFlow(
             fetched => fetched.isApproved,
             APPROVAL_INDEX_TIMEOUT_MS
           ).catch(() => ({ ...collection, isApproved: true }))
-          queryClient.setQueryData<Collection>(['collection', address, collection.id], indexed)
+          queryClient.setQueryData<Collection>(privateKey(address, 'collection', collection.id), indexed)
           await complete(token)
         } catch (error) {
           track(mode === 'enable' ? 'Enable collection error' : 'Approve collection error', {

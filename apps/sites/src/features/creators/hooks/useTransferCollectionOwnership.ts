@@ -1,3 +1,4 @@
+import { privateKey, privateDomain } from '@/data/lib/creators/queryKeys'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { errorCode, track } from '@/data/lib/creators/analytics'
 import { sendContractTransaction, waitForTransaction, type Session } from '@/data/lib/creators/auth'
@@ -37,16 +38,16 @@ export function useTransferCollectionOwnership(session: Session | null) {
       track('Transfer collection ownership', { collectionId: collection.id, newOwner: collection.owner })
       if (!session) return
       const address = session.address
-      queryClient.setQueryData(['collection', address, collection.id], collection)
-      void queryClient.invalidateQueries({ queryKey: ['collections'] })
+      queryClient.setQueryData(privateKey(address, 'collection', collection.id), collection)
+      void queryClient.invalidateQueries(privateDomain('collections'))
       // Detached on purpose, like the publish sync: the dialog moves on and the server catches up on its own.
       // The transfer is done either way, and the server also picks the new owner up on their first write.
       waitForOwnerSync(collection.id, collection.owner, {
         syncCollectionOwner: id => syncCollectionOwner(address, id)
       })
-        .then(synced => queryClient.setQueryData(['collection', address, collection.id], synced))
+        .then(synced => queryClient.setQueryData(privateKey(address, 'collection', collection.id), synced))
         .catch((error: unknown) => captureError(error, { flow: 'transfer_ownership', collectionId: collection.id }))
-        .finally(() => void queryClient.invalidateQueries({ queryKey: ['collections'] }))
+        .finally(() => void queryClient.invalidateQueries(privateDomain('collections')))
     },
     onError: (error, { collection }) =>
       track('Transfer collection ownership error', { collectionId: collection.id, error: errorCode(error) })

@@ -3,6 +3,7 @@ import '@/data/lib/creators/test/setup'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { privateKey } from '@/data/lib/creators/queryKeys'
 import type { ReactNode } from 'react'
 import type { ContractCall, Session } from '@/data/lib/creators/auth'
 import type { Collection } from '@/data/lib/creators/collections'
@@ -129,7 +130,9 @@ describe('useApprovalFlow', () => {
     await act(() => result.current.start())
     await act(() => result.current.runApprove())
     expect(api.fetchCollection).toHaveBeenCalledTimes(2)
-    expect(queryClient.getQueryData<Collection>(['collection', '0xme', 'c1'])).toMatchObject({ name: 'From server' })
+    expect(queryClient.getQueryData<Collection>(privateKey('0xme', 'collection', 'c1'))).toMatchObject({
+      name: 'From server'
+    })
     expect(result.current.view).toEqual({ kind: 'success' })
   })
 
@@ -138,7 +141,9 @@ describe('useApprovalFlow', () => {
     const { result } = renderFlow()
     await act(() => result.current.start())
     await act(() => result.current.runApprove())
-    expect(queryClient.getQueryData<Collection>(['collection', '0xme', 'c1'])).toMatchObject({ isApproved: true })
+    expect(queryClient.getQueryData<Collection>(privateKey('0xme', 'collection', 'c1'))).toMatchObject({
+      isApproved: true
+    })
     expect(result.current.view).toEqual({ kind: 'success' })
   })
 
@@ -151,7 +156,7 @@ describe('useApprovalFlow', () => {
   })
 
   it('closes the request opened after the flow started, e.g. by assigning the collection', async () => {
-    queryClient.setQueryData(['collection-curation', '0xme', 'c1'], pending)
+    queryClient.setQueryData(privateKey('0xme', 'collection-curation', 'c1'), pending)
     const { result } = renderFlow(collection, null)
     await act(() => result.current.start())
     await act(() => result.current.runApprove())

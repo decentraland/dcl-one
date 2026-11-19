@@ -1,3 +1,4 @@
+import { privateKey } from '@/data/lib/creators/queryKeys'
 import { useEffect, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from '@/data/lib/creators/intl'
@@ -36,7 +37,7 @@ export function TopUpOutcome({ address, orderId, onDone }: Props) {
     track('Credits checkout settled', { orderId, status, credits: creditsGranted ?? null })
     // The card was charged in every settled state but these two: the balance is worth re-reading.
     if (status !== 'abandoned' && status !== 'initiated') {
-      void queryClient.invalidateQueries({ queryKey: ['credits-balance', address] })
+      void queryClient.invalidateQueries({ queryKey: privateKey(address, 'credits-balance') })
     }
   }, [status, creditsGranted, orderId, address, queryClient])
 

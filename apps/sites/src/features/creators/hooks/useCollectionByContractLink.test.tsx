@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { privateKey } from '@/data/lib/creators/queryKeys'
 import '@/data/lib/creators/test/setup'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
@@ -94,7 +95,7 @@ describe('when a signed-in creator opens a contract link', () => {
 
   it('looks the contract up again when an older answer, read before the collection was deployed, is cached', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    client.setQueryData(['collections', OWNER, 'contract', CONTRACT.toLowerCase()], [])
+    client.setQueryData(privateKey(OWNER, 'collections', 'contract', CONTRACT.toLowerCase()), [])
     const { result } = renderLink(OWNER, undefined, client)
 
     await waitFor(() => expect(result.current.url).toBe('/create/collections/hats-1'))

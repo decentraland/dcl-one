@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { privateKey } from '@/data/lib/creators/queryKeys'
 import '@/data/lib/creators/test/setup'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
@@ -27,8 +28,8 @@ beforeEach(() => {
 function renderOutcome(outcome: CreditsOrderOutcome) {
   vi.mocked(pollCreditsOrder).mockResolvedValue(outcome)
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  queryClient.setQueryData(['credits-balance', ADDRESS], { credits: 0, balanceCents: 0 })
-  const balanceIsStale = () => queryClient.getQueryState(['credits-balance', ADDRESS])?.isInvalidated
+  queryClient.setQueryData(privateKey(ADDRESS, 'credits-balance'), { credits: 0, balanceCents: 0 })
+  const balanceIsStale = () => queryClient.getQueryState(privateKey(ADDRESS, 'credits-balance'))?.isInvalidated
   const onDone = vi.fn()
   render(
     <QueryClientProvider client={queryClient}>
