@@ -525,6 +525,11 @@ impl ChainIndex for RentalsIndex {
     }
 }
 
+/// Whether this index walks `venue`: only the mainnet Rentals contract.
+pub fn walks(venue: &str) -> bool {
+    venue.eq_ignore_ascii_case(RENTALS_MAINNET)
+}
+
 /// The asset's most recent rent at `venue`: its lessor and when it ends
 /// (unix seconds; the rentals subgraph's `endsAt`, block time plus days).
 pub async fn latest_rent(

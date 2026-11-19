@@ -195,6 +195,26 @@ fn naive_secs(secs: i64, fallback: chrono::NaiveDateTime) -> chrono::NaiveDateTi
         .unwrap_or(fallback)
 }
 
+/// Whether `signer` may list an asset the Rentals contract at `rentals` holds
+/// (it keeps the asset after a rent until claimed): the last rent there was
+/// theirs. `None` while the index is not ready to name that lessor; `false`
+/// at a contract the index does not walk (any but mainnet's).
+pub(super) async fn held_for_lessor(
+    pool: &sqlx::PgPool,
+    now: chrono::DateTime<chrono::Utc>,
+    rentals: &str,
+    latest_rent: Option<&(String, i64)>,
+    signer: &str,
+) -> Option<bool> {
+    if !super::index::walks(rentals) {
+        return Some(false);
+    }
+    if !super::index::ready(pool, now).await {
+        return None;
+    }
+    Some(latest_rent.is_some_and(|(lessor, _)| lessor.eq_ignore_ascii_case(signer)))
+}
+
 pub async fn create_rentals_listing(
     State(state): State<SharedState>,
     OriginalUri(original): OriginalUri,
@@ -259,13 +279,18 @@ pub async fn create_rentals_listing(
         Err(e) => return Err(ApiError::bad_request(e.to_string())),
     }
 
-    let latest_rent = super::index::latest_rent(
-        state.db.pool(),
-        rentals,
-        &body.contract_address,
-        &body.token_id,
-    )
-    .await?;
+    // Only the indexed contract has rents to read; elsewhere a rented asset is the contract's, so the owner check refuses it.
+    let latest_rent = if super::index::walks(rentals) {
+        super::index::latest_rent(
+            state.db.pool(),
+            rentals,
+            &body.contract_address,
+            &body.token_id,
+        )
+        .await?
+    } else {
+        None
+    };
     if latest_rent
         .as_ref()
         .is_some_and(|(_, ends_at)| *ends_at > now.timestamp())
@@ -281,21 +306,20 @@ pub async fn create_rentals_listing(
         Err(e) => return Ok(reader_unavailable(e)),
     };
 
-    // The Rentals contract keeps the asset after a rent until it is claimed; its last lessor may list it again.
-    let held_for_lessor = if nft.owner_address.eq_ignore_ascii_case(rentals) {
-        if !super::index::ready(state.db.pool(), now).await {
+    let relist = if nft.owner_address.eq_ignore_ascii_case(rentals) {
+        let Some(held) =
+            held_for_lessor(state.db.pool(), now, rentals, latest_rent.as_ref(), &signer).await
+        else {
             return Ok(unavailable(
                 Source::RentalsIndex,
                 "The asset is held by the Rentals contract and the rentals index is not ready to name its lessor",
             ));
-        }
-        latest_rent
-            .as_ref()
-            .is_some_and(|(lessor, _)| lessor.eq_ignore_ascii_case(&signer))
+        };
+        held
     } else {
         false
     };
-    if !nft.owner_address.eq_ignore_ascii_case(&signer) && !held_for_lessor {
+    if !nft.owner_address.eq_ignore_ascii_case(&signer) && !relist {
         return Err(ApiError::unauthorized(format!(
             "The owner of the NFT {} is not the lessor {}",
             nft.owner_address, signer

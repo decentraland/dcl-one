@@ -978,3 +978,26 @@ async fn a_running_rent_conflicts_and_an_ended_one_lets_its_lessor_relist() {
     assert_eq!(status, StatusCode::CREATED, "{out}");
     assert_eq!(out["data"]["rentalContractAddress"], RENTALS);
 }
+
+/// The index walks only the mainnet contract: off it no lessor is ever named,
+/// so an asset that contract holds is refused at once rather than waiting on
+/// a readiness that never comes; at mainnet's it waits for the index.
+#[tokio::test]
+async fn a_held_asset_off_the_indexed_contract_is_not_relisted() {
+    let sepolia = super::signature::rentals_contract(11_155_111).unwrap();
+    let now = chrono::Utc::now();
+    let last_rent = (LESSOR.to_string(), now.timestamp() - 86_400);
+    assert_eq!(
+        super::handlers::held_for_lessor(&lazy_pool(), now, sepolia, Some(&last_rent), LESSOR)
+            .await,
+        Some(false)
+    );
+
+    let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+        return;
+    };
+    assert_eq!(
+        super::handlers::held_for_lessor(&pool, now, RENTALS, Some(&last_rent), LESSOR).await,
+        None
+    );
+}

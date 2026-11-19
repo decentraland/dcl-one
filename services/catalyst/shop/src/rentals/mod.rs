@@ -24,7 +24,9 @@
 //!   contract's address); an asset whose last rent at that contract is
 //!   still running answers 409, and an asset the contract still holds may
 //!   be listed by that rent's lessor once the `rentals` index is ready (the
-//!   unavailable envelope until then).
+//!   unavailable envelope until then). The index walks only the mainnet
+//!   contract, so off mainnet no rent is read and an asset the contract
+//!   holds is refused as not the lessor's (401).
 //! - `PATCH /v1/rentals-listings/{id}`: the same reader refreshes the asset
 //!   row; behind the write switch; the same envelope without a reader (the
 //!   old crate answered the stored row unchanged, which presents stale
