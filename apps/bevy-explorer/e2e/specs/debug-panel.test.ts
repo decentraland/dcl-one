@@ -37,6 +37,8 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     .some((section) => section.title === 'Profiler')
   const target = readTarget()
   const nativeHud = explorer.console.kind === 'native'
+  const sidebarSettings = button('Sidebar settings')
+  await explorer.hud.wait(sidebarSettings)
   const launcher = button('Toggle debug panel')
   const launcherEnabled = await explorer.hud.isVisible(launcher)
   if (!nativeHud) {
@@ -45,7 +47,6 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
   } else if (target.native.bin) {
     assert.equal(launcherEnabled, target.native.args.includes('--debug-panel'))
   }
-  const sidebarSettings = button('Sidebar settings')
   if (nativeHud) {
     await explorer.hud.click(sidebarSettings)
     await explorer.hud.wait(button('Debug panel'))
