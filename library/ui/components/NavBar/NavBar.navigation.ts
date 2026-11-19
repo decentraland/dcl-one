@@ -27,7 +27,8 @@ export const decentralandNavigation: readonly DecentralandNavigationEntry[] = [
       { label: 'Places', href: '/places' }
     ]
   },
-  { id: 'shop', label: 'Shop', href: '/shop' },
+  // The overview itself: /shop only redirects to it, one more route request before the page.
+  { id: 'shop', label: 'Shop', href: '/shop/overview' },
   { id: 'create', label: 'Create', href: '/create' },
   { id: 'learn', label: 'Learn', href: '/blog' }
 ]

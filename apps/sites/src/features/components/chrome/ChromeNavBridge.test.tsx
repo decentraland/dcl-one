@@ -97,7 +97,7 @@ describe("ChromeNavBridge", () => {
   it("renders plain anchors without the bridge", () => {
     const html = renderToString(<DclTopBar variant="sites" active="shop" signedIn={false} />);
     expect(html).not.toContain("data-discover");
-    expect(html).toContain('href="/shop"');
+    expect(html).toContain('href="/shop/overview"');
   });
 });
 

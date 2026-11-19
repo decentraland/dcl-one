@@ -69,7 +69,8 @@ pub fn crash_batch(message: &str, source: &str) -> Option<(String, String)> {
         }),
         Utc::now(),
         uuid::Uuid::new_v4().to_string(),
-    );
+    )
+    .ok()?;
     let mut item = serde_json::to_value(&item).ok()?;
     if let (Some((flags, overridden)), Some(properties)) = (
         &snapshot.feature_flags,
