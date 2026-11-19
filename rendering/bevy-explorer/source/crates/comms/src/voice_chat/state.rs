@@ -752,6 +752,22 @@ impl CallState {
             }
             self.mic_wanted = false;
         }
+        // the server keeps the join's `muted`; others must see the promoted speaker's mic state
+        let muted = !self.mic_enabled;
+        if !was_speaker
+            && self.local_speaker
+            && self.kind == Kind::Community
+            && self.connected_once
+            && metadata.muted != muted
+        {
+            if let Some(community_id) = self.community_id.clone() {
+                effects.push(Effect::Rpc(Rpc::MuteSpeaker {
+                    community_id,
+                    address,
+                    muted,
+                }));
+            }
+        }
     }
 
     fn reply(&mut self, reply: Reply, effects: &mut Vec<Effect>) {
@@ -1357,8 +1373,15 @@ mod tests {
             0.0,
         );
         assert!(s.local_speaker);
-        // promoted: the mic stays down until toggled
-        assert!(effects.is_empty());
+        // promoted: the mic stays down until toggled, and the others are told so
+        assert_eq!(
+            effects,
+            vec![Effect::Rpc(Rpc::MuteSpeaker {
+                community_id: "c1".to_owned(),
+                address: me(),
+                muted: true
+            })]
+        );
         let effects = s.apply(Input::SetMic(true), 0.0);
         assert_eq!(
             effects,
@@ -1914,6 +1937,69 @@ mod tests {
             s.apply(Input::RoomConnected, 0.0),
             vec![Effect::Sound(Sound::Join)]
         );
+    }
+
+    #[test]
+    fn a_promotion_tells_the_server_the_mic_is_down_once() {
+        let mut s = state();
+        s.apply(Input::JoinCommunity("c1".to_owned()), 0.0);
+        s.apply(
+            Input::Reply(Reply::JoinCommunity(
+                "c1".to_owned(),
+                s.attempt,
+                Ok("livekit:c".to_owned()),
+            )),
+            0.0,
+        );
+        s.apply(Input::RoomConnected, 0.0);
+        let metadata = |is_speaker, muted| Input::ParticipantMetadata {
+            address: me(),
+            metadata: Metadata {
+                is_speaker,
+                muted,
+                ..Default::default()
+            },
+            raised_hand: false,
+        };
+        let muted = |muted| {
+            Effect::Rpc(Rpc::MuteSpeaker {
+                community_id: "c1".to_owned(),
+                address: me(),
+                muted,
+            })
+        };
+        // the join stamped `muted: false`
+        assert!(s.apply(metadata(false, false), 0.0).is_empty());
+        assert_eq!(s.apply(metadata(true, false), 0.0), vec![muted(true)]);
+        // the server's patch, a later update and a re-dial send nothing more
+        assert!(s.apply(metadata(true, true), 0.0).is_empty());
+        assert!(s.apply(metadata(true, false), 0.0).is_empty());
+        s.apply(
+            Input::RoomDisconnected {
+                terminal: false,
+                ending: CallEnding::ConnectionLost,
+            },
+            0.0,
+        );
+        assert_eq!(
+            s.apply(Input::RoomConnected, 0.0),
+            vec![Effect::Sound(Sound::Join)]
+        );
+        assert!(s.apply(metadata(true, true), 0.0).is_empty());
+        // toggles still report as today
+        assert_eq!(
+            s.apply(Input::SetMic(true), 0.0),
+            vec![Effect::SetCallMic(true), muted(false)]
+        );
+        s.apply(Input::CallMicChanged(true), 0.0);
+        // demotion only drops the mic
+        assert_eq!(
+            s.apply(metadata(false, false), 0.0),
+            vec![Effect::SetCallMic(false)]
+        );
+        s.apply(Input::CallMicChanged(false), 0.0);
+        // a speaker already shown muted is not told again
+        assert!(s.apply(metadata(true, true), 0.0).is_empty());
     }
 
     #[test]

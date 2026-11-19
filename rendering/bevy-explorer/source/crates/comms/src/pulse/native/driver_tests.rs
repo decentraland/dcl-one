@@ -140,3 +140,32 @@ fn abandoning_a_connection_tells_the_server_at_once() {
         Ok(PulseStatus::Failed(message)) if message == "gave up"
     ));
 }
+
+#[test]
+fn transient_socket_errors_leave_the_session_to_enets_timeout() {
+    for kind in [
+        ErrorKind::WouldBlock,
+        ErrorKind::ConnectionReset,
+        ErrorKind::ConnectionRefused,
+        ErrorKind::NetworkUnreachable,
+        ErrorKind::HostUnreachable,
+        ErrorKind::NetworkDown,
+    ] {
+        assert!(is_transient(&io::Error::from(kind)), "{kind:?}");
+    }
+    if let Some(code) = ENOBUFS {
+        assert!(is_transient(&io::Error::from_raw_os_error(code)));
+    }
+}
+
+#[test]
+fn other_socket_errors_still_end_the_session() {
+    for kind in [
+        ErrorKind::PermissionDenied,
+        ErrorKind::InvalidInput,
+        ErrorKind::AddrNotAvailable,
+        ErrorKind::Other,
+    ] {
+        assert!(!is_transient(&io::Error::from(kind)), "{kind:?}");
+    }
+}
