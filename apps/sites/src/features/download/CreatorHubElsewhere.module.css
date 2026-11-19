@@ -61,3 +61,14 @@
   outline: 2px solid var(--dcl-primary-primary);
   outline-offset: 2px;
 }
+
+/* The page's card stacks below 1024px, with its content centred. */
+@media (max-width: 1023.95px) {
+  .root {
+    align-items: center;
+    width: 100%;
+  }
+  .actions {
+    width: 100%;
+  }
+}

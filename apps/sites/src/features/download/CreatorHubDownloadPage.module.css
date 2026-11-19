@@ -89,6 +89,14 @@
     padding: 40px;
     min-height: auto;
   }
+  .info {
+    align-items: center;
+    width: 100%;
+    text-align: center;
+  }
+  .actions {
+    align-items: center;
+  }
   .banner {
     width: 100%;
     max-width: 400px;
