@@ -4,6 +4,14 @@ import { EventEmitter } from 'node:events';
 import {
   local_audio_track_set_enabled,
   local_audio_track_stop,
+  local_participant_can_publish,
+  local_participant_publish_track,
+  local_participant_unpublish_track,
+  local_track_publication_kind,
+  local_track_publication_sid,
+  local_track_publication_source,
+  remote_track_publication_set_subscribed,
+  remote_audio_track_set_volume,
   remote_track_pan_and_volume,
   room_connect,
   room_drop,
@@ -252,4 +260,131 @@ test('repeat subscribe disposes the previous rig and streaming attachment', asyn
   room_drop(room);
   assert.equal(attached.size, 0);
   assert.equal(connected.size, 0);
+});
+
+test('the microphone permission prompt releases the capture it opened', async (t) => {
+  const { promptMicrophonePermission } = await import('./livekit_web_bindings.js?prompt');
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  t.after(() => Object.defineProperty(globalThis, 'navigator', previous));
+  const stopped = [];
+  const stream = { getTracks: () => ['a', 'b'].map(id => ({ stop() { stopped.push(id); } })) };
+  let reply = Promise.resolve(stream);
+  const getUserMedia = () => reply;
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { mediaDevices: { getUserMedia } },
+    configurable: true,
+  });
+  const unhandled = [];
+  const onUnhandled = reason => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  t.after(() => process.off('unhandledRejection', onUnhandled));
+
+  promptMicrophonePermission();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(stopped, ['a', 'b']);
+
+  reply = Promise.reject(new Error('NotAllowedError'));
+  const previousWarn = console.warn;
+  console.warn = () => {};
+  t.after(() => { console.warn = previousWarn; });
+  promptMicrophonePermission();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(unhandled, []);
+});
+
+test('volume setters never pass a value their target rejects', () => {
+  const element = { volume: 1 };
+  const elementTrack = {
+    audioElement: element,
+    setVolume(volume) {
+      // HTMLMediaElement.volume throws IndexSizeError outside 0..1, NaN included
+      if (!(volume >= 0 && volume <= 1)) throw new RangeError(`volume ${volume}`);
+      element.volume = volume;
+    },
+  };
+  const param = () => ({
+    v: 0,
+    get value() { return this.v; },
+    // AudioParam.value throws TypeError on non-finite values
+    set value(v) {
+      if (!Number.isFinite(v)) throw new TypeError(`value ${v}`);
+      this.v = v;
+    },
+  });
+  const rigTrack = { trackRig: { pannerNode: { pan: param() }, gainNode: { gain: param() } } };
+  const { pannerNode: { pan }, gainNode: { gain } } = rigTrack.trackRig;
+
+  remote_audio_track_set_volume(elementTrack, 2);
+  assert.equal(element.volume, 1);
+  remote_audio_track_set_volume(elementTrack, -1);
+  assert.equal(element.volume, 0);
+  remote_audio_track_set_volume(elementTrack, 0.5);
+  remote_audio_track_set_volume(elementTrack, NaN);
+  assert.equal(element.volume, 0);
+
+  remote_audio_track_set_volume(rigTrack, 1.5);
+  assert.equal(gain.value, 1.5);
+  remote_audio_track_set_volume(rigTrack, Infinity);
+  assert.equal(gain.value, 0);
+  remote_audio_track_set_volume(rigTrack, 1e9);
+  assert.ok(gain.value > 1 && gain.value < 1e9);
+
+  remote_track_pan_and_volume(rigTrack, 1, -2);
+  assert.deepEqual([pan.value, gain.value], [1, 0]);
+  remote_track_pan_and_volume(rigTrack, NaN, NaN);
+  assert.deepEqual([pan.value, gain.value], [0, 0]);
+  remote_track_pan_and_volume(rigTrack, -Infinity, 0.25);
+  assert.deepEqual([pan.value, gain.value], [0, 0.25]);
+});
+
+test('stopping local capture stops the track even if disabling the source throws', () => {
+  let stopped = false;
+  const mediaStreamTrack = {
+    set enabled(_) { throw new Error('ended'); },
+  };
+  assert.throws(() => local_audio_track_stop({
+    mediaStreamTrack,
+    stop() { stopped = true; },
+  }));
+  assert.equal(stopped, true);
+});
+
+test('page calls the host catches surface failures as throws or empty results', async () => {
+  // the host reads a publication only after a null check, and catches these throws
+  for (const read of [
+    local_track_publication_sid,
+    local_track_publication_kind,
+    local_track_publication_source,
+  ]) {
+    assert.throws(() => read(undefined), TypeError);
+  }
+  assert.deepEqual(
+    [local_track_publication_sid, local_track_publication_kind, local_track_publication_source]
+      .map(read => read({ trackSid: 'TR_1', kind: 'audio', source: 'microphone' })),
+    ['TR_1', 'audio', 'microphone'],
+  );
+  // an SDK that held no publication resolves empty; the host reports that as unpublished
+  assert.equal(
+    await local_participant_unpublish_track({ unpublishTrack: async () => undefined }, {}),
+    undefined,
+  );
+  // a publish that resolves without a publication still resolves; the host builds it from the track
+  assert.equal(
+    await local_participant_publish_track({ publishTrack: async () => undefined }, {}, {}),
+    undefined,
+  );
+  await assert.rejects(
+    local_participant_publish_track({ publishTrack: async () => { throw new Error('denied'); } }, {}, {}),
+    /denied/,
+  );
+  assert.throws(
+    () => remote_track_publication_set_subscribed(
+      { setSubscribed() { throw new Error('gone'); } },
+      true,
+    ),
+    /gone/,
+  );
+  assert.throws(() => local_audio_track_set_enabled({}, true), TypeError);
+  assert.equal(local_participant_can_publish({}), true);
+  assert.equal(local_participant_can_publish({ permissions: { canPublish: false } }), false);
 });

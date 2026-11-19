@@ -6526,7 +6526,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "5efa999e8cf97008015445cf64da6691653ddf109af911785f406fe975c72bea"
+      "sha256": "8ee04aa55e278fc4ee82258a7f737098e1b190b57ebda932ba9ed98bb43f1169"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -8894,7 +8894,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/IconButton.tsx",
-      "sha256": "464269af19152cccbf6f9e008893688ab971ab83dbbdf6853ae5ef8c190e082a"
+      "sha256": "1513629c4855e0b16bda4e3bdf1146ee8d6329c2c40bfb8758e4a7da9c09bfb2"
     },
     {
       "path": "library/ui/apps/hud/design/KebabMenu.module.css",
@@ -9002,7 +9002,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "2c5367462f9e0e8a4a166ac2e69be3e4102043a6a9b94fe05f952397b28502c7"
+      "sha256": "9ddc6f3ff0bf293267e910d4d185a1459f9299465be5f613d14be92c8da275b0"
     },
     {
       "path": "library/ui/apps/hud/design/Skeleton.module.css",
@@ -9094,11 +9094,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Tooltip.module.css",
-      "sha256": "f5ffc1d7f9e641a1c5b762a39740f23cba58c45b82686f5b6abc853a2a95e255"
+      "sha256": "cfde7a0f39330c7c7862e2597ced5b70e2a3a89058607a1cf36d01f7dcf34533"
     },
     {
       "path": "library/ui/apps/hud/design/Tooltip.tsx",
-      "sha256": "a3ea119426e53b01d0425669a75aef7abd21a6d1372c0ba635d5310abaa660a0"
+      "sha256": "b39585c2844a1dcf4c7f7765bb08724a86a6092faaf63f5e4e4f1eb1cfa434ca"
     },
     {
       "path": "library/ui/apps/hud/design/VoiceBars.module.css",
@@ -10318,11 +10318,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.module.css",
-      "sha256": "5f8b7b38707969fd786835edc16c80d00d0ab6d01acf1fbce9d361fb721e474b"
+      "sha256": "ac317d5a12cfbd092e4b80dd2755945e3326c16022f79a4f6832e6ab1e9c2c3e"
     },
     {
       "path": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
-      "sha256": "6c0cf6e1b0b526a7c7caf46be5f3a3a32f5da19cd10833da9042a7eb77844477"
+      "sha256": "dee609b08c6bb0267561da36165e5f2fac843dbaab0aa27807d914c2820cef85"
     },
     {
       "path": "library/ui/apps/hud/features/voiceChat/callGate.ts",
