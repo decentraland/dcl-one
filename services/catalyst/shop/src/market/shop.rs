@@ -1298,7 +1298,9 @@ fn body_of(v: impl Serialize) -> Result<Value, ApiError> {
     serde_json::to_value(v).map_err(|e| ApiError::Internal(e.to_string()))
 }
 
-/// Served from a 30 s memo for a browse read; the readiness gates still run per request.
+/// Served from a 30 s memo for a browse read, which also carries its creators' profiles; the
+/// readiness gates and the MANA rate read still run per request, while a memo hit keeps the prices
+/// it was built with (at most 30 s old).
 pub async fn get_unified_catalog(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
@@ -1312,13 +1314,20 @@ pub async fn get_unified_catalog(
         Ok(rate) => rate,
         Err(envelope) => return envelope,
     };
+    let browse_key = unified_browse_key(group_by, &filters);
+    // Only a browse read carries its creators' profiles: a read that names its item (an item
+    // page, the cart's price read, checkout) never waits on the creator directory's refresh.
+    let with_profiles = browse_key.is_some();
     let read = || async {
         match group_by {
             UnifiedGroupBy::Item => {
-                let (page, directory) = tokio::join!(
-                    unified_items(&state, &filters, rate),
-                    directory_snapshot(&state)
-                );
+                let (page, directory) =
+                    tokio::join!(unified_items(&state, &filters, rate), async {
+                        match with_profiles {
+                            true => directory_snapshot(&state).await,
+                            false => None,
+                        }
+                    });
                 page.and_then(|(mut data, total)| {
                     name_creators(directory.as_deref(), &state.denylist, data.iter_mut());
                     body_of(DataTotal { data, total })
@@ -1329,7 +1338,7 @@ pub async fn get_unified_catalog(
                 .and_then(|(data, total)| body_of(DataTotal { data, total })),
         }
     };
-    let result = match unified_browse_key(group_by, &filters) {
+    let result = match browse_key {
         Some(key) => memoized(&state, Ttl::S30, key, read).await,
         None => read().await.map(Arc::new),
     };

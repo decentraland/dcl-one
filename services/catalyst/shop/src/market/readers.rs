@@ -75,6 +75,12 @@ impl Caches {
         }
     }
 
+    /// Whether `key` holds a fresh answer under `ttl`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn holds(&self, ttl: Ttl, key: &str) -> bool {
+        self.map(ttl).get_fresh(&key.to_string()).is_some()
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn clear(&self) {
         for m in [&self.s30, &self.s60, &self.m5, &self.m10, &self.m15] {

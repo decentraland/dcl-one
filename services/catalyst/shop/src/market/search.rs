@@ -274,11 +274,14 @@ pub async fn creator_directory(state: &MarketplaceState) -> Result<Vec<CreatorEn
         .collect())
 }
 
+/// The creator directory's memo key, under [`Ttl::M15`].
+pub(crate) const CREATOR_DIRECTORY_KEY: &str = "search:creator-directory";
+
 async fn directory_value(state: &MarketplaceState) -> Result<Arc<Value>, ApiError> {
     cached(
         state,
         Ttl::M15,
-        "search:creator-directory".to_string(),
+        CREATOR_DIRECTORY_KEY.to_string(),
         || async {
             let rows = sqlx::query(CREATOR_DIRECTORY_SQL)
                 .fetch_all(&state.pool)
