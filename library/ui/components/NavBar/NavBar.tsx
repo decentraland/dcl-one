@@ -17,7 +17,6 @@ import {
 import {
   GeneralBell,
   GeneralClose,
-  GeneralCopy,
   GeneralDecentralandColor,
   GeneralDownArrow,
   GeneralMana,
@@ -89,7 +88,7 @@ export type NavBarLabels = {
   account: (name: string) => string
   userId: string
   copyUserId: string
-  addressCopied?: string
+  addressCopied: string
   userIdCopied: string
   copyUserIdError: string
   openMenu: string
@@ -121,9 +120,12 @@ type NavBarCommonProps = {
   notifications?: NavBarNotifications
   /** Signed in: the account menu's entries, for example profile links and sign out. */
   accountActions?: readonly NavBarAccountAction[]
-  accountMenuAppearance?: 'default' | 'sites' | 'profile'
-  /** Optional balances and network control inside the profile panel. */
+  accountMenuAppearance?: 'default' | 'profile'
+  /** Reports when the account menu opens and when it closes or unmounts while open. */
+  onAccountMenuOpenChange?: (open: boolean) => void
+  /** Profile panel balances. Header balances stay separate. */
   accountMenuBalances?: NavBarBalances
+  /** Optional network control inside the profile panel. */
   accountMenuNetwork?: ReactNode
   linkComponent?: NavBarLinkComponent
   labels?: Partial<NavBarLabels>
@@ -153,6 +155,7 @@ const defaultLabels: NavBarLabels = {
   signIn: 'Sign in',
   userId: 'User ID',
   copyUserId: 'Copy user ID',
+  addressCopied: 'Address copied!',
   userIdCopied: 'User ID copied',
   copyUserIdError: 'Could not copy user ID',
   notifications: 'Notifications',
@@ -575,6 +578,7 @@ function AccountMenu({
   labels,
   renderLink,
   onDone,
+  onOpenChange,
   appearance,
   balances,
   network,
@@ -585,6 +589,7 @@ function AccountMenu({
   labels: NavBarLabels
   renderLink: LinkRenderer
   onDone?: () => void
+  onOpenChange?: NavBarCommonProps['onAccountMenuOpenChange']
   appearance?: NavBarCommonProps['accountMenuAppearance']
   balances?: NavBarBalances
   network?: ReactNode
@@ -596,9 +601,17 @@ function AccountMenu({
   const { open, setOpen, toggle, onKeyDown, onBlur } = usePopup(rootRef, triggerRef)
   const displayName = account.name || shortAddress(account.address)
   const profile = appearance === 'profile'
-  const sites = profile || appearance === 'sites'
   const [failedBodyUrl, setFailedBodyUrl] = useState<string>()
   const bodyUrl = account.bodyUrl === failedBodyUrl ? undefined : account.bodyUrl
+  const openObserver = useRef(onOpenChange)
+  useEffect(() => {
+    openObserver.current = onOpenChange
+  }, [onOpenChange])
+  useEffect(() => {
+    if (!open) return
+    openObserver.current?.(true)
+    return () => openObserver.current?.(false)
+  }, [open])
   return (
     <div
       ref={rootRef}
@@ -632,27 +645,20 @@ function AccountMenu({
           </div>
         ) : null}
         <div className={profile ? profileStyles.content : undefined}>
-          <div className={profile ? `${styles.accountHeader} ${profileStyles.header}` : styles.accountHeader}>
-            {sites ? (
-              <div className={profile ? profileStyles.face : styles.accountMenuAvatar}>
+          {profile ? (
+            <div className={profileStyles.header}>
+              <div className={profileStyles.face}>
                 <Avatar account={account} />
               </div>
-            ) : null}
-            <div className={styles.accountDetails}>
-              <p className={profile ? profileStyles.name : styles.accountName}>{displayName}</p>
-              {sites ? (
-                <div className={profile ? profileStyles.identity : styles.accountIdentity}>
-                  <span className={profile ? profileStyles.identityLabel : undefined}>{labels.userId}</span>
-                  {!profile ? (
-                    <span title={account.address}>{shortAddress(account.address)}</span>
-                  ) : null}
+              <div className={profileStyles.details}>
+                <p className={profileStyles.name}>{displayName}</p>
+                <div className={profileStyles.identity}>
+                  <span className={profileStyles.identityLabel}>{labels.userId}</span>
                   {open ? (
                     <CopyFeedback
                       value={account.address}
-                      inlineValue={profile ? (
-                        <span title={account.address}>{shortAddress(account.address)}</span>
-                      ) : undefined}
-                      copiedLabel={profile ? labels.addressCopied ?? 'Address copied!' : undefined}
+                      inlineValue={<span title={account.address}>{shortAddress(account.address)}</span>}
+                      copiedLabel={labels.addressCopied}
                       successAnnouncement={labels.userIdCopied}
                       errorAnnouncement={labels.copyUserIdError}
                     >
@@ -663,29 +669,30 @@ function AccountMenu({
                           className={styles.iconButton}
                           onClick={copy}
                         >
-                          {profile ? (
-                            <MenusCopy size={16} aria-hidden="true" />
-                          ) : (
-                            <GeneralCopy size={16} aria-hidden="true" />
-                          )}
+                          <MenusCopy size={16} aria-hidden="true" />
                         </button>
                       )}
                     </CopyFeedback>
                   ) : null}
                 </div>
-              ) : account.name ? (
+                {balances ? (
+                  <div className={profileStyles.balances}>
+                    <Balances balances={balances} labels={labels} format={format} profile />
+                  </div>
+                ) : null}
+                {open && network ? <div className={profileStyles.network}>{network}</div> : null}
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className={styles.accountName}>{displayName}</p>
+              {account.name ? (
                 <p className={styles.accountAddress} title={account.address}>
                   {shortAddress(account.address)}
                 </p>
               ) : null}
-              {profile && balances ? (
-                <div className={profileStyles.balances}>
-                  <Balances balances={balances} labels={labels} format={format} profile />
-                </div>
-              ) : null}
-              {profile && open && network ? <div className={profileStyles.network}>{network}</div> : null}
-            </div>
-          </div>
+            </>
+          )}
           {actions.length > 0 ? (
             <AccountActionList
               actions={actions}
@@ -893,6 +900,7 @@ export function NavBar({
   notifications,
   accountActions = [],
   accountMenuAppearance,
+  onAccountMenuOpenChange,
   accountMenuBalances,
   accountMenuNetwork,
   linkComponent,
@@ -1071,13 +1079,14 @@ export function NavBar({
               key={account.address}
               account={account}
               appearance={accountMenuAppearance}
-              balances={accountMenuBalances ?? balances}
+              balances={accountMenuBalances}
               network={accountMenuNetwork}
               format={format}
               actions={accountActions}
               labels={labels}
               renderLink={renderLink}
               onDone={drawerOpen ? closeDrawer : undefined}
+              onOpenChange={onAccountMenuOpenChange}
             />
           ) : (
             renderSignIn(drawerOpen ? dismissDrawer : undefined)
