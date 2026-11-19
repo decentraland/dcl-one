@@ -1243,3 +1243,107 @@ async fn earlier_native_receipts_upgrade_preserves_retries_and_server_quota() {
     drop(referral);
     database.drop().await;
 }
+
+/// A confirmed empty supply releases the claim and the tier is asked again
+/// once its delay passes; a reply without a usable reward stays quarantined.
+#[tokio::test]
+async fn an_empty_reward_supply_is_retried_after_its_delay() {
+    let Some(database) = reward_database().await else {
+        return;
+    };
+    let pool = database.pool.clone();
+    let rewards = Arc::new(AtomicUsize::new(0));
+    let observed = rewards.clone();
+    let app = axum::Router::new().route(
+        "/api/rewards",
+        axum::routing::post(move || {
+            let calls = observed.clone();
+            async move {
+                match calls.fetch_add(1, Ordering::SeqCst) {
+                    0 => Json(json!({"ok": true, "data": []})),
+                    2 => Json(json!({"ok": true, "data": [{"rarity": "rare"}]})),
+                    _ => Json(
+                        json!({"ok": true, "data": [{"image": "https://reward.example.org/tier.png"}]}),
+                    ),
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let settings = Settings {
+        reward_server_url: Some(url),
+        ..Settings::for_tests()
+    };
+    let referral = Referral::new(pool.clone(), Outbound::for_tests(), settings);
+    let state = |invited: Address| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (Option<i32>, bool, bool, bool)>(
+                "SELECT reward_tier, reward_requested_at IS NOT NULL, reward_response IS NOT NULL, \
+                        COALESCE(reward_retry_at > timezone('UTC', now()) + interval '50 minutes', FALSE) \
+                 FROM social.referral_progress WHERE invited_user = $1",
+            )
+            .bind(&invited)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let grant = |referrer: &Address, invited: &Address| {
+        sqlx::query("INSERT INTO social.referral_progress(referrer,invited_user,status,tier_granted,reward_tier) VALUES($1,$2,'tier_granted',true,5)")
+            .bind(referrer.clone()).bind(invited.clone()).execute(&pool)
+    };
+
+    let (referrer, invited) = (wallet(), wallet());
+    grant(&referrer, &invited).await.unwrap();
+    referral.drain_pending_rewards().await.unwrap();
+    assert_eq!(rewards.load(Ordering::SeqCst), 1);
+    assert_eq!(state(invited.clone()).await, (Some(5), false, false, true));
+
+    referral.drain_pending_rewards().await.unwrap();
+    assert_eq!(
+        rewards.load(Ordering::SeqCst),
+        1,
+        "nothing is asked before the delay"
+    );
+
+    sqlx::query("UPDATE social.referral_progress SET reward_retry_at = timezone('UTC', now()) WHERE invited_user = $1")
+        .bind(&invited)
+        .execute(&pool)
+        .await
+        .unwrap();
+    referral.drain_pending_rewards().await.unwrap();
+    assert_eq!(rewards.load(Ordering::SeqCst), 2);
+    assert_eq!(state(invited.clone()).await.0, None, "the tier is paid");
+    let images: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM social.referral_reward_images WHERE referrer = $1 AND tier = 5",
+    )
+    .bind(&referrer)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(images, 1);
+
+    let (referrer, invited) = (wallet(), wallet());
+    grant(&referrer, &invited).await.unwrap();
+    referral.drain_pending_rewards().await.unwrap();
+    assert_eq!(rewards.load(Ordering::SeqCst), 3);
+    assert_eq!(
+        state(invited.clone()).await,
+        (Some(5), true, false, false),
+        "a reply without a usable reward stays quarantined"
+    );
+    sqlx::query(
+        "UPDATE social.referral_progress SET reward_retry_at = NULL WHERE invited_user = $1",
+    )
+    .bind(&invited)
+    .execute(&pool)
+    .await
+    .unwrap();
+    referral.drain_pending_rewards().await.unwrap();
+    assert_eq!(rewards.load(Ordering::SeqCst), 3);
+    server.abort();
+    database.drop().await;
+}

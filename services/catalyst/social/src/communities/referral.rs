@@ -54,6 +54,9 @@ fn login_database_error(error: sqlx::Error) -> CommError {
 const LOGIN_MAX_AGE_MS: i64 = 86_400_000;
 // Login timestamps may run up to five minutes ahead.
 const LOGIN_FUTURE_SKEW_MS: i64 = 300_000;
+/// How long a tier the rewards backend had no supply for waits before it is
+/// asked again.
+const EMPTY_SUPPLY_RETRY: &str = "1 hour";
 
 /// node-pg sends a JavaScript numeric parameter as Number.toString(). In
 /// particular fractional MAX values reach bigint parsing and are refused; they
@@ -477,7 +480,8 @@ impl Referral {
         Ok(())
     }
     /// Resume a bounded due set without requiring another login. Requests with
-    /// no confirmed response stay quarantined for provider reconciliation.
+    /// no confirmed response stay quarantined for provider reconciliation; a
+    /// confirmed empty supply is retried after `EMPTY_SUPPLY_RETRY`.
     pub async fn drain_pending_rewards(&self) -> Result<(), CommError> {
         if let Err(error) = sqlx::query("DELETE FROM social.referral_login_receipts WHERE (invited_user,login_id) IN (SELECT invited_user,login_id FROM social.referral_login_receipts WHERE expires_at < timezone('UTC',clock_timestamp()) AND received_at <= timezone('UTC',clock_timestamp()) - interval '24 hours' ORDER BY expires_at,invited_user,login_id LIMIT 1000 FOR UPDATE SKIP LOCKED)")
             .execute(&self.pool).await {
@@ -588,6 +592,16 @@ impl Referral {
                 .error_for_status()
                 .map_err(|_| CommError::Internal)?;
             let value: Value = response.json().await.map_err(|_| CommError::Internal)?;
+            // A confirmed empty supply assigned nothing, so the claim is
+            // released and the tier is asked again after a delay.
+            if value["data"].as_array().is_some_and(Vec::is_empty) {
+                sqlx::query("UPDATE social.referral_progress SET reward_requested_at=NULL,reward_retry_at=timezone('UTC',now())+$3::interval WHERE invited_user=$1 AND reward_tier=$2")
+                    .bind(invited).bind(total as i32).bind(EMPTY_SUPPLY_RETRY).execute(&mut *guard).await.map_err(database_error)?;
+                return Err(CommError::MessageOnly(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    format!("Reward supply is empty for tier {total}"),
+                ));
+            }
             let reward = value["data"]
                 .as_array()
                 .and_then(|values| values.first())

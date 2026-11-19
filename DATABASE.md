@@ -1248,7 +1248,9 @@ Configuration failures leave the request unclaimed. After the POST claim commits
 transport errors, non-success statuses, malformed replies and a crash before
 response persistence leave an ambiguous receipt that is never automatically
 reissued. Operators must reconcile the outcome before restoring it to pending or
-supplying a confirmed response. Additive step `0024_social_referral_reward_receipt`
+supplying a confirmed response. A successful reply whose `data` is an empty array confirms that
+nothing was assigned: the claim is cleared and `reward_retry_at` moves one hour
+ahead, so the worker asks for the tier again then. Additive step `0024_social_referral_reward_receipt`
 imports previously confirmed object-valued `reward_paid` responses, including
 receipts with missing or invalid image metadata, and quarantines uncertain pending
 markers. A confirmed receipt with unusable image metadata remains confirmed and
