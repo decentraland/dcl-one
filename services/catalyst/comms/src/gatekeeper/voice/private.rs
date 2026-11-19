@@ -140,9 +140,12 @@ async fn update_private_messages_participant(
 /// the change in the private-messages room. Tightening to `only_friends`
 /// reaches the room before it is stored and is refused, storing nothing, when
 /// the room cannot be updated (including while LiveKit is unreachable); it is
-/// shown again after the write for a wallet that joined in between. Loosening
-/// is stored first and a room failure is only logged: the room keeps the
-/// stricter value until the wallet's next token.
+/// shown again after the write for a wallet that joined in between, and if
+/// that update fails such a wallet keeps `all` until its next token. A failed
+/// write after the first update answers an error with the room already
+/// showing `only_friends` until the wallet's next token. Loosening is stored
+/// first and a room failure is only logged: the room keeps the stricter value
+/// until the wallet's next token.
 pub async fn patch_private_messages_privacy(
     State(state): State<SharedState>,
     Path(address): Path<String>,

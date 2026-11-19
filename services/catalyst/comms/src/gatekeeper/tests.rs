@@ -1869,9 +1869,23 @@ async fn the_moderator_routes_need_the_token_or_a_listed_wallet() {
 /// The service route shows a privacy change in the private-messages room:
 /// a present participant gets its metadata merged, before and after the
 /// write when tightening; a tightening the room refuses stores nothing; a
-/// loosening the room refuses is stored.
-#[tokio::test]
+/// loosening the room refuses is stored. Each room failure is counted.
+#[tokio::test(flavor = "current_thread")]
 async fn the_private_messages_privacy_patch_reaches_the_room_or_is_refused() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let series = recorder.handle();
+    let _recording = metrics::set_default_local_recorder(&recorder);
+    let failures = || {
+        series
+            .render()
+            .lines()
+            .filter(|line| !line.starts_with('#'))
+            .find_map(|line| {
+                line.strip_prefix("comms_private_messages_privacy_room_failures_total ")?
+                    .parse::<f64>()
+                    .ok()
+            })
+    };
     let room = Arc::new(PrivateRoomFixture::default());
     let (settings, _room_task) = private_room_settings(room.clone()).await;
     let state = lazy_state(settings);
@@ -1908,11 +1922,13 @@ async fn the_private_messages_privacy_patch_reaches_the_room_or_is_refused() {
     }
 
     let Json(_) = patch("all").await.unwrap();
+    assert_eq!(failures(), None);
     room.fail.store(true, std::sync::atomic::Ordering::SeqCst);
     room.updates.lock().clear();
     let refused = patch("only_friends").await.unwrap_err();
     assert_eq!(refused.code, 500);
     assert_eq!(stored().await, "all", "a refused tightening stores nothing");
+    assert_eq!(failures(), Some(1.0));
 
     state
         .social
@@ -1927,6 +1943,7 @@ async fn the_private_messages_privacy_patch_reaches_the_room_or_is_refused() {
         "a loosening the room refuses is stored"
     );
     assert!(room.updates.lock().is_empty());
+    assert_eq!(failures(), Some(2.0));
 }
 
 #[tokio::test]

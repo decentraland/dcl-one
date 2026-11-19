@@ -23,12 +23,14 @@ pub(crate) async fn private_messages_settings(
 }
 
 /// Stores the settings and shows a private-messages privacy change in the
-/// live room, for both transports. An error means nothing was stored.
-/// Tightening to `only_friends` reaches the room first and is refused when
-/// the room cannot be updated (including while LiveKit is unreachable); it is
-/// shown again after the write for a wallet that joined in between. Loosening
-/// is stored first and a room failure is only logged: the room keeps the
-/// stricter value until the wallet's next token.
+/// live room, for both transports. An error means nothing was stored, though
+/// a tightening the room already shows stays there until the wallet's next
+/// token. Tightening to `only_friends` reaches the room first and is refused
+/// when the room cannot be updated (including while LiveKit is unreachable);
+/// it is shown again after the write for a wallet that joined in between, and
+/// if that update fails such a wallet keeps `all` until its next token.
+/// Loosening is stored first and a room failure is only logged: the room
+/// keeps the stricter value until the wallet's next token.
 pub(crate) async fn update_social_settings(
     ctx: &Context,
     me: &str,
