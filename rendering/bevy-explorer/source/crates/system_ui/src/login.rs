@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use alloy_core::primitives::Address;
+use alloy_core::primitives::{Address, B256};
 use alloy_signer_local::PrivateKeySigner;
 use analytics::segment_system::SegmentConfig;
 use bevy::{
@@ -681,7 +681,12 @@ fn process_login_bridge(
                             }
                         };
 
-                    let local_wallet = match PrivateKeySigner::from_slice(&ephemeral_key) {
+                    // exactly 32 bytes: a shorter slice would be zero-padded into another key
+                    let local_wallet = match B256::try_from(ephemeral_key.as_slice())
+                        .map_err(|e| e.to_string())
+                        .and_then(|key| {
+                            PrivateKeySigner::from_bytes(&key).map_err(|e| e.to_string())
+                        }) {
                         Ok(local_wallet) => local_wallet,
                         Err(e) => {
                             rpc_result_sender
