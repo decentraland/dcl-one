@@ -46,11 +46,18 @@ pub enum Event {
     Disconnect {
         peer: PeerId,
     },
-    /// Transport-level malformed input (a stream frame past the cap, or a datagram too short
-    /// to hold its header). Only WebTransport emits this -- ENet frames packets itself. The
-    /// server charges it against the shared corrupted-packet budget, exactly like a protobuf
-    /// decode failure, and disconnects the peer on exhaustion.
+    /// Transport-level malformed input (a stream frame over the cap and up to twice it, whose
+    /// payload is skipped, or a datagram too short to hold its header). Only WebTransport emits
+    /// this -- ENet frames packets itself. The server charges it against the shared
+    /// corrupted-packet budget, exactly like a protobuf decode failure, and disconnects the peer
+    /// on exhaustion.
     Corrupt {
+        peer: PeerId,
+    },
+    /// A WebTransport stream frame declared a payload over twice the message cap, and the
+    /// stream is not read past it. Like an ENet packet over twice its receive buffer, the server
+    /// disconnects the peer at once with `PacketCorrupted`.
+    Oversized {
         peer: PeerId,
     },
 }

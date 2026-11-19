@@ -20,7 +20,7 @@ use common::{
         WorldHold,
     },
 };
-use scene_runner::renderer_context::RendererSceneContext;
+use scene_runner::{renderer_context::RendererSceneContext, SceneLoopTiming};
 use wallet::Wallet;
 
 /// What the frame brought, as of `First`.
@@ -108,6 +108,7 @@ pub(crate) fn collect_frame_inputs_system(
     realm: Option<Res<CurrentRealm>>,
     player: Query<Has<OutOfWorld>, With<PrimaryUser>>,
     client_window_focus: Res<ClientWindowFocus>,
+    scene_loop: Option<Res<SceneLoopTiming>>,
 ) {
     #[cfg(target_arch = "wasm32")]
     let viewport_paused =
@@ -131,7 +132,11 @@ pub(crate) fn collect_frame_inputs_system(
     inputs.memory_reading = memory.reading();
     inputs.js_heap = sum_scene_js_heaps(scenes.iter());
     inputs.entity_count = latest_entity_count(&diagnostics);
-    inputs.target_fps = effective_target_fps(&config, session_graphics.as_deref());
+    inputs.target_fps = effective_target_fps(
+        &config,
+        session_graphics.as_deref(),
+        scene_loop.and_then(|timing| timing.refresh_hz),
+    );
     inputs.session = SessionSignals {
         signed_in: wallet
             .as_ref()
@@ -170,15 +175,15 @@ pub fn latest_entity_count(diagnostics: &DiagnosticsStore) -> Option<u32> {
         .map(|count| count as u32)
 }
 
-/// The effective frame-rate target: the session override, else the configured target; `None` with vsync on (the monitor sets the rate) or uncapped.
-pub fn effective_target_fps(config: &AppConfig, session: Option<&SessionGraphics>) -> Option<f32> {
-    if config.graphics.vsync {
-        return None;
-    }
-    let target = session.map_or(config.graphics.fps_target, |session| {
-        session.fps_target(config)
-    });
-    (target > 0 && target < 999).then_some(target as f32)
+/// The effective frame-rate target: the rate the scene loop paces to ([`SessionGraphics::paced_fps`]),
+/// `None` when uncapped.
+pub fn effective_target_fps(
+    config: &AppConfig,
+    session: Option<&SessionGraphics>,
+    refresh_hz: Option<usize>,
+) -> Option<f32> {
+    let fps = SessionGraphics::paced_fps(session, config, refresh_hz);
+    (fps > 0 && fps < 999).then_some(fps as f32)
 }
 
 /// Every running scene's reported heap, summed; `None` when no scene reports one.

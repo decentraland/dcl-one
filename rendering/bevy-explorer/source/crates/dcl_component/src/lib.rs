@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::ops::RangeInclusive;
 
 // structs representing dcl components and de/serialization
