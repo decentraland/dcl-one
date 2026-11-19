@@ -138,27 +138,8 @@ pub fn scene_listener_update(area_of_interest: Vec<SceneListenerAoi>) -> ClientM
     }))
 }
 
-const REASONS: [DisconnectReason; 19] = [
-    DisconnectReason::Graceful,
-    DisconnectReason::AuthTimeout,
-    DisconnectReason::AuthFailed,
-    DisconnectReason::DuplicateSession,
-    DisconnectReason::Banned,
-    DisconnectReason::ServerFull,
-    DisconnectReason::PreAuthIpLimitExhausted,
-    DisconnectReason::PreAuthBudgetExhausted,
-    DisconnectReason::InputRateExceeded,
-    DisconnectReason::DiscreteEventRateExceeded,
-    DisconnectReason::InvalidInputField,
-    DisconnectReason::InvalidEmoteField,
-    DisconnectReason::InvalidTeleportField,
-    DisconnectReason::HandshakeReplayRejected,
-    DisconnectReason::InvalidHandshakeField,
-    DisconnectReason::PacketCorrupted,
-    DisconnectReason::IpConnectionLimitExceeded,
-    DisconnectReason::SceneListenerIpLimitExceeded,
-    DisconnectReason::InvalidSceneListenerField,
-];
+/// The server's own list, so a reason it adds is named here without a change.
+const REASONS: &[DisconnectReason] = &DisconnectReason::ALL;
 
 /// Every disconnect code the server gives.
 pub fn codes() -> impl Iterator<Item = u32> {
