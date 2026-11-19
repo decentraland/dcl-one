@@ -63,11 +63,12 @@ impl Plugin for ItemPurchasePlugin {
                     ("HUD listeners", "hudListeners"),
                     ("Request", "active.state"),
                     ("Requesting scene", "active.scene"),
-                    ("Item urn", "active.urn"),
+                    ("Item (contract:id)", "active.item"),
                     ("Request id", "active.requestId"),
                     ("Last ended", "last.outcome"),
                     ("Last scene", "last.scene"),
-                    ("Last item urn", "last.urn"),
+                    ("Last item (contract:id)", "last.item"),
+                    ("Scenes owed a closed event", "closedOwed"),
                 ],
                 actions: &[("Cancel request", "/item_purchase_cancel")],
                 inputs: &[],
@@ -123,9 +124,7 @@ struct SceneRequest {
 
 enum Phase {
     /// sent to the HUD; the scene's call is unanswered until the HUD says whether it can show
-    /// the confirmation. No deadline: the HUD opens the confirmation as it accepts, so a request
-    /// given up on here could still be bought there. It ends only with the HUD's answer or the
-    /// HUD itself.
+    /// the confirmation, or goes away
     AwaitingHud {
         response: RpcResultSender<OpenExplorerUiResult>,
     },
@@ -216,7 +215,7 @@ impl ItemPurchases {
     fn report(&mut self, id: u32, state: ItemPurchaseState) -> Option<Change> {
         let active = self.active.take_if(|active| active.id == id)?;
         match (active.phase, state) {
-            (Phase::AwaitingHud { response, .. }, ItemPurchaseState::Accepted) => {
+            (Phase::AwaitingHud { response }, ItemPurchaseState::Accepted) => {
                 response.send(OpenExplorerUiResult::Opened);
                 let request = active.request.clone();
                 self.active = Some(Active {
@@ -225,7 +224,7 @@ impl ItemPurchases {
                 });
                 Some(Change::Opened(request))
             }
-            (Phase::AwaitingHud { response, .. }, ItemPurchaseState::Unavailable) => {
+            (Phase::AwaitingHud { response }, ItemPurchaseState::Unavailable) => {
                 response.send(OpenExplorerUiResult::RejectedFeatureDisabled);
                 self.end(active.request, "unavailable in this client");
                 None
@@ -250,29 +249,36 @@ impl ItemPurchases {
         if self.active.is_none() || self.has_hud() {
             return None;
         }
+        self.drop_active("the HUD went away")
+    }
+
+    /// Drops the request in flight, whatever its phase. The HUD's confirmation is not closed
+    /// by this; its later reports are ignored.
+    fn cancel(&mut self) -> Option<Change> {
+        self.drop_active("cancelled")
+    }
+
+    /// Ends the request in flight without the HUD's word: an unanswered call is refused, an open
+    /// confirmation reports `Dismissed`.
+    fn drop_active(&mut self, reason: &'static str) -> Option<Change> {
         let active = self.active.take()?;
         match active.phase {
             Phase::AwaitingHud { response } => {
                 response.send(OpenExplorerUiResult::RejectedFeatureDisabled);
-                self.end(active.request, "the HUD went away");
+                self.end(active.request, reason);
                 None
             }
             Phase::Open => Some(self.close(active.request, ItemPurchaseState::Dismissed)),
         }
     }
 
-    /// Drops the request in flight, whatever its phase. The HUD's confirmation is not closed
-    /// by this; its later reports are ignored.
-    fn cancel(&mut self) -> Option<Change> {
-        let active = self.active.take()?;
-        match active.phase {
-            Phase::AwaitingHud { response, .. } => {
-                response.send(OpenExplorerUiResult::RejectedFeatureDisabled);
-                self.end(active.request, "cancelled");
-                None
-            }
-            Phase::Open => Some(self.close(active.request, ItemPurchaseState::Dismissed)),
-        }
+    /// The request a HUD that starts listening now has yet to answer.
+    fn unanswered(&self) -> Option<ItemPurchaseRequest> {
+        let active = self.active.as_ref()?;
+        matches!(active.phase, Phase::AwaitingHud { .. }).then(|| ItemPurchaseRequest {
+            id: active.id,
+            item: active.request.item.clone(),
+        })
     }
 
     fn close(&mut self, request: SceneRequest, state: ItemPurchaseState) -> Change {
@@ -291,11 +297,16 @@ impl ItemPurchases {
         self.last = Some(Ended { request, outcome });
     }
 
-    fn snapshot(&mut self) -> Value {
+    /// `closed_owed`: the hashes of the scenes whose `closed` event is still owed.
+    fn snapshot(&mut self, closed_owed: Vec<String>) -> Value {
+        // the parsed item, never the scene's own text
         let request = |request: &SceneRequest| {
             json!({
                 "scene": request.scene_hash,
-                "urn": request.urn,
+                "item": match &request.item {
+                    Some(item) => format!("{}:{}", item.contract, item.item_id),
+                    None => "not a collection item".to_owned(),
+                },
                 "requestId": request.request_id,
             })
         };
@@ -332,6 +343,7 @@ impl ItemPurchases {
             "hudListeners": if self.has_hud() { self.streams.len() } else { 0 },
             "active": active,
             "last": last,
+            "closedOwed": closed_owed,
             "unavailable": unavailable,
         })
     }
@@ -424,12 +436,7 @@ fn open_item_purchase(
             response.send(OpenExplorerUiResult::RejectedNotCurrentScene);
             continue;
         }
-        // its previous purchase ended while the prompt was up, and that `closed` is still owed
-        if closed_owed.contains(request.scene) {
-            response.send(OpenExplorerUiResult::WasAlreadyOpen);
-            continue;
-        }
-        // begin() refuses a request another one overtook while its prompt was up
+        // begin() refuses all but the first of several requests allowed in one frame
         purchases.begin(request, response);
     }
 
@@ -447,6 +454,10 @@ fn track_item_purchase(
     for ev in events.read() {
         match ev {
             SystemApi::GetItemPurchaseRequestStream(stream) => {
+                // a HUD that starts listening with a request unanswered is asked it too
+                if let Some(request) = purchases.unanswered() {
+                    let _ = stream.send(request);
+                }
                 purchases.streams.push(stream.clone())
             }
             SystemApi::SetItemPurchaseState(SetItemPurchaseState { id, state }) => {
@@ -539,9 +550,14 @@ struct ItemPurchaseStateCommand;
 fn item_purchase_state(
     mut input: ConsoleCommand<ItemPurchaseStateCommand>,
     mut purchases: ResMut<ItemPurchases>,
+    closed_owed: Query<&RendererSceneContext, With<ItemPurchaseClosedOwed>>,
 ) {
     if let Some(Ok(_)) = input.take() {
-        input.reply_ok(purchases.snapshot().to_string());
+        let closed_owed = closed_owed
+            .iter()
+            .map(|context| context.hash.to_string())
+            .collect();
+        input.reply_ok(purchases.snapshot(closed_owed).to_string());
     }
 }
 
@@ -723,19 +739,23 @@ mod tests {
     }
 
     #[test]
-    fn slow_hud_keeps_the_request_until_it_answers() {
+    fn request_waits_while_a_hud_is_listening_and_a_new_listener_is_asked_too() {
         let (mut purchases, mut hud) = with_hud();
         let mut response = begin(&mut purchases, URN);
         let id = hud.try_recv().unwrap().id;
 
-        // however long the answer takes, the request is neither answered nor freed: the HUD
-        // opens the confirmation as it accepts
+        // a HUD that starts listening before the answer gets the same request
+        assert_eq!(purchases.unanswered().map(|request| request.id), Some(id));
+
+        // with a HUD listening the request is neither answered nor freed
         assert_eq!(purchases.hud_gone(), None);
         assert!(response.try_recv().is_err());
         assert!(purchases.active.is_some());
 
         assert!(purchases.report(id, ItemPurchaseState::Accepted).is_some());
         assert_eq!(response.try_recv(), Ok(OpenExplorerUiResult::Opened));
+        // once accepted, a new listener is asked nothing
+        assert!(purchases.unanswered().is_none());
     }
 
     #[test]
@@ -1089,18 +1109,31 @@ mod tests {
         }
 
         #[test]
-        fn scene_unloading_with_closed_owed_owes_nothing() {
+        fn scene_unloading_with_closed_owed_leaves_the_next_request_free() {
             let (mut app, scene, mut hud) = app();
             let id = open(&mut app, scene, &mut hud);
             report(&mut app, id, ItemPurchaseState::Purchased);
             assert!(app.world().get::<ItemPurchaseClosedOwed>(scene).is_some());
 
+            // the systems run on with the scene gone, and nothing is held for it
             leave(&mut app);
             app.world_mut().despawn(scene);
             app.update();
             app.update();
-            let mut owed = app.world_mut().query::<&ItemPurchaseClosedOwed>();
-            assert_eq!(owed.iter(app.world()).count(), 0);
+            assert!(app.world().resource::<ItemPurchases>().active.is_none());
+        }
+
+        #[test]
+        fn hud_that_starts_listening_is_asked_the_unanswered_request() {
+            let (mut app, scene, mut hud) = app();
+            let _response = ask(&mut app, scene, 9);
+            let id = hud.try_recv().unwrap().id;
+
+            let (sender, mut late) = RpcStreamSender::channel();
+            app.world_mut()
+                .send_event(SystemApi::GetItemPurchaseRequestStream(sender));
+            app.update();
+            assert_eq!(late.try_recv().unwrap().id, id);
         }
 
         #[test]

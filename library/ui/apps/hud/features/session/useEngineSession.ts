@@ -1711,6 +1711,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   useEffect(() => {
     const driver = createDriver()
     driverRef.current = driver
+    // a new engine numbers its item purchase requests from the start again
+    lastItemPurchase.current = null
     // The profile store asks the engine itself for any address it's shown and doesn't hold.
     setProfileRequester((address, extras) => driver.send({ kind: 'getUserProfile', address, extras }))
     setMapTransport((msg) => driver.send(msg))

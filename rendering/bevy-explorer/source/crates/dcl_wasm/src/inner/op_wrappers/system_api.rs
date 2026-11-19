@@ -359,7 +359,7 @@ pub fn op_set_item_purchase_state(
 ) -> Result<(), WasmError> {
     // map_err rather than serde_parse!'s unwrap: an unknown state throws in JS, as on Deno.
     let purchase_state = serde_wasm_bindgen::from_value(purchase_state)
-        .map_err(|e| WasmError::from(anyhow::anyhow!("{e}")))?;
+        .map_err(|e| WasmError::from(anyhow::anyhow!("setItemPurchaseState: {e}")))?;
     dcl_js::system_api::op_set_item_purchase_state(state.rc(), id, purchase_state);
     Ok(())
 }

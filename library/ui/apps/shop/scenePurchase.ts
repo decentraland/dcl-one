@@ -58,7 +58,11 @@ export function purchaseSceneItem(item: { contract: string; itemId: string }, sh
       if (operation == null) early.push(op)
       else follow(op)
     })
+    // Ends once: the shell can still answer or refuse after the request was given up on.
+    let done = false
     const end = (outcome: SceneItemOutcome): void => {
+      if (done) return
+      done = true
       clearTimeout(silent)
       stop()
       resolve(outcome)
@@ -73,6 +77,7 @@ export function purchaseSceneItem(item: { contract: string; itemId: string }, sh
     const request: ShopBuyRequest = { v: SHOP_PROTOCOL, items: [wanted], method: 'credits' }
     shell.request<ShopOperation>(SHOP_METHODS.buy, request, REQUEST_TIMEOUT_MS).then(
       (opened) => {
+        if (done) return
         const parsed = opened != null && typeof opened === 'object' ? parseOperationEvent({ ...opened, type: SHOP_EVENT }) : null
         if (!parsed) return end('failed')
         // The shell's answer must be a purchase of this item, and nothing else.
@@ -85,6 +90,7 @@ export function purchaseSceneItem(item: { contract: string; itemId: string }, sh
         for (const op of early) follow(op)
       },
       (e: unknown) => {
+        if (done) return
         console.warn('[shop] the purchase a scene asked for could not open', e)
         end('failed')
       }

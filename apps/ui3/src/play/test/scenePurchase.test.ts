@@ -42,6 +42,19 @@ describe('a purchase a scene asked for', () => {
     expect(s.listening()).toBe(0)
   })
 
+  it('stays dismissed and quiet when the shell refuses after it was given up on', async () => {
+    vi.useFakeTimers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const s = fakeShell()
+    const outcome = purchaseSceneItem(ITEM, s.shell)
+    await vi.advanceTimersByTimeAsync(BUY_TIMEOUT_MS)
+    s.refuse(new Error('no answer from the shell to shop.buy'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(await outcome).toBe('dismissed')
+    expect(warn).not.toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
   it('waits as long as the dialog is open once the shell has answered', async () => {
     vi.useFakeTimers()
     const s = fakeShell()
@@ -69,7 +82,8 @@ describe('a purchase a scene asked for', () => {
     const outcome = purchaseSceneItem(ITEM, shell)
     expect(request).toHaveBeenCalledWith(SHOP_METHODS.buy, { v: 1, items: [{ contract: CONTRACT, itemId: '7', quantity: 1 }], method: 'credits' }, expect.any(Number))
     answer(operation('reviewing'))
-    await Promise.resolve()
+    // past every microtask, so the shell's answer has been read before its events arrive
+    await new Promise((resolve) => setTimeout(resolve))
     post(operation('succeeded', 'another'))
     post(operation('processing'))
     expect(listening()).toBe(1)
