@@ -1,0 +1,204 @@
+.root {
+  border-top: 1px solid var(--dcl-border-subtle);
+}
+
+.toggle {
+  width: 100%;
+  min-height: 44px;
+  padding-inline: 0;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.chevron {
+  color: var(--dcl-text-secondary);
+  transition: transform 150ms ease;
+}
+
+.toggle[aria-expanded='true'] .chevron {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-12);
+  padding-top: var(--dcl-space-8);
+}
+
+.panel[hidden] {
+  display: none;
+}
+
+.listTitle {
+  composes: text6c6162656c2f746167 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  color: var(--dcl-text-secondary);
+  text-transform: uppercase;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: grid;
+  grid-template-areas:
+    'kind amount'
+    'time confirmed'
+    'hash hash';
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  align-items: center;
+  min-width: 0;
+  gap: var(--dcl-space-4) var(--dcl-space-12);
+  padding: var(--dcl-space-8) 0;
+  border-bottom: 1px solid var(--dcl-border-subtle);
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.kind,
+.amount {
+  composes: text626f64792f736d2d7374726f6e67 from '../../../foundations/typography/text-styles.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+}
+
+.kind {
+  grid-area: kind;
+}
+
+.directionIcon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-bg-hover);
+}
+
+.amount {
+  grid-area: amount;
+  justify-self: end;
+  max-width: 100%;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.unit {
+  position: absolute;
+  clip-path: inset(50%);
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.mana {
+  flex: none;
+}
+
+.amount[data-network='ethereum'] .unit {
+  position: absolute;
+  clip-path: inset(50%);
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.mana {
+  color: var(--dcl-action-primary);
+}
+
+.time,
+.hash {
+  composes: text626f64792f7873 from '../../../foundations/typography/text-styles.module.css';
+  min-width: 0;
+  color: var(--dcl-text-secondary);
+}
+
+.time {
+  grid-area: time;
+}
+
+.hash {
+  grid-area: hash;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+a.hash {
+  color: var(--dcl-text-link);
+  text-decoration: underline;
+}
+
+a.hash:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.confirmed {
+  composes: text6c6162656c2f746167 from '../../../foundations/typography/text-styles.module.css';
+  grid-area: confirmed;
+  justify-self: end;
+  padding: var(--dcl-space-4) var(--dcl-space-8);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-bg-hover);
+  color: var(--dcl-feedback-success);
+}
+
+.note,
+.error {
+  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+}
+
+.note {
+  color: var(--dcl-text-secondary);
+}
+
+.error {
+  color: var(--dcl-feedback-error);
+}
+
+.unavailable {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dcl-space-12);
+}
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-8);
+}
+
+.skeleton {
+  display: block;
+  height: 20px;
+}
+
+@media (min-width: 1024px) {
+  .row {
+    grid-template-areas: 'kind time hash confirmed amount';
+    grid-template-columns: 9rem minmax(7rem, 11rem) minmax(0, 1fr) auto auto;
+    column-gap: var(--dcl-space-16);
+  }
+}

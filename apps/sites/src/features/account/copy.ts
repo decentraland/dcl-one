@@ -107,21 +107,3 @@ export const CREDITS_COPY = {
   close: "Close",
   confirm: "Leave Program",
 } as const;
-
-export const WALLETS_COPY = {
-  address: "Wallet address",
-  networks: { ethereum: "Ethereum MANA", polygon: "Polygon MANA" },
-  unit: "MANA",
-  balanceUnavailable: "Balance not available. This node cannot read this network right now.",
-  retry: "Try again",
-  transactions: {
-    title: "Transactions",
-    empty: "No transactions yet.",
-    unavailable: "Transaction history is not available on this node.",
-    loadError: "We couldn't load your transactions. Please try again later.",
-    moreError: "We couldn't load more transactions. Please try again.",
-    loadMore: "Load more",
-    direction: { sent: "Sent", received: "Received" },
-    counterparty: { sent: "To", received: "From" },
-  },
-} as const;

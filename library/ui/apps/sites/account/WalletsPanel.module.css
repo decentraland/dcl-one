@@ -1,0 +1,98 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-16);
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: var(--dcl-space-12);
+  border-radius: var(--dcl-radius-lg);
+  background: var(--dcl-transparencies-black-20);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-16);
+  min-width: 0;
+  padding: var(--dcl-space-16);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-20);
+}
+
+.balance {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-8);
+}
+
+.network {
+  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  margin: 0;
+  color: var(--dcl-text-secondary);
+}
+
+.networkIcon {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-system-blue-dark-1);
+  color: var(--dcl-text-primary);
+}
+
+.card[data-network='polygon'] .networkIcon {
+  background: var(--dcl-bg-surface-brand);
+}
+
+.amount {
+  composes: text68656164696e672f31 from '../../../foundations/typography/text-styles.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  margin: 0;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.mana {
+  flex: none;
+}
+
+.card[data-network='ethereum'] .mana {
+  color: var(--dcl-action-primary);
+}
+
+.skeleton {
+  display: block;
+  width: 140px;
+  height: 40px;
+}
+
+.unavailable {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dcl-space-12);
+}
+
+.note {
+  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  color: var(--dcl-text-secondary);
+}
+
+@media (min-width: 1024px) {
+  .panel {
+    padding: var(--dcl-space-24);
+  }
+
+  .card {
+    padding: calc(var(--dcl-space-16) + var(--dcl-space-4));
+  }
+}

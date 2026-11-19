@@ -72,13 +72,14 @@ afterEach(() => {
 });
 
 describe("WalletsSettings", () => {
-  it("shows the whole wallet address with a way to copy it", async () => {
+  it("groups both network cards in the Wallets panel", async () => {
     balances({});
     show();
 
-    const address = card("Wallet address");
-    expect(within(address).getByText(SIGNER)).toBeTruthy();
-    expect(within(address).getByRole("button", { name: "Copy address" })).toBeTruthy();
+    const panel = card("Wallets");
+    expect(within(panel).getByRole("region", { name: "Ethereum MANA" })).toBeTruthy();
+    expect(within(panel).getByRole("region", { name: "Polygon MANA" })).toBeTruthy();
+    expect(within(panel).queryByRole("button", { name: "Copy address" })).toBeNull();
     await within(card("Ethereum MANA")).findByText("0");
   });
 
@@ -132,7 +133,6 @@ describe("WalletsSettings", () => {
     await within(card("Polygon MANA")).findByText("1");
 
     expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent)).toEqual([
-      "Copy address",
       "Transactions, Ethereum MANA",
       "Transactions, Polygon MANA",
     ]);
@@ -159,7 +159,7 @@ describe("WalletsSettings", () => {
     expect(api.fetchManaTransfers.mock.calls[0]!.slice(0, 2)).toEqual([SIGNER, "polygon"]);
   });
 
-  it("lists each transfer with its side, amount, other party, time and hash", async () => {
+  it("lists confirmed transfers with their direction, amount, time and Ethereum explorer links", async () => {
     const user = userEvent.setup();
     balances({});
     api.fetchManaTransfers.mockResolvedValue({
@@ -174,13 +174,31 @@ describe("WalletsSettings", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]!.textContent).toContain("Sent");
     expect(rows[0]!.textContent).toContain("2.5 MANA");
-    expect(rows[0]!.textContent).toContain("To 0x1111\u{2026}1111");
-    expect(rows[0]!.textContent).toContain(transfer(1).hash);
+    expect(within(rows[0]!).getByText("Confirmed")).toBeTruthy();
+    expect(within(rows[0]!).getByRole("link", { name: transfer(1).hash }).getAttribute("href")).toBe(
+      `https://etherscan.io/tx/${transfer(1).hash}`,
+    );
     expect(rows[0]!.querySelector("time")?.getAttribute("datetime")).toBe("2026-11-02T12:00:00.000Z");
     expect(rows[1]!.textContent).toContain("Received");
     expect(rows[1]!.textContent).toContain("< 0.01 MANA");
-    expect(rows[1]!.textContent).toContain("From 0x1111\u{2026}1111");
+    expect(within(rows[1]!).getByText("Confirmed")).toBeTruthy();
+    expect(within(card("Ethereum MANA")).getByText("Latest transactions")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
+  describe("when Polygon history is populated", () => {
+    beforeEach(() => {
+      balances({});
+      api.fetchManaTransfers.mockResolvedValue({ transfers: [transfer(1)], next: null });
+    });
+
+    it("should link the transaction hash to PolygonScan", async () => {
+      show();
+      await userEvent.click(screen.getByRole("button", { name: "Transactions, Polygon MANA" }));
+
+      const link = await within(card("Polygon MANA")).findByRole("link", { name: transfer(1).hash });
+      expect(link.getAttribute("href")).toBe(`https://polygonscan.com/tx/${transfer(1).hash}`);
+    });
   });
 
   it("says there are no transactions only when the node read an empty history", async () => {
