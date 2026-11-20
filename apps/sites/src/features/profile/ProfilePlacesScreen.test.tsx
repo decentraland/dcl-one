@@ -251,7 +251,7 @@ describe("profile places, the owner's empty My Places", () => {
 
     const main = await screen.findByText(/You already have a NAME/);
     const panel = main.closest("div") as HTMLElement;
-    expect(within(panel).getByRole("link", { name: "Manage World" }).getAttribute("href")).toBe("/create/worlds");
+    expect(within(panel).getByRole("link", { name: "Manage World" }).getAttribute("href")).toBe("/download/creator-hub");
     expect(screen.queryByRole("link", { name: "Get a name" })).toBeNull();
   });
 

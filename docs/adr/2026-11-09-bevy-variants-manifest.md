@@ -44,7 +44,7 @@ from the configured service, rejecting only what fails to decode.
   variant's bytes, served with `Cache-Control: immutable`. A path's bytes are
   fixed for the life of its generation.
 
-### Manifest schema (`v: 3`)
+### Manifest schema
 
 ```json
 {
@@ -73,9 +73,16 @@ from the configured service, rejecting only what fails to decode.
   class letter, not a new generation.
 - `lanes` records which generation each variant class was built from; it is for
   abgen, and a reader only shows it.
-- A reader takes only `v: 3`. Earlier versions listed a CID, format and size for
-  each variant; abgen keeps those in records beside each variant, which it does
-  not serve.
+- `v` is abgen's too: with `lanes` it tells abgen when to rewrite an entity's
+  manifest. A reader does not use it to decide whether a manifest is accepted.
+  A reader requires `files`, each CID mapped to a list of path strings, and
+  ignores fields it does not know, so it loads what any manifest of this shape
+  lists, whichever generation built it. A change to `files` that an existing
+  reader cannot load therefore takes a new manifest URL, not a new `v`; new
+  data goes in new fields.
+- Earlier versions listed a CID, format and size for each variant; a reader
+  rejects those object entries. abgen keeps them in records beside each
+  variant, which it does not serve.
 
 Classes:
 

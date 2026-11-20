@@ -12,6 +12,8 @@ import { mockGifting } from './lib/mockGifting'
 
 /** Site pages follow the domain the Explorer runs against (`?baseDomain=`, decentraland.org by default). */
 const siteUrl = (path: string): string => `https://${BASE_DOMAIN}${path}`
+// This host's Shop reads the deployment siteUrl names, so its funding page is that site's.
+const checkoutSiteUrl = siteUrl
 /** Items open on the marketplace: this deployment has no Shop page of its own. */
 const ownShopItemUrl = (_contract: string, _item: string): string | null => null
 /** The Shop opens the web Shop: this HUD's in-world Shop page is the catalogue (ShopPage). */
@@ -52,7 +54,7 @@ const BUILD_VERSION: string | null = (typeof __HUD_BUILD__ !== 'undefined' && __
 const exitUrl = (): string => 'https://decentraland.org'
 
 
-export { acceptedEntryParams, BUILD_VERSION, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, CAN_ASK_BEFORE_LEAVING, donations, gifting, siteRevision, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+export { acceptedEntryParams, BUILD_VERSION, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, CAN_ASK_BEFORE_LEAVING, donations, gifting, siteRevision, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, checkoutSiteUrl, unattendedRun }
 
-const host: HudHost = { acceptedEntryParams, BUILD_VERSION, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, CAN_ASK_BEFORE_LEAVING, donations, gifting, siteRevision, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+const host: HudHost = { acceptedEntryParams, BUILD_VERSION, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, CAN_ASK_BEFORE_LEAVING, donations, gifting, siteRevision, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, checkoutSiteUrl, unattendedRun }
 void host

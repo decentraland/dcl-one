@@ -858,6 +858,7 @@ mod tests {
             base: "https://example.org".into(),
             jump_in_site_url: "https://decentraland.org/jump".into(),
             asset_base: "https://example.org/events".into(),
+            public_base: Some("https://example.org".into()),
         };
         // Rewrites the activation singleton: its own database.
         let Some(pool) = crate::db::scratch::isolated_pool(4).await else {

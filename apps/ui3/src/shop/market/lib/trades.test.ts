@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { CHAIN } from "@shop/model/chain";
 import { fakeChain, fakeWallet, noWait } from "../testing";
 import { COLLECTION_V2_ABI, COUPON_MANAGER_ABI, ERC721_ABI, latestOffChainMarketplace, MARKETPLACE_ABI, marketplaceForTrade } from "@shop/market/lib/contracts";
-import { executeMetaTransactionData, metaTransactionTypedData, normalizeV } from "./metaTx";
+import { executeMetaTransactionData, MetaTransactionError, metaTransactionTypedData, normalizeV, sendMetaTransaction } from "./metaTx";
 import {
   cancelTrade,
   createBidTrade,
@@ -247,6 +247,21 @@ describe("cancelling a listing", () => {
     expect(body.transactionData.params[0]).toBe(trade.contract);
     expect(body.transactionData.params[1].slice(0, 10)).toBe(selectorOf("DecentralandMarketplacePolygon", "executeMetaTransaction"));
     expect(wallet.sent).toHaveLength(0);
+  });
+
+  it("keeps the relay's own word for a refusal: its error code, and when a spent quota frees up", async () => {
+    const marketplace = latestOffChainMarketplace(CHAIN.POLYGON)!;
+    restore = fakeChain({ contracts: { [marketplace.address]: { abi: MARKETPLACE_ABI, answer: () => 3n } } });
+    const original = globalThis.fetch;
+    const body = { ok: false, error: "quota_reached", code: "quota_reached", message: "Max amount of transactions reached for address. Quota: 30", not_sent: true, retryAt: 1_767_230_000, quota: 30 };
+    globalThis.fetch = (async () => new Response(JSON.stringify(body), { status: 429 })) as typeof fetch;
+    try {
+      const refused = sendMetaTransaction({ provider: fakeWallet(), contract: marketplace, kind: "offchain", functionData: "0x12" });
+      await expect(refused).rejects.toBeInstanceOf(MetaTransactionError);
+      await expect(refused).rejects.toMatchObject({ code: "quota_reached", status: 429, refused: true, refusal: { error: "quota_reached", retryAt: 1_767_230_000, quota: 30 } });
+    } finally {
+      globalThis.fetch = original;
+    }
   });
 
   it("gasless-only reports a failed relay instead of paying gas; a stranger cannot cancel", async () => {

@@ -543,6 +543,10 @@ pub struct PrimaryPlayerRes(pub Entity);
 #[derive(Resource)]
 pub struct PrimaryCameraRes(pub Entity);
 
+/// A camera that draws the lens flare of the directional light (`visuals::lens_flare`).
+#[derive(Component, Clone, Copy, Default)]
+pub struct LensFlare;
+
 /// World-space head gaze angles, in degrees. On the local player, written each frame
 /// from the real camera (and zeroed/disabled when a scene-driven camera is active). On
 /// remote players, written from the incoming rfc4::Movement head-sync fields. The
@@ -629,6 +633,13 @@ pub struct AppConfig {
     pub scene_threads: usize,
     pub scene_load_distance: f32,
     pub scene_unload_extra_distance: f32,
+    /// How many loading scenes may draw a near LOD (their own models) at once, in view and
+    /// behind the camera together: the nearest in view start first, and with none free one
+    /// behind the camera makes way for one in view. A near LOD's colliders take no place.
+    pub max_near_lods: usize,
+    /// How many scenes may load or show a far LOD (the asset pipeline's simplified mesh) at once,
+    /// in view and behind the camera together, as `max_near_lods` counts near LODs.
+    pub max_far_lods: usize,
     pub scene_imposter_distances: Vec<f32>,
     pub scene_imposter_multisample: bool,
     pub scene_imposter_multisample_amount: f32,
@@ -676,11 +687,11 @@ pub struct AppConfig {
 
 /// bump to run one-time migrations of the preset-managed settings in existing configs
 /// (see [`AppConfig::reset_outdated_settings`])
-pub const SETTINGS_GENERATION: u32 = 3;
+pub const SETTINGS_GENERATION: u32 = 5;
 
 /// bump to run one-time migrations of saved input binding tables
 /// (see [`AppConfig::migrate_inputs`])
-pub const INPUTS_GENERATION: u32 = 1;
+pub const INPUTS_GENERATION: u32 = 2;
 
 /// bump when the terms of use change, so every install accepts them again
 pub const TERMS_VERSION: u32 = 1;
@@ -699,6 +710,8 @@ impl Default for AppConfig {
             scene_threads: 4,
             scene_load_distance: 10.0,
             scene_unload_extra_distance: 10.0,
+            max_near_lods: 12,
+            max_far_lods: 200,
             scene_imposter_distances: vec![100.0, 200.0, 400.0, 800.0, 1600.0, 99999.0],
             scene_imposter_multisample: false,
             scene_imposter_multisample_amount: 0.0,
@@ -772,6 +785,10 @@ impl AppConfig {
     /// else. gen 1: reinitialize the preset-managed settings to the current defaults.
     /// gen 2: default bloom dropped High -> Low; move configs still on the old default.
     /// gen 3: native gpu uploads became capped by default; move configs still uncapped (0).
+    /// gen 4: the defaults became the Medium graphics preset; reset the settings the presets set,
+    /// so every saved config lands on Medium.
+    /// gen 5: Render Resolution moves in 10% steps; move a value saved between steps to its
+    /// nearest step.
     pub fn reset_outdated_settings(&mut self) {
         if self.settings_generation >= SETTINGS_GENERATION {
             return;
@@ -786,9 +803,18 @@ impl AppConfig {
         if self.settings_generation < 3 && self.graphics.gpu_bytes_per_frame == 0 {
             self.graphics.gpu_bytes_per_frame = default.graphics.gpu_bytes_per_frame;
         }
+        if self.settings_generation < 4 {
+            self.graphics.reset_quality_preset(&default.graphics);
+        }
+        if self.settings_generation < 5 {
+            self.graphics
+                .set_render_scale_steps(self.graphics.render_scale_steps());
+        }
         self.settings_generation = SETTINGS_GENERATION;
     }
 
+    /// gen 1's list, frozen: the settings the presets managed then, load distances and avatars
+    /// included. Today's preset settings are [`GraphicsSettings::reset_quality_preset`].
     fn reset_preset_settings(&mut self, default: &Self) {
         self.graphics.msaa = default.graphics.msaa;
         self.graphics.shadow_distance = default.graphics.shadow_distance;
@@ -804,6 +830,8 @@ impl AppConfig {
         self.graphics.spring_bones = default.graphics.spring_bones;
         self.scene_load_distance = default.scene_load_distance;
         self.scene_unload_extra_distance = default.scene_unload_extra_distance;
+        self.max_near_lods = default.max_near_lods;
+        self.max_far_lods = default.max_far_lods;
         self.scene_imposter_distances = default.scene_imposter_distances.clone();
         self.scene_imposter_multisample = default.scene_imposter_multisample;
         self.scene_imposter_multisample_amount = default.scene_imposter_multisample_amount;
@@ -813,11 +841,12 @@ impl AppConfig {
     }
 
     /// migrate saved input tables: replace bindings still on changed old defaults
-    /// (RollLeft/RollRight KeyT/KeyG freed for ChatPanel/Gallery, quick emotes moved off
-    /// the Action 3-6 digits onto the numpad), and add defaults for any actions the saved
-    /// table doesn't mention
+    /// (generation 1: RollLeft/RollRight KeyT/KeyG freed for ChatPanel/Gallery, quick emotes
+    /// moved off the Action 3-6 digits onto the numpad; generation 2: the microphone moved
+    /// from KeyV to KeyT and ChatPanel lost KeyT), and add
+    /// defaults for any actions the saved table doesn't mention
     pub fn migrate_inputs(&mut self) {
-        if self.inputs_generation < INPUTS_GENERATION {
+        if self.inputs_generation < 1 {
             for (action, bindings) in self.inputs.0.iter_mut() {
                 let (old_default, new_default) = match action {
                     Action::System(SystemAction::RollLeft) => (KeyCode::KeyT, None),
@@ -858,8 +887,47 @@ impl AppConfig {
                     *bindings = new_default.map(InputIdentifier::Key).into_iter().collect();
                 }
             }
-            self.inputs_generation = INPUTS_GENERATION;
         }
+        if self.inputs_generation < 2 {
+            let t = InputIdentifier::Key(KeyCode::KeyT);
+            let v = InputIdentifier::Key(KeyCode::KeyV);
+            let is = |action: &Action, system: SystemAction| *action == Action::System(system);
+            let bindings_of = |system: SystemAction| {
+                self.inputs
+                    .0
+                    .iter()
+                    .find(|(action, _)| is(action, system))
+                    .map(|(_, bindings)| bindings.as_slice())
+            };
+            // the microphone takes T when it is still on its old default (or has no row yet, so
+            // the default merges in below) and no action other than the chat panel's old default
+            // holds T; otherwise one press would fire both
+            let chat_panel_on_t = bindings_of(SystemAction::ChatPanel) == Some(&[t][..]);
+            let mic_on_old_default = bindings_of(SystemAction::Microphone).is_none_or(|b| b == [v]);
+            // the rows that may hold T after the move: the microphone's, and the chat panel's old
+            // default, which gives it up
+            let gives_way = |action: &Action| {
+                is(action, SystemAction::Microphone)
+                    || (is(action, SystemAction::ChatPanel) && chat_panel_on_t)
+            };
+            let t_taken = self
+                .inputs
+                .0
+                .iter()
+                .any(|(action, bindings)| !gives_way(action) && bindings.contains(&t));
+            // the chat panel gives up T only for the microphone: a player who moved the
+            // microphone elsewhere keeps T on the chat panel
+            if mic_on_old_default && !t_taken {
+                for (action, bindings) in self.inputs.0.iter_mut() {
+                    if is(action, SystemAction::ChatPanel) && *bindings == [t] {
+                        bindings.clear();
+                    } else if is(action, SystemAction::Microphone) {
+                        *bindings = vec![t];
+                    }
+                }
+            }
+        }
+        self.inputs_generation = self.inputs_generation.max(INPUTS_GENERATION);
         // ShowProfile is legacy (see the SystemAction variant): drop saved rows so the dead
         // action neither lingers in tables nor resurfaces anywhere.
         self.inputs
@@ -967,8 +1035,6 @@ pub struct GraphicsSettings {
     pub sky_reflections: SkyReflectionSetting,
     pub oob: f32,
     pub ambient_brightness: i32,
-    /// cel-shade avatars (toon shading) instead of standard PBR
-    pub cel_shading: bool,
     /// draw the dark edge outline around avatars
     pub avatar_outline: bool,
     /// show a hologram ghost where an avatar is still loading
@@ -980,23 +1046,53 @@ pub struct GraphicsSettings {
     /// share of the window's device pixels the world renders at, upscaled to the window with FSR
     /// (`visuals::upscale`); the UI stays at full resolution
     pub render_scale: f32,
+    /// draw the lens flare of the sun by day and of the moon at night (`visuals::lens_flare`)
+    pub lens_flare: bool,
 }
 
 /// The ambient brightness setting at which the Trilight ambient is the sky preset's
 /// (visuals::sky_envmap).
 pub const AMBIENT_BRIGHTNESS_DEFAULT: i32 = 50;
 
+impl GraphicsSettings {
+    /// Render Resolution steps in a render scale of 1: one step is 10%.
+    pub const RENDER_SCALE_STEPS: i32 = 10;
+    /// The lowest Render Resolution a player can choose, in steps (50%). Hosts may go lower for
+    /// the session ([`SessionGraphics::MIN_RENDER_SCALE`]).
+    pub const MIN_PLAYER_RENDER_SCALE_STEPS: i32 = 5;
+
+    /// The saved render scale at its nearest Render Resolution step within the player's range.
+    pub fn render_scale_steps(&self) -> i32 {
+        ((self.render_scale * Self::RENDER_SCALE_STEPS as f32).round() as i32).clamp(
+            Self::MIN_PLAYER_RENDER_SCALE_STEPS,
+            Self::RENDER_SCALE_STEPS,
+        )
+    }
+
+    pub fn set_render_scale_steps(&mut self, steps: i32) {
+        self.render_scale = steps as f32 / Self::RENDER_SCALE_STEPS as f32;
+    }
+}
+
+/// The defaults are the Medium graphics preset, the one a new install gets: the HUD's Graphics
+/// Preset (`react-web/bridge-scene/src/domains/graphicsPresets.ts`) reads Medium off each
+/// setting's published default.
 impl Default for GraphicsSettings {
     fn default() -> Self {
         Self {
-            vsync: false,
+            // the browser paces the web build to the display, whatever this says
+            vsync: !cfg!(target_arch = "wasm32"),
             log_fps: !cfg!(target_arch = "wasm32"),
-            msaa: AaSetting::FxaaLow,
+            // FXAA, not MSAA, so depth of field stays on (see `DofSetting::apply_to_camera`)
+            msaa: AaSetting::FxaaHigh,
             fps_target: 60,
+            // one 4096 cascade (`visuals`), so a short distance keeps its texels small
             shadow_distance: 20.0,
+            // one cascade
             shadow_settings: ShadowSetting::Low,
-            light_count: 4,
-            shadow_caster_count: 0,
+            light_count: 6,
+            // spot light shadows within 20 m
+            shadow_caster_count: 3,
             window: WindowSetting::Windowed,
             // fullscreen_res: FullscreenResSetting(UVec2::new(1280,720)),
             fog: FogSetting::On,
@@ -1006,13 +1102,34 @@ impl Default for GraphicsSettings {
             sky_reflections: SkyReflectionSetting::High,
             oob: 2.0,
             ambient_brightness: AMBIENT_BRIGHTNESS_DEFAULT,
-            cel_shading: true,
             avatar_outline: true,
             avatar_ghosts: true,
             spring_bones: false,
             gpu_bytes_per_frame: 10_000_000,
             render_scale: 1.0,
+            lens_flare: true,
         }
+    }
+}
+
+impl GraphicsSettings {
+    /// Set every setting the HUD's Graphics Preset sets to `preset`'s value, keeping the rest.
+    pub fn reset_quality_preset(&mut self, preset: &Self) {
+        self.vsync = preset.vsync;
+        self.fps_target = preset.fps_target;
+        self.render_scale = preset.render_scale;
+        self.msaa = preset.msaa;
+        self.bloom = preset.bloom;
+        self.avatar_outline = preset.avatar_outline;
+        self.shadow_settings = preset.shadow_settings;
+        self.shadow_distance = preset.shadow_distance;
+        self.light_count = preset.light_count;
+        self.shadow_caster_count = preset.shadow_caster_count;
+        self.lens_flare = preset.lens_flare;
+        self.dof = preset.dof;
+        self.ssao = preset.ssao;
+        self.fog = preset.fog;
+        self.sky_reflections = preset.sky_reflections;
     }
 }
 
@@ -1023,6 +1140,8 @@ pub struct SessionGraphics {
     pub fps_target: Option<usize>,
     pub parcel_grass: Option<ParcelGrassSetting>,
     pub render_scale: Option<f32>,
+    /// Set by the preview's `/avatar_demo cap`, which takes values past the setting's range.
+    pub max_avatars: Option<usize>,
 }
 
 impl SessionGraphics {
@@ -1033,6 +1152,46 @@ impl SessionGraphics {
 
     pub fn fps_target(&self, config: &AppConfig) -> usize {
         self.fps_target.unwrap_or(config.graphics.fps_target)
+    }
+
+    pub fn max_avatars(&self, config: &AppConfig) -> usize {
+        self.max_avatars.unwrap_or(config.max_avatars)
+    }
+
+    /// The frame rate the explorer paces to: the session's target, else the player's, and with
+    /// VSync on no faster than the monitor. VSync only removes tearing, so a lower target still
+    /// applies, and Max (999) means the monitor's rate. `refresh_hz`, when known, is the monitor's
+    /// rate rounded up past it (60 Hz gives 61), so at the monitor's rate VSync, not the pacer's
+    /// sleep, sets the frame time.
+    pub fn paced_fps(
+        session: Option<&Self>,
+        config: &AppConfig,
+        refresh_hz: Option<usize>,
+    ) -> usize {
+        let target = session.map_or(config.graphics.fps_target, |session| {
+            session.fps_target(config)
+        });
+        match refresh_hz {
+            Some(refresh) if config.graphics.vsync && (target == 0 || refresh <= target + 1) => {
+                refresh
+            }
+            _ => target,
+        }
+    }
+
+    /// [`Self::paced_fps`] as the debug panel shows it: when VSync sets the rate, the monitor's
+    /// rate (60 for a 60 Hz monitor, not the pacer's 61).
+    pub fn shown_fps(
+        session: Option<&Self>,
+        config: &AppConfig,
+        refresh_hz: Option<usize>,
+    ) -> usize {
+        let fps = Self::paced_fps(session, config, refresh_hz);
+        if config.graphics.vsync && refresh_hz == Some(fps) {
+            fps.saturating_sub(1)
+        } else {
+            fps
+        }
     }
 
     pub fn parcel_grass(&self, config: &AppConfig) -> ParcelGrassSetting {
@@ -1117,6 +1276,11 @@ pub const MIN_CASCADE: f32 = 0.1;
 #[derive(Component)]
 pub struct StageLight;
 
+/// A light that never casts shadows (a photo booth's key light): the shadow settings leave it
+/// alone.
+#[derive(Component)]
+pub struct ShadowlessLight;
+
 /// The camera that shows the lobby stage, drawn with no post-processing: the bloom setting
 /// leaves it alone.
 #[derive(Component)]
@@ -1160,6 +1324,12 @@ pub enum AaSetting {
     Msaa2x,
     Msaa4x,
     Msaa8x,
+}
+
+impl AaSetting {
+    pub fn is_msaa(self) -> bool {
+        matches!(self, Self::Msaa2x | Self::Msaa4x | Self::Msaa8x)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1469,7 +1639,7 @@ impl PermissionStrings for PermissionType {
             PermissionType::Websocket => "Open Websocket",
             PermissionType::OpenUrl => "Open Url",
             PermissionType::CopyToClipboard => "Copy to Clipboard",
-            PermissionType::OpenExplorerUi => "Open Explorer Menu",
+            PermissionType::OpenExplorerUi => "Open Explorer Menu or Item Purchase",
         }
     }
 
@@ -1528,7 +1698,7 @@ impl PermissionStrings for PermissionType {
             PermissionType::OpenUrl => "open a url in your browser",
             PermissionType::CopyToClipboard => "copy text into the clipboard",
             PermissionType::OpenExplorerUi => {
-                "open an explorer menu panel (map, backpack, settings, ...)"
+                "open an explorer menu panel (map, backpack, settings, ...) or the purchase confirmation for an item"
             }
         }
     }
@@ -1552,7 +1722,9 @@ impl PermissionStrings for PermissionType {
             PermissionType::Websocket => "opening a websocket",
             PermissionType::OpenUrl => "opening a url in your browser",
             PermissionType::CopyToClipboard => "copying text into the clipboard",
-            PermissionType::OpenExplorerUi => "opening an explorer menu panel",
+            PermissionType::OpenExplorerUi => {
+                "opening an explorer menu panel or an item's purchase confirmation"
+            }
         }
     }
 }
@@ -2039,11 +2211,19 @@ pub struct PreviewMode {
     pub preview_parcel: Option<IVec2>,
 }
 
-/// Render out-of-bounds geometry (dithered) instead of culling it. Set at startup
-/// (preview, a loopback realm, or editor mode — never a public realm); read by
-/// scene_material's show-outside-bounds observer.
+/// Render out-of-bounds geometry (dithered) instead of culling it, and keep its colliders on.
+/// Set at startup (preview, a loopback realm, or editor mode — never a public realm); read by
+/// scene_material's show-outside-bounds observer and by the scene collider data.
 #[derive(Debug, Resource, Default)]
 pub struct ShowOutOfBounds(pub bool);
+
+impl ShowOutOfBounds {
+    /// The switch for a run on `realm`: on in the editor, in preview and on a loopback realm
+    /// (local development). A run with no realm of its own passes none.
+    pub fn for_run(editor: bool, preview: bool, realm: Option<&str>) -> Self {
+        Self(editor || preview || realm.is_some_and(crate::util::is_loopback_url))
+    }
+}
 
 /// True when the explorer is embedded in a scene editor (the explicit `--editor` arg /
 /// `editor` web boot param — the editor host is expected to unfreeze scenes when the
@@ -2214,6 +2394,16 @@ pub struct ServerConfiguration {
     pub local_scene_parcels: Option<Vec<String>>,
 }
 
+impl ServerConfiguration {
+    /// Whether the realm lists its scenes up front: a World, and also some previews and the
+    /// editor's realm. A city lists none and resolves its scenes around the player.
+    pub fn lists_scenes(&self) -> bool {
+        self.scenes_urn
+            .as_ref()
+            .is_some_and(|urns| !urns.is_empty())
+    }
+}
+
 #[derive(Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct MapData {
@@ -2352,6 +2542,34 @@ pub struct WorldPasswordPrompter(pub tokio::sync::mpsc::UnboundedSender<WorldPas
 mod tests {
     use super::*;
     use crate::inputs::CommonInputAction;
+
+    /// the removed `cel_shading` field in a saved config must not stop it loading
+    #[test]
+    fn old_config_with_cel_shading_still_loads() {
+        let mut graphics = serde_json::to_value(GraphicsSettings::default()).unwrap();
+        graphics["cel_shading"] = serde_json::Value::Bool(false);
+        let config: AppConfig =
+            serde_json::from_value(serde_json::json!({ "graphics": graphics })).unwrap();
+        assert_eq!(
+            serde_json::to_value(&config.graphics).unwrap(),
+            serde_json::to_value(GraphicsSettings::default()).unwrap()
+        );
+    }
+
+    #[test]
+    fn out_of_bounds_geometry_shows_in_the_editor_in_preview_and_on_a_loopback_realm() {
+        let public = Some("https://realm.example.test/main");
+        assert!(!ShowOutOfBounds::for_run(false, false, public).0);
+        assert!(ShowOutOfBounds::for_run(true, false, public).0);
+        assert!(ShowOutOfBounds::for_run(false, true, public).0);
+        assert!(ShowOutOfBounds::for_run(false, false, Some("http://127.0.0.1:8000")).0);
+        assert!(ShowOutOfBounds::for_run(false, false, Some("http://localhost:8000")).0);
+        // a preview server reached by its LAN address
+        assert!(!ShowOutOfBounds::for_run(false, false, Some("http://192.168.1.20:8000")).0);
+        // no realm of its own
+        assert!(!ShowOutOfBounds::for_run(false, false, None).0);
+        assert!(ShowOutOfBounds::for_run(false, true, None).0);
+    }
 
     #[test]
     fn fog_reads_the_old_variants_as_on() {
@@ -2608,6 +2826,122 @@ mod tests {
     }
 
     #[test]
+    fn reset_outdated_settings_moves_render_scale_to_a_ten_percent_step() {
+        for (saved, migrated) in [
+            (0.97, 1.0),
+            (0.84, 0.8),
+            (0.53, 0.5),
+            (0.3, 0.5),
+            (0.7, 0.7),
+        ] {
+            let mut config = AppConfig {
+                settings_generation: 4,
+                ..Default::default()
+            };
+            config.graphics.render_scale = saved;
+            config.reset_outdated_settings();
+            assert_eq!(config.graphics.render_scale, migrated);
+        }
+    }
+
+    #[test]
+    fn default_graphics_are_the_medium_preset() {
+        let g = GraphicsSettings::default();
+        assert_eq!((g.fps_target, g.render_scale), (60, 1.0));
+        assert_eq!((g.bloom, g.avatar_outline), (BloomSetting::Low, true));
+        assert_eq!(
+            (
+                g.shadow_settings,
+                g.shadow_distance,
+                g.light_count,
+                g.shadow_caster_count
+            ),
+            (ShadowSetting::Low, 20.0, 6, 3)
+        );
+        assert_eq!(
+            (g.dof, g.ssao, g.fog, g.sky_reflections),
+            (
+                DofSetting::High,
+                SsaoSetting::Off,
+                FogSetting::On,
+                SkyReflectionSetting::High
+            )
+        );
+        assert_eq!(g.msaa, AaSetting::FxaaHigh);
+        assert_eq!(g.vsync, !cfg!(target_arch = "wasm32"));
+    }
+
+    #[test]
+    fn vsync_caps_the_target_at_the_refresh_rate() {
+        let mut config = AppConfig::default();
+        let paced = |config: &AppConfig, session: Option<&SessionGraphics>, refresh| {
+            SessionGraphics::paced_fps(session, config, refresh)
+        };
+        let thirty = SessionGraphics {
+            fps_target: Some(30),
+            ..Default::default()
+        };
+        config.graphics.vsync = true;
+        config.graphics.fps_target = 60;
+        assert_eq!(paced(&config, None, Some(144)), 60);
+        assert_eq!(paced(&config, None, Some(50)), 50);
+        // a 60 Hz monitor reads as 61: VSync sets the rate
+        assert_eq!(paced(&config, None, Some(61)), 61);
+        assert_eq!(paced(&config, Some(&thirty), Some(144)), 30);
+        assert_eq!(paced(&config, None, None), 60);
+        config.graphics.fps_target = 999;
+        assert_eq!(paced(&config, None, Some(144)), 144);
+        config.graphics.vsync = false;
+        assert_eq!(paced(&config, None, Some(144)), 999);
+        assert_eq!(paced(&config, Some(&thirty), Some(144)), 30);
+    }
+
+    #[test]
+    fn the_shown_rate_is_the_monitors_when_vsync_sets_it() {
+        let mut config = AppConfig::default();
+        let shown = |config: &AppConfig, refresh| SessionGraphics::shown_fps(None, config, refresh);
+        config.graphics.vsync = true;
+        config.graphics.fps_target = 999;
+        assert_eq!(shown(&config, Some(61)), 60);
+        assert_eq!(shown(&config, None), 999);
+        config.graphics.fps_target = 60;
+        assert_eq!(shown(&config, Some(61)), 60);
+        assert_eq!(shown(&config, Some(145)), 60);
+        config.graphics.vsync = false;
+        config.graphics.fps_target = 999;
+        assert_eq!(shown(&config, Some(61)), 999);
+    }
+
+    #[test]
+    fn generation_4_lands_on_medium_and_keeps_the_rest() {
+        let mut config = AppConfig {
+            settings_generation: 3,
+            scene_load_distance: 100.0,
+            max_avatars: 50,
+            ..Default::default()
+        };
+        let g = &mut config.graphics;
+        (g.vsync, g.fps_target, g.render_scale) = (false, 144, 0.5);
+        (g.msaa, g.bloom, g.dof) = (AaSetting::FxaaLow, BloomSetting::High, DofSetting::Off);
+        (g.shadow_distance, g.light_count, g.shadow_caster_count) = (200.0, 32, 8);
+        g.lens_flare = false;
+        (g.ambient_brightness, g.oob) = (10, 0.0);
+        config.reset_outdated_settings();
+
+        let mut medium = GraphicsSettings::default();
+        (medium.ambient_brightness, medium.oob) = (10, 0.0);
+        assert_eq!(
+            serde_json::to_value(&config.graphics).unwrap(),
+            serde_json::to_value(&medium).unwrap()
+        );
+        assert_eq!(
+            (config.scene_load_distance, config.max_avatars),
+            (100.0, 50)
+        );
+        assert_eq!(config.settings_generation, SETTINGS_GENERATION);
+    }
+
+    #[test]
     fn migrate_inputs_updates_old_tables() {
         // a table saved before Places/Gallery/etc existed, with old roll defaults and
         // one deliberate user customization
@@ -2723,6 +3057,97 @@ mod tests {
     }
 
     #[test]
+    fn migrate_inputs_moves_the_microphone_to_t() {
+        fn table(rows: &[(SystemAction, Option<KeyCode>)]) -> AppConfig {
+            AppConfig {
+                inputs: InputMapSerialized(
+                    rows.iter()
+                        .map(|(action, key)| {
+                            (
+                                Action::System(*action),
+                                key.map(InputIdentifier::Key).into_iter().collect(),
+                            )
+                        })
+                        .collect(),
+                    Default::default(),
+                ),
+                inputs_generation: 1,
+                ..Default::default()
+            }
+        }
+        fn get(config: &AppConfig, action: SystemAction) -> Vec<InputIdentifier> {
+            config
+                .inputs
+                .0
+                .iter()
+                .find(|(a, _)| *a == Action::System(action))
+                .map(|(_, bindings)| bindings.clone())
+                .unwrap()
+        }
+        let t = InputIdentifier::Key(KeyCode::KeyT);
+        let v = InputIdentifier::Key(KeyCode::KeyV);
+
+        // both on the old defaults: the microphone takes T, ChatPanel is left unbound
+        let mut config = table(&[
+            (SystemAction::Microphone, Some(KeyCode::KeyV)),
+            (SystemAction::ChatPanel, Some(KeyCode::KeyT)),
+        ]);
+        config.migrate_inputs();
+        assert_eq!(get(&config, SystemAction::Microphone), vec![t]);
+        assert_eq!(get(&config, SystemAction::ChatPanel), vec![]);
+        assert_eq!(config.inputs_generation, INPUTS_GENERATION);
+
+        // rebinds are kept
+        let mut config = table(&[
+            (SystemAction::Microphone, Some(KeyCode::KeyB)),
+            (SystemAction::ChatPanel, Some(KeyCode::KeyY)),
+        ]);
+        config.migrate_inputs();
+        assert_eq!(
+            get(&config, SystemAction::Microphone),
+            vec![InputIdentifier::Key(KeyCode::KeyB)]
+        );
+        assert_eq!(
+            get(&config, SystemAction::ChatPanel),
+            vec![InputIdentifier::Key(KeyCode::KeyY)]
+        );
+
+        // the microphone moved elsewhere by the player: the chat panel keeps T
+        let mut config = table(&[
+            (SystemAction::Microphone, Some(KeyCode::KeyB)),
+            (SystemAction::ChatPanel, Some(KeyCode::KeyT)),
+        ]);
+        config.migrate_inputs();
+        assert_eq!(
+            get(&config, SystemAction::Microphone),
+            vec![InputIdentifier::Key(KeyCode::KeyB)]
+        );
+        assert_eq!(get(&config, SystemAction::ChatPanel), vec![t]);
+
+        // no microphone row yet: the chat panel gives up T and the default merges in on T
+        let mut config = table(&[(SystemAction::ChatPanel, Some(KeyCode::KeyT))]);
+        config.migrate_inputs();
+        assert_eq!(get(&config, SystemAction::Microphone), vec![t]);
+        assert_eq!(get(&config, SystemAction::ChatPanel), vec![]);
+
+        // T given to another action: the microphone stays on V, the chat panel keeps T
+        let mut config = table(&[
+            (SystemAction::Microphone, Some(KeyCode::KeyV)),
+            (SystemAction::ChatPanel, Some(KeyCode::KeyY)),
+            (SystemAction::RollLeft, Some(KeyCode::KeyT)),
+        ]);
+        config.migrate_inputs();
+        assert_eq!(get(&config, SystemAction::Microphone), vec![v]);
+        assert_eq!(get(&config, SystemAction::RollLeft), vec![t]);
+
+        // a deliberate rebind of the microphone back to V after the migration stays
+        let mut config = table(&[(SystemAction::Microphone, Some(KeyCode::KeyV))]);
+        config.inputs_generation = INPUTS_GENERATION;
+        config.migrate_inputs();
+        assert_eq!(get(&config, SystemAction::Microphone), vec![v]);
+    }
+
+    #[test]
     fn malformed_satellite_view_is_absent() {
         let parse = |map: &str| serde_json::from_str::<MapData>(map).unwrap().satellite_view;
 
@@ -2773,6 +3198,14 @@ mod tests {
                 "{toggles}"
             );
         }
+    }
+
+    #[test]
+    fn a_realm_lists_scenes_only_with_a_scene_in_its_list() {
+        let config = |json: &str| serde_json::from_str::<ServerConfiguration>(json).unwrap();
+        assert!(config(r#"{"scenesUrn":["urn:decentraland:entity:a"]}"#).lists_scenes());
+        assert!(!config(r#"{"scenesUrn":[]}"#).lists_scenes());
+        assert!(!config(r#"{"realmName":"main"}"#).lists_scenes());
     }
 
     #[test]

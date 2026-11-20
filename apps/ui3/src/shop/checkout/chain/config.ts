@@ -2,6 +2,7 @@
 //       app/src/config/env/{prod,dev}.json, app/src/lib/gasless-config.ts
 import { catalystBase } from "../../../data/catalyst/client";
 import { CHAIN, type ChainId } from "@shop/model/chain";
+import { pageOverride } from "../../pageOverride";
 
 export type ShopChainOverrides = {
   settlementChainId?: number;
@@ -10,8 +11,6 @@ export type ShopChainOverrides = {
   relayerUrl?: string;
   gasless?: boolean;
 };
-
-type ShopChainWindow = Window & typeof globalThis & { __SHOP_CHAIN__?: ShopChainOverrides };
 
 const DEFAULT_RPC: Record<number, string> = {
   [CHAIN.POLYGON]: "https://rpc.decentraland.org/polygon",
@@ -25,8 +24,9 @@ function env(name: string): string | undefined {
   return value && value.trim() ? value.trim() : undefined;
 }
 
+/** A test's or a local build's override from the page; none in a production build (../../pageOverride). */
 function fromWindow(): ShopChainOverrides {
-  return typeof window !== "undefined" ? ((window as ShopChainWindow).__SHOP_CHAIN__ ?? {}) : {};
+  return pageOverride<ShopChainOverrides>("__SHOP_CHAIN__") ?? {};
 }
 
 function overrides(): ShopChainOverrides {

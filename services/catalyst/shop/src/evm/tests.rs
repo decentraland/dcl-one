@@ -269,10 +269,20 @@ async fn spawn_fake_chain() -> (String, RawTxs) {
     (format!("http://{addr}"), raws)
 }
 
+/// The relayer list of a fake OZ relayer that lists no relayer accounts.
+fn empty_relayer_list(app: axum::Router) -> axum::Router {
+    app.route(
+        "/api/v1/relayers/",
+        axum::routing::get(|| async {
+            Json(json!({ "success": true, "data": [], "pagination": { "total_items": 0 } }))
+        }),
+    )
+}
+
 async fn spawn_fake_relayer() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(1);
-    let app = axum::Router::new().route(
+    let app = empty_relayer_list(axum::Router::new()).route(
         "/api/v1/relayers/{relayer_id}/transactions",
         post(|| async {
             let n = NEXT.fetch_add(1, Ordering::Relaxed);
@@ -504,6 +514,176 @@ fn unique_address() -> String {
     format!("{:#x}", PrivateKeySigner::random().address())
 }
 
+/// `createOrder` on the legacy order books is answered 400 before any check
+/// that reaches the chain, the quota or the database; `executeOrder` on the
+/// same targets and `createOrder`'s selector on other targets are not, in
+/// both calldata formats.
+#[tokio::test]
+async fn create_order_on_the_legacy_marketplaces_is_refused_before_simulation() {
+    let app = router(state(lazy_pool(), Settings::for_tests()));
+    let key = PrivateKeySigner::random();
+    let user = format!("{:#x}", key.address());
+    let mut call = super::abi::createOrderCall::SELECTOR.to_vec();
+    call.extend_from_slice(&[0u8; 32 * 4]);
+    for market in [
+        "0x02080031b45a3c67d338dd4a2cc309d28756a160",
+        "0x480a0f4e360e8964e68858dd231c2922f1df45ef",
+    ] {
+        for calldata in [
+            signed_split_calldata(&key, &call),
+            signed_combined_calldata(&key, &call),
+        ] {
+            let (status, body) = post_transaction(&app, &user, market, &calldata).await;
+            assert_eq!(status, 400, "{market}: {body}");
+            assert_eq!(body["error"], "invalid_transaction", "{body}");
+            assert_eq!(body["not_sent"], true, "{body}");
+            assert_eq!(
+                body["message"],
+                format!(
+                    "The meta-transaction method createOrder(address,uint256,uint256,uint256) is not allowed for contract {market}."
+                ),
+            );
+        }
+    }
+    let mut execute_order = super::abi::executeOrderCall::SELECTOR.to_vec();
+    execute_order.extend_from_slice(&[0u8; 32 * 3]);
+    // Each reaches a later check: the zero price, or the unreachable database.
+    for (contract, inner, later) in [
+        (
+            "0x02080031b45a3c67d338dd4a2cc309d28756a160",
+            &execute_order,
+            "sale_price_too_low",
+        ),
+        (
+            "0x480a0f4e360e8964e68858dd231c2922f1df45ef",
+            &execute_order,
+            "sale_price_too_low",
+        ),
+        (
+            "0x214ffc0f0103735728dc66b61a22e4f163e275ae",
+            &call,
+            "sale_price_too_low",
+        ),
+        (COLLECTION, &call, "unknown"),
+    ] {
+        for calldata in [
+            signed_split_calldata(&key, inner),
+            signed_combined_calldata(&key, inner),
+        ] {
+            let (_, body) = post_transaction(&app, &user, contract, &calldata).await;
+            assert_eq!(body["error"], later, "{contract}: {body}");
+        }
+    }
+}
+
+/// A trial relay answers a wallet outside the trial 403 before refusing its `createOrder`.
+#[tokio::test]
+async fn a_trial_relay_refuses_a_non_buyer_create_order_as_forbidden() {
+    let app = router(state(
+        lazy_pool(),
+        Settings {
+            data_writes_enabled: false,
+            ops_writes_enabled: true,
+            ..trial_relay()
+        },
+    ));
+    let key = PrivateKeySigner::random();
+    let user = format!("{:#x}", key.address());
+    let mut call = super::abi::createOrderCall::SELECTOR.to_vec();
+    call.extend_from_slice(&[0u8; 32 * 4]);
+    let calldata = signed_split_calldata(&key, &call);
+    let (status, body) = post_transaction(
+        &app,
+        &user,
+        "0x480a0f4e360e8964e68858dd231c2922f1df45ef",
+        &calldata,
+    )
+    .await;
+    assert_eq!(status, 403, "{body}");
+    assert_eq!(
+        body["message"],
+        "this relay serves only the test's buyers (CREDITS_TRIAL_MODE)"
+    );
+}
+
+/// A spent free-call budget says when the next free call is admitted, counted over every free
+/// call (not the refused address's): the first whole second after the budget-th newest one
+/// leaves the window. A sale in the window is no free call and moves nothing.
+#[tokio::test]
+async fn a_spent_free_call_budget_says_when_the_next_one_is_admitted() {
+    // Its own database, so no other test's free calls count, and one connection: the refusal
+    // holds the budget lock on it, so the read must not wait for a second one.
+    let Some(pool) = crate::db::scratch::isolated_pool(1).await else {
+        return;
+    };
+    let tc = component(pool.clone());
+    let t0 = chrono::NaiveDate::from_ymd_opt(2101, 1, 1)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    let at = |secs: i64| t0 + chrono::Duration::seconds(secs);
+    let unix = |secs: i64| at(secs).and_utc().timestamp();
+    let window = super::QUOTA_WINDOW_SECS;
+    let addrs = [unique_address(), unique_address(), unique_address()];
+    let free = |a: &str, budget: i64, clock| {
+        let (tc, a) = (&tc, a.to_string());
+        async move {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                tc.reserve_free_call(
+                    10,
+                    budget,
+                    &sender(&a),
+                    &Uuid::new_v4().to_string(),
+                    137,
+                    COLLECTION,
+                    clock,
+                ),
+            )
+            .await
+            .expect("answers without waiting for a second connection")
+        }
+    };
+    free(&addrs[0], 2, at(0)).await.expect("first free call");
+    free(&addrs[1], 2, at(10)).await.expect("second free call");
+    tc.reserve_quota(
+        10,
+        &sender(&addrs[2]),
+        &Uuid::new_v4().to_string(),
+        137,
+        COLLECTION,
+        at(15),
+    )
+    .await
+    .expect("a sale");
+    let err = free(&addrs[2], 2, at(20)).await.unwrap_err();
+    assert!(
+        matches!(err, ApiError::RelayBudgetSpent { retry_at: Some(t), .. } if t == unix(window) + 1),
+        "the older free call has to leave: {err:?}"
+    );
+    assert_eq!(
+        axum::response::IntoResponse::into_response(err).status(),
+        axum::http::StatusCode::TOO_MANY_REQUESTS
+    );
+    let err = free(&addrs[2], 1, at(20)).await.unwrap_err();
+    assert!(
+        matches!(err, ApiError::RelayBudgetSpent { retry_at: Some(t), .. } if t == unix(10 + window) + 1),
+        "under a lowered budget the newer one has to leave: {err:?}"
+    );
+    assert!(free(&addrs[2], 2, at(window)).await.is_err());
+    let retry = chrono::DateTime::from_timestamp(unix(window) + 1, 0)
+        .unwrap()
+        .naive_utc();
+    free(&addrs[2], 2, retry)
+        .await
+        .expect("admitted at retryAt");
+    sqlx::query("DELETE FROM economy.transactions WHERE user_address = ANY($1)")
+        .bind(addrs.iter().map(|a| a.to_lowercase()).collect::<Vec<_>>())
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn the_free_call_budget_never_holds_back_a_sale() {
     use axum::response::IntoResponse;
@@ -535,7 +715,16 @@ async fn the_free_call_budget_never_holds_back_a_sale() {
     free(&addrs[0], 2).await.expect("first free call");
     free(&addrs[1], 2).await.expect("second free call");
     let err = free(&addrs[2], 2).await.unwrap_err();
-    assert!(matches!(err, ApiError::RelayBudgetSpent(_)), "got {err:?}");
+    assert!(
+        matches!(
+            err,
+            ApiError::RelayBudgetSpent {
+                retry_at: Some(_),
+                ..
+            }
+        ),
+        "got {err:?}"
+    );
     assert_eq!(
         err.into_response().status(),
         axum::http::StatusCode::TOO_MANY_REQUESTS
@@ -694,7 +883,7 @@ async fn reserve_enforces_daily_limit_and_release_refunds_a_slot() {
         .await
         .expect_err("over quota");
     assert!(
-        matches!(err, ApiError::QuotaReached(_)),
+        matches!(err, ApiError::QuotaReached { quota: MAX, .. }),
         "expected QuotaReached, got {err:?}"
     );
     assert_eq!(row_count(&pool, &addr).await, MAX);
@@ -721,6 +910,155 @@ async fn reserve_enforces_daily_limit_and_release_refunds_a_slot() {
     .await
     .expect("the quota counts the day before the bound clock, not now()");
     cleanup_user(&pool, &addr).await;
+}
+
+/// A refused address learns its cap and when its next relay is admitted: the first whole second
+/// after the relay that has to leave the window does so (the oldest at the cap, a later one when
+/// the cap is under the count). The second before is still refused; that one is admitted.
+#[tokio::test]
+async fn a_quota_refusal_says_when_the_next_relay_is_admitted() {
+    use chrono::Timelike;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let tc = component(pool.clone());
+    let addr = unique_address();
+    const MAX: i64 = 3;
+    let t0 = now().with_nanosecond(0).unwrap() - chrono::Duration::hours(1);
+    let at = |secs: i64| t0 + chrono::Duration::seconds(secs);
+    let unix = |secs: i64| at(secs).and_utc().timestamp();
+    let window = super::QUOTA_WINDOW_SECS;
+    for i in 0..MAX {
+        tc.reserve_quota(
+            MAX,
+            &sender(&addr),
+            &Uuid::new_v4().to_string(),
+            137,
+            COLLECTION,
+            at(10 * i),
+        )
+        .await
+        .expect("reserve within budget");
+    }
+    let refused = |cap: i64, clock| {
+        let (tc, addr) = (&tc, &addr);
+        async move {
+            tc.reserve_quota(
+                cap,
+                &sender(addr),
+                &Uuid::new_v4().to_string(),
+                137,
+                COLLECTION,
+                clock,
+            )
+            .await
+        }
+    };
+
+    let err = refused(MAX, at(30)).await.expect_err("over quota");
+    let frees = unix(window) + 1;
+    assert!(
+        matches!(err, ApiError::QuotaReached { quota: MAX, retry_at: Some(t), .. } if t == frees),
+        "{err:?}"
+    );
+    let err = refused(MAX - 1, at(30))
+        .await
+        .expect_err("over a lowered cap");
+    assert!(
+        matches!(err, ApiError::QuotaReached { quota: 2, retry_at: Some(t), .. } if t == unix(10 + window) + 1),
+        "the second oldest has to leave for 2 to fit: {err:?}"
+    );
+    assert!(
+        matches!(
+            refused(0, at(30)).await,
+            Err(ApiError::QuotaReached {
+                quota: 0,
+                retry_at: None,
+                ..
+            })
+        ),
+        "a cap of 0 never frees"
+    );
+
+    assert!(
+        refused(MAX, at(window)).await.is_err(),
+        "a relay exactly a window old still counts"
+    );
+    let retry = chrono::DateTime::from_timestamp(frees, 0)
+        .unwrap()
+        .naive_utc();
+    refused(MAX, retry).await.expect("admitted at retryAt");
+    cleanup_user(&pool, &addr).await;
+}
+
+/// The next opening counts from the newest relay, so a reservation released between the refusal
+/// and the read never makes it later: with relays at t0, t0+10 and t0+20 and a cap of 2, once
+/// t0's is released the opening is when t0+10's leaves, and with fewer relays than the cap there
+/// is none to wait for.
+#[tokio::test]
+async fn the_next_quota_opening_follows_a_released_reservation() {
+    use chrono::Timelike;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let tc = component(pool.clone());
+    let addr = unique_address();
+    let t0 = now().with_nanosecond(0).unwrap() - chrono::Duration::hours(1);
+    let at = |secs: i64| t0 + chrono::Duration::seconds(secs);
+    let window = super::QUOTA_WINDOW_SECS;
+    let mut sessions = Vec::new();
+    for i in 0..3 {
+        let session = Uuid::new_v4().to_string();
+        tc.reserve_quota(3, &sender(&addr), &session, 137, COLLECTION, at(10 * i))
+            .await
+            .expect("reserve within budget");
+        sessions.push(session);
+    }
+    let window_start = at(30) - chrono::Duration::seconds(window);
+    let opening =
+        |cap| super::transaction::next_slot_at(&pool, Some(addr.as_str()), window_start, cap);
+    assert_eq!(
+        opening(2).await.unwrap(),
+        Some(at(10 + window).and_utc().timestamp() + 1)
+    );
+    tc.release_reservation(&sessions[0]).await.expect("release");
+    assert_eq!(
+        opening(2).await.unwrap(),
+        Some(at(10 + window).and_utc().timestamp() + 1),
+        "releasing the oldest never moves the opening later"
+    );
+    tc.release_reservation(&sessions[1]).await.expect("release");
+    assert_eq!(
+        opening(2).await.unwrap(),
+        None,
+        "under the cap there is no opening to wait for"
+    );
+    cleanup_user(&pool, &addr).await;
+}
+
+/// A refusal already decided keeps its 429 when its opening cannot be read: the lookup's error
+/// becomes no `retryAt`, never an error of its own, for either limit.
+#[tokio::test]
+async fn a_failed_opening_lookup_leaves_the_refusal_without_a_time() {
+    let Some(pool) = crate::db::scratch::isolated_pool(1).await else {
+        return;
+    };
+    pool.close().await;
+    let window_start = now() - chrono::Duration::seconds(super::QUOTA_WINDOW_SECS);
+    let address = unique_address();
+    assert!(
+        super::transaction::next_slot_at(&pool, Some(address.as_str()), window_start, 3)
+            .await
+            .is_err(),
+        "the closed pool fails the read itself"
+    );
+    for user_address in [Some(address.as_str()), None] {
+        assert_eq!(
+            super::transaction::retry_at(&pool, user_address, window_start, 3).await,
+            None,
+            "{user_address:?}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -753,7 +1091,7 @@ async fn concurrent_reservations_never_exceed_the_limit() {
     for task in tasks {
         match task.await.expect("task") {
             Ok(()) => reserved += 1,
-            Err(ApiError::QuotaReached(msg)) => {
+            Err(ApiError::QuotaReached { message: msg, .. }) => {
                 assert!(msg.ends_with(&format!("Quota: {MAX}")), "{msg}");
                 refused += 1;
             }
@@ -822,7 +1160,7 @@ async fn reservations_are_isolated_per_user() {
             now()
         )
         .await,
-        Err(ApiError::QuotaReached(_))
+        Err(ApiError::QuotaReached { .. })
     ));
     for _ in 0..MAX {
         tc.reserve_quota(
@@ -1060,7 +1398,7 @@ async fn oz_app_over(pool: &PgPool, relayer_url: String) -> axum::Router {
 /// A fake OZ relayer whose submission answers `submission` and whose every status check answers
 /// `status`.
 async fn spawn_oz_answering(submission: Value, status: Value) -> String {
-    let app = axum::Router::new()
+    let app = empty_relayer_list(axum::Router::new())
         .route(
             "/api/v1/relayers/{relayer_id}/transactions",
             post(move || {
@@ -1143,6 +1481,265 @@ async fn an_oz_transaction_never_signed_reaches_the_client_as_not_sent() {
             "terminal hash {terminal_hash}: the slot is released only when nothing was signed"
         );
     }
+}
+
+/// A fake OZ relayer whose API key lists `account`, counting the submissions it receives.
+async fn spawn_oz_listing(account: String) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let submissions = Arc::new(AtomicUsize::new(0));
+    let counted = submissions.clone();
+    let app = axum::Router::new()
+        .route(
+            "/api/v1/relayers/",
+            axum::routing::get(move || {
+                let account = account.clone();
+                async move { Json(json!({ "success": true, "data": [{ "id": "other", "address": account }] })) }
+            }),
+        )
+        .route(
+            "/api/v1/relayers/{relayer_id}/transactions",
+            post(move || {
+                counted.fetch_add(1, Ordering::Relaxed);
+                async { Json(json!({ "success": true, "data": { "id": "oz-1", "hash": format!("0x{:064x}", 1), "status": "submitted" } })) }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake relayer");
+    let addr = listener.local_addr().expect("relayer addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (format!("http://{addr}"), submissions)
+}
+
+/// With only the OZ relayer provisioned (no direct signer), a meta-transaction whose
+/// `userAddress` is any account the relayer's API key lists is answered 400 before the contract,
+/// quota or broadcast steps.
+#[tokio::test]
+async fn a_relayer_account_is_refused_as_the_user_with_only_the_oz_relayer() {
+    let relayer_key = PrivateKeySigner::random();
+    let relayer_account = relayer_key.address().to_checksum(None);
+    let (relayer_url, submissions) = spawn_oz_listing(relayer_account.clone()).await;
+    let state = state(
+        lazy_pool(),
+        Settings {
+            oz_relayer_url: Some(relayer_url),
+            oz_relayer_id: Some("relayer-under-test".into()),
+            oz_relayer_api_key: Some("api-key-under-test".into()),
+            ..Settings::for_tests()
+        },
+    );
+    assert!(state.transaction.has_oz_relayer() && !state.transaction.has_direct_signer());
+    let app = router(state);
+    let user = format!("{:#x}", relayer_key.address());
+    for calldata in [
+        signed_split_calldata(&relayer_key, FS),
+        signed_combined_calldata(&relayer_key, FS),
+    ] {
+        let (status, body) = post_transaction(&app, &user, COLLECTION, &calldata).await;
+        assert_eq!(status, 400, "{body}");
+        assert_eq!(body["error"], "invalid_transaction", "{body}");
+        assert_eq!(body["message"], "Invalid transaction data.", "{body}");
+        assert_eq!(body["not_sent"], true, "{body}");
+    }
+    assert_eq!(submissions.load(std::sync::atomic::Ordering::Relaxed), 0);
+}
+
+/// The `relayer-accounts` job reads the OZ relayer's list on its own, before any relay request.
+#[tokio::test]
+async fn the_relayer_accounts_job_reads_the_list_at_start() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let reads = Arc::new(AtomicUsize::new(0));
+    let counted = reads.clone();
+    let app = axum::Router::new().route(
+        "/api/v1/relayers/",
+        axum::routing::get(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            async { Json(json!({ "success": true, "data": [] })) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake relayer");
+    let addr = listener.local_addr().expect("relayer addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let state = state(
+        lazy_pool(),
+        Settings {
+            oz_relayer_url: Some(format!("http://{addr}")),
+            oz_relayer_id: Some("relayer-under-test".into()),
+            oz_relayer_api_key: Some("api-key-under-test".into()),
+            ..Settings::for_tests()
+        },
+    );
+    let jobs = crate::jobs::Jobs::new();
+    super::spawn_jobs(&state, &jobs);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while reads.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the job reads the list");
+    jobs.shutdown(std::time::Duration::from_secs(5)).await;
+}
+
+/// A user that is not a listed relayer account passes that step and reaches the OZ relayer.
+#[tokio::test]
+async fn an_unlisted_user_reaches_the_oz_relayer() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let listed = PrivateKeySigner::random().address().to_checksum(None);
+    let (relayer_url, submissions) = spawn_oz_listing(listed).await;
+    let app = oz_app_over(&pool, relayer_url).await;
+    let key = PrivateKeySigner::random();
+    let user = format!("{:#x}", key.address());
+    let (status, body) =
+        post_transaction(&app, &user, COLLECTION, &signed_split_calldata(&key, FS)).await;
+    cleanup_user(&pool, &user).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(submissions.load(std::sync::atomic::Ordering::Relaxed), 1);
+}
+
+/// With both the direct signer and the OZ relayer provisioned, the signer's address and every
+/// account the OZ relayer lists are refused as the user.
+#[tokio::test]
+async fn relayer_accounts_are_refused_with_both_the_signer_and_the_oz_relayer() {
+    let signer_key = PrivateKeySigner::random();
+    let listed_key = PrivateKeySigner::random();
+    let (relayer_url, submissions) = spawn_oz_listing(listed_key.address().to_checksum(None)).await;
+    let (chain_url, raws) = spawn_fake_chain().await;
+    let state = state(
+        lazy_pool(),
+        Settings {
+            oz_relayer_url: Some(relayer_url),
+            oz_relayer_id: Some("relayer-under-test".into()),
+            oz_relayer_api_key: Some("api-key-under-test".into()),
+            polygon_rpc_url: Some(chain_url),
+            meta_tx_broadcast_enabled: true,
+            relayer_private_key: Some(hex::encode(signer_key.to_bytes())),
+            ..Settings::for_tests()
+        },
+    );
+    assert!(state.transaction.has_oz_relayer() && state.transaction.has_direct_signer());
+    let app = router(state);
+    for key in [&signer_key, &listed_key] {
+        let user = format!("{:#x}", key.address());
+        let (status, body) =
+            post_transaction(&app, &user, COLLECTION, &signed_split_calldata(key, FS)).await;
+        assert_eq!(status, 400, "{body}");
+        assert_eq!(body["message"], "Invalid transaction data.", "{body}");
+    }
+    assert_eq!(submissions.load(std::sync::atomic::Ordering::Relaxed), 0);
+    assert!(raws.lock().unwrap().is_empty());
+}
+
+/// While the OZ relayer's list has not been read, the direct signer's address is still answered
+/// 400 at once, and any other user 503 (not sent) once the wait for the first read runs out.
+#[tokio::test]
+async fn a_relay_before_the_relayer_list_is_read_is_unavailable() {
+    let app = axum::Router::new().route(
+        "/api/v1/relayers/",
+        axum::routing::get(|| async {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            Json(json!({ "success": true, "data": [] }))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake relayer");
+    let addr = listener.local_addr().expect("relayer addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let signer_key = PrivateKeySigner::random();
+    let (chain_url, raws) = spawn_fake_chain().await;
+    let state = state(
+        lazy_pool(),
+        Settings {
+            oz_relayer_url: Some(format!("http://{addr}")),
+            oz_relayer_id: Some("relayer-under-test".into()),
+            oz_relayer_api_key: Some("api-key-under-test".into()),
+            polygon_rpc_url: Some(chain_url),
+            meta_tx_broadcast_enabled: true,
+            relayer_private_key: Some(hex::encode(signer_key.to_bytes())),
+            oz_accounts_first_wait: std::time::Duration::from_millis(50),
+            ..Settings::for_tests()
+        },
+    );
+    let app = router(state);
+    let started = std::time::Instant::now();
+    let user = format!("{:#x}", signer_key.address());
+    let (status, body) = post_transaction(
+        &app,
+        &user,
+        COLLECTION,
+        &signed_split_calldata(&signer_key, FS),
+    )
+    .await;
+    assert_eq!(status, 400, "{body}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    let key = PrivateKeySigner::random();
+    let user = format!("{:#x}", key.address());
+    let (status, body) =
+        post_transaction(&app, &user, COLLECTION, &signed_split_calldata(&key, FS)).await;
+    assert_eq!(status, 503, "{body}");
+    assert_eq!(body["not_sent"], true, "{body}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    assert!(raws.lock().unwrap().is_empty());
+}
+
+/// A refused method is answered 400 at once, without waiting for an OZ relayer list that is not
+/// read yet.
+#[tokio::test]
+async fn a_refused_method_does_not_wait_for_the_relayer_list() {
+    let app = axum::Router::new().route(
+        "/api/v1/relayers/",
+        axum::routing::get(|| async {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            Json(json!({ "success": true, "data": [] }))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake relayer");
+    let addr = listener.local_addr().expect("relayer addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let app = router(state(
+        lazy_pool(),
+        Settings {
+            oz_relayer_url: Some(format!("http://{addr}")),
+            oz_relayer_id: Some("relayer-under-test".into()),
+            oz_relayer_api_key: Some("api-key-under-test".into()),
+            oz_accounts_first_wait: std::time::Duration::from_secs(30),
+            ..Settings::for_tests()
+        },
+    ));
+    let key = PrivateKeySigner::random();
+    let user = format!("{:#x}", key.address());
+    let mut call = super::abi::createOrderCall::SELECTOR.to_vec();
+    call.extend_from_slice(&[0u8; 32 * 4]);
+    let started = std::time::Instant::now();
+    let (status, body) = post_transaction(
+        &app,
+        &user,
+        "0x02080031b45a3c67d338dd4a2cc309d28756a160",
+        &signed_split_calldata(&key, &call),
+    )
+    .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(body["error"], "invalid_transaction", "{body}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
 }
 
 #[tokio::test]
@@ -3529,6 +4126,9 @@ async fn a_trial_never_reuses_the_relayer_key_on_the_names_chain() {
     let trial = State::new(pool.clone(), Outbound::for_tests(), with_eth(trial_relay()))
         .expect("a complete trial relay starts");
     assert!(trial.eth_signer.is_none());
+    // The NAME routes' error and the startup log say the trial is why, not a missing key.
+    let why = trial.settings.names_signer_absence();
+    assert!(why.contains("CREDITS_TRIAL_MODE"), "{why}");
     let open = State::new(
         pool,
         Outbound::for_tests(),
@@ -3673,6 +4273,11 @@ async fn with_a_relayer_key_the_testnet_relay_signs_on_amoy_alone_and_admits_dcl
     assert_eq!(signer.chain_id(), 80_002);
     assert_eq!(signer.max_fee_per_gas(), Some(200_000_000_000));
     assert!(keyed.eth_signer.is_none(), "no NAMEs chain signer");
+    // An operator who hits a NAME route here is told the flag is why, not to set the key again.
+    assert_eq!(
+        keyed.settings.names_signer_absence(),
+        "off (NAMES_SIGNER_ENABLED=false)"
+    );
     assert_eq!(keyed.transaction.broadcast_route(), BroadcastRoute::Direct);
     let manager = format!("{:#x}", crate::policy_entry::DCL_ONE_AMOY_MANAGER);
     assert!(keyed.contracts.is_whitelisted(&manager).await.unwrap());
@@ -3680,6 +4285,59 @@ async fn with_a_relayer_key_the_testnet_relay_signs_on_amoy_alone_and_admits_dcl
     let named =
         State::new(lazy_pool(), Outbound::for_tests(), testnet(true)).expect("the relay starts");
     assert_eq!(named.eth_signer.as_ref().map(|s| s.chain_id()), Some(1));
+    // With the flag on and no key, the missing pieces are what it names.
+    let keyless = Settings {
+        relayer_private_key: None,
+        ..testnet(true)
+    };
+    let why = keyless.names_signer_absence();
+    assert!(
+        why.contains("RELAYER_PRIVATE_KEY_FILE") && why.contains("ETH_RPC_URL"),
+        "{why}"
+    );
+}
+
+/// A NAME route with no Ethereum signer answers 503 with the reason it is missing, as the startup
+/// log does: the flag on the keyed testnet profile, and the settings that provision it when the
+/// key and `ETH_RPC_URL` are there but broadcasting is off. Nothing reaches a chain either way.
+#[tokio::test]
+async fn a_name_route_without_the_ethereum_signer_says_why() {
+    let key = hex::encode(PrivateKeySigner::random().to_bytes());
+    let names = |meta_tx_broadcast_enabled: bool, names_signer_enabled: bool| Settings {
+        meta_tx_broadcast_enabled,
+        names_signer_enabled,
+        relayer_private_key: Some(key.clone()),
+        polygon_rpc_url: Some("http://127.0.0.1:1/".into()),
+        eth_rpc_url: Some("http://127.0.0.1:1/".into()),
+        admin_token: Some(ADMIN.into()),
+        ..Settings::for_tests()
+    };
+    let bearer = format!("Bearer {ADMIN}");
+    for (settings, reason) in [
+        (names(true, false), "off (NAMES_SIGNER_ENABLED=false)"),
+        (
+            names(false, true),
+            "not provisioned (set META_TX_BROADCAST_ENABLED=true with RELAYER_PRIVATE_KEY_FILE + ETH_RPC_URL)",
+        ),
+    ] {
+        let app = router(state(lazy_pool(), settings));
+        let (status, text) = send(
+            &app,
+            "POST",
+            "/v1/broker/names/buy",
+            Some(json!({ "mode": "mint", "name": "nacho", "buyerAddress": BUYER }).to_string()),
+            &[
+                ("authorization", &bearer),
+                ("idempotency-key", "names-without-a-signer"),
+            ],
+        )
+        .await;
+        assert_eq!(status, 503, "{text}");
+        assert!(
+            text.contains(&format!("the Ethereum signer, which is {reason}")),
+            "{text}"
+        );
+    }
 }
 
 /// Under a trial the MANA payment routes refuse before any work: `config` would hand a client the
@@ -3760,6 +4418,10 @@ async fn a_trial_relays_meta_transactions_for_its_buyers_only() {
     )
     .await;
     assert_eq!(status, 403, "{body}");
+    assert_eq!(
+        body["message"],
+        "this relay serves only the test's buyers (CREDITS_TRIAL_MODE)"
+    );
     assert!(body.to_string().contains("CREDITS_TRIAL_MODE"), "{body}");
     assert_eq!(
         row_count(&pool, &stranger_address).await,
@@ -3784,6 +4446,102 @@ async fn a_trial_relays_meta_transactions_for_its_buyers_only() {
     );
     assert_eq!(raws.lock().unwrap().len(), 1);
     cleanup_user(&pool, &buyer_address).await;
+    cleanup_user(&pool, &stranger_address).await;
+}
+
+/// `CREDITS_TRIAL_RELAY_ALL_WALLETS` lifts the relay's buyer gate and nothing else: outside a
+/// trial there is no gate, a trial gates on its buyers, and a trial for every wallet has none
+/// while keeping its one capped route.
+#[test]
+fn a_trial_for_every_wallet_drops_only_the_relays_buyer_gate() {
+    let buyer = format!("{:#x}", PrivateKeySigner::random().address());
+    let gated = Settings {
+        trial_buyers: Some(crate::credits::trial::TrialBuyers::parse(Some(&buyer)).unwrap()),
+        ..trial_relay()
+    };
+    assert!(gated.relay_only_for().is_some_and(|b| b.admits(&buyer)));
+    let every_wallet = Settings {
+        trial_relay_all_wallets: true,
+        ..gated.clone()
+    };
+    assert!(every_wallet.relay_only_for().is_none());
+    assert!(
+        every_wallet.refuse_an_open_trial_relay().is_ok(),
+        "the trial's capped route is unchanged"
+    );
+    for uncapped in [0, -1] {
+        let without_a_total = Settings {
+            max_relayed_transactions_per_day: uncapped,
+            ..every_wallet.clone()
+        };
+        let refusal = without_a_total.refuse_an_open_trial_relay().unwrap_err();
+        assert!(
+            refusal
+                .to_string()
+                .contains("MAX_RELAYED_TRANSACTIONS_PER_DAY"),
+            "{refusal}"
+        );
+    }
+    let buyers_only_uncapped = Settings {
+        max_relayed_transactions_per_day: 0,
+        ..gated.clone()
+    };
+    assert!(
+        buyers_only_uncapped.refuse_an_open_trial_relay().is_ok(),
+        "a buyers-only trial keeps accepting 0"
+    );
+    let no_buyers = Settings {
+        trial_buyers: None,
+        ..every_wallet
+    };
+    assert!(
+        no_buyers.refuse_an_open_trial_relay().is_err(),
+        "a trial still needs its buyers for the credits"
+    );
+    assert!(Settings::for_tests().relay_only_for().is_none());
+}
+
+/// With `CREDITS_TRIAL_RELAY_ALL_WALLETS` a trial's relayer pays gas for a wallet that is not
+/// among the buyers too: its meta-transaction relays, and is charged to its own daily quota.
+#[tokio::test]
+async fn a_trial_relay_for_every_wallet_relays_a_strangers_meta_transaction() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let (chain_url, raws) = spawn_fake_chain().await;
+    let buyer = format!("{:#x}", PrivateKeySigner::random().address());
+    let stranger = PrivateKeySigner::random();
+    let stranger_address = format!("{:#x}", stranger.address());
+    let settings = Settings {
+        trial_mode: true,
+        trial_buyers: Some(crate::credits::trial::TrialBuyers::parse(Some(&buyer)).unwrap()),
+        trial_relay_all_wallets: true,
+        meta_tx_broadcast_enabled: true,
+        relayer_private_key: Some(hex::encode(PrivateKeySigner::random().to_bytes())),
+        polygon_rpc_url: Some(chain_url),
+        relayer_max_fee_per_gas_wei: Some(500_000_000_000),
+        ..Settings::for_tests()
+    };
+    let app = router(state(pool.clone(), settings));
+
+    let (status, body) = post_transaction(
+        &app,
+        &stranger_address,
+        COLLECTION,
+        &signed_split_calldata(&stranger, FS),
+    )
+    .await;
+    assert_eq!(status, 200, "a wallet outside the buyers relays: {body}");
+    assert_eq!(raws.lock().unwrap().len(), 1);
+    assert_eq!(
+        row_count(&pool, &stranger_address).await,
+        1,
+        "charged to the wallet's own quota"
+    );
     cleanup_user(&pool, &stranger_address).await;
 }
 

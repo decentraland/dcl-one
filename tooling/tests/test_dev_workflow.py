@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 import os
 import re
+import runpy
 import subprocess
 import tempfile
 import textwrap
@@ -211,11 +212,31 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             self.assertNotIn(cache, tooling)
         self.assertNotRegex(tooling, r'(?m)^    (env|permissions):')
 
+    def test_smoke_snapshot_preserves_all_active_library_variants(self):
+        prune = runpy.run_path(str(WORKFLOW.parents[2] / "tooling/catalyst-smoke-cache.py"))["prune"]
+        with tempfile.TemporaryDirectory() as temporary:
+            deps = Path(temporary)
+            stems = ["libcrate-" + str(index) * 16 for index in range(3)]
+            for stem in stems:
+                for suffix in (".rlib", ".rmeta"):
+                    (deps / (stem + suffix)).write_bytes(b"data")
+            other = deps / ("libother-" + "3" * 16 + ".rlib")
+            other.touch()
+            def message(stem):
+                return json.dumps({"reason": "compiler-artifact", "filenames": [str(deps / (stem + ".rlib"))]})
+            receipts = "\n".join(message(stem) for stem in stems[:2])
+            self.assertEqual(prune(deps, receipts), 8)
+            self.assertEqual(prune(deps, receipts), 0)
+            self.assertEqual({path.name for path in deps.iterdir()},
+                             {stem + suffix for stem in stems[:2] for suffix in (".rlib", ".rmeta")} | {other.name})
+            with self.assertRaises(ValueError):
+                prune(deps, "")
+
     def test_smoke_gives_unchanged_sources_the_snapshot_file_times(self):
         # Cargo decides by file time. The snapshot is of no use to Cargo unless the checkout's
         # unchanged files get the times they had when the snapshot was built.
         smoke = jobs()['smoke']
-        restore = '        run: python3 tooling/cargo-mtimes.py restore services/catalyst/target\n'
+        restore = '          python3 tooling/cargo-mtimes.py restore services/catalyst/target\n'
         record = '        run: python3 tooling/cargo-mtimes.py record services/catalyst/target\n'
         self.assertEqual(smoke.count(restore), 1)
         self.assertEqual(smoke.count(record), 1)
@@ -228,6 +249,9 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         condition = lambda name: re.search(r'(?m)^        if: (.+)$', steps[name]).group(1)
         self.assertEqual(condition('Record the source file times in the snapshot'),
                          condition('Save successful smoke build snapshot'))
+        self.assertEqual(condition('Prune superseded Rust libraries from the smoke snapshot'),
+                         condition('Save successful smoke build snapshot'))
+        self.assertLess(smoke.index('python3 tooling/catalyst-smoke-cache.py'), smoke.index(record))
         self.assertNotIn('        if:', steps['Give unchanged sources the file times of the snapshot'])
 
     def test_every_nix_job_restores_the_store_snapshot_before_its_first_shell(self):

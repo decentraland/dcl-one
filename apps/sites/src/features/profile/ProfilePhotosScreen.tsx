@@ -5,6 +5,18 @@ import { useSearchParams } from "react-router";
 import { Button, JumpInCTA } from "@dcl/one-ui";
 import { GeneralGallery, GeneralImage, GeneralLock, GeneralPublic } from "@dcl/one-ui/foundations/icons";
 
+import {
+  CollectiblesItem,
+  CollectiblesPanel,
+  useCategoryTabs,
+  useFocusNewRows,
+  type CategoryOption,
+  type CollectiblesState,
+} from "@dcl/one-ui/apps/sites/profile/collectibles";
+import { EmptyMessage } from "@dcl/one-ui/apps/sites/profile/EmptyMessage";
+import { PhotoViewer, type PhotoViewerDetails } from "@dcl/one-ui/apps/sites/profile/PhotoViewer";
+import { PhotoTile, PrivatePhotosNotice } from "@dcl/one-ui/apps/sites/profile/PhotoTile";
+
 import { useAuth } from "@/data/lib/auth/index";
 import { playUrl } from "@/data/lib/catalyst/bases";
 import { shortAddress } from "@/data/lib/catalyst/format/address";
@@ -12,24 +24,10 @@ import { formatPhotoDate, isPhotoId, type ProfilePhoto } from "@/data/lib/cataly
 import { normalizeAddress, type ProfileVM } from "@/data/lib/catalyst/social/profile";
 import { canReadProfile, photosQuery, signsFor } from "@/data/lib/profile/queries";
 
-import {
-  catalogueTotal,
-  CollectiblesItem,
-  CollectiblesPanel,
-  loadedRows,
-  loadMore,
-  useCategoryTabs,
-  useFocusNewRows,
-  type CategoryOption,
-  type CollectiblesState,
-} from "./collectibles";
-import { EmptyMessage } from "./EmptyMessage";
+import { CollectibleLink, catalogueTotal, loadedRows, loadMore } from "./collectibles";
 import { usePlaceOwners, useProfilePhoto, useProfilePhotos } from "./hooks";
-import { PhotoViewer, type PhotoViewerDetails } from "./PhotoViewer";
 import { ProfileShell, type ProfileShellTab } from "./ProfileShell";
-import styles from "./ProfilePhotosScreen.module.css";
 import { profileHref } from "./tabs";
-import { useBrokenImage } from "./useBrokenImage";
 
 /** The search parameter that holds the open photo, so the viewer can be linked to. */
 const PHOTO_PARAM = "photo";
@@ -98,7 +96,10 @@ function personHref(address: string): string | undefined {
   return canReadProfile(address) ? profileHref(address) : undefined;
 }
 
-function viewerDetails(photo: ProfilePhoto, faces: Record<string, { picture?: string | null } | undefined>): PhotoViewerDetails {
+function viewerDetails(
+  photo: ProfilePhoto,
+  faces: Record<string, { picture?: string | null } | undefined>,
+): PhotoViewerDetails {
   const takenByHref = personHref(photo.author.address);
   return {
     date: formatPhotoDate(photo.dateTime) || undefined,
@@ -111,34 +112,6 @@ function viewerDetails(photo: ProfilePhoto, faces: Record<string, { picture?: st
       isGuest: person.isGuest,
     })),
   };
-}
-
-/** A snapshot in the grid; the whole tile opens the viewer. */
-function PhotoTile({ photo, label, isPrivate, onOpen }: { photo: ProfilePhoto; label: string; isPrivate: boolean; onOpen: () => void }) {
-  const { broken, ref, onError } = useBrokenImage(photo.thumbnailUrl);
-  return (
-    <button type="button" className={styles.tile} aria-label={isPrivate ? `${label}, private` : label} onClick={onOpen}>
-      {broken ? (
-        <span className={styles.tileBroken} aria-hidden="true">
-          <GeneralImage size={40} />
-        </span>
-      ) : (
-        <img
-          ref={ref}
-          className={styles.tileImage}
-          src={photo.thumbnailUrl}
-          alt=""
-          loading="lazy"
-          onError={onError}
-        />
-      )}
-      {isPrivate ? (
-        <span className={styles.privateBadge} aria-hidden="true">
-          <GeneralLock size={16} />
-        </span>
-      ) : null}
-    </button>
-  );
 }
 
 /** The open photo with its neighbours in the grid, and the people in it with their faces. */
@@ -169,6 +142,7 @@ function OpenPhoto({
       onPrevious={previous ? () => onOpen(previous.id) : undefined}
       onNext={next ? () => onOpen(next.id) : undefined}
       onClose={onClose}
+      linkComponent={CollectibleLink}
     />
   );
 }
@@ -246,14 +220,7 @@ export function ProfilePhotosScreen({ profile, own, tabs, onTab }: ProfilePhotos
 
   const visibilityTabs = useCategoryTabs("Photos shown", VISIBILITIES, visibility, setVisibility);
 
-  const signedFailed = fallback ? (
-    <span role="status">
-      Your private photos could not be loaded.{" "}
-      <Button variant="text" size="sm" onClick={() => void query.refetch()}>
-        Try again
-      </Button>
-    </span>
-  ) : null;
+  const signedFailed = fallback ? <PrivatePhotosNotice onRetry={() => void query.refetch()} /> : null;
 
   let state: CollectiblesState;
   if (query.isError && !data) {
@@ -305,7 +272,7 @@ export function ProfilePhotosScreen({ profile, own, tabs, onTab }: ProfilePhotos
       children: shown.map((photo) => (
         <CollectiblesItem key={photo.id}>
           <PhotoTile
-            photo={photo}
+            image={photo.thumbnailUrl}
             label={photoLabel(photo)}
             isPrivate={signed && !photo.isPublic}
             onOpen={() => setOpen(photo.id, { push: true })}

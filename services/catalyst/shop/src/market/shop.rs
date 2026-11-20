@@ -21,7 +21,9 @@
 //! holdings and the request's seeds (`neighbours`, built from the nft
 //! index), with the trending floor filling the rest and answering alone
 //! until a build exists (`personalized: false`). Coupons are stored and
-//! served by `/v1/coupons` (`coupons`).
+//! served by `/v1/coupons` (`coupons`). `/v3/catalog/trending` and the
+//! browse reads of `/v3/catalog/unified` are memoized 30 s; item pages and
+//! checkout name their item and read fresh.
 
 #[path = "shop_queries.rs"]
 mod queries;
@@ -33,7 +35,7 @@ pub use queries::{
     build_unified_listings_sql,
 };
 #[cfg(test)]
-use queries::{related_rarity_sort_key, unified_branch, unified_selection};
+use queries::{id_contracts, related_rarity_sort_key, unified_branch, unified_selection};
 #[path = "shop_projection.rs"]
 mod projection;
 use projection::{
@@ -49,8 +51,10 @@ use recommendations::{
 use recommendations::{MIN_PERSONAL_ROWS, personal_rows};
 pub use recommendations::{aggregate_sales, rank_trending};
 
+use crate::content::Denylist;
 use crate::types::{ASSET_TYPE_ERC20, ASSET_TYPE_USD_PEGGED_MANA, ManaUsdRate};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Query, State};
@@ -63,9 +67,13 @@ use serde_json::Value;
 use sqlx::Row;
 use sqlx::postgres::PgRow;
 
-use super::catalog::{Builder, ITEM_ID_SHIFT, MAX_NUMERIC_NUMBER, escape_like, unified_trades_cte};
+use super::catalog::{
+    Builder, ITEM_ID_SHIFT, MAX_NUMERIC_NUMBER, escape_like, unified_trades_cte,
+    unified_trades_cte_of,
+};
 use super::items::{USD_WEI_PER_CREDIT, mana_usd_rate, rate_to_numeric_string, recent_sales};
-use super::readers::{self, Ttl, cached};
+use super::readers::{self, Ttl, cached, memoized};
+use super::search::{CreatorProfile, creator_profiles, directory_snapshot};
 use super::wire::{
     ApiError, ChainId, DataTotal, Network, Params, body_shapes_for_genders, emote_play_mode_clause,
     network_and_chain, where_from,
@@ -831,6 +839,12 @@ pub struct UnifiedItem {
     pub chain_id: ChainId,
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub created_at: i64,
+    // Never set on the row itself: `with_creator_profiles` adds it to each response's JSON, after
+    // the memo, under the content denylist as it stands.
+    /// The creator's profile on the item and trending feeds (`name_creators`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub creator_profile: Option<CreatorProfile>,
 }
 
 #[derive(Debug, Serialize)]
@@ -862,6 +876,10 @@ pub struct TopCreator {
     pub collections: i64,
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub items: i64,
+    /// Set by `get_top_creators`, never cached with the ranking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub profile: Option<CreatorProfile>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1208,7 +1226,7 @@ pub async fn top_creators(
             .filter_map(|creator| {
                 let (volume, sales) = ranked.get(&creator).copied()?;
                 let (items, collections) = catalogue.get(&creator).copied().unwrap_or((0, 0));
-                (items >= TOP_CREATORS_MIN_ITEMS).then(|| TopCreator { id: creator, volume_wei: volume.to_string(), sales, total_sales: sales, collections, items })
+                (items >= TOP_CREATORS_MIN_ITEMS).then(|| TopCreator { id: creator, volume_wei: volume.to_string(), sales, total_sales: sales, collections, items, profile: None })
             })
             .collect();
         rows.sort_by(|a, b| b.volume_wei.parse::<u128>().unwrap_or(0).cmp(&a.volume_wei.parse::<u128>().unwrap_or(0)).then(a.id.cmp(&b.id)));
@@ -1225,15 +1243,6 @@ pub async fn top_creators(
 async fn ready(state: &MarketplaceState) -> Result<(), Response> {
     super::mirrors::require_priced(state).await?;
     super::trades::require_ready(state).await
-}
-
-fn hour_cache() -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        CACHE_CONTROL,
-        "public,max-age=3600,s-maxage=3600".parse().unwrap(),
-    );
-    headers
 }
 
 pub async fn get_shop_catalog(
@@ -1262,6 +1271,69 @@ pub async fn get_legacy_catalog(
     }
 }
 
+/// Whether a read names what it reads (a collection, an item, a creator or a search): an item
+/// page, checkout, the cart's price read, a creator page or a typed search. It reads fresh and
+/// carries no creator profiles, so it never waits on the creator directory.
+fn names_its_rows(f: &UnifiedCatalogFilters) -> bool {
+    let b = &f.base;
+    f.contract_addresses.is_some()
+        || f.item_ids.is_some()
+        || b.contract_address.is_some()
+        || b.item_id.is_some()
+        || !b.creator.is_empty()
+        || b.search.is_some()
+}
+
+/// The largest page the 30 s memo keeps: the overview's rails ask for 12 rows and the browse
+/// grid's default page is [`SHOP_DEFAULT_PAGE_SIZE`].
+const MEMO_MAX_ROWS: i64 = SHOP_DEFAULT_PAGE_SIZE;
+
+/// Whether a read's filters are the rails' own shape, which the memo keeps: none of the free
+/// text a client can vary at will (a category, rarities, wearable categories or genders, price
+/// bounds, emote filters). Every other value is an enum or a flag, so the keys stay few.
+fn rail_filters(b: &ShopCatalogFilters) -> bool {
+    b.category.is_none()
+        && b.rarities.is_empty()
+        && b.wearable_categories.is_empty()
+        && b.wearable_genders.is_empty()
+        && b.min_price_credits.is_none()
+        && b.max_price_credits.is_none()
+        && !b.is_smart
+        && b.emote_loop.is_none()
+        && !b.emote_has_sound
+        && !b.emote_has_geometry
+}
+
+/// The memo key of a browse read (the overview rails), built from the parsed filters with the
+/// page size clamped, so that parameter order, spelling and unknown keys share one entry. Only a
+/// first page of at most [`MEMO_MAX_ROWS`] rows over [`rail_filters`] has one: another page,
+/// size or filter reads fresh, so a client cannot fill the memo with full-size pages under keys
+/// it makes up. A read that names a collection, an item, a creator or a search (item pages,
+/// checkout, creator pages, typed searches) has no key either.
+fn unified_browse_key(group_by: UnifiedGroupBy, f: &UnifiedCatalogFilters) -> Option<String> {
+    let b = &f.base;
+    let named = names_its_rows(f);
+    let rows = b
+        .first
+        .unwrap_or(SHOP_DEFAULT_PAGE_SIZE)
+        .clamp(SHOP_MIN_PAGE_SIZE, SHOP_MAX_PAGE_SIZE);
+    let first_page = b.skip.unwrap_or(0) <= 0;
+    if named || !first_page || rows > MEMO_MAX_ROWS || !rail_filters(b) {
+        return None;
+    }
+    let mut keyed = f.clone();
+    (keyed.base.first, keyed.base.skip) = (Some(rows), None);
+    Some(format!("unified:{group_by:?}:{keyed:?}"))
+}
+
+fn body_of(v: impl Serialize) -> Result<Value, ApiError> {
+    serde_json::to_value(v).map_err(|e| ApiError::Internal(e.to_string()))
+}
+
+/// A browse read (one that names none of its rows) carries its creators' profiles, added to each
+/// response under the content denylist as it stands (never memoized); the rails' shapes are also
+/// served from a 30 s memo ([`unified_browse_key`]). The readiness gates and the MANA rate read
+/// still run per request, while a memo hit keeps the prices it was built with (at most 30 s old).
 pub async fn get_unified_catalog(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
@@ -1270,19 +1342,44 @@ pub async fn get_unified_catalog(
         return r;
     }
     let filters = parse_unified_filters(&pairs);
+    let group_by = parse_unified_group_by(&pairs);
     let rate = match mana_usd_rate(&state).await {
         Ok(rate) => rate,
         Err(envelope) => return envelope,
     };
-    let result = match parse_unified_group_by(&pairs) {
-        UnifiedGroupBy::Item => unified_items(&state, &filters, rate)
-            .await
-            .map(|(data, total)| Json(DataTotal { data, total }).into_response()),
-        UnifiedGroupBy::Listing => unified_listings(&state, &filters, rate)
-            .await
-            .map(|(data, total)| Json(DataTotal { data, total }).into_response()),
+    let browse_key = unified_browse_key(group_by, &filters);
+    // Every browse read carries its creators' profiles, memoized or not; a read that names its
+    // rows never waits on the creator directory.
+    let with_profiles = !names_its_rows(&filters);
+    let read = || async {
+        match group_by {
+            UnifiedGroupBy::Item => unified_items(&state, &filters, rate)
+                .await
+                .and_then(|(data, total)| body_of(DataTotal { data, total })),
+            UnifiedGroupBy::Listing => unified_listings(&state, &filters, rate)
+                .await
+                .and_then(|(data, total)| body_of(DataTotal { data, total })),
+        }
     };
-    result.unwrap_or_else(IntoResponse::into_response)
+    let with_profiles = with_profiles && group_by == UnifiedGroupBy::Item;
+    let (result, directory) = tokio::join!(
+        async {
+            match browse_key {
+                Some(key) => memoized(&state, Ttl::S30, key, read).await,
+                None => read().await.map(Arc::new),
+            }
+        },
+        async {
+            match with_profiles {
+                true => directory_snapshot(&state).await,
+                false => None,
+            }
+        }
+    );
+    match result {
+        Ok(body) => with_creator_profiles(&state, body, directory.as_deref(), None),
+        Err(e) => e.into_response(),
+    }
 }
 
 pub async fn get_importable_listings(
@@ -1345,6 +1442,8 @@ pub async fn get_related_catalog(
     Json(RelatedResponseBody { data }).into_response()
 }
 
+/// Served from a 30 s memo per clamped request, with its creators' profiles added to each response
+/// as in [`get_unified_catalog`]; the readiness gates still run per request.
 pub async fn get_trending_catalog(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
@@ -1357,9 +1456,101 @@ pub async fn get_trending_catalog(
         Ok(rate) => rate,
         Err(envelope) => return envelope,
     };
-    match trending_items(&state, req.first, req.days, &req.filters, rate).await {
-        Ok(data) => (hour_cache(), Json(TrendingResponseBody { data })).into_response(),
+    let (first, days) = (
+        trending_clamp_first(req.first),
+        trending_clamp_days(req.days),
+    );
+    let read = || async {
+        let data = trending_items(&state, Some(first), Some(days), &req.filters, rate).await?;
+        body_of(TrendingResponseBody { data }).map_err(IntoResponse::into_response)
+    };
+    // As the browse memo, only over the rails' filters: free text a client varies reads fresh.
+    let key = rail_filters(&req.filters.base)
+        .then(|| format!("trending:{first}:{days}:{:?}", req.filters));
+    let (body, directory) = tokio::join!(
+        async {
+            match key {
+                Some(key) => memoized(&state, Ttl::S30, key, read).await,
+                None => read().await.map(Arc::new),
+            }
+        },
+        directory_snapshot(&state)
+    );
+    match body {
+        Ok(body) => with_creator_profiles(&state, body, directory.as_deref(), Some(brief_cache())),
         Err(r) => r,
+    }
+}
+
+/// A feed body (`{"data": [row, ...]}`, each row naming its `creator`) as this response serves it:
+/// with each row's `creatorProfile` from the creator directory under the content denylist as it
+/// stands now, so a profile denylisted since the body was memoized leaves it at once. A body that
+/// carries a profile is sent `no-cache` (no copy is used without revalidation); without the
+/// directory it goes as it is, under `cacheable` when given.
+fn with_creator_profiles(
+    state: &MarketplaceState,
+    body: Arc<Value>,
+    directory: Option<&Value>,
+    cacheable: Option<HeaderMap>,
+) -> Response {
+    let Some(directory) = directory else {
+        return match cacheable {
+            Some(headers) => (headers, Json(body.as_ref())).into_response(),
+            None => Json(body.as_ref()).into_response(),
+        };
+    };
+    let mut body = Arc::unwrap_or_clone(body);
+    name_creators(&mut body, directory, &state.denylist);
+    (profiles_revalidate(), Json(body)).into_response()
+}
+
+/// The `Cache-Control` of a trending or top-creators answer sent without the creator directory (a
+/// cold node, a feed that did not lead the directory's read, or a failing read): kept briefly, so
+/// a CDN does not hold an answer without profiles, whose cards each ask `/lambdas/profiles`, for
+/// the hour these feeds were cached before they carried profiles.
+fn brief_cache() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        CACHE_CONTROL,
+        "public,max-age=60,s-maxage=60".parse().unwrap(),
+    );
+    headers
+}
+
+/// The `Cache-Control` of a response that carries creator profiles: a cache may keep it only to
+/// revalidate it, so a profile the content denylist withholds is gone from its next answer.
+fn profiles_revalidate() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(CACHE_CONTROL, "no-cache".parse().unwrap());
+    headers
+}
+
+/// Sets each row's `creatorProfile` from the creator directory (rows of creators it does not hold
+/// get none, and the cards ask `/lambdas/profiles`), so the overview's cards need no request.
+fn name_creators(body: &mut Value, directory: &Value, denylist: &Denylist) {
+    let Some(rows) = body.get_mut("data").and_then(Value::as_array_mut) else {
+        return;
+    };
+    let creator_of = |row: &Value| {
+        row.get("creator")
+            .and_then(Value::as_str)
+            .map(str::to_lowercase)
+    };
+    let wanted: HashSet<String> = rows.iter().filter_map(creator_of).collect();
+    let profiles = creator_profiles(directory, &wanted, denylist);
+    for row in rows.iter_mut() {
+        let profile = creator_of(row).and_then(|c| profiles.get(&c));
+        let Some(fields) = row.as_object_mut() else {
+            continue;
+        };
+        match profile.map(serde_json::to_value) {
+            Some(Ok(profile)) => {
+                fields.insert("creatorProfile".to_string(), profile);
+            }
+            _ => {
+                fields.remove("creatorProfile");
+            }
+        }
     }
 }
 
@@ -1469,14 +1660,30 @@ pub async fn get_top_creators(
         return r;
     }
     let p = Params::new(&pairs);
-    match top_creators(
-        &state,
-        finite_i64(p.get_number("first", None)),
-        finite_i64(p.get_number("days", None)),
-    )
-    .await
-    {
-        Ok(data) => (hour_cache(), Json(TopCreatorsResponseBody { data })).into_response(),
+    let (ranked, directory) = tokio::join!(
+        top_creators(
+            &state,
+            finite_i64(p.get_number("first", None)),
+            finite_i64(p.get_number("days", None)),
+        ),
+        directory_snapshot(&state)
+    );
+    match ranked {
+        Ok(mut data) => {
+            let Some(directory) = directory.as_deref() else {
+                return (brief_cache(), Json(TopCreatorsResponseBody { data })).into_response();
+            };
+            let ids = data.iter().map(|c| c.id.clone()).collect();
+            let profiles = creator_profiles(directory, &ids, &state.denylist);
+            for creator in &mut data {
+                creator.profile = profiles.get(&creator.id).cloned();
+            }
+            (
+                profiles_revalidate(),
+                Json(TopCreatorsResponseBody { data }),
+            )
+                .into_response()
+        }
         Err(r) => r,
     }
 }
@@ -1490,6 +1697,85 @@ mod tests {
         list.iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    #[test]
+    fn browse_reads_share_one_memo_key_and_named_reads_have_none() {
+        let key = |q: &[(&str, &str)]| {
+            let p = pairs(q);
+            unified_browse_key(parse_unified_group_by(&p), &parse_unified_filters(&p))
+        };
+        let newest = key(&[
+            ("first", "12"),
+            ("sortBy", "newest"),
+            ("listingType", "primary"),
+            ("groupBy", "item"),
+        ]);
+        assert!(newest.is_some());
+        assert_eq!(
+            newest,
+            key(&[
+                ("groupBy", "item"),
+                ("utm_source", "x"),
+                ("listingType", "primary"),
+                ("sortBy", "newest"),
+                ("first", "12")
+            ]),
+            "order and unknown keys do not split the entry"
+        );
+        assert_ne!(
+            newest,
+            key(&[
+                ("first", "12"),
+                ("sortBy", "discount"),
+                ("discounted", "true"),
+                ("listingType", "primary"),
+                ("groupBy", "item")
+            ])
+        );
+        assert_ne!(
+            newest,
+            key(&[
+                ("first", "12"),
+                ("sortBy", "newest"),
+                ("listingType", "primary")
+            ]),
+            "grouped by listing"
+        );
+        assert_eq!(
+            key(&[("groupBy", "item")]),
+            key(&[("groupBy", "item"), ("first", "48"), ("skip", "0")]),
+            "the default page and an explicit one share the entry"
+        );
+        // Only the rails' shapes are kept: a larger page, a later page or free text reads fresh,
+        // so a client cannot fill the memo with full-size pages under made-up keys.
+        for fresh in [
+            vec![("first", "49")],
+            vec![("first", "1000")],
+            vec![("first", "5095")],
+            vec![("first", "12"), ("skip", "12")],
+            vec![("first", "12"), ("category", "wearable")],
+            vec![("first", "12"), ("rarity", "mythic")],
+            vec![("first", "12"), ("wearableCategory", "hat")],
+            vec![("first", "12"), ("wearableGender", "female")],
+            vec![("first", "12"), ("minPriceCredits", "1")],
+            vec![("first", "12"), ("isSmart", "true")],
+            vec![("first", "12"), ("emoteHasSound", "true")],
+        ] {
+            assert_eq!(key(&fresh), None, "{fresh:?}");
+        }
+        let c = "0x1111111111111111111111111111111111111111";
+        let item = format!("{c}-1");
+        for named in [
+            ("contractAddress", c),
+            ("contractAddress", "junk"),
+            ("itemId", "1"),
+            ("items", item.as_str()),
+            ("creator", c),
+            ("search", "hat"),
+        ] {
+            assert_eq!(key(&[("first", "5"), named]), None, "{named:?}");
+        }
     }
 
     #[test]
@@ -1860,6 +2146,30 @@ mod tests {
     }
 
     #[test]
+    fn items_by_ids_read_only_the_open_trades_of_the_ids_contracts() {
+        let ids = vec![
+            "0xaa-1".to_string(),
+            "0xAA-2".to_string(),
+            "0xbb-3".to_string(),
+        ];
+        assert_eq!(id_contracts(&ids), vec!["0xaa", "0xbb"]);
+        let rate = ManaUsdRate::parse_usd_per_mana("0.5").unwrap();
+        let by_ids =
+            build_items_by_ids_sql(&ids, &UnifiedCatalogFilters::default(), rate, None).sql;
+        assert!(
+            by_ids.contains(
+                "sent.direction = 'sent' AND sent.contract_address IN (SELECT unnest($3::text[]))"
+            ) && by_ids.contains("(d.contract_address || '-' || d.item_id) = ANY("),
+            "{by_ids}"
+        );
+        let feed = build_unified_items_sql(&UnifiedCatalogFilters::default(), rate, None).sql;
+        assert!(
+            !feed.contains("unnest("),
+            "a feed reads every open trade: {feed}"
+        );
+    }
+
+    #[test]
     fn clamps_and_floors_follow_the_old_bounds() {
         assert_eq!(
             (
@@ -2005,9 +2315,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn trending_takes_the_sales_cut_then_volume() {
-        let mk = |c: &str, i: &str| UnifiedItem {
+    fn unified_item(c: &str, i: &str) -> UnifiedItem {
+        UnifiedItem {
             source: "native".into(),
             acquisition: "trade".into(),
             trade_id: Some("t".into()),
@@ -2033,7 +2342,59 @@ mod tests {
             network: Network::Matic,
             chain_id: ChainId::MaticMainnet,
             created_at: 0,
+            creator_profile: None,
+        }
+    }
+
+    #[test]
+    fn the_feeds_name_their_creators_inline() {
+        let row = |creator: &str| UnifiedItem {
+            creator: creator.into(),
+            ..unified_item("0xc", "1")
         };
+        let page = serde_json::to_value(DataTotal {
+            data: vec![row("0xAA"), row("0xcc")],
+            total: 2,
+        })
+        .unwrap();
+        let directory = json!([{ "address": "0xaa", "entity_id": "bafyquack", "name": "Quack", "face": null, "claimed": true, "names": ["Quack"], "items": 2, "collections": 1 }]);
+        let denylist = Denylist::default();
+        assert!(
+            page["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r.get("creatorProfile").is_none()),
+            "a memoized page carries no profile"
+        );
+        let mut body = page.clone();
+        name_creators(&mut body, &directory, &denylist);
+        assert_eq!(
+            body["data"][0]["creatorProfile"],
+            json!({ "name": "Quack", "face": null, "claimed": true })
+        );
+        assert!(
+            body["data"][1].get("creatorProfile").is_none(),
+            "an unknown creator is left to the client: {}",
+            body["data"][1]
+        );
+        // A profile denylisted since the page was memoized leaves the next response, as
+        // /lambdas/profiles leaves it out.
+        denylist.set_remote(
+            "https://registry.example/denylist",
+            ["bafyquack".to_string()],
+        );
+        let mut body = page.clone();
+        name_creators(&mut body, &directory, &denylist);
+        assert_eq!(
+            body["data"][0]["creatorProfile"],
+            json!({ "name": "", "face": null, "claimed": false })
+        );
+    }
+
+    #[test]
+    fn trending_takes_the_sales_cut_then_volume() {
+        let mk = unified_item;
         let sales = |c: &str, i: &str, n: usize, price: &str| {
             (0..n)
                 .map(|_| json!({"searchContractAddress": c, "searchItemId": i, "price": price}))

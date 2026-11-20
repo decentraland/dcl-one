@@ -77,6 +77,13 @@ describe("profile overview screen, header", () => {
     expect(screen.queryByText("#f295")).toBeNull();
   });
 
+  it("keeps the global header in the layout flow above Profile", () => {
+    show(profile());
+
+    const layout = screen.getByRole("heading", { level: 1, name: "Alice" }).closest(".site-layout");
+    expect(layout?.classList.contains("site-layout--overlay")).toBe(false);
+  });
+
   it("shows an unclaimed name with the address's last four characters", () => {
     show(profile({ hasClaimedName: false }));
 
@@ -141,7 +148,7 @@ describe("profile overview screen, header", () => {
     cleanup();
 
     show(profile({ hasClaimedName: true }), true);
-    expect(screen.getByRole("link", { name: "Manage World" }).getAttribute("href")).toBe("/create/worlds");
+    expect(screen.getByRole("link", { name: "Manage World" }).getAttribute("href")).toBe("/download/creator-hub");
     cleanup();
 
     show(profile(), false);

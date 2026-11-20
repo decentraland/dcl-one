@@ -337,6 +337,18 @@ async fn settle() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
+/// Waits up to 10 s of real time for `done`, then settles. The wait never
+/// advances tokio time, so it also works while the clock is paused and
+/// rendering runs on blocking threads.
+async fn settle_until(done: impl Fn() -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !done() && std::time::Instant::now() < deadline {
+        tokio::task::yield_now().await;
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    settle().await;
+}
+
 // ── wire contract ──
 
 #[test]
@@ -509,7 +521,20 @@ fn commands_parse_as_upstream_reads_them() {
     assert_eq!(parse(json!({"type": "presentation:overlay:update"})), None);
     assert_eq!(
         parse(json!({"type": "presentation:video:play", "videoIndex": 0})),
-        Some(Command::Unsupported("presentation:video:play".into()))
+        Some(Command::VideoPlay(Some(0)))
+    );
+    assert_eq!(
+        parse(json!({"type": "presentation:video:pause"})),
+        Some(Command::Unsupported("presentation:video:pause".into()))
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&video_unavailable_message(Some(2))).unwrap(),
+        json!({
+            "type": "presentation:error",
+            "code": "video-playback-failed",
+            "message": "Video playback is not available on this server",
+            "videoIndex": 2
+        })
     );
     assert_eq!(parse(json!({"type": "presentation:unknown"})), None);
 }
@@ -836,7 +861,7 @@ async fn presenters_navigate_and_others_are_ignored() {
     events
         .data(PRESENTER, command_packet(next, "scene-7"))
         .await;
-    settle().await;
+    settle_until(|| data_messages(&bot).len() >= 2).await;
     let messages = data_messages(&bot);
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[1].0["currentSlide"], 1);
@@ -853,7 +878,7 @@ async fn presenters_navigate_and_others_are_ignored() {
     events
         .data(PRESENTER, br#"{"type":"presentation:get-state"}"#.to_vec())
         .await;
-    settle().await;
+    settle_until(|| data_messages(&bot).len() >= 3).await;
     let messages = data_messages(&bot);
     assert_eq!(messages.len(), 3);
     assert_eq!(messages[2].0["currentSlide"], 1);
@@ -868,7 +893,7 @@ async fn presenters_navigate_and_others_are_ignored() {
             ),
         )
         .await;
-    settle().await;
+    settle_until(|| data_messages(&bot).len() >= 4).await;
     assert_eq!(data_messages(&bot).last().unwrap().0["currentSlide"], 0);
     drop(presenter);
 }
@@ -997,6 +1022,28 @@ async fn the_concurrency_limit_answers_before_connecting() {
 }
 
 // ── the route ──
+
+/// The Cast page posts the form cross-origin: the preflight is answered for
+/// any origin, without credentials.
+#[tokio::test]
+async fn the_route_answers_a_cors_preflight_for_any_origin_without_credentials() {
+    let response = super::router(None)
+        .oneshot(
+            Request::options("/presentations")
+                .header("origin", "https://cast.example")
+                .header("access-control-request-method", "POST")
+                .header("access-control-request-headers", "content-type")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let headers = response.headers();
+    assert_eq!(headers["access-control-allow-origin"], "*");
+    assert_eq!(headers["access-control-allow-headers"], "content-type");
+    assert!(!headers.contains_key("access-control-allow-credentials"));
+}
 
 async fn post(app: axum::Router, content_type: &str, body: Vec<u8>) -> (StatusCode, Value) {
     let response = app
@@ -1616,7 +1663,7 @@ async fn a_full_render_pool_drops_slide_changes_and_creations_but_stops_nothing(
         .data(PRESENTER, command_packet(next.clone(), "scene-1"))
         .await;
     tokio::time::sleep(super::session::RENDER_WAIT * 2).await;
-    settle().await;
+    settle_until(|| frames(&bot) >= 2 && data_messages(&bot).len() >= 2).await;
     // The slide change is dropped: the session runs on slide 0, re-pushes
     // its frame and broadcasts that state.
     assert_eq!(presenter.active_sessions(), 1);
@@ -1639,7 +1686,7 @@ async fn a_full_render_pool_drops_slide_changes_and_creations_but_stops_nothing(
     events
         .data(PRESENTER, command_packet(next, "scene-1"))
         .await;
-    settle().await;
+    settle_until(|| frames(&bot) >= 3).await;
     assert_eq!(data_messages(&bot).last().unwrap().0["currentSlide"], 1);
     assert_eq!(frames(&bot), 3);
     assert_eq!(presenter.active_sessions(), 1);
