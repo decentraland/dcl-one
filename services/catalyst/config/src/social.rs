@@ -211,10 +211,6 @@ pub struct SocialConfig {
     #[arg(long, env = "COMMUNITIES_CDN_URL")]
     pub communities_cdn_url: Option<String>,
 
-    /// Archipelago stats base URL for the onlyOnline member filter; unset renders everyone offline.
-    #[arg(long, env = "ARCHIPELAGO_STATS_URL")]
-    pub archipelago_stats_url: Option<String>,
-
     /// Require places added to a community to be owned by the caller per the mirrored places catalogue
     /// (on by default, as upstream always checks; `false` skips the check).
     #[arg(long, env = "COMMUNITIES_PLACES_OWNERSHIP_CHECK", default_value_t = true, action = clap::ArgAction::Set)]

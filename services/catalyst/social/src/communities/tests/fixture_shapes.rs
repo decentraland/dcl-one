@@ -69,19 +69,19 @@ fn entity_of(picture: &str) -> String {
 }
 
 /// A presence source answering `/peers` with `online`.
-async fn peers(online: Vec<String>) -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let body = json!({ "ok": true, "peers": online.iter().map(|a| json!({ "id": a })).collect::<Vec<_>>() });
-    let app = axum::Router::new().route(
-        "/peers",
-        axum::routing::get(move || {
-            let body = body.clone();
-            async move { axum::Json(body) }
-        }),
-    );
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    format!("http://{addr}")
+/// The Pulse frame that names `online` as the wallets in the world.
+fn topology_frame(online: &[String]) -> Vec<u8> {
+    use crate::comms::protocol::pulse::decentraland::kernel::comms::v3::{
+        IslandData, IslandStatusMessage,
+    };
+    use prost::Message;
+    IslandStatusMessage {
+        data: vec![IslandData {
+            peers: online.to_vec(),
+            ..Default::default()
+        }],
+    }
+    .encode_to_vec()
 }
 
 struct Seed<'a> {
@@ -305,14 +305,13 @@ impl Seed<'_> {
     }
 }
 
-fn settings(presence: Option<String>) -> Settings {
+fn settings() -> Settings {
     Settings {
         faces: FaceUrls::new(
             Some(PROFILE_CDN),
             "http://127.0.0.1:9/profile-images/",
             false,
         ),
-        archipelago_stats_url: presence,
         ..Settings::for_tests()
     }
 }
@@ -359,9 +358,11 @@ async fn the_data_bound_social_api_fixtures_replay_against_their_seeded_rows() {
         .iter()
         .map(|r| r["memberAddress"].as_str().unwrap().to_string())
         .collect();
-    let Some(rig) = Rig::new(settings(Some(peers(online.clone()).await))).await else {
+    let Some(rig) = Rig::new(settings()).await else {
         return;
     };
+    let topology = Arc::new(crate::comms::topology::Topology::default());
+    rig.state.set_topology(topology.clone());
     let seed = Seed { rig: &rig };
     let mut got = BTreeMap::new();
 
@@ -395,6 +396,8 @@ async fn the_data_bound_social_api_fixtures_replay_against_their_seeded_rows() {
             assert!(!online.contains(&owner), "the owner must be offline here");
             seed.member(COMMUNITY, &owner, "owner", "2025-01-01T00:00:00.000Z")
                 .await;
+            // the frame's receipt is fresh for a few seconds: received right before the read
+            topology.receive(&topology_frame(&online)).unwrap();
         }
         check(&rig, &mut got, &[name]).await;
     }
