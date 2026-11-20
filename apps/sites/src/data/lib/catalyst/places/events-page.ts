@@ -152,12 +152,15 @@ export const placeDetailQuery = (target: PlaceTarget) =>
 
 /** What the page's first document holds for agents: the live and upcoming events it dehydrated. */
 export function eventsAgentData(state: DehydratedState | null | undefined): { live: Event[]; upcoming: Event[] } {
-  const read = <T>(key: readonly unknown[]): T | undefined =>
-    state?.queries.find((query) => JSON.stringify(query.queryKey) === JSON.stringify(key))?.state.data as T | undefined;
   return {
-    live: read<LiveNowData>(eventsPageKeys.live())?.events ?? [],
-    upcoming: read<Event[]>(eventsPageKeys.upcoming()) ?? [],
+    live: dehydratedData<LiveNowData>(state, eventsPageKeys.live())?.events ?? [],
+    upcoming: dehydratedData<Event[]>(state, eventsPageKeys.upcoming()) ?? [],
   };
+}
+
+/** What one of the page's reads answered in its first document; undefined when that read failed or never ran. */
+export function dehydratedData<T>(state: DehydratedState | null | undefined, key: readonly unknown[]): T | undefined {
+  return state?.queries.find((query) => JSON.stringify(query.queryKey) === JSON.stringify(key))?.state.data as T | undefined;
 }
 
 /** The event a `?id=` link opened, when the page's first document dehydrated it, for its agent markdown. */

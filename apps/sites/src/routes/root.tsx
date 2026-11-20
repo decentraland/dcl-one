@@ -37,6 +37,7 @@ import { readWallet } from "@/data/lib/auth/wallet-cookie";
 import { browserCatalystBase } from "@/data/lib/catalyst/bases";
 import { isCommitteeMember } from "@/data/lib/catalyst/creator-hub/committee-membership.server";
 import { serverShopApiMode } from "@/data/lib/shop/mode";
+import { homeMeta, notFoundMeta } from "./lib/social-meta";
 import type { Route } from "./+types/root";
 
 /** Reads or mints the session id once per request, before every loader, and sets its cookie once. */
@@ -118,11 +119,13 @@ export function shouldRevalidate({
   return defaultShouldRevalidate;
 }
 
-export function meta(_args: Route.MetaArgs) {
-  return [
-    { title: "Decentraland" },
-    { name: "description", content: "Explore Decentraland: discover virtual places and events, create experiences, and find wearables, emotes, NAMEs and LAND in the Shop." },
-  ];
+/**
+ * The shell card for every page without a head of its own, without a canonical: naming the home page
+ * there would tell search engines those pages duplicate it. The 404 of an unknown path has no card.
+ */
+export function meta({ error }: Route.MetaArgs) {
+  if (isRouteErrorResponse(error) && error.status === 404) return notFoundMeta();
+  return homeMeta(undefined);
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
