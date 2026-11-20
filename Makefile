@@ -24,6 +24,11 @@ bevy-headless:
 bevy-avatar-render:
 	$(MAKE) -C apps/bevy-explorer avatar-render
 
+# The nix shell's prebuilt V8 for catalyst's pin (flake.nix).
+ifdef CATALYST_RUSTY_V8_ARCHIVE
+catalyst-build catalyst-test: export RUSTY_V8_ARCHIVE := $(CATALYST_RUSTY_V8_ARCHIVE)
+endif
+
 catalyst-build:
 	cd services/catalyst && cargo build --locked --bin catalyst
 

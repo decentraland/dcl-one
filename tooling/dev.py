@@ -1135,8 +1135,12 @@ def task(name):
         os.execve(binary, [str(binary), 'index'], runtime_env(config))
     elif name in ('api-build', 'api-run'):
         target = BACKEND / 'target'
+        env = dict(os.environ)
+        # The nix shell's prebuilt V8 for catalyst's pin (flake.nix).
+        if env.get('CATALYST_RUSTY_V8_ARCHIVE'):
+            env['RUSTY_V8_ARCHIVE'] = env['CATALYST_RUSTY_V8_ARCHIVE']
         print(f"foundation-dev task: {name} build begin", file=sys.stderr, flush=True)
-        run(['cargo', 'build', '--locked', '--bin', 'catalyst', '--target-dir', target], cwd=BACKEND)
+        run(['cargo', 'build', '--locked', '--bin', 'catalyst', '--target-dir', target], cwd=BACKEND, env=env)
         print(f"foundation-dev task: {name} build complete", file=sys.stderr, flush=True)
         binary = target / 'debug/catalyst'
         print(f"foundation-dev task: {name} schema begin", file=sys.stderr, flush=True)
