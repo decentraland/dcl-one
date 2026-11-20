@@ -2547,8 +2547,9 @@ async fn an_orphaned_reset_becomes_a_revocation_after_an_hour() {
 /// manager, approved-for-all address, lease holder, world grantee) manages
 /// its stream access and Cast presenters and is promoted on join, as
 /// upstream's `isSceneOwnerOrAdmin`; an outsider gets the manager gate's
-/// refusal on every route. The stub's grantees ignore parcels, so the world
-/// case shows admission, not grant scoping.
+/// refusal on every route, as does the lease holder on a place outside its
+/// lease. The stub's grantees ignore parcels, so the world case shows
+/// admission, not grant scoping.
 #[tokio::test]
 async fn extended_holders_manage_stream_access_and_cast_presenters() {
     use crate::gatekeeper::streaming::NOT_AUTHORIZED_TO_STREAM_MSG;
@@ -2636,7 +2637,7 @@ async fn extended_holders_manage_stream_access_and_cast_presenters() {
         "lease holder",
         StubPolicy::default(),
         genesis(&lease_scene),
-        Some(lease_url),
+        Some(lease_url.clone()),
     ));
     cases.push((
         "world grantee",
@@ -2708,6 +2709,47 @@ async fn extended_holders_manage_stream_access_and_cast_presenters() {
         outsider("DELETE", access, NOT_AUTHORIZED_TO_STREAM_MSG).await;
         let (status, body) = h.signed(KEY, "DELETE", access, &metadata, None).await;
         assert_eq!(status, StatusCode::NO_CONTENT, "{role}: {body}");
+    }
+
+    // The lease holder is refused on a place outside its lease document.
+    let unleased = genesis_scene();
+    seed_genesis_place(&pool, &unleased, None).await;
+    let (room, metadata) = genesis(&unleased);
+    // An active stream, so the presenter route reaches its gate.
+    seed_access(
+        &pool,
+        &unleased.place_id,
+        Some(&room.room),
+        chrono::Duration::hours(1),
+    )
+    .await;
+    let h = harness_tuned(
+        pool.clone(),
+        Some(room),
+        StubPolicy::default(),
+        None,
+        |state| {
+            state.settings.lease_authorizations_url = Some(lease_url);
+        },
+    )
+    .await;
+    for (method, path, message) in [
+        ("GET", "/scene-stream-access", NOT_AUTHORIZED_TO_STREAM_MSG),
+        ("POST", "/scene-stream-access", NOT_AUTHORIZED_TO_STREAM_MSG),
+        (
+            "GET",
+            "/cast/generate-stream-link",
+            NOT_STREAM_LINK_ADMIN_MSG,
+        ),
+        ("GET", "/cast/presenters", NOT_PRESENTER_ADMIN_MSG),
+    ] {
+        let (status, body) = h.signed(KEY, method, path, &metadata, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "unleased {method} {path}");
+        assert_eq!(
+            body,
+            json!({ "error": message }),
+            "unleased {method} {path}"
+        );
     }
     lease_server.abort();
     database.drop().await;
