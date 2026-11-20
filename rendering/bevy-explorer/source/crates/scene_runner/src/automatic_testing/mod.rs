@@ -35,6 +35,10 @@ use crate::{
     ContainingScene, OutOfWorld, Toaster,
 };
 
+/// A scene-test capture camera that needs scene lighting with a clear background.
+#[derive(Component)]
+pub struct SceneSnapshotCamera;
+
 pub struct AutomaticTestingPlugin;
 
 impl Plugin for AutomaticTestingPlugin {
@@ -165,6 +169,7 @@ fn automatic_testing(
                 commands
                     .spawn((
                         Camera3d::default(),
+                        SceneSnapshotCamera,
                         transform,
                         Projection::Perspective(PerspectiveProjection {
                             fov: std::f32::consts::PI / 2.0,

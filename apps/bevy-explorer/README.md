@@ -185,9 +185,11 @@ logs and captures. Same-ref runs are serialized without cancelling the active ru
 `before..head`; nightly dispatch retries all scenes even on unchanged main. Failed main assertions
 still allow dependency-cache saves. Artifacts contain logs, screenshots and Cargo timings.
 
-The harness retains player simulation but renders only 256×256 snapshot windows, skipping the
-unused sky cubemap. Native UI is hidden and the background clock is frozen; scene lighting and
-scene-authored time overrides remain active. Captures wait for completed render frames without
+The harness retains player simulation and renders 256×256 snapshot windows with a clear
+background. The snapshot cameras use scene lighting and a reduced-resolution sky reflection
+source. The default reflected sky is clear for reproducible captures. Native UI is hidden and
+the background clock is frozen. Scene-authored lighting and time overrides remain active.
+Captures wait for completed render frames without
 pending shader pipelines. Native video textures are held until GPU readback, then queued updates
 resume. References keep their CPU pixels; invalid images fail comparison. The embedded references
 (`crates/assets/src/assets/images/screenshots`) are this runner's own captures with the native UI

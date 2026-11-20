@@ -24,10 +24,10 @@ use bevy::{
     render::view::{Layer, RenderLayers},
 };
 
-use bevy::render::{Render, RenderApp, RenderSet};
+use bevy::render::RenderApp;
 use bevy_atmosphere::{
     model::AddAtmosphereModel,
-    pipeline::{AtmosphereImageBindGroupLayout, AtmosphereUpdateEvent},
+    pipeline::AtmosphereImageBindGroupLayout,
     prelude::{AtmosphereCamera, AtmosphereModel, AtmospherePlugin, AtmosphereSettings},
     system_param::AtmosphereMut,
 };
@@ -43,7 +43,10 @@ use common::{
     },
 };
 use console::DoAddConsoleCommand;
-use scene_runner::update_world::lights::{moon_direction, SUN_COLOR_NOON};
+use scene_runner::{
+    initialize_scene::TestingData,
+    update_world::lights::{moon_direction, SUN_COLOR_NOON},
+};
 
 use crate::{
     coast::CoastPlugin,
@@ -92,8 +95,14 @@ impl Plugin for VisualsPlugin {
             .add_systems(Update, update_dof)
             .add_systems(Startup, setup.in_set(SetupSets::Main));
 
+        // The snapshot reflection source uses the smallest sky that the probe can downsample.
+        let snapshots_only = app.world().resource::<TestingData>().test_scenes.is_some();
         app.insert_resource(AtmosphereSettings {
-            resolution: 1024,
+            resolution: if snapshots_only {
+                2 * sky_envmap::SPECULAR_SIZE
+            } else {
+                1024
+            },
             dithering: true,
             skybox_creation_mode:
                 bevy_atmosphere::settings::SkyboxCreationMode::FromProjectionFarWithFallback(
@@ -130,23 +139,8 @@ impl Plugin for VisualsPlugin {
     }
 
     fn finish(&self, app: &mut App) {
-        let snapshots_only = app
-            .world()
-            .resource::<scene_runner::initialize_scene::TestingData>()
-            .test_scenes
-            .is_some();
-        let render_app = app.sub_app_mut(RenderApp);
-        render_app.init_resource::<AtmosphereImageBindGroupLayout>();
-        if snapshots_only {
-            // The player camera is inactive and snapshot cameras have no sky or
-            // environment map. Do not raymarch an unused 1024px sky cubemap every
-            // frame; scene lighting and snapshot rendering still run normally.
-            render_app.add_systems(
-                Render,
-                (|mut updates: ResMut<Events<AtmosphereUpdateEvent>>| updates.clear())
-                    .in_set(RenderSet::PrepareBindGroups),
-            );
-        }
+        app.sub_app_mut(RenderApp)
+            .init_resource::<AtmosphereImageBindGroupLayout>();
 
         app.add_atmosphere_model::<NishitaCloud>();
     }
@@ -198,7 +192,7 @@ fn apply_global_light(
         &mut DirectionalLight,
     )>,
     mut ambient: ResMut<AmbientLight>,
-    time: Res<Time>,
+    (time, testing): (Res<Time>, Option<Res<TestingData>>),
     mut fogs: Query<&mut DistanceFog, With<Camera3d>>,
     scene_light: (Res<SceneGlobalLight>, Res<environment::SceneEnvironment>),
     time_of_day: Res<TimeOfDay>,
@@ -274,10 +268,17 @@ fn apply_global_light(
     atmosphere.scene_rim = band(environment.rim);
     let procedural_clouds = environment.texture.is_none();
     atmosphere.scene_cloud_color = band(environment.cloud_color.filter(|_| procedural_clouds));
+    // The default cloud layer uses a daily seed and moves with wall time. Use a clear sky for
+    // its snapshot reflections while still honoring scene-authored cloud opacity.
+    let default_cloud_opacity = if testing.is_some_and(|data| data.test_scenes.is_some()) {
+        0.0
+    } else {
+        1.0
+    };
     atmosphere.scene_cloud_opacity = environment
         .cloud_opacity
         .filter(|_| procedural_clouds)
-        .unwrap_or(1.0);
+        .unwrap_or(default_cloud_opacity);
     atmosphere.scene_sun_visible = if next_light.sun_hidden { 0.0 } else { 1.0 };
     if let Some(speed) = environment.cloud_speed.filter(|_| procedural_clouds) {
         atmosphere.scene_cloud_rotation = (atmosphere.scene_cloud_rotation as f64
