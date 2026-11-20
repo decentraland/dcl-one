@@ -5,7 +5,7 @@
 //       v2 ui3/src/marketplace/pages/MkAssetDetailView.tsx, MkAssetPage.tsx (superseded)
 // Licence of the Marketplace parts: Apache-2.0, Copyright 2020 Metaverse Holdings Ltd.
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 
 import Button from "../../atoms/Button";
@@ -61,28 +61,35 @@ import {
 import type { LegacyOrderRef } from "@shop/detail/api";
 import { fetchItemVideoUrl, fetchSmartWearableRequiredPermissions } from "./builder";
 import ItemPreview from "./components/ItemPreview";
-import LandBranch from "./components/LandBranch";
-import CombinedBuy from "./components/CombinedBuy";
-import LegacyOrderBuy from "./components/LegacyOrderBuy";
 import NotifyMe from "./components/NotifyMe";
 import { pdpText } from "./copy";
 import PaymentPanel from "./components/PaymentPanel";
 import ResaleOffers from "./components/ResaleOffers";
 import { ItemOwners, LatestSales } from "./components/TradeHistory";
 import { itemIdFromTokenId } from "./lib/token-id";
+import { preloadable } from "./lib/preloadable";
 import { itemUrn } from "@shop/detail/lib/urn";
 import { fetchVrmExportBlocked } from "./lib/wearable-rules";
 import { offerQueryKey, offersRevalidation, useOffers, type OfferQuery } from "./offers";
 import { useShopServices } from "../checkout/services";
 import { readManaBalanceWei } from "../checkout/lib/mana";
 import { useBuysInPlace, usePurchaseLauncher } from "./purchase";
-import BuyModal from "./components/BuyModal";
 import { takeBuyNowReturn, type BuyNowReturn } from "../credits/returns";
 import { listingTypeFor } from "@shop/market/access-rule";
+import { landCategoryOf } from "@shop/land/contracts";
 import { serviceBase } from "../../data/catalyst/client";
 import { shopClient } from "../api/host";
 import { shopReads } from "../discovery/reads";
 import "./itemdetail.css";
+
+// The purchase dialogs and the LAND page carry the checkout and LAND code: a visitor needs them only after a buy click
+// or on a LAND token, so they load on demand and the item page hydrates without them.
+const BuyModal = preloadable(() => import("./components/BuyModal"));
+const CombinedBuy = preloadable(() => import("./components/CombinedBuy"));
+const LegacyOrderBuy = preloadable(() => import("./components/LegacyOrderBuy"));
+const LandBranch = preloadable(() => import("./components/LandBranch"));
+
+type IdleWindow = Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number; cancelIdleCallback?: (handle: number) => void };
 
 type RouteState = { item?: CatalogItem } | null;
 
@@ -485,6 +492,28 @@ export default function ItemDetail() {
     if (handoff) setBuyNow({ resume: { account: handoff.account, lineId: handoff.lineId, credits: handoff.credits } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.search, session.kind, account]);
+  // A LAND token's page is LandBranch: fetch it with the token. Signed in, a buy click opens a dialog over the page:
+  // fetch the dialogs once the browser is idle, so the click does not wait for their code.
+  const landToken = isTokenRoute && !!landCategoryOf(contractAddress);
+  useEffect(() => {
+    if (landToken) void LandBranch.preload();
+  }, [landToken]);
+  const buysOverPage = buysInPlace && session.kind !== "signedOut";
+  useEffect(() => {
+    if (!buysOverPage) return;
+    const preload = () => {
+      void BuyModal.preload();
+      void CombinedBuy.preload();
+      if (isTokenRoute) void LegacyOrderBuy.preload();
+    };
+    const w = window as IdleWindow;
+    if (w.requestIdleCallback) {
+      const handle = w.requestIdleCallback(preload, { timeout: 3000 });
+      return () => w.cancelIdleCallback?.(handle);
+    }
+    const timer = window.setTimeout(preload, 1000);
+    return () => window.clearTimeout(timer);
+  }, [buysOverPage, isTokenRoute]);
   const viewed = useRef<string | null>(null);
   useEffect(() => {
     if (!current.name || viewed.current === current.id) return;
@@ -882,7 +911,9 @@ export default function ItemDetail() {
       </div>
 
       {marketplace && isTokenRoute && (current.category === "parcel" || current.category === "estate") ? (
-        <LandBranch contractAddress={contractAddress} tokenId={routeTokenId!} viewer={account} />
+        <Suspense fallback={null}>
+          <LandBranch contractAddress={contractAddress} tokenId={routeTokenId!} viewer={account} />
+        </Suspense>
       ) : null}
 
       {showResales ? (
@@ -911,35 +942,37 @@ export default function ItemDetail() {
 
       {!isLand ? <PhotoReel contractAddress={contractAddress} itemId={pageItemId} /> : null}
 
-      {buyNow && inPlace && cartInput ? (
-        <BuyModal
-          line={{ ...cartInput, seen: offer ?? null }}
-          returnPath={itemHref}
-          resume={buyNow.resume}
-          onResumeUsed={() => setBuyNow((b) => (b ? { resume: null } : b))}
-          onClose={() => setBuyNow(null)}
-        />
-      ) : null}
-      {buyingMixed ? (
-        <CombinedBuy
-          line={buyingMixed.line}
-          offer={buyingMixed.offer}
-          mixed={buyingMixed.mixed}
-          onClose={() => setBuyingMixed(null)}
-          onDone={() => invalidateShopQueries()}
-        />
-      ) : null}
-      {buyingOrder && routeTokenId ? (
-        <LegacyOrderBuy
-          name={current.name}
-          contractAddress={contractAddress}
-          tokenId={routeTokenId}
-          order={buyingOrder.order}
-          quoted={buyingOrder.quoted}
-          onClose={() => setBuyingOrder(null)}
-          onDone={() => invalidateShopQueries()}
-        />
-      ) : null}
+      <Suspense fallback={null}>
+        {buyNow && inPlace && cartInput ? (
+          <BuyModal
+            line={{ ...cartInput, seen: offer ?? null }}
+            returnPath={itemHref}
+            resume={buyNow.resume}
+            onResumeUsed={() => setBuyNow((b) => (b ? { resume: null } : b))}
+            onClose={() => setBuyNow(null)}
+          />
+        ) : null}
+        {buyingMixed ? (
+          <CombinedBuy
+            line={buyingMixed.line}
+            offer={buyingMixed.offer}
+            mixed={buyingMixed.mixed}
+            onClose={() => setBuyingMixed(null)}
+            onDone={() => invalidateShopQueries()}
+          />
+        ) : null}
+        {buyingOrder && routeTokenId ? (
+          <LegacyOrderBuy
+            name={current.name}
+            contractAddress={contractAddress}
+            tokenId={routeTokenId}
+            order={buyingOrder.order}
+            quoted={buyingOrder.quoted}
+            onClose={() => setBuyingOrder(null)}
+            onDone={() => invalidateShopQueries()}
+          />
+        ) : null}
+      </Suspense>
     </div>
   );
 }
