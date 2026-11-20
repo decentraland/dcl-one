@@ -29,7 +29,9 @@ import { useChromeAuth } from "@ui/web/frames/chrome-auth";
 import ChromeLink from "@ui/web/frames/ChromeLink";
 import { useSiteLayout } from "@ui/web/frames/SiteLayout";
 import {
+  categoryForType,
   notificationBody,
+  notificationImage,
   notificationLink,
   notificationTitle,
   relativeTime,
@@ -244,6 +246,8 @@ export default function SitesTopBar({
         id: row.id,
         title: notificationTitle(row),
         description: notificationBody(row),
+        category: row.type.startsWith("community_event") ? "event" : categoryForType(row.type),
+        image: notificationImage(row) ?? undefined,
         href: notificationLink(row) ?? undefined,
         time: relativeTime(row.timestamp, Date.now()),
         unread: !row.read,

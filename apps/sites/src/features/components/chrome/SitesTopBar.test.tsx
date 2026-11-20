@@ -312,7 +312,7 @@ describe("Sites native chrome integration", () => {
         name: "Notifications",
       }),
     );
-    await screen.findByText("No notifications yet");
+    await screen.findByText("No Notifications Yet");
     view.rerender(<Host auth={{ ...a, account: "0xb" }} />);
     view.rerender(<Host auth={a} />);
     expect(screen.queryByRole("dialog", { name: "Notifications" })).toBeNull();
@@ -563,7 +563,7 @@ it("restores the actual bell opener after pointer activation and dialog dismissa
   );
   const bell = screen.getByRole("button", { name: "Notifications" });
   fireEvent.click(bell);
-  await screen.findByText("No notifications yet");
+  await screen.findByText("No Notifications Yet");
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
   expect(document.activeElement).toBe(bell);
 });
@@ -651,7 +651,7 @@ describe("when Home notifications are opened", () => {
     const bell = screen.getByRole("button", { name: "Notifications" });
     fireEvent.click(bell);
     const panel = screen.getByRole("dialog", { name: "Notifications" });
-    await screen.findByText("No notifications yet");
+    await screen.findByText("No Notifications Yet");
     const close = within(panel).getByRole("button", { name: "Close" });
     close.focus();
     fireEvent.keyDown(close, { key: "Escape" });
