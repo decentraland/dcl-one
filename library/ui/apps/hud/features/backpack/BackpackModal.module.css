@@ -1,5 +1,5 @@
-/* The page in a centred 1600px card that leaves 100px above and below; the page lays itself out for
-   that width (its own in-modal rules). */
+/* The page in a centred 1600×1000 card on the 1920×1080 canvas; the page lays itself out for that
+   size (its own in-modal rules). */
 .root {
   position: fixed;
   inset: 0;
@@ -17,7 +17,7 @@
   left: 50%;
   top: 50%;
   width: 1600px;
-  height: calc(100vh / var(--ui-scale) - 200px);
+  height: 1000px;
   transform: translate(-50%, -50%) scale(var(--ui-scale));
   border-radius: var(--r-xl);
   overflow: hidden;

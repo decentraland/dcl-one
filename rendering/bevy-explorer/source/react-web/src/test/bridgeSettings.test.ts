@@ -19,8 +19,7 @@ const FXAA = ['Off', 'FXAA (Low)', 'FXAA (High)']
 const MSAA = [...FXAA, 'MSAA 2x', 'MSAA 4x', 'MSAA 8x']
 
 // The engine's defaults, the Medium preset, as the web build publishes them: no VSync, no MSAA,
-// no SSAO. Jiggle Bones is off by default but on in Medium. Lens Flare is not published yet, so
-// the presets skip it.
+// no SSAO. Jiggle Bones is off by default but on in Medium.
 const webDefaults = (): Setting[] => [
   setting('Target Frame Rate', 1, ['30 fps', '60 fps', '120 fps', '144 fps', 'Max']),
   setting('Render Resolution', 100),
@@ -32,6 +31,7 @@ const webDefaults = (): Setting[] => [
   setting('Shadow Distance', 20),
   setting('Light Count', 6),
   setting('Shadow Caster Count', 3),
+  setting('Lens Flare', 1, OFF_ON),
   setting('Depth of Field', 2, ['Off', 'Low', 'High']),
   setting('Fog', 1, OFF_ON),
   setting('Sky Reflections', 1, ['Low', 'High']),
@@ -77,14 +77,14 @@ describe('graphics presets', () => {
       'Anti-aliasing': 0,
       Bloom: 1,
       'Shadow settings': 0,
-      'Light Count': 0
+      'Light Count': 0,
+      'Lens Flare': 0
     })
   })
 
   it('leaves load distance to the player, and skips what the engine does not publish', () => {
     const names = presetTargets(nativeDefaults(), 2).map((t) => t.name)
     expect(names).not.toContain('Scene Load Distance')
-    expect(names).not.toContain('Lens Flare')
   })
 
   it('reads as Custom once a preset setting differs', () => {

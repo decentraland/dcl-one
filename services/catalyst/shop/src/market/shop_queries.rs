@@ -85,17 +85,45 @@ pub(super) fn unified_selection(
         alternatives.push(format!("mv.contract_address = ANY({p})"));
     }
     if !items.is_empty() {
-        let mut item_contracts: Vec<String> = items
-            .iter()
-            .filter_map(|id| id.rsplit_once('-').map(|(c, _)| c.to_lowercase()))
-            .collect();
-        item_contracts.sort();
-        item_contracts.dedup();
-        let contracts_p = b.bind_strings(&item_contracts);
+        let contracts_p = b.bind_strings(&id_contracts(items));
         let items_p = b.bind_strings(&items.iter().map(|id| id.to_lowercase()).collect::<Vec<_>>());
         alternatives.push(format!("(mv.contract_address = ANY({contracts_p}) AND mv.contract_address || '-' || mv.item_id::text = ANY({items_p}))"));
     }
     Some(format!("({})", alternatives.join(" OR ")))
+}
+
+/// The distinct lowercase contracts of `<contract>-<itemId>` ids.
+pub(super) fn id_contracts(ids: &[String]) -> Vec<String> {
+    let mut contracts: Vec<String> = ids
+        .iter()
+        .filter_map(|id| id.rsplit_once('-').map(|(c, _)| c.to_lowercase()))
+        .collect();
+    contracts.sort();
+    contracts.dedup();
+    contracts
+}
+
+/// The contracts a read names, lowercase: its `contractAddress`, else every
+/// contract of its selection ([`unified_selection`]); `None` when it names
+/// none. Every trade row the read keeps sells from one of them, so the
+/// open-trades CTE can read only those.
+pub(super) fn named_contracts(f: &UnifiedCatalogFilters) -> Option<Vec<String>> {
+    if let Some(ca) = f.base.contract_address.as_deref().filter(|c| !c.is_empty()) {
+        return Some(vec![ca.to_lowercase()]);
+    }
+    if f.contract_addresses.is_none() && f.item_ids.is_none() {
+        return None;
+    }
+    let mut contracts = id_contracts(f.item_ids.as_deref().unwrap_or_default());
+    contracts.extend(
+        f.contract_addresses
+            .iter()
+            .flatten()
+            .map(|c| c.to_lowercase()),
+    );
+    contracts.sort();
+    contracts.dedup();
+    Some(contracts)
 }
 
 /// The filters every feed shares, over the `mv` alias of [`branch_base`].
@@ -398,12 +426,22 @@ fn outer_page_clauses(
     )
 }
 
-/// The `unified_trades` CTE at now, counting mirrored trades from `since`.
-fn with_trades(b: &mut Builder, since: Option<chrono::NaiveDateTime>) {
+/// The `unified_trades` CTE at now, counting mirrored trades from `since`,
+/// over the trades of `contracts` only when given ([`named_contracts`]).
+fn with_trades(
+    b: &mut Builder,
+    since: Option<chrono::NaiveDateTime>,
+    contracts: Option<Vec<String>>,
+) {
     let now_p = b.bind_time(Utc::now().naive_utc());
     let since_p = b.bind_opt_time(since);
+    let contracts_p = contracts.map(|c| b.bind_strings(&c));
     b.push("WITH ");
-    b.push(&unified_trades_cte(&now_p, &since_p));
+    b.push(&unified_trades_cte_of(
+        &now_p,
+        &since_p,
+        contracts_p.as_deref(),
+    ));
     b.push(" ");
 }
 
@@ -423,7 +461,6 @@ pub fn build_shop_listings_sql(
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
-    with_trades(&mut b, since);
     let unified = UnifiedCatalogFilters {
         base: f.clone(),
         source: Some(UnifiedSource::Native),
@@ -431,6 +468,7 @@ pub fn build_shop_listings_sql(
         item_ids: None,
         include_legacy_secondary: false,
     };
+    with_trades(&mut b, since, named_contracts(&unified));
     let inner = unified_branch(
         &mut b,
         UnifiedSource::Native,
@@ -460,7 +498,7 @@ pub fn build_legacy_listings_sql(
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
-    with_trades(&mut b, since);
+    with_trades(&mut b, since, None);
     let unified = UnifiedCatalogFilters {
         base: ShopCatalogFilters {
             category: f.category.clone(),
@@ -499,7 +537,7 @@ pub fn build_importable_listings_sql(
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
-    with_trades(&mut b, since);
+    with_trades(&mut b, since, None);
     let unified = UnifiedCatalogFilters {
         source: Some(UnifiedSource::Legacy),
         include_legacy_secondary: true,
@@ -524,7 +562,7 @@ pub fn build_unified_listings_sql(
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
-    with_trades(&mut b, since);
+    with_trades(&mut b, since, named_contracts(f));
     let inner = unified_inner(&mut b, f, rate);
     let (where_clause, order, limit_p, offset_p) = outer_page_clauses(
         &mut b,
@@ -563,7 +601,7 @@ pub fn build_unified_items_sql(
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
-    with_trades(&mut b, since);
+    with_trades(&mut b, since, named_contracts(f));
     let core = item_unified_core(&mut b, f, rate);
     let (where_clause, order, limit_p, offset_p) =
         outer_page_clauses(&mut b, "d", &f.base, vec!["d.usd_wei > 0".to_string()]);
@@ -571,7 +609,8 @@ pub fn build_unified_items_sql(
     b
 }
 
-/// The item core restricted to `<contract>-<itemId>` ids; order is the caller's.
+/// The item core restricted to `<contract>-<itemId>` ids, over the open
+/// trades of the ids' contracts only; order is the caller's.
 pub fn build_items_by_ids_sql(
     ids: &[String],
     f: &UnifiedCatalogFilters,
@@ -579,7 +618,7 @@ pub fn build_items_by_ids_sql(
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
-    with_trades(&mut b, since);
+    with_trades(&mut b, since, Some(id_contracts(ids)));
     let core = item_unified_core(&mut b, f, rate);
     let ids_p = b.bind_strings(ids);
     b.push(&format!("SELECT d.* FROM ({core}) d WHERE d.usd_wei > 0 AND (d.contract_address || '-' || d.item_id) = ANY({ids_p})"));
@@ -637,7 +676,7 @@ pub fn build_related_items_sql(
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
-    with_trades(&mut b, since);
+    with_trades(&mut b, since, None);
     let f = UnifiedCatalogFilters {
         base: ShopCatalogFilters {
             category: Some(reference_category.to_string()),

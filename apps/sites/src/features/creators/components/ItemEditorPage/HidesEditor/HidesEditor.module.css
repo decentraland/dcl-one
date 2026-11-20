@@ -1,0 +1,18 @@
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--editor-label);
+}
+
+.empty {
+  font-size: 13px;
+  color: var(--editor-label);
+}

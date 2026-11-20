@@ -1,0 +1,54 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+@layer dcl.components {
+  .root {
+    composes: text6c6162656c2f746167 from '../../foundations/typography/text-styles.module.css';
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    height: 18px;
+    border-radius: var(--dcl-radius-xs);
+    color: var(--dcl-text-primary);
+    font-size: var(--dcl-font-size-label-tag);
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+
+  .icon {
+    flex: none;
+  }
+
+  .root[data-variant='new'] {
+    font-size: var(--dcl-font-size-label-xs-caps);
+    padding: 0 var(--dcl-space-4);
+    background: var(--dcl-action-primary);
+    text-transform: uppercase;
+  }
+
+  .root[data-variant='smart'] {
+    gap: 2px;
+    padding: 0 5px;
+    background: linear-gradient(90deg, var(--dcl-brand-lavender), var(--dcl-brand-violet));
+    color: var(--dcl-neutrals-white);
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .root[data-variant='amount'] {
+    height: 19px;
+    padding: 0 var(--dcl-space-4);
+    background: var(--dcl-transparencies-black-40);
+  }
+
+  @media (forced-colors: active) {
+    .root {
+      border: 1px solid CanvasText;
+      background: Canvas;
+      color: CanvasText;
+      forced-color-adjust: none;
+    }
+  }
+}

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { siteUrl } from '@hud-host'
+import { checkoutSiteUrl, siteUrl } from '@hud-host'
 import { ShopPanel } from '../features/sidebar/panels/ShopPanel'
 import { Sidebar } from '../features/sidebar/Sidebar'
 import { fakeSession, renderSettled } from './harness'
@@ -48,7 +48,7 @@ describe('SHOP panel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'BUY CREDITS' }))
     expect(open).toHaveBeenCalledTimes(1)
     const [url, target, features] = open.mock.calls[0]!
-    expect(String(url).startsWith(`${siteUrl('/shop/credits')}?utm_source=`)).toBe(true)
+    expect(String(url).startsWith(`${checkoutSiteUrl('/shop/credits')}?utm_source=`)).toBe(true)
     expect(target).toBe('_blank')
     expect(features).toBe('noopener')
     expect(onClose).toHaveBeenCalledTimes(1)

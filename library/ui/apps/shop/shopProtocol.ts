@@ -79,6 +79,11 @@ export interface ShopCapabilities {
    */
   marketplace?: boolean
   /**
+   * Whether this buyer is shown paying in MANA (the MANA equivalent under a price): the shell's one rule for every MANA
+   * feature, which its own purchase dialog follows too. Absent means not.
+   */
+  mana?: boolean
+  /**
    * Whether this shell's refusals carry a code (lib/shellReply), so the HUD tells a busy shell by SHOP_BUSY alone.
    * Absent from a shell from before codes, which says busy in LEGACY_SHOP_BUSY_MESSAGE's words only.
    */

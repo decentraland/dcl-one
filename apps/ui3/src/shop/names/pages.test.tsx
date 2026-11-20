@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import type { Hex } from "viem";
 import { useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { setSplitPayment } from "@shop/payment/present";
 
 import { LAND_NETWORKS } from "@shop/land/contracts";
 import { erc20Abi } from "../land/evm";
@@ -81,6 +82,15 @@ const type = (value: string) => fireEvent.change(screen.getByRole("textbox", { n
 
 beforeEach(() => sessionStorage.clear());
 afterEach(() => vi.restoreAllMocks());
+
+
+// The split (Credits and MANA together) is off in this deployment (present's SPLIT_PAYMENT): these tests cover it as it
+// runs once it is offered.
+let undoSplit: () => void = () => {};
+beforeEach(() => {
+  undoSplit = setSplitPayment(true);
+});
+afterEach(() => undoSplit());
 
 describe("NAME registration search", () => {
   it("sanitizes input and explains invalid, banned and taken NAMEs; a taken one points to the resale browse", async () => {
@@ -240,7 +250,8 @@ describe("the NAME buy dialog", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Continue" }));
     fireEvent.change(within(dialog).getByRole("textbox", { name: "Re-enter the NAME" }), { target: { value: "nacho" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Buy" }));
-    expect(await screen.findByRole("dialog", { name: "Purchase complete!" })).toBeInTheDocument();
+    const done = await screen.findByRole("dialog", { name: "Purchase complete!" });
+    expect(within(done).getByRole("link", { name: "Use it for your World" })).toHaveAttribute("href", "/download/creator-hub");
     expect(wallet.sent.map((t) => [t.to, t.fn])).toEqual([
       [MAINNET.mana, "approve"],
       [MAINNET.nameController, "register"],

@@ -2,6 +2,30 @@
 
 use clap::Args;
 
+/// `CAST_PRESENTER_PUBLIC_URL` as upstream reads its `PUBLIC_BASE_URL`
+/// (`decentraland/cast-presenter-server` @ cae78612,
+/// `src/logic/presentation-manager/component.ts:181-187`): `https://`, or
+/// `http://` on this host, no credentials, query or fragment; the trailing
+/// `/` goes. A blank value stays blank: `Config::non_empty` reads it as unset.
+fn cast_presenter_public_url(raw: &str) -> Result<String, String> {
+    if raw.trim().is_empty() {
+        return Ok(String::new());
+    }
+    let url = url::Url::parse(raw).map_err(|e| e.to_string())?;
+    let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+    let plain = url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none();
+    if !plain || !(url.scheme() == "https" || url.scheme() == "http" && local) {
+        return Err(
+            "must be an https:// URL (http:// only for localhost) with no credentials, query or fragment"
+                .into(),
+        );
+    }
+    Ok(url.as_str().trim_end_matches('/').into())
+}
+
 // @well-known-components/env-config-provider getNumber uses parseFloat,
 // including numeric prefixes and Infinity, and rejects NaN.
 fn source_number(raw: &str) -> Result<f64, String> {
@@ -487,12 +511,25 @@ pub struct SocialConfig {
     #[arg(long, env = "MAX_CONCURRENT_PRESENTATIONS", default_value_t = 10)]
     pub max_concurrent_presentations: usize,
 
+    /// The Cast presenter's routes as clients reach them. With it, a
+    /// presentation serves its slides as pictures there and its bot names the
+    /// current one, for clients that compose: the Unity Explorer fetches only
+    /// from `https://cast-presenter-service.<its base domain>`. Unset or
+    /// blank, clients show the bot's slide track.
+    #[arg(long, env = "CAST_PRESENTER_PUBLIC_URL", value_parser = cast_presenter_public_url)]
+    pub cast_presenter_public_url: Option<String>,
+
     #[arg(
         long,
         env = "PRIVATE_MESSAGES_ROOM_ID",
         default_value = "private-messages"
     )]
     pub private_messages_room_id: String,
+
+    /// Give a local preview scene (a `b64-` id or a `preview`/`localpreview`
+    /// realm) a Genesis scene token without a deployed scene behind it.
+    #[arg(long, env = "ALLOW_LOCAL_PREVIEW", default_value_t = false, action = clap::ArgAction::Set)]
+    pub allow_local_preview: bool,
 
     /// The one wallet that may mint the authoritative-server host token; unset refuses /get-server-scene-adapter.
     #[arg(long, env = "AUTHORITATIVE_SERVER_ADDRESS")]
@@ -535,9 +572,11 @@ pub struct SocialConfig {
     #[arg(long, env = "COMMS_LAND_OPERATORS_URL")]
     pub comms_land_operators_url: Option<String>,
 
-    /// The linker-server lease document (`[{addresses, plots}]`) whose
-    /// holders administer the scenes on their plots (the mirror posture's:
-    /// Decentraland's published list); empty lists no lease holder.
+    /// The linker-server lease document (`[{addresses, plots, startDate?,
+    /// endDate?, onlyDev?}]`) whose holders administer the scenes on their
+    /// plots while an entry is within its dates (`onlyDev` entries only on a
+    /// Sepolia `ETH_NETWORK`; the mirror posture's: Decentraland's published
+    /// list); empty lists no lease holder.
     #[arg(long, env = "LEASE_AUTHORIZATIONS_URL", default_value = "")]
     pub lease_authorizations_url: String,
 
@@ -1113,6 +1152,34 @@ mod tests {
     use crate::config::Config;
 
     const BASE: [(&str, &str); 1] = [("DATABASE_URL", "postgres:///catalyst")];
+
+    #[test]
+    fn the_cast_presenter_public_url_is_secure_and_plain() {
+        let read = super::cast_presenter_public_url;
+        for (raw, base) in [
+            ("https://Cast.example.org:443/", "https://cast.example.org"),
+            ("https://example.org/cast//", "https://example.org/cast"),
+            ("http://127.0.0.1:5141/x", "http://127.0.0.1:5141/x"),
+            ("http://localhost:5141", "http://localhost:5141"),
+            ("http://[::1]:5141", "http://[::1]:5141"),
+        ] {
+            assert_eq!(read(raw).as_deref(), Ok(base));
+        }
+        for raw in [
+            "http://example.org",
+            "https://user@example.org",
+            "https://example.org/?a=1",
+            "https://example.org/#slides",
+            "ftp://localhost",
+            "example.org",
+        ] {
+            assert!(read(raw).is_err(), "{raw}");
+        }
+        for blank in ["", " "] {
+            let set = social(&[("CAST_PRESENTER_PUBLIC_URL", blank)]).unwrap();
+            assert_eq!(Config::non_empty(&set.cast_presenter_public_url), None);
+        }
+    }
 
     #[test]
     fn http_body_cap_uses_executed_source_boot_rules() {

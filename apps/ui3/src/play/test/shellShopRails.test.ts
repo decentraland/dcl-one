@@ -107,6 +107,7 @@ function rails(opts: { trusted: string; kind: 'managed' | 'web3'; gasless?: bool
       // One tab: every operation's lock is this page's.
       claim: async () => () => {},
       creatorName: async () => null,
+      creatorFace: async () => null,
       manager: (chainId) => ({ chainId, address: opts.trusted, name: 'Decentraland Credits', version: '1.0.0' }),
       rail: () => ({
         relayerUrl: 'https://node.test/transactions-api/v1',
@@ -358,6 +359,35 @@ describe('the shell purchase on the real rails', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('says the account’s spent fee-free quota, and when it frees up, to a managed wallet', async () => {
+    const r = rails({ trusted: DEDICATED, kind: 'managed' })
+    r.relay.state.mode = 'refuse'
+    r.relay.state.refuseStatus = 429
+    r.relay.state.refuseBody = { error: 'quota_reached', message: 'Max amount of transactions reached for address. Quota: 30', quota: 30 }
+    await r.buy()
+    const failed = await r.until('failed')
+    expect(failed.view).toMatchObject({
+      step: 'failed',
+      retry: true,
+      message: "You've used all 30 fee-free transactions this account gets in 24 hours. Try again later."
+    })
+    expect(failed.view).not.toHaveProperty('switchTo')
+  })
+
+  it('gives a funded web3 wallet the relay’s reason beside the switch', async () => {
+    const r = rails({ trusted: DEDICATED, kind: 'web3', walletChain: 1 })
+    r.relay.state.mode = 'refuse'
+    r.relay.state.refuseStatus = 429
+    r.relay.state.refuseBody = { error: 'relay_budget_spent', message: 'The relay budget for today is spent' }
+    await r.buy()
+    const failed = await r.until('failed')
+    expect(failed.view).toMatchObject({
+      step: 'failed',
+      switchTo: 'Polygon',
+      message: 'The shared fee-free limit for this operation has been reached. Try again later. You can switch to Polygon and pay the network fee with your wallet. Nothing was bought.'
+    })
   })
 
   it('relays nothing when the hand-off isn’t kept: the signed purchase never leaves the browser', async () => {

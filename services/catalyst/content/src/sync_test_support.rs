@@ -113,3 +113,31 @@ pub(crate) async fn spawn_content_server(
     });
     (format!("http://{addr}"), handle)
 }
+
+/// A loopback peer whose `redirect` path answers 307 to `target(port)` on any
+/// method, and the number of requests the redirect target received.
+pub(crate) async fn redirecting_peer(
+    redirect: &'static str,
+    target: impl Fn(u16) -> String + Send + Sync + 'static,
+) -> (u16, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    use axum::routing::any;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = hits.clone();
+    let location = target(port);
+    let app = axum::Router::new()
+        .route(
+            redirect,
+            any(move || async move { axum::response::Redirect::temporary(&location) }),
+        )
+        .route(
+            "/target",
+            any(move || async move {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                "[]"
+            }),
+        );
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (port, hits)
+}

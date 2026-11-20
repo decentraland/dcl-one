@@ -79,13 +79,47 @@ fn ser(v: &Value) -> String {
     serde_json::to_string(v).unwrap()
 }
 
+/// The NAME holders every [`state_with`] policy reads: [`seed_world`]'s owner
+/// is the world label's only holder.
+static NAMES: std::sync::LazyLock<crate::chain_index::graph::test_support::Names> =
+    std::sync::LazyLock::new(Default::default);
+
 async fn seed_world(pool: &PgPool, world: &WorldName, owner: Option<&Address>) {
+    if let Some(owner) = owner {
+        NAMES.transfer(owner, world.label());
+    }
     sqlx::query("INSERT INTO worlds.worlds (name, owner) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET owner = EXCLUDED.owner")
         .bind(world.key())
         .bind(owner)
         .execute(pool)
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn reseeding_a_world_moves_its_name_to_the_new_owner() {
+    let Some(pool) = scratch().await else { return };
+    let world = world_name();
+    let (previous, current) = (address(), address());
+    seed_world(&pool, &world, Some(&previous)).await;
+    seed_world(&pool, &world, Some(&current)).await;
+    let policy = Policy::new(
+        pool.clone(),
+        PersonalWorldsPolicy::disabled(),
+        Some(crate::chain_index::graph::test_support::index_reading(
+            NAMES.clone(),
+        )),
+    );
+    assert!(matches!(
+        policy.is_owner(&world, &current).await,
+        crate::shared::identity::PermissionDecision::Allowed
+    ));
+    assert!(matches!(
+        policy.is_owner(&world, &previous).await,
+        crate::shared::identity::PermissionDecision::Refused(
+            crate::shared::identity::AuthorityNotEstablished::RefusedLacksAuthority { detail }
+        ) if detail == crate::policy::NOT_OWNER_MSG
+    ));
 }
 
 async fn seed_scene(
@@ -209,7 +243,9 @@ fn state_with(pool: &PgPool, settings: Settings) -> SharedState {
     let policy = Arc::new(Policy::new(
         pool.clone(),
         PersonalWorldsPolicy::disabled(),
-        None,
+        Some(crate::chain_index::graph::test_support::index_reading(
+            NAMES.clone(),
+        )),
     ));
     Arc::new(StorageState::new(pool.clone(), policy, settings, None))
 }
@@ -2532,8 +2568,8 @@ async fn seed_genesis_scene(pool: &PgPool) -> (String, String, String, i32) {
 }
 
 async fn remove_genesis_scene(pool: &PgPool, id: &str, dep_id: i32) {
-    sqlx::query("DELETE FROM social.scene_admins WHERE place_id = $1")
-        .bind(id)
+    sqlx::query("DELETE FROM social.scene_admins WHERE place_id = (SELECT entity_metadata #>> '{scene,base}' FROM content.deployments WHERE id = $1)")
+        .bind(dep_id)
         .execute(pool)
         .await
         .unwrap();
@@ -2562,7 +2598,7 @@ async fn genesis_scenes_scope_by_the_active_pointer_and_admit_the_land_authority
     sqlx::query(
         "INSERT INTO social.scene_admins (place_id, admin_address, added_by) VALUES ($1, $2, $3)",
     )
-    .bind(&id)
+    .bind(&p2)
     .bind(Address::parse(&address_of(&admin_key)).unwrap())
     .bind(address())
     .execute(&pool)
@@ -2904,7 +2940,7 @@ async fn genesis_land_ownership_counts_only_at_the_request_parcel() {
     sqlx::query(
         "INSERT INTO social.scene_admins (place_id, admin_address, added_by) VALUES ($1, $2, $3)",
     )
-    .bind(&id)
+    .bind(&p2)
     .bind(Address::parse(&address_of(&admin_key)).unwrap())
     .bind(address())
     .execute(&pool)

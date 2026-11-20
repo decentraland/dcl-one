@@ -381,6 +381,7 @@ fn island_sets_every_upstream_empty_and_every_follower_switch_off() {
         "TRADES_SYNC_UPSTREAM_URL",
         "RPC_UPSTREAM_MAINNET",
         "ABGEN_UPSTREAM_AB_CDN",
+        "BVIMPOSTERS_UPSTREAM_URL",
         "EXPLORER_REGISTRY_SOURCE_URL",
         "OPENSEA_FALLBACK_URL",
         "COINGECKO_URL",
@@ -1149,4 +1150,51 @@ fn about_resource_check_is_off_unless_set() {
         let on = parsed(&[db, (ENV, posture), ("ABOUT_RESOURCE_CHECK", "true")]);
         assert!(on.node.about_resource_check, "{posture}");
     }
+}
+
+#[test]
+fn world_writes_need_the_names_reader_unless_chain_checks_are_skipped() {
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    let writes = ("WORLDS_WRITES_ENABLED", "true");
+    let reader = (
+        "MARKETPLACE_SUBGRAPH_URL",
+        "https://reader.example/subgraph",
+    );
+    let skip = ("IGNORE_BLOCKCHAIN_ACCESS_CHECKS", "true");
+    let run = |pairs: &[(&str, &str)]| worlds_names_reader(&parsed(pairs));
+
+    let err = run(&[db, writes]).unwrap_err().to_string();
+    assert!(err.contains("MARKETPLACE_SUBGRAPH_URL"), "{err}");
+    assert!(
+        run(&[db, writes, ("MARKETPLACE_SUBGRAPH_URL", " ")]).is_err(),
+        "a blank reader is no reader"
+    );
+    assert!(
+        run(&[db, (ENV, "island"), writes]).is_err(),
+        "refused under a posture too"
+    );
+
+    assert!(
+        run(&[db, writes, skip])
+            .unwrap()
+            .unwrap()
+            .contains("MARKETPLACE_SUBGRAPH_URL"),
+        "no chain access: starts and warns"
+    );
+
+    for pairs in [&[db, writes, reader][..], &[db][..], &[db, skip][..]] {
+        assert_eq!(run(pairs).unwrap(), None, "{pairs:?}");
+    }
+}
+
+/// The indexer shares serve's environment but takes no world writes: the
+/// shared refusals leave the names reader to serve.
+#[test]
+fn the_shared_check_leaves_the_names_reader_to_serve() {
+    let pairs = [
+        ("DATABASE_URL", "postgres:///catalyst"),
+        ("WORLDS_WRITES_ENABLED", "true"),
+    ];
+    let map = env(&pairs);
+    check(&parsed(&pairs), &lookup(&map)).unwrap();
 }

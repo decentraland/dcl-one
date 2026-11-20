@@ -38,7 +38,7 @@ scene and world administration and moderation.
 | Platform-ban lookup failure | fail open (`access-gate/component.ts:30-36`) | fail closed, 503 (`G/moderation/store.rs:383-400`) | DIVERGENCE (safer) | `undetermined_scene_and_private_message_tokens_request_retry` |
 | Genesis scene ban → 403 | `comms-scene-handler.ts:84-136` | `connection_gate` (`store.rs:348-400`) | MATCH | `the_scene_adapter_mints_for_a_clean_wallet_and_refuses_platform_and_scene_bans` |
 | World scene ban → 403 "User is banned from this scene" | `comms-scene-handler.ts:116` | the permission core's scene ban (the scene's `world:base` key or a successor's) is answered 403 with that message, apart from the world's 401 (`G/admission/scene_policy.rs` `world_access`) | MATCH | `a_world_scene_ban_at_the_adapter_is_answered_apart_from_the_world_refusal` |
-| Genesis `sceneId` is a verified deployment (53deed5) | `GK/adapters/places.ts:200-218` | shared realm takes the id as given (`G/admission/scene_lookup.rs:136-146`) | GAP-AU-4 | format only |
+| Genesis `sceneId` is a verified deployment (53deed5) | `GK/adapters/places.ts:200-218` | `/get-scene-adapter` mints a shared-realm token only for a scene deployed and not deleted in this node's content and not on its denylist, else 404; an unreadable catalogue is 503 (`G/admission/scene_lookup.rs` `require_genesis_deployment`); `/get-server-scene-adapter` takes the id as given, as upstream. Local previews reach this handler (the Explorer's preview gatekeeper is aliased to it): with `ALLOW_LOCAL_PREVIEW=true` a `b64-` id or a `preview`/`localpreview` realm skips the deployment check, as upstream skips it for preview realms; the ban gates still run. The check precedes the ban gate. The realm half of the room stays free-form (GAP-AU-4) | DIVERGENCE (stricter) | `the_scene_adapter_refuses_a_genesis_scene_that_is_not_deployed`, `the_scene_adapter_answers_503_when_the_genesis_catalogue_is_unreadable`, `the_scene_adapter_refuses_a_denylisted_genesis_scene`, `the_scene_adapter_refuses_a_preview_scene_without_allow_local_preview`, `allow_local_preview_accepts_a_preview_scene_without_a_deployment` |
 | World scene from a previous deployment maps to the current room by `parcel` (53deed5) | `GK/adapters/worlds.ts:303-345` | retired scenes match, but the room is built from the retired id and `parcel` is never read (`C/worlds/src/rooms.rs:125-143,453-477`) | GAP-AU-2 | untested |
 | Legacy `sceneId` = world name, multi-scene world | `parcel` picks the scene (`worlds.ts:311-332`) | newest scene (`C/worlds/src/rooms.rs:300-306`) | GAP-AU-5 | untested |
 | World access | owner, unrestricted, allow-list (`worlds.ts:281-291`) | also shared secret and community allow-lists (`G/admission/scene_policy.rs:24-80`) | DIVERGENCE (documented `handlers.rs:85-87`) | `the_world_mints_decide_through_the_permission_core_and_throttle_secrets` |
@@ -66,6 +66,7 @@ scene and world administration and moderation.
 | Device bans; connection IP/device recorded; null upsert keeps the stored value (21f055b, 0a7c499) | `player-connection-db.ts` | `store.rs:30-37,630-651`; IP from socket or trusted proxy only (`G/auth.rs:455-461`) | MATCH (IP source is a documented divergence) | `a_lookup_without_a_device_id_is_widened_to_the_recorded_device`, `the_scene_adapter_records_the_pinned_client_ip_not_a_client_set_header` |
 | Platform bans held in memory (8be80d5) | `adapters/ban-registry/*` | SQL on every check; Pulse polls `GET /bans` with ETag | DIVERGENCE (never stale) | – |
 | Island mints check bans **and** the deny list | `cluster-subscriber/component.ts:372-381` | bans and blocked wallets only (`G/admission/cluster/gateway.rs:68-81`); the comment at `subscriber.rs:576-577` says no deny-list store exists, but `CommsState.deny_list` does | GAP-AU-1 | `a_banned_wallet_is_skipped_entirely` (bans only) |
+| Island mint when the ban lookup fails | deferred: nothing minted, `dcl_gatekeeper_cluster_access_check_failed_total`, a later hint retries (`cluster-subscriber/component.ts:379-383`) | deferred: nothing minted or remembered, `comms_cluster_access_check_failed_total` only, a later hint or reconnect retries (`G/admission/cluster/subscriber.rs`, `admission_withheld`) | MATCH | `an_access_check_failure_defers_the_assignment` |
 
 ## 4. Scene admins (`/scene-admin`)
 
@@ -79,7 +80,7 @@ scene and world administration and moderation.
 | POST/DELETE gate `isSceneOwnerOrAdmin`: owner, admin, extended permissions (LAND operators, world deploy/stream grantees), land lease | `GK/adapters/scene-manager.ts:81-94` | `scene_manager_decision`: owner or explicit admin, else an extended holder (`G/admission/scene_policy.rs`); unreadable grants answer 503. The stream key of a world is the exception, see [`meetings-voice.md`](meetings-voice.md) | MATCH | `a_land_owner_moderates_a_genesis_scene_without_an_admin_row`, `toolkit_ban_listings_admit_extended_holders` |
 | Target protection; add by `name` | `add-…:62-91` | `handlers.rs:59-85,239-258` | MATCH (messages differ) | `scene_ban_rejects_admin_target_and_admin_decisions_are_explicit` |
 | Room metadata `sceneAdmins` (1c3b907) | `room-metadata-sync/component.ts:33-161` | `G/admission/scene_effects.rs:206-212`, `maintenance.rs:208-245` (also the world lobby) | MATCH | `canonical_moderation_metadata_and_kick_target_the_joined_scene_and_lobby` |
-| Storage key | Places `place.id`, stable across redeploys | `social.scene_admins.place_id` = deployment entity id (`C/comms/src/world_identity.rs:195-201`) | GAP-AU-11 | untested |
+| Storage key | Places `place.id`, stable across redeploys | `social.scene_admins.place_id` = the scene's place, stable across redeploys: a world scene's identity, a Genesis scene's base parcel (`C/comms/src/rooms.rs:286`); a world keys each scene apart, see [`meetings-voice.md`](meetings-voice.md) | MATCH | `a_scene_admin_mints_lists_resets_and_removes_the_stream_key`, `a_redeploy_revokes_the_key_of_a_replaced_scene_the_resolver_still_answers` |
 
 ## 5. Scene bans (`/scene-bans`, `/scene-bans/addresses`)
 
@@ -115,7 +116,7 @@ scene and world administration and moderation.
 | 52f32da | Lowercase LiveKit room names | DIVERGENCE: own `w1:` scheme |
 | 2f425e4 | Keep serving opted-out world scenes | MATCH for admission; cleanup key GAP-AU-14 |
 | d366aef | Recover missing island assignments from Pulse | DIVERGENCE: own Pulse (`cluster_lookup`) |
-| 53deed5 | Bind scene permissions to verified deployments | MATCH for moderation; GAP-AU-2, GAP-AU-4 for admission |
+| 53deed5 | Bind scene permissions to verified deployments | MATCH for moderation; GAP-AU-2, GAP-AU-4 (realm half) for admission |
 | 1e7d0f2, cdd006c | Stream access expiry, ingress reconcile | MATCH, see [`meetings-voice.md`](meetings-voice.md) |
 | 8ea4e62 | Presentation bot metadata, presenter place lookups | See [`meetings-voice.md`](meetings-voice.md) |
 | 841d099 | Finish takeovers before issuing credentials | MATCH with a durable store; `withNotBefore` lifetime GAP-AU-6 |
@@ -129,14 +130,14 @@ scene and world administration and moderation.
 2. **GAP-AU-2: Joins from a previous world deployment land in another room.** Severity P1.
    - Expected: the signed `parcel` maps an old deployment's scene to the current scene's room.
    - dcl-one: the room is built from the retired id; `parcel` is ignored. Start with a test that pins the current behavior.
-4. **GAP-AU-4: Genesis `sceneId` is not checked against a deployed entity.** Severity P2. Any string mints `scene:<realm>:<id>`.
+4. **GAP-AU-4: A Genesis room's realm half is free-form.** Severity P2. The scene id must be a deployed scene, but a shared realm name is not checked, so one valid id opens `scene:<any-realm>:<id>` rooms. Upstream also takes the realm name as signed.
 5. **GAP-AU-5: Legacy world-name `sceneId` ignores `parcel` in multi-scene worlds.** Severity P2.
 6. **GAP-AU-6: `with_not_before` shortens island tokens.** Severity P2. Keep the lifetime and reject a non-positive `nbf`, as upstream does.
 8. **GAP-AU-8: Check order.** Severity P2. A wallet both deny-listed and platform-banned gets 401; upstream gives 403.
 9. **GAP-AU-9: Undocumented token claims and realm sources.** Severity P2. Record `name`, `isGuest` metadata, server-token metadata, the island `canUpdateOwnMetadata=false`, `displayName` as a canonical key as divergences, or remove them. `/get-server-scene-adapter` and streaming still fall back to `realm.serverName` (`realm_name_from_metadata`). The web place-page scene chat signs `/get-scene-adapter` as `dcl:explorer`.
-11. **GAP-AU-11: Scene admins, and Genesis scene bans, are lost on redeploy.** Severity P1.
+11. **GAP-AU-11: Genesis scene bans are lost on redeploy.** Severity P1.
     - Expected: keyed on the stable Places id.
-    - dcl-one: keyed on the deployment entity id. World bans already use a stable `world:base` key; give admins and Genesis bans a stable key too (base parcel), with a schema migration step.
+    - dcl-one: keyed on the deployment entity id. Scene admins use the scene's place and world bans a stable `world:base` key; give Genesis bans a stable key too (base parcel), with a schema migration step.
 12. **GAP-AU-12: The authoritative server's admin listing reads the wrong key.** Severity P1. Resolve the place from the signed realm and parcel, as the scene signer path does.
 14. **GAP-AU-14: Removed-place cleanup deletes by a key no row uses.** Severity P2. Unverified at runtime; write the test first.
 15. **GAP-AU-15: Small shape differences.** Severity P2. Ban listing offset rounding, `/mute` body, add/remove admin error texts.

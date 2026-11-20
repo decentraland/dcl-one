@@ -9,6 +9,7 @@ import {
   getDeepLinkTarget,
   getExplorerDeeplink,
   getSigninDeeplink,
+  identityBindingFor,
   isBridgeOnlyEnabled,
   isDeepLinkFlowEnabled,
   isValidUuidV4,
@@ -87,6 +88,7 @@ describe("getDeepLinkTarget", () => {
     expect(getDeepLinkTarget(params)).toEqual({
       appName: "Creator Hub",
       deepLink: "dcl-creator-hub://",
+      holdsVerifier: true,
     });
   });
 
@@ -95,7 +97,25 @@ describe("getDeepLinkTarget", () => {
       expect(getDeepLinkTarget(new URLSearchParams(query)), query).toEqual({
         appName: "Decentraland",
         deepLink: "decentraland://",
+        holdsVerifier: false,
       });
+    }
+  });
+});
+
+describe("identityBindingFor", () => {
+  it("binds the identity only for an app that holds a verifier", () => {
+    const loadedFor = (query: string, id = REQUEST_ID) => ({
+      id,
+      deepLinkIdValid: isValidUuidV4(id),
+      target: getDeepLinkTarget(new URLSearchParams(query)),
+    });
+    expect(identityBindingFor(loadedFor("targetConfigId=creator-hub"))).toBe(REQUEST_ID);
+    expect(identityBindingFor(loadedFor("targetConfigId=creator-hub", "not-a-uuid"))).toBe(
+      undefined,
+    );
+    for (const query of ["", "targetConfigId=alternative", "targetConfigId=unknown"]) {
+      expect(identityBindingFor(loadedFor(query)), query).toBe(undefined);
     }
   });
 });

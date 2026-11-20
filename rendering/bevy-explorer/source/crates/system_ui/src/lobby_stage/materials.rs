@@ -198,9 +198,11 @@ impl Material for VignetteMaterial {
 
 pub use uniforms::{DustUniform, FloorUniform, MistUniform, RockUniform, VignetteUniform};
 
-// the ShaderType derive emits a `check` function per field that nothing calls
 mod uniforms {
-    #![allow(dead_code)]
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
 
     use bevy::{
         math::{Vec2, Vec4},

@@ -5,6 +5,7 @@ import { cardPrice } from '@shop/discovery/cardPrice'
 import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
 import { MAX_SUPPLY } from '@shop/discovery/lib/rarity'
 import { saleDiscountPct } from '@shop/discovery/lib/sale'
+import { parseManaWei } from '@shop/model/money'
 import { SIGNED_OUT } from '@shop/model/settlement'
 import { ShopCard as CatalogueCard } from '@dcl/one-ui'
 import { MaskIcon } from '@hud/design'
@@ -104,12 +105,15 @@ export function categoryGlyph(category: string | undefined, size: number): React
 
 export function SelectedItemPanel({
   item,
+  showMana = false,
   onClose,
   onOpenOnWeb,
   onBuy,
   onAddToCart
 }: {
   item: CatalogItem
+  /** The buyer is shown MANA (capabilities' `mana`): the MANA equivalent goes under a credits price. */
+  showMana?: boolean
   onClose: () => void
   onOpenOnWeb: () => void
   /** BUY ITEM. */
@@ -129,6 +133,7 @@ export function SelectedItemPanel({
       rarity={rarity}
       icon={itemIcon(item, 28)}
       price={cardPrice(item, SIGNED_OUT)}
+      manaPrice={showMana ? parseManaWei(item.manaWei ?? null) : null}
       stock={item.available != null && max != null ? `${item.available}/${max}` : undefined}
       creator={{ name: creatorName, picture: creator?.picture, color: userColor(item.creator, creatorName, creator?.hasClaimedName) }}
       description={entity.data?.description}

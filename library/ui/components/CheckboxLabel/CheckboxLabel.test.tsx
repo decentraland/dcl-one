@@ -1,199 +1,277 @@
-import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { render, type RenderResult, screen } from '@testing-library/react'
+import userEvent, { type UserEvent } from '@testing-library/user-event'
 import { renderToString } from 'react-dom/server'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 import { CheckboxLabel } from './CheckboxLabel'
 
 describe('CheckboxLabel', () => {
+  let user: UserEvent
+
+  beforeEach(() => {
+    user = userEvent.setup()
+  })
+
+  afterEach(() => {
+    vi.resetAllMocks()
+  })
+
   describe('when rendered with a label', () => {
-    it('names the checkbox with its visible text', () => {
-      render(<CheckboxLabel label="Open Debug Console" />)
-      expect(screen.getByRole('checkbox', { name: 'Open Debug Console' })).not.toBeChecked()
-      expect(screen.getByText('Open Debug Console')).toBeVisible()
+    describe('and no other props', () => {
+      beforeEach(() => {
+        render(<CheckboxLabel label="Open Debug Console" />)
+      })
+
+      it('should name the checkbox with its visible text', () => {
+        expect(screen.getByRole('checkbox', { name: 'Open Debug Console' })).not.toBeChecked()
+        expect(screen.getByText('Open Debug Console')).toBeVisible()
+      })
     })
 
-    it('puts the box before the text by default and after it at the start position', () => {
-      const { container, rerender } = render(<CheckboxLabel label="Order" />)
-      const order = () =>
-        Array.from(container.firstElementChild!.children).map((child) =>
-          child.querySelector('input') ? 'box' : 'text'
+    describe('and the label position changes', () => {
+      let rendered: RenderResult
+      let order: () => string[]
+
+      beforeEach(() => {
+        rendered = render(<CheckboxLabel label="Order" />)
+        order = () =>
+          Array.from(rendered.container.firstElementChild!.children).map((child) =>
+            child.querySelector('input') ? 'box' : 'text'
+          )
+      })
+
+      it('should put the box before the text by default and after it at the start position', () => {
+        const { container, rerender } = rendered
+        expect(container.firstElementChild).toHaveAttribute('data-position', 'end')
+        expect(order()).toEqual(['box', 'text'])
+        rerender(<CheckboxLabel label="Order" labelPosition="start" />)
+        expect(container.firstElementChild).toHaveAttribute('data-position', 'start')
+        expect(order()).toEqual(['text', 'box'])
+      })
+    })
+
+    describe('and it has a size, a variant and the mixed state', () => {
+      let container: HTMLElement
+
+      beforeEach(() => {
+        container = render(
+          <CheckboxLabel label="All" size="lg" variant="filled" indeterminate />
+        ).container
+      })
+
+      it('should pass size, variant and the mixed state to the box', () => {
+        const box = container.querySelector('[data-size]')!
+        expect(box).toHaveAttribute('data-size', 'lg')
+        expect(box).toHaveAttribute('data-variant', 'filled')
+        expect(screen.getByRole('checkbox')).toBePartiallyChecked()
+      })
+    })
+
+    describe('and the caller sets an id', () => {
+      beforeEach(() => {
+        render(<CheckboxLabel id="debug" label="Debug" />)
+      })
+
+      it('should keep the caller id for the input and its label', () => {
+        expect(screen.getByLabelText('Debug')).toHaveAttribute('id', 'debug')
+      })
+    })
+
+    describe('and two instances render together', () => {
+      beforeEach(() => {
+        render(
+          <>
+            <CheckboxLabel label="First" />
+            <CheckboxLabel label="Second" />
+          </>
         )
-      expect(container.firstElementChild).toHaveAttribute('data-position', 'end')
-      expect(order()).toEqual(['box', 'text'])
-      rerender(<CheckboxLabel label="Order" labelPosition="start" />)
-      expect(container.firstElementChild).toHaveAttribute('data-position', 'start')
-      expect(order()).toEqual(['text', 'box'])
+      })
+
+      it('should give each instance a distinct id', () => {
+        const [first, second] = screen.getAllByRole('checkbox')
+        expect(first!.id).not.toBe(second!.id)
+        expect(screen.getByRole('checkbox', { name: 'Second' })).toBe(second)
+      })
     })
 
-    it('passes size, variant and the mixed state to the box', () => {
-      const { container } = render(
-        <CheckboxLabel label="All" size="lg" variant="filled" indeterminate />
-      )
-      const box = container.querySelector('[data-size]')!
-      expect(box).toHaveAttribute('data-size', 'lg')
-      expect(box).toHaveAttribute('data-variant', 'filled')
-      expect(screen.getByRole('checkbox')).toBePartiallyChecked()
-    })
+    describe('and it renders on the server', () => {
+      let html: string
 
-    it('keeps a caller id for the input and its label', () => {
-      render(<CheckboxLabel id="debug" label="Debug" />)
-      expect(screen.getByLabelText('Debug')).toHaveAttribute('id', 'debug')
-    })
+      beforeEach(() => {
+        html = renderToString(<CheckboxLabel label="Server" help="Explained" />)
+      })
 
-    it('gives two instances distinct ids', () => {
-      render(
-        <>
-          <CheckboxLabel label="First" />
-          <CheckboxLabel label="Second" />
-        </>
-      )
-      const [first, second] = screen.getAllByRole('checkbox')
-      expect(first!.id).not.toBe(second!.id)
-      expect(screen.getByRole('checkbox', { name: 'Second' })).toBe(second)
-    })
-
-    it('renders on the server without a browser', () => {
-      const html = renderToString(<CheckboxLabel label="Server" help="Explained" />)
-      expect(html).toContain('type="checkbox"')
-      expect(html).toContain('Server')
+      it('should render without a browser', () => {
+        expect(html).toContain('type="checkbox"')
+        expect(html).toContain('Server')
+      })
     })
   })
 
   describe('when it has help', () => {
-    it('describes the checkbox without changing its name', () => {
-      render(<CheckboxLabel label="Open Debug Console" help="Shows logs in a panel." />)
-      const box = screen.getByRole('checkbox', { name: 'Open Debug Console' })
-      expect(box).toHaveAccessibleDescription('Shows logs in a panel.')
+    describe('and no caller description', () => {
+      beforeEach(() => {
+        render(<CheckboxLabel label="Open Debug Console" help="Shows logs in a panel." />)
+      })
+
+      it('should describe the checkbox without changing its name', () => {
+        const box = screen.getByRole('checkbox', { name: 'Open Debug Console' })
+        expect(box).toHaveAccessibleDescription('Shows logs in a panel.')
+      })
     })
 
-    it('keeps a caller description before the help', () => {
-      render(
-        <>
-          <p id="extra">Restart required.</p>
-          <CheckboxLabel label="Beta" help="Unstable." aria-describedby="extra" />
-        </>
-      )
-      expect(screen.getByRole('checkbox')).toHaveAccessibleDescription(
-        'Restart required. Unstable.'
-      )
+    describe('and a caller description', () => {
+      beforeEach(() => {
+        render(
+          <>
+            <p id="extra">Restart required.</p>
+            <CheckboxLabel label="Beta" help="Unstable." aria-describedby="extra" />
+          </>
+        )
+      })
+
+      it('should keep the caller description before the help', () => {
+        expect(screen.getByRole('checkbox')).toHaveAccessibleDescription(
+          'Restart required. Unstable.'
+        )
+      })
     })
 
-    it('shows no help icon or description without help', () => {
+    describe('and the help button is clicked', () => {
+      beforeEach(() => {
+        render(<CheckboxLabel label="Help" help="Info" />)
+      })
+
+      it('should not toggle the box', async () => {
+        await user.click(screen.getByRole('button', { name: 'More information' }))
+        expect(screen.getByRole('checkbox')).not.toBeChecked()
+      })
+    })
+
+    describe('and a helpLabel', () => {
+      beforeEach(() => {
+        render(<CheckboxLabel label="Help" help="Info" helpLabel="Más información" />)
+      })
+
+      it('should name the help button with helpLabel', () => {
+        expect(screen.getByRole('button', { name: 'Más información' })).toBeInTheDocument()
+      })
+    })
+  })
+
+  describe('when it has no help', () => {
+    beforeEach(() => {
       render(<CheckboxLabel label="Plain" />)
+    })
+
+    it('should show no help icon or description', () => {
       expect(screen.queryByRole('button')).toBeNull()
       expect(screen.getByRole('checkbox')).not.toHaveAttribute('aria-describedby')
-    })
-
-    it('does not toggle the box when the help button is clicked', async () => {
-      const user = userEvent.setup()
-      render(<CheckboxLabel label="Help" help="Info" />)
-      await user.click(screen.getByRole('button', { name: 'More information' }))
-      expect(screen.getByRole('checkbox')).not.toBeChecked()
-    })
-
-    it('names the help button with helpLabel', () => {
-      render(<CheckboxLabel label="Help" help="Info" helpLabel="Más información" />)
-      expect(screen.getByRole('button', { name: 'Más información' })).toBeInTheDocument()
     })
   })
 
   describe('when the reader opens the help', () => {
-    const setup = () => {
-      const user = userEvent.setup()
-      render(
-        <>
-          <CheckboxLabel label="Open Debug Console" help="Shows engine logs in a panel." />
-          <button type="button">Elsewhere</button>
-        </>
-      )
-      const button = screen.getByRole('button', { name: 'More information' })
-      return { user, button }
-    }
     const isOpen = (button: HTMLElement) => button.getAttribute('aria-expanded') === 'true'
-    const visibleText = () =>
-      document.querySelector<HTMLElement>('[id$="-bubble"]')!
+    const visibleText = () => document.querySelector<HTMLElement>('[id$="-bubble"]')!
 
-    it('starts closed with the text hidden', () => {
-      const { button } = setup()
-      expect(isOpen(button)).toBe(false)
-      expect(visibleText()).not.toBeVisible()
-      expect(button).toHaveAttribute('aria-controls', visibleText().id)
+    describe('and the page has another focusable control', () => {
+      let button: HTMLElement
+
+      beforeEach(() => {
+        render(
+          <>
+            <CheckboxLabel label="Open Debug Console" help="Shows engine logs in a panel." />
+            <button type="button">Elsewhere</button>
+          </>
+        )
+        button = screen.getByRole('button', { name: 'More information' })
+      })
+
+      it('should start closed with the text hidden', () => {
+        expect(isOpen(button)).toBe(false)
+        expect(visibleText()).not.toBeVisible()
+        expect(button).toHaveAttribute('aria-controls', visibleText().id)
+      })
+
+      it.each(['{Enter}', ' '])('should open and close from the keyboard with %s', async (key) => {
+        button.focus()
+        await user.keyboard(key)
+        expect(isOpen(button)).toBe(true)
+        expect(visibleText()).toBeVisible()
+        await user.keyboard(key)
+        expect(isOpen(button)).toBe(false)
+        expect(visibleText()).not.toBeVisible()
+      })
+
+      it('should close on Escape and keep focus on the button', async () => {
+        await user.click(button)
+        await user.keyboard('{Escape}')
+        expect(isOpen(button)).toBe(false)
+        expect(button).toHaveFocus()
+      })
+
+      it('should close as focus leaves it', async () => {
+        await user.click(button)
+        await user.tab()
+        expect(screen.getByRole('button', { name: 'Elsewhere' })).toHaveFocus()
+        expect(isOpen(button)).toBe(false)
+      })
+
+      it('should open on a tap and close on a tap outside', async () => {
+        await user.pointer({ keys: '[TouchA]', target: button })
+        expect(isOpen(button)).toBe(true)
+        expect(visibleText()).toBeVisible()
+        await user.pointer({ keys: '[TouchA]', target: document.body })
+        expect(isOpen(button)).toBe(false)
+      })
+
+      it('should stay open as its own text is tapped', async () => {
+        await user.click(button)
+        await user.pointer({ keys: '[TouchA]', target: visibleText() })
+        expect(isOpen(button)).toBe(true)
+      })
+
+      it('should keep the checkbox name and description while open', async () => {
+        await user.click(button)
+        const box = screen.getByRole('checkbox', { name: 'Open Debug Console' })
+        expect(box).toHaveAccessibleDescription('Shows engine logs in a panel.')
+        expect(box).not.toBeChecked()
+      })
     })
 
-    it.each(['{Enter}', ' '])('opens and closes from the keyboard with %s', async (key) => {
-      const { user, button } = setup()
-      button.focus()
-      await user.keyboard(key)
-      expect(isOpen(button)).toBe(true)
-      expect(visibleText()).toBeVisible()
-      await user.keyboard(key)
-      expect(isOpen(button)).toBe(false)
-      expect(visibleText()).not.toBeVisible()
-    })
+    describe('and the page listens for keys', () => {
+      let page: Mock
+      let button: HTMLElement
 
-    it('closes on Escape and keeps focus on the button', async () => {
-      const { user, button } = setup()
-      await user.click(button)
-      await user.keyboard('{Escape}')
-      expect(isOpen(button)).toBe(false)
-      expect(button).toHaveFocus()
-    })
+      beforeEach(() => {
+        page = vi.fn()
+        render(
+          <div onKeyDown={(event) => page(event.key, event.defaultPrevented)}>
+            <CheckboxLabel label="Nested" help="Nested help." />
+          </div>
+        )
+        button = screen.getByRole('button', { name: 'More information' })
+      })
 
-    it('keeps the Escape that closes it from reaching the page, and passes it on when closed', async () => {
-      const user = userEvent.setup()
-      const page = vi.fn()
-      render(
-        <div onKeyDown={(event) => page(event.key, event.defaultPrevented)}>
-          <CheckboxLabel label="Nested" help="Nested help." />
-        </div>
-      )
-      const button = screen.getByRole('button', { name: 'More information' })
-      await user.click(button)
-      await user.keyboard('{Escape}')
-      expect(page).not.toHaveBeenCalled()
-      expect(button).toHaveAttribute('aria-expanded', 'false')
-      await user.keyboard('{Escape}')
-      expect(page).toHaveBeenCalledWith('Escape', false)
-    })
-
-    it('closes when focus leaves it', async () => {
-      const { user, button } = setup()
-      await user.click(button)
-      await user.tab()
-      expect(screen.getByRole('button', { name: 'Elsewhere' })).toHaveFocus()
-      expect(isOpen(button)).toBe(false)
-    })
-
-    it('opens on a tap and closes on a tap outside', async () => {
-      const { user, button } = setup()
-      await user.pointer({ keys: '[TouchA]', target: button })
-      expect(isOpen(button)).toBe(true)
-      expect(visibleText()).toBeVisible()
-      await user.pointer({ keys: '[TouchA]', target: document.body })
-      expect(isOpen(button)).toBe(false)
-    })
-
-    it('stays open when its own text is tapped', async () => {
-      const { user, button } = setup()
-      await user.click(button)
-      await user.pointer({ keys: '[TouchA]', target: visibleText() })
-      expect(isOpen(button)).toBe(true)
-    })
-
-    it('keeps the checkbox name and description while open', async () => {
-      const { user, button } = setup()
-      await user.click(button)
-      const box = screen.getByRole('checkbox', { name: 'Open Debug Console' })
-      expect(box).toHaveAccessibleDescription('Shows engine logs in a panel.')
-      expect(box).not.toBeChecked()
+      it('should keep the Escape that closes it from reaching the page, and pass it on once closed', async () => {
+        await user.click(button)
+        await user.keyboard('{Escape}')
+        expect(page).not.toHaveBeenCalled()
+        expect(button).toHaveAttribute('aria-expanded', 'false')
+        await user.keyboard('{Escape}')
+        expect(page).toHaveBeenCalledWith('Escape', false)
+      })
     })
   })
 
   describe('when the reader toggles it', () => {
-    it('toggles from its visible text and from Space', async () => {
-      const user = userEvent.setup()
-      const checked = vi.fn()
+    let checked: Mock
+
+    beforeEach(() => {
+      checked = vi.fn()
       render(<CheckboxLabel label="Sounds" onCheckedChange={checked} />)
+    })
+
+    it('should toggle from its visible text and from Space', async () => {
       await user.click(screen.getByText('Sounds'))
       expect(checked).toHaveBeenLastCalledWith(true)
       expect(screen.getByRole('checkbox')).toHaveFocus()
@@ -203,10 +281,17 @@ describe('CheckboxLabel', () => {
   })
 
   describe('when disabled', () => {
-    it('ignores clicks on the text and marks the row disabled', async () => {
-      const user = userEvent.setup()
-      const checked = vi.fn()
-      const { container } = render(<CheckboxLabel label="Locked" disabled onCheckedChange={checked} />)
+    let checked: Mock
+    let container: HTMLElement
+
+    beforeEach(() => {
+      checked = vi.fn()
+      container = render(
+        <CheckboxLabel label="Locked" disabled onCheckedChange={checked} />
+      ).container
+    })
+
+    it('should ignore clicks on the text and mark the row disabled', async () => {
       await user.click(screen.getByText('Locked'))
       expect(checked).not.toHaveBeenCalled()
       expect(screen.getByRole('checkbox', { name: 'Locked' })).toBeDisabled()
@@ -215,13 +300,15 @@ describe('CheckboxLabel', () => {
   })
 
   describe('when inside a form', () => {
-    it('submits its name and value only while checked', async () => {
-      const user = userEvent.setup()
+    beforeEach(() => {
       render(
         <form aria-label="settings">
           <CheckboxLabel label="Debug" name="debug" />
         </form>
       )
+    })
+
+    it('should submit its name and value only while checked', async () => {
       const form = screen.getByRole<HTMLFormElement>('form')
       expect(new FormData(form).has('debug')).toBe(false)
       await user.click(screen.getByText('Debug'))

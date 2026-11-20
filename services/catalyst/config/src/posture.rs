@@ -349,6 +349,7 @@ const ROWS: &[Row] = &[
     mirrored("indexes", "MARKETPLACE_NFT_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_SALES_INDEX_ENABLED"),
+    mirrored("indexes", "MARKETPLACE_COMMITTEE_INDEX_ENABLED"),
     // The MANA transfer walk stays an operator's opt-in under every posture.
     same(
         "indexes",
@@ -438,6 +439,14 @@ const ROWS: &[Row] = &[
         "upstreams",
         "ABGEN_UPSTREAM_AB_CDN",
         "https://ab-cdn.decentraland.org",
+    ),
+    // Temporary: imposter tiles the /bvimposters store lacks, read through
+    // from the community CDN the explorer's tiles were baked into, until this
+    // node bakes its own (decentraland/dcl-one#1711); then this row goes.
+    upstream(
+        "upstreams",
+        "BVIMPOSTERS_UPSTREAM_URL",
+        "https://bevy-imposters.dclregenesislabs.xyz",
     ),
     // Avatar faces of profiles whose snapshot files this node does not hold
     // (current clients deploy none) when no renderer runs here.
@@ -739,6 +748,29 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A DCL NAME world's owner is its NAME's holder, read from
+/// `MARKETPLACE_SUBGRAPH_URL`; without it no DCL NAME world has an owner. A
+/// `serve` taking world writes is refused without the reader, unless it
+/// skips the chain checks (`IGNORE_BLOCKCHAIN_ACCESS_CHECKS`), which gets the
+/// warning returned here and serves personal worlds only. The indexer takes
+/// no world writes, so only `serve` runs this.
+pub fn worlds_names_reader(config: &Config) -> anyhow::Result<Option<&'static str>> {
+    if !config.worlds.worlds_writes_enabled
+        || Config::non_empty(&config.market_upstreams.marketplace_subgraph_url).is_some()
+    {
+        return Ok(None);
+    }
+    if !config.validator.ignore_blockchain_access_checks {
+        anyhow::bail!(
+            "WORLDS_WRITES_ENABLED=true needs MARKETPLACE_SUBGRAPH_URL, the DCL NAME holder reader: \
+             set it, or IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true on a node without chain access"
+        );
+    }
+    Ok(Some(
+        "MARKETPLACE_SUBGRAPH_URL is unset: DCL NAME worlds have no owner here, only personal worlds take owner writes",
+    ))
+}
+
 /// A mirror replaces a Catalyst whose lambdas always check the profiles'
 /// items and names against their owner: the collections and marketplace
 /// subgraphs the posture names may not be blanked (an island, with no
@@ -898,6 +930,7 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("NOTIFICATIONS_CDN_URL", LINK),
     ("MAP_EXTERNAL_BASE_URL", LINK),
     ("MAP_IMAGE_BASE_URL", LINK),
+    ("MAP_DISSOLVED_ESTATE_IMAGE_URL", LINK),
     ("CAMERA_REEL_API_URL", LINK),
     ("CAMERA_REEL_BUCKET_URL", LINK),
     ("BFF_URL", LINK),

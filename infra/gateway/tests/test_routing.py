@@ -75,6 +75,20 @@ class HostAliasTest(unittest.TestCase):
                 self.assertEqual(route("worlds-content-server.example.test", path),
                                  ("/worlds-content-server" + path, path))
 
+    def test_realm_hosts_pass_the_services_a_scene_builds_from_its_realm_base(self):
+        # A scene asks `<realm base URL>/<service>/...`; a realm base is one of these hosts.
+        for host in ["worlds-content-server", "realm-provider", "realm-provider-ea"]:
+            for path in ["/comms-gatekeeper/scene-admin", "/cast-presenter-service/presentations?x=1"]:
+                with self.subTest(host=host, path=path):
+                    self.assertEqual(route(host + ".example.test", path), (path.split("?")[0], path))
+        # The host's own paths and every other host keep the prefix.
+        for host, path in [("worlds-content-server", "/comms-gatekeeper"),
+                           ("worlds-content-server", "/comms-gatekeeperx/a"),
+                           ("realm-provider-ea", "/main/comms-gatekeeper/a"),
+                           ("places", "/comms-gatekeeper/scene-admin")]:
+            with self.subTest(host=host, path=path):
+                self.assertEqual(route(host + ".example.test", path), (f"/{host}{path}", path))
+
 
 class AccountHostTest(unittest.TestCase):
     def test_account_host_reaches_the_sites_confirmation_pages(self):

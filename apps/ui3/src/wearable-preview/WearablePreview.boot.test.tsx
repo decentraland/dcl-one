@@ -180,3 +180,16 @@ test("an outfit change swaps on the live scene once per change, while a model ch
   await waitFor(() => expect(createAvatarScene).toHaveBeenCalledTimes(2));
   expect(scene.dispose).toHaveBeenCalledTimes(1);
 });
+
+test("a scene built while the outfit is read holds its loads and gets the outfit in one swap", async () => {
+  const outfit = { bodyShape: "urn:body", wearables: ["urn:hat:1"] };
+  const { rerender } = render(<WearablePreview urns={["urn:hat:1"]} outfitPending />);
+  await waitFor(() => expect(createAvatarScene).toHaveBeenCalledTimes(1));
+  expect(createAvatarScene.mock.calls[0]![1]).toEqual(expect.objectContaining({ outfitPending: true, outfit: undefined }));
+  const scene = scenes[0]!;
+
+  rerender(<WearablePreview urns={["urn:hat:1"]} outfit={outfit} />);
+  await waitFor(() => expect(scene.setOutfit).toHaveBeenCalledTimes(1));
+  expect(scene.setOutfit).toHaveBeenLastCalledWith(expect.objectContaining({ outfit, outfitPending: false }));
+  expect(createAvatarScene).toHaveBeenCalledTimes(1);
+});

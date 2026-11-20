@@ -52,7 +52,7 @@ export function consoleLine(message: { at: number; target: string; kind: string;
 interface WebDriverModule {
   /** What `console` rejects with when the command's document is replaced or closed first. */
   readonly APP_GONE: string
-  launch(options: { url: string; chrome?: string; headless?: boolean; args?: string[]; windowSize?: [number, number] }): Promise<WebDriver>
+  launch(options: { url: string; chrome?: string; headless?: boolean; args?: string[]; windowSize?: [number, number]; profile?: string }): Promise<WebDriver>
   findChrome(env?: NodeJS.ProcessEnv): string | undefined
 }
 

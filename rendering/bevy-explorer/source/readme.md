@@ -281,7 +281,8 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   scene moderation lists; Nearby chat and reactions from an address the scene room bans are
   dropped, and nearby voice is not subscribed from an address blocked either way or banned by the
   connected scene room, while calls still carry it; `/ban_block_refresh` re-checks the platform
-  ban), `/entity_screen_position <entity>
+  ban), `/item_purchase_state` (the scene item purchase request in flight and how the last one
+  ended; `/item_purchase_cancel` drops the one in flight), `/entity_screen_position <entity>
   [--bounds]`, `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or open or
   close it) and `/take_photo` (a photo, captured and uploaded; the reply is the state, a refusal
   names why), plus the older `/player_position`, `/get_user_data`, `/connected_players`, `/time`
@@ -302,12 +303,12 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
 - Saved mutes for nearby voice: `/nearby_mute on|off <address>` mutes or unmutes a wallet, as the
   profile menu's Hush and Hear do, and `/nearby_mutes` reports the account's list. The debug
   panel's "Nearby voice mutes" section shows it and binds both.
-- In development builds the lower-right bug button toggles the debug panel. In all builds,
-  open **Sidebar settings (•••) → Debug panel** or type `/debug` in chat. Search by
+- Start the desktop client with `--debug-panel` or add `debugPanel=1` to the web page query
+  to show the lower-right bug button. In all builds, open **Sidebar settings (•••) → Debug panel**
+  or type `/debug` in chat. Search by
   section or control, or enter `/debug Performance` directly. Expanded sections refresh
   about once per second. `/debug help` lists the available sections. Engine plugins
-  advertise their queries, fields and controls through `/debug_panel`. The HUD offers session actions
-  and checks `/debug_panel --dev-build` for the engine's compile-time development flag.
+  advertise their queries, fields and controls through `/debug_panel`. The HUD also offers session actions.
   Use the panel to inspect a scene, compare frame and memory measurements, diagnose
   room and media connections, and exercise supported controls. Availability depends
   on the build, platform and preview mode. `/performance_state` reports the effective

@@ -1,6 +1,5 @@
 import type { paths as EventsPaths } from "@catalyst-api/openapi/events";
 import type { paths as PlacesPaths } from "@catalyst-api/openapi/places";
-import type { paths as WorldsPaths } from "@catalyst-api/openapi/worlds";
 
 type Method = "get" | "post" | "put" | "patch" | "delete" | "head";
 
@@ -31,5 +30,4 @@ function servicePath<P>(prefix: string) {
 
 export const eventsApiPath = servicePath<EventsPaths>("/events");
 export const placesApiPath = servicePath<PlacesPaths>("/places");
-export const worldsApiPath = servicePath<WorldsPaths>("");
 
