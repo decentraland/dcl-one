@@ -23,22 +23,15 @@ import { dappsFlagsAnswer, type DappsFlags, type DappsFlagsAnswer, type DappsFla
 import { serverShopApiMode } from "./mode";
 import { defaultShopSeo, type PrimedQuery, type ShopPageData, type ShopSeo } from "./pages";
 
-/** The creator-sales switch the reads map with: the page's, primed (primeRemoteFlags) before any read. */
+/** The creator-sales switch the reads map with: the page's, primed (primeRemoteFlags) before any answer is mapped. */
 const creatorSales = (): boolean => shopFlags().creatorSales;
 
 /** How long one server read may hold the document before the page falls back to its own fetch. */
 export const SHOP_SSR_READ_MS = 1_500;
 
-let shared: { key: string; client: ShopClient } | null = null;
-
-/** The server's unsigned client for CATALYST_URL, rebuilt when the base or the mode changes. */
+/** The server's unsigned client for CATALYST_URL. */
 export function serverShopClient(env: BaseEnv = processEnv(), fetchImpl?: typeof fetch): ShopClient {
-  const base = catalystUrl(undefined, env);
-  const mode = serverShopApiMode(env);
-  const key = `${base}|${mode}`;
-  if (fetchImpl) return createShopClient(hostApiOptions({ base, mode, signer: null, fetchImpl }));
-  if (!shared || shared.key !== key) shared = { key, client: createShopClient(hostApiOptions({ base, mode, signer: null })) };
-  return shared.client;
+  return createShopClient(hostApiOptions({ base: catalystUrl(undefined, env), mode: serverShopApiMode(env), signer: null, fetchImpl }));
 }
 
 export type ShopLoadInput = {
@@ -192,17 +185,26 @@ async function itemsPage(ctx: ReadCtx, client: ShopClient, env: BaseEnv): Promis
 /** The SSR data for one /shop page: its head, its primed public reads and the HTTP status. */
 export async function loadShopPage(page: ShopPageId, input: ShopLoadInput): Promise<ShopPageLoad> {
   const env = input.env ?? processEnv();
-  const client = input.client ?? serverShopClient(env);
-  // The page's flags decide what it reads (the Best Deals rail): primed here before any read, and sent with the page
-  // so the browser primes the same answer before it hydrates. Their variants (My Store's address list) go with them.
-  const answer: DappsFlagsAnswer = input.flags
-    ? { flags: input.flags, variants: input.flagVariants ?? {} }
+  // The page's flags decide what the overview and the grid read (the Best Deals rail), and every answer is mapped with
+  // them (creator sales). They go with the page, so the browser primes the same answer before it hydrates; their
+  // variants (My Store's address list) go with them. The other reads start together with the flags read: each answer
+  // waits until the flags are primed.
+  const flagsRead: Promise<DappsFlagsAnswer> = input.flags
+    ? Promise.resolve({ flags: input.flags, variants: input.flagVariants ?? {} })
     : input.client
-      ? { flags: {}, variants: {} }
-      : await dappsFlagsAnswer();
-  const featureFlags = answer.flags;
-  const featureFlagVariants = Object.keys(answer.variants).length > 0 ? answer.variants : undefined;
-  primeRemoteFlags(featureFlags, answer.variants);
+      ? Promise.resolve({ flags: {}, variants: {} })
+      : dappsFlagsAnswer();
+  const primed = flagsRead.then((answer) => {
+    primeRemoteFlags(answer.flags, answer.variants);
+    return answer;
+  });
+  const client =
+    input.client ??
+    serverShopClient(env, async (...args) => {
+      const res = await fetch(...args);
+      await primed;
+      return res;
+    });
   const now = input.now ?? Date.now;
   const { request, params } = input;
   const pathname = new URL(request.url).pathname;
@@ -218,9 +220,11 @@ export async function loadShopPage(page: ShopPageId, input: ShopLoadInput): Prom
       collected = await collectionPage(request, params, client, now, env);
       break;
     case "overview":
+      await primed;
       collected = await overviewPage(ctx, client, env);
       break;
     case "items":
+      await primed;
       collected = await itemsPage(ctx, client, env);
       break;
     case "notFound":
@@ -229,6 +233,9 @@ export async function loadShopPage(page: ShopPageId, input: ShopLoadInput): Prom
     default:
       collected = { queries: [], seo: defaultShopSeo(page, publicPageUrl(request, pathname, env)), status: 200 };
   }
+  const answer = await primed;
+  const featureFlags = answer.flags;
+  const featureFlagVariants = Object.keys(answer.variants).length > 0 ? answer.variants : undefined;
   return {
     data: { page, seo: collected.seo, queries: collected.queries, featureFlags, ...(featureFlagVariants ? { featureFlagVariants } : {}) },
     status: collected.status,

@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createShopClient, fetchTransport } from "@ui/shop/api";
 import { REMOTE_FLAG, remoteFlagVariant } from "@ui/shop/discovery/lib/remoteFlags";
 
+import { resetDappsFlags } from "../feature-flags.server";
 import { serverShopApiMode } from "./mode";
 import { defaultShopSeo, shopMetaDescriptors } from "./pages";
 import { loadShopPage, serverShopClient } from "./pages.server";
@@ -97,6 +98,37 @@ describe("the item page's SSR data", () => {
     expect(status).toBe(200);
     expect(data.queries.map(([key]) => key[0])).toContain("token");
     expect(data.seo).toMatchObject({ title: "Pirate Hat #5", image: "https://img.test/5.png", canonical: `https://sites.test/shop/token/${C}/5` });
+  });
+});
+
+describe("the page's flags, read by the server", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetDappsFlags();
+  });
+
+  it("starts the item reads with the flags read, and maps an answer that arrives first with the page's flags", async () => {
+    // Creator sales off from an earlier page: an answer mapped before this page's flags would lose its sale price.
+    await loadShopPage("cart", { request: request("/shop/cart"), params: {}, client: node([]).client, now, env: {}, flags: {} });
+    resetDappsFlags();
+    const onSale = { listingType: "primary", contractAddress: C, itemId: "7", name: "Pirate Hat", priceCredits: 5, compareAtCredits: 7 };
+    const routes = [...ITEM_ROUTES.filter((r) => r.path !== "/shop-api/v3/catalog/unified"), { path: "/shop-api/v3/catalog/unified", body: { data: [onSale], total: 1 } }];
+    const asked: string[] = [];
+    let answerFlags: (res: Response) => void = () => {};
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/dapps.json") return new Promise<Response>((resolve) => (answerFlags = resolve));
+      asked.push(url.pathname);
+      const hit = routes.find((r) => r.path === url.pathname);
+      return new Response(JSON.stringify(hit?.body ?? {}), { status: hit ? 200 : 404 });
+    });
+
+    const load = loadShopPage("itemDetail", { request: request(`/shop/item/${C}/7`), params: { contractAddress: C, itemId: "7" }, now, env: { CATALYST_URL: "http://node.test" } });
+    await vi.waitFor(() => expect(asked).toHaveLength(routes.length));
+    answerFlags(new Response(JSON.stringify({ flags: { "dapps-shop-creator-sales": true } })));
+    const { data } = await load;
+    expect(data.featureFlags).toEqual({ "dapps-shop-creator-sales": true });
+    expect(data.queries.find(([key]) => key[0] === "shop-item")?.[1]).toMatchObject({ priceCredits: 5, compareAtCredits: 7 });
   });
 });
 
