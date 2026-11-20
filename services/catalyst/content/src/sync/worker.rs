@@ -218,7 +218,7 @@ fn spawn_dao_refresh(
     jobs: &Arc<Jobs>,
     ctx: &JobContext,
     dao: DaoSource,
-    client: reqwest::Client,
+    client: crate::http::CheckedRedirectClient,
     tx: watch::Sender<HashSet<String>>,
 ) {
     jobs.spawn_scoped(ctx, "sync-dao-peers", move |ctx| async move {
@@ -295,7 +295,7 @@ pub async fn start(
     pool: PgPool,
     storage: Arc<Storage>,
     status: Arc<SyncStatus>,
-    client: reqwest::Client,
+    client: crate::http::CheckedRedirectClient,
     validation: SyncValidation,
     jobs: &Arc<Jobs>,
 ) -> anyhow::Result<SyncHandles> {
@@ -413,7 +413,7 @@ struct Leader {
     /// How synced and retried entities are judged.
     validation: SyncValidation,
     status: Arc<SyncStatus>,
-    client: reqwest::Client,
+    client: crate::http::CheckedRedirectClient,
     control: SyncControl,
     jobs: Arc<Jobs>,
 }
@@ -558,7 +558,7 @@ impl FailedDeploymentSettings {
 struct FailedDeploymentDeps {
     pool: PgPool,
     storage: Arc<Storage>,
-    client: reqwest::Client,
+    client: crate::http::CheckedRedirectClient,
     deployer: Arc<LiveSyncDeployer>,
     failed: Arc<LiveFailedDeploymentsStore>,
     peers: Arc<RwLock<Vec<String>>>,
@@ -650,7 +650,7 @@ pub fn start_failed_deployments(
     peers: Vec<String>,
     pool: PgPool,
     storage: Arc<Storage>,
-    client: reqwest::Client,
+    client: crate::http::CheckedRedirectClient,
     validation: SyncValidation,
     jobs: &Arc<Jobs>,
 ) {
@@ -894,7 +894,7 @@ mod tests {
             vec!["https://peer.example/content".to_string()],
             pool,
             storage,
-            reqwest::Client::new(),
+            crate::sync::test_sync_client(reqwest::Client::new()),
             SyncValidation::AuthChainOnly,
             &jobs,
         );

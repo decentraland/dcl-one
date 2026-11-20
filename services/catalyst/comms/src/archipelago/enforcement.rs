@@ -82,7 +82,7 @@ impl Enforcement {
         let banned = futures::stream::iter(addrs)
             .map(|addr| {
                 let checker = Arc::clone(&checker);
-                async move { checker.is_banned_fresh(&addr).await.then_some(addr) }
+                async move { checker.is_banned(&addr).await.then_some(addr) }
             })
             .buffer_unordered(BAN_SWEEP_CONCURRENCY)
             .filter_map(|hit| async move { hit });

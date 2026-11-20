@@ -13,7 +13,7 @@ export type CreatorHubHost = {
 const HOST_KEY = "__dclCreatorHubHost";
 type HostWindow = Window & { [HOST_KEY]?: CreatorHubHost };
 
-export const CREATOR_HUB_HOME = "/create/home";
+export const CREATOR_HUB_HOME = "/create";
 export const CREATOR_HUB_SCOPE = ["/create"] as const;
 
 export function isCreatorHubPath(path: string): boolean {

@@ -504,6 +504,176 @@ fn unique_address() -> String {
     format!("{:#x}", PrivateKeySigner::random().address())
 }
 
+/// `createOrder` on the legacy order books is answered 400 before any check
+/// that reaches the chain, the quota or the database; `executeOrder` on the
+/// same targets and `createOrder`'s selector on other targets are not, in
+/// both calldata formats.
+#[tokio::test]
+async fn create_order_on_the_legacy_marketplaces_is_refused_before_simulation() {
+    let app = router(state(lazy_pool(), Settings::for_tests()));
+    let key = PrivateKeySigner::random();
+    let user = format!("{:#x}", key.address());
+    let mut call = super::abi::createOrderCall::SELECTOR.to_vec();
+    call.extend_from_slice(&[0u8; 32 * 4]);
+    for market in [
+        "0x02080031b45a3c67d338dd4a2cc309d28756a160",
+        "0x480a0f4e360e8964e68858dd231c2922f1df45ef",
+    ] {
+        for calldata in [
+            signed_split_calldata(&key, &call),
+            signed_combined_calldata(&key, &call),
+        ] {
+            let (status, body) = post_transaction(&app, &user, market, &calldata).await;
+            assert_eq!(status, 400, "{market}: {body}");
+            assert_eq!(body["error"], "invalid_transaction", "{body}");
+            assert_eq!(body["not_sent"], true, "{body}");
+            assert_eq!(
+                body["message"],
+                format!(
+                    "The meta-transaction method createOrder(address,uint256,uint256,uint256) is not allowed for contract {market}."
+                ),
+            );
+        }
+    }
+    let mut execute_order = super::abi::executeOrderCall::SELECTOR.to_vec();
+    execute_order.extend_from_slice(&[0u8; 32 * 3]);
+    // Each reaches a later check: the zero price, or the unreachable database.
+    for (contract, inner, later) in [
+        (
+            "0x02080031b45a3c67d338dd4a2cc309d28756a160",
+            &execute_order,
+            "sale_price_too_low",
+        ),
+        (
+            "0x480a0f4e360e8964e68858dd231c2922f1df45ef",
+            &execute_order,
+            "sale_price_too_low",
+        ),
+        (
+            "0x214ffc0f0103735728dc66b61a22e4f163e275ae",
+            &call,
+            "sale_price_too_low",
+        ),
+        (COLLECTION, &call, "unknown"),
+    ] {
+        for calldata in [
+            signed_split_calldata(&key, inner),
+            signed_combined_calldata(&key, inner),
+        ] {
+            let (_, body) = post_transaction(&app, &user, contract, &calldata).await;
+            assert_eq!(body["error"], later, "{contract}: {body}");
+        }
+    }
+}
+
+/// A trial relay answers a wallet outside the trial 403 before refusing its `createOrder`.
+#[tokio::test]
+async fn a_trial_relay_refuses_a_non_buyer_create_order_as_forbidden() {
+    let app = router(state(
+        lazy_pool(),
+        Settings {
+            data_writes_enabled: false,
+            ops_writes_enabled: true,
+            ..trial_relay()
+        },
+    ));
+    let key = PrivateKeySigner::random();
+    let user = format!("{:#x}", key.address());
+    let mut call = super::abi::createOrderCall::SELECTOR.to_vec();
+    call.extend_from_slice(&[0u8; 32 * 4]);
+    let calldata = signed_split_calldata(&key, &call);
+    let (status, body) = post_transaction(
+        &app,
+        &user,
+        "0x480a0f4e360e8964e68858dd231c2922f1df45ef",
+        &calldata,
+    )
+    .await;
+    assert_eq!(status, 403, "{body}");
+    assert_eq!(
+        body["message"],
+        "this relay serves only the test's buyers (CREDITS_TRIAL_MODE)"
+    );
+}
+
+/// A spent free-call budget says when the next free call is admitted, counted over every free
+/// call (not the refused address's): the first whole second after the budget-th newest one
+/// leaves the window. A sale in the window is no free call and moves nothing.
+#[tokio::test]
+async fn a_spent_free_call_budget_says_when_the_next_one_is_admitted() {
+    // Its own database, so no other test's free calls count, and one connection: the refusal
+    // holds the budget lock on it, so the read must not wait for a second one.
+    let Some(pool) = crate::db::scratch::isolated_pool(1).await else {
+        return;
+    };
+    let tc = component(pool.clone());
+    let t0 = chrono::NaiveDate::from_ymd_opt(2101, 1, 1)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    let at = |secs: i64| t0 + chrono::Duration::seconds(secs);
+    let unix = |secs: i64| at(secs).and_utc().timestamp();
+    let window = super::QUOTA_WINDOW_SECS;
+    let addrs = [unique_address(), unique_address(), unique_address()];
+    let free = |a: &str, budget: i64, clock| {
+        let (tc, a) = (&tc, a.to_string());
+        async move {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                tc.reserve_free_call(
+                    10,
+                    budget,
+                    &sender(&a),
+                    &Uuid::new_v4().to_string(),
+                    137,
+                    COLLECTION,
+                    clock,
+                ),
+            )
+            .await
+            .expect("answers without waiting for a second connection")
+        }
+    };
+    free(&addrs[0], 2, at(0)).await.expect("first free call");
+    free(&addrs[1], 2, at(10)).await.expect("second free call");
+    tc.reserve_quota(
+        10,
+        &sender(&addrs[2]),
+        &Uuid::new_v4().to_string(),
+        137,
+        COLLECTION,
+        at(15),
+    )
+    .await
+    .expect("a sale");
+    let err = free(&addrs[2], 2, at(20)).await.unwrap_err();
+    assert!(
+        matches!(err, ApiError::RelayBudgetSpent { retry_at: Some(t), .. } if t == unix(window) + 1),
+        "the older free call has to leave: {err:?}"
+    );
+    assert_eq!(
+        axum::response::IntoResponse::into_response(err).status(),
+        axum::http::StatusCode::TOO_MANY_REQUESTS
+    );
+    let err = free(&addrs[2], 1, at(20)).await.unwrap_err();
+    assert!(
+        matches!(err, ApiError::RelayBudgetSpent { retry_at: Some(t), .. } if t == unix(10 + window) + 1),
+        "under a lowered budget the newer one has to leave: {err:?}"
+    );
+    assert!(free(&addrs[2], 2, at(window)).await.is_err());
+    let retry = chrono::DateTime::from_timestamp(unix(window) + 1, 0)
+        .unwrap()
+        .naive_utc();
+    free(&addrs[2], 2, retry)
+        .await
+        .expect("admitted at retryAt");
+    sqlx::query("DELETE FROM economy.transactions WHERE user_address = ANY($1)")
+        .bind(addrs.iter().map(|a| a.to_lowercase()).collect::<Vec<_>>())
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn the_free_call_budget_never_holds_back_a_sale() {
     use axum::response::IntoResponse;
@@ -535,7 +705,16 @@ async fn the_free_call_budget_never_holds_back_a_sale() {
     free(&addrs[0], 2).await.expect("first free call");
     free(&addrs[1], 2).await.expect("second free call");
     let err = free(&addrs[2], 2).await.unwrap_err();
-    assert!(matches!(err, ApiError::RelayBudgetSpent(_)), "got {err:?}");
+    assert!(
+        matches!(
+            err,
+            ApiError::RelayBudgetSpent {
+                retry_at: Some(_),
+                ..
+            }
+        ),
+        "got {err:?}"
+    );
     assert_eq!(
         err.into_response().status(),
         axum::http::StatusCode::TOO_MANY_REQUESTS
@@ -694,7 +873,7 @@ async fn reserve_enforces_daily_limit_and_release_refunds_a_slot() {
         .await
         .expect_err("over quota");
     assert!(
-        matches!(err, ApiError::QuotaReached(_)),
+        matches!(err, ApiError::QuotaReached { quota: MAX, .. }),
         "expected QuotaReached, got {err:?}"
     );
     assert_eq!(row_count(&pool, &addr).await, MAX);
@@ -721,6 +900,155 @@ async fn reserve_enforces_daily_limit_and_release_refunds_a_slot() {
     .await
     .expect("the quota counts the day before the bound clock, not now()");
     cleanup_user(&pool, &addr).await;
+}
+
+/// A refused address learns its cap and when its next relay is admitted: the first whole second
+/// after the relay that has to leave the window does so (the oldest at the cap, a later one when
+/// the cap is under the count). The second before is still refused; that one is admitted.
+#[tokio::test]
+async fn a_quota_refusal_says_when_the_next_relay_is_admitted() {
+    use chrono::Timelike;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let tc = component(pool.clone());
+    let addr = unique_address();
+    const MAX: i64 = 3;
+    let t0 = now().with_nanosecond(0).unwrap() - chrono::Duration::hours(1);
+    let at = |secs: i64| t0 + chrono::Duration::seconds(secs);
+    let unix = |secs: i64| at(secs).and_utc().timestamp();
+    let window = super::QUOTA_WINDOW_SECS;
+    for i in 0..MAX {
+        tc.reserve_quota(
+            MAX,
+            &sender(&addr),
+            &Uuid::new_v4().to_string(),
+            137,
+            COLLECTION,
+            at(10 * i),
+        )
+        .await
+        .expect("reserve within budget");
+    }
+    let refused = |cap: i64, clock| {
+        let (tc, addr) = (&tc, &addr);
+        async move {
+            tc.reserve_quota(
+                cap,
+                &sender(addr),
+                &Uuid::new_v4().to_string(),
+                137,
+                COLLECTION,
+                clock,
+            )
+            .await
+        }
+    };
+
+    let err = refused(MAX, at(30)).await.expect_err("over quota");
+    let frees = unix(window) + 1;
+    assert!(
+        matches!(err, ApiError::QuotaReached { quota: MAX, retry_at: Some(t), .. } if t == frees),
+        "{err:?}"
+    );
+    let err = refused(MAX - 1, at(30))
+        .await
+        .expect_err("over a lowered cap");
+    assert!(
+        matches!(err, ApiError::QuotaReached { quota: 2, retry_at: Some(t), .. } if t == unix(10 + window) + 1),
+        "the second oldest has to leave for 2 to fit: {err:?}"
+    );
+    assert!(
+        matches!(
+            refused(0, at(30)).await,
+            Err(ApiError::QuotaReached {
+                quota: 0,
+                retry_at: None,
+                ..
+            })
+        ),
+        "a cap of 0 never frees"
+    );
+
+    assert!(
+        refused(MAX, at(window)).await.is_err(),
+        "a relay exactly a window old still counts"
+    );
+    let retry = chrono::DateTime::from_timestamp(frees, 0)
+        .unwrap()
+        .naive_utc();
+    refused(MAX, retry).await.expect("admitted at retryAt");
+    cleanup_user(&pool, &addr).await;
+}
+
+/// The next opening counts from the newest relay, so a reservation released between the refusal
+/// and the read never makes it later: with relays at t0, t0+10 and t0+20 and a cap of 2, once
+/// t0's is released the opening is when t0+10's leaves, and with fewer relays than the cap there
+/// is none to wait for.
+#[tokio::test]
+async fn the_next_quota_opening_follows_a_released_reservation() {
+    use chrono::Timelike;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let tc = component(pool.clone());
+    let addr = unique_address();
+    let t0 = now().with_nanosecond(0).unwrap() - chrono::Duration::hours(1);
+    let at = |secs: i64| t0 + chrono::Duration::seconds(secs);
+    let window = super::QUOTA_WINDOW_SECS;
+    let mut sessions = Vec::new();
+    for i in 0..3 {
+        let session = Uuid::new_v4().to_string();
+        tc.reserve_quota(3, &sender(&addr), &session, 137, COLLECTION, at(10 * i))
+            .await
+            .expect("reserve within budget");
+        sessions.push(session);
+    }
+    let window_start = at(30) - chrono::Duration::seconds(window);
+    let opening =
+        |cap| super::transaction::next_slot_at(&pool, Some(addr.as_str()), window_start, cap);
+    assert_eq!(
+        opening(2).await.unwrap(),
+        Some(at(10 + window).and_utc().timestamp() + 1)
+    );
+    tc.release_reservation(&sessions[0]).await.expect("release");
+    assert_eq!(
+        opening(2).await.unwrap(),
+        Some(at(10 + window).and_utc().timestamp() + 1),
+        "releasing the oldest never moves the opening later"
+    );
+    tc.release_reservation(&sessions[1]).await.expect("release");
+    assert_eq!(
+        opening(2).await.unwrap(),
+        None,
+        "under the cap there is no opening to wait for"
+    );
+    cleanup_user(&pool, &addr).await;
+}
+
+/// A refusal already decided keeps its 429 when its opening cannot be read: the lookup's error
+/// becomes no `retryAt`, never an error of its own, for either limit.
+#[tokio::test]
+async fn a_failed_opening_lookup_leaves_the_refusal_without_a_time() {
+    let Some(pool) = crate::db::scratch::isolated_pool(1).await else {
+        return;
+    };
+    pool.close().await;
+    let window_start = now() - chrono::Duration::seconds(super::QUOTA_WINDOW_SECS);
+    let address = unique_address();
+    assert!(
+        super::transaction::next_slot_at(&pool, Some(address.as_str()), window_start, 3)
+            .await
+            .is_err(),
+        "the closed pool fails the read itself"
+    );
+    for user_address in [Some(address.as_str()), None] {
+        assert_eq!(
+            super::transaction::retry_at(&pool, user_address, window_start, 3).await,
+            None,
+            "{user_address:?}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -753,7 +1081,7 @@ async fn concurrent_reservations_never_exceed_the_limit() {
     for task in tasks {
         match task.await.expect("task") {
             Ok(()) => reserved += 1,
-            Err(ApiError::QuotaReached(msg)) => {
+            Err(ApiError::QuotaReached { message: msg, .. }) => {
                 assert!(msg.ends_with(&format!("Quota: {MAX}")), "{msg}");
                 refused += 1;
             }
@@ -822,7 +1150,7 @@ async fn reservations_are_isolated_per_user() {
             now()
         )
         .await,
-        Err(ApiError::QuotaReached(_))
+        Err(ApiError::QuotaReached { .. })
     ));
     for _ in 0..MAX {
         tc.reserve_quota(
@@ -3821,6 +4149,10 @@ async fn a_trial_relays_meta_transactions_for_its_buyers_only() {
     )
     .await;
     assert_eq!(status, 403, "{body}");
+    assert_eq!(
+        body["message"],
+        "this relay serves only the test's buyers (CREDITS_TRIAL_MODE)"
+    );
     assert!(body.to_string().contains("CREDITS_TRIAL_MODE"), "{body}");
     assert_eq!(
         row_count(&pool, &stranger_address).await,
@@ -3845,6 +4177,102 @@ async fn a_trial_relays_meta_transactions_for_its_buyers_only() {
     );
     assert_eq!(raws.lock().unwrap().len(), 1);
     cleanup_user(&pool, &buyer_address).await;
+    cleanup_user(&pool, &stranger_address).await;
+}
+
+/// `CREDITS_TRIAL_RELAY_ALL_WALLETS` lifts the relay's buyer gate and nothing else: outside a
+/// trial there is no gate, a trial gates on its buyers, and a trial for every wallet has none
+/// while keeping its one capped route.
+#[test]
+fn a_trial_for_every_wallet_drops_only_the_relays_buyer_gate() {
+    let buyer = format!("{:#x}", PrivateKeySigner::random().address());
+    let gated = Settings {
+        trial_buyers: Some(crate::credits::trial::TrialBuyers::parse(Some(&buyer)).unwrap()),
+        ..trial_relay()
+    };
+    assert!(gated.relay_only_for().is_some_and(|b| b.admits(&buyer)));
+    let every_wallet = Settings {
+        trial_relay_all_wallets: true,
+        ..gated.clone()
+    };
+    assert!(every_wallet.relay_only_for().is_none());
+    assert!(
+        every_wallet.refuse_an_open_trial_relay().is_ok(),
+        "the trial's capped route is unchanged"
+    );
+    for uncapped in [0, -1] {
+        let without_a_total = Settings {
+            max_relayed_transactions_per_day: uncapped,
+            ..every_wallet.clone()
+        };
+        let refusal = without_a_total.refuse_an_open_trial_relay().unwrap_err();
+        assert!(
+            refusal
+                .to_string()
+                .contains("MAX_RELAYED_TRANSACTIONS_PER_DAY"),
+            "{refusal}"
+        );
+    }
+    let buyers_only_uncapped = Settings {
+        max_relayed_transactions_per_day: 0,
+        ..gated.clone()
+    };
+    assert!(
+        buyers_only_uncapped.refuse_an_open_trial_relay().is_ok(),
+        "a buyers-only trial keeps accepting 0"
+    );
+    let no_buyers = Settings {
+        trial_buyers: None,
+        ..every_wallet
+    };
+    assert!(
+        no_buyers.refuse_an_open_trial_relay().is_err(),
+        "a trial still needs its buyers for the credits"
+    );
+    assert!(Settings::for_tests().relay_only_for().is_none());
+}
+
+/// With `CREDITS_TRIAL_RELAY_ALL_WALLETS` a trial's relayer pays gas for a wallet that is not
+/// among the buyers too: its meta-transaction relays, and is charged to its own daily quota.
+#[tokio::test]
+async fn a_trial_relay_for_every_wallet_relays_a_strangers_meta_transaction() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let (chain_url, raws) = spawn_fake_chain().await;
+    let buyer = format!("{:#x}", PrivateKeySigner::random().address());
+    let stranger = PrivateKeySigner::random();
+    let stranger_address = format!("{:#x}", stranger.address());
+    let settings = Settings {
+        trial_mode: true,
+        trial_buyers: Some(crate::credits::trial::TrialBuyers::parse(Some(&buyer)).unwrap()),
+        trial_relay_all_wallets: true,
+        meta_tx_broadcast_enabled: true,
+        relayer_private_key: Some(hex::encode(PrivateKeySigner::random().to_bytes())),
+        polygon_rpc_url: Some(chain_url),
+        relayer_max_fee_per_gas_wei: Some(500_000_000_000),
+        ..Settings::for_tests()
+    };
+    let app = router(state(pool.clone(), settings));
+
+    let (status, body) = post_transaction(
+        &app,
+        &stranger_address,
+        COLLECTION,
+        &signed_split_calldata(&stranger, FS),
+    )
+    .await;
+    assert_eq!(status, 200, "a wallet outside the buyers relays: {body}");
+    assert_eq!(raws.lock().unwrap().len(), 1);
+    assert_eq!(
+        row_count(&pool, &stranger_address).await,
+        1,
+        "charged to the wallet's own quota"
+    );
     cleanup_user(&pool, &stranger_address).await;
 }
 

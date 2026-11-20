@@ -30,6 +30,12 @@ sol! {
     function buy(ItemToBuy[] itemsToBuy) external;
 
     function executeOrder(address nftAddress, uint256 assetId, uint256 price) external;
+    function createOrder(
+        address nftAddress,
+        uint256 assetId,
+        uint256 priceInWei,
+        uint256 expiresAt
+    ) external;
 
     function placeBid(
         address _tokenAddress,
@@ -633,6 +639,16 @@ impl SaleMethod {
             }
         })
     }
+}
+
+/// The signature of the inner method a registered sale target never relays:
+/// `createOrder` on Marketplace and MarketplaceV2. `None` for every other call.
+pub fn refused_method(full_data: &[u8], kind: SaleKind) -> Option<&'static str> {
+    if !matches!(kind, SaleKind::Marketplace | SaleKind::MarketplaceV2) {
+        return None;
+    }
+    let inner = decode_meta_tx_full(full_data)?.function_signature;
+    (inner.get(..4)? == createOrderCall::SELECTOR).then_some(createOrderCall::SIGNATURE)
 }
 
 /// The price a meta-transaction aimed at a registered sale target settles at:

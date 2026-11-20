@@ -1,0 +1,255 @@
+/* Profile gallery layout inside the shared modal. */
+/* Close sits on the photo's top-left corner, as on decentraland.org: fixed to the dialog shell, so
+ * it never covers the information panel or moves when the panel scrolls. */
+.close {
+  position: absolute;
+  z-index: 2;
+  top: var(--dcl-space-16);
+  left: var(--dcl-space-16);
+}
+
+.body {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+}
+
+.withDetails {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.media {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  background: var(--dcl-neutrals-black);
+}
+
+.image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.toolbar {
+  position: absolute;
+  z-index: 1;
+  top: var(--dcl-space-16);
+  right: var(--dcl-space-16);
+  display: flex;
+  gap: var(--dcl-space-8);
+}
+
+.step {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.previous {
+  left: var(--dcl-space-8);
+}
+
+.next {
+  right: var(--dcl-space-8);
+}
+
+/* The panel is a clipped shell; only its content area scrolls, inset from the dialog's edge so the
+ * track never touches the rounded border. */
+.details {
+  display: flex;
+  overflow: hidden;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-height: 0;
+  max-height: 55vh;
+  padding: var(--dcl-space-8) var(--dcl-space-4) var(--dcl-space-8) 0;
+  background: radial-gradient(
+    123.58% 82% at 9.01% 25.79%,
+    var(--dcl-brand-purple) 0%,
+    var(--dcl-brand-purple-dark) 37.11%,
+    var(--dcl-neutrals-black) 100%
+  );
+}
+
+.detailsScroll {
+  display: flex;
+  overflow: hidden auto;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--dcl-space-16);
+  min-height: 0;
+  padding: var(--dcl-space-16) 0;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--dcl-transparencies-white-20) transparent;
+  scrollbar-width: thin;
+}
+
+.detailsScroll:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: -2px;
+}
+
+.detailsScroll::-webkit-scrollbar {
+  width: var(--dcl-space-4);
+}
+
+.detailsScroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.detailsScroll::-webkit-scrollbar-thumb {
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-transparencies-white-20);
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 var(--dcl-space-24);
+}
+
+.sectionTitle {
+  margin: 0;
+  color: var(--dcl-transparencies-white-60);
+  font-size: var(--dcl-font-size-label-xs-caps);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.padded {
+  padding: 0 var(--dcl-space-24);
+}
+
+.date,
+.takenBy {
+  margin: 0;
+  font-size: var(--dcl-font-size-body-sm);
+}
+
+.date {
+  font-weight: 500;
+}
+
+.takenBy {
+  margin-top: var(--dcl-space-4);
+}
+
+.link {
+  color: var(--dcl-text-link);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.link:hover,
+.personName:hover {
+  text-decoration: underline;
+}
+
+.link:focus-visible,
+.personName:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.place {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dcl-space-12);
+  padding: 0 var(--dcl-space-24);
+}
+
+.placeLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  min-width: 0;
+  font-size: var(--dcl-font-size-body-sm);
+  font-weight: 600;
+}
+
+.people {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.person {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  padding: var(--dcl-space-12) var(--dcl-space-24);
+  border-top: 1px solid var(--dcl-transparencies-white-10);
+}
+
+.person:first-child {
+  border-top: 0;
+}
+
+.face {
+  display: inline-flex;
+  overflow: hidden;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--dcl-transparencies-white-20);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-neutrals-pale-black);
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-body-sm);
+  font-weight: 700;
+}
+
+.faceImage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.personName {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-body-sm);
+  font-weight: 600;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.guest {
+  padding: 2px var(--dcl-space-8);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-transparencies-white-20);
+  font-size: var(--dcl-font-size-label-xs-caps);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+@media (min-width: 1024px) {
+  .withDetails {
+    grid-template-rows: minmax(0, 1fr);
+    /* The source's 571px rail, narrowed on smaller desktops so the photo keeps most of the width. */
+    grid-template-columns: minmax(0, 1fr) min(571px, 40%);
+  }
+
+  .details {
+    max-height: none;
+  }
+}

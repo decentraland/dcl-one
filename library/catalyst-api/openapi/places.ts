@@ -2073,6 +2073,8 @@ export interface operations {
                 names?: string[];
                 categories?: string[];
                 only_highlighted?: string;
+                /** @description True to show only entries the automated ranking is not allowed to touch */
+                only_excluded_from_ranking?: string;
                 only_favorites?: string;
                 search?: string;
                 creator_address?: string;

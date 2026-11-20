@@ -9,7 +9,7 @@ import { detectMacChip, isTouchMac, preferChip } from "@/data/lib/download/mac-c
 import { track } from "@/core/lib/telemetry/track";
 
 import { CREATOR_HUB_DOWNLOAD_STORY, useCreatorHubDownloadClick } from "./creator-hub-click";
-import OtherBuilds, { downloadFor, OsIcon } from "./OtherBuilds";
+import CreatorHubDownload from "./CreatorHubDownload";
 import styles from "./CreatorHubDownloadPage.module.css";
 
 const copy = { title: "Decentraland Creator Hub" };
@@ -70,17 +70,7 @@ export default function CreatorHubDownloadPage({
 
             {main && (
               <div className={styles.actions}>
-                <a
-                  className={styles.cta}
-                  href={main.url}
-                  data-os={main.osKey}
-                  data-arch={main.arch}
-                  onClick={(event) => onDownload(main, "primary", event)}
-                >
-                  <span className={styles.ctaLabel}>{downloadFor(main)}</span>
-                  <OsIcon os={main.osKey} className={styles.btnIcon} />
-                </a>
-                <OtherBuilds options={offered.others} onDownload={(option, event) => onDownload(option, "secondary", event)} />
+                <CreatorHubDownload primary={main} others={offered.others} onDownload={onDownload} />
               </div>
             )}
           </div>

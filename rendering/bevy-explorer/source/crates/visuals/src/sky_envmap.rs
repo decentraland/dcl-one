@@ -459,8 +459,10 @@ fn ambient_console_command(
 struct SkyEnvmapLabel;
 
 mod decl {
-    // temporary for ShaderType macro, remove in future
-    #![allow(dead_code)]
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
 
     use bevy::render::render_resource::ShaderType;
 

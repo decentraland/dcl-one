@@ -1917,7 +1917,14 @@ async fn an_expired_credential_does_not_promote_admins_on_join() {
 /// force, no cleanup is recorded for it, and the new ingress is deleted.
 #[tokio::test]
 async fn a_reset_that_cannot_store_its_credential_keeps_the_old_key() {
-    let Some(pool) = scratch().await else { return };
+    // Its trigger on a shared table would block or deadlock other tests.
+    let Some(database) =
+        crate::db::scratch::OwnedDatabase::new("castrefuse", crate::db::scratch::Schema::Full, 8)
+            .await
+    else {
+        return;
+    };
+    let pool = database.pool.clone();
     let scene = genesis_scene();
     seed_genesis_place(&pool, &scene, None).await;
     let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
@@ -1978,6 +1985,8 @@ async fn a_reset_that_cannot_store_its_credential_keeps_the_old_key() {
         )
         .await;
     assert_eq!(status, StatusCode::OK);
+    drop(h);
+    database.drop().await;
 }
 
 /// Upstream mints the replacement's ingress before revoking the old one: a
@@ -2412,7 +2421,14 @@ async fn streamer_presenters_stay_bounded_and_follow_the_streamers_session() {
 /// old key stays, no cleanup is recorded, and the new ingress is deleted.
 #[tokio::test]
 async fn a_reset_that_loses_to_a_concurrent_change_keeps_the_old_key() {
-    let Some(pool) = scratch().await else { return };
+    // Its trigger on a shared table would block or deadlock other tests.
+    let Some(database) =
+        crate::db::scratch::OwnedDatabase::new("castskip", crate::db::scratch::Schema::Full, 8)
+            .await
+    else {
+        return;
+    };
+    let pool = database.pool.clone();
     let scene = genesis_scene();
     seed_genesis_place(&pool, &scene, None).await;
     let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
@@ -2459,6 +2475,8 @@ async fn a_reset_that_loses_to_a_concurrent_change_keeps_the_old_key() {
     assert!(!pending);
     assert_eq!(h.livekit.ingresses.load(Ordering::SeqCst), 2);
     assert_eq!(h.livekit.deleted_ingresses.load(Ordering::SeqCst), 1);
+    drop(h);
+    database.drop().await;
 }
 
 /// A reset intent whose replacement never arrived (left by a crash before
