@@ -60,12 +60,13 @@ export interface SplitSale {
  *   `settleSplitHold` holds it as it holds `unknown`. The envelope is kept on both surfaces so that both can tell it;
  * - `other`: the buyer's useCredits spending this very credit, alone or in a batch, on other terms (another venue,
  *   function, call, share or gap): the credit went into another purchase;
+ * - `foreign`: a useCredits by another account, or of other credits: provably not this purchase (its hash is no sale's
+ *   own), and nothing of where this credit went (a record that points at it is wrong, not proof);
  * - `unknown`: nothing that says either way: no transaction or receipt yet, a read that failed, a transaction whose
- *   wrapper or target this page can't read (its destination alone says nothing about where the credit went), a useCredits
- *   by another account or of other credits (it doesn't spend this one), or a revert of these terms in bytes other than
- *   the ones dispatched (or with none kept to compare).
+ *   wrapper or target this page can't read (its destination alone says nothing about where the credit went), or a revert
+ *   of these terms in bytes other than the ones dispatched (or with none kept to compare).
  */
-export type SplitOutcome = 'bought' | 'reverted' | 'other' | 'unknown'
+export type SplitOutcome = 'bought' | 'reverted' | 'other' | 'foreign' | 'unknown'
 
 const lower = (v: unknown): string => (typeof v === 'string' ? v.toLowerCase() : '')
 
@@ -101,11 +102,11 @@ export function isSplitSale(v: unknown): v is SplitSale {
 /**
  * What `tx` says of the sale: `match` (the buyer's useCredits at the sale's manager carrying exactly its terms, relayed or
  * sent by the buyer's own wallet), `other` (the buyer's useCredits spending this very credit, alone or in a batch, on
- * other terms: the credit went into something else) or `unreadable`. That covers another target or wrapper, calldata
- * this page can't decode, a direct call whose sender the reader didn't give, and a useCredits by another account or of
- * other credits: such a call says nothing of where this credit went (a record that points at it is wrong, not proof).
+ * other terms: the credit went into something else), `foreign` (a useCredits by another account or of other credits: not
+ * this sale, and nothing of where its credit went) or `unreadable` (another target or wrapper, calldata this page can't
+ * decode, or a direct call whose sender the reader didn't give).
  */
-export function readSale(tx: SplitTransaction, sale: SplitSale): 'match' | 'other' | 'unreadable' {
+export function readSale(tx: SplitTransaction, sale: SplitSale): 'match' | 'other' | 'foreign' | 'unreadable' {
   if (lower(tx.to) !== lower(sale.manager)) return 'unreadable'
   let user: string
   let inner: Hex
@@ -129,7 +130,7 @@ export function readSale(tx: SplitTransaction, sale: SplitSale): 'match' | 'othe
     return 'unreadable'
   }
   const salt = lower(idToSalt(sale.creditId))
-  if (lower(user) !== lower(sale.buyer) || !args.credits.some((c) => lower(c.salt) === salt)) return 'unreadable'
+  if (lower(user) !== lower(sale.buyer) || !args.credits.some((c) => lower(c.salt) === salt)) return 'foreign'
   const creditWei = BigInt(sale.creditWei)
   const call = args.externalCall
   const [credit] = args.credits
@@ -179,7 +180,7 @@ export async function splitExecution(
   if (!tx) return 'unknown'
   const read = readSale(tx, sale)
   if (read === 'unreadable') return 'unknown'
-  if (read === 'other') return 'other'
+  if (read === 'other' || read === 'foreign') return read
   if (!receipt) return 'unknown'
   // A success carrying the terms is the purchase, whatever bytes carried it; a revert is only that invocation's.
   if (receipt.status === 'success') return 'bought'

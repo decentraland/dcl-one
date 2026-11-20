@@ -964,6 +964,16 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   })
 
   /** The newer of the checkout's own progress and the record's copy of it. */
+  /**
+   * Hashes a split's live outcome found to be another transaction (`other` or `foreign`), per operation, for this page's
+   * life: a check reads the node's record of the credit instead of reading such a hash again.
+   */
+  const notTheSale = new WeakMap<Operation, Set<string>>()
+  const markNotTheSale = (op: Operation, hash: string) => {
+    const known = notTheSale.get(op) ?? new Set<string>()
+    known.add(hash.toLowerCase())
+    notTheSale.set(op, known)
+  }
   const latest = (a: GroupProgress | null, b: GroupProgress | null): GroupProgress | null => {
     if (!a || !b) return a ?? b
     if (a.updatedAt !== b.updatedAt) return a.updatedAt > b.updatedAt ? a : b
@@ -1035,9 +1045,11 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
 
   const findOutSplit = async (op: Operation & { buyer: string }, sale: SplitSale, store: CartStore): Promise<boolean | null> => {
     const progress = latest(store.getSnapshot().checkout?.groups[0] ?? null, op.progress ?? null)
-    const hash = progress?.txHash ?? op.txHash ?? null
-    const handedOff = op.state === 'pending' || !!hash || (progress != null && ['submitted', 'pending', 'confirmed'].includes(progress.status))
+    const answered = progress?.txHash ?? op.txHash ?? null
+    const handedOff = op.state === 'pending' || !!answered || (progress != null && ['submitted', 'pending', 'confirmed'].includes(progress.status))
     if (!handedOff) return null
+    // A hash already found to be another transaction says nothing more: the node's record is read instead.
+    const hash = answered && !notTheSale.get(op)?.has(answered.toLowerCase()) ? answered : null
     const evidence = svc.manaEvidence()
     if (hash) {
       const outcome = await splitExecution(evidence, sale, hash)
@@ -2033,7 +2045,10 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         if (op.split) {
           const outcome = result.txHash ? await splitExecution(svc.manaEvidence(), op.split, result.txHash) : 'unknown'
           if (outcome !== 'bought') {
-            move(op, 'pending', { txHash: outcome === 'other' ? null : result.txHash })
+            // Another transaction's hash is never kept, nor read again, as this sale's.
+            const notIt = outcome === 'other' || outcome === 'foreign'
+            if (notIt && result.txHash) markNotTheSale(op, result.txHash)
+            move(op, 'pending', { txHash: notIt ? null : result.txHash })
             return { kind: 'pending' }
           }
         }
@@ -2062,7 +2077,9 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
             move(op, 'pending', { txHash: result.txHash })
             return { kind: 'pending' }
           }
-          move(op, 'pending', { txHash: outcome === 'other' ? null : result.txHash })
+          const notIt = outcome === 'other' || outcome === 'foreign'
+          if (notIt) markNotTheSale(op, result.txHash)
+          move(op, 'pending', { txHash: notIt ? null : result.txHash })
           return { kind: 'pending' }
         }
         move(op, 'pending', { txHash: result.txHash })

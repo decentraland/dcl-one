@@ -677,16 +677,19 @@ describe('the in-world purchase with MANA', () => {
       expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
     })
 
-    it('never takes a confirmed useCredits of other terms at its hash as bought, nor keeps that hash as its own', async () => {
+    it.each([
+      ['by the buyer, of another gap (its credit spent elsewhere)', BUYER, 1n],
+      ['by another account (not its sale, nor its credit)', `0x${'cc'.repeat(20)}`, 0n]
+    ])('never takes a confirmed useCredits %s at its hash as bought, nor keeps that hash as its own', async (_, by, extraGap) => {
       on()
       const w = world()
       splitShop(w)
       w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
-      // What mined at the hash the relay answered is a successful useCredits by the buyer, but of another gap: 'other'.
+      // What mined at the hash the relay answered is a successful useCredits, but not this sale.
       w.onChain.rewrite = (input) => {
         const meta = decodeFunctionData({ abi: OFFCHAIN_META_TX_ABI, data: input })
         const [args] = decodeFunctionData({ abi: CREDITS_MANAGER_ABI, data: meta.args[1] as Hex }).args as unknown as [UseCreditsArgs]
-        return encodeExecuteMetaTransaction('functionData', BUYER, encodeUseCredits({ ...args, maxUncreditedValue: args.maxUncreditedValue + 1n }), `0x${'33'.repeat(65)}` as Hex)
+        return encodeExecuteMetaTransaction('functionData', by, encodeUseCredits({ ...args, maxUncreditedValue: args.maxUncreditedValue + extraGap }), `0x${'33'.repeat(65)}` as Hex)
       }
       const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
       await p.open()
@@ -699,6 +702,30 @@ describe('the in-world purchase with MANA', () => {
       const other = [...w.txs.keys()][0]!
       expect(p.events.at(-1)).toMatchObject({ state: 'pending', txHash: null })
       expect(createLedger(() => w.storage).load(BUYER).every((r) => r.txHash !== other)).toBe(true)
+    })
+
+    it('reads a hash it found to be another transaction no more: its next check goes to the node\'s record of its credit', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      // Another account's useCredits mined at the hash the relay answered.
+      w.onChain.rewrite = (input) => {
+        const meta = decodeFunctionData({ abi: OFFCHAIN_META_TX_ABI, data: input })
+        return encodeExecuteMetaTransaction('functionData', `0x${'cc'.repeat(20)}`, meta.args[1] as Hex, `0x${'33'.repeat(65)}` as Hex)
+      }
+      const reads: string[] = []
+      const evidence = { ...w.evidence, transaction: async (c: number, h: string) => (reads.push(h.toLowerCase()), w.evidence.transaction(c, h)) }
+      let records = 0
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, manaEvidence: () => evidence as never, creditRecordOf: async () => (records++, null) } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      // The check that follows the live outcome reads the node's record of the credit, not that hash again.
+      await vi.waitFor(() => expect(records).toBeGreaterThan(0))
+      const foreign = [...w.txs.keys()][0]!
+      expect(reads.filter((h) => h === foreign)).toHaveLength(1)
+      expect(p.events.some((e) => e.state === 'succeeded' || e.state === 'failed')).toBe(false)
     })
 
     it('finds a sale whose answer was lost by the transaction the node indexed its credit in, and completes it', async () => {

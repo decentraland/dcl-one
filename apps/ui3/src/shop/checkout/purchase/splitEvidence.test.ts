@@ -81,8 +81,8 @@ describe('which transaction is an in-world split purchase', () => {
     ['another credit', relayed({ credit: { ...credit, id: '0x' + 'b2'.repeat(32) } })],
     ['another sender', relayed({ user: '0x' + 'cc'.repeat(20) })],
     ['another sender spending another credit', relayed({ user: '0x' + 'cc'.repeat(20), credit: { ...credit, id: '0x' + 'b2'.repeat(32) } })]
-  ])('says nothing of a useCredits that doesn\'t spend this credit for this buyer (%s): not this sale, nor where its credit went', async (_, input) => {
-    expect(await splitExecution(evidenceOf({ to: MANAGER, input }, 'success') as never, sale, '0xabc')).toBe('unknown')
+  ])('reads a useCredits that doesn\'t spend this credit for this buyer (%s) as foreign: not this sale, nor where its credit went', async (_, input) => {
+    expect(await splitExecution(evidenceOf({ to: MANAGER, input }, 'success') as never, sale, '0xabc')).toBe('foreign')
   })
 
   it('says nothing of a transaction to another contract, or one it can\'t read: its destination alone isn\'t where the credit went', async () => {
@@ -102,7 +102,7 @@ describe('which transaction is an in-world split purchase', () => {
     expect(await splitExecution(evidence(BUYER, 'reverted') as never, { ...sale, envelope: splitEnvelope(direct) }, '0xabc')).toBe('reverted')
     expect(await splitExecution(evidence(BUYER, 'reverted') as never, { ...sale, envelope: splitEnvelope(relayed()) }, '0xabc')).toBe('unknown')
     // Sent by another account: it doesn't spend this buyer's credit.
-    expect(await splitExecution(evidence('0x' + 'cc'.repeat(20), 'success') as never, sale, '0xabc')).toBe('unknown')
+    expect(await splitExecution(evidence('0x' + 'cc'.repeat(20), 'success') as never, sale, '0xabc')).toBe('foreign')
     // A reader that doesn't give the sender can't tell whose it is.
     expect(await splitExecution(evidence(undefined, 'success') as never, sale, '0xabc')).toBe('unknown')
   })
