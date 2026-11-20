@@ -323,9 +323,7 @@ impl Harness {
 
     /// The player is behind the loading screen.
     fn leave_world(&mut self) {
-        self.world
-            .entity_mut(self.user)
-            .insert(OutOfWorld::default());
+        self.world.entity_mut(self.user).insert(OutOfWorld);
     }
 
     /// The player is placed in the world.

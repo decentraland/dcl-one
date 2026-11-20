@@ -665,7 +665,7 @@ impl Plugin for IpfsIoPlugin {
             app.register_diagnostic(Diagnostic::new(path));
         }
         app.insert_resource(IpfsResource { inner: ipfs_io });
-        app.insert_resource(RealmInitialLocation::BASE);
+        app.insert_resource(RealmInitialLocation::Base);
 
         #[cfg(feature = "hot_reload")]
         app.register_asset_source(
@@ -733,24 +733,12 @@ impl Plugin for IpfsIoPlugin {
     }
 }
 
-/// Where the player lands in a realm being changed to. `spawn_point` is the name of the spawn
-/// point to be placed on there, which the landing hands to `OutOfWorld`.
 #[derive(Resource, PartialEq, Debug)]
 pub enum RealmInitialLocation {
     None,
-    Base {
-        spawn_point: Option<String>,
-    },
+    Base,
     /// Land on this parcel of the new realm (a teleport that named its realm).
-    Parcel {
-        parcel: IVec2,
-        spawn_point: Option<String>,
-    },
-}
-
-impl RealmInitialLocation {
-    /// The realm's own spawn, on its default spawn points.
-    pub const BASE: Self = Self::Base { spawn_point: None };
+    Parcel(IVec2),
 }
 
 /// Switch to a new realm
@@ -768,7 +756,7 @@ fn change_realm_command(
     mut pending: ResMut<PendingConsoleResponses>,
 ) {
     if let Some(Ok(command)) = input.take() {
-        *target = RealmInitialLocation::BASE;
+        *target = RealmInitialLocation::Base;
         debug!("change realm command -> base");
         let (response, rx) = RpcResultSender::channel();
         let realm = command.new_realm.clone();

@@ -5918,7 +5918,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "f1b6ba62725acca39c0b9c463e768f7db5280d6782c2a8618b7704504d419299"
+      "sha256": "c25b73b74feb5909c7ebb2cfb0ce96c59840331563c8cb01ff840307c558aadd"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bridge.ts",
@@ -6019,10 +6019,6 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/session.ts",
       "sha256": "c4a8eaa94177021bf9905c75d3cab9eea51d90323735a8d8c02899ec63a9e90a"
-    },
-    {
-      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/teleport.ts",
-      "sha256": "99837dcca899a65d20fba5b860c1af2c9eac5e3920db270d462daa33d17e0614"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/textureOptimization.ts",
@@ -6277,10 +6273,6 @@
       "sha256": "2a7d25c775f5d3bbac4a4a15296d428f034aff39b1d665c63961a58e44d64e92"
     },
     {
-      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeTeleport.test.ts",
-      "sha256": "899cd34b1c9856357e20a912ce5d5436dd79bad8929f4141e6042c2a99fdbc72"
-    },
-    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
       "sha256": "9215e44d8c803335b125591254a6584453268644d0d65b4b59fb375322ef83aa"
     },
@@ -6350,7 +6342,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/realmTravel.test.tsx",
-      "sha256": "0ba0fc7ab592024b78d61008731387b72bfcb6973131ba5de54d25a63e2fe917"
+      "sha256": "e16dc3f88748d06173160d70b18eb950146d37c292c85b53ecbff0021a295525"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/recoverSigner.ts",
@@ -6475,7 +6467,6 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneLookup.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
-    "rendering/bevy-explorer/source/react-web/src/test/bridgeTeleport.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeVoice.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeVoiceChat.test.ts",
@@ -6560,7 +6551,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "e749c80db3a792e3364aeda0b64393f6b5ec805630200e917d8f21f4c8b63ce1"
+      "sha256": "fe882c52ddb2b3ed297ebf7b598c6d1fb63af63a5dd7914fa619e81294935742"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -6600,7 +6591,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "a3cc0fc5150a342dbee65992dcfb93edc1cf9af32ae2a7e5a08bbc4da080ecf6"
+      "sha256": "c0aa82ebcc0a40560ebc404979ea516813a9aa4ede2eac55cb24b7423f77df57"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -6644,11 +6635,11 @@
     },
     {
       "path": "library/explorer-core/features/chat/chatCommands.test.ts",
-      "sha256": "8f3274ab031f3b2a528ba048834e5651b96a91e533b83dfb9b2d497d589ef508"
+      "sha256": "0e11d4fa58c8ad08339da734af6f9bc3ddec06954f5d2363f29270c3c3131d3c"
     },
     {
       "path": "library/explorer-core/features/chat/chatCommands.ts",
-      "sha256": "12fbe671ec5b55b1c023efced0f2b6a3b54e20553c1c8528dc486e53c7a07823"
+      "sha256": "1499c6df83095cee7260041f03c2a452cd136979a3e35ff665fd1544d77e2a63"
     },
     {
       "path": "library/explorer-core/features/chat/chatParse.ts",
@@ -6744,7 +6735,7 @@
     },
     {
       "path": "library/explorer-core/features/lobby/goto.ts",
-      "sha256": "175d7929f0c1dd58f8955774b79d52f081cd06051e41285d18d5cb7c5b46057a"
+      "sha256": "73c010d1fd3c82b072d71f5cab0a4412820d712476af4aa0d5fcaf063daf96d3"
     },
     {
       "path": "library/explorer-core/features/lobby/layout.ts",
@@ -7116,7 +7107,7 @@
     },
     {
       "path": "library/explorer-core/test/lobbyGoto.test.ts",
-      "sha256": "d0ce3d2bd14db25c7e913561872367d57eeb8b2bca29b460ce6a0afaabc4c145"
+      "sha256": "67cd0379c181f064e4beabed6dffb23c8822b01074ece3d957684fea931ed9c4"
     },
     {
       "path": "library/explorer-core/test/lobbyLayout.test.ts",
@@ -10140,7 +10131,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "5a2e50c628637262dd9243e0e65d142c49d4b261c86d264ab77bb8b7f535da61"
+      "sha256": "9a4030b57d7e9ef4313623135bc910d3ff98e360eb7668923e3894ef1e02fc2b"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -11633,36 +11624,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/explorer-core/features/chat/chatCommands.test.ts",
-      "to": "library/explorer-core/features/lobby/goto.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/explorer-core/features/chat/chatCommands.test.ts",
-      "to": "library/explorer-core/features/lobby/goto.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/explorer-core/features/chat/chatCommands.test.ts",
-      "to": "library/explorer-core/features/lobby/goto.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/explorer-core/features/chat/chatCommands.ts",
-      "to": "library/explorer-core/features/lobby/goto.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/explorer-core/features/chat/chatCommands.ts",
-      "to": "library/explorer-core/features/lobby/goto.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/explorer-core/features/chat/chatCommands.ts",
-      "to": "library/explorer-core/features/lobby/goto.ts",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/explorer-core/features/chat/chatParse.ts",
       "to": "library/explorer-core/engine/mention.ts",
       "kind": "native:runtime"
@@ -33530,21 +33491,6 @@
     {
       "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "to": "library/explorer-core/features/friends/friendEvents.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "to": "library/explorer-core/features/lobby/goto.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "to": "library/explorer-core/features/lobby/goto.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "to": "library/explorer-core/features/lobby/goto.ts",
       "kind": "test:runtime"
     },
     {
@@ -45765,11 +45711,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/src/test/perfStream.test.ts",
       "to": "library/explorer-core/test/console.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/src/test/realmTravel.test.tsx",
-      "to": "library/explorer-core/features/map/atlas.ts",
       "kind": "test:runtime"
     },
     {

@@ -384,7 +384,7 @@ fn the_arriving_players_scene_is_active_while_they_are_out_of_world() {
         .query_filtered::<Entity, With<PrimaryUser>>()
         .single(&world)
         .unwrap();
-    world.entity_mut(player).insert(OutOfWorld::default());
+    world.entity_mut(player).insert(OutOfWorld);
     let destination = world.spawn(SceneHash("destination".to_owned())).id();
     player_stands_on(&mut world, "destination", destination);
     let _waiting = hold_a_waiting_download(world.resource::<IpfsResource>(), 1);

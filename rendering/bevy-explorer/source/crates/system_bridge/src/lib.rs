@@ -145,16 +145,6 @@ pub enum SystemApi {
     LiveSceneInfo(RpcResultSender<Vec<LiveSceneInfo>>),
     GetHomeScene(RpcResultSender<HomeScene>),
     SetHomeScene(HomeScene),
-    /// The HUD's teleport: to a parcel of the realm the player is in, or with a realm a realm
-    /// change landing on the parcel (on the realm's own spawn without one). `spawn_point` names
-    /// the spawn point of the scene landed in to use, in any case; the scene's default ones are
-    /// used without it, and when the scene has none of that name.
-    Teleport {
-        to: Option<bevy::math::IVec2>,
-        realm: Option<String>,
-        spawn_point: Option<String>,
-        response: RpcResultSender<Result<(), String>>,
-    },
     /// None takes the lobby stage down.
     SetLobbyStage(Option<LobbyStage>),
     /// Whether the local user may enter the named world (`name.dcl.eth`).

@@ -159,11 +159,6 @@ export type BevyApiInterface = {
   getWorldAccess?: (world: string) => Promise<WorldAccessVerdict>
   /** Pin the home scene the engine boots into and the HUD's home actions go to. */
   setHomeScene: (home: { realm: string; parcel: { x: number; y: number } }) => Promise<void>
-  /** Teleport to a parcel of the realm the player is in, or with `realm` change realm and land on
-   *  the parcel (on the realm's own spawn without one). `spawnPoint` names the spawn point of the
-   *  scene landed in to use, in any case; its default ones are used when it has none of that name.
-   *  Rejects with the engine's reason. Optional: absent on runtimes whose SystemApi predates it. */
-  teleport?: (to: { parcel?: { x: number; y: number }; realm?: string; spawnPoint?: string }) => Promise<void>
   /** What the welcome page must show for the signed-in account (all false when the host shows none). */
   getWelcome?: () => Promise<WelcomeState>
   /** The welcome page's accept: records the terms for this install. A held new profile deploys with

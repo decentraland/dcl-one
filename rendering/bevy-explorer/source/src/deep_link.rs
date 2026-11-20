@@ -116,8 +116,8 @@ mod place {
                 return;
             }
         };
-        // the teleport scenes use, sent by the engine itself: with a realm it is a realm change (a
-        // full reconnect) landing on the parcel, or on the realm's own spawn without one
+        // the teleport the HUD and scenes use: with a realm it is a realm change (a full
+        // reconnect) landing on the parcel, or on the realm's own spawn without one
         let (response, rx) = RpcResultSender::channel();
         commands.send_event(RpcCallEvent::engine(RpcCall::TeleportPlayer {
             to: destination.parcel,

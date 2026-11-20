@@ -326,7 +326,7 @@ mod log_order_tests {
         }
         let player = app
             .world_mut()
-            .spawn((PrimaryUser::default(), OutOfWorld::default()))
+            .spawn((PrimaryUser::default(), OutOfWorld))
             .id();
         app.update();
         let root = wallet::local_guest::new_root_key();
