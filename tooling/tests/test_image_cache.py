@@ -433,20 +433,24 @@ class WorkflowSetupTest(unittest.TestCase):
             self.assertEqual(self.build.count(f"steps.cache-saves.outputs.{group} == 'true'"), 2)
         self.assertLess(decision, self.build.index('Import cached store paths'))
 
-    def test_upload_guard_uses_pr_head_and_skips_reruns_superseded_heads_and_failed_queries(self):
+    def test_upload_guard_trusts_main_first_attempts_and_checks_pr_heads(self):
         step = self.build.split('      - name: Allow cache uploads only from current first attempts\n', 1)[1]
         script = textwrap.dedent(step.split('        run: |\n', 1)[1].split('      - name:', 1)[0])
         self.assertIn("if: steps.cache-keys.outputs.save == 'true'", step.split('        run:', 1)[0])
         self.assertLess(self.build.index('tooling/image-smoke.py'), self.build.index('id: cache-writer'))
         self.assertEqual(self.build.count("steps.cache-writer.outputs.allowed == 'true'"), 8)
         self.assertIn('PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}', step.split('        run:', 1)[0])
-        cases = [('1', 'head', '0', True, True, 'head'),
-                 ('2', 'head', '0', False, False, 'head'),
-                 ('1', 'newer', '0', False, True, 'head'),
-                 ('1', 'head', '1', False, True, 'head')]
-        for ref in ('refs/heads/main', 'refs/pull/93/merge'):
+        main_cases = [('1', 'newer', '1', True, False, ''),
+                      ('2', 'head', '0', False, False, '')]
+        other_cases = [('1', 'head', '0', False, False, '')]
+        pr_cases = [('1', 'head', '0', True, True, 'head'),
+                    ('2', 'head', '0', False, False, 'head'),
+                    ('1', 'newer', '0', False, True, 'head'),
+                    ('1', 'head', '1', False, True, 'head'),
+                    ('1', 'head', '0', False, False, '')]
+        for ref, variants in (('refs/heads/main', main_cases), ('refs/pull/93/merge', pr_cases),
+                              ('refs/tags/v1', other_cases), ('refs/heads/feature', other_cases)):
             pr = ref.startswith('refs/pull/')
-            variants = cases + ([('1', 'head', '0', False, False, '')] if pr else [])
             for attempt, current, failure, allowed, queried, event_head in variants:
                 with self.subTest(ref=ref, attempt=attempt, current=current, failure=failure), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
@@ -467,9 +471,8 @@ class WorkflowSetupTest(unittest.TestCase):
                     self.assertEqual((root / 'output').read_text(), f'allowed={str(allowed).lower()}\n')
                     self.assertEqual((root / 'called').exists(), queried)
                     if queried:
-                        checked_ref = 'pull/93/head' if pr else 'heads/main'
                         self.assertEqual((root / 'called').read_text().strip(),
-                                         f'api repos/decentraland/dcl-one/git/ref/{checked_ref} --jq .object.sha')
+                                         'api repos/decentraland/dcl-one/git/ref/pull/93/head --jq .object.sha')
 
     def test_compiled_exports_require_matching_derivations_and_successful_evaluations(self):
         exports = {'Export the tested APIs package': 'apis', 'Export the tested Sites app': 'sites-app'}

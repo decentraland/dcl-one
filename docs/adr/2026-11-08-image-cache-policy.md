@@ -19,6 +19,10 @@ because their GitHub cache scope is shared across workflows.
 Save when the matched derivation digest differs from the primary digest, including
 a miss. An exact main identity restored by a PR needs no duplicate save. A stale
 fallback must not prevent saving the replacement.
+Nix reuses a fixed-output path whose name and declared hash match, so a fixed-output
+path restored by fallback must change its name with its inputs. The Sites pnpm
+dependencies carry a digest of their own derivation in their name: a changed lockfile
+or fetcher gives a new path, and the fetch checks the declared hash.
 
 Catalyst exports retain both compiled dependencies and vendored sources. Sites
 exports retain dependencies and the toolchain. API and Sites app exports contain the
@@ -41,15 +45,18 @@ scope to match the ref. PR closure removes all entries on its merge ref. Only ID
 in the completed listing are deleted, so a concurrent upload absent from that
 listing survives until a later sweep.
 
-Image uploads require a first attempt and a current-head SHA check after
-smoke tests. Main compares its ref with the built commit. PRs compare
-`refs/pull/N/head` with the event's PR head SHA, allowing a save when only the base
-advanced and regenerated the merge ref. Cache keys still identify the actual
-built derivations, so a changed base cannot turn a stale cache into an exact hit.
-Reruns and builds whose head was superseded at this check skip uploads;
-failed ref lookups also skip uploads without failing image validation. Ref changes
-during export/upload can still reorder entries. Keeping two generations limits
-that race's impact, without guaranteeing a hit or a byte-size bound.
+Image uploads require a first attempt. The image build uploads after its smoke
+tests; the compile job uploads after compiling. A main push saves without a ref
+check: `Bevy Explorer / CI` runs main pushes one at a time and never cancels a
+running one, so main entries are created in push order even when main has moved on
+during the build. PRs compare `refs/pull/N/head` with the event's PR head
+SHA, allowing a save when only the base advanced and regenerated the merge ref. Cache
+keys still identify the actual built derivations, so a changed base cannot turn a
+stale cache into an exact hit. Reruns and PR builds whose head was superseded at this
+check skip uploads; failed PR ref lookups also skip uploads without failing image
+validation. A PR head change during export/upload can still reorder that PR's
+entries. Keeping two generations limits that race's impact, without guaranteeing a
+hit or a byte-size bound.
 
 ## Consequences
 
