@@ -36,7 +36,7 @@ export type HomeDownloadActions = {
   hero: DownloadActionsProps;
   hangOut: DownloadActionsProps;
   store: StoreBadgeProps;
-  alternateStore: StoreBadgeProps;
+  alternateStore?: StoreBadgeProps;
 };
 
 export function homeDownloadActions(
@@ -78,12 +78,8 @@ export function homeDownloadActions(
     },
     store,
     alternateStore:
-      store.badge === "google_play"
-        ? {
-            badge: "app_store",
-            label: STORE_LINKS.ios.label,
-            href: STORES.app_store,
-          }
+      platform.kind === "mobile"
+        ? undefined
         : {
             badge: "google_play",
             label: STORE_LINKS.android.label,
