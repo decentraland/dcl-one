@@ -929,6 +929,54 @@
       ]
     },
     {
+      "setId": "9373:1555",
+      "name": "CommunityCard",
+      "page": "",
+      "kind": "set",
+      "properties": {
+        "Property 1": {
+          "type": "VARIANT",
+          "default": "View",
+          "options": [
+            "View",
+            "Join",
+            "Loading",
+            "Hover"
+          ]
+        }
+      },
+      "variants": [
+        {
+          "id": "9373:1556",
+          "name": "Property 1=View",
+          "props": {
+            "Property 1": "View"
+          }
+        },
+        {
+          "id": "9373:1573",
+          "name": "Property 1=Hover",
+          "props": {
+            "Property 1": "Hover"
+          }
+        },
+        {
+          "id": "9373:1594",
+          "name": "Property 1=Loading",
+          "props": {
+            "Property 1": "Loading"
+          }
+        },
+        {
+          "id": "9373:1598",
+          "name": "Property 1=Join",
+          "props": {
+            "Property 1": "Join"
+          }
+        }
+      ]
+    },
+    {
       "setId": "9803:3823",
       "name": "ModeratonType",
       "page": "",
