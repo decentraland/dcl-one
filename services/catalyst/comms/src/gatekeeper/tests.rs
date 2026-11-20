@@ -225,6 +225,14 @@ fn land_policy(doc: LandOperators) -> StubPolicy {
 
 /// Every LAND-document role held by `holder`, in checksummed form.
 fn extended_land_roles(holder: &str) -> [(&'static str, LandOperators); 5] {
+    // A new LAND-document field fails to build here until it gets a role below.
+    let LandOperators {
+        owner: _,
+        operator: _,
+        update_operator: _,
+        update_managers: _,
+        approved_for_all: _,
+    } = LandOperators::default();
     [
         // Admitted via the LAND document; `is_admin` refuses.
         (
