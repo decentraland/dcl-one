@@ -2,15 +2,15 @@
 //!
 //! Every mesh of an avatar is drawn again into each shadow cascade it falls in, skinned again
 //! each time, as far as the Shadow Distance setting reaches (up to 300 m). An avatar's shadow is
-//! a few pixels at that range, so beyond [`AvatarShadowDistance`] from the local player an
-//! avatar's meshes are marked `NotShadowCaster`, and unmarked when it comes back within it. The
-//! local player's avatar always casts one. The distance is from the player, not the camera, so
-//! with a camera away from the player the avatars near the camera may cast none.
+//! a few pixels at that range, so beyond [`AvatarShadowDistance`] from the camera an avatar's
+//! meshes are marked `NotShadowCaster`, and unmarked when it comes back within it. The distance
+//! is from the camera because the cascades follow it. The local player's avatar always casts
+//! one, and so does an avatar on a render layer of its own.
 
 use bevy::{pbr::NotShadowCaster, prelude::*, render::view::RenderLayers};
 use bevy_console::ConsoleCommand;
-use common::structs::PrimaryUser;
-use console::DoAddConsoleCommand;
+use common::structs::{PrimaryCamera, PrimaryUser};
+use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 
 use crate::AvatarProcessed;
 
@@ -20,11 +20,27 @@ impl Plugin for AvatarShadowDistancePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AvatarShadowDistance>()
             .add_systems(Update, set_avatar_shadows)
-            .add_console_command::<AvatarShadowDistanceCommand, _>(avatar_shadow_distance);
+            .add_console_command::<AvatarShadowDistanceCommand, _>(avatar_shadow_distance)
+            .add_debug_section(DebugSection {
+                title: "Avatar shadows",
+                query: "/avatar_shadow_distance",
+                fields: &[("Avatars casting none for being far", "shadowless")],
+                actions: &[],
+                inputs: &[DebugInput {
+                    label: "Avatar shadow distance, metres (not saved)",
+                    field: "metres",
+                    command: "/avatar_shadow_distance {value}",
+                    kind: DebugInputKind::Number {
+                        min: 0.0,
+                        max: 300.0,
+                        step: 1.0,
+                    },
+                }],
+            });
     }
 }
 
-/// How far from the local player (metres) another avatar still casts a shadow.
+/// How far from the camera (metres) another avatar still casts a shadow.
 #[derive(Resource)]
 pub struct AvatarShadowDistance(pub f32);
 
@@ -43,7 +59,7 @@ const RETURN_FACTOR: f32 = 0.9;
 #[derive(Component)]
 struct DistantShadowOff(Vec<Entity>);
 
-/// Whether an avatar at `distance` from the local player casts a shadow, given whether it does
+/// Whether an avatar at `distance` from the camera casts a shadow, given whether it does
 /// now.
 fn casts_shadow(distance: f32, max_distance: f32, casting: bool) -> bool {
     distance
@@ -67,23 +83,22 @@ fn set_avatar_shadows(
         ),
         With<AvatarProcessed>,
     >,
-    player: Query<&GlobalTransform, With<PrimaryUser>>,
+    camera: Query<&GlobalTransform, With<PrimaryCamera>>,
+    player: Query<(), With<PrimaryUser>>,
     children: Query<&Children>,
     meshes: Query<(), (With<Mesh3d>, Without<NotShadowCaster>)>,
     mut unmarked: Query<&mut Mesh3d>,
 ) {
-    let Ok(player_pos) = player.single().map(GlobalTransform::translation) else {
+    let Ok(camera_pos) = camera.single().map(GlobalTransform::translation) else {
         return;
     };
     let default_layer = RenderLayers::layer(0);
     for (build, transform, parent, layers, off) in &builds {
         // an avatar on a layer of its own (a preview) is lit by its own stage, wherever it stands
-        if layers.is_some_and(|layers| !layers.intersects(&default_layer)) {
-            continue;
-        }
-        let casts = player.contains(parent.parent())
+        let casts = layers.is_some_and(|layers| !layers.intersects(&default_layer))
+            || player.contains(parent.parent())
             || casts_shadow(
-                transform.translation().distance(player_pos),
+                transform.translation().distance(camera_pos),
                 distance.0,
                 off.is_none(),
             );
@@ -115,7 +130,7 @@ fn set_avatar_shadows(
     }
 }
 
-/// Read or set how far from the player other avatars cast shadows, in metres
+/// Read or set how far from the camera other avatars cast shadows, in metres
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/avatar_shadow_distance")]
 struct AvatarShadowDistanceCommand {
@@ -125,6 +140,7 @@ struct AvatarShadowDistanceCommand {
 fn avatar_shadow_distance(
     mut input: ConsoleCommand<AvatarShadowDistanceCommand>,
     mut distance: ResMut<AvatarShadowDistance>,
+    shadowless: Query<(), With<DistantShadowOff>>,
 ) {
     let Some(Ok(command)) = input.take() else {
         return;
@@ -136,7 +152,10 @@ fn avatar_shadow_distance(
         }
         distance.0 = metres;
     }
-    input.reply_ok(serde_json::json!({ "metres": distance.0 }).to_string());
+    input.reply_ok(
+        serde_json::json!({ "metres": distance.0, "shadowless": shadowless.iter().count() })
+            .to_string(),
+    );
 }
 
 #[cfg(test)]
@@ -158,7 +177,7 @@ mod tests {
         app.init_resource::<AvatarShadowDistance>()
             .add_systems(Update, set_avatar_shadows);
         let world = app.world_mut();
-        world.spawn((PrimaryUser::default(), GlobalTransform::default()));
+        world.spawn((PrimaryCamera::default(), GlobalTransform::default()));
         let root = world.spawn_empty().id();
         let build = world
             .spawn((
@@ -191,7 +210,7 @@ mod tests {
         app.init_resource::<AvatarShadowDistance>()
             .add_systems(Update, set_avatar_shadows);
         let world = app.world_mut();
-        world.spawn((PrimaryUser::default(), GlobalTransform::default()));
+        world.spawn((PrimaryCamera::default(), GlobalTransform::default()));
         let root = world.spawn_empty().id();
         let build = world
             .spawn((
@@ -203,6 +222,33 @@ mod tests {
             .id();
         let mesh = world.spawn((Mesh3d::default(), ChildOf(build))).id();
 
+        app.update();
+        assert!(app.world().get::<NotShadowCaster>(mesh).is_none());
+    }
+
+    #[test]
+    fn a_far_avatar_moved_to_a_layer_of_its_own_gets_its_shadow_back() {
+        let mut app = App::new();
+        app.init_resource::<AvatarShadowDistance>()
+            .add_systems(Update, set_avatar_shadows);
+        let world = app.world_mut();
+        world.spawn((PrimaryCamera::default(), GlobalTransform::default()));
+        let root = world.spawn_empty().id();
+        let build = world
+            .spawn((
+                AvatarProcessed,
+                GlobalTransform::from_translation(Vec3::X * 50.0),
+                ChildOf(root),
+            ))
+            .id();
+        let mesh = world.spawn((Mesh3d::default(), ChildOf(build))).id();
+
+        app.update();
+        assert!(app.world().get::<NotShadowCaster>(mesh).is_some());
+
+        app.world_mut()
+            .entity_mut(build)
+            .insert(RenderLayers::layer(1));
         app.update();
         assert!(app.world().get::<NotShadowCaster>(mesh).is_none());
     }
