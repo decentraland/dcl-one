@@ -889,6 +889,134 @@ async fn the_deploy_blocks_come_from_a_search_that_remembers() {
 
 const GENESIS_MS_BEFORE: i64 = (fake_chain::GENESIS - 3600) * 1000;
 
+fn block_reads(chain: &fake_chain::FakeChain) -> usize {
+    chain
+        .calls()
+        .iter()
+        .filter(|c| *c == "eth_getBlockByNumber")
+        .count()
+}
+
+#[tokio::test]
+async fn a_block_read_is_asked_again_after_an_error_or_an_empty_answer() {
+    let chain = fake_chain::serve(|_, _| Reply::Yes(true)).await;
+    let last = ((TS / 1000 - fake_chain::GENESIS) / fake_chain::INTERVAL) as u64;
+    type Fault = fn(&fake_chain::FakeChain, usize);
+    let faults: [(&str, Fault); 2] = [
+        ("an error", fake_chain::FakeChain::fail_block_reads),
+        ("an empty answer", fake_chain::FakeChain::miss_block_reads),
+    ];
+    for (what, fault) in faults {
+        // Before the first block the search reads only the head and block 0.
+        chain.clear();
+        fault(&chain, 2);
+        assert_eq!(
+            access(Some(&chain.url), None)
+                .l1_block_at(GENESIS_MS_BEFORE)
+                .await
+                .unwrap(),
+            None,
+            "{what}"
+        );
+        assert_eq!(block_reads(&chain), 2 + 2, "{what}: the head read thrice");
+        fault(&chain, 2);
+        assert_eq!(
+            access(Some(&chain.url), None)
+                .l1_block_at(TS)
+                .await
+                .unwrap(),
+            Some(last),
+            "{what}"
+        );
+        fault(&chain, 2);
+        assert_eq!(
+            access(Some(&chain.url), None)
+                .land(OWNER, &[(1, 1)], TS)
+                .await
+                .unwrap(),
+            vec![true],
+            "{what}: the check passes"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_block_the_rpc_never_answers_is_undecided_after_three_reads() {
+    let chain = fake_chain::serve(|_, _| Reply::Yes(true)).await;
+    type Fault = fn(&fake_chain::FakeChain, usize);
+    let faults: [(&str, Fault, &str); 2] = [
+        (
+            "an error",
+            fake_chain::FakeChain::fail_block_reads,
+            "upstream request timed out",
+        ),
+        (
+            "an empty answer",
+            fake_chain::FakeChain::miss_block_reads,
+            "no block latest",
+        ),
+    ];
+    for (what, fault, needle) in faults {
+        chain.clear();
+        fault(&chain, usize::MAX);
+        let err = access(Some(&chain.url), None)
+            .l1_block_at(TS)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, ValidatorError::BlockchainQuery(m) if m.contains("block lookup") && m.contains(needle)),
+            "{what}: {err}"
+        );
+        assert_eq!(block_reads(&chain), 3, "{what}");
+        let err = access(Some(&chain.url), None)
+            .land(OWNER, &[(1, 1)], TS)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ValidatorError::BlockchainQuery(_)),
+            "{what}: {err}"
+        );
+        fault(&chain, 0);
+    }
+}
+
+#[tokio::test]
+async fn a_refused_endpoint_is_not_asked_again() {
+    let a = OnChainAccess::new(
+        Outbound::new(Default::default()).unwrap(),
+        "mainnet",
+        Some("http://127.0.0.1:9/".into()),
+        None,
+    );
+    let started = Instant::now();
+    let err = a.l1_block_at(TS).await.unwrap_err().to_string();
+    assert!(err.contains("refused"), "{err}");
+    assert!(
+        started.elapsed() < Duration::from_millis(BLOCK_READ_BASE_MS),
+        "no backoff: {:?}",
+        started.elapsed()
+    );
+}
+
+#[tokio::test]
+async fn a_dropped_check_stops_reading_blocks() {
+    let chain = fake_chain::serve(|_, _| Reply::Yes(true)).await;
+    chain.fail_block_reads(usize::MAX);
+    let a = access(Some(&chain.url), None).with_deadline(Duration::from_millis(50));
+    let err = a.l1_block_at(TS).await.unwrap_err();
+    assert!(
+        matches!(&err, ValidatorError::BlockchainQuery(m) if m.contains("did not finish")),
+        "{err}"
+    );
+    let asked = block_reads(&chain);
+    assert!(
+        asked <= 1,
+        "the deadline falls in the first backoff: {asked}"
+    );
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert_eq!(block_reads(&chain), asked, "no read after the drop");
+}
+
 /// Read-only calls to a public archive RPC (`CHECKER_LIVE_L1_RPC` and
 /// `CHECKER_LIVE_L2_RPC` override the defaults), at fixed past timestamps so
 /// the answers do not move: a parcel owned directly, one in an estate, and

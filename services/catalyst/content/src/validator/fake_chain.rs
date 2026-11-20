@@ -100,6 +100,10 @@ struct Switches {
     requests: Arc<AtomicUsize>,
     /// `eth_getCode` answers empty while set.
     no_code: Arc<AtomicBool>,
+    /// `eth_getBlockByNumber`s left to answer a JSON-RPC error.
+    failing_blocks: Arc<AtomicUsize>,
+    /// `eth_getBlockByNumber`s left to answer `null`.
+    missing_blocks: Arc<AtomicUsize>,
 }
 
 #[derive(Clone)]
@@ -130,6 +134,16 @@ impl FakeChain {
     /// Every address holds no code while set (`eth_getCode` answers `0x`).
     pub fn set_no_code(&self, no_code: bool) {
         self.switches.no_code.store(no_code, Ordering::SeqCst);
+    }
+
+    /// The next `n` block reads answer a JSON-RPC error.
+    pub fn fail_block_reads(&self, n: usize) {
+        self.switches.failing_blocks.store(n, Ordering::SeqCst);
+    }
+
+    /// The next `n` block reads answer `null`, as a replica behind the chain does.
+    pub fn miss_block_reads(&self, n: usize) {
+        self.switches.missing_blocks.store(n, Ordering::SeqCst);
     }
 
     /// The `eth_chainId` this chain answers (1 by default).
@@ -296,9 +310,19 @@ fn answer_one(fake: &Fake, body: &Value) -> Value {
                 _ => quantity(&params[0]).filter(|n| *n <= head),
             };
             fake.log.lock().unwrap().push(method.clone());
-            Ok(n.map_or(Value::Null, |n| {
-                json!({ "number": format!("0x{n:x}"), "timestamp": format!("0x{:x}", GENESIS + n as i64 * INTERVAL) })
-            }))
+            let take = |left: &AtomicUsize| {
+                left.try_update(Ordering::SeqCst, Ordering::SeqCst, |l| l.checked_sub(1))
+                    .is_ok()
+            };
+            if take(&fake.switches.failing_blocks) {
+                Err((-32000, "upstream request timed out".to_string()))
+            } else if take(&fake.switches.missing_blocks) {
+                Ok(Value::Null)
+            } else {
+                Ok(n.map_or(Value::Null, |n| {
+                    json!({ "number": format!("0x{n:x}"), "timestamp": format!("0x{:x}", GENESIS + n as i64 * INTERVAL) })
+                }))
+            }
         }
         "eth_call" => {
             fake.log.lock().unwrap().push(format!(

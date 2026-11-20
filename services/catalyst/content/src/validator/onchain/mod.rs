@@ -5,7 +5,10 @@
 //! ownership through `ownerOf`/`balanceOf` in JSON-RPC batches, every
 //! question asked at the block of the entity timestamp and again at the
 //! block five minutes before it. Blocks come from a binary search over the
-//! RPC ([`dcl_http::jsonrpc::BlockSearch`]).
+//! RPC ([`dcl_http::jsonrpc::BlockSearch`]); each block it reads is asked up
+//! to [`BLOCK_READ_ATTEMPTS`] times, an error or an empty answer (a replica
+//! behind the chain) retried after a jittered backoff. The `eth_call`s are
+//! asked once.
 //!
 //! The vendored contract data is in `contracts/` with its provenance
 //! (`upstream.lock.json`). A call that cannot be decided (no RPC, a failing
@@ -27,10 +30,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::error::ValidatorError;
-use crate::http::Outbound;
 use crate::http::jsonrpc::{
     BlockInfo, BlockSearch, BlockTag, Rpc, RpcError, hex_of, request, result_of,
 };
+use crate::http::{Outbound, RetryDecision, retry_with_backoff};
 
 pub use items::v1_collection_contract;
 
@@ -119,6 +122,10 @@ const BLOCKS_MEMO_CAP: usize = 4096;
 const RPC_TIMEOUT: Duration = Duration::from_secs(10);
 /// The longest one access check takes before it is undecided.
 const CHECK_DEADLINE: Duration = Duration::from_secs(30);
+/// Reads of one block before its error stands, and the first wait between
+/// them: 100-200 ms, then 200-400 ms.
+const BLOCK_READ_ATTEMPTS: u32 = 3;
+const BLOCK_READ_BASE_MS: u64 = 100;
 
 /// An address as the vendored JSON spells it.
 #[derive(Debug, Clone, Copy)]
@@ -227,6 +234,39 @@ fn call_params(to: Address, data: &[u8], block: BlockTag, overrides: Option<&Val
     Value::Array(params)
 }
 
+/// One block, read again after an error or an empty answer, each wait
+/// doubling with up to as much again in jitter; an endpoint the guard refuses
+/// is not asked again.
+async fn read_block(rpc: &Rpc<'_>, tag: BlockTag) -> Result<BlockInfo, RpcError> {
+    let mut attempt = 0;
+    let answer = retry_with_backoff(
+        "block read",
+        BLOCK_READ_ATTEMPTS,
+        BLOCK_READ_BASE_MS,
+        || {
+            attempt += 1;
+            let last = attempt == BLOCK_READ_ATTEMPTS;
+            let base = BLOCK_READ_BASE_MS << (attempt - 1);
+            let wait = Duration::from_millis(base + rand::random::<u64>() % base);
+            async move {
+                Ok(match rpc.block(tag).await {
+                    Err(e) if !last && !matches!(e, RpcError::Refused(_)) => RetryDecision::Retry {
+                        after: Some(wait),
+                        rate_limited: false,
+                    },
+                    answer => RetryDecision::Done(answer),
+                })
+            }
+        },
+    )
+    .await;
+    // The last attempt answers `Done`, so the budget never runs out first.
+    answer
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| Err(RpcError::Transport("block read gave no answer".into())))
+}
+
 /// One chain's RPC and the blocks read from it.
 struct Chain {
     http: Outbound,
@@ -257,7 +297,7 @@ impl Chain {
     async fn block_at(&self, timestamp: i64) -> Result<Option<BlockInfo>, ValidatorError> {
         let rpc = self.rpc();
         self.search
-            .block_at(timestamp, |tag| rpc.block(tag))
+            .block_at(timestamp, |tag| read_block(&rpc, tag))
             .await
             .map_err(|e| query_failed(&format!("{} block lookup", self.name), e))
     }
