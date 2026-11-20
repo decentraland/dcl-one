@@ -2,7 +2,8 @@
 //! (`update_ready_gltfs`): the diagnostics [`SCENE_SPAWNER`] and [`GLTF_PROCESSING`], in
 //! milliseconds, for the debug panel and load-time comparisons. With `spawn_timing=debug` in the
 //! log filter, it also logs the model whose processing took longest in a frame, when that is a
-//! millisecond or more.
+//! millisecond or more. It registers [`AVATAR_PROCESSING`] too, which the avatar crate measures
+//! into.
 
 use std::time::Duration;
 
@@ -22,8 +23,8 @@ pub const SCENE_SPAWNER: DiagnosticPath = DiagnosticPath::const_new("instantiati
 pub const GLTF_PROCESSING: DiagnosticPath =
     DiagnosticPath::const_new("instantiation/gltf_processing");
 
-/// Milliseconds a frame spends processing avatars whose parts are written (the avatar crate's
-/// `process_avatar`, which measures it).
+/// Milliseconds a frame spends processing avatars whose parts are written: the avatar crate's
+/// `process_avatar` times itself and its `measure_avatar_processing` records the value here.
 pub const AVATAR_PROCESSING: DiagnosticPath =
     DiagnosticPath::const_new("instantiation/avatar_processing");
 
