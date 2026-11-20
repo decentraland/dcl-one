@@ -13,7 +13,7 @@
 // watchGroup: its receipt, or the server's record of its credit) until it settles, across dialogs and
 // reloads. Buying an item again while one of it is unresolved shows that one instead.
 
-import { fetchProfile } from '../../../data/catalyst/profile'
+import { fetchProfile, profileFaceUrl } from '../../../data/catalyst/profile'
 import type { Eip1193Provider } from '../../../data/auth/wallet'
 import { createShopClient, type ShopClient } from '@shop/api/shop'
 import { purchaseOfferSource } from '../../../shop/api/offers'
@@ -145,15 +145,19 @@ export interface DialogSlot {
   hide(owner: DialogOwner): void
   holds(owner: DialogOwner): boolean
   holder(): DialogOwner | null
+  /** What it shows now, for whom: the step last drawn, while its owner still holds it. */
+  shown(): { owner: DialogOwner; view: ShellPurchaseView; handlers: ShellPurchaseHandlers; opening?: { pointer: boolean } } | null
   /** A purchase is open in it: its operation is still being reviewed or processed. */
   open(): boolean
 }
 
 export function createDialogSlot(ui: ShellShopUi): DialogSlot {
   let holder: DialogOwner | null = null
+  let drawn: ReturnType<DialogSlot['shown']> = null
   return {
     show(owner, view, handlers, opening) {
       holder = owner
+      drawn = { owner, view, handlers, ...(opening ? { opening } : {}) }
       ui.show(view, handlers, opening)
     },
     hand(owner) {
@@ -162,10 +166,12 @@ export function createDialogSlot(ui: ShellShopUi): DialogSlot {
     hide(owner) {
       if (holder !== owner) return
       holder = null
+      drawn = null
       ui.hide()
     },
     holds: (owner) => holder === owner,
     holder: () => holder,
+    shown: () => (drawn && drawn.owner === holder ? drawn : null),
     open: () => holder != null && (holder.state === 'reviewing' || holder.state === 'processing')
   }
 }
@@ -188,6 +194,8 @@ export interface ShellShopServices {
   creditRecord(buyer: string, creditIds: string[], client: ShopClient): Promise<'settled' | 'expired' | 'open'>
   /** The creator's display name, read here (its profile), never taken from the app. */
   creatorName(address: string): Promise<string | null>
+  /** The creator's profile picture, read here (its profile), or null while it has none. */
+  creatorFace(address: string): Promise<string | null>
   /**
    * Takes the operation's lock for this page (Web Locks), held until the returned release or until the
    * page goes; null when another live page holds it (or, with `wait`, once it lets go). A page touches
@@ -284,6 +292,20 @@ export async function fetchBuyListing(contract: string, itemId: string, client: 
   return row && !isResale(row) ? row : null
 }
 
+/** Creators' profiles, read once per page for both their name and their picture; a read that failed is tried again. */
+const creatorProfiles = new Map<string, ReturnType<typeof fetchProfile>>()
+const creatorProfile = (address: string): ReturnType<typeof fetchProfile> => {
+  let read = creatorProfiles.get(address)
+  if (!read) {
+    read = fetchProfile(address, { signal: AbortSignal.timeout(3000) }).catch(() => null)
+    creatorProfiles.set(address, read)
+    void read.then((avatar) => {
+      if (!avatar) creatorProfiles.delete(address)
+    })
+  }
+  return read
+}
+
 const LIVE: ShellShopServices = {
   client: (signer) => createShopClient(hostApiOptions({ signer })),
   // The creator-sales switch as this document holds it, asked when the listing is mapped, as the read did itself.
@@ -306,10 +328,11 @@ const LIVE: ShellShopServices = {
     return mine.length > 0 && mine.every((p) => p.status === 'EXPIRED') ? 'expired' : 'open'
   },
   creatorName: async (address) => {
-    const avatar = await fetchProfile(address, { signal: AbortSignal.timeout(3000) }).catch(() => null)
+    const avatar = await creatorProfile(address)
     const name = avatar?.name?.trim()
     return name ? name.charAt(0).toUpperCase() + name.slice(1) : null
   },
+  creatorFace: async (address) => profileFaceUrl(await creatorProfile(address)),
   claim: (id, wait) => claimLock(typeof navigator !== 'undefined' ? navigator.locks : undefined, id, wait),
   manager: (chainId) => trustedCreditsManager(chainId),
   guard: guardedProvider,
@@ -338,6 +361,9 @@ const LIVE: ShellShopServices = {
   manaEvidence: () => createManaEvidence({ reader: shopChainReader() }),
   manaTimeouts: () => ({ sendMs: SEND_MS, readMs: EVIDENCE_READ_MS })
 }
+
+/** What a wallet asks its owner to approve: a signature, a transaction, a network to move to. */
+const WALLET_PROMPTS = new Set(['eth_signTypedData_v4', 'eth_signTypedData_v3', 'eth_signTypedData', 'eth_sendTransaction', 'personal_sign', 'eth_sign', 'wallet_switchEthereumChain', 'wallet_addEthereumChain'])
 
 /** A watcher signs nothing: the wallet is never asked while a purchase is only followed. */
 const NO_WALLET: Eip1193Provider = {
@@ -580,6 +606,29 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     }
   }
   const show = (op: Operation, view: ShellPurchaseView, handlers: ShellPurchaseHandlers): void => slot.show(op, view, handlers, { pointer: op.input === 'pointer' })
+  /**
+   * The buyer's own wallet as `op` asks it: while it asks the buyer to sign (a signature or a transaction), the dialog up
+   * for `op` says so (Confirm in your wallet), and once it answers, the step it showed before comes back, unless another
+   * step was shown meanwhile. A managed wallet signs without asking anyone: it is used as it is.
+   */
+  const prompting = (op: Operation, wallet: Eip1193Provider, kind: ShopWalletKind): Eip1193Provider => {
+    if (kind !== 'web3') return wallet
+    return {
+      request: async (args) => {
+        const before = WALLET_PROMPTS.has(args.method) ? slot.shown() : null
+        if (!before || before.owner !== op) return wallet.request(args)
+        const asking: ShellPurchaseView = { step: 'wallet' }
+        slot.show(op, asking, { onClose: () => {} }, before.opening)
+        try {
+          return await wallet.request(args)
+        } finally {
+          if (slot.shown()?.view === asking) slot.show(op, before.view, before.handlers, before.opening)
+        }
+      },
+      ...(wallet.on ? { on: wallet.on.bind(wallet) } : {}),
+      ...(wallet.removeListener ? { removeListener: wallet.removeListener.bind(wallet) } : {})
+    }
+  }
   const hide = (op: Operation): void => {
     op.unwatchWallet?.()
     op.unwatchWallet = undefined
@@ -698,6 +747,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     check: (op, store) => check(op, store),
     reviewPart: (part, quote) => reviewPart(part, quote),
     create: (req, buyer, items) => create(req, buyer, items),
+    prompting: (op, wallet, kind) => prompting(op, wallet, kind),
     presentCheckout: (co) => presentCheckout(co),
     busy: () => running,
     hold: () => {
@@ -1103,11 +1153,13 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       const available = listings[i]?.available
       if (available != null && l.quantity > available) return available === 0 ? `${named(i)} is sold out.` : `Only ${available} left of ${single ? 'this item' : named(i)}.`
     }
-    // The creators' names, from their profiles, read while the offers are: never the app's word for them.
+    // The creators' names and pictures, from their profiles, read while the offers are: never the app's word for them.
     const creators = new Map<string, Promise<string | null>>()
+    const faces = new Map<string, Promise<string | null>>()
     for (const listing of listings) {
       const creator = listing?.creator
       if (creator && !creators.has(creator)) creators.set(creator, svc.creatorName(creator).catch(() => null))
+      if (creator && !faces.has(creator)) faces.set(creator, svc.creatorFace(creator).catch(() => null))
     }
     const account = parseEvmAddress(buyer)
     if (!account) return "Your sign-in can't confirm purchases here."
@@ -1151,11 +1203,14 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     const displays = await Promise.all(
       cartLines.map(async (line, i): Promise<ShellPurchaseItem> => {
         const listing = listings[i]!
+        const face = listing.creator ? await faces.get(listing.creator) : null
         return {
           name: listing.name,
           creator: (listing.creator ? await creators.get(listing.creator) : null) || shortAddress(listing.creator ?? ''),
+          ...(face ? { creatorFace: face } : {}),
           rarity: listing.rarity || 'base',
           thumbnail: listing.thumbnail || undefined,
+          ...(listing.isSmart ? { smart: true } : {}),
           category: listing.category === 'emote' ? 'emote' : (listing.wearableCategory ?? listing.category),
           credits: unitCredits.get(line.id) ?? 0
         }
@@ -1239,7 +1294,9 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       return
     }
     if (short > 0) {
-      show(op, { step: 'insufficient', items: quote.items, balance: quote.balance, need: short }, {
+      // Where the buyer holds MANA that can't pay either, Insufficient Funds shows both ways off.
+      const neither = mana != null && mana.balance > 0n && !mana.pays
+      show(op, { step: 'insufficient', items: quote.items, balance: quote.balance, need: short, ...(neither ? { mana: { price: mana.price, balance: mana.balance } } : {}) }, {
         onClose: () => close(op, 'cancelled'),
         onBuyCredits: () => {
           deps.openExternal(svc.creditsUrl())
@@ -1478,7 +1535,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       unmirror = store.subscribe(mirror)
       result = await svc.run(
         {
-          ctx: { buyer: quote.buyer, provider: svc.guard(wallet, intent), reader: svc.reader(), client: quote.client, walletKind: quote.kind, ...rail, fetchImpl: relay },
+          ctx: { buyer: quote.buyer, provider: svc.guard(prompting(op, wallet, quote.kind), intent), reader: svc.reader(), client: quote.client, walletKind: quote.kind, ...rail, fetchImpl: relay },
           store,
           guard: createSpendGuard()
         },

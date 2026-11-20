@@ -223,6 +223,7 @@ function page(
       primeFlags: async () => {},
       claim: async () => (opts.foreign ? null : () => {}),
       creatorName: async () => null,
+      creatorFace: async () => null,
       manager: (chainId) => ({ chainId, address: '0x' + 'de'.repeat(20), name: 'Decentraland Credits', version: '1.0.0' }),
       rail: () => ({
         relayerUrl: 'https://node.test/transactions-api/v1',
@@ -338,6 +339,14 @@ describe('the in-world purchase with MANA', () => {
       expect(view).toMatchObject({ step: 'method', credits: { price: 12, balance: 700, pays: true }, mana: { price: BigInt(PRICE), balance: 40n * WEI, pays: true } })
     })
 
+    it('shows Insufficient Funds with both ways off when neither the Credits nor the MANA the buyer holds pay', async () => {
+      const w = world()
+      const p = page(w, { manaBalance: WEI, creditsCents: 50 })
+      await p.open()
+      const { view } = await p.until('insufficient')
+      expect(view).toMatchObject({ step: 'insufficient', balance: 5, need: 7, mana: { price: BigInt(PRICE), balance: WEI } })
+    })
+
     it('shows MANA the buyer holds that can’t pay, beside Credits that do', async () => {
       const w = world()
       const p = page(w, { manaBalance: WEI })
@@ -416,6 +425,31 @@ describe('the in-world purchase with MANA', () => {
       expect(relayedTo(w)).toEqual([MANA, STORE])
       expect(w.wallet.sent).toHaveLength(0)
       expect(p.events.at(-1)).toMatchObject({ state: 'succeeded' })
+    })
+
+    it('says to confirm in the wallet while it asks for each signature, then shows the step it showed before', async () => {
+      const w = world()
+      const p = page(w)
+      await p.payMana()
+      ;(await p.until('authorize')).handlers.onAuthorize?.()
+      await p.until('success')
+      const steps = p.shown.map((s) => (s.view.step === 'authorize' ? `authorize:${s.view.state}` : s.view.step))
+      // The approve's signature over Authorize MANA (back to it once signed), then the sale's over Processing.
+      const approve = steps.indexOf('authorize:waiting')
+      expect(steps.slice(approve, approve + 3)).toEqual(['authorize:waiting', 'wallet', 'authorize:waiting'])
+      const sale = steps.lastIndexOf('wallet')
+      expect(steps[sale - 1]).toBe('processing')
+      expect(steps[sale + 1]).toBe('processing')
+      expect(steps.filter((s) => s === 'wallet')).toHaveLength(2)
+    })
+
+    it('never says to confirm in a wallet that signs without asking (an in-app one)', async () => {
+      const w = world({ allowance: maxUint256 })
+      const p = page(w, { kind: 'managed' })
+      await p.open()
+      ;(await p.until('confirm')).handlers.onConfirm?.()
+      await vi.waitFor(() => expect(p.shown.length).toBeGreaterThan(3))
+      expect(p.shown.some((s) => s.view.step === 'wallet')).toBe(false)
     })
 
     it('doesn’t ask again once the allowance stands: one signature, one relayed sale', async () => {

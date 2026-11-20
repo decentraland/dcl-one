@@ -22,7 +22,7 @@ import type { ManaWei, UsdCents } from '@shop/model/money'
 import type { CartLine, PurchaseOffer } from '@shop/model/purchase'
 import type { Session } from '@shop/model/settlement'
 import type { StoredLogin } from '@explorer-core/features/auth/sso'
-import { SHOP_PROTOCOL, TERMINAL_STATES, type ShopBuyRequest, type ShopLine, type ShopOperationState } from '@dcl/one-ui/apps/shop/shopProtocol'
+import { SHOP_PROTOCOL, TERMINAL_STATES, type ShopBuyRequest, type ShopLine, type ShopOperationState, type ShopWalletKind } from '@dcl/one-ui/apps/shop/shopProtocol'
 import type { ShopPaymentProgress } from '@dcl/one-ui/apps/shop/ui'
 import { checkManaTerms, registryFor, type ManaPurchaseIntent, type ManaSaleTerms } from './manaGuard'
 import {
@@ -103,6 +103,8 @@ export interface ManaFlowHost {
   checkAgain(op: Operation, view: (check: 'ready' | 'checking') => void): Promise<void>
   reviewPart(part: QuotePart, quote: Quote): Promise<{ resolved: Resolved } | { why: string; retry: 'cancelled' | null }>
   stillPending(op: Operation): boolean
+  /** The buyer's own wallet as `op` asks it: the dialog says when the wallet asks the buyer to sign. */
+  prompting(op: Operation, wallet: Eip1193Provider, kind: ShopWalletKind): Eip1193Provider
   /** A new operation for `items` (one sale of a cart), held by this page before anything of it is stored. */
   create(req: ShopBuyRequest, buyer: string | null, items: ShopLine[]): Promise<Operation>
   /** A checkout of several sales, as its dialog shows it: in progress, successful, or what went and what didn't. */
@@ -557,7 +559,7 @@ export function createManaFlow(host: ManaFlowHost): ManaFlow {
     }
     let provider: Eip1193Provider
     try {
-      provider = svc.manaGuard(attempt.observe(wallet), intent)
+      provider = svc.manaGuard(attempt.observe(host.prompting(op, wallet, quote.kind)), intent)
     } catch (e) {
       return refused(e instanceof WalletRefusal ? `${e.message} No MANA was spent.` : cannotPayMana(quote))
     }

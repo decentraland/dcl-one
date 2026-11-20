@@ -1,77 +1,52 @@
-/* The design's "Modals": 600px wide, 70px above and below the content, 60px at the sides. */
+/* The design system's Explorer modal: 600px wide, 48px above and below the content, 64px at the sides, 24px corners,
+   Brand/Purple Dark under its two pink glows (the design's radial gradients, sized to the card as they stretch with it). */
 .modal {
   position: relative;
-  isolation: isolate;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
   width: 600px;
   max-width: 100%;
-  padding: 70px 60px;
+  padding: 48px 64px;
   overflow: hidden;
   border-radius: var(--r-xl);
-  background: var(--shop-modal);
+  background:
+    radial-gradient(62% 45% at 92% -12%, rgba(255, 75, 237, 0.3) 0%, rgba(255, 75, 237, 0) 100%),
+    radial-gradient(85% 30% at 50% 112%, rgba(255, 75, 237, 0.42) 0%, rgba(255, 75, 237, 0) 100%),
+    var(--shop-modal);
   color: var(--text);
 }
 
+/* The slot: a 472px column, its sections 32px apart. */
 .content {
   position: relative;
-  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+  width: 472px;
+  max-width: 100%;
+}
+
+/* A section's header: the illustration, the title and what stands under it, 16px apart. */
+.header {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 16px;
-  width: 396px;
-  max-width: 100%;
+  width: 100%;
 }
 
-/* The CTAs sit one more gap below the content; two share the row, one takes it whole. */
+/* The CTAs, 24px apart: two share the row, one takes it whole. */
 .actions {
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   justify-content: center;
-  gap: 16px;
+  gap: 24px;
   width: 100%;
-  padding-top: 16px;
 }
 .actions > * {
   flex: 1 1 0;
   min-width: 0;
-}
-
-.gap {
-  display: block;
-  width: 0;
-  height: 0;
-}
-
-/* The pink glow off the top-right corner: the design's blurred ellipse (its export, at its own size),
-   centred 52px right of the card's edge and 94px above it, turned and flipped as drawn. */
-.glowTop {
-  position: absolute;
-  z-index: 0;
-  left: calc(100% - 230.153px);
-  top: -363.719px;
-  width: 564.326px;
-  height: 540.16px;
-  max-width: none;
-  transform: rotate(-139.73deg) scaleY(-1);
-  pointer-events: none;
-}
-
-/* The glow under the bottom edge: centred 34.5px below it (25.5px above it while busy). */
-.glowBottom {
-  position: absolute;
-  z-index: 0;
-  left: calc(50% - 574px);
-  bottom: -270px;
-  width: 1149px;
-  height: 471px;
-  max-width: none;
-  pointer-events: none;
-}
-.busy .glowBottom {
-  bottom: -210px;
 }

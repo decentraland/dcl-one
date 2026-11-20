@@ -125,6 +125,11 @@
   line-height: 1.5;
   white-space: nowrap;
 }
+/* The MANA mark in Snow, beside the grey amount. */
+.manaPrice > svg {
+  flex: none;
+  color: var(--text);
+}
 .price {
   display: inline-flex;
   flex: none;
