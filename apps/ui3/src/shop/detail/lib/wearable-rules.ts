@@ -46,12 +46,12 @@ export function entityBase(urns: string[]): string {
 
 /**
  * The one Catalyst every URN's network reads from, or undefined when they span peers (a host that names a peer for one
- * network, and an outfit with items on two): no single peer then serves the whole outfit. A URN that carries no network
- * (the off-chain body shape, a collections-v1 wearable) does not decide, as in `peerUrlFor`: it is read from whichever
- * peer the others pick, as the rules read already does.
+ * network, and an outfit with items on two): no single peer then serves the whole outfit. An off-chain URN (the body
+ * shape) does not decide: every peer serves the base avatars. Any other URN does, a collections-v1 wearable included,
+ * since a peer named for one network may not serve another's items.
  */
 export function sharedEntityBase(urns: string[]): string | undefined {
-  const networked = urns.filter((urn) => /:(amoy|matic):/.test(urn));
+  const networked = urns.filter((urn) => !urn.includes(":off-chain:"));
   if (networked.length === 0) return entityBase(urns);
   const peers = new Set(networked.map((urn) => entityBase([urn])));
   return peers.size === 1 ? [...peers][0] : undefined;

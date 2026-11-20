@@ -230,9 +230,14 @@ describe("the one Catalyst an outfit's entities share", () => {
     delete peered.__SHOP_PEERS__
   })
 
-  it("should be the item's network's peer when the URNs that carry no network are left out", () => {
+  it("should be the item's network's peer, whatever the off-chain body would fall back to", () => {
     peered.__SHOP_PEERS__ = { amoy: AMOY_PEER }
-    expect(sharedEntityBase([AMOY, BODY, V1])).toBe(AMOY_PEER)
+    expect(sharedEntityBase([AMOY, BODY])).toBe(AMOY_PEER)
+  })
+
+  it("should be none when a collections-v1 wearable joins an Amoy item: the Amoy peer may not serve it", () => {
+    peered.__SHOP_PEERS__ = { amoy: AMOY_PEER }
+    expect(sharedEntityBase([AMOY, BODY, V1])).toBeUndefined()
   })
 
   it("should be none when the outfit's networks have different peers", () => {
