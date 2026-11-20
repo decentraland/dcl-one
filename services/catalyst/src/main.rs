@@ -265,8 +265,9 @@ enum ContentCommand {
     /// are lines that are no entity id or hash (pointers), counted with
     /// their line numbers. A listed id is left alone, so a re-run adds
     /// nothing. A malformed line imports nothing and names itself. Prints
-    /// the counts as JSON; a running `serve` hides the new ids within a
-    /// minute. Not behind OPS_WRITES_ENABLED: an import is operator data.
+    /// the counts as JSON; a running `serve` hides the new ids within about
+    /// 65 seconds (its 60 s denylist reload, then up to 5 s of cached history
+    /// answers). Not behind OPS_WRITES_ENABLED: an import is operator data.
     ImportDenylist {
         #[arg(
             long,
