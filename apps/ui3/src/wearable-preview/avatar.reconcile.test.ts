@@ -311,6 +311,49 @@ test("an initial-load failure is recovered by the next outfit swap on the same s
   container.remove();
 });
 
+test("a part whose downloads ended (the parts' timeout) is not kept, and loads when it is worn again", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  // A pointer no other test resolved: resolved entities are cached for the module's life.
+  const SLOW = "urn:decentraland:matic:collections-v2:0xhat:9";
+  // The wave's timeout, fired by the test.
+  const timeouts: AbortController[] = [];
+  vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+    const ctl = new AbortController();
+    timeouts.push(ctl);
+    return ctl.signal;
+  });
+  let serve = false;
+  const slowDownloads: string[] = [];
+  const entities = globalThis.fetch;
+  globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    const path = String(url);
+    if (path.endsWith(`/content/contents/h_${SLOW}`)) {
+      slowDownloads.push(path);
+      if (serve) return { ok: true, blob: async () => new Blob([path]) } as unknown as Response;
+      return new Promise<Response>((_resolve, reject) =>
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))),
+      );
+    }
+    return entities(url, init);
+  }) as unknown as typeof fetch;
+
+  const { container, scene, onStatus, mountedParts } = mount([SLOW]);
+  await vi.waitFor(() => expect(slowDownloads).toHaveLength(1));
+  timeouts.at(-1)!.abort();
+  await vi.waitFor(() => expect(onStatus).toHaveBeenLastCalledWith("ready"));
+  expect(mountedParts()).toEqual([partName(BODY)]);
+  // Its loader never ran: nothing downloaded the part's file a second time.
+  expect(loads).not.toContain(contentUrl(SLOW));
+
+  serve = true;
+  await scene.setOutfit({ body: BODY, urns: [SLOW] });
+  expect(slowDownloads).toHaveLength(2);
+  expect(mountedParts()).toEqual([partName(BODY), partName(SLOW)]);
+
+  scene.dispose();
+  container.remove();
+});
+
 test("frames the posed avatar rather than its miniature bind pose", async () => {
   tinyBindPose = true;
   const { container, scene, onStatus, renderer } = mount([]);

@@ -410,13 +410,14 @@ export function createAvatarScene(
   }
 
   /**
-   * Object URLs of the held files among `hashes`; a file that did not download is left to the loader. Null once the
-   * wave has ended: the part is not loaded at all, so its loader does not download its files again.
+   * Object URLs of the held files among `hashes`; a file that did not download is left to the loader. Once the wave
+   * has ended it throws instead: the part is not loaded, so its loader does not download its files again, and the
+   * failure drops the part from its cache, so wearing it again loads it anew.
    */
-  async function heldUrls(files: HeldFiles, hashes: string[]): Promise<Map<string, string> | null> {
+  async function heldUrls(files: HeldFiles, hashes: string[]): Promise<Map<string, string>> {
     const blobs: (Blob | null | undefined)[] = [];
     for (const hash of hashes) blobs.push(await files.get(hash));
-    if (files.signal.aborted) return null;
+    if (files.signal.aborted) throw new DOMException("the part's downloads ended", "AbortError");
     const urls = new Map<string, string>();
     hashes.forEach((hash, i) => {
       const blob = blobs[i];
@@ -436,7 +437,6 @@ export function createAvatarScene(
     if (!mainHash) return null;
     const mainUrl = `${base}/content/contents/${mainHash}`;
     const held = await heldUrls(files, representationHashes(entity, bodyShape));
-    if (!held) return null;
     const manager = new THREE.LoadingManager();
     manager.setURLModifier((url) => {
       if (/^(blob:|data:)/.test(url)) return url;
@@ -467,7 +467,6 @@ export function createAvatarScene(
     if (!texHash) return null;
     const maskHash = hashOf(names.find((n) => n.endsWith("_mask.png")));
     const held = await heldUrls(files, maskHash ? [texHash, maskHash] : [texHash]);
-    if (!held) return null;
     const loadTex = async (hash: string, srgb: boolean): Promise<THREE.Texture> => {
       const t = await new THREE.TextureLoader().loadAsync(held.get(hash) ?? `${base}/content/contents/${hash}`);
       t.flipY = false;
@@ -509,7 +508,7 @@ export function createAvatarScene(
         return obj;
       })
       .catch((err) => {
-        console.warn("[wearable-preview] failed", key, err);
+        if (!disposed) console.warn("[wearable-preview] failed", key, err);
         partCache.delete(key);
         return null;
       });
@@ -522,7 +521,7 @@ export function createAvatarScene(
     let pending = featureCache.get(key);
     if (!pending) {
       pending = loadFacialFeature(entity, bodyShape, files).catch((err) => {
-        console.warn("[wearable-preview] failed", key, err);
+        if (!disposed) console.warn("[wearable-preview] failed", key, err);
         featureCache.delete(key);
         return null;
       });
