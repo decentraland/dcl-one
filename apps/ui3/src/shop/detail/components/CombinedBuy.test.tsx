@@ -2,6 +2,7 @@
 // chain and relay: the manager's MANA allowance approved first, ONE credit for the credits leg, the
 // MANA gap checked against what was shown, and a declined signature releasing the credit.
 
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -13,9 +14,17 @@ import { usdCents } from "@shop/model/money";
 import { presentPayment, type MixedPayment } from "@shop/payment/present";
 import { BOOK, storeMint } from "@shop/payment/fixtures";
 import { cartLineId } from "../../cart/store";
+import { SHOP_QUERY_KEYS } from "../../checkout/lib/after-purchase";
 import CombinedBuy, { readSentSplit } from "./CombinedBuy";
 
 afterEach(() => sessionStorage.clear());
+
+/** The page's query client, as the dialog's own page holds it. */
+let pageQueries: QueryClient | null = null;
+function QueryProbe() {
+  pageQueries = useQueryClient();
+  return null;
+}
 
 function setup(signedFor?: string, confirm?: "none") {
   const demo = createDemo({
@@ -36,6 +45,7 @@ function setup(signedFor?: string, confirm?: "none") {
   const line = { asset: offer.asset, listing: { acquisition: "store" as const }, display: { name: "Rainbow Hat" } };
   const shell = () => (
     <DemoShell demo={demo} path="/shop/item/x/7">
+      <QueryProbe />
       <CombinedBuy line={line} offer={offer} mixed={mixed} onClose={() => {}} portal={false} />
     </DemoShell>
   );
@@ -58,6 +68,17 @@ describe("buying with Credits and MANA", () => {
     expect(auth[0]!.body).toMatchObject({ usdPriceCents: 50, contractAddress: BOOK.collection, itemId: "7" });
     expect(demo.relay.posts).toHaveLength(2);
     expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
+  });
+
+  it("a finished purchase has the page read its MANA balance again", async () => {
+    setup();
+    const balance = [SHOP_QUERY_KEYS.manaBalance, BOOK.buyer.toLowerCase(), 137];
+    act(() => void pageQueries!.setQueryData(balance, 10n ** 21n));
+    expect(pageQueries!.getQueryState(balance)?.isInvalidated).toBe(false);
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(pageQueries!.getQueryState(balance)?.isInvalidated).toBe(true);
   });
 
   it("a declined signature releases the credit and says nothing was charged", async () => {
