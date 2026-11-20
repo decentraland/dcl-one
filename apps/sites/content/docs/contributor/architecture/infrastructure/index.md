@@ -20,7 +20,7 @@ This page covers supporting infrastructure and external services that power Dece
 
 **Used By**:
 
-* Archipelago Workers - Default voice
+* Catalyst Gatekeeper - LiveKit access for island and other voice rooms
 * Worlds - Per-world voice channels
 * Events - Event-specific channels
 
@@ -98,7 +98,7 @@ Managed subgraph hosting:
 
 | Service        | Purpose          |
 | -------------- | ---------------- |
-| Archipelago    | Position updates |
+| Pulse and Catalyst | Cluster updates, room lookup, and statistics snapshots |
 | Social Service | Friend status    |
 | Worlds         | World events     |
 

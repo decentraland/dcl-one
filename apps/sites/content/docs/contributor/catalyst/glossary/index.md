@@ -79,7 +79,7 @@ A user connected to Decentraland.
 ### Lighthouse
 
 The [Lighthouse](https://github.com/decentraland/lighthouse) is the name used to reference the previous version of the Communications Service hosted on the Catalyst nodes and used for grouping users in a P2P network.
-Main responsibilities were to determine which are the candidates for a P2P connection and do the WebRTC signaling to establish the connection. Most of this logic was done through two external components: the PeerJS Server (connects [WebRTC](https://webrtc.org/) peers) and Archipelago (receives users positions and groups them in islands).
+It selected peers for direct connections and handled WebRTC signaling.
 
 ### Backend for Frontend (aka BFF)
 
@@ -90,9 +90,11 @@ The [BFF](https://github.com/decentraland/explorer-bff) Service was created to r
 A [Catalyst Owner](https://github.com/decentraland/catalyst-owner) is an individual or organization running a Catalyst node. To add a Catalyst node to the DAO network a [proposal](https://governance.decentraland.org/?type=catalyst) needs to be submitted and the DAO nodes represent the trusted Decentraland Network.
 
 
-### Archipelago Service
+<span id="archipelago-service"></span>
 
-The [Archipelago Service](https://github.com/decentraland/archipelago-service) previously was a library used by the Lighthouse. This service will have the same responsibility that the library did: group peers into clusters so they can communicate efficiently between them. Each cluster is called an island. On the other hand, the service also needs to be able to balance islands using the available communications transports and following a set of [Catalyst Owner](https://github.com/decentraland/catalyst-owner) defined rules, in order to, for example, use LiveKit for an island in the Casino scene and P2P in a Genesis Plaza.
+### Realm WebSocket connector
+
+The signed [Realm WebSocket connector](/docs/contributor/communications/archipelago/) in the primary Catalyst API delivers Gatekeeper room assignments. The `archipelago:` adapter prefix identifies its compatibility protocol. Pulse groups nearby players into islands.
 
 ### Island
 
