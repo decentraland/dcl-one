@@ -494,6 +494,8 @@ export interface Checkout {
   failures: string[]
   /** Paid in MANA: what wasn't bought is said to have spent none. */
   mana?: true
+  /** The part handed off but not confirmed that held the rest: its step in progress says the rest wasn't sent. */
+  heldBy?: Operation
 }
 
 /** An operation and, while its dialog is up, what it shows. */

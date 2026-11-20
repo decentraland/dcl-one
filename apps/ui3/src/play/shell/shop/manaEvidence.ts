@@ -295,3 +295,45 @@ export async function resolveMana(
   }
   return { kind: 'waiting', retry: false }
 }
+
+/**
+ * Whether the attempt's sale is on chain past its checkpoint, final or not yet: a hash the relay gave for one of its
+ * sends is a successful transaction past the checkpoint, and either it is this sale's own signed execution (its bytes,
+ * sent to the venue), or, at a verified venue, its block holds the execution that consumed the sale's nonce with the
+ * sale's call (a forwarder's carriage). A receipt alone is never enough: the relay's hash may name some other
+ * transaction. This never settles the sale (only resolveMana's finalized evidence does). It says only that what comes
+ * after the sale in a checkout may go, since its nonce is spent by the sale itself. Anything it can't read is a no.
+ */
+export async function manaIncluded(
+  attempt: ManaAttemptRecord,
+  ctx: { chainId: number; buyer: string; venue: { address: string; metaTx: MetaTxStyle }; evidence: ManaEvidence }
+): Promise<boolean> {
+  const payloads = new Set(attempt.sends.flatMap((s) => (s.stage === 'dispatched' && s.payload ? [s.payload] : [])))
+  if (attempt.nonce == null || attempt.data == null || attempt.fromBlock == null || payloads.size === 0) return false
+  const { chainId, evidence } = ctx
+  const buyer = ctx.buyer.toLowerCase()
+  const venue = ctx.venue.address.toLowerCase()
+  const nonce = BigInt(attempt.nonce)
+  const call = keccak256(attempt.data)
+  const fromBlock = BigInt(attempt.fromBlock)
+  for (const send of attempt.sends) {
+    if (!send.hash) continue
+    const receipt = await evidence.receipt(chainId, send.hash)
+    if (!receipt || receipt.status !== 'success' || receipt.blockNumber <= fromBlock) continue
+    const tx = await evidence.transaction(chainId, send.hash)
+    if (tx && tx.to?.toLowerCase() === venue && payloads.has(keccak256(tx.input))) return true
+    if (!verifiedVenue(chainId, venue)) continue
+    // At a verified venue each execution moves its signer's nonce once and logs its call: the block holds the one that
+    // consumed N only when it counts exactly as many of the buyer's executions as the nonce moved across it.
+    const block = receipt.blockNumber
+    const start = await evidence.nonceAt(chainId, ctx.venue, buyer, block - 1n)
+    const end = await evidence.nonceAt(chainId, ctx.venue, buyer, block)
+    if (nonce < start || nonce >= end) continue
+    const logs = new Map((await evidence.executions(chainId, venue, block, block)).filter((e) => e.user === buyer).map((e) => [`${e.blockNumber}:${e.logIndex}`, e]))
+    const mine = [...logs.values()].sort(inChainOrder)
+    if (BigInt(mine.length) !== end - start) continue
+    const at = mine[Number(nonce - start)]
+    if (at && keccak256(at.call) === call) return true
+  }
+  return false
+}

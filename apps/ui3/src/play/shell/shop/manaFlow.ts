@@ -36,7 +36,7 @@ import {
   storedManaTerms,
   type ManaAttemptRecord
 } from './manaPurchase'
-import { boundedReader, deadline, resolveMana, verifiedVenue } from './manaEvidence'
+import { boundedReader, deadline, manaIncluded, resolveMana, verifiedVenue } from './manaEvidence'
 import { readMetaTxNonce, relaySignedMetaTransaction } from '../../../shop/checkout/chain/metatx'
 import { STORAGE_REFUSED, type Ledger } from './ledger'
 import { assertWalletAccount, WalletRefusal } from './walletGuard'
@@ -54,6 +54,8 @@ const MANA_NEVER_WENT_PART = 'one of its transactions never went out; no MANA wa
 const MANA_AFTER_PENDING_PART = 'the rest wasn’t sent while an earlier part was still being confirmed; no MANA was spent for it.'
 /** How a MANA checkout says the rest was cancelled on Authorize MANA. */
 const MANA_REST_CANCELLED_PART = 'the rest was cancelled before it was paid; no MANA was spent for it.'
+/** What the step of a sale holding the rest of its checkout adds: the rest never went, and waits in the cart. */
+const restHeld = (cart: boolean): string => ` The rest of this purchase wasn’t sent while this part is being confirmed${cart ? ', and it’s still in your cart' : ''}.`
 /** How a MANA checkout says this page couldn't hold the rest's own operation. */
 const MANA_REST_UNHELD_PART = 'this browser couldn’t keep the rest of the purchase to this tab; no MANA was spent for it.'
 /** A MANA sale's refusal (nothing of it went), as one transaction of a checkout: it spent no MANA. */
@@ -161,11 +163,13 @@ export function createManaFlow(host: ManaFlowHost): ManaFlow {
   const showPending = (op: Operation): void => {
     const kind = manaPendingKind(op)
     op.manaShown = kind
+    // A sale holding the rest of its checkout says so, whatever else it offers: settling it may take a long while.
+    const held = op.checkout?.heldBy === op ? restHeld(op.checkout.cart) : ''
     if (kind === 'retry') {
-      show(op, { step: 'pending', message: MANA_RETRY, retry: true }, { onClose: () => hide(op), onRetry: () => void retryMana(op) })
+      show(op, { step: 'pending', message: MANA_RETRY + held, retry: true }, { onClose: () => hide(op), onRetry: () => void retryMana(op) })
       return
     }
-    const message = kind === 'capped' ? MANA_NO_MORE_RETRIES : kind === 'signin' ? MANA_SIGN_IN_TO_RETRY : MANA_CHECKING
+    const message = (kind === 'capped' ? MANA_NO_MORE_RETRIES : kind === 'signin' ? MANA_SIGN_IN_TO_RETRY : MANA_CHECKING) + held
     const view = (check: 'ready' | 'checking'): void => show(op, { step: 'pending', check, message }, { onClose: () => hide(op), onCheckAgain: () => void checkAgain(op, view) })
     view('ready')
   }
@@ -208,8 +212,10 @@ export function createManaFlow(host: ManaFlowHost): ManaFlow {
     }
     // The relay refused every send that went (answering, maybe, after the send's deadline): proven unsent, it ends
     // failed (on the dialog still up for it, with TRY AGAIN; quietly when that was closed), not as one that never left.
+    // One sale of a checkout ends through the checkout, which says what went and what didn't, even when its own step
+    // is the one up: TRY AGAIN would buy that sale's items alone.
     if (!op.manaSending && !manaDispatched(attempt) && attempt.sends.some((s) => s.stage === 'refused') && !attempt.sends.some((s) => s.stage === 'signing')) {
-      if (slot.holds(op)) {
+      if (slot.holds(op) && !op.checkout) {
         op.state = 'reviewing'
         publish(op)
         const req: ShopBuyRequest = { v: SHOP_PROTOCOL, items: op.items, method: 'credits', ...(op.cart ? { cart: true as const } : {}), ...(op.input ? { input: op.input } : {}) }
@@ -364,10 +370,12 @@ export function createManaFlow(host: ManaFlowHost): ManaFlow {
    * Marketplace's trades), as the Credits' checkout runs its groups. Every sale is reviewed against the one the buyer was
    * shown before any runs, so one that changed is refused with nothing spent, never found after another was paid. Then
    * each runs as an operation of its own (its record, lock and attempt), one after another under the one confirmation
-   * and the shop-wide hold, the dialog saying which payment it is on. The next sale starts only once the executor saw
-   * the one before it confirmed: one handed off and not confirmed holds the rest (a later sale at the same venue would
-   * sign at its nonce), and what comes after it never starts; a sale that didn't go ends the checkout the same way. What
-   * went stands, each followed by the watch to the chain's word, and the dialog shows the checkout as a whole.
+   * and the shop-wide hold, the dialog saying which payment it is on. The next sale starts only once the one before it
+   * is on chain as itself (the executor saw it confirmed, and the transaction is that sale's own execution past its
+   * checkpoint), final or not: one handed off and not shown so holds the rest (a later sale at the same venue would sign
+   * at its nonce), what comes after it never starts, and its step says so. A sale that didn't go ends the checkout the
+   * same way. What went stands, each followed by the watch to the chain's finalized word, and the dialog shows the
+   * checkout as a whole.
    */
   const runManaCart = async (op: Operation, req: ShopBuyRequest, quote: Quote, mana: ManaQuote, wallet: Eip1193Provider, current: () => boolean): Promise<void> => {
     const again = (): void => restart(op, req, 'cancelled')
@@ -401,9 +409,14 @@ export function createManaFlow(host: ManaFlowHost): ManaFlow {
       }
       const ran = await runMana(run, quote, sale, wallet, current, { release: () => {}, cart: { progress: { at: i + 1, of }, sale: sales[i] } })
       if (ran.kind === 'went') {
-        if (ran.confirmed) continue
-        // Handed off and not confirmed: what comes after it never starts.
-        if (i < of - 1) co.failures.push(MANA_AFTER_PENDING_PART)
+        // Confirmed, and found on chain as this sale itself past its checkpoint: its nonce is spent by it, so the next may
+        // go, while the watch waits for the chain to finalize it.
+        if (ran.confirmed && (await included(run))) continue
+        // Handed off and not shown on chain as itself: what comes after it never starts, and its step says so.
+        if (i < of - 1) {
+          co.failures.push(MANA_AFTER_PENDING_PART)
+          co.heldBy = run
+        }
         break
       }
       // Ended already: bought, or (its reason kept by the checkout) not, and then nothing more starts.
@@ -423,6 +436,19 @@ export function createManaFlow(host: ManaFlowHost): ManaFlow {
       break
     }
     presentCheckout(co)
+  }
+
+  /** Whether `op`'s sale is on chain as itself past its checkpoint, final or not (./manaEvidence manaIncluded). */
+  const included = async (op: Operation): Promise<boolean> => {
+    if (!op.mana || !op.buyer || !op.chainId) return false
+    try {
+      const { venue } = registryFor({ chainId: op.chainId, sale: storedManaTerms(op.mana) })
+      if (!venue.metaTx) return false
+      return await manaIncluded(op.mana, { chainId: op.chainId, buyer: op.buyer, venue: { address: venue.address, metaTx: venue.metaTx }, evidence: svc.manaEvidence() })
+    } catch (e) {
+      console.warn('[shell/shop] could not read whether a MANA sale is on chain', e)
+      return false
+    }
   }
 
   /**

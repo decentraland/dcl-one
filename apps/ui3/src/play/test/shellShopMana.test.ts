@@ -1741,7 +1741,8 @@ describe('the in-world purchase with MANA', () => {
       const p = cartPage(w)
       await p.payMana()
       const pending = await p.until('pending')
-      expect(pending.view).toMatchObject({ check: 'ready', message: 'Checking your purchase. You can close this window.' })
+      // Its step says the rest never went and waits in the cart, while it may take a long while to settle.
+      expect(pending.view).toMatchObject({ check: 'ready', message: 'Checking your purchase. You can close this window. The rest of this purchase wasn’t sent while this part is being confirmed, and it’s still in your cart.' })
       expect(relayedTo(w)).toEqual([STORE])
       // The chain shows it now: CHECK AGAIN settles it, and the dialog says what went and what didn't.
       for (const hash of w.txs.keys()) w.chain.receipts.set(hash, 'success')
@@ -1817,6 +1818,59 @@ describe('the in-world purchase with MANA', () => {
       })
       expect(relayedTo(w)).toEqual([STORE])
       expect(ends(p)).toEqual(['succeeded', 'cancelled'])
+    })
+
+    it('holds the rest when the relay’s hash for a sale names another transaction, however well its receipt reads', async () => {
+      const w = world({ advancing: true })
+      allowed(w, STORE, MARKET)
+      // A successful receipt for the hash the relay gave, which isn't the sale's signed execution; finality lags.
+      w.onChain.foreignHash = true
+      w.onChain.frozen = true
+      const p = cartPage(w)
+      await p.payMana()
+      const pending = await p.until('pending')
+      expect(relayedTo(w)).toEqual([STORE])
+      expect(pending.view).toMatchObject({ message: 'Checking your purchase. You can close this window. The rest of this purchase wasn’t sent while this part is being confirmed, and it’s still in your cart.' })
+      expect(ends(p)).toEqual(['pending'])
+    })
+
+    it('ends a later sale the relay refused past its deadline through the checkout: what went, and what didn’t', async () => {
+      const w = world({ advancing: true })
+      allowed(w, STORE, MARKET)
+      let release!: () => void
+      const held = new Promise<void>((r) => (release = r))
+      // The Marketplace's relay request is refused (marked as never sent), and the answer comes after the send's deadline.
+      const lateAtMarket = (async (url: string, init?: RequestInit) => {
+        const target = String((JSON.parse(String(init?.body)) as { transactionData: { params: unknown[] } }).transactionData.params[0]).toLowerCase()
+        if (target !== MARKET) return w.relay.fetchImpl(url, init)
+        w.relay.state.mode = 'refuse'
+        const res = await w.relay.fetchImpl(url, init)
+        await held
+        return res
+      }) as unknown as typeof fetch
+      const sleepers: (() => void)[] = []
+      const wake = () => sleepers.splice(0).forEach((r) => r())
+      const p = cartPage(w, {
+        services: {
+          rail: () => ({ relayerUrl: 'https://node.test/transactions-api/v1', fetchImpl: lateAtMarket, gasless: true, wait: { timeoutMs: 30, pollMs: 10 } }),
+          sleep: () => new Promise<void>((r) => sleepers.push(r)),
+          manaTimeouts: () => ({ sendMs: 50, readMs: 50 })
+        }
+      })
+      await p.payMana()
+      await p.until('pending')
+      const [, market] = [...new Set(p.events.map((e) => e.operation))]
+      await new Promise((r) => setTimeout(r, 120))
+      release()
+      await new Promise((r) => setTimeout(r, 30))
+      wake()
+      await vi.waitFor(() => expect(p.events.filter((e) => e.operation === market).at(-1)?.state).toBe('failed'))
+      const failed = await p.until('failed')
+      expect(failed.view).toMatchObject({
+        retry: false,
+        message: 'Part of this purchase went through, but not all of it: one of its transactions couldn’t go out; no MANA was spent for it. What wasn’t bought is still in your cart.'
+      })
+      expect(ends(p)).toEqual(['succeeded', 'failed'])
     })
 
     it('goes on once the executor sees a sale confirmed, and shows each one still being finalized until the chain settles all of it', async () => {
