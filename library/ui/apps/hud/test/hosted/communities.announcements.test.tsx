@@ -251,6 +251,21 @@ describe('announcements tab', () => {
     expect((field as HTMLTextAreaElement).value).not.toContain(':smil')
   })
 
+  it('closes the emoji panel on a press in the field, on POST, and keeps it open on a pick', async () => {
+    const card = renderCard('owner', posts([]))
+    const field = screen.getByRole('textbox', { name: 'New announcement' })
+    await userEvent.click(screen.getByRole('button', { name: 'Emoji' }))
+    const panel = screen.getByRole('dialog', { name: 'Emoji picker' })
+    await userEvent.click(within(panel).getAllByRole('button', { name: /^(?!Smileys|Animals|Food|Activities|Travel|Objects|Symbols|Flags)/ })[0])
+    expect(screen.getByRole('dialog', { name: 'Emoji picker' })).toBeInTheDocument()
+    await userEvent.click(field)
+    expect(screen.queryByRole('dialog', { name: 'Emoji picker' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Emoji' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Post announcement' }))
+    expect(card.onPost).toHaveBeenCalled()
+    expect(screen.queryByRole('dialog', { name: 'Emoji picker' })).not.toBeInTheDocument()
+  })
+
   it("shows the author's marks: verified or #tag, and official", () => {
     renderCard('member', posts([post(1, { official: true }), post(2, { hasClaimedName: false, author: 'Anon' })]))
     const [first, second] = screen.getAllByRole('article')

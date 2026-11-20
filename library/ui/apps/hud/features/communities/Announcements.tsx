@@ -10,7 +10,7 @@ import heartSolid from '../../assets/communities/favourite-solid.png'
 import { splitName } from '@explorer-core/lib/identity'
 import type { CommunityPost } from '@explorer-core/engine/protocol'
 import { EmojiButton } from '../chat/EmojiButton'
-import { EmojiPicker } from '../chat/EmojiPicker'
+import { EmojiPicker, useCloseEmojiPanelOnOutsidePress } from '../chat/EmojiPicker'
 import { EmojiSuggestList, emojiSuggestionAt, moveSelection, type EmojiSuggestion } from '../chat/EmojiSuggestList'
 import { isCancelKey } from '../../lib/bindingLabels'
 import { knownUserColor } from '../session/profileStore'
@@ -124,6 +124,9 @@ function Composer({
   const [picker, setPicker] = useState(false)
   const [sug, setSug] = useState<EmojiSuggestion | null>(null)
   const field = useRef<HTMLTextAreaElement | null>(null)
+  // As unity-explorer's: the panel closes on a press outside it (the field and POST included).
+  const pickerRef = useRef<HTMLDivElement>(null)
+  useCloseEmojiPanelOnOutsidePress(picker, pickerRef, () => setPicker(false))
   // the text clears once a post went through, not when it is sent
   const [seen, setSeen] = useState(posted)
   if (seen !== posted) {
@@ -194,7 +197,7 @@ function Composer({
         />
         {sug != null && <EmojiSuggestList className={styles.suggest} suggestion={sug} onAccept={(i) => accept(sug, i)} />}
         {picker && (
-          <div className={styles.picker}>
+          <div ref={pickerRef} className={styles.picker}>
             <EmojiPicker
               onPick={insertAtCaret}
               onClose={() => {
@@ -211,7 +214,10 @@ function Composer({
               {draft.length}/{ANNOUNCEMENT_MAX}
             </span>
           )}
-          <Button size="sm" disabled={draft.trim() === '' || posting} onClick={() => onPost(draft.trim())} aria-label="Post announcement">
+          <Button size="sm" disabled={draft.trim() === '' || posting} onClick={() => {
+              setPicker(false)
+              onPost(draft.trim())
+            }} aria-label="Post announcement">
             {posting ? <Spinner size={14} /> : 'POST'}
           </Button>
         </div>
