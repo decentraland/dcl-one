@@ -282,8 +282,8 @@ pub struct GltfHandle(Handle<Gltf>);
 /// The bounds the materials of a root's glTF containers clip to, on a root with no
 /// `RendererSceneContext`: a scene's stand-in (`scene_lod`), whose containers this path loads and
 /// processes as it does a live scene's. Such a root also carries the scene's
-/// `SceneEntityDefinitionHandle`, a `SceneResourceLookup`, a `ComponentTracker` and a
-/// `SceneColliderData`.
+/// `SceneEntityDefinitionHandle` (or a `StandInContent`), a `SceneResourceLookup`, a
+/// `ComponentTracker` and a `SceneColliderData`.
 #[derive(Component)]
 pub struct StandInBounds(pub SceneBounds);
 
@@ -299,6 +299,12 @@ pub enum GltfPart {
     /// What is drawn: shares the live scene's asset and builds no collider.
     Visuals,
 }
+
+/// The scene hash a stand-in root's containers load under when the root has no entity
+/// definition: a far LOD, whose one model is a url. The url resolves without the scene's content
+/// map, and its download ranks under the scene's hash.
+#[derive(Component)]
+pub(crate) struct StandInContent(pub String);
 
 #[derive(Component, Deref)]
 pub struct GltfReady(pub(super) InstanceId);
@@ -409,7 +415,10 @@ fn update_gltf(
         (Entity, &SceneEntity, &GltfHandle, &GltfDefinition),
         (With<GltfDefinition>, Without<GltfLoaded>),
     >,
-    scene_def_handles: Query<&SceneEntityDefinitionHandle>,
+    scene_contents: Query<(
+        Option<&SceneEntityDefinitionHandle>,
+        Option<&StandInContent>,
+    )>,
     (scene_defs, gltfs, images, ipfas, mut base_mats): (
         Res<Assets<EntityDefinition>>,
         Res<Assets<Gltf>>,
@@ -480,16 +489,21 @@ fn update_gltf(
 
         // a value that cannot load leaves no handle behind: the previous model's would spawn it
         // again
-        let Ok(h_scene_def) = scene_def_handles.get(scene_ent.root) else {
-            warn!("no scene definition found, can't process file request");
-            commands.entity(ent).try_remove::<GltfHandle>();
-            continue;
-        };
-
-        let Some(scene_def) = scene_defs.get(h_scene_def.0.id()) else {
-            warn!("scene definition not loaded, can't process file request");
-            commands.entity(ent).try_remove::<GltfHandle>();
-            continue;
+        let content_hash = match scene_contents.get(scene_ent.root) {
+            Ok((Some(h_scene_def), _)) => {
+                let Some(scene_def) = scene_defs.get(h_scene_def.0.id()) else {
+                    warn!("scene definition not loaded, can't process file request");
+                    commands.entity(ent).try_remove::<GltfHandle>();
+                    continue;
+                };
+                scene_def.id.as_str()
+            }
+            Ok((None, Some(content))) => content.0.as_str(),
+            _ => {
+                warn!("no scene definition found, can't process file request");
+                commands.entity(ent).try_remove::<GltfHandle>();
+                continue;
+            }
         };
 
         let transfer_priority = if immediate_scene == Some(scene_ent.root) {
@@ -501,14 +515,14 @@ fn update_gltf(
             Ok(
                 ipfas.load_content_file_colliders::<Gltf, GltfLoaderSettings>(
                     &gltf.0.src,
-                    &scene_def.id,
+                    content_hash,
                     collider_gltf_loader_settings,
                 ),
             )
         } else {
             ipfas.load_content_file_with_settings::<Gltf, GltfLoaderSettings>(
                 &gltf.0.src,
-                &scene_def.id,
+                content_hash,
                 scene_gltf_loader_settings(transfer_priority, no_render_app.is_some()),
             )
         };
@@ -663,7 +677,9 @@ pub struct GltfMaterialName(String);
 pub struct CachedMeshData {
     pub mesh_id: AssetId<Mesh>,
     pub is_skinned: bool,
-    pub shape: SharedShape,
+    /// the collision shape, which only colliders read: built for a part that may make colliders,
+    /// and left `None` by a visuals part until a part that may make colliders reuses the mesh
+    pub shape: Option<SharedShape>,
     pub maybe_collider: Option<Handle<Mesh>>,
 }
 
@@ -981,10 +997,8 @@ impl NodeProcessing<'_, '_> {
                     }
                 }
 
-                let shape = mesh_to_parry_shape(mesh_data).unwrap_or_else(|| {
-                    warn!("gltf mesh has no positions; using placeholder collider");
-                    SharedShape::ball(0.01)
-                });
+                // a visuals part makes no colliders, so it builds no shape for them
+                let shape = colliders.then(|| collider_shape(mesh_data));
 
                 let maybe_collider = if is_skinned {
                     let mut new_mesh = Mesh::new(
@@ -1028,6 +1042,23 @@ impl NodeProcessing<'_, '_> {
                 *tracker.0.entry("Unique Meshes").or_default() += 1;
                 (h_gltf_mesh.0.clone(), data)
             };
+
+            // a lookup shared by a visuals part and a colliders part (none is today) can hold a
+            // mesh a visuals part cached without a shape: build it for a part that may make
+            // colliders, once, and keep it in the cache
+            let mut data = data;
+            if colliders && data.shape.is_none() {
+                if let Some(mesh_data) = meshes.get(h_mesh.id()) {
+                    data.shape = Some(collider_shape(mesh_data));
+                    if let Some(cached) =
+                        maybe_hash.and_then(|hash| resource_lookup.meshes_by_hash.get_mut(&hash))
+                    {
+                        cached.shape = data.shape.clone();
+                    }
+                } else {
+                    warn!("mesh for colliders is gone from the assets; its colliders are dropped");
+                }
+            }
 
             *tracker.0.entry("Total Meshes").or_default() += 1;
 
@@ -1173,7 +1204,10 @@ impl NodeProcessing<'_, '_> {
             let is_collider = is_collider || definition.0.visible_meshes_collision_mask.is_some();
 
             // a visuals part leaves its colliders to its scene's colliders part
-            if colliders && is_collider && collider_bits != Some(0) {
+            if let (true, Some(shape)) = (
+                colliders && is_collider && collider_bits != Some(0),
+                &data.shape,
+            ) {
                 let collider_bits = collider_bits
                     .unwrap_or(ColliderLayer::ClPhysics as u32 | ColliderLayer::ClPointer as u32);
                 let index = progress
@@ -1191,7 +1225,7 @@ impl NodeProcessing<'_, '_> {
                 commands
                     .entity(spawned_ent)
                     .try_insert(MeshCollider::<CtCollider> {
-                        shape: MeshColliderShape::Shape(data.shape.clone(), h_collider),
+                        shape: MeshColliderShape::Shape(shape.clone(), h_collider),
                         collision_mask: collider_bits,
                         mesh_name: collider_base_name.map(ToOwned::to_owned),
                         index: *index,
@@ -1199,7 +1233,10 @@ impl NodeProcessing<'_, '_> {
                     });
             }
 
-            if colliders && is_trigger && collider_bits != Some(0) {
+            if let (true, Some(shape)) = (
+                colliders && is_trigger && collider_bits != Some(0),
+                &data.shape,
+            ) {
                 let collider_bits = collider_bits.unwrap_or(ColliderLayer::ClPlayer as u32);
                 let index = progress
                     .collider_counter
@@ -1216,7 +1253,7 @@ impl NodeProcessing<'_, '_> {
                 commands
                     .entity(spawned_ent)
                     .try_insert(MeshCollider::<CtTrigger> {
-                        shape: MeshColliderShape::Shape(data.shape.clone(), h_collider),
+                        shape: MeshColliderShape::Shape(shape.clone(), h_collider),
                         collision_mask: collider_bits,
                         mesh_name: collider_base_name.map(ToOwned::to_owned),
                         index: *index,
@@ -1630,6 +1667,14 @@ fn _node_graph(
 
     let dot = petgraph::dot::Dot::with_config(&graph, &[petgraph::dot::Config::EdgeNoLabel]);
     format!("{dot:?}")
+}
+
+/// A mesh's collision shape, or a small placeholder for a mesh with no positions.
+fn collider_shape(mesh_data: &Mesh) -> SharedShape {
+    mesh_to_parry_shape(mesh_data).unwrap_or_else(|| {
+        warn!("gltf mesh has no positions; using placeholder collider");
+        SharedShape::ball(0.01)
+    })
 }
 
 /// Returns None when the mesh has no POSITION attribute — a crafted glTF can produce

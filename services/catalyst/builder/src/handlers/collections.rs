@@ -1,5 +1,4 @@
 // from: catalyrst/crates/catalyrst-builder/src/handlers/collections.rs (the by-id routes); the listing rule from builder-server's Collection.router.ts getCollections/getAddressCollections and Item.router.ts getItems/getAddressItems
-use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{OriginalUri, Path, Query, State};
@@ -13,7 +12,6 @@ use crate::SharedState;
 use crate::auth::{signed_path, try_extract_signer};
 use crate::http::{ApiData, ApiError};
 use crate::items::{CollectionMetaOut, FullItemOut, ItemQuery};
-use crate::onchain;
 
 use super::drafts::signer;
 use super::onchain::ItemsParams;
@@ -230,39 +228,25 @@ fn unauthorized_for(eth_address: &str) -> Response {
 }
 
 /// The curation committee (builder-server's `isCommitteeMember`):
-/// `BUILDER_ADMIN_ADDRESSES` and the curators the collections subgraphs
-/// list, memoised five minutes as `/v1/collections/curation` reads them;
-/// without a reader only the configured addresses, and a failed lookup
-/// refuses (a listing is never widened by an outage).
-pub(super) async fn is_committee(state: &SharedState, address: &str) -> bool {
+/// `BUILDER_ADMIN_ADDRESSES` and the current members of the Polygon
+/// committee index ([`crate::committee`]); an unpublished index admits only
+/// the configured addresses, and a failed read answers 503 to anyone else, as
+/// the curation console does (a listing is never widened by an outage).
+pub(super) async fn is_committee(state: &SharedState, address: &str) -> Result<bool, ApiError> {
     if state
         .settings
         .admin_addresses
         .iter()
         .any(|a| a.eq_ignore_ascii_case(address))
     {
-        return true;
+        return Ok(true);
     }
-    let Some(market) = state
-        .market
-        .as_deref()
-        .filter(|m| onchain::configured(Some(m)))
-    else {
-        return false;
-    };
-    match state
-        .committee_memo
-        .get_or_fetch((), || async {
-            onchain::committee_members(market).await.map(Arc::new)
-        })
-        .await
-    {
-        Ok(members) => members
-            .iter()
-            .any(|m| m.address.eq_ignore_ascii_case(address)),
+    match crate::committee::current_members(state.items.pool()).await {
+        Ok(Some(members)) => Ok(members.iter().any(|m| m.eq_ignore_ascii_case(address))),
+        Ok(None) => Ok(false),
         Err(error) => {
-            tracing::warn!(error = %error, "committee lookup failed; the listing is refused");
-            false
+            tracing::warn!(error = %error, "committee read failed");
+            Err(ApiError::http(503, "committee unavailable"))
         }
     }
 }
@@ -278,7 +262,8 @@ async fn refusal_unless_own_or_committee(
     address: &str,
 ) -> Result<Option<Response>, ApiError> {
     let signer = signer(state, headers, "get", original, local).await?;
-    if signer.as_str().eq_ignore_ascii_case(address) || is_committee(state, signer.as_str()).await {
+    if signer.as_str().eq_ignore_ascii_case(address) || is_committee(state, signer.as_str()).await?
+    {
         return Ok(None);
     }
     Ok(Some(unauthorized_for(address)))
@@ -319,7 +304,7 @@ pub async fn get_collections(
     )
     .await
     {
-        Some(signer) if is_committee(&state, signer.as_str()).await => Ok(Json(ApiData::ok(
+        Some(signer) if is_committee(&state, signer.as_str()).await? => Ok(Json(ApiData::ok(
             state.items.collection_drafts_of_everyone().await?,
         ))
         .into_response()),
@@ -337,7 +322,7 @@ pub async fn get_items(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let signer = signer(&state, &headers, "get", &original, &uri).await?;
-    if !is_committee(&state, signer.as_str()).await {
+    if !is_committee(&state, signer.as_str()).await? {
         return Ok(unauthorized_for(signer.as_str()));
     }
     Ok(Json(ApiData::ok(state.items.item_drafts_of_everyone().await?)).into_response())
@@ -390,6 +375,7 @@ pub async fn get_address_items(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     use axum::Router;
     use axum::body::Body;
@@ -409,12 +395,15 @@ mod tests {
     }
 
     async fn state(committee: &str) -> Option<SharedState> {
-        let pool = crate::db::scratch::pool(4).await?;
+        Some(state_on(crate::db::scratch::pool(4).await?, committee).await)
+    }
+
+    async fn state_on(pool: sqlx::PgPool, committee: &str) -> SharedState {
         let settings = crate::Settings {
             admin_addresses: vec![committee.to_string()],
             ..Default::default()
         };
-        Some(Arc::new(
+        Arc::new(
             crate::State::new(
                 pool,
                 temp_storage().await,
@@ -425,7 +414,7 @@ mod tests {
                 settings,
             )
             .unwrap(),
-        ))
+        )
     }
 
     async fn get(app: &Router, path: &str, key: Option<&str>) -> (StatusCode, Value) {
@@ -677,6 +666,184 @@ mod tests {
         assert!(!should_paginate(Some(1), Some(0)));
         assert!(!should_paginate(Some(1), Some(100_000)));
         assert!(!should_paginate(Some(1), Some(100_001)));
+    }
+
+    /// The committee is the index's current membership: a wallet whose latest
+    /// MemberSet removed it is refused, a member that never curated is
+    /// admitted, a MemberSet past the published block does not count yet,
+    /// and an unpublished or stale index admits only the configured addresses.
+    #[tokio::test]
+    async fn committee_is_the_current_indexed_membership() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+            return;
+        };
+        let (removed, member, admin) = (
+            address_of(STRANGER_KEY),
+            address_of(COMMITTEE_KEY),
+            address_of(OWNER_KEY),
+        );
+        let pending = "0x00000000000000000000000000000000000000cc";
+        let state = state_on(pool.clone(), &admin).await;
+        let app = crate::router(state.clone());
+        let old = "0x71d9350ef44e1e451f00e447c0dff2d1fb75510a";
+        let current = "0xaeec95a8aa671a6d3fec56594827d7804964fa70";
+        for (block, contract, wallet, set) in [
+            (10_i64, old, removed.as_str(), true),
+            (20, current, removed.as_str(), false),
+            (30, current, member.as_str(), true),
+            (150, current, pending, true),
+        ] {
+            sqlx::query(
+                "INSERT INTO shop.committee_event (network, block_number, log_index, block_time, contract_address, member, is_member) \
+                 VALUES ('matic', $1, 0, $1, $2, $3, $4)",
+            )
+            .bind(block)
+            .bind(contract)
+            .bind(wallet)
+            .bind(set)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let publish = |folded_at: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, fold_through, folded_at, full_history) \
+                     VALUES ('committee', 'matic', 0, 100, 100, 100, {folded_at}, true) \
+                     ON CONFLICT (indexer, network) DO UPDATE SET folded_at = EXCLUDED.folded_at, last_block = EXCLUDED.last_block"
+                )))
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+
+        assert!(
+            !is_committee(&state, &member).await.unwrap(),
+            "no published index: not a member yet"
+        );
+        assert!(is_committee(&state, &admin).await.unwrap());
+
+        publish("timezone('UTC', now())").await;
+        assert!(is_committee(&state, &member).await.unwrap());
+        assert!(
+            !is_committee(&state, &removed).await.unwrap(),
+            "removed member"
+        );
+        assert!(
+            !is_committee(&state, pending).await.unwrap(),
+            "past the published block"
+        );
+        assert!(is_committee(&state, &admin).await.unwrap());
+
+        sqlx::query("UPDATE shop.chain_cursor SET last_block = 200 WHERE indexer = 'committee'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            is_committee(&state, &member).await.unwrap(),
+            "a walk ahead of its last publish keeps the published membership"
+        );
+        assert!(
+            !is_committee(&state, pending).await.unwrap(),
+            "until it publishes"
+        );
+
+        let (status, _) = get(&app, "/v1/items", Some(COMMITTEE_KEY)).await;
+        assert_eq!(status, StatusCode::OK, "a member that never curated");
+        let (status, body) = get(&app, "/v1/items", Some(STRANGER_KEY)).await;
+        assert_eq!(
+            (status, body),
+            (StatusCode::UNAUTHORIZED, refusal_of(&removed))
+        );
+
+        publish("timezone('UTC', now()) - interval '2 hours'").await;
+        assert!(
+            !is_committee(&state, &member).await.unwrap(),
+            "a stale index"
+        );
+        assert!(is_committee(&state, &admin).await.unwrap());
+
+        // A failed read answers 503, not a refusal; the admin addresses
+        // need no read.
+        sqlx::query("ALTER TABLE shop.committee_event RENAME TO committee_event_gone")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, body) = get(&app, "/v1/items", Some(COMMITTEE_KEY)).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        let (status, body) = get(&app, "/v1/items", Some(OWNER_KEY)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        pool.close().await;
+    }
+
+    /// The curation console lists the published index's current members,
+    /// an empty committee while the index is unpublished, and answers 503
+    /// when the index cannot be read.
+    #[tokio::test]
+    async fn curation_console_lists_the_indexed_committee() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+            return;
+        };
+        let admin = address_of(OWNER_KEY);
+        let state = state_on(pool.clone(), &admin).await;
+        let app = crate::router(state);
+        let (removed, member) = (
+            "0x00000000000000000000000000000000000000aa",
+            "0x00000000000000000000000000000000000000bb",
+        );
+        for (block, wallet, set) in [
+            (10_i64, removed, true),
+            (20, member, true),
+            (30, removed, false),
+        ] {
+            sqlx::query(
+                "INSERT INTO shop.committee_event (network, block_number, log_index, block_time, contract_address, member, is_member) \
+                 VALUES ('matic', $1, 0, $1, '0xaeec95a8aa671a6d3fec56594827d7804964fa70', $2, $3)",
+            )
+            .bind(block)
+            .bind(wallet)
+            .bind(set)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let committee = |body: &Value| {
+            body["data"]["committee"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|m| m["address"].as_str().map(str::to_string))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+
+        let (status, body) = get(&app, "/v1/collections/curation", Some(OWNER_KEY)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(committee(&body).is_empty(), "unpublished index: {body}");
+
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, fold_through, folded_at, full_history) \
+             VALUES ('committee', 'matic', 0, 100, 100, 100, timezone('UTC', now()), true)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (status, body) = get(&app, "/v1/collections/curation", Some(OWNER_KEY)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(committee(&body), vec![member.to_string()], "{body}");
+
+        sqlx::query("ALTER TABLE shop.committee_event RENAME TO committee_event_gone")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, body) = get(&app, "/v1/collections/curation", Some(OWNER_KEY)).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        pool.close().await;
     }
 
     #[derive(Default)]

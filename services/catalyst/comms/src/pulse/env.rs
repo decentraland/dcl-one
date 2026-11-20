@@ -213,7 +213,7 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
     ),
     (
         "PULSE_REPLAY_ENTRIES_PER_WALLET",
-        "consumed-handshake entries one wallet may hold while they are fresh, including clock-ahead handshakes the server answered; a client signs one per connection attempt, so the default sits above the reconnect cadence of one client; defense in depth beside the per-source and whitelisted quotas, which bound the table; a handshake over it is refused with the pre-auth budget code and may be retried once older entries leave the freshness window; applies to every source; 0 means unlimited (default 32)",
+        "consumed-handshake entries one wallet may hold while they are fresh, including handshakes signed ahead of the server clock; a client signs one per connection attempt, so the default sits above the reconnect cadence of one client; defense in depth beside the per-source and whitelisted quotas, which bound the table; a handshake over it is refused with the pre-auth budget code and may be retried once older entries leave the freshness window; applies to every source; 0 means unlimited (default 32)",
     ),
     (
         "ARCHIPELAGO_CONTROL_V4_AUDIENCE",

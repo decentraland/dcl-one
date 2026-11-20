@@ -38,9 +38,14 @@
 //!
 //! The same base serves a scene's near-LOD descriptor, the asset pipeline's initial scene state
 //! (`{base}/LOD/lods-unity/manifests/{sceneId}_InitialSceneState.json`,
-//! [`IpfsIo::bevy_lod_descriptor`]).
+//! [`IpfsIo::bevy_lod_descriptor`]), and its far LOD, abgen's one simplified mesh for the scene
+//! (`{base}/LOD/lods-bevy/lods/{sceneId}_1.glb`, [`IpfsIo::bevy_far_lod`]), the latter under the
+//! conditions of a manifest request, on a GPU with BC textures only. A far LOD the server has
+//! none for is not asked for again in the session, and far LODs pause while their requests fail
+//! (`far_lod`).
 
 mod debug_panel;
+mod far_lod;
 pub mod ktx2;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
@@ -65,10 +70,14 @@ use serde::Deserialize;
 use tokio::sync::watch;
 use web_time::Duration;
 
+pub use far_lod::FarLodStatus;
+use far_lod::{BreakerChange, FarLodHealth, FAR_LOD_BREAKER_FAILURES, FAR_LOD_COOL_DOWN};
+
 use crate::{
     content_hash,
     download::FetchPolicy,
-    ipfs_path::{CacheKey, IpfsPath},
+    failed_remotes,
+    ipfs_path::{is_http_url, CacheKey, IpfsPath},
     IpfsIo, IpfsResource, SharedBytes,
 };
 
@@ -90,7 +99,7 @@ pub enum Decoded {
     BcTexture,
     /// A `glb-br` model: the original `.glb`, fetched as its Brotli copy that the browser
     /// decodes, handed to the glTF loader of the original path. Web only.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    #[cfg(target_arch = "wasm32")]
     BrotliGlb,
     /// A `glb` model: a GLB with its embedded images as BC KTX2, handed to the glTF loader of
     /// the original path as it is; the loader decodes each image through the host KTX2
@@ -174,6 +183,7 @@ pub fn taken_formats() -> String {
     for row in SUPPORTED_FORMATS {
         let how = match row.decoded {
             Decoded::BcTexture => "BC1/BC5/BC7, unwrapped to DDS by the image loaders",
+            #[cfg(target_arch = "wasm32")]
             Decoded::BrotliGlb => "Brotli, decoded by the browser",
             Decoded::BcGlb => "embedded BC1/BC5/BC7, unwrapped to DDS by the glTF loader",
         };
@@ -203,7 +213,7 @@ pub const MANIFEST_DEADLINE: Duration = Duration::from_secs(2);
 /// a host that never answers holds a request slot.
 const MANIFEST_TIMEOUT: Duration = Duration::from_secs(3);
 /// A variant download: one attempt, with short timeouts, since the original is the retry.
-const VARIANT_FETCH: FetchPolicy = FetchPolicy {
+pub(crate) const VARIANT_FETCH: FetchPolicy = FetchPolicy {
     headers_timeout: Duration::from_secs(5),
     idle_timeout: Duration::from_secs(5),
     max_attempts: 1,
@@ -215,6 +225,10 @@ const BREAKER_FAILURES: u32 = 5;
 /// failed, before it assembles without it. Long enough for the original's download on a slow
 /// link; past it the avatar is built as it was before variants.
 const MODEL_RELOAD_WAIT: Duration = Duration::from_secs(120);
+/// Where a scene's far LOD is under the variants base:
+/// `{base}{FAR_LOD_DIR}{sceneId}{FAR_LOD_SUFFIX}`.
+const FAR_LOD_DIR: &str = "/LOD/lods-bevy/lods/";
+const FAR_LOD_SUFFIX: &str = "_1.glb";
 
 /// One variant of an original: where it is served, and the class its path's prefix letter
 /// names. The path also identifies it (failed variants, caches): abgen keeps a path's bytes
@@ -325,11 +339,13 @@ fn extension(file_path: &str) -> Option<String> {
 }
 
 /// Whether a file of this type could be replaced by any supported format; others never wait on
-/// a manifest.
+/// a manifest. A url a scene names (a far LOD's among them) never could: a manifest maps the
+/// scene's content files, by hash.
 pub fn could_have_variant(file_path: &str) -> bool {
-    SUPPORTED_FORMATS
-        .iter()
-        .any(|row| row.accepts_path(file_path))
+    !is_http_url(file_path)
+        && SUPPORTED_FORMATS
+            .iter()
+            .any(|row| row.accepts_path(file_path))
 }
 
 /// Whether this client can load `variant` at `file_path`: a supported format, for a file type
@@ -379,6 +395,18 @@ pub fn scene_eligibility(
         return Err("loopback content server");
     }
     Ok(())
+}
+
+/// Where a scene's far LOD comes from ([`IpfsIo::bevy_far_lod`]).
+#[derive(Clone, Debug, PartialEq)]
+pub enum FarLodSource {
+    /// abgen's mesh for the scene.
+    Url(String),
+    /// Not known yet: the GPU has not reported its BC support, or the content context is being
+    /// written. Ask again later.
+    NotYet,
+    /// None for this scene in this session, and why.
+    Unavailable(String),
 }
 
 #[derive(Clone, Debug)]
@@ -457,6 +485,8 @@ pub struct BevyVariants {
     /// When each entity's manifest was requested, for [`MANIFEST_DEADLINE`].
     requested_at: Mutex<HashMap<String, web_time::Instant>>,
     session: Mutex<Session>,
+    /// What the far LOD requests have answered: missing meshes and the breaker.
+    far_lods: Mutex<FarLodHealth>,
 }
 
 impl BevyVariants {
@@ -464,14 +494,24 @@ impl BevyVariants {
         self.base.get().map(String::as_str)
     }
 
+    /// The scene whose far LOD `remote` is ([`IpfsIo::bevy_far_lod`]'s url), if it is one.
+    fn far_lod_scene<'a>(&self, remote: &'a str) -> Option<&'a str> {
+        remote
+            .strip_prefix(self.base()?)?
+            .strip_prefix(FAR_LOD_DIR)?
+            .strip_suffix(FAR_LOD_SUFFIX)
+    }
+
     fn bc(&self) -> bool {
         self.bc.get().copied().unwrap_or(false)
     }
 
     fn set_base(&self, url: &str) {
-        let url = url.trim().trim_end_matches('/');
+        let url = url.trim();
         match url::Url::parse(url) {
             Ok(parsed) if matches!(parsed.scheme(), "http" | "https") => {
+                // the serialised form, so a prefix match agrees with a re-serialised remote url
+                let url = parsed.as_str().trim_end_matches('/');
                 if self.base.set(url.to_owned()).is_ok() {
                     info!("bevy variants: on, from `{url}`");
                 }
@@ -673,6 +713,123 @@ impl IpfsIo {
         ))
     }
 
+    /// abgen's one simplified mesh for a scene, its far LOD, under the variants base. Offered on
+    /// the terms a manifest request has (variants on and not turned off for the session, the
+    /// scene eligible) and only on a GPU with BC textures: the mesh's atlases are BC KTX2 only.
+    /// Like a `glb` variant it is fetched at its own path: its Brotli copy exists only when it is
+    /// smaller, and the server sends it to a browser that accepts `br`.
+    ///
+    /// Not offered again for a scene the server answered a definitive status for (404) this
+    /// session. Naming a url does not spend the breaker's probe: whether its download may start
+    /// is [`IpfsIo::far_lod_may_request`].
+    pub fn bevy_far_lod(&self, scene: &str) -> FarLodSource {
+        let Some(base) = self.bevy_variants.base() else {
+            return FarLodSource::Unavailable("bevy variants off".to_owned());
+        };
+        if let Some(reason) = self.bevy_variants.disabled() {
+            return FarLodSource::Unavailable(format!("variants off: {reason}"));
+        }
+        match self.bevy_variants.bc.get() {
+            None => return FarLodSource::NotYet,
+            Some(false) => {
+                return FarLodSource::Unavailable("the GPU has no BC texture support".to_owned())
+            }
+            Some(true) => (),
+        }
+        let contents = match self.context.try_read() {
+            Ok(context) => context.contents_base_url(scene),
+            Err(_) => return FarLodSource::NotYet,
+        };
+        if let Err(reason) = scene_eligibility(scene, contents.as_deref(), self.is_preview) {
+            return FarLodSource::Unavailable(reason.to_owned());
+        }
+        let scene = scene.to_lowercase();
+        {
+            let mut health = self.bevy_variants.far_lods.lock().unwrap();
+            if health.is_missing(&scene) {
+                return FarLodSource::Unavailable("the server has none for the scene".to_owned());
+            }
+            health.name(&scene);
+        }
+        FarLodSource::Url(format!("{base}{FAR_LOD_DIR}{scene}{FAR_LOD_SUFFIX}"))
+    }
+
+    /// Records what a download of `remote` came to when it is a far LOD's: the mesh (`Ok`), a
+    /// status (`Err(Some)`), or another failure: an error or a timeout (`Err(None)`). A
+    /// definitive status (`failed_remotes::is_definitive`, such as 404) means the server has no
+    /// mesh for the scene; any status other than that counts as a failure.
+    pub(crate) fn far_lod_fetched(
+        &self,
+        remote: &str,
+        result: Result<(), Option<reqwest::StatusCode>>,
+    ) {
+        let Some(scene) = self.bevy_variants.far_lod_scene(remote) else {
+            return;
+        };
+        let change = {
+            let mut health = self.bevy_variants.far_lods.lock().unwrap();
+            // only a url this client named is a far LOD: a scene can make up any other
+            if !health.is_named(scene) {
+                return;
+            }
+            match result {
+                Ok(()) => health.answered(scene, false),
+                Err(Some(status)) if failed_remotes::is_definitive(status) => {
+                    health.answered(scene, true)
+                }
+                Err(_) => health.failed(scene, web_time::Instant::now()),
+            }
+        };
+        match change {
+            Some(BreakerChange::Tripped) => warn!(
+                "far LODs: paused, {FAR_LOD_BREAKER_FAILURES} requests in a row failed (last \
+                 `{remote}`); one is tried every {}s until it is answered",
+                FAR_LOD_COOL_DOWN.as_secs()
+            ),
+            Some(BreakerChange::Recovered) => info!("far LODs: answered again, resumed"),
+            None => (),
+        }
+    }
+
+    /// Whether a far LOD's download may start now. While far LODs are paused it is false, except
+    /// once per cool-down (the probe), which a true answer spends, so call it only right before
+    /// starting a download.
+    pub fn far_lod_may_request(&self) -> bool {
+        if self.bevy_variants.disabled().is_some() {
+            return false;
+        }
+        self.bevy_variants
+            .far_lods
+            .lock()
+            .unwrap()
+            .may_request(web_time::Instant::now())
+    }
+
+    /// Whether `remote` is a far LOD url this client named ([`IpfsIo::bevy_far_lod`]).
+    pub(crate) fn is_named_far_lod(&self, remote: &str) -> bool {
+        self.bevy_variants
+            .far_lod_scene(remote)
+            .is_some_and(|scene| self.bevy_variants.far_lods.lock().unwrap().is_named(scene))
+    }
+
+    /// Whether no far LOD can be offered this session: no variants base, variants turned off,
+    /// a GPU known to have no BC textures, or preview.
+    pub fn far_lods_off(&self) -> bool {
+        self.is_preview
+            || self.bevy_variants.base().is_none()
+            || self.bevy_variants.disabled().is_some()
+            || self.bevy_variants.bc.get() == Some(&false)
+    }
+
+    /// The far LODs' missing meshes and breaker, for `/scene_lod_state`.
+    pub fn far_lod_status(&self) -> FarLodStatus {
+        self.bevy_variants
+            .far_lods
+            .lock()
+            .unwrap()
+            .status(web_time::Instant::now())
+    }
+
     /// Asks abgen for an entity's manifest (a scene, wearable or emote), once per session. A
     /// no-op when variants are off.
     pub fn request_bevy_variants(self: &Arc<Self>, entity: &str) {
@@ -827,6 +984,7 @@ impl IpfsIo {
         // own path is fetched and the server sends the copy to a client that accepts `br`
         let url = match decoded {
             Decoded::BcTexture | Decoded::BcGlb => format!("{base}/{}", variant.path),
+            #[cfg(target_arch = "wasm32")]
             Decoded::BrotliGlb => format!("{base}/{}.br", variant.path),
         };
         let key = CacheKey::Url(content_hash::url_cache_name(&url));
@@ -895,6 +1053,7 @@ impl IpfsIo {
             // byte: checked against the original's own content hash, a truncated or corrupt
             // copy falls back here, and one that passes is the original, so a glTF loader
             // failure on it is the original's own and needs no reload
+            #[cfg(target_arch = "wasm32")]
             Decoded::BrotliGlb => {
                 (!content_hash::matches_content_hash(&original, &fetched)).then(|| {
                     format!(

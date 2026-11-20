@@ -302,6 +302,8 @@ impl Rig {
             ("RUST_LOG", "info".into()),
             ("REALM_NAME", REALM.into()),
             ("WORLDS_WRITES_ENABLED", "true".into()),
+            // Personal worlds only: no DCL NAME holder reader.
+            ("IGNORE_BLOCKCHAIN_ACCESS_CHECKS", "true".into()),
             ("WORLDS_PERSONAL_WORLDS_MAX", "5".into()),
             ("CATALYRST_WORLDS_ADMIN_TOKEN", self.admin_token.clone()),
             ("ENCRYPTION_KEY", self.encryption_key.clone()),

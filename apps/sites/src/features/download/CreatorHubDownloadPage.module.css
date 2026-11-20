@@ -8,9 +8,14 @@
   align-items: center;
   justify-content: center;
   background: linear-gradient(150deg, #2a0c43 0%, #1a0a2e 50%, #3d1464 100%);
-  min-height: calc(100vh - 64px);
-  padding: 80px 0;
+  /* The room under the top bar and the Create tabs, so the card sits centred in the view when it fits. */
+  min-height: calc(100vh - var(--site-header-h, 92px) - 56px);
+  padding: var(--dcl-space-24) 0;
   box-sizing: border-box;
+
+  @media (min-width: 1024px) {
+    min-height: calc(100vh - var(--site-header-h, 92px) - 64px);
+  }
 }
 
 .card {
@@ -72,9 +77,6 @@
 
 /* The decentraland-ui2 theme's breakpoints: down("md") is max-width 1023.95px, down("sm") 990.95px. */
 @media (max-width: 990.95px) {
-  .root {
-    padding: 40px 0;
-  }
   .title {
     font-size: 1.75rem; /* reference 28px, no token */
   }
@@ -87,8 +89,31 @@
     padding: 40px;
     min-height: auto;
   }
+  .info {
+    align-items: center;
+    width: 100%;
+    text-align: center;
+  }
+  .actions {
+    align-items: center;
+  }
   .banner {
     width: 100%;
     max-width: 400px;
   }
+}
+
+@media (max-width: 768px) {
+  .card {
+    width: calc(100% - 32px);
+    padding: var(--dcl-space-24);
+    border-radius: var(--dcl-radius-xl);
+  }
+}
+
+/* The Create section's field behind Sites' top bar and the tabs, as on the section's other pages. */
+:global(.site-layout):has(.root) {
+  background: radial-gradient(61.64% 109.58% at 50% 54.49%, #952dc6 0%, #7c27a8 25%, #642089 50%, #4b1a6b 75%, #32134c 100%)
+    fixed;
+  background-color: #32134c;
 }

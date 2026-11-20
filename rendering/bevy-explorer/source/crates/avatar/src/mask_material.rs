@@ -54,7 +54,10 @@ impl Material for MaskMaterial {
 }
 
 mod decl {
-    #![allow(dead_code)]
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
     use bevy::{math::Vec4, render::render_resource::ShaderType};
 
     #[derive(ShaderType, Debug, Clone)]
