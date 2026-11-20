@@ -396,7 +396,7 @@ fn world_resolution_sql() -> String {
 /// kept, and not shadowed by a scene (the scene clear owns those).
 fn clear_candidates_sql(world: bool) -> String {
     let leg = if world { "TRUE" } else { "FALSE" };
-    let scene = super::scene_identity::is_scene_id_sql("id");
+    let scene = super::scene_identity::is_scene_id_sql("explore.place_indexed.id");
     format!(
         "SELECT id FROM explore.place_indexed WHERE world IS {leg} AND highlighted IS FALSE
          AND {EXCLUDE_FROM_RANKING_SQL} IS FALSE AND {RANKING_IS_SET_SQL} AND id <> ALL($1::text[])

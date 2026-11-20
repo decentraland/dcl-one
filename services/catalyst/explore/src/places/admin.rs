@@ -2947,6 +2947,7 @@ mod tests {
             ),
             (&plain, json!({})),
             (&twin, json!({})),
+            (&dropped.to_uppercase(), json!({})),
             (
                 &shared,
                 json!({"world": true, "world_name": "bulk.dcl.eth"}),
@@ -2971,6 +2972,7 @@ mod tests {
             (&excluded, 8.0),
             (&shared, 3.0),
             (&twin, 2.5),
+            (&dropped.to_uppercase(), 4.4),
         ] {
             ranking::set_ranking(&pool, id, Some(value), "data")
                 .await
@@ -3075,6 +3077,8 @@ mod tests {
             (&excluded, json!(8.0)),
             (&shared, json!(0)),
             (&twin, json!(2.5)),
+            // A catalogue row a scene shadows in another spelling is the scene's.
+            (&dropped.to_uppercase(), json!(4.4)),
         ] {
             assert_eq!(stored(id.clone()).await, expected, "{id}");
         }
