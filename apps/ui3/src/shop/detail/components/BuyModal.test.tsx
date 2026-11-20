@@ -106,6 +106,21 @@ describe("Buy now's dialog", () => {
     expect(within(dialog).queryByTestId("price-changed")).toBeNull();
   });
 
+  it("opened again later with the page's fresh offer, it shows the price at once: the line holds that offer before the check starts", async () => {
+    // A first open, long after its offer was quoted: the dialog waits for the check.
+    const first = renderBuy({ session: "web2" }, { seenAt: Date.now() - 60_000 });
+    await settledDialog();
+    first.unmount();
+
+    const check = heldOffers();
+    const { line, lineId } = renderBuy({ session: "web2" }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });
+    const dialog = await screen.findByTestId("buy-modal");
+    await waitFor(() => expect(phaseOf(dialog)).toBe("ready"));
+    expect(within(dialog).getByTestId("buy-modal-buy")).toBeDisabled();
+    await check.answer({ [lineId]: line.seen! });
+    await waitFor(() => expect(within(dialog).getByTestId("buy-modal-buy")).toBeEnabled());
+  });
+
   it("a check still running after a moment says why Buy waits, and the notice goes with the answer", async () => {
     const check = heldOffers();
     const { line, lineId } = renderBuy({ session: "web2" }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });

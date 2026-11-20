@@ -122,9 +122,11 @@ export function useCartRevalidation(
   opts: { enabled?: boolean; revision?: string | number; onSeen?: (lineId: string, offer: PurchaseOffer | null) => void } = {},
 ): CartRevalidation {
   const enabled = opts.enabled ?? true;
-  const [state, setState] = useState<{ status: RevalidationStatus; seenRecently: boolean; result: RevalidationResult; error: unknown; pricedFor: string | null }>({
+  // `firstCheck`: the running check is the first under the session and revision the seen offers were quoted under, so
+  // the offers the lines hold may stand on screen until it ends (`seenRecently` below).
+  const [state, setState] = useState<{ status: RevalidationStatus; firstCheck: boolean; result: RevalidationResult; error: unknown; pricedFor: string | null }>({
     status: "idle",
-    seenRecently: false,
+    firstCheck: false,
     result: { offers: {}, changes: [] },
     error: null,
     pricedFor: null,
@@ -140,22 +142,22 @@ export function useCartRevalidation(
 
   useEffect(() => {
     if (!enabled || latest.current.lines.length === 0) {
-      setState({ status: "idle", seenRecently: false, result: { offers: {}, changes: [] }, error: null, pricedFor: null });
+      setState({ status: "idle", firstCheck: false, result: { offers: {}, changes: [] }, error: null, pricedFor: null });
       return;
     }
     const controller = new AbortController();
     const { lines: current, session: who, fetchOffers: fetcher } = latest.current;
-    const recent = tick === 0 && firstAsked.current === `${sessionKey}|${opts.revision ?? ""}` && current.every((l) => seenRecently(l));
-    setState((s) => ({ ...s, status: "checking", seenRecently: recent, error: null }));
+    const firstCheck = tick === 0 && firstAsked.current === `${sessionKey}|${opts.revision ?? ""}`;
+    setState((s) => ({ ...s, status: "checking", firstCheck, error: null }));
     const asked = revalidationIdentity(current);
     revalidateCart(current, who, fetcher, controller.signal).then(
       (result) => {
         if (controller.signal.aborted) return;
-        setState({ status: result.changes.length === 0 ? "current" : "changed", seenRecently: false, result, error: null, pricedFor: asked });
+        setState({ status: result.changes.length === 0 ? "current" : "changed", firstCheck: false, result, error: null, pricedFor: asked });
       },
       (error: unknown) => {
         if (controller.signal.aborted) return;
-        setState((s) => ({ ...s, status: "failed", seenRecently: false, error }));
+        setState((s) => ({ ...s, status: "failed", firstCheck: false, error }));
       },
     );
     return () => controller.abort();
@@ -172,9 +174,12 @@ export function useCartRevalidation(
     setState({ ...s, status: blocking.length === 0 ? "current" : "changed", result: { ...s.result, changes: blocking } });
   }, []);
 
+  // Read from the lines as they are now, not as the check found them: a line the page hands its fresh offer after the
+  // check started (Buy now holds its line in its own effect, which runs after this hook's) still counts.
+  const recent = state.status === "checking" && state.firstCheck && lines.length > 0 && lines.every((l) => seenRecently(l));
   return {
     status: state.status,
-    seenRecently: state.seenRecently,
+    seenRecently: recent,
     offers: state.result.offers,
     changes: state.result.changes,
     error: state.error,
