@@ -19,25 +19,30 @@ export const TRANSFER_ABI = [
 const FIRST_RETRY_MS = 5_000
 const MAX_RETRY_MS = 120_000
 
+/** The body code of the catalyst's 503 for a node with no tip index: its claim could only expire. */
+export const TIP_INDEX_UNAVAILABLE = 'tip-index-unavailable'
+
 /**
- * How a forward ended: the catalyst took it, refused it (asking again changes nothing), had no tip index to confirm
- * it with (503: its claim could only expire), or time ran out.
+ * How a forward ended: the catalyst took it, refused it (asking again changes nothing), answered that it has no tip
+ * index (`TIP_INDEX_UNAVAILABLE`), or time ran out.
  */
 export type ForwardOutcome = 'notified' | 'refused' | 'unavailable' | 'gave-up'
 
-/** A failed forward's HTTP status (0 or none: no answer) and the seconds the server asked to wait. */
-function failure(e: unknown): { status: number; retryAfterSecs: number } {
-  const { status, retryAfterSecs } = (e ?? {}) as { status?: unknown; retryAfterSecs?: unknown }
+/** A failed forward's HTTP status (0 or none: no answer), the seconds the server asked to wait and its body code. */
+function failure(e: unknown): { status: number; retryAfterSecs: number; code?: string } {
+  const { status, retryAfterSecs, code } = (e ?? {}) as { status?: unknown; retryAfterSecs?: unknown; code?: unknown }
   return {
     status: typeof status === 'number' ? status : 0,
-    retryAfterSecs: typeof retryAfterSecs === 'number' && retryAfterSecs > 0 ? retryAfterSecs : 0
+    retryAfterSecs: typeof retryAfterSecs === 'number' && retryAfterSecs > 0 ? retryAfterSecs : 0,
+    code: typeof code === 'string' ? code : undefined
   }
 }
 
 /**
- * Forwards a mined tip, retrying what may succeed later (429, 5xx but 503, no answer) with backoff, never sooner than the
- * server's Retry-After, until `deadline`. A failure carries its `status` and `retryAfterSecs` (as the catalyst
- * client's errors do). Never throws.
+ * Forwards a mined tip until `deadline`. It retries what may succeed later (429, any 5xx, no answer) with backoff,
+ * never sooner than the server's Retry-After. It stops at a 503 whose body code is `TIP_INDEX_UNAVAILABLE`, and at
+ * any other 4xx. A failure carries its `status`, `retryAfterSecs` and `code` (as the catalyst client's errors do).
+ * Never throws.
  */
 export async function forwardUntil(
   hash: string,
@@ -53,8 +58,8 @@ export async function forwardUntil(
       await forward(hash)
       return 'notified'
     } catch (e) {
-      const { status, retryAfterSecs } = failure(e)
-      if (status === 503) return 'unavailable'
+      const { status, retryAfterSecs, code } = failure(e)
+      if (status === 503 && code === TIP_INDEX_UNAVAILABLE) return 'unavailable'
       if (!(status === 0 || status === 429 || status >= 500)) return 'refused'
       hint = retryAfterSecs * 1000
     }

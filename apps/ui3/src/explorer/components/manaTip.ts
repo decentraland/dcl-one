@@ -2,7 +2,7 @@ import { encodeFunctionData, isAddress, parseUnits, toHex } from "viem";
 
 import type { Eip1193Provider } from "../../data/auth/wallet";
 import { getJSON, sendSignedJSON, type SendOpts } from "../../data/catalyst/client";
-import { forwardUntil, TRANSFER_ABI } from "@explorer-core/features/donate/tip";
+import { forwardUntil, TRANSFER_ABI, type ForwardOutcome } from "@explorer-core/features/donate/tip";
 import type { PaymentsConfig } from "@catalyst-api/economy/PaymentsConfig";
 
 const MANA_DECIMALS = 18;
@@ -108,7 +108,7 @@ export async function forwardTip(transactionHash: string, opts: SendOpts = {}): 
   });
 }
 
-export type TipDelivery = "notified" | "reverted" | "refused" | "unavailable" | "gave-up";
+export type TipDelivery = ForwardOutcome | "reverted";
 
 export type TipDeliveryOpts = {
   forward?: (transactionHash: string) => Promise<void>;

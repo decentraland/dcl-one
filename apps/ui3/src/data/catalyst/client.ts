@@ -8,6 +8,8 @@ export class CatalystError extends Error {
   url: string;
   /** Seconds the server asked to wait before retrying (`Retry-After` or a JSON `retryAfter`). */
   retryAfterSecs?: number;
+  /** The JSON body's `code`, when the server names the refusal. */
+  code?: string;
 
   constructor(message: string, url: string, status = 0) {
     super(message);
@@ -351,11 +353,13 @@ export async function sendSignedJSON<T = unknown>(
   if (status < 200 || status >= 300) {
     let serverMsg = "";
     let retryAfter: unknown;
+    let code: unknown;
     if (body) {
       try {
-        const parsed = JSON.parse(body) as { retryAfter?: unknown } | null;
+        const parsed = JSON.parse(body) as { retryAfter?: unknown; code?: unknown } | null;
         serverMsg = envelopeMessage(parsed);
         retryAfter = parsed?.retryAfter;
+        code = parsed?.code;
       } catch {
         serverMsg = body;
       }
@@ -363,6 +367,7 @@ export async function sendSignedJSON<T = unknown>(
     const err = new CatalystError(serverMsg || `Catalyst returned ${status}`, url, status);
     // The bridge passes no headers, so the server repeats Retry-After in the body.
     if (typeof retryAfter === "number" && Number.isFinite(retryAfter) && retryAfter > 0) err.retryAfterSecs = retryAfter;
+    if (typeof code === "string") err.code = code;
     throw err;
   }
 

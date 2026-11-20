@@ -1,10 +1,10 @@
 // A mined tip's forward to the catalyst (features/donate/tip): retried while it may still succeed, never sooner
-// than the server’s Retry-After, never after a refusal or a 503 (no tip index to confirm it).
+// than the server’s Retry-After, never after a refusal or a 503 coded as having no tip index.
 import { describe, expect, it, vi } from 'vitest'
-import { forwardUntil } from '../features/donate/tip'
+import { forwardUntil, TIP_INDEX_UNAVAILABLE } from '../features/donate/tip'
 
 const HASH = '0x' + 'ab'.repeat(32)
-const failed = (status: number, retryAfterSecs?: number) => Object.assign(new Error(`HTTP ${status}`), { status, retryAfterSecs })
+const failed = (status: number, retryAfterSecs?: number, code?: string) => Object.assign(new Error(`HTTP ${status}`), { status, retryAfterSecs, code })
 
 function clock() {
   let t = 0
@@ -38,8 +38,15 @@ describe('forwarding a mined tip', () => {
   })
 
   it('stops at once when the catalyst has no tip index to confirm it', async () => {
-    const unavailable = vi.fn().mockRejectedValue(failed(503))
+    const unavailable = vi.fn().mockRejectedValue(failed(503, undefined, TIP_INDEX_UNAVAILABLE))
     expect(await forwardUntil(HASH, unavailable, { ...clock(), deadline: 600_000 })).toBe('unavailable')
     expect(unavailable).toHaveBeenCalledOnce()
+  })
+
+  it('retries any other 503, as a lagging index or a gateway answers, after its Retry-After', async () => {
+    const c = clock()
+    const forward = vi.fn().mockRejectedValueOnce(failed(503, 60)).mockRejectedValueOnce(failed(503)).mockResolvedValue(undefined)
+    expect(await forwardUntil(HASH, forward, { ...c, deadline: 600_000 })).toBe('notified')
+    expect(c.waits).toEqual([60_000, 10_000])
   })
 })

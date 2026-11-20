@@ -653,20 +653,26 @@ describe('sending a tip', () => {
     await flush()
     await flush()
     expect(retried).toHaveBeenCalledTimes(2)
-    const refused = vi.fn().mockRejectedValue(new CatalystError('no', 'u', 400))
-    const r = setup({ forward: refused, now: () => 0 })
-    await open(r.donate)
-    r.handlers().onSend?.('166')
-    await flush()
-    await flush()
-    expect(refused).toHaveBeenCalledOnce()
-    const unavailable = vi.fn().mockRejectedValue(new CatalystError('no index', 'u', 503))
-    const u = setup({ forward: unavailable, now: () => 0 })
-    await open(u.donate)
-    u.handlers().onSend?.('166')
-    await flush()
-    await flush()
-    expect(unavailable).toHaveBeenCalledOnce()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const noIndex = Object.assign(new CatalystError('no index', 'u', 503), { code: 'tip-index-unavailable' })
+    for (const [err, outcome] of [
+      [new CatalystError('no', 'u', 400), 'refused'],
+      [noIndex, 'unavailable']
+    ] as const) {
+      // A clock that advances with every wait: a regression that retried ends at the deadline, not in a hang.
+      let t = 0
+      const sleep = vi.fn(async (ms: number) => void (t += ms))
+      const stopped = vi.fn().mockRejectedValue(err)
+      const s = setup({ forward: stopped, sleep, now: () => t })
+      await open(s.donate)
+      s.handlers().onSend?.('166')
+      await flush()
+      await flush()
+      expect(stopped).toHaveBeenCalledOnce()
+      expect(sleep).not.toHaveBeenCalled()
+      expect(warn).toHaveBeenCalledWith('[donate] tip forward', outcome)
+    }
+    warn.mockRestore()
   })
 
   it('asks the places service on every donate.target: nothing is kept', async () => {
