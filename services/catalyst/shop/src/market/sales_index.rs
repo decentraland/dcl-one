@@ -12,9 +12,6 @@
 //! difference.
 
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 use alloy_primitives::U256;
 use alloy_sol_types::{SolType, sol_data};
@@ -22,12 +19,10 @@ use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
 
-use super::MarketplaceState;
 use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_SALES, LogGroup};
 use super::chain_walk::{topic_address, topic_u256};
 use super::nft_index::{self, DecodeError};
 use crate::chain_index::rpc::{Rpc, RpcLog};
-use crate::jobs::{Jobs, PeriodicCfg};
 
 /// `Issue(address indexed _beneficiary, uint256 indexed _tokenId, uint256 indexed _itemId, uint256 _issuedId, address _caller)` (v2 collections).
 pub const TOPIC_ISSUE: &str = "0x57e2fe3f4d57a597e655a893f43c395d7dc18cb9c9c1898eda75cc0ad7608525";
@@ -636,78 +631,6 @@ pub async fn status(pool: &PgPool) -> Value {
             "ready": chain_walk::is_ready(&c, Utc::now()), "reorgRewinds": c.reorg_rewinds,
         })),
     })
-}
-
-/// Attaches `sales-index` when `MARKETPLACE_SALES_INDEX_ENABLED` and a
-/// Polygon JSON-RPC endpoint (`TRADE_RPC_URLS` 137=) are configured, on the
-/// market indexes' cadence and budget: the venue check on its first tick,
-/// then one pass per tick once the collections mirror has completed a pass
-/// (the address set is only as complete as it).
-pub fn spawn_job(market: &Arc<MarketplaceState>, jobs: &Jobs) {
-    let settings = market.settings.market.indexes.clone();
-    if !settings.sales_enabled {
-        tracing::info!(
-            job = "sales-index",
-            "marketplace chain index off: its routes answer the unavailable envelope"
-        );
-        return;
-    }
-    let Some(url) = market.chain_rpc_url(ChainNet::Matic) else {
-        tracing::warn!(
-            job = "sales-index",
-            "marketplace chain index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=): it stays off"
-        );
-        return;
-    };
-    let market = market.clone();
-    let venues_checked = Arc::new(AtomicBool::new(false));
-    let holdings = Arc::new(chain_walk::Holdings::default());
-    jobs.spawn_periodic_leased(
-        "sales-index",
-        PeriodicCfg::every(settings.interval)
-            .with_jitter(Duration::from_secs(1))
-            .with_error_backoff(Duration::from_secs(30)),
-        move |ctx| {
-            let (market, url, settings, venues_checked, holdings) = (
-                market.clone(),
-                url.clone(),
-                settings.clone(),
-                venues_checked.clone(),
-                holdings.clone(),
-            );
-            async move {
-                let rpc = Rpc::at(&market.http, &url);
-                if !venues_checked.load(Ordering::SeqCst) {
-                    check_venues(&rpc, &market.pool).await?;
-                    venues_checked.store(true, Ordering::SeqCst);
-                }
-                let source = chain_walk::RpcSource::new(rpc);
-                let lease = ctx.lease();
-                if !nft_index::mirror_complete(&market.pool, ChainNet::Matic).await {
-                    ctx.progress(
-                        "sales matic: waiting for the collections mirror's first complete pass"
-                            .to_string(),
-                    );
-                    return Ok(());
-                }
-                let progress = |m: String| ctx.progress(m);
-                let outcome = chain_walk::job_pass(
-                    &market.pool,
-                    &source,
-                    &SalesIndex,
-                    &settings,
-                    &holdings,
-                    lease,
-                    Some(&ctx.cancel),
-                    &progress,
-                )
-                .await?;
-                tracing::info!(indexer = INDEXER_SALES, summary = %outcome.summary(), "marketplace chain index pass");
-                ctx.progress(outcome.summary());
-                Ok(())
-            }
-        },
-    );
 }
 
 #[cfg(test)]

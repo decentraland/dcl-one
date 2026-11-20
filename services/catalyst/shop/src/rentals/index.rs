@@ -23,8 +23,6 @@
 
 use crate::market::chain_walk::{topic_address, topic_u256};
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
 
 use alloy_primitives::Address;
 use alloy_sol_types::{SolType, sol_data};
@@ -33,8 +31,6 @@ use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool, Row};
 
 use crate::chain_index::rpc::RpcLog;
-use crate::jobs::{Jobs, PeriodicCfg};
-use crate::market::MarketplaceState;
 use crate::market::chain_walk::{self, ChainIndex, ChainNet, LogGroup};
 
 pub const INDEXER_RENTALS: &str = "rentals";
@@ -578,68 +574,6 @@ pub async fn status(pool: &PgPool) -> Value {
         })),
         "venue": RENTALS_MAINNET,
     })
-}
-
-/// Attaches `rentals-index` when a chain-1 JSON-RPC endpoint is configured
-/// (`TRADE_RPC_URLS` 1=, or `ETH_RPC_URL` on mainnet) and `enabled`
-/// (`SHOP_RENTALS_INDEX_ENABLED`) is not `Some(false)`, on the market
-/// indexes' cadence and budget. Run by `catalyst index`; a fresh cursor
-/// walks from the contract's deployment.
-pub fn spawn_job(market: &Arc<MarketplaceState>, jobs: &Jobs, enabled: Option<bool>) {
-    if enabled == Some(false) {
-        tracing::info!(
-            "rentals index off (SHOP_RENTALS_INDEX_ENABLED=false): rental listings keep the status they were posted with"
-        );
-        return;
-    }
-    // The venue is mainnet's: off mainnet ETH_RPC_URL serves another chain.
-    let Some(url) = market.venue_rpc_url(1) else {
-        let why = "no chain-1 JSON-RPC endpoint is configured (TRADE_RPC_URLS 1=, or ETH_RPC_URL on mainnet)";
-        if enabled == Some(true) {
-            tracing::warn!("rentals index enabled but {why}: it stays off");
-        } else {
-            tracing::info!("rentals index off: {why}");
-        }
-        return;
-    };
-    let settings = market.settings.market.indexes.clone();
-    let market = market.clone();
-    let holdings = Arc::new(chain_walk::Holdings::default());
-    jobs.spawn_periodic_leased(
-        "rentals-index",
-        PeriodicCfg::every(settings.interval)
-            .with_jitter(Duration::from_secs(20))
-            .with_error_backoff(Duration::from_secs(1800)),
-        move |ctx| {
-            let (market, url, settings, holdings) = (
-                market.clone(),
-                url.clone(),
-                settings.clone(),
-                holdings.clone(),
-            );
-            async move {
-                let source = chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(
-                    &market.http,
-                    &url,
-                ));
-                let progress = |m: String| ctx.progress(m);
-                let outcome = chain_walk::job_pass(
-                    &market.pool,
-                    &source,
-                    &RentalsIndex::mainnet(),
-                    &settings,
-                    &holdings,
-                    ctx.lease(),
-                    Some(&ctx.cancel),
-                    &progress,
-                )
-                .await?;
-                tracing::info!(summary = %outcome.summary(), "rentals index pass");
-                ctx.progress(outcome.summary());
-                Ok(())
-            }
-        },
-    );
 }
 
 #[cfg(test)]

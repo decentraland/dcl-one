@@ -2086,11 +2086,21 @@ revokes, whose `address` a catalog write does not have.
 network (`ethereum`, `matic`). A window commit writes it once, and so do a
 fold record, a publish and a rewind; the table stays at a dozen rows.
 
-**Ownership.** The job that walks a projection claims it on the session
-that holds its lease. The claim raises `owner_generation` in one bounded
-transaction (`statement_timeout` 2 s, `lock_timeout` 1.5 s) and creates the
-row when there is none. The job keeps that generation for the lease
-acquisition.
+**Ownership.** Each network has a supervisor job, `chain-walk-ethereum` and
+`chain-walk-matic`, in the process that runs the indexes. It walks each
+projection that process enables under the projection's own lease,
+`<index>-index-<network>` (`nft-index-matic`, `rentals-index-ethereum`), so
+processes with different projections enabled share a network. Each
+projection keeps its own cadence and backoff. A process that runs no fleet
+jobs (`FLEET_JOBS_ENABLED=false`) takes no lease and walks nothing.
+
+The supervisor claims a projection on the session that holds its lease. The
+claim raises `owner_generation` in one bounded transaction
+(`statement_timeout` 2 s, `lock_timeout` 1.5 s) and creates the row when
+there is none. The supervisor keeps that generation for the lease
+acquisition. A lost lease ends the projection's pass at once, even inside a
+fold; transactions it had already committed stay, and the generation fences
+any later one.
 
 Every transaction that writes the projection ends by locking the row
 (`SELECT … FOR UPDATE`) and comparing that generation, the chain binding and
@@ -2111,12 +2121,10 @@ while it still holds the lease.
 
 **Binding.** `chain_id` is the chain the history was read from, as the
 source proved it at the claim. The walk checks the source's chain every
-pass. In a job that walks both networks, a source of another chain skips
-that network for the pass and the other one walks on; the job fails, and
-backs off, only when no network walked (a projection in quarantine walks
-nothing). A row from before the binding
-(`chain_id` NULL) is adopted at the start of a pass, before any lane,
-rewind, fold or publish, in two cases:
+pass; a source of another chain fails that projection's pass alone, which
+backs off on its own. A row from before the binding (`chain_id` NULL) is
+adopted at the start of a pass, before any lane, rewind, fold or publish,
+in two cases:
 - it has no history yet;
 - its stored last-block hash equals the source's hash at that height.
 
@@ -2186,10 +2194,12 @@ pass claims the projection again and acts.
   ```
 
 **Deploys.** A binary from before step `0053_shop_chain_cursor_ownership`
-does not check `owner_generation`. Stop the process that runs the indexes
-(`catalyst index`) before starting one with the step, and before rolling
-back to one without it. A deployment that runs the index process as one
-replica replaced with the `Recreate` strategy already does this.
+does not check `owner_generation`, and one from before the per-network
+supervisors takes leases named after the index alone (`nft-index`), which do
+not exclude the new ones. Stop the process that runs the indexes
+(`catalyst index`) before starting a newer one, and before rolling back. A
+deployment that runs the index process as one replica replaced with the
+`Recreate` strategy already does this.
 
 ## Curation committee
 

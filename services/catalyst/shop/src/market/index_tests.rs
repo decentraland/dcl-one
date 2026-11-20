@@ -3536,11 +3536,8 @@ async fn api_jobs_never_attach_market_indexing_even_when_enabled() {
     state.spawn_api_jobs(&api);
     let names: Vec<_> = api.report().into_iter().map(|j| j.name).collect();
     for forbidden in [
-        "nft-index",
-        "trade-events-index",
-        "mana-transfers-index",
-        "committee-index",
-        "sales-index",
+        "chain-walk-ethereum",
+        "chain-walk-matic",
         "collections-mirror",
         "items-mirror",
         "trades-mirror",
@@ -3552,14 +3549,11 @@ async fn api_jobs_never_attach_market_indexing_even_when_enabled() {
         );
     }
     let worker = crate::jobs::Jobs::new().with_fleet_jobs(false);
-    state.spawn_index_jobs(&worker);
+    state.spawn_index_jobs(&worker, None);
     let names: Vec<_> = worker.report().into_iter().map(|j| j.name).collect();
     for required in [
-        "nft-index",
-        "trade-events-index",
-        "mana-transfers-index",
-        "committee-index",
-        "sales-index",
+        "chain-walk-ethereum",
+        "chain-walk-matic",
         "collections-mirror",
         "items-mirror",
         "trades-mirror",
@@ -3584,18 +3578,17 @@ async fn api_jobs_never_attach_market_indexing_even_when_enabled() {
     db.drop().await;
 }
 
-/// `catalyst index` attaches `rentals-index` whenever a chain-1 endpoint is
-/// configured, unless switched off.
+/// `catalyst index` walks `rentals-index-ethereum` whenever a chain-1
+/// endpoint is configured, unless switched off.
 #[tokio::test]
 async fn the_rentals_index_attaches_behind_its_switch_and_a_chain_one_endpoint() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
     let attached = |state: &SharedState, enabled: Option<bool>| {
-        let jobs = crate::jobs::Jobs::new().with_fleet_jobs(false);
-        crate::rentals::index::spawn_job(state, &jobs, enabled);
-        let names: Vec<_> = jobs.report().into_iter().map(|j| j.name).collect();
-        (jobs, names.iter().any(|n| n == "rentals-index"))
+        super::chain_jobs::projections(state, ChainNet::Ethereum, enabled)
+            .iter()
+            .any(|p| p.lease == "rentals-index-ethereum")
     };
     let with_rpc = state_over(
         db.pool.clone(),
@@ -3603,9 +3596,6 @@ async fn the_rentals_index_attaches_behind_its_switch_and_a_chain_one_endpoint()
         IndexSettings::default(),
         false,
     );
-    let (off, on_switched_off) = attached(&with_rpc, Some(false));
-    let (on, on_with_switch) = attached(&with_rpc, Some(true));
-    let (unset, on_by_default) = attached(&with_rpc, None);
     let mut no_rpc = state_over(
         db.pool.clone(),
         "https://rpc.example.org/",
@@ -3617,17 +3607,15 @@ async fn the_rentals_index_attaches_behind_its_switch_and_a_chain_one_endpoint()
         .settings
         .market
         .trade_rpc_urls = RpcEndpoints::from_env(None);
-    let (bare, on_without_rpc) = attached(&no_rpc, Some(true));
-    let (bare_unset, on_by_default_without_rpc) = attached(&no_rpc, None);
-    assert!(!on_switched_off && on_with_switch && on_by_default);
-    assert!(!on_without_rpc && !on_by_default_without_rpc);
-    for jobs in [off, on, unset, bare, bare_unset] {
-        assert!(
-            jobs.shutdown(std::time::Duration::from_secs(5))
-                .await
-                .is_empty()
-        );
-    }
+    assert!(!attached(&with_rpc, Some(false)));
+    assert!(attached(&with_rpc, Some(true)) && attached(&with_rpc, None));
+    assert!(!attached(&no_rpc, Some(true)) && !attached(&no_rpc, None));
+    assert!(
+        super::chain_jobs::projections(&with_rpc, ChainNet::Matic, None)
+            .iter()
+            .all(|p| !p.lease.starts_with("rentals-index")),
+        "the rentals venue is mainnet's"
+    );
     db.drop().await;
 }
 
@@ -4551,81 +4539,6 @@ async fn a_job_pass_refuses_another_chain_and_claims_again_after_a_fence() {
     db.drop().await;
 }
 
-/// An index job over two networks keeps its cadence while one walks (at the
-/// head too) and the other's endpoint serves another chain, and backs off
-/// when no network walks: none configured besides it (committee-index walks
-/// Polygon only), or the other in quarantine.
-#[tokio::test]
-async fn an_index_job_backs_off_only_when_no_network_walked() {
-    let Some(db) = ScratchDb::create().await else {
-        return;
-    };
-    let polygon = FakeChain::new(100, vec![], 1000, 1000);
-    polygon.finalized_lag.store(2, Ordering::SeqCst);
-    let amoy = FakeChain::new(100, vec![], 1000, 1000);
-    amoy.chain_id.store(80_002, Ordering::SeqCst);
-    let (polygon_url, amoy_url) = (serve(polygon).await, serve(amoy).await);
-    let st = state_over(
-        db.pool.clone(),
-        &polygon_url,
-        index_settings(100, 1000),
-        false,
-    );
-    let settings = st.settings.market.indexes.clone();
-    let holdings = chain_walk::Holdings::default();
-    async fn pass(
-        pool: &PgPool,
-        source: &chain_walk::RpcSource<'_>,
-        settings: &IndexSettings,
-        holdings: &chain_walk::Holdings,
-    ) -> super::NetPass {
-        let ix = super::mana_transfers::ManaTransfersIndex {
-            net: ChainNet::Matic,
-        };
-        let outcome =
-            chain_walk::job_pass(pool, source, &ix, settings, holdings, None, None, &|_| {}).await;
-        super::net_pass(ChainNet::Matic, outcome)
-    }
-    let polygon = chain_walk::RpcSource::new(Rpc::at(&st.http, &polygon_url));
-    let amoy = chain_walk::RpcSource::new(Rpc::at(&st.http, &amoy_url));
-    let wrong = pass(&db.pool, &amoy, &settings, &holdings).await;
-    assert!(matches!(wrong, super::NetPass::WrongChain(_)), "{wrong:?}");
-    let walked = pass(&db.pool, &polygon, &settings, &holdings).await;
-    assert!(matches!(walked, super::NetPass::Walked(_)), "{walked:?}");
-    super::index_job_result(vec![walked, wrong])
-        .expect("the network that walked keeps the job's cadence");
-    let at_head = pass(&db.pool, &polygon, &settings, &holdings).await;
-    assert!(matches!(at_head, super::NetPass::Walked(_)), "{at_head:?}");
-    let wrong = pass(&db.pool, &amoy, &settings, &holdings).await;
-    super::index_job_result(vec![at_head, wrong]).expect("a network with nothing new still walked");
-
-    let wrong = pass(&db.pool, &amoy, &settings, &holdings).await;
-    let err = super::index_job_result(vec![wrong, super::NetPass::Waiting])
-        .expect_err("no network walked: the job backs off");
-    assert!(err.to_string().contains("serves chain 80002"), "{err}");
-    let wrong = pass(&db.pool, &amoy, &settings, &holdings).await;
-    let err = super::index_job_result(vec![wrong])
-        .expect_err("a one-network job whose endpoint serves another chain backs off");
-    assert!(err.to_string().contains("matic"), "{err}");
-
-    sqlx::query("UPDATE shop.chain_cursor SET quarantined_at = timezone('UTC', now()), quarantine_reason = 'test' WHERE indexer = 'mana_transfers' AND network = 'matic'")
-        .execute(&db.pool)
-        .await
-        .unwrap();
-    let quarantined = pass(&db.pool, &polygon, &settings, &holdings).await;
-    assert!(
-        matches!(quarantined, super::NetPass::Quarantined(_)),
-        "{quarantined:?}"
-    );
-    let wrong = pass(&db.pool, &amoy, &settings, &holdings).await;
-    super::index_job_result(vec![quarantined, wrong])
-        .expect_err("a projection in quarantine walks nothing: the job backs off");
-    let quarantined = pass(&db.pool, &polygon, &settings, &holdings).await;
-    super::index_job_result(vec![quarantined])
-        .expect("a quarantine alone waits for an operator, with no error");
-    db.drop().await;
-}
-
 /// The verdict SQL of the listings lends a trade-events verdict only from a
 /// cursor bound to the chain this process serves (mainnet in the tests):
 /// one bound to another chain is ignored before any walk runs.
@@ -4819,4 +4732,942 @@ async fn a_rebuilt_cursor_keeps_its_chain_against_a_switch_before_the_replay() {
         "{o:?}"
     );
     db.drop().await;
+}
+
+/// The chain index supervisor (`chain_jobs`): one projection per lease, each
+/// on its own cadence, its attempt interrupted when its lease is lost.
+mod supervisor {
+    use super::*;
+    use crate::jobs::{JobState, Jobs, LeaseSettings, PeriodicCfg};
+    use crate::market::chain_jobs::{self, MakeIndex, Projection, Supervisor};
+    use std::time::Duration;
+
+    /// A real index with hooks: a fold that waits for `fold_gate` (counting
+    /// the entries, and the waits dropped before the gate opened), a
+    /// `groups` that panics, and an `abandon` that panics too.
+    #[derive(Default)]
+    struct Hooked {
+        inner: Option<Arc<dyn ChainIndex>>,
+        fold_gate: Option<Arc<tokio::sync::Semaphore>>,
+        entered: Arc<AtomicUsize>,
+        dropped: Arc<AtomicUsize>,
+        panics: Option<Arc<AtomicUsize>>,
+        abandon_panics: bool,
+    }
+
+    impl Hooked {
+        fn inner(&self) -> &dyn ChainIndex {
+            self.inner.as_deref().expect("a hooked index wraps one")
+        }
+    }
+
+    /// Counts a wait dropped before it ended.
+    struct DroppedWait(Arc<AtomicUsize>);
+
+    impl Drop for DroppedWait {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ChainIndex for Hooked {
+        fn indexer(&self) -> &'static str {
+            self.inner().indexer()
+        }
+        fn net(&self) -> ChainNet {
+            self.inner().net()
+        }
+        fn chain_id(&self) -> i64 {
+            self.inner().chain_id()
+        }
+        fn start_block(&self) -> u64 {
+            self.inner().start_block()
+        }
+        async fn groups(
+            &self,
+            pool: &PgPool,
+            from: u64,
+            to: u64,
+            anchor: (u64, i64),
+        ) -> anyhow::Result<Vec<chain_walk::LogGroup>> {
+            if let Some(panics) = &self.panics {
+                panics.fetch_add(1, Ordering::SeqCst);
+                panic!("a hooked index panicked");
+            }
+            self.inner().groups(pool, from, to, anchor).await
+        }
+        async fn write(
+            &self,
+            conn: &mut sqlx::PgConnection,
+            logs: &[crate::chain_index::rpc::RpcLog],
+            times: &HashMap<i64, i64>,
+        ) -> anyhow::Result<usize> {
+            self.inner().write(conn, logs, times).await
+        }
+        async fn rewind(&self, conn: &mut sqlx::PgConnection, to: i64) -> anyhow::Result<()> {
+            self.inner().rewind(conn, to).await
+        }
+        async fn clear(&self, conn: &mut sqlx::PgConnection, to: i64) -> anyhow::Result<()> {
+            self.inner().clear(conn, to).await
+        }
+        async fn fold(
+            &self,
+            pool: &PgPool,
+            since: Option<i64>,
+            upto: i64,
+            owner: &chain_walk::Owner,
+        ) -> anyhow::Result<bool> {
+            if let Some(gate) = &self.fold_gate {
+                self.entered.fetch_add(1, Ordering::SeqCst);
+                let wait = DroppedWait(self.dropped.clone());
+                gate.acquire().await.unwrap().forget();
+                std::mem::forget(wait);
+            }
+            self.inner().fold(pool, since, upto, owner).await
+        }
+        fn abandon(&self) {
+            assert!(!self.abandon_panics, "a hooked index's cleanup panicked");
+            self.inner().abandon()
+        }
+    }
+
+    /// The market test settings, every Polygon projection walked from block
+    /// 0 (the fake chains end at block 100).
+    fn walk_settings() -> IndexSettings {
+        IndexSettings {
+            start_block_matic: Some(0),
+            ..index_settings(100, 1000)
+        }
+    }
+
+    fn supervisor(st: &SharedState, net: ChainNet, projections: Vec<Projection>) -> Supervisor {
+        Supervisor {
+            name: chain_jobs::job_name(net),
+            pool: st.pool.clone(),
+            http: st.http.clone(),
+            settings: st.settings.market.indexes.clone(),
+            projections,
+        }
+    }
+
+    fn projection(job: &str, net: ChainNet, url: &str, make: MakeIndex) -> Projection {
+        Projection {
+            lease: chain_jobs::lease_name(job, net),
+            url: url.to_string(),
+            cfg: PeriodicCfg::every(Duration::from_millis(50))
+                .with_error_backoff(Duration::from_millis(400)),
+            make,
+            gate: None,
+        }
+    }
+
+    fn mana(net: ChainNet) -> MakeIndex {
+        Arc::new(move || Arc::new(super::super::mana_transfers::ManaTransfersIndex { net }))
+    }
+
+    fn lease_settings(namespace: &str, poll: Duration) -> LeaseSettings {
+        LeaseSettings {
+            namespace: namespace.to_string(),
+            poll,
+            keepalive: Duration::from_millis(200),
+        }
+    }
+
+    async fn eventually<F, Fut>(what: &str, mut check: F)
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = bool>,
+    {
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while !check().await {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting: {what}"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    async fn cursor(pool: &PgPool, indexer: &str, net: ChainNet) -> Option<chain_walk::Cursor> {
+        chain_walk::cursor(pool, indexer, net).await.unwrap()
+    }
+
+    async fn published(pool: &PgPool, indexer: &str, net: ChainNet) -> bool {
+        cursor(pool, indexer, net)
+            .await
+            .is_some_and(|c| c.folded_block == Some(c.last_block) && c.last_block >= 0)
+    }
+
+    /// A URL whose connections are refused.
+    async fn refusing_endpoint() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        format!("http://{addr}/")
+    }
+
+    /// A URL that accepts connections and never answers.
+    async fn hanging_endpoint() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = listener.accept().await {
+                held.push(socket);
+            }
+        });
+        format!("http://{addr}/")
+    }
+
+    /// The advisory locks held in this database: the leases taken.
+    async fn advisory_locks(pool: &PgPool) -> i64 {
+        sqlx::query_scalar(
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' \
+             AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    /// A projection keeps walking on its own cadence while, on the same
+    /// network, one fails on a refusing endpoint, one waits on an endpoint
+    /// that never answers and one panics, whose cleanup would panic too: the
+    /// panicking one is retried with a fresh index, every finished attempt
+    /// counts as a pass, and stopping the process interrupts the one still
+    /// waiting.
+    #[tokio::test]
+    async fn a_projection_keeps_its_turns_while_others_fail_hang_or_panic() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let mana_chain = FakeChain::new(100, vec![], 1000, 1000);
+        mana_chain.finalized_lag.store(2, Ordering::SeqCst);
+        let mana_url = serve(mana_chain.clone()).await;
+        let sales_chain = FakeChain::new(100, vec![], 1000, 1000);
+        sales_chain.finalized_lag.store(2, Ordering::SeqCst);
+        let sales_url = serve(sales_chain.clone()).await;
+        let st = state_over(db.pool.clone(), &mana_url, walk_settings(), false);
+        let (panics, made) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let sales: MakeIndex = {
+            let (panics, made) = (panics.clone(), made.clone());
+            Arc::new(move || {
+                made.fetch_add(1, Ordering::SeqCst);
+                Arc::new(Hooked {
+                    inner: Some(Arc::new(super::super::sales_index::SalesIndex)),
+                    panics: Some(panics.clone()),
+                    abandon_panics: true,
+                    ..Hooked::default()
+                }) as Arc<dyn ChainIndex>
+            })
+        };
+        let projections = vec![
+            projection(
+                "mana-transfers-index",
+                ChainNet::Matic,
+                &mana_url,
+                mana(ChainNet::Matic),
+            ),
+            projection(
+                "trade-events-index",
+                ChainNet::Matic,
+                &refusing_endpoint().await,
+                Arc::new(|| {
+                    Arc::new(TradeEventsIndex {
+                        net: ChainNet::Matic,
+                        chain_id: 137,
+                    })
+                }),
+            ),
+            projection(
+                "committee-index",
+                ChainNet::Matic,
+                &hanging_endpoint().await,
+                Arc::new(|| Arc::new(super::super::committee_index::CommitteeIndex)),
+            ),
+            projection("sales-index", ChainNet::Matic, &sales_url, sales),
+        ];
+        let namespace = format!("supervisor-turns-{}", std::process::id());
+        let jobs = Jobs::with_leases(
+            db.pool.clone(),
+            lease_settings(&namespace, Duration::from_millis(100)),
+        )
+        .with_first_pass_now(true);
+        chain_jobs::spawn(&jobs, supervisor(&st, ChainNet::Matic, projections));
+        eventually("mana published", || {
+            published(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
+        })
+        .await;
+        eventually("the panicking projection retried", || {
+            let panics = panics.clone();
+            async move { panics.load(Ordering::SeqCst) >= 2 }
+        })
+        .await;
+        let before = mana_chain.requests.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        let after = mana_chain.requests.load(Ordering::SeqCst);
+        assert!(
+            after > before + 10,
+            "mana keeps its 50 ms cadence while the others fail, hang or panic: {before} -> {after}"
+        );
+        assert!(
+            made.load(Ordering::SeqCst) > panics.load(Ordering::SeqCst).min(2),
+            "each retry after a panic runs on a fresh index"
+        );
+        assert!(
+            cursor(&db.pool, chain_walk::INDEXER_TRADE_EVENTS, ChainNet::Matic)
+                .await
+                .is_none(),
+            "a refusing endpoint claims nothing"
+        );
+        let report = jobs.report();
+        let job = report
+            .iter()
+            .find(|j| j.name == "chain-walk-matic")
+            .unwrap();
+        assert_eq!(
+            job.state,
+            JobState::Running,
+            "a panicking attempt never ends the supervisor"
+        );
+        assert!(
+            job.passes >= 4,
+            "every finished attempt counts: {}",
+            job.passes
+        );
+        assert!(
+            jobs.shutdown(Duration::from_secs(5)).await.is_empty(),
+            "stopping interrupts the attempt waiting on the silent endpoint"
+        );
+        db.drop().await;
+    }
+
+    /// The process's leases with a gate per name before the request, and
+    /// every name asked for, in order.
+    struct GatedLeases {
+        inner: Arc<crate::jobs::Leases>,
+        gates: HashMap<String, Arc<tokio::sync::Semaphore>>,
+        asked: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl chain_jobs::TakeLease for GatedLeases {
+        async fn try_acquire(&self, name: &str) -> sqlx::Result<Option<crate::jobs::LeaseGuard>> {
+            self.asked.lock().push(name.to_string());
+            if let Some(gate) = self.gates.get(name) {
+                gate.acquire().await.unwrap().forget();
+            }
+            self.inner.try_acquire(name).await
+        }
+        fn poll(&self) -> Duration {
+            self.inner.settings().poll
+        }
+    }
+
+    fn gated(
+        jobs: &Jobs,
+        gated: &[&str],
+    ) -> (
+        Arc<GatedLeases>,
+        Arc<tokio::sync::Semaphore>,
+        Arc<Mutex<Vec<String>>>,
+    ) {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let leases = Arc::new(GatedLeases {
+            inner: jobs.leases().expect("a process with leases").clone(),
+            gates: gated
+                .iter()
+                .map(|n| (n.to_string(), gate.clone()))
+                .collect(),
+            asked: asked.clone(),
+        });
+        (leases, gate, asked)
+    }
+
+    /// A lease request held back holds back no other projection: mana
+    /// publishes twice more, from its own chain, while trade events still
+    /// waits for its lease, and walks once it has it.
+    #[tokio::test]
+    async fn a_slow_lease_request_holds_back_no_other_projection() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let mana_chain = FakeChain::new(100, vec![], 1000, 1000);
+        mana_chain.finalized_lag.store(2, Ordering::SeqCst);
+        let mana_url = serve(mana_chain.clone()).await;
+        let trades_chain = FakeChain::new(100, vec![], 1000, 1000);
+        trades_chain.finalized_lag.store(2, Ordering::SeqCst);
+        let trades_url = serve(trades_chain.clone()).await;
+        let st = state_over(db.pool.clone(), &mana_url, walk_settings(), false);
+        let namespace = format!("supervisor-slow-lease-{}", std::process::id());
+        let jobs = Jobs::with_leases(
+            db.pool.clone(),
+            lease_settings(&namespace, Duration::from_millis(100)),
+        )
+        .with_first_pass_now(true);
+        let (leases, gate, asked) = gated(&jobs, &["trade-events-index-matic"]);
+        let trade_events: MakeIndex = Arc::new(|| {
+            Arc::new(TradeEventsIndex {
+                net: ChainNet::Matic,
+                chain_id: 137,
+            })
+        });
+        chain_jobs::spawn_with(
+            &jobs,
+            supervisor(
+                &st,
+                ChainNet::Matic,
+                vec![
+                    projection(
+                        "mana-transfers-index",
+                        ChainNet::Matic,
+                        &mana_url,
+                        mana(ChainNet::Matic),
+                    ),
+                    projection(
+                        "trade-events-index",
+                        ChainNet::Matic,
+                        &trades_url,
+                        trade_events,
+                    ),
+                ],
+            ),
+            Some(leases),
+        );
+        eventually("mana published", || {
+            published(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
+        })
+        .await;
+        let folded_at = || async {
+            cursor(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
+                .await
+                .and_then(|c| c.folded_at)
+        };
+        let first = folded_at().await;
+        eventually("a second mana pass", || async { folded_at().await > first }).await;
+        let second = folded_at().await;
+        eventually("a third mana pass", || async { folded_at().await > second }).await;
+        assert_eq!(
+            trades_chain.requests.load(Ordering::SeqCst),
+            0,
+            "trade events still waits for its lease"
+        );
+        assert_eq!(
+            asked
+                .lock()
+                .iter()
+                .filter(|n| *n == "trade-events-index-matic")
+                .count(),
+            1,
+            "one request, still in flight"
+        );
+        gate.add_permits(1);
+        eventually("trade events walks once it has its lease", || {
+            published(&db.pool, chain_walk::INDEXER_TRADE_EVENTS, ChainNet::Matic)
+        })
+        .await;
+        assert!(jobs.shutdown(Duration::from_secs(5)).await.is_empty());
+        db.drop().await;
+    }
+
+    /// Stopping lets a lease request in flight run to its end, lets go of
+    /// the lease it took, and asks for no other: committee, due after the
+    /// stop, is never asked for.
+    #[tokio::test]
+    async fn stopping_lets_a_lease_request_finish_and_asks_for_no_other() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = FakeChain::new(100, vec![], 1000, 1000);
+        chain.finalized_lag.store(2, Ordering::SeqCst);
+        let url = serve(chain.clone()).await;
+        let st = state_over(db.pool.clone(), &url, walk_settings(), false);
+        let namespace = format!("supervisor-stop-{}", std::process::id());
+        let jobs = Arc::new(Jobs::with_leases(
+            db.pool.clone(),
+            lease_settings(&namespace, Duration::from_millis(100)),
+        ));
+        let (leases, gate, asked) = gated(&jobs, &["mana-transfers-index-matic"]);
+        let later = Projection {
+            cfg: PeriodicCfg::every(Duration::from_secs(1)).after_first_interval(),
+            ..projection(
+                "committee-index",
+                ChainNet::Matic,
+                &url,
+                Arc::new(|| Arc::new(super::super::committee_index::CommitteeIndex)),
+            )
+        };
+        chain_jobs::spawn_with(
+            &jobs,
+            supervisor(
+                &st,
+                ChainNet::Matic,
+                vec![
+                    projection(
+                        "mana-transfers-index",
+                        ChainNet::Matic,
+                        &url,
+                        mana(ChainNet::Matic),
+                    ),
+                    later,
+                ],
+            ),
+            Some(leases),
+        );
+        eventually("mana's lease asked for", || {
+            let asked = asked.clone();
+            async move { !asked.lock().is_empty() }
+        })
+        .await;
+        let stopping = tokio::spawn({
+            let jobs = jobs.clone();
+            async move { jobs.shutdown(Duration::from_secs(10)).await }
+        });
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert!(
+            !stopping.is_finished(),
+            "the request in flight runs to its end"
+        );
+        gate.add_permits(1);
+        assert!(stopping.await.unwrap().is_empty());
+        assert_eq!(
+            *asked.lock(),
+            vec!["mana-transfers-index-matic".to_string()]
+        );
+        assert_eq!(
+            advisory_locks(&db.pool).await,
+            0,
+            "the lease it took was let go"
+        );
+        assert_eq!(
+            chain.requests.load(Ordering::SeqCst),
+            0,
+            "no attempt after the stop"
+        );
+        db.drop().await;
+    }
+
+    /// An idle projection whose lease is lost stands by at once, without
+    /// waiting out its backoff, and the next acquisition starts with none:
+    /// its next attempt comes after the lease poll, not after the 10 s
+    /// backoff of the failure before.
+    #[tokio::test]
+    async fn a_lost_lease_resets_an_idle_projections_backoff() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let amoy = FakeChain::new(100, vec![], 1000, 1000);
+        amoy.chain_id.store(80_002, Ordering::SeqCst);
+        let url = serve(amoy.clone()).await;
+        let st = state_over(db.pool.clone(), &url, walk_settings(), false);
+        let namespace = format!("supervisor-backoff-{}", std::process::id());
+        let jobs = Jobs::with_leases(
+            db.pool.clone(),
+            lease_settings(&namespace, Duration::from_millis(100)),
+        )
+        .with_first_pass_now(true);
+        let failing = Projection {
+            cfg: PeriodicCfg::every(Duration::from_secs(10))
+                .with_error_backoff(Duration::from_secs(60)),
+            ..projection(
+                "mana-transfers-index",
+                ChainNet::Matic,
+                &url,
+                mana(ChainNet::Matic),
+            )
+        };
+        chain_jobs::spawn(&jobs, supervisor(&st, ChainNet::Matic, vec![failing]));
+        eventually("the first attempt failed on another chain", || {
+            let amoy = amoy.clone();
+            async move { amoy.requests.load(Ordering::SeqCst) == 1 }
+        })
+        .await;
+        sqlx::query(
+            "SELECT pg_terminate_backend(pid) FROM pg_locks WHERE locktype = 'advisory' \
+             AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        let lost_at = std::time::Instant::now();
+        eventually("a new acquisition attempts again", || {
+            let amoy = amoy.clone();
+            async move { amoy.requests.load(Ordering::SeqCst) >= 2 }
+        })
+        .await;
+        assert!(
+            lost_at.elapsed() < Duration::from_secs(5),
+            "after the lease poll, not the backoff: {:?}",
+            lost_at.elapsed()
+        );
+        assert!(jobs.shutdown(Duration::from_secs(5)).await.is_empty());
+        db.drop().await;
+    }
+
+    /// Losing the lease interrupts an attempt blocked in its fold, before the
+    /// fold commits and with no successor yet; another process then takes
+    /// the lease, claims the projection at the same block and hash, and
+    /// publishes it, and opening the old fold's gate changes nothing.
+    #[tokio::test]
+    async fn a_lost_lease_interrupts_a_blocked_fold_and_a_successor_takes_over() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let polygon = FakeChain::new(100, vec![], 1000, 1000);
+        polygon.finalized_lag.store(2, Ordering::SeqCst);
+        let url = serve(polygon.clone()).await;
+        let st = state_over(db.pool.clone(), &url, walk_settings(), false);
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let (entered, dropped) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let hooked: MakeIndex = {
+            let (gate, entered, dropped) = (gate.clone(), entered.clone(), dropped.clone());
+            Arc::new(move || {
+                Arc::new(Hooked {
+                    inner: Some(Arc::new(super::super::mana_transfers::ManaTransfersIndex {
+                        net: ChainNet::Matic,
+                    })),
+                    fold_gate: Some(gate.clone()),
+                    entered: entered.clone(),
+                    dropped: dropped.clone(),
+                    ..Hooked::default()
+                }) as Arc<dyn ChainIndex>
+            })
+        };
+        let namespace = format!("supervisor-handover-{}", std::process::id());
+        // A stands by long after a loss, so the successor takes the lease.
+        let a = Jobs::with_leases(
+            db.pool.clone(),
+            lease_settings(&namespace, Duration::from_secs(60)),
+        )
+        .with_first_pass_now(true);
+        chain_jobs::spawn(
+            &a,
+            supervisor(
+                &st,
+                ChainNet::Matic,
+                vec![projection(
+                    "mana-transfers-index",
+                    ChainNet::Matic,
+                    &url,
+                    hooked,
+                )],
+            ),
+        );
+        eventually("A's fold entered", || {
+            let entered = entered.clone();
+            async move { entered.load(Ordering::SeqCst) == 1 }
+        })
+        .await;
+        let walked = cursor(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
+            .await
+            .unwrap();
+        assert_eq!(walked.last_block, 98, "the walk committed before the fold");
+        assert_eq!((walked.fold_through, walked.folded_block), (None, None));
+
+        sqlx::query(
+            "SELECT pg_terminate_backend(pid) FROM pg_locks WHERE locktype = 'advisory' \
+             AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        eventually("A's blocked fold dropped", || {
+            let dropped = dropped.clone();
+            async move { dropped.load(Ordering::SeqCst) == 1 }
+        })
+        .await;
+        let after_loss = cursor(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
+            .await
+            .unwrap();
+        assert_eq!(
+            (
+                after_loss.fold_through,
+                after_loss.folded_block,
+                after_loss.owner_generation
+            ),
+            (None, None, walked.owner_generation),
+            "the interrupted attempt committed nothing more, and no one has claimed yet"
+        );
+
+        let b = Jobs::with_leases(
+            db.pool.clone(),
+            lease_settings(&namespace, Duration::from_millis(100)),
+        )
+        .with_first_pass_now(true);
+        chain_jobs::spawn(
+            &b,
+            supervisor(
+                &st,
+                ChainNet::Matic,
+                vec![projection(
+                    "mana-transfers-index",
+                    ChainNet::Matic,
+                    &url,
+                    mana(ChainNet::Matic),
+                )],
+            ),
+        );
+        eventually("B published", || {
+            published(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
+        })
+        .await;
+        let by_b = cursor(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
+            .await
+            .unwrap();
+        assert_eq!(
+            by_b.owner_generation,
+            walked.owner_generation + 1,
+            "B claimed once"
+        );
+        assert_eq!(by_b.last_block, 98, "the same block and hash");
+
+        gate.add_permits(10);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            entered.load(Ordering::SeqCst),
+            1,
+            "A stood by: no new attempt"
+        );
+        let last = cursor(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
+            .await
+            .unwrap();
+        assert_eq!(
+            last.owner_generation, by_b.owner_generation,
+            "A's old attempt is gone"
+        );
+        assert!(a.shutdown(Duration::from_secs(5)).await.is_empty());
+        assert!(b.shutdown(Duration::from_secs(5)).await.is_empty());
+        db.drop().await;
+    }
+
+    /// Two processes with different projections enabled on one network:
+    /// the projection both have is walked by one writer, claimed once, and
+    /// the one only the second has walks there.
+    #[tokio::test]
+    async fn processes_with_different_projections_share_a_network() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let polygon = FakeChain::new(100, vec![], 1000, 1000);
+        polygon.finalized_lag.store(2, Ordering::SeqCst);
+        let url = serve(polygon.clone()).await;
+        let st = state_over(db.pool.clone(), &url, walk_settings(), false);
+        let namespace = format!("supervisor-capabilities-{}", std::process::id());
+        let trade_events: MakeIndex = Arc::new(|| {
+            Arc::new(TradeEventsIndex {
+                net: ChainNet::Matic,
+                chain_id: 137,
+            })
+        });
+        let first = Jobs::with_leases(
+            db.pool.clone(),
+            lease_settings(&namespace, Duration::from_millis(100)),
+        )
+        .with_first_pass_now(true);
+        chain_jobs::spawn(
+            &first,
+            supervisor(
+                &st,
+                ChainNet::Matic,
+                vec![projection(
+                    "mana-transfers-index",
+                    ChainNet::Matic,
+                    &url,
+                    mana(ChainNet::Matic),
+                )],
+            ),
+        );
+        let second = Jobs::with_leases(
+            db.pool.clone(),
+            lease_settings(&namespace, Duration::from_millis(100)),
+        )
+        .with_first_pass_now(true);
+        chain_jobs::spawn(
+            &second,
+            supervisor(
+                &st,
+                ChainNet::Matic,
+                vec![
+                    projection(
+                        "mana-transfers-index",
+                        ChainNet::Matic,
+                        &url,
+                        mana(ChainNet::Matic),
+                    ),
+                    projection("trade-events-index", ChainNet::Matic, &url, trade_events),
+                ],
+            ),
+        );
+        eventually("trade events published on the second process", || {
+            published(&db.pool, chain_walk::INDEXER_TRADE_EVENTS, ChainNet::Matic)
+        })
+        .await;
+        eventually("mana published", || {
+            published(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
+        })
+        .await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let mana = cursor(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
+            .await
+            .unwrap();
+        assert_eq!(
+            mana.owner_generation, 1,
+            "one writer, claimed once: {mana:?}"
+        );
+        assert!(first.shutdown(Duration::from_secs(5)).await.is_empty());
+        assert!(second.shutdown(Duration::from_secs(5)).await.is_empty());
+        db.drop().await;
+    }
+
+    /// Both networks walk under their own supervisors; when the process
+    /// stops, it lets its leases go and another one takes both over.
+    #[tokio::test]
+    async fn two_networks_walk_and_hand_over_between_processes() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = FakeChain::new(100, vec![], 1000, 1000);
+        chain.finalized_lag.store(2, Ordering::SeqCst);
+        let polygon_url = serve(chain.clone()).await;
+        let ethereum = FakeChain::new(100, vec![], 1000, 1000);
+        ethereum.chain_id.store(1, Ordering::SeqCst);
+        let ethereum_url = serve(ethereum.clone()).await;
+        let st = state_over(db.pool.clone(), &polygon_url, walk_settings(), false);
+        let namespace = format!("supervisor-networks-{}", std::process::id());
+        let start = |jobs: &Jobs| {
+            for (net, url) in [
+                (ChainNet::Matic, &polygon_url),
+                (ChainNet::Ethereum, &ethereum_url),
+            ] {
+                chain_jobs::spawn(
+                    jobs,
+                    supervisor(
+                        &st,
+                        net,
+                        vec![projection("mana-transfers-index", net, url, mana(net))],
+                    ),
+                );
+            }
+        };
+        let first = Jobs::with_leases(
+            db.pool.clone(),
+            lease_settings(&namespace, Duration::from_millis(100)),
+        )
+        .with_first_pass_now(true);
+        start(&first);
+        for net in ChainNet::ALL {
+            eventually("both networks published", || {
+                published(&db.pool, chain_walk::INDEXER_MANA, net)
+            })
+            .await;
+        }
+        assert!(first.shutdown(Duration::from_secs(5)).await.is_empty());
+        assert_eq!(
+            advisory_locks(&db.pool).await,
+            0,
+            "a stopped process lets its leases go"
+        );
+
+        let second = Jobs::with_leases(
+            db.pool.clone(),
+            lease_settings(&namespace, Duration::from_millis(100)),
+        )
+        .with_first_pass_now(true);
+        start(&second);
+        for net in ChainNet::ALL {
+            let pool = &db.pool;
+            eventually("the second process claimed both", || async move {
+                cursor(pool, chain_walk::INDEXER_MANA, net)
+                    .await
+                    .is_some_and(|c| {
+                        c.owner_generation == 2 && c.folded_block == Some(c.last_block)
+                    })
+            })
+            .await;
+        }
+        let ethereum_cursor = cursor(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Ethereum)
+            .await
+            .unwrap();
+        assert_eq!(ethereum_cursor.chain_id, Some(1));
+        assert!(second.shutdown(Duration::from_secs(5)).await.is_empty());
+        db.drop().await;
+    }
+
+    /// A process that runs no fleet jobs takes no lease, reads no chain and
+    /// claims nothing, with leases or without them; with leases, another
+    /// process can take the name.
+    #[tokio::test]
+    async fn a_process_without_fleet_jobs_takes_no_lease_and_reads_no_chain() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let polygon = FakeChain::new(100, vec![], 1000, 1000);
+        let url = serve(polygon.clone()).await;
+        let st = state_over(db.pool.clone(), &url, walk_settings(), false);
+        let namespace = format!("supervisor-fleet-off-{}", std::process::id());
+        let with_leases = Jobs::with_leases(
+            db.pool.clone(),
+            lease_settings(&namespace, Duration::from_millis(50)),
+        )
+        .with_fleet_jobs(false)
+        .with_first_pass_now(true);
+        let without_leases = Jobs::new().with_fleet_jobs(false).with_first_pass_now(true);
+        for jobs in [&with_leases, &without_leases] {
+            chain_jobs::spawn(
+                jobs,
+                supervisor(
+                    &st,
+                    ChainNet::Matic,
+                    vec![projection(
+                        "mana-transfers-index",
+                        ChainNet::Matic,
+                        &url,
+                        mana(ChainNet::Matic),
+                    )],
+                ),
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert_eq!(polygon.requests.load(Ordering::SeqCst), 0, "no chain read");
+        assert!(
+            cursor(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
+                .await
+                .is_none(),
+            "nothing claimed"
+        );
+        assert_eq!(advisory_locks(&db.pool).await, 0, "no lease taken");
+        for jobs in [&with_leases, &without_leases] {
+            let report = jobs.report();
+            let job = report
+                .iter()
+                .find(|j| j.name == "chain-walk-matic")
+                .unwrap();
+            assert_eq!(job.state, JobState::StoodDown);
+        }
+        let other = Arc::new(crate::jobs::Leases::new(
+            db.pool.clone(),
+            lease_settings(&namespace, Duration::from_millis(50)),
+        ));
+        let guard = other
+            .try_acquire("mana-transfers-index-matic")
+            .await
+            .unwrap()
+            .expect("another process takes the name");
+        guard.release().await;
+        assert!(
+            with_leases
+                .shutdown(Duration::from_secs(5))
+                .await
+                .is_empty()
+        );
+        assert!(
+            without_leases
+                .shutdown(Duration::from_secs(5))
+                .await
+                .is_empty()
+        );
+        db.drop().await;
+    }
 }
