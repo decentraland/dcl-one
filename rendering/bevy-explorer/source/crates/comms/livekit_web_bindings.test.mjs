@@ -4,6 +4,14 @@ import { EventEmitter } from 'node:events';
 import {
   local_audio_track_set_enabled,
   local_audio_track_stop,
+  local_participant_can_publish,
+  local_participant_publish_track,
+  local_participant_unpublish_track,
+  local_track_publication_kind,
+  local_track_publication_sid,
+  local_track_publication_source,
+  remote_track_publication_set_subscribed,
+  remote_audio_track_set_volume,
   remote_track_pan_and_volume,
   room_connect,
   room_drop,
@@ -275,4 +283,391 @@ test('repeat subscribe disposes the previous rig and streaming attachment', asyn
   room_drop(room);
   assert.equal(attached.size, 0);
   assert.equal(connected.size, 0);
+});
+
+const tick = () => new Promise(resolve => setImmediate(resolve));
+
+function fakeDocument() {
+  const listeners = new Map();
+  return {
+    listeners,
+    addEventListener(event, listener) {
+      if (!listeners.has(event)) listeners.set(event, new Set());
+      listeners.get(event).add(listener);
+    },
+    removeEventListener(event, listener) { listeners.get(event)?.delete(listener); },
+    dispatch(event) { [...(listeners.get(event) ?? [])].forEach(listener => listener()); },
+    events() { return [...listeners].filter(([, set]) => set.size > 0).map(([event]) => event).sort(); },
+  };
+}
+
+const GESTURES = ['click', 'keydown', 'pointerdown', 'pointerup', 'touchend'];
+
+function withPageGlobals(t, globals) {
+  const names = Object.keys(globals);
+  const previous = names.map(name => globalThis[name]);
+  t.after(() => names.forEach((name, i) => { globalThis[name] = previous[i]; }));
+  Object.assign(globalThis, globals);
+}
+
+// The browser's autoplay policy: play() of an audible element is refused until activation.
+function fakePage() {
+  const page = { activated: false, plays: 0 };
+  page.element = () => {
+    const element = {
+      muted: false,
+      volume: 1,
+      paused: true,
+      play() {
+        page.plays++;
+        if (!page.activated && !element.muted) {
+          return Promise.reject(Object.assign(new Error('refused'), { name: 'NotAllowedError' }));
+        }
+        element.paused = false;
+        return Promise.resolve();
+      },
+      pause() { element.paused = true; },
+      remove() {},
+    };
+    return element;
+  };
+  return page;
+}
+
+// LiveKit's Room, including what startAudio() does with webAudioMix off: unmute and play every
+// attached remote audio element. The bindings must not call it (the voice rigs stay muted).
+function fakeRoomClass(attached) {
+  return class Room extends EventEmitter {
+    name = 'scene-room';
+    async connect() {}
+    async disconnect() {}
+    async startAudio() {
+      for (const element of attached) {
+        element.muted = false;
+        await element.play();
+      }
+    }
+  };
+}
+
+function remoteAudio(sid, page, attached) {
+  return {
+    sid,
+    kind: 'audio',
+    mediaStreamTrack: {},
+    attach() {
+      const element = page.element();
+      attached.add(element);
+      element.play().catch(() => {});
+      return element;
+    },
+    detach(element) { attached.delete(element); },
+  };
+}
+
+function suspendedAudioContextClass(contexts) {
+  const node = () => ({ connect() {}, disconnect() {} });
+  return class AudioContext extends EventTarget {
+    state = 'suspended';
+    destination = {};
+    resumeCalls = 0;
+    constructor() { super(); contexts.push(this); }
+    setState(state) { this.state = state; this.dispatchEvent(new Event('statechange')); }
+    createMediaStreamSource() { return node(); }
+    createStereoPanner() { return { ...node(), pan: { value: 0 } }; }
+    createGain() { return { ...node(), gain: { value: 1 } }; }
+    async resume() {
+      this.resumeCalls++;
+      if (page_activated()) this.setState('running');
+      else throw Object.assign(new Error('refused'), { name: 'NotAllowedError' });
+    }
+  };
+}
+let page_activated = () => true;
+
+test('a refused stream plays on a gesture; voice rig elements stay muted', async (t) => {
+  const { room_connect } = await import('./livekit_web_bindings.js?stream-gesture');
+  const roomEvent = new Proxy({}, { get: (_, name) => name });
+  const attached = new Set();
+  const page = fakePage();
+  const contexts = [];
+  page_activated = () => page.activated;
+  const document = fakeDocument();
+  withPageGlobals(t, {
+    LivekitClient: { Room: fakeRoomClass(attached), RoomEvent: roomEvent },
+    window: { AudioContext: suspendedAudioContextClass(contexts) },
+    MediaStream: class {},
+    document,
+  });
+
+  const room = await room_connect('wss://room.example', 'token', {}, {}, () => {});
+  const stream = remoteAudio('stream', page, attached);
+  const voice = remoteAudio('voice', page, attached);
+  room.emit(roomEvent.TrackSubscribed, stream, {}, { sid: 'ingress', identity: 'abc-streamer' });
+  room.emit(roomEvent.TrackSubscribed, voice, {}, { sid: 'player', identity: 'player' });
+  await tick();
+  assert.equal(stream.audioElement.paused, true);
+  assert.deepEqual(document.events(), GESTURES);
+
+  page.activated = true;
+  document.dispatch('pointerup');
+  await tick();
+  assert.equal(stream.audioElement.paused, false, 'the stream element plays');
+  assert.equal(voice.trackRig.audioElement.muted, true, 'the rig element stays muted');
+  assert.equal(contexts[0].state, 'running');
+  assert.deepEqual(document.events(), [], 'nothing waits: the listener is removed');
+
+  const plays = page.plays;
+  document.dispatch('click');
+  await tick();
+  assert.equal(page.plays, plays);
+});
+
+test('a gesture without activation keeps the listener; a later one succeeds', async (t) => {
+  const { room_connect } = await import('./livekit_web_bindings.js?no-activation');
+  const roomEvent = new Proxy({}, { get: (_, name) => name });
+  const attached = new Set();
+  const page = fakePage();
+  const document = fakeDocument();
+  withPageGlobals(t, { LivekitClient: { Room: fakeRoomClass(attached), RoomEvent: roomEvent }, document });
+
+  const room = await room_connect('wss://room.example', 'token', {}, {}, () => {});
+  const stream = remoteAudio('stream', page, attached);
+  room.emit(roomEvent.TrackSubscribed, stream, {}, { sid: 'ingress', identity: 'abc-streamer' });
+  await tick();
+
+  // a touch pointerdown (or Escape) grants no activation: play() is refused again
+  document.dispatch('pointerdown');
+  await tick();
+  assert.equal(stream.audioElement.paused, true);
+  assert.deepEqual(document.events(), GESTURES);
+
+  page.activated = true;
+  document.dispatch('touchend');
+  await tick();
+  assert.equal(stream.audioElement.paused, false);
+  assert.deepEqual(document.events(), []);
+});
+
+test('the voice context listener follows its statechange until running', async (t) => {
+  const { room_connect } = await import('./livekit_web_bindings.js?context-state');
+  const roomEvent = new Proxy({}, { get: (_, name) => name });
+  const attached = new Set();
+  const page = fakePage();
+  const contexts = [];
+  page_activated = () => page.activated;
+  const document = fakeDocument();
+  withPageGlobals(t, {
+    LivekitClient: { Room: fakeRoomClass(attached), RoomEvent: roomEvent },
+    window: { AudioContext: suspendedAudioContextClass(contexts) },
+    MediaStream: class {},
+    document,
+  });
+
+  const room = await room_connect('wss://room.example', 'token', {}, {}, () => {});
+  room.emit(roomEvent.TrackSubscribed, remoteAudio('a', page, attached), {}, { sid: 'p1', identity: 'player-a' });
+  room.emit(roomEvent.TrackSubscribed, remoteAudio('b', page, attached), {}, { sid: 'p2', identity: 'player-b' });
+  assert.equal(contexts.length, 1);
+  assert.deepEqual(document.events(), GESTURES);
+
+  document.dispatch('keydown');
+  await tick();
+  assert.equal(contexts[0].resumeCalls, 1);
+  assert.deepEqual(document.events(), GESTURES, 'a refused resume keeps the listener');
+
+  page.activated = true;
+  document.dispatch('click');
+  await tick();
+  assert.equal(contexts[0].state, 'running');
+  assert.deepEqual(document.events(), []);
+
+  // the browser suspends the context later (an interruption): no new rig is needed to re-arm
+  contexts[0].setState('suspended');
+  assert.deepEqual(document.events(), GESTURES);
+  document.dispatch('pointerdown');
+  await tick();
+  assert.equal(contexts[0].state, 'running');
+  assert.deepEqual(document.events(), []);
+});
+
+test('a failed connect releases a refused stream and its listener', async (t) => {
+  const { room_connect } = await import('./livekit_web_bindings.js?failed-connect');
+  const roomEvent = new Proxy({}, { get: (_, name) => name });
+  const attached = new Set();
+  const page = fakePage();
+  const document = fakeDocument();
+  let stream;
+  class Room extends fakeRoomClass(attached) {
+    async connect() {
+      stream = remoteAudio('stream', page, attached);
+      this.emit(roomEvent.TrackSubscribed, stream, {}, { sid: 'ingress', identity: 'abc-streamer' });
+      await tick();
+      throw new Error('join failed');
+    }
+  }
+  withPageGlobals(t, { LivekitClient: { Room, RoomEvent: roomEvent }, document });
+
+  await assert.rejects(room_connect('wss://room.example', 'token', {}, {}, () => {}), /join failed/);
+  assert.deepEqual(document.events(), []);
+  assert.equal(attached.size, 0);
+  const plays = page.plays;
+  page.activated = true;
+  document.dispatch('click');
+  await tick();
+  assert.equal(page.plays, plays);
+});
+
+test('a dropped room is not retried, even by a refusal that settles after the drop', async (t) => {
+  const { room_connect, room_drop } = await import('./livekit_web_bindings.js?dropped');
+  const roomEvent = new Proxy({}, { get: (_, name) => name });
+  const attached = new Set();
+  const page = fakePage();
+  const document = fakeDocument();
+  withPageGlobals(t, { LivekitClient: { Room: fakeRoomClass(attached), RoomEvent: roomEvent }, document });
+
+  const room = await room_connect('wss://room.example', 'token', {}, {}, () => {});
+  room.emit(roomEvent.TrackSubscribed, remoteAudio('stream', page, attached), {}, { sid: 'ingress', identity: 'abc-streamer' });
+  // dropped before the first play() settles
+  room_drop(room);
+  await tick();
+  assert.deepEqual(document.events(), []);
+
+  const other = await room_connect('wss://room.example', 'token', {}, {}, () => {});
+  other.emit(roomEvent.TrackSubscribed, remoteAudio('stream2', page, attached), {}, { sid: 'ingress', identity: 'def-streamer' });
+  await tick();
+  assert.deepEqual(document.events(), GESTURES);
+  room_drop(other);
+  assert.deepEqual(document.events(), []);
+  const plays = page.plays;
+  page.activated = true;
+  document.dispatch('click');
+  await tick();
+  assert.equal(page.plays, plays, 'no play() after the drop');
+});
+
+test('the microphone permission prompt releases the capture it opened', async (t) => {
+  const { promptMicrophonePermission } = await import('./livekit_web_bindings.js?prompt');
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  t.after(() => Object.defineProperty(globalThis, 'navigator', previous));
+  const stopped = [];
+  const stream = { getTracks: () => ['a', 'b'].map(id => ({ stop() { stopped.push(id); } })) };
+  let reply = Promise.resolve(stream);
+  const getUserMedia = () => reply;
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { mediaDevices: { getUserMedia } },
+    configurable: true,
+  });
+  const unhandled = [];
+  const onUnhandled = reason => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  t.after(() => process.off('unhandledRejection', onUnhandled));
+
+  promptMicrophonePermission();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(stopped, ['a', 'b']);
+
+  reply = Promise.reject(new Error('NotAllowedError'));
+  const previousWarn = console.warn;
+  console.warn = () => {};
+  t.after(() => { console.warn = previousWarn; });
+  promptMicrophonePermission();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(unhandled, []);
+});
+
+test('volume setters never pass a value their target rejects', () => {
+  const element = { volume: 1 };
+  const elementTrack = {
+    audioElement: element,
+    setVolume(volume) {
+      // HTMLMediaElement.volume throws IndexSizeError outside 0..1, NaN included
+      if (!(volume >= 0 && volume <= 1)) throw new RangeError(`volume ${volume}`);
+      element.volume = volume;
+    },
+  };
+  const param = () => ({
+    v: 0,
+    get value() { return this.v; },
+    // AudioParam.value throws TypeError on non-finite values
+    set value(v) {
+      if (!Number.isFinite(v)) throw new TypeError(`value ${v}`);
+      this.v = v;
+    },
+  });
+  const rigTrack = { trackRig: { pannerNode: { pan: param() }, gainNode: { gain: param() } } };
+  const { pannerNode: { pan }, gainNode: { gain } } = rigTrack.trackRig;
+
+  remote_audio_track_set_volume(elementTrack, 2);
+  assert.equal(element.volume, 1);
+  remote_audio_track_set_volume(elementTrack, -1);
+  assert.equal(element.volume, 0);
+  remote_audio_track_set_volume(elementTrack, 0.5);
+  remote_audio_track_set_volume(elementTrack, NaN);
+  assert.equal(element.volume, 0);
+
+  remote_audio_track_set_volume(rigTrack, 1.5);
+  assert.equal(gain.value, 1.5);
+  remote_audio_track_set_volume(rigTrack, Infinity);
+  assert.equal(gain.value, 0);
+  remote_audio_track_set_volume(rigTrack, 1e9);
+  assert.ok(gain.value > 1 && gain.value < 1e9);
+
+  remote_track_pan_and_volume(rigTrack, 1, -2);
+  assert.deepEqual([pan.value, gain.value], [1, 0]);
+  remote_track_pan_and_volume(rigTrack, NaN, NaN);
+  assert.deepEqual([pan.value, gain.value], [0, 0]);
+  remote_track_pan_and_volume(rigTrack, -Infinity, 0.25);
+  assert.deepEqual([pan.value, gain.value], [0, 0.25]);
+});
+
+test('stopping local capture stops the track even if disabling the source throws', () => {
+  let stopped = false;
+  const mediaStreamTrack = {
+    set enabled(_) { throw new Error('ended'); },
+  };
+  assert.throws(() => local_audio_track_stop({
+    mediaStreamTrack,
+    stop() { stopped = true; },
+  }));
+  assert.equal(stopped, true);
+});
+
+test('page calls the host catches surface failures as throws or empty results', async () => {
+  // the host reads a publication only after a null check, and catches these throws
+  for (const read of [
+    local_track_publication_sid,
+    local_track_publication_kind,
+    local_track_publication_source,
+  ]) {
+    assert.throws(() => read(undefined), TypeError);
+  }
+  assert.deepEqual(
+    [local_track_publication_sid, local_track_publication_kind, local_track_publication_source]
+      .map(read => read({ trackSid: 'TR_1', kind: 'audio', source: 'microphone' })),
+    ['TR_1', 'audio', 'microphone'],
+  );
+  // an SDK that held no publication resolves empty; the host reports that as unpublished
+  assert.equal(
+    await local_participant_unpublish_track({ unpublishTrack: async () => undefined }, {}),
+    undefined,
+  );
+  // a publish that resolves without a publication still resolves; the host builds it from the track
+  assert.equal(
+    await local_participant_publish_track({ publishTrack: async () => undefined }, {}, {}),
+    undefined,
+  );
+  await assert.rejects(
+    local_participant_publish_track({ publishTrack: async () => { throw new Error('denied'); } }, {}, {}),
+    /denied/,
+  );
+  assert.throws(
+    () => remote_track_publication_set_subscribed(
+      { setSubscribed() { throw new Error('gone'); } },
+      true,
+    ),
+    /gone/,
+  );
+  assert.throws(() => local_audio_track_set_enabled({}, true), TypeError);
+  assert.equal(local_participant_can_publish({}), true);
+  assert.equal(local_participant_can_publish({ permissions: { canPublish: false } }), false);
 });

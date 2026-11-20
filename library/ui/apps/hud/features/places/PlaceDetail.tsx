@@ -1,7 +1,8 @@
 // The card's place lacks the player's own votes and favourite: a signed read on opening adds them.
 // Votes and the favourite change at once and go back if the service refuses them.
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { DEFAULT_REALM } from '@hud-host'
 import { Button, ContextMenu, MaskIcon, openPopup, showToast } from '../../design'
 import closeIcon from '../../assets/events/close-icn-thin.png'
 import linkIcon from '../../assets/events/link-icn.png'
@@ -10,9 +11,12 @@ import defaultPlace from '../../assets/map/panel/default-place.png'
 import dislikeOutline from '../../assets/map/panel/dislike-outline.png'
 import favouriteOutline from '../../assets/map/panel/favourite-outline.png'
 import favouriteSolid from '../../assets/map/panel/favourite-solid.png'
+import homeOutline from '../../assets/map/panel/home-outline.png'
+import homeSolid from '../../assets/map/panel/home-solid.png'
 import jumpInIcon from '../../assets/map/panel/jump-in.png'
 import likeOutline from '../../assets/map/panel/like-outline.png'
 import likeSolid from '../../assets/map/panel/like-solid.png'
+import navigationIcon from '../../assets/map/panel/navigation.png'
 import parcelsIcon from '../../assets/map/panel/parcels.png'
 import playersIcon from '../../assets/map/panel/players.png'
 import shareIcon from '../../assets/map/panel/share.png'
@@ -22,7 +26,9 @@ import likeRateIcon from '../../assets/places/like-rate.png'
 import locationIcon from '../../assets/places/location.png'
 import visitsIcon from '../../assets/places/visits.png'
 import type { SignedPlace } from '@explorer-core/engine/protocol'
+import { homeOf, isPlacePanelHome, placeHomeTarget } from '@explorer-core/features/map/home'
 import { likeRateOf, setPlaceFavorite, setPlaceLike } from '@explorer-core/features/map/mapApi'
+import { isRouteTo, navigation, placeParcel } from '@explorer-core/features/map/navigation'
 import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import type { WorldAccessVerdict as WorldAccess } from '@explorer-core/engine/generated'
 import { placeOnline } from '@explorer-core/features/lobby/lobbyApi'
@@ -229,9 +235,24 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
     )
   }
 
+  const home = homeOf(session.homeScene())
+  const isHome = isPlacePanelHome(home, place, null)
+  const setHome = (): void => {
+    if (isHome) return
+    const target = placeHomeTarget(place, null)
+    // `placeHomeTarget` reads a World with no name as a Genesis City parcel
+    if (target == null || (world && target.realm == null)) return
+    session.map.setHome(target.realm ?? DEFAULT_REALM, target.parcel)
+  }
+  const destination = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot)
+  const navigating = isRouteTo(destination, place)
+  const routable = !world && placeParcel(place) != null
+
   const signingIn = session.login.busy
   const jumpIn = (): void => {
-    if (onJumpIn(place)) onClose()
+    if (!onJumpIn(place)) return
+    if (isRouteTo(navigation.getSnapshot(), place)) navigation.stop()
+    onClose()
   }
 
   const connected = signed?.connected_addresses ?? place.connected_addresses
@@ -299,11 +320,23 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
           <Toggle label="Like" on={votes.like} iconOn={likeSolid} iconOff={likeOutline} disabled={busy.vote} onClick={() => vote(votes.like ? null : true, LIKE_ERROR)} />
           <Toggle label="Dislike" on={votes.dislike} iconOn={dislikeSolid} iconOff={dislikeOutline} disabled={busy.vote} onClick={() => vote(votes.dislike ? null : false, DISLIKE_ERROR)} />
           <Toggle label="Favorite" on={votes.favorite} iconOn={favouriteSolid} iconOff={favouriteOutline} disabled={busy.favorite} onClick={favorite} />
+          <Toggle label="Set as Home" on={isHome} iconOn={homeSolid} iconOff={homeOutline} onClick={setHome} />
           <Button size="bare" radius="md" variant="faint" className={styles.share} aria-label="Share" aria-haspopup="menu" onClick={(e) => openShareMenu(e.currentTarget, place, referrer)}>
             <MaskIcon src={shareIcon} size={24} />
           </Button>
         </div>
         <div className={styles.row}>
+          {routable &&
+            (navigating ? (
+              <Button size="bare" radius="md" variant="navigateExit" className={`${styles.wide} ${styles.navigation}`} onClick={navigation.stop}>
+                exit navigation
+              </Button>
+            ) : (
+              <Button size="bare" radius="md" variant="navigate" className={`${styles.wide} ${styles.navigation}`} onClick={() => navigation.start(place)}>
+                <MaskIcon src={navigationIcon} size={19} />
+                start navigation
+              </Button>
+            ))}
           {showJumpIn && (
             <Button size="bare" radius="md" variant="primary" className={styles.wide} aria-label={`Jump in to ${place.title}`} disabled={signingIn} onClick={jumpIn}>
               JUMP IN

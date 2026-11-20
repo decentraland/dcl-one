@@ -22,7 +22,7 @@ import { fetchNftResult, indexOutage, landData } from "./api";
 import { landCategoryOf, landNetwork } from "@shop/land/contracts";
 import { erc20Abi, readContract, rpcReader, txHref, type ChainReader } from "./evm";
 import { Mana, shortDateText } from "./format";
-import { BUILDER_LAND_HREF } from "./ManageAsset";
+import { CREATOR_HUB_HREF } from "./ManageAsset";
 import { acceptRentalListing, isOwnedBy, isRentalExecuted, isRentalOpen, pricePerRent, rentalEndDate, type RentalListing, type RentalTxStage } from "./rentals";
 import { fetchTiles, type TilesResult } from "./tiles";
 import { txOutcome, type TxOutcome } from "./txText";
@@ -175,8 +175,8 @@ export default function RentPage(props: RentPageProps) {
           </p>
           <ul className="shop-land-cta-list">
             <li>
-              <a href="/create/scenes">
-                Get creative with the Scene Builder<span>Easily create simpler scenes.</span>
+              <a href={CREATOR_HUB_HREF}>
+                Get creative with the Creator Hub<span>Easily create simpler scenes.</span>
               </a>
             </li>
             <li>
@@ -185,7 +185,7 @@ export default function RentPage(props: RentPageProps) {
               </a>
             </li>
             <li>
-              <a href={BUILDER_LAND_HREF}>
+              <a href={CREATOR_HUB_HREF}>
                 Manage LAND<span>Add an existing scene, or review permissions.</span>
               </a>
             </li>

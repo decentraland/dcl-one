@@ -219,6 +219,8 @@ the shared foundations and components. The app itself, under `apps/<app>`,
 keeps its pages, routes and data wiring and imports its UI from there. Until
 `library/ui` is implemented, app-specific UI stays where it is in the app.
 
+Sites composes its views in route modules or in `apps/sites/src/pages/<domain>/` when a screen needs app-level wiring. Its visual components and styles belong in `library/ui/apps/sites/<domain>/`. See [Sites page components](adr/2026-11-20-sites-pages.md).
+
 Until `library/ui` is implemented, Sites imports some UI source through the
 `@ui/*` alias (`apps/sites/tsconfig.json`, resolving to `apps/ui3/src`). Verify the
 actual importing surfaces of a component before assuming it has more than one
@@ -416,7 +418,9 @@ include the shared sources so that changes invalidate the affected artifacts.
   (`src/test/sharedUi.test.tsx` checks them).
 
 The Sites host maps `@hud`, `@explorer-core` and `@hud-host` the same way,
-with React deduplicated and both folders allowed to its dev servers:
+and also `@shop-host`, the in-world Shop's host (`library/ui/apps/shop/hostContract.ts`,
+implemented by `apps/ui3/src/play/shopHost.ts`), with React and TanStack Query
+deduplicated and both folders allowed to its dev servers:
 `apps/ui3/tsconfig.json` and `apps/ui3/vitest.config.ts` for the `/play`
 type check and tests, `apps/sites/tsconfig.json` and
 `apps/sites/vite.config.ts` for the Sites build.

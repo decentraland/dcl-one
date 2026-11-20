@@ -14,8 +14,6 @@ const DELETE_COMPONENT_NETWORK: u32 = 6;
 const DELETE_ENTITY_NETWORK: u32 = 7;
 const AUTHORITATIVE_PUT_COMPONENT: u32 = 8;
 
-const VIDEO_CONTROL_STATE: SceneComponentId = SceneComponentId(2_092_194_694);
-
 /// Filters SDK CRDT traffic inside a binary scene message. Other binary tags are opaque.
 /// A malformed CRDT envelope or record drops the whole packet.
 pub fn filter_scene_crdt(payload: &[u8], trusted: bool) -> Option<Cow<'_, [u8]>> {
@@ -79,7 +77,7 @@ fn record_is_allowed(record: &[u8], trusted: bool) -> Option<bool> {
     let component = SceneComponentId(read_word(record, 12)?);
     let local_only = matches!(
         component,
-        VIDEO_CONTROL_STATE
+        SceneComponentId::VIDEO_CONTROL_STATE
             | SceneComponentId::PHYSICS_COMBINED_IMPULSE
             | SceneComponentId::PHYSICS_COMBINED_FORCE
     );
@@ -98,7 +96,6 @@ mod tests {
     use dcl_component::SceneComponentId;
 
     const ORDINARY_COMPONENT: u32 = 1000;
-    const VIDEO_CONTROL_STATE_ID: u32 = 2092194694;
 
     fn record(kind: u32, fields: &[u32], data: &[u8]) -> Vec<u8> {
         let length = (8 + fields.len() * 4 + data.len()) as u32;
@@ -158,7 +155,11 @@ mod tests {
     #[test]
     fn state_response_keeps_the_destination_and_filters_components() {
         let destination = [3, 9, 5, 0, 0, 0, b'0', b'x', b'1', b'2', b'3'];
-        let video_state = record(5, &[1, VIDEO_CONTROL_STATE_ID, 1, 2, 0], b"");
+        let video_state = record(
+            5,
+            &[1, SceneComponentId::VIDEO_CONTROL_STATE.0, 1, 2, 0],
+            b"",
+        );
         let normal = record(5, &[1, ORDINARY_COMPONENT, 1, 2, 0], b"");
         let payload = packet(&destination, &[&video_state, &normal]);
         assert_eq!(

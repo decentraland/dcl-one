@@ -31,10 +31,6 @@ pub fn handler() -> Handler {
     }
 }
 
-pub fn registration() -> Result<String, anyhow::Error> {
-    anyhow::bail!("no scheme registration on this platform")
-}
-
 pub fn register_handler() -> Result<(), anyhow::Error> {
     anyhow::bail!(
         "nothing on this mac handles {SCHEME}:// links. Install the Decentraland launcher (https://decentraland.org/download) and try again"

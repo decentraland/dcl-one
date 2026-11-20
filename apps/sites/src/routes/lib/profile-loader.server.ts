@@ -5,13 +5,15 @@ import { QUERY_CLIENT_CONFIG } from "@/core/lib/query/defaults";
 import { sidLoader } from "@/core/lib/telemetry/session";
 import { readWallet } from "@/data/lib/auth/wallet-cookie";
 import { normalizeAddress, type ProfileVM } from "@/data/lib/catalyst/social/profile";
+import { knownDappsFlags } from "@/data/lib/feature-flags.server";
+import { profileFlagsFrom } from "@/data/lib/profile/flags";
 import {
+  assetsQuery,
   badgesQuery,
   canReadProfile,
   profileKeys,
   creationsQuery,
-  ownedNamesQuery,
-  ownedWearablesQuery,
+  DEFAULT_CREATIONS_CATEGORY,
   photosQuery,
   placesQuery,
   profileQuery,
@@ -60,17 +62,16 @@ function prefetchTab(client: QueryClient, address: string, tab: ProfileTab) {
   switch (tab) {
     case "overview":
       return client.prefetchQuery(badgesQuery(address));
+    // The first page of the view a tab opens on: wearables for Creations, every category for Assets.
     case "creations":
-      return client.prefetchQuery(creationsQuery(address));
+      return client.prefetchInfiniteQuery(creationsQuery(address, DEFAULT_CREATIONS_CATEGORY));
     case "places":
       return client.prefetchQuery(placesQuery(address));
+    // The public gallery's first page; the owner's signed one needs the browser's identity.
     case "photos":
-      return client.prefetchQuery(photosQuery(address));
+      return client.prefetchInfiniteQuery(photosQuery(address));
     case "assets":
-      return Promise.all([
-        client.prefetchQuery(ownedWearablesQuery(address)),
-        client.prefetchQuery(ownedNamesQuery(address)),
-      ]);
+      return client.prefetchInfiniteQuery(assetsQuery(address, null));
     default:
       return undefined;
   }
@@ -79,7 +80,8 @@ function prefetchTab(client: QueryClient, address: string, tab: ProfileTab) {
 /**
  * `/profile/:address[/:tab]`. The profile itself is required: an address that cannot be a wallet is
  * 404, and a profile service that fails is 503. A wallet with no profile yet is a valid, empty profile.
- * Older links (`?tab=`, `?own=1`, a mixed-case address) are redirected to the canonical path.
+ * Older links (`?tab=`, `?own=1`, a mixed-case address, the old `referral` tab id) are redirected to
+ * the canonical path.
  */
 export async function profileLoader(
   request: Request,
@@ -98,11 +100,19 @@ export async function profileLoader(
   // cookie only exists after a thirdweb sign-in.
   const own = isOwnProfile(address, readWallet(request));
 
+  // Only the member's own profile has a tab behind a rollout flag, so only it reads the flags.
+  const readFlags = own ? await knownDappsFlags() : null;
+  const flags = readFlags === null ? null : profileFlagsFrom(readFlags);
+  // An unavailable flag keeps an owner's deep link until the client can confirm the rollout.
+  const tabOptions = { referral: own && flags?.referral !== false };
+
   const legacyTab = url.searchParams.get("tab");
   if (legacyTab !== null || url.searchParams.has("own")) {
-    throw redirect(keepQuery(profileHref(address, readProfileTab(legacyTab ?? "", own) ?? "overview"), url));
+    throw redirect(
+      keepQuery(profileHref(address, readProfileTab(legacyTab ?? "", own, tabOptions) ?? "overview"), url),
+    );
   }
-  const tab = readProfileTab(params.tab, own);
+  const tab = readProfileTab(params.tab, own, tabOptions);
   if (tab === null) throw redirect(keepQuery(profileHref(address), url));
   const canonical = profileHref(address, tab);
   if (url.pathname !== canonical) throw redirect(keepQuery(canonical, url));
@@ -110,6 +120,8 @@ export async function profileLoader(
   // A visitor already gone is not read for; one who leaves mid-load stops the reads.
   request.signal.throwIfAborted();
   const client = new QueryClient(QUERY_CLIENT_CONFIG);
+  // The page reads the same flags the tab was decided with, without asking for them again.
+  if (flags) client.setQueryData(profileKeys.flags(), flags);
   const cancel = () => void client.cancelQueries();
   request.signal.addEventListener("abort", cancel, { once: true });
   const profileRead = client.fetchQuery(profileQuery(address));
@@ -146,7 +158,10 @@ export function ownProfileRedirect(request: Request, tab?: string): never {
   }
   // `/profile/me?tab=places`, the query form of the profile site's old links, keeps its tab.
   const requested = tab ?? url.searchParams.get("tab") ?? undefined;
-  throw redirect(keepQuery(profileHref(wallet, readProfileTab(requested, true) ?? "overview"), url));
+  // Referral Rewards is kept here; the profile's own loader then decides it by its rollout flag.
+  throw redirect(
+    keepQuery(profileHref(wallet, readProfileTab(requested, true, { referral: true }) ?? "overview"), url),
+  );
 }
 
 /** `/profile/accounts/:address[/:tab]`, the profile site's old paths. */

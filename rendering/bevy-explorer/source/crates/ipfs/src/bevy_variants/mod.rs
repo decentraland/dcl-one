@@ -5,7 +5,7 @@
 //! field, else the asset-bundle generator's CDN for the base domain (`https://abgen-cdn.<base>`);
 //! `off` in any of them turns the client off. For each scene, wearable and emote entity it loads, the
 //! explorer fetches
-//! `{base}/bevy/manifest/{entityId}.json` once (schema v3); it maps original content CIDs to the
+//! `{base}/bevy/manifest/{entityId}.json` once; it maps original content CIDs to the
 //! paths of their variants, `bevy/{prefix}/{name}`, whose prefix letter is the variant's class
 //! (`t` a BC KTX2 texture, `m` a `glb-br` model, `g` a GLB). A content file read whose
 //! original CID has a variant of a class this client takes is answered with
@@ -35,6 +35,10 @@
 //! Preview mode, local scenes (`b64-` ids) and entities served from a loopback or file content
 //! server never ask for a manifest; in preview mode that includes the wearables and emotes, so a
 //! preview always shows the deployed files.
+//!
+//! The same base serves a scene's near-LOD descriptor, the asset pipeline's initial scene state
+//! (`{base}/LOD/lods-unity/manifests/{sceneId}_InitialSceneState.json`,
+//! [`IpfsIo::bevy_lod_descriptor`]).
 
 mod debug_panel;
 pub mod ktx2;
@@ -72,7 +76,7 @@ use crate::{
 /// texture variant loads at the original path. A path without an extension goes to the last
 /// image loader, which does too.
 const TEXTURE_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "ktx2"];
-/// Every variant class the manifest schema (v3) names by a path's prefix letter, taken or not.
+/// Every variant class the manifest names by a path's prefix letter, taken or not.
 const SCHEMA_FORMATS: [&str; 3] = ["ktx2-bc", "glb-br", "glb"];
 /// Model paths a model variant stands in for: only a binary glTF, which is what it holds.
 const MODEL_EXTENSIONS: [&str; 1] = ["glb"];
@@ -86,7 +90,7 @@ pub enum Decoded {
     BcTexture,
     /// A `glb-br` model: the original `.glb`, fetched as its Brotli copy that the browser
     /// decodes, handed to the glTF loader of the original path. Web only.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    #[cfg(target_arch = "wasm32")]
     BrotliGlb,
     /// A `glb` model: a GLB with its embedded images as BC KTX2, handed to the glTF loader of
     /// the original path as it is; the loader decodes each image through the host KTX2
@@ -170,6 +174,7 @@ pub fn taken_formats() -> String {
     for row in SUPPORTED_FORMATS {
         let how = match row.decoded {
             Decoded::BcTexture => "BC1/BC5/BC7, unwrapped to DDS by the image loaders",
+            #[cfg(target_arch = "wasm32")]
             Decoded::BrotliGlb => "Brotli, decoded by the browser",
             Decoded::BcGlb => "embedded BC1/BC5/BC7, unwrapped to DDS by the glTF loader",
         };
@@ -255,30 +260,21 @@ pub struct Manifest {
 }
 
 #[derive(Deserialize)]
-struct ManifestVersion {
-    v: u32,
-}
-
-#[derive(Deserialize)]
 struct ManifestJson {
+    /// abgen's, and only shown: read as any JSON, so its shape never decides whether the
+    /// manifest is accepted.
     #[serde(default)]
-    lanes: BTreeMap<String, String>,
-    #[serde(default)]
+    lanes: serde_json::Value,
     files: HashMap<String, Vec<String>>,
 }
 
-/// The manifest schema version this client reads.
-pub const MANIFEST_VERSION: u32 = 3;
-
-/// A v3 manifest: `v`, `lanes`, and original content CID → variant paths. It is fetched at the
-/// entity's own url, so it names no entity. Paths that are not `bevy/{prefix}/{name}` with plain
-/// segments (a path becomes part of a url) or whose prefix letter names no class are dropped,
-/// and so is an original left with none.
+/// A manifest: `lanes` and `files`, original content CID → variant paths. Its `v` and any other
+/// field are abgen's own (they tell it when to rebuild) and are not read: whatever a manifest
+/// lists is loaded, whichever generation built it. Of `lanes`, the entries that are strings are
+/// kept for the debug panel. It is fetched at the entity's own url, so it names no entity. Paths
+/// that are not `bevy/{prefix}/{name}` with plain segments (a path becomes part of a url) or
+/// whose prefix letter names no class are dropped, and so is an original left with none.
 pub fn parse_manifest(bytes: &[u8]) -> Result<Manifest, String> {
-    let version: ManifestVersion = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-    if version.v != MANIFEST_VERSION {
-        return Err(format!("unsupported manifest version {}", version.v));
-    }
     let json: ManifestJson = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
     let files = json
         .files
@@ -292,10 +288,14 @@ pub fn parse_manifest(bytes: &[u8]) -> Result<Manifest, String> {
         })
         .filter(|(_, variants)| !variants.is_empty())
         .collect();
-    Ok(Manifest {
-        lanes: json.lanes,
-        files,
-    })
+    let lanes = json
+        .lanes
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(class, prefix)| Some((class.clone(), prefix.as_str()?.to_owned())))
+        .collect();
+    Ok(Manifest { lanes, files })
 }
 
 /// `bevy/{prefix}/{name}`: the prefix ASCII alphanumeric and not `manifest`, the name ASCII
@@ -664,6 +664,16 @@ impl IpfsIo {
         }
     }
 
+    /// The asset pipeline's initial-scene-state descriptor for a scene, which places its near
+    /// LOD, under the variants base; `None` when variants are off.
+    pub fn bevy_lod_descriptor(&self, scene: &str) -> Option<String> {
+        let base = self.bevy_variants.base()?;
+        Some(format!(
+            "{base}/LOD/lods-unity/manifests/{}_InitialSceneState.json",
+            scene.to_lowercase()
+        ))
+    }
+
     /// Asks abgen for an entity's manifest (a scene, wearable or emote), once per session. A
     /// no-op when variants are off.
     pub fn request_bevy_variants(self: &Arc<Self>, entity: &str) {
@@ -818,6 +828,7 @@ impl IpfsIo {
         // own path is fetched and the server sends the copy to a client that accepts `br`
         let url = match decoded {
             Decoded::BcTexture | Decoded::BcGlb => format!("{base}/{}", variant.path),
+            #[cfg(target_arch = "wasm32")]
             Decoded::BrotliGlb => format!("{base}/{}.br", variant.path),
         };
         let key = CacheKey::Url(content_hash::url_cache_name(&url));
@@ -886,6 +897,7 @@ impl IpfsIo {
             // byte: checked against the original's own content hash, a truncated or corrupt
             // copy falls back here, and one that passes is the original, so a glTF loader
             // failure on it is the original's own and needs no reload
+            #[cfg(target_arch = "wasm32")]
             Decoded::BrotliGlb => {
                 (!content_hash::matches_content_hash(&original, &fetched)).then(|| {
                     format!(

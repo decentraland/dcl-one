@@ -94,10 +94,7 @@ impl ScratchDb {
             "catalyst_test_laz_{}",
             &uuid::Uuid::new_v4().simple().to_string()[..12]
         );
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let mut url = url::Url::parse(&base).unwrap();
         url.set_path(&format!("/{name}"));
         let pool = crate::db::connect_pool(
@@ -109,7 +106,6 @@ impl ScratchDb {
         )
         .await
         .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         Some(Self { name, pool, admin })
     }
 
@@ -4545,8 +4541,11 @@ async fn wait_until_blocked_by(pool: &PgPool, holder: i32) {
     panic!("nothing waited on backend {holder}");
 }
 
+/// What the lock-timeout tests wait instead of the production five seconds.
+const SHORT_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+
 /// A fold of the old registries left running (by a lost lease, say) holds
-/// their cursor row: a switch waits for it at most `REBIND_LOCK_TIMEOUT`,
+/// their cursor row: a switch waits for it at most `rebind_lock_timeout`,
 /// then defers without writing, and the pass ends without an error, so it
 /// is retried at the next interval, not after the error backoff. A rewind
 /// on the same registries never waits for the fold.
@@ -4561,6 +4560,7 @@ async fn a_switch_defers_behind_a_fold_left_running_and_a_same_registries_rewind
         rpc_url: Some("http://127.0.0.1:9".into()),
         index_enabled: true,
         replay_from_block: Some(START),
+        rebind_lock_timeout: SHORT_LOCK_TIMEOUT,
         ..Settings::for_tests()
     };
     let old = Settings {
@@ -4614,7 +4614,7 @@ async fn a_switch_defers_behind_a_fold_left_running_and_a_same_registries_rewind
     // and no longer than that.
     let waited = asked.elapsed();
     assert!(
-        waited >= std::time::Duration::from_secs(5) && waited < std::time::Duration::from_secs(30),
+        waited >= SHORT_LOCK_TIMEOUT && waited < std::time::Duration::from_secs(30),
         "{waited:?}"
     );
     assert_eq!(registries().await, old_registries);
@@ -4850,7 +4850,7 @@ async fn the_first_cursor_of_an_empty_database_admits_one_network() {
     let mut creating = pool.begin().await.unwrap();
     let creating_pid = backend_pid(&mut creating).await;
     assert_eq!(
-        indexer::admit_network(&mut creating, NETWORK_MAINNET)
+        indexer::admit_network(&mut creating, NETWORK_MAINNET, indexer::REBIND_LOCK_TIMEOUT)
             .await
             .unwrap(),
         None
@@ -4909,14 +4909,19 @@ async fn a_pass_whose_new_cursor_waits_on_the_admission_ends_without_an_error() 
         // Never asked: the pass ends before any request.
         rpc_url: Some("http://127.0.0.1:9".into()),
         index_enabled: true,
+        rebind_lock_timeout: SHORT_LOCK_TIMEOUT,
         ..Settings::for_tests()
     };
     let (_jobs, ctx) = job_ctx().await;
     let mut admitting = pool.begin().await.unwrap();
     assert_eq!(
-        indexer::admit_network(&mut admitting, NETWORK_MAINNET)
-            .await
-            .unwrap(),
+        indexer::admit_network(
+            &mut admitting,
+            NETWORK_MAINNET,
+            indexer::REBIND_LOCK_TIMEOUT
+        )
+        .await
+        .unwrap(),
         None
     );
 
@@ -4955,7 +4960,7 @@ async fn a_switch_another_pass_already_made_is_begun_without_a_second_rewind() {
     let mut first = pool.begin().await.unwrap();
     let first_pid = backend_pid(&mut first).await;
     assert_eq!(
-        indexer::admit_network(&mut first, NETWORK_MAINNET)
+        indexer::admit_network(&mut first, NETWORK_MAINNET, indexer::REBIND_LOCK_TIMEOUT)
             .await
             .unwrap(),
         None
@@ -5012,7 +5017,10 @@ async fn a_replay_whose_write_waits_past_the_lock_timeout_defers() {
         return;
     };
     let pool = &db.pool;
-    let configured = Settings::for_tests();
+    let configured = Settings {
+        rebind_lock_timeout: SHORT_LOCK_TIMEOUT,
+        ..Settings::for_tests()
+    };
     let mut writer = pool.begin().await.unwrap();
     sqlx::query(
         "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, full_replay_started) \
@@ -5032,7 +5040,7 @@ async fn a_replay_whose_write_waits_past_the_lock_timeout_defers() {
         ReplayStart::Deferred
     );
     assert!(
-        asked.elapsed() >= std::time::Duration::from_secs(5),
+        asked.elapsed() >= SHORT_LOCK_TIMEOUT,
         "{:?}",
         asked.elapsed()
     );

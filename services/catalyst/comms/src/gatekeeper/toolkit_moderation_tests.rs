@@ -972,6 +972,38 @@ async fn toolkit_ban_listings_admit_extended_holders() {
                 assert_eq!(status, StatusCode::UNAUTHORIZED, "{case} {path}: {value}");
             }
         }
+        // The writes share the gate: a holder reaches the store, an outsider
+        // is refused.
+        for (method, path, key) in [
+            ("POST", "/scene-admin", "admin"),
+            ("DELETE", "/scene-admin", "admin"),
+            ("POST", "/scene-bans", "banned_address"),
+            ("DELETE", "/scene-bans", "banned_address"),
+        ] {
+            let body = json!({ key: "0x00000000000000000000000000000000000000aa" });
+            let (status, value) = call(&app, method, path, meta, body.clone(), KEY).await;
+            if outcome == StatusCode::INTERNAL_SERVER_ERROR {
+                // Past the gate: the store behind it has no database here.
+                assert!(status.is_server_error(), "{case} {method} {path}: {value}");
+            } else if outcome == StatusCode::UNAUTHORIZED {
+                // A write refuses with 403 where a listing answers 401.
+                assert_eq!(
+                    status,
+                    StatusCode::FORBIDDEN,
+                    "{case} {method} {path}: {value}"
+                );
+            } else {
+                assert_eq!(status, outcome, "{case} {method} {path}: {value}");
+            }
+            if outcome == StatusCode::INTERNAL_SERVER_ERROR {
+                let (status, value) = call(&app, method, path, meta, body, OUTSIDER_KEY).await;
+                assert_eq!(
+                    status,
+                    StatusCode::FORBIDDEN,
+                    "{case} {method} {path}: {value}"
+                );
+            }
+        }
     }
     server.abort();
 }

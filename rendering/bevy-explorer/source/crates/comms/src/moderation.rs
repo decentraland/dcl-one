@@ -4,15 +4,19 @@
 use alloy_core::primitives::Address;
 use bevy::{
     ecs::{component::Component, resource::Resource},
-    platform::collections::HashSet,
+    platform::collections::{HashMap, HashSet},
 };
 use common::util::AsH160;
 use serde::Serialize;
 
-/// The gatekeeper's answer to the local user's request to join the current scene's room. Built
-/// only through its constructors; read through [`SceneAdmission::view`].
-#[derive(Resource, Debug, Clone, PartialEq, Eq, Default)]
-pub struct SceneAdmission(Admission);
+/// Admission to the current scene and recognized refusals for this wallet's realm session.
+/// Refusals outlive the scene and its room; only fresh admission or a session change clears them.
+#[derive(Resource, Debug, Clone, PartialEq, Default)]
+pub struct SceneAdmission {
+    current: Admission,
+    session: Option<(String, Address)>,
+    refusals: HashMap<String, SceneRefusal>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 enum Admission {
@@ -22,11 +26,15 @@ enum Admission {
         scene_id: String,
     },
     Refused {
-        scope: BanScope,
-        message: String,
         scene_id: String,
-        session: Option<(String, Address)>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct SceneRefusal {
+    scope: BanScope,
+    message: String,
+    retry_due: f64,
 }
 
 /// A [`SceneAdmission`] as it reads.
@@ -65,14 +73,16 @@ impl SceneAdmission {
 
     /// The gatekeeper minted the scene's room.
     pub fn allowed(scene_id: &str) -> Self {
-        Self(Admission::Allowed {
-            scene_id: scene_id.to_owned(),
-        })
+        Self {
+            current: Admission::Allowed {
+                scene_id: scene_id.to_owned(),
+            },
+            ..Self::default()
+        }
     }
 
-    /// The admission a scene-adapter refusal means: the gatekeeper's 403s, and the worlds
-    /// server's 401s for a platform or world ban. A refusal that names no ban and a 503 are
-    /// unknown.
+    /// Recognizes the gatekeeper's 403s and the worlds server's ban-specific 401s.
+    /// A refusal that names no ban, or a 503, is unknown.
     pub fn from_refusal(
         status: u16,
         message: Option<&str>,
@@ -87,74 +97,119 @@ impl SceneAdmission {
             401 if is_world && message.starts_with(WORLD_BANNED_PREFIX) => BanScope::World,
             _ => return Self::unknown(),
         };
-        Self(Admission::Refused {
-            scope,
-            message: message.trim_end_matches('.').to_owned(),
-            scene_id: scene_id.to_owned(),
-            session: None,
-        })
+        Self {
+            current: Admission::Refused {
+                scene_id: scene_id.to_owned(),
+            },
+            refusals: HashMap::from_iter([(
+                scene_id.to_owned(),
+                SceneRefusal {
+                    scope,
+                    message: message.trim_end_matches('.').to_owned(),
+                    retry_due: 0.0,
+                },
+            )]),
+            ..Self::default()
+        }
     }
 
     pub(crate) fn from_room_ban(scene_id: &str) -> Self {
-        Self(Admission::Refused {
-            scope: BanScope::Scene,
-            message: SCENE_BANNED.to_owned(),
-            scene_id: scene_id.to_owned(),
-            session: None,
-        })
+        Self::from_refusal(403, Some(SCENE_BANNED), false, scene_id)
     }
 
     pub fn for_session(mut self, realm_about_url: &str, address: Address) -> Self {
-        // The worlds adapter reports the same refusal for a world-wide ban and a scene ban.
-        // In either case the refusal applies to the scene whose adapter was requested.
-        if let Admission::Refused {
-            scope: BanScope::Scene | BanScope::World,
-            session,
-            ..
-        } = &mut self.0
-        {
-            *session = Some((realm_about_url.to_owned(), address));
-        }
+        self.session = Some((realm_about_url.to_owned(), address));
         self
     }
 
-    pub fn banned_scene(&self, realm_about_url: &str, address: Address) -> Option<&str> {
-        match &self.0 {
-            Admission::Refused {
-                scene_id,
-                session: Some((realm, user)),
-                ..
-            } if realm == realm_about_url && *user == address => Some(scene_id),
-            _ => None,
+    pub(crate) fn select_scene(&mut self, realm: &str, address: Option<Address>, scene_id: &str) {
+        let session = address.map(|address| (realm.to_owned(), address));
+        if self.session != session {
+            self.refusals.clear();
+            self.session = session;
         }
+        // Platform refusals are reported by the platform-ban owner, not retained as scene bans.
+        self.refusals
+            .retain(|_, refusal| refusal.scope != BanScope::Platform);
+        self.current = if self.refusals.contains_key(scene_id) {
+            Admission::Refused {
+                scene_id: scene_id.to_owned(),
+            }
+        } else {
+            Admission::Unknown
+        };
+    }
+
+    pub(crate) fn observe(&mut self, next: Self) {
+        if self.session != next.session {
+            self.refusals.clear();
+            self.session = next.session;
+        }
+        if let Admission::Allowed { scene_id } = &next.current {
+            self.refusals.remove(scene_id);
+        }
+        for (scene_id, mut refusal) in next.refusals {
+            if let Some(previous) = self.refusals.get(&scene_id) {
+                refusal.retry_due = refusal.retry_due.max(previous.retry_due);
+            }
+            self.refusals.insert(scene_id, refusal);
+        }
+        self.current = next.current;
+    }
+
+    /// Whether this scene must stay unloaded, even while another scene is current.
+    pub fn is_scene_banned(&self, realm_about_url: &str, address: Address, scene_id: &str) -> bool {
+        self.session
+            .as_ref()
+            .is_some_and(|(realm, user)| realm == realm_about_url && *user == address)
+            && self
+                .refusals
+                .get(scene_id)
+                .is_some_and(|refusal| matches!(refusal.scope, BanScope::Scene | BanScope::World))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn banned_scene(&self, realm_about_url: &str, address: Address) -> Option<&str> {
+        self.scene_id()
+            .filter(|scene_id| self.is_scene_banned(realm_about_url, address, scene_id))
+    }
+
+    // The active room owns retries. Checkpoint its deadline only when disposing that room,
+    // so returning to a refused parcel cannot bypass a server's longer Retry-After.
+    pub(crate) fn remember_retry(&mut self, scene_id: &str, due: f64) {
+        if let Some(refusal) = self.refusals.get_mut(scene_id) {
+            refusal.retry_due = refusal.retry_due.max(due);
+        }
+    }
+
+    pub(crate) fn retry_due(&self, scene_id: &str) -> Option<f64> {
+        self.refusals.get(scene_id).map(|refusal| refusal.retry_due)
     }
 
     pub fn view(&self) -> AdmissionView<'_> {
-        match &self.0 {
+        match &self.current {
             Admission::Unknown => AdmissionView::Unknown,
             Admission::Allowed { scene_id } => AdmissionView::Allowed { scene_id },
-            Admission::Refused {
-                scope,
-                message,
-                scene_id,
-                ..
-            } => AdmissionView::Refused {
-                scope: *scope,
-                message,
-                scene_id,
-            },
+            Admission::Refused { scene_id } => {
+                let refusal = &self.refusals[scene_id];
+                AdmissionView::Refused {
+                    scope: refusal.scope,
+                    message: &refusal.message,
+                    scene_id,
+                }
+            }
         }
     }
 
-    /// The gatekeeper refused the player as banned.
+    /// The gatekeeper refused the current scene's player as banned.
     pub fn is_refused(&self) -> bool {
-        matches!(self.0, Admission::Refused { .. })
+        matches!(self.current, Admission::Refused { .. })
     }
 
     pub fn scene_id(&self) -> Option<&str> {
-        match &self.0 {
+        match &self.current {
             Admission::Unknown => None,
-            Admission::Allowed { scene_id } | Admission::Refused { scene_id, .. } => Some(scene_id),
+            Admission::Allowed { scene_id } | Admission::Refused { scene_id } => Some(scene_id),
         }
     }
 }
@@ -181,12 +236,12 @@ pub enum MetadataError {
 }
 
 impl SceneRoomModeration {
-    /// Parses `{"bannedAddresses":[..],"sceneAdmins":[..]}`. A missing or non-array field is
-    /// empty; an entry that is not an address is skipped.
-    pub fn from_metadata(metadata: &str) -> Result<Self, MetadataError> {
-        let mut moderation = Self::default();
-        moderation.update_from_metadata(metadata)?;
-        Ok(moderation)
+    pub fn is_banned(&self, address: Address) -> bool {
+        self.banned_addresses.contains(&address)
+    }
+
+    pub fn is_admin(&self, address: Address) -> bool {
+        self.scene_admins.contains(&address)
     }
 
     /// Only explicit arrays replace lists. Missing or non-array fields retain known state;
@@ -218,6 +273,39 @@ impl SceneRoomModeration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parse_metadata(metadata: &str) -> Result<SceneRoomModeration, MetadataError> {
+        let mut state = SceneRoomModeration::default();
+        state.update_from_metadata(metadata)?;
+        Ok(state)
+    }
+
+    #[test]
+    fn refusals_survive_scene_changes_and_only_their_own_fresh_admission_clears_them() {
+        let realm = "https://realm.example/about";
+        let address = Address::repeat_byte(1);
+        let mut admission = SceneAdmission::from_room_ban("a").for_session(realm, address);
+        admission.remember_retry("a", 45.0);
+        admission.select_scene(realm, Some(address), "b");
+        admission.observe(SceneAdmission::allowed("b").for_session(realm, address));
+        assert!(admission.is_scene_banned(realm, address, "a"));
+        admission.observe(SceneAdmission::from_room_ban("b").for_session(realm, address));
+        admission.select_scene(realm, Some(address), "a");
+        assert_eq!(admission.banned_scene(realm, address), Some("a"));
+        assert_eq!(admission.retry_due("a"), Some(45.0));
+        admission.observe(SceneAdmission::allowed("a").for_session(realm, address));
+        assert!(!admission.is_scene_banned(realm, address, "a"));
+        assert!(admission.is_scene_banned(realm, address, "b"));
+        assert_eq!(admission.retry_due("a"), None);
+        admission.select_scene(realm, Some(Address::repeat_byte(2)), "b");
+        assert!(!admission.is_scene_banned(realm, address, "b"));
+        admission.select_scene(realm, Some(address), "b");
+        assert!(!admission.is_scene_banned(realm, address, "b"));
+        admission.observe(SceneAdmission::from_room_ban("b").for_session(realm, address));
+        admission.select_scene("https://other.example/about", Some(address), "b");
+        admission.select_scene(realm, Some(address), "b");
+        assert!(!admission.is_scene_banned(realm, address, "b"));
+    }
 
     #[test]
     fn scene_bans_apply_only_to_the_session_that_received_them() {
@@ -330,7 +418,7 @@ mod tests {
     #[test]
     fn room_metadata_parses_leniently() {
         let full = r#"{"bannedAddresses":["0xABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD","nope"],"sceneAdmins":["0x1111111111111111111111111111111111111111"]}"#;
-        let parsed = SceneRoomModeration::from_metadata(full).unwrap();
+        let parsed = parse_metadata(full).unwrap();
         assert_eq!(parsed.banned_addresses.len(), 1);
         assert!(parsed.banned_addresses.contains(
             &"0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
@@ -339,24 +427,14 @@ mod tests {
         ));
         assert_eq!(parsed.scene_admins.len(), 1);
 
-        let partial =
-            SceneRoomModeration::from_metadata(r#"{"sceneAdmins":"not a list"}"#).unwrap();
+        let partial = parse_metadata(r#"{"sceneAdmins":"not a list"}"#).unwrap();
         assert_eq!(partial, SceneRoomModeration::default());
+        assert_eq!(parse_metadata("").unwrap(), SceneRoomModeration::default());
         assert_eq!(
-            SceneRoomModeration::from_metadata("").unwrap(),
+            parse_metadata("{}").unwrap(),
             SceneRoomModeration::default()
         );
-        assert_eq!(
-            SceneRoomModeration::from_metadata("{}").unwrap(),
-            SceneRoomModeration::default()
-        );
-        assert_eq!(
-            SceneRoomModeration::from_metadata("[1,2]"),
-            Err(MetadataError::NotAnObject)
-        );
-        assert_eq!(
-            SceneRoomModeration::from_metadata("garbage"),
-            Err(MetadataError::NotAnObject)
-        );
+        assert_eq!(parse_metadata("[1,2]"), Err(MetadataError::NotAnObject));
+        assert_eq!(parse_metadata("garbage"), Err(MetadataError::NotAnObject));
     }
 }

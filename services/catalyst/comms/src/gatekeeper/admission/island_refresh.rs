@@ -568,8 +568,6 @@ mod tests {
                 ("identity", snapshot.clone()),
                 ("cleanup", snapshot.clone()),
                 ("unknown", snapshot.clone()),
-                ("wallet", snapshot.clone()),
-                ("session", snapshot.clone()),
                 ("cluster", snapshot.clone()),
                 ("realm", snapshot.clone()),
                 ("source", snapshot.clone()),
@@ -582,8 +580,6 @@ mod tests {
                     }
                     "identity" => changed.selected_identity = Some(0),
                     "cleanup" => changed.assignment_state = 2,
-                    "wallet" => changed.wallet = SESSION_A.into(),
-                    "session" => changed.session = SESSION_A.into(),
                     "cluster" => changed.cluster_id.push_str("-changed"),
                     "realm" => changed.realm.push_str("-changed"),
                     "source" => changed.source_incarnation.push_str("-changed"),
@@ -606,6 +602,25 @@ mod tests {
                 StatusCode::OK
             );
         }
+        // Pulse has no reply for another wallet or session whatever the vector,
+        // so each case waits out the refresh deadline once, not per vector.
+        let current = source.lock().unwrap().clone().expect("a valid vector");
+        for field in ["wallet", "session"] {
+            let mut changed = current.clone();
+            match field {
+                "wallet" => changed.wallet = SESSION_A.into(),
+                _ => changed.session = SESSION_A.into(),
+            }
+            *source.lock().unwrap() = Some(changed);
+            let (status, body) = call(&app, owner.headers("{}").await, b"").await;
+            assert_ne!(status, StatusCode::OK, "{field}");
+            assert!(body.is_empty());
+        }
+        *source.lock().unwrap() = Some(current);
+        assert_eq!(
+            call(&app, owner.headers("{}").await, b"").await.0,
+            StatusCode::OK
+        );
         worker.abort();
         let _ = worker.await;
         pool.close().await;

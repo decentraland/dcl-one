@@ -61,10 +61,10 @@
       "path": "raycast-storm"
     },
     {
-      "path": "environment"
+      "path": "video"
     },
     {
-      "path": "scene-comms"
+      "path": "environment"
     }
   ]
 }

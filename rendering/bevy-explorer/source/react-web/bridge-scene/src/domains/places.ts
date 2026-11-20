@@ -35,8 +35,14 @@ function mapPlace(p: PlaceRaw): DiscoverPlace {
 
 const places = (rows: PlaceRaw[] | undefined): DiscoverPlace[] => (Array.isArray(rows) ? rows.map(mapPlace) : [])
 
-async function placesAt(positions: string[]): Promise<DiscoverPlace[]> {
+async function placesAt(positions: string[], world?: string): Promise<DiscoverPlace[]> {
   if (positions.length === 0) return []
+  if (world != null && world !== '') {
+    // `names` turns `positions` off on the service, so the scenes covering them are put first here
+    const scenes = places(await signed<PlaceRaw[]>(`${await serviceBase('places')}/api/places?names=${encodeURIComponent(world)}&with_realms_detail=true`))
+    const covers = (p: DiscoverPlace): boolean => p.positions.some((at) => positions.includes(at))
+    return [...scenes.filter(covers), ...scenes.filter((p) => !covers(p))]
+  }
   const query = positions.map((p) => `positions=${p}`).join('&')
   return places(await signed<PlaceRaw[]>(`${await serviceBase('places')}/api/places?${query}&with_realms_detail=true`))
 }
@@ -92,7 +98,7 @@ export function registerPlaces(ctx: Ctx): void {
   })
   ctx.on('getPlacesAt', async (msg) => {
     try {
-      ctx.send({ kind: 'placesAt', request: msg.request, places: await placesAt(msg.positions) })
+      ctx.send({ kind: 'placesAt', request: msg.request, places: await placesAt(msg.positions, msg.world) })
     } catch (e) {
       console.error('[places] by parcel failed', e)
       ctx.send({ kind: 'placesAt', request: msg.request, places: [], failed: true })

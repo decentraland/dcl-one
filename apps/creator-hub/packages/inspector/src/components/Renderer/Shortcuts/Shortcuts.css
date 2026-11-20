@@ -16,7 +16,7 @@
   gap: 8px;
 }
 
-.Shortcuts .Buttons .Button {
+.Shortcuts .Buttons .btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -27,19 +27,19 @@
   background-color: var(--gray-0);
 }
 
-.Shortcuts .Buttons .Button:hover {
+.Shortcuts .Buttons .btn:hover {
   background-color: var(--base-17);
 }
 
-.Shortcuts .Buttons .Button.Active {
+.Shortcuts .Buttons .btn.Active {
   background-color: var(--selected-item);
 }
 
-.Shortcuts .Buttons .Button.Active svg {
+.Shortcuts .Buttons .btn.Active svg {
   color: var(--base-02);
 }
 
-.Shortcuts .Buttons .Button svg {
+.Shortcuts .Buttons .btn svg {
   color: var(--base-02);
 }
 
@@ -47,13 +47,13 @@
   display: flex;
 }
 
-.Shortcuts .Buttons .ZoomButtons .Button:first-of-type {
+.Shortcuts .Buttons .ZoomButtons .btn:first-of-type {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
   border-right: 1.5px solid var(--base-19);
 }
 
-.Shortcuts .Buttons .ZoomButtons .Button:last-of-type {
+.Shortcuts .Buttons .ZoomButtons .btn:last-of-type {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
   border-left: 1.5px solid var(--base-19);

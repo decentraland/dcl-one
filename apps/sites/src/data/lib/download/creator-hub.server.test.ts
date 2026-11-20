@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { loadLatestRelease, resetLatestRelease, resolveDownload } from "./creator-hub.server";
+import { heroDownloads, loadLatestRelease, resetLatestRelease, resolveDownload } from "./creator-hub.server";
 
 const RELEASES_PAGE = "https://github.com/decentraland/creator-hub/releases/latest";
 const fetchMock = vi.fn();
@@ -78,6 +78,32 @@ describe("the latest Creator Hub release", () => {
     expect(d.secondary.map((o) => o.url)).toEqual([RELEASES_PAGE]);
   });
 
+  it("offers the download page every other installer, the other Mac build included", async () => {
+    answer(release("0.42.0"));
+    const mac = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:130.0) Gecko/20100101 Firefox/130.0";
+    const d = resolveDownload(await loadLatestRelease(), mac);
+    expect(d.primary).toMatchObject({ osKey: "macos", arch: "arm64" });
+    expect(d.secondary.map((o) => `${o.osKey}-${o.arch}`)).toEqual(["macos-amd64", "windows-amd64"]);
+  });
+
+  it("offers each other system once when no release was ever read", async () => {
+    fetchMock.mockRejectedValueOnce(new Error("network"));
+    const mac = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
+    const d = resolveDownload(await loadLatestRelease(), mac);
+    expect(d.primary).toMatchObject({ osKey: "macos", url: RELEASES_PAGE });
+    expect(d.secondary.map((o) => `${o.osKey}-${o.url}`)).toEqual([`windows-${RELEASES_PAGE}`]);
+  });
+
+  it("leaves the chip to the browser only on a Mac whose link names no chip", async () => {
+    answer(release("0.42.0"));
+    const latest = await loadLatestRelease();
+    const mac = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
+    const pc = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
+    expect(resolveDownload(latest, mac, { os: "mac" }).macChipUnknown).toBe(true);
+    expect(resolveDownload(latest, mac, { arch: "intel" }).macChipUnknown).toBe(false);
+    expect(resolveDownload(latest, pc, { os: "mac" }).macChipUnknown).toBe(false);
+  });
+
   it("asks again a minute after a failed read, not before", async () => {
     fetchMock.mockRejectedValueOnce(new Error("network"));
     await loadLatestRelease();
@@ -122,5 +148,48 @@ describe("the latest Creator Hub release", () => {
     answer(r);
     const d = resolveDownload(await loadLatestRelease(), null, { os: "macos", arch: "arm64" });
     expect(d.primary.url).toBe(RELEASES_PAGE);
+  });
+});
+
+describe("heroDownloads", () => {
+  const MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
+  const MAC_FIREFOX = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:130.0) Gecko/20100101 Firefox/130.0";
+  const WINDOWS = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
+  const LINUX = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
+  const PHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148";
+
+  async function latest() {
+    answer(release("1.2.3"));
+    return loadLatestRelease();
+  }
+
+  it("offers a Windows visitor the Windows installer first and both Mac builds after it", async () => {
+    const downloads = heroDownloads(await latest(), WINDOWS);
+    expect(downloads?.primary).toMatchObject({ osKey: "windows", arch: "amd64" });
+    expect(downloads?.others.map((o) => `${o.osKey}-${o.arch}`)).toEqual(["macos-arm64", "macos-amd64"]);
+  });
+
+  it("offers a Mac visitor the Apple Silicon build first, with the Intel and Windows builds after it", async () => {
+    const downloads = heroDownloads(await latest(), MAC);
+    expect(downloads?.primary).toMatchObject({ osKey: "macos", arch: "arm64" });
+    expect(downloads?.primary.url).toContain("mac-arm64.dmg");
+    expect(downloads?.others.map((o) => `${o.osKey}-${o.arch}`)).toEqual(["macos-amd64", "windows-amd64"]);
+  });
+
+  it("offers a Mac visitor on Firefox, whose User-Agent names no Apple engine, the Apple Silicon build first", async () => {
+    const downloads = heroDownloads(await latest(), MAC_FIREFOX);
+    expect(downloads?.primary).toMatchObject({ osKey: "macos", arch: "arm64" });
+    expect(downloads?.others.map((o) => `${o.osKey}-${o.arch}`)).toEqual(["macos-amd64", "windows-amd64"]);
+  });
+
+  it("offers nothing in place to a system with no installer", async () => {
+    const latestRelease = await latest();
+    expect(heroDownloads(latestRelease, LINUX)).toBeNull();
+    expect(heroDownloads(latestRelease, PHONE)).toBeNull();
+  });
+
+  it("offers nothing in place when the release could not be read", async () => {
+    answer({}, 503);
+    expect(heroDownloads(await loadLatestRelease(), WINDOWS)).toBeNull();
   });
 });

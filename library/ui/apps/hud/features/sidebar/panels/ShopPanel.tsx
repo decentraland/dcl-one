@@ -5,7 +5,7 @@
 // when the caller can open its section.
 
 import { withUtm } from '@explorer-core/lib/utm'
-import { siteUrl } from '@hud-host'
+import { checkoutSiteUrl } from '@hud-host'
 import coin from '../../../assets/sidebar-shop/credits.svg?no-inline'
 import emotesArt from '../../../assets/sidebar-shop/banner-emotes.webp'
 import wearablesArt from '../../../assets/sidebar-shop/banner-wearables.webp'
@@ -34,7 +34,8 @@ const WHOLE = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0, useGrou
 
 export function ShopPanel({ credits, explore, onClose }: ShopPanelProps): React.JSX.Element {
   const buyCredits = (): void => {
-    window.open(withUtm(siteUrl('/shop/credits')), '_blank', 'noopener')
+    // The site whose node the in-world checkout reads its balance from (the host's checkoutSiteUrl).
+    window.open(withUtm(checkoutSiteUrl('/shop/credits')), '_blank', 'noopener')
     onClose?.()
   }
   const banners = BANNERS.flatMap((banner) => {

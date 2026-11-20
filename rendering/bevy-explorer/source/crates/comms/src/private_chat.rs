@@ -341,7 +341,6 @@ fn participant_metadata_changed(
 /// A packet on the private chat room: a DM or a reaction to one, addressed to us by topic and
 /// sent by the partner themselves; or a community message or reaction, on a community channel's
 /// topic, relayed by the router with the author stamped in. Anything else is dropped.
-#[allow(clippy::too_many_arguments)]
 fn participant_payload(
     trigger: Trigger<ParticipantPayload>,
     mut rooms: Query<&mut CommunityChatStats, With<PrivateChatRoom>>,
@@ -802,7 +801,6 @@ fn community_state_json(
 #[command(name = "/dm_room")]
 struct DmRoomCommand;
 
-#[allow(clippy::type_complexity)]
 fn dm_room(
     mut input: ConsoleCommand<DmRoomCommand>,
     rooms: Query<

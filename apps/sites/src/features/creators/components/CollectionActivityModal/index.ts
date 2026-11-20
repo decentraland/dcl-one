@@ -1,0 +1,1 @@
+export { CollectionActivityModal } from './CollectionActivityModal'

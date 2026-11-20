@@ -1,4 +1,4 @@
-// What may cross into the shell's purchase (lib/shopProtocol) and what the purchase may ask of the wallet
+// What may cross into the shell's purchase (library/ui/apps/shop/shopProtocol) and what the purchase may ask of the wallet
 // (shell/shop/walletGuard).
 import { describe, expect, it } from 'vitest'
 import type { Hex } from 'viem'
@@ -8,7 +8,7 @@ import { metaTxTypedData } from '../../shop/checkout/chain/metatx'
 import { createFakeWallet, creatorTrade } from '../../shop/checkout/fakes'
 import { buildStoreUseCreditsArgs, buildUseCreditsArgs, encodeUseCredits, type SpendableCredit, type StoreItemToBuy, type UseCreditsArgs } from '../../shop/checkout/purchase/encoding'
 import { BOOK, ITEM } from '@shop/payment/fixtures'
-import { ADDRESS, OPERATION_STATES, parseBuyNameRequest, parseBuyRequest, parseLines, parseOperationEvent, SHOP_EVENT, SHOP_PROTOCOL } from '../lib/shopProtocol'
+import { ADDRESS, OPERATION_STATES, parseBuyNameRequest, parseBuyRequest, parseLines, parseOperationEvent, SHOP_EVENT, SHOP_PROTOCOL } from '@dcl/one-ui/apps/shop/shopProtocol'
 import { AMOY_ADD_PARAMS } from '../../shop/wallet/chain'
 import { guardedProvider, type PurchaseIntent } from '../shell/shop/walletGuard'
 

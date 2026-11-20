@@ -6,12 +6,14 @@ import { useChromeAuth } from "./chrome-auth";
 import { chromeLinkProps, useChromeNav, type ChromeNavigate } from "./chrome-nav";
 import "../../atoms/maskicon.css";
 import wordmark from "@dcl/one-ui/apps/sites/assets/dcl_name.svg?url";
+import { sitesFooterCopy, type SitesFooterCopy } from "@dcl/one-ui/apps/sites/chrome/footer-copy";
 import { siteHost } from "../../data/site";
 import { docsUrl } from "../../data/docs";
 import "./siteschrome.css";
 import SiteLayout from "./SiteLayout";
 import SiteSectionNavigation from "./SiteSectionNavigation";
 import { ProfileNavigationContext } from "./ProfileNavigation";
+import { SITES_LANGUAGES, SitesLocaleContext, saveSitesLocale, sitesLanguage, type SitesLocale } from "./sites-locale";
 
 export type SitesNavId =
   | "play"
@@ -39,54 +41,41 @@ const ACTIVE_MAP: Record<SitesNavId, DclTopBarNavId | ""> = {
   none: "",
 };
 
-type FooterLink = { label: string; href: string };
-type FooterCol = { title: string; links: FooterLink[] };
+function footerColumns(copy: SitesFooterCopy) {
+  return [
+    {
+      id: "getting-started",
+      title: copy.getting_started.title,
+      links: [
+        { label: copy.getting_started.what_is, href: docsUrl("player/introduction/about-decentraland") },
+        { label: copy.getting_started.download, href: "/download" },
+        { label: copy.getting_started.system_requirements, href: docsUrl("player/decentraland-in-world/settings-and-performance") },
+        { label: copy.getting_started.faqs, href: docsUrl("player/faqs/decentraland-101") },
+        { label: copy.getting_started.contact_support, href: "/help" },
+      ],
+    },
+    {
+      id: "resources",
+      title: copy.resources.title,
+      links: [
+        { label: copy.resources.marketplace, href: "/shop" },
+        { label: copy.resources.creator_hub, href: "/create" },
+        { label: copy.resources.docs, href: docsUrl() },
+        { label: copy.resources.blog, href: "/blog" },
+        { label: copy.resources.vote, href: "https://decentraland.org/dao" },
+      ],
+    },
+  ];
+}
 
-// The footer's labels and order are decentraland.org's; the links are this tree's own routes where it has them.
-const FOOTER_COLS: FooterCol[] = [
-  {
-    title: "Getting Started",
-    links: [
-      { label: "About Decentraland", href: docsUrl("player/introduction/about-decentraland") },
-      { label: "Download Decentraland", href: "/download" },
-      { label: "System Requirements", href: docsUrl("player/decentraland-in-world/settings-and-performance") },
-      { label: "FAQs", href: docsUrl("player/faqs/decentraland-101") },
-      { label: "Contact Support", href: "/help" },
-    ],
-  },
-  {
-    title: "Resources",
-    links: [
-      { label: "Shop", href: "/shop" },
-      { label: "Creator Hub", href: "/create" },
-      { label: "Docs", href: docsUrl() },
-      { label: "Blog", href: "/blog" },
-      { label: "Vote", href: "https://decentraland.org/dao" },
-    ],
-  },
-];
-
-const LEGAL: FooterLink[] = [
-  { label: "Privacy Policy", href: "/privacy" },
-  { label: "Terms of Use", href: "/terms" },
-  { label: "Content Policy", href: "/content-policy" },
-  { label: "Code of Ethics", href: "/ethics" },
-];
-
-type Language = { code: string; label: string; flag: string };
-
-const DEFAULT_LANG: Language = { code: "en", label: "English", flag: "1f1ec-1f1e7" };
-const LANGUAGES: Language[] = [
-  DEFAULT_LANG,
-  { code: "es", label: "Espa\u{F1}ol", flag: "1f1ea-1f1f8" },
-  { code: "zh", label: "\u{4E2D}\u{6587}", flag: "1f1e8-1f1f3" },
-];
+const LEGAL = [
+  ["privacy", "/privacy"],
+  ["terms", "/terms"],
+  ["content", "/content-policy"],
+  ["ethics", "/ethics"],
+] as const;
 
 const LANG_STORAGE_KEY = "dcl:lang";
-
-function flagUrl(flag: string): string {
-  return `/assets/twemoji-${flag}.svg`;
-}
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -143,10 +132,10 @@ function FootChevron() {
   );
 }
 
-function Connect({ className }: { className: string }) {
+function Connect({ className, label }: { className: string; label: string }) {
   return (
     <div className={className}>
-      <p className="st__foottitle">Connect</p>
+      <p className="st__foottitle">{label}</p>
       <div className="st__socials">
         {SOCIALS.map(({ name, href, path, box: [w, h] = [24, 24] }) => (
           <a key={name} href={href} className="st__social" aria-label={name} target="_blank" rel="noopener noreferrer">
@@ -169,9 +158,10 @@ type SitesChromeProps = {
   mana?: string;
   account?: string;
   onSignIn?: () => void;
-  overlayNav?: boolean;
+  overlayNav?: boolean | "mobile";
   headerSurface?: "solid" | "overlay";
   hideNav?: boolean;
+  footerCopy?: SitesFooterCopy;
   secondaryNavigation?: { title: string; active?: string; items: readonly { id: string; label: string; href: string }[] };
 };
 
@@ -179,7 +169,7 @@ type NewsletterState =
   | { phase: "idle" }
   | { phase: "sending" }
   | { phase: "ok" }
-  | { phase: "error"; message: string };
+  | { phase: "error"; reason: "invalidEmail" | "failed" };
 
 export default function SitesChrome({
   children,
@@ -190,6 +180,7 @@ export default function SitesChrome({
   overlayNav = false,
   headerSurface = "solid",
   hideNav = false,
+  footerCopy = sitesFooterCopy.en,
   secondaryNavigation,
 }: SitesChromeProps) {
   const pageId = useId();
@@ -207,7 +198,7 @@ export default function SitesChrome({
     e.preventDefault();
     const value = email.trim();
     if (!EMAIL_RE.test(value)) {
-      setNews({ phase: "error", message: "Enter a valid email address." });
+      setNews({ phase: "error", reason: "invalidEmail" });
       return;
     }
     setNews({ phase: "sending" });
@@ -222,25 +213,24 @@ export default function SitesChrome({
         setEmail("");
       })
       .catch(() => {
-        setNews({ phase: "error", message: "Something went wrong. Please try again." });
+        setNews({ phase: "error", reason: "failed" });
       });
   };
 
-  const [lang, setLang] = useState<Language>(DEFAULT_LANG);
+  const [storedLocale, setStoredLocale] = useState<SitesLocale>("en");
+  const preference = useContext(SitesLocaleContext);
+  const lang = sitesLanguage(preference?.locale ?? storedLocale);
+  const columns = footerColumns(footerCopy);
   const [langOpen, setLangOpen] = useState(false);
   const langRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    if (preference) return;
     try {
-      const saved = window.localStorage.getItem(LANG_STORAGE_KEY);
-      const found = LANGUAGES.find((l) => l.code === saved);
-      if (found) {
-        setLang(found);
-        document.documentElement.lang = found.code;
-      }
+      setStoredLocale(sitesLanguage(window.localStorage.getItem(LANG_STORAGE_KEY)).code);
     } catch {
     }
-  }, []);
+  }, [preference]);
 
   useEffect(() => {
     if (!langOpen) return;
@@ -258,23 +248,31 @@ export default function SitesChrome({
     };
   }, [langOpen]);
 
-  const pickLang = (l: Language) => {
-    setLang(l);
-    setLangOpen(false);
-    try {
-      window.localStorage.setItem(LANG_STORAGE_KEY, l.code);
-      document.cookie = `lang=${l.code}; path=/; max-age=31536000; samesite=lax`;
-    } catch {
+  const pickLang = (locale: SitesLocale) => {
+    if (preference) {
+      preference.onSelect(locale);
+    } else {
+      setStoredLocale(locale);
+      try {
+        window.localStorage.setItem(LANG_STORAGE_KEY, locale);
+      } catch {
+      }
     }
-    document.documentElement.lang = l.code;
+    setLangOpen(false);
+    saveSitesLocale(locale);
   };
+
+  const overlayClass =
+    overlayNav === "mobile" ? " site-layout--overlay-mobile"
+    : overlayNav ? " site-layout--overlay"
+    : "";
 
   return (
     <SiteLayout overlayNavigation={headerSurface === "overlay"} navigation={!hideNav ? <DclTopBar
       variant="sites" transparent={headerSurface === "overlay"} active={ACTIVE_MAP[active]} signedIn={isIn} account={acct}
       onSignIn={signIn} fetchNotifications={auth.fetchNotifications}
       balances={isIn && acct ? <SitesCreditsChip account={acct} /> : undefined}
-    /> : null} className={"site-layout--sites" + (overlayNav ? " site-layout--overlay" : "")} sections={profileNav ? closeMenu => <SiteSectionNavigation
+    /> : null} className={"site-layout--sites" + overlayClass} sections={profileNav ? closeMenu => <SiteSectionNavigation
       title="Profile" label="Profile sections" items={profileNav.tabs} active={profileNav.active}
       onSelect={profileNav.onTab} closeMenu={closeMenu}
     /> : secondaryNavigation ? closeMenu => <SiteSectionNavigation
@@ -290,13 +288,13 @@ export default function SitesChrome({
           <div className="st__footleft">
             <img className="st__wordmark" src={wordmark} alt="Decentraland" width={384} height={48} />
             <div className="st__news">
-              <p className="st__newstitle">Get the weekly highlights in your inbox</p>
+              <p className="st__newstitle">{footerCopy.newsletter.title}</p>
               <form className="st__newsform" onSubmit={submitNewsletter} noValidate>
                 <input
                   className="st__newsinput"
                   type="email"
-                  placeholder="Enter Your Email"
-                  aria-label="Email"
+                  placeholder={footerCopy.newsletter.placeholder}
+                  aria-label={footerCopy.newsletter.emailLabel}
                   value={email}
                   onChange={(e) => {
                     setEmail(e.target.value);
@@ -305,25 +303,25 @@ export default function SitesChrome({
                   disabled={news.phase === "sending"}
                 />
                 <button type="submit" className="st__newsbtn" disabled={news.phase === "sending"}>
-                  {news.phase === "sending" ? "Sending\u{2026}" : "Subscribe"}
+                  {news.phase === "sending" ? footerCopy.newsletter.sending : footerCopy.newsletter.cta}
                 </button>
               </form>
               {news.phase === "ok" && (
-                <p className="st__newsnote st__newsnote--ok" role="status">Subscribed!</p>
+                <p className="st__newsnote st__newsnote--ok" role="status">{footerCopy.newsletter.subscribed}</p>
               )}
               {news.phase === "error" && (
-                <p className="st__newsnote st__newsnote--err" role="alert">{news.message}</p>
+                <p className="st__newsnote st__newsnote--err" role="alert">{footerCopy.newsletter[news.reason]}</p>
               )}
             </div>
-            <Connect className="st__connect st__connect--desktop" />
+            <Connect className="st__connect st__connect--desktop" label={footerCopy.connect} />
           </div>
 
           <div className="st__footcols">
-            {FOOTER_COLS.map((col) => (
-              <div key={col.title} className="st__footcol">
+            {columns.map((col) => (
+              <div key={col.id} className="st__footcol">
                 <p className="st__foottitle">{col.title}</p>
                 {col.links.map((link) => (
-                  <a key={link.label} {...footerLinkProps(link.href, go)} className="st__footlink">
+                  <a key={link.href} {...footerLinkProps(link.href, go)} className="st__footlink">
                     {link.label}
                   </a>
                 ))}
@@ -332,21 +330,21 @@ export default function SitesChrome({
           </div>
 
           <div className="st__footmenu">
-            <p className="st__footmenulabel">Menu</p>
-            {FOOTER_COLS.map((col) => (
-              <div key={col.title}>
+            <p className="st__footmenulabel">{footerCopy.menu}</p>
+            {columns.map((col) => (
+              <div key={col.id}>
                 <button
                   type="button"
                   className="st__footdrop"
-                  aria-expanded={openCol === col.title}
-                  onClick={() => setOpenCol((o) => (o === col.title ? null : col.title))}
+                  aria-expanded={openCol === col.id}
+                  onClick={() => setOpenCol((o) => (o === col.id ? null : col.id))}
                 >
                   {col.title}
                   <FootChevron />
                 </button>
-                <div className="st__footdropcontent" data-open={openCol === col.title || undefined}>
+                <div className="st__footdropcontent" data-open={openCol === col.id || undefined}>
                   {col.links.map((link) => (
-                    <a key={link.label} {...footerLinkProps(link.href, go)} className="st__footmlink">
+                    <a key={link.href} {...footerLinkProps(link.href, go)} className="st__footmlink">
                       {link.label}
                     </a>
                   ))}
@@ -354,7 +352,7 @@ export default function SitesChrome({
               </div>
             ))}
           </div>
-          <Connect className="st__connect st__connect--mobile" />
+          <Connect className="st__connect st__connect--mobile" label={footerCopy.connect} />
         </div>
 
         <div className="st__footbar">
@@ -363,27 +361,27 @@ export default function SitesChrome({
               <button
                 type="button"
                 className="st__lang"
-                aria-label={`Change language: ${lang.label}`}
+                aria-label={`${footerCopy.language.change}: ${lang.label}`}
                 aria-haspopup="listbox"
                 aria-expanded={langOpen}
                 onClick={() => setLangOpen((o) => !o)}
               >
-                <img className="st__flag" src={flagUrl(lang.flag)} alt="" width="16" height="16" />
+                <img className="st__flag" src={lang.flag} alt="" width="16" height="16" />
                 {lang.label}
                 <FootChevron />
               </button>
               {langOpen && (
-                <div className="st__langmenu" role="listbox" aria-label="Language">
-                  {LANGUAGES.map((l) => (
+                <div className="st__langmenu" role="listbox" aria-label={footerCopy.language.label}>
+                  {SITES_LANGUAGES.map((l) => (
                     <button
                       key={l.code}
                       type="button"
                       role="option"
                       aria-selected={l.code === lang.code}
                       className={"st__langopt" + (l.code === lang.code ? " is-active" : "")}
-                      onClick={() => pickLang(l)}
+                      onClick={() => pickLang(l.code)}
                     >
-                      <img className="st__flag" src={flagUrl(l.flag)} alt="" width="16" height="16" />
+                      <img className="st__flag" src={l.flag} alt="" width="16" height="16" />
                       {l.label}
                     </button>
                   ))}
@@ -391,9 +389,9 @@ export default function SitesChrome({
               )}
             </div>
             <div className="st__legal">
-              {LEGAL.map((l) => (
-                <a key={l.label} href={l.href} className="st__legallink">
-                  {l.label}
+              {LEGAL.map(([key, href]) => (
+                <a key={key} href={href} className="st__legallink">
+                  {footerCopy.legal[key]}
                 </a>
               ))}
             </div>

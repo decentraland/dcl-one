@@ -44,6 +44,12 @@ import type { AiMessage, AiPromptData, AiSessionMeta } from '/@/modules/store/ai
 import { WarningCircleIcon } from '../Icons';
 import { SignInCodeField } from '../SignInCodeField';
 import { toolChipLabel } from './labels';
+import {
+  SharingConsentCard,
+  SharingStatusChip,
+  TurnRating,
+  type SharingProps,
+} from './SharingConsent';
 import styles from './component.module.css';
 
 // Render assistant replies as markdown. Raw HTML is disabled so nothing the model emits
@@ -250,7 +256,7 @@ function PromptBlock({
 // The pure chat surface, driven entirely by props. Both the inline panel (redux-backed)
 // and the detached window (mirror-backed) render this — neither reaches into a store from
 // here, so the same view works whichever owns the state (#1504).
-export interface ChatViewProps {
+export interface ChatViewProps extends SharingProps {
   providers: {
     id: AiProvider;
     label: string;
@@ -285,6 +291,8 @@ export interface ChatViewProps {
   onNewChat: () => void;
   onProviderChange: (provider: AiProvider) => void;
   onRevertTurn: (id: string, count: number) => void;
+  // Thumbs up or down on a shared reply (null clears it). Shown only on shared replies.
+  onRateTurn?: (id: string, rating: 'up' | 'down' | null) => void;
   // Answer an interactive `ask_user` prompt (unblocks the agent's waiting tool call).
   onAnswerPrompt: (id: string, answer: string) => void;
   onRecheck: () => void;
@@ -347,6 +355,7 @@ export function ChatView(props: ChatViewProps) {
     onNewChat,
     onProviderChange,
     onRevertTurn,
+    onRateTurn,
     onAnswerPrompt,
     onRecheck,
     onDismissBilling,
@@ -358,6 +367,10 @@ export function ChatView(props: ChatViewProps) {
     onClose,
     draftPrompt,
     onDraftConsumed,
+    sharing,
+    onShareDecision,
+    onShareNotNow,
+    onSetConversationShared,
   } = props;
 
   const [input, setInput] = useState('');
@@ -814,6 +827,14 @@ export function ChatView(props: ChatViewProps) {
                 {t('editor.ai.revert')}
               </Button>
             )}
+          {msg.done && (
+            <TurnRating
+              sharing={sharing}
+              recordId={msg.recordId}
+              rating={msg.rating}
+              onRate={onRateTurn !== undefined ? rating => onRateTurn(msg.id, rating) : undefined}
+            />
+          )}
         </div>
       ),
     );
@@ -854,6 +875,11 @@ export function ChatView(props: ChatViewProps) {
           {title !== undefined && title !== '' ? ` — ${title}` : ''}
         </div>
         <div className={styles.headerActions}>
+          <SharingStatusChip
+            sharing={sharing}
+            onShareDecision={onShareDecision}
+            onSetConversationShared={onSetConversationShared}
+          />
           {!detached && onPopOut !== undefined && (
             <Tooltip
               label={t('editor.ai.pop_out')}
@@ -1075,6 +1101,12 @@ export function ChatView(props: ChatViewProps) {
             </div>
           </div>
         )}
+
+        <SharingConsentCard
+          sharing={sharing}
+          onShareDecision={onShareDecision}
+          onShareNotNow={onShareNotNow}
+        />
 
         {available && !billingDismissed && (
           <div className={styles.billingCard}>

@@ -38,27 +38,41 @@ pub struct SceneMessageTraffic {
     pub invalid: u64,
 }
 
-/// None denies delivery; absent metadata grants ordinary peer permissions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PeerTrust {
+    Banned,
+    Peer,
+    Trusted,
+}
+
+/// Absent metadata grants ordinary peer permissions.
 pub(crate) fn peer_trust(
     moderation: Option<&SceneRoomModeration>,
     sender: Option<Address>,
     authoritative: bool,
-) -> Option<bool> {
-    if moderation
-        .is_some_and(|state| sender.is_some_and(|sender| state.banned_addresses.contains(&sender)))
-    {
-        return None;
+) -> PeerTrust {
+    if moderation.is_some_and(|state| sender.is_some_and(|sender| state.is_banned(sender))) {
+        return PeerTrust::Banned;
     }
-    Some(
-        authoritative
-            || moderation.is_some_and(|state| {
-                sender.is_some_and(|sender| state.scene_admins.contains(&sender))
-            }),
-    )
+    if authoritative
+        || moderation.is_some_and(|state| sender.is_some_and(|sender| state.is_admin(sender)))
+    {
+        PeerTrust::Trusted
+    } else {
+        PeerTrust::Peer
+    }
 }
 
+/// Incoming binary payloads retain the 30,000-byte bus limit for older peers. Egress
+/// additionally enforces `scene_message_fits` for receivers with a 13 KiB buffer.
 pub fn filter_scene_message(data: &[u8], trusted: bool) -> Option<Cow<'_, [u8]>> {
-    if !scene_message_fits(data) {
+    let fits = match data.split_first() {
+        Some((&kind, payload)) if kind == CommsMessageType::Binary as u8 => {
+            payload.len() <= dcl_types::MAX_COMMS_MESSAGE_BYTES
+        }
+        _ => scene_message_fits(data),
+    };
+    if !fits {
         return None;
     }
     if data[0] == CommsMessageType::Binary as u8 {
@@ -66,7 +80,7 @@ pub fn filter_scene_message(data: &[u8], trusted: bool) -> Option<Cow<'_, [u8]>>
             let mut frame = Vec::with_capacity(1 + filtered.len());
             frame.push(CommsMessageType::Binary as u8);
             frame.extend(filtered);
-            return scene_message_fits(&frame).then_some(Cow::Owned(frame));
+            return Some(Cow::Owned(frame));
         }
     }
     Some(Cow::Borrowed(data))
@@ -102,19 +116,30 @@ mod tests {
     fn scene_bans_override_admin_and_authoritative_trust() {
         let sender = Address::repeat_byte(1);
         let mut metadata = SceneRoomModeration::default();
-        assert_eq!(peer_trust(None, Some(sender), false), Some(false));
+        assert_eq!(peer_trust(None, Some(sender), false), PeerTrust::Peer);
         metadata.scene_admins.insert(sender);
-        assert_eq!(peer_trust(Some(&metadata), Some(sender), false), Some(true));
+        assert_eq!(
+            peer_trust(Some(&metadata), Some(sender), false),
+            PeerTrust::Trusted
+        );
         metadata.banned_addresses.insert(sender);
-        assert_eq!(peer_trust(Some(&metadata), Some(sender), true), None);
+        assert_eq!(
+            peer_trust(Some(&metadata), Some(sender), true),
+            PeerTrust::Banned
+        );
     }
 
     #[test]
-    fn scene_binary_limit_includes_receiver_sender_framing() {
+    fn ingress_accepts_older_peers_while_egress_reserves_receiver_framing() {
         let mut frame = vec![0; dcl_types::MAX_BINARY_MESSAGE_BYTES + 1];
         frame[0] = CommsMessageType::Binary as u8;
         assert!(filter_scene_message(&frame, false).is_some());
         assert_eq!(frame.len() - 1 + 1 + 42, 13 * 1024);
+        frame.push(0);
+        assert!(filter_scene_message(&frame, true).is_some());
+        assert!(!scene_message_fits(&frame));
+        frame.resize(dcl_types::MAX_COMMS_MESSAGE_BYTES + 1, 0);
+        assert!(filter_scene_message(&frame, true).is_some());
         frame.push(0);
         assert!(filter_scene_message(&frame, true).is_none());
     }

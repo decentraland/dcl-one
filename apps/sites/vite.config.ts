@@ -1,6 +1,6 @@
 import { reactRouter } from "@react-router/dev/vite";
 import { spawnSync } from "node:child_process";
-import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin, type ProxyOptions } from "vite";
@@ -10,10 +10,20 @@ const ui = fileURLToPath(new URL("../ui3/src", import.meta.url));
 const src = fileURLToPath(new URL("./src", import.meta.url));
 const catalystApi = fileURLToPath(new URL("../../library/catalyst-api", import.meta.url));
 const shopCore = fileURLToPath(new URL("../../library/shop", import.meta.url));
+// Decentraland's content hashes, which the creators code computes for the files and entities it publishes.
+const hashing = fileURLToPath(new URL("../../library/hashing/src/index.ts", import.meta.url));
+// Part of every cached item validation's key (data/lib/creators/validation/cache.ts).
+const validatorVersion = (
+  JSON.parse(
+    readFileSync(new URL("./node_modules/@dcl-regenesislabs/wearable-validator/package.json", import.meta.url), "utf8"),
+  ) as { version: string }
+).version;
 // The Explorer HUD UI /play compiles, and the behaviours /play supplies to it (hostContract.ts there).
 const hud = fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url));
 const explorerCore = fileURLToPath(new URL("../../library/explorer-core", import.meta.url));
 const hudHost = fileURLToPath(new URL("../ui3/src/play/host.ts", import.meta.url));
+// What /play supplies to the in-world Shop UI (library/ui/apps/shop).
+const shopHost = fileURLToPath(new URL("../ui3/src/play/shopHost.ts", import.meta.url));
 // library/ui/apps/hud has no node_modules of its own: the @noble modules it imports resolve to this app's
 // copies. Only these specifiers: a dependency of this app keeps an older @noble of its own. Keep this list
 // to the @noble modules library/explorer-core imports; tsconfig.json maps all of @noble/* for the type check.
@@ -35,7 +45,6 @@ function watchUi3(ui3Src: string): Plugin {
     },
   };
 }
-const monaco = fileURLToPath(new URL("./node_modules/monaco-editor", import.meta.url));
 const three = fileURLToPath(new URL("./node_modules/three", import.meta.url));
 const qrcode = fileURLToPath(new URL("./node_modules/qrcode-generator", import.meta.url));
 const reactQuery = fileURLToPath(new URL("./node_modules/@tanstack/react-query", import.meta.url));
@@ -123,7 +132,18 @@ function nodeProxy(): Record<string, ProxyOptions> {
     "/comms-gatekeeper": to(),
     // Cast 2.0: the gateway's `^~ /cast/` alias to the gatekeeper, except the stream and watch
     // pages (/cast/s/, /cast/w/), which are this app's (infra/gateway/gateway.py).
-    "^/cast/(?!s/|w/)": to({ rewrite: (path) => `/comms-gatekeeper${path}` }),
+    // As the gateway, it forwards the path the browser signed (`x-original-path`): the node takes
+    // a signature over it, as the watcher token's signed fetch over `/cast/watcher-token` is.
+    "^/cast/(?!s/|w/)": to({
+      rewrite: (path) => `/comms-gatekeeper${path}`,
+      configure: (proxy) => {
+        proxy.on("proxyReq", (proxyReq, req) => {
+          // `req.url` is already rewritten here; connect keeps the browser's in `originalUrl`.
+          const original = (req as { originalUrl?: string }).originalUrl ?? req.url;
+          if (original) proxyReq.setHeader("x-original-path", original);
+        });
+      },
+    }),
     "/badges": to(),
     "/profile-images": to(),
     "/signatures-api": to(),
@@ -250,7 +270,9 @@ function playBuild(): string {
 }
 
 export default defineConfig({
-  define: { __PLAY_BUILD__: JSON.stringify(playBuild()) },
+  define: { __PLAY_BUILD__: JSON.stringify(playBuild()), __VALIDATOR_VERSION__: JSON.stringify(validatorVersion) },
+  // ES workers can code-split, so the item validation worker loads its rule book as its own chunk.
+  worker: { format: "es" },
   plugins: [icoTypeLikeServe(), separateDevCaches(), servePlayWeb(), reactRouter(), watchUi3(ui), warmServerBuild()],
   server: {
     // A save is often truncate-then-write, and over the NFS home the two reach the
@@ -271,7 +293,7 @@ export default defineConfig({
     host: process.env.HOST || "127.0.0.1",
     port: Number(process.env.PORT) || 5212,
     strictPort: true,
-    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../library/shop", "../../library/ui", "../../library/explorer-core"] },
+    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../library/shop", "../../library/ui", "../../library/explorer-core", "../../library/hashing"] },
     proxy: nodeProxy(),
   },
   resolve: {
@@ -281,14 +303,17 @@ export default defineConfig({
         "@ui": ui,
         "@catalyst-api": catalystApi,
         "@shop": shopCore,
+        "@dcl/hashing": hashing,
         "@hud-host": hudHost,
+        "@shop-host": shopHost,
         "@noble/curves/secp256k1.js": noble("curves/secp256k1.js"),
+        "@noble/hashes/sha2.js": noble("hashes/sha2.js"),
         "@noble/hashes/sha3.js": noble("hashes/sha3.js"),
+        "@noble/hashes/webcrypto.js": noble("hashes/webcrypto.js"),
         "@noble/hashes/utils.js": noble("hashes/utils.js"),
         "@hud": hud,
         "@explorer-core": explorerCore,
         "@": src,
-        "monaco-editor": monaco,
         three,
         "qrcode-generator": qrcode,
         "@tanstack/react-query": reactQuery,
@@ -301,13 +326,9 @@ export default defineConfig({
     dedupe: ["viem", "react", "react-dom", "zod"],
   },
   optimizeDeps: {
-    include: ["monaco-editor", "@xstate/react", "xstate", "zod", "viem/accounts"],
+    include: ["@xstate/react", "xstate", "zod", "viem/accounts"],
     // The shared dev sandbox is also a public browsing surface. Compact vendor
     // code while keeping development React, named stacks and application HMR.
     rolldownOptions: { output: { minify: true, keepNames: true } },
-    exclude: [
-      "monaco-editor/esm/vs/editor/editor.worker?worker&url",
-      "monaco-editor/esm/vs/language/typescript/ts.worker?worker&url",
-    ],
   },
 });

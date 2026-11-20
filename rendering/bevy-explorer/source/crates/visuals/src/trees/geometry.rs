@@ -298,7 +298,9 @@ mod tests {
                 .collect();
             assert_eq!(leaves.len(), 7 * 52 * 4);
             let centers: Vec<_> = leaves
-                .chunks_exact(52 * 4)
+                .as_chunks::<{ 52 * 4 }>()
+                .0
+                .iter()
                 .map(|crown| crown.iter().copied().sum::<Vec3>() / crown.len() as f32)
                 .collect();
             let lowest = centers.iter().map(|p| p.y).fold(f32::INFINITY, f32::min);

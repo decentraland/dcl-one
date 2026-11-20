@@ -1,18 +1,27 @@
-import path from 'path';
 import { ipcRenderer, type IpcRendererEvent } from 'electron';
 import {
   DEPENDENCY_UPDATE_STRATEGY,
   DEFAULT_DEPENDENCY_UPDATE_STRATEGY,
 } from '/shared/types/settings';
 import type { AppSettings } from '/shared/types/settings';
-import { SCENES_DIRECTORY } from '/shared/paths';
 
+import * as fs from '../services/fs';
 import { invoke } from '../services/ipc';
 import { getConfig, setConfig } from '../services/config';
 
-export async function getDefaultScenesPath() {
-  const userDataPath = await invoke('electron.getUserDataPath');
-  return path.join(userDataPath, SCENES_DIRECTORY);
+/** Where new scenes go unless the user picks another folder. Reading it creates nothing. */
+export async function getDefaultScenesPath(): Promise<string> {
+  return invoke('electron.getDefaultScenesPath');
+}
+
+/**
+ * Creates the default scenes folder and returns it, for a user who switches to it in Settings:
+ * Settings checks that the folder it shows exists, and that user may never have had it.
+ */
+export async function createDefaultScenesFolder(): Promise<string> {
+  const scenesPath = await getDefaultScenesPath();
+  await fs.mkdir(scenesPath, { recursive: true });
+  return scenesPath;
 }
 
 export async function getScenesPath() {
@@ -35,9 +44,25 @@ export async function getUpdateDependenciesStrategy() {
   return DEFAULT_DEPENDENCY_UPDATE_STRATEGY;
 }
 
+/**
+ * Writes the app settings, except the AI sharing keys: the sharing decisions and requests are
+ * written only by `updateAiSharingSettings`, so a screen holding an older copy of the settings
+ * can't bring back a decision the creator has since changed.
+ */
 export async function updateAppSettings(settings: AppSettings) {
-  // update app settings on config file
-  await setConfig(config => (config.settings = settings));
+  await setConfig(config => {
+    const { aiDataSharing, aiSharingPending } = config.settings ?? {};
+    config.settings = { ...settings, aiDataSharing, aiSharingPending };
+  });
+}
+
+export type AiSharingSettings = Pick<AppSettings, 'aiDataSharing' | 'aiSharingPending'>;
+
+/** Writes the AI sharing keys of the settings, and nothing else. */
+export async function updateAiSharingSettings(sharing: AiSharingSettings) {
+  await setConfig(config => {
+    config.settings = { ...config.settings, ...sharing };
+  });
 }
 
 export async function selectSceneFolder(): Promise<string | undefined> {

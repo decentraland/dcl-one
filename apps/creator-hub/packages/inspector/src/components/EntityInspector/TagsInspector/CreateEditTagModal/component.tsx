@@ -67,6 +67,7 @@ const CreateEditTagModal = withSdk<Props>(({ open, onClose, sdk, editingTag, onT
         <h2 className="title">{editingTag ? 'Edit tag' : 'Create tag'}</h2>
         <div>
           <TextField
+            size="large"
             label="Tag name"
             autoSelect
             value={editingTag || ''}
@@ -78,15 +79,16 @@ const CreateEditTagModal = withSdk<Props>(({ open, onClose, sdk, editingTag, onT
 
       <div className="actions">
         <Button
-          size="big"
-          type="danger"
+          variant="primary"
+          size="lg"
           onClick={editingTag ? handleSaveTag : handleCreateTag}
           disabled={isDuplicatedTag}
         >
           {editingTag ? 'Save tag' : 'Create tag'}
         </Button>
         <Button
-          size="big"
+          variant="secondary"
+          size="lg"
           onClick={onClose}
         >
           Cancel

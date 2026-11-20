@@ -46,7 +46,7 @@ fn cliffs_face_outward_and_stay_outside_the_ground() {
         };
         let points = positions(&mesh);
         assert!(!points.is_empty());
-        for (index, triangle) in points.chunks_exact(3).enumerate() {
+        for (index, triangle) in points.as_chunks::<3>().0.iter().enumerate() {
             let p = [0, 1, 2].map(|i| Vec3::from_array(triangle[i]));
             let n = Vec3::from_array(normals[index * 3]);
             if p.iter().all(|point| point.y == UNDERGROUND) {

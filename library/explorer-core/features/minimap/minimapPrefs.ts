@@ -11,7 +11,6 @@ import { getPref, PREF, setPref } from '../../lib/prefs'
 const STYLE_KEY = PREF.minimapStyle
 const ROTATION_KEY = PREF.minimapRotation
 const ZOOM_KEY = PREF.minimapZoom
-const MARKERS_KEY = PREF.minimapMarkers
 const OPEN_KEY = PREF.minimapOpen
 const WORLD_OPEN_KEY = PREF.minimapWorldOpen
 
@@ -23,24 +22,6 @@ export const DEFAULT_VISIBLE_METERS = 256
 export const MIN_VISIBLE_METERS = 64
 export const MAX_VISIBLE_METERS = 768
 export const ZOOM_STEP = 1.5
-
-/** The place categories the places API knows, in the order the settings menu lists them. */
-export const ALL_MARKER_CATEGORIES = [
-  'poi',
-  'featured',
-  'game',
-  'casino',
-  'social',
-  'music',
-  'art',
-  'fashion',
-  'crypto',
-  'education',
-  'shop',
-  'sports',
-  'business',
-  'parkour'
-]
 
 const read = getPref
 const write = setPref
@@ -72,20 +53,6 @@ export function loadZoom(): number {
 
 export function saveZoom(meters: number): void {
   write(ZOOM_KEY, String(meters))
-}
-
-export function loadMarkers(): string[] {
-  try {
-    const v: unknown = JSON.parse(read(MARKERS_KEY) ?? 'null')
-    if (!Array.isArray(v)) return [...ALL_MARKER_CATEGORIES]
-    return v.filter((c): c is string => typeof c === 'string')
-  } catch {
-    return [...ALL_MARKER_CATEGORIES]
-  }
-}
-
-export function saveMarkers(categories: string[]): void {
-  write(MARKERS_KEY, JSON.stringify(categories))
 }
 
 /** Whether the map circle is expanded. Kept per realm type: Genesis City defaults open,

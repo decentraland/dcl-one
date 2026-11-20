@@ -11,8 +11,9 @@ pub struct ColorPicker {
 
 impl ColorPicker {
     pub fn new_linear(color: Color) -> Self {
+        let [red, green, blue, _alpha] = color.to_linear().to_f32_array();
         Self {
-            color: color.to_linear().to_f32_array()[0..3].try_into().unwrap(),
+            color: [red, green, blue],
         }
     }
 

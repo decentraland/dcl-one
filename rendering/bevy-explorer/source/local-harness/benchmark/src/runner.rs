@@ -251,7 +251,6 @@ fn page_url(settings: &Settings, access: &Access, port: u16, warmup: bool) -> St
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn wait_for_end(
     settings: &Settings,
     app_root: &Path,

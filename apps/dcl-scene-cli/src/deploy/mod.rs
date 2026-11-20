@@ -151,7 +151,7 @@ pub fn catalyst_rotation() -> Vec<String> {
 /// one of these — a bundler's module-path comment, a `require('../package.json')`
 /// — without the explorer ever fetching it, so such a mention is not a lost
 /// asset.
-const DEVELOPER_DCL_IGNORE: [&str; 25] = [
+const DEVELOPER_DCL_IGNORE: [&str; 27] = [
     ".*",
     "package.json",
     "package-lock.json",
@@ -178,6 +178,9 @@ const DEVELOPER_DCL_IGNORE: [&str; 25] = [
     "*.md",
     "*.mdc",
     "*.map",
+    // Editor and agent files scene templates ship without a leading dot.
+    "cursor.config",
+    "cursorignore",
 ];
 
 /// Built-in ignore rules over files scene code could otherwise name as
@@ -1178,6 +1181,8 @@ mod tests {
             "assets/model.glb",
             ".dclignore-not-really/x.png",
             ".hidden.png",
+            "cursor.config",
+            "cursorignore",
         ]);
         let got = collect_publishable_files(&t.0).unwrap();
         assert_eq!(

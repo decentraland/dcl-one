@@ -197,7 +197,7 @@ fn the_server_accepts_every_send_of_a_storm_and_of_mixed_movement() {
 fn the_client_budget_stays_under_the_servers_limits() {
     assert!(MOVEMENT_REFILL_PER_SECOND < SERVER_INPUT_MAX_HZ as f64);
     assert!(MOVEMENT_BURST < SERVER_INPUT_BURST as f64);
-    assert!(MOVEMENT_MAX_SENDS_PER_SECOND < SERVER_INPUT_BURST);
+    const { assert!(MOVEMENT_MAX_SENDS_PER_SECOND < SERVER_INPUT_BURST) };
 }
 
 #[test]

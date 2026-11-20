@@ -27,7 +27,8 @@ pub const MIRROR: &str = "denylist";
 const BODY_CAP: usize = 4 << 20;
 /// Delay between refresh passes; failures retain the last snapshot.
 pub const RELOAD_INTERVAL: Duration = Duration::from_secs(30);
-const RELOAD_TIMEOUT: Duration = Duration::from_secs(5);
+/// Budget of one refresh pass.
+pub const RELOAD_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Denylist {
@@ -247,8 +248,9 @@ pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
 /// Every process reloads its served set from the tables the leased mirror and
 /// the local overlay write, so replicas that never hold the mirror lease (and
 /// social's referral checks on them) follow the shared denylist. Each pass has
-/// a five-second budget and failed passes retry after the same interval.
-pub fn spawn_reload(state: &Shared, jobs: &Jobs, every: Duration) {
+/// a `timeout` budget ([`RELOAD_TIMEOUT`]) and failed passes retry after the
+/// same interval.
+pub fn spawn_reload(state: &Shared, jobs: &Jobs, every: Duration, timeout: Duration) {
     let state = state.clone();
     jobs.spawn_periodic(
         "explorer-denylist-reload",
@@ -256,7 +258,7 @@ pub fn spawn_reload(state: &Shared, jobs: &Jobs, every: Duration) {
         move |_ctx| {
             let state = state.clone();
             async move {
-                tokio::time::timeout(RELOAD_TIMEOUT, state.denylist.reload(&state.pool))
+                tokio::time::timeout(timeout, state.denylist.reload(&state.pool))
                     .await
                     .context("denylist snapshot reload timed out")?
                     .context("reloading the denylist")

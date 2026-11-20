@@ -22,6 +22,13 @@ import { downloadGithubRepo } from './download-github-folder';
 import { startMobileDebugServer } from './mobile-debug-server';
 import { qrCodeDataUrl } from './qr-code';
 import { getLanIp } from './network';
+import { getRealm } from './bevy-realm';
+import { NO_SERVER_FLAG } from './realm-server-logs';
+import {
+  addDependencyOverrides,
+  clearTemplateDescription,
+  ensureEditorFilesNotDeployed,
+} from './project-config-files';
 
 // `mobile` marks a preview that was started for the mobile-QR flow (`--mobile`): the
 // SDK runs the preview server but does NOT open the desktop client. It is tracked so a
@@ -40,6 +47,10 @@ const RAW_GLTF_PARAM = 'lsd-raw-gltf';
 // ready. sdk-commands prints it only with a LAN IP; if none is found it never comes, so
 // the mobile start settles (with no url) shortly after instead of hanging indefinitely.
 const MOBILE_DEEPLINK_GRACE_MS = 5000;
+
+// The flag as the start command's `arg` spec declares it. A bare mention of the flag in a
+// comment or a help string would match a substring check while `arg` still rejects it.
+const NO_SERVER_SPEC = /['"]--no-server['"]\s*:\s*Boolean/;
 
 const previewCache: Map<string, Preview> = new Map();
 export let deployServer: { stop: () => Promise<void> } | null = null;
@@ -69,6 +80,12 @@ export async function init(targetPath: string, repo: string): Promise<void> {
   log.info('[CLI] Downloading GitHub repository', { repo, targetPath });
   await downloadGithubRepo(repo, targetPath);
   log.info('[CLI] GitHub repository downloaded successfully');
+  excludeEditorFiles(targetPath);
+  try {
+    addDependencyOverrides(targetPath);
+  } catch (error) {
+    log.warn('[CLI] Could not add the dependency overrides to package.json', { targetPath, error });
+  }
   track('Scene created', {
     projectType: 'github-repo',
     url: repo,
@@ -330,6 +347,26 @@ export async function start(path: string, opts: StartOptions): Promise<string> {
   }
 }
 
+/**
+ * Flags that keep the preview from spawning a second Multiplayer Server for the scene.
+ *
+ * The Bevy editor realm (bevy-realm.ts) is a `sdk-commands start` of the same project, so
+ * on an SDK with the authoritative server it already runs one. A second server loses the
+ * scene room to it and exits, and the preview console then reports that no server is
+ * running while the realm's keeps serving. The preview reuses the realm's server instead;
+ * realm-server-logs.ts relays that server's logs into the preview console.
+ *
+ * `arg` rejects unknown flags, so the flag is only passed when the scene's sdk-commands
+ * declares it. Only versions that spawn a server do.
+ */
+async function getServerArgs(path: string): Promise<string[]> {
+  if (!getRealm(path)) return [];
+  const startCommand = await fs
+    .readFile(join(path, 'node_modules', '@dcl/sdk-commands/dist/commands/start/index.js'), 'utf-8')
+    .catch(() => '');
+  return NO_SERVER_SPEC.test(startCommand) ? [NO_SERVER_FLAG] : [];
+}
+
 async function doStart(path: string, opts: StartOptions, generation: number): Promise<string> {
   const { retry = true } = opts;
   const stopped = () => stopGeneration(path) !== generation;
@@ -396,10 +433,11 @@ async function doStart(path: string, opts: StartOptions, generation: number): Pr
     // itself and prints no deeplink, so we wait for the browser URL it prints. Mobile
     // (`--mobile`): it serves the scene and prints the LAN QR deeplink, opening no client
     // at all. Both are bare.
+    const serverArgs = await getServerArgs(path);
     const args = isMobile
-      ? ['start', '--mobile']
+      ? ['start', '--mobile', ...serverArgs]
       : isBevyWeb
-        ? ['start', '--bevy-web']
+        ? ['start', '--bevy-web', ...serverArgs]
         : [
             'start',
             '--explorer-alpha',
@@ -408,6 +446,7 @@ async function doStart(path: string, opts: StartOptions, generation: number): Pr
             // `--mcp` (a boolean) is emitted by generatePreviewArguments from opts.mcp;
             // pin the port too when the gateway asked for one, so it knows where to connect.
             ...(opts.mcp && opts.mcpPort !== undefined ? ['--mcp-port', String(opts.mcpPort)] : []),
+            ...serverArgs,
             // must stay last: everything after `--` is forwarded to the explorer deeplink
             ...(opts.loadRawGltfs ? ['--', `--${RAW_GLTF_PARAM}`] : []),
           ];
@@ -516,6 +555,22 @@ async function doStart(path: string, opts: StartOptions, generation: number): Pr
   }
 }
 
+// Templates ship editor and agent files (`cursor.config`, `cursorignore`) that no default deploy
+// rule covers, and the empty template describes itself. Run before every deploy so scenes created
+// before these fixes are covered too. A file the Hub cannot write leaves the scene as it is.
+function excludeEditorFiles(path: string) {
+  try {
+    ensureEditorFilesNotDeployed(path);
+  } catch (error) {
+    log.warn('[CLI] Could not add the editor files to .dclignore', { path, error });
+  }
+  try {
+    clearTemplateDescription(path);
+  } catch (error) {
+    log.warn('[CLI] Could not clear the template description from scene.json', { path, error });
+  }
+}
+
 // ############################################################################################
 // TODO: Remove this after a couple of months...
 export async function legacyDeploy({
@@ -526,6 +581,7 @@ export async function legacyDeploy({
   if (deployServer) {
     await deployServer.stop();
   }
+  excludeEditorFiles(path);
   const port = await getAvailablePort();
   const process = run('@dcl/sdk-commands', 'sdk-commands', {
     args: [
@@ -634,6 +690,7 @@ async function startDeploy({
     };
   }
 
+  excludeEditorFiles(path);
   const port = await getAvailablePort();
   const deployToken = support.deployResource && support.deployToken ? randomUUID() : undefined;
 

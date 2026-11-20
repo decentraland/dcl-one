@@ -76,7 +76,6 @@ impl Plugin for OowUiPlugin {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update_loading_scene_dialog(
     mut commands: Commands,
     time: Res<Time>,
@@ -157,7 +156,6 @@ fn animate_logo_pulse(mut logos: Query<&mut ImageNode, With<LogoPulse>>, time: R
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update_loading_backdrop(
     mut commands: Commands,
     oow: Query<&OutOfWorld>,
@@ -236,7 +234,6 @@ fn update_loading_backdrop(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn pipe_scene_loading_ui_stream(
     mut requests: EventReader<SystemApi>,
     time: Res<Time>,

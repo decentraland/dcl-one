@@ -118,6 +118,8 @@ const IncompatibleAssetModal: React.FC<Props> = ({
 
       <div className="IncompatibleAssetModalFooter">
         <Button
+          variant="secondary"
+          size="sm"
           onClick={onClose}
           disabled={updating}
         >
@@ -125,7 +127,9 @@ const IncompatibleAssetModal: React.FC<Props> = ({
         </Button>
         {canUpdateSdk && sdkUpdate !== 'updated' && (
           <Button
-            type="blue"
+            variant="primary"
+            className="info"
+            size="sm"
             onClick={handleUpdateSdk}
             disabled={updating}
           >

@@ -1,3 +1,4 @@
+import type { AiSharingConsentByWallet, AiSharingPendingByWallet } from './ai-sharing';
 export enum DEPENDENCY_UPDATE_STRATEGY {
   AUTO_UPDATE = 'auto_update',
   NOTIFY = 'notify',
@@ -56,6 +57,9 @@ export type AppSettings = {
   renderer: RENDERER;
   aiAssistant: boolean;
   aiAssistantPromoted?: boolean;
+  // Marker for the one-time move of `scenesPath` off the hidden app data folder — see
+  // `promoteScenesPath`.
+  scenesPathPromoted?: boolean;
   // Opt-in: let AI agents running OUTSIDE the app (Claude Code in a terminal or VS Code,
   // Codex, Claude Desktop…) use the Creator Hub MCP server. While on, its URL + token are shown
   // in settings and written to the app data folder as `mcp-server.json` and into the open scene
@@ -76,6 +80,11 @@ export type AppSettings = {
   // `/upload-assets` can be tested before merge. The toggle is shown and honored ONLY in
   // non-production builds (`!import.meta.env.PROD`); a production release ignores it entirely.
   useDevAssetCatalog?: boolean;
+  // Opt-in sharing of AI assistant conversations, per wallet. Deliberately NOT in
+  // DEFAULT_CONFIG: a wallet with no entry was never asked, which is what shows the consent card.
+  aiDataSharing?: AiSharingConsentByWallet;
+  // Erasures and ratings for the sharing service that haven't reached it yet, per wallet.
+  aiSharingPending?: AiSharingPendingByWallet;
 };
 
 export interface ReleaseNotes {

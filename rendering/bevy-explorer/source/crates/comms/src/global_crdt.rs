@@ -3,6 +3,7 @@ use std::{f32::consts::TAU, sync::Arc};
 use alloy_core::primitives::Address;
 use bevy::{
     app::Propagate,
+    ecs::system::SystemParam,
     platform::collections::{HashMap, HashSet},
     prelude::*,
     render::view::RenderLayers,
@@ -90,7 +91,6 @@ pub struct DiscardPlayerUpdates(pub bool);
 impl Plugin for GlobalCrdtPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DiscardPlayerUpdates>();
-        app.init_resource::<crate::scene_messages::SceneMessageTraffic>();
 
         // the shared context: the client's single player view, which every transport and
         // scene resolves to unless a room-specific context exists for its hash. An
@@ -781,7 +781,6 @@ fn remote_move_kind(
 /// [`PlayerMessage::Movement`]) or as a legacy rfc4 packet over a websocket transport (as
 /// [`PlayerMessage::PlayerData`]). Writes the CRDT transform and emits a [`PlayerPositionEvent`]
 /// for `foreign_dynamics` to interpolate.
-#[allow(clippy::too_many_arguments)]
 fn apply_foreign_movement(
     m: &rfc4::Movement,
     entity: Entity,
@@ -851,7 +850,6 @@ fn apply_foreign_movement(
     });
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn process_transport_updates(
     mut commands: Commands,
     mut contexts: Query<(Entity, &mut GlobalCrdtState)>,
@@ -865,33 +863,33 @@ pub fn process_transport_updates(
         EventWriter<ChatEvent>,
         EventWriter<ChatReactionEvent>,
     ),
-    mut string_senders: Local<HashMap<String, RpcEventSender>>,
-    mut binary_senders: Local<HashMap<String, RpcStreamSender<(String, Vec<u8>)>>>,
+    mut messagebus: SceneMessageBus,
     mut subscribers: EventReader<RpcCallEvent>,
     mut duplicate_chat_filter: Local<HashMap<Entity, f64>>,
     mut remote_anim: Local<RemoteAnimState>,
-    (discard_player_updates, transports, scene_rooms, mut scene_topics, mut scene_traffic): (
+    (discard_player_updates, transports): (
         Res<DiscardPlayerUpdates>,
         Query<Option<&crate::room_connection::ConnectionHealth>, With<Transport>>,
-        SceneRooms,
-        SceneTopicRouter,
-        ResMut<crate::scene_messages::SceneMessageTraffic>,
     ),
 ) {
     // gather any event receivers
     for ev in subscribers.read() {
         match (&ev.origin, &ev.call) {
             (RpcOrigin::Scene { hash, .. }, RpcCall::SubscribeMessageBus { sender }) => {
-                string_senders.insert(hash.to_string(), sender.clone());
+                messagebus
+                    .string_senders
+                    .insert(hash.to_string(), sender.clone());
             }
             (RpcOrigin::Scene { hash, .. }, RpcCall::SubscribeBinaryBus { sender }) => {
-                binary_senders.insert(hash.to_string(), sender.clone());
+                messagebus
+                    .binary_senders
+                    .insert(hash.to_string(), sender.clone());
             }
             _ => (),
         }
     }
-    string_senders.retain(|_, s| !s.is_closed());
-    binary_senders.retain(|_, s| !s.is_closed());
+    messagebus.string_senders.retain(|_, s| !s.is_closed());
+    messagebus.binary_senders.retain(|_, s| !s.is_closed());
 
     // forget per-player state for despawned players (cheap unless a map outgrew the live set)
     let live_players = players.iter().len();
@@ -1074,17 +1072,7 @@ pub fn process_transport_updates(
                                     continue;
                                 }
                             }
-                            process_messagebus(
-                                scene,
-                                address,
-                                update.transport_id,
-                                &mut string_senders,
-                                &mut binary_senders,
-                                &scene_rooms,
-                                &mut scene_topics,
-                                &mut scene_traffic,
-                                false,
-                            );
+                            messagebus.process(scene, address, update.transport_id, false);
                         }
                         PlayerMessage::PlayerData(Message::Voice(_)) => (),
                         PlayerMessage::Movement {
@@ -1233,17 +1221,7 @@ pub fn process_transport_updates(
                                 }
                             }
 
-                            process_messagebus(
-                                scene,
-                                update.address,
-                                update.transport_id,
-                                &mut string_senders,
-                                &mut binary_senders,
-                                &scene_rooms,
-                                &mut scene_topics,
-                                &mut scene_traffic,
-                                true,
-                            );
+                            messagebus.process(scene, update.address, update.transport_id, true);
                         }
                         // a server resolving a guest profile asks the guest directly — the
                         // only source there is. The request handler reads the requested
@@ -1383,85 +1361,93 @@ fn resolve_remote_anim(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn process_messagebus(
-    mut scene: rfc4::Scene,
-    address: String,
-    transport: Entity,
-    string_senders: &mut HashMap<String, RpcStreamSender<String>>,
-    binary_senders: &mut HashMap<String, RpcStreamSender<(String, Vec<u8>)>>,
-    scene_rooms: &SceneRooms,
-    scene_topics: &mut SceneTopicRouter,
-    traffic: &mut crate::scene_messages::SceneMessageTraffic,
-    authoritative: bool,
-) {
-    if !scene_rooms.carries(transport, &scene.scene_id) {
-        if scene.data.first() == Some(&(CommsMessageType::CommsData as u8)) {
-            scene_topics.drop_without_room();
-        }
-        return;
-    }
-    let Some(trusted) = crate::scene_messages::peer_trust(
-        scene_rooms.moderation(&scene.scene_id),
-        address.as_h160(),
-        authoritative,
-    ) else {
-        traffic.banned_senders += 1;
-        return;
-    };
-    let Some(filtered) = crate::scene_messages::filter_scene_message(&scene.data, trusted) else {
-        traffic.invalid += 1;
-        return;
-    };
-    if let std::borrow::Cow::Owned(filtered) = filtered {
-        traffic.filtered_inbound += 1;
-        scene.data = filtered;
-    }
-    if scene.data.is_empty() {
-        warn!("empty scene message");
-        return;
-    }
+/// Scene bus subscriptions and delivery policy used by transport processing.
+#[derive(SystemParam)]
+pub struct SceneMessageBus<'w, 's> {
+    string_senders: Local<'s, HashMap<String, RpcEventSender>>,
+    binary_senders: Local<'s, HashMap<String, RpcStreamSender<(String, Vec<u8>)>>>,
+    scene_rooms: SceneRooms<'w, 's>,
+    scene_topics: SceneTopicRouter<'w, 's>,
+    traffic: ResMut<'w, crate::scene_messages::SceneMessageTraffic>,
+}
 
-    let comms_type = match *scene.data.first().unwrap() {
-        c if c == CommsMessageType::String as u8 => {
-            scene.data.remove(0);
-            CommsMessageType::String
-        }
-        c if c == CommsMessageType::Binary as u8 => {
-            scene.data.remove(0);
-            CommsMessageType::Binary
-        }
-        c if c == CommsMessageType::CommsData as u8 => {
-            scene.data.remove(0);
-            CommsMessageType::CommsData
-        }
-        _ => CommsMessageType::String,
-    };
-
-    debug!(
-        "messagebus received from {} to scene {}: [{:?}] `{:?}`",
-        address, scene.scene_id, comms_type, scene.data
-    );
-
-    match comms_type {
-        CommsMessageType::String => {
-            if let Some(sender) = string_senders.get(&scene.scene_id) {
-                let _ = sender.send(
-                    json!({
-                        "message": String::from_utf8(scene.data).unwrap_or_default(),
-                        "sender": address,
-                    })
-                    .to_string(),
-                );
+impl SceneMessageBus<'_, '_> {
+    fn process(
+        &mut self,
+        mut scene: rfc4::Scene,
+        address: String,
+        transport: Entity,
+        authoritative: bool,
+    ) {
+        if !self.scene_rooms.carries(transport, &scene.scene_id) {
+            if scene.data.first() == Some(&(CommsMessageType::CommsData as u8)) {
+                self.scene_topics.drop_without_room();
             }
+            return;
         }
-        CommsMessageType::Binary => {
-            if let Some(sender) = binary_senders.get(&scene.scene_id) {
-                let _ = sender.send((address, scene.data));
+        let trusted = match crate::scene_messages::peer_trust(
+            self.scene_rooms.moderation(&scene.scene_id),
+            address.as_h160(),
+            authoritative,
+        ) {
+            crate::scene_messages::PeerTrust::Banned => {
+                self.traffic.banned_senders += 1;
+                return;
             }
+            crate::scene_messages::PeerTrust::Peer => false,
+            crate::scene_messages::PeerTrust::Trusted => true,
+        };
+        let Some(filtered) = crate::scene_messages::filter_scene_message(&scene.data, trusted)
+        else {
+            self.traffic.invalid += 1;
+            return;
+        };
+        if let std::borrow::Cow::Owned(filtered) = filtered {
+            self.traffic.filtered_inbound += 1;
+            scene.data = filtered;
         }
-        CommsMessageType::CommsData => {
-            scene_topics.deliver(&scene.scene_id, address, scene.data);
+        let comms_type = match *scene.data.first().unwrap() {
+            c if c == CommsMessageType::String as u8 => {
+                scene.data.remove(0);
+                CommsMessageType::String
+            }
+            c if c == CommsMessageType::Binary as u8 => {
+                scene.data.remove(0);
+                CommsMessageType::Binary
+            }
+            c if c == CommsMessageType::CommsData as u8 => {
+                scene.data.remove(0);
+                CommsMessageType::CommsData
+            }
+            _ => CommsMessageType::String,
+        };
+
+        debug!(
+            "messagebus received from {} to scene {}: [{:?}] `{:?}`",
+            address, scene.scene_id, comms_type, scene.data
+        );
+
+        match comms_type {
+            CommsMessageType::String => {
+                if let Some(sender) = self.string_senders.get(&scene.scene_id) {
+                    let _ = sender.send(
+                        json!({
+                            "message": String::from_utf8(scene.data).unwrap_or_default(),
+                            "sender": address,
+                        })
+                        .to_string(),
+                    );
+                }
+            }
+            CommsMessageType::Binary => {
+                if let Some(sender) = self.binary_senders.get(&scene.scene_id) {
+                    let _ = sender.send((address, scene.data));
+                }
+            }
+            CommsMessageType::CommsData => {
+                self.scene_topics
+                    .deliver(&scene.scene_id, address, scene.data);
+            }
         }
     }
 }

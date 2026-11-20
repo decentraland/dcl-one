@@ -40,8 +40,8 @@ pub(crate) fn apply_scene_bans(
         if target.scene.realm_about_url != realm.about_url {
             continue;
         }
-        if metadata.banned_addresses.contains(&address) {
-            admission.set_if_neq(
+        if metadata.is_banned(address) {
+            admission.observe(
                 SceneAdmission::from_room_ban(&target.scene.scene_id)
                     .for_session(&realm.about_url, address),
             );

@@ -4,7 +4,8 @@ import {
   type AnchorHTMLAttributes,
   type ComponentType,
   type FormHTMLAttributes,
-  type ReactNode
+  type ReactNode,
+  type Ref
 } from 'react'
 
 /** An in-site link: always an `<a href>`, so it works before hydration and without JavaScript. */
@@ -21,6 +22,7 @@ export type BlogFormProps = Omit<
 > & {
   action: string
   method: 'get'
+  ref?: Ref<HTMLFormElement>
 }
 
 /**
@@ -53,6 +55,10 @@ export function BlogRoutingProvider({
 export function BlogLink(props: BlogLinkProps) {
   const { Link } = useContext(RoutingContext)
   return <Link {...props} />
+}
+
+export function BlogArticleLink(props: BlogLinkProps) {
+  return <BlogLink {...props} data-blog-card="" />
 }
 
 export function BlogForm(props: BlogFormProps) {

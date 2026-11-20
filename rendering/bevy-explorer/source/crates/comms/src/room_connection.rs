@@ -472,7 +472,12 @@ pub(crate) fn finish_credentials(
     for (entity, mut task, mut recovery, context, scene, realm, suspended, rechecking) in
         &mut requests
     {
-        if suspended || wallet.address() != Some(task.identity) {
+        // An identity conflict (another device took the session over) outlasts a refresh that
+        // was already asked for.
+        if suspended
+            || wallet.address() != Some(task.identity)
+            || recovery.failure == Some(FailureKind::IdentityConflict)
+        {
             commands.entity(entity).try_remove::<CredentialTask>();
             continue;
         }
@@ -490,7 +495,10 @@ pub(crate) fn finish_credentials(
         }) {
             Ok(adapter) => {
                 if let Some(scene) = scene {
-                    admission.set_if_neq(crate::SceneAdmission::allowed(&scene.scene.scene_id));
+                    admission.observe(
+                        crate::SceneAdmission::allowed(&scene.scene.scene_id)
+                            .for_session(&scene.scene.realm_about_url, task.identity),
+                    );
                     commands.entity(entity).try_remove::<(
                         crate::scene_bans::MetadataSceneBan,
                         crate::SceneRoomModeration,
@@ -527,7 +535,7 @@ pub(crate) fn finish_credentials(
                     let was_banned = admission.is_refused();
                     banned = next.is_refused() || was_banned;
                     if !was_banned || next.view() != crate::AdmissionView::Unknown {
-                        admission.set_if_neq(next);
+                        admission.observe(next);
                     }
                 }
                 warn!(?entity, kind = ?error.kind, "room admission failed");
@@ -1192,6 +1200,94 @@ mod tests {
                 "{cancellation}"
             );
         }
+    }
+
+    #[cfg(feature = "livekit")]
+    #[test]
+    fn changing_scene_keeps_refusals_and_retry_deadlines_until_that_scene_is_admitted() {
+        let mut app = completion_app();
+        app.init_resource::<common::structs::AppConfig>()
+            .init_resource::<common::structs::CurrentRealm>()
+            .init_resource::<common::structs::PreviewMode>()
+            .init_resource::<ipfs::world_access::WorldCommsSecret>()
+            .init_resource::<crate::SceneRoomConnection>()
+            .init_resource::<crate::SceneRoomAdapterOverride>()
+            .init_resource::<crate::DisableSceneRoomGatekeeper>()
+            .add_event::<crate::SetCurrentScene>()
+            .add_systems(Update, crate::connect_scene_room.before(finish_credentials));
+        app.world_mut()
+            .spawn(crate::global_crdt::GlobalCrdtState::new(None));
+        let address = app.world().resource::<Wallet>().address().unwrap();
+        let select = |app: &mut App, scene: &str| {
+            app.world_mut().send_event(crate::SetCurrentScene {
+                realm_name: "realm".into(),
+                realm_about_url: String::new(),
+                scene_id: scene.into(),
+            });
+            app.update();
+            app.world_mut()
+                .query_filtered::<Entity, With<crate::SceneRoomTarget>>()
+                .single(app.world())
+                .unwrap()
+        };
+        let a = select(&mut app, "a");
+        let mut refusal = AdmissionError::status(403, Some(45.0));
+        refusal.message = Some("User is banned from this scene".into());
+        let task = completed(&app, Err(refusal));
+        app.world_mut().entity_mut(a).insert(task);
+        app.update();
+        let due = app.world().get::<RoomRecovery>(a).unwrap().retry.due;
+
+        let b = select(&mut app, "b");
+        assert!(app.world().get_entity(a).is_err());
+        let task = completed(
+            &app,
+            Ok("livekit:wss://rooms.example?access_token=test".into()),
+        );
+        app.world_mut().entity_mut(b).insert(task);
+        app.update();
+        assert!(app
+            .world()
+            .resource::<crate::SceneAdmission>()
+            .is_scene_banned("", address, "a"));
+        assert_eq!(
+            app.world().resource::<crate::SceneAdmission>().view(),
+            crate::AdmissionView::Allowed { scene_id: "b" }
+        );
+
+        // A same-wallet signer refresh must cancel old work without forgetting scene bans.
+        app.world_mut()
+            .resource_mut::<Wallet>()
+            .finalize_as_guest_with_seed([7; 32]);
+        app.update();
+        assert!(app
+            .world()
+            .resource::<crate::SceneAdmission>()
+            .is_scene_banned("", address, "a"));
+        let a = select(&mut app, "a");
+        assert!(app.world().get::<BanRecheck>(a).is_some());
+        let recovery = app.world().get::<RoomRecovery>(a).unwrap();
+        assert_eq!(recovery.failure, Some(FailureKind::Denied));
+        assert_eq!(recovery.retry.due, due);
+        assert!(!recovery.retry.ready(44.9));
+        assert_eq!(
+            app.world()
+                .resource::<crate::SceneAdmission>()
+                .banned_scene("", address),
+            Some("a")
+        );
+
+        let task = completed(
+            &app,
+            Ok("livekit:wss://rooms.example?access_token=test".into()),
+        );
+        app.world_mut().entity_mut(a).insert(task);
+        app.update();
+        assert!(!app
+            .world()
+            .resource::<crate::SceneAdmission>()
+            .is_scene_banned("", address, "a"));
+        assert!(app.world().get::<BanRecheck>(a).is_none());
     }
 
     #[cfg(feature = "livekit")]

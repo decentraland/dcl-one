@@ -53,8 +53,23 @@ reference:
   It logs `raycast entity=<id>` the first time an entity's raycast answers and
   `raycast-storm complete` once all 200 have.
 
-`bin/`, `node_modules/` and the other build outputs are ignored. The `.glb`, `.png` and `.jpg`
-assets are in Git LFS.
+## The video scene
+
+`video`, parcel `0,26`, spawn at `(8, 0, 4)` facing the screens: the scene of
+`specs/media-retry.test.ts`, in the workspace but not in `SCENES`, so without a reference, and
+left out of the visual specs' realm, so its looping decoders run only beside its own spec. Three
+planes each show one looped file of `assets/` in a basic material: `recover`
+(`assets/recover.webm`, at `(5, 2, 8)`), `broken` (`assets/broken.webm`, at `(11, 2, 15)`) and
+`paused` (`assets/paused.webm`, at `(2, 2, 15)`), 2 s, 64 by 64 VP8 of one colour each, so their
+bytes and content hashes differ. `recover` and `broken` play from the start; `paused` starts
+paused and is set playing 1 s after it first reports `VS_ERROR`, logging `video paused play`. One
+video plays at a time, the nearest: `recover` from the spawn, `broken` from `(11, 0, 12)` and
+`paused` from `(2, 0, 12)`, where the spec walks. It logs `video ready` once all exist and
+`video <name> state=<VideoState>` (`VS_PLAYING`, `VS_ERROR`, ...) on every state the engine
+reports. The spec's realm fails the files' first GETs.
+
+`bin/`, `node_modules/` and the other build outputs are ignored. The `.glb`, `.png`, `.jpg` and
+`.webm` assets are in Git LFS.
 
 ## Environment components
 
@@ -63,11 +78,3 @@ EnvironmentFog components through the SDK. It is a workspace fixture without a v
 reference. After building it, `DCL_E2E_NATIVE_BIN=/path/to/decentra-bevy pnpm run check:environment`
 serves an isolated loopback realm and checks its optional values, sky image, component removal
 and scene-departure reset through the native console. Captures are saved in `report/environment`.
-
-## Scene messaging
-
-`scene-comms`, parcel `0,26`, subscribes to `scene-comms-smoke` and publishes one ping per
-second. Build it with `pnpm run build-scenes scene-comms`, then run two clients with distinct
-wallets in the same preview room. Each client's `/scene_logs` must show the other sender's
-ping. `consumeMessages` is read as the runtime's bare array. This is a live-room smoke fixture,
-outside the visual reference suite; the ban scenario separately checks admission and unloading.

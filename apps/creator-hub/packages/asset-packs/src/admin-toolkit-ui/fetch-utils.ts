@@ -58,7 +58,28 @@ export function isPreview() {
   return !!realmCache?.isPreview;
 }
 
-export function getDomain() {
-  if (!realmCache || realmCache.networkId === 1) return 'org';
+export function getDomain(realm: PBRealmInfo | undefined = realmCache) {
+  if (!realm || realm.networkId === 1) return 'org';
   return 'zone';
+}
+
+// Decentraland's own hosts, where each service has a host of its own.
+const DECENTRALAND_HOST = /^(?:[a-z0-9-]+\.)*decentraland\.(?:org|zone|today)$/i;
+
+/**
+ * The URL of `path` on a service of the realm's deployment. A Decentraland realm's services each
+ * have a host (`https://comms-gatekeeper.decentraland.org`). Any other realm is a node that serves
+ * them under its origin (`https://<node>/comms-gatekeeper`), as its gateway routes them.
+ */
+export function serviceUrl(
+  service: string,
+  path: string,
+  realm: PBRealmInfo | undefined = realmCache,
+): string {
+  const origin = /^https?:\/\/[^/?#]+/i.exec(realm?.baseUrl ?? '')?.[0];
+  const host = origin?.replace(/^https?:\/\//i, '').replace(/:\d+$/, '');
+  if (!origin || !host || DECENTRALAND_HOST.test(host)) {
+    return `https://${service}.decentraland.${getDomain(realm)}${path}`;
+  }
+  return `${origin}/${service}${path}`;
 }

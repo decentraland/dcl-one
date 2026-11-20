@@ -3,9 +3,12 @@ import { fireEvent, screen, within } from '@testing-library/react'
 import { MapPanel } from '../../features/sidebar/panels/MapPanel'
 import { fakeSession, renderSettled } from '../harness'
 
-vi.mock('@explorer-core/features/minimap/minimapPlaces', async (original) => ({
-  ...await original<typeof import('@explorer-core/features/minimap/minimapPlaces')>(),
-  loadMinimapPlaces: vi.fn(async () => [])
+vi.mock('@explorer-core/features/map/mapApi', async (original) => ({
+  ...await original<typeof import('@explorer-core/features/map/mapApi')>(),
+  fetchLiveEvents: vi.fn(async () => []),
+  fetchPoiParcels: vi.fn(async () => []),
+  fetchPeers: vi.fn(async () => []),
+  fetchPlaceAt: vi.fn(async () => null)
 }))
 
 // The panel the navigation bar's Map button shows. It is the HUD's minimap under the name "Map":

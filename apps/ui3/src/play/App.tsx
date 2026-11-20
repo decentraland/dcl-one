@@ -6,12 +6,19 @@ import { HudApp, type HudShopProps } from '@hud/App'
 import { ShopPage } from '@hud/features/shop/ShopPage'
 import { BridgeClient } from '@explorer-core/engine/bridge'
 import { EngineDriver } from '@explorer-core/engine/EngineDriver'
-import { IN_WORLD_SHOP } from './features/shop/entry'
+import { IN_WORLD_SHOP } from '@dcl/one-ui/apps/shop/entry'
+import { inShell } from '@explorer-core/lib/shell'
+import type { ItemPurchaseItem } from '@explorer-core/engine/generated'
 
 // The in-world Shop, loaded only when it is first opened. lazy() keeps a failed load, so a crash
 // swaps in a fresh one for the next open.
-const loadInWorldShop = () => lazy(() => import('./features/shop/InWorldShop'))
+const loadInWorldShop = () => lazy(() => import('@dcl/one-ui/apps/shop/InWorldShop'))
 let InWorldShop = /* @__PURE__ */ loadInWorldShop()
+
+// A purchase a scene asked for runs where the in-world Shop buys: in the web shell, which holds the
+// wallet. Its code loads with the first such request.
+const purchaseSceneItem =
+  IN_WORLD_SHOP && inShell ? async (item: ItemPurchaseItem) => (await import('@dcl/one-ui/apps/shop/scenePurchase')).purchaseSceneItem(item) : undefined
 
 // The HUD's one server-state cache (docs/web-app-standards.md, "QueryClient"), with the reference defaults.
 function Providers({ children }: { children: ReactNode }): React.JSX.Element {
@@ -51,6 +58,7 @@ export function App(): React.JSX.Element {
       createEngineDriver={(rpc) => new EngineDriver(rpc)}
       createBridgeClient={() => new BridgeClient()}
       ShopPage={Shop}
+      purchaseSceneItem={purchaseSceneItem}
       onShopCrash={() => {
         if (IN_WORLD_SHOP) InWorldShop = loadInWorldShop()
       }}

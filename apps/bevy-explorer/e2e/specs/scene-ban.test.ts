@@ -4,7 +4,7 @@
 // | Scenario                                                   | Class            |
 // | a scene room reports its admission and moderation lists    | New              |
 // | leaving the scene clears the room state                    | New              |
-// | a refused scene unloads until the player is admitted again | New, native only |
+// | a refused scene stays unloaded across departure and return | New, native only |
 //
 // The refusal scenario starts its own standalone against a loopback gatekeeper stub
 // (`--comms-gatekeeper`); on the web a service override stops the boot at the launch gate.
@@ -59,6 +59,21 @@ scenario(
   'a refused scene unloads until the player is admitted again',
   async ({ explorer }) => {
     assert.ok(stub)
+    await explorer.teleport(...SCENE_PARCEL)
+    const loadingState = () => explorer.json<{ stage: string }>('/scene_loading_state')
+    await until(loadingState, (s) => s.stage === 'Running', {
+      timeoutMs: ROOM_TIMEOUT_MS, what: 'the initial scene to load'
+    })
+    const target = await explorer.json<{ parcels: string[] }>('/scene_target')
+    const occupied = new Set(target.parcels)
+    const neighbours = target.parcels.flatMap((parcel) => {
+      const [x, y] = parcel.split(',').map(Number) as [number, number]
+      return [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]] as [number, number][]
+    }).filter((parcel) => !occupied.has(parcel.join(',')))
+    neighbours.sort((a, b) => Math.abs(a[0]) + Math.abs(a[1]) - Math.abs(b[0]) - Math.abs(b[1]))
+    const neighbour = neighbours[0]
+    assert.ok(neighbour, 'the scene has a neighbouring parcel')
+    await explorer.teleport(...EMPTY_PARCEL)
     stub.sceneAdapter(refusal(403, 'User is banned from this scene'))
     try {
       await explorer.teleport(...SCENE_PARCEL)
@@ -70,14 +85,21 @@ scenario(
       assert.equal(state.sceneAdmission.message, 'User is banned from this scene')
       assert.equal(state.sceneRoom.state, 'not_connected')
 
-      const loadingState = () => explorer.json<{ stage: string }>('/scene_loading_state')
       const absent = 'Waiting for the parcel scene to load.'
       await until(loadingState, (s) => s.stage === absent, {
         timeoutMs: ROOM_TIMEOUT_MS,
         what: 'the refused scene to unload'
       })
       assert.ok((await explorer.worldState()).inWorld)
+      await explorer.teleport(...neighbour)
+      await until(() => explorer.banBlockState(), (s) => s.sceneAdmission.sceneId !== state.sceneAdmission.sceneId, {
+        timeoutMs: ROOM_TIMEOUT_MS, what: 'the room target to leave the refused scene'
+      })
       await explorer.teleport(...SCENE_PARCEL)
+      await until(() => explorer.banBlockState(), (s) =>
+        s.sceneAdmission.state === 'refused' && s.sceneAdmission.sceneId === state.sceneAdmission.sceneId, {
+          timeoutMs: ROOM_TIMEOUT_MS, what: 'the refused parcel to regain its admission owner'
+        })
       assert.equal((await loadingState()).stage, absent)
 
       // Admission succeeds; a loopback endpoint keeps the transport out of this assertion.

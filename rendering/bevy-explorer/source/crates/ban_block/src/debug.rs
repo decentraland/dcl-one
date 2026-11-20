@@ -267,13 +267,12 @@ fn scene_room_json(room: SceneRoomView, unavailable: &mut Map<String, Value>) ->
         }
         SceneRoomView::Connected {
             scene_id,
-            banned_addresses,
-            scene_admins,
+            moderation,
         } => json!({
             "state": "connected",
             "sceneId": scene_id,
-            "bannedAddresses": addresses(banned_addresses),
-            "sceneAdmins": addresses(scene_admins),
+            "bannedAddresses": addresses(&moderation.banned_addresses),
+            "sceneAdmins": addresses(&moderation.scene_admins),
         }),
     }
 }

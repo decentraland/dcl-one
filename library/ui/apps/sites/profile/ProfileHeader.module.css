@@ -1,0 +1,104 @@
+/* The profile header: the shared avatar picture, name and address, the owner's calls to action. The
+ * design system has no profile header, so its layout is drawn here. */
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--dcl-space-12);
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--dcl-space-16);
+  border-bottom: 1px solid var(--dcl-border-subtle);
+}
+
+.identity {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  min-width: 0;
+}
+
+.nameBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.nameRow {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-4);
+}
+
+.name,
+.discriminator {
+  margin: 0;
+  font-family: 'Inter', sans-serif;
+  font-size: var(--dcl-font-size-heading-5);
+  font-weight: 500;
+  line-height: 1.334;
+}
+
+.name {
+  overflow: hidden;
+  max-width: 20ch;
+  color: var(--name-color);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.discriminator {
+  color: var(--dcl-text-secondary);
+}
+
+.verified {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.addressRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dcl-text-secondary);
+}
+
+.address {
+  color: var(--dcl-text-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: var(--dcl-font-size-body-md);
+  line-height: 1.75;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  width: 100%;
+}
+
+@media (min-width: 1024px) {
+  .root {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--dcl-space-16);
+    padding: var(--dcl-space-16) var(--dcl-space-24);
+  }
+
+  .name,
+  .discriminator {
+    font-size: var(--dcl-font-size-heading-2);
+  }
+
+  .actions {
+    flex-shrink: 0;
+    flex-wrap: nowrap;
+    width: auto;
+  }
+}
