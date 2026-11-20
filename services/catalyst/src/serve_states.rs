@@ -78,6 +78,8 @@ pub(super) async fn ops_states(
             store_root: non_empty(&Some(config.imposters.bvimposters_store_root.clone())),
             store_max_bytes: Some(config.imposters.bvimposters_store_max_bytes),
             mem_cache_bytes: Some(config.imposters.bvimposters_mem_cache_bytes),
+            upstream_url: non_empty(&Some(config.imposters.bvimposters_upstream_url.clone())),
+            upstream_realm: non_empty(&Some(config.imposters.bvimposters_upstream_realm.clone())),
             bake: imposters_bake_settings(config),
         })
         .context("BVIMPOSTERS_* configuration")?,
