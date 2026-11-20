@@ -12,12 +12,14 @@ const C = 1_000_000_000_000_000_000n
 const G = 1_300_000_000_000_000_000n
 const credit: SpendableCredit = { id: '0x' + 'a1'.repeat(32), amount: C.toString(), availableAmount: C.toString(), expiresAt: Math.floor(Date.now() / 1000) + 900, signature: '0x' + 'cc'.repeat(65), contract: MANAGER }
 const item: StoreItemToBuy = { collection: BOOK.collection, itemId: String(ITEM), priceWei: (C + G).toString() }
-const sale: SplitSale = { buyer: BUYER, chainId: 137, manager: MANAGER, creditId: credit.id, creditWei: C.toString(), gapWei: G.toString(), callData: buildStoreBuyCalldata([item], BUYER).data }
+const call = buildStoreBuyCalldata([item], BUYER)
+const sale: SplitSale = { buyer: BUYER, chainId: 137, manager: MANAGER, creditId: credit.id, creditWei: C.toString(), gapWei: G.toString(), target: STORE, selector: call.selector, callData: call.data }
 
 /** The relayed meta-transaction a split's sale lands as, with `over` changing what it carries. */
-function relayed(over: { credit?: SpendableCredit; items?: StoreItemToBuy[]; gap?: bigint; credited?: bigint; user?: string } = {}): Hex {
+function relayed(over: { credit?: SpendableCredit; items?: StoreItemToBuy[]; gap?: bigint; credited?: bigint; user?: string; venue?: string; selector?: Hex } = {}): Hex {
   const c = over.credit ?? credit
-  const args = buildStoreUseCreditsArgs(STORE, over.items ?? [item], BUYER, [c], (over.credited ?? C).toString(), { maxUncreditedValue: over.gap ?? G })
+  const built = buildStoreUseCreditsArgs(STORE, over.items ?? [item], BUYER, [c], (over.credited ?? C).toString(), { maxUncreditedValue: over.gap ?? G })
+  const args = { ...built, externalCall: { ...built.externalCall, ...(over.venue ? { target: over.venue as Hex } : {}), ...(over.selector ? { selector: over.selector } : {}) } }
   return encodeExecuteMetaTransaction('functionData', over.user ?? BUYER, encodeUseCredits(args), ('0x' + '11'.repeat(65)) as Hex)
 }
 const evidenceOf = (tx: { to: string | null; input: Hex } | null, status: 'success' | 'reverted' | null) => ({
@@ -37,14 +39,16 @@ describe('which transaction is an in-world split purchase', () => {
     ['another credit', relayed({ credit: { ...credit, id: '0x' + 'b2'.repeat(32) } })],
     ['another gap', relayed({ gap: G + 1n })],
     ['crediting another share', relayed({ credited: C - 1n })],
-    ['another sender', relayed({ user: '0x' + 'cc'.repeat(20) })]
+    ['another sender', relayed({ user: '0x' + 'cc'.repeat(20) })],
+    ['the same arguments at another venue', relayed({ venue: BOOK.marketplace.contract })],
+    ['the same arguments for another function', relayed({ selector: '0x12345678' })]
   ])('is not bought by %s, even successful', async (_, input) => {
     expect(await splitExecution(evidenceOf({ to: MANAGER, input }, 'success') as never, sale, '0xabc')).toBe('other')
   })
 
-  it('is not bought by a transaction to another contract, or one it can\'t read', async () => {
-    expect(await splitExecution(evidenceOf({ to: STORE, input: relayed() }, 'success') as never, sale, '0xabc')).toBe('other')
-    expect(await splitExecution(evidenceOf({ to: MANAGER, input: '0xdeadbeef' }, 'success') as never, sale, '0xabc')).toBe('other')
+  it('says nothing of a transaction to another contract, or one it can\'t read: its destination alone isn\'t where the credit went', async () => {
+    expect(await splitExecution(evidenceOf({ to: STORE, input: relayed() }, 'success') as never, sale, '0xabc')).toBe('unknown')
+    expect(await splitExecution(evidenceOf({ to: MANAGER, input: '0xdeadbeef' }, 'success') as never, sale, '0xabc')).toBe('unknown')
   })
 
   it('says nothing yet without a transaction, without a receipt for its own, or when a read fails', async () => {

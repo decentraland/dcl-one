@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, keccak256, maxUint256, parseAbi, type Hex } from 'viem'
 import { batchAuthorization, createFakeChain, createFakeLocks, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade } from '../../shop/checkout/fakes'
 import { CREDITS_MANAGER_ABI, OFFCHAIN_META_TX_ABI } from '@shop/checkout/chain/abi'
-import { claimSplitHold, readSplitHold, readSplitHoldRecord, splitHoldLine, writeSplitHold } from '../../shop/checkout/purchase/splitHold'
+import { claimSplitHold, readSplitHold, readSplitHoldRecord, splitHoldKey, splitHoldLine, writeSplitHold } from '../../shop/checkout/purchase/splitHold'
 import { ASSET_TYPE, buildStoreUseCreditsArgs, encodeStoreBuy, encodeUseCredits } from '../../shop/checkout/purchase/encoding'
 import { encodeExecuteMetaTransaction } from '../../shop/checkout/chain/metatx'
 import { manaFingerprint } from '../shell/shop/manaPurchase'
@@ -729,6 +729,110 @@ describe('the in-world purchase with MANA', () => {
       ;(await p.until('method')).handlers.onPay?.('split')
       await p.until('success')
       expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toBeNull()
+    })
+
+    it('keeps its credit and hold when the relay answers someone else\'s reverted transaction', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.onChain.foreignHash = true
+      w.relay.state.confirm = 'reverted'
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, creditRecordOf: async () => null } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      await new Promise((r) => setTimeout(r, 50))
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+      expect(p.events.some((e) => e.state === 'failed' || e.state === 'succeeded')).toBe(false)
+      expect(readSplitHold(BUYER, HOLD_LINE)).toMatchObject({ creditId: `0x${'a1'.repeat(32)}` })
+    })
+
+    it('gives its credit back, and its hold, when its own transaction reverted', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'reverted'
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('failed')
+      expect(w.shop.log.filter((q) => q.name === 'cancelCreditAuthorizations')).toHaveLength(1)
+      expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toBeNull()
+    })
+
+    it('can buy again on the same page after a purchase stopped while it was prepared', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      expect(writeSplitHold(BUYER, HOLD_LINE, webHold)).toBe(true)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      ;(await p.until('failed')).handlers.onClose()
+      localStorage.removeItem(splitHoldKey(BUYER, HOLD_LINE))
+      const before = p.shown.length
+      await p.open()
+      await vi.waitFor(() => expect(p.shown.slice(before).some((s) => s.view.step === 'method')).toBe(true))
+      p.shown.slice(before).find((s) => s.view.step === 'method')!.handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'succeeded' }), { timeout: 5000 })
+    })
+
+    /** Evidence that never finds the hash the relay answered (A): it was dropped, or never existed. */
+    const losingA = (w: World, B?: string) => ({
+      ...w.evidence,
+      transaction: async (_c: number, h: string) => (B && h === B ? (w.txs.get([...w.txs.keys()][0]!) ?? null) : null),
+      receipt: async (_c: number, h: string) => (B && h === B ? { transactionHash: h as Hex, status: 'success' as const, blockNumber: 1n } : null)
+    })
+    const record = (status: 'SETTLED' | 'EXPIRED', txHash: string | null) =>
+      ({ id: `0x${'a1'.repeat(32)}:0`, tradeId: null, contractAddress: null, itemId: null, registeredName: null, usdCents: 50, credits: 5, status, createdAt: 0, manaSettledWei: null, txHash, submittedTxHash: null }) as const
+
+    it('completes from the node when its own hash is gone, by the indexed transaction that is this sale', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'none'
+      const B = `0x${'b'.repeat(63)}2`
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, manaEvidence: () => losingA(w, B) as never, creditRecordOf: async () => record('SETTLED', B) } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'succeeded' }), { timeout: 5000 })
+      expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toBeNull()
+    })
+
+    it('ends unbought when its own hash is gone and the node says its credit expired unspent, past the index\'s lag', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'none'
+      const p = page(w, {
+        split: splitOn,
+        creditsCents: 50,
+        services: { ...managed, manaEvidence: () => losingA(w) as never, creditRecordOf: async () => record('EXPIRED', null), sleep: async () => void (w.clock.now += 16 * 60_000) }
+      })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'failed' }), { timeout: 5000 })
+      expect(p.events.some((e) => e.state === 'succeeded')).toBe(false)
+    })
+
+    it('stays pending while neither its hash nor the node says anything', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'none'
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, manaEvidence: () => losingA(w) as never, creditRecordOf: async () => null } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      await new Promise((r) => setTimeout(r, 50))
+      expect(p.events.at(-1)).toMatchObject({ state: 'pending' })
+      expect(readSplitHold(BUYER, HOLD_LINE)).not.toBeNull()
     })
 
     it('reserves nothing and asks nothing of the wallet without Web Locks', async () => {

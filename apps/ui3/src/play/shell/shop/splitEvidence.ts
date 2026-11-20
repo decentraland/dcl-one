@@ -21,7 +21,9 @@ export interface SplitSale {
   /** The credit's exact value C and the MANA gap G, in wei. */
   creditWei: string
   gapWei: string
-  /** The external call's data, as reviewed (its price, coupon and buyer). */
+  /** The external call as reviewed: its venue (`target`), its function (`selector`) and its data (price, coupon, buyer). */
+  target: string
+  selector: Hex
   callData: Hex
   /** Its line in the hold the web Shop and /play share (shop/checkout/purchase/splitHold), and the attempt it wrote there. */
   hold?: { line: string; attempt: string }
@@ -30,8 +32,10 @@ export interface SplitSale {
 /**
  * - `bought`: a mined, successful execution of exactly this purchase;
  * - `reverted`: this purchase's own execution, mined and reverted (its credit unspent);
- * - `other`: a transaction that isn't this purchase (another call, another credit, another manager or sender);
- * - `unknown`: nothing read yet (no receipt, no transaction, or a read that failed).
+ * - `other`: a useCredits this page can read that is provably not this purchase: another sender, another credit, or this
+ *   credit with other terms (another venue, function, call, share or gap);
+ * - `unknown`: nothing that says either way: no transaction or receipt yet, a read that failed, or a transaction whose
+ *   wrapper or target this page can't read (its destination alone says nothing about where the credit went).
  */
 export type SplitOutcome = 'bought' | 'reverted' | 'other' | 'unknown'
 
@@ -52,34 +56,52 @@ export function isSplitSale(v: unknown): v is SplitSale {
     s.creditId.length > 0 &&
     digits(s.creditWei) &&
     digits(s.gapWei) &&
+    hex(s.target) &&
+    hex(s.selector) &&
     hex(s.callData) &&
     (s.hold === undefined ||
       (typeof s.hold === 'object' && s.hold !== null && typeof (s.hold as Record<string, unknown>).line === 'string' && typeof (s.hold as Record<string, unknown>).attempt === 'string'))
   )
 }
 
-/** Whether `tx` is the buyer's relayed useCredits at the sale's manager, carrying exactly the sale's terms. */
-export function carriesSale(tx: { to: string | null; input: Hex }, sale: SplitSale): boolean {
-  if (lower(tx.to) !== lower(sale.manager)) return false
+/**
+ * What `tx` says of the sale: `match` (the buyer's relayed useCredits at the sale's manager carrying exactly its terms),
+ * `other` (a readable useCredits that provably isn't it) or `unreadable` (another target or wrapper, or calldata this page
+ * can't decode).
+ */
+export function readSale(tx: { to: string | null; input: Hex }, sale: SplitSale): 'match' | 'other' | 'unreadable' {
+  if (lower(tx.to) !== lower(sale.manager)) return 'unreadable'
+  let args
+  let user: string
   try {
     const meta = decodeFunctionData({ abi: OFFCHAIN_META_TX_ABI, data: tx.input })
-    if (meta.functionName !== 'executeMetaTransaction' || lower(meta.args[0]) !== lower(sale.buyer)) return false
+    if (meta.functionName !== 'executeMetaTransaction') return 'unreadable'
+    user = meta.args[0] as string
     const call = decodeFunctionData({ abi: CREDITS_MANAGER_ABI, data: meta.args[1] as Hex })
-    if (call.functionName !== 'useCredits') return false
-    const [args] = call.args
-    const creditWei = BigInt(sale.creditWei)
-    return (
-      args.credits.length === 1 &&
-      lower(args.credits[0].salt) === lower(idToSalt(sale.creditId)) &&
-      args.credits[0].value === creditWei &&
-      args.maxCreditedValue === creditWei &&
-      args.maxUncreditedValue === BigInt(sale.gapWei) &&
-      args.customExternalCallSignature === '0x' &&
-      lower(args.externalCall.data) === lower(sale.callData)
-    )
+    if (call.functionName !== 'useCredits') return 'unreadable'
+    ;[args] = call.args
   } catch {
-    return false
+    return 'unreadable'
   }
+  const creditWei = BigInt(sale.creditWei)
+  const call = args.externalCall
+  const same =
+    lower(user) === lower(sale.buyer) &&
+    args.credits.length === 1 &&
+    lower(args.credits[0].salt) === lower(idToSalt(sale.creditId)) &&
+    args.credits[0].value === creditWei &&
+    args.maxCreditedValue === creditWei &&
+    args.maxUncreditedValue === BigInt(sale.gapWei) &&
+    args.customExternalCallSignature === '0x' &&
+    lower(call.target) === lower(sale.target) &&
+    lower(call.selector) === lower(sale.selector) &&
+    lower(call.data) === lower(sale.callData)
+  return same ? 'match' : 'other'
+}
+
+/** Whether `tx` is the buyer's relayed useCredits at the sale's manager, carrying exactly the sale's terms. */
+export function carriesSale(tx: { to: string | null; input: Hex }, sale: SplitSale): boolean {
+  return readSale(tx, sale) === 'match'
 }
 
 /** What the transaction at `hash` says about the sale (see SplitOutcome). A read that fails is `unknown`, never `other`. */
@@ -92,7 +114,9 @@ export async function splitExecution(evidence: Pick<ManaEvidence, 'receipt' | 't
     return 'unknown'
   }
   if (!tx) return 'unknown'
-  if (!carriesSale(tx, sale)) return 'other'
+  const read = readSale(tx, sale)
+  if (read === 'unreadable') return 'unknown'
+  if (read === 'other') return 'other'
   if (!receipt) return 'unknown'
   return receipt.status === 'success' ? 'bought' : 'reverted'
 }

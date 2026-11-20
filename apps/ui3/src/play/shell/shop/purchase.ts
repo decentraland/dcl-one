@@ -31,7 +31,7 @@ import { ensureAuthorization, exactAllowanceReady, exactGrantLock, getManaSpendi
 import { pageLocks, webLock as lockIfFree } from '../../../shop/checkout/lib/web-lock'
 import type { RailContext } from '../../../shop/checkout/purchase/rail'
 import { createSpendGuard } from '@shop/checkout/purchase/spend-guard'
-import { fetchUserPurchases, getUsdBalance, type PurchaseRecord, type UsdBalance } from '@shop/credits/credits'
+import { cancelUsdIntents, fetchUserPurchases, getUsdBalance, type PurchaseRecord, type UsdBalance } from '@shop/credits/credits'
 import type { OfferSource } from '../../../shop/detail/offers'
 import { fetchShopItems } from '@shop/discovery/api'
 import { isResale } from '@shop/market/access-rule'
@@ -505,8 +505,10 @@ interface SplitRun {
   resolved: Resolved
   plan: SplitPlan
   gapWei: bigint
-  /** The credit's exact value C, and the external call's data as reviewed: what the sale's signature is bound to. */
+  /** The credit's exact value C, and the external call as reviewed (venue, function, data): what the sale is bound to. */
   creditWei: bigint
+  target: string
+  selector: Hex
   callData: Hex
   /** Lets go of the exact approval's lock and the item's hold, held from the last allowance read through the sale's outcome. */
   release: () => void
@@ -999,7 +1001,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         settled(op, 'failed', {}, 'The transaction failed on-chain. Nothing was bought.', REVERTED_PART)
         return true
       }
-      if (outcome === 'unknown') return false
+      // Unknown or another transaction: a hash that is missing, dropped or not this sale says nothing more. The node's
+      // record of the credit is independent evidence, read next.
     }
     const record = await svc.creditRecordOf(op.buyer, sale.creditId, client(op.buyer)).catch(() => null)
     if (record?.status === 'SETTLED' && record.txHash) {
@@ -1534,7 +1537,16 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     // Credits and MANA together: one item, its credit and its MANA gap fixed before anything is reserved (prepareSplit).
     let split: SplitRun | undefined
     if (splitting) {
-      const prepared = await prepareSplit(op, quote, wallet, current)
+      let prepared: Awaited<ReturnType<typeof prepareSplit>>
+      try {
+        prepared = await prepareSplit(op, quote, wallet, current)
+      } catch (e) {
+        // Whatever stopped it, nothing of it was reserved or sent, and nothing of it stays held: the page can buy again.
+        console.warn('[shell/shop] could not prepare the purchase', e)
+        running = false
+        fail(op, "We couldn't start this purchase. Nothing was charged.", again)
+        return
+      }
       if (prepared === 'stop') {
         running = false
         return
@@ -1670,6 +1682,22 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     const manager = svc.manager(chainId)
     if (!manager) return { why: "Buying with Credits isn't available here right now." }
     const auth = getManaSpendingAuthorization(chainId as ChainId, manager.address)
+    // The sale's external call, from the line as reviewed (its venue, price, coupon and buyer), built before any lock is
+    // taken: the only one its signature may carry, and the one its execution must carry to count as this purchase.
+    let call: { selector: Hex; data: Hex }
+    try {
+      const target = purchaseTargetFor(unit)
+      call =
+        target.kind === 'store'
+          ? buildStoreBuyCalldata([target.mint.item], quote.buyer)
+          : target.coupon
+            ? buildAcceptWithCouponCalldata([target.trade], [target.coupon], quote.buyer)
+            : buildAcceptCalldata([target.trade], quote.buyer)
+    } catch (e) {
+      console.warn('[shell/shop] could not prepare the purchase', e)
+      return { why: "We couldn't start this purchase. Nothing was charged." }
+    }
+    const venue = part.group.key.contract.toLowerCase()
     // The exact approval and the sale each run in one window at a time; without Web Locks nothing proves that.
     const locks = svc.locks()
     if (!locks) return { why: "This browser can't keep a purchase with Credits and MANA to one window, so nothing was charged." }
@@ -1688,7 +1716,13 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     // The item's hold, shared with the web Shop: one split of it at a time, on either, until the last one is found out.
     const line = part.priced[0]!.line
     const holdLine = splitHoldLine(line.asset, line.listing)
-    const claim = await claimSplitHold(locks, quote.buyer, holdLine)
+    let claim: Awaited<ReturnType<typeof claimSplitHold>>
+    try {
+      claim = await claimSplitHold(locks, quote.buyer, holdLine)
+    } catch (e) {
+      release()
+      throw e
+    }
     if (claim.kind !== 'claimed') {
       release()
       return {
@@ -1700,20 +1734,11 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
               : "This browser can't keep a purchase with Credits and MANA to one window, so nothing was charged."
       }
     }
-    // The sale's external call, from the line as reviewed (its price, coupon and buyer): the only one its signature may carry.
-    const target = purchaseTargetFor(unit)
-    const callData = (
-      target.kind === 'store'
-        ? buildStoreBuyCalldata([target.mint.item], quote.buyer)
-        : target.coupon
-          ? buildAcceptWithCouponCalldata([target.trade], [target.coupon], quote.buyer)
-          : buildAcceptCalldata([target.trade], quote.buyer)
-    ).data
     const both = (): void => {
       claim.release()
       release()
     }
-    return { resolved: review.resolved, plan: { creditsCents: terms.creditsCents, confirmedWei: terms.manaWei, session: { walletKind: 'web3' } }, gapWei: gap, creditWei: credit, callData, release: both, hold: { line: holdLine, attempt: claim.attempt } }
+    return { resolved: review.resolved, plan: { creditsCents: terms.creditsCents, confirmedWei: terms.manaWei, session: { walletKind: 'web3' } }, gapWei: gap, creditWei: credit, target: venue, selector: call.selector, callData: call.data, release: both, hold: { line: holdLine, attempt: claim.attempt } }
   }
 
   /**
@@ -1899,7 +1924,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
                     const held = writeSplitHold(quote.buyer, split.hold.line, { at: Date.now(), attempt: split.hold.attempt, txHash: null, chainId, creditId: credit.id, creditExpiresAt: credit.expiresAt })
                     if (!held) return false
                     issued = credit
-                    op.split = { buyer: quote.buyer, chainId, manager: manager.address, creditId: credit.id, creditWei: split.creditWei.toString(), gapWei: split.gapWei.toString(), callData: split.callData, hold: split.hold }
+                    op.split = { buyer: quote.buyer, chainId, manager: manager.address, creditId: credit.id, creditWei: split.creditWei.toString(), gapWei: split.gapWei.toString(), target: split.target, selector: split.selector, callData: split.callData, hold: split.hold }
                     keep(op)
                     return true
                   }
@@ -1935,9 +1960,24 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         move(op, 'succeeded', { txHash: result.txHash })
         return { kind: 'confirmed' }
       }
-      case 'pending':
+      case 'pending': {
+        // A split's hash is read for what it is: only its own mined revert ends it unbought and gives its credit back.
+        if (op.split && result.txHash) {
+          const outcome = await splitExecution(svc.manaEvidence(), op.split, result.txHash)
+          if (outcome === 'bought') {
+            move(op, 'succeeded', { txHash: result.txHash })
+            return { kind: 'confirmed' }
+          }
+          if (outcome === 'reverted') {
+            await cancelUsdIntents([op.split.creditId], quote.client).catch(() => 0)
+            return refused('The transaction failed on-chain and nothing was bought.', REVERTED_PART, 'failed')
+          }
+          move(op, 'pending', { txHash: outcome === 'other' ? null : result.txHash })
+          return { kind: 'pending' }
+        }
         move(op, 'pending', { txHash: result.txHash })
         return { kind: 'pending' }
+      }
       case 'failed': {
         // The balance fell short between the quote and the authorization: Insufficient Funds after all.
         if (result.topUp) return refused(result.failure.message, 'your Credits balance didn’t cover the rest of it.', null, creditsFloor(result.topUp.balanceCents as UsdCents))

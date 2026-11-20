@@ -238,6 +238,9 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
     return { status: "confirmed", txHash };
   } catch (e) {
     guard.submitFinished(creditId);
+    // A split's revert is its caller's to attribute first: a reverted receipt for the hash the relay answered may be some
+    // other transaction's, while this purchase's own can still land. Nothing is released here.
+    if (split && isRevertedTxError(e) && txHash) return { status: "pending", txHash };
     if (isRevertedTxError(e) && txHash) {
       guard.reverted(txHash);
       const failure: GroupFailure = { kind: "reverted", message: "The transaction failed on-chain and nothing was bought. The Credits held for it are released once the authorization expires and that is confirmed on chain." };
