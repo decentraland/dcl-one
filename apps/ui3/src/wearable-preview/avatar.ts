@@ -94,9 +94,9 @@ const EMOTES: Record<string, string> = {
 const PART_CACHE_MAX = 32;
 const GLB_TIMEOUT_MS = 20000;
 /**
- * How long a part waits for its held files. Past it, the files still downloading are given up and the loader reads
- * the ones the model references itself, inside what is left of GLB_TIMEOUT_MS: a stalled file the model never uses
- * does not cost the part.
+ * How long a part waits for its held files other than its model. Past it, a file still downloading is left to the
+ * loader, which reads it only if the model references it: a stalled file the model never uses does not cost the part.
+ * The downloads themselves are not cut: a slow model keeps downloading, and its part waits for it.
  */
 const HELD_FILES_MS = GLB_TIMEOUT_MS / 2;
 export const OUTFIT_SWAP_DEBOUNCE_MS = 120;
@@ -396,8 +396,9 @@ export function createAvatarScene(
 
   // The parts' files by content hash, each download started once when the entities arrive, so a GLB's textures
   // download beside it instead of after its parse.
-  // `signal` ends the wave: the preview's disposal or the parts' timeout.
-  type HeldFiles = Map<string, Promise<Blob | null>> & { signal: AbortSignal };
+  // `signal` ends the downloads: the preview's disposal or the parts' timeout. `late` settles HELD_FILES_MS after the
+  // wave starts.
+  type HeldFiles = Map<string, Promise<Blob | null>> & { signal: AbortSignal; late: Promise<void> };
 
   /**
    * Starts the downloads of an entity's files under the wave's signal. A failed answer's body is cancelled. A file
@@ -416,12 +417,16 @@ export function createAvatarScene(
   }
 
   /**
-   * Object URLs of the held files among `hashes`. A file that did not download (failed, or still on its way when the
-   * wave ended) is left to the loader, which reads it if the model references it. A disposed preview loads nothing.
+   * Object URLs of the held files among `hashes`. The part waits for `essential` (its model, or a feature's texture),
+   * which it cannot draw without, for as long as that download runs; for the others, until it has `essential` and the
+   * wave is HELD_FILES_MS old. A file that did not download, or not by then, is left to the loader, which reads it if
+   * the model references it. A disposed preview loads nothing.
    */
-  async function heldUrls(files: HeldFiles, hashes: string[]): Promise<Map<string, string>> {
-    const blobs: (Blob | null | undefined)[] = [];
-    for (const hash of hashes) blobs.push(await files.get(hash));
+  async function heldUrls(files: HeldFiles, hashes: string[], essential: string): Promise<Map<string, string>> {
+    const first = await files.get(essential);
+    const blobs = await Promise.all(
+      hashes.map((hash) => (hash === essential ? first : Promise.race([files.get(hash), files.late.then(() => undefined)]))),
+    );
     if (disposed) throw new DOMException("the preview was disposed", "AbortError");
     const urls = new Map<string, string>();
     hashes.forEach((hash, i) => {
@@ -441,7 +446,7 @@ export function createAvatarScene(
       (mainBase !== undefined ? fileMap.get(mainBase.toLowerCase()) : undefined);
     if (!mainHash) return null;
     const mainUrl = `${base}/content/contents/${mainHash}`;
-    const held = await heldUrls(files, representationHashes(entity, bodyShape));
+    const held = await heldUrls(files, representationHashes(entity, bodyShape), mainHash);
     const manager = new THREE.LoadingManager();
     manager.setURLModifier((url) => {
       if (/^(blob:|data:)/.test(url)) return url;
@@ -471,7 +476,7 @@ export function createAvatarScene(
     const texHash = hashOf(names.find((n) => n.endsWith(".png") && !n.endsWith("_mask.png")));
     if (!texHash) return null;
     const maskHash = hashOf(names.find((n) => n.endsWith("_mask.png")));
-    const held = await heldUrls(files, maskHash ? [texHash, maskHash] : [texHash]);
+    const held = await heldUrls(files, maskHash ? [texHash, maskHash] : [texHash], texHash);
     const loadTex = async (hash: string, srgb: boolean): Promise<THREE.Texture> => {
       const t = await new THREE.TextureLoader().loadAsync(held.get(hash) ?? `${base}/content/contents/${hash}`);
       t.flipY = false;
@@ -507,16 +512,26 @@ export function createAvatarScene(
       partCache.set(key, pending);
       return pending;
     }
-    pending = withTimeout(loadEntityGlb(entity, bodyShape, files), GLB_TIMEOUT_MS)
+    const load = loadEntityGlb(entity, bodyShape, files);
+    let lost = false;
+    pending = withTimeout(load, GLB_TIMEOUT_MS)
       .then((obj) => {
         if (obj) mattify(obj);
         return obj;
       })
       .catch((err) => {
+        lost = true;
         if (!disposed) console.warn("[wearable-preview] failed", key, err);
         partCache.delete(key);
         return null;
       });
+    // A model that arrives after its part gave up is not shown: free it.
+    load.then(
+      (obj) => {
+        if (lost && obj) disposeObject(obj);
+      },
+      () => {},
+    );
     partCache.set(key, pending);
     trimPartCache();
     return pending;
@@ -527,11 +542,23 @@ export function createAvatarScene(
     if (!pending) {
       // Bounded as a part is: a texture the loader reads itself (its held copy did not arrive) that never answers must
       // not hold the avatar's other parts, and a failed feature leaves the cache so wearing it again reads it anew.
-      pending = withTimeout(loadFacialFeature(entity, bodyShape, files), GLB_TIMEOUT_MS).catch((err) => {
+      const load = loadFacialFeature(entity, bodyShape, files);
+      let lost = false;
+      pending = withTimeout(load, GLB_TIMEOUT_MS).catch((err) => {
+        lost = true;
         if (!disposed) console.warn("[wearable-preview] failed", key, err);
         featureCache.delete(key);
         return null;
       });
+      // Textures that arrive after their feature gave up are not shown: free them.
+      load.then(
+        (feat) => {
+          if (!lost || !feat) return;
+          feat.tex.dispose();
+          feat.mask?.dispose();
+        },
+        () => {},
+      );
       featureCache.set(key, pending);
     }
     return pending;
@@ -833,10 +860,11 @@ export function createAvatarScene(
       else wantParts.push({ key: partKey(urn, bodyLc), urn, isBody: false, entity: e });
     }
 
-    // The wave ends with the preview or after HELD_FILES_MS. An outfit change does not end it: the parts it feeds stay
-    // in the part cache, where the next outfit picks them up.
+    // The downloads end with the preview or with the parts' own timeout. An outfit change does not end them: the parts
+    // they feed stay in the part cache, where the next outfit picks them up.
     const files: HeldFiles = Object.assign(new Map<string, Promise<Blob | null>>(), {
-      signal: AbortSignal.any([downloads.signal, AbortSignal.timeout(HELD_FILES_MS)]),
+      signal: AbortSignal.any([downloads.signal, AbortSignal.timeout(GLB_TIMEOUT_MS)]),
+      late: new Promise<void>((settle) => setTimeout(settle, HELD_FILES_MS)),
     });
     for (const p of wantParts) if (!partCache.has(p.key)) holdFiles(files, p.entity, bodyShape);
     for (const f of wantFeatures) if (!featureCache.has(f.key)) holdFiles(files, f.entity, bodyShape);
