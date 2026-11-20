@@ -15,13 +15,13 @@ import { useEffect, useRef, useState } from "react";
 
 import Button from "../../../atoms/Button";
 import Modal from "../../../components/Modal";
-import { authorizeUsdCredit, cancelUsdIntents } from "@shop/credits/credits";
+import { authorizeUsdCredit, cancelUsdIntents, fetchUserPurchases } from "@shop/credits/credits";
 import { invalidateAfterPurchase } from "../../checkout/lib/after-purchase";
 import { requireContracts } from "../../checkout/chain/contracts";
 import { isSignatureDeclined } from "../../checkout/chain/metatx";
 import { isPendingTxError, isRevertedTxError } from "../../checkout/chain/wallet";
 import AuthorizeStep from "../../checkout/components/AuthorizeStep";
-import { AuthorizationKind, getAuthorizationStatus, needsApprovalStep, setAuthorization, type ShopAuthorization } from "../../checkout/lib/authorizations";
+import { AuthorizationKind, getAuthorizationStatus, isAuthorizationPending, needsApprovalStep, setAuthorization, type ShopAuthorization } from "../../checkout/lib/authorizations";
 import { friendlyError, isRejection } from "../../checkout/lib/errors";
 import { isSettlementPending } from "../../checkout/purchase/gasless";
 import { purchaseTargetFor, resolveLine, tradeManaPrice } from "../../checkout/purchase/cart";
@@ -65,9 +65,11 @@ export const SENT_HOLD_MS = 15 * 60 * 1000;
 
 /**
  * `creditId`: the credit the split reserved. When Check again finds the purchase reverted it retires that reservation, as
- * the live path does; the Credits then come back with the expiry sweep.
+ * the live path does; the Credits then come back with the expiry sweep. `creditExpiresAt` (unix seconds): when that
+ * credit stops being spendable. A split sent with no hash to read (the relay lost its answer) is let go only once that
+ * credit has expired and the node says it was released unspent; one it says was spent completes.
  */
-export type SentSplit = { at: number; txHash: string | null; chainId: number | null; creditId: string | null };
+export type SentSplit = { at: number; txHash: string | null; chainId: number | null; creditId: string | null; creditExpiresAt: number | null };
 
 const sentKey = (account: string | null, lineId: string) => `${SENT_KEY}${account?.toLowerCase() ?? "anonymous"}:${lineId}`;
 
@@ -76,7 +78,7 @@ function readSentRecord(account: string | null, lineId: string): SentSplit | nul
   try {
     const raw = sessionStorage.getItem(sentKey(account, lineId));
     const parsed = raw ? (JSON.parse(raw) as unknown) : null;
-    if (typeof parsed === "number") return { at: parsed, txHash: null, chainId: null, creditId: null };
+    if (typeof parsed === "number") return { at: parsed, txHash: null, chainId: null, creditId: null, creditExpiresAt: null };
     const sent = parsed as Partial<SentSplit> | null;
     if (!sent || typeof sent.at !== "number") return null;
     return {
@@ -84,6 +86,7 @@ function readSentRecord(account: string | null, lineId: string): SentSplit | nul
       txHash: typeof sent.txHash === "string" ? sent.txHash : null,
       chainId: typeof sent.chainId === "number" ? sent.chainId : null,
       creditId: typeof sent.creditId === "string" ? sent.creditId : null,
+      creditExpiresAt: typeof sent.creditExpiresAt === "number" ? sent.creditExpiresAt : null,
     };
   } catch {
     return null;
@@ -91,11 +94,18 @@ function readSentRecord(account: string | null, lineId: string): SentSplit | nul
 }
 
 const held = (sent: SentSplit, now: number) => now >= sent.at && now - sent.at < SENT_HOLD_MS;
+/** The credit a split with no hash spent, or not, can no longer be spent: only then can the node's record settle it. */
+const creditOver = (sent: SentSplit, now: number) => sent.creditExpiresAt === null || now >= sent.creditExpiresAt * 1000;
+/** When Check again next has something to do for a split with no hash: its hold and its credit both over. */
+const releasableAt = (sent: SentSplit) => Math.max(sent.at + SENT_HOLD_MS, (sent.creditExpiresAt ?? 0) * 1000);
 
-/** The split this account sent for this line, while it is held: recorded no later than now and no longer ago than the hold. */
+/**
+ * The split this account sent for this line, while it is held: recorded no later than now and no longer ago than the hold;
+ * and one sent with no hash to read whose credit is known, until Check again finds out what became of that credit.
+ */
 export function readSentSplit(account: string | null, lineId: string, now: number = Date.now()): SentSplit | null {
   const sent = readSentRecord(account, lineId);
-  return sent && held(sent, now) ? sent : null;
+  return sent && (held(sent, now) || (!sent.txHash && !!sent.creditId)) ? sent : null;
 }
 
 function writeSentSplit(account: string | null, lineId: string, sent: SentSplit): void {
@@ -183,7 +193,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   const [, setExpiredTick] = useState(0);
   useEffect(() => {
     if (!sent) return;
-    const left = sent.at + SENT_HOLD_MS - Date.now();
+    const left = releasableAt(sent) - Date.now();
     if (left <= 0) return;
     const t = setTimeout(() => setExpiredTick((n) => n + 1), left + 1);
     return () => clearTimeout(t);
@@ -252,8 +262,11 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   async function pay(ctx: RailContext, { offer, mixed }: Terms, known?: PurchaseTarget) {
     setPhase({ kind: "working" });
     let creditId: string | null = null;
+    let creditExpiresAt: number | null = null;
     let sentHash: string | null = null;
     let sentChain: number | null = null;
+    // Set once the sale itself goes to the relay or the wallet: before it, a failure is the MANA approval's, and no sale left.
+    let dispatched = false;
     try {
       const target = known ?? (await resolveTarget(ctx, offer));
       sentChain = manaSpenderFor("combined", target).chainId;
@@ -265,10 +278,17 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       // The whole price is what the node checks against its quote; the credit it signs is for the Credits part alone.
       const authorized = await authorizeUsdCredit(
         mixed.priceCents,
-        { ...(target.kind === "trade" ? { tradeId: target.trade.id } : {}), ...(item ? { item } : {}), creditsCents: mixed.creditsCents },
+        {
+          ...(target.kind === "trade" ? { tradeId: target.trade.id } : {}),
+          ...(item ? { item } : {}),
+          creditsCents: mixed.creditsCents,
+          // The session the quote was asked with, signed: the node authorizes a part only for a web3 wallet.
+          session: { walletKind: wallet.session.kind === "web3" ? "web3" : "web2" },
+        },
         ctx.client,
       );
       creditId = authorized.credit.id;
+      creditExpiresAt = authorized.credit.expiresAt;
       // The credit must be the node's share for these terms, and the MANA left is what the buyer confirmed at most: anything
       // else stops here, before anything is sent, and the credit is released below.
       const { gapWei: gap } = splitTerms({
@@ -291,6 +311,9 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
           if (txHash) guard.current.reverted(txHash);
         },
         onUnobservable: () => guard.current.unobservable(id),
+        onDispatch: () => {
+          dispatched = true;
+        },
       };
       const hash =
         target.kind === "trade"
@@ -303,9 +326,12 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       finished(hash);
     } catch (e) {
       if (creditId) guard.current.submitFinished(creditId);
-      if (isSettlementPending(e) || isPendingTxError(e) || isMetaTxPending(e)) {
+      const stillPending = isSettlementPending(e) || isPendingTxError(e) || isMetaTxPending(e);
+      // A sale handed off that may have consumed its credit (a broadcast not seen reverting, or an answer the relay lost)
+      // is still confirming: held for this account and item, never offered again until it is found out.
+      if (dispatched && (stillPending || (creditId !== null && guard.current.mayBeConsumed(creditId)))) {
         // Recorded for the account that sent it, whatever the wallet shows by now.
-        const record = { at: Date.now(), txHash: sentHash, chainId: sentChain, creditId };
+        const record: SentSplit = { at: Date.now(), txHash: sentHash, chainId: sentChain, creditId, creditExpiresAt };
         writeSentSplit(ctx.buyer, lineId, record);
         setSent(record);
         setPhase({ kind: "pending" });
@@ -313,7 +339,9 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       }
       if (creditId && !guard.current.mayBeConsumed(creditId)) await cancelUsdIntents([creditId], ctx.client).catch(() => 0);
       const message =
-        isRejection(e) || isSignatureDeclined(e)
+        isAuthorizationPending(e) || (stillPending && !dispatched)
+          ? "Your MANA approval is still confirming, so nothing was bought. Try again in a moment."
+          : isRejection(e) || isSignatureDeclined(e)
           ? "You cancelled the request in your wallet. Nothing was charged."
           : isRevertedTxError(e)
             ? REVERTED
@@ -356,8 +384,12 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       if (!busy) setPhase({ kind: "review" });
     },
     remembered: sent !== null,
-    // A receipt to read, or a hold that has run out (Check again then lets the item go).
-    checkable: !!sent && ((!!sent.txHash && sent.chainId !== null) || !held(sent, Date.now())),
+    // A receipt to read; or a hold that has run out (Check again then lets the item go), which for a split with no hash
+    // also waits for its credit to expire, so the node's record of it can tell spent from released.
+    checkable:
+      !!sent &&
+      ((!!sent.txHash && sent.chainId !== null) ||
+        (!held(sent, Date.now()) && (!!sent.txHash || !sent.creditId || creditOver(sent, Date.now())))),
     checking,
     checkAgain: async () => {
       // Read even past the hold: a purchase that mined in the meantime is completed, never offered a second time.
@@ -395,11 +427,36 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
           setChecking(false);
         }
       }
-      // No receipt (or nothing to read): it stays held while the hold lasts, and is let go once it has run out.
-      if (!held(record, Date.now())) {
-        release();
-        if (phase.kind === "pending") setPhase({ kind: "review" });
+      // No receipt (or nothing to read): it stays held while the hold lasts.
+      if (held(record, Date.now())) return;
+      if (!record.txHash && record.creditId) {
+        // Nothing to read on chain (the relay lost its answer): fifteen minutes prove nothing. Whether the credit was spent
+        // decides, asked of the node once it can no longer be: spent completes the split, released lets the item go,
+        // anything else (still reserved, not listed, an unanswered read) keeps it held.
+        if (!creditOver(record, Date.now()) || !wallet.account) return;
+        setChecking(true);
+        try {
+          const { items } = await fetchUserPurchases(wallet.account, { all: true, first: 50 }, services.client);
+          // The node lists a credit by its lines (`<salt>:<position>`); the split's is one line.
+          const credit = items.find((p) => p.id.split(":")[0]!.toLowerCase() === record.creditId!.toLowerCase());
+          if (credit?.status === "SETTLED") {
+            release();
+            setPhase({ kind: "success", txHash: credit.txHash });
+            finished(credit.txHash);
+          } else if (credit?.status === "EXPIRED") {
+            release();
+            if (phase.kind === "pending") setPhase({ kind: "review" });
+          }
+        } catch {
+          // A failed read is not an answer: still held.
+        } finally {
+          setChecking(false);
+        }
+        return;
       }
+      // A broadcast whose receipt never came, or a record from before credits were kept with it: let go after the hold.
+      release();
+      if (phase.kind === "pending") setPhase({ kind: "review" });
     },
   };
 }

@@ -9,11 +9,12 @@ import { authorizeUsdCredit, authorizeUsdCreditGroup } from "./credits";
 const ITEM = { contractAddress: "0x00000000000000000000000000000000000000c1", itemId: "7" };
 
 function client() {
-  const sent: { route: "single" | "group"; body: unknown }[] = [];
+  const sent: { route: "single" | "group"; body: unknown; metadata?: unknown }[] = [];
+  const signed = (o?: { metadata?: unknown }) => (o?.metadata ? { metadata: o.metadata } : {});
   const stub = {
     authorizations: {
-      authorize: async (body: unknown) => (sent.push({ route: "single", body }), {}),
-      authorizeGroup: async (body: unknown) => (sent.push({ route: "group", body }), {}),
+      authorize: async (body: unknown, o?: { metadata?: unknown }) => (sent.push({ route: "single", body, ...signed(o) }), {}),
+      authorizeGroup: async (body: unknown, o?: { metadata?: unknown }) => (sent.push({ route: "group", body, ...signed(o) }), {}),
     },
   } as unknown as ShopClient;
   return { stub, sent };
@@ -28,6 +29,14 @@ describe("authorizing a credit", () => {
       { usdPriceCents: 115, ...ITEM, creditsCents: 50, source: "website" },
       { usdPriceCents: 115, ...ITEM, source: "website" },
     ]);
+  });
+
+  it("a Credits part is sent with its session signed, on both routes; a whole price needs none", async () => {
+    const { stub, sent } = client();
+    await authorizeUsdCredit(115, { item: ITEM, creditsCents: 50, session: { walletKind: "web3" } }, stub);
+    await authorizeUsdCreditGroup([{ usdPriceCents: 115, ...ITEM, creditsCents: 50 }], "client", stub, { walletKind: "web3" });
+    await authorizeUsdCredit(115, { item: ITEM }, stub);
+    expect(sent.map((s) => s.metadata ?? null)).toEqual([{ walletKind: "web3" }, { walletKind: "web3" }, null]);
   });
 
   it("a one-line group carries its line's Credits part to the batch route", async () => {

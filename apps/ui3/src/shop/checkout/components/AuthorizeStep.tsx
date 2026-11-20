@@ -11,7 +11,8 @@ import { shortAddress } from "@shop/model/address";
 import { chainLabel } from "@shop/model/chain";
 import { formatMana, type ManaWei } from "@shop/model/money";
 import { contractAt } from "../chain/contracts";
-import type { ShopAuthorization } from "../lib/authorizations";
+import { TxPendingError } from "../chain/wallet";
+import { isAuthorizationPending, type ShopAuthorization } from "../lib/authorizations";
 import { friendlyError, isRejection } from "../lib/errors";
 import "./authorizestep.css";
 
@@ -39,7 +40,13 @@ export default function AuthorizeStep({ auth, step, requiredWei, grant, onAuthor
       await grant();
       onAuthorized();
     } catch (e) {
-      setError(isRejection(e) ? "You declined the approval in your wallet." : friendlyError(e, "The approval didn't go through. Try again."));
+      setError(
+        isRejection(e)
+          ? "You declined the approval in your wallet."
+          : isAuthorizationPending(e) || e instanceof TxPendingError
+            ? "Your approval was sent and is still confirming. Try again in a moment: no second approval goes out until it lands."
+            : friendlyError(e, "The approval didn't go through. Try again."),
+      );
       setBusy(false);
     }
   }

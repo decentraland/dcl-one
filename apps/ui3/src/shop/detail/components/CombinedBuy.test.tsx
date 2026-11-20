@@ -242,3 +242,124 @@ describe("buying with Credits and MANA", () => {
     expect(screen.getByTestId("combined-check-again")).toBeEnabled();
   });
 });
+
+describe("a split whose outcome is not known", () => {
+  const managerKey = () => `${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase()}`;
+  const authorizations = (demo: ReturnType<typeof createDemo>) => demo.shop.log.filter((r) => r.name === "authorizeCredit").length;
+
+  it("a sale the relay may have sent (its answer lost) is held confirming, kept on reopen, and nothing is authorized or sent again", async () => {
+    const { demo, line, unmount, again } = setup();
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    demo.relay.state.mode = "fail-after-send";
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText(/still confirming/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(demo.relay.posts).toHaveLength(1);
+    expect(authorizations(demo)).toBe(1);
+    expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
+    const held = readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing));
+    expect(held).toMatchObject({ txHash: null, chainId: CHAIN.POLYGON, creditId: expect.any(String), creditExpiresAt: expect.any(Number) });
+    unmount();
+    again();
+    expect(await screen.findByText(/still confirming/)).toBeTruthy();
+    expect(screen.queryByTestId("combined-confirm")).toBeNull();
+    expect(screen.getByTestId("combined-check-again")).toBeDisabled();
+    expect(demo.relay.posts).toHaveLength(1);
+    expect(authorizations(demo)).toBe(1);
+  });
+
+  it("control: a sale the relay marked as not sent is not held; declined in the wallet, its credit is released", async () => {
+    const { demo, line } = setup();
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    demo.relay.state.mode = "refuse";
+    demo.wallet.next = "reject";
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText("You cancelled the request in your wallet. Nothing was charged.", {}, { timeout: 5000 })).toBeTruthy();
+    expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))).toBeNull();
+    expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(true);
+    expect(screen.getByTestId("combined-confirm")).toBeEnabled();
+  });
+
+  it("an approval whose answer was lost stays pending through Approve and its retry: no second grant, and no credit or sale until it lands", async () => {
+    const { demo } = setup();
+    demo.relay.state.mode = "fail-after-send";
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    const pending = /Your approval was sent and is still confirming/;
+    expect(await screen.findByText(pending, {}, { timeout: 5000 })).toBeTruthy();
+    expect(demo.relay.posts).toHaveLength(1);
+    // It has not landed yet (the fake relay applied it; take it back): a retry reads the allowance and grants nothing.
+    demo.chain.allowances.delete(managerKey());
+    await act(async () => fireEvent.click(screen.getByTestId("authorize-step-action")));
+    expect(await screen.findByText(pending, {}, { timeout: 5000 })).toBeTruthy();
+    expect(demo.relay.posts).toHaveLength(1);
+    expect(demo.wallet.requests.some((r) => r.method === "eth_sendTransaction")).toBe(false);
+    expect(authorizations(demo)).toBe(0);
+    // It lands: the retry finds it, grants nothing more, and the purchase goes on.
+    demo.chain.allowances.set(managerKey(), 13n * 10n ** 17n);
+    demo.relay.state.mode = "ok";
+    await act(async () => fireEvent.click(screen.getByTestId("authorize-step-action")));
+    expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(demo.relay.posts.map(relayedApproval).filter((a) => a !== null)).toHaveLength(1);
+    expect(authorizations(demo)).toBe(1);
+  });
+});
+
+describe("a held split with no transaction to read", () => {
+  const CREDIT = `0x${"c1".repeat(32)}`;
+  function heldSplit(status: { value: "PENDING" | "SETTLED" | "EXPIRED" | null }, creditExpiresAt: number) {
+    const demo = createDemo({
+      session: "web3",
+      handlers: {
+        userPurchases: () => ({
+          // As the node lists it: the credit's salt and the line's position.
+          purchases: status.value ? [{ id: `${CREDIT}:0`, status: status.value, usdCents: 50, createdAt: 1, txHash: status.value === "SETTLED" ? `0x${"ab".repeat(32)}` : null }] : [],
+          total: status.value ? 1 : 0,
+        }),
+      },
+    });
+    const offer = storeMint(demo.session);
+    const mixed = presentPayment(offer, demo.session, { creditsBalance: usdCents(50), report: () => {} }).options.find((o) => o.method === "mana")!.mixed as MixedPayment;
+    const line = { asset: offer.asset, listing: { acquisition: "store" as const }, display: { name: "Rainbow Hat" } };
+    // Sent sixteen minutes ago, past the hold; the relay lost its answer, so no hash.
+    sessionStorage.setItem(
+      `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${cartLineId(line.asset, line.listing)}`,
+      JSON.stringify({ at: Date.now() - 16 * 60 * 1000, txHash: null, chainId: CHAIN.POLYGON, creditId: CREDIT, creditExpiresAt }),
+    );
+    render(
+      <DemoShell demo={demo} path="/shop/item/x/7">
+        <CombinedBuy line={line} offer={offer} mixed={mixed} onClose={() => {}} portal={false} />
+      </DemoShell>,
+    );
+    return demo;
+  }
+  const nowSeconds = () => Math.floor(Date.now() / 1000);
+
+  it("is not let go by time while its credit can still be spent", async () => {
+    heldSplit({ value: "EXPIRED" }, nowSeconds() + 300);
+    expect(await screen.findByText(/still confirming/)).toBeTruthy();
+    expect(screen.getByTestId("combined-check-again")).toBeDisabled();
+  });
+
+  it("once its credit expired, the node's record decides: still reserved keeps it held, released lets the item go", async () => {
+    const status: { value: "PENDING" | "SETTLED" | "EXPIRED" | null } = { value: "PENDING" };
+    const demo = heldSplit(status, nowSeconds() - 1);
+    const check = await screen.findByTestId("combined-check-again");
+    expect(check).toBeEnabled();
+    await act(async () => fireEvent.click(check));
+    expect(screen.getByText(/still confirming/)).toBeTruthy();
+    status.value = null;
+    await act(async () => fireEvent.click(screen.getByTestId("combined-check-again")));
+    expect(screen.getByText(/still confirming/)).toBeTruthy();
+    status.value = "EXPIRED";
+    await act(async () => fireEvent.click(screen.getByTestId("combined-check-again")));
+    expect(await screen.findByTestId("combined-confirm")).toBeEnabled();
+    expect(demo.shop.log.filter((r) => r.name === "userPurchases")).toHaveLength(3);
+  });
+
+  it("a credit the node says was spent completes the purchase, never offering it again", async () => {
+    heldSplit({ value: "SETTLED" }, nowSeconds() - 1);
+    await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
+    expect(await screen.findByText(/Purchase complete/)).toBeTruthy();
+    expect(screen.queryByTestId("combined-confirm")).toBeNull();
+  });
+});

@@ -9,6 +9,7 @@ import { CREDITS_MANAGER_ABI, OFFCHAIN_META_TX_ABI } from "@shop/checkout/chain/
 import { CHAIN } from "@shop/model/chain";
 import { BOOK } from "@shop/payment/fixtures";
 import { requireContracts } from "../chain/contracts";
+import { GaslessUnavailableError, provedNotSent } from "../chain/metatx";
 import { createFakeChain, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade, relayedApproval } from "../fakes";
 import { buildGroupUseCreditsArgs, groupPurchases } from "./credits";
 import type { SpendableCredit } from "./encoding";
@@ -80,11 +81,27 @@ describe("the terms a split settles on", () => {
     expect(() => splitTerms({ priceWei: price, quotedCents: 30, partCents: 10, credit: { amount: "30", availableAmount: "29" }, confirmedWei: 61n })).toThrow(/not the share/);
   });
 
+  it("a share that floors to zero is refused, even when the credit returned is zero too", () => {
+    expect(() => splitTerms({ priceWei: 2n, quotedCents: 30, partCents: 10, credit: { amount: "0", availableAmount: "0" }, confirmedWei: 2n })).toThrow(/too small/);
+  });
+
   it("a gap above what the buyer confirmed is refused, and a part outside the price never settles", () => {
     expect(() => terms(30n, 60n)).toThrow(/moved past/);
     for (const partCents of [0, 30, 31, -10]) {
       expect(() => splitTerms({ priceWei: price, quotedCents: 30, partCents, credit: { amount: "0", availableAmount: "0" }, confirmedWei: 61n })).toThrow(/inside the price/);
     }
+  });
+});
+
+describe("what a failed relay proves", () => {
+  it("only a relay that said nothing was sent (or was never asked) lets the wallet send the same thing instead", () => {
+    for (const reason of ["relayer-rejected", "disabled", "contract-account", "signing-failed"] as const) {
+      expect(provedNotSent(new GaslessUnavailableError("x", reason)), reason).toBe(true);
+    }
+    for (const reason of ["relayer-unreachable", "unknown"] as const) {
+      expect(provedNotSent(new GaslessUnavailableError("x", reason)), reason).toBe(false);
+    }
+    expect(provedNotSent(new Error("the answer was lost"))).toBe(false);
   });
 });
 

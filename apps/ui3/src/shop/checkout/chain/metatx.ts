@@ -226,6 +226,17 @@ export function isGaslessUnavailable(e: unknown): e is GaslessUnavailableError {
   return e instanceof GaslessUnavailableError || (e as { name?: string } | null)?.name === "GaslessUnavailableError";
 }
 
+/** Relay failures that prove nothing was sent: the relay said so (`not_sent`), or it was never asked. */
+const NOT_SENT: readonly GaslessReason[] = ["relayer-rejected", "disabled", "contract-account", "signing-failed"];
+
+/**
+ * Whether a relayed call is known not to have been sent: only then may the same effect go out another way (the wallet)
+ * without risking it twice. Any other failure (a lost answer, an unknown one) may have been sent.
+ */
+export function provedNotSent(e: unknown): boolean {
+  return isGaslessUnavailable(e) && NOT_SENT.includes(e.reason);
+}
+
 export function isSignatureDeclined(e: unknown): boolean {
   return e instanceof SignatureDeclinedError || (e as { name?: string } | null)?.name === "SignatureDeclinedError";
 }

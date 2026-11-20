@@ -8,7 +8,7 @@ import type { WalletKind } from "../../wallet/session";
 import { COLLECTION_MINTER_ABI, ERC20_ABI, ERC721_ABI } from "@shop/checkout/chain/abi";
 import { gaslessEnabled, rpcUrl } from "../chain/config";
 import { COLLECTION_V2_DOMAIN, requireContracts } from "../chain/contracts";
-import { isSignatureDeclined, relayMetaTransaction, type MetaTxTarget } from "../chain/metatx";
+import { isSignatureDeclined, provedNotSent, relayMetaTransaction, type MetaTxTarget } from "../chain/metatx";
 import { shopChainReader, waitForReceipt, type ChainReader } from "../chain/rpc";
 import { sendAndConfirm, TxPendingError, TxRevertedError } from "../chain/wallet";
 import { activeChainId } from "./network";
@@ -116,12 +116,111 @@ async function onChain(provider: Eip1193Provider, chainId: number): Promise<bool
   }
 }
 
-/** `amount`: an allowance granted at exactly that value instead of in full (see `encodeAuthorizationCall`). */
+/**
+ * A finite grant whose relayed approve may still land: the relay lost its answer (or the receipt is not in yet). Granting
+ * again from the wallet could land beside it, the purchase spend that allowance, and the late relayed approve restore it;
+ * so no grant goes out until it resolves.
+ */
+export class AuthorizationPendingError extends Error {
+  constructor(message = "The MANA approval was sent and is still confirming.") {
+    super(message);
+    this.name = "AuthorizationPendingError";
+  }
+}
+
+export function isAuthorizationPending(e: unknown): e is AuthorizationPendingError {
+  return e instanceof AuthorizationPendingError;
+}
+
+/** How long a retry re-reads instead of granting again after a lost answer; and when a record is too old to matter. */
+export const PENDING_GRANT_HOLD_MS = 60_000;
+const PENDING_GRANT_MAX_MS = 24 * 60 * 60 * 1000;
+const PENDING_GRANT_KEY = "dcl-shop-exact-grant:v1:";
+
+type PendingGrant = { at: number };
+
+function pendingGrantKey(auth: ShopAuthorization, account: string): string {
+  return `${PENDING_GRANT_KEY}${account.toLowerCase()}:${auth.chainId}:${auth.contractAddress.toLowerCase()}:${auth.spenderAddress.toLowerCase()}`;
+}
+
+/** The finite grant to `auth` this account sent and has not seen land, if any (this tab). */
+export function readPendingGrant(auth: ShopAuthorization, account: string, now: number = Date.now()): PendingGrant | null {
+  try {
+    const raw = sessionStorage.getItem(pendingGrantKey(auth, account));
+    const parsed = raw ? (JSON.parse(raw) as Partial<PendingGrant>) : null;
+    if (!parsed || typeof parsed.at !== "number" || now < parsed.at || now - parsed.at > PENDING_GRANT_MAX_MS) return null;
+    return { at: parsed.at };
+  } catch {
+    return null;
+  }
+}
+
+function writePendingGrant(auth: ShopAuthorization, account: string): void {
+  try {
+    sessionStorage.setItem(pendingGrantKey(auth, account), JSON.stringify({ at: Date.now() }));
+  } catch {
+    // Without storage the hold lasts as long as the error the caller shows.
+  }
+}
+
+function clearPendingGrant(auth: ShopAuthorization, account: string): void {
+  try {
+    sessionStorage.removeItem(pendingGrantKey(auth, account));
+  } catch {
+    // Nothing was stored.
+  }
+}
+
+/**
+ * Grants exactly `amount` (the CreditsManager's gap). Unlike a full grant, a relayed approve whose answer was lost is never
+ * doubled from the wallet: it is recorded as pending and refused (`AuthorizationPendingError`). A retry then re-reads the
+ * allowance first (an approve that landed meanwhile is enough); within `PENDING_GRANT_HOLD_MS` it grants nothing; later it
+ * grants again only through the relay, whose meta-transaction reuses the pending one's nonce while that one has not run, so
+ * at most one of them can ever land. The record goes only with a relayed grant that confirmed (it used that nonce): an
+ * allowance seen covered may be another grant's, and the lost one could still land after a purchase spends it. The wallet
+ * sends it only when the relay proved nothing was sent (or it reverted), and never while a lost one is pending.
+ */
+async function grantExactly(opts: AuthorizationContext & { auth: ShopAuthorization; amount: bigint }): Promise<void> {
+  const { auth, amount, provider, account } = opts;
+  const reader = opts.reader ?? readProvider();
+  const pending = readPendingGrant(auth, account);
+  if (pending) {
+    if (await getAuthorizationStatus(auth, account, amount, reader)) return;
+    if (Date.now() - pending.at < PENDING_GRANT_HOLD_MS) throw new AuthorizationPendingError();
+  }
+  const functionData = encodeAuthorizationCall(auth, true, amount);
+  const target = metaTxTargetFor(auth);
+  if (gaslessEnabled() && target) {
+    try {
+      const { txHash } = await relayMetaTransaction({ provider, reader, target, from: account, functionData, relayerUrl: opts.relayerUrl, fetchImpl: opts.fetchImpl });
+      const receipt = await waitForReceipt(reader, auth.chainId, txHash);
+      if (!receipt) throw new TxPendingError(txHash, "The authorization");
+      if (receipt.status === "reverted") throw new TxRevertedError(receipt, "The authorization");
+      clearPendingGrant(auth, account);
+      return;
+    } catch (e) {
+      if (isSignatureDeclined(e)) throw e;
+      const notSent = provedNotSent(e) || e instanceof TxRevertedError;
+      if (!notSent) {
+        writePendingGrant(auth, account);
+        throw e instanceof TxPendingError ? e : new AuthorizationPendingError();
+      }
+      // After a lost answer only the relay grants (above); the wallet's approve would not consume its nonce.
+      if (pending || !canPayGasItself(opts.walletKind) || !(await onChain(provider, auth.chainId))) throw e;
+    }
+  } else if (pending) {
+    throw new AuthorizationPendingError();
+  }
+  await sendAndConfirm({ provider, reader, chainId: auth.chainId, from: account, to: auth.contractAddress, data: functionData, what: "The authorization" });
+}
+
+/** `amount`: an allowance granted at exactly that value instead of in full (see `encodeAuthorizationCall`, `grantExactly`). */
 export async function setAuthorization(opts: AuthorizationContext & { auth: ShopAuthorization; active: boolean; amount?: bigint }): Promise<void> {
   const { auth, active, provider, account } = opts;
-  if (opts.amount !== undefined && (auth.kind !== AuthorizationKind.Allowance || opts.amount <= 0n)) {
+  if (opts.amount !== undefined && (auth.kind !== AuthorizationKind.Allowance || opts.amount <= 0n || !active)) {
     throw new Error("An exact amount is granted only as a positive MANA allowance");
   }
+  if (opts.amount !== undefined) return grantExactly({ ...opts, amount: opts.amount });
   const reader = opts.reader ?? readProvider();
   const functionData = encodeAuthorizationCall(auth, active, opts.amount);
   const target = metaTxTargetFor(auth);

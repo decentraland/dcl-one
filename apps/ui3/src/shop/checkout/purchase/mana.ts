@@ -12,7 +12,7 @@ import type { Hex } from "viem";
 import type { ChainId } from "@shop/model/chain";
 import { gaslessEnabled } from "../chain/config";
 import { requireContracts } from "../chain/contracts";
-import { GaslessUnavailableError, isGaslessUnavailable, isSignatureDeclined, relayMetaTransaction, type MetaTxTarget } from "../chain/metatx";
+import { GaslessUnavailableError, isGaslessUnavailable, isSignatureDeclined, provedNotSent, relayMetaTransaction, type MetaTxTarget } from "../chain/metatx";
 import { sendAndConfirm, TxPendingError } from "../chain/wallet";
 import { AuthorizationKind, ensureAuthorization } from "../lib/authorizations";
 import { getMarketplaceForTrade } from "../lib/marketplace";
@@ -214,6 +214,7 @@ export function splitTerms(opts: {
     throw new Error("The Credits part is not inside the price.");
   }
   const share = (priceWei * BigInt(partCents)) / BigInt(quotedCents);
+  if (share <= 0n) throw new Error("The Credits part is too small to carry any MANA.");
   if (BigInt(opts.credit.amount) !== share || BigInt(opts.credit.availableAmount) !== share) {
     throw new Error("The credit is not the share of the price it should be.");
   }
@@ -226,6 +227,11 @@ export function splitTerms(opts: {
 type GapOptions = {
   credits: SpendableCredit[];
   manaGapWei: bigint;
+  /**
+   * Right before the sale goes to the relay or the wallet, once the allowance is in place: from here on it may be sent,
+   * so a failure after this is a sale whose outcome must be found out, not one that never left.
+   */
+  onDispatch?: () => void;
   onBroadcast?: (info: { txHash: Hex }) => void;
   onReverted?: (info: { txHash: string | null }) => void;
   onUnobservable?: () => void;
@@ -246,6 +252,7 @@ async function payGapWithMana(ctx: RailContext, target: PurchaseTarget, opts: Ga
   await ensureManaAllowance(ctx, chainId, spender, opts.manaGapWei, true);
   const creditsValue = opts.credits.reduce((acc, c) => acc + BigInt(c.availableAmount), 0n);
   const purchase: AnyPurchase = { ...purchaseFor(target, opts.credits, creditsValue.toString()), maxUncreditedValue: opts.manaGapWei.toString() };
+  opts.onDispatch?.();
   if (ctx.gasless ?? gaslessEnabled()) {
     let relayed: Hex | undefined;
     try {
@@ -259,7 +266,9 @@ async function payGapWithMana(ctx: RailContext, target: PurchaseTarget, opts: Ga
         if (relayed) opts.onReverted?.({ txHash: relayed });
         throw e;
       }
-      if (e.reason === "relayer-unreachable") {
+      // Only a relay that proved nothing was sent lets the wallet send the sale instead: any other failure (a lost
+      // answer, an unknown one) may have sent it, so its credit may be consumed and it is not sent twice.
+      if (!provedNotSent(e)) {
         opts.onUnobservable?.();
         throw e;
       }
