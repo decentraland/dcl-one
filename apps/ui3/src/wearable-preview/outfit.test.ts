@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { fetchEntities } from "./outfit";
+import { fetchEntities, representationHashes } from "./outfit";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -68,4 +68,22 @@ test("a failed batch releases every preview pointer for retry", async () => {
   fetch.mockResolvedValueOnce({ ok: true, json: async () => entities });
   expect((await fetchEntities("https://retry.test", ["urn:a", "urn:b"])).size).toBe(2);
   expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+test("a representation's files to download: each hash once, the main model but no other model, else the main file", () => {
+  const male = "urn:decentraland:off-chain:base-avatars:BaseMale";
+  const content = [
+    { file: "M_lBody_CargoShorts.glb", hash: "h_male" },
+    { file: "F_lBody_CargoShorts.glb", hash: "h_female" },
+    { file: "CargoShorts.png", hash: "h_tex" },
+    { file: "textures/CargoShorts_copy.png", hash: "h_tex" },
+    { file: "thumbnail.png", hash: "h_thumb" },
+  ];
+  const listed = ["M_lBody_CargoShorts.glb", "F_lBody_CargoShorts.glb", "CargoShorts.png", "textures/CargoShorts_copy.png"];
+  const entity = (contents?: string[]) => ({
+    content,
+    metadata: { data: { representations: [{ bodyShapes: [male], mainFile: "M_lBody_CargoShorts.glb", contents }] } },
+  });
+  expect(representationHashes(entity(listed), male.toLowerCase())).toEqual(["h_male", "h_tex"]);
+  expect(representationHashes(entity(), male)).toEqual(["h_male"]);
 });

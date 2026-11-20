@@ -9,6 +9,7 @@ import {
   fetchEntities,
   fileMapFor,
   representationContents,
+  representationHashes,
   representationMainFile,
   resolveOutfit,
 } from "./outfit";
@@ -382,7 +383,29 @@ export function createAvatarScene(
     });
   }
 
-  async function loadEntityGlb(entity: Entity, bodyShape: string): Promise<THREE.Object3D | null> {
+  // The parts' files by content hash, each download started once when the entities arrive, so a GLB's textures
+  // download beside it instead of after its parse.
+  type HeldFiles = Map<string, Promise<Blob | null>>;
+
+  function holdFiles(files: HeldFiles, entity: Entity, bodyShape: string): void {
+    for (const hash of representationHashes(entity, bodyShape)) {
+      if (files.has(hash)) continue;
+      const download = fetch(`${base}/content/contents/${hash}`).then((r) => (r.ok ? r.blob() : null));
+      files.set(hash, download.catch(() => null));
+    }
+  }
+
+  /** Object URLs of the held files among `hashes`; a file that did not download is left to the loader. */
+  async function heldUrls(files: HeldFiles, hashes: string[]): Promise<Map<string, string>> {
+    const urls = new Map<string, string>();
+    for (const hash of hashes) {
+      const blob = await files.get(hash);
+      if (blob) urls.set(hash, URL.createObjectURL(blob));
+    }
+    return urls;
+  }
+
+  async function loadEntityGlb(entity: Entity, bodyShape: string, files: HeldFiles): Promise<THREE.Object3D | null> {
     const main = representationMainFile(entity, bodyShape);
     if (!main) return null;
     const fileMap = fileMapFor(entity);
@@ -391,21 +414,29 @@ export function createAvatarScene(
       fileMap.get(main.toLowerCase()) ??
       (mainBase !== undefined ? fileMap.get(mainBase.toLowerCase()) : undefined);
     if (!mainHash) return null;
+    const mainUrl = `${base}/content/contents/${mainHash}`;
+    const held = await heldUrls(files, representationHashes(entity, bodyShape));
     const manager = new THREE.LoadingManager();
     manager.setURLModifier((url) => {
       if (/^(blob:|data:)/.test(url)) return url;
+      if (url === mainUrl) return held.get(mainHash) ?? url;
       const path = url.split("?")[0] ?? url;
       const baseName = (path.split("/").pop() ?? "").toLowerCase();
       const hash = fileMap.get(baseName);
-      return hash ? `${base}/content/contents/${hash}` : url;
+      return hash ? (held.get(hash) ?? `${base}/content/contents/${hash}`) : url;
     });
-    const gltf = await new GLTFLoader(manager).loadAsync(`${base}/content/contents/${mainHash}`);
-    return gltf.scene;
+    try {
+      const gltf = await new GLTFLoader(manager).loadAsync(mainUrl);
+      return gltf.scene;
+    } finally {
+      for (const url of held.values()) URL.revokeObjectURL(url);
+    }
   }
 
   async function loadFacialFeature(
     entity: Entity,
     bodyShape: string,
+    files: HeldFiles,
   ): Promise<FacialFeature | null> {
     const names = representationContents(entity, bodyShape);
     const fileMap = fileMapFor(entity);
@@ -413,18 +444,23 @@ export function createAvatarScene(
       n ? (fileMap.get(n) ?? fileMap.get(n.split("/").pop() ?? "") ?? null) : null;
     const texHash = hashOf(names.find((n) => n.endsWith(".png") && !n.endsWith("_mask.png")));
     if (!texHash) return null;
+    const maskHash = hashOf(names.find((n) => n.endsWith("_mask.png")));
+    const held = await heldUrls(files, maskHash ? [texHash, maskHash] : [texHash]);
     const loadTex = async (hash: string, srgb: boolean): Promise<THREE.Texture> => {
-      const t = await new THREE.TextureLoader().loadAsync(`${base}/content/contents/${hash}`);
+      const t = await new THREE.TextureLoader().loadAsync(held.get(hash) ?? `${base}/content/contents/${hash}`);
       t.flipY = false;
       if (srgb) t.colorSpace = THREE.SRGBColorSpace;
       t.needsUpdate = true;
       return t;
     };
-    const maskHash = hashOf(names.find((n) => n.endsWith("_mask.png")));
-    return {
-      tex: await loadTex(texHash, true),
-      mask: maskHash ? await loadTex(maskHash, false) : null,
-    };
+    try {
+      return {
+        tex: await loadTex(texHash, true),
+        mask: maskHash ? await loadTex(maskHash, false) : null,
+      };
+    } finally {
+      for (const url of held.values()) URL.revokeObjectURL(url);
+    }
   }
 
   function trimPartCache(): void {
@@ -438,14 +474,14 @@ export function createAvatarScene(
     }
   }
 
-  function cachedPart(key: string, entity: Entity, bodyShape: string): Promise<THREE.Object3D | null> {
+  function cachedPart(key: string, entity: Entity, bodyShape: string, files: HeldFiles): Promise<THREE.Object3D | null> {
     let pending = partCache.get(key);
     if (pending) {
       partCache.delete(key);
       partCache.set(key, pending);
       return pending;
     }
-    pending = withTimeout(loadEntityGlb(entity, bodyShape), GLB_TIMEOUT_MS)
+    pending = withTimeout(loadEntityGlb(entity, bodyShape, files), GLB_TIMEOUT_MS)
       .then((obj) => {
         if (obj) mattify(obj);
         return obj;
@@ -460,10 +496,10 @@ export function createAvatarScene(
     return pending;
   }
 
-  function cachedFeature(key: string, entity: Entity, bodyShape: string): Promise<FacialFeature | null> {
+  function cachedFeature(key: string, entity: Entity, bodyShape: string, files: HeldFiles): Promise<FacialFeature | null> {
     let pending = featureCache.get(key);
     if (!pending) {
-      pending = loadFacialFeature(entity, bodyShape).catch((err) => {
+      pending = loadFacialFeature(entity, bodyShape, files).catch((err) => {
         console.warn("[wearable-preview] failed", key, err);
         featureCache.delete(key);
         return null;
@@ -769,9 +805,12 @@ export function createAvatarScene(
       else wantParts.push({ key: partKey(urn, bodyLc), urn, isBody: false, entity: e });
     }
 
+    const files: HeldFiles = new Map();
+    for (const p of wantParts) if (!partCache.has(p.key)) holdFiles(files, p.entity, bodyShape);
+    for (const f of wantFeatures) if (!featureCache.has(f.key)) holdFiles(files, f.entity, bodyShape);
     const [objs, feats] = await Promise.all([
-      Promise.all(wantParts.map((p) => cachedPart(p.key, p.entity, bodyShape))),
-      Promise.all(wantFeatures.map((f) => cachedFeature(f.key, f.entity, bodyShape))),
+      Promise.all(wantParts.map((p) => cachedPart(p.key, p.entity, bodyShape, files))),
+      Promise.all(wantFeatures.map((f) => cachedFeature(f.key, f.entity, bodyShape, files))),
     ]);
     if (stale(gen)) return null;
 

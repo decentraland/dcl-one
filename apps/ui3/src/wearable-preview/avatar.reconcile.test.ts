@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import * as THREE from "three";
 
 type RenderSample = { visible: boolean; hipsY: number | null };
@@ -6,6 +6,7 @@ type FakeRenderer = { loop: (() => void) | null; lastScene: THREE.Object3D | nul
 const rendererInstances: FakeRenderer[] = [];
 const renders: RenderSample[] = [];
 const loads: string[] = [];
+const loadManagers = new Map<string, THREE.LoadingManager | undefined>();
 const deferred = new Map<string, () => void>();
 let autoResolve = true;
 let tinyBindPose = false;
@@ -83,8 +84,10 @@ vi.mock("three/examples/jsm/loaders/GLTFLoader.js", () => {
     return g;
   };
   class FakeGLTFLoader {
+    constructor(private manager?: THREE.LoadingManager) {}
     loadAsync(url: string) {
       loads.push(url);
+      loadManagers.set(url, this.manager);
       const emoteFile = () => {
         const scene = new THREE.Group();
         const mic = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.3, 0.1), new THREE.MeshStandardMaterial());
@@ -144,6 +147,7 @@ beforeEach(() => {
   rendererInstances.length = 0;
   renders.length = 0;
   loads.length = 0;
+  loadManagers.clear();
   deferred.clear();
   autoResolve = true;
   tinyBindPose = false;
@@ -473,4 +477,73 @@ test("a later named emote wins over an emote item still being looked up", async 
   // The item's file was never played: the call that came later claimed the motion first.
   expect(loads.filter((url) => url === contentUrl(EMOTE))).toHaveLength(0);
   scene.dispose();
+});
+
+test("every file of the parts downloads once, all when the entities arrive, and the loaders read the held copies", async () => {
+  // Pointers no other test resolved: resolved entities are cached for the module's life.
+  const HELD_BODY = "urn:decentraland:off-chain:base-avatars:basemale_held";
+  const HAT8 = "urn:decentraland:matic:collections-v2:0xhat:8";
+  const EYES = "urn:decentraland:matic:collections-v2:0xeyes:0";
+  const held = (pointer: string) => {
+    const category = pointer === HELD_BODY ? "body_shape" : pointer === EYES ? "eyes" : "hat";
+    const files = category === "eyes" ? ["eyes.png", "eyes_mask.png"] : ["model.glb", "shared.png"];
+    const content = [...files, "thumbnail.png"].map((file) => ({
+      file,
+      hash: file === "shared.png" ? "h_shared" : file === "model.glb" ? `h_${pointer}` : `h_${pointer}_${file}`,
+    }));
+    const representations = [{ bodyShapes: [HELD_BODY], mainFile: files[0], contents: files }];
+    return { pointers: [pointer], content, metadata: { data: { category, representations } } };
+  };
+  const downloads: string[] = [];
+  globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    const path = String(url);
+    if (path.includes("/content/contents/")) {
+      downloads.push(path.split("/").pop() ?? "");
+      return { ok: true, blob: async () => new Blob([path]) } as unknown as Response;
+    }
+    const body = JSON.parse(String(init?.body ?? "{}")) as { pointers?: string[] };
+    const pointers = body.pointers ?? [];
+    return { ok: true, json: async () => pointers.map((p) => ([HELD_BODY, HAT8, EYES].includes(p) ? held(p) : entityFor(p))) } as Response;
+  }) as unknown as typeof fetch;
+  let objectUrls = 0;
+  const createObjectURL = vi.fn(() => `blob:held/${objectUrls++}`);
+  const revokeObjectURL = vi.fn();
+  const jsdomUrls = { createObjectURL: URL.createObjectURL, revokeObjectURL: URL.revokeObjectURL };
+  Object.assign(URL, { createObjectURL, revokeObjectURL });
+  onTestFinished(() => {
+    Object.assign(URL, jsdomUrls);
+  });
+  const textureUrls: string[] = [];
+  vi.spyOn(THREE.TextureLoader.prototype, "loadAsync").mockImplementation(async (url: string) => {
+    textureUrls.push(url);
+    return new THREE.Texture();
+  });
+  autoResolve = false;
+
+  const container = document.createElement("div");
+  const onStatus = vi.fn();
+  const scene = createAvatarScene(container, { body: HELD_BODY, urns: [HAT8, EYES], emote: "idle", onStatus });
+  await vi.waitFor(() => {
+    expect(loads).toContain(contentUrl(HELD_BODY));
+    expect(loads).toContain(contentUrl(HAT8));
+  }, { timeout: 10_000 });
+
+  // Before any GLB has parsed, every listed file is on its way, the shared texture once and no thumbnail.
+  expect(downloads.sort()).toEqual(
+    [`h_${HELD_BODY}`, `h_${HAT8}`, "h_shared", `h_${EYES}_eyes.png`, `h_${EYES}_eyes_mask.png`].sort(),
+  );
+  const hat = loadManagers.get(contentUrl(HAT8));
+  expect(hat?.resolveURL(contentUrl(HAT8))).toMatch(/^blob:held\//);
+  expect(hat?.resolveURL(`${window.location.origin}/content/contents/shared.png`)).toMatch(/^blob:held\//);
+  expect(hat?.resolveURL("data:image/png;base64,AA")).toBe("data:image/png;base64,AA");
+
+  for (const url of [...deferred.keys()]) resolveLoad(url);
+  await vi.waitFor(() => expect(onStatus).toHaveBeenLastCalledWith("ready"), { timeout: 10_000 });
+  // The facial feature's texture and mask come from the held copies too.
+  expect(textureUrls).toHaveLength(2);
+  expect(textureUrls.every((url) => url.startsWith("blob:held/"))).toBe(true);
+  expect(revokeObjectURL.mock.calls.map(([url]) => url).sort()).toEqual(createObjectURL.mock.results.map((r) => r.value).sort());
+
+  scene.dispose();
+  container.remove();
 });
