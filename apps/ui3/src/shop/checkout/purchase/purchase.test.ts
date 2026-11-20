@@ -1,3 +1,5 @@
+import { decodeFunctionData, type Hex } from "viem";
+import { CREDITS_MANAGER_ABI, OFFCHAIN_META_TX_ABI } from "@shop/checkout/chain/abi";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setSplitPaymentForTests } from "@shop/payment/present";
 
@@ -33,7 +35,7 @@ import {
 import { getCouponManagerForTrade } from "../lib/marketplace";
 import { ASSET_TYPE, type ListingCoupon } from "./encoding";
 import { reviewCart, resolveLine, partitionReservations, couponForTrade, classifyTrade, classifyStoreMint, isLineBuyable, tradeManaPrice, type ResolvedLine, type SettlementResolvers } from "./cart";
-import { AFTER_PENDING, resumeCheckout, runGroup, runGroups, watchGroup, type CheckoutDeps } from "./executor";
+import { AFTER_PENDING, resumeCheckout, runGroup, runGroups, splitPriceOf, watchGroup, type CheckoutDeps } from "./executor";
 import { computePaymentOptions, distributeCreditsAcrossUnits, findOption, hasPayableOption } from "./payment-options";
 import type { RailContext } from "./rail";
 import { createSpendGuard } from "@shop/checkout/purchase/spend-guard";
@@ -270,7 +272,7 @@ type Harness = {
 };
 
 async function harness(
-  opts: { method?: "credits" | "mana"; handlers?: FakeHandlers; session?: Session; relay?: "ok" | "refuse" | "down" | "fail-after-send"; refuseStatus?: number; refuseEvidence?: boolean; refuseBody?: Record<string, unknown>; failStatus?: number; failBody?: unknown; confirm?: "success" | "reverted" | "none" } = {},
+  opts: { method?: "credits" | "mana"; handlers?: FakeHandlers; resolvers?: Partial<SettlementResolvers>; session?: Session; relay?: "ok" | "refuse" | "down" | "fail-after-send"; refuseStatus?: number; refuseEvidence?: boolean; refuseBody?: Record<string, unknown>; failStatus?: number; failBody?: unknown; confirm?: "success" | "reverted" | "none" } = {},
 ): Promise<Harness> {
   const session = opts.session ?? web3();
   const offer = opts.method === "mana" ? wearableResale(session) : creatorOrder(session);
@@ -315,7 +317,7 @@ async function harness(
     },
   };
   const part = partitionCart([{ line: lines[0]!, offer }], session, { report: noop });
-  const review = await reviewCart([{ line: lines[0]!, offer }], session, BOOK.buyer, resolvers());
+  const review = await reviewCart([{ line: lines[0]!, offer }], session, BOOK.buyer, resolvers(opts.resolvers));
   store.startCheckout(part.groups);
   return {
     deps: { ctx, store, guard: createSpendGuard() },
@@ -577,6 +579,87 @@ describe("a credits group the relay refuses for its limits", () => {
     const result = await runGroup(h.deps, h.group, h.resolved);
     expect(result).toMatchObject({ status: "pending" });
     expect(released(h)).toBeUndefined();
+  });
+});
+
+describe("a credits group of one unit paid with Credits and MANA together", () => {
+  // The harness's creator listing is quoted 100 cents; its MANA price is the sale's, read from the resolved line.
+  const PART = 40;
+  const relayedUseCredits = (body: unknown) => {
+    const data = (body as { transactionData: { params: [string, Hex] } }).transactionData.params[1];
+    const meta = decodeFunctionData({ abi: OFFCHAIN_META_TX_ABI, data });
+    return decodeFunctionData({ abi: CREDITS_MANAGER_ABI, data: meta.args[1] as Hex }).args[0] as { maxCreditedValue: bigint; maxUncreditedValue: bigint };
+  };
+  /** A harness whose node signs `credit(share)` for the Credits part, and the split terms the buyer confirmed. */
+  async function splitHarness(opts: { credit?: (share: bigint) => bigint; confirmed?: (gap: bigint) => bigint; relay?: "ok" | "refuse" } = {}) {
+    let price = 0n;
+    // A creator listing priced in MANA itself (a USD-pegged one has no split): 2.3 MANA.
+    const listing = creatorTrade({ received: [{ assetType: ASSET_TYPE.ERC20, contractAddress: BOOK.mana, amount: (23n * 10n ** 17n).toString(), extra: "0x", beneficiary: BOOK.creator }] });
+    const h = await harness({
+      relay: opts.relay,
+      resolvers: { trade: async () => listing },
+      handlers: {
+        authorizeCreditBatch: ({ body }) => {
+          const share = (price * BigInt(PART)) / 100n;
+          const value = (opts.credit ?? ((x) => x))(share).toString();
+          const answer = batchAuthorization((body as { items: { usdPriceCents: number }[] }).items);
+          return { ...answer, credit: { ...answer.credit, amount: value, availableAmount: value }, maxCreditedValue: value };
+        },
+      },
+    });
+    const unit = [...h.resolved.values()][0]!;
+    price = splitPriceOf(unit)!;
+    const share = (price * BigInt(PART)) / 100n;
+    const gap = price - share;
+    h.deps.split = { creditsCents: PART, confirmedWei: (opts.confirmed ?? ((g) => g))(gap), session: { walletKind: "web3" } };
+    return { h, price, share, gap };
+  }
+
+  it("asks for a credit for the Credits part alone, at the whole price, and relays one useCredits with the credit and the gap as its caps", async () => {
+    const { h, share, gap } = await splitHarness();
+    expect(await runGroup(h.deps, h.group, h.resolved)).toMatchObject({ status: "confirmed" });
+    const auth = h.shop.log.find((r) => r.name === "authorizeCreditBatch")!;
+    expect(auth.body).toMatchObject({ items: [{ usdPriceCents: 100, creditsCents: PART }], source: "website" });
+    expect(h.relay.posts).toHaveLength(1);
+    expect(relayedUseCredits(h.relay.posts[0])).toMatchObject({ maxCreditedValue: share, maxUncreditedValue: gap });
+  });
+
+  it.each([
+    ["a credit above its share", (s: bigint) => s + 1n],
+    ["a credit below its share", (s: bigint) => s - 1n],
+  ])("refuses %s before anything is signed, and releases it", async (_, credit) => {
+    const { h } = await splitHarness({ credit });
+    const result = await runGroup(h.deps, h.group, h.resolved);
+    expect(result).toMatchObject({ status: "failed", failure: { kind: "refused" } });
+    expect(h.relay.posts).toHaveLength(0);
+    expect(h.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(true);
+  });
+
+  it("refuses a gap above what the buyer confirmed, before anything is signed", async () => {
+    const { h } = await splitHarness({ confirmed: (g) => g - 1n });
+    expect(await runGroup(h.deps, h.group, h.resolved)).toMatchObject({ status: "failed", failure: { kind: "refused" } });
+    expect(h.relay.posts).toHaveLength(0);
+  });
+
+  it("never falls back to the wallet when the relay refuses it", async () => {
+    const { h } = await splitHarness({ relay: "refuse" });
+    const result = await runGroup(h.deps, h.group, h.resolved);
+    expect(result.status).not.toBe("confirmed");
+    expect(h.wallet.requests.some((q) => q.method === "eth_sendTransaction")).toBe(false);
+  });
+
+  it("asks for no credit for a USD-pegged listing", async () => {
+    const h = await harness();
+    h.deps.split = { creditsCents: PART, confirmedWei: 10n ** 18n, session: { walletKind: "web3" } };
+    expect(await runGroup(h.deps, h.group, h.resolved)).toMatchObject({ status: "failed", failure: { kind: "refused" } });
+    expect(h.shop.log.some((r) => r.name === "authorizeCreditBatch")).toBe(false);
+  });
+
+  it("asks for no credit without the fee-free relay", async () => {
+    const { h } = await splitHarness();
+    h.deps.ctx.gasless = false;
+    expect(await runGroup(h.deps, h.group, h.resolved)).toMatchObject({ status: "failed", failure: { kind: "refused" } });
+    expect(h.shop.log.some((r) => r.name === "authorizeCreditBatch")).toBe(false);
   });
 });
 
