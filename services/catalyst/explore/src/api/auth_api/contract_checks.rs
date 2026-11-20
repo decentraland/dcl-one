@@ -97,6 +97,10 @@ struct Windows {
     global: Window,
     /// Whether the replica cap was logged in this global window.
     global_tripped: bool,
+    /// While the table is full, no tracked window can end before this.
+    next_prune: Option<Instant>,
+    /// Scans of the full table, for the tests.
+    prunes: u64,
 }
 
 pub struct ContractChecks {
@@ -110,6 +114,8 @@ impl Default for ContractChecks {
                 by_key: HashMap::new(),
                 global: Window::new(Instant::now()),
                 global_tripped: false,
+                next_prune: None,
+                prunes: 0,
             }),
         }
     }
@@ -142,13 +148,21 @@ impl ContractChecks {
             return Err(Spent::Replica);
         }
         let mut key = source.map_or(Key::NoSource, |s| Key::Source(network_key(s)));
-        if !windows.by_key.contains_key(&key) && windows.by_key.len() >= MAX_SOURCES {
+        if !windows.by_key.contains_key(&key)
+            && windows.by_key.len() >= MAX_SOURCES
+            && windows.next_prune.is_none_or(|at| now >= at)
+        {
             windows
                 .by_key
                 .retain(|_, w| now.saturating_duration_since(w.started) < WINDOW);
-            if windows.by_key.len() >= MAX_SOURCES && matches!(key, Key::Source(_)) {
-                key = Key::Overflow;
-            }
+            windows.prunes += 1;
+            windows.next_prune = windows.by_key.values().map(|w| w.started + WINDOW).min();
+        }
+        if !windows.by_key.contains_key(&key)
+            && windows.by_key.len() >= MAX_SOURCES
+            && matches!(key, Key::Source(_))
+        {
+            key = Key::Overflow;
         }
         let max = key.max();
         let w = windows
@@ -242,6 +256,26 @@ impl Eip1654Validator for Budgeted<'_> {
     }
 }
 
+/// Takes every contract-wallet link as signed, noting that one was asked: a
+/// chain's checks that need no RPC, before any budgeted call.
+#[derive(Default)]
+pub(super) struct Offline(Mutex<bool>);
+
+impl Offline {
+    /// Whether the chain had a contract-wallet link.
+    pub(super) fn asked(&self) -> bool {
+        *self.0.lock()
+    }
+}
+
+#[async_trait::async_trait]
+impl Eip1654Validator for Offline {
+    async fn validate_signature(&self, _: &str, _: &[u8], _: &[u8]) -> Result<bool, AuthError> {
+        *self.0.lock() = true;
+        Ok(true)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,6 +310,25 @@ mod tests {
         ));
         assert!(checks.charge(Some("2001:db8:2::/64"), now).is_ok());
         assert_eq!(network_key("203.0.113.5"), "203.0.113.5");
+    }
+
+    #[test]
+    fn a_full_table_is_scanned_again_only_once_a_window_can_have_ended() {
+        let checks = ContractChecks::default();
+        let now = Instant::now();
+        for i in 0..MAX_SOURCES {
+            let charge = checks.charge(Some(&i.to_string()), now).unwrap();
+            checks.refund(charge);
+        }
+        for i in 0..50 {
+            let later = now + Duration::from_secs(i);
+            assert!(checks.charge(Some(&format!("new-{i}")), later).is_ok());
+        }
+        assert_eq!(checks.windows.lock().prunes, 1);
+        assert!(checks.charge(Some("newest"), now + WINDOW).is_ok());
+        let windows = checks.windows.lock();
+        assert_eq!(windows.prunes, 2);
+        assert!(windows.by_key.len() <= 2, "the ended windows were dropped");
     }
 
     #[test]

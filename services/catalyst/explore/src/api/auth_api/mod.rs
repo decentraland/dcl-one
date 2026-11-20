@@ -770,7 +770,7 @@ async fn create_request(
     let sender = if needs_contract_check(chain) {
         match validate_auth_chain(chain, as_validator(&budget)).await {
             Ok(verified) => verified.sender,
-            Err(refusal) => return chain_refused(under(&budget, refusal)),
+            Err(refusal) => return chain_refused(throttled_if_spent(&budget, refusal)),
         }
     } else {
         offline.sender
@@ -1012,7 +1012,7 @@ async fn submit_outcome(
         if needs_contract_check(chain)
             && let Err(refusal) = validate_auth_chain(chain, as_validator(&budget)).await
         {
-            return chain_refused(under(&budget, refusal));
+            return chain_refused(throttled_if_spent(&budget, refusal));
         }
     }
 
@@ -1166,7 +1166,7 @@ fn as_validator<'a>(
 }
 
 /// `refusal`, or a 429 when a call was refused because a budget was spent.
-fn under(budget: &Option<Budgeted<'_>>, refusal: ChainRefusal) -> ChainRefusal {
+fn throttled_if_spent(budget: &Option<Budgeted<'_>>, refusal: ChainRefusal) -> ChainRefusal {
     match budget.as_ref().and_then(Budgeted::spent) {
         Some(spent) => ChainRefusal::Throttled(spent),
         None => refusal,
@@ -1629,7 +1629,7 @@ mod tests {
 
     /// An identity post from the contract wallet: its signed-fetch chain's
     /// contract link signed `header_sig`, its identity chain's `identity_sig`.
-    fn contract_identity_post(header_sig: &str, identity_sig: &str, peer: &str) -> Request {
+    fn contract_identity_post(header_sig: &str, identity_sig: &str, peer: Option<&str>) -> Request {
         use crate::shared::signed_fetch as sf;
         use alloy_signer::SignerSync;
         use validation::contract_wallet::chain;
@@ -1640,13 +1640,13 @@ mod tests {
             "expiration": "2100-01-01T00:00:00.000Z",
             "authChain": chain(&eph_address, identity_sig),
         });
-        let mut req = from_peer(
-            json_post(
-                "/auth-api/identities",
-                serde_json::to_vec(&json!({ "identity": identity })).unwrap(),
-            ),
-            peer,
+        let mut req = json_post(
+            "/auth-api/identities",
+            serde_json::to_vec(&json!({ "identity": identity })).unwrap(),
         );
+        if let Some(peer) = peer {
+            req = from_peer(req, peer);
+        }
         let timestamp = Utc::now().timestamp_millis().to_string();
         let payload = sf::build_payload_v6("post", "/auth-api/identities", &timestamp, "{}");
         let signature = ephemeral.sign_message_sync(payload.as_bytes()).unwrap();
@@ -1671,15 +1671,27 @@ mod tests {
 
     #[tokio::test]
     async fn a_contract_wallet_identity_is_checked_without_the_rpc_until_its_owner_matches() {
-        use validation::contract_wallet::{SIGNATURE, Wallet, chain};
+        use validation::contract_wallet::{SIGNATURE, Unreachable, Wallet, chain};
         let state = crate::api::tests_support::state_without_db().await;
         let app = Router::new().nest("/auth-api", routes().with_state(state.clone()));
+        let (status, err) = call(&app, contract_identity_post(SIGNATURE, SIGNATURE, None)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "no validator: {err}");
+
+        let unreachable = crate::api::tests_support::state_without_db().await;
+        assert!(unreachable.attach_eip1654(Some(std::sync::Arc::new(Unreachable))));
         let (status, err) = call(
-            &app,
-            contract_identity_post(SIGNATURE, SIGNATURE, "203.0.113.5:1"),
+            &Router::new().nest("/auth-api", routes().with_state(unreachable)),
+            contract_identity_post(SIGNATURE, SIGNATURE, None),
         )
         .await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "no validator: {err}");
+        assert_eq!(
+            (status, err["error"].as_str()),
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Some("Contract wallet signature verification unavailable")
+            ),
+            "an RPC that cannot answer the signed fetch's contract link"
+        );
 
         let wallet = std::sync::Arc::new(Wallet::default());
         assert!(state.attach_eip1654(Some(wallet.clone())));
@@ -1713,11 +1725,25 @@ mod tests {
         );
         assert_eq!(wallet.calls(), 0, "a 403 costs no contract call");
 
-        let (status, err) = call(
-            &app,
-            contract_identity_post(SIGNATURE, "0xbad0", "203.0.113.5:1"),
-        )
-        .await;
+        let mut forged = contract_identity_post(SIGNATURE, SIGNATURE, None);
+        let ts = forged.headers()[crate::shared::signed_fetch::AUTH_TIMESTAMP_HEADER]
+            .to_str()
+            .unwrap()
+            .parse::<i64>()
+            .unwrap();
+        forged.headers_mut().insert(
+            crate::shared::signed_fetch::AUTH_TIMESTAMP_HEADER,
+            (ts + 1).to_string().parse().unwrap(),
+        );
+        let (status, err) = call(&app, forged).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{err}");
+        assert_eq!(
+            wallet.calls(),
+            0,
+            "a forged request chain costs no contract call"
+        );
+
+        let (status, err) = call(&app, contract_identity_post(SIGNATURE, "0xbad0", None)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{err}");
         assert!(wallet.calls() > 0);
     }
@@ -1725,15 +1751,17 @@ mod tests {
     #[tokio::test]
     async fn a_network_that_spends_its_contract_checks_reaches_no_validator() {
         use validation::contract_wallet::{SIGNATURE, Wallet};
-        let state = crate::api::tests_support::state_without_db().await;
+        let Some((db, state)) = replica().await else {
+            return;
+        };
         let wallet = std::sync::Arc::new(Wallet::default());
         assert!(state.attach_eip1654(Some(wallet.clone())));
-        let app = Router::new().nest("/auth-api", routes().with_state(state.clone()));
+        let app = app(&state);
         let mut refused = 0;
         let throttled = loop {
             let (status, err) = call(
                 &app,
-                contract_identity_post("0xbad0", SIGNATURE, "203.0.113.5:1"),
+                contract_identity_post("0xbad0", SIGNATURE, Some("203.0.113.5:1")),
             )
             .await;
             if status != StatusCode::UNAUTHORIZED {
@@ -1760,7 +1788,7 @@ mod tests {
         let asked = wallet.calls();
         let (status, _) = call(
             &app,
-            contract_identity_post("0xbad0", SIGNATURE, "203.0.113.5:2"),
+            contract_identity_post("0xbad0", SIGNATURE, Some("203.0.113.5:2")),
         )
         .await;
         assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
@@ -1771,7 +1799,7 @@ mod tests {
         );
         let (status, _) = call(
             &app,
-            contract_identity_post("0xbad0", SIGNATURE, "198.51.100.7:1"),
+            contract_identity_post("0xbad0", SIGNATURE, Some("198.51.100.7:1")),
         )
         .await;
         assert_eq!(
@@ -1780,6 +1808,46 @@ mod tests {
             "another network is still asked"
         );
         assert!(wallet.calls() > asked);
+        db.teardown().await;
+    }
+
+    #[tokio::test]
+    async fn a_network_at_its_identity_cap_spends_no_contract_call() {
+        use validation::contract_wallet::{SIGNATURE, Wallet};
+        let Some((db, state)) = replica().await else {
+            return;
+        };
+        let wallet = std::sync::Arc::new(Wallet::default());
+        assert!(state.attach_eip1654(Some(wallet.clone())));
+        let app = app(&state);
+        let now = now_micros();
+        let mut conn = state.pool.acquire().await.unwrap();
+        for i in 0..identities::MAX_IDENTITIES_PER_SOURCE {
+            identities::insert_identity(
+                &mut conn,
+                &identities::IdentityRecord {
+                    identity_id: format!("i{i}"),
+                    identity: Value::Null,
+                    ip_address: String::new(),
+                    source: Some("203.0.113.5".into()),
+                    is_mobile: false,
+                    created_at: now,
+                    expiration: now + Duration::seconds(3600),
+                    auth_request_id: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        drop(conn);
+        let (status, err) = call(
+            &app,
+            contract_identity_post(SIGNATURE, SIGNATURE, Some("203.0.113.5:1")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{err}");
+        assert_eq!(wallet.calls(), 0);
+        db.teardown().await;
     }
 
     #[tokio::test]

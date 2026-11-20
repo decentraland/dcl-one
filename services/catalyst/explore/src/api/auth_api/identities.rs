@@ -12,11 +12,11 @@ use crate::api::internal_error;
 use crate::auth::AuthChain;
 use crate::shared::signed_fetch::{self, PayloadPolicy, Signer};
 
-use super::contract_checks::Budgeted;
+use super::contract_checks::{Budgeted, Offline};
 use super::validation::{ChainRefusal, needs_contract_check, validate_identity_chain};
 use super::{
     ErrorBody, EvictedBody, admission_lock, as_validator, bad_request, budgeted, chain_refused,
-    client_ip, ips_match, is_valid_uuid, naive, normalize_ip, now_micros, under,
+    client_ip, ips_match, is_valid_uuid, naive, normalize_ip, now_micros, throttled_if_spent,
 };
 use crate::api::Shared as AppState;
 
@@ -129,16 +129,12 @@ pub(super) async fn create_identity(
         peer.map(|axum::Extension(axum::extract::ConnectInfo(p))| p),
         &state.settings.trusted_proxy_cidrs,
     );
-    let budget = budgeted(&state, source.as_deref());
+    // Every check that needs no RPC first, contract-wallet links taken as signed.
+    let header_offline = Offline::default();
     let request_signer =
-        match verify_identity_post(&headers, uri.path(), as_validator(&budget)).await {
+        match verify_identity_post(&headers, uri.path(), Some(&header_offline)).await {
             Ok(signer) => signer,
-            Err(refusal) => {
-                return match budget.as_ref().and_then(Budgeted::spent) {
-                    Some(spent) => chain_refused(ChainRefusal::Throttled(spent)),
-                    None => *refusal,
-                };
-            }
+            Err(refusal) => return *refusal,
         };
     if body.identity.is_null() {
         return bad_request("AuthIdentity is required in request body");
@@ -186,10 +182,28 @@ pub(super) async fn create_identity(
     if !derives_address {
         return forbidden("Ephemeral private key does not match the provided address");
     }
+    let budget = budgeted(&state, source.as_deref());
+    if budget.is_some() && (header_offline.asked() || needs_contract_check(chain)) {
+        // Before the RPC: a network at its cap costs no contract call.
+        match identity_network_over_cap(&state, source.as_deref(), now_micros()).await {
+            Ok(false) => {}
+            Ok(true) => return too_many_identities_from_network(),
+            Err(err) => return internal_error("auth-api: counting the network's identities", err),
+        }
+    }
+    if header_offline.asked()
+        && let Err(refusal) =
+            verify_identity_post(&headers, uri.path(), as_validator(&budget)).await
+    {
+        return match budget.as_ref().and_then(Budgeted::spent) {
+            Some(spent) => chain_refused(ChainRefusal::Throttled(spent)),
+            None => *refusal,
+        };
+    }
     if needs_contract_check(chain)
         && let Err(refusal) = validate_identity_chain(chain, as_validator(&budget)).await
     {
-        return chain_refused(under(&budget, refusal));
+        return chain_refused(throttled_if_spent(&budget, refusal));
     }
 
     let identity_id = Uuid::new_v4().to_string();
@@ -240,6 +254,37 @@ async fn identity_counts(
     .await
 }
 
+fn too_many_identities_from_network() -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(ErrorBody {
+            error: "Too many pending sign-ins from this network, try again later".into(),
+        }),
+    )
+        .into_response()
+}
+
+/// Whether `source` holds its cap of pending identities, checked without the
+/// admission lock before a contract-wallet call; under the lock the count is
+/// taken again, exactly.
+async fn identity_network_over_cap(
+    state: &AppState,
+    source: Option<&str>,
+    now: DateTime<Utc>,
+) -> sqlx::Result<bool> {
+    let Some(source) = source else {
+        return Ok(false);
+    };
+    let from_source: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM explore_api.auth_identities WHERE source = $1 AND expiration >= $2",
+    )
+    .bind(source)
+    .bind(naive(now))
+    .fetch_one(&state.pool)
+    .await?;
+    Ok(from_source >= MAX_IDENTITIES_PER_SOURCE as i64)
+}
+
 /// The caps checked and the identity (and, while fewer than
 /// `MAX_IDENTITY_TOMBSTONES` are kept, its tombstone) stored in one
 /// transaction under the admission lock.
@@ -270,15 +315,7 @@ async fn admit_identity(
         ));
     }
     if source.is_some() && from_source >= MAX_IDENTITIES_PER_SOURCE as i64 {
-        return Ok(Some(
-            (
-                StatusCode::TOO_MANY_REQUESTS,
-                Json(ErrorBody {
-                    error: "Too many pending sign-ins from this network, try again later".into(),
-                }),
-            )
-                .into_response(),
-        ));
+        return Ok(Some(too_many_identities_from_network()));
     }
     insert_identity(&mut tx, record).await?;
     sqlx::query(
@@ -342,7 +379,11 @@ async fn verify_identity_post(
     )
     .await
     .map_err(|err| {
-        let (_, message) = err.http_status_and_message();
+        let (status, message) = err.http_status_and_message();
+        // A contract wallet the RPC could not decide: as on the other relay routes.
+        if status == 503 {
+            return Box::new(chain_refused(ChainRefusal::Unavailable));
+        }
         Box::new(
             (
                 StatusCode::UNAUTHORIZED,
