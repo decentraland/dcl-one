@@ -179,6 +179,28 @@ describe("Buy now's dialog", () => {
     expect(within(dialog).queryByTestId("buy-modal-quoting")).toBeNull();
   });
 
+  it("a pack picked during the check that the checked shortfall no longer offers is not bought: the buyer picks again", async () => {
+    const check = heldOffers();
+    const { demo, line, lineId } = renderBuy({ session: "web2", balanceCents: 30 }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });
+    const dialog = await settledDialog();
+    fireEvent.click(within(dialog).getAllByTestId("credit-pack")[0]!);
+    expect(within(dialog).getAllByTestId("credit-pack")[0]).toHaveAttribute("aria-pressed", "true");
+    // The checked price leaves 57 Credits short: the 40-Credit pack the buyer picked is no longer offered.
+    const seen = line.seen!;
+    await check.answer({ [lineId]: { ...seen, quotes: seen.quotes.map((q) => (q.method === "credits" ? { ...q, quoted: usdCents(600) } : q)) } });
+    await waitFor(() => expect(within(dialog).getAllByTestId("credit-pack").map((p) => p.textContent)).toEqual(["100($11.99)", "260($29.99)", "540($59.99)"]));
+    expect(within(dialog).getAllByTestId("credit-pack").some((p) => p.getAttribute("aria-pressed") === "true")).toBe(false);
+    const topUp = within(dialog).getByTestId("buy-modal-topup");
+    expect(topUp).toBeDisabled();
+    fireEvent.click(topUp);
+    expect(demo.shop.log.filter((r) => r.name === "createPackOrder")).toHaveLength(0);
+
+    fireEvent.click(within(dialog).getAllByTestId("credit-pack")[0]!);
+    expect(within(dialog).getByTestId("buy-modal-topup")).toBeEnabled();
+    fireEvent.click(within(dialog).getByTestId("buy-modal-topup"));
+    await waitFor(() => expect(demo.shop.log.filter((r) => r.name === "createPackOrder").map((r) => r.body)).toEqual([expect.objectContaining({ packId: "pack_10" })]));
+  });
+
   it("short by the page's offer but not at the checked price: the dialog turns to Buy, no pack offered", async () => {
     const check = heldOffers();
     const { demo, line, lineId } = renderBuy({ session: "web2", balanceCents: 30 }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });

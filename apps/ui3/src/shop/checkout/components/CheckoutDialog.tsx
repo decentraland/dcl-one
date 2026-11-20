@@ -267,6 +267,8 @@ export function NoFundsBody(props: {
   const cover = offer.packs.find((p) => p.credits >= props.shortfall) ?? offer.packs[offer.packs.length - 1];
   const [picked, setPicked] = useState<string | null>(null);
   const selectedId = picked ?? cover?.id ?? null;
+  // Only a pack the offer still holds can be bought: when a new shortfall drops the buyer's pick, nothing is selected
+  // until they pick again, rather than another pack they did not choose.
   const selected = offer.packs.find((p) => p.id === selectedId) ?? null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -289,12 +291,12 @@ export function NoFundsBody(props: {
   const iap = isIapMode();
 
   async function buy() {
-    if (!selectedId || props.checking) return;
+    if (!selected || props.checking) return;
     setBusy(true);
     setError(null);
     const leaving = props.onLeave();
     try {
-      const session = await createPackCheckout(selectedId, client);
+      const session = await createPackCheckout(selected.id, client);
       if (!mounted.current) {
         props.onFailed(leaving);
         return;
@@ -371,7 +373,7 @@ export function NoFundsBody(props: {
           {TEXT.cancel}
         </DialogButton>
         {iap ? null : (
-          <DialogButton variant="gradient" onClick={() => void buy()} disabled={busy || !selectedId || !!props.checking} data-testid={`${props.testId}-topup`}>
+          <DialogButton variant="gradient" onClick={() => void buy()} disabled={busy || !selected || !!props.checking} data-testid={`${props.testId}-topup`}>
             {TEXT.buy}
           </DialogButton>
         )}
