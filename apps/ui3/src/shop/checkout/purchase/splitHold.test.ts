@@ -243,12 +243,13 @@ describe("what settles a hold", () => {
       mined(reverted.chain, HASH, tx, "reverted");
       expect(await settleSplitHold(hold({ txHash: HASH, sale: dispatchedAs(tx) }), reverted.deps), JSON.stringify(listed)).toBeNull();
     }
-    // Expired unspent: let go only past the grace, as any other.
+    // Expired unspent, its credit past its expiry: let go only past the grace, as any other.
     const expired = deps({ status: "EXPIRED" });
     mined(expired.chain, HASH, tx, "reverted");
-    expect(await settleSplitHold(hold({ txHash: HASH, sale: dispatchedAs(tx) }), expired.deps)).toEqual({ kind: "expiring" });
+    const over = { creditExpiresAt: seconds() - 1 };
+    expect(await settleSplitHold(hold({ ...over, txHash: HASH, sale: dispatchedAs(tx) }), expired.deps)).toEqual({ kind: "expiring" });
     const seen = Date.now() - SPLIT_EXPIRY_CONFIRM_MS;
-    expect(await settleSplitHold(hold({ txHash: HASH, sale: dispatchedAs(tx), expiredSeenAt: seen }), expired.deps)).toEqual({ kind: "released" });
+    expect(await settleSplitHold(hold({ ...over, txHash: HASH, sale: dispatchedAs(tx), expiredSeenAt: seen }), expired.deps)).toEqual({ kind: "released" });
   });
 
   it("a revert of its terms in another envelope (signed again) is not its own: the node's record decides, and nothing is released on it", async () => {
@@ -314,12 +315,21 @@ describe("what settles a hold", () => {
     expect(await settleSplitHold(hold(), deps(null).deps)).toBeNull();
   });
 
-  it("EXPIRED lets it go only once seen so for the whole grace: before, it is expiring", async () => {
+  it("EXPIRED, its credit past its expiry, lets it go only once seen so for the whole grace: before, it is expiring", async () => {
     const { deps: d } = deps({ status: "EXPIRED" });
-    expect(await settleSplitHold(hold(), d)).toEqual({ kind: "expiring" });
+    const over = { creditExpiresAt: seconds() - 1 };
+    expect(await settleSplitHold(hold(over), d)).toEqual({ kind: "expiring" });
     const seen = Date.now() - SPLIT_EXPIRY_CONFIRM_MS + 1_000;
-    expect(await settleSplitHold(hold({ expiredSeenAt: seen }), d)).toEqual({ kind: "expiring" });
-    expect(await settleSplitHold(hold({ expiredSeenAt: seen }), { ...d, now: seen + SPLIT_EXPIRY_CONFIRM_MS })).toEqual({ kind: "released" });
+    expect(await settleSplitHold(hold({ ...over, expiredSeenAt: seen }), d)).toEqual({ kind: "expiring" });
+    expect(await settleSplitHold(hold({ ...over, expiredSeenAt: seen }), { ...d, now: seen + SPLIT_EXPIRY_CONFIRM_MS })).toEqual({ kind: "released" });
+  });
+
+  it("EXPIRED while its credit can still be spent here is no answer, however long seen so: held, the grace not started", async () => {
+    const { deps: d } = deps({ status: "EXPIRED" });
+    const live = { creditExpiresAt: seconds() + 300 };
+    expect(await settleSplitHold(hold(live), d)).toBeNull();
+    const long = Date.now() - 10 * SPLIT_EXPIRY_CONFIRM_MS;
+    expect(await settleSplitHold(hold({ ...live, expiredSeenAt: long }), d)).toBeNull();
   });
 
   it("a record with a credit and no terms is never settled, whatever its receipt says", async () => {

@@ -245,8 +245,9 @@ export async function findCreditRecord(account: string, creditId: string, client
 /**
  * What became of a held split, decided only by its terms (the same rules the in-world Shop follows):
  * - its own transaction, read and matched (`splitExecution`): bought completes it;
- * - else the node's record of its credit: SETTLED by an execution of exactly its terms completes it, by one provably not
- *   it is `elsewhere`; EXPIRED releases it once that has been seen for `SPLIT_EXPIRY_CONFIRM_MS` (`expiring` before);
+ * - else the node's record of its credit: SETTLED by an execution of exactly its terms completes it, by the buyer's own
+ *   call of that credit on other terms is `elsewhere`; EXPIRED, once the credit's own expiry has passed here too, releases
+ *   it once that has been seen for `SPLIT_EXPIRY_CONFIRM_MS` (`expiring` before);
  * - its own dispatched bytes mined and reverted settle nothing on their own: that invocation failed, but a sibling
  *   invocation of the same terms may have run (the index may not show it yet), and a credit the node retired stays
  *   spendable on chain until it expires. So it is held, as anything else is, until the node's record says one of the above;
@@ -284,6 +285,10 @@ export async function settleSplitHold(
     return null;
   }
   if (credit?.status === "EXPIRED") {
+    // The node lists a credit EXPIRED only once the chain, as far as it has read it, is past its expiry. This browser waits
+    // for that expiry too, a second safeguard: a credit that may still be spent never lets its split go, and the grace
+    // only starts once both say so.
+    if (!splitHoldCreditOver(hold, now)) return null;
     const seen = hold.expiredSeenAt ?? null;
     return seen !== null && now >= seen && now - seen >= SPLIT_EXPIRY_CONFIRM_MS ? { kind: "released" } : { kind: "expiring" };
   }
