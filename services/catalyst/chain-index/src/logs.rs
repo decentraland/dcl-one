@@ -85,9 +85,12 @@ pub trait LogSource: Send + Sync {
     async fn finalized(&self) -> Result<Read<BlockHeader>, RpcError>;
     /// The header of block `number`.
     async fn header(&self, number: u64) -> Result<Read<BlockHeader>, RpcError>;
-    /// Every log of `[from, reached]` (`reached <= to`) of every group,
-    /// sorted by position. An endpoint that refuses the address count halves
-    /// `chunk`, which the caller keeps for the rest of its pass.
+    /// Every log of `[from, reached]` of every group, sorted by position and
+    /// without duplicates. The implementation guarantees
+    /// `from <= reached <= to` and that every log lies in `[from, reached]`;
+    /// the walk commits up to `reached` on that guarantee. An endpoint that
+    /// refuses the address count halves `chunk`, which the caller keeps for
+    /// the rest of its pass.
     async fn window(
         &self,
         from: u64,
@@ -120,7 +123,7 @@ impl LogSource for RpcSource<'_> {
             .and_then(Value::as_str)
             .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
             .map(Read::one)
-            .ok_or_else(|| RpcError::Rpc(format!("eth_chainId returned {v}")))
+            .ok_or_else(|| RpcError::Malformed(format!("eth_chainId returned {v}")))
     }
 
     async fn head(&self) -> Result<Read<u64>, RpcError> {
@@ -156,7 +159,7 @@ impl LogSource for RpcSource<'_> {
 /// accepted) of every group: a request that narrows the range narrows the
 /// window for all of them (the logs past it are dropped and re-read next
 /// window), and an address-count refusal halves `chunk` and repeats.
-pub async fn fetch_window(
+pub(crate) async fn fetch_window(
     rpc: &Rpc<'_>,
     from: u64,
     to: u64,
@@ -213,7 +216,7 @@ pub async fn fetch_window(
                     *chunk = (*chunk / 2).max(1);
                     tracing::info!(
                         chunk = *chunk,
-                        "marketplace index: the endpoint refused the address count; halving the chunk"
+                        "chain logs: the endpoint refused the address count; halving the chunk"
                     );
                 }
                 Err(e) => return Err(e),
@@ -228,7 +231,7 @@ pub async fn fetch_window(
 /// The block time of every log: the endpoint's `blockTimestamp` when it sent
 /// one, else the headers of the distinct blocks without one, fetched in
 /// JSON-RPC batches (`Rpc::block_headers`; the requests are counted).
-pub async fn block_times(
+pub(crate) async fn block_times(
     rpc: &Rpc<'_>,
     logs: &[RpcLog],
 ) -> Result<(HashMap<i64, i64>, usize), RpcError> {
