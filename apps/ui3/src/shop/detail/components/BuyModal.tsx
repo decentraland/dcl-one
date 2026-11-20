@@ -512,7 +512,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
         ) : null}
 
         {phase === "pending" ? (
-          <PendingBody text={TEXT.stillConfirming} testId="buy-modal-pending">
+          <PendingBody text={(splitSent && combined.unsent) || TEXT.stillConfirming} testId="buy-modal-pending">
             {splitSent && combined.notice ? (
               <p role="status" data-testid="buy-modal-check-notice">
                 {combined.notice}

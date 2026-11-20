@@ -843,6 +843,26 @@ describe('the in-world purchase with MANA', () => {
       expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toBeNull()
     })
 
+    it('keeps an own revert\'s expiry clock through a history it couldn\'t read: it ends once that expiry has held long enough', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'reverted'
+      // EXPIRED, then a read that fails, then EXPIRED again: the clock from the first read still counts.
+      let calls = 0
+      const creditRecordOf = async () => {
+        if (calls++ === 1) throw new Error('upstream unavailable')
+        return record('EXPIRED', null)
+      }
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, creditRecordOf: creditRecordOf as never, sleep: async () => void (w.clock.now += 16 * 60_000) } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'failed' }), { timeout: 5000 })
+      expect(calls).toBe(3)
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+    })
+
     it('ends an own-reverted split unbought once its credit reads expired unspent past the index\'s lag', async () => {
       on()
       const w = world()

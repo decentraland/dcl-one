@@ -192,6 +192,17 @@ export class GrantNotInEffectError extends Error {
   }
 }
 
+/**
+ * An exact grant that can never run any more (its nonce passed) whose allowance couldn't be read afterwards: whether it is
+ * in place is unknown. Its record is gone, so trying again reads the allowance anew and grants only if it falls short.
+ */
+export class GrantUncheckedError extends Error {
+  constructor() {
+    super("We couldn't check whether the approval took effect. Try again in a moment.");
+    this.name = "GrantUncheckedError";
+  }
+}
+
 /** An exact grant needs what makes it go out once: the relay (its nonce reconciles a lost answer) and Web Locks. */
 export class ExactGrantUnavailableError extends Error {
   constructor(message = "The MANA approval can't be sent from here right now, so nothing was sent. Try again later.") {
@@ -414,7 +425,7 @@ async function settleFailedGrant(
   if (e instanceof NonceMovedError) return new AuthorizationPendingError();
   if (sent && !provedNotSent(e)) {
     // Already settled by `confirmGrant` (still confirming, or past its nonce and not in place): as it said.
-    if (e instanceof TxPendingError || e instanceof GrantNotInEffectError) return e;
+    if (e instanceof TxPendingError || e instanceof GrantNotInEffectError || e instanceof GrantUncheckedError) return e;
     if (!(e instanceof TxRevertedError)) return new AuthorizationPendingError();
     // A reverted receipt for the hash the relay answered proves nothing on its own: that hash may be another
     // transaction's, and a reverted execution spends no nonce, so this signed approve may still run. Its record stays
@@ -433,14 +444,20 @@ async function settleFailedGrant(
  * Settles a recorded grant whose send the relay answered and whose receipt for that hash succeeded. That is not proof on
  * its own (the relay may answer another hash; a reader may lag): the record goes only once the token's nonce has passed
  * the one it signed, and then the allowance says whether the grant is in place. While the nonce is still usable, or can't
- * be read, it stays recorded (`AuthorizationPendingError`); past it with the allowance short, it didn't take effect
- * (`GrantNotInEffectError`), and the next try grants anew.
+ * be read, it stays recorded (`AuthorizationPendingError`); past it with the allowance read short, it didn't take effect
+ * (`GrantNotInEffectError`), and the next try grants anew; with the allowance unread, that is unknown (`GrantUncheckedError`).
  */
 async function confirmGrant(opts: AuthorizationContext & { auth: ShopAuthorization }, grant: PendingGrant, amount: bigint, reader: ChainReader, target: MetaTxTarget | null): Promise<void> {
   const { auth, account } = opts;
   if (await pendingGrantOpen(grant, account, reader, target)) throw new AuthorizationPendingError();
   clearPendingGrant(auth, account, grant);
-  if (!(await getAuthorizationStatus(auth, account, amount, reader).catch(() => false))) throw new GrantNotInEffectError();
+  let inPlace: boolean;
+  try {
+    inPlace = await getAuthorizationStatus(auth, account, amount, reader);
+  } catch {
+    throw new GrantUncheckedError();
+  }
+  if (!inPlace) throw new GrantNotInEffectError();
 }
 
 /** The recorded approve, sent again exactly as signed. Its record goes as a first send's does (`confirmGrant`). */
@@ -455,7 +472,7 @@ async function resendPendingGrant(opts: AuthorizationContext & { auth: ShopAutho
   } catch (e) {
     // Refused, reverted (its nonce may be spent already) or lost: still reconciled by its nonce on the next try. Settled
     // by `confirmGrant` (still confirming, or past its nonce and not in place): as it said.
-    throw e instanceof TxPendingError || e instanceof GrantNotInEffectError ? e : new AuthorizationPendingError();
+    throw e instanceof TxPendingError || e instanceof GrantNotInEffectError || e instanceof GrantUncheckedError ? e : new AuthorizationPendingError();
   }
 }
 

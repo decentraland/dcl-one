@@ -619,6 +619,31 @@ describe("Buy now's dialog", () => {
     expect(readSplitHold(BOOK.buyer, lineId)).toBeNull();
   });
 
+  it("a split that provably sent nothing, whose record the storage keeps, says what happened beside the notice: never that it is still being confirmed", async () => {
+    const { demo } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
+    demo.chain.allowances.set(`${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${manager}`, 10n ** 21n);
+    // The relay refuses it as not sent, and the buyer declines it in the wallet: nothing left.
+    demo.relay.state.mode = "refuse";
+    demo.wallet.next = "reject";
+    const removeItem = Storage.prototype.removeItem;
+    const stuck = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(function (this: Storage, key: string) {
+      if (!key.startsWith("dcl-shop-buynow-split:")) return removeItem.call(this, key);
+    });
+    try {
+      const dialog = await settledDialog();
+      const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByRole("button", { name: "Buy" });
+      await waitFor(() => expect(confirm).toBeEnabled());
+      await act(async () => fireEvent.click(confirm));
+      const pending = await within(screen.getByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
+      expect(pending).toHaveTextContent("You cancelled the request in your wallet. Nothing was charged.");
+      expect(pending).not.toHaveTextContent("Your purchase is still being confirmed");
+      expect(screen.getByTestId("buy-modal-check-notice")).toHaveTextContent("This browser couldn't update its record of this purchase. Check again in a moment.");
+    } finally {
+      stuck.mockRestore();
+    }
+  });
+
   it("Check again on a remembered split whose own bytes reverted keeps it held, no credit retired, until the node settles its credit", async () => {
     const sent = await sendSplitThatStaysPending();
     const listed: { status: "PENDING" | "SETTLED"; txHash: string | null } = { status: "PENDING", txHash: null };

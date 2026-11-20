@@ -23,6 +23,7 @@ import {
   getManaSpendingAuthorization,
   GrantCancelledError,
   GrantNotInEffectError,
+  GrantUncheckedError,
   GrantNotRecordedError,
   metaTxTargetFor,
   PENDING_GRANT_HOLD_MS,
@@ -425,6 +426,31 @@ describe("an exact grant that may still land", () => {
     await setAuthorization({ ...ctx, auth: allowance, active: true, amount: GAP });
     expect(signed().slice(before)).toEqual(["1"]);
     expect(await exactAllowanceReady(allowance, BOOK.buyer, GAP, ctx.reader)).toBe(true);
+  });
+
+  it("a grant past its nonce whose allowance can't then be read says it couldn't be checked, not that it didn't take effect", async () => {
+    const { chain, relay, ctx, signed } = rail("fail-after-send");
+    relay.state.mode = "ok";
+    let down = false;
+    const reader: ChainReader = {
+      ...chain,
+      call: async (chainId, to, data) => {
+        if (down && data.startsWith("0xdd62ed3e")) throw new Error("upstream unavailable");
+        return chain.call(chainId, to, data);
+      },
+    };
+    // That hash succeeded and nonce 0 is spent; the allowance read that follows fails.
+    const fetchImpl = (async () => {
+      chain.receipts.set(FOREIGN, "success");
+      chain.nonces.set(nonceKey, 1n);
+      down = true;
+      return new Response(JSON.stringify({ ok: true, txHash: FOREIGN }), { status: 200 });
+    }) as unknown as typeof fetch;
+    await expect(setAuthorization({ ...ctx, reader, fetchImpl, auth: allowance, active: true, amount: GAP })).rejects.toBeInstanceOf(GrantUncheckedError);
+    expect(readPendingGrant(allowance, BOOK.buyer)).toBeNull();
+    // Read again, it is short: a new approve is signed at the next nonce.
+    await setAuthorization({ ...ctx, auth: allowance, active: true, amount: GAP });
+    expect(signed()).toEqual(["0", "1"]);
   });
 
   it("a successful receipt whose nonce can't be read keeps its record: no answer is no proof", async () => {

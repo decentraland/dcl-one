@@ -780,6 +780,48 @@ describe("a split whose outcome is not known", () => {
     expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toBeNull();
   });
 
+  it("a dialog closed while its sale's own approval confirms sends no sale: only the approve went out, its credit is let go", async () => {
+    const { demo, line, unmount } = setup();
+    // The allowance reads enough when the purchase starts, then nothing once its credit is issued: the sale approves first.
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    const call = demo.chain.call.bind(demo.chain);
+    let short = false;
+    demo.chain.call = async (chainId, to, data) => {
+      if (!short && data.startsWith("0xdd62ed3e") && demo.shop.log.some((r) => r.name === "authorizeCredit")) {
+        short = true;
+        demo.chain.allowances.delete(managerKey());
+      }
+      return call(chainId, to, data);
+    };
+    // The approve's receipt is held back until the dialog is gone.
+    let land!: () => void;
+    const landing = new Promise<void>((resolve) => (land = resolve));
+    let waiting = false;
+    const receipt = demo.chain.receipt.bind(demo.chain);
+    demo.chain.receipt = async (...args: Parameters<typeof receipt>) => {
+      if (!waiting && demo.relay.posts.length === 1) {
+        waiting = true;
+        await landing;
+      }
+      return receipt(...args);
+    };
+    act(() => {
+      fireEvent.click(screen.getByTestId("combined-confirm"));
+    });
+    await waitFor(() => expect(waiting).toBe(true), { timeout: 5000 });
+    unmount();
+    await act(async () => {
+      land();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    // One POST, the approve's; one signature, the approve's; no sale kept, signed or sent; its credit given back.
+    expect(demo.relay.posts.map(relayedApproval).filter((a) => a !== null)).toHaveLength(1);
+    expect(demo.relay.posts).toHaveLength(1);
+    expect(demo.wallet.requests.filter((r) => r.method === "eth_signTypedData_v4")).toHaveLength(1);
+    expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toBeNull();
+    expect(demo.shop.log.filter((r) => r.name === "cancelCreditAuthorizations")).toHaveLength(1);
+  });
+
   it("a dialog closed while the wallet signs its approval records and sends nothing: no grant left to reconcile, no POST", async () => {
     const { demo, unmount } = setup();
     // The wallet holds its signature until the dialog is gone.

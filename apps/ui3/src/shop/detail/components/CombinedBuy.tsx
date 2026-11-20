@@ -28,6 +28,7 @@ import {
   GrantCancelledError,
   GrantNotInEffectError,
   GrantNotRecordedError,
+  GrantUncheckedError,
   isAuthorizationPending,
   needsApprovalStep,
   setAuthorization,
@@ -37,7 +38,7 @@ import { friendlyError, isRejection } from "../../checkout/lib/errors";
 import { webLock } from "../../checkout/lib/web-lock";
 import { isSettlementPending } from "../../checkout/purchase/gasless";
 import { purchaseTargetFor, resolveLine, tradeManaPrice } from "../../checkout/purchase/cart";
-import { buyMintWithCreditsAndMana, buyWithCreditsAndMana, manaSpenderFor, splitTerms, type PurchaseTarget } from "../../checkout/purchase/mana";
+import { buyMintWithCreditsAndMana, buyWithCreditsAndMana, manaSpenderFor, SaleCancelledError, splitTerms, type PurchaseTarget } from "../../checkout/purchase/mana";
 import type { RailContext } from "../../checkout/purchase/rail";
 import {
   claimSplitHold,
@@ -471,8 +472,14 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       const message =
         e instanceof SplitNotRecorded
           ? NOT_RECORDED
-          : e instanceof GrantNotRecordedError || e instanceof ExactGrantUnavailableError || e instanceof GrantCancelledError || e instanceof GrantNotInEffectError
-            ? `${e.message} Nothing was bought.`
+          : e instanceof SaleCancelledError
+            ? e.message
+            : e instanceof GrantNotRecordedError ||
+                e instanceof ExactGrantUnavailableError ||
+                e instanceof GrantCancelledError ||
+                e instanceof GrantNotInEffectError ||
+                e instanceof GrantUncheckedError
+              ? `${e.message} Nothing was bought.`
             : isAuthorizationPending(e) || (stillPending && !dispatched)
               ? "Your MANA approval is still confirming, so nothing was bought. Try again in a moment."
               : isRejection(e) || isSignatureDeclined(e)

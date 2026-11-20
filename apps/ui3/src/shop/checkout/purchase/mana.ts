@@ -227,6 +227,17 @@ export function splitTerms(opts: {
   return { creditWei: share, gapWei };
 }
 
+/**
+ * The purchase stopped being its caller's (`RailContext.live`: its dialog closed, or its terms changed) before its sale was
+ * kept or signed: nothing of the sale was sent. Its credit is released like any purchase that failed before it left.
+ */
+export class SaleCancelledError extends Error {
+  constructor() {
+    super("The purchase was closed before it was sent, so nothing was bought.");
+    this.name = "SaleCancelledError";
+  }
+}
+
 /** The call a split's sale makes: the CreditsManager it goes to, and the external call it runs there. */
 export type SplitDispatch = { manager: string; target: Hex; selector: Hex; callData: Hex };
 
@@ -265,6 +276,8 @@ async function payGapWithMana(ctx: RailContext, target: PurchaseTarget, opts: Ga
   // The book's manager, which pulls the gap: a credit signed for any other is refused before this approves.
   const spender = creditsManagerFor(chainId, opts.credits).address;
   await ensureManaAllowance(ctx, chainId, spender, opts.manaGapWei, true);
+  // Its approval may have taken a while (signed, relayed, confirmed): a purchase gone meanwhile is neither kept nor signed.
+  if (ctx.live?.() === false) throw new SaleCancelledError();
   const creditsValue = opts.credits.reduce((acc, c) => acc + BigInt(c.availableAmount), 0n);
   const purchase: AnyPurchase = { ...purchaseFor(target, opts.credits, creditsValue.toString()), maxUncreditedValue: opts.manaGapWei.toString() };
   // The call both rails send (the relay's meta-transaction wraps it; the wallet sends it as is), built as they build it.

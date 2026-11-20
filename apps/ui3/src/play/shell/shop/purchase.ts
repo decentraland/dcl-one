@@ -1021,6 +1021,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
    */
   const afterOwnRevert = async (op: Operation & { buyer: string }, sale: SplitSale): Promise<{ kind: 'bought'; txHash: string } | { kind: 'elsewhere' | 'held' | 'expired' }> => {
     const record = await svc.creditRecordOf(op.buyer, sale.creditId, client(op.buyer)).catch(() => undefined)
+    // A history it couldn't read says nothing, the expiry's clock included: held, as findOutSplit holds it.
+    if (record === undefined) return { kind: 'held' }
     if (record?.status === 'EXPIRED') {
       op.expiredSince ??= svc.now()
       return svc.now() - op.expiredSince >= EXPIRY_CONFIRM_MS ? { kind: 'expired' } : { kind: 'held' }
