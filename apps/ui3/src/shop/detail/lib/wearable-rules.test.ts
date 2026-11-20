@@ -9,6 +9,7 @@ import {
   keepEquipped,
   faceOnly,
   hiddenBy,
+  sharedEntityBase,
   type WearableRule
 } from "./wearable-rules"
 
@@ -215,5 +216,32 @@ describe("when asking whether VRM export is blocked", () => {
     expect(await fetchVrmExportBlocked("urn:a")).toBe(false)
     expect(await fetchWearableRules([], ["urn:a"])).toEqual([])
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("the one Catalyst an outfit's entities share", () => {
+  const AMOY_PEER = "https://peer.amoy.test"
+  const AMOY = "urn:decentraland:amoy:collections-v2:0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1"
+  const MATIC = "urn:decentraland:matic:collections-v2:0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:2"
+  const BODY = "urn:decentraland:off-chain:base-avatars:BaseMale"
+  const V1 = "urn:decentraland:ethereum:collections-v1:halloween_2019:pumpkin_mask"
+  const peered = window as unknown as { __SHOP_PEERS__?: Record<string, string> }
+  afterEach(() => {
+    delete peered.__SHOP_PEERS__
+  })
+
+  it("should be the item's network's peer when the URNs that carry no network are left out", () => {
+    peered.__SHOP_PEERS__ = { amoy: AMOY_PEER }
+    expect(sharedEntityBase([AMOY, BODY, V1])).toBe(AMOY_PEER)
+  })
+
+  it("should be none when the outfit's networks have different peers", () => {
+    peered.__SHOP_PEERS__ = { amoy: AMOY_PEER }
+    expect(sharedEntityBase([AMOY, BODY, MATIC])).toBeUndefined()
+  })
+
+  it("should be the host's base for an outfit of URNs with no network, and for any outfit when no network has its own peer", () => {
+    expect(sharedEntityBase([BODY, V1])).toBe(peer)
+    expect(sharedEntityBase([AMOY, BODY, MATIC])).toBe(peer)
   })
 })
