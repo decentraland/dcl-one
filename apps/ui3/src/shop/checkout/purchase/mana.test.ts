@@ -14,7 +14,7 @@ import { createFakeChain, createFakeLocks, createFakeRelay, createFakeShop, crea
 import { buildGroupUseCreditsArgs, groupPurchases } from "./credits";
 import type { SpendableCredit } from "./encoding";
 import { tradeManaPrice } from "./cart";
-import { buyMintWithCreditsAndMana, buyMintWithMana, buyWithCreditsAndMana, splitTerms, type MintToBuy } from "./mana";
+import { buyMintWithCreditsAndMana, buyMintWithMana, buyWithCreditsAndMana, splitTerms, type MintToBuy, type SplitDispatch } from "./mana";
 import type { RailContext } from "./rail";
 
 const MANA = 10n ** 18n;
@@ -64,6 +64,91 @@ function relayedUseCredits(body: unknown): { maxCreditedValue: bigint; maxUncred
   const call = decodeFunctionData({ abi: CREDITS_MANAGER_ABI, data: meta.args[1] as Hex });
   return call.args[0] as { maxCreditedValue: bigint; maxUncreditedValue: bigint };
 }
+
+describe("a split's dispatch, and the bytes it leaves as", () => {
+  /** A split of the store's mint, its allowance in place, with what its two hooks hear and when. */
+  async function split(over: Partial<RailContext> = {}, hooks: { dispatch?: () => void; envelope?: () => void } = {}) {
+    const r = rail();
+    r.chain.allowances.set(r.key(MANAGER), 2n * MANA);
+    // A wallet whose sends the chain confirms.
+    let n = 0;
+    const wallet = createFakeWallet({
+      onSend: () => {
+        const hash = `0x${(++n).toString(16).padStart(64, "0")}` as Hex;
+        r.chain.receipts.set(hash, "success");
+        return hash;
+      },
+    });
+    const seen: { order: string[]; dispatched: SplitDispatch | null; envelope: Hex | null } = { order: [], dispatched: null, envelope: null };
+    const fetchImpl = (async (...args: Parameters<typeof fetch>) => {
+      seen.order.push("post");
+      return r.relay.fetchImpl(...args);
+    }) as typeof fetch;
+    const done = buyMintWithCreditsAndMana(
+      { ...r.ctx, provider: wallet, fetchImpl, ...over },
+      {
+        mint,
+        credits: [credit],
+        manaGapWei: GAP,
+        onDispatch: (call) => {
+          seen.order.push("dispatch");
+          seen.dispatched = call;
+          hooks.dispatch?.();
+        },
+        onEnvelope: (bytes) => {
+          seen.order.push("envelope");
+          seen.envelope = bytes;
+          hooks.envelope?.();
+        },
+      },
+    );
+    const outcome = await done.then(
+      () => null,
+      (e: unknown) => e,
+    );
+    const asked = (method: string) => wallet.requests.filter((q) => q.method === method).length;
+    return { ...r, wallet, seen, outcome, asked };
+  }
+
+  it("relayed: its call is kept, then the exact signed execution, before anything is posted; what leaves is that one call", async () => {
+    const { relay, seen, outcome } = await split();
+    expect(outcome).toBeNull();
+    expect(seen.order).toEqual(["dispatch", "envelope", "post"]);
+    const posted = (relay.posts[0] as { transactionData: { params: [string, Hex] } }).transactionData.params[1];
+    expect(seen.envelope).toBe(posted);
+    // The very call it kept (its external call's salt and all), never a second build of it.
+    expect(decodeFunctionData({ abi: OFFCHAIN_META_TX_ABI, data: posted }).args[1]).toBe(seen.dispatched!.useCredits);
+  });
+
+  it("from the wallet: its call is kept, then the exact call data it is handed, before it is asked to send; that one call", async () => {
+    const { seen, outcome, wallet, asked } = await split({ gasless: false });
+    expect(outcome).toBeNull();
+    expect(seen.order).toEqual(["dispatch", "envelope"]);
+    expect(asked("eth_sendTransaction")).toBe(1);
+    expect(seen.envelope).toBe(wallet.sent[0]!.data);
+    expect(wallet.sent[0]!.data).toBe(seen.dispatched!.useCredits);
+  });
+
+  it("a throw while its call is kept stops it before anything is signed or sent", async () => {
+    const stop = new Error("not recorded");
+    const { relay, seen, outcome, asked } = await split({}, { dispatch: () => { throw stop; } });
+    expect(outcome).toBe(stop);
+    expect(seen.order).toEqual(["dispatch"]);
+    expect(asked("eth_signTypedData_v4") + asked("eth_sendTransaction")).toBe(0);
+    expect(relay.posts).toHaveLength(0);
+  });
+
+  it("a throw while its bytes are kept stops them unsent: relayed, signed but never posted; from the wallet, never handed over", async () => {
+    const stop = new Error("not recorded");
+    const relayed = await split({}, { envelope: () => { throw stop; } });
+    expect(relayed.outcome).toBe(stop);
+    expect(relayed.asked("eth_signTypedData_v4")).toBe(1);
+    expect(relayed.relay.posts).toHaveLength(0);
+    const direct = await split({ gasless: false }, { envelope: () => { throw stop; } });
+    expect(direct.outcome).toBe(stop);
+    expect(direct.asked("eth_sendTransaction")).toBe(0);
+  });
+});
 
 describe("the terms a split settles on", () => {
   // The split vector: a listing of 101 MANA wei with a 10% coupon moves 91; quoted 30 cents, a 10-cent part.

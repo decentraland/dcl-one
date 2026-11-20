@@ -535,10 +535,11 @@ describe("a split whose outcome is not known", () => {
   it("a hold on the item through another listing (another surface may sell it through a creator's trade) stops this one too", async () => {
     const { demo, line, unmount, again } = setup();
     unmount();
-    // This dialog buys the store's mint; the hold was written for the same item bought through a trade.
+    // This dialog buys the store's mint; the hold was written for the same item bought through a trade, under the item's
+    // own line (it names no listing).
     expect(line.listing).toEqual({ acquisition: "store" });
     localStorage.setItem(
-      `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${splitHoldLine(line.asset, { tradeId: "creator-trade" })}`,
+      `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${splitHoldLine(line.asset)}`,
       JSON.stringify({ at: Date.now(), attempt: "elsewhere", txHash: null, chainId: CHAIN.POLYGON, creditId: OTHER, creditExpiresAt: Math.floor(Date.now() / 1000) + 300 }),
     );
     again();

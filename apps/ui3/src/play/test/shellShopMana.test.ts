@@ -735,7 +735,7 @@ describe('the in-world purchase with MANA', () => {
     })
 
     // The item's line in the hold the web Shop and /play share, as both compute it for this listing.
-    const HOLD_LINE = splitHoldLine(itemAsset(CHAIN.POLYGON, CONTRACT as never, String(ITEM)), {})
+    const HOLD_LINE = splitHoldLine(itemAsset(CHAIN.POLYGON, CONTRACT as never, String(ITEM)))
     const webHold = { at: Date.now(), attempt: 'web-attempt', txHash: null, chainId: 137, creditId: `0x${'d4'.repeat(32)}`, creditExpiresAt: Math.floor(Date.now() / 1000) + 900 }
 
     it('waits on a split the web Shop left unanswered for this item: no credit asked, nothing sent', async () => {

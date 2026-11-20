@@ -35,7 +35,7 @@ afterEach(() => {
 
 const ACCOUNT = BOOK.buyer;
 const ASSET = itemAsset(CHAIN.POLYGON, BOOK.collection, "7");
-const LINE = splitHoldLine(ASSET, { acquisition: "store" });
+const LINE = splitHoldLine(ASSET);
 const CREDIT = `0x${"c1".repeat(32)}`;
 const seconds = () => Math.floor(Date.now() / 1000);
 /** A split's terms, as the web Shop's dialog or the in-world Shop keeps them with its hold. */
@@ -64,16 +64,13 @@ const hold = (over: Partial<SplitHold> = {}): SplitHold => ({
 
 describe("what a hold is kept under", () => {
   it("the item, whatever listing a surface buys it through: the same item is one hold, another item another", () => {
-    const byTrade = splitHoldLine(ASSET, { tradeId: "t-1", acquisition: "trade" });
-    // The web's item page may sell it through a creator's trade while the in-world Shop picks the store's mint.
-    expect(splitHoldLine(ASSET, { acquisition: "store" })).toBe(byTrade);
-    expect(splitHoldLine(ASSET, { tradeId: "t-2" })).toBe(byTrade);
-    expect(splitHoldLine(ASSET)).toBe(byTrade);
-    expect(byTrade).toBe(`${CHAIN.POLYGON}:${BOOK.collection}:item:7`);
-    expect(splitHoldLine(itemAsset(CHAIN.POLYGON, BOOK.collection, "8"))).not.toBe(byTrade);
-    // A hold written through one listing blocks a claim through another.
-    writeSplitHold(ACCOUNT, splitHoldLine(ASSET, { tradeId: "t-1" }), hold());
-    expect(readSplitHold(ACCOUNT, splitHoldLine(ASSET, { acquisition: "store" }))).not.toBeNull();
+    // Its line names the item and nothing of a listing: the web's creator's trade and the in-world Shop's store mint of
+    // the same item are one hold.
+    const line = splitHoldLine(ASSET);
+    expect(line).toBe(`${CHAIN.POLYGON}:${BOOK.collection}:item:7`);
+    expect(splitHoldLine(itemAsset(CHAIN.POLYGON, BOOK.collection, "8"))).not.toBe(line);
+    writeSplitHold(ACCOUNT, line, hold());
+    expect(readSplitHold(ACCOUNT, splitHoldLine(itemAsset(CHAIN.POLYGON, BOOK.collection, "7")))).not.toBeNull();
     // The key and the lock name lowercase the account, so a checksummed address finds the same hold.
     expect(splitHoldKey(ACCOUNT.toUpperCase().replace("0X", "0x"), LINE)).toBe(splitHoldKey(ACCOUNT, LINE));
     expect(splitHoldLockName(ACCOUNT.toUpperCase().replace("0X", "0x"), LINE)).toBe(splitHoldLockName(ACCOUNT, LINE));

@@ -496,6 +496,18 @@ describe("the RPC reader", () => {
     expect(await waitForReceipt(flaky, 137, "0x02", { sleep: async () => {} })).toMatchObject({ transactionHash: "0x02" });
   });
 
+  it("reads a transaction's sender, target and input; one the chain doesn't know is null", async () => {
+    const answers: Record<string, unknown> = { "0x01": { hash: "0x01", from: "0xab", to: "0xcd", input: "0x1234", nonce: "0x1" }, "0x02": null };
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      const { method, params } = JSON.parse(String(init?.body)) as { method: string; params: [string] };
+      expect(method).toBe("eth_getTransactionByHash");
+      return new Response(JSON.stringify({ result: answers[params[0]] }));
+    }) as unknown as typeof fetch;
+    const reader = createRpcReader({ url: () => "https://rpc.example", fetchImpl });
+    expect(await reader.transaction!(137, "0x01")).toEqual({ from: "0xab", to: "0xcd", input: "0x1234" });
+    expect(await reader.transaction!(137, "0x02")).toBeNull();
+  });
+
   it("lets an error answer's body go instead of leaving it open, so polling through errors leaks nothing", async () => {
     let cancelled = false;
     const body = new ReadableStream({ pull: () => new Promise<void>(() => {}), cancel: () => void (cancelled = true) });

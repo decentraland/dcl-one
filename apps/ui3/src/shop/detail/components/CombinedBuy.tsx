@@ -38,7 +38,7 @@ import { friendlyError, isRejection } from "../../checkout/lib/errors";
 import { webLock } from "../../checkout/lib/web-lock";
 import { isSettlementPending } from "../../checkout/purchase/gasless";
 import { purchaseTargetFor, resolveLine, tradeManaPrice } from "../../checkout/purchase/cart";
-import { buyMintWithCreditsAndMana, buyWithCreditsAndMana, manaSpenderFor, SaleCancelledError, splitTerms, type PurchaseTarget } from "../../checkout/purchase/mana";
+import { buyMintWithCreditsAndMana, buyWithCreditsAndMana, manaSpenderFor, SaleCancelledError, splitTerms, type PurchaseTarget, type SplitDispatch } from "../../checkout/purchase/mana";
 import type { RailContext } from "../../checkout/purchase/rail";
 import {
   claimSplitHold,
@@ -83,7 +83,8 @@ type CombinedPhase =
   | { kind: "error"; message: string };
 
 const FALLBACK = "We couldn't complete the purchase. Nothing was charged.";
-const REVERTED = "The purchase failed on-chain, so nothing was bought. The Credits it held come back on their own.";
+// Reached only before the sale leaves (a sale that left is held, whatever its receipt says): the approval's own revert.
+const APPROVAL_REVERTED = "The MANA approval failed on-chain, so nothing was bought. The Credits it held come back on their own.";
 
 // A split sent and not settled is held per account and item in every tab and on every surface (checkout/purchase/
 // splitHold.ts): this dialog claims the item's lock, reads the hold inside it, writes it before the sale may leave, and
@@ -179,7 +180,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   /** Whether the purchase agreed on as `agreed` is still this dialog's: open, with those very terms. */
   const stillAgreed = (agreed: Terms) => () => mounted.current && terms.current === agreed;
   // The hold's key: the item, whatever listing this dialog buys it through (another surface may use another).
-  const lineId = splitHoldLine(line.asset, line.listing);
+  const lineId = splitHoldLine(line.asset);
   const [sent, setSent] = useState(() => readSplitHold(wallet.account, lineId));
   useEffect(() => setSent(readSplitHold(wallet.account, lineId)), [wallet.account, lineId]);
   // Drawn again the moment the hold runs out, so a record with nothing to read can then be let go by Check again.
@@ -375,7 +376,8 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       return true;
     };
     try {
-      sentChain = manaSpenderFor("combined", target).chainId;
+      const saleChain = manaSpenderFor("combined", target).chainId;
+      sentChain = saleChain;
       // The MANA the sale moves: the mint's price, or the listing's after its coupon. A USD-pegged listing's is only fixed
       // at settlement, so it has no split, and nothing is authorized for one.
       const price = target.kind === "trade" ? tradeManaPrice(target.trade, target.coupon) : BigInt(target.mint.item.priceWei);
@@ -406,6 +408,13 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       });
       const id = creditId;
       guard.current.submitStarted(id);
+      /** Keeps `sale` as this run's record before the sale may leave: a browser that cannot keep it sends nothing. */
+      const recordSale = (sale: SplitSale) => {
+        kept.sale = sale;
+        if (!writeSplitHold(ctx.buyer, lineId, { at: Date.now(), attempt, txHash: null, chainId: saleChain, creditId: id, creditExpiresAt, sale })) {
+          throw new SplitNotRecorded(NOT_RECORDED);
+        }
+      };
       const gapArgs = {
         credits: [{ ...authorized.credit }],
         manaGapWei: gap,
@@ -419,10 +428,10 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
         },
         onUnobservable: () => guard.current.unobservable(id),
         // Recorded before it may leave, for every tab and a restart: a split the browser cannot record is not sent.
-        onDispatch: (call: { manager: string; target: string; selector: `0x${string}`; callData: `0x${string}` }) => {
-          kept.sale = {
+        onDispatch: (call: SplitDispatch) => {
+          recordSale({
             buyer: ctx.buyer.toLowerCase(),
-            chainId: sentChain!,
+            chainId: saleChain,
             manager: call.manager.toLowerCase(),
             creditId: id,
             creditWei: authorized.credit.amount,
@@ -431,18 +440,14 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
             selector: call.selector,
             callData: call.callData,
             hold: { line: lineId, attempt },
-          };
-          if (!writeSplitHold(ctx.buyer, lineId, { at: Date.now(), attempt, txHash: null, chainId: sentChain, creditId: id, creditExpiresAt, sale: kept.sale })) {
-            throw new SplitNotRecorded(NOT_RECORDED);
-          }
+          });
           dispatched = true;
         },
         // And the identity of the exact bytes it leaves as, recorded before they leave: only a revert of those is this sale's.
         onEnvelope: (dispatchedAs: `0x${string}`) => {
-          kept.sale = { ...kept.sale!, envelope: splitEnvelope(dispatchedAs) };
-          if (!writeSplitHold(ctx.buyer, lineId, { at: Date.now(), attempt, txHash: null, chainId: sentChain, creditId: id, creditExpiresAt, sale: kept.sale })) {
-            throw new SplitNotRecorded(NOT_RECORDED);
-          }
+          // Its terms come first (`onDispatch`); bytes with none recorded before them are not sent.
+          if (!kept.sale) throw new SplitNotRecorded(NOT_RECORDED);
+          recordSale({ ...kept.sale, envelope: splitEnvelope(dispatchedAs) });
         },
       };
       const hash =
@@ -488,7 +493,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
               : isRejection(e) || isSignatureDeclined(e)
                 ? "You cancelled the request in your wallet. Nothing was charged."
                 : isRevertedTxError(e)
-                  ? REVERTED
+                  ? APPROVAL_REVERTED
                   : friendlyError(e, FALLBACK, { sale: true });
       // Nothing of this run is left confirming: its own record goes, and its outcome shows once it has (read back). One the
       // storage kept still holds the item, here and on the next open: so it is shown held, for what it is, and Check again

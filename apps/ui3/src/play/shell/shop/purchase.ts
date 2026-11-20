@@ -1773,7 +1773,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     }
     // The item's hold, shared with the web Shop: one split of it at a time, on either, until the last one is found out.
     const line = part.priced[0]!.line
-    const holdLine = splitHoldLine(line.asset, line.listing)
+    const holdLine = splitHoldLine(line.asset)
     let claim: Awaited<ReturnType<typeof claimSplitHold>>
     try {
       claim = await claimSplitHold(locks, quote.buyer, holdLine)

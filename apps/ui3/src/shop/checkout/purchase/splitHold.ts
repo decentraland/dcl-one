@@ -15,7 +15,6 @@
 import type { ShopClient } from "@shop/api/shop";
 import { fetchUserPurchases, type PurchaseRecord } from "@shop/credits/credits";
 import { assetKey, type AssetId } from "@shop/model/asset";
-import type { CartListingRef } from "@shop/model/purchase";
 import type { ChainReader } from "../chain/rpc";
 import { newAttemptId, webLock } from "../lib/web-lock";
 import { isSplitSale, splitExecution, type SplitEvidenceReader, type SplitSale } from "./splitEvidence";
@@ -65,9 +64,9 @@ export type SplitHold = {
 /**
  * What a hold is kept under for one account: the item (`assetKey`), never its listing. The web Shop and the in-world Shop
  * may buy the same item through different listings (a creator's trade, the store's mint); either way it is the same item,
- * and one unsettled split of it holds every other. `_listing` is accepted so a caller passes what it has.
+ * and one unsettled split of it holds every other.
  */
-export function splitHoldLine(asset: AssetId, _listing?: CartListingRef): string {
+export function splitHoldLine(asset: AssetId): string {
   return assetKey(asset);
 }
 
