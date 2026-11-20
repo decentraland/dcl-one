@@ -43,7 +43,8 @@ fn absolute_default_image(image: &str, events_asset_base: &str) -> String {
     }
 }
 
-/// A notice's image as the read projection serves it: posters on their mount, the default on the asset mount.
+/// A notice's image as the read projection serves it: posters on their mount,
+/// the default on the asset mount, anything else as stored.
 pub fn notice_image_url(
     image: &str,
     configured_public_base: Option<&str>,
@@ -398,7 +399,17 @@ mod tests {
         assert_eq!(
             super::notice_image_url("/other/a.webp", public.as_deref(), &assets),
             "/other/a.webp",
-            "other paths stay as stored, as on read"
+            "other paths stay as stored"
+        );
+        assert_eq!(
+            super::event_image_url(
+                "/other/a.webp",
+                rewrite.as_deref(),
+                public.as_deref(),
+                &assets
+            ),
+            "/other/a.webp",
+            "as on read"
         );
     }
 
