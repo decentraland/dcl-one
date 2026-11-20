@@ -78,7 +78,7 @@ async fn a_retried_deployment_keeps_its_record_until_its_write_commits() {
     ));
     let retry = RetryFailedDeployments::new(
         RetryFailedConfig::default(),
-        reqwest::Client::new(),
+        catalyst_content::sync::test_sync_client(reqwest::Client::new()),
         storage.clone(),
         deployer.clone(),
         store.clone(),
@@ -126,7 +126,7 @@ async fn a_retried_deployment_keeps_its_record_until_its_write_commits() {
     ));
     let retry = RetryFailedDeployments::new(
         RetryFailedConfig::default(),
-        reqwest::Client::new(),
+        catalyst_content::sync::test_sync_client(reqwest::Client::new()),
         storage,
         deployer.clone(),
         store,

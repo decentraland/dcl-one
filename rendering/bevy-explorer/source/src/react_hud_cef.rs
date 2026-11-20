@@ -65,6 +65,8 @@ pub struct ReactHudCefPlugin {
     /// --guest: injected into the page URL as ?guest=1, the page's own auto guest-login boot flag
     /// (parity with ?guest=1 on web).
     pub guest: bool,
+    /// --debug-panel: shows the corner launcher through the HUD's debugPanel query switch.
+    pub debug_panel: bool,
     /// --autopilot: injected as ?autopilot, which takes the page through its sign-in and
     /// destination without a person (always as the local guest; a stored login is never used).
     pub autopilot: bool,
@@ -76,6 +78,7 @@ struct ReactHudOptions {
     server: Option<String>,
     position: Option<String>,
     guest: bool,
+    debug_panel: bool,
     autopilot: bool,
 }
 
@@ -85,6 +88,7 @@ impl Plugin for ReactHudCefPlugin {
             server: self.server.clone(),
             position: self.position.clone(),
             guest: self.guest,
+            debug_panel: self.debug_panel,
             autopilot: self.autopilot,
         });
         // Needed to read engine fps for the perf overlay; may already be added by --log-fps/preview.
@@ -229,6 +233,10 @@ fn spawn_hud(
     if options.guest {
         url.push_str(if url.contains('?') { "&" } else { "?" });
         url.push_str("guest=1");
+    }
+    if options.debug_panel {
+        url.push_str(if url.contains('?') { "&" } else { "?" });
+        url.push_str("debugPanel=1");
     }
     if options.autopilot {
         url.push_str(if url.contains('?') { "&" } else { "?" });
@@ -651,15 +659,18 @@ fn on_page_envelope(
     // through one at a time.
     if env.get("to").and_then(|t| t.as_str()) == Some("engine") {
         match env.get("kind").and_then(|k| k.as_str()) {
-            Some("prefsLoad") => {
-                commands.trigger_targets(
-                    HostEmitEvent {
-                        id: "prefs".to_string(),
-                        payload: serde_json::to_string(&state.prefs).unwrap(),
-                    },
-                    state.hud,
-                );
-            }
+            Some("prefsLoad") => match serde_json::to_string(&state.prefs) {
+                Ok(payload) => {
+                    commands.trigger_targets(
+                        HostEmitEvent {
+                            id: "prefs".to_string(),
+                            payload,
+                        },
+                        state.hud,
+                    );
+                }
+                Err(e) => error!("[react-hud-cef] failed to serialize prefs: {e}"),
+            },
             Some("prefSet") => {
                 if let (Some(key), Some(value)) = (
                     env.get("key").and_then(|k| k.as_str()),
@@ -788,10 +799,17 @@ fn read_prefs() -> BTreeMap<String, String> {
 
 fn write_prefs(prefs: &BTreeMap<String, String>) {
     let Some(file) = prefs_file() else { return };
+    let json = match serde_json::to_string(prefs) {
+        Ok(json) => json,
+        Err(e) => {
+            error!("[react-hud-cef] failed to serialize prefs: {e}");
+            return;
+        }
+    };
     if let Some(folder) = file.parent() {
         let _ = std::fs::create_dir_all(folder);
     }
-    if let Err(e) = std::fs::write(&file, serde_json::to_string(prefs).unwrap()) {
+    if let Err(e) = std::fs::write(&file, json) {
         warn!("[react-hud-cef] failed to write {file:?}: {e}");
     }
 }

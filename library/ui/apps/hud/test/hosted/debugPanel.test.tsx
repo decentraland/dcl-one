@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { hasOpenPopup } from '../../design/popups'
 import { DebugPanelHost } from '../../features/debug/DebugPanel'
@@ -11,19 +11,28 @@ vi.mock('@hud-host', async (original) => ({ ...(await original<object>()), siteR
 
 afterEach(() => {
   site.revision = null
+  window.history.replaceState(null, '', '/')
   vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
-it.each([true, false])('gates the direct debug launcher on the engine development build (%s)', async (development) => {
+it.each([
+  ['/', true, false],
+  ['/?debugPanel=0', true, false],
+  ['/?debugPanel=1', false, true],
+  ['/?native=1&debugPanel=1', false, true]
+] as const)('shows the launcher at %s (development build %s) only when opted in', async (url, development, optedIn) => {
+  window.history.replaceState(null, '', url)
   const session = fakeSession()
   session.runDebugCommand = vi.fn(async (line: string) =>
     line === '/debug_panel --dev-build' ? String(development) : '[]')
   render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
-  await waitFor(() => expect(session.runDebugCommand).toHaveBeenCalledWith('/debug_panel --dev-build'))
   const button = { name: 'Toggle debug panel' }
-  if (!development) {
+  expect(session.runDebugCommand).not.toHaveBeenCalled()
+  if (!optedIn) {
     expect(screen.queryByRole('button', button)).toBeNull()
+    await act(async () => requestDebugPanel('', vi.fn()))
+    expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBeInTheDocument()
     return
   }
   const launcher = () => screen.getByRole('button', button)
@@ -48,7 +57,6 @@ it('discovers plugin sections, samples expanded sections and dispatches their ac
   ]
   let seconds = 1
   const command = vi.fn(async (line: string) => {
-    if (line === '/debug_panel --dev-build') return 'false'
     if (line === '/debug_panel') return JSON.stringify(sections)
     if (line === '/clock_test') return JSON.stringify({ seconds })
     if (line === '/advance_test') { seconds += 10; return 'Clock advanced' }
@@ -61,7 +69,7 @@ it('discovers plugin sections, samples expanded sections and dispatches their ac
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Debug panel' })) })
     expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Transport' })).toHaveAttribute('aria-expanded', 'false')
-    expect(command.mock.calls).toEqual([['/debug_panel --dev-build'], ['/debug_panel']])
+    expect(command.mock.calls).toEqual([['/debug_panel']])
     const clock = screen.getByRole('button', { name: 'Clock' })
     const sectionHeaders = () => screen.getAllByRole('button', { name: /^(Transport|Clock|Session)$/ })
     const originalOrder = sectionHeaders()
@@ -120,7 +128,6 @@ it('shows only the next connection action and follows changes from the engine', 
     type: 'actionButton', options: { enable: ['Connect', 'connect'], disable: ['Disconnect', 'disconnect'] }
   } }
   session.runDebugCommand = vi.fn(async (line: string) => {
-    if (line === '/debug_panel --dev-build') return 'true'
     if (line === '/debug_panel') return JSON.stringify([{ title: 'Pulse', query: '/state', fields: [], actions: [], inputs: [input] }])
     if (line === '/state') return JSON.stringify({ enabled, unavailable: { enabled: 'No session' } })
     if (line === '/connection disconnect') {
@@ -226,17 +233,6 @@ it('drops focus from a control clicked with the pointer and keeps it in the sear
   act(() => search.focus())
   fireEvent.click(search, { detail: 1 })
   expect(document.activeElement).toBe(search)
-})
-
-it('asks the engine for the development build once for the sidebar and every open', async () => {
-  const session = fakeSession()
-  session.runDebugCommand = vi.fn(async (line: string) => line === '/debug_panel --dev-build' ? 'true' : '[]')
-  render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
-  await act(async () => requestDebugPanel('', vi.fn()))
-  await act(async () => requestDebugPanel('', vi.fn()))
-  await act(async () => requestDebugPanel('', vi.fn()))
-  expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBeInTheDocument()
-  expect(vi.mocked(session.runDebugCommand).mock.calls.filter(([line]) => line === '/debug_panel --dev-build')).toHaveLength(1)
 })
 
 it('keeps the panel open when the world sidebar unmounts and closes it with its host', async () => {

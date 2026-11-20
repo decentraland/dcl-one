@@ -175,7 +175,7 @@ describe("track (fetch mocked)", () => {
     expect(withoutSensitiveParams("/a?token=x&")).toBe("/a");
     expect(withoutSensitiveParams("/a?token=x&&y=1")).toBe("/a?y=1");
     expect(withoutSensitiveParams("/a?q=token#token=1")).toBe("/a?q=token");
-    expect(withoutSensitiveParams("/create/scene-editor?project=p#token=abc&x=1")).toBe("/create/scene-editor?project=p#x=1");
+    expect(withoutSensitiveParams("/create/preview?project=p#token=abc&x=1")).toBe("/create/preview?project=p#x=1");
     expect(withoutSensitiveParams("/a#top")).toBe("/a#top");
     expect(withoutSensitiveParams("/a?#token")).toBe("/a?#token");
     expect(withoutSensitiveParams("")).toBe("");

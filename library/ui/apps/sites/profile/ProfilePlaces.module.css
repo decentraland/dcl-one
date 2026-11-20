@@ -1,0 +1,75 @@
+/* The profile Places panel around the shared PlaceCard, Tabs, Button and Spinner. The grid's 260px and 220px column
+ * floors follow the source and have no tokens. */
+.root {
+  width: 100%;
+}
+
+.filters {
+  margin-bottom: var(--dcl-space-24);
+}
+
+.tabLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+}
+
+.status,
+.count {
+  margin: 0 0 var(--dcl-space-16);
+}
+
+.status {
+  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
+  color: var(--dcl-text-primary);
+}
+
+.count {
+  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
+  color: var(--dcl-text-secondary);
+}
+
+.note {
+  color: var(--dcl-text-disabled);
+  font-style: italic;
+}
+
+.spinner {
+  display: block;
+  margin: var(--dcl-space-24) 0;
+}
+
+.visuallyHidden {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.errorAction {
+  margin-bottom: var(--dcl-space-16);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--dcl-space-16);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  min-width: 0;
+}
+
+@media (min-width: 768px) {
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  }
+}
