@@ -592,8 +592,9 @@ describe("a split whose outcome is not known", () => {
     const pending = /Your approval was sent and is still confirming/;
     expect(await screen.findByText(pending, {}, { timeout: 5000 })).toBeTruthy();
     expect(demo.relay.posts).toHaveLength(1);
-    // It has not landed yet (the fake relay applied it; take it back): a retry reads the allowance and grants nothing.
+    // It has not landed yet (the fake relay applied it; take back its allowance and its nonce): a retry grants nothing.
     demo.chain.allowances.delete(managerKey());
+    demo.chain.nonces.delete(manaNonceKey());
     await act(async () => fireEvent.click(screen.getByTestId("authorize-step-action")));
     expect(await screen.findByText(pending, {}, { timeout: 5000 })).toBeTruthy();
     expect(demo.relay.posts).toHaveLength(1);

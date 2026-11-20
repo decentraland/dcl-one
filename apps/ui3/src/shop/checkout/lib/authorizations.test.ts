@@ -65,13 +65,24 @@ describe("an exact grant that may still land", () => {
   const recordKey = `dcl-shop-exact-grant:v2:${BOOK.buyer.toLowerCase()}:${CHAIN.POLYGON}:${MANA}:${MANAGER.toLowerCase()}`;
 
   /**
-   * A relay in `mode` whose sends the chain confirms (`relayed` says how, per post) but whose approves it does not apply,
-   * a wallet whose sends it confirms too, and one browser's Web Locks.
+   * A relay in `mode` whose sends the chain confirms (`relayed` says how, per post), a wallet whose sends it confirms too,
+   * and one browser's Web Locks. An approve the relay answered with its hash, and that succeeds, has run: its nonce is
+   * spent and the allowance is its amount. One whose answer was lost has not run yet, as far as the reads go.
    */
   function rail(mode: "fail-after-send" | "refuse", relayed: (post: number) => "success" | "reverted" = () => "success") {
     const chain = createFakeChain();
     let posts = 0;
-    const relay = createFakeRelay({ mode, onRelay: (hash) => chain.receipts.set(hash.toLowerCase(), relayed(++posts)) });
+    const relay = createFakeRelay({
+      mode,
+      onRelay: (hash, body) => {
+        const status = relayed(++posts);
+        chain.receipts.set(hash.toLowerCase(), status);
+        const approval = relayedApproval(body);
+        if (status !== "success" || !approval || relay.state.mode !== "ok") return;
+        chain.nonces.set(nonceKey, (chain.nonces.get(nonceKey) ?? 0n) + 1n);
+        chain.allowances.set(allowanceKey, approval.amount);
+      },
+    });
     let n = 0;
     const wallet = createFakeWallet({
       onSend: () => {
@@ -298,6 +309,180 @@ describe("an exact grant that may still land", () => {
     }
     expect(readPendingGrant(allowance, BOOK.buyer)).toEqual(replaced);
     expect(await exactAllowanceReady(allowance, BOOK.buyer, 1n, ctx.reader)).toBe(false);
+  });
+
+  it("a replacement refused as not sent whose replaced approve can't be written back keeps its own record at that nonce: a reopen still waits", async () => {
+    const { chain, relay, ctx, signed } = rail("fail-after-send");
+    await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: 100n })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    relay.state.mode = "refuse";
+    // The replacement's record is written; the write putting the approve of 100 back in its place fails.
+    const setItem = Storage.prototype.setItem;
+    let writes = 0;
+    const failing = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key: string, value: string) {
+      if (key === recordKey && ++writes > 1) throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+      setItem.call(this, key, value);
+    });
+    const clock = later(PENDING_GRANT_HOLD_MS + 1);
+    try {
+      await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: 1n })).rejects.toThrow();
+    } finally {
+      clock.mockRestore();
+      failing.mockRestore();
+    }
+    expect(writes).toBe(2);
+    // The approve of 100 may still run at nonce 0: the replacement's record, at that very nonce, is what holds the sale.
+    expect(readPendingGrant(allowance, BOOK.buyer)).toMatchObject({ amount: "1", nonce: "0" });
+    // A reopen, with another grant covering the allowance: the sale still waits, and nothing new is signed.
+    anotherTab();
+    chain.allowances.set(allowanceKey, 10n ** 21n);
+    expect(await exactAllowanceReady(allowance, BOOK.buyer, 1n, ctx.reader)).toBe(false);
+    await expect(ensureAuthorization({ ...ctx, auth: allowance, requiredWei: 1n, exact: true })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    expect(signed()).toEqual(["0", "0"]);
+  });
+
+  /** A lost approve of `lost` first (none for a first send), so that the approve of GAP is sent anew, again, or over it. */
+  const SENDS = [
+    ["a first send", null],
+    ["a resend", GAP],
+    ["a replacement", 100n],
+  ] as const;
+  const FOREIGN = `0x${"ab".repeat(32)}` as Hex;
+
+  it.each(SENDS)("%s the relay answers with another transaction's hash keeps its record while its nonce can run, a covered allowance notwithstanding", async (_, lost) => {
+    const { chain, relay, ctx, signed } = rail("fail-after-send");
+    if (lost !== null) await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: lost })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    relay.state.mode = "ok";
+    // That hash succeeded, and another grant covers the allowance; nonce 0 is still unspent.
+    const fetchImpl = (async () => {
+      chain.receipts.set(FOREIGN, "success");
+      chain.allowances.set(allowanceKey, 10n ** 21n);
+      return new Response(JSON.stringify({ ok: true, txHash: FOREIGN }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const clock = later(PENDING_GRANT_HOLD_MS + 1);
+    try {
+      await expect(setAuthorization({ ...ctx, fetchImpl, auth: allowance, active: true, amount: GAP })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    } finally {
+      clock.mockRestore();
+    }
+    expect(readPendingGrant(allowance, BOOK.buyer)).toMatchObject({ amount: "61", nonce: "0" });
+    expect(await exactAllowanceReady(allowance, BOOK.buyer, GAP, ctx.reader)).toBe(false);
+    // Its nonce passes with the allowance in place: now the record goes, and nothing more is signed or sent.
+    const before = signed();
+    chain.nonces.set(nonceKey, 1n);
+    await ensureAuthorization({ ...ctx, auth: allowance, requiredWei: GAP, exact: true });
+    expect(readPendingGrant(allowance, BOOK.buyer)).toBeNull();
+    expect(signed()).toEqual(before);
+  });
+
+  it.each(SENDS)("%s whose receipt reads before its nonce does keeps its record, then settles once the nonce read catches up", async (_, lost) => {
+    const { chain, relay, ctx, signed } = rail("fail-after-send");
+    if (lost !== null) await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: lost })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    relay.state.mode = "ok";
+    // The approve runs and its receipt reads, but the node the nonce is read from still answers 0.
+    const fetchImpl = (async (...args: Parameters<typeof fetch>) => {
+      const answer = await relay.fetchImpl(...args);
+      chain.nonces.set(nonceKey, 0n);
+      return answer;
+    }) as typeof fetch;
+    const clock = later(PENDING_GRANT_HOLD_MS + 1);
+    try {
+      await expect(setAuthorization({ ...ctx, fetchImpl, auth: allowance, active: true, amount: GAP })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    } finally {
+      clock.mockRestore();
+    }
+    expect(chain.allowances.get(allowanceKey)).toBe(GAP);
+    expect(readPendingGrant(allowance, BOOK.buyer)).toMatchObject({ amount: "61", nonce: "0" });
+    expect(await exactAllowanceReady(allowance, BOOK.buyer, GAP, ctx.reader)).toBe(false);
+    const before = { signed: signed(), posts: relay.posts.length };
+    chain.nonces.set(nonceKey, 1n);
+    await ensureAuthorization({ ...ctx, auth: allowance, requiredWei: GAP, exact: true });
+    expect(readPendingGrant(allowance, BOOK.buyer)).toBeNull();
+    expect({ signed: signed(), posts: relay.posts.length }).toEqual(before);
+  });
+
+  it("a successful receipt with the nonce passed but the allowance short (another call took the nonce) waits, and the next try approves anew", async () => {
+    const { chain, relay, ctx, signed } = rail("fail-after-send");
+    relay.state.mode = "ok";
+    const fetchImpl = (async () => {
+      chain.receipts.set(FOREIGN, "success");
+      chain.nonces.set(nonceKey, 1n);
+      return new Response(JSON.stringify({ ok: true, txHash: FOREIGN }), { status: 200 });
+    }) as unknown as typeof fetch;
+    await expect(setAuthorization({ ...ctx, fetchImpl, auth: allowance, active: true, amount: GAP })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    // Nonce 0 is spent, so that approve can never run: its record goes, and the allowance says no.
+    expect(readPendingGrant(allowance, BOOK.buyer)).toBeNull();
+    expect(await exactAllowanceReady(allowance, BOOK.buyer, GAP, ctx.reader)).toBe(false);
+    await setAuthorization({ ...ctx, auth: allowance, active: true, amount: GAP });
+    expect(signed()).toEqual(["0", "1"]);
+    expect(await exactAllowanceReady(allowance, BOOK.buyer, GAP, ctx.reader)).toBe(true);
+  });
+
+  it("a successful receipt whose nonce can't be read keeps its record: no answer is no proof", async () => {
+    const { chain, relay, ctx } = rail("fail-after-send");
+    relay.state.mode = "ok";
+    let down = false;
+    const reader: ChainReader = {
+      ...chain,
+      call: async (chainId, to, data) => {
+        if (down && data.startsWith("0x2d0335ab")) throw new Error("upstream unavailable");
+        return chain.call(chainId, to, data);
+      },
+    };
+    const fetchImpl = (async (...args: Parameters<typeof fetch>) => {
+      const answer = await relay.fetchImpl(...args);
+      down = true;
+      return answer;
+    }) as typeof fetch;
+    await expect(setAuthorization({ ...ctx, reader, fetchImpl, auth: allowance, active: true, amount: GAP })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    expect(readPendingGrant(allowance, BOOK.buyer)).toMatchObject({ amount: "61", nonce: "0" });
+    expect(await exactAllowanceReady(allowance, BOOK.buyer, GAP, reader)).toBe(false);
+    down = false;
+    await ensureAuthorization({ ...ctx, auth: allowance, requiredWei: GAP, exact: true });
+    expect(readPendingGrant(allowance, BOOK.buyer)).toBeNull();
+  });
+
+  it("a replacement is signed only at the replaced approve's own nonce: one that moves before the signature asks the wallet nothing", async () => {
+    const { chain, relay, ctx, signed } = rail("fail-after-send");
+    await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: 100n })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    const replaced = readPendingGrant(allowance, BOOK.buyer)!;
+    relay.state.mode = "ok";
+    // The approve of 100 lands between the read that finds it open and the one a replacement would be signed at.
+    let reads = 0;
+    const reader: ChainReader = {
+      ...chain,
+      call: async (chainId, to, data) => {
+        const out = await chain.call(chainId, to, data);
+        if (data.startsWith("0x2d0335ab") && ++reads === 1) {
+          chain.nonces.set(nonceKey, 1n);
+          chain.allowances.set(allowanceKey, 100n);
+        }
+        return out;
+      },
+    };
+    const clock = later(PENDING_GRANT_HOLD_MS + 1);
+    try {
+      await expect(setAuthorization({ ...ctx, reader, auth: allowance, active: true, amount: 1n })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    } finally {
+      clock.mockRestore();
+    }
+    expect(signed()).toEqual(["0"]);
+    expect(relay.posts).toHaveLength(1);
+    expect(readPendingGrant(allowance, BOOK.buyer)).toEqual(replaced);
+    // Next try: past its nonce the record goes, and the 100 it left covers the gap of 1.
+    await setAuthorization({ ...ctx, auth: allowance, active: true, amount: 1n });
+    expect(readPendingGrant(allowance, BOOK.buyer)).toBeNull();
+    expect(signed()).toEqual(["0"]);
+  });
+
+  it("a record whose nonce is ahead of the token's is never replaced by a signature at that future nonce", async () => {
+    const { relay, ctx, signatures } = rail("fail-after-send");
+    relay.state.mode = "ok";
+    const record = { at: Date.now() - PENDING_GRANT_HOLD_MS - 1, attempt: "ahead", amount: "100", to: MANA, data: signedApprove(100n), nonce: "5" };
+    localStorage.setItem(recordKey, JSON.stringify(record));
+    await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: 1n })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    expect(signatures()).toBe(0);
+    expect(relay.posts).toHaveLength(0);
+    expect(readPendingGrant(allowance, BOOK.buyer)).toEqual(record);
   });
 
   it("with the relay off, a recorded approve that may still run says the approval can't be sent from here, not that it is confirming", async () => {

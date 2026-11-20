@@ -8,7 +8,7 @@ import type { WalletKind } from "../../wallet/session";
 import { COLLECTION_MINTER_ABI, ERC20_ABI, ERC721_ABI } from "@shop/checkout/chain/abi";
 import { gaslessEnabled, rpcUrl } from "../chain/config";
 import { COLLECTION_V2_DOMAIN, requireContracts } from "../chain/contracts";
-import { decodeExecuteMetaTransaction, isSignatureDeclined, provedNotSent, readMetaTxNonce, relayMetaTransaction, relaySignedMetaTransaction, type MetaTxTarget } from "../chain/metatx";
+import { decodeExecuteMetaTransaction, isSignatureDeclined, NonceMovedError, provedNotSent, readMetaTxNonce, relayMetaTransaction, relaySignedMetaTransaction, type MetaTxTarget } from "../chain/metatx";
 import { shopChainReader, waitForReceipt, type ChainReader } from "../chain/rpc";
 import { sendAndConfirm, TxPendingError, TxRevertedError } from "../chain/wallet";
 import { activeChainId } from "./network";
@@ -253,6 +253,15 @@ function writePendingGrant(auth: ShopAuthorization, account: string, grant: Pend
   }
 }
 
+/**
+ * Puts `next` in `current`'s place, in one write, only while the record is `current`'s attempt. Should the write fail,
+ * `current` stays: callers rely on that (a replacement left at the very nonce it shares with `next` still holds the sale).
+ */
+function replacePendingGrant(auth: ShopAuthorization, account: string, current: PendingGrant, next: PendingGrant): boolean {
+  if (readPendingGrant(auth, account)?.attempt !== current.attempt) return false;
+  return writePendingGrant(auth, account, next);
+}
+
 /** Clears the record only while it is `grant`'s attempt: another attempt's stays. */
 function clearPendingGrant(auth: ShopAuthorization, account: string, grant: PendingGrant | null): void {
   if (!grant) return;
@@ -309,7 +318,8 @@ async function underGrantLock<T>(opts: AuthorizationContext & { auth: ShopAuthor
  * A new grant goes through the relay only, recorded before it may leave (one this browser cannot record is not sent,
  * `GrantNotRecordedError`). The wallet never sends one: its approve consumes no meta-transaction nonce, so nothing would
  * reconcile it. Without the relay, or when it proves nothing was sent, nothing goes out (`ExactGrantUnavailableError`, or
- * the relay's own refusal).
+ * the relay's own refusal). A successful receipt for the hash the relay answered retires no record on its own: the record
+ * goes once the target's nonce has passed the one it signed, and the allowance then says whether the grant is in place.
  */
 async function grantExactly(opts: AuthorizationContext & { auth: ShopAuthorization; amount: bigint }): Promise<void> {
   return underGrantLock(opts, () => grantExactlyHeld(opts));
@@ -354,7 +364,8 @@ async function grantExactlyHeld(opts: AuthorizationContext & { auth: ShopAuthori
       functionData,
       relayerUrl: opts.relayerUrl,
       fetchImpl: opts.fetchImpl,
-      ...(supersede ? { minNonce: BigInt(supersede.nonce) } : {}),
+      // A replacement is signed only at the replaced one's own nonce, read as exactly that before the wallet is asked.
+      ...(supersede ? { exactNonce: BigInt(supersede.nonce) } : {}),
       onSignedCall: ({ to, data, nonce }) => {
         // Signed, not yet recorded or sent: a purchase cancelled meanwhile leaves no record and sends nothing.
         if (opts.live?.() === false) throw new GrantCancelledError();
@@ -370,18 +381,34 @@ async function grantExactlyHeld(opts: AuthorizationContext & { auth: ShopAuthori
     const receipt = await waitForReceipt(reader, auth.chainId, txHash);
     if (!receipt) throw new TxPendingError(txHash, "The authorization");
     if (receipt.status === "reverted") throw new TxRevertedError(receipt, "The authorization");
-    clearPendingGrant(auth, account, sent.grant);
+    await confirmGrant(opts, sent.grant!, amount, reader, target);
   } catch (e) {
+    // The nonce moved (or reads inconsistent) before a replacement was signed: nothing was asked, the replaced one stays.
+    if (e instanceof NonceMovedError) throw new AuthorizationPendingError();
     if (sent.grant && !provedNotSent(e) && !(e instanceof TxRevertedError)) throw e instanceof TxPendingError ? e : new AuthorizationPendingError();
     // Never sent (declined, refused before it left, or as not sent) or reverted: its record goes, and nothing goes in its
-    // place. One it was to replace is put back: that one may still run.
-    clearPendingGrant(auth, account, sent.grant);
-    if (supersede && sent.grant) writePendingGrant(auth, account, supersede);
+    // place. One it was to replace goes back in its place, in one write, since that one may still run; should that write
+    // fail, the replacement's record stays, at the same nonce, and the sale still waits on it.
+    if (supersede && sent.grant) replacePendingGrant(auth, account, sent.grant, supersede);
+    else clearPendingGrant(auth, account, sent.grant);
     throw e;
   }
 }
 
-/** The recorded approve, sent again exactly as signed. Its record goes only once a send of it confirms. */
+/**
+ * Settles a recorded grant whose send the relay answered and whose receipt for that hash succeeded. That is not proof on
+ * its own (the relay may answer another hash; a reader may lag): the record goes only once the token's nonce has passed
+ * the one it signed, and then the allowance says whether the grant is in place. While the nonce is still usable, or can't
+ * be read, it stays recorded (`AuthorizationPendingError`); past it with the allowance short, the next try grants anew.
+ */
+async function confirmGrant(opts: AuthorizationContext & { auth: ShopAuthorization }, grant: PendingGrant, amount: bigint, reader: ChainReader, target: MetaTxTarget | null): Promise<void> {
+  const { auth, account } = opts;
+  if (await pendingGrantOpen(grant, account, reader, target)) throw new AuthorizationPendingError();
+  clearPendingGrant(auth, account, grant);
+  if (!(await getAuthorizationStatus(auth, account, amount, reader).catch(() => false))) throw new AuthorizationPendingError();
+}
+
+/** The recorded approve, sent again exactly as signed. Its record goes as a first send's does (`confirmGrant`). */
 async function resendPendingGrant(opts: AuthorizationContext & { auth: ShopAuthorization }, grant: PendingGrant, reader: ChainReader): Promise<void> {
   const { auth, account } = opts;
   try {
@@ -389,7 +416,7 @@ async function resendPendingGrant(opts: AuthorizationContext & { auth: ShopAutho
     const receipt = await waitForReceipt(reader, auth.chainId, txHash);
     if (!receipt) throw new TxPendingError(txHash, "The authorization");
     if (receipt.status === "reverted") throw new TxRevertedError(receipt, "The authorization");
-    clearPendingGrant(auth, account, grant);
+    await confirmGrant(opts, grant, BigInt(grant.amount), reader, metaTxTargetFor(auth));
   } catch (e) {
     // Refused, reverted (its nonce may be spent already) or lost: still reconciled by its nonce on the next try.
     throw e instanceof TxPendingError ? e : new AuthorizationPendingError();

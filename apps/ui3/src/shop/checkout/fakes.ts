@@ -290,7 +290,8 @@ export function relayedApproval(body: unknown): { owner: string; spender: string
 
 /**
  * A relay endpoint (POST {base}/transactions): hashes in order, or the refusal/outage asked for. With a
- * `chain`, a relayed MANA approve raises that allowance and every relayed hash gets the receipt `confirm`.
+ * `chain`, a relayed MANA approve runs (it sets that allowance and spends the owner's meta-transaction nonce at the
+ * token) and every other relayed hash gets the receipt `confirm`.
  * `refuse` answers a refusal before any send, as `refuseStatus`: 400 by default (a reverted gas
  * estimate), 503 for fees above the cap. It carries the relay's evidence that nothing was sent
  * (`"not_sent": true`) unless `refuseEvidence` is false, as from a relay of another version.
@@ -333,6 +334,9 @@ export function createFakeRelay(
       const approval = relayedApproval(body);
       if (approval) {
         opts.chain.allowances.set(`${opts.chainId ?? CHAIN.POLYGON}:${approval.owner}:${approval.spender}`, approval.amount);
+        const token = (body as { transactionData: { params: [string, Hex] } }).transactionData.params[0].toLowerCase();
+        const nonce = `${token}:${approval.owner}`;
+        opts.chain.nonces.set(nonce, (opts.chain.nonces.get(nonce) ?? 0n) + 1n);
         opts.chain.receipts.set(hash.toLowerCase(), "success");
       } else if (state.confirm !== "none") opts.chain.receipts.set(hash.toLowerCase(), state.confirm);
     }

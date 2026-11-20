@@ -22,6 +22,7 @@ import {
   encodeExecuteMetaTransaction,
   GaslessUnavailableError,
   metaTxType,
+  NonceMovedError,
   normalizeSignature,
   refusedBeforeBroadcast,
   relayMetaTransaction,
@@ -296,6 +297,31 @@ describe("relaying a meta-transaction", () => {
     await expect(
       relayMetaTransaction({ provider, reader: fakeReader({ code: async () => "0x6080" }), target, from, functionData: "0x12" }),
     ).rejects.toBeInstanceOf(GaslessUnavailableError);
+  });
+
+  it("with an exact nonce, a nonce that reads as any other (behind or ahead) asks the wallet nothing and sends nothing", async () => {
+    const asked: string[] = [];
+    const provider = {
+      request: async ({ method }: { method: string }) => {
+        asked.push(method);
+        return `0x${"22".repeat(65)}`;
+      },
+    };
+    const posts: unknown[] = [];
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      posts.push(init?.body);
+      return new Response(JSON.stringify({ ok: true, txHash: `0x${"ab".repeat(32)}` }), { status: 200 });
+    }) as unknown as typeof fetch;
+    // The contract's nonce reads 7.
+    for (const exactNonce of [6n, 8n]) {
+      const moved = relayMetaTransaction({ provider, reader: fakeReader(), target, from, functionData: "0x12", fetchImpl, exactNonce });
+      await expect(moved).rejects.toBeInstanceOf(NonceMovedError);
+      await expect(moved).rejects.toMatchObject({ expected: exactNonce, read: 7n });
+    }
+    expect(asked).toEqual([]);
+    expect(posts).toEqual([]);
+    expect(await relayMetaTransaction({ provider, reader: fakeReader(), target, from, functionData: "0x12", fetchImpl, exactNonce: 7n })).toMatchObject({ nonce: 7n });
+    expect(asked).toEqual(["eth_signTypedData_v4"]);
   });
 
   it("keeps the relay's own word for a refusal: its error code, and when a spent quota frees up", async () => {

@@ -163,6 +163,11 @@ export type RelayOptions = {
   fetchImpl?: typeof fetch;
   /** A nonce already observed on chain: never sign against a staler one (load-balanced RPCs lag). */
   minNonce?: bigint;
+  /**
+   * Sign only at this nonce: when the target's nonce reads as any other, nothing is asked of the wallet
+   * (`NonceMovedError`). A replacement that must compete with one signed call at its nonce, and no other, uses it.
+   */
+  exactNonce?: bigint;
   /** Fired once the buyer signed (the prompt is gone), before the relay is called. */
   onSigned?: () => void;
   /**
@@ -177,12 +182,24 @@ export type SignedCall = { to: string; data: Hex; nonce: bigint };
 
 export type Relayed = { txHash: Hex; nonce: bigint };
 
+/** The target's nonce read as `read`, not the `expected` one a signature was asked for: nothing was signed or sent. */
+export class NonceMovedError extends Error {
+  override name = "NonceMovedError";
+  constructor(
+    readonly expected: bigint,
+    readonly read: bigint,
+  ) {
+    super(`The nonce reads ${read}, not ${expected}`);
+  }
+}
+
 export async function relayMetaTransaction(opts: RelayOptions): Promise<Relayed> {
   const { provider, reader, target, from, functionData } = opts;
   const code = await reader.code(target.chainId, from).catch(() => "0x" as Hex);
   if (code && code !== "0x") throw new GaslessUnavailableError("Contract accounts are not supported", "contract-account");
 
   const read = await readMetaTxNonce(reader, target, from);
+  if (opts.exactNonce !== undefined && read !== opts.exactNonce) throw new NonceMovedError(opts.exactNonce, read);
   const nonce = opts.minNonce !== undefined && opts.minNonce > read ? opts.minNonce : read;
   const typed = metaTxTypedData(target, from, nonce, functionData);
 
