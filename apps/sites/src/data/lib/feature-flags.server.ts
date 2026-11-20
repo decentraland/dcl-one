@@ -3,9 +3,10 @@
 // The rollout flags decentraland.org's sites read (`dapps`, and `builder` for the creators pages), read here by the server. The service answers by the site a
 // browser's request comes from (its Referer), so a browser on any other domain (a preview, this node's own) would be
 // told every flag is off: the server asks as decentraland.org (or the site FEATURE_FLAGS_ORIGIN names) and hands the
-// answer to the page. One read a minute whatever the request; a failed or slow one keeps the last good answer for that
-// minute ("all off" only before any read has succeeded). The variants' payloads (an address list, for one) come with
-// the flags, kept as upstream keeps them (`parseRemoteFlags`).
+// answer to the page. One read a minute whatever the request, and no request waits for it once an answer is in: for
+// five minutes after its minute the last answer is served at once while one read runs behind it. A failed or slow read
+// keeps the last good answer for that minute ("all off" only before any read has succeeded). The variants' payloads
+// (an address list, for one) come with the flags, kept as upstream keeps them (`parseRemoteFlags`).
 
 import { parseRemoteFlags, type RemoteFlagsAnswer } from "@ui/shop/discovery/lib/remoteFlags";
 
@@ -59,6 +60,7 @@ async function load(origin: string, application: FlagApplication): Promise<Dapps
 
 const read = ttlMemo({
   ttlMs: 60_000,
+  staleMs: 5 * 60_000,
   keyOf: (origin: string, application: FlagApplication) => `${origin}|${application}`,
   load,
 });

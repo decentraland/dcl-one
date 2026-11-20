@@ -525,6 +525,10 @@
           "kind": "regular"
         },
         {
+          "name": "satelliteTiles.ts",
+          "kind": "regular"
+        },
+        {
           "name": "shareLinks.ts",
           "kind": "regular"
         }
@@ -905,6 +909,10 @@
         },
         {
           "name": "pointerKeys.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "satelliteTiles.test.ts",
           "kind": "regular"
         },
         {
@@ -4332,6 +4340,10 @@
           "kind": "regular"
         },
         {
+          "name": "SatelliteDetailLayer.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "WorldWarning.tsx",
           "kind": "regular"
         },
@@ -5922,7 +5934,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "8f2af9b26ec8e3740d1dc95450928e9ac78ad4265a9cd4c6c96c50f00dc0eebf"
+      "sha256": "b0fb7c20f18ef2bca3632f2057eddbcc4383f665396ae9a335ec4db9d41ed58c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bridge.ts",
@@ -6555,7 +6567,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "dc2daaa789761748173110f2d18f8ca23b42e7c156589a7ee4ef1c414ef1220d"
+      "sha256": "a42e1d3bdad4292d1edbff46baf3fe6d749635d5eb444503db8a8b18467ed756"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -6595,7 +6607,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "13eb286ac2d09076f3cd703a7f597652300caff564adfaed219de6d7b036d83c"
+      "sha256": "810040a69a1bfe1066f463c257564cae59cef48d1801a1073ae53d7396a94010"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -6767,7 +6779,7 @@
     },
     {
       "path": "library/explorer-core/features/map/atlas.ts",
-      "sha256": "6f172107dd598a145dd0d5c1d8a7a0c9c5be3885e4e98ae590f8474d7a9e91ab"
+      "sha256": "a98d9181e4cd7bb217bb5456a806d1189d4be711b1a0c48a78948d72afd2b8fc"
     },
     {
       "path": "library/explorer-core/features/map/cityParcels.ts",
@@ -6824,6 +6836,10 @@
     {
       "path": "library/explorer-core/features/map/parcelsCenter.ts",
       "sha256": "63a071cf77f4f124c423c12d31a4dce4580c7bb09a44822c0ed467a6e880850f"
+    },
+    {
+      "path": "library/explorer-core/features/map/satelliteTiles.ts",
+      "sha256": "89db23c68b7c9c5e1f0995da9dc8c311cda29b5cff0c0157c68cfc9b9eba5a1a"
     },
     {
       "path": "library/explorer-core/features/map/shareLinks.ts",
@@ -7035,7 +7051,7 @@
     },
     {
       "path": "library/explorer-core/test/atlas.test.ts",
-      "sha256": "8b0ad33b14d8288d9e6c1bb30d2bce3aedb7971ba007765825e1ab08acdc8390"
+      "sha256": "1178156b37965075aac9e572df61555214b4fae6e6bc9d11eb1e3a7a5ed43dab"
     },
     {
       "path": "library/explorer-core/test/avatarEquip.test.ts",
@@ -7156,6 +7172,10 @@
     {
       "path": "library/explorer-core/test/pointerKeys.test.ts",
       "sha256": "89e9e9a003e5e05216a8b59d21756e4715a460d57765cfdef0914eb41339b2b8"
+    },
+    {
+      "path": "library/explorer-core/test/satelliteTiles.test.ts",
+      "sha256": "70e950795a06bdebd208daf570a581d8ca57386724f0148251b19d6299916a04"
     },
     {
       "path": "library/explorer-core/test/serverReadErrors.test.ts",
@@ -9807,7 +9827,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapCanvas.tsx",
-      "sha256": "1b2d22c67347d00d77249d846c4ec393d5f13fec046b7496a5209820141b2c00"
+      "sha256": "4da4eb5b3ba6f79f8ab205acb4d765cef390778c9d3ceade0edaa4f794d863b4"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapChrome.module.css",
@@ -9823,7 +9843,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.tsx",
-      "sha256": "ff49f7e61956f9d0fe55578de3d47bbd764a3f1801b374c5ce22eb23248c907b"
+      "sha256": "4e84754b7e6a0c754b0878137a282e2fa180ee2e8478e0cf0ac1c2d10b08a282"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapToolbar.tsx",
@@ -9832,6 +9852,10 @@
     {
       "path": "library/ui/apps/hud/features/map/RouteLayer.tsx",
       "sha256": "654aed9836612538e71061e460d9f49a12fed1a213af8a63eb05a2be5ddd0e64"
+    },
+    {
+      "path": "library/ui/apps/hud/features/map/SatelliteDetailLayer.tsx",
+      "sha256": "87cb4b856ac28b1549a77b570d7627f48d9f9262c87cf06b13d23db3e8eedd3f"
     },
     {
       "path": "library/ui/apps/hud/features/map/WorldWarning.tsx",
@@ -9875,7 +9899,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/useMapCamera.ts",
-      "sha256": "833c5228214b2a8b61adf3b13aacdf7034edaebbed62cf1ceb78f12eeaad2bb7"
+      "sha256": "87fc66a010db1fe616084100454d329b22647adf7ddbd01848a60f8469d1d202"
     },
     {
       "path": "library/ui/apps/hud/features/map/useMapLayerData.ts",
@@ -10139,7 +10163,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "5d9512680a9fbffd953f9f1fad6edb50eddf8c3c3f9d5d2275c6fda11f44ec3b"
+      "sha256": "e3f3ac026cbe8d085f6fe6728f46ad5c067e709e49825c03bf1ccbd5acf9dfed"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10479,7 +10503,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "880b7327b852207ed646651e3bbff4edb57d3599845c1d08a2528f11069477a3"
+      "sha256": "f174281763ec813fc93cd2aa8e684b0f518d350f22927f8320922720d7c32517"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -12292,6 +12316,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/features/map/satelliteTiles.ts",
+      "to": "library/explorer-core/features/map/atlas.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/satelliteTiles.ts",
+      "to": "library/explorer-core/features/map/atlas.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/satelliteTiles.ts",
+      "to": "library/explorer-core/features/map/atlas.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/features/map/shareLinks.ts",
       "to": "library/explorer-core/features/map/mapCoords.ts",
       "kind": "native:runtime"
@@ -13714,6 +13753,36 @@
     {
       "from": "library/explorer-core/test/pointerKeys.test.ts",
       "to": "library/explorer-core/engine/pointerKeys.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/satelliteTiles.test.ts",
+      "to": "library/explorer-core/features/map/atlas.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/satelliteTiles.test.ts",
+      "to": "library/explorer-core/features/map/atlas.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/satelliteTiles.test.ts",
+      "to": "library/explorer-core/features/map/atlas.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/satelliteTiles.test.ts",
+      "to": "library/explorer-core/features/map/satelliteTiles.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/satelliteTiles.test.ts",
+      "to": "library/explorer-core/features/map/satelliteTiles.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/satelliteTiles.test.ts",
+      "to": "library/explorer-core/features/map/satelliteTiles.ts",
       "kind": "test:runtime"
     },
     {
@@ -27503,6 +27572,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/map/MapCanvas.tsx",
+      "to": "library/ui/apps/hud/features/map/SatelliteDetailLayer.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapCanvas.tsx",
+      "to": "library/ui/apps/hud/features/map/SatelliteDetailLayer.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapCanvas.tsx",
+      "to": "library/ui/apps/hud/features/map/SatelliteDetailLayer.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapCanvas.tsx",
       "to": "library/ui/apps/hud/features/map/mapArt.ts",
       "kind": "native:runtime"
     },
@@ -27922,6 +28006,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/map/MapToolbar.tsx",
       "to": "library/explorer-core/features/map/mapZoom.ts",
       "kind": "native:runtime"
@@ -28024,6 +28123,51 @@
     {
       "from": "library/ui/apps/hud/features/map/RouteLayer.tsx",
       "to": "library/ui/apps/hud/features/map/mapArt.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/SatelliteDetailLayer.tsx",
+      "to": "library/explorer-core/features/map/mapCoords.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/SatelliteDetailLayer.tsx",
+      "to": "library/explorer-core/features/map/mapCoords.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/SatelliteDetailLayer.tsx",
+      "to": "library/explorer-core/features/map/mapCoords.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/SatelliteDetailLayer.tsx",
+      "to": "library/explorer-core/features/map/satelliteTiles.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/SatelliteDetailLayer.tsx",
+      "to": "library/explorer-core/features/map/satelliteTiles.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/SatelliteDetailLayer.tsx",
+      "to": "library/explorer-core/features/map/satelliteTiles.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/SatelliteDetailLayer.tsx",
+      "to": "library/ui/apps/hud/features/map/MapCanvas.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/SatelliteDetailLayer.tsx",
+      "to": "library/ui/apps/hud/features/map/MapCanvas.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/SatelliteDetailLayer.tsx",
+      "to": "library/ui/apps/hud/features/map/MapCanvas.module.css",
       "kind": "test:runtime"
     },
     {
@@ -29599,6 +29743,21 @@
     {
       "from": "library/ui/apps/hud/features/map/panel/TextWithLinks.tsx",
       "to": "library/ui/apps/hud/features/map/panel/MapPanel.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/useMapCamera.ts",
+      "to": "library/explorer-core/features/map/atlas.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/useMapCamera.ts",
+      "to": "library/explorer-core/features/map/atlas.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/useMapCamera.ts",
+      "to": "library/explorer-core/features/map/atlas.ts",
       "kind": "test:runtime"
     },
     {
@@ -46218,6 +46377,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/features/map/satelliteTiles.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/features/map/shareLinks.ts",
       "kind": "type"
     },
@@ -46629,6 +46793,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/pointerKeys.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/satelliteTiles.test.ts",
       "kind": "type"
     },
     {
@@ -47479,6 +47648,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/map/RouteLayer.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/map/SatelliteDetailLayer.tsx",
       "kind": "type"
     },
     {

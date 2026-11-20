@@ -17,6 +17,7 @@ import { Navmap } from '@explorer-core/features/map/navmap'
 import { showToast } from '../../design'
 import { PhotoDetail } from '../gallery/PhotoDetail'
 import { MainMenuShell } from '../menu/MainMenuShell'
+import { useOptionalSession } from '../session/SessionContext'
 import type { GalleryState, MapState, MinimapState, ProfileState, TravelOutcome } from '../session/useEngineSession'
 import { CategoryStrip } from './CategoryStrip'
 import { DestinationBanner } from './DestinationBanner'
@@ -58,6 +59,7 @@ export function MapPage({
 }): React.JSX.Element | null {
   const open = map.open || compact != null
   const camera = useMapCamera()
+  const fetchSatelliteTile = useOptionalSession()?.fetchSatelliteTile
   const layers = useSyncExternalStore(mapLayers.subscribe, mapLayers.getSnapshot)
   const nav = useMemo(() => new Navmap(), [])
   const snap = useSyncExternalStore(nav.subscribe, nav.getSnapshot)
@@ -209,6 +211,8 @@ export function MapPage({
           onEvent={onEvent}
           onPlace={onPlace}
           onHome={showHome}
+          fetchSatelliteTile={fetchSatelliteTile}
+          satelliteDetail={open && genesis}
         >
           <RouteLayer destination={destination} pose={pose} active={open} />
         </MapCanvas>

@@ -100,6 +100,7 @@ import type {
   GalleryPhotoMeta,
   GalleryWriteMessage,
   ExternalUrlOpenedMessage,
+  SatelliteTileMessage,
   PlaceMessage,
   WorldAccessMessage,
   SignedPlace,
@@ -997,7 +998,7 @@ export const SIGNING_IN_PICK = 'Still signing in. Try again in a moment.'
 // camera-reel-service deletes the photo and its thumbnail from S3 in turn, up to 15 s each.
 export const GALLERY_DELETE_TIMEOUT_MS = 60_000
 
-type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage | PlaceMessage | WorldAccessMessage | GiftingPageMessage
+type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage | SatelliteTileMessage | PlaceMessage | WorldAccessMessage | GiftingPageMessage
 
 export type LoginStatus =
   | 'loading'
@@ -1215,6 +1216,9 @@ export interface EngineSession {
   lobbyStage: { preset: string; set: (options: { preset?: string; idleEmotes?: boolean }) => void }
   /** Open an `https:` url in the user's browser through the engine; resolves whether it opened. */
   openExternalUrl: (url: string) => Promise<boolean>
+  /** One deep-zoom satellite detail tile for the map, as base64 JPEG bytes; null when the engine
+   *  cannot decode it or the request fails. `path` is relative to the tile source. */
+  fetchSatelliteTile: (path: string) => Promise<string | null>
   /** Report (or clear) the screen rect where the scene should render an engine view. */
   setEngineViewport: (
     region: EngineViewportRegion,
@@ -2642,6 +2646,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
         case 'gallery':
         case 'galleryWrite':
         case 'externalUrlOpened':
+        case 'satelliteTile':
         case 'place':
         case 'worldAccess':
         case 'giftingPage': {
@@ -3365,6 +3370,13 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   )
   const openExternalUrl = useCallback(
     async (url: string): Promise<boolean> => (await bridgeCall('externalUrlOpened', (requestId) => ({ kind: 'openExternalUrl', requestId, url })))?.ok === true,
+    [bridgeCall]
+  )
+  const fetchSatelliteTile = useCallback(
+    async (path: string): Promise<string | null> => {
+      const msg = await bridgeCall('satelliteTile', (requestId) => ({ kind: 'getSatelliteTile', requestId, path }))
+      return msg?.ok === true && typeof msg.data === 'string' ? msg.data : null
+    },
     [bridgeCall]
   )
   const setGalleryPhotoPublic = useCallback(
@@ -5323,6 +5335,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     voiceChat: { state: voiceChatState, active: activeVoiceChats, activeLoaded: activeVoiceChatsLoaded, scene: sceneVoiceChat, guest: profile?.isGuest === true, act: voiceChatAct },
     nav,
     openExternalUrl,
+    fetchSatelliteTile,
     setEngineViewport,
     lobbyStage: { preset: lobbyStagePresetState, set: setLobbyStage },
     setInteractableArea,

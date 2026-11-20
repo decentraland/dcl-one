@@ -434,6 +434,22 @@ pub async fn op_get_satellite_view(
     rx.await.map_err(|e| anyhow::anyhow!(e))
 }
 
+pub async fn op_get_satellite_tile(
+    state: Rc<RefCell<impl State>>,
+    path: String,
+) -> Result<String, anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetSatelliteTile(path, sx))?;
+
+    rx.await
+        .map_err(|e| anyhow::anyhow!(e))?
+        .map_err(|e| anyhow::anyhow!(e))
+}
+
 pub async fn op_get_world_access(
     state: Rc<RefCell<impl State>>,
     world: String,

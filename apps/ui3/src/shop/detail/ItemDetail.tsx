@@ -5,7 +5,7 @@
 //       v2 ui3/src/marketplace/pages/MkAssetDetailView.tsx, MkAssetPage.tsx (superseded)
 // Licence of the Marketplace parts: Apache-2.0, Copyright 2020 Metaverse Holdings Ltd.
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 
 import Button from "../../atoms/Button";
@@ -32,7 +32,7 @@ import IndexNotice from "../discovery/components/IndexNotice";
 import Rail from "../discovery/components/Rail";
 import SaleTag from "../discovery/components/SaleTag";
 import { OfferStock, SaleTimer } from "../discovery/components/SaleTimer";
-import SuggestedForYouRow, { useSuggestedForYou } from "../discovery/components/SuggestedForYouRow";
+import SuggestedForYouRow, { RAIL_SIZE as SUGGESTED_RAIL_SIZE, useSuggestedForYou } from "../discovery/components/SuggestedForYouRow";
 import { suggestedHiddenReason } from "../discovery/lib/suggestionEvents";
 import { indexUnavailable } from "@shop/discovery/freshness";
 import { useSaleActive, useSeo } from "../discovery/hooks";
@@ -49,7 +49,6 @@ import { mergeSuggestions, SUGGESTIONS_TARGET } from "../discovery/lib/suggestio
 import { invalidateShopQueries, useShopQuery } from "../discovery/query";
 import {
   fetchClassicItemOrders,
-  fetchItemDescription,
   fetchItemMeta,
   fetchItemResales,
   fetchOwnedItemCount,
@@ -62,28 +61,35 @@ import {
 import type { LegacyOrderRef } from "@shop/detail/api";
 import { fetchItemVideoUrl, fetchSmartWearableRequiredPermissions } from "./builder";
 import ItemPreview from "./components/ItemPreview";
-import LandBranch from "./components/LandBranch";
-import CombinedBuy from "./components/CombinedBuy";
-import LegacyOrderBuy from "./components/LegacyOrderBuy";
 import NotifyMe from "./components/NotifyMe";
 import { pdpText } from "./copy";
 import PaymentPanel from "./components/PaymentPanel";
 import ResaleOffers from "./components/ResaleOffers";
 import { ItemOwners, LatestSales } from "./components/TradeHistory";
 import { itemIdFromTokenId } from "./lib/token-id";
+import { DialogBoundary, preloadable } from "./lib/preloadable";
 import { itemUrn } from "@shop/detail/lib/urn";
 import { fetchVrmExportBlocked } from "./lib/wearable-rules";
 import { offerQueryKey, offersRevalidation, useOffers, type OfferQuery } from "./offers";
-import { useShopServices } from "../checkout/services";
-import { readManaBalanceWei } from "../checkout/lib/mana";
+import { EnsureQueryClient, useShopServices } from "../checkout/services";
+import { useManaBalance } from "../credits/hooks";
 import { useBuysInPlace, usePurchaseLauncher } from "./purchase";
-import BuyModal from "./components/BuyModal";
 import { takeBuyNowReturn, type BuyNowReturn } from "../credits/returns";
 import { listingTypeFor } from "@shop/market/access-rule";
+import { landCategoryOf } from "@shop/land/contracts";
 import { serviceBase } from "../../data/catalyst/client";
 import { shopClient } from "../api/host";
 import { shopReads } from "../discovery/reads";
 import "./itemdetail.css";
+
+// The purchase dialogs and the LAND page carry the checkout and LAND code: a visitor needs them only after a buy click
+// or on a LAND token, so they load on demand and the item page hydrates without them.
+const BuyModal = preloadable(() => import("./components/BuyModal"));
+const CombinedBuy = preloadable(() => import("./components/CombinedBuy"));
+const LegacyOrderBuy = preloadable(() => import("./components/LegacyOrderBuy"));
+const LandBranch = preloadable(() => import("./components/LandBranch"));
+
+type IdleWindow = Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number; cancelIdleCallback?: (handle: number) => void };
 
 type RouteState = { item?: CatalogItem } | null;
 
@@ -256,7 +262,11 @@ function ClampedDescription({ text }: { text: string }) {
 
 export function ItemDetailRoute() {
   const { pathname } = useLocation();
-  return <ItemDetail key={pathname} />;
+  return (
+    <EnsureQueryClient>
+      <ItemDetail key={pathname} />
+    </EnsureQueryClient>
+  );
 }
 
 export default function ItemDetail() {
@@ -297,7 +307,6 @@ export default function ItemDetail() {
   const metaQ = useShopQuery(validContract && pageItemId ? ["item-meta", contractAddress, pageItemId] : null, (signal) => fetchItemMeta(contractAddress, pageItemId!, shopReads(signal)), { staleMs: 5 * 60_000 });
   const tokenQ = useShopQuery(isTokenRoute && validContract ? ["token", contractAddress, routeTokenId] : null, (signal) => fetchTokenById(contractAddress, routeTokenId!, shopReads(signal)), { staleMs: 0 });
   const ownedQ = useShopQuery(isTokenRoute && validContract && account ? ["owned-token", contractAddress, routeTokenId, account] : null, (signal) => fetchOwnedToken(account!, contractAddress, routeTokenId!, shopReads(signal)), { staleMs: 0 });
-  const descQ = useShopQuery(validContract && pageItemId ? ["item-desc", contractAddress, pageItemId] : null, (signal) => fetchItemDescription(contractAddress, pageItemId!, shopReads(signal)), { staleMs: 5 * 60_000 });
   const collectionQ = useShopQuery(validContract ? ["collection-meta", contractAddress] : null, (signal) => fetchCollection(contractAddress, shopReads(signal)), { staleMs: 5 * 60_000 });
   const resalesQ = useShopQuery(marketplace && validContract && pageItemId ? ["item-resales", contractAddress, pageItemId] : null, (signal) => fetchItemResales(contractAddress, pageItemId!, shopReads(signal)), { staleMs: 0 });
   const classicQ = useShopQuery(marketplace && validContract && pageItemId ? ["classic-orders", contractAddress, pageItemId] : null, (signal) => fetchClassicItemOrders(contractAddress, pageItemId!, shopReads(signal)), { staleMs: 0 });
@@ -412,15 +421,12 @@ export default function ItemDetail() {
   const creditsQ = useShopQuery(account && session.kind !== "signedOut" ? ["credits-balance", account] : null, (signal) => shopClient().credits.balance(account!, { signal }), { staleMs: 30_000 });
   const creditsBalance = creditsQ.data ? balanceCents(creditsQ.data) : null;
   const manaChain = (offer ? offerSettlementKey(offer, "mana")?.chainId : null) ?? current.chainId;
-  const manaQ = useShopQuery(
-    session.kind === "web3" && account ? ["mana-balance", account, manaChain] : null,
-    () => readManaBalanceWei(account!, manaChain, services.reader),
-    { staleMs: 30_000 },
-  );
+  // The checkout's own read (one key, one cache): Buy now's dialog and the cart then show it without asking again.
+  const manaQ = useManaBalance(session.kind === "web3" ? account : null, manaChain);
   const manaBalance = manaQ.data != null ? (manaQ.data as ManaWei) : null;
 
   const urnForTraits = meta?.urn ?? current.urn ?? itemUrn(current);
-  const vrmQ = useShopQuery(urnForTraits && current.category === "wearable" ? ["item-vrm", urnForTraits] : null, (signal) => fetchVrmExportBlocked(urnForTraits!, signal), { staleMs: 30 * 60_000 });
+  const vrmQ = useShopQuery(urnForTraits && current.category === "wearable" ? ["item-vrm", urnForTraits] : null, () => fetchVrmExportBlocked(urnForTraits!), { staleMs: 30 * 60_000 });
   const videoQ = useShopQuery(current.isSmart && pageItemId ? ["item-video", contractAddress, pageItemId] : null, (signal) => fetchItemVideoUrl(contractAddress, pageItemId!, signal), { staleMs: 30 * 60_000 });
   const permissionsQ = useShopQuery(current.isSmart && urnForTraits ? ["item-permissions", urnForTraits] : null, (signal) => fetchSmartWearableRequiredPermissions(urnForTraits!, signal), { staleMs: 30 * 60_000 });
 
@@ -448,7 +454,11 @@ export default function ItemDetail() {
   );
 
   const personalExclude = useMemo(() => (pageItemId ? [`${contractAddress}-${pageItemId}`] : undefined), [contractAddress, pageItemId]);
-  const personal = useSuggestedForYou(PERSONAL_RAIL_SIZE, { exclude: personalExclude });
+  const cardInput = cartInputFor(current, "item_detail");
+  const nextContract = cardInput?.asset.contract;
+  const nextItemId = cardInput?.asset.token.kind === "item" ? cardInput.asset.token.itemId : null;
+  const nextCartItem = useMemo(() => (forSale && nextContract && nextItemId ? { contractAddress: nextContract, itemId: nextItemId } : null), [forSale, nextContract, nextItemId]);
+  const personal = useSuggestedForYou(SUGGESTED_RAIL_SIZE, { exclude: personalExclude, show: PERSONAL_RAIL_SIZE, nextCartItem });
   const personalHidden = suggestedHiddenReason({
     enabled: personal.enabled,
     hasSignal: personal.hasSignal,
@@ -459,7 +469,6 @@ export default function ItemDetail() {
   });
 
   const cartLines = useCart((s) => s.lines);
-  const cardInput = cartInputFor(current, "item_detail");
   const cartInput = cardInput ? { ...cardInput, listing: listingRef } : null;
   const cartLine = cartInput ? cartLines.find((l) => l.asset.contract === cartInput.asset.contract && JSON.stringify(l.asset.token) === JSON.stringify(cartInput.asset.token) && (l.listing.tradeId ?? "") === (cartInput.listing.tradeId ?? "")) : undefined;
   const stockCap = isTokenRoute ? 1 : typeof current.available === "number" ? current.available : Infinity;
@@ -484,6 +493,28 @@ export default function ItemDetail() {
     if (handoff) setBuyNow({ resume: { account: handoff.account, lineId: handoff.lineId, credits: handoff.credits } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.search, session.kind, account]);
+  // A LAND token's page is LandBranch: fetch it with the token. Signed in, a buy click opens a dialog over the page:
+  // fetch the dialogs once the browser is idle, so the click does not wait for their code.
+  const landToken = isTokenRoute && !!landCategoryOf(contractAddress);
+  useEffect(() => {
+    if (landToken) void LandBranch.preload();
+  }, [landToken]);
+  const buysOverPage = buysInPlace && session.kind !== "signedOut";
+  useEffect(() => {
+    if (!buysOverPage) return;
+    const preload = () => {
+      void BuyModal.preload();
+      void CombinedBuy.preload();
+      if (isTokenRoute) void LegacyOrderBuy.preload();
+    };
+    const w = window as IdleWindow;
+    if (w.requestIdleCallback) {
+      const handle = w.requestIdleCallback(preload, { timeout: 3000 });
+      return () => w.cancelIdleCallback?.(handle);
+    }
+    const timer = window.setTimeout(preload, 1000);
+    return () => window.clearTimeout(timer);
+  }, [buysOverPage, isTokenRoute]);
   const viewed = useRef<string | null>(null);
   useEffect(() => {
     if (!current.name || viewed.current === current.id) return;
@@ -551,7 +582,7 @@ export default function ItemDetail() {
   const unitsLeft = showCompareAt ? saleUnitsHint(current.saleUnitsLeft) : null;
   const owns = isTokenRoute && !!ownedQ.data;
   const ownedCount = ownedCountQ.data ?? 0;
-  const description = descQ.data ?? "";
+  const description = meta?.description ?? "";
   const utility = meta?.utility ?? null;
   const network = current.chainId === 1 || current.chainId === 11_155_111 ? "ethereum" : "polygon";
   const resales = (resalesQ.data ?? []).filter((r) => r.tokenId !== routeTokenId || !isTokenRoute);
@@ -881,7 +912,9 @@ export default function ItemDetail() {
       </div>
 
       {marketplace && isTokenRoute && (current.category === "parcel" || current.category === "estate") ? (
-        <LandBranch contractAddress={contractAddress} tokenId={routeTokenId!} viewer={account} />
+        <Suspense fallback={null}>
+          <LandBranch contractAddress={contractAddress} tokenId={routeTokenId!} viewer={account} />
+        </Suspense>
       ) : null}
 
       {showResales ? (
@@ -895,7 +928,7 @@ export default function ItemDetail() {
         <LatestSales contractAddress={contractAddress} tokenId={isTokenRoute ? routeTokenId! : undefined} itemId={isTokenRoute ? undefined : pageItemId!} />
       ) : null}
 
-      <SuggestedForYouRow exclude={personalExclude} title={pdpText("itemDetail.becauseYouOwn")} first={PERSONAL_RAIL_SIZE} />
+      <SuggestedForYouRow exclude={personalExclude} title={pdpText("itemDetail.becauseYouOwn")} show={PERSONAL_RAIL_SIZE} />
       {personalHidden !== null && rail.items.length > 0 ? (
         <Rail
           title={rail.isCollectionOnly ? t("itemDetail.moreFromCollection") : t("itemDetail.youMightAlsoLike")}
@@ -910,35 +943,45 @@ export default function ItemDetail() {
 
       {!isLand ? <PhotoReel contractAddress={contractAddress} itemId={pageItemId} /> : null}
 
-      {buyNow && inPlace && cartInput ? (
-        <BuyModal
-          line={{ ...cartInput, seen: offer ?? null }}
-          returnPath={itemHref}
-          resume={buyNow.resume}
-          onResumeUsed={() => setBuyNow((b) => (b ? { resume: null } : b))}
-          onClose={() => setBuyNow(null)}
-        />
-      ) : null}
-      {buyingMixed ? (
-        <CombinedBuy
-          line={buyingMixed.line}
-          offer={buyingMixed.offer}
-          mixed={buyingMixed.mixed}
-          onClose={() => setBuyingMixed(null)}
-          onDone={() => invalidateShopQueries()}
-        />
-      ) : null}
-      {buyingOrder && routeTokenId ? (
-        <LegacyOrderBuy
-          name={current.name}
-          contractAddress={contractAddress}
-          tokenId={routeTokenId}
-          order={buyingOrder.order}
-          quoted={buyingOrder.quoted}
-          onClose={() => setBuyingOrder(null)}
-          onDone={() => invalidateShopQueries()}
-        />
-      ) : null}
+      <DialogBoundary
+        onClose={() => {
+          setBuyNow(null);
+          setBuyingMixed(null);
+          setBuyingOrder(null);
+        }}
+      >
+        <Suspense fallback={null}>
+          {buyNow && inPlace && cartInput ? (
+            <BuyModal
+              line={{ ...cartInput, seen: offer ?? null }}
+              returnPath={itemHref}
+              resume={buyNow.resume}
+              onResumeUsed={() => setBuyNow((b) => (b ? { resume: null } : b))}
+              onClose={() => setBuyNow(null)}
+            />
+          ) : null}
+          {buyingMixed ? (
+            <CombinedBuy
+              line={buyingMixed.line}
+              offer={buyingMixed.offer}
+              mixed={buyingMixed.mixed}
+              onClose={() => setBuyingMixed(null)}
+              onDone={() => invalidateShopQueries()}
+            />
+          ) : null}
+          {buyingOrder && routeTokenId ? (
+            <LegacyOrderBuy
+              name={current.name}
+              contractAddress={contractAddress}
+              tokenId={routeTokenId}
+              order={buyingOrder.order}
+              quoted={buyingOrder.quoted}
+              onClose={() => setBuyingOrder(null)}
+              onDone={() => invalidateShopQueries()}
+            />
+          ) : null}
+        </Suspense>
+      </DialogBoundary>
     </div>
   );
 }

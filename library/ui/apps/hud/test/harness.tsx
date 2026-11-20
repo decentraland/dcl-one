@@ -264,6 +264,7 @@ export function fakeSession(): EngineSession {
     },
     nav: vi.fn(),
     openExternalUrl: vi.fn(async () => true),
+    fetchSatelliteTile: vi.fn(async () => null),
     setEngineViewport: vi.fn(),
     lobbyStage: { preset: 'halloween-2026', set: vi.fn() },
     setInteractableArea: vi.fn(),

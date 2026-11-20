@@ -7112,6 +7112,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "system_bridge",
  "thiserror 2.0.18",
  "tokio",
  "url",

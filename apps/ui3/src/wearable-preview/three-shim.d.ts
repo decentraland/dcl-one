@@ -198,6 +198,7 @@ declare module "three" {
 
   export class LoadingManager {
     setURLModifier(callback: (url: string) => string): this;
+    resolveURL(url: string): string;
   }
 
   export interface WebGLRendererParameters {
