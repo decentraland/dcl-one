@@ -18,7 +18,7 @@ import { CART_KEY_PREFIX, CHECKOUT_KEY_PREFIX, createCartStore, type CartStorage
 import type { GroupProgress, GroupStatus } from '@shop/model/purchase'
 import { MAX_PURCHASE_UNITS, OPERATION_STATES, parseLines, TERMINAL_STATES, type ShopLine, type ShopOperationState } from '@dcl/one-ui/apps/shop/shopProtocol'
 import { isManaAttempt, type ManaAttemptRecord } from './manaPurchase'
-import { isSplitSale, type SplitSale } from './splitEvidence'
+import { isSplitSale, type SplitSale } from '../../../shop/checkout/purchase/splitEvidence'
 
 /** What the buyer is told when a write the purchase depends on was refused: nothing goes without its record. */
 export const STORAGE_REFUSED = "This browser can't keep a record of the purchase right now (its storage is full or blocked), so nothing was bought."
