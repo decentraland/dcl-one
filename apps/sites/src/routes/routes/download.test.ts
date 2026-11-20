@@ -69,10 +69,10 @@ describe("/download", () => {
 
 describe("/download head", () => {
   it("should carry the title, the description and the canonical path", () => {
-    expect(downloadMeta()).toEqual([
-      { title: "Download Decentraland | Decentraland" },
+    expect(downloadMeta({ matches: [{ loaderData: { publicPageBase: "https://public.test" } }] } as never)).toEqual([
+      { title: "Download | Decentraland" },
       { name: "description", content: "Download Decentraland and start exploring the metaverse — events, communities, voice chat and more." },
-      { tagName: "link", rel: "canonical", href: "/download" },
+      { tagName: "link", rel: "canonical", href: "https://public.test/download" },
     ]);
   });
 });

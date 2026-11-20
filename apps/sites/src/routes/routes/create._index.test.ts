@@ -77,13 +77,13 @@ it("does not hold the landing for a release that is slow to read", async () => {
 });
 
 it("should carry the title, the description and the canonical path", () => {
-  expect(meta()).toEqual([
+  expect(meta({ matches: [{ loaderData: { publicPageBase: "https://public.test" } }] } as never)).toEqual([
     { title: "Create in Decentraland | Wearables, Emotes, Scenes & Worlds" },
     {
       name: "description",
       content:
         "Everything you need to create in Decentraland: build Wearables, Emotes, Scenes and Worlds, manage your collections and join the creator community.",
     },
-    { tagName: "link", rel: "canonical", href: "/create" },
+    { tagName: "link", rel: "canonical", href: "https://public.test/create" },
   ]);
 });

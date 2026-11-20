@@ -5,13 +5,14 @@ import { downloadOptions } from "@/data/lib/download/installers";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import DownloadPage from "@/features/download/DownloadPage";
 
+import { canonicalLink } from "../lib/canonical";
 import type { Route } from "./+types/download";
 
-export function meta() {
+export function meta({ matches }: Route.MetaArgs) {
   return [
-    { title: "Download Decentraland | Decentraland" },
+    { title: "Download | Decentraland" },
     { name: "description", content: "Download Decentraland and start exploring the metaverse — events, communities, voice chat and more." },
-    { tagName: "link", rel: "canonical", href: "/download" },
+    ...canonicalLink(matches[0]?.loaderData?.publicPageBase, "/download"),
   ];
 }
 

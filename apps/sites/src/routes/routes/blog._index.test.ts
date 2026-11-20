@@ -76,11 +76,24 @@ describe("blog routes", () => {
     expect(ok.get("Cache-Control")).toBe("private");
   });
 
+  it.each([
+    ["?page=2&utm_campaign=test", "/blog?page=2"],
+    ["?page=1", "/blog"],
+    ["?page=invalid", "/blog"],
+  ])("uses the displayed page for %s", (search, expected) => {
+    const tags = meta({ matches: [{ loaderData: { publicPageBase: "https://public.test" } }], location: { search } } as never);
+    expect(tags).toContainEqual({ tagName: "link", rel: "canonical", href: "https://public.test" + expected });
+  });
+
+  it("omits the canonical if the root loader failed", () => {
+    expect(meta({ matches: [], location: { search: "" } } as never).some(tag => "rel" in tag)).toBe(false);
+  });
+
   it("title each page, including a missing or unavailable one", () => {
-    expect(meta()).toEqual([
+    expect(meta({ matches: [{ loaderData: { publicPageBase: "https://public.test" } }], location: { search: "" } } as never)).toEqual([
       { title: "Blog | Decentraland" },
       { name: "description", content: "News, creator stories, events, and updates from the Decentraland community." },
-      { tagName: "link", rel: "canonical", href: "/blog" },
+      { tagName: "link", rel: "canonical", href: "https://public.test/blog" },
     ]);
     expect(categoryMeta({ loaderData: { state: "ok", title: "Platform", subtitle: "About" } } as never)).toEqual([
       { title: "Platform | Decentraland Blog" },

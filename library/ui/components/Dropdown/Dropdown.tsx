@@ -189,7 +189,10 @@ export function Dropdown<T extends string = string>(props: DropdownProps<T>) {
     setActive(at ?? (first >= 0 ? first : seek(0, 1)))
     setOpen(true)
   }
-  const close = () => setOpen(false)
+  const close = () => {
+    typed.current = { text: '', at: 0 }
+    setOpen(false)
+  }
   const choose = (index: number) => {
     const picked = options[index]?.value
     if (disabled || picked === undefined || !enabled(index)) return
@@ -210,10 +213,7 @@ export function Dropdown<T extends string = string>(props: DropdownProps<T>) {
     if (open && active >= 0) document.getElementById(optionId(active))?.scrollIntoView?.({ block: 'nearest' })
   }, [open, active, id])
 
-  const typeahead = (key: string) => {
-    const now = Date.now()
-    const buffer = (now - typed.current.at > 500 ? '' : typed.current.text) + key.toLowerCase()
-    typed.current = { text: buffer, at: now }
+  const typeahead = (buffer: string) => {
     // One repeated letter steps through the options that start with it.
     const start = buffer.length === 1 && open ? active + 1 : 0
     const order = [...options.keys()].slice(start).concat([...options.keys()].slice(0, start))
@@ -222,13 +222,26 @@ export function Dropdown<T extends string = string>(props: DropdownProps<T>) {
   }
 
   const keyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    if (event.altKey || event.ctrlKey || event.metaKey) return
+    if (event.ctrlKey || event.metaKey || event.nativeEvent.isComposing) return
     const { key } = event
+    if (event.altKey) {
+      if (key === 'ArrowDown' || key === 'ArrowUp') {
+        event.preventDefault()
+        if (key === 'ArrowUp') close()
+        else if (!open) show()
+      }
+      return
+    }
     if (key === 'Tab') return close()
-    if (key.length === 1 && key !== ' ') {
-      const match = typeahead(key)
-      if (match === undefined) return
+    const now = Date.now()
+    const previous = now - typed.current.at <= 500 ? typed.current.text : ''
+    if (key.length === 1 && (key !== ' ' || previous !== '')) {
+      const letter = key.toLowerCase()
+      const buffer = previous === letter ? letter : previous + letter
+      typed.current = { text: buffer, at: now }
       event.preventDefault()
+      const match = typeahead(buffer)
+      if (match === undefined) return
       return open ? setActive(match) : show(match)
     }
     typed.current = { text: '', at: 0 }
@@ -280,7 +293,11 @@ export function Dropdown<T extends string = string>(props: DropdownProps<T>) {
         aria-labelledby={labelId}
         aria-describedby={help ? helpId : undefined}
         aria-activedescendant={open && active >= 0 ? optionId(active) : undefined}
-        onClick={() => (open ? close() : show())}
+        onClick={event => {
+          event.currentTarget.focus()
+          if (open) close()
+          else show()
+        }}
         onKeyDown={keyDown}
       >
         <span className={styles.value} data-placeholder={text === '' || undefined}>

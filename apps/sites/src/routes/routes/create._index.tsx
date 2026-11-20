@@ -12,17 +12,20 @@ import CreateLanding from "@/features/create-landing/CreateLanding";
 import { CREATOR_HUB_DOWNLOAD } from "@/features/create-landing/HeroDownload";
 import { SubNav } from "@/features/creators/components/SubNav";
 
+import { canonicalLink } from "../lib/canonical";
 import type { Route } from "./+types/create._index";
 
-export const meta = () => [
-  { title: "Create in Decentraland | Wearables, Emotes, Scenes & Worlds" },
-  {
-    name: "description",
-    content:
-      "Everything you need to create in Decentraland: build Wearables, Emotes, Scenes and Worlds, manage your collections and join the creator community.",
-  },
-  { tagName: "link", rel: "canonical", href: "/create" },
-];
+export function meta({ matches }: Route.MetaArgs) {
+  return [
+    { title: "Create in Decentraland | Wearables, Emotes, Scenes & Worlds" },
+    {
+      name: "description",
+      content:
+        "Everything you need to create in Decentraland: build Wearables, Emotes, Scenes and Worlds, manage your collections and join the creator community.",
+    },
+    ...canonicalLink(matches[0]?.loaderData?.publicPageBase, "/create"),
+  ];
+}
 
 // The landing never waits long for the release: without it the hero links to the download page, which does.
 const RELEASE_WAIT_MS = 300;

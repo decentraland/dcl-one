@@ -1,6 +1,4 @@
 @layer dcl.reset, dcl.foundations, dcl.components;
-/* Figma `ConnectionStatus` (Property 1=Online|Away): a 10px dot with a ring in the page colour, a
- * fifth of its size. The capture's online green (#30cd00) has no token. */
 @layer dcl.components {
   .root {
     --connection-status-size: 10px;
@@ -12,7 +10,7 @@
     height: var(--connection-status-size);
     border: calc(var(--connection-status-size) / 5) solid var(--dcl-neutrals-shadow);
     border-radius: var(--dcl-radius-full);
-    background: #30cd00;
+    background: var(--dcl-feedback-success);
   }
 
   .root[data-status='away'] {

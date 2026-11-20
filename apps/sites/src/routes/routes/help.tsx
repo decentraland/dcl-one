@@ -8,16 +8,17 @@ import { helpConfig } from "@/data/lib/help/config.server";
 import { HELP_COPY } from "@/features/help/content";
 import { HelpView } from "@/features/help/HelpView";
 
+import { canonicalLink } from "../lib/canonical";
 import type { Route } from "./+types/help";
 
 const STORY: StoryId = "landings/help";
 const FALLBACK: PageDefaults = { variant: "config_driven" };
 
-export function meta() {
+export function meta({ matches }: Route.MetaArgs) {
   return [
     { title: HELP_COPY.pageTitle },
     { name: "description", content: HELP_COPY.pageDescription },
-    { tagName: "link", rel: "canonical", href: "/help" },
+    ...canonicalLink(matches[0]?.loaderData?.publicPageBase, "/help"),
   ];
 }
 

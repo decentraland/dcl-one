@@ -37,7 +37,7 @@ export type TagProps = Omit<HTMLAttributes<HTMLSpanElement>, 'children'> & {
   /**
    * The text. `live`, `listening`, `voiceStream`, `featured`, `public`, `private` and the age
    * ratings have an English default; pass the localized word. `location`, `role` and `realm` show
-   * what the caller gives; `online` and `streaming` show only their count.
+   * what the caller gives; `online` and `streaming` show their status text when the count is absent.
    */
   children?: ReactNode
   /** The number after the players mark of `online`, `streaming`, `voiceStream` and `realm`. */
@@ -48,6 +48,8 @@ export type TagProps = Omit<HTMLAttributes<HTMLSpanElement>, 'children'> & {
 
 const DEFAULT_TEXT: Partial<Record<TagVariant, string>> = {
   live: 'Live',
+  online: 'Online',
+  streaming: 'Streaming',
   listening: 'Listening',
   voiceStream: 'Live Voice Stream',
   featured: 'Featured',
@@ -135,12 +137,12 @@ function mark(variant: TagVariant): ReactNode {
  * label or the age rating's word carries the meaning; colour is never the only sign.
  */
 export function Tag({ variant, appearance, children, count, countLabel, className, ...rest }: TagProps) {
-  const text = TEXTLESS.has(variant) ? null : (children ?? DEFAULT_TEXT[variant])
+  const text = TEXTLESS.has(variant) && count != null ? null : (children ?? DEFAULT_TEXT[variant])
   const ratingName = RATING_NAMES[variant]
   // The one letter of an age rating is read as its word, unless the caller names the tag.
   const named =
-    ratingName !== undefined && rest['aria-label'] === undefined && rest['aria-labelledby'] === undefined
-      ? ({ role: 'img', 'aria-label': ratingName } as const)
+    ratingName !== undefined
+      ? ({ role: 'img', 'aria-label': rest['aria-labelledby'] ? undefined : ratingName } as const)
       : undefined
   return (
     <span

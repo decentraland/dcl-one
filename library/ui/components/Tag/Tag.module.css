@@ -9,14 +9,14 @@
  * have no token. */
 @layer dcl.components {
   .root {
+    composes: text626f64792f736d2d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
     display: inline-flex;
     flex: none;
     align-items: center;
     box-sizing: border-box;
     max-width: 100%;
     color: var(--dcl-text-primary);
-    font-family: Inter, sans-serif;
-    font-size: 14px;
+    font-size: var(--dcl-font-size-body-sm);
     font-weight: 600;
     line-height: 1.25;
     white-space: nowrap;
@@ -70,7 +70,7 @@
     width: 8px;
     height: 8px;
     border-radius: var(--dcl-radius-full);
-    background: #30cd00;
+    background: var(--dcl-feedback-success);
   }
 
   .root[data-variant='online'] .count {
@@ -86,7 +86,7 @@
   }
 
   .root[data-variant='streaming'] > .icon {
-    color: #30cd00;
+    color: var(--dcl-feedback-success);
   }
 
   .root[data-variant='listening'] {
@@ -95,21 +95,21 @@
     padding: 0 6px;
     border-radius: var(--dcl-radius-sm);
     background: var(--dcl-neutrals-shadow);
-    font-size: 12px;
+    font-size: var(--dcl-font-size-label-tag);
   }
 
   .root[data-variant='listening'] > .icon {
-    color: #30cd00;
+    color: var(--dcl-feedback-success);
   }
 
   .root[data-variant='voiceStream'] {
     gap: var(--dcl-space-4);
     min-height: 18px;
-    font-size: 13px;
+    font-size: var(--dcl-font-size-button-sm);
   }
 
   .root[data-variant='voiceStream'] .text {
-    color: #30cd00;
+    color: var(--dcl-feedback-success);
   }
 
   /* An 18px box holds the 22px mark; the 31px halo behind it does not take space. */
@@ -121,14 +121,14 @@
     justify-content: center;
     width: 18px;
     height: 18px;
-    color: #30cd00;
+    color: var(--dcl-feedback-success);
   }
 
   .halo::before {
     position: absolute;
     inset: -6px;
     border-radius: var(--dcl-radius-full);
-    background: rgb(9 202 64 / 20%);
+    background: color-mix(in srgb, var(--dcl-feedback-success) 20%, transparent);
     content: '';
   }
 
@@ -138,8 +138,8 @@
 
   .root[data-variant='voiceStream'] .count {
     gap: var(--dcl-space-4);
-    color: rgb(255 255 255 / 70%);
-    font-size: 14px;
+    color: color-mix(in srgb, var(--dcl-neutrals-white) 70%, transparent);
+    font-size: var(--dcl-font-size-body-sm);
   }
 
   .root[data-variant='featured'] {
@@ -155,9 +155,9 @@
     height: 23px;
     padding: 0 var(--dcl-space-8) 0 var(--dcl-space-4);
     border-radius: var(--dcl-radius-xs);
-    background: rgb(255 255 255 / 5%);
-    color: rgb(255 255 255 / 70%);
-    font-size: 12px;
+    background: color-mix(in srgb, var(--dcl-neutrals-white) 5%, transparent);
+    color: color-mix(in srgb, var(--dcl-neutrals-white) 70%, transparent);
+    font-size: var(--dcl-font-size-label-tag);
     font-weight: 400;
   }
 
@@ -165,8 +165,8 @@
   .root[data-variant='private'] {
     gap: var(--dcl-space-4);
     min-height: 18px;
-    color: rgb(255 255 255 / 70%);
-    font-size: 12px;
+    color: color-mix(in srgb, var(--dcl-neutrals-white) 70%, transparent);
+    font-size: var(--dcl-font-size-label-tag);
     font-weight: 400;
   }
 
@@ -192,9 +192,9 @@
     gap: var(--dcl-space-4);
     height: 20px;
     padding: 0 7px;
-    border-radius: 7px;
+    border-radius: var(--dcl-radius-full);
     background: var(--dcl-transparencies-white-10);
-    font-size: 11px;
+    font-size: var(--dcl-font-size-label-xs-caps);
     line-height: 1;
     text-transform: uppercase;
   }
@@ -206,24 +206,24 @@
     width: 16px;
     height: 16px;
     border-radius: 4px;
-    font-size: 11px;
+    font-size: var(--dcl-font-size-label-xs-caps);
     line-height: 1;
     text-transform: uppercase;
   }
 
   .root[data-variant='teen'] {
-    background: rgb(54 212 29 / 15%);
-    color: #28ac00;
+    background: color-mix(in srgb, var(--dcl-feedback-success) 15%, transparent);
+    color: var(--dcl-feedback-success);
   }
 
   .root[data-variant='adult'] {
-    background: rgb(255 214 0 / 15%);
-    color: #ffd600;
+    background: color-mix(in srgb, var(--dcl-brand-yellow) 15%, transparent);
+    color: var(--dcl-brand-yellow);
   }
 
   .root[data-variant='restricted'] {
-    background: rgb(255 0 0 / 15%);
-    color: #f00;
+    background: color-mix(in srgb, var(--dcl-feedback-error) 15%, transparent);
+    color: var(--dcl-feedback-error);
   }
 
   @media (forced-colors: active) {

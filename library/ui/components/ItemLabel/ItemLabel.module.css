@@ -1,10 +1,7 @@
 @layer dcl.reset, dcl.foundations, dcl.components;
-/* Figma `NewLabel` (18px, radius 6px, the primary colour, 12px bold capitals), `SmartItemBadge`
- * (18px, radius 6px, a pink to purple gradient, a 12px mark and 12px semibold text) and
- * `AmountLabel` (19px, radius 6px, black at 40%, 12px bold text). The gradient's two colours have
- * no token. */
 @layer dcl.components {
   .root {
+    composes: text6c6162656c2f746167 from '../../foundations/typography/text-styles.module.css';
     display: inline-flex;
     flex: none;
     align-items: center;
@@ -13,8 +10,7 @@
     height: 18px;
     border-radius: var(--dcl-radius-xs);
     color: var(--dcl-text-primary);
-    font-family: Inter, sans-serif;
-    font-size: 12px;
+    font-size: var(--dcl-font-size-label-tag);
     font-weight: 700;
     line-height: 1;
     white-space: nowrap;
@@ -26,6 +22,7 @@
   }
 
   .root[data-variant='new'] {
+    font-size: var(--dcl-font-size-label-xs-caps);
     padding: 0 var(--dcl-space-4);
     background: var(--dcl-action-primary);
     text-transform: uppercase;
@@ -34,7 +31,7 @@
   .root[data-variant='smart'] {
     gap: 2px;
     padding: 0 5px;
-    background: linear-gradient(90deg, #fb2bff 0%, #af2ade 100%);
+    background: linear-gradient(90deg, var(--dcl-brand-lavender), var(--dcl-brand-violet));
     color: var(--dcl-neutrals-white);
     font-weight: 600;
     text-transform: uppercase;

@@ -84,6 +84,16 @@ describe('Tag', () => {
       expect(screen.getByTestId('tag')).not.toHaveTextContent('24')
     })
 
+    it.each([['online', 'Online'], ['streaming', 'Streaming']] as const)(
+      'shows the status text for %s without a count',
+      (variant, label) => {
+        const { rerender } = render(<Tag variant={variant} />)
+        expect(screen.getByText(label)).toBeVisible()
+        rerender(<Tag variant={variant}>En vivo</Tag>)
+        expect(screen.getByText('En vivo')).toBeVisible()
+      }
+    )
+
     it('draws no count mark without a count', () => {
       render(<Tag variant="realm" data-testid="tag">america-amber</Tag>)
       expect(marks(screen.getByTestId('tag'))).toHaveLength(0)
@@ -100,8 +110,13 @@ describe('Tag', () => {
       expect(screen.getByRole('img', { name: word })).toHaveTextContent(letter)
     })
 
+    it('reads the referenced label for a rating', () => {
+      render(<><span id="rating">Adultos</span><Tag variant="adult" aria-labelledby="rating" /></>)
+      expect(screen.getByRole('img', { name: 'Adultos' })).toHaveTextContent('A')
+    })
+
     it('reads the caller’s name when one is given', () => {
-      render(<Tag variant="teen" role="img" aria-label="Adolescentes" />)
+      render(<Tag variant="teen" aria-label="Adolescentes" />)
       expect(screen.getByRole('img', { name: 'Adolescentes' })).toBeInTheDocument()
     })
   })

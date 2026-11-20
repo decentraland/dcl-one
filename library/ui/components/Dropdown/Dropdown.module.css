@@ -1,8 +1,4 @@
 @layer dcl.reset, dcl.foundations, dcl.components;
-/* Figma `Dropdown` (Property 1=Idle|Opened|Blocked) and its `Entry` (Idle|Hover|Selected): a 16px
- * semi-bold label 10px above a 344 by 40px snow control (radius 12px, 16px side padding, a 12 by 6px
- * arrow), and a snow list 10px below it (radius 12px, 10 by 12px padding) of 40px entries (radius
- * 10px), pearl under the pointer, with an orange check mark when chosen. */
 @layer dcl.components {
   .root {
     position: relative;
@@ -110,7 +106,7 @@
     box-sizing: border-box;
     width: max-content;
     min-width: 100%;
-    max-width: calc(100vw - 32px);
+    max-width: calc(100vw - var(--dcl-space-32));
     max-height: 230px;
     padding: 10px var(--dcl-space-12);
     /* The capture's 8px scroll thumb at black 20%. */
@@ -142,7 +138,7 @@
     box-sizing: border-box;
     min-height: 40px;
     padding: var(--dcl-space-8) var(--dcl-space-12);
-    border-radius: 10px;
+    border-radius: var(--dcl-radius-md);
     line-height: normal;
     cursor: pointer;
   }
@@ -196,7 +192,7 @@
     border: 0;
     border-radius: var(--dcl-radius-full);
     background: none;
-    color: rgb(255 255 255 / 70%);
+    color: color-mix(in srgb, var(--dcl-neutrals-white) 70%, transparent);
     cursor: pointer;
   }
 
@@ -213,7 +209,7 @@
     right: 0;
     z-index: 11;
     width: max-content;
-    max-width: min(240px, calc(100vw - 32px));
+    max-width: min(240px, calc(100vw - var(--dcl-space-32)));
     padding: var(--dcl-space-8) var(--dcl-space-12);
     border: 1px solid var(--dcl-border-subtle);
     border-radius: var(--dcl-radius-sm);
