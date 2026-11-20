@@ -17,7 +17,8 @@ import { itemAsset } from '@shop/model/asset'
 import { CHAIN } from '@shop/model/chain'
 import type { StoredLogin } from '@explorer-core/features/auth/sso'
 import { SHOP_PROTOCOL, type ShopOperationEvent } from '@dcl/one-ui/apps/shop/shopProtocol'
-import { createShellShop, RETRY_AFTER_MS, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices } from '../shell/shop/purchase'
+import { createShellShop, RETRY_AFTER_MS, splitTerms, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices } from '../shell/shop/purchase'
+import { setSplitInWorld } from '../shell/shop/manaGate'
 import type { ManaEvidence, ManaExecution } from '../shell/shop/manaEvidence'
 
 const BUYER = BOOK.buyer.toLowerCase()
@@ -409,6 +410,70 @@ describe('the in-world purchase with MANA', () => {
       // The Credits path runs as before (it asks the Shop for a credit), and nothing reaches MANA's rails.
       await vi.waitFor(() => expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(true))
       expect(relayedTo(w)).not.toContain(MANA)
+    })
+  })
+
+  describe('Credits and MANA together (one item)', () => {
+    let undo = (): void => {}
+    afterEach(() => undo())
+    const on = () => (undo = setSplitInWorld(true))
+
+    it('splits whole credits from the balance and MANA for the rest, rounded up, as the web Shop does', () => {
+      // 1,000 cents for 100 MANA; 370 cents held: 37 credits (370 cents) pay, and 630 cents' worth, 63 MANA, the rest.
+      const MANA_WEI = 10n ** 18n
+      expect(splitTerms(1000 as UsdCents, 375 as UsdCents, (100n * MANA_WEI) as never, 100n * MANA_WEI)).toEqual({ creditsCents: 370, credits: 37, manaWei: 63n * MANA_WEI })
+      // A third of a wei is still owed: rounded up, never down.
+      expect(splitTerms(300 as UsdCents, 100 as UsdCents, 1000n as never, 10_000n)?.manaWei).toBe(667n)
+      // None when the balance holds no whole credit, covers the price, or the MANA can't pay the rest.
+      expect(splitTerms(1000 as UsdCents, 9 as UsdCents, (100n * MANA_WEI) as never, 100n * MANA_WEI)).toBeNull()
+      expect(splitTerms(1000 as UsdCents, 1000 as UsdCents, (100n * MANA_WEI) as never, 100n * MANA_WEI)).toBeNull()
+      expect(splitTerms(1000 as UsdCents, 370 as UsdCents, (100n * MANA_WEI) as never, 63n * MANA_WEI - 1n)).toBeNull()
+    })
+
+    it('offers both together when the Credits are short of one item and MANA pays the rest', async () => {
+      on()
+      const w = world()
+      const p = page(w, { creditsCents: 50 })
+      await p.open()
+      const { view } = await p.until('method')
+      expect(view).toMatchObject({ step: 'method', credits: { price: 12, balance: 5, pays: false }, mana: { pays: true }, split: { credits: 5 } })
+      const mana = (view as { split: { mana: bigint } }).split.mana
+      expect(mana > 0n && mana < BigInt(PRICE)).toBe(true)
+    })
+
+    it('offers them together even where MANA alone can’t pay, and Insufficient Funds where it can’t pay the rest either', async () => {
+      on()
+      const p = page(world(), { creditsCents: 50, manaBalance: (3n * WEI) / 2n })
+      await p.open()
+      const { view } = await p.until('method')
+      expect(view).toMatchObject({ credits: { pays: false }, mana: { pays: false }, split: { credits: 5 } })
+      const short = page(world(), { creditsCents: 50, manaBalance: WEI })
+      await short.open()
+      expect((await short.until('insufficient')).view).not.toHaveProperty('split')
+    })
+
+    it('isn’t offered while the rule is off, for a cart, or for an in-app wallet', async () => {
+      const off = page(world(), { creditsCents: 50 })
+      await off.open()
+      expect((await off.until('method')).view).not.toHaveProperty('split')
+      on()
+      const cart = page(world(), { creditsCents: 50 })
+      await cart.open(true)
+      expect((await cart.until('method')).view).not.toHaveProperty('split')
+      const managed = page(world(), { creditsCents: 50, kind: 'managed' })
+      await managed.open()
+      await managed.until('insufficient')
+    })
+
+    it('buys nothing on BUY with both until the credits node authorizes part of a price', async () => {
+      on()
+      const w = world()
+      const p = page(w, { creditsCents: 50 })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await new Promise((r) => setTimeout(r, 20))
+      expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
+      expect(w.wallet.requests.some((q) => q.method === 'eth_signTypedData_v4' || q.method === 'eth_sendTransaction')).toBe(false)
     })
   })
 

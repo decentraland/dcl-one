@@ -11,3 +11,19 @@ import type { ShopWalletKind } from '@dcl/one-ui/apps/shop/shopProtocol'
 export function seesMana({ flag, wallet }: { flag: boolean; wallet: ShopWalletKind | null }): boolean {
   return flag && wallet === 'web3'
 }
+
+/**
+ * Paying one item with Credits and MANA together (the balance pays part, MANA the rest): only to a buyer shown MANA, and
+ * off until the credits node authorizes part of a price. `setSplitInWorld` turns it on (tests, then the node's release).
+ */
+let splitOn = false
+export function seesSplit(who: { flag: boolean; wallet: ShopWalletKind | null }): boolean {
+  return splitOn && seesMana(who)
+}
+export function setSplitInWorld(on: boolean): () => void {
+  const previous = splitOn
+  splitOn = on
+  return () => {
+    splitOn = previous
+  }
+}

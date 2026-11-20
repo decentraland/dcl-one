@@ -43,7 +43,7 @@ import { readManaBalanceWei } from '../../../shop/checkout/lib/mana'
 import { REMOTE_FLAG } from '@shop/discovery/lib/rolloutFlags'
 import { requestChainSwitch } from '../../../shop/wallet/chain'
 import { itemAsset } from '@shop/model/asset'
-import { creditsCeil, creditsFloor, type UsdCents } from '@shop/model/money'
+import { creditsCeil, creditsFloor, manaForRemainder, subCents, wholeCreditsFloor, type ManaWei, type UsdCents } from '@shop/model/money'
 import type { CartLine, GroupProgress, GroupStatus, PurchaseOffer, PurchaseState } from '@shop/model/purchase'
 import type { Session } from '@shop/model/settlement'
 import { loginExpired, rootAddress, type StoredLogin } from '@explorer-core/features/auth/sso'
@@ -79,7 +79,7 @@ import { withUtm } from '@explorer-core/lib/utm'
 import { trustedCreditsManager, type TrustedManager } from './config'
 import { createLedger, STORAGE_REFUSED, type OperationRecord } from './ledger'
 import { createManaFlow, MANA_BALANCE_TIMEOUT_MS } from './manaFlow'
-import { seesMana } from './manaGate'
+import { seesMana, seesSplit } from './manaGate'
 import { createNamePurchase, nameBuild, namesModeFor, type NameStanding } from './namePurchase'
 import { assertWalletAccount, guardedProvider, WalletRefusal, type PurchaseIntent } from './walletGuard'
 import { hostApiOptions } from '../../../shop/api/host'
@@ -446,6 +446,29 @@ export interface QuotePart {
   displays: ShellPurchaseItem[]
 }
 
+/**
+ * One item paid with Credits and MANA together: `creditsCents` (whole credits, `credits` of them) from the balance, and
+ * `manaWei` for the rest, rounded up, as the web Shop splits it.
+ */
+export interface SplitQuote {
+  creditsCents: UsdCents
+  credits: number
+  manaWei: ManaWei
+}
+
+/**
+ * The split one item's terms allow, or null: the balance holds some whole credits but fewer than the price, and the
+ * buyer's MANA covers the rest. `quotedCents`: the item's price as the server quoted it; `priceWei`: the same item in MANA.
+ */
+export function splitTerms(quotedCents: UsdCents, balanceCents: UsdCents, priceWei: ManaWei, manaBalance: bigint): SplitQuote | null {
+  const leg = wholeCreditsFloor(balanceCents)
+  if (leg <= 0 || leg >= quotedCents) return null
+  const rest = subCents(quotedCents, leg)
+  const manaWei = rest == null ? null : manaForRemainder(rest, quotedCents, priceWei)
+  if (manaWei == null || manaWei <= 0n || manaWei > manaBalance) return null
+  return { creditsCents: leg, credits: creditsFloor(leg), manaWei }
+}
+
 /** What the buyer is shown agreeing to: the session it was read for and the quoted terms. */
 export interface Quote {
   login: string
@@ -464,6 +487,8 @@ export interface Quote {
   mana?: ManaQuote
   /** The Credits balance couldn't be read (`balance` is 0 then): the Credits can't pay, and MANA does. */
   creditsUnread?: true
+  /** Credits and MANA together, where offered (splitTerms): what the balance pays and what MANA pays of the rest. */
+  split?: SplitQuote
   /** Set when the wallet changed account or went away after the terms were shown. */
   stale?: string
 }
@@ -1249,6 +1274,13 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           pays: mana.pays
         }
       : null
+    // One unit of one item, bought on its own (never from the cart: carts come later), that the Credits price but the
+    // balance doesn't cover, and that MANA can pay the rest of.
+    const only = partition.groups.length === 1 && partition.groups[0].quotes.length === 1 ? partition.groups[0].quotes[0] : null
+    const split =
+      seesSplit({ flag: svc.manaInWorld(), wallet: kind }) && single && !req.cart && req.items[0].quantity === 1 && creditsBuys && balance && manaQuote?.parts.length === 1 && only?.method === 'credits'
+        ? splitTerms(only.quoted, balance.balanceCents, manaQuote.price as ManaWei, manaQuote.balance)
+        : null
     return {
       login: loginKey(login),
       buyer,
@@ -1260,7 +1292,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       total: creditsBuys ? creditsCeil(partition.totals.credits.charged) : 0,
       balance: balance?.credits ?? 0,
       ...(balance ? {} : { creditsUnread: true as const }),
-      ...(manaQuote ? { mana: manaQuote } : {})
+      ...(manaQuote ? { mana: manaQuote } : {}),
+      ...(split ? { split } : {})
     }
   }
 
@@ -1290,7 +1323,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     const mana = quote.mana
     // Choose your payment method, as the web Shop's BuyModal shows it: when the MANA pays, or when the buyer holds some
     // that doesn't while the Credits do (the row then says why it can't). Otherwise the Credits' own steps, as before.
-    if (mana && (mana.pays || (mana.balance > 0n && creditsPay))) {
+    if (mana && (mana.pays || (mana.balance > 0n && creditsPay) || quote.split)) {
       show(
         op,
         {
@@ -1298,6 +1331,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           items: quote.items,
           credits: { price: quote.parts.length > 0 ? quote.total : null, balance: quote.creditsUnread ? null : quote.balance, pays: creditsPay },
           mana: { price: mana.price, balance: mana.balance, pays: mana.pays },
+          ...(quote.split ? { split: { credits: quote.split.credits, mana: quote.split.manaWei } } : {}),
           ...(initial ? { initial } : {})
         },
         { onClose: () => close(op, 'cancelled'), onPay: (method) => void settle(op, req, quote, method) }
