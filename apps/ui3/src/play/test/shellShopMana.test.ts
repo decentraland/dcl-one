@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, keccak256, maxUint256, parseAbi, type Hex } from 'viem'
 import { batchAuthorization, createFakeChain, createFakeLocks, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade } from '../../shop/checkout/fakes'
 import { CREDITS_MANAGER_ABI, OFFCHAIN_META_TX_ABI } from '@shop/checkout/chain/abi'
+import { claimSplitHold, readSplitHold, readSplitHoldRecord, splitHoldLine, writeSplitHold } from '../../shop/checkout/purchase/splitHold'
 import { ASSET_TYPE, buildStoreUseCreditsArgs, encodeStoreBuy, encodeUseCredits } from '../../shop/checkout/purchase/encoding'
 import { encodeExecuteMetaTransaction } from '../../shop/checkout/chain/metatx'
 import { manaFingerprint } from '../shell/shop/manaPurchase'
@@ -423,8 +424,8 @@ describe('the in-world purchase with MANA', () => {
     let splitOn = false
     afterEach(() => {
       splitOn = false
-      // An exact approval's record (any tab's, in localStorage) never carries over to the next test.
-      for (const key of Object.keys(localStorage)) if (key.startsWith('dcl-shop-exact-grant')) localStorage.removeItem(key)
+      // An exact approval's record and a split's shared hold (any tab's, in localStorage) never carry over to the next test.
+      for (const key of Object.keys(localStorage)) if (key.startsWith('dcl-shop-exact-grant') || key.startsWith('dcl-shop-buynow-split')) localStorage.removeItem(key)
     })
     const on = () => (splitOn = true)
 
@@ -678,6 +679,56 @@ describe('the in-world purchase with MANA', () => {
       await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'failed' }), { timeout: 5000 })
       expect(p.events.some((e) => e.state === 'succeeded')).toBe(false)
       expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+    })
+
+    // The item's line in the hold the web Shop and /play share, as both compute it for this listing.
+    const HOLD_LINE = splitHoldLine(itemAsset(CHAIN.POLYGON, CONTRACT as never, String(ITEM)), {})
+    const webHold = { at: Date.now(), attempt: 'web-attempt', txHash: null, chainId: 137, creditId: `0x${'d4'.repeat(32)}`, creditExpiresAt: Math.floor(Date.now() / 1000) + 900 }
+
+    it('waits on a split the web Shop left unanswered for this item: no credit asked, nothing sent', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      expect(writeSplitHold(BUYER, HOLD_LINE, webHold)).toBe(true)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      const failed = await p.until('failed')
+      expect(failed.view).toMatchObject({ message: expect.stringContaining('still confirming') })
+      expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
+      expect(w.relay.posts).toHaveLength(0)
+      // The web's record stays as it was.
+      expect(readSplitHold(BUYER, HOLD_LINE)).toMatchObject({ attempt: 'web-attempt' })
+    })
+
+    it('leaves an unanswered split held for the web Shop too, and clears its hold once it is bought', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      Object.assign(w.relay.state, { mode: 'fail-after-send', failStatus: 504 })
+      // The node lists nothing yet: the sale stays unknown.
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, creditRecordOf: async () => null } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      const held = readSplitHold(BUYER, HOLD_LINE)
+      expect(held).toMatchObject({ creditId: `0x${'a1'.repeat(32)}` })
+      // What the web Shop's Buy finds: this item is held.
+      expect(await claimSplitHold(createFakeLocks(), BUYER, HOLD_LINE)).toMatchObject({ kind: 'held' })
+    })
+
+    it('clears its own hold once its sale is bought', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('success')
+      expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toBeNull()
     })
 
     it('reserves nothing and asks nothing of the wallet without Web Locks', async () => {

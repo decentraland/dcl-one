@@ -23,6 +23,8 @@ export interface SplitSale {
   gapWei: string
   /** The external call's data, as reviewed (its price, coupon and buyer). */
   callData: Hex
+  /** Its line in the hold the web Shop and /play share (shop/checkout/purchase/splitHold), and the attempt it wrote there. */
+  hold?: { line: string; attempt: string }
 }
 
 /**
@@ -50,7 +52,9 @@ export function isSplitSale(v: unknown): v is SplitSale {
     s.creditId.length > 0 &&
     digits(s.creditWei) &&
     digits(s.gapWei) &&
-    hex(s.callData)
+    hex(s.callData) &&
+    (s.hold === undefined ||
+      (typeof s.hold === 'object' && s.hold !== null && typeof (s.hold as Record<string, unknown>).line === 'string' && typeof (s.hold as Record<string, unknown>).attempt === 'string'))
   )
 }
 

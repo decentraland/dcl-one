@@ -53,8 +53,11 @@ export type SplitPlan = {
   creditsCents: number;
   confirmedWei: bigint;
   session: SignedSession;
-  /** The credit the node issued, once checked to be the share it must be: before anything is signed for it. */
-  onCredit?: (credit: { id: string }) => void;
+  /**
+   * The credit the node issued, once checked to be the share it must be: before anything is signed for it. False: the
+   * caller couldn't keep the purchase's record, so nothing is signed or sent and the credit is released.
+   */
+  onCredit?: (credit: { id: string; expiresAt: number }) => boolean | void;
 };
 
 export type CheckoutDeps = {
@@ -170,7 +173,11 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
       dispatchSafe(store, keyId, { type: "failed", failure });
       return { status: "failed", failure, released: await release(deps, [creditId]) };
     }
-    split.onCredit?.({ id: credit.id });
+    if (split.onCredit?.({ id: credit.id, expiresAt: Math.floor(Number(credit.expiresAt)) }) === false) {
+      const failure: GroupFailure = { kind: "refused", message: "This browser couldn't keep a record of this purchase, so it wasn't sent. Nothing was charged." };
+      dispatchSafe(store, keyId, { type: "failed", failure });
+      return { status: "failed", failure, released: await release(deps, [creditId]) };
+    }
     purchases = [{ ...purchaseFor(purchaseTargetFor(units[0]!), [credit], terms.creditWei.toString()), maxUncreditedValue: terms.gapWei.toString() }];
   } else {
     purchases = units.map((u) => purchaseFor(purchaseTargetFor(u), [credit], auth.maxCreditedValue));

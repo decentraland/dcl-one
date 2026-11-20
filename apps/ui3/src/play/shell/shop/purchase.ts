@@ -26,6 +26,7 @@ import type { Hex } from 'viem'
 import { releaseAuthorizing, runGroup, splitPriceOf, watchGroup, type CheckoutDeps, type GroupResult, type SplitPlan } from '../../../shop/checkout/purchase/executor'
 import { buildAcceptCalldata, buildAcceptWithCouponCalldata, buildStoreBuyCalldata } from '../../../shop/checkout/purchase/encoding'
 import { purchaseTargetFor } from '../../../shop/checkout/purchase/cart'
+import { claimSplitHold, clearSettledSplitHold, clearSplitHold, readSplitHoldRecord, splitHoldLine, writeSplitHold } from '../../../shop/checkout/purchase/splitHold'
 import { ensureAuthorization, exactAllowanceReady, exactGrantLock, getManaSpendingAuthorization } from '../../../shop/checkout/lib/authorizations'
 import { pageLocks, webLock as lockIfFree } from '../../../shop/checkout/lib/web-lock'
 import type { RailContext } from '../../../shop/checkout/purchase/rail'
@@ -507,8 +508,10 @@ interface SplitRun {
   /** The credit's exact value C, and the external call's data as reviewed: what the sale's signature is bound to. */
   creditWei: bigint
   callData: Hex
-  /** Lets go of the exact approval's lock, held from the last allowance read through the sale's hand-off. */
+  /** Lets go of the exact approval's lock and the item's hold, held from the last allowance read through the sale's outcome. */
   release: () => void
+  /** The item's line in the hold the web Shop and /play share, and this attempt's id there. */
+  hold: { line: string; attempt: string }
 }
 
 /** What the buyer is shown agreeing to: the session it was read for and the quoted terms. */
@@ -966,7 +969,21 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
    * own, or a credit expired unused (past the index's lag), ends it unbought. Anything unread keeps it pending. Null: not
    * handed off, for the Credits path to decide.
    */
+  /** A found-out split's record in the hold it shares with the web Shop goes, if it is still this attempt's. */
+  const releaseSplitHold = (sale: SplitSale): void => {
+    const hold = sale.hold
+    if (!hold) return
+    const read = readSplitHoldRecord(sale.buyer, hold.line)
+    if (read && read.attempt === hold.attempt) void clearSettledSplitHold(svc.locks(), sale.buyer, hold.line, read).catch(() => undefined)
+  }
+
   const checkSplit = async (op: Operation & { buyer: string }, sale: SplitSale, store: CartStore): Promise<boolean | null> => {
+    const decided = await findOutSplit(op, sale, store)
+    if (decided === true) releaseSplitHold(sale)
+    return decided
+  }
+
+  const findOutSplit = async (op: Operation & { buyer: string }, sale: SplitSale, store: CartStore): Promise<boolean | null> => {
     const progress = latest(store.getSnapshot().checkout?.groups[0] ?? null, op.progress ?? null)
     const hash = progress?.txHash ?? op.txHash ?? null
     const handedOff = op.state === 'pending' || !!hash || (progress != null && ['submitted', 'pending', 'confirmed'].includes(progress.status))
@@ -1578,6 +1595,12 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           break
         }
         const outcome = await runPart(run, part, quote, wallet, current, split?.resolved ?? reviewed.get(part), split)
+        // The shared hold follows the outcome before its lock goes: kept with the hash while unknown, else cleared.
+        if (split) {
+          if (outcome.kind === 'pending') {
+            if (run.txHash) writeSplitHold(quote.buyer, split.hold.line, { at: Date.now(), attempt: split.hold.attempt, txHash: run.txHash, chainId: run.chainId ?? null, creditId: run.split?.creditId ?? null, creditExpiresAt: readSplitHoldRecord(quote.buyer, split.hold.line)?.creditExpiresAt ?? null })
+          } else clearSplitHold(quote.buyer, split.hold.line, split.hold.attempt)
+        }
         if (outcome.kind === 'pending') {
           follow.push(run)
           // A group handed off but not yet mined holds the rest: signed meanwhile, the next could take the same
@@ -1662,6 +1685,21 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       release()
       return { why: 'Your MANA approval is still confirming. Nothing was charged; try again in a minute.' }
     }
+    // The item's hold, shared with the web Shop: one split of it at a time, on either, until the last one is found out.
+    const line = part.priced[0]!.line
+    const holdLine = splitHoldLine(line.asset, line.listing)
+    const claim = await claimSplitHold(locks, quote.buyer, holdLine)
+    if (claim.kind !== 'claimed') {
+      release()
+      return {
+        why:
+          claim.kind === 'held'
+            ? 'A purchase of this item with Credits and MANA is still confirming. Nothing was charged here.'
+            : claim.kind === 'busy'
+              ? 'This item is being bought in another window. Nothing was charged here.'
+              : "This browser can't keep a purchase with Credits and MANA to one window, so nothing was charged."
+      }
+    }
     // The sale's external call, from the line as reviewed (its price, coupon and buyer): the only one its signature may carry.
     const target = purchaseTargetFor(unit)
     const callData = (
@@ -1671,7 +1709,11 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           ? buildAcceptWithCouponCalldata([target.trade], [target.coupon], quote.buyer)
           : buildAcceptCalldata([target.trade], quote.buyer)
     ).data
-    return { resolved: review.resolved, plan: { creditsCents: terms.creditsCents, confirmedWei: terms.manaWei, session: { walletKind: 'web3' } }, gapWei: gap, creditWei: credit, callData, release }
+    const both = (): void => {
+      claim.release()
+      release()
+    }
+    return { resolved: review.resolved, plan: { creditsCents: terms.creditsCents, confirmedWei: terms.manaWei, session: { walletKind: 'web3' } }, gapWei: gap, creditWei: credit, callData, release: both, hold: { line: holdLine, attempt: claim.attempt } }
   }
 
   /**
@@ -1852,10 +1894,14 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
                 split: {
                   ...split.plan,
                   // Kept before anything is signed for it: what its execution must carry to count as this purchase.
-                  onCredit: (credit: { id: string }) => {
+                  onCredit: (credit: { id: string; expiresAt: number }) => {
+                    // The shared hold, written and read back before anything is signed: unkept, nothing goes.
+                    const held = writeSplitHold(quote.buyer, split.hold.line, { at: Date.now(), attempt: split.hold.attempt, txHash: null, chainId, creditId: credit.id, creditExpiresAt: credit.expiresAt })
+                    if (!held) return false
                     issued = credit
-                    op.split = { buyer: quote.buyer, chainId, manager: manager.address, creditId: credit.id, creditWei: split.creditWei.toString(), gapWei: split.gapWei.toString(), callData: split.callData }
+                    op.split = { buyer: quote.buyer, chainId, manager: manager.address, creditId: credit.id, creditWei: split.creditWei.toString(), gapWei: split.gapWei.toString(), callData: split.callData, hold: split.hold }
                     keep(op)
+                    return true
                   }
                 }
               }
