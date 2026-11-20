@@ -195,8 +195,11 @@ export type FakeWallet = Eip1193Provider & {
   chainId: number;
   account: string;
   requests: { method: string; params?: unknown[] }[];
-  /** What the next signature/transaction request does. */
-  next: "ok" | "reject" | "fail";
+  /**
+   * What the next signature/transaction request does. `lost` is for the next transaction (signatures pass it by): sent (it
+   * is in `sent`), then failing without its hash, as a wallet that disconnects after broadcasting (4900).
+   */
+  next: "ok" | "reject" | "fail" | "lost";
   sent: { to: string; data: Hex }[];
   emit(event: string, ...args: unknown[]): void;
 };
@@ -222,13 +225,16 @@ export function createFakeWallet(opts: { chainId?: number; account?: string; onS
       }
       if (method === "eth_signTypedData_v4" || method === "eth_sendTransaction") {
         const mode = wallet.next;
+        if (mode === "lost" && method === "eth_signTypedData_v4") return `0x${"11".repeat(64)}1b`;
         wallet.next = "ok";
         if (mode === "reject") throw Object.assign(new Error("User rejected the request."), { code: 4001 });
         if (mode === "fail") throw new Error("The wallet could not sign");
         if (method === "eth_signTypedData_v4") return `0x${"11".repeat(64)}1b`;
         const tx = (params![0] as { to: string; data: Hex });
         wallet.sent.push({ to: tx.to, data: tx.data });
-        return opts.onSend?.(tx) ?? (`0x${(++n).toString(16).padStart(64, "0")}` as Hex);
+        const hash = opts.onSend?.(tx) ?? (`0x${(++n).toString(16).padStart(64, "0")}` as Hex);
+        if (mode === "lost") throw Object.assign(new Error("The wallet disconnected."), { code: 4900 });
+        return hash;
       }
       throw Object.assign(new Error(`unsupported ${method}`), { code: 4200 });
     },
@@ -246,6 +252,29 @@ export function createFakeWallet(opts: { chainId?: number; account?: string; onS
     },
   };
   return wallet;
+}
+
+/**
+ * The Web Locks of one browser, shared by every dialog (tab) given the same one: a lock asked `ifAvailable` while another
+ * holds it is refused. Waiting for one is not modeled.
+ */
+export function createFakeLocks(): LockManager & { held: Set<string> } {
+  const held = new Set<string>();
+  const request = async (name: string, options: LockOptions | LockGrantedCallback<unknown>, callback?: LockGrantedCallback<unknown>) => {
+    const opts = typeof options === "function" ? {} : options;
+    const granted = (typeof options === "function" ? options : callback)!;
+    if (held.has(name)) {
+      if (opts.ifAvailable) return granted(null);
+      throw new Error("fake locks: waiting for a held lock is not modeled");
+    }
+    held.add(name);
+    try {
+      return await granted({ name, mode: "exclusive" } as Lock);
+    } finally {
+      held.delete(name);
+    }
+  };
+  return { held, request, query: async () => ({ held: [], pending: [] }) } as unknown as LockManager & { held: Set<string> };
 }
 
 /** The MANA approve a relayed NativeMetaTransaction carries, if any: (owner, spender, amount). */

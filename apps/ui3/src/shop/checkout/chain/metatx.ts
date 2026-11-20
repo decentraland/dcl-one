@@ -153,7 +153,15 @@ export type RelayOptions = {
   minNonce?: bigint;
   /** Fired once the buyer signed (the prompt is gone), before the relay is called. */
   onSigned?: () => void;
+  /**
+   * The signed execution, before it goes to the relay: what `relaySignedMetaTransaction` can send again, and the nonce it
+   * names. A throw here stops it before anything is sent (the caller could not record it).
+   */
+  onSignedCall?: (call: SignedCall) => void;
 };
+
+/** A meta-transaction signed for one nonce: sent again as is, it can still run at most once. */
+export type SignedCall = { to: string; data: Hex; nonce: bigint };
 
 export type Relayed = { txHash: Hex; nonce: bigint };
 
@@ -177,6 +185,7 @@ export async function relayMetaTransaction(opts: RelayOptions): Promise<Relayed>
   opts.onSigned?.();
 
   const data = encodeExecuteMetaTransaction(target.metaTx, from, functionData, signature);
+  opts.onSignedCall?.({ to: target.address, data, nonce });
   const txHash = await relaySignedMetaTransaction({ from, to: target.address, data, relayerUrl: opts.relayerUrl, fetchImpl: opts.fetchImpl });
   return { txHash, nonce };
 }
