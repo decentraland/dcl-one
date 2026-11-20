@@ -79,6 +79,7 @@ import { withUtm } from '@explorer-core/lib/utm'
 import { trustedCreditsManager, type TrustedManager } from './config'
 import { createLedger, STORAGE_REFUSED, type OperationRecord } from './ledger'
 import { createManaFlow, MANA_BALANCE_TIMEOUT_MS } from './manaFlow'
+import { seesMana } from './manaGate'
 import { createNamePurchase, nameBuild, namesModeFor, type NameStanding } from './namePurchase'
 import { assertWalletAccount, guardedProvider, WalletRefusal, type PurchaseIntent } from './walletGuard'
 import { hostApiOptions } from '../../../shop/api/host'
@@ -1078,8 +1079,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   const readQuote = async (op: Operation, login: StoredLogin, buyer: string, kind: ShopWalletKind, req: ShopBuyRequest): Promise<Quote | string> => {
     const c = confirmedClient(loginKey(login))
     await svc.primeFlags().catch(() => {})
-    // MANA is offered to a self-custody wallet (as the web Shop offers it), for one item or a cart, where this page may.
-    const manaOffered = kind === 'web3' && svc.manaInWorld()
+    // MANA is offered, for one item or a cart, to whoever the one MANA rule shows it to (./manaGate).
+    const manaOffered = seesMana({ flag: svc.manaInWorld(), wallet: kind })
     let creditsUnread: unknown = null
     const [listings, balance, manaBalance] = await Promise.all([
       Promise.all(req.items.map((l) => svc.fetchItem(l.contract, l.itemId, c))),
@@ -1566,8 +1567,27 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     const canPay = wallet != null && deps.wallet?.provider(buyer) != null && !!login.identity.ephemeralIdentity.privateKey
     const marketplace = canPay && wallet === 'web3' && deps.wallet?.marketplace?.(buyer) === true
     const namesMode = canPay ? nameSession()?.mode : undefined
-    return { v: SHOP_PROTOCOL, buyer, wallet, credits: canPay, marketplace, ...(namesMode ? { namesMode } : {}), ...(canPay ? {} : { reason: 'noWallet' as const }), codedErrors: true }
+    // What the HUD shows of MANA (the MANA equivalent of a price) follows the same rule as the purchase (./manaGate).
+    const mana = canPay && seesMana({ flag: svc.manaInWorld(), wallet })
+    return {
+      v: SHOP_PROTOCOL,
+      buyer,
+      wallet,
+      credits: canPay,
+      marketplace,
+      ...(namesMode ? { namesMode } : {}),
+      ...(mana ? { mana: true } : {}),
+      ...(canPay ? {} : { reason: 'noWallet' as const }),
+      codedErrors: true
+    }
   }
+
+  /** The flags file, read once for this page's capabilities (each purchase reads it again as it opens). */
+  let flagsRead: Promise<void> | null = null
+  const readFlagsOnce = (): Promise<void> =>
+    (flagsRead ??= svc.primeFlags().catch(() => {
+      flagsRead = null
+    }))
 
   const balance = async (): Promise<ShopBalance | null> => {
     const who = signedIn()
@@ -1604,6 +1624,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         case SHOP_METHODS.capabilities: {
           const who = signedIn()
           if (who) await restore(who.buyer)
+          // The MANA rule reads the flags file: it is read before the answer, once for the page.
+          await readFlagsOnce()
           return capabilities()
         }
         case SHOP_METHODS.balance:

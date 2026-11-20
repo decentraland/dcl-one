@@ -292,6 +292,13 @@ describe('the in-world purchase with MANA', () => {
       }
     })
 
+    it('tells the HUD to show MANA by the same rule: a self-custody wallet with the flag on', async () => {
+      const caps = async (opts: Parameters<typeof page>[1]) => (await page(world(), opts).shell.request('shop.capabilities', undefined)) as { mana?: boolean }
+      expect(await caps({})).toMatchObject({ mana: true })
+      expect(await caps({ kind: 'managed' })).not.toHaveProperty('mana')
+      expect(await caps({ flag: false })).not.toHaveProperty('mana')
+    })
+
     it('isn’t offered for an in-app wallet', async () => {
       const w = world()
       const p = page(w, { kind: 'managed' })

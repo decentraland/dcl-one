@@ -1,9 +1,12 @@
 // The Shop's item panel, beside the grid while an item is selected: the item on its rarity art, its
-// price, rarity and stock, creator, description and what it hides, and what can be done with it here.
+// price (and, for a buyer shown MANA, its MANA equivalent under it), rarity and stock, creator, description
+// and what it hides, and what can be done with it here.
 // A primary sale priced in credits is bought in-world; anything else (a resale, MANA only, not for
 // sale) is offered on the web Shop's item page.
 
 import type { CardPrice } from '@shop/discovery/cardPrice'
+import { formatMana, type ManaWei } from '@shop/model/money'
+import { GeneralPolygonMana } from '@dcl/one-ui'
 import { Close, MaskIcon, rarityPanel } from '@hud/design'
 import hiddenIcon from '@hud/assets/backpack/icon-hidden.webp'
 import cartIcon from '../assets/cart.svg'
@@ -28,6 +31,8 @@ export interface ShopItemPanelProps {
   /** Its category's glyph, before the name. */
   icon: React.ReactNode
   price: CardPrice
+  /** The MANA a credits price comes to, shown under it ("≈ 5,000 MANA") to a buyer shown MANA; absent otherwise. */
+  manaPrice?: ManaWei | null
   /** What is left of its supply, as "35/1000", when known. */
   stock?: string
   creator: { name: string; picture?: string | null; color: string }
@@ -42,7 +47,22 @@ export interface ShopItemPanelProps {
   onAddToCart?: () => void
 }
 
-export function ShopItemPanel({ name, thumbnail, rarity, icon, price, stock, creator, description, hides = [], onClose, onOpenOnWeb, onBuy, onAddToCart }: ShopItemPanelProps): React.JSX.Element {
+export function ShopItemPanel({
+  name,
+  thumbnail,
+  rarity,
+  icon,
+  price,
+  manaPrice,
+  stock,
+  creator,
+  description,
+  hides = [],
+  onClose,
+  onOpenOnWeb,
+  onBuy,
+  onAddToCart
+}: ShopItemPanelProps): React.JSX.Element {
   return (
     <aside className={styles.panel} data-rarity={rarity} aria-label={name} style={{ '--panel-art': `url(${rarityPanel(rarity)})` } as React.CSSProperties}>
       <button type="button" className={styles.favourite} aria-label="Add to favourites" disabled title="Favourites are coming soon">
@@ -58,8 +78,15 @@ export function ShopItemPanel({ name, thumbnail, rarity, icon, price, stock, cre
             {icon}
             <span>{name}</span>
           </span>
-          <span className={styles.price}>
-            <PriceTag price={price} size={24} />
+          <span className={styles.prices}>
+            <span className={styles.price}>
+              <PriceTag price={price} size={24} />
+            </span>
+            {price.kind === 'credits' && manaPrice != null && manaPrice > 0n && (
+              <span className={styles.manaPrice} title={`${formatMana(manaPrice, { group: true })} MANA`}>
+                <GeneralPolygonMana size={16} aria-hidden="true" />≈ {formatMana(manaPrice, { group: true, decimals: 2 })} MANA
+              </span>
+            )}
           </span>
         </div>
         <span className={styles.rarity}>
