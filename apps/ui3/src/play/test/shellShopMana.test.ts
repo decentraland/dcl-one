@@ -760,7 +760,7 @@ describe('the in-world purchase with MANA', () => {
       expect(readSplitHold(BUYER, HOLD_LINE)).toMatchObject({ creditId: `0x${'a1'.repeat(32)}` })
     })
 
-    it('gives its credit back, and its hold, when its own transaction reverted and the node lists no spend of it', async () => {
+    it('keeps an own-reverted split held, its credit and hold kept, while the node lists nothing of its credit', async () => {
       on()
       const w = world()
       splitShop(w)
@@ -769,8 +769,54 @@ describe('the in-world purchase with MANA', () => {
       const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, creditRecordOf: async () => null } })
       await p.open()
       ;(await p.until('method')).handlers.onPay?.('split')
-      await p.until('failed')
-      expect(w.shop.log.filter((q) => q.name === 'cancelCreditAuthorizations')).toHaveLength(1)
+      await p.until('pending')
+      await new Promise((r) => setTimeout(r, 50))
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+      expect(p.events.some((e) => e.state === 'failed')).toBe(false)
+      expect(readSplitHold(BUYER, HOLD_LINE)).toMatchObject({ creditId: `0x${'a1'.repeat(32)}` })
+    })
+
+    it.each([
+      ['PENDING', 'PENDING' as const],
+      ['not yet listed', null]
+    ])('waits on an own revert while its credit reads %s, and completes once the node settles it in a replay that is this sale', async (_, first) => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'reverted'
+      const B = `0x${'c'.repeat(63)}4`
+      const evidence = {
+        ...w.evidence,
+        transaction: async (c: number, h: string) => (h === B ? resigned(w) : w.evidence.transaction(c, h)),
+        receipt: async (c: number, h: string) => (h === B ? { transactionHash: h as Hex, status: 'success' as const, blockNumber: 1n } : w.evidence.receipt(c, h))
+      }
+      let reads = 0
+      const creditRecordOf = async () => (reads++ === 0 ? (first ? { ...record('SETTLED', null), status: first } : null) : record('SETTLED', B))
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, manaEvidence: () => evidence as never, creditRecordOf: creditRecordOf as never } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'succeeded', txHash: B }), { timeout: 5000 })
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+      expect(w.relay.posts).toHaveLength(1)
+      expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toBeNull()
+    })
+
+    it('ends an own-reverted split unbought once its credit reads expired unspent past the index\'s lag', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'reverted'
+      const p = page(w, {
+        split: splitOn,
+        creditsCents: 50,
+        services: { ...managed, creditRecordOf: async () => record('EXPIRED', null), sleep: async () => void (w.clock.now += 16 * 60_000) }
+      })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'failed' }), { timeout: 5000 })
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
       expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toBeNull()
     })
 
@@ -980,7 +1026,8 @@ describe('the in-world purchase with MANA', () => {
       const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, manaEvidence: () => evidence as never, ...settledIn(() => B) } })
       await p.open()
       ;(await p.until('method')).handlers.onPay?.('split')
-      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'succeeded' }), { timeout: 5000 })
+      // Published with the replay's hash, never the reverted one it sent.
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'succeeded', txHash: B }), { timeout: 5000 })
       expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
     })
 

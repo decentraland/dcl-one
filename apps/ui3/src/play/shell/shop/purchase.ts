@@ -31,7 +31,7 @@ import { ensureAuthorization, exactAllowanceReady, exactGrantLock, getManaSpendi
 import { pageLocks, webLock as lockIfFree } from '../../../shop/checkout/lib/web-lock'
 import type { RailContext } from '../../../shop/checkout/purchase/rail'
 import { createSpendGuard } from '@shop/checkout/purchase/spend-guard'
-import { cancelUsdIntents, fetchUserPurchases, getUsdBalance, type PurchaseRecord, type UsdBalance } from '@shop/credits/credits'
+import { fetchUserPurchases, getUsdBalance, type PurchaseRecord, type UsdBalance } from '@shop/credits/credits'
 import type { OfferSource } from '../../../shop/detail/offers'
 import { fetchShopItems } from '@shop/discovery/api'
 import { isResale } from '@shop/market/access-rule'
@@ -995,17 +995,22 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   }
 
   /**
-   * After a split's own bytes reverted, the node's record of its credit, read first: an attributable success (a replay
-   * the node settled) bought it; a credit spent by another call is that; a SETTLED it can't attribute, or a read that
-   * fails, says nothing yet (held). Anything else read (pending, expired, not listed): the revert stands.
+   * After a split's own bytes reverted. The revert proves only that invocation failed, not that no other one carrying the
+   * sale succeeded, so it stays held until the credit's consumption is resolved: an attributable success the node
+   * indexed bought it (its hash returned); a credit the node says another call spent is that; an authoritative unused
+   * expiry (EXPIRED, read again past the index's lag) ends it unbought. PENDING, not listed, a SETTLED it can't
+   * attribute or a read that fails: held. Nothing is cancelled here: retiring a credit doesn't stop it being spent.
    */
-  const afterOwnRevert = async (op: Operation & { buyer: string }, sale: SplitSale): Promise<'bought' | 'elsewhere' | 'held' | 'reverted'> => {
+  const afterOwnRevert = async (op: Operation & { buyer: string }, sale: SplitSale): Promise<{ kind: 'bought'; txHash: string } | { kind: 'elsewhere' | 'held' | 'expired' }> => {
     const record = await svc.creditRecordOf(op.buyer, sale.creditId, client(op.buyer)).catch(() => undefined)
-    if (record === undefined) return 'held'
-    if (record?.status !== 'SETTLED') return 'reverted'
-    if (!record.txHash) return 'held'
+    if (record?.status === 'EXPIRED') {
+      op.expiredSince ??= svc.now()
+      return svc.now() - op.expiredSince >= EXPIRY_CONFIRM_MS ? { kind: 'expired' } : { kind: 'held' }
+    }
+    op.expiredSince = undefined
+    if (record?.status !== 'SETTLED' || !record.txHash) return { kind: 'held' }
     const outcome = await splitExecution(svc.manaEvidence(), sale, record.txHash)
-    return outcome === 'bought' ? 'bought' : outcome === 'other' ? 'elsewhere' : 'held'
+    return outcome === 'bought' ? { kind: 'bought', txHash: record.txHash } : outcome === 'other' ? { kind: 'elsewhere' } : { kind: 'held' }
   }
 
   const findOutSplit = async (op: Operation & { buyer: string }, sale: SplitSale, store: CartStore): Promise<boolean | null> => {
@@ -1022,10 +1027,10 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       }
       if (outcome === 'reverted') {
         const after = await afterOwnRevert(op, sale)
-        if (after === 'held') return false
-        if (after === 'bought') settled(op, 'succeeded', {})
-        else if (after === 'elsewhere') settled(op, 'failed', {}, SPLIT_SPENT_ELSEWHERE, SPLIT_SPENT_ELSEWHERE_PART)
-        else settled(op, 'failed', {}, 'The transaction failed on-chain. Nothing was bought.', REVERTED_PART)
+        if (after.kind === 'held') return false
+        if (after.kind === 'bought') settled(op, 'succeeded', { txHash: after.txHash })
+        else if (after.kind === 'elsewhere') settled(op, 'failed', {}, SPLIT_SPENT_ELSEWHERE, SPLIT_SPENT_ELSEWHERE_PART)
+        else settled(op, 'failed', {}, 'This purchase failed on-chain and its Credits expired unspent: nothing was bought.', REVERTED_PART)
         return true
       }
       // Unknown or another transaction: a hash that is missing, dropped or not this sale says nothing more. The node's
@@ -2022,17 +2027,15 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           if (outcome === 'reverted') {
             // Its own bytes reverted; the node's record of its credit still comes first (a replay may have bought it).
             const after = await afterOwnRevert(op as Operation & { buyer: string }, op.split)
-            if (after === 'bought') {
-              move(op, 'succeeded', { txHash: result.txHash })
+            if (after.kind === 'bought') {
+              move(op, 'succeeded', { txHash: after.txHash })
               return { kind: 'confirmed' }
             }
-            if (after === 'elsewhere') return refused(SPLIT_SPENT_ELSEWHERE, SPLIT_SPENT_ELSEWHERE_PART, null)
-            if (after === 'held') {
-              move(op, 'pending', { txHash: result.txHash })
-              return { kind: 'pending' }
-            }
-            await cancelUsdIntents([op.split.creditId], quote.client).catch(() => 0)
-            return refused('The transaction failed on-chain and nothing was bought.', REVERTED_PART, 'failed')
+            if (after.kind === 'elsewhere') return refused(SPLIT_SPENT_ELSEWHERE, SPLIT_SPENT_ELSEWHERE_PART, null)
+            if (after.kind === 'expired') return refused('This purchase failed on-chain and its Credits expired unspent: nothing was bought.', REVERTED_PART, 'failed')
+            // Held while its credit's consumption is unresolved: watched like any purchase that may have gone.
+            move(op, 'pending', { txHash: result.txHash })
+            return { kind: 'pending' }
           }
           move(op, 'pending', { txHash: outcome === 'other' ? null : result.txHash })
           return { kind: 'pending' }
