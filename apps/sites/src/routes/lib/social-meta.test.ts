@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SOCIAL_IMAGE, absoluteUrl, homeMeta, notFoundMeta, oneLine, publicBase, socialMeta } from "./social-meta";
-
-const content = (tags: ReturnType<typeof socialMeta>, key: string) =>
-  tags.filter((t) => ("property" in t && t.property === key) || ("name" in t && t.name === key)).map((t) => (t as { content: string }).content);
+import { tagContent as content } from "./social-meta.test-utils";
 
 describe("socialMeta", () => {
   it("writes the full card with one og:type and an absolute canonical", () => {
