@@ -250,37 +250,58 @@ impl reqwest::dns::Resolve for PublicAddressResolver {
     }
 }
 
-/// The client a hop to another origin is dialled with: no trusted name, no
-/// redirect, no proxy, and the sync client's timeouts.
-fn other_origin_client(resolver: PublicAddressResolver) -> reqwest::Result<reqwest::Client> {
-    HttpClientCfg {
-        max_redirects: None,
-        ..HttpClientCfg::serve(4)
-    }
-    .builder()
-    .dns_resolver(resolver)
-    .no_proxy()
-    .build()
+/// A client built without redirects, paired with the client its file
+/// downloads dial a hop to another origin with: one that trusts no name,
+/// follows no redirect and uses no proxy. Built per caller, so its pool lives
+/// on that caller's runtime and takes its idle setting.
+#[derive(Clone)]
+pub struct CheckedRedirectClient {
+    client: reqwest::Client,
+    other_origins: reqwest::Client,
 }
 
-/// `GET url` on `client` (built without redirects), following at most `max`
-/// 301/302/303/307/308 redirects by hand. A hop on the first URL's origin
-/// (scheme, host and port) is dialled with `client`; a hop to any other
-/// origin must be a public http(s) URL and is dialled by a client that trusts
-/// no name, so its address check and its connection share one lookup.
+impl CheckedRedirectClient {
+    /// `resolver` answers the other-origin client; production passes
+    /// `PublicAddressResolver::trusting([])`.
+    pub fn new(
+        client: reqwest::Client,
+        resolver: PublicAddressResolver,
+        connections_max_idle: usize,
+    ) -> reqwest::Result<Self> {
+        let other_origins = HttpClientCfg {
+            max_redirects: None,
+            ..HttpClientCfg::serve(connections_max_idle)
+        }
+        .builder()
+        .dns_resolver(resolver)
+        .no_proxy()
+        .build()?;
+        Ok(Self {
+            client,
+            other_origins,
+        })
+    }
+}
+
+impl std::ops::Deref for CheckedRedirectClient {
+    type Target = reqwest::Client;
+
+    fn deref(&self) -> &reqwest::Client {
+        &self.client
+    }
+}
+
+/// `GET url`, following at most `max` 301/302/303/307/308 redirects by hand.
+/// A hop on the first URL's origin (scheme, host and port) is dialled with
+/// the main client; a hop to any other origin must be a public http(s) URL
+/// and is dialled by the other-origin client, so its address check and its
+/// connection share one lookup.
 pub async fn get_following_checked_redirects(
-    client: &reqwest::Client,
+    client: &CheckedRedirectClient,
     url: &str,
     max: usize,
 ) -> Result<reqwest::Response, SendError> {
-    static OTHER_ORIGINS: std::sync::LazyLock<Result<reqwest::Client, String>> =
-        std::sync::LazyLock::new(|| {
-            other_origin_client(PublicAddressResolver::trusting([])).map_err(|e| e.to_string())
-        });
-    let other = OTHER_ORIGINS
-        .as_ref()
-        .map_err(|e| SendError::Refused(format!("redirect client: {e}")))?;
-    follow_checked_redirects(client, other, url, max).await
+    follow_checked_redirects(&client.client, &client.other_origins, url, max).await
 }
 
 async fn follow_checked_redirects(
@@ -1259,6 +1280,31 @@ mod tests {
         let other_hits = Arc::new(AtomicUsize::new(0));
         let other_app = axum::Router::new().route("/ok", counting(&other_hits));
         tokio::spawn(async move { axum::serve(other_listener, other_app).await.unwrap() });
+        // Redirects plain http to https on its own host and port, so only the
+        // scheme changes; it counts TLS handshakes (first byte 0x16) and drops
+        // them. A dialled https hop would fail its handshake either way, so
+        // only the count shows the hop was refused before any dial.
+        let scheme_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let scheme_port = scheme_listener.local_addr().unwrap().port();
+        let tls_dials = Arc::new(AtomicUsize::new(0));
+        let dials = tls_dials.clone();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            while let Ok((mut socket, _)) = scheme_listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let Ok(n) = socket.read(&mut buf).await else {
+                    continue;
+                };
+                if buf[..n].first() == Some(&0x16) {
+                    dials.fetch_add(1, SeqCst);
+                    continue;
+                }
+                let reply = format!(
+                    "HTTP/1.1 307 Temporary Redirect\r\nlocation: https://peer.example:{scheme_port}/ok\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                );
+                let _ = socket.write_all(reply.as_bytes()).await;
+            }
+        });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let to = |target: String| get(move || async move { Redirect::temporary(&target) });
@@ -1271,7 +1317,6 @@ mod tests {
                 "/to-port",
                 to(format!("http://peer.example:{other_port}/ok")),
             )
-            .route("/to-https", to(format!("https://peer.example:{port}/ok")))
             .route("/same", to("/ok".to_string()))
             .route("/loop", to("/loop".to_string()))
             .route(
@@ -1300,11 +1345,12 @@ mod tests {
             ))
             .build()
             .unwrap();
-        let other_origins = other_origin_client(PublicAddressResolver::over(inner, [])).unwrap();
+        let redirecting =
+            CheckedRedirectClient::new(client.clone(), PublicAddressResolver::over(inner, []), 4)
+                .unwrap();
         let peer = |path: &str| format!("http://peer.example:{port}{path}");
-        let follow = async |path: &str| {
-            follow_checked_redirects(&client, &other_origins, &peer(path), 2).await
-        };
+        let follow =
+            async |path: &str| get_following_checked_redirects(&redirecting, &peer(path), 2).await;
 
         assert!(
             client
@@ -1331,20 +1377,17 @@ mod tests {
             200
         );
         hits.store(0, SeqCst);
-        for path in [
-            "/to-name",
-            "/to-ip",
-            "/to-trusted",
-            "/to-port",
-            "/to-https",
-            "/loop",
-        ] {
+        for path in ["/to-name", "/to-ip", "/to-trusted", "/to-port", "/loop"] {
             assert!(follow(path).await.is_err(), "{path}");
         }
+        let to_https = format!("http://peer.example:{scheme_port}/to-https");
+        let refused = get_following_checked_redirects(&redirecting, &to_https, 2).await;
+        assert!(refused.is_err());
         // The hop to the trusted name was refused on the one lookup its dial made.
         assert_eq!(lookups.load(SeqCst), 2);
         assert_eq!(hits.load(SeqCst), 0);
         assert_eq!(other_hits.load(SeqCst), 0);
+        assert_eq!(tls_dials.load(SeqCst), 0);
         let not_followed = client.get(peer("/to-name")).send().await.unwrap();
         assert!(not_followed.status().is_redirection());
         // An IP literal is dialled without asking the resolver.

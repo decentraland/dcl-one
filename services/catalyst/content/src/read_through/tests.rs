@@ -265,7 +265,7 @@ impl Node {
             ReadThrough::new(
                 pool.clone(),
                 storage.clone(),
-                reqwest::Client::new(),
+                crate::sync::test_sync_client(reqwest::Client::new()),
                 vec![fake.source.clone()],
                 entity_types.map(|types| types.iter().map(|t| t.to_string()).collect()),
                 Fills::with_negative_ttl(4, wait, TEST_NEGATIVE_TTL),
@@ -1001,7 +1001,7 @@ async fn read_through_is_off_by_default_and_needs_a_source() {
             &["https://this.node.example".to_string()],
             pool.clone(),
             storage.clone(),
-            reqwest::Client::new(),
+            crate::sync::test_sync_client(reqwest::Client::new()),
             Arc::new(crate::validator::Sources::new(
                 pool.clone(),
                 storage.clone(),

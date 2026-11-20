@@ -374,7 +374,7 @@ impl DownloadSlot {
 struct Upstream {
     pool: PgPool,
     storage: Arc<Storage>,
-    client: reqwest::Client,
+    client: crate::http::CheckedRedirectClient,
     sources: Vec<String>,
     /// Asked for a content file only, after `sources`: the worlds content server the worlds
     /// read-through mirrors from (`WORLDS_CONTENT_MIRROR_SOURCE`), whose scene files a world's
@@ -401,7 +401,7 @@ impl ReadThrough {
     pub fn new(
         pool: PgPool,
         storage: Arc<Storage>,
-        client: reqwest::Client,
+        client: crate::http::CheckedRedirectClient,
         sources: Vec<String>,
         entity_types: Option<HashSet<String>>,
         fills: Fills,
@@ -432,7 +432,7 @@ impl ReadThrough {
         own_urls: &[String],
         pool: PgPool,
         storage: Arc<Storage>,
-        client: reqwest::Client,
+        client: crate::http::CheckedRedirectClient,
         validator: Arc<Sources>,
     ) -> anyhow::Result<Option<Self>> {
         if !config.content.read_through_enabled {

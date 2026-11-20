@@ -752,7 +752,7 @@ mod tests {
         let (storage, tmp) = crate::sync_test_support::temp_storage("pointer-changes").await;
         let batch = BatchDeployer::new(
             BatchDeployerConfig::default(),
-            reqwest::Client::new(),
+            crate::sync::test_sync_client(reqwest::Client::new()),
             storage,
             pool.clone(),
             Arc::new(LiveSyncDeployer::new(

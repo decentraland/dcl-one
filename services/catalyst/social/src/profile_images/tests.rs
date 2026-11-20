@@ -458,7 +458,7 @@ async fn an_entity_not_held_is_filled_only_when_the_origin_has_no_image() {
     let read_through = Arc::new(crate::content::read_through::ReadThrough::new(
         pool.clone(),
         store.clone(),
-        reqwest::Client::new(),
+        crate::content::sync::test_sync_client(reqwest::Client::new()),
         vec![format!("http://{peer}/content")],
         None,
         crate::content::read_through::Fills::new(4, std::time::Duration::from_secs(10)),
@@ -989,7 +989,7 @@ fn slow_read_through(
     Arc::new(crate::content::read_through::ReadThrough::new(
         pool,
         store,
-        reqwest::Client::new(),
+        crate::content::sync::test_sync_client(reqwest::Client::new()),
         vec![format!("http://{peer}/content")],
         None,
         crate::content::read_through::Fills::new(4, std::time::Duration::from_secs(1)),

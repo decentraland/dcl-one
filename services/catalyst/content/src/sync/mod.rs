@@ -140,19 +140,39 @@ pub fn parse_entity_types(raw: &str) -> Result<Option<HashSet<String>>, SyncConf
 
 /// The client for peer sync, the read-through and the failed-deployments
 /// retries: it follows no redirect on its own (file downloads follow theirs
-/// through [`crate::http::get_following_checked_redirects`]), uses no proxy
+/// through [`crate::http::get_following_checked_redirects`], dialling a hop to
+/// another origin with a paired client that trusts no name), uses no proxy
 /// and dials only public addresses, except for the [`trusted_hosts`].
-pub fn sync_http_client(config: &crate::config::Config) -> anyhow::Result<reqwest::Client> {
-    Ok(crate::http::HttpClientCfg {
+pub fn sync_http_client(
+    config: &crate::config::Config,
+) -> anyhow::Result<crate::http::CheckedRedirectClient> {
+    let max_idle = config.content.connections_max_idle;
+    let client = crate::http::HttpClientCfg {
         max_redirects: None,
-        ..crate::http::HttpClientCfg::serve(config.content.connections_max_idle)
+        ..crate::http::HttpClientCfg::serve(max_idle)
     }
     .builder()
     .dns_resolver(crate::http::PublicAddressResolver::trusting(trusted_hosts(
         config,
     )?))
     .no_proxy()
-    .build()?)
+    .build()?;
+    Ok(crate::http::CheckedRedirectClient::new(
+        client,
+        crate::http::PublicAddressResolver::trusting([]),
+        max_idle,
+    )?)
+}
+
+/// [`sync_http_client`]'s pair over `client`, for tests.
+#[cfg(any(test, feature = "test-support"))]
+pub fn test_sync_client(client: reqwest::Client) -> crate::http::CheckedRedirectClient {
+    crate::http::CheckedRedirectClient::new(
+        client,
+        crate::http::PublicAddressResolver::trusting([]),
+        1,
+    )
+    .expect("test sync client")
 }
 
 /// The operator-configured hosts the sync client reads, which may be private:

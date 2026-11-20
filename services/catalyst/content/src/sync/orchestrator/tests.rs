@@ -219,7 +219,7 @@ async fn bootstrap_callbacks_require_success_and_keep_parent_cancellation_scope(
             .connect_lazy("postgres://nobody@127.0.0.1:1/unused")
             .unwrap();
         let status = Arc::new(SyncStatus::default());
-        let client = reqwest::Client::new();
+        let client = crate::sync::test_sync_client(reqwest::Client::new());
         let deployer = Arc::new(BatchDeployer::new(
             BatchDeployerConfig::default(),
             client.clone(),
