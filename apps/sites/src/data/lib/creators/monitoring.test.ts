@@ -48,10 +48,11 @@ describe('captureError', () => {
   })
 
   it('describes a thrown value that is not an Error by its plain facts, never a sensitive one', () => {
-    captureError({ code: 4001, token: 'abc' }, { flow: 'sell-item' })
+    captureError({ code: 4001, token: 'abc', mnemonic: 'seed words' }, { flow: 'sell-item' })
 
     expect(logged()).toContain('Object [code=4001]')
     expect(logged()).not.toContain('abc')
+    expect(logged()).not.toContain('seed words')
     expect(logged()).not.toContain('[object Object]')
   })
 

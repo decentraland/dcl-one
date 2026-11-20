@@ -34,8 +34,9 @@ describe('not found', () => {
     await app.page.waitForSelector('main[data-status="404"]', { state: 'attached' })
   })
 
-  it('tells an editor link without a collection that the collection was not found', async () => {
+  it('offers the collection picker for an editor link without a collection', async () => {
     app = await launchApp({ path: '/collections/editor', builder })
-    await waitForTestId(app.page, 'collection-not-found')
+    await waitForTestId(app.page, 'collection-picker')
+    expect(await app.page.$('[data-testid="collection-not-found"]')).toBeNull()
   })
 })

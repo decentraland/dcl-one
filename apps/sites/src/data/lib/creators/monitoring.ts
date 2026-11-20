@@ -77,11 +77,16 @@ function describeContext(context: ErrorContext): string {
   return facts.length > 0 ? ` [${facts.join(' ')}]` : ''
 }
 
-/** A thrown value that is not an Error, by its type and plain facts: `Object [code=4001]`, not `[object Object]`. */
+// A thrown value of unknown shape may hold anything, so only these fields of it are reported.
+const VALUE_FACTS = ['code', 'status', 'statusCode', 'name', 'reason'] as const
+
+/** A thrown value that is not an Error, by its type and known facts: `Object [code=4001]`, not `[object Object]`. */
 function describeValue(value: unknown): string {
   if (typeof value !== 'object' || value === null) return String(value)
   const type = (value as { constructor?: { name?: unknown } }).constructor?.name
-  return `${typeof type === 'string' && type !== '' ? type : 'Object'}${describeContext(value as ErrorContext)}`
+  const record = value as Record<string, unknown>
+  const known = Object.fromEntries(VALUE_FACTS.filter(key => key in record).map(key => [key, record[key]]))
+  return `${typeof type === 'string' && type !== '' ? type : 'Object'}${describeContext(known)}`
 }
 
 /** Logs a failure, redacted, with the flow that produced it and the plain facts of its context. Never throws. */
