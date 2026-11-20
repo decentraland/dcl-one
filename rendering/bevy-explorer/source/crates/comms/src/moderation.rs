@@ -6,6 +6,7 @@ use bevy::{
     ecs::{component::Component, resource::Resource},
     platform::collections::{HashMap, HashSet},
 };
+#[cfg(any(feature = "livekit", test))]
 use common::util::AsH160;
 use serde::Serialize;
 
@@ -248,6 +249,7 @@ pub struct SceneRoomModeration {
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BlockedOrBanned;
 
+#[cfg(any(feature = "livekit", test))]
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum MetadataError {
     NotAnObject,
@@ -265,6 +267,7 @@ impl SceneRoomModeration {
     /// Only explicit arrays replace lists. Missing or non-array fields retain known state;
     /// an empty array clears its list. Invalid entries are skipped. An entirely unusable ban
     /// array retains known bans; an entirely unusable admin array removes admin trust.
+    #[cfg(any(feature = "livekit", test))]
     pub(crate) fn update_from_metadata(&mut self, metadata: &str) -> Result<(), MetadataError> {
         if metadata.trim().is_empty() {
             return Ok(());
