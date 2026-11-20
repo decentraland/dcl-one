@@ -23,10 +23,12 @@ const PATH = "/shop/item/0x00000000000000000000000000000000000000c0/7";
 
 beforeEach(() => {
   sessionStorage.clear();
+  localStorage.clear();
   resetBuyNowCarts();
 });
 afterEach(() => {
   sessionStorage.clear();
+  localStorage.clear();
   resetBuyNowCarts();
 });
 
@@ -632,7 +634,7 @@ describe("Buy now's dialog", () => {
       cleanup();
       resetBuyNowCarts();
       // The first format's record: a bare timestamp, no hash.
-      sessionStorage.setItem(`dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${lineId}`, String(Date.now()));
+      localStorage.setItem(`dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${lineId}`, String(Date.now()));
       renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
       const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
       expect(within(pending).getByRole("button", { name: "Check again" })).toBeDisabled();
@@ -890,7 +892,7 @@ describe("why the split cannot be bought", () => {
 describe("the record of a split still confirming", () => {
   const key = (lineId: string) => `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${lineId}`;
   it("holds for fifteen minutes from when it was sent, and never for a time that has not come yet", () => {
-    sessionStorage.setItem(key("line-7"), JSON.stringify({ at: 1_000, txHash: "0xabc", chainId: 137 }));
+    localStorage.setItem(key("line-7"), JSON.stringify({ at: 1_000, txHash: "0xabc", chainId: 137 }));
     expect(readSentSplit(BOOK.buyer, "line-7", 1_000 + SENT_HOLD_MS - 1)).toMatchObject({ txHash: "0xabc", chainId: 137 });
     expect(readSentSplit(BOOK.buyer, "line-7", 1_000 + SENT_HOLD_MS)).toBeNull();
     // A clock set back after the split was sent does not stretch the hold.

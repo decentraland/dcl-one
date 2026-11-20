@@ -6,7 +6,7 @@
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { decodeFunctionData, type Hex } from "viem";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setSplitPayment } from "@shop/payment/present";
 
 import { CREDITS_MANAGER_ABI, OFFCHAIN_META_TX_ABI } from "@shop/checkout/chain/abi";
@@ -25,7 +25,10 @@ import { cartLineId } from "../../cart/store";
 import { SHOP_QUERY_KEYS } from "../../checkout/lib/after-purchase";
 import CombinedBuy, { readSentSplit } from "./CombinedBuy";
 
-afterEach(() => sessionStorage.clear());
+afterEach(() => {
+  sessionStorage.clear();
+  localStorage.clear();
+});
 
 /** The page's query client, as the dialog's own page holds it. */
 let pageQueries: QueryClient | null = null;
@@ -279,6 +282,81 @@ describe("a split whose outcome is not known", () => {
     expect(screen.getByTestId("combined-confirm")).toBeEnabled();
   });
 
+  const OTHER = `0x${"0e".repeat(32)}`;
+  /** What another tab of this browser leaves when its split's answer is lost: held, no hash, its credit still spendable. */
+  const holdFromAnotherTab = (line: ReturnType<typeof setup>["line"]) =>
+    localStorage.setItem(
+      `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${cartLineId(line.asset, line.listing)}`,
+      JSON.stringify({ at: Date.now(), txHash: null, chainId: CHAIN.POLYGON, creditId: OTHER, creditExpiresAt: Math.floor(Date.now() / 1000) + 300 }),
+    );
+
+  it("a hold one tab wrote stops the purchase in another: a fresh dialog, with a session of its own, shows it confirming and sends nothing", async () => {
+    const { demo, line, unmount, again } = setup();
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    demo.relay.state.mode = "fail-after-send";
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText(/still confirming/, {}, { timeout: 5000 })).toBeTruthy();
+    unmount();
+    // Another tab: its session storage starts empty, this browser's local storage is the same one.
+    sessionStorage.clear();
+    demo.relay.state.mode = "ok";
+    again();
+    expect(await screen.findByText(/still confirming/)).toBeTruthy();
+    expect(screen.queryByTestId("combined-confirm")).toBeNull();
+    expect(demo.relay.posts).toHaveLength(1);
+    expect(authorizations(demo)).toBe(1);
+    expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))).toMatchObject({ txHash: null, creditId: expect.any(String) });
+  });
+
+  it("a dialog already open when another tab's hold appears reads it again on Pay: shown confirming, nothing authorized or sent", async () => {
+    const { demo, line } = setup();
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    expect(screen.getByTestId("combined-confirm")).toBeEnabled();
+    holdFromAnotherTab(line);
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText(/still confirming/)).toBeTruthy();
+    expect(screen.queryByTestId("combined-confirm")).toBeNull();
+    expect(authorizations(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
+  });
+
+  it("a hold another tab wrote while this one approved stops the sale before it is sent: this credit is released, the other shown confirming", async () => {
+    const { demo, line } = setup();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    const approve = await screen.findByTestId("authorize-step-action");
+    holdFromAnotherTab(line);
+    await act(async () => fireEvent.click(approve));
+    expect(await screen.findByText(/still confirming/, {}, { timeout: 5000 })).toBeTruthy();
+    // The approval alone was relayed; the credit authorized for the sale went back.
+    expect(demo.relay.posts).toHaveLength(1);
+    expect(relayedApproval(demo.relay.posts[0])).not.toBeNull();
+    expect(authorizations(demo)).toBe(1);
+    expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(true);
+    expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))?.creditId).toBe(OTHER);
+  });
+
+  it("a browser that cannot keep the record sends nothing: the credit is released and the buyer told why", async () => {
+    const { demo, line } = setup();
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    const setItem = Storage.prototype.setItem;
+    const full = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key: string, value: string) {
+      if (key.startsWith("dcl-shop-buynow-split:")) throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+      setItem.call(this, key, value);
+    });
+    try {
+      await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+      const told = "Your browser couldn't keep a record of this purchase, so it wasn't sent. Nothing was charged.";
+      expect(await screen.findByText(told, {}, { timeout: 5000 })).toBeTruthy();
+    } finally {
+      full.mockRestore();
+    }
+    expect(demo.relay.posts).toHaveLength(0);
+    expect(authorizations(demo)).toBe(1);
+    expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(true);
+    expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))).toBeNull();
+    expect(screen.getByTestId("combined-confirm")).toBeEnabled();
+  });
+
   it("an approval whose answer was lost stays pending through Approve and its retry: no second grant, and no credit or sale until it lands", async () => {
     const { demo } = setup();
     demo.relay.state.mode = "fail-after-send";
@@ -321,7 +399,7 @@ describe("a held split with no transaction to read", () => {
     const mixed = presentPayment(offer, demo.session, { creditsBalance: usdCents(50), report: () => {} }).options.find((o) => o.method === "mana")!.mixed as MixedPayment;
     const line = { asset: offer.asset, listing: { acquisition: "store" as const }, display: { name: "Rainbow Hat" } };
     // Sent sixteen minutes ago, past the hold; the relay lost its answer, so no hash.
-    sessionStorage.setItem(
+    localStorage.setItem(
       `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${cartLineId(line.asset, line.listing)}`,
       JSON.stringify({ at: Date.now() - 16 * 60 * 1000, txHash: null, chainId: CHAIN.POLYGON, creditId: CREDIT, creditExpiresAt }),
     );

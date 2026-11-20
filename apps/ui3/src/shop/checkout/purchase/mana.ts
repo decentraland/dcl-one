@@ -229,7 +229,8 @@ type GapOptions = {
   manaGapWei: bigint;
   /**
    * Right before the sale goes to the relay or the wallet, once the allowance is in place: from here on it may be sent,
-   * so a failure after this is a sale whose outcome must be found out, not one that never left.
+   * so a failure after this is a sale whose outcome must be found out, not one that never left. A throw here stops the
+   * sale before anything is sent (the caller could not record it).
    */
   onDispatch?: () => void;
   onBroadcast?: (info: { txHash: Hex }) => void;

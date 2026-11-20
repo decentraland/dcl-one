@@ -57,11 +57,33 @@ type CombinedPhase =
 const FALLBACK = "We couldn't complete the purchase. Nothing was charged.";
 const REVERTED = "The purchase failed on-chain, so nothing was bought. The Credits it held come back on their own.";
 
-// A split sent and not confirmed yet, per account and item, in this tab. The run writes it itself, so it is there however
-// the split was started (Buy now's dialog or the page's) and even when its screen is gone by then (an account switched
-// away remounts the dialog). It holds a second split off for 15 minutes, or until Check again reads the receipt.
+// A split sent and not confirmed yet, per account and item, in this browser: every tab reads it and it outlives a restart,
+// since a sale whose outcome is unknown is exactly when the buyer opens the item again elsewhere. The run writes it itself,
+// before the sale may leave, so it is there however the split was started (Buy now's dialog or the page's) and even when
+// its screen is gone by then (an account switched away remounts the dialog). It holds a second split off for 15 minutes,
+// or until Check again reads the receipt.
 const SENT_KEY = "dcl-shop-buynow-split:v1:";
 export const SENT_HOLD_MS = 15 * 60 * 1000;
+const NOT_RECORDED = "Your browser couldn't keep a record of this purchase, so it wasn't sent. Nothing was charged.";
+
+/** The split could not be recorded before leaving, so it was not sent. */
+class SplitNotRecorded extends Error {}
+
+/** Another tab or window of this browser sent a split for this account and item that is still held. */
+class SplitSentElsewhere extends Error {
+  constructor(readonly sent: SentSplit) {
+    super("A purchase of this item is already confirming.");
+  }
+}
+
+/** The storage every tab of this browser shares; none on a page without it, or where the browser blocks it. */
+function holdStorage(): Storage | null {
+  try {
+    return typeof localStorage !== "undefined" ? localStorage : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * `creditId`: the credit the split reserved. When Check again finds the purchase reverted it retires that reservation, as
@@ -76,7 +98,7 @@ const sentKey = (account: string | null, lineId: string) => `${SENT_KEY}${accoun
 /** The record as stored, held or not. A bare number is the first format's (a timestamp, written before the hash was kept). */
 function readSentRecord(account: string | null, lineId: string): SentSplit | null {
   try {
-    const raw = sessionStorage.getItem(sentKey(account, lineId));
+    const raw = holdStorage()?.getItem(sentKey(account, lineId)) ?? null;
     const parsed = raw ? (JSON.parse(raw) as unknown) : null;
     if (typeof parsed === "number") return { at: parsed, txHash: null, chainId: null, creditId: null, creditExpiresAt: null };
     const sent = parsed as Partial<SentSplit> | null;
@@ -108,17 +130,23 @@ export function readSentSplit(account: string | null, lineId: string, now: numbe
   return sent && (held(sent, now) || (!sent.txHash && !!sent.creditId)) ? sent : null;
 }
 
-function writeSentSplit(account: string | null, lineId: string, sent: SentSplit): void {
+/** Whether the record was kept (written and read back): a sale is sent only once it is. */
+function writeSentSplit(account: string | null, lineId: string, sent: SentSplit): boolean {
   try {
-    sessionStorage.setItem(sentKey(account, lineId), JSON.stringify(sent));
+    const storage = holdStorage();
+    if (!storage) return false;
+    const key = sentKey(account, lineId);
+    const value = JSON.stringify(sent);
+    storage.setItem(key, value);
+    return storage.getItem(key) === value;
   } catch {
-    // Without storage the screen still shows it while open.
+    return false;
   }
 }
 
 function clearSentSplit(account: string | null, lineId: string): void {
   try {
-    sessionStorage.removeItem(sentKey(account, lineId));
+    holdStorage()?.removeItem(sentKey(account, lineId));
   } catch {
     // Nothing was stored.
   }
@@ -140,7 +168,7 @@ type CombinedBuyRun = {
   declined(): void;
   /** Back to the start after a failure, so the buyer can choose again. */
   reset(): void;
-  /** A split for this account and line was sent and is not known to be confirmed yet (this run's, or an earlier one). */
+  /** A split for this account and line was sent and is not known to be confirmed yet (this run's, an earlier one, or another tab's). */
   remembered: boolean;
   /**
    * Check again has something to do: a transaction to read, or a hold that has run out (it then lets the item go). A split
@@ -240,6 +268,13 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   async function start() {
     const ctx = context();
     if (!ctx || blocked || !offer || !mixed || busy) return;
+    // Sent from another tab since this screen opened: shown confirming, never a second one beside it.
+    const earlier = readSentSplit(ctx.buyer, lineId);
+    if (earlier) {
+      setSent(earlier);
+      setPhase({ kind: "review" });
+      return;
+    }
     const agreedTerms: Terms = { offer, mixed };
     terms.current = agreedTerms;
     setAgreed(mixed);
@@ -311,7 +346,14 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
           if (txHash) guard.current.reverted(txHash);
         },
         onUnobservable: () => guard.current.unobservable(id),
+        // Recorded before it may leave, for every tab and a restart; checked against another tab's first, in the same
+        // turn. A split already held, or one the browser cannot record, is not sent.
         onDispatch: () => {
+          const other = readSentSplit(ctx.buyer, lineId);
+          if (other) throw new SplitSentElsewhere(other);
+          if (!writeSentSplit(ctx.buyer, lineId, { at: Date.now(), txHash: null, chainId: sentChain, creditId: id, creditExpiresAt })) {
+            throw new SplitNotRecorded(NOT_RECORDED);
+          }
           dispatched = true;
         },
       };
@@ -330,7 +372,8 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       // A sale handed off that may have consumed its credit (a broadcast not seen reverting, or an answer the relay lost)
       // is still confirming: held for this account and item, never offered again until it is found out.
       if (dispatched && (stillPending || (creditId !== null && guard.current.mayBeConsumed(creditId)))) {
-        // Recorded for the account that sent it, whatever the wallet shows by now.
+        // Recorded for the account that sent it, whatever the wallet shows by now, with its hash when there is one. Should
+        // this write fail, the record made before it left stays: held, with no hash, until the node settles its credit.
         const record: SentSplit = { at: Date.now(), txHash: sentHash, chainId: sentChain, creditId, creditExpiresAt };
         writeSentSplit(ctx.buyer, lineId, record);
         setSent(record);
@@ -338,14 +381,23 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
         return;
       }
       if (creditId && !guard.current.mayBeConsumed(creditId)) await cancelUsdIntents([creditId], ctx.client).catch(() => 0);
+      // Nothing of this run is left confirming: its own record goes. Another tab's, which stopped it, stays and is shown.
+      if (dispatched) clearSentSplit(ctx.buyer, lineId);
+      if (e instanceof SplitSentElsewhere) {
+        setSent(e.sent);
+        setPhase({ kind: "review" });
+        return;
+      }
       const message =
-        isAuthorizationPending(e) || (stillPending && !dispatched)
-          ? "Your MANA approval is still confirming, so nothing was bought. Try again in a moment."
-          : isRejection(e) || isSignatureDeclined(e)
-          ? "You cancelled the request in your wallet. Nothing was charged."
-          : isRevertedTxError(e)
-            ? REVERTED
-            : friendlyError(e, FALLBACK, { sale: true });
+        e instanceof SplitNotRecorded
+          ? NOT_RECORDED
+          : isAuthorizationPending(e) || (stillPending && !dispatched)
+            ? "Your MANA approval is still confirming, so nothing was bought. Try again in a moment."
+            : isRejection(e) || isSignatureDeclined(e)
+              ? "You cancelled the request in your wallet. Nothing was charged."
+              : isRevertedTxError(e)
+                ? REVERTED
+                : friendlyError(e, FALLBACK, { sale: true });
       setPhase({ kind: "error", message });
     }
   }
