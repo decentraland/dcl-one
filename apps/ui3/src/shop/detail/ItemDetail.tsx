@@ -32,7 +32,7 @@ import IndexNotice from "../discovery/components/IndexNotice";
 import Rail from "../discovery/components/Rail";
 import SaleTag from "../discovery/components/SaleTag";
 import { OfferStock, SaleTimer } from "../discovery/components/SaleTimer";
-import SuggestedForYouRow, { useSuggestedForYou } from "../discovery/components/SuggestedForYouRow";
+import SuggestedForYouRow, { RAIL_SIZE as SUGGESTED_RAIL_SIZE, useSuggestedForYou } from "../discovery/components/SuggestedForYouRow";
 import { suggestedHiddenReason } from "../discovery/lib/suggestionEvents";
 import { indexUnavailable } from "@shop/discovery/freshness";
 import { useSaleActive, useSeo } from "../discovery/hooks";
@@ -446,7 +446,11 @@ export default function ItemDetail() {
   );
 
   const personalExclude = useMemo(() => (pageItemId ? [`${contractAddress}-${pageItemId}`] : undefined), [contractAddress, pageItemId]);
-  const personal = useSuggestedForYou(PERSONAL_RAIL_SIZE, { exclude: personalExclude });
+  const cardInput = cartInputFor(current, "item_detail");
+  const nextContract = cardInput?.asset.contract;
+  const nextItemId = cardInput?.asset.token.kind === "item" ? cardInput.asset.token.itemId : null;
+  const nextCartItem = useMemo(() => (forSale && nextContract && nextItemId ? { contractAddress: nextContract, itemId: nextItemId } : null), [forSale, nextContract, nextItemId]);
+  const personal = useSuggestedForYou(SUGGESTED_RAIL_SIZE, { exclude: personalExclude, show: PERSONAL_RAIL_SIZE, nextCartItem });
   const personalHidden = suggestedHiddenReason({
     enabled: personal.enabled,
     hasSignal: personal.hasSignal,
@@ -457,7 +461,6 @@ export default function ItemDetail() {
   });
 
   const cartLines = useCart((s) => s.lines);
-  const cardInput = cartInputFor(current, "item_detail");
   const cartInput = cardInput ? { ...cardInput, listing: listingRef } : null;
   const cartLine = cartInput ? cartLines.find((l) => l.asset.contract === cartInput.asset.contract && JSON.stringify(l.asset.token) === JSON.stringify(cartInput.asset.token) && (l.listing.tradeId ?? "") === (cartInput.listing.tradeId ?? "")) : undefined;
   const stockCap = isTokenRoute ? 1 : typeof current.available === "number" ? current.available : Infinity;
@@ -893,7 +896,7 @@ export default function ItemDetail() {
         <LatestSales contractAddress={contractAddress} tokenId={isTokenRoute ? routeTokenId! : undefined} itemId={isTokenRoute ? undefined : pageItemId!} />
       ) : null}
 
-      <SuggestedForYouRow exclude={personalExclude} title={pdpText("itemDetail.becauseYouOwn")} first={PERSONAL_RAIL_SIZE} />
+      <SuggestedForYouRow exclude={personalExclude} title={pdpText("itemDetail.becauseYouOwn")} show={PERSONAL_RAIL_SIZE} />
       {personalHidden !== null && rail.items.length > 0 ? (
         <Rail
           title={rail.isCollectionOnly ? t("itemDetail.moreFromCollection") : t("itemDetail.youMightAlsoLike")}
