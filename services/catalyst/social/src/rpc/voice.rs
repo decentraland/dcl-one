@@ -72,6 +72,17 @@ pub mod fake {
         fn presence_config(&self) -> crate::comms::gatekeeper::voice::db::VoiceDbConfig {
             self.db.config()
         }
+        async fn publish_private_messages_privacy(
+            &self,
+            address: &str,
+            privacy: &str,
+        ) -> Result<(), VoiceUnavailable> {
+            self.note(format!("private-messages-privacy {address} {privacy}"));
+            if self.fail_actions.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(VoiceUnavailable::Failed("test runtime failed".into()));
+            }
+            Ok(())
+        }
         async fn create_pending_private_call(
             &self,
             caller: &str,

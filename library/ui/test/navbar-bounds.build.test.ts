@@ -80,7 +80,13 @@ beforeAll(async () => {
   await session.send('Page.enable')
 }, 300_000)
 afterAll(() => releaseHarness({ session, server, scratch }))
-async function openCase(id: string, width: number, publicNavigation = false, height = 900) {
+async function openCase(
+  id: string,
+  width: number,
+  publicNavigation = false,
+  height = 900,
+  profile = false
+) {
   await session.send('Emulation.setDeviceMetricsOverride', {
     width,
     height,
@@ -89,6 +95,7 @@ async function openCase(id: string, width: number, publicNavigation = false, hei
   })
   const params = new URLSearchParams({ case: id })
   if (publicNavigation) params.set('public', '')
+  if (profile) params.set('profile', '')
   await session.navigate(`${origin}${page}?${params}`)
   await evaluate(
     `new Promise((resolve,reject)=>{const start=Date.now();const poll=()=>{if(!document.querySelector('#native-bounds-root>div>nav'))return Date.now()-start>15000?reject(Error('Native NavBar missing')):setTimeout(poll,25);document.fonts.ready.then(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))};poll()})`
@@ -258,6 +265,38 @@ describe('when the public Sites navigation runs with browser input', () => {
       )
     ).toBe(true)
   }, 60_000)
+
+  it.each([390, 485])(
+    'should keep Nav Profile anchored to the header above the open drawer at %ipx',
+    async (width) => {
+      await openCase('in-solid-3', width, true, 900, true)
+      const trigger = 'button[aria-label="Account: Ada"]'
+      const profileBounds = `(() => {
+        const button = document.querySelector(${JSON.stringify(trigger)})
+        const panel = document.getElementById(button.getAttribute('aria-controls'))
+        const { left, right, top, width } = panel.getBoundingClientRect()
+        const action = panel.querySelector('a[href="/profile"]')
+        const actionBox = action.getBoundingClientRect()
+        const target = document.elementFromPoint(
+          actionBox.x + actionBox.width / 2,
+          actionBox.y + actionBox.height / 2
+        )
+        return { left, right, top, width, actionReachable: action.contains(target) }
+      })()`
+      await click(trigger)
+      const closedDrawer = await evaluate<{ width: number; actionReachable: boolean }>(
+        profileBounds
+      )
+      expect(closedDrawer.width).toBeGreaterThan(300)
+      expect(closedDrawer.actionReachable).toBe(true)
+      await click(trigger)
+
+      await click('button[aria-label="Open menu"]')
+      await click(trigger)
+      expect(await evaluate('!!document.querySelector(\'[role="dialog"]\')')).toBe(true)
+      expect(await evaluate(profileBounds)).toEqual(closedDrawer)
+    }
+  )
 
   for (const preference of ['no-preference', 'reduce']) {
     it(`should fill the Pixel viewport below the header and honor ${preference} motion`, async () => {

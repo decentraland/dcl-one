@@ -9,7 +9,9 @@
 //! `POST`/`PUT`/`PATCH`/`DELETE` answers 503 with the builder envelope and a
 //! `Retry-After`; the reads (drafts, catalogue, blobs, on-chain lookups)
 //! keep answering. Nothing is exempt: the builder has no admission mint or
-//! stateless proxy on a mutating method. The middleware itself is shared:
+//! stateless proxy on a mutating method. A read of a published collection
+//! stores its on-chain creator as the owner only while the switch is on;
+//! off, the answer carries the creator and the rows stay. The middleware itself is shared:
 //! [`Gate`] carries a router's open paths and its own refusal envelope, so
 //! `camera_reel::writes` applies the same switch with the camera-reel
 //! `{message}` envelope and its one read-shaped `POST` kept open.

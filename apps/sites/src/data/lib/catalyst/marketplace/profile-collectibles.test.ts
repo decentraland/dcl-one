@@ -10,7 +10,13 @@ vi.mock("./credit-quotes", () => ({ tryQuoteCreditItems: vi.fn() }));
 import { CatalystError, getJSON } from "../client";
 import { warnInvalid } from "../warn";
 import { tryQuoteCreditItems } from "./credit-quotes";
-import { CREATIONS_QUOTES_TIMEOUT_MS, fetchProfileAssets, fetchProfileCreations, manaPrice } from "./profile-collectibles";
+import {
+  CREATIONS_QUOTES_TIMEOUT_MS,
+  fetchProfileAssets,
+  fetchProfileCreations,
+  fetchWornCollectibles,
+  manaPrice,
+} from "./profile-collectibles";
 
 const CREATOR = "0x09BC69A986E1B37FB01EF36124F4C2E14FA0AB6B";
 const CONTRACT = "0x242E85D51F975E0FD3C6208E3E7BE852BC8A11A0";
@@ -369,5 +375,120 @@ describe("manaPrice", () => {
 
   it.each([null, undefined, "", "0", "-5", "1.5", "abc"])("gives %j no price", (wei) => {
     expect(manaPrice(wei)).toBeUndefined();
+  });
+});
+
+describe("fetchWornCollectibles", () => {
+  const OTHER = "0x1111111111111111111111111111111111111111";
+  const matic = (contract: string, id: string) => `urn:decentraland:matic:collections-v2:${contract.toLowerCase()}:${id}`;
+  const ETH_URN = "urn:decentraland:ethereum:collections-v1:halloween_2019:funny_skull_mask";
+
+  // A `collections-v1` row has a contract address and a number where its URN has names.
+  const mask = (over: Record<string, unknown> = {}) =>
+    item({ id: `${OTHER}-34`, contractAddress: OTHER, itemId: "34", name: "Mask", network: "ETHEREUM", chainId: 1, urn: ETH_URN, ...over });
+
+  it("reads the worn items by URN, one read per network, and keeps the order worn", async () => {
+    vi.mocked(tryQuoteCreditItems).mockResolvedValue([null, null, null]);
+    vi.mocked(getJSON).mockImplementation(async (path: string) =>
+      path.includes("network=MATIC")
+        ? // The catalogue answers in its own order.
+          {
+            data: [
+              item({ id: `${OTHER}-7`, contractAddress: OTHER, itemId: "7", name: "Second", urn: matic(OTHER, "7") }),
+              item({ name: "First", urn: matic(CONTRACT, "0") }),
+            ],
+            total: 2,
+          }
+        : { data: [mask()], total: 1 },
+    );
+    const signal = new AbortController().signal;
+
+    const cards = await fetchWornCollectibles([matic(CONTRACT, "0"), ETH_URN, matic(OTHER, "7")], { signal });
+
+    expect(cards.map((card) => card.name)).toEqual(["First", "Mask", "Second"]);
+    const paths = vi.mocked(getJSON).mock.calls.map(([path]) => new URL(path, "http://node"));
+    expect(paths.map((url) => url.pathname)).toEqual(["/marketplace-api/v2/catalog", "/marketplace-api/v2/catalog"]);
+    const polygon = paths.find((url) => url.searchParams.get("network") === "MATIC");
+    expect(polygon?.searchParams.getAll("urn")).toEqual([matic(CONTRACT, "0"), matic(OTHER, "7")]);
+    expect(polygon?.searchParams.get("first")).toBe("2");
+    const ethereum = paths.find((url) => url.searchParams.get("network") === "ETHEREUM");
+    expect(ethereum?.searchParams.getAll("urn")).toEqual([ETH_URN]);
+    expect(vi.mocked(getJSON).mock.calls[0]?.[1]).toEqual({ signal });
+  });
+
+  it("keeps the order worn for Ethereum items worn under the `mainnet` spelling of their URN", async () => {
+    vi.mocked(tryQuoteCreditItems).mockResolvedValue([null, null]);
+    const hat = "urn:decentraland:mainnet:collections-v1:Atari_Launch:atari_hat";
+    vi.mocked(getJSON).mockResolvedValue({
+      // The catalogue answers `ethereum`, in lowercase, and in its own order.
+      data: [mask(), mask({ id: `${OTHER}-9`, itemId: "9", name: "Hat", urn: "urn:decentraland:ethereum:collections-v1:atari_launch:atari_hat" })],
+      total: 2,
+    });
+
+    const cards = await fetchWornCollectibles([hat, ETH_URN]);
+
+    expect(cards.map((card) => card.name)).toEqual(["Hat", "Mask"]);
+    expect(new URL(vi.mocked(getJSON).mock.calls[0]![0], "http://node").searchParams.getAll("urn")).toEqual([hat, ETH_URN]);
+  });
+
+  it.each([
+    ["Ethereum", "network=ETHEREUM", ["First"]],
+    ["Polygon", "network=MATIC", ["Mask"]],
+  ])("returns the other network's cards when the %s read fails", async (_network, failing, names) => {
+    vi.mocked(tryQuoteCreditItems).mockResolvedValue([null]);
+    vi.mocked(getJSON).mockImplementation(async (path: string) => {
+      if (path.includes(failing)) throw new CatalystError("Catalyst returned 502", "/marketplace-api/v2/catalog", 502);
+      return path.includes("network=MATIC")
+        ? { data: [item({ name: "First", urn: matic(CONTRACT, "0") })], total: 1 }
+        : { data: [mask()], total: 1 };
+    });
+
+    const cards = await fetchWornCollectibles([matic(CONTRACT, "0"), ETH_URN]);
+
+    expect(cards.map((card) => card.name)).toEqual(names);
+  });
+
+  it("fails when both networks' reads fail", async () => {
+    vi.mocked(getJSON).mockRejectedValue(new CatalystError("Catalyst returned 502", "/marketplace-api/v2/catalog", 502));
+
+    await expect(fetchWornCollectibles([matic(CONTRACT, "0"), ETH_URN])).rejects.toBeInstanceOf(CatalystError);
+    expect(getJSON).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops, with no partial answer, when the visitor leaves while one network's read runs", async () => {
+    const controller = new AbortController();
+    vi.mocked(getJSON).mockImplementation(async (path: string) => {
+      if (path.includes("network=MATIC")) return { data: [item({ urn: matic(CONTRACT, "0") })], total: 1 };
+      controller.abort();
+      throw controller.signal.reason;
+    });
+
+    await expect(fetchWornCollectibles([matic(CONTRACT, "0"), ETH_URN], { signal: controller.signal })).rejects.toBe(
+      controller.signal.reason,
+    );
+    expect(tryQuoteCreditItems).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing of a network with no worn item, and prices a card as the Shop does", async () => {
+    vi.mocked(tryQuoteCreditItems).mockResolvedValue(["12"]);
+    vi.mocked(getJSON).mockResolvedValue({ data: [item()], total: 1 });
+
+    const cards = await fetchWornCollectibles([matic(CONTRACT, "0")]);
+
+    expect(getJSON).toHaveBeenCalledTimes(1);
+    expect(cards[0]?.payment).toEqual({ kind: "credits", credits: "12" });
+  });
+
+  it("leaves out a worn item the catalogue does not know", async () => {
+    vi.mocked(getJSON).mockResolvedValue({ data: [], total: 0 });
+
+    await expect(fetchWornCollectibles([matic(CONTRACT, "0")])).resolves.toEqual([]);
+    expect(tryQuoteCreditItems).not.toHaveBeenCalled();
+  });
+
+  it("passes a service failure through", async () => {
+    vi.mocked(getJSON).mockRejectedValue(new CatalystError("Catalyst returned 502", "/marketplace-api/v2/catalog", 502));
+
+    await expect(fetchWornCollectibles([matic(CONTRACT, "0")])).rejects.toBeInstanceOf(CatalystError);
   });
 });

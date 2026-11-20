@@ -78,6 +78,12 @@ export function dappsFlagsAnswer(): Promise<DappsFlagsAnswer> {
   return flagsAnswer("dapps");
 }
 
+/** For routes that must distinguish an unread flag from an explicitly disabled one. */
+export async function knownDappsFlags(): Promise<DappsFlags | null> {
+  const answer = await flagsAnswer("dapps");
+  return isUnread(answer) ? null : answer.flags;
+}
+
 /** decentraland.org's `dapps` flags, each true only where the service says so. */
 export async function dappsFlags(): Promise<DappsFlags> {
   return (await flagsAnswer("dapps")).flags;

@@ -10,9 +10,9 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
+  /* Stack the header controls as flex items so the mobile profile stays positioned against the bar. */
   .root[data-menu-open] > .start,
   .root[data-menu-open] > .end {
-    position: relative;
     z-index: 11;
   }
 

@@ -55,4 +55,16 @@ describe("the rollout flags endpoint", () => {
     expect(res.status).toBe(503);
     expect(res.headers.get("cache-control")).toBe("no-store");
   });
+
+  it("tells the profile's unread flags apart from disabled ones on the old path", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 502 })));
+    const unread = await legacyLoader({ request: new Request("https://node.example/internal/dapps-flags?known=1") });
+    expect(unread.status).toBe(503);
+    expect(unread.headers.get("cache-control")).toBe("no-store");
+
+    resetDappsFlags();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ flags: { "dapps-profile-referrals": false } }))));
+    const read = await legacyLoader({ request: new Request("https://node.example/internal/dapps-flags?known=1") });
+    expect(await read.json()).toEqual({ "dapps-profile-referrals": false });
+  });
 });
