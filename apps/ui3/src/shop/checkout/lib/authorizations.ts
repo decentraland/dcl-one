@@ -111,6 +111,12 @@ export type AuthorizationContext = {
   locks?: LockManager | null;
   /** The caller already holds the exact grant's lock (`exactGrantLock`): a sale holds it across its own dispatch. */
   grantLockHeld?: boolean;
+  /**
+   * Whether the purchase an exact grant is for still goes on (the in-world Shop's dialog may be closed or cancelled while
+   * the wallet asks). Read once the approve is signed and before it is recorded or sent, and before a recorded one is sent
+   * again: false records and sends nothing (`GrantCancelledError`), and leaves a recorded one as it is.
+   */
+  live?: () => boolean;
 };
 
 async function onChain(provider: Eip1193Provider, chainId: number): Promise<boolean> {
@@ -168,6 +174,14 @@ export class GrantNotRecordedError extends Error {
 }
 
 /** An exact grant needs what makes it go out once: the relay (its nonce reconciles a lost answer) and Web Locks. */
+/** The purchase the approval was for was cancelled before it went out: nothing was recorded or sent. */
+export class GrantCancelledError extends Error {
+  constructor() {
+    super("The approval was cancelled, so nothing was sent.");
+    this.name = "GrantCancelledError";
+  }
+}
+
 export class ExactGrantUnavailableError extends Error {
   constructor(message = "The MANA approval can't be sent from here right now, so nothing was sent. Try again later.") {
     super(message);
@@ -316,7 +330,11 @@ async function grantExactlyHeld(opts: AuthorizationContext & { auth: ShopAuthori
       // Past the hold, the same terms send that same signed call again. Other terms sign a new approve, for this amount,
       // at the recorded one's own nonce: whichever of the two runs, the other never can, so the old amount is never sent
       // for another gap, and a lost approve never keeps this account waiting.
-      if (BigInt(pending.amount) === amount) return resendPendingGrant(opts, pending, reader);
+      if (BigInt(pending.amount) === amount) {
+        // A cancelled purchase sends nothing, not even again: the recorded approve stays as it is, to reconcile later.
+        if (opts.live?.() === false) throw new GrantCancelledError();
+        return resendPendingGrant(opts, pending, reader);
+      }
       supersede = pending;
     } else {
       clearPendingGrant(auth, account, pending);
@@ -338,6 +356,8 @@ async function grantExactlyHeld(opts: AuthorizationContext & { auth: ShopAuthori
       fetchImpl: opts.fetchImpl,
       ...(supersede ? { minNonce: BigInt(supersede.nonce) } : {}),
       onSignedCall: ({ to, data, nonce }) => {
+        // Signed, not yet recorded or sent: a purchase cancelled meanwhile leaves no record and sends nothing.
+        if (opts.live?.() === false) throw new GrantCancelledError();
         // A replacement goes only at the nonce it replaces (one that moved meanwhile reconciles the old one on the next try).
         if (supersede && nonce !== BigInt(supersede.nonce)) throw new AuthorizationPendingError();
         // Never over another attempt's record (one written by a window without the lock): this one is not sent.

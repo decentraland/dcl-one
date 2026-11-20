@@ -20,6 +20,7 @@ import {
   exactAllowanceReady,
   ExactGrantUnavailableError,
   getManaSpendingAuthorization,
+  GrantCancelledError,
   GrantNotRecordedError,
   metaTxTargetFor,
   PENDING_GRANT_HOLD_MS,
@@ -350,6 +351,40 @@ describe("an exact grant that may still land", () => {
     await expect(pending).rejects.toBeInstanceOf(AuthorizationPendingError);
     expect(relay.posts).toHaveLength(0);
     expect(readPendingGrant(allowance, BOOK.buyer)?.attempt).toBe("other");
+  });
+
+  it("a purchase cancelled while the wallet signs records and sends nothing: an approval for another gap starts right after", async () => {
+    const { relay, wallet, ctx, signed } = rail("fail-after-send");
+    relay.state.mode = "ok";
+    let live = true;
+    const signer = signingLater(wallet);
+    const pending = setAuthorization({ ...ctx, provider: signer.provider, live: () => live, auth: allowance, active: true, amount: GAP });
+    await vi.waitFor(() => expect(signer.asked()).toBe(1));
+    live = false;
+    signer.sign();
+    await expect(pending).rejects.toBeInstanceOf(GrantCancelledError);
+    expect(readPendingGrant(allowance, BOOK.buyer)).toBeNull();
+    expect(relay.posts).toHaveLength(0);
+    // Nothing recorded, so nothing waits: another gap is approved at once.
+    await setAuthorization({ ...ctx, live: () => true, auth: allowance, active: true, amount: 1n });
+    expect(relay.posts.map((p) => relayedApproval(p)?.amount)).toEqual([1n]);
+    expect(signed()).toEqual(["0", "0"]);
+  });
+
+  it("a cancelled purchase sends no recorded approve again, nor a replacement: the record stays as it was", async () => {
+    const { relay, ctx } = rail("fail-after-send");
+    await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: GAP })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    const recorded = readPendingGrant(allowance, BOOK.buyer);
+    relay.state.mode = "ok";
+    const clock = later(PENDING_GRANT_HOLD_MS + 1);
+    try {
+      await expect(setAuthorization({ ...ctx, live: () => false, auth: allowance, active: true, amount: GAP })).rejects.toBeInstanceOf(GrantCancelledError);
+      await expect(setAuthorization({ ...ctx, live: () => false, auth: allowance, active: true, amount: 1n })).rejects.toBeInstanceOf(GrantCancelledError);
+    } finally {
+      clock.mockRestore();
+    }
+    expect(relay.posts).toHaveLength(1);
+    expect(readPendingGrant(allowance, BOOK.buyer)).toEqual(recorded);
   });
 
   it("without Web Locks an exact grant asks the wallet nothing", async () => {
