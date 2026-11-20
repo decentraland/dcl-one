@@ -1099,7 +1099,8 @@ fn the_chain_rpcs_default_by_network_outside_island_and_journey() {
     };
     assert_eq!(rpcs(&[]), pair("mainnet", "polygon"));
     assert_eq!(rpcs(&[(ENV, "mirror")]), pair("mainnet", "polygon"));
-    // The tag never carries the node's address, public or internal.
+    // Guard: the tag is never derived from PUBLIC_URL. It would tie the node's
+    // address, public or internal, to its RPC activity.
     for public_url in [
         "https://node.example.org",
         "http://192.0.2.7:5000",
