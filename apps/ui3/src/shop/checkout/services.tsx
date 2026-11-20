@@ -9,6 +9,7 @@ import type { ShopSigner } from "@shop/api/signer";
 import { type OfferFetcher } from "../cart/revalidate";
 import { shopCart, type CartStore } from "../cart/store";
 import { shopChainReader, type ChainReader } from "./chain/rpc";
+import { pageLocks } from "./lib/web-lock";
 import { liveResolvers, type SettlementResolvers } from "./purchase/cart";
 import type { RailContext } from "./purchase/rail";
 import { shopClient } from "../api/host";
@@ -30,6 +31,8 @@ export type ShopServices = {
   signer?: ShopSigner | null;
   /** A page on setting up a web3 wallet, for the MANA guidance. */
   walletSetupUrl?: string;
+  /** The browser's Web Locks (the page's by default): one tab at a time runs a credits + MANA sale of an item. */
+  locks?: LockManager | null;
 };
 
 const Ctx = createContext<Partial<ShopServices>>({});
@@ -53,6 +56,7 @@ function defaults(partial: Partial<ShopServices>): ShopServices {
       }),
     signer: partial.signer ?? null,
     walletSetupUrl: partial.walletSetupUrl ?? "https://decentraland.org/help/wallets/",
+    locks: partial.locks !== undefined ? partial.locks : pageLocks(),
   };
 }
 

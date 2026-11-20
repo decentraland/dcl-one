@@ -639,14 +639,35 @@ describe("Buy now's dialog", () => {
     }
   });
 
-  it("past the hold with no receipt, Check again lets the item go", async () => {
-    await sendSplitThatStaysPending();
-    renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
-    const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
-    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + SENT_HOLD_MS + 1);
+  it("past the hold with no receipt, time lets nothing go: the node's record of its credit does, once that credit has expired", async () => {
+    const sent = await sendSplitThatStaysPending();
+    const listed: { status: "PENDING" | "EXPIRED" | null } = { status: null };
+    const userPurchases = () => ({
+      purchases: listed.status ? [{ id: `${sent.creditId}:0`, status: listed.status, usdCents: 30, createdAt: 1, txHash: null }] : [],
+      total: listed.status ? 1 : 0,
+    });
+    const { demo, lineId } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit, userPurchases } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const modal = await screen.findByTestId("buy-modal");
+    await within(modal).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
+    const checkAgain = async () => {
+      await act(async () => fireEvent.click(within(screen.getByTestId("buy-modal-pending")).getByRole("button", { name: "Check again" })));
+      // Done reading once the button is back on.
+      await waitFor(() => expect(within(screen.getByTestId("buy-modal-pending")).getByRole("button", { name: "Check again" })).toBeEnabled());
+    };
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Math.max(Date.now() + SENT_HOLD_MS, sent.creditExpiresAt! * 1000) + 1);
     try {
-      await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
-      expect(await within(screen.getByTestId("buy-modal")).findByTestId("payment-method-step", undefined, { timeout: 5000 })).toBeTruthy();
+      // Not mined, and its credit not listed, then still reserved: nothing says what became of it, so it stays held.
+      await checkAgain();
+      expect(within(modal).getByTestId("buy-modal-pending")).toBeTruthy();
+      listed.status = "PENDING";
+      await checkAgain();
+      expect(within(modal).getByTestId("buy-modal-pending")).toBeTruthy();
+      expect(readSentSplit(BOOK.buyer, lineId)).not.toBeNull();
+      // Released unspent: the item is offered again.
+      listed.status = "EXPIRED";
+      await act(async () => fireEvent.click(within(screen.getByTestId("buy-modal-pending")).getByRole("button", { name: "Check again" })));
+      expect(await within(modal).findByTestId("payment-method-step", undefined, { timeout: 5000 })).toBeTruthy();
+      expect(demo.shop.log.filter((r) => r.name === "userPurchases").length).toBeGreaterThanOrEqual(3);
     } finally {
       clock.mockRestore();
     }

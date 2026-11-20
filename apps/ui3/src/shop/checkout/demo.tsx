@@ -10,7 +10,7 @@ import type { Session } from "@shop/model/settlement";
 import { BOOK, SIGNED_OUT, web2, web3 } from "@shop/payment/fixtures";
 import { ShopWalletProvider } from "../wallet/context";
 import type { ShopWalletHost } from "../wallet/session";
-import { batchAuthorization, createFakeChain, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade, resaleTrade, type FakeHandlers } from "./fakes";
+import { batchAuthorization, createFakeChain, createFakeLocks, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade, resaleTrade, type FakeHandlers } from "./fakes";
 import type { SettlementResolvers } from "./purchase/cart";
 import { ShopServicesProvider, type ShopServices } from "./services";
 
@@ -159,6 +159,8 @@ export function createDemo(s: DemoScenario) {
       },
     },
     openExternal: () => {},
+    // One browser's locks, shared by every dialog the demo renders, as tabs share them.
+    locks: createFakeLocks(),
   };
 
   const host: ShopWalletHost = {

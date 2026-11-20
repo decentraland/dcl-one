@@ -13,7 +13,7 @@ import type { ChainId } from "@shop/model/chain";
 import { gaslessEnabled } from "../chain/config";
 import { requireContracts } from "../chain/contracts";
 import { GaslessUnavailableError, isGaslessUnavailable, isSignatureDeclined, provedNotSent, relayMetaTransaction, type MetaTxTarget } from "../chain/metatx";
-import { sendAndConfirm, TxPendingError } from "../chain/wallet";
+import { isRevertedTxError, isWalletRefusal, sendAndConfirm, TxPendingError } from "../chain/wallet";
 import { AuthorizationKind, ensureAuthorization } from "../lib/authorizations";
 import { getMarketplaceForTrade } from "../lib/marketplace";
 import { canPayGasItself } from "../lib/wallet-kind";
@@ -276,7 +276,22 @@ async function payGapWithMana(ctx: RailContext, target: PurchaseTarget, opts: Ga
       if (!canPayGasItself(ctx.walletKind)) throw e;
     }
   }
-  return buyOneWithCredits(ctx, { purchase, onBroadcast: opts.onBroadcast, onReverted: opts.onReverted });
+  let handedOff = false;
+  try {
+    return await buyOneWithCredits(ctx, {
+      purchase,
+      onHandoff: () => {
+        handedOff = true;
+      },
+      onBroadcast: opts.onBroadcast,
+      onReverted: opts.onReverted,
+    });
+  } catch (e) {
+    // Handed to the wallet, the sale may have gone out though no hash came back (a wallet that disconnected after
+    // broadcasting answers 4900): only the buyer's refusal or a mined revert proves its credit untouched.
+    if (handedOff && !isWalletRefusal(e) && !isRevertedTxError(e)) opts.onUnobservable?.();
+    throw e;
+  }
 }
 
 export function buyWithCreditsAndMana(ctx: RailContext, opts: GapOptions & { trade: SignedTrade; coupon?: ListingCoupon }): Promise<Hex> {

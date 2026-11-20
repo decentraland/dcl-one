@@ -150,13 +150,20 @@ export async function sendUseCredits(
 /** One purchase (a trade or a mint) in a single useCredits. */
 export async function buyOneWithCredits(
   ctx: RailContext,
-  opts: { purchase: AnyPurchase; onBroadcast?: (info: { txHash: Hex }) => void; onReverted?: (info: { txHash: string | null }) => void },
+  opts: {
+    purchase: AnyPurchase;
+    /** Right before the transaction is handed to the wallet: from here it may be broadcast. */
+    onHandoff?: () => void;
+    onBroadcast?: (info: { txHash: Hex }) => void;
+    onReverted?: (info: { txHash: string | null }) => void;
+  },
 ): Promise<Hex> {
   if (opts.purchase.credits.length === 0) throw new Error("No credits to spend");
   const built = buildGroupUseCreditsArgs(groupPurchases([opts.purchase])[0]!, ctx.buyer);
   try {
     return await sendUseCredits(ctx, {
       ...built,
+      onHandoff: opts.onHandoff,
       onBroadcast: (txHash) => {
         opts.onBroadcast?.({ txHash });
         void reportSubmittedTx({ txHash, salts: built.salts, client: ctx.client });

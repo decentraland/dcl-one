@@ -4,7 +4,7 @@
 // declined signature releasing the credit.
 
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { decodeFunctionData, type Hex } from "viem";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setSplitPaymentForTests } from "@shop/payment/present";
@@ -23,7 +23,7 @@ import type { PurchaseOffer } from "@shop/model/purchase";
 import { ASSET_TYPE } from "../../checkout/purchase/encoding";
 import { cartLineId } from "../../cart/store";
 import { SHOP_QUERY_KEYS } from "../../checkout/lib/after-purchase";
-import CombinedBuy, { readSentSplit } from "./CombinedBuy";
+import CombinedBuy, { readSentSplit, SENT_HOLD_MS } from "./CombinedBuy";
 
 afterEach(() => {
   sessionStorage.clear();
@@ -46,8 +46,8 @@ function relayedUseCredits(body: unknown): { maxCreditedValue: bigint; maxUncred
   return decodeFunctionData({ abi: CREDITS_MANAGER_ABI, data: meta.args[1] as Hex }).args[0] as { maxCreditedValue: bigint; maxUncreditedValue: bigint };
 }
 
-/** The node answers a credit for the Credits part (`creditsCents`), worth `value` (1 MANA by default). */
-function setup(signedFor?: string, confirm?: "none", value = MANA) {
+/** The node answers a credit for the Credits part (`creditsCents`), worth `value` (1 MANA by default), spendable `expiresIn` s. */
+function setup(signedFor?: string, confirm?: "none", value = MANA, expiresIn?: number) {
   const demo = createDemo({
     session: "web3",
     ...(confirm ? { confirm } : {}),
@@ -55,7 +55,13 @@ function setup(signedFor?: string, confirm?: "none", value = MANA) {
       authorizeCredit: ({ body }) => {
         const cents = (body as { creditsCents: number }).creditsCents;
         const one = batchAuthorization([{ usdPriceCents: cents }]);
-        const credit = { ...one.credit, amount: value.toString(), availableAmount: value.toString(), ...(signedFor ? { contract: signedFor } : {}) };
+        const credit = {
+          ...one.credit,
+          amount: value.toString(),
+          availableAmount: value.toString(),
+          ...(signedFor ? { contract: signedFor } : {}),
+          ...(expiresIn ? { expiresAt: Math.floor(Date.now() / 1000) + expiresIn } : {}),
+        };
         return { ...one, credit, maxCreditedValue: value.toString(), usdCents: cents };
       },
     },
@@ -282,7 +288,89 @@ describe("a split whose outcome is not known", () => {
     expect(screen.getByTestId("combined-confirm")).toBeEnabled();
   });
 
+  it("after a refusal the relay marked as not sent, a direct sale whose wallet lost its answer (4900) is held: its credit is kept", async () => {
+    const { demo, line } = setup();
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    demo.relay.state.mode = "refuse";
+    demo.wallet.next = "lost";
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText(/still confirming/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(demo.wallet.sent).toHaveLength(1);
+    expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
+    expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))).toMatchObject({ txHash: null, creditId: expect.any(String) });
+    expect(screen.queryByTestId("combined-confirm")).toBeNull();
+  });
+
   const OTHER = `0x${"0e".repeat(32)}`;
+  const holdKey = (line: ReturnType<typeof setup>["line"]) => `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${cartLineId(line.asset, line.listing)}`;
+  const nowSeconds = () => Math.floor(Date.now() / 1000);
+  /** Check again clicked, and done reading (the button back on). */
+  async function checkAgain() {
+    await act(async () => fireEvent.click(screen.getByTestId("combined-check-again")));
+    await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
+  }
+
+  it("a sale sent sixteen minutes ago with a hash, its credit still spendable, is kept on reopen: no Pay, and a missing receipt lets nothing go", async () => {
+    const { demo, line, unmount, again } = setup();
+    unmount();
+    const record = { at: Date.now() - 16 * 60 * 1000, attempt: "a1", txHash: `0x${"5a".repeat(32)}`, chainId: CHAIN.POLYGON, creditId: OTHER, creditExpiresAt: nowSeconds() + 300 };
+    localStorage.setItem(holdKey(line), JSON.stringify(record));
+    again();
+    expect(await screen.findByText(/still confirming/)).toBeTruthy();
+    expect(screen.queryByTestId("combined-confirm")).toBeNull();
+    await checkAgain();
+    expect(screen.getByText(/still confirming/)).toBeTruthy();
+    expect(screen.queryByTestId("combined-confirm")).toBeNull();
+    expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))).toMatchObject({ attempt: "a1", txHash: record.txHash });
+    // Its credit can still be spent, so the node is not even asked.
+    expect(demo.shop.log.some((r) => r.name === "userPurchases")).toBe(false);
+  });
+
+  it("a dialog left open past the hold keeps a sale with a hash whose receipt is not in, while its credit can still be spent", async () => {
+    const { demo, line } = setup(undefined, "none", MANA, 3600);
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText(/still confirming/, {}, { timeout: 8000 })).toBeTruthy();
+    const record = readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing));
+    expect(record?.txHash).toBeTruthy();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + SENT_HOLD_MS + 60_000);
+    try {
+      await checkAgain();
+      expect(screen.getByText(/still confirming/)).toBeTruthy();
+      expect(screen.queryByTestId("combined-confirm")).toBeNull();
+      expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))).toMatchObject({ txHash: record!.txHash, attempt: record!.attempt });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("two tabs paying at once: one takes the item's lock and sends, the other authorizes and sends nothing", async () => {
+    const { demo, again } = setup();
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    again();
+    const [first, second] = screen.getAllByTestId("combined-confirm");
+    await act(async () => {
+      fireEvent.click(first!);
+      fireEvent.click(second!);
+    });
+    expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(await screen.findByText("This item is being bought in another window. Nothing was charged here.")).toBeTruthy();
+    expect(authorizations(demo)).toBe(1);
+    expect(demo.relay.posts).toHaveLength(1);
+  });
+
+  it("without Web Locks nothing is authorized or sent: this browser can't make sure the split goes once", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    demo.services.locks = null;
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText(/can't make sure a purchase with Credits and MANA is sent only once/)).toBeTruthy();
+    expect(authorizations(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
+  });
+
   /** What another tab of this browser leaves when its split's answer is lost: held, no hash, its credit still spendable. */
   const holdFromAnotherTab = (line: ReturnType<typeof setup>["line"]) =>
     localStorage.setItem(
@@ -320,18 +408,17 @@ describe("a split whose outcome is not known", () => {
     expect(demo.relay.posts).toHaveLength(0);
   });
 
-  it("a hold another tab wrote while this one approved stops the sale before it is sent: this credit is released, the other shown confirming", async () => {
+  it("a hold another tab wrote while this one approved is read under the item's lock: no credit is authorized, the other shown confirming", async () => {
     const { demo, line } = setup();
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
     const approve = await screen.findByTestId("authorize-step-action");
     holdFromAnotherTab(line);
     await act(async () => fireEvent.click(approve));
     expect(await screen.findByText(/still confirming/, {}, { timeout: 5000 })).toBeTruthy();
-    // The approval alone was relayed; the credit authorized for the sale went back.
+    // The approval alone was relayed; no credit was reserved for a sale that was never going to be sent.
     expect(demo.relay.posts).toHaveLength(1);
     expect(relayedApproval(demo.relay.posts[0])).not.toBeNull();
-    expect(authorizations(demo)).toBe(1);
-    expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(true);
+    expect(authorizations(demo)).toBe(0);
     expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))?.creditId).toBe(OTHER);
   });
 
@@ -384,15 +471,16 @@ describe("a split whose outcome is not known", () => {
 
 describe("a held split with no transaction to read", () => {
   const CREDIT = `0x${"c1".repeat(32)}`;
-  function heldSplit(status: { value: "PENDING" | "SETTLED" | "EXPIRED" | null }, creditExpiresAt: number) {
+  type Listing = (req: { query: URLSearchParams }) => unknown;
+  function heldSplit(status: { value: "PENDING" | "SETTLED" | "EXPIRED" | null }, creditExpiresAt: number, opts: { userPurchases?: Listing; attempt?: string } = {}) {
     const demo = createDemo({
       session: "web3",
       handlers: {
-        userPurchases: () => ({
+        userPurchases: opts.userPurchases ?? (() => ({
           // As the node lists it: the credit's salt and the line's position.
           purchases: status.value ? [{ id: `${CREDIT}:0`, status: status.value, usdCents: 50, createdAt: 1, txHash: status.value === "SETTLED" ? `0x${"ab".repeat(32)}` : null }] : [],
           total: status.value ? 1 : 0,
-        }),
+        })),
       },
     });
     const offer = storeMint(demo.session);
@@ -401,14 +489,14 @@ describe("a held split with no transaction to read", () => {
     // Sent sixteen minutes ago, past the hold; the relay lost its answer, so no hash.
     localStorage.setItem(
       `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${cartLineId(line.asset, line.listing)}`,
-      JSON.stringify({ at: Date.now() - 16 * 60 * 1000, txHash: null, chainId: CHAIN.POLYGON, creditId: CREDIT, creditExpiresAt }),
+      JSON.stringify({ at: Date.now() - 16 * 60 * 1000, ...(opts.attempt ? { attempt: opts.attempt } : {}), txHash: null, chainId: CHAIN.POLYGON, creditId: CREDIT, creditExpiresAt }),
     );
     render(
       <DemoShell demo={demo} path="/shop/item/x/7">
         <CombinedBuy line={line} offer={offer} mixed={mixed} onClose={() => {}} portal={false} />
       </DemoShell>,
     );
-    return demo;
+    return Object.assign(demo, { lineId: cartLineId(line.asset, line.listing) });
   }
   const nowSeconds = () => Math.floor(Date.now() / 1000);
 
@@ -439,5 +527,61 @@ describe("a held split with no transaction to read", () => {
     await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
     expect(await screen.findByText(/Purchase complete/)).toBeTruthy();
     expect(screen.queryByTestId("combined-confirm")).toBeNull();
+  });
+
+  it("a stale outcome never wipes a newer attempt's record: another tab settled this one and sent anew while Check again read", async () => {
+    const newer = { at: Date.now(), attempt: "newer", txHash: null, chainId: CHAIN.POLYGON, creditId: `0x${"0e".repeat(32)}`, creditExpiresAt: nowSeconds() + 300 };
+    let key = "";
+    const demo = heldSplit({ value: null }, nowSeconds() - 1, {
+      attempt: "older",
+      userPurchases: () => {
+        // While this tab waits on the node, another one settles the older attempt and sends a new split of the item.
+        localStorage.setItem(key, JSON.stringify(newer));
+        return { purchases: [{ id: `${CREDIT}:0`, status: "EXPIRED", usdCents: 50, createdAt: 1, txHash: null }], total: 1 };
+      },
+    });
+    key = `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${demo.lineId}`;
+    await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
+    await waitFor(() => expect(demo.shop.log.some((r) => r.name === "userPurchases")).toBe(true));
+    // The older attempt's outcome (released) is not applied to the newer one: it stays, and is what the dialog shows.
+    await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeDisabled());
+    expect(readSentSplit(BOOK.buyer, demo.lineId)).toMatchObject({ attempt: "newer" });
+    expect(screen.getByText(/still confirming/)).toBeTruthy();
+    expect(screen.queryByTestId("combined-confirm")).toBeNull();
+  });
+
+  it("finds its credit past the newest lines: the history is read page by page until it is found", async () => {
+    const lines = Array.from({ length: 450 }, (_, n) => ({ id: `0x${n.toString(16).padStart(64, "0")}:0`, status: "SETTLED", usdCents: 10, createdAt: 1, txHash: null }));
+    lines[420] = { id: `${CREDIT}:0`, status: "EXPIRED", usdCents: 50, createdAt: 1, txHash: null };
+    const demo = heldSplit({ value: null }, nowSeconds() - 1, {
+      userPurchases: ({ query }) => {
+        const offset = Number(query.get("offset") ?? 0);
+        const limit = Number(query.get("limit") ?? 50);
+        return { purchases: lines.slice(offset, offset + limit), total: lines.length };
+      },
+    });
+    await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
+    expect(await screen.findByTestId("combined-confirm")).toBeEnabled();
+    const pages = demo.shop.log.filter((r) => r.name === "userPurchases").map((r) => [r.query.get("offset"), r.query.get("limit")]);
+    expect(pages).toEqual([
+      ["0", "200"],
+      ["200", "200"],
+      ["400", "200"],
+    ]);
+  });
+
+  it("a credit the history does not list, read to its end, keeps the split held", async () => {
+    const lines = Array.from({ length: 250 }, (_, n) => ({ id: `0x${n.toString(16).padStart(64, "0")}:0`, status: "SETTLED", usdCents: 10, createdAt: 1, txHash: null }));
+    const demo = heldSplit({ value: null }, nowSeconds() - 1, {
+      userPurchases: ({ query }) => {
+        const offset = Number(query.get("offset") ?? 0);
+        return { purchases: lines.slice(offset, offset + 200), total: lines.length };
+      },
+    });
+    await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
+    await waitFor(() => expect(demo.shop.log.filter((r) => r.name === "userPurchases")).toHaveLength(2));
+    await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
+    expect(screen.getByText(/still confirming/)).toBeTruthy();
+    expect(readSentSplit(BOOK.buyer, demo.lineId)).not.toBeNull();
   });
 });
