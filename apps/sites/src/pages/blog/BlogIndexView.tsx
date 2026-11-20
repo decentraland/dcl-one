@@ -9,9 +9,9 @@ import type { BlogListPayload } from "@/data/lib/blog/types";
 import { track } from "@/core/lib/telemetry/track";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 
-import { blogRouting, clickedPostSlug } from "./routing";
+import { blogRouting, clickedPostSlug } from "@/features/blog/routing";
 
-import { useBlogSearchSuggestions } from "./useBlogSearchSuggestions";
+import { useBlogSearchSuggestions } from "@/features/blog/useBlogSearchSuggestions";
 
 function DesktopBlogSearch({ query }: { query: string }) {
   const [input, setInput] = useState("");
