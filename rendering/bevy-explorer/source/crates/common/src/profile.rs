@@ -29,6 +29,30 @@ fn integral_slot<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u3
     }
 }
 
+/// Emotes without a valid slot are dropped, so one entry does not fail the
+/// whole profile, nor a batched profile fetch with it.
+fn valid_emotes<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Vec<AvatarEmote>>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Entry {
+        Valid(AvatarEmote),
+        Invalid(serde::de::IgnoredAny),
+    }
+    Ok(
+        Option::<Vec<Entry>>::deserialize(deserializer)?.map(|entries| {
+            entries
+                .into_iter()
+                .filter_map(|entry| match entry {
+                    Entry::Valid(emote) => Some(emote),
+                    Entry::Invalid(_) => None,
+                })
+                .collect()
+        }),
+    )
+}
+
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, Default)]
 pub struct AvatarColor {
     pub color: Color3,
@@ -66,7 +90,11 @@ pub struct AvatarWireFormat {
     pub wearables: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub force_render: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "valid_emotes",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub emotes: Option<Vec<AvatarEmote>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshots: Option<AvatarSnapshots>,
@@ -234,6 +262,30 @@ mod tests {
         let bytes = crate::rpc::rmp_encode(&profile).unwrap();
         let decoded: SerializedProfile = rmp_serde::from_slice(&bytes).unwrap();
         assert_eq!(decoded.avatar.emotes, profile.avatar.emotes);
+    }
+
+    #[test]
+    fn emotes_with_an_invalid_slot_are_dropped_from_a_profile_batch() {
+        let batch: LambdaProfiles = serde_json::from_str(
+            r#"{"avatars": [{
+                "ethAddress": "0x1",
+                "avatar": {"wearables": [], "emotes": [
+                    {"slot": 1.5, "urn": "spin"},
+                    {"slot": 2.0, "urn": "wave"}
+                ]}
+            }]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            batch.avatars[0].avatar.emotes,
+            Some(vec![AvatarEmote {
+                slot: 2,
+                urn: "wave".to_owned(),
+            }])
+        );
+
+        let no_emotes: AvatarWireFormat = serde_json::from_str(r#"{"wearables": []}"#).unwrap();
+        assert_eq!(no_emotes.emotes, None);
     }
 
     #[test]
