@@ -1172,6 +1172,7 @@ mod metadata_tests {
             r#"{"bannedAddresses":"not a list","sceneAdmins":42}"#,
             r#"{"bannedAddresses":["0XABCD",{}],"sceneAdmins":[false]}"#,
             r#"{"bannedAddresses":["invalid"],"sceneAdmins":[null]}"#,
+            r#"{"bannedAddresses":["0x3333333333333333333333333333333333333333","invalid"]}"#,
             "not json",
             "[]",
             "null",

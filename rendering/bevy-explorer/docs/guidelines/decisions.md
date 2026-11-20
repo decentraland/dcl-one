@@ -383,8 +383,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Scene message trust is enforced in the engine.** Room metadata rejects banned senders
   across the string bus, binary bus and topics. New rooms without metadata grant ordinary peer
   permissions. Later updates retain lists whose fields are missing or non-array; explicit
-  usable arrays replace only their own list, including an empty array clearing it. A non-empty
-  array with no parseable address retains the known list.
+  valid address arrays replace only their own list, including an empty array clearing it.
+  An array with any invalid address retains the known list.
   Binary SDK CRDT batches and state responses exclude VideoControlState and the combined physics
   force/impulse components in both directions; incoming VideoPlayer edits require a room admin
   or the authoritative server. This protects the video source; peers can still move, hide or

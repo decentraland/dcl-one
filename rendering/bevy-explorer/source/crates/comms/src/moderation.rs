@@ -263,8 +263,8 @@ impl SceneRoomModeration {
     }
 
     /// Only explicit arrays replace lists. Missing or non-array fields retain known state;
-    /// an empty array clears its list. Invalid entries are skipped; a non-empty array with
-    /// no usable address retains the known list.
+    /// an empty array clears its list. An array containing an invalid address retains the
+    /// known list, including when other entries are valid.
     pub(crate) fn update_from_metadata(&mut self, metadata: &str) -> Result<(), MetadataError> {
         if metadata.trim().is_empty() {
             return Ok(());
@@ -274,11 +274,16 @@ impl SceneRoomModeration {
         let object = value.as_object().ok_or(MetadataError::NotAnObject)?;
         let addresses = |key: &str| -> Option<HashSet<Address>> {
             object.get(key).and_then(|v| v.as_array()).and_then(|list| {
-                let addresses: HashSet<_> = list
+                let addresses: Option<HashSet<_>> = list
                     .iter()
-                    .filter_map(|entry| entry.as_str().and_then(|s| s.as_h160()))
+                    .map(|entry| entry.as_str().and_then(|s| s.as_h160()))
                     .collect();
-                (list.is_empty() || !addresses.is_empty()).then_some(addresses)
+                if addresses.is_none() {
+                    bevy::log::warn!(
+                        "scene room metadata {key} contains an invalid address; retaining its list"
+                    );
+                }
+                addresses
             })
         };
         if let Some(addresses) = addresses("bannedAddresses") {
@@ -459,7 +464,7 @@ mod tests {
 
     #[test]
     fn room_metadata_parses_leniently() {
-        let full = r#"{"bannedAddresses":["0xABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD","nope"],"sceneAdmins":["0x1111111111111111111111111111111111111111"]}"#;
+        let full = r#"{"bannedAddresses":["0xABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD"],"sceneAdmins":["0x1111111111111111111111111111111111111111"]}"#;
         let parsed = parse_metadata(full).unwrap();
         assert_eq!(parsed.banned_addresses.len(), 1);
         assert!(parsed.banned_addresses.contains(
