@@ -153,7 +153,20 @@ function declined(e: unknown): boolean {
   return err?.code === 4001 || err?.code === "ACTION_REJECTED" || /denied|reject|cancel/i.test(err?.message ?? "");
 }
 
-export type RelayOptions = {
+/**
+ * Which nonce a signature may be at: no lower than `minNonce`, or exactly `exactNonce`, never both (a call that passes both
+ * anyway is refused, `RangeError`, before anything is read, signed or sent).
+ */
+type NonceChoice =
+  /** A nonce already observed on chain: never sign against a staler one (load-balanced RPCs lag). */
+  | { minNonce?: bigint; exactNonce?: never }
+  /**
+   * Sign only at this nonce: when the target's nonce reads as any other, nothing is asked of the wallet
+   * (`NonceMovedError`). A replacement that must compete with one signed call at its nonce, and no other, uses it.
+   */
+  | { exactNonce: bigint; minNonce?: never };
+
+export type RelayOptions = NonceChoice & {
   provider: Eip1193Provider;
   reader: ChainReader;
   target: MetaTxTarget;
@@ -161,14 +174,6 @@ export type RelayOptions = {
   functionData: Hex;
   relayerUrl?: string;
   fetchImpl?: typeof fetch;
-  /** A nonce already observed on chain: never sign against a staler one (load-balanced RPCs lag). */
-  minNonce?: bigint;
-  /**
-   * Sign only at this nonce: when the target's nonce reads as any other, nothing is asked of the wallet
-   * (`NonceMovedError`). A replacement that must compete with one signed call at its nonce, and no other, uses it. With a
-   * `minNonce` above it the two can't both hold: refused (`RangeError`) before anything is read, signed or sent.
-   */
-  exactNonce?: bigint;
   /** Fired once the buyer signed (the prompt is gone), before the relay is called. */
   onSigned?: () => void;
   /**
@@ -196,15 +201,17 @@ export class NonceMovedError extends Error {
 
 export async function relayMetaTransaction(opts: RelayOptions): Promise<Relayed> {
   const { provider, reader, target, from, functionData } = opts;
-  if (opts.exactNonce !== undefined && opts.minNonce !== undefined && opts.minNonce > opts.exactNonce) {
-    throw new RangeError(`A signature can't be at nonce ${opts.exactNonce} and at least ${opts.minNonce}`);
+  // Read loosely: the type keeps the two apart, and a caller that passes both anyway is refused here.
+  const { exactNonce, minNonce } = opts as { exactNonce?: bigint; minNonce?: bigint };
+  if (exactNonce !== undefined && minNonce !== undefined && minNonce > exactNonce) {
+    throw new RangeError(`A signature can't be at nonce ${exactNonce} and at least ${minNonce}`);
   }
   const code = await reader.code(target.chainId, from).catch(() => "0x" as Hex);
   if (code && code !== "0x") throw new GaslessUnavailableError("Contract accounts are not supported", "contract-account");
 
   const read = await readMetaTxNonce(reader, target, from);
-  if (opts.exactNonce !== undefined && read !== opts.exactNonce) throw new NonceMovedError(opts.exactNonce, read);
-  const nonce = opts.exactNonce ?? (opts.minNonce !== undefined && opts.minNonce > read ? opts.minNonce : read);
+  if (exactNonce !== undefined && read !== exactNonce) throw new NonceMovedError(exactNonce, read);
+  const nonce = exactNonce ?? (minNonce !== undefined && minNonce > read ? minNonce : read);
   const typed = metaTxTypedData(target, from, nonce, functionData);
 
   let signature: Hex;

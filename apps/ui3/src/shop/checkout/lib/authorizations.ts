@@ -173,7 +173,6 @@ export class GrantNotRecordedError extends Error {
   }
 }
 
-/** An exact grant needs what makes it go out once: the relay (its nonce reconciles a lost answer) and Web Locks. */
 /** The purchase the approval was for was cancelled before it went out: nothing was recorded or sent. */
 export class GrantCancelledError extends Error {
   constructor() {
@@ -182,6 +181,18 @@ export class GrantCancelledError extends Error {
   }
 }
 
+/**
+ * An exact grant that can never run any more (the token's nonce passed the one it signed) and left the allowance short of
+ * its amount: another call took that nonce, or the approve didn't take. Its record is gone, so trying again signs anew.
+ */
+export class GrantNotInEffectError extends Error {
+  constructor() {
+    super("The approval didn't take effect. Try again.");
+    this.name = "GrantNotInEffectError";
+  }
+}
+
+/** An exact grant needs what makes it go out once: the relay (its nonce reconciles a lost answer) and Web Locks. */
 export class ExactGrantUnavailableError extends Error {
   constructor(message = "The MANA approval can't be sent from here right now, so nothing was sent. Try again later.") {
     super(message);
@@ -369,8 +380,6 @@ async function grantExactlyHeld(opts: AuthorizationContext & { auth: ShopAuthori
       onSignedCall: ({ to, data, nonce }) => {
         // Signed, not yet recorded or sent: a purchase cancelled meanwhile leaves no record and sends nothing.
         if (opts.live?.() === false) throw new GrantCancelledError();
-        // A replacement goes only at the nonce it replaces (one that moved meanwhile reconciles the old one on the next try).
-        if (supersede && nonce !== BigInt(supersede.nonce)) throw new AuthorizationPendingError();
         // Never over another attempt's record (one written by a window without the lock): this one is not sent.
         if (readPendingGrant(auth, account)?.attempt !== supersede?.attempt) throw new AuthorizationPendingError();
         const grant: PendingGrant = { at: Date.now(), attempt, amount: amount.toString(), to, data, nonce: nonce.toString() };
@@ -383,35 +392,55 @@ async function grantExactlyHeld(opts: AuthorizationContext & { auth: ShopAuthori
     if (receipt.status === "reverted") throw new TxRevertedError(receipt, "The authorization");
     await confirmGrant(opts, sent.grant!, amount, reader, target);
   } catch (e) {
-    // The nonce moved (or reads inconsistent) before a replacement was signed: nothing was asked, the replaced one stays.
-    if (e instanceof NonceMovedError) throw new AuthorizationPendingError();
-    if (sent.grant && !provedNotSent(e)) {
-      if (!(e instanceof TxRevertedError)) throw e instanceof TxPendingError ? e : new AuthorizationPendingError();
-      // A reverted receipt for the hash the relay answered proves nothing on its own: that hash may be another
-      // transaction's, and a reverted execution spends no nonce, so this signed approve may still run. Its record stays
-      // while its nonce can still be used (or can't be read); only once that nonce has passed can it never run.
-      if (await pendingGrantOpen(sent.grant, account, reader, target)) throw new AuthorizationPendingError();
-    }
-    // Never sent (declined, refused before it left, or marked as not sent), or reverted with its nonce passed: its record
-    // goes, and nothing goes in its place. One it was to replace goes back in its place, in one write, since that one may
-    // still run; should that write fail, the replacement's record stays, at the same nonce, and the sale still waits on it.
-    if (supersede && sent.grant) replacePendingGrant(auth, account, sent.grant, supersede);
-    else clearPendingGrant(auth, account, sent.grant);
-    throw e;
+    throw await settleFailedGrant(opts, e, sent.grant, supersede, reader, target);
   }
+}
+
+/**
+ * What a send of an exact grant that failed with `e` leaves recorded, and the error it ends with. `sent`: its record, once
+ * written before it left (none: it never got that far). `supersede`: the recorded approve it was to replace, at the same
+ * nonce. With the grant's other record rules (`replacePendingGrant`, `confirmGrant`), all of them here.
+ */
+async function settleFailedGrant(
+  opts: AuthorizationContext & { auth: ShopAuthorization },
+  e: unknown,
+  sent: PendingGrant | null,
+  supersede: PendingGrant | null,
+  reader: ChainReader,
+  target: MetaTxTarget | null,
+): Promise<unknown> {
+  const { auth, account } = opts;
+  // The nonce moved (or reads inconsistent) before a replacement was signed: nothing was asked, the replaced one stays.
+  if (e instanceof NonceMovedError) return new AuthorizationPendingError();
+  if (sent && !provedNotSent(e)) {
+    // Already settled by `confirmGrant` (still confirming, or past its nonce and not in place): as it said.
+    if (e instanceof TxPendingError || e instanceof GrantNotInEffectError) return e;
+    if (!(e instanceof TxRevertedError)) return new AuthorizationPendingError();
+    // A reverted receipt for the hash the relay answered proves nothing on its own: that hash may be another
+    // transaction's, and a reverted execution spends no nonce, so this signed approve may still run. Its record stays
+    // while its nonce can still be used (or can't be read); only once that nonce has passed can it never run.
+    if (await pendingGrantOpen(sent, account, reader, target)) return new AuthorizationPendingError();
+  }
+  // Never sent (declined, refused before it left, or marked as not sent), or reverted with its nonce passed: its record
+  // goes, and nothing goes in its place. One it was to replace goes back in its place, in one write, since that one may
+  // still run; should that write fail, the replacement's record stays, at the same nonce, and the sale still waits on it.
+  if (supersede && sent) replacePendingGrant(auth, account, sent, supersede);
+  else clearPendingGrant(auth, account, sent);
+  return e;
 }
 
 /**
  * Settles a recorded grant whose send the relay answered and whose receipt for that hash succeeded. That is not proof on
  * its own (the relay may answer another hash; a reader may lag): the record goes only once the token's nonce has passed
  * the one it signed, and then the allowance says whether the grant is in place. While the nonce is still usable, or can't
- * be read, it stays recorded (`AuthorizationPendingError`); past it with the allowance short, the next try grants anew.
+ * be read, it stays recorded (`AuthorizationPendingError`); past it with the allowance short, it didn't take effect
+ * (`GrantNotInEffectError`), and the next try grants anew.
  */
 async function confirmGrant(opts: AuthorizationContext & { auth: ShopAuthorization }, grant: PendingGrant, amount: bigint, reader: ChainReader, target: MetaTxTarget | null): Promise<void> {
   const { auth, account } = opts;
   if (await pendingGrantOpen(grant, account, reader, target)) throw new AuthorizationPendingError();
   clearPendingGrant(auth, account, grant);
-  if (!(await getAuthorizationStatus(auth, account, amount, reader).catch(() => false))) throw new AuthorizationPendingError();
+  if (!(await getAuthorizationStatus(auth, account, amount, reader).catch(() => false))) throw new GrantNotInEffectError();
 }
 
 /** The recorded approve, sent again exactly as signed. Its record goes as a first send's does (`confirmGrant`). */
@@ -424,8 +453,9 @@ async function resendPendingGrant(opts: AuthorizationContext & { auth: ShopAutho
     if (receipt.status === "reverted") throw new TxRevertedError(receipt, "The authorization");
     await confirmGrant(opts, grant, BigInt(grant.amount), reader, metaTxTargetFor(auth));
   } catch (e) {
-    // Refused, reverted (its nonce may be spent already) or lost: still reconciled by its nonce on the next try.
-    throw e instanceof TxPendingError ? e : new AuthorizationPendingError();
+    // Refused, reverted (its nonce may be spent already) or lost: still reconciled by its nonce on the next try. Settled
+    // by `confirmGrant` (still confirming, or past its nonce and not in place): as it said.
+    throw e instanceof TxPendingError || e instanceof GrantNotInEffectError ? e : new AuthorizationPendingError();
   }
 }
 

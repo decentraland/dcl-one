@@ -22,6 +22,7 @@ import {
   ExactGrantUnavailableError,
   getManaSpendingAuthorization,
   GrantCancelledError,
+  GrantNotInEffectError,
   GrantNotRecordedError,
   metaTxTargetFor,
   PENDING_GRANT_HOLD_MS,
@@ -401,20 +402,28 @@ describe("an exact grant that may still land", () => {
     expect({ signed: signed(), posts: relay.posts.length }).toEqual(before);
   });
 
-  it("a successful receipt with the nonce passed but the allowance short (another call took the nonce) waits, and the next try approves anew", async () => {
+  it.each(SENDS)("%s whose receipt succeeds with its nonce passed but the allowance short (another call took the nonce) didn't take effect: the record goes, and the next try approves anew", async (_, lost) => {
     const { chain, relay, ctx, signed } = rail("fail-after-send");
+    if (lost !== null) await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: lost })).rejects.toBeInstanceOf(AuthorizationPendingError);
     relay.state.mode = "ok";
     const fetchImpl = (async () => {
       chain.receipts.set(FOREIGN, "success");
       chain.nonces.set(nonceKey, 1n);
       return new Response(JSON.stringify({ ok: true, txHash: FOREIGN }), { status: 200 });
     }) as unknown as typeof fetch;
-    await expect(setAuthorization({ ...ctx, fetchImpl, auth: allowance, active: true, amount: GAP })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    const clock = later(PENDING_GRANT_HOLD_MS + 1);
+    try {
+      // Not "still confirming": nothing recorded is left to land, so trying again is what helps.
+      await expect(setAuthorization({ ...ctx, fetchImpl, auth: allowance, active: true, amount: GAP })).rejects.toBeInstanceOf(GrantNotInEffectError);
+    } finally {
+      clock.mockRestore();
+    }
     // Nonce 0 is spent, so that approve can never run: its record goes, and the allowance says no.
     expect(readPendingGrant(allowance, BOOK.buyer)).toBeNull();
     expect(await exactAllowanceReady(allowance, BOOK.buyer, GAP, ctx.reader)).toBe(false);
+    const before = signed().length;
     await setAuthorization({ ...ctx, auth: allowance, active: true, amount: GAP });
-    expect(signed()).toEqual(["0", "1"]);
+    expect(signed().slice(before)).toEqual(["1"]);
     expect(await exactAllowanceReady(allowance, BOOK.buyer, GAP, ctx.reader)).toBe(true);
   });
 
