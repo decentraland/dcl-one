@@ -35,7 +35,9 @@ pub use queries::{
     build_unified_listings_sql,
 };
 #[cfg(test)]
-use queries::{id_contracts, related_rarity_sort_key, unified_branch, unified_selection};
+use queries::{
+    id_contracts, named_contracts, related_rarity_sort_key, unified_branch, unified_selection,
+};
 #[path = "shop_projection.rs"]
 mod projection;
 use projection::{
@@ -68,8 +70,7 @@ use sqlx::Row;
 use sqlx::postgres::PgRow;
 
 use super::catalog::{
-    Builder, ITEM_ID_SHIFT, MAX_NUMERIC_NUMBER, escape_like, unified_trades_cte,
-    unified_trades_cte_of,
+    Builder, ITEM_ID_SHIFT, MAX_NUMERIC_NUMBER, escape_like, unified_trades_cte_of,
 };
 use super::items::{USD_WEI_PER_CREDIT, mana_usd_rate, rate_to_numeric_string, recent_sales};
 use super::readers::{self, Ttl, cached, memoized};
@@ -2163,6 +2164,27 @@ mod tests {
             !feed.contains("unnest("),
             "a feed reads every open trade: {feed}"
         );
+    }
+
+    #[test]
+    fn a_read_names_the_contracts_of_its_filter_and_its_selection() {
+        let (a, b, c) = (
+            "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "0xcccccccccccccccccccccccccccccccccccccccc",
+        );
+        let named = |list: &[(&str, &str)]| named_contracts(&parse_unified_filters(&pairs(list)));
+        assert_eq!(named(&[("first", "5")]), None);
+        assert_eq!(
+            named(&[("contractAddress", a), ("itemId", "0")]),
+            Some(vec![a.to_lowercase()])
+        );
+        let items = format!("{c}-1,{a}-2");
+        assert_eq!(
+            named(&[("contractAddress", b), ("items", &items)]),
+            Some(vec![a.to_lowercase(), b.to_string(), c.to_string()])
+        );
+        assert_eq!(named(&[("contractAddress", "nope")]), Some(vec![]));
     }
 
     #[test]

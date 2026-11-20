@@ -2633,6 +2633,104 @@ async fn a_stored_malformed_token_id_does_not_break_the_bid_or_listing_reads() {
     }
 }
 
+/// A read that names a contract reads only that contract's open trades; its
+/// rows are those of the read over every open trade, restricted to it.
+#[tokio::test]
+async fn a_read_naming_a_contract_keeps_the_rows_of_the_whole_read() {
+    use super::shop::{
+        build_shop_listings_sql, build_unified_items_sql, build_unified_listings_sql,
+        parse_shop_filters, parse_unified_filters,
+    };
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let t = tag();
+    let (c1, c2) = (contract_of(&t, 1), contract_of(&t, 2));
+    for (c, item) in [(&c1, "0"), (&c1, "1"), (&c2, "0")] {
+        seed_item_row(&pool, c, item, CREATOR).await;
+    }
+    sqlx::query("UPDATE shop.items SET search_is_collection_approved = true WHERE contract_address = ANY($1)")
+        .bind(vec![c1.clone(), c2.clone()])
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut ids = Vec::new();
+    for (c, kind, sent_type, value, received_type, amount) in [
+        (&c1, "public_item_order", 4, "0", 2, "250000000000000000"),
+        (&c1, "public_item_order", 4, "1", 1, "5000000000000000000"),
+        (&c1, "public_nft_order", 3, "7", 2, "400000000000000000"),
+        (&c1, "public_nft_order", 3, "8", 1, "6000000000000000000"),
+        (&c2, "public_item_order", 4, "0", 2, "300000000000000000"),
+    ] {
+        let asset = |asset_type, contract: &str, value: &str| Asset {
+            asset_type,
+            contract: contract.to_string(),
+            value: value.to_string(),
+        };
+        let sent = asset(sent_type, c, value);
+        let received = asset(
+            received_type,
+            "0x7ad72b9f944ea9793cf4055d88f81138cc2c63a0",
+            amount,
+        );
+        ids.push(insert_trade(&pool, kind, CREATOR, sent, received).await.0);
+    }
+
+    let rate = crate::types::ManaUsdRate::parse_usd_per_mana("0.5").unwrap();
+    let build = |kind: &str, pairs: &[(String, String)]| match kind {
+        "shop" => build_shop_listings_sql(&parse_shop_filters(pairs), None),
+        "items" => build_unified_items_sql(&parse_unified_filters(pairs), rate, None),
+        _ => build_unified_listings_sql(&parse_unified_filters(pairs), rate, None),
+    };
+    let rows = async |b: super::catalog::Builder| -> Vec<Value> {
+        let sql = format!("SELECT to_jsonb(q) - 'total' FROM ({}) q", b.sql);
+        sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql), b.args)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+    };
+    for (kind, params) in [
+        ("listings", &[("includeLegacySecondary", "true")][..]),
+        ("listings", &[("itemId", "0"), ("listingType", "primary")]),
+        ("listings", &[("itemId", "1"), ("source", "legacy")]),
+        ("items", &[("includeLegacySecondary", "true")]),
+        ("shop", &[]),
+    ] {
+        let whole: Vec<(String, String)> = params
+            .iter()
+            .chain(&[("first", "1000")])
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let mut named = whole.clone();
+        named.push((
+            "contractAddress".to_string(),
+            c1.to_uppercase().replace("0X", "0x"),
+        ));
+        let (named, whole) = (build(kind, &named), build(kind, &whole));
+        assert!(
+            named
+                .sql
+                .contains("sent.contract_address IN (SELECT unnest(")
+                && !whole.sql.contains("unnest("),
+            "{}",
+            named.sql
+        );
+        let of_c1: Vec<Value> = rows(whole)
+            .await
+            .into_iter()
+            .filter(|r| r["contract_address"] == c1.as_str())
+            .collect();
+        assert!(!of_c1.is_empty(), "{kind} {params:?}");
+        assert_eq!(rows(named).await, of_c1, "{kind} {params:?}");
+    }
+
+    for id in ids {
+        delete_trade(&pool, &id).await;
+    }
+    cleanup_mirror(&pool, &[c1, c2]).await;
+}
+
 #[tokio::test]
 async fn admin_moderation_is_bearer_gated_audited_and_idempotent() {
     let Some(state) = state_with_db(

@@ -1577,6 +1577,50 @@ checkout and a claim takes the checkout first, so the edges add no lock
 cycle. Changing the
 key format, the frozen statuses or either statement updates this section.
 
+## Shop open-trades reads that name a contract
+
+Workload: the item page's listing read and the checkout's store-mint and
+coupon reads (`/v3/catalog/unified?contractAddress=&itemId=`), and
+`/v3/catalog/shop?contractAddress=`, run on each item view and each purchase
+confirmation. Each read builds the `unified_trades` CTE
+(`catalog::unified_trades_cte_of`). Two UNION branches reference it, so
+PostgreSQL materializes it before the branches filter by contract. Without a
+scope, the CTE reads every open trade.
+
+When a read names contracts (`contractAddress`, or the contracts of its
+`items` selection: `shop_queries::named_contracts`; the item read by ids:
+`shop_queries::id_contracts`), the CTE reads only the trades whose sent asset
+is from those contracts. The partial index
+`idx_trade_assets_sent_contract` on `shop.trade_assets (contract_address)
+WHERE direction = 'sent'` finds them.
+
+Invariants:
+
+- The scope keeps every row the read returns. Each branch still applies its
+  own contract and item filters. A trade row it keeps joins `shop.items` on
+  `contract_address = contract_address_sent`, so its sent contract is one of
+  the named contracts in lowercase. The rows are equal to the unscoped read's
+  rows for that contract (the `market_tests` test
+  `a_read_naming_a_contract_keeps_the_rows_of_the_whole_read`).
+- Reads that name no contract (the feeds, related items, legacy and
+  importable listings) keep the unscoped CTE.
+- Write cost: each sent asset that the trades mirror or a local signed trade
+  inserts adds one index entry. Received assets are not in the index.
+
+The object pass builds `idx_trade_assets_sent_contract` in the migrate
+transaction, not concurrently, so the trades mirror's writes to
+`shop.trade_assets` wait for the build. To build it outside that window, run
+beforehand, with the same definition as `schemas/30_shop.sql`:
+
+```sql
+CREATE INDEX CONCURRENTLY idx_trade_assets_sent_contract
+    ON shop.trade_assets (contract_address) WHERE direction = 'sent';
+```
+
+The object pass creates only objects the database lacks, so it then skips the
+index. A failed concurrent build leaves an invalid index of that name: drop it
+before retrying.
+
 ## Camera reel photo events workload
 
 `camera_reel.photo_events` (`schemas/50_create.sql`) is the append-only outbox
