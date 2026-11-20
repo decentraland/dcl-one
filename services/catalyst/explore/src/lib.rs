@@ -321,6 +321,18 @@ pub struct ExploreState {
 
 pub type SharedState = Arc<ExploreState>;
 
+/// The prefixes `serve` nests this router under, besides the root mount.
+pub const NESTS: [&str; 2] = ["/places", "/events"];
+
+/// The nest-stripped route, so a proxy's `x-original-path` can match it.
+fn signed_path(path: &str) -> signed_fetch::SignedPath {
+    let local = NESTS
+        .into_iter()
+        .find_map(|nest| path.strip_prefix(nest).filter(|rest| rest.starts_with('/')))
+        .unwrap_or(path);
+    signed_fetch::SignedPath::new(path, local)
+}
+
 impl ExploreState {
     pub fn new(
         pool: PgPool,
@@ -461,10 +473,10 @@ impl ExploreState {
         method: &str,
         path: &str,
     ) -> Result<String, signed_fetch::SignedFetchError> {
-        signed_fetch::require_signer(
+        signed_fetch::require_signer_at(
             headers,
             method,
-            path,
+            &signed_path(path),
             signed_fetch::PayloadPolicy::V6ThenLegacy,
             self.eip1654.as_deref(),
         )
@@ -475,10 +487,10 @@ impl ExploreState {
     /// The lowercased signer of a signed-fetch request, or `None` for an
     /// anonymous or unverifiable one.
     pub async fn viewer(&self, headers: &HeaderMap, method: &str, path: &str) -> Option<String> {
-        signed_fetch::optional_signer(
+        signed_fetch::optional_signer_at(
             headers,
             method,
-            path,
+            &signed_path(path),
             signed_fetch::PayloadPolicy::V6ThenLegacy,
             self.eip1654.as_deref(),
         )
@@ -1141,6 +1153,82 @@ mod tests {
 
     use super::*;
 
+    /// A signature over the host-rewritten path verifies only as the proxy reports it.
+    #[tokio::test]
+    async fn a_signature_over_the_rewritten_host_path_verifies_under_the_nest() {
+        use signed_fetch::test_support::{address, signed_headers};
+        let state = offline_state();
+        let forwarded = |mut headers: HeaderMap, original: &str| {
+            headers.insert(
+                signed_fetch::ORIGINAL_PATH_HEADER,
+                original.parse().unwrap(),
+            );
+            headers
+        };
+        let signed = signed_headers("post", "/api/events", "{}", true).await;
+        let ok = state
+            .signer(
+                &forwarded(signed.clone(), "/api/events?x=1"),
+                "post",
+                "/events/api/events",
+            )
+            .await
+            .unwrap();
+        assert_eq!(ok, address());
+        let rating = "/api/places/7b5c2f8e-6b0a-4c55-9a43-1f1d3c0e8a10/rating";
+        let signed_rating = signed_headers("put", rating, "{}", true).await;
+        let ok = state
+            .wkc_signer(
+                &forwarded(signed_rating, rating),
+                "put",
+                &format!("/places{rating}"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ok, address());
+        assert!(
+            state
+                .viewer(
+                    &forwarded(signed.clone(), "/api/events"),
+                    "post",
+                    "/events/api/events"
+                )
+                .await
+                .is_some()
+        );
+
+        // The root mount verifies with or without the forwarded path.
+        for headers in [signed.clone(), forwarded(signed.clone(), "/api/events")] {
+            let ok = state.signer(&headers, "post", "/api/events").await.unwrap();
+            assert_eq!(ok, address());
+        }
+
+        // Missing or mismatched forwarded path, or another signed path: refused.
+        for (headers, path) in [
+            (signed.clone(), "/events/api/events"),
+            (
+                forwarded(signed.clone(), "/api/events"),
+                "/events/api/schedules",
+            ),
+            (
+                forwarded(
+                    signed_headers("post", "/api/schedules", "{}", true).await,
+                    "/api/events",
+                ),
+                "/events/api/events",
+            ),
+            (
+                forwarded(signed.clone(), "/api/events"),
+                "/places/api/events/x",
+            ),
+        ] {
+            assert!(
+                state.signer(&headers, "post", path).await.is_err(),
+                "{path}"
+            );
+        }
+    }
+
     #[test]
     fn a_mirror_source_must_be_a_public_upstream_that_is_not_this_node() {
         let ok = MirrorSource::checked(
@@ -1335,18 +1423,15 @@ mod tests {
     #[tokio::test]
     async fn unknown_api_routes_answer_the_upstream_json_404() {
         let app = router(offline_state());
-        let nested = Router::new()
-            .nest("/places", router(offline_state()))
-            .nest("/events", router(offline_state()));
+        let nested = NESTS.into_iter().fold(Router::new(), |nested, nest| {
+            nested.nest(nest, router(offline_state()))
+        });
         let expected = json!({"ok": false, "error": "NotFound", "code": "not_found"});
-        for (app, uri) in [
-            (&app, "/api/nope"),
-            (&app, "/api/places/x/nope/deeper"),
-            (&app, "/api"),
-            (&nested, "/places/api/nope"),
-            (&nested, "/events/api/nope"),
-        ] {
-            let (status, headers, body) = send(app, Method::GET, uri, &[]).await;
+        let root =
+            ["/api/nope", "/api/places/x/nope/deeper", "/api"].map(|uri| (&app, uri.to_string()));
+        let mounts = NESTS.map(|nest| (&nested, format!("{nest}/api/nope")));
+        for (app, uri) in root.into_iter().chain(mounts) {
+            let (status, headers, body) = send(app, Method::GET, &uri, &[]).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
             assert_eq!(body, expected, "{uri}");
             assert_eq!(headers["content-type"], "application/json", "{uri}");

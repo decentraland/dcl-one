@@ -101,8 +101,10 @@ pub(crate) fn terrain_vertex_shader() -> ShaderRef {
 }
 
 mod decl {
-    // temporary for ShaderType macro, remove in future
-    #![allow(dead_code)]
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
 
     use bevy::{
         math::{IVec2, Vec2, Vec4},
@@ -125,26 +127,26 @@ mod decl {
         /// hills are displaced out to this many metres from the player (`hill_reach`)
         pub hill_reach: f32,
     }
+}
+pub use decl::*;
 
-    /// Coast bounds that no point is beyond.
-    pub const NO_COAST: Vec4 = Vec4::new(-1.0e7, -1.0e7, 1.0e7, 1.0e7);
+/// Coast bounds that no point is beyond.
+pub const NO_COAST: Vec4 = Vec4::new(-1.0e7, -1.0e7, 1.0e7, 1.0e7);
 
-    impl Default for TerrainParams {
-        fn default() -> Self {
-            Self {
-                min: IVec2::ZERO,
-                size: IVec2::ZERO,
-                max_steps: 0.0,
-                uv_size: 0.0,
-                player_parcel: IVec2::ZERO,
-                player_offset: Vec2::ZERO,
-                coast: NO_COAST,
-                hill_reach: super::hill_reach(super::LandscapeDistance::default().0),
-            }
+impl Default for TerrainParams {
+    fn default() -> Self {
+        Self {
+            min: IVec2::ZERO,
+            size: IVec2::ZERO,
+            max_steps: 0.0,
+            uv_size: 0.0,
+            player_parcel: IVec2::ZERO,
+            player_offset: Vec2::ZERO,
+            coast: NO_COAST,
+            hill_reach: hill_reach(LandscapeDistance::default().0),
         }
     }
 }
-pub use decl::*;
 
 /// Flat ground colour (used when parcel grass is off), displaced like the grass.
 pub type TerrainFlatMaterial = ExtendedMaterial<TerrainExtension>;

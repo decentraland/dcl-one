@@ -48,13 +48,4 @@ export type MiscEvents = {
     own: boolean;
     source: "fallback" | "live";
   };
-  scene_analytics_exported: {
-    scene_id: string;
-    scene_type: "genesis" | "world";
-  };
-  scene_analytics_viewed: {
-    scene_id?: string;
-    scene_type?: "genesis" | "world";
-    source: string;
-  };
 };
