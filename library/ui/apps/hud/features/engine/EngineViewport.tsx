@@ -30,10 +30,12 @@ export function EngineViewport({
     if (!el) return
     const push = (): void => {
       const r = el.getBoundingClientRect()
+      const rect = { x: r.left, y: r.top, width: r.width, height: r.height }
+      const f = focus?.current?.getBoundingClientRect()
       // Re-read the ratio on every push rather than once: dragging the window to a display with
       // a different density changes it.
-      const f = focus?.current?.getBoundingClientRect()
-      report(region, { x: r.left, y: r.top, width: r.width, height: r.height }, window.devicePixelRatio, f != null && f.height > 0 ? { x: f.left, y: f.top, width: f.width, height: f.height } : undefined)
+      if (f != null && f.height > 0) report(region, rect, window.devicePixelRatio, { x: f.left, y: f.top, width: f.width, height: f.height })
+      else report(region, rect, window.devicePixelRatio)
     }
     push()
     // The rect moves for two independent reasons, and each needs its own signal:

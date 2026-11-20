@@ -5094,6 +5094,10 @@
           "kind": "regular"
         },
         {
+          "name": "engineViewport.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "error.test.tsx",
           "kind": "regular"
         },
@@ -9435,7 +9439,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/engine/EngineViewport.tsx",
-      "sha256": "47e5f5323d976436ce9019149bdc6aa8a522bca77975ca270c4b543bd9d825db"
+      "sha256": "363b2c745f0bbed1b1f8ae4ea97aabf896069061df8de42c3bba5c2e56e2cae8"
     },
     {
       "path": "library/ui/apps/hud/features/error/ConnectivityFeedback.module.css",
@@ -10452,6 +10456,10 @@
     {
       "path": "library/ui/apps/hud/test/donatePanel.test.ts",
       "sha256": "6ff187f0c763b8c51980477fe79611261e17f40836089bf5dd45159778e8c0ea"
+    },
+    {
+      "path": "library/ui/apps/hud/test/engineViewport.test.tsx",
+      "sha256": "d9cbaf74174df277064400d93749ff7694e82ede32b9d68a01fc6786e49d1f1d"
     },
     {
       "path": "library/ui/apps/hud/test/error.test.tsx",
@@ -38114,6 +38122,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/engineViewport.test.tsx",
+      "to": "library/ui/apps/hud/features/engine/EngineViewport.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/engineViewport.test.tsx",
+      "to": "library/ui/apps/hud/features/engine/EngineViewport.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/engineViewport.test.tsx",
+      "to": "library/ui/apps/hud/features/engine/EngineViewport.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/error.test.tsx",
       "to": "library/explorer-core/lib/inputLock.ts",
       "kind": "native:runtime"
@@ -48011,6 +48034,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/donatePanel.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/engineViewport.test.tsx",
       "kind": "type"
     },
     {
