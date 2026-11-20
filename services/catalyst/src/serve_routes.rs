@@ -174,9 +174,11 @@ pub(super) fn build_routes(
         .merge(price::router(price.clone()))
         .nest("/price", price::router(price))
         .nest("/presence", presence::router(presence))
-        .merge(explore::router(explore.clone()))
-        .nest("/places", explore::router(explore.clone()))
-        .nest("/events", explore::router(explore))
+        .merge(explore::router(explore.clone()));
+    let app = explore::NESTS.into_iter().fold(app, |app, nest| {
+        app.nest(nest, explore::router(explore.clone()))
+    });
+    let app = app
         .merge(worlds::app_router(worlds, blobs, stage5))
         .merge(live_presence_routes(live_presence, stage5.writes_enabled))
         .merge(if primary {

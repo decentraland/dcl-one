@@ -11,7 +11,7 @@
 
 use futures::StreamExt;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering::Relaxed, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering::Relaxed, Ordering::SeqCst};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 use tokio::sync::{Mutex, Notify};
@@ -62,8 +62,8 @@ impl Default for SyncOrchestratorConfig {
             bootstrap_reconnect_exponent: 1.5,
             bootstrap_max_reconnect_ms: 3_600_000,
             syncing_reconnect_time_ms: 1_000,
-            syncing_reconnect_exponent: 1.5,
-            syncing_max_reconnect_ms: 86_400_000,
+            syncing_reconnect_exponent: 1.2,
+            syncing_max_reconnect_ms: 3_600_000,
             phased_sync: true,
             entity_types: None,
             snapshot_concurrency: 4,
@@ -419,6 +419,34 @@ fn heartbeat_while_busy(repo: Arc<LiveDeploymentRepository>) -> HeartbeatGuard {
 
 fn backoff(ms: f64, exponent: f64, max_ms: u64) -> f64 {
     (ms * exponent).min(max_ms as f64)
+}
+
+impl SyncOrchestratorConfig {
+    /// Next stream reconnect delay: a run that ended cleanly, or settled a poll and stayed up
+    /// for a full poll cycle, resets it; any other failed run grows it. A settled poll already
+    /// implies a run of at least the poll wait, so the elapsed check only matters when
+    /// `syncing_reconnect_time_ms` is the larger value.
+    fn next_syncing_backoff(
+        &self,
+        backoff_ms: f64,
+        failed: bool,
+        settled_poll: bool,
+        run: Duration,
+    ) -> f64 {
+        let healthy_run = Duration::from_millis(
+            self.pointer_changes_wait_time_ms
+                .max(self.syncing_reconnect_time_ms),
+        );
+        if !failed || (settled_poll && run >= healthy_run) {
+            self.syncing_reconnect_time_ms as f64
+        } else {
+            backoff(
+                backoff_ms,
+                self.syncing_reconnect_exponent,
+                self.syncing_max_reconnect_ms,
+            )
+        }
+    }
 }
 
 impl SyncOrchestratorRefs {
@@ -1054,6 +1082,7 @@ impl SyncOrchestratorRefs {
                     },
                     persist_cursor.then(|| refs.deployment_repo.clone()),
                     &progress,
+                    &AtomicU64::new(0),
                     || refs.is_stopped(),
                 )
                 .await;
@@ -1114,6 +1143,8 @@ impl SyncOrchestratorRefs {
                     };
                     let progress = AtomicI64::new(from_timestamp);
                     let report = Arc::new(DeploymentReport::default());
+                    let settled_polls = AtomicU64::new(0);
+                    let run_started = tokio::time::Instant::now();
                     let outcome = pointer_changes::deploy_entities_from_pointer_changes(
                         &refs.http_client,
                         &server,
@@ -1125,26 +1156,29 @@ impl SyncOrchestratorRefs {
                         },
                         Some(refs.deployment_repo.clone()),
                         &progress,
+                        &settled_polls,
                         || refs.is_stopped() || refs.control.is_paused(),
                     )
                     .await;
                     refs.advance_cursor(&server, &mut from_timestamp, progress.load(Relaxed))
                         .await;
-                    match outcome {
+                    let failed = match outcome {
                         Ok(greatest_ts) => {
                             refs.advance_cursor(&server, &mut from_timestamp, greatest_ts)
                                 .await;
-                            backoff_ms = cfg.syncing_reconnect_time_ms as f64;
+                            false
                         }
                         Err(e) => {
                             error!(server = %server, error = %e, "Sync stream failed");
-                            backoff_ms = backoff(
-                                backoff_ms,
-                                cfg.syncing_reconnect_exponent,
-                                cfg.syncing_max_reconnect_ms,
-                            );
+                            true
                         }
-                    }
+                    };
+                    backoff_ms = cfg.next_syncing_backoff(
+                        backoff_ms,
+                        failed,
+                        settled_polls.load(Relaxed) > 0,
+                        run_started.elapsed(),
+                    );
                     if let Some(state) = refs.servers.lock().await.get_mut(&server) {
                         state.last_snapshot_timestamp =
                             state.last_snapshot_timestamp.max(from_timestamp);
