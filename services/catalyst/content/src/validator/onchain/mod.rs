@@ -238,16 +238,20 @@ fn call_params(to: Address, data: &[u8], block: BlockTag, overrides: Option<&Val
 }
 
 /// Whether a failed block read may succeed when asked again: the node
-/// unreachable or overloaded, a server-side JSON-RPC error, or a replica that
-/// has not seen the block yet. A rate limit is not asked again within the
-/// check, nor is an answer that will not change (a refused endpoint, a bad
-/// key or path, invalid params, a malformed block).
+/// unreachable or overloaded, a 2xx body that is not JSON (cut off on the
+/// way), a JSON-RPC internal or server error, or a replica that has not seen
+/// the block yet. A rate limit (HTTP 429, or EIP-1474's -32005 "limit
+/// exceeded") is not asked again within the check, nor is an answer that
+/// will not change (a refused endpoint, a bad key or path, invalid params, a
+/// block without a usable number or timestamp).
 fn transient(e: &RpcError) -> bool {
     match e {
         RpcError::Transport(_) => true,
         RpcError::Status(s) => *s == 408 || (500..600).contains(s),
-        RpcError::Malformed(m) => m.starts_with("no block "),
-        RpcError::Response { code, .. } => (-32099..=-32000).contains(code),
+        RpcError::Malformed(m) => !m.starts_with("block "),
+        RpcError::Response { code, .. } => {
+            *code == -32603 || ((-32099..=-32000).contains(code) && *code != -32005)
+        }
         RpcError::Refused(_) => false,
     }
 }

@@ -4,7 +4,7 @@
 //! `multicall`) and to item contracts, each question answered by the test.
 //! A JSON-RPC batch is answered element by element unless batches are off.
 
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
@@ -104,8 +104,8 @@ struct Switches {
     failing_blocks: Arc<AtomicUsize>,
     /// `eth_getBlockByNumber`s left to answer `null`.
     missing_blocks: Arc<AtomicUsize>,
-    /// The HTTP status every `eth_getBlockByNumber` answers, when not 0.
-    block_status: Arc<AtomicU16>,
+    /// The HTTP status and raw body every `eth_getBlockByNumber` answers, when set.
+    block_reply: Arc<Mutex<Option<(u16, &'static str)>>>,
 }
 
 #[derive(Clone)]
@@ -148,9 +148,9 @@ impl FakeChain {
         self.switches.missing_blocks.store(n, Ordering::SeqCst);
     }
 
-    /// Every block read answers HTTP `status` with no JSON-RPC body; 0 answers normally.
-    pub fn set_block_status(&self, status: u16) {
-        self.switches.block_status.store(status, Ordering::SeqCst);
+    /// Every block read answers HTTP `status` with `body` as it is.
+    pub fn set_block_reply(&self, status: u16, body: &'static str) {
+        *self.switches.block_reply.lock().unwrap() = Some((status, body));
     }
 
     /// The `eth_chainId` this chain answers (1 by default).
@@ -383,13 +383,11 @@ async fn handle(State(fake): State<Fake>, Json(body): Json<Value>) -> axum::resp
         }
         single
             if single["method"] == "eth_getBlockByNumber"
-                && fake.switches.block_status.load(Ordering::SeqCst) != 0 =>
+                && fake.switches.block_reply.lock().unwrap().is_some() =>
         {
             fake.log.lock().unwrap().push("eth_getBlockByNumber".into());
-            let status = fake.switches.block_status.load(Ordering::SeqCst);
-            axum::http::StatusCode::from_u16(status)
-                .unwrap()
-                .into_response()
+            let (status, body) = fake.switches.block_reply.lock().unwrap().unwrap();
+            (axum::http::StatusCode::from_u16(status).unwrap(), body).into_response()
         }
         single => {
             let answer = tokio::task::spawn_blocking(move || answer_one(&fake, &single))

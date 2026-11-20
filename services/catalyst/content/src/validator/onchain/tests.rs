@@ -10,6 +10,7 @@ use alloy_primitives::{Address, U256, keccak256};
 use alloy_sol_types::SolCall;
 
 use super::*;
+use crate::http::jsonrpc::parse_envelope;
 use crate::validator::fake_chain::{self, Query, Reply, at_deployment, five_min_before};
 
 const OWNER: &str = "0xaaaa000000000000000000000000000000000001";
@@ -983,19 +984,31 @@ async fn a_block_the_rpc_never_answers_is_undecided_after_three_reads() {
 #[tokio::test]
 async fn only_a_block_read_that_may_succeed_is_asked_again() {
     let chain = fake_chain::serve(|_, _| Reply::Yes(true)).await;
-    // 401: a bad key; 429: rate limited, not asked again within the check.
-    for (status, reads) in [(401, 1), (429, 1), (404, 1), (408, 3), (503, 3)] {
+    let limit = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"limit exceeded"}}"#;
+    let internal = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"internal error"}}"#;
+    // 401: a bad key; 429 or -32005: rate limited, not asked again within the check.
+    for (status, body, said, reads) in [
+        (401, "", "401", 1),
+        (429, "", "429", 1),
+        (429, limit, "-32005", 1),
+        (200, limit, "-32005", 1),
+        (404, "", "404", 1),
+        (408, "", "408", 3),
+        (503, "", "503", 3),
+        (200, internal, "-32603", 3),
+        (200, r#"{"jsonrpc":"2.0","id":1,"res"#, "malformed", 3),
+    ] {
         chain.clear();
-        chain.set_block_status(status);
+        chain.set_block_reply(status, body);
         let err = access(Some(&chain.url), None)
             .l1_block_at(TS)
             .await
             .unwrap_err();
         assert!(
-            matches!(&err, ValidatorError::BlockchainQuery(m) if m.contains(&status.to_string())),
-            "{status}: {err}"
+            matches!(&err, ValidatorError::BlockchainQuery(m) if m.contains(said)),
+            "{status} {body}: {err}"
         );
-        assert_eq!(block_reads(&chain), reads, "{status}");
+        assert_eq!(block_reads(&chain), reads, "{status} {body}");
     }
 }
 
@@ -1009,14 +1022,25 @@ fn transient_block_read_errors() {
         (RpcError::Transport("timeout".into()), true),
         (RpcError::Status(502), true),
         (RpcError::Malformed("no block latest".into()), true),
+        (parse_envelope(200, b"<html>").unwrap_err(), true),
+        (
+            parse_envelope(200, br#"{"jsonrpc":"2.0","res"#).unwrap_err(),
+            true,
+        ),
         (response(-32000), true),
         (response(-32099), true),
+        (response(-32603), true),
         (RpcError::Refused("private address".into()), false),
         (RpcError::Status(403), false),
         (
             RpcError::Malformed("block without a hex timestamp".into()),
             false,
         ),
+        (
+            RpcError::Malformed("block timestamp out of range".into()),
+            false,
+        ),
+        (response(-32005), false),
         (response(-32602), false),
         (response(-32100), false),
         (response(3), false),
