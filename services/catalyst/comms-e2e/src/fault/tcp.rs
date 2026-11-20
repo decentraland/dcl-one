@@ -130,7 +130,8 @@ async fn relay(
 
 /// What a pump does next, given the link's state.
 enum Gate {
-    Open(Fault),
+    /// Bytes may move.
+    Open,
     /// Stalled or half-open: wait for a change.
     Wait,
     /// Cut: end the connection on both sides.
@@ -154,7 +155,7 @@ fn gate(shared: &Shared, direction: Direction, generation: u64) -> Gate {
     match shared.fault(direction) {
         // the bytes of a queue wait in the sockets, as on a stall
         Fault::Stall | Fault::Queue { .. } => Gate::Wait,
-        fault => Gate::Open(fault),
+        _ => Gate::Open,
     }
 }
 
@@ -197,7 +198,7 @@ async fn pump<R, W>(
         }
         // Past a stall or a half-open nothing is read and nothing is written: what is held waits,
         // unless the other direction is over, which ends this one too.
-        let fault = match gate(&shared, direction, generation) {
+        match gate(&shared, direction, generation) {
             Gate::Close => break false,
             Gate::Orphan => break true,
             Gate::Wait if other_ended => break false,
@@ -208,7 +209,7 @@ async fn pump<R, W>(
                 }
                 continue;
             }
-            Gate::Open(fault) => fault,
+            Gate::Open => {}
         };
         // What is due goes first.
         let next_due = held.front().map(|chunk| chunk.due);
@@ -241,7 +242,9 @@ async fn pump<R, W>(
         match read {
             Some(Ok(length)) if length > 0 => {
                 shared.count(direction, length);
-                let delay = match fault {
+                // The fault that is on now, not the one this pass began with: a fault set while
+                // the pump waited may not have woken it before the bytes did.
+                let delay = match shared.fault(direction) {
                     Fault::Delay { by } => by,
                     Fault::Link { delay, .. } => delay,
                     _ => Duration::ZERO,
@@ -323,6 +326,42 @@ mod tests {
         .unwrap();
         assert_eq!(written, b"reply");
         pumping.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn bytes_that_arrive_once_a_delay_is_set_take_that_delay() {
+        // The bytes and the wake-up for the new fault can both be ready when the pump next
+        // runs. Whichever it takes first, bytes that arrive under a delay are delayed.
+        let by = Duration::from_millis(60);
+        for round in 0..24 {
+            let shared = shared();
+            let (over, _) = watch::channel(false);
+            let (mut stack_side, from) = tokio::io::duplex(1024);
+            let (to, mut client_side) = tokio::io::duplex(1024);
+            let pumping = tokio::spawn(pump(
+                shared.clone(),
+                Direction::Downlink,
+                from,
+                to,
+                0,
+                over.clone(),
+            ));
+            // the pump reaches its wait on a plain link
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            shared.faults.lock().down = Fault::Delay { by };
+            shared.changed.notify_waiters();
+            let sent = Instant::now();
+            stack_side.write_all(b"late").await.unwrap();
+            let mut bytes = [0u8; 4];
+            client_side.read_exact(&mut bytes).await.unwrap();
+            assert!(
+                sent.elapsed() >= by,
+                "round {round}: bytes sent under a delay arrived after {:?}",
+                sent.elapsed()
+            );
+            over.send_replace(true);
+            pumping.await.unwrap();
+        }
     }
 
     #[tokio::test]
