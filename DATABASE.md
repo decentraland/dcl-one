@@ -2083,7 +2083,11 @@ contract-wallet RPC nor queues on the lock. Contract-wallet calls
 chain stores no row for the caps to count: 20 calls per network per minute,
 200 shared by requests with no network, 200 shared by networks past 4,096
 tracked ones, and 1,000 per replica; the calls behind a request, outcome or
-identity that is stored are given back. An IPv6 caller is keyed by its /48. A
+identity that is stored are given back. The contract-wallet budget keys an
+IPv6 caller by its /48 (the pending-request cap keeps its /64), so a whole /48
+shares one 20-call budget: on a shared carrier or hosting range one sender can
+spend it and bring everyone in that range a 429, and an RPC outage reaches
+that 429 sooner. A
 network past its budget gets a 429 before the RPC. Forged calls are never
 given back, so about 50 networks together can spend the replica's 1,000 in a
 window: every contract-wallet sign-in on that replica then gets a 429 ("on this
