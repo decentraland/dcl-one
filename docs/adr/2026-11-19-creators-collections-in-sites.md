@@ -67,7 +67,9 @@ The creators pages move into `apps/sites` from `decentraland/creators-website` `
 
 1. Replace the local components with `@dcl/one-ui` (Button, Switch, Spinner, Skeleton, SearchBar,
    inputs, TabsBar), adding the variants the creators pages need.
-2. Move each flow to the Rust builder service as its endpoints land.
+2. Move the pages to the node's builder service (`services/catalyst/builder`) once its port of
+   builder-server's wearable and emote API is merged (#1325): the backend owners finish the service,
+   then the pages switch from the Foundation builder-api to it.
 3. Bring the server state fully under TanStack Query: the feature flags' module-level cache and the
    module-level copies in the roles, sales and discounts hooks become queries, and the inline query keys
    move to key factories (`docs/web-app-standards.md`).
@@ -78,3 +80,13 @@ The creators pages move into `apps/sites` from `decentraland/creators-website` `
 5. Move the creators colors onto `--dcl-*` tokens, adding the status colors and the missing opacity
    steps to `library/ui/foundations`. Do it with or after follow-up 1, since the shared components
    take many of these colors with them.
+6. Move the creators page UI from `features/creators/components` to `library/ui/apps/sites/create/`,
+   as the UI standards ask of migrated UI, after follow-up 1 has moved the generic components.
+7. Compare the creators chain, credits, MANA rate, listing and trade code with the Shop's portable
+   core (`library/shop`) and move what both sides share there, with the host passing in network,
+   identity and wallets, as that core requires.
+8. Split `data/lib/creators/` into domain folders (collections, items, curation, linked collections,
+   sales, validation) and move the rendering and browser helpers it holds (`cx`, `theme`, `three`,
+   `renderPosedThumbnail`, `clipboard`, `filePicker`, `idle`) to `features/creators` or `core/lib`.
+9. Run `tooling/creators-e2e` in CI, starting with a smoke subset (gates, collections, the item
+   editor).
