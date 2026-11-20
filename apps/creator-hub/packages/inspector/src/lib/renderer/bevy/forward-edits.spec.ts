@@ -1509,6 +1509,29 @@ describe('createForwardEditBridge', () => {
         await drain();
         expect(rootSets().LightSource).toMatchObject({ active: true, intensity: 3 });
       });
+
+      describe('and the scene is then stopped, and its code sets its own root light', () => {
+        it('should show the value the scene code set on the next Play', async () => {
+          bridge.refreshEngineScene();
+          await drain();
+          const LightSource = components.LightSource(ctx.engine);
+          LightSource.create(ctx.engine.RootEntity, { active: true, intensity: 3 });
+          await ctx.engine.update(1);
+          await drain();
+          play();
+          await drain();
+
+          stop();
+          snapshot = { '0': { LightSource: { active: true, intensity: 7 } } };
+          bridge.refreshEngineScene();
+          await drain();
+          sent.length = 0;
+          play();
+          await drain();
+
+          expect(rootSets().LightSource).toMatchObject({ active: true, intensity: 7 });
+        });
+      });
     });
   });
 

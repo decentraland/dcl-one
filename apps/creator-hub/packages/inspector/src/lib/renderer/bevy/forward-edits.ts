@@ -1042,6 +1042,9 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
     // The reload re-ran the scene's code: what it made before is gone, and what
     // it makes now is found by the scan at the end of the reconcile.
     engineScene = emptyEngineSceneState();
+    // Root lighting edits were saved, so the reloaded scene starts from them and
+    // its code may set its own on top: the next scan holds the scene's values.
+    editedRootLighting.clear();
     for (const entity of hiddenCameraAttachments) {
       if (!isEditorEntity(entity)) hiddenCameraAttachments.delete(entity);
     }

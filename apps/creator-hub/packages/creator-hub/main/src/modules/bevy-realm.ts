@@ -76,7 +76,12 @@ const SERVER_UNAVAILABLE_CODE = '78';
 
 // What `sdk-commands start` prints when its Multiplayer Server child stops. The realm keeps
 // running without it, so its own exit does not tell. A SIGTERM/SIGINT stop prints nothing:
-// that is a deliberate stop. The server's own lines carry the `[Server]` tag and are skipped.
+// that is a deliberate stop, and so is exit code 0. The server's own lines carry the
+// `[Server]` tag and are skipped. The wording is `printWarning` in the `close` and `error`
+// handlers of decentraland/js-sdk-toolchain
+// `packages/@dcl/sdk-commands/src/commands/start/multiplayer-server.ts`, and the test
+// fixtures in bevy-realm.test.ts copy it. If it changes, a server-only stop goes
+// unnoticed (the realm keeps serving without a server); a realm crash is still restarted.
 const SERVER_STOPPED =
   /Multiplayer Server (?:exited with code (\d+)|terminated by signal|process error)/;
 
