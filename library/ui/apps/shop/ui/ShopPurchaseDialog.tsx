@@ -64,8 +64,11 @@ export interface ShopPurchaseItem {
 /** A simulated NAME purchase's step: nothing is bought (see the header). */
 type Simulated = { simulation?: true }
 
-/** How the buyer pays a purchase: from the Credits balance, or in Polygon MANA. */
-export type ShopPaymentMethod = 'credits' | 'mana'
+/**
+ * How the buyer pays a purchase: from the Credits balance, in Polygon MANA, or `split`, both together: the Credits balance
+ * pays part and MANA the rest (the method step's `split`).
+ */
+export type ShopPaymentMethod = 'credits' | 'mana' | 'split'
 
 /** The Credits option of Buy Item. */
 export interface ShopCreditsChoice {
@@ -83,6 +86,15 @@ export interface ShopManaChoice {
   balance: bigint
   /** Whether the buyer's MANA pays it now. */
   pays: boolean
+}
+
+/**
+ * Credits and MANA together, where the Credits balance pays part of the price and MANA the rest: `credits`, the whole
+ * credits the balance pays; `mana`, what the rest comes to in MANA (wei).
+ */
+export interface ShopSplitChoice {
+  credits: number
+  mana: bigint
 }
 
 /** Which of a checkout's payments a step is for: the `at`th of `of`, counted from 1. Said only when there are several. */
@@ -104,9 +116,10 @@ export type ShopPurchaseStep =
   | ({ step: 'success'; items: ShopPurchaseItem[] } & Simulated)
   /**
    * Buy Item with its payment options. `initial`: the buyer's earlier pick (the step shown again after a failure),
-   * picked again while it still pays.
+   * picked again while it still pays. `split`: where offered, both options may be ticked together, and then pay it
+   * together.
    */
-  | { step: 'method'; items: ShopPurchaseItem[]; credits: ShopCreditsChoice; mana: ShopManaChoice; initial?: ShopPaymentMethod }
+  | { step: 'method'; items: ShopPurchaseItem[]; credits: ShopCreditsChoice; mana: ShopManaChoice; split?: ShopSplitChoice; initial?: ShopPaymentMethod }
   /**
    * Authorize MANA. `venue`: what the allowance is for, named ("the Marketplace"); `network`: its chain, named;
    * `required`: the MANA this purchase needs, in wei. `waiting`: the wallet or the chain is confirming it; `failed`:
@@ -290,7 +303,7 @@ export function ShopPurchaseDialog({
             <PaymentOptions
               credits={{ price: view.balance + view.need, balance: view.balance, pays: false }}
               mana={{ price: mana.price, balance: mana.balance, pays: false }}
-              picked={null}
+              ticked={NONE}
             />
           )}
           {mana && view.items.length > 1 && <OrderSummary count={view.items.length} credits={view.balance + view.need} />}
@@ -724,12 +737,20 @@ function MethodStep({
   cancel: React.ReactNode
   onPay?: (method: ShopPaymentMethod) => void
 }): React.JSX.Element {
-  const { credits, mana } = view
-  const pays = (method: ShopPaymentMethod): boolean => (method === 'credits' ? credits.pays : mana.pays)
-  const first = (): ShopPaymentMethod | null => (view.initial && pays(view.initial) ? view.initial : credits.pays ? 'credits' : mana.pays ? 'mana' : null)
-  const [picked, setPicked] = useState<ShopPaymentMethod | null>(first)
-  // Dropped as this render reads it (React renders again at once), so no later view sees the old pick come back.
-  if (picked && !pays(picked)) setPicked(null)
+  const { credits, mana, split } = view
+  const pays = (method: ShopPaymentMethod): boolean => (method === 'credits' ? credits.pays : method === 'mana' ? mana.pays : split != null)
+  // Credits first, then both together (the balance spent before any MANA), then MANA alone.
+  const first = (): Ticked => ticks(view.initial && pays(view.initial) ? view.initial : credits.pays ? 'credits' : split ? 'split' : mana.pays ? 'mana' : null)
+  const [ticked, setTicked] = useState<Ticked>(first)
+  const [seen, setSeen] = useState(view)
+  const picked = methodOf(ticked)
+  // A new view (a balance read again) drops a pick that stopped paying, as this render reads it (React renders again at
+  // once), so no later view sees the old pick come back. Within one view an unpaid tick stays: the buyer may be
+  // ticking the second option of a split.
+  if (seen !== view) {
+    setSeen(view)
+    if (picked && !pays(picked)) setTicked(NONE)
+  }
   const method = picked && pays(picked) ? picked : null
   const count = view.items.length
   return (
@@ -750,10 +771,24 @@ function MethodStep({
         <Balance credits={credits.balance} mana={mana.balance} />
       </ShopModalHeader>
       <ItemList items={view.items} />
-      <PaymentOptions credits={credits} mana={mana} picked={method} onPick={setPicked} />
+      <PaymentOptions credits={credits} mana={mana} split={split} ticked={ticked} onPick={(m) => setTicked((t) => tick(t, m, split != null))} />
       {count > 1 && <OrderSummary count={count} credits={method === 'mana' ? null : credits.price} mana={method === 'mana' ? mana.price : null} />}
     </ShopModal>
   )
+}
+
+/** Which options are ticked. */
+type Ticked = { credits: boolean; mana: boolean }
+const NONE: Ticked = { credits: false, mana: false }
+const ticks = (method: ShopPaymentMethod | null): Ticked =>
+  method === 'split' ? { credits: true, mana: true } : method ? { ...NONE, [method]: true } : NONE
+const methodOf = (t: Ticked): ShopPaymentMethod | null => (t.credits && t.mana ? 'split' : t.credits ? 'credits' : t.mana ? 'mana' : null)
+/**
+ * `option` ticked or unticked. Where both may go together (`together`) each box is its own; otherwise one is picked at
+ * a time (radios): picking one moves the pick to it.
+ */
+function tick(t: Ticked, option: 'credits' | 'mana', together: boolean): Ticked {
+  return together ? { ...t, [option]: !t[option] } : { ...NONE, [option]: true }
 }
 
 /** MANA per credit at the prices given ("10"), or null where the Credits can't price it. */
@@ -764,28 +799,36 @@ function manaPerCredit(mana: bigint, credits: number | null): string | null {
 
 /**
  * The design's payment options: one per currency, each with its mark, its name over the buyer's balance, and what it
- * pays (MANA with its rate to Credits). An option that can't pay is shown off. Radios, drawn as the design's
- * checkboxes; `onPick` absent: none may be picked (Insufficient Funds).
+ * pays (MANA with its rate to Credits). An option that can't pay, alone or in a `split`, is shown off. With both ticked
+ * (the split), each says its part: the Credits the balance pays and the MANA for the rest. Drawn as the design's
+ * checkboxes: real checkboxes where the two may go together (`split`), radios where one is picked at a time; `onPick`
+ * absent: none may be picked (Insufficient Funds).
  */
 function PaymentOptions({
   credits,
   mana,
-  picked,
+  split,
+  ticked,
   onPick
 }: {
   credits: ShopCreditsChoice
   mana: ShopManaChoice
-  picked: ShopPaymentMethod | null
-  onPick?: (method: ShopPaymentMethod) => void
+  split?: ShopSplitChoice
+  ticked: Ticked
+  onPick?: (option: 'credits' | 'mana') => void
 }): React.JSX.Element {
   const rate = manaPerCredit(mana.price, credits.price)
+  const both = split != null && ticked.credits && ticked.mana
+  const creditsFigure = both ? split.credits : credits.price
+  const manaFigure = both ? split.mana : mana.price
+  const kind = split != null ? 'checkbox' : 'radio'
   return (
-    // One is picked at a time: radios, drawn as the design's checkboxes.
-    <div className={styles.options} role="radiogroup" aria-label="Payment method">
+    <div className={styles.options} role={kind === 'radio' ? 'radiogroup' : 'group'} aria-label="Payment method">
       <PaymentOption
         label="Credits"
-        checked={picked === 'credits'}
-        disabled={onPick == null || !credits.pays}
+        kind={kind}
+        checked={ticked.credits}
+        disabled={onPick == null || (!credits.pays && split == null)}
         onChange={() => onPick?.('credits')}
         mark={<img src={creditsCoin} alt="" aria-hidden="true" width={32} height={32} />}
         balance={
@@ -798,18 +841,19 @@ function PaymentOptions({
           </>
         }
         price={
-          credits.price != null && (
-            <span className={styles.optionAmount} title={`${formatCreditsFull(credits.price)} Credits`}>
+          creditsFigure != null && (
+            <span className={styles.optionAmount} title={`${formatCreditsFull(creditsFigure)} Credits`}>
               <img src={priceCredit} alt="" aria-hidden="true" width={20} height={20} />
-              <span className={styles.optionFigure}>{formatCreditsFull(credits.price)}</span>
+              <span className={styles.optionFigure}>{formatCreditsFull(creditsFigure)}</span>
             </span>
           )
         }
       />
       <PaymentOption
         label="MANA"
-        checked={picked === 'mana'}
-        disabled={onPick == null || !mana.pays}
+        kind={kind}
+        checked={ticked.mana}
+        disabled={onPick == null || (!mana.pays && split == null)}
         onChange={() => onPick?.('mana')}
         mark={<GeneralDecentralandColor size={32} aria-hidden="true" />}
         balance={
@@ -821,9 +865,9 @@ function PaymentOptions({
         }
         price={
           <>
-            <span className={styles.optionAmount} title={`${formatMana(mana.price as ManaWei, { group: true })} MANA`}>
+            <span className={styles.optionAmount} title={`${formatMana(manaFigure as ManaWei, { group: true })} MANA`}>
               <GeneralPolygonMana size={20} aria-hidden="true" />
-              <span className={styles.optionFigure}>{formatManaPrice(mana.price as ManaWei)}</span>
+              <span className={styles.optionFigure}>{formatManaPrice(manaFigure as ManaWei)}</span>
             </span>
             {rate != null && <span className={styles.optionRate}>1 Credit = {rate} MANA</span>}
           </>
@@ -833,9 +877,10 @@ function PaymentOptions({
   )
 }
 
-/** One payment option: a native radio, out of sight, drawn as the design system's filled checkbox. */
+/** One payment option: a native radio or checkbox (`kind`), out of sight, drawn as the design system's filled checkbox. */
 function PaymentOption({
   label,
+  kind,
   checked,
   disabled,
   onChange,
@@ -844,6 +889,7 @@ function PaymentOption({
   price
 }: {
   label: string
+  kind: 'radio' | 'checkbox'
   checked: boolean
   disabled: boolean
   onChange: () => void
@@ -853,7 +899,7 @@ function PaymentOption({
 }): React.JSX.Element {
   return (
     <label className={styles.option} data-checked={checked || undefined} data-disabled={disabled || undefined}>
-      <input type="radio" name="shop-payment-method" className={styles.optionInput} checked={checked} disabled={disabled} onChange={onChange} />
+      <input type={kind} {...(kind === 'radio' ? { name: 'shop-payment-method' } : {})} className={styles.optionInput} checked={checked} disabled={disabled} onChange={onChange} />
       <span className={styles.check} aria-hidden="true">
         <span className={styles.checkBox}>{checked && <img src={paymentCheck} alt="" width={16} height={16} />}</span>
       </span>

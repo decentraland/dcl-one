@@ -388,6 +388,80 @@ describe('the purchase dialog', () => {
       expect(option(/^MANA/)).toBe('MANAMANA Balance:7,0005,000')
     })
 
+    describe('Credits and MANA together', () => {
+      // The design's case: a 50-credit item, 20 credits held, 3,400 MANA; the balance pays 20 and MANA the other 300.
+      const short = { price: 50, balance: 20, pays: false }
+      const enough = { price: 500n * MANA, balance: 3400n * MANA, pays: true }
+      const split = { credits: 20, mana: 300n * MANA }
+      // Where both may go together the options are real checkboxes, each its own.
+      const box = (name: RegExp) => screen.getByRole('checkbox', { name }) as HTMLInputElement
+      const option = (name: RegExp) => box(name).closest('label')?.textContent
+      const radio = (name: RegExp) => screen.getByRole('radio', { name }) as HTMLInputElement
+
+      it('ticks both by default, each with its part, and BUY pays with both', () => {
+        vi.useFakeTimers()
+        const h = show({ step: 'method', items: [item], credits: short, mana: enough, split })
+        expect(box(/^Credits/).checked).toBe(true)
+        expect(box(/^MANA/).checked).toBe(true)
+        expect(option(/^Credits/)).toBe('CreditsCredits Balance:2020')
+        expect(option(/^MANA/)).toBe('MANAMANA Balance:3,4003001 Credit = 10 MANA')
+        arm()
+        fireEvent.click(buy())
+        expect(h.onPay).toHaveBeenCalledWith('split')
+      })
+
+      it('ticks each box on its own: Credits alone that can’t pay holds BUY, MANA alone pays its whole price', () => {
+        vi.useFakeTimers()
+        const h = show({ step: 'method', items: [item], credits: short, mana: enough, split })
+        arm()
+        fireEvent.click(box(/^MANA/))
+        expect(box(/^Credits/).checked).toBe(true)
+        expect(box(/^MANA/).checked).toBe(false)
+        expect(option(/^Credits/)).toBe('CreditsCredits Balance:2050')
+        expect(buy().disabled).toBe(true)
+        fireEvent.click(box(/^MANA/))
+        fireEvent.click(box(/^Credits/))
+        expect(box(/^MANA/).checked).toBe(true)
+        expect(option(/^MANA/)).toBe('MANAMANA Balance:3,4005001 Credit = 10 MANA')
+        fireEvent.click(buy())
+        expect(h.onPay).toHaveBeenCalledWith('mana')
+      })
+
+      it('lets MANA that can’t pay alone be ticked as the rest of a split, and holds BUY while it is alone', () => {
+        vi.useFakeTimers()
+        const h = show({ step: 'method', items: [item], credits: short, mana: { ...enough, balance: 400n * MANA, pays: false }, split })
+        arm()
+        expect(box(/^MANA/).disabled).toBe(false)
+        fireEvent.click(box(/^Credits/))
+        expect(box(/^MANA/).checked).toBe(true)
+        expect(buy().disabled).toBe(true)
+        fireEvent.click(buy())
+        expect(h.onPay).not.toHaveBeenCalled()
+      })
+
+      it('drops both when a new read no longer offers them together, and doesn’t tick them back', () => {
+        vi.useFakeTimers()
+        const onPay = vi.fn()
+        const view = (offered: boolean): ShopPurchaseStep => ({ step: 'method', items: [item], credits: short, mana: { ...enough, balance: 200n * MANA, pays: false }, ...(offered ? { split } : {}) })
+        const { rerender } = render(<ShopPurchaseDialog view={view(true)} onClose={vi.fn()} onPay={onPay} />)
+        arm()
+        rerender(<ShopPurchaseDialog view={view(false)} onClose={vi.fn()} onPay={onPay} />)
+        // Not together any more: radios again, none picked.
+        expect(radio(/^Credits/).checked || radio(/^MANA/).checked).toBe(false)
+        rerender(<ShopPurchaseDialog view={view(true)} onClose={vi.fn()} onPay={onPay} />)
+        expect(box(/^Credits/).checked || box(/^MANA/).checked).toBe(false)
+        expect(buy().disabled).toBe(true)
+      })
+
+      it('keeps one pick at a time, as radios, where they aren’t offered together', () => {
+        show({ step: 'method', items: [item], credits, mana })
+        expect(screen.queryByRole('checkbox')).toBeNull()
+        fireEvent.click(radio(/^MANA/))
+        expect(radio(/^Credits/).checked).toBe(false)
+        expect(radio(/^MANA/).checked).toBe(true)
+      })
+    })
+
     it('shows no Credits price on an item only MANA buys, never "0"', () => {
       show({ step: 'method', items: [{ ...item, credits: 0 }], credits: { price: null, balance: 700, pays: false }, mana })
       expect(screen.queryByTitle('0 Credits')).toBeNull()

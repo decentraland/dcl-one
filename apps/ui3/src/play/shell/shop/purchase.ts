@@ -1337,7 +1337,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   const confirming = new Set<Operation>()
   const settle = async (op: Operation, req: ShopBuyRequest, quote: Quote, method: ShopPaymentMethod = 'credits'): Promise<void> => {
     if (op.state !== 'reviewing' || !slot.holds(op) || running || confirming.has(op)) return
-    // Only a way the terms said pays: the dialog holds BUY otherwise.
+    // Only a way the terms said pays: the dialog holds BUY otherwise. Credits and MANA together isn't offered here yet.
+    if (method === 'split') return
     if (method === 'mana' ? !quote.mana?.pays : quote.parts.length === 0 || quote.total > quote.balance || quote.creditsUnread) return
     confirming.add(op)
     try {
