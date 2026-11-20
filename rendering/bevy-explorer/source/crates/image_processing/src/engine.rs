@@ -483,7 +483,7 @@ fn pipe_events(
 /// The satellite tile fetch's wait for response headers, and for each body chunk after them.
 const TILE_HEADERS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const TILE_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-/// Tiles are well under a megabyte; anything larger is not one.
+/// Tiles are under a megabyte; anything this large is not one.
 const TILE_MAX_BYTES: usize = 16 * 1024 * 1024;
 
 /// Answers `SystemApi::GetSatelliteTile`: fetches the tile from the abgen CDN's satellite maps
@@ -526,35 +526,61 @@ async fn fetch_satellite_tile(
     req_sx: UnboundedSender<ProcessorRequest>,
 ) -> Result<String, String> {
     use base64::{engine::general_purpose::STANDARD, Engine};
-    use platform::FetchError;
 
-    let fetched = platform::fetch(client.get(&url), TILE_HEADERS_TIMEOUT, TILE_IDLE_TIMEOUT)
-        .await
-        .map_err(|e| match e {
-            FetchError::Headers => "satellite tile request timed out".to_owned(),
-            FetchError::Send(e) => format!("satellite tile request failed: {e}"),
-            FetchError::Status(status, _) => format!("satellite tile request returned {status}"),
-            FetchError::Stalled => "satellite tile download stalled".to_owned(),
-            FetchError::Body(e) => format!("satellite tile download failed: {e}"),
-        })?;
-    if fetched.body.len() > TILE_MAX_BYTES {
-        return Err("satellite tile is too large".to_owned());
-    }
+    let body = download_satellite_tile(&client, &url).await?;
 
     // the conversion is tens of milliseconds: off the frame loop and the scene's thread
     #[cfg(not(target_arch = "wasm32"))]
     let jpeg = bevy::tasks::AsyncComputeTaskPool::get()
-        .spawn(async move { crate::satellite_tile_jpeg(&fetched.body) })
+        .spawn(async move { crate::satellite_tile_jpeg(&body) })
         .await;
     #[cfg(target_arch = "wasm32")]
     let jpeg = {
         let (sx, rx) = tokio::sync::oneshot::channel();
         req_sx
-            .send(ProcessorRequest::SatelliteTile(fetched.body, sx))
+            .send(ProcessorRequest::SatelliteTile(body, sx))
             .map_err(|_| "image processor is not running".to_owned())?;
         rx.await.map_err(|_| "image processor stopped".to_owned())?
     };
 
     jpeg.map(|jpeg| STANDARD.encode(jpeg))
         .map_err(|e| format!("satellite tile conversion failed: {e}"))
+}
+
+/// The tile's bytes, read chunk by chunk so a body over `TILE_MAX_BYTES` stops downloading at
+/// the limit; a `Content-Length` over it is refused before the body is read.
+async fn download_satellite_tile(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, String> {
+    use futures_lite::StreamExt;
+
+    let response = platform::within(TILE_HEADERS_TIMEOUT, client.get(url).send())
+        .await
+        .ok_or("satellite tile request timed out")?
+        .map_err(|e| format!("satellite tile request failed: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "satellite tile request returned {}",
+            response.status()
+        ));
+    }
+    if response
+        .content_length()
+        .is_some_and(|len| len > TILE_MAX_BYTES as u64)
+    {
+        return Err("satellite tile is too large".to_owned());
+    }
+    let mut stream = Box::pin(response.bytes_stream());
+    let mut body = Vec::new();
+    loop {
+        match platform::within(TILE_IDLE_TIMEOUT, stream.next()).await {
+            Some(Some(Ok(chunk))) => {
+                if body.len() + chunk.len() > TILE_MAX_BYTES {
+                    return Err("satellite tile is too large".to_owned());
+                }
+                body.extend_from_slice(&chunk);
+            }
+            Some(Some(Err(e))) => return Err(format!("satellite tile download failed: {e}")),
+            Some(None) => return Ok(body),
+            None => return Err("satellite tile download stalled".to_owned()),
+        }
+    }
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { BASE_PX_PER_PARCEL, type ParcelRect, type SatelliteManifest } from '../features/map/atlas'
 import { SatelliteDetail, base64ToBlob, type DetailView } from '../features/map/satelliteTiles'
 
@@ -184,5 +184,64 @@ describe('SatelliteDetail', () => {
     for (const r of requests.slice(1)) r.resolve('AAAA')
     await settle()
     expect(store.getSnapshot().length).toBe(urls.length)
+  })
+
+  describe('after a failure, with the view kept still', () => {
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('asks for a failed tile again once the wait is over', async () => {
+      vi.useFakeTimers()
+      const { store, requests, fetchTile } = setup()
+      store.setView(view(around(0, 0, 0.5), 5))
+      await settle()
+      const failedPath = requests[0].path
+      requests[0].resolve(null)
+      await settle()
+      expect(fetchTile.mock.calls.filter(([p]) => p === failedPath)).toHaveLength(1)
+
+      await vi.advanceTimersByTimeAsync(30_000)
+      await settle()
+      expect(fetchTile.mock.calls.filter(([p]) => p === failedPath)).toHaveLength(2)
+      store.dispose()
+    })
+
+    it('loads the manifest again after a failure, and gives up after repeated ones', async () => {
+      vi.useFakeTimers()
+      const loadManifest = vi.fn(async (): Promise<SatelliteManifest | null> => {
+        throw new Error('offline')
+      })
+      const fetchTile = vi.fn(async () => null)
+      const store = new SatelliteDetail({ fetchTile, loadManifest, createImage: async () => 'blob:x', revokeUrl: vi.fn() })
+      store.setView(view(around(0, 0, 0.5), 5))
+      await settle()
+      expect(loadManifest).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(30_000)
+      await settle()
+      expect(loadManifest).toHaveBeenCalledTimes(2)
+
+      // eight failures in a row with nothing loaded: no more attempts, and no retry left pending
+      for (let i = 0; i < 10; i++) {
+        await vi.advanceTimersByTimeAsync(30_000)
+        await settle()
+      }
+      expect(loadManifest).toHaveBeenCalledTimes(8)
+      expect(vi.getTimerCount()).toBe(0)
+      expect(fetchTile).not.toHaveBeenCalled()
+    })
+
+    it('leaves no retry pending once disposed', async () => {
+      vi.useFakeTimers()
+      const { store, requests } = setup()
+      store.setView(view(around(0, 0, 0.5), 5))
+      await settle()
+      requests[0].resolve(null)
+      await settle()
+      expect(vi.getTimerCount()).toBe(1)
+      store.dispose()
+      expect(vi.getTimerCount()).toBe(0)
+    })
   })
 })

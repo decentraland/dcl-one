@@ -55,7 +55,7 @@
     }
   ],
   "omitted": {
-    "reason": "The ETC1S per-format transcoders and the precomputed tables only they use (about 640,000 lines). The Explorer takes UASTC only and rejects ETC1S before this crate runs. Each path stays in upstream-files.sha256 with its published digest; verify.py requires it absent here and skips it in the offline replay, so these files are checked only against the published .crate.",
+    "reason": "The ETC1S per-format transcoders and the precomputed tables only they use (about 640,000 lines). The Explorer decodes ETC1S only to RGBA32, for satellite map tiles; scene KTX2 textures are UASTC only and ETC1S ones are rejected before this crate runs. Each path stays in upstream-files.sha256 with its published digest; verify.py requires it absent here and skips it in the offline replay, so these files are checked only against the published .crate.",
     "paths": [
       "src/basislz/astc_pack.rs",
       "src/basislz/astc_tables.rs",

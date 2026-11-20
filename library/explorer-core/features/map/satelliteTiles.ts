@@ -138,6 +138,8 @@ export class SatelliteDetail {
   private snapshot: readonly DetailTile[] = []
   private snapshotKey = ''
   private disposed = false
+  /** The one pending retry after a failure, so a still view recovers without moving. */
+  private retryTimer: ReturnType<typeof setTimeout> | null = null
   private readonly listeners = new Set<() => void>()
 
   constructor(options: SatelliteDetailOptions) {
@@ -170,6 +172,7 @@ export class SatelliteDetail {
   /** Revokes every tile and stops; replies still in flight are discarded. */
   dispose(): void {
     this.disposed = true
+    this.clearRetry()
     for (const { url } of this.cache.values()) this.revokeUrl(url)
     this.cache.clear()
     this.listeners.clear()
@@ -178,8 +181,7 @@ export class SatelliteDetail {
 
   private refresh(): void {
     const view = this.view
-    const gaveUp = this.failures >= GIVE_UP_AFTER && !this.everLoaded
-    this.wanted = view == null || gaveUp ? [] : this.plan(view)
+    this.wanted = view == null || this.gaveUp() ? [] : this.plan(view)
     if (this.wanted.length > 0) this.ensureManifest()
     const manifest = this.manifest
     const usable = manifest == null ? [] : this.wanted.filter((t) => satelliteTilePath(manifest, t) != null)
@@ -200,6 +202,28 @@ export class SatelliteDetail {
     return tiles.map((t) => ({ t, d: distance(t) })).sort((a, b) => a.d - b.d).map(({ t }) => t)
   }
 
+  /** Failures in a row, manifest and tiles alike, with no tile ever loaded: the source is out of reach. */
+  private gaveUp(): boolean {
+    return this.failures >= GIVE_UP_AFTER && !this.everLoaded
+  }
+
+  private clearRetry(): void {
+    if (this.retryTimer !== null) clearTimeout(this.retryTimer)
+    this.retryTimer = null
+  }
+
+  /** After a failure, look again once the wait is over: a failed tile or manifest is asked for
+   *  again only by a refresh, and a view that stays still makes none. */
+  private failed(): void {
+    this.failures++
+    this.clearRetry()
+    if (this.gaveUp()) return
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null
+      if (!this.disposed) this.refresh()
+    }, this.retryMs)
+  }
+
   private recentlyFailed(key: string): boolean {
     const at = this.failedAt.get(key)
     return at !== undefined && this.now() - at < this.retryMs
@@ -217,7 +241,9 @@ export class SatelliteDetail {
       },
       () => {
         this.manifestLoading = false
+        if (this.disposed) return
         this.manifestFailedAt = this.now()
+        this.failed()
       }
     )
   }
@@ -253,8 +279,8 @@ export class SatelliteDetail {
       .catch(() => {
         this.inFlight.delete(key)
         if (this.disposed) return
-        this.failures++
         this.failedAt.set(key, this.now())
+        this.failed()
       })
       .finally(() => {
         if (!this.disposed) this.refresh()
