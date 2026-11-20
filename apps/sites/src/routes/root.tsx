@@ -37,6 +37,7 @@ import { readWallet } from "@/data/lib/auth/wallet-cookie";
 import { browserCatalystBase } from "@/data/lib/catalyst/bases";
 import { isCommitteeMember } from "@/data/lib/catalyst/creator-hub/committee-membership.server";
 import { serverShopApiMode } from "@/data/lib/shop/mode";
+import { homeMeta, notFoundMeta, publicBase } from "./lib/social-meta";
 import type { Route } from "./+types/root";
 
 /** Reads or mints the session id once per request, before every loader, and sets its cookie once. */
@@ -118,11 +119,10 @@ export function shouldRevalidate({
   return defaultShouldRevalidate;
 }
 
-export function meta(_args: Route.MetaArgs) {
-  return [
-    { title: "Decentraland" },
-    { name: "description", content: "Explore Decentraland: discover virtual places and events, create experiences, and find wearables, emotes, NAMEs and LAND in the Shop." },
-  ];
+/** The shell card: every page without a head of its own, and the 404 for an unknown path. */
+export function meta({ error, matches }: Route.MetaArgs) {
+  if (isRouteErrorResponse(error) && error.status === 404) return notFoundMeta();
+  return homeMeta(publicBase(matches));
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
