@@ -158,7 +158,7 @@
     border: 0;
     box-shadow: inset 0 0 0 1px var(--dcl-transparencies-white-40);
   }
-  .root[data-surface='web'] .input {
+  .webField .input {
     box-sizing: border-box;
     min-height: 44px;
     padding: 0;
@@ -189,7 +189,7 @@
   .root[data-surface='web']:has(input:disabled) {
     opacity: 0.4;
   }
-  .root[data-surface='web'] .input:disabled {
+  .webField .input:disabled {
     opacity: 1;
   }
   @media (hover: hover) {
@@ -201,16 +201,11 @@
   .nativeField:has(> .input:disabled) {
     opacity: 0.4;
   }
-  .nativeField .input:disabled {
-    opacity: 1;
-  }
   .nativeSelect {
     color-scheme: dark;
   }
-  .nativeTextarea {
-    box-sizing: border-box;
+  .webField .nativeTextarea {
     padding: var(--dcl-space-8) 0;
-    line-height: 24px;
     resize: vertical;
   }
 }
@@ -231,7 +226,7 @@
   .root[data-surface='web'] .error {
     line-height: 21px;
   }
-  .root[data-surface='web'] .input::selection {
+  .webField .input::selection {
     background: var(--dcl-system-blue-dark-2);
   }
 }

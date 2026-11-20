@@ -193,19 +193,36 @@ describe("when a signed-in visitor submits an incomplete report", () => {
 });
 
 describe("when the connected wallet does not match the report link", () => {
-  beforeEach(() => {
-    auth.address = "0x1111111111111111111111111111111111111111";
-    auth.isConnected = true;
-    render(
-      <MemoryRouter initialEntries={["/report?player_address=0x2222222222222222222222222222222222222222"]}>
+  let report: ReturnType<typeof render>;
+  const entry = "/report?player_address=0x2222222222222222222222222222222222222222";
+
+  function page() {
+    return (
+      <MemoryRouter initialEntries={[entry]}>
         <ReportForm trackCtx={{ sid: "sid", story: "report" } as never} />
-      </MemoryRouter>,
+      </MemoryRouter>
     );
+  }
+
+  beforeEach(() => {
+    report = render(page());
   });
 
-  it("should focus the wallet warning and prevent submission", () => {
-    expect(document.activeElement).toBe(screen.getByText(/The connected wallet does not match the player address/));
+  it("should announce the wallet warning without disturbing focus", () => {
+    const description = screen.getByRole("textbox", { name: "Description" });
+    description.focus();
+    auth.address = "0x1111111111111111111111111111111111111111";
+    auth.isConnected = true;
+    report.rerender(page());
+    expect(screen.getByRole("alert").textContent).toMatch(/The connected wallet does not match the player address/);
+    expect(document.activeElement).toBe(description);
     expect(screen.getByRole("button", { name: "Submit Report" })).toHaveProperty("disabled", true);
+
+    auth.address = "0x2222222222222222222222222222222222222222";
+    report.rerender(page());
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(document.activeElement).toBe(description);
+    expect(screen.getByRole("button", { name: "Submit Report" })).toHaveProperty("disabled", false);
   });
 });
 

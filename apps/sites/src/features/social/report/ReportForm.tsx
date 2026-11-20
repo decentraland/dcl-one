@@ -222,10 +222,6 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
   }, [startCtx]);
 
   const mismatch = !!wallet && !!playerParam && wallet.toLowerCase() !== playerParam.toLowerCase();
-  const mismatchAlert = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (mismatch) mismatchAlert.current?.focus();
-  }, [mismatch]);
   const draft: ReportDraft = {
     playerAddress: wallet,
     reportedAddress,
@@ -297,7 +293,7 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
             </div>
 
             {mismatch && (
-              <div className={styles.mismatch} ref={mismatchAlert} tabIndex={-1}>
+              <div className={styles.mismatch} role="alert">
                 The connected wallet does not match the player address. Please connect with the correct wallet to submit this report.
               </div>
             )}
