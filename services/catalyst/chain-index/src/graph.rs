@@ -1288,6 +1288,27 @@ pub mod test_support {
                 .or_default()
                 .push(label.to_string());
         }
+        /// Makes `owner` the label's only holder.
+        pub fn transfer(&self, owner: &Address, label: &str) {
+            for labels in self.0.lock().unwrap().values_mut() {
+                labels.retain(|l| !l.eq_ignore_ascii_case(label));
+            }
+            self.set(owner, label);
+        }
+
+        #[cfg(test)]
+        fn holders(&self, label: &str) -> Vec<String> {
+            let mut holders: Vec<String> = self
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(_, labels)| labels.iter().any(|l| l.eq_ignore_ascii_case(label)))
+                .map(|(owner, _)| owner.clone())
+                .collect();
+            holders.sort();
+            holders
+        }
         pub fn forget(&self, owner: &Address) {
             self.0.lock().unwrap().remove(owner.as_str());
         }
@@ -1369,10 +1390,14 @@ pub mod test_support {
     }
 
     pub async fn fake_names_subgraph(names: Names) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        serve_names(listener, names)
+    }
+
+    fn serve_names(listener: tokio::net::TcpListener, names: Names) -> String {
         let app = Router::new()
             .route("/subgraph", post(answer))
             .with_state(names);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         format!("http://{addr}/subgraph")
@@ -1382,6 +1407,19 @@ pub mod test_support {
     pub async fn index_with_names() -> (Arc<ChainIndex>, Names) {
         let names = Names::default();
         let subgraph = fake_names_subgraph(names.clone()).await;
+        (names_index(subgraph), names)
+    }
+
+    /// A chain index reading `names`, built from a synchronous caller inside
+    /// a Tokio runtime.
+    pub fn index_reading(names: Names) -> Arc<ChainIndex> {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+        names_index(serve_names(listener, names))
+    }
+
+    fn names_index(subgraph: String) -> Arc<ChainIndex> {
         let settings = IndexSettings {
             marketplace_subgraph_url: Some(subgraph),
             eth_network: "mainnet".to_string(),
@@ -1389,6 +1427,34 @@ pub mod test_support {
         };
         let index = ChainIndex::new(Outbound::for_tests(), settings);
         index.allow_loopback_for_tests();
-        (Arc::new(index), names)
+        Arc::new(index)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn address(byte: char) -> Address {
+            Address::parse(&format!("0x{}", byte.to_string().repeat(40))).unwrap()
+        }
+
+        #[test]
+        fn transfer_leaves_the_new_owner_as_the_only_holder() {
+            let names = Names::default();
+            let (previous, current) = (address('a'), address('b'));
+            names.set(&previous, "label");
+            names.set(&previous, "kept");
+            names.transfer(&current, "LABEL");
+            assert_eq!(names.holders("label"), vec![current.as_str().to_string()]);
+            assert_eq!(names.holders("kept"), vec![previous.as_str().to_string()]);
+        }
+
+        #[test]
+        fn set_adds_a_holder() {
+            let names = Names::default();
+            names.set(&address('a'), "label");
+            names.set(&address('b'), "label");
+            assert_eq!(names.holders("label").len(), 2);
+        }
     }
 }

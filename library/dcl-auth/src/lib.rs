@@ -44,5 +44,8 @@ pub use pointer::{canonicalize_pointer, is_canonical_pointer, parse_pointer};
 pub use recover::{recover_address, recover_address_from_digest};
 pub use rpc_validator::RpcEip1654Validator;
 pub use validation_cache::{ValidationCache, cached_rpc_validator};
-pub use verify::{verify_auth_chain, verify_auth_chain_async};
+pub use verify::{
+    LOGIN_PURPOSE, verify_auth_chain, verify_auth_chain_async, verify_login_chain,
+    verify_login_chain_async,
+};
 pub use wallet::{SignError, Wallet, create_simple_auth_chain};

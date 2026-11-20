@@ -9,6 +9,7 @@ export function EmojiButton({ open, onToggle, className }: { open: boolean; onTo
       className={[styles.button, open ? styles.on : '', className ?? ''].filter(Boolean).join(' ')}
       aria-label="Emoji"
       aria-pressed={open}
+      data-ui-sound="soft"
       onMouseDown={(e) => e.preventDefault()}
       onClick={onToggle}
     />

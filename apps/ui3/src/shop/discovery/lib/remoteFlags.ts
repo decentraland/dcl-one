@@ -148,14 +148,14 @@ export function remoteFlag(flag: RemoteFlag): boolean {
   return remoteFlagOn(snapshot, flag);
 }
 
-function useRefreshOnMount(enabled = true): void {
+function useRefreshOnMount(enabled = true, refresh: () => Promise<void> = refreshRemoteFlags): void {
   useEffect(() => {
     if (!enabled) return;
-    void refreshRemoteFlags();
-    const onFocus = () => void refreshRemoteFlags();
+    void refresh();
+    const onFocus = () => void refresh();
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [enabled]);
+  }, [enabled, refresh]);
 }
 
 /** One rollout flag; false until the service answers yes. */
@@ -177,8 +177,8 @@ export function remoteFlagState(flag: RemoteFlag): boolean | null {
 const getVersion = () => version;
 const skipSubscription = () => () => {};
 
-export function useRemoteFlagState(flag: RemoteFlag, enabled = true): boolean | null {
+export function useRemoteFlagState(flag: RemoteFlag, enabled = true, refresh = refreshRemoteFlags): boolean | null {
   useSyncExternalStore(enabled ? subscribe : skipSubscription, getVersion, getVersion);
-  useRefreshOnMount(enabled);
+  useRefreshOnMount(enabled, refresh);
   return enabled ? remoteFlagState(flag) : null;
 }

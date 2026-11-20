@@ -18,7 +18,11 @@ use bevy_dui::{DuiRegistry, DuiTemplate};
 use collectibles::{urn::CollectibleUrn, Emote};
 use common::{
     sets::SetupSets,
-    structs::{AppConfig, AvatarDynamicState, EmoteCommand, EmoteMask, GraphicsSettings},
+    sky_preset::LIGHT_UNIT_LUX,
+    structs::{
+        AppConfig, AvatarDynamicState, EmoteCommand, EmoteMask, GraphicsSettings, ShadowlessLight,
+        StageLight,
+    },
     util::TryPushChildrenEx,
 };
 use platform::default_camera_components;
@@ -246,6 +250,24 @@ fn add_booth_camera(
         // here
         sync_prepasses(&mut cmds, graphics);
         camera = Some(cmds.id());
+
+        // the key light: avatars are lit by the brightest directional light and the ambient
+        // alone, and a booth has neither the world's sun nor its sky. One light unit lights the
+        // avatar in full, from the spot light's side. A stage light, so the sun's cascades and
+        // the sun readouts leave it alone, and shadowless, so the shadow settings never turn its
+        // shadows on
+        c.spawn((
+            Transform::from_xyz(1.0, 2.0, -1.0).looking_at(Vec3::new(0.0, 1.8, 0.0), Vec3::Y),
+            DirectionalLight {
+                illuminance: LIGHT_UNIT_LUX,
+                color: Color::WHITE,
+                shadows_enabled: false,
+                ..default()
+            },
+            StageLight,
+            ShadowlessLight,
+            render_layers.clone(),
+        ));
 
         c.spawn((
             Transform::from_xyz(1.0, 2.0, -1.0).looking_at(Vec3::new(0.0, 1.8, 0.0), Vec3::Z),

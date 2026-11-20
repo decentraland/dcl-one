@@ -17,6 +17,7 @@ use boimp::bake::{
     ImposterBakeMaterial, ImposterBakeMaterialExtension, ImposterBakeMaterialPlugin,
 };
 use common::{
+    sky_preset::{ambient_trilight, LIGHT_UNIT_LUX},
     structs::{PreviewMode, ShowOutOfBounds},
     util::InvertedScaleExt,
 };
@@ -31,10 +32,11 @@ pub const SCENE_MATERIAL_NO_DITHERING_MESH_TAG: u32 = 0x02000000;
 pub const SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG: u32 = 0x04000000;
 // cel-shade this mesh (avatars) instead of standard PBR — see toon.wgsl
 pub const SCENE_MATERIAL_TOON_MESH_TAG: u32 = 0x08000000;
-pub const SCENE_MATERIAL_OUTLINE_MESH_TAGS: u32 = 0xF0000000;
-pub const SCENE_MATERIAL_OUTLINE_BLACK_MESH_TAG: u32 = 0x10000000;
-pub const SCENE_MATERIAL_OUTLINE_RED_MESH_TAG: u32 = 0x20000000;
-pub const SCENE_MATERIAL_OUTLINE_BLUE_MESH_TAG: u32 = 0x80000000;
+// the tone-on-tone avatar outline (bound_material.wgsl, mask_material.wgsl)
+pub const SCENE_MATERIAL_OUTLINE_MESH_TAG: u32 = 0x10000000;
+// an avatar's eyes, eyebrows or mouth: lit by the ambient light alone (toon.wgsl's
+// facial_feature_lighting) instead of the toon bands
+pub const SCENE_MATERIAL_FACIAL_FEATURE_MESH_TAG: u32 = 0x20000000;
 /// an avatar being revealed bottom-up from its ghost: the shaders discard fragments above the
 /// reveal height, carried in the tag's low byte: 0 is no reveal, and 1..=255 span the range from
 /// `SCENE_MATERIAL_REVEAL_HIDE_HEIGHT` to `SCENE_MATERIAL_REVEAL_FULL_HEIGHT` above the mesh
@@ -63,6 +65,48 @@ pub fn reveal_mesh_tag(tag: u32, height: f32) -> u32 {
 /// `tag` with no reveal
 pub fn unrevealed_mesh_tag(tag: u32) -> u32 {
     tag & !SCENE_MATERIAL_REVEAL_MESH_TAG_MASK
+}
+
+/// the tag bits an avatar's style is read from (the camera dither, the toon lighting and the
+/// outline) and the toon values derived here, for the pipeline of every shader that styles an
+/// avatar's meshes: bound_material.wgsl and mask_material.wgsl. A def carries only integers, so
+/// each `f32` travels as its bit pattern and the shader reads it with `bitcast<f32>(#{NAME}u)`:
+/// - `TOON_LIGHT_UNIT_LUX`, the light unit;
+/// - `TOON_FACIAL_FLAT_AMBIENT_R/G/B`, the ambient light, in light units, that lights the eyes,
+///   eyebrows and mouth in a view without the sky environment map (the Backpack preview, a photo
+///   booth): the noon Trilight's equator colour, about what the sky gives a surface facing the
+///   horizon at noon. Such a view's flat ambient is set to light the body flat, far above any
+///   sky, so it is not read there.
+pub fn avatar_style_shader_defs() -> Vec<ShaderDefVal> {
+    [
+        (
+            "NO_DITHERING_MESH_TAG",
+            SCENE_MATERIAL_NO_DITHERING_MESH_TAG,
+        ),
+        (
+            "CONE_ONLY_DITHER_MESH_TAG",
+            SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG,
+        ),
+        ("TOON_MESH_TAG", SCENE_MATERIAL_TOON_MESH_TAG),
+        ("OUTLINE_MESH_TAG", SCENE_MATERIAL_OUTLINE_MESH_TAG),
+        (
+            "FACIAL_FEATURE_MESH_TAG",
+            SCENE_MATERIAL_FACIAL_FEATURE_MESH_TAG,
+        ),
+    ]
+    .into_iter()
+    .map(|(name, tag)| ShaderDefVal::UInt(name.to_owned(), tag))
+    .chain({
+        let flat = ambient_trilight(0.5)[1];
+        [
+            ("TOON_LIGHT_UNIT_LUX", LIGHT_UNIT_LUX),
+            ("TOON_FACIAL_FLAT_AMBIENT_R", flat.x),
+            ("TOON_FACIAL_FLAT_AMBIENT_G", flat.y),
+            ("TOON_FACIAL_FLAT_AMBIENT_B", flat.z),
+        ]
+        .map(|(name, value)| ShaderDefVal::UInt(name.to_owned(), value.to_bits()))
+    })
+    .collect()
 }
 
 /// the reveal encoding, for the pipeline of every shader that imports `reveal_discard`
@@ -292,8 +336,10 @@ impl SceneBounds {
 }
 
 mod decl {
-    // temporary for ShaderType macro, remove in future
-    #![allow(dead_code)]
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
 
     use bevy::{
         math::{IVec2, UVec2},
@@ -472,34 +518,7 @@ impl MaterialExtension for SceneBound {
                 "SHOW_OUTSIDE_BOUNDS_MESH_TAG".to_owned(),
                 SCENE_MATERIAL_SHOW_OUTSIDE_BOUNDS_MESH_TAG,
             ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
-                "NO_DITHERING_MESH_TAG".to_owned(),
-                SCENE_MATERIAL_NO_DITHERING_MESH_TAG,
-            ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
-                "CONE_ONLY_DITHER_MESH_TAG".to_owned(),
-                SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG,
-            ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
-                "TOON_MESH_TAG".to_owned(),
-                SCENE_MATERIAL_TOON_MESH_TAG,
-            ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
-                "OUTLINE_MESH_TAGS".to_owned(),
-                SCENE_MATERIAL_OUTLINE_MESH_TAGS,
-            ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
-                "OUTLINE_BLACK_MESH_TAG".to_owned(),
-                SCENE_MATERIAL_OUTLINE_BLACK_MESH_TAG,
-            ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
-                "OUTLINE_RED_MESH_TAG".to_owned(),
-                SCENE_MATERIAL_OUTLINE_RED_MESH_TAG,
-            ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
-                "OUTLINE_BLUE_MESH_TAG".to_owned(),
-                SCENE_MATERIAL_OUTLINE_BLUE_MESH_TAG,
-            ));
+            fragment.shader_defs.extend(avatar_style_shader_defs());
             fragment.shader_defs.extend(reveal_shader_defs());
             // the material has no cell table (`webgl2`), so scene_bounds.wgsl leaves it out too
             if cfg!(feature = "webgl2") {

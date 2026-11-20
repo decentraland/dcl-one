@@ -155,28 +155,37 @@ impl IpfsType {
                 content_hash: scene_hash,
                 file_path,
                 ..
-            } => context
-                .entities
-                .get(scene_hash)
-                .ok_or_else(|| anyhow::anyhow!("required collection hash not found: {scene_hash}"))?
-                .collection
-                .hash(file_path)
-                .map(|hash| format!("{base_url}{hash}"))
-                .or_else(|| {
-                    // On an authoritative server a content-map miss must NOT fall through to
-                    // fetching the file_path as a raw URL: that turns any asset load of a
-                    // missing entry into a scene-controlled outbound request (SSRF). Clients
-                    // keep the URL fallthrough.
-                    // TODO: check scene.json for allowed domains (include these in context like baseUrls)
-                    if common::structs::server_mode() {
-                        None
-                    } else {
-                        is_url(file_path).then_some(file_path.to_owned())
-                    }
-                })
-                .ok_or_else(|| {
-                    anyhow::anyhow!("file not found in content map: {file_path:?} in {scene_hash}")
-                }),
+            } => {
+                // a url resolves as itself even when the scene's content map is not registered:
+                // a far LOD (`scene_lod`) names its mesh under the scene's hash alone, so the
+                // download ranks under it
+                let collection = context
+                    .entities
+                    .get(scene_hash)
+                    .map(|entity| &entity.collection);
+                collection
+                    .and_then(|collection| collection.hash(file_path))
+                    .map(|hash| format!("{base_url}{hash}"))
+                    .or_else(|| {
+                        // On an authoritative server a content-map miss must NOT fall through to
+                        // fetching the file_path as a raw URL: that turns any asset load of a
+                        // missing entry into a scene-controlled outbound request (SSRF). Clients
+                        // keep the URL fallthrough.
+                        // TODO: check scene.json for allowed domains (include these in context like
+                        // baseUrls)
+                        if common::structs::server_mode() {
+                            None
+                        } else {
+                            is_url(file_path).then_some(file_path.to_owned())
+                        }
+                    })
+                    .ok_or_else(|| match collection {
+                        None => anyhow::anyhow!("required collection hash not found: {scene_hash}"),
+                        Some(_) => anyhow::anyhow!(
+                            "file not found in content map: {file_path:?} in {scene_hash}"
+                        ),
+                    })
+            }
             IpfsType::Entity { hash, .. } => Ok(format!("{base_url}{hash}")),
             IpfsType::SceneContent { content_hash, .. } => Ok(format!("{base_url}{content_hash}")),
             IpfsType::UrlCached { url, .. } | IpfsType::UrlUncached { url, .. } => {
@@ -212,11 +221,11 @@ impl IpfsType {
                 ..
             } => context
                 .entities
-                .get(scene_hash)?
-                .collection
-                .hash(file_path)
+                .get(scene_hash)
+                .and_then(|entity| entity.collection.hash(file_path))
                 .or_else(|| {
-                    // not in the content map: only a url can still be fetched (see `url_target`)
+                    // not in the content map, or no content map registered: only a url can still
+                    // be fetched (see `url_target`)
                     is_url(file_path).then(|| {
                         let digest =
                             multihash_codetable::Code::Sha2_256.digest(file_path.as_bytes());
@@ -773,7 +782,7 @@ pub fn content_file_path(file_path: &str) -> Cow<'_, str> {
 ///
 /// Deliberately not `Url::parse`, and deliberately only http(s): those are the only schemes the
 /// fetcher can use, and the wider syntax admits shapes that are better treated as paths.
-fn is_http_url(file_path: &str) -> bool {
+pub(crate) fn is_http_url(file_path: &str) -> bool {
     let Some((scheme, _)) = file_path.split_once("://") else {
         return false;
     };
@@ -1182,6 +1191,25 @@ mod tests {
         assert_eq!(hash("scenehash", "dance"), None);
         assert!(hash("scenehash", "https://example.com/foo.glb").is_some());
         assert_eq!(hash("otherhash", "models/emotes/foo.glb"), None);
+        // a url under a scene with no registered content map (a far LOD's mesh) still resolves
+        assert!(hash("otherhash", "https://example.com/foo.glb").is_some());
+    }
+
+    #[test]
+    fn a_url_resolves_under_a_scene_with_no_content_map() {
+        let context = crate::IpfsContext::default();
+        let target = |file: &str| {
+            IpfsType::new_content_file("bafyscene".to_owned(), file.to_owned())
+                .url_target(&context, "https://peer/contents/")
+        };
+        assert_eq!(
+            target("https://cdn.example/lods/bafyscene_1.glb").unwrap(),
+            "https://cdn.example/lods/bafyscene_1.glb"
+        );
+        assert!(target("models/foo.glb")
+            .unwrap_err()
+            .to_string()
+            .contains("required collection hash not found"));
     }
 
     #[test]
