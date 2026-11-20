@@ -334,7 +334,7 @@ async fn forward(
         Ok(tx) => tx,
         Err(message) => return error(StatusCode::BAD_REQUEST, message),
     };
-    match index_state(&state).await {
+    match index_state(&state, STARTED.elapsed()).await {
         IndexState::Serves => {}
         IndexState::Off => {
             return (
@@ -422,7 +422,8 @@ fn missing_cursor(enabled: bool, uptime: std::time::Duration) -> IndexState {
     }
 }
 
-async fn index_state(state: &SharedState) -> IndexState {
+/// `uptime`: how long this process has served forwards.
+async fn index_state(state: &SharedState, uptime: std::time::Duration) -> IndexState {
     let now = chrono::Utc::now();
     match chain_walk::cursor(&state.pool, INDEXER_MANA, NET).await {
         Ok(Some(c)) if !c.full_history => IndexState::Off,
@@ -438,10 +439,7 @@ async fn index_state(state: &SharedState) -> IndexState {
             IndexState::Off
         }
         Ok(Some(_)) => IndexState::Behind,
-        Ok(None) => missing_cursor(
-            state.settings.market.indexes.mana_transfers_enabled,
-            STARTED.elapsed(),
-        ),
+        Ok(None) => missing_cursor(state.settings.market.indexes.mana_transfers_enabled, uptime),
         Err(e) => {
             tracing::error!(error = %e, "cannot read the MANA transfer cursor; refusing the tip forward");
             IndexState::Unknown
@@ -1579,8 +1577,9 @@ mod tests {
         send_signed_body(app, "10.77.0.1", None, Some(w), body).await
     }
 
-    /// Without an index walked here or elsewhere a forward is refused unstored,
-    /// the local setting on or off; with either it is kept as a claim as before.
+    /// Without an index walked here or elsewhere a forward is refused unstored
+    /// (no cursor with the setting off; the setting on or off once a cursor
+    /// exists); with either it is kept as a claim as before.
     #[tokio::test]
     async fn a_forward_needs_a_running_index() {
         let Some(db) = crate::market::tests::support::OwnDb::create("tips_no_index").await else {
@@ -1732,6 +1731,28 @@ mod tests {
         let app = forward_router(crate::market::tests::support::state_without_db());
         let res = forward_tip(&app, &crate::outfits::testkit::scratch_wallet()).await;
         assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn a_missing_cursor_is_read_with_the_setting_and_uptime() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("tips_no_cursor").await else {
+            return;
+        };
+        let state_with = |enabled: bool| {
+            let mut settings = crate::market::Settings::for_tests();
+            settings.market.indexes.mana_transfers_enabled = enabled;
+            std::sync::Arc::new(crate::market::MarketplaceState::new(
+                db.pool.clone(),
+                crate::http::Outbound::for_tests(),
+                settings,
+            ))
+        };
+        let (on, off) = (state_with(true), state_with(false));
+        let minute = std::time::Duration::from_secs(60);
+        assert_eq!(index_state(&on, minute).await, IndexState::Behind);
+        assert_eq!(index_state(&on, FIRST_PASS_GRACE).await, IndexState::Off);
+        assert_eq!(index_state(&off, minute).await, IndexState::Off);
+        db.drop().await;
     }
 
     async fn claim_count(pool: &PgPool) -> i64 {
