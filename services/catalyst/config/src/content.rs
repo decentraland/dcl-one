@@ -474,9 +474,10 @@ pub struct ValidatorConfig {
     /// wears it. Off under every posture: a peer that checks ownership on
     /// chain only rejects such an entity when it syncs it. Set it together
     /// with `EXPLORER_ESCROW_GRANTS_ENABLED`, which lists the same leases in
-    /// the explorer backpack; startup warns when the two differ. This node's
-    /// `/lambdas/profiles` still serves the deployed profile without the
-    /// leased item, since it keeps chain-owned items only.
+    /// the explorer backpack; startup warns when the two differ. Where it
+    /// reads the collections subgraphs, this node's `/lambdas/profiles` still
+    /// serves the deployed profile without the leased item, since it keeps
+    /// the worn items the chain says are owned.
     #[arg(long, env = "CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub content_escrow_lease_ownership_enabled: bool,
 }
