@@ -23,7 +23,7 @@ describe('captureError', () => {
     captureError(new TypeError('upload failed'), { flow: 'add-items', http_status: 500, item: { id: 'x' } })
 
     expect(console.error).toHaveBeenCalledTimes(1)
-    expect(logged()).toContain('[creators] error in add-items: TypeError: upload failed [http_status=500]')
+    expect(logged()).toContain('[creators] error in add-items [http_status=500]: TypeError: upload failed')
   })
 
   it('never logs a signature or a sensitive context value', () => {
@@ -39,6 +39,20 @@ describe('captureError', () => {
 
     expect(logged()).toContain('Failed to fetch (code -32603)')
     expect(logged()).toContain('rpc_code=-32603 http_status=401')
+  })
+
+  it('keeps the facts ahead of a long message, within what the site reports', () => {
+    captureError(new Error(`rpc failed ${'x'.repeat(2_000)}`), { flow: 'publish', http_status: 502 })
+
+    expect(logged().slice(0, 500)).toContain('[creators] error in publish [http_status=502]: Error: rpc failed')
+  })
+
+  it('describes a thrown value that is not an Error by its plain facts, never a sensitive one', () => {
+    captureError({ code: 4001, token: 'abc' }, { flow: 'sell-item' })
+
+    expect(logged()).toContain('Object [code=4001]')
+    expect(logged()).not.toContain('abc')
+    expect(logged()).not.toContain('[object Object]')
   })
 
   it('lets the caller override a fact read off the thrown value', () => {

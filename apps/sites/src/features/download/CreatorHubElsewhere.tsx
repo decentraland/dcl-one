@@ -35,10 +35,11 @@ export default function CreatorHubElsewhere({ sid }: { sid: string }) {
       try {
         await navigator.share({ title: copy.shareTitle, url });
         report("share");
-      } catch {
-        // Dismissing the share sheet rejects too; there is nothing to report.
+        return;
+      } catch (error) {
+        // A dismissed sheet is the visitor's choice; any other refusal (a webview, a lost gesture) falls back to copying.
+        if (error instanceof DOMException && error.name === "AbortError") return;
       }
-      return;
     }
     try {
       await navigator.clipboard.writeText(url);

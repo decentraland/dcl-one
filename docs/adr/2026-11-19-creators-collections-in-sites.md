@@ -76,7 +76,10 @@ The creators pages move into `apps/sites` from `decentraland/creators-website` `
 4. Retire the creators environment files (`data/lib/creators/config/env`): the pages pick the
    development, staging or production Foundation services and chains from the page's host. Each
    service leaves them when it moves behind the node and is reached like the rest of Sites; once the
-   chain choice is deployment configuration too, the files and the host detection go.
+   chain choice is deployment configuration too, the files and the host detection go. Until then a
+   deployment that serves the pages on `.zone` sets `FEATURE_FLAGS_URL` and `FEATURE_FLAGS_ORIGIN` to
+   `.zone` too: some flags mirror builder-api's own, and the pages would otherwise read
+   decentraland.org's flags against the development services.
 5. Move the creators colors onto `--dcl-*` tokens, adding the status colors and the missing opacity
    steps to `library/ui/foundations`. Do it with or after follow-up 1, since the shared components
    take many of these colors with them.

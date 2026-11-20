@@ -48,4 +48,11 @@ describe("the rollout flags endpoint", () => {
     const res = await loader({ request: new Request("https://node.example/internal/feature-flags?app=explorer") });
     expect(res.status).toBe(400);
   });
+
+  it("answers 503, uncached, while the flag service has not answered once", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("down", { status: 503 })));
+    const res = await loader({ request: new Request("https://node.example/internal/feature-flags?app=builder") });
+    expect(res.status).toBe(503);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
 });

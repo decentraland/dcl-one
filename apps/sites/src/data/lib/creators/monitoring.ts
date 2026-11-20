@@ -77,6 +77,13 @@ function describeContext(context: ErrorContext): string {
   return facts.length > 0 ? ` [${facts.join(' ')}]` : ''
 }
 
+/** A thrown value that is not an Error, by its type and plain facts: `Object [code=4001]`, not `[object Object]`. */
+function describeValue(value: unknown): string {
+  if (typeof value !== 'object' || value === null) return String(value)
+  const type = (value as { constructor?: { name?: unknown } }).constructor?.name
+  return `${typeof type === 'string' && type !== '' ? type : 'Object'}${describeContext(value as ErrorContext)}`
+}
+
 /** Logs a failure, redacted, with the flow that produced it and the plain facts of its context. Never throws. */
 export function captureError(error: unknown, context: ErrorContext = {}): void {
   try {
@@ -85,13 +92,14 @@ export function captureError(error: unknown, context: ErrorContext = {}): void {
     const facts = describeContext({ ...rpcFactsFrom(error), ...context })
     const reportable = toReportable(error)
     const summary =
-      reportable instanceof Error ? `${reportable.name}: ${redact(reportable.message)}` : redact(String(reportable))
+      reportable instanceof Error ? `${reportable.name}: ${redact(reportable.message)}` : redact(describeValue(reportable))
     // V8 stacks open with the name and message, which the summary already carries.
     const frames =
       reportable instanceof Error && reportable.stack
         ? reportable.stack.replace(`${reportable.name}: ${reportable.message}`, '').replace(/^\n/, '')
         : ''
-    console.error(`[creators] ${label}: ${summary}${facts}${frames ? `\n${redact(frames)}` : ''}`)
+    // The site's reporter keeps only the first 500 characters, so the facts go before a message that can be long.
+    console.error(`[creators] ${label}${facts}: ${summary}${frames ? `\n${redact(frames)}` : ''}`)
   } catch {
     // Reporting must never throw back into the caller's catch block.
   }

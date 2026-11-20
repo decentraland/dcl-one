@@ -14,7 +14,7 @@ export type RedirectRule = {
   from: string;
   to: string;
   carry: readonly string[];
-  param?: { name: string; queryKey?: string };
+  param?: { name: string };
 };
 
 export const REDIRECTS = {
@@ -65,12 +65,7 @@ export function buildDestination(
   if (rule.param) {
     // The legacy page takes it in the path or, like publish-collection, in the query.
     const raw = params[rule.param.name] ?? url.searchParams.get(rule.param.name);
-    if (raw != null && raw !== "") {
-      if (rule.param.queryKey) out.set(rule.param.queryKey, raw);
-      else to = to.replace(`:${rule.param.name}`, encodeURIComponent(raw));
-    } else if (!rule.param.queryKey) {
-      to = "/create/collections";
-    }
+    to = raw != null && raw !== "" ? to.replace(`:${rule.param.name}`, encodeURIComponent(raw)) : "/create/collections";
   }
 
   const qs = out.toString();

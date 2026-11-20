@@ -6,7 +6,7 @@ export const MappingSchema = z.object({
   to: z.string(),
   carry: z.array(z.string()),
   param: z
-    .object({ name: z.string(), queryKey: z.string().nullable() })
+    .object({ name: z.string() })
     .nullable(),
 });
 export type Mapping = z.infer<typeof MappingSchema>;
@@ -46,7 +46,7 @@ export const REDIRECT_DASHBOARD: RedirectFixture = {
       legacyPath: "/builder/publish-collection",
       to: "/create/collections/:collection",
       carry: [],
-      param: { name: "collection", queryKey: null },
+      param: { name: "collection" },
     },
     {
       from: "curation",
@@ -60,7 +60,7 @@ export const REDIRECT_DASHBOARD: RedirectFixture = {
       legacyPath: "/builder/collection/:id",
       to: "/create/collections/:id",
       carry: [],
-      param: { name: "id", queryKey: null },
+      param: { name: "id" },
     },
     {
       from: "item-detail",

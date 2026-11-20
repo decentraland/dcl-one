@@ -63,6 +63,11 @@ const read = ttlMemo({
   load,
 });
 
+/** Whether an answer is the "all off" stand-in for a service that has not answered yet, rather than a read. */
+export function isUnread(answer: DappsFlagsAnswer): boolean {
+  return answer === NONE;
+}
+
 /** decentraland.org's flags of one application and their variants' payloads, as last read. */
 export function flagsAnswer(application: FlagApplication): Promise<DappsFlagsAnswer> {
   return read(site(), application);

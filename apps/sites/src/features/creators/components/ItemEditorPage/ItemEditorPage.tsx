@@ -619,7 +619,7 @@ const ItemEditorPage = () => {
     thirdParty.error instanceof BuilderServerError &&
     NOT_FOUND_STATUSES.includes(thirdParty.error.status)
   const isNotFound =
-    (!!collectionParam && !collectionId) ||
+    !collectionId ||
     (!!collectionId &&
       ((collectionQuery.isError &&
         collectionQuery.error instanceof BuilderServerError &&
