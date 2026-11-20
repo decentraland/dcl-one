@@ -167,6 +167,17 @@ impl SceneBound {
         self.alpha_texture = Some(alpha_texture);
         self
     }
+
+    /// the material's own rules (emissive, alpha texture) stay
+    pub fn rebind(&mut self, bounds: &SceneBounds, distance: f32) {
+        let rules = self.data.flags & (SCENE_PLAIN_EMISSIVE | SCENE_ALPHA_TEXTURE);
+        self.data = SceneBoundData {
+            distance,
+            flags: bounds.data.flags | rules,
+            ..bounds.data
+        };
+        self.cells = bounds.cells.clone();
+    }
 }
 
 pub const SCENE_BOUNDED: u32 = 1;
@@ -744,6 +755,42 @@ mod test {
     }
 
     #[test]
+    fn a_rebound_material_keeps_its_rules() {
+        use bevy::{asset::Handle, math::UVec2};
+
+        use crate::{
+            SceneBound, SceneBounds, EMPTY_SCENE_CELLS, SCENE_ALPHA_TEXTURE, SCENE_BOUNDED,
+            SCENE_FULL_RECT, SCENE_PLAIN_EMISSIVE,
+        };
+
+        let region = BoundRegion::new(IVec2::new(3, -2), IVec2::new(3, -2), 1);
+        let bounds = SceneBounds::rect(&region);
+
+        let mut sdk = SceneBound::new_unbounded()
+            .with_plain_emissive()
+            .with_alpha_texture(Handle::default())
+            .with_capsule_dither()
+            .with_base_opacity(0.5);
+        sdk.rebind(&bounds, 1.5);
+        assert_eq!(
+            sdk.data.flags,
+            SCENE_BOUNDED | SCENE_FULL_RECT | SCENE_PLAIN_EMISSIVE | SCENE_ALPHA_TEXTURE
+        );
+        let (min, _) = region.cells();
+        assert_eq!(sdk.data.origin, min);
+        assert_eq!(sdk.data.size, UVec2::ONE);
+        assert_eq!(sdk.data.rect_height, region.height);
+        assert_eq!(sdk.data.distance, 1.5);
+        assert_eq!(sdk.data.base_opacity, 0.0);
+        assert!(sdk.alpha_texture.is_some());
+        assert_eq!(sdk.cells, EMPTY_SCENE_CELLS);
+
+        let mut gltf = SceneBound::new_unbounded();
+        gltf.rebind(&bounds, 1.5);
+        assert_eq!(gltf.data, SceneBound::new(&bounds, 1.5).data);
+    }
+
+    #[test]
     fn test_bounds() {
         for x in [-10, 0, 10] {
             for y in [-10, 0, 10] {
@@ -802,7 +849,7 @@ mod test {
         };
         use pipeline_test::{compile_pipelines, fragment_pipelines, headless_app};
 
-        use crate::{SceneBound, SceneMaterial, EMPTY_SCENE_CELLS};
+        use crate::{BoundRegion, SceneBound, SceneBounds, SceneMaterial, EMPTY_SCENE_CELLS};
 
         const TILE: u32 = 64;
 
@@ -834,6 +881,13 @@ mod test {
         };
         let (black, white) = (texel([0, 0, 0, 255]), texel([255, 255, 255, 255]));
 
+        // the quads reach 0.9 m outside this region, within the distance
+        let rebound = |mut extension: SceneBound| {
+            let region = BoundRegion::new(IVec2::ZERO, IVec2::ZERO, 1);
+            extension.rebind(&SceneBounds::rect(&region), 1.0);
+            extension
+        };
+
         // as `MaterialDefinition` builds them: an SDK unlit material with an alpha texture blends
         let unlit = |alpha_texture: Handle<Image>| SceneMaterial {
             base: StandardMaterial {
@@ -841,7 +895,7 @@ mod test {
                 alpha_mode: AlphaMode::Blend,
                 ..Default::default()
             },
-            extension: SceneBound::new_unbounded().with_alpha_texture(alpha_texture),
+            extension: rebound(SceneBound::new_unbounded().with_alpha_texture(alpha_texture)),
         };
         let emissive = |extension: SceneBound| SceneMaterial {
             base: StandardMaterial {
@@ -849,7 +903,7 @@ mod test {
                 emissive: LinearRgba::rgb(0.4, 0.4, 0.4),
                 ..Default::default()
             },
-            extension,
+            extension: rebound(extension),
         };
         let mut materials = world.resource_mut::<Assets<SceneMaterial>>();
         let quads = [
