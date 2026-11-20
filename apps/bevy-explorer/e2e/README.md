@@ -116,7 +116,7 @@ many `built`, waits `--settle` seconds and samples `/performance_state` every 25
 pnpm run avatar-sweep                                          # 0..800 avatars, caps 20 and all, idle and dancing
 pnpm run avatar-sweep --counts 0,100,400 --caps all --emotes none --window 20 --out sweep.jsonl
 pnpm run avatar-sweep --url http://localhost:8080/            # an app served already
-pnpm run avatar-sweep --mirror ~/.cache/dcl-catalyst-mirror --port 8765 --mirror-port 8764   # repeated runs
+pnpm run avatar-sweep --profile ~/.cache/dcl-avatar-sweep-profile --port 8765   # repeated runs
 ```
 
 | Option | Default | Meaning |
@@ -131,25 +131,24 @@ pnpm run avatar-sweep --mirror ~/.cache/dcl-catalyst-mirror --port 8765 --mirror
 | `--window`, `--settle`, `--load-timeout` | `10`, `3`, `180` | Seconds |
 | `--realm`, `--position` | the `genesispng.dcl.eth` world on zone, `0,0` | Where to stand |
 | `--web-app` or `--url`, `--out`, `--headless` | `dist/web` | What to open, a JSONL copy of stdout, headless Chrome (GPU timing may then be missing) |
-| `--port` | `0` (a free one) | The port `--web-app` is served on. A fixed one keeps the page's origin, and so the browser's caches for it, from run to run |
-| `--mirror`, `--mirror-port` | none, `0` | A directory to keep the catalyst's files in, and the port to serve them on (see below) |
+| `--port` | `0` (a free one) | The port `--web-app` is served on. A fixed one keeps the page's origin from run to run |
+| `--profile` | none (a temporary one, removed at the end) | A directory for Chrome's profile, kept between runs; needs a fixed `--port` (see below) |
 
 The demo avatars wear random base wearables: a few hundred models and textures from the
 catalyst, which a crowd of several hundred asks for all at once. Run after run, that is more than
 the catalyst allows one client, and it then refuses content files for hours. For anything beyond
-a single run, pass `--mirror <dir>`: the sweep serves a catalyst on loopback
-(`driver/catalyst-mirror.ts`) and points the explorer at it with the `catalyst` service override.
-The mirror keeps every content file and active-entity lookup it serves in `<dir>` and answers
-from there afterwards; what it does not have yet it asks the catalyst for, a few requests a
-second, waiting and trying again when refused. The first run fills the directory, slowly; later
-runs ask the catalyst for nothing. Other requests (profiles, `/about`) pass through, not kept.
-The mirror answers the sweep's own page only: a request from a page of another origin, or one
-that does not name loopback as its host, gets a 403, and a request body over 1 MiB a 413.
-The sweep's last stderr line counts each kind.
+a single run, pass `--profile <dir>` and a fixed `--port`: Chrome keeps its profile in `<dir>`
+instead of a temporary folder, and with it the engine's content cache, which holds every content
+file by its hash. The browser keeps that cache by the page's origin, so the port has to stay the
+same; the sweep refuses `--profile` with a port picked anew. The first run fills the cache; later
+runs take the files from it and ask the catalyst for little: a 200-avatar run downloaded 1565
+files on an empty profile and 16 on the next run. Active-entity lookups are not cached and go to
+the catalyst every run. `loadSeconds` follows: a first run is a first visit, a later one a
+returning player's. One Chrome at a time uses a profile, and a profile grows to several hundred
+megabytes. The sweep's last stderr line is `/content_request_state`: `success` counts the run's
+downloads and `cached` what the cache answered.
 
-The page stops on its launch-link warning for a `catalyst` outside Decentraland's own domains,
-which the mirror is: choose Advanced, then Continue anyway, in the window the sweep opens, once
-per run. The player enters the world at a different spot each session, so for runs that are
+The player enters the world at a different spot each session, so for runs that are
 compared, stand in one place first with `--setup "/move_player_to <x> <y> <z>"`.
 
 Each stdout line is one step: `count`, `built` (`-1` when the avatars did not finish building
