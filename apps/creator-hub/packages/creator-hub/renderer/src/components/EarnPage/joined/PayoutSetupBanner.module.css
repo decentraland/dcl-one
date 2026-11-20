@@ -1,0 +1,73 @@
+.banner {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  box-sizing: border-box;
+  min-height: 80px;
+  margin-top: 30px;
+  padding: 18px 24px;
+  border: 1px solid var(--palette-whiteTransparent-subtle);
+  border-radius: var(--r-card);
+  background-color: var(--purple-banner);
+}
+
+.banner > :not(.glow) {
+  position: relative;
+  z-index: 1;
+}
+
+.glow {
+  position: absolute;
+  z-index: 0;
+  top: -161px;
+  right: -250px;
+  width: 422px;
+  height: 230px;
+  border-radius: 50%;
+  background-color: var(--palette-rarity-mythic);
+  opacity: 0.4;
+  filter: blur(50px);
+  pointer-events: none;
+}
+
+.badge {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-pill);
+  background-color: var(--surface-brand);
+  color: var(--palette-neutral-softWhite);
+}
+
+.copy {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-family);
+  font-size: var(--type-h6-semi-size);
+  font-weight: var(--type-h6-semi-weight);
+  line-height: 1.5;
+  color: var(--palette-neutral-softWhite);
+}
+
+.description {
+  margin: 0;
+  font-family: var(--font-family);
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+  line-height: 1;
+  color: var(--palette-whiteTransparent-backdrop);
+}

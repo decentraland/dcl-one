@@ -13,6 +13,7 @@ import { CopyIcon, WarningIcon } from '../icons';
 
 import { InfoTip } from './InfoTip';
 import { shortAddress } from './wallet';
+import parts from './parts.module.css';
 import styles from './PayoutsTab.module.css';
 
 const GET_A_WALLET_URL = 'https://docs.decentraland.org/blockchain-integration/get-a-wallet';
@@ -118,7 +119,7 @@ export function WalletCard({
             </CopyToClipboard>
           ) : (
             <Button
-              className={styles.setupButton}
+              className={parts.setupButton}
               variant="primary"
               disabled={locked}
               aria-describedby={describedBy}
@@ -178,7 +179,7 @@ export function ContactCard({
         </div>
         {unverified && (
           <Button
-            className={`${styles.setupButton} ${styles.verifyEmailButton}`}
+            className={`${parts.setupButton} ${styles.verifyEmailButton}`}
             variant="primary"
             disabled={locked}
             aria-describedby={locked ? hintId : undefined}

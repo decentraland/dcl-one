@@ -1751,6 +1751,12 @@
       "banner": {
         "region": "Anuncio"
       },
+      "setup_banner": {
+        "wallet": {
+          "title": "Configura tu billetera de pagos",
+          "description": "Agrega una billetera para recibir tus pagos del Creator Fund en USDC."
+        }
+      },
       "filter": {
         "cycle": "Ciclo",
         "all_cycles": "Todos los ciclos",
