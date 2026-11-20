@@ -13,7 +13,7 @@ import type { ShopPageId } from "@ui/shop/routes";
 import { primeDappsFlags } from "@/data/lib/feature-flags.browser";
 import { defaultShopSeo, type ShopPageData, type ShopSeo } from "@/data/lib/shop/pages";
 
-import { absoluteUrl, publicBase, socialMeta } from "../lib/social-meta";
+import { absoluteUrl, publicBase, socialMeta, SCHEMA_ORG } from "../lib/social-meta";
 
 const primed = new WeakSet<object>();
 
@@ -55,7 +55,7 @@ const PRODUCT: ReadonlySet<ShopPageId> = new Set<ShopPageId>(["itemDetail", "tok
 function shopWebsite(seo: ShopSeo, base: string | undefined): object {
   const decentraland = { name: "Decentraland", url: absoluteUrl(base, "/") };
   return {
-    "@context": "https://schema.org",
+    "@context": SCHEMA_ORG,
     "@type": "WebSite",
     name: SHOP_SITE_NAME,
     url: seo.canonical,
