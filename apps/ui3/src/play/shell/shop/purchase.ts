@@ -13,7 +13,7 @@
 // watchGroup: its receipt, or the server's record of its credit) until it settles, across dialogs and
 // reloads. Buying an item again while one of it is unresolved shows that one instead.
 
-import { fetchProfile } from '../../../data/catalyst/profile'
+import { fetchProfile, profileFaceUrl } from '../../../data/catalyst/profile'
 import type { Eip1193Provider } from '../../../data/auth/wallet'
 import { createShopClient, type ShopClient } from '@shop/api/shop'
 import { purchaseOfferSource } from '../../../shop/api/offers'
@@ -47,7 +47,7 @@ import { creditsCeil, creditsFloor, type UsdCents } from '@shop/model/money'
 import type { CartLine, GroupProgress, GroupStatus, PurchaseOffer, PurchaseState } from '@shop/model/purchase'
 import type { Session } from '@shop/model/settlement'
 import { loginExpired, rootAddress, type StoredLogin } from '@explorer-core/features/auth/sso'
-import type { ShopPaymentMethod, ShopPurchaseItem, ShopPurchaseStep } from '@dcl/one-ui/apps/shop/ui'
+import { shopStepLeave, type ShopPaymentMethod, type ShopPurchaseItem, type ShopPurchaseStep } from '@dcl/one-ui/apps/shop/ui'
 import { manaGuardedProvider, type ManaPurchaseIntent, type ManaSaleTerms } from './manaGuard'
 import { SEND_MS } from './manaPurchase'
 import { boundedReader, createManaEvidence, EVIDENCE_READ_MS, type ManaEvidence } from './manaEvidence'
@@ -79,6 +79,7 @@ import { withUtm } from '@explorer-core/lib/utm'
 import { trustedCreditsManager, type TrustedManager } from './config'
 import { createLedger, STORAGE_REFUSED, type OperationRecord } from './ledger'
 import { createManaFlow, MANA_BALANCE_TIMEOUT_MS } from './manaFlow'
+import { seesMana } from './manaGate'
 import { createNamePurchase, nameBuild, namesModeFor, type NameStanding } from './namePurchase'
 import { assertWalletAccount, guardedProvider, WalletRefusal, type PurchaseIntent } from './walletGuard'
 import { hostApiOptions } from '../../../shop/api/host'
@@ -144,15 +145,19 @@ export interface DialogSlot {
   hide(owner: DialogOwner): void
   holds(owner: DialogOwner): boolean
   holder(): DialogOwner | null
+  /** What it shows now, for whom: the step last drawn, while its owner still holds it. */
+  shown(): { owner: DialogOwner; view: ShellPurchaseView; handlers: ShellPurchaseHandlers; opening?: { pointer: boolean } } | null
   /** A purchase is open in it: its operation is still being reviewed or processed. */
   open(): boolean
 }
 
 export function createDialogSlot(ui: ShellShopUi): DialogSlot {
   let holder: DialogOwner | null = null
+  let drawn: ReturnType<DialogSlot['shown']> = null
   return {
     show(owner, view, handlers, opening) {
       holder = owner
+      drawn = { owner, view, handlers, ...(opening ? { opening } : {}) }
       ui.show(view, handlers, opening)
     },
     hand(owner) {
@@ -161,11 +166,43 @@ export function createDialogSlot(ui: ShellShopUi): DialogSlot {
     hide(owner) {
       if (holder !== owner) return
       holder = null
+      drawn = null
       ui.hide()
     },
     holds: (owner) => holder === owner,
     holder: () => holder,
+    shown: () => (drawn && drawn.owner === holder ? drawn : null),
     open: () => holder != null && (holder.state === 'reviewing' || holder.state === 'processing')
+  }
+}
+
+/** What a wallet asks its owner to approve: a signature, a transaction, a network to move to. */
+const WALLET_PROMPTS = new Set(['eth_signTypedData_v4', 'eth_signTypedData_v3', 'eth_signTypedData', 'eth_sendTransaction', 'personal_sign', 'eth_sign', 'wallet_switchEthereumChain', 'wallet_addEthereumChain'])
+
+/**
+ * `wallet` as `owner`'s purchase uses it: while a self-custody wallet asks the buyer to sign or send, the dialog
+ * says to confirm in the wallet, with the covered step's own way out (its CANCEL, and Escape), then shows the step it
+ * showed before, unless a newer step replaced the prompt meanwhile. The request, its answer and its refusal pass through untouched. An in-app wallet signs without asking,
+ * so it is returned as it is; so is a request while `owner` isn't the one shown.
+ */
+export function promptingWallet(slot: DialogSlot, owner: DialogOwner, wallet: Eip1193Provider, kind: ShopWalletKind): Eip1193Provider {
+  if (kind !== 'web3') return wallet
+  return {
+    request: async (args) => {
+      const before = WALLET_PROMPTS.has(args.method) ? slot.shown() : null
+      if (!before || before.owner !== owner) return wallet.request(args)
+      // The step it covers keeps its way out (CANCEL on Authorize MANA): a wallet that never answers can't trap the buyer.
+      const close = shopStepLeave(before.view)
+      const asking: ShellPurchaseView = close ? { step: 'wallet', close } : { step: 'wallet' }
+      slot.show(owner, asking, { onClose: close ? before.handlers.onClose : () => {} }, before.opening)
+      try {
+        return await wallet.request(args)
+      } finally {
+        if (slot.shown()?.view === asking) slot.show(owner, before.view, before.handlers, before.opening)
+      }
+    },
+    ...(wallet.on ? { on: wallet.on.bind(wallet) } : {}),
+    ...(wallet.removeListener ? { removeListener: wallet.removeListener.bind(wallet) } : {})
   }
 }
 
@@ -187,6 +224,8 @@ export interface ShellShopServices {
   creditRecord(buyer: string, creditIds: string[], client: ShopClient): Promise<'settled' | 'expired' | 'open'>
   /** The creator's display name, read here (its profile), never taken from the app. */
   creatorName(address: string): Promise<string | null>
+  /** The creator's profile picture, read here (its profile), or null while it has none. */
+  creatorFace(address: string): Promise<string | null>
   /**
    * Takes the operation's lock for this page (Web Locks), held until the returned release or until the
    * page goes; null when another live page holds it (or, with `wait`, once it lets go). A page touches
@@ -283,6 +322,24 @@ export async function fetchBuyListing(contract: string, itemId: string, client: 
   return row && !isResale(row) ? row : null
 }
 
+/**
+ * Creators' profiles, read once per page for both their name and their picture; a read that failed is tried again. Kept
+ * for the page's life on purpose: a name and a picture only label the dialog (nothing is charged from them), they
+ * change rarely, and a page opened again reads them afresh.
+ */
+const creatorProfiles = new Map<string, ReturnType<typeof fetchProfile>>()
+const creatorProfile = (address: string): ReturnType<typeof fetchProfile> => {
+  let read = creatorProfiles.get(address)
+  if (!read) {
+    read = fetchProfile(address, { signal: AbortSignal.timeout(3000) }).catch(() => null)
+    creatorProfiles.set(address, read)
+    void read.then((avatar) => {
+      if (!avatar) creatorProfiles.delete(address)
+    })
+  }
+  return read
+}
+
 const LIVE: ShellShopServices = {
   client: (signer) => createShopClient(hostApiOptions({ signer })),
   // The creator-sales switch as this document holds it, asked when the listing is mapped, as the read did itself.
@@ -305,10 +362,11 @@ const LIVE: ShellShopServices = {
     return mine.length > 0 && mine.every((p) => p.status === 'EXPIRED') ? 'expired' : 'open'
   },
   creatorName: async (address) => {
-    const avatar = await fetchProfile(address, { signal: AbortSignal.timeout(3000) }).catch(() => null)
+    const avatar = await creatorProfile(address)
     const name = avatar?.name?.trim()
     return name ? name.charAt(0).toUpperCase() + name.slice(1) : null
   },
+  creatorFace: async (address) => profileFaceUrl(await creatorProfile(address)),
   claim: (id, wait) => claimLock(typeof navigator !== 'undefined' ? navigator.locks : undefined, id, wait),
   manager: (chainId) => trustedCreditsManager(chainId),
   guard: guardedProvider,
@@ -337,6 +395,7 @@ const LIVE: ShellShopServices = {
   manaEvidence: () => createManaEvidence({ reader: shopChainReader() }),
   manaTimeouts: () => ({ sendMs: SEND_MS, readMs: EVIDENCE_READ_MS })
 }
+
 
 /** A watcher signs nothing: the wallet is never asked while a purchase is only followed. */
 const NO_WALLET: Eip1193Provider = {
@@ -410,14 +469,24 @@ export interface Quote {
 }
 
 /**
- * Paying one item in Polygon MANA, as the buyer is shown it: its one group, the sale built from its lines as the
- * chain and the server read them when the terms were read (the guard binds exactly this), and the buyer's MANA.
+ * One sale of a purchase paid in Polygon MANA: its group, and the sale built from the group's lines as the chain and the
+ * server read them when the terms were read (the guard binds exactly this).
  */
-export interface ManaQuote {
+export interface ManaQuotePart {
   part: QuotePart
   terms: ManaSaleTerms
   fingerprint: string
   /** The group's MANA, in wei. */
+  price: bigint
+}
+
+/**
+ * Paying in Polygon MANA, as the buyer is shown it: one sale per group (a cart of the Collection Store's mints and a
+ * Marketplace's trades is two), in the order they run, and the buyer's MANA against all of them.
+ */
+export interface ManaQuote {
+  parts: ManaQuotePart[]
+  /** Every group's MANA together, in wei. */
   price: bigint
   balance: bigint
   pays: boolean
@@ -473,7 +542,7 @@ export { RETRY_AFTER_MS } from './manaFlow'
  * of its operations is, successful once every group was bought, and partly bought if any wasn't. Each
  * operation keeps its own record, lock and watch; this is only what the dialog makes of them.
  */
-interface Checkout {
+export interface Checkout {
   ops: Operation[]
   /** Every unit, in the request's order. */
   displays: ShellPurchaseItem[]
@@ -482,6 +551,10 @@ interface Checkout {
   cart: boolean
   /** Why each part of it that wasn't bought wasn't, in the order they ended. */
   failures: string[]
+  /** Paid in MANA: what wasn't bought is said to have spent none. */
+  mana?: true
+  /** The part handed off and not shown on chain that held the rest: while it is set, a step in progress says so. */
+  heldBy?: Operation
 }
 
 /** An operation and, while its dialog is up, what it shows. */
@@ -565,6 +638,12 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     }
   }
   const show = (op: Operation, view: ShellPurchaseView, handlers: ShellPurchaseHandlers): void => slot.show(op, view, handlers, { pointer: op.input === 'pointer' })
+  /**
+   * The buyer's own wallet as `op` asks it: while it asks the buyer to sign (a signature or a transaction), the dialog up
+   * for `op` says so (Confirm in your wallet), and once it answers, the step it showed before comes back, unless another
+   * step was shown meanwhile. A managed wallet signs without asking anyone: it is used as it is.
+   */
+  const prompting = (op: Operation, wallet: Eip1193Provider, kind: ShopWalletKind): Eip1193Provider => promptingWallet(slot, op, wallet, kind)
   const hide = (op: Operation): void => {
     op.unwatchWallet?.()
     op.unwatchWallet = undefined
@@ -682,6 +761,9 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     reconcile: (op) => reconcile(op),
     check: (op, store) => check(op, store),
     reviewPart: (part, quote) => reviewPart(part, quote),
+    create: (req, buyer, items) => create(req, buyer, items),
+    prompting: (op, wallet, kind) => prompting(op, wallet, kind),
+    presentCheckout: (co) => presentCheckout(co),
     busy: () => running,
     hold: () => {
       running = true
@@ -762,8 +844,11 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   const presentCheckout = (co: Checkout): void => {
     const anchor = co.ops[co.ops.length - 1]
     if (!anchor) return
-    if (co.ops.some((o) => o.state === 'processing' || o.state === 'pending')) {
-      showPending(anchor)
+    // The part still in progress, shown as itself (CHECK AGAIN, or RETRY for MANA): in a MANA cart it may come before
+    // the last, which the executor saw confirmed while the chain hasn't finalized it yet.
+    const unsettled = co.ops.find((o) => o.state === 'processing' || o.state === 'pending')
+    if (unsettled) {
+      showPending(unsettled)
       return
     }
     const bought = co.ops.filter((o) => o.state === 'succeeded').length
@@ -774,8 +859,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     // Each part's reason is said as one transaction of it; several, as what they add up to.
     const message =
       bought === 0
-        ? `None of its transactions went through: nothing was bought.${co.cart ? ' Everything is still in your cart.' : ''}`
-        : partly(co.failures.length === 1 ? co.failures[0] : 'more than one of its transactions didn’t go through.', co.cart)
+        ? `None of its transactions went through: nothing was bought${co.mana ? ' and no MANA was spent' : ''}.${co.cart ? ' Everything is still in your cart.' : ''}`
+        : partly(co.failures.length === 1 ? co.failures[0] : `more than one of its transactions didn’t go through${co.mana ? '; no MANA was spent for them' : ''}.`, co.cart)
     show(anchor, { step: 'failed', message, retry: false }, { onClose: () => hide(anchor) })
   }
 
@@ -1059,8 +1144,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   const readQuote = async (op: Operation, login: StoredLogin, buyer: string, kind: ShopWalletKind, req: ShopBuyRequest): Promise<Quote | string> => {
     const c = confirmedClient(loginKey(login))
     await svc.primeFlags().catch(() => {})
-    // MANA is offered for one item, bought by a self-custody wallet (as the web Shop offers it), where this page may.
-    const manaOffered = req.items.length === 1 && !req.cart && kind === 'web3' && svc.manaInWorld()
+    // MANA is offered, for one item or a cart, to whoever the one MANA rule shows it to (./manaGate).
+    const manaOffered = seesMana({ flag: svc.manaInWorld(), wallet: kind })
     let creditsUnread: unknown = null
     const [listings, balance, manaBalance] = await Promise.all([
       Promise.all(req.items.map((l) => svc.fetchItem(l.contract, l.itemId, c))),
@@ -1083,11 +1168,13 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       const available = listings[i]?.available
       if (available != null && l.quantity > available) return available === 0 ? `${named(i)} is sold out.` : `Only ${available} left of ${single ? 'this item' : named(i)}.`
     }
-    // The creators' names, from their profiles, read while the offers are: never the app's word for them.
+    // The creators' names and pictures, from their profiles, read while the offers are: never the app's word for them.
     const creators = new Map<string, Promise<string | null>>()
+    const faces = new Map<string, Promise<string | null>>()
     for (const listing of listings) {
       const creator = listing?.creator
       if (creator && !creators.has(creator)) creators.set(creator, svc.creatorName(creator).catch(() => null))
+      if (creator && !faces.has(creator)) faces.set(creator, svc.creatorFace(creator).catch(() => null))
     }
     const account = parseEvmAddress(buyer)
     if (!account) return "Your sign-in can't confirm purchases here."
@@ -1131,13 +1218,17 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     const displays = await Promise.all(
       cartLines.map(async (line, i): Promise<ShellPurchaseItem> => {
         const listing = listings[i]!
+        const face = listing.creator ? await faces.get(listing.creator) : null
         return {
           name: listing.name,
           creator: (listing.creator ? await creators.get(listing.creator) : null) || shortAddress(listing.creator ?? ''),
+          ...(face ? { creatorFace: face } : {}),
           rarity: listing.rarity || 'base',
           thumbnail: listing.thumbnail || undefined,
+          ...(listing.isSmart ? { smart: true } : {}),
           category: listing.category === 'emote' ? 'emote' : (listing.wearableCategory ?? listing.category),
-          credits: unitCredits.get(line.id) ?? 0
+          credits: unitCredits.get(line.id) ?? 0,
+          key: line.id
         }
       })
     )
@@ -1150,7 +1241,14 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     const parts: QuotePart[] = creditsBuys ? partition.groups.map((group) => partOf(group, priced)) : []
     const items = cartLines.flatMap((_, i) => unitsFor(i))
     op.displays = items
-    const manaQuote: ManaQuote | null = mana ? { terms: mana.terms, fingerprint: mana.fingerprint, price: mana.price, balance: mana.balance, pays: mana.pays, part: partOf(mana.group, mana.priced) } : null
+    const manaQuote: ManaQuote | null = mana
+      ? {
+          parts: mana.sales.map((sale) => ({ part: partOf(sale.group, mana.priced), terms: sale.terms, fingerprint: sale.fingerprint, price: sale.price })),
+          price: mana.price,
+          balance: mana.balance,
+          pays: mana.pays
+        }
+      : null
     return {
       login: loginKey(login),
       buyer,
@@ -1208,11 +1306,13 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       return
     }
     if (quote.parts.length === 0) {
-      fail(op, "This item can't be bought with Credits. You can still buy it on the website.")
+      fail(op, quote.items.length === 1 ? "This item can't be bought with Credits. You can still buy it on the website." : "Some of these items can't be bought with Credits. You can still buy them on the website.")
       return
     }
     if (short > 0) {
-      show(op, { step: 'insufficient', items: quote.items, balance: quote.balance, need: short }, {
+      // Where the buyer holds MANA that can't pay either, Insufficient Funds shows both ways off.
+      const neither = mana != null && mana.balance > 0n && !mana.pays
+      show(op, { step: 'insufficient', items: quote.items, balance: quote.balance, need: short, ...(neither ? { mana: { price: mana.price, balance: mana.balance } } : {}) }, {
         onClose: () => close(op, 'cancelled'),
         onBuyCredits: () => {
           deps.openExternal(svc.creditsUrl())
@@ -1451,7 +1551,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       unmirror = store.subscribe(mirror)
       result = await svc.run(
         {
-          ctx: { buyer: quote.buyer, provider: svc.guard(wallet, intent), reader: svc.reader(), client: quote.client, walletKind: quote.kind, ...rail, fetchImpl: relay },
+          ctx: { buyer: quote.buyer, provider: svc.guard(prompting(op, wallet, quote.kind), intent), reader: svc.reader(), client: quote.client, walletKind: quote.kind, ...rail, fetchImpl: relay },
           store,
           guard: createSpendGuard()
         },
@@ -1540,8 +1640,27 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     const canPay = wallet != null && deps.wallet?.provider(buyer) != null && !!login.identity.ephemeralIdentity.privateKey
     const marketplace = canPay && wallet === 'web3' && deps.wallet?.marketplace?.(buyer) === true
     const namesMode = canPay ? nameSession()?.mode : undefined
-    return { v: SHOP_PROTOCOL, buyer, wallet, credits: canPay, marketplace, ...(namesMode ? { namesMode } : {}), ...(canPay ? {} : { reason: 'noWallet' as const }), codedErrors: true }
+    // What the HUD shows of MANA (the MANA equivalent of a price) follows the same rule as the purchase (./manaGate).
+    const mana = canPay && seesMana({ flag: svc.manaInWorld(), wallet })
+    return {
+      v: SHOP_PROTOCOL,
+      buyer,
+      wallet,
+      credits: canPay,
+      marketplace,
+      ...(namesMode ? { namesMode } : {}),
+      ...(mana ? { mana: true } : {}),
+      ...(canPay ? {} : { reason: 'noWallet' as const }),
+      codedErrors: true
+    }
   }
+
+  /** The flags file, read once for this page's capabilities (each purchase reads it again as it opens). */
+  let flagsRead: Promise<void> | null = null
+  const readFlagsOnce = (): Promise<void> =>
+    (flagsRead ??= svc.primeFlags().catch(() => {
+      flagsRead = null
+    }))
 
   const balance = async (): Promise<ShopBalance | null> => {
     const who = signedIn()
@@ -1578,6 +1697,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         case SHOP_METHODS.capabilities: {
           const who = signedIn()
           if (who) await restore(who.buyer)
+          // The MANA rule reads the flags file: it is read before the answer, once for the page.
+          await readFlagsOnce()
           return capabilities()
         }
         case SHOP_METHODS.balance:

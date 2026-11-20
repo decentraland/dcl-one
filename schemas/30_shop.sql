@@ -71,6 +71,9 @@ CREATE TABLE shop.trade_assets (
 CREATE INDEX idx_trade_assets_trade ON shop.trade_assets (trade_id);
 -- /v1/activity (trades_of_address): WHERE beneficiary = $1 ORDER BY created_at DESC LIMIT.
 CREATE INDEX idx_trade_assets_beneficiary_created ON shop.trade_assets (beneficiary, created_at DESC) WHERE beneficiary IS NOT NULL;
+-- The open trades of the contracts a Shop read names (unified_trades_cte_of):
+-- WHERE direction = 'sent' AND contract_address IN (...).
+CREATE INDEX idx_trade_assets_sent_contract ON shop.trade_assets (contract_address) WHERE direction = 'sent';
 
 CREATE TABLE shop.trade_assets_erc721 (
     asset_id uuid NOT NULL UNIQUE REFERENCES shop.trade_assets(id) ON DELETE CASCADE,

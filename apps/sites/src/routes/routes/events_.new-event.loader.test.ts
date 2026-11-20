@@ -12,45 +12,69 @@ vi.mock("@/data/lib/catalyst/places/events", async (original) => ({
 const args = (path: string, params: Record<string, string> = {}) =>
   ({ request: new Request(`https://sites.test${path}`), params, context: new RouterContextProvider() }) as never;
 
+type EditorData = Awaited<ReturnType<typeof newLoader>>["data"];
+
 describe("when the hangout editor loads", () => {
+  let data: EditorData;
+
   beforeEach(() => {
     vi.mocked(fetchEventCategories).mockResolvedValue([]);
   });
   afterEach(() => vi.resetAllMocks());
 
   describe("and the visitor opens /events/new-event", () => {
-    it("should open the editor in create mode with the community from the query", async () => {
-      const { data } = await newLoader(args("/events/new-event?community_id=c-1"));
-      expect(data).toMatchObject({ mode: "create", eventId: null, communityId: "c-1" });
+    describe("and the query names a community", () => {
+      beforeEach(async () => {
+        ({ data } = await newLoader(args("/events/new-event?community_id=c-1")));
+      });
+
+      it("should open the editor in create mode with the community from the query", () => {
+        expect(data).toMatchObject({ mode: "create", eventId: null, communityId: "c-1" });
+      });
     });
 
-    it("should ignore an id in the query", async () => {
-      const { data } = await newLoader(args("/events/new-event?mode=edit&id=ev-1"));
-      expect(data).toMatchObject({ mode: "create", eventId: null });
+    describe("and the query carries an id", () => {
+      beforeEach(async () => {
+        ({ data } = await newLoader(args("/events/new-event?mode=edit&id=ev-1")));
+      });
+
+      it("should ignore the id and open in create mode", () => {
+        expect(data).toMatchObject({ mode: "create", eventId: null });
+      });
     });
   });
 
   describe("and the visitor opens /events/edit-event/:id", () => {
-    it("should open the editor in edit mode for the event in the path", async () => {
-      const { data } = await editLoader(args("/events/edit-event/ev-1?community_id=c-1", { id: "ev-1" }));
-      expect(data).toMatchObject({ mode: "edit", eventId: "ev-1", communityId: "" });
+    describe("and the path id names an event", () => {
+      beforeEach(async () => {
+        ({ data } = await editLoader(args("/events/edit-event/ev-1?community_id=c-1", { id: "ev-1" })));
+      });
+
+      it("should open the editor in edit mode for the event in the path", () => {
+        expect(data).toMatchObject({ mode: "edit", eventId: "ev-1", communityId: "" });
+      });
     });
 
-    it("should ask for an event when the path id is blank", async () => {
-      const { data } = await editLoader(args("/events/edit-event/%20", { id: " " }));
-      expect(data).toMatchObject({ mode: "edit", eventId: null });
+    describe("and the path id is blank", () => {
+      beforeEach(async () => {
+        ({ data } = await editLoader(args("/events/edit-event/%20", { id: " " })));
+      });
+
+      it("should ask for an event", () => {
+        expect(data).toMatchObject({ mode: "edit", eventId: null });
+      });
     });
   });
 
   describe("and a category has multiple translations", () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       vi.mocked(fetchEventCategories).mockResolvedValueOnce([
         { name: "music", active: true, i18n: { en: "Music", es: "Música" } },
       ]);
+      ({ data } = await newLoader(args("/events/new-event")));
     });
 
-    it("should retain the translations for the locale selected on the client", async () => {
-      const { data } = await newLoader(args("/events/new-event"));
+    it("should retain the translations for the locale selected on the client", () => {
       expect(data.categories).toEqual([
         { name: "music", label: "Music", i18n: { en: "Music", es: "Música" } },
       ]);
@@ -58,12 +82,12 @@ describe("when the hangout editor loads", () => {
   });
 
   describe("and the categories cannot be read", () => {
-    beforeEach(() => {
-      vi.mocked(fetchEventCategories).mockRejectedValue(new Error("down"));
+    beforeEach(async () => {
+      vi.mocked(fetchEventCategories).mockRejectedValueOnce(new Error("down"));
+      ({ data } = await newLoader(args("/events/new-event")));
     });
 
-    it("should still open the editor and flag the categories", async () => {
-      const { data } = await newLoader(args("/events/new-event"));
+    it("should still open the editor and flag the categories", () => {
       expect(data).toMatchObject({ mode: "create", categories: [], categoriesError: true });
     });
   });

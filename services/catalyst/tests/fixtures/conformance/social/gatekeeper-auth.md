@@ -80,7 +80,7 @@ scene and world administration and moderation.
 | POST/DELETE gate `isSceneOwnerOrAdmin`: owner, admin, extended permissions (LAND operators, world deploy/stream grantees), land lease | `GK/adapters/scene-manager.ts:81-94` | `scene_manager_decision`: owner or explicit admin, else an extended holder (`G/admission/scene_policy.rs`); unreadable grants answer 503. The stream key of a world is the exception, see [`meetings-voice.md`](meetings-voice.md) | MATCH | `a_land_owner_moderates_a_genesis_scene_without_an_admin_row`, `toolkit_ban_listings_admit_extended_holders` |
 | Target protection; add by `name` | `add-…:62-91` | `handlers.rs:59-85,239-258` | MATCH (messages differ) | `scene_ban_rejects_admin_target_and_admin_decisions_are_explicit` |
 | Room metadata `sceneAdmins` (1c3b907) | `room-metadata-sync/component.ts:33-161` | `G/admission/scene_effects.rs:206-212`, `maintenance.rs:208-245` (also the world lobby) | MATCH | `canonical_moderation_metadata_and_kick_target_the_joined_scene_and_lobby` |
-| Storage key | Places `place.id`, stable across redeploys | `social.scene_admins.place_id` = deployment entity id (`C/comms/src/world_identity.rs:195-201`) | GAP-AU-11 | untested |
+| Storage key | Places `place.id`, stable across redeploys | `social.scene_admins.place_id` = the scene's place, stable across redeploys: a world scene's identity, a Genesis scene's base parcel (`C/comms/src/rooms.rs:286`); a world keys each scene apart, see [`meetings-voice.md`](meetings-voice.md) | MATCH | `a_scene_admin_mints_lists_resets_and_removes_the_stream_key`, `a_redeploy_revokes_the_key_of_a_replaced_scene_the_resolver_still_answers` |
 
 ## 5. Scene bans (`/scene-bans`, `/scene-bans/addresses`)
 
@@ -135,9 +135,9 @@ scene and world administration and moderation.
 6. **GAP-AU-6: `with_not_before` shortens island tokens.** Severity P2. Keep the lifetime and reject a non-positive `nbf`, as upstream does.
 8. **GAP-AU-8: Check order.** Severity P2. A wallet both deny-listed and platform-banned gets 401; upstream gives 403.
 9. **GAP-AU-9: Undocumented token claims and realm sources.** Severity P2. Record `name`, `isGuest` metadata, server-token metadata, the island `canUpdateOwnMetadata=false`, `displayName` as a canonical key as divergences, or remove them. `/get-server-scene-adapter` and streaming still fall back to `realm.serverName` (`realm_name_from_metadata`). The web place-page scene chat signs `/get-scene-adapter` as `dcl:explorer`.
-11. **GAP-AU-11: Scene admins, and Genesis scene bans, are lost on redeploy.** Severity P1.
+11. **GAP-AU-11: Genesis scene bans are lost on redeploy.** Severity P1.
     - Expected: keyed on the stable Places id.
-    - dcl-one: keyed on the deployment entity id. World bans already use a stable `world:base` key; give admins and Genesis bans a stable key too (base parcel), with a schema migration step.
+    - dcl-one: keyed on the deployment entity id. Scene admins use the scene's place and world bans a stable `world:base` key; give Genesis bans a stable key too (base parcel), with a schema migration step.
 12. **GAP-AU-12: The authoritative server's admin listing reads the wrong key.** Severity P1. Resolve the place from the signed realm and parcel, as the scene signer path does.
 14. **GAP-AU-14: Removed-place cleanup deletes by a key no row uses.** Severity P2. Unverified at runtime; write the test first.
 15. **GAP-AU-15: Small shape differences.** Severity P2. Ban listing offset rounding, `/mute` body, add/remove admin error texts.

@@ -419,7 +419,42 @@ CREATE INDEX community_voice_chat_users_status_idx
 -- ── scene moderation (comms-gatekeeper, place-scoped) ──────────────────────
 
 -- Ownership of a place is resolved through explore/worlds, not stored here.
--- These three move to `worlds` unchanged when worlds/comms lands.
+-- Social owns these tables; the comms gatekeeper writes them and the worlds
+-- policy reads them (`worlds::policy`), both by shared SQL.
+--
+-- scene_admins.place_id is the scene's place, the storage scope the room
+-- resolver reads from the active deployment: a world scene's identity
+-- (explore.world_scene_place.identity as text), a Genesis scene's canonical
+-- base parcel "x,y". A redeploy of the same place and an owner change write
+-- nothing here, so the grants stay; another place has none. Read by primary
+-- key on every scene-signed gatekeeper request of a non-owner; written by
+-- POST/DELETE /scene-admin and the place removal cleanup (DATABASE.md
+-- "Scene admin grants").
+-- The effective base parcel "x,y" of a scene footprint: the declared base
+-- when it is one of the parcels, else the numerically first parcel; NULL
+-- when no parcel parses. This is the one SQL copy of the room resolver's
+-- ParcelSet::effective_base over Parcel::parse (comms/src/world_identity.rs)
+-- for the release scripts and the import loads; a test compares the two.
+-- W is the White_Space that Rust's trim strips (\s excludes NBSP on some
+-- locales). Leading zeros go before the bounded cast, so a long padding
+-- parses and an oversized magnitude never overflows.
+CREATE FUNCTION social.scene_base_parcel(parcels text[], declared_base text) RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+  WITH coordinates AS (
+    SELECT declared, x, y, x::text || ',' || y::text AS canonical
+      FROM (SELECT declared,
+                   CASE WHEN length(m[2]) <= 10 THEN (m[1] || m[2])::bigint END AS x,
+                   CASE WHEN length(m[4]) <= 10 THEN (m[3] || m[4])::bigint END AS y
+              FROM (SELECT p AS pointer, false AS declared FROM unnest(parcels) p
+                    UNION ALL SELECT declared_base, true) inputs,
+                   regexp_match(pointer, replace('^W(-?)0*([0-9]+)W,W(-?)0*([0-9]+)W$', 'W',
+                       U&'[\0009-\000D\0020\0085\00A0\1680\2000-\200A\2028\2029\202F\205F\3000]*')) m) bounded
+     WHERE x BETWEEN -2147483648 AND 2147483647 AND y BETWEEN -2147483648 AND 2147483647)
+  SELECT f.canonical FROM coordinates f WHERE NOT f.declared
+   ORDER BY f.canonical IS DISTINCT FROM (SELECT canonical FROM coordinates WHERE declared), f.x, f.y
+   LIMIT 1
+$$;
+
 CREATE TABLE social.scene_admins (
     place_id text NOT NULL,
     admin_address text NOT NULL,
@@ -1734,7 +1769,11 @@ FROM (VALUES
 ) AS t (badge_id, tier_id, tier_name, description, slot, steps, ordinal);
 -- ==== end section: badges ====
 
+-- The reconciliation reads the 20 credentials checked longest ago of each
+-- kind: the streaming ones (a lost ingress_ended), then the idle ones (a lost
+-- ingress_started). DATABASE.md "Stream state reconciliation".
 CREATE INDEX scene_stream_access_reconcile_idx ON social.scene_stream_access (streaming_checked_at NULLS FIRST, id) WHERE active AND streaming;
+CREATE INDEX scene_stream_access_reconcile_idle_idx ON social.scene_stream_access (streaming_checked_at NULLS FIRST, id) WHERE active AND NOT streaming;
 
 -- Workload: rare island cleanup transitions and exact-wallet credential checks;
 -- no position writes. Historical wallet/attempt counts and write cost unmeasured.

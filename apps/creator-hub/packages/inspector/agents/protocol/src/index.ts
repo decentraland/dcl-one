@@ -317,7 +317,10 @@ export type PageToScene =
   // scene instead (so a button opens its door, etc.) rather than selecting/moving
   // the entity (#1458). The inspector's "Interact" toolbar toggle sends this; scene
   // pointer events are delivered by the engine regardless, so this only turns the
-  // agent's editing interception off.
+  // agent's editing interception off. While disabled the agent does not draw the
+  // transform gizmo or the spawn-point handle; `set-selection` and
+  // `set-spawn-gizmo` still update its state, and re-enabling draws the latest.
+  // The selection outline stays. The host re-sends it on every `editor-ready`.
   | { kind: 'set-editing-enabled'; enabled: boolean }
   // Turn session-recorder activity reporting on/off. Off by default: reporting
   // costs a hover raycast every few frames even while editing, so the agent only

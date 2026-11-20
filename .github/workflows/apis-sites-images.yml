@@ -217,7 +217,6 @@ jobs:
           df -h /
       - name: Build the complete Sites toolchain and dependencies
         if: steps.compiled.outputs.sites-app != 'true'
-        # runtime-deps, unlike the fixed-output sites-deps, rebuilds when the lockfile changes.
         run: nix build .#sites-toolchain .#sites-runtime-deps --no-link -L
       - name: Import the matching tested Bevy build for Sites
         timeout-minutes: 95
@@ -282,16 +281,15 @@ jobs:
         run: |
           allowed=false
           if [ "$GITHUB_RUN_ATTEMPT" = 1 ]; then
-            ref=${GITHUB_REF#refs/}
-            expected=$GITHUB_SHA
-            if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-              ref=${ref%/merge}/head
-              expected=$PR_HEAD_SHA
-            fi
-            if [ -n "$expected" ] && current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/$ref" --jq .object.sha); then
-              if [ "$current" = "$expected" ]; then allowed=true; fi
-            else
-              echo '::warning::Cannot verify the current ref; skipping cache uploads'
+            if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ]; then
+              allowed=true
+            elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+              ref=${GITHUB_REF#refs/}
+              if [ -n "$PR_HEAD_SHA" ] && current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/${ref%/merge}/head" --jq .object.sha); then
+                if [ "$current" = "$PR_HEAD_SHA" ]; then allowed=true; fi
+              else
+                echo '::warning::Cannot verify the current ref; skipping cache uploads'
+              fi
             fi
           fi
           echo "allowed=$allowed" >> "$GITHUB_OUTPUT"

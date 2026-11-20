@@ -52,10 +52,13 @@
         "retry": "重试",
         "outdated_deps": "此场景的依赖项已过时，不支持 Bevy 渲染器。请更新它们以继续。",
         "update_deps": "更新依赖项",
-        "data_layer_crashed": "场景反复意外停止。请返回并重新打开，或查看日志。"
+        "data_layer_crashed": "场景反复意外停止。请重试、返回并重新打开，或查看日志。"
       }
     },
+    "realm_server_restarting": "多人服务器意外停止。正在重新启动，编辑器将重新加载。",
+    "realm_server_unavailable": "多人服务器无法在此电脑上运行，场景将在没有它的情况下运行。",
     "realm_restarted": "场景意外停止，已重新加载。最近几秒的更改可能未保存。",
+    "realm_restart_failed": "重新启动场景失败。正在重试。",
     "header": {
       "actions": {
         "code": "代码",
@@ -915,6 +918,7 @@
     "generic": {
       "import_scene": "导入场景...",
       "import_scene_failed": "场景导入失败",
+      "watchlist_not_saved": "无法保存你的关注列表。关闭应用后此更改将丢失。",
       "import_scene_already_imported": "场景已导入",
       "duplicate_scene": "复制场景...",
       "duplicate_scene_failed": "复制场景失败",
@@ -953,6 +957,13 @@
       "actions": {
         "view": "版本",
         "discard_all": "全部丢弃"
+      }
+    },
+    "realm_server_stopped": {
+      "title": "多人服务器反复停止，场景将在没有它的情况下运行。重试会重新启动它并重新加载编辑器。",
+      "actions": {
+        "dismiss": "关闭",
+        "retry": "重试"
       }
     },
     "external_agent_access": {

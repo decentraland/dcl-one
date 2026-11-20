@@ -52,10 +52,13 @@
         "retry": "Reintentar",
         "outdated_deps": "Las dependencias de esta escena están desactualizadas y no son compatibles con el renderizador Bevy. Actualízalas para continuar.",
         "update_deps": "Actualizar dependencias",
-        "data_layer_crashed": "La escena se detiene inesperadamente una y otra vez. Vuelve atrás y ábrela de nuevo, o revisa los registros."
+        "data_layer_crashed": "La escena se detiene inesperadamente una y otra vez. Reintenta, vuelve atrás y ábrela de nuevo, o revisa los registros."
       }
     },
+    "realm_server_restarting": "El servidor multijugador se detuvo inesperadamente. Se está reiniciando, lo que recarga el editor.",
+    "realm_server_unavailable": "El servidor multijugador no puede ejecutarse en este equipo, así que la escena funciona sin él.",
     "realm_restarted": "La escena se detuvo inesperadamente y se recargó. Es posible que los cambios de los últimos segundos no se hayan guardado.",
+    "realm_restart_failed": "No se pudo reiniciar la escena. Se intentará de nuevo.",
     "header": {
       "actions": {
         "code": "Código",
@@ -915,6 +918,7 @@
     "generic": {
       "import_scene": "Importando escena...",
       "import_scene_failed": "Error al importar escena",
+      "watchlist_not_saved": "No se pudo guardar tu lista de seguimiento. Este cambio se perderá al cerrar la aplicación.",
       "import_scene_already_imported": "La escena ya fue importada",
       "duplicate_scene": "Duplicando escena...",
       "duplicate_scene_failed": "Error al duplicar escena",
@@ -953,6 +957,13 @@
       "actions": {
         "view": "Ver",
         "discard_all": "Descartar todas"
+      }
+    },
+    "realm_server_stopped": {
+      "title": "El servidor multijugador se detiene una y otra vez, así que la escena funciona sin él. Reintentar lo reinicia y recarga el editor.",
+      "actions": {
+        "dismiss": "Descartar",
+        "retry": "Reintentar"
       }
     },
     "external_agent_access": {

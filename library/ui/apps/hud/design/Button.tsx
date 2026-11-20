@@ -4,7 +4,7 @@
 import styles from './Button.module.css'
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'light' | 'outline' | 'accent' | 'dark' | 'tint' | 'scrim' | 'faint' | 'veil' | 'glass' | 'shade' | 'clear' | 'darkOutline' | 'whisper' | 'method' | 'navigate' | 'navigateExit'
-type Size = 'sm' | 'md' | 'lg' | 'row' | 'card' | 'cardSm' | 'header' | 'modal' | 'cta' | 'start' | 'bare'
+type Size = 'sm' | 'md' | 'lg' | 'row' | 'card' | 'cardSm' | 'header' | 'modal' | 'dialog' | 'cta' | 'start' | 'bare'
 /** Overrides the size's corner radius. */
 type Radius = 'md' | 'button' | 'pill'
 

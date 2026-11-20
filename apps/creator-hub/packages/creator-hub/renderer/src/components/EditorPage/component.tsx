@@ -43,14 +43,17 @@ import { getProjectWorldName } from '/@/lib/project-world';
 
 import EditorPng from '/assets/images/editor.png';
 
-import { ai, analytics } from '#preload';
+import { ai, analytics, editor as editorApi } from '#preload';
 import { useDispatch, useSelector } from '#store';
 import { useFeatureFlags } from '/@/hooks/useFeatureFlags';
 import { useAiSession } from '/@/hooks/useAiSession';
 import { useSessionRecorder } from '/@/hooks/useSessionRecorder';
 import { actions as snackbarActions } from '/@/modules/store/snackbar';
 import { actions as optimizerActions } from '/@/modules/store/optimizer';
-import { createGenericNotification } from '/@/modules/store/snackbar/utils';
+import {
+  createCustomNotification,
+  createGenericNotification,
+} from '/@/modules/store/snackbar/utils';
 import Button from '@ui/atoms/Button';
 import { Header } from '../Header';
 import { Row } from '../Row';
@@ -103,6 +106,17 @@ function readAiPanelWidth(): number {
   } catch {
     return AI_PANEL_DEFAULT;
   }
+}
+
+// One per scene: a second stop replaces the snackbar, and the editor can close it.
+function realmServerStoppedId(path: string): string {
+  return `realm-server-stopped:${path}`;
+}
+
+// One per scene for each step of an automatic restart (stopped, restarting, a failed
+// attempt): each replaces the last instead of stacking.
+function realmRestartId(path: string): string {
+  return `realm-restart:${path}`;
 }
 
 // The Bevy realm launches `sdk-commands start --no-client --data-layer`; an old
@@ -211,8 +225,8 @@ export function EditorPage() {
   // for the project and hold the URLs to thread into the iframe config below.
   const useBevy = settings.renderer === RENDERER.BEVY;
   const [bevyRealm, setBevyRealm] = useState<{ url: string; wsUrl: string } | null>(null);
-  const [realmRestarts, setRealmRestarts] = useState(0);
-  const realmRestartingRef = useRef(false);
+  // Main stopped restarting the realm after it kept crashing; the error screen offers Retry.
+  const [realmGaveUp, setRealmGaveUp] = useState(false);
   // A broken scene (e.g. a TS error) makes the Bevy realm's `sdk-commands start`
   // fail, or the scene never finishes loading — leaving the editor stuck on the
   // loader with no way out. Capture the failure (or a load timeout) so the loading
@@ -247,20 +261,65 @@ export function EditorPage() {
   );
   useMobileDebugForwarding(iframeRef, isPreviewRunning, project?.path, inspectorReadyNonce);
   useBevyBuildForwarding(iframeRef, useBevy ? project?.path : undefined);
-  useBevyRealmRestart(useBevy ? project?.path : undefined, {
-    onRestart: () => {
-      dispatch(
-        snackbarActions.pushSnackbar(
-          createGenericNotification('warning', t('editor.realm_restarted')),
-        ),
-      );
-      realmRestartingRef.current = true;
-      setBevyRealm(null);
-      setRealmRestarts(n => n + 1);
+  // Main restarts the realm after an unexpected stop (bevy-realm.ts); the editor reloads the
+  // inspector on the new realm. A realm that stopped takes the editor with it, so it shows the
+  // loader until the restart. One that only lost its Multiplayer Server keeps serving the
+  // editor until it is replaced.
+  const realmPath = useBevy ? project?.path : undefined;
+  // The server is being replaced, or the editor of the scene closed: Retry has nothing to do.
+  const closeRealmServerStopped = useCallback(() => {
+    if (realmPath) dispatch(snackbarActions.removeSnackbar(realmServerStoppedId(realmPath)));
+  }, [realmPath, dispatch]);
+  useEffect(() => closeRealmServerStopped, [closeRealmServerStopped]);
+  useBevyRealmRestart(realmPath, {
+    onStopped: ({ path, cause, restartInMs, unavailable }) => {
+      if (unavailable) {
+        dispatch(
+          snackbarActions.pushSnackbar(
+            createGenericNotification('warning', t('editor.realm_server_unavailable'), {
+              requestId: `realm-server-unavailable:${path}`,
+            }),
+          ),
+        );
+      } else if (restartInMs !== null) {
+        const message =
+          cause === 'server'
+            ? t('editor.realm_server_restarting')
+            : cause === 'restart'
+              ? t('editor.realm_restart_failed')
+              : t('editor.realm_restarted');
+        dispatch(
+          snackbarActions.pushSnackbar(
+            createGenericNotification('warning', message, { requestId: realmRestartId(path) }),
+          ),
+        );
+        if (cause !== 'server') setBevyRealm(null);
+      } else if (cause === 'server') {
+        dispatch(snackbarActions.removeSnackbar(realmRestartId(path)));
+        dispatch(
+          snackbarActions.pushSnackbar(
+            createCustomNotification(
+              { type: 'realm-server-stopped', path },
+              { duration: 0, requestId: realmServerStoppedId(path) },
+            ),
+          ),
+        );
+      } else {
+        dispatch(snackbarActions.removeSnackbar(realmRestartId(path)));
+        setBevyRealm(null);
+        setRealmGaveUp(true);
+        setLoadError(t('editor.loading.failed.data_layer_crashed'));
+      }
     },
-    onGiveUp: () => {
+    onRestarting: () => {
+      closeRealmServerStopped();
       setBevyRealm(null);
-      setLoadError(t('editor.loading.failed.data_layer_crashed'));
+    },
+    onRestarted: realm => {
+      closeRealmServerStopped();
+      setRealmGaveUp(false);
+      setLoadError(null);
+      setBevyRealm(realm);
     },
   });
   useProjectAssetWatch(iframeRef, project?.path);
@@ -287,7 +346,7 @@ export function EditorPage() {
     [project, updateScene, featureFlags],
   );
 
-  const handleRefresh = useCallback(() => {
+  const handleRefresh = useCallback(async () => {
     const rpc = iframeRef.current;
     if (!rpc) return;
     const { iframe } = rpc;
@@ -296,8 +355,25 @@ export function EditorPage() {
     setReloadTimedOut(false);
     rpc.dispose();
     iframeRef.current = undefined;
+    // Under Bevy the reload also brings back a realm that stopped or lost its Multiplayer
+    // Server. A replaced realm reaches the editor through the restart events, which remount
+    // the iframe on its URLs; a healthy one is reloaded in place.
+    const path = project?.path;
+    if (useBevy && path) {
+      const realm = await editorApi.ensureBevyRealm(path).catch(() => null);
+      if (!realm || realm.url !== bevyRealm?.url) return;
+    }
     iframe.src = src;
-  }, []);
+  }, [useBevy, project?.path, bevyRealm?.url]);
+
+  const handleRetryRealm = useCallback(() => {
+    const path = project?.path;
+    if (!path) return;
+    setRealmGaveUp(false);
+    setLoadError(null);
+    // A failure comes back as a stopped-realm event, which shows the error again.
+    editorApi.ensureBevyRealm(path).catch(() => {});
+  }, [project?.path]);
 
   // Retry a stuck reload. The prior attempt may have left no RPC handle (the iframe never
   // reached onLoad), so recreate the element via its key rather than reloading in place.
@@ -443,7 +519,7 @@ export function EditorPage() {
   }, [aiDraftPrompt?.nonce, aiChatEnabled]);
 
   useEffect(() => {
-    realmRestartingRef.current = false;
+    setRealmGaveUp(false);
     if (!projectPath || !useBevy) {
       setBevyRealm(null);
       return;
@@ -477,9 +553,9 @@ export function EditorPage() {
       });
     return () => {
       cancelled = true;
-      if (!realmRestartingRef.current) void killBevyRealm(projectPath);
+      void killBevyRealm(projectPath);
     };
-  }, [projectPath, useBevy, isInstallingProject, startBevyRealm, killBevyRealm, realmRestarts]);
+  }, [projectPath, useBevy, isInstallingProject, startBevyRealm, killBevyRealm]);
 
   useEffect(() => {
     if (!projectPath || !useBevy) return;
@@ -739,6 +815,16 @@ export function EditorPage() {
             >
               {t('editor.loading.failed.back')}
             </Button>
+            {realmGaveUp && (
+              <Button
+                variant="text"
+                className="hub-button hub-button--primary"
+                startIcon={<RefreshIcon />}
+                onClick={handleRetryRealm}
+              >
+                {t('editor.loading.failed.retry')}
+              </Button>
+            )}
             {outdatedDeps ? (
               <Button
                 variant="text"

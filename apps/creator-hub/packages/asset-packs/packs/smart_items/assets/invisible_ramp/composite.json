@@ -6,19 +6,19 @@
       "data": {
         "0": {
           "json": {
-            "src": "{assetPath}/invisible_ramp.glb",
-            "visibleMeshesCollisionMask": 2,
-            "invisibleMeshesCollisionMask": 0
+            "src": "{assetPath}/invisible_ramp_collider.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 2
           }
         }
       }
     },
     {
-      "name": "core::VisibilityComponent",
+      "name": "asset-packs::Placeholder",
       "data": {
         "0": {
           "json": {
-            "visible": false
+            "src": "{assetPath}/invisible_ramp.glb"
           }
         }
       }

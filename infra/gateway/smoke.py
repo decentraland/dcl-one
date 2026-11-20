@@ -230,6 +230,8 @@ def client(args):
     print("Internal paths, admin CIDRs, normalized paths and forwarded-header trust passed.", flush=True)
 
     hit("/about", "apis", vhost="peer.example.test")
+    hit("/comms-gatekeeper/scene-admin", "apis", vhost="worlds-content-server.example.test")
+    hit("/cast-presenter-service/presentations/p/slides/s.png", "apis", vhost="realm-provider-ea.example.test")
     hit("/peer/about?x=1", "apis", vhost="gateway.example.test", target="/about?x=1")
     data = hit("/comms-gatekeeper/get-scene-adapter", "apis", vhost="gateway.example.test")
     assert data["headers"]["x-original-path"] == "/get-scene-adapter"

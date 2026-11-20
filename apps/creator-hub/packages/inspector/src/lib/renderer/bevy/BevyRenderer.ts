@@ -541,6 +541,11 @@ export class BevyRenderer implements IRenderer {
   /** Called by `register` when the agent posts `reset-complete`: the reloaded
    * scene is re-pinned + re-frozen (or the agent gave up). Clears the reset guard
    * and applies any Play the user requested while the reset was in flight (#1420). */
+  /** Whether a Play is waiting for the reset in flight to complete. */
+  hasPendingRun(): boolean {
+    return this.#resetting && this.#pendingRun;
+  }
+
   notifyResetComplete(): void {
     if (!this.#resetting) return;
     this.#resetting = false;

@@ -166,6 +166,7 @@ pub async fn serve(
     .context("connecting to DATABASE_URL")?;
     db::bootstrap(&pool).await?;
     worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
+    worlds::rooms::ensure_scene_admin_place_release(&pool).await?;
 
     let storage_root = Path::new(&config.node.storage_root_folder);
     let storage = Arc::new(
@@ -562,6 +563,7 @@ pub async fn serve(
         Some(market.index.clone()),
     ));
     explore.places.set_land_authz(land.clone());
+    explorer_api.attach_land_authz(land.clone());
 
     // The content server's local write path (src/content/{create_entity,
     // unpublish_scene,land_publish}): the write deployer over the ONE pool

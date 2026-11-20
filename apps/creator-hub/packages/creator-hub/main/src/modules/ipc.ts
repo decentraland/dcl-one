@@ -92,6 +92,7 @@ export function initIpc({ beforeQuitCleanup }: InitIpcOptions) {
   // bevy realm (headless sdk-commands server feeding the embedded Bevy editor engine)
   handle('bevyRealm.start', (_event, path) => bevyRealm.start(path));
   handle('bevyRealm.kill', (_event, path) => bevyRealm.kill(path));
+  handle('bevyRealm.ensure', (_event, path) => bevyRealm.ensure(path));
 
   // project asset watcher (auto-refresh the inspector catalog on out-of-editor file drops)
   handle('projectWatcher.start', async (_event, path) => projectWatcher.startProjectWatcher(path));

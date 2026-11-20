@@ -1,0 +1,60 @@
+--- a/src/dispatch.rs
++++ b/src/dispatch.rs
+@@ -1,5 +1,6 @@
+-// Modified in dcl-one: the ETC1S per-format transcoders are removed; see
+-// patches/0003-remove-etc1s-transcoders.patch beside this crate.
++// Modified in dcl-one: the ETC1S per-format transcoders are removed except RGBA32; see
++// patches/0003-remove-etc1s-transcoders.patch and patches/0004-transcode-etc1s-to-rgba32.patch
++// beside this crate.
+ //! Container-independent per-target transcode dispatch, shared by both the KTX2
+ //! and `.basis` front-ends. Each front-end parses its own container framing to
+ //! recover the same inputs: for ETC1S, the decoded codebooks plus a color slice
+@@ -63,25 +64,33 @@
+     (v + (v >> 8)) >> 8
+ }
+ 
+-/// ETC1S images are not transcoded in this copy: the per-target ETC1S
+-/// transcoders and their tables are removed, so every target is unsupported
+-/// and this returns `None`. The signature is kept for the KTX2 and `.basis`
+-/// front-ends, which still parse ETC1S containers.
++/// ETC1S images transcode only to RGBA32 in this copy: the other per-target
++/// ETC1S transcoders and their tables are removed, so every other target, and
++/// ETC1S video (its previous-frame state went with them), returns `None`.
++/// `rgb` is the BasisLZ color slice and `alpha`, if present, the paired alpha
++/// slice; `(bx, by)` are the level's 4x4 block dimensions and `(lw, lh)` its
++/// pixel dimensions.
+ #[allow(clippy::too_many_arguments)]
+ pub fn transcode_etc1s(
+-    _t: &Etc1sTranscoder,
+-    _rgb: &[u8],
+-    _alpha: Option<&[u8]>,
+-    _bx: u32,
+-    _by: u32,
+-    _lw: u32,
+-    _lh: u32,
+-    _fmt: i32,
++    t: &Etc1sTranscoder,
++    rgb: &[u8],
++    alpha: Option<&[u8]>,
++    bx: u32,
++    by: u32,
++    lw: u32,
++    lh: u32,
++    fmt: i32,
+     _flags: u32,
+-    _video: Option<(&mut crate::basislz::etc1s::VideoState, u32)>,
+-    _out: &mut [u8],
++    video: Option<(&mut crate::basislz::etc1s::VideoState, u32)>,
++    out: &mut [u8],
+ ) -> Option<()> {
+-    None
++    if video.is_some() || fmt != target::RGBA32 {
++        return None;
++    }
++    match alpha {
++        Some(a) => t.transcode_image_rgba32(rgb, a, bx, by, lw, lh, None, out),
++        None => t.transcode_slice_rgba32(rgb, bx, by, lw, lh, None, out),
++    }
+ }
+ 
+ /// Transcode one UASTC image to `fmt`, writing into `out` (sized per the

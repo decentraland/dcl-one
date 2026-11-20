@@ -1,4 +1,5 @@
 import type { AiSharingConsentByWallet, AiSharingPendingByWallet } from './ai-sharing';
+import type { AnalyticsWatchlistByWallet } from './analytics-watchlist';
 export enum DEPENDENCY_UPDATE_STRATEGY {
   AUTO_UPDATE = 'auto_update',
   NOTIFY = 'notify',
@@ -88,6 +89,9 @@ export type AppSettings = {
   aiDataSharing?: AiSharingConsentByWallet;
   // Erasures and ratings for the sharing service that haven't reached it yet, per wallet.
   aiSharingPending?: AiSharingPendingByWallet;
+  // Places pinned to the Analytics watchlist, per wallet. Not in DEFAULT_CONFIG: absent reads as
+  // no pins (`watchlistFor`). Written only by `setAnalyticsWatchlist`, like the AI sharing keys.
+  analyticsWatchlist?: AnalyticsWatchlistByWallet;
 };
 
 export interface ReleaseNotes {

@@ -298,6 +298,14 @@ module.exports.getSatelliteView = async function() {
     return await Deno.core.ops.op_get_satellite_view()
 }
 
+// a satellite map tile as base64-encoded JPEG bytes (no `data:` prefix); rejects on any failure.
+// `path` is relative to the abgen CDN's `SatelliteMaps/`:
+// `sections/<sx>%2C<sy>/<version>/<level>/<x>%2C<y>.ktx2` (level 3..=8, sections below 8, tile
+// coordinates below 2^level); the engine rejects any other path without a request.
+module.exports.getSatelliteTile = async function(path) {
+    return await Deno.core.ops.op_get_satellite_tile(path)
+}
+
 // 'allowed' | 'invited' | 'denied' | 'password' | 'failed'
 module.exports.getWorldAccess = async function(world) {
     return await Deno.core.ops.op_get_world_access(world)
