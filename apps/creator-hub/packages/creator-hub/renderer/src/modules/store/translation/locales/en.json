@@ -58,6 +58,7 @@
     "realm_server_restarting": "The Multiplayer Server stopped unexpectedly. Restarting it, which reloads the editor.",
     "realm_server_unavailable": "The Multiplayer Server cannot run on this computer, so the scene runs without it.",
     "realm_restarted": "The scene stopped unexpectedly and was reloaded. Changes from the last few seconds may not have been saved.",
+    "realm_restart_failed": "Restarting the scene failed. Trying again.",
     "header": {
       "actions": {
         "code": "Code",

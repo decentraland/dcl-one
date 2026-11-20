@@ -31,6 +31,9 @@ export interface SceneRunBridge {
   /** The engine restarted the scene from its initial state outside a Stop (a
    * reboot for a parcel-layout change): unless it is running, it is stopped again. */
   markRestarted(): void;
+  /** A Play is waiting for the reset to complete: the reloaded scene runs at once,
+   * so it is not stopped (it shows no editor placeholders or lighting meanwhile). */
+  markRunPending(): void;
   /** Stop/reset (#1376): ask the agent to restart the inspected scene to its
    * initial state (via the engine's scene-scoped `reload`). Fast — no engine
    * reboot. The caller re-asserts freeze afterwards. */
@@ -96,6 +99,9 @@ export function createSceneRunBridge(options: SceneRunBridgeOptions = {}): Scene
     isStopped: () => stopped,
     markRestarted: () => {
       if (!running) stopped = true;
+    },
+    markRunPending: () => {
+      stopped = false;
     },
     reset,
     disconnect: () => {

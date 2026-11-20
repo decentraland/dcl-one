@@ -246,6 +246,9 @@ export function registerBevyRenderer(): void {
 
       const rewireEngineBindings = (engineWindow: typeof engine.engineWindow) => {
         forwardBridge?.disconnect();
+        // A rebooted engine reloaded the scene: its first entity list must trigger a
+        // re-read even when it matches the list from before the reboot.
+        lastSceneEntities = null;
         disconnectPreview();
         disconnectInputFocus();
         disconnectFlyInput();
@@ -429,6 +432,9 @@ export function registerBevyRenderer(): void {
           cameraBridge.setEditingEnabled(bevy.interaction.isEditingEnabled());
           // Its boot also pinned the day clock at noon, which a running scene must not keep.
           forwardBridge?.syncSceneClock();
+          // The scene is pinned now: re-read what its code made, in case the read when
+          // forwarding armed came too early (a reboot while stopped, during agent login).
+          forwardBridge?.refreshEngineScene();
         },
       });
       // The player's avatar is hidden while the scene is stopped and the user drives
@@ -468,6 +474,10 @@ export function registerBevyRenderer(): void {
         // lands on an unpinned scene). reconcileAfterReload re-freezes animations as
         // part of re-applying overrides.
         onResetComplete: () => {
+          // A Play waiting on the reset (a reload before Play) runs the reloaded scene
+          // at once: it is not stopped, so the reconcile skips the stopped-only
+          // replays (placeholders, editor lighting) that Play would swap back.
+          if (bevy.hasPendingRun()) sceneRunBridge.markRunPending();
           forwardBridge?.reconcileAfterReload();
           bevy.notifyResetComplete();
         },
@@ -627,6 +637,8 @@ export function registerBevyRenderer(): void {
         // reconcile at reset-complete does it once the scene is pinned again.)
         sceneRunBridge.setRunning(false);
         sceneRunBridge.reset();
+        // Edits from here until reset-complete are not in the bundle it reloads.
+        forwardBridge?.noteReloadStarted();
         // Stopped now, also from a Pause (which kept the avatar shown): hide it in the
         // free camera. The camera attachments are re-hidden on the reloaded scene by
         // reconcileAfterReload.

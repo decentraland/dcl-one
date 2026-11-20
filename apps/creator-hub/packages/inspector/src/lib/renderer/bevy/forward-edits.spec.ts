@@ -1474,6 +1474,47 @@ describe('createForwardEditBridge', () => {
           expect(lastVisibility(torch)).toBe(true);
         });
       });
+
+      describe('and the scene runs (Play)', () => {
+        it('should show it, as the composite has it', async () => {
+          play();
+          await drain();
+          expect(lastVisibility(torch)).toBe(true);
+        });
+      });
+    });
+
+    describe('and the scene code parents an authored entity to the camera and hides it', () => {
+      let flashlight: number;
+
+      beforeEach(async () => {
+        const entity = ctx.engine.addEntity();
+        flashlight = entity;
+        ctx.Name.create(entity, { value: 'Flashlight' });
+        ctx.Transform.create(entity, {
+          ...IDENTITY,
+          position: { x: 4, y: 1, z: 4 },
+          parent: ctx.engine.RootEntity,
+        });
+        await ctx.engine.update(1);
+        snapshot = {
+          ...NIGHT,
+          [String(entity)]: {
+            Transform: { ...IDENTITY, position: { x: 0, y: 0, z: 0 }, parent: 2 },
+            VisibilityComponent: { visible: false },
+          },
+        };
+        stop();
+        await drain();
+      });
+
+      describe('and the scene runs (Play)', () => {
+        it('should keep it hidden, as the scene code left it', async () => {
+          play();
+          await drain();
+          expect(lastVisibility(flashlight)).toBe(false);
+        });
+      });
     });
 
     describe('and the scene is stopped and reset (Stop)', () => {
@@ -1530,6 +1571,31 @@ describe('createForwardEditBridge', () => {
           await drain();
 
           expect(rootSets().LightSource).toMatchObject({ active: true, intensity: 7 });
+        });
+      });
+
+      describe('and it is edited again while the Stop reload runs', () => {
+        it('should show the latest edit on the next Play, not the reloaded value', async () => {
+          bridge.refreshEngineScene();
+          await drain();
+          const LightSource = components.LightSource(ctx.engine);
+          LightSource.create(ctx.engine.RootEntity, { active: true, intensity: 3 });
+          await ctx.engine.update(1);
+          await drain();
+
+          bridge.noteReloadStarted();
+          LightSource.getMutable(ctx.engine.RootEntity).intensity = 5;
+          await ctx.engine.update(1);
+          await drain();
+          stop();
+          snapshot = { '0': { LightSource: { active: true, intensity: 3 } } };
+          bridge.refreshEngineScene();
+          await drain();
+          sent.length = 0;
+          play();
+          await drain();
+
+          expect(rootSets().LightSource).toMatchObject({ active: true, intensity: 5 });
         });
       });
     });

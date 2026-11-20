@@ -68,6 +68,14 @@ describe('createSceneRunBridge', () => {
     });
   });
 
+  describe('when a Play waits on a reset', () => {
+    it('should not be stopped once the reset completes', () => {
+      bridge.reset();
+      bridge.markRunPending();
+      expect(bridge.isStopped()).toBe(false);
+    });
+  });
+
   it('should post reset-scene when reset (Stop)', () => {
     bridge.reset();
     expect(posted).toEqual([{ to: 'scene', msg: { kind: 'reset-scene' } }]);

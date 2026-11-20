@@ -58,6 +58,7 @@
     "realm_server_restarting": "多人服务器意外停止。正在重新启动，编辑器将重新加载。",
     "realm_server_unavailable": "多人服务器无法在此电脑上运行，场景将在没有它的情况下运行。",
     "realm_restarted": "场景意外停止，已重新加载。最近几秒的更改可能未保存。",
+    "realm_restart_failed": "重新启动场景失败。正在重试。",
     "header": {
       "actions": {
         "code": "代码",

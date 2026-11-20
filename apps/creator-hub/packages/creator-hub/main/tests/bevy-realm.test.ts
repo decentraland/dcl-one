@@ -264,8 +264,26 @@ describe('bevy-realm supervision', () => {
       await kill(path);
     });
 
-    it('should settle the pending start', async () => {
-      await expect(starting).rejects.toThrow();
+    it('should settle the pending start as cancelled, not as a crash', async () => {
+      await expect(starting).rejects.toThrow('The scene server was stopped before it started.');
+    });
+  });
+
+  describe('when the editor reloads while a realm boots, then leaves the scene', () => {
+    let ensuring: Promise<unknown>;
+
+    beforeEach(async () => {
+      mocks.child = createFakeChild({ holdReady: true }).child;
+      ensuring = ensure(path);
+      ensuring.catch(() => {});
+      await flush();
+      await kill(path);
+      await flush();
+    });
+
+    it('should not report a stop', async () => {
+      await expect(ensuring).rejects.toThrow('The scene server was stopped before it started.');
+      expect(stoppedEvents()).toEqual([]);
     });
   });
 
@@ -393,6 +411,49 @@ describe('bevy-realm restarts', () => {
 
       it('should clear the down state', () => {
         expect(isRealmDown(path)).toBe(false);
+      });
+    });
+
+    describe('and the editor reloads while the restart boots', () => {
+      beforeEach(async () => {
+        const booting = createFakeChild({ holdReady: true });
+        mocks.child = booting.child;
+        await vi.advanceTimersByTimeAsync(1_000);
+        const ensuring = ensure(path);
+        await flush();
+        booting.release();
+        await ensuring;
+        await flush();
+      });
+
+      it('should spawn one realm and tell the editor once that it restarted', () => {
+        expect(run).toHaveBeenCalledTimes(2);
+        expect(supervisionEvents().filter(event => event.kind === 'restarted')).toEqual([
+          {
+            kind: 'restarted',
+            path,
+            url: 'http://localhost:8005',
+            wsUrl: 'ws://localhost:8005/data-layer',
+          },
+        ]);
+      });
+    });
+
+    describe('and the restart fails to start a realm', () => {
+      beforeEach(async () => {
+        const failing = createFakeChild({ holdReady: true });
+        mocks.child = failing.child;
+        await vi.advanceTimersByTimeAsync(1_000);
+        mocks.child = createFakeChild().child;
+        failing.exit();
+        await flush();
+      });
+
+      it('should report the failed restart and plan the next one', () => {
+        expect(stoppedEvents().map(({ cause, restartInMs }) => ({ cause, restartInMs }))).toEqual([
+          { cause: 'realm', restartInMs: 1_000 },
+          { cause: 'restart', restartInMs: 3_000 },
+        ]);
       });
     });
 

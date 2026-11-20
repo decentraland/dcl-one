@@ -58,6 +58,7 @@
     "realm_server_restarting": "El servidor multijugador se detuvo inesperadamente. Se está reiniciando, lo que recarga el editor.",
     "realm_server_unavailable": "El servidor multijugador no puede ejecutarse en este equipo, así que la escena funciona sin él.",
     "realm_restarted": "La escena se detuvo inesperadamente y se recargó. Es posible que los cambios de los últimos segundos no se hayan guardado.",
+    "realm_restart_failed": "No se pudo reiniciar la escena. Se intentará de nuevo.",
     "header": {
       "actions": {
         "code": "Código",

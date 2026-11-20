@@ -64,6 +64,8 @@ type Realm = {
   servesMultiplayer: boolean;
   /** Its Multiplayer Server stopped while the realm kept serving. */
   serverDown: boolean;
+  /** It printed its ready line: the editor can load from it. False while it boots. */
+  ready: boolean;
 };
 
 export const MAX_RESTARTS = 3;
@@ -128,9 +130,10 @@ class StartCancelled extends Error {
 }
 
 // A realm whose Multiplayer Server stopped still serves the editor, but it is no longer
-// what the project should run: start() and ensure() replace it.
+// what the project should run: start() and ensure() replace it. A realm that is still
+// booting is not running yet: start() and ensure() wait for its start instead.
 function isRealmRunning(realm?: Realm): realm is Realm {
-  return !!(realm?.child.alive() && realm.url && !realm.serverDown);
+  return !!(realm?.child.alive() && realm.url && realm.ready && !realm.serverDown);
 }
 
 export function getRealm(path: string): Realm | undefined {
@@ -144,7 +147,8 @@ export function getRealm(path: string): Realm | undefined {
  */
 export function realmProvidesServer(path: string): boolean {
   const realm = realms.get(path);
-  if (isRealmRunning(realm)) return realm.servesMultiplayer;
+  // A booting realm counts: its server comes up with it.
+  if (realm?.child.alive() && !realm.serverDown) return realm.servesMultiplayer;
   const supervisor = supervisors.get(path);
   return !!supervisor && !supervisor.gaveUp && (!!supervisor.timer || supervisor.restarting);
 }
@@ -222,6 +226,7 @@ async function startInternal(path: string): Promise<{ url: string; wsUrl: string
     port,
     servesMultiplayer: spawnsServer && !leavesServer,
     serverDown: false,
+    ready: false,
   };
   realms.set(path, realm);
 
@@ -242,8 +247,11 @@ async function startInternal(path: string): Promise<{ url: string; wsUrl: string
     // concurrent kill()/start() that already replaced our entry isn't clobbered.
     await child.kill().catch(() => {});
     if (realms.get(path)?.child === child) realms.delete(path);
+    // A deliberate stop while it booted killed it: not a crash.
+    if ((deliberateStops.get(path) ?? 0) !== stopsBefore) throw new StartCancelled();
     throw err;
   }
+  realm.ready = true;
 
   log.info(`[BevyRealm] Serving ${path} at ${url}`);
   clearRealmDown(path);
@@ -400,7 +408,13 @@ async function autoRestart(path: string, supervisor: Supervisor): Promise<void> 
     if (shuttingDown || supervisors.get(path) !== supervisor) return;
     const message = error instanceof Error ? error.message : String(error);
     log.error(`[BevyRealm] Restarting ${path} failed: ${message}`);
-    notify({ kind: 'stopped', path, cause: 'realm', message, restartInMs: scheduleRestart(path) });
+    notify({
+      kind: 'stopped',
+      path,
+      cause: 'restart',
+      message,
+      restartInMs: scheduleRestart(path),
+    });
     return;
   }
   supervisor.restarting = false;
@@ -435,6 +449,8 @@ async function stopRealm(path: string): Promise<void> {
 /**
  * Gets a serving realm for the project, as when the editor reloads: reuses a healthy one,
  * replaces one that stopped or lost its Multiplayer Server, and starts the restart count over.
+ * A realm that is still booting (an automatic restart, say) is awaited through start(), and
+ * this reports it as restarted: the automatic restart it may belong to no longer will.
  */
 export async function ensure(path: string): Promise<{ url: string; wsUrl: string }> {
   dropSupervisor(path);

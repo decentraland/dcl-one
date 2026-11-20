@@ -67,8 +67,11 @@ export type BevyRealmBuildEvent = SceneBuildEvent & { path: string };
 // inspector on the new realm.
 export const BEVY_REALM_SUPERVISION_EVENT = 'bevyRealm.supervision';
 
-/** `realm`: the realm process stopped. `server`: only its Multiplayer Server did; the realm still serves the editor. */
-export type BevyRealmStopCause = 'realm' | 'server';
+/**
+ * `realm`: the realm process stopped. `server`: only its Multiplayer Server did; the realm
+ * still serves the editor. `restart`: an automatic restart failed to start a new realm.
+ */
+export type BevyRealmStopCause = 'realm' | 'server' | 'restart';
 
 export type BevyRealmSupervisionEvent =
   | {

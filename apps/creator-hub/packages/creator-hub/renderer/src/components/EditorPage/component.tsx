@@ -106,6 +106,17 @@ function readAiPanelWidth(): number {
   }
 }
 
+// One per scene: a second stop replaces the snackbar, and the editor can close it.
+function realmServerStoppedId(path: string): string {
+  return `realm-server-stopped:${path}`;
+}
+
+// One per scene for each step of an automatic restart (stopped, restarting, a failed
+// attempt): each replaces the last instead of stacking.
+function realmRestartId(path: string): string {
+  return `realm-restart:${path}`;
+}
+
 // The Bevy realm launches `sdk-commands start --no-client --data-layer`; an old
 // scene's local `@dcl/sdk-commands` predates those flags and fails with a raw CLI
 // usage dump (e.g. "unknown or unexpected option: --no-client"). Detect that so we
@@ -113,11 +124,6 @@ function readAiPanelWidth(): number {
 // Require BOTH the option-rejection phrasing AND one of our flags — matching a bare
 // "--data-layer"/"--no-client" mention would misfire on an unrelated build error that
 // merely prints the flag as text.
-// One per scene: a second stop replaces the snackbar, and the editor can close it.
-function realmServerStoppedId(path: string): string {
-  return `realm-server-stopped:${path}`;
-}
-
 function isOutdatedDepsError(message: string): boolean {
   const rejectsOption = /(?:unknown|unexpected|unrecognized|invalid)[^\n]{0,40}option/i.test(
     message,
@@ -265,10 +271,19 @@ export function EditorPage() {
         );
       } else if (restartInMs !== null) {
         const message =
-          cause === 'server' ? t('editor.realm_server_restarting') : t('editor.realm_restarted');
-        dispatch(snackbarActions.pushSnackbar(createGenericNotification('warning', message)));
-        if (cause === 'realm') setBevyRealm(null);
+          cause === 'server'
+            ? t('editor.realm_server_restarting')
+            : cause === 'restart'
+              ? t('editor.realm_restart_failed')
+              : t('editor.realm_restarted');
+        dispatch(
+          snackbarActions.pushSnackbar(
+            createGenericNotification('warning', message, { requestId: realmRestartId(path) }),
+          ),
+        );
+        if (cause !== 'server') setBevyRealm(null);
       } else if (cause === 'server') {
+        dispatch(snackbarActions.removeSnackbar(realmRestartId(path)));
         dispatch(
           snackbarActions.pushSnackbar(
             createCustomNotification(
@@ -278,6 +293,7 @@ export function EditorPage() {
           ),
         );
       } else {
+        dispatch(snackbarActions.removeSnackbar(realmRestartId(path)));
         setBevyRealm(null);
         setRealmGaveUp(true);
         setLoadError(t('editor.loading.failed.data_layer_crashed'));

@@ -544,6 +544,22 @@ describe('placeAnalytics watchlist', () => {
     });
   });
 
+  describe('when reading the stored watchlist fails once and a stored place is then pinned', () => {
+    beforeEach(async () => {
+      stored = withWatchlist(undefined, WALLET, [NIGHTMARE.placeId]);
+      vi.mocked(settingsPreload.getAnalyticsWatchlist).mockRejectedValueOnce(
+        new Error('no config'),
+      );
+      await load(WALLET_KEY);
+      await store.dispatch(actions.togglePin(NIGHTMARE.placeId));
+    });
+
+    it('should keep the place pinned, as the click asked, instead of unpinning it', () => {
+      expect(store.getState().placeAnalytics.pinnedPlaceIds).toEqual([NIGHTMARE.placeId]);
+      expect(watchlistFor(stored, WALLET)).toEqual([NIGHTMARE.placeId]);
+    });
+  });
+
   describe('when saving the watchlist fails', () => {
     let toggled: { type: string };
 

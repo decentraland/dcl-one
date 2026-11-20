@@ -211,6 +211,9 @@ export interface ForwardEditBridge {
    * lighting) while it is stopped. Call when the engine's entity set changes, e.g.
    * once the scene's `main()` has run after load. */
   refreshEngineScene(): void;
+  /** A scene reload (Stop, or a reload before Play) was just requested. Edits made
+   * from here until `reconcileAfterReload` are not in the bundle it reloads. */
+  noteReloadStarted(): void;
   /** Re-establish editor overrides after a scene reload (Stop/#1376), which
    * re-creates the engine entities: marks existing entities instantiated (no
    * re-`new_entity` → no id collision) and replays placeholder/visibility/pickable/
@@ -540,16 +543,28 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
     return knownParents.get(entity) !== transform?.parent;
   };
 
-  // Attachments are hidden only while the scene is stopped, when the editor's
-  // entities carry nothing of the scene's own. An entity only the engine knows was
-  // made by the scene's code, and its main() may have given it a visibility: the
-  // snapshot that found it holds that value, so Play restores it instead of
-  // forcing the entity visible.
+  // Attachments are hidden only while the scene is stopped, and its main() may have
+  // given them a visibility: the snapshot that found them holds that value, so Play
+  // restores it instead of forcing the entity visible. An entity only the engine
+  // knows was made by the scene's code, so its snapshot value is the scene's. For
+  // an authored entity the snapshot value counts only when it differs from the
+  // composite's: main() changed it (a flashlight that starts off). When they match,
+  // the editor's rule stands (#1377: visible while editing).
   const runtimeVisibility = new Map<Entity, boolean>();
+  const authoredVisibility = (entity: Entity): boolean => {
+    const component = context.getForwardableComponent('core::VisibilityComponent') as {
+      getOrNull?: (e: Entity) => unknown;
+    } | null;
+    const value = component?.getOrNull?.(entity) as { visible?: boolean } | null | undefined;
+    return value?.visible !== false;
+  };
   const captureRuntimeVisibility = (entity: Entity) => {
-    if (isEditorEntity(entity)) return;
-    const visible = engineScene.visibility.get(entity);
-    if (visible !== undefined) runtimeVisibility.set(entity, visible);
+    const visible = engineScene.visibility.get(entity) ?? true;
+    if (isEditorEntity(entity)) {
+      if (visible !== authoredVisibility(entity)) runtimeVisibility.set(entity, visible);
+      return;
+    }
+    if (engineScene.visibility.has(entity)) runtimeVisibility.set(entity, visible);
   };
 
   const forgetEntity = (entity: Entity) => {
@@ -575,7 +590,13 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
   // saved at once, but while stopped it only reaches the viewport on Play.
   const ROOT_ENTITY = 0 as Entity;
   const EDITOR_CLOCK = ['12', '0'];
-  const editedRootLighting = new Set<string>();
+  // Each edited component with the serial of its last edit. A reload clears the
+  // marks of edits made before it started: they were saved by then, so the
+  // reloaded scene starts from them and its code may set its own on top. An edit
+  // made while the reload runs is not in the bundle it reloads, so it keeps its mark.
+  const editedRootLighting = new Map<string, number>();
+  let lightingEditSerial = 0;
+  let reloadStartSerial: number | null = null;
   const isRootLighting = (entity: Entity, engineName: string) =>
     entity === ROOT_ENTITY && SCENE_LIGHTING_COMPONENTS.includes(engineName);
   const sceneLightingValue = (engineName: string): unknown => {
@@ -813,7 +834,7 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
       // Root lighting: saved as always, but while stopped the viewport keeps the
       // editor's lighting and Play applies the edit (see applySceneLighting).
       if (isRootLighting(entity, engineName)) {
-        editedRootLighting.add(engineName);
+        editedRootLighting.set(engineName, ++lightingEditSerial);
         if (isStopped()) return;
       }
 
@@ -1042,9 +1063,14 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
     // The reload re-ran the scene's code: what it made before is gone, and what
     // it makes now is found by the scan at the end of the reconcile.
     engineScene = emptyEngineSceneState();
-    // Root lighting edits were saved, so the reloaded scene starts from them and
-    // its code may set its own on top: the next scan holds the scene's values.
-    editedRootLighting.clear();
+    // Root lighting edits made before the reload started were saved, so the
+    // reloaded scene starts from them and its code may set its own on top: the
+    // next scan holds the scene's values. Later edits keep their marks.
+    const clearUpTo = reloadStartSerial ?? lightingEditSerial;
+    reloadStartSerial = null;
+    for (const [name, serial] of editedRootLighting) {
+      if (serial <= clearUpTo) editedRootLighting.delete(name);
+    }
     for (const entity of hiddenCameraAttachments) {
       if (!isEditorEntity(entity)) hiddenCameraAttachments.delete(entity);
     }
@@ -1072,6 +1098,9 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
     },
     refreshEngineScene: () => {
       if (shouldForward()) void scanEngineScene();
+    },
+    noteReloadStarted: () => {
+      reloadStartSerial = lightingEditSerial;
     },
     reconcileAfterReload,
   };
