@@ -175,7 +175,8 @@ fn now() -> chrono::NaiveDateTime {
     chrono::Utc::now().naive_utc()
 }
 
-/// Locks the world-scene identities among `ids`, which serializes their curation and ranking writes.
+/// Locks the world-scene identities among `ids`, in identity order: their
+/// curation and ranking writes then run one at a time.
 pub(super) async fn lock_world_scenes(
     conn: &mut PgConnection,
     ids: &[String],
@@ -351,8 +352,8 @@ const LOCALLY_SERVED_WORLD_IDS: &str =
 const WORLD_SCENE_IDS: &str =
     "SELECT identity FROM explore.world_scene_place WHERE identity = ANY($1)";
 
-/// The ranked, uncurated world-scene places the places leg clears, as their projection reads curation.
-/// `$2`, when set, narrows them to the identities already locked.
+/// The ranked, uncurated world-scene places the places leg clears, curation
+/// read as the projection reads it; `$2`, when set, narrows them to `$2`.
 const SCENE_CLEAR_CANDIDATES: &str = "SELECT p.identity::text FROM explore.world_scene_place p \
      JOIN explore.place_ranking r ON r.place_id = p.identity::text \
      LEFT JOIN explore.place_moderation m ON m.place_id = p.identity::text \
@@ -499,7 +500,7 @@ pub async fn replace_ranking(
                 .bind(&keep)
                 .fetch_all(&mut *tx)
                 .await?;
-        let scene_ids: Vec<String> = if world {
+        let mut scene_ids: Vec<String> = if world {
             Vec::new()
         } else {
             sqlx::query_scalar(SCENE_CLEAR_CANDIDATES)
@@ -508,6 +509,8 @@ pub async fn replace_ranking(
                 .fetch_all(&mut *tx)
                 .await?
         };
+        // An id that is also a catalogue row is cleared once, with the catalogue.
+        scene_ids.retain(|id| !cleared_ids.contains(id));
         legs.push((world, keep, applied, cleared_ids, scene_ids));
     }
     let touched: Vec<String> = legs

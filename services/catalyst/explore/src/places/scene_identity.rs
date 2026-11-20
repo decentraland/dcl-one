@@ -36,7 +36,7 @@ pub async fn assign(
     }
     let overlapped: Vec<Uuid> = sqlx::query_scalar(
         "SELECT identity FROM explore.world_scene_place \
-         WHERE world_name = $1 AND active AND parcels && $2::text[] FOR UPDATE",
+         WHERE world_name = $1 AND active AND parcels && $2::text[] ORDER BY identity FOR UPDATE",
     )
     .bind(world)
     .bind(parcels)
