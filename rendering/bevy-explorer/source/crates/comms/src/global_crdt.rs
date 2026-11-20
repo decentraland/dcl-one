@@ -1406,7 +1406,10 @@ impl SceneMessageBus<'_, '_> {
             self.traffic.filtered_inbound += 1;
             scene.data = filtered;
         }
-        let comms_type = match *scene.data.first().unwrap() {
+        let Some((&kind, _)) = scene.data.split_first() else {
+            return;
+        };
+        let comms_type = match kind {
             c if c == CommsMessageType::String as u8 => {
                 scene.data.remove(0);
                 CommsMessageType::String

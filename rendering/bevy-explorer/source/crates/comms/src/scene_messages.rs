@@ -8,7 +8,7 @@ use dcl_types::{scene_message_fits, CommsMessageType};
 
 use crate::{scene_crdt::filter_scene_crdt, SceneRoomModeration};
 
-pub struct SceneMessagesPlugin;
+pub(crate) struct SceneMessagesPlugin;
 
 impl Plugin for SceneMessagesPlugin {
     fn build(&self, app: &mut App) {
@@ -65,10 +65,22 @@ pub(crate) fn peer_trust(
 
 /// Incoming binary payloads retain the 30,000-byte bus limit for older peers. Egress
 /// additionally enforces `scene_message_fits` for receivers with a 13 KiB buffer.
-pub fn filter_scene_message(data: &[u8], trusted: bool) -> Option<Cow<'_, [u8]>> {
+pub(crate) fn filter_scene_message(data: &[u8], trusted: bool) -> Option<Cow<'_, [u8]>> {
+    filter_message(data, trusted, dcl_types::MAX_COMMS_MESSAGE_BYTES)
+}
+
+/// Engine egress enforces the local ban and the receiver's binary framing limit.
+pub fn outbound(data: &[u8], sender_banned: bool) -> Option<Cow<'_, [u8]>> {
+    if sender_banned {
+        return None;
+    }
+    filter_message(data, true, dcl_types::MAX_BINARY_MESSAGE_BYTES)
+}
+
+fn filter_message(data: &[u8], trusted: bool, binary_limit: usize) -> Option<Cow<'_, [u8]>> {
     let fits = match data.split_first() {
         Some((&kind, payload)) if kind == CommsMessageType::Binary as u8 => {
-            payload.len() <= dcl_types::MAX_COMMS_MESSAGE_BYTES
+            payload.len() <= binary_limit
         }
         _ => scene_message_fits(data),
     };
@@ -134,10 +146,13 @@ mod tests {
         let mut frame = vec![0; dcl_types::MAX_BINARY_MESSAGE_BYTES + 1];
         frame[0] = CommsMessageType::Binary as u8;
         assert!(filter_scene_message(&frame, false).is_some());
+        assert!(outbound(&frame, false).is_some());
+        assert!(outbound(&frame, true).is_none());
         assert_eq!(frame.len() - 1 + 1 + 42, 13 * 1024);
         frame.push(0);
         assert!(filter_scene_message(&frame, true).is_some());
         assert!(!scene_message_fits(&frame));
+        assert!(outbound(&frame, false).is_none());
         frame.resize(dcl_types::MAX_COMMS_MESSAGE_BYTES + 1, 0);
         assert!(filter_scene_message(&frame, true).is_some());
         frame.push(0);

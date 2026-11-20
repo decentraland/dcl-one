@@ -79,6 +79,15 @@ pub struct BanBlock<'w, 's> {
     platform_ban: Res<'w, PlatformBanStatus>,
     admission: Res<'w, SceneAdmission>,
     #[cfg(feature = "livekit")]
+    recovery: Query<
+        'w,
+        's,
+        (
+            &'static comms::SceneRoom,
+            &'static comms::room_connection::RoomRecovery,
+        ),
+    >,
+    #[cfg(feature = "livekit")]
     room: Query<
         'w,
         's,
@@ -251,6 +260,16 @@ impl BanBlock<'_, '_> {
     /// The local user's admission to the current scene's room.
     pub fn scene_admission(&self) -> &SceneAdmission {
         &self.admission
+    }
+
+    pub(crate) fn scene_retry_due(&self, scene_id: &str, checkpoint: f64) -> f64 {
+        #[cfg(feature = "livekit")]
+        if let Some((_, recovery)) = self.recovery.iter().find(|(room, _)| room.0 == scene_id) {
+            return recovery.retry.due;
+        }
+        #[cfg(not(feature = "livekit"))]
+        let _ = scene_id;
+        checkpoint
     }
 
     /// The scene room's lists while it is connected; a reconnecting or absent room is

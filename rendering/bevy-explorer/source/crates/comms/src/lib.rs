@@ -58,8 +58,9 @@ use wallet::Wallet;
 
 use crate::global_crdt::ChannelControl;
 pub use moderation::{
-    AdmissionView, BanScope, BlockedOrBanned, MetadataError, SceneAdmission, SceneRoomModeration,
+    AdmissionView, BanScope, BlockedOrBanned, SceneAdmission, SceneRoomModeration,
 };
+pub use scene_bans::SceneBanGate;
 
 use self::{
     archipelago::{ArchipelagoPlugin, StartArchipelago},

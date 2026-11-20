@@ -31,7 +31,7 @@ use common::{
 };
 use comms::{
     global_crdt::{CrdtContexts, GlobalCrdtState},
-    SceneAdmission,
+    SceneBanGate,
 };
 use dcl_component::{
     proto_components::sdk::components::{PbMainCamera, PbRealmInfo, PbVisibilityComponent},
@@ -1726,7 +1726,7 @@ pub fn process_scene_lifecycle(
     preview_mode: Res<PreviewMode>,
     mut current_scene_loading_res: ResMut<CurrentSceneLoading>,
     startup_scenes: Option<Res<StartupScenes>>,
-    (admission, realm, wallet): (Res<SceneAdmission>, Res<CurrentRealm>, Res<wallet::Wallet>),
+    bans: SceneBanGate,
     time: Res<Time>,
 ) {
     let mut required_scene_ids: HashMap<(String, Option<String>), bool> = HashMap::new();
@@ -1827,16 +1827,11 @@ pub fn process_scene_lifecycle(
     }));
     keep_scene_ids.extend(ring_scenes(LIVE_KEEP_RING));
 
-    if !server_mode() && !preview_mode.is_preview && !realm.is_local() {
-        if let Some(address) = wallet.address() {
-            let allowed = |scene: &(String, Option<String>)| {
-                portable_ids.contains(scene)
-                    || !admission.is_scene_banned(&realm.about_url, address, &scene.0)
-            };
-            required_scene_ids.retain(|scene, _| allowed(scene));
-            keep_scene_ids.retain(allowed);
-        }
-    }
+    let allowed = |scene: &(String, Option<String>)| {
+        portable_ids.contains(scene) || !bans.is_banned(&scene.0)
+    };
+    required_scene_ids.retain(|scene, _| allowed(scene));
+    keep_scene_ids.retain(allowed);
 
     // record which scene entities we should keep
     let keep_entities: HashMap<_, _> = keep_scene_ids

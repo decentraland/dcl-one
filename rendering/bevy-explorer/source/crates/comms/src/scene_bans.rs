@@ -11,6 +11,27 @@ use crate::{
     SceneAdmission, SceneRoomModeration, SceneRoomTarget,
 };
 
+/// Local-player scene lifetime policy, shared by loading, room targeting and teleport arrival.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct SceneBanGate<'w> {
+    admission: Res<'w, SceneAdmission>,
+    realm: Res<'w, CurrentRealm>,
+    wallet: Res<'w, Wallet>,
+    preview: Res<'w, PreviewMode>,
+}
+
+impl SceneBanGate<'_> {
+    pub fn is_banned(&self, scene_id: &str) -> bool {
+        !server_mode()
+            && !self.preview.is_preview
+            && !self.realm.is_local()
+            && self.wallet.address().is_some_and(|address| {
+                self.admission
+                    .is_scene_banned(&self.realm.about_url, address, scene_id)
+            })
+    }
+}
+
 /// A retry may predate the latest metadata ban for this wallet.
 #[derive(Component)]
 pub(crate) struct MetadataSceneBan(pub(crate) Address);

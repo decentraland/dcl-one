@@ -304,7 +304,9 @@ State, in every build:
   platform ban (`state` unknown, checked or failed, `isBanned`, `source`, `reason`,
   `matchedOn` for a record the gatekeeper withheld, `customMessage`, `expiresAt`,
   `checkedAgoSecs`, `error`), the local user's scene admission
-  (`state` unknown, allowed or refused, `scope` platform, world or scene, `message`, `sceneId`),
+  (`state` unknown, allowed or refused, `scope` platform, world or scene, `message`, `sceneId`,
+  `retainedRefusals`: scene id, scope and `retryDue` in elapsed engine seconds, from the active
+  room or its saved deadline while away),
   the scene room's lists (`state`, `sceneId`, `bannedAddresses`, `sceneAdmins`, while the room is
   connected) and, with an address, its `lookup` (`isBlockedEitherWay`, `direction`,
   `bannedInScene`, `adminPermissions`). Every `null` reading has its reason in `unavailable`,

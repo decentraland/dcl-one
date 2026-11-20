@@ -4,7 +4,7 @@
 // | Scenario                                                   | Class            |
 // | a scene room reports its admission and moderation lists    | New              |
 // | leaving the scene clears the room state                    | New              |
-// | a refused scene stays unloaded across departure and return | New, native only |
+// | a refused scene unloads until the player is admitted again | New, native only |
 //
 // The refusal scenario starts its own standalone against a loopback gatekeeper stub
 // (`--comms-gatekeeper`); on the web a service override stops the boot at the launch gate.
@@ -95,12 +95,15 @@ scenario(
       await until(() => explorer.banBlockState(), (s) => s.sceneAdmission.sceneId !== state.sceneAdmission.sceneId, {
         timeoutMs: ROOM_TIMEOUT_MS, what: 'the room target to leave the refused scene'
       })
+      assert.ok((await explorer.banBlockState()).sceneAdmission.retainedRefusals.some((refusal) =>
+        refusal.sceneId === state.sceneAdmission.sceneId && refusal.scope === 'scene'))
       await explorer.teleport(...SCENE_PARCEL)
       await until(() => explorer.banBlockState(), (s) =>
         s.sceneAdmission.state === 'refused' && s.sceneAdmission.sceneId === state.sceneAdmission.sceneId, {
           timeoutMs: ROOM_TIMEOUT_MS, what: 'the refused parcel to regain its admission owner'
         })
       assert.equal((await loadingState()).stage, absent)
+      assert.ok((await explorer.worldState()).inWorld, 'returning to a banned parcel must finish teleport arrival')
 
       // Admission succeeds; a loopback endpoint keeps the transport out of this assertion.
       stub.sceneAdapter({ status: 200, body: { adapter: 'livekit:wss://127.0.0.1:9/?access_token=e2e-admission' } })

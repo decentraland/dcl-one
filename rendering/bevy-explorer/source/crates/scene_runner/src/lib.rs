@@ -1787,11 +1787,8 @@ fn update_scene_room(
     mut writer: EventWriter<SetCurrentScene>,
     mut last: Local<Option<SetCurrentScene>>,
     realm: Res<CurrentRealm>,
-    (preview, admission, wallet): (
-        Res<PreviewMode>,
-        Res<comms::SceneAdmission>,
-        Res<wallet::Wallet>,
-    ),
+    preview: Res<PreviewMode>,
+    bans: comms::SceneBanGate,
     containing_scene: ContainingScene,
     player: Query<Entity, With<PrimaryUser>>,
     scenes: Query<&RendererSceneContext>,
@@ -1815,9 +1812,7 @@ fn update_scene_room(
         };
         // A banned parcel has no live scene to identify it. Its pointer must select the room
         // even when the player arrives from another scene, so fresh admission can restore it.
-        let banned = wallet
-            .address()
-            .is_some_and(|address| admission.is_scene_banned(&realm.about_url, address, hash));
+        let banned = bans.is_banned(hash);
         let previous = last.as_ref().is_some_and(|previous| {
             previous.realm_about_url == realm.about_url && previous.scene_id == *hash
         });

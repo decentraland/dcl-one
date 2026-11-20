@@ -383,7 +383,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Scene message trust is enforced in the engine.** Room metadata rejects banned senders
   across the string bus, binary bus and topics. New rooms without metadata grant ordinary peer
   permissions. Later updates retain lists whose fields are missing or non-array; explicit
-  arrays replace only their own list, including an empty array clearing it.
+  usable arrays replace only their own list, including an empty array clearing it. A non-empty
+  array with no parseable address retains the known list.
   Binary SDK CRDT batches and state responses exclude VideoControlState and the combined physics
   force/impulse components in both directions; incoming VideoPlayer edits require a room admin
   or the authoritative server. This protects the video source; peers can still move, hide or
@@ -402,8 +403,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   server delays. A transient failure cannot clear a known ban. Successful fresh admission
   restores the scene while the player stays on or returns to its parcel. Leaving and returning
   preserves the retry deadline, including a longer server delay. A removed scene-room participant
-  requests fresh admission; other room types retain their existing denial behavior. Preview
-  and headless scene lifecycles are exempt from local-player unloading.
+  requests fresh admission; other room types retain their existing denial behavior. Preview,
+  local and headless scene lifecycles are exempt from local-player unloading. Teleport arrival
+  onto a refused parcel completes without waiting for the deliberately absent scene root.
 - **Realm entry refused during a platform ban.** The realm change reads `PlatformBanStatus`
   (`common::platform_ban`) and, while a platform ban is known, refuses every request ("You are
   banned from Decentraland"), so the lobby's pick, a link held for the

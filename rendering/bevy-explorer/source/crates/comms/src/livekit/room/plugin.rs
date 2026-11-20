@@ -217,7 +217,7 @@ pub(crate) fn apply_scene_room_metadata(commands: &mut Commands, entity: Entity,
                     ),
                     Err(err) => warn!("scene room metadata unreadable ({err:?}): {metadata}"),
                 }
-                observed.is_some_and(|address| !moderation.banned_addresses.contains(&address))
+                observed.is_some_and(|address| !moderation.is_banned(address))
             };
             if invalidated {
                 // A later ban in this command batch must cancel credentials from before it.
@@ -1170,6 +1170,8 @@ mod metadata_tests {
             r#"{"unrelated":true}"#,
             r#"{"bannedAddresses":null,"sceneAdmins":false}"#,
             r#"{"bannedAddresses":"not a list","sceneAdmins":42}"#,
+            r#"{"bannedAddresses":["0XABCD",{}],"sceneAdmins":[false]}"#,
+            r#"{"bannedAddresses":["invalid"],"sceneAdmins":[null]}"#,
             "not json",
             "[]",
             "null",

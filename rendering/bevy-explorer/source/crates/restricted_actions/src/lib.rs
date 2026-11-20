@@ -1778,31 +1778,28 @@ fn send_scene_messages(
                     .moderation(hash)
                     .is_some_and(|state| state.is_banned(address))
         });
-        let filtered = dcl_types::scene_message_fits(data)
-            .then(|| comms::scene_messages::filter_scene_message(data, true))
-            .flatten();
-        if filtered.is_none() {
+        let filtered = comms::scene_messages::outbound(data, denied);
+        if !denied && filtered.is_none() {
             traffic.invalid += 1;
         }
-        let sent = !denied
-            && filtered.is_some_and(|filtered| {
-                if matches!(filtered, std::borrow::Cow::Owned(_)) {
-                    traffic.filtered_outbound += 1;
-                }
-                scene_rooms.transport(hash).is_some_and(|transport| {
-                    let message = rfc4::Packet {
-                        message: Some(rfc4::packet::Message::Scene(rfc4::Scene {
-                            scene_id: hash.to_string(),
-                            data: filtered.into_owned(),
-                        })),
-                        protocol_version: 100,
-                    };
-                    transport
-                        .sender
-                        .try_send(NetworkMessage::targetted_reliable(&message, recipient))
-                        .is_ok()
-                })
-            });
+        let sent = filtered.is_some_and(|filtered| {
+            if matches!(filtered, std::borrow::Cow::Owned(_)) {
+                traffic.filtered_outbound += 1;
+            }
+            scene_rooms.transport(hash).is_some_and(|transport| {
+                let message = rfc4::Packet {
+                    message: Some(rfc4::packet::Message::Scene(rfc4::Scene {
+                        scene_id: hash.to_string(),
+                        data: filtered.into_owned(),
+                    })),
+                    protocol_version: 100,
+                };
+                transport
+                    .sender
+                    .try_send(NetworkMessage::targetted_reliable(&message, recipient))
+                    .is_ok()
+            })
+        });
         if topic {
             topic_traffic.record_publish(sent);
         }
