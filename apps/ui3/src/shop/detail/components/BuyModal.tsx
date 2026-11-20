@@ -414,7 +414,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
             onBuy={buyWith}
             onClose={close}
             notice={
-              priceChanged || stepHeld ? (
+              priceChanged || stepHeld || slowQuote ? (
                 <span className={styles.notes}>
                   {priceChanged ? <span data-testid="price-changed">{TEXT.priceChanged}</span> : null}
                   {stepHeld ? (
@@ -422,6 +422,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
                       <HeldText block={stepHeld} wallet={co.wallet} web3={co.session.kind === "web3"} />
                     </span>
                   ) : null}
+                  {slowQuote ? <span data-testid="buy-modal-quoting">{TEXT.quoting}</span> : null}
                 </span>
               ) : null
             }
@@ -451,6 +452,14 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
             units={1}
             items={<DialogAsset display={display} priceCredits={priceCredits} testId="buy-modal-asset" flapTestId="buy-modal-flap" />}
             shortfall={Math.max(1, creditsShort ?? (co.topUp ? creditsCeil(co.topUp.shortCents) : priceCredits - (co.balance?.credits ?? 0)))}
+            checking={!checked}
+            notice={
+              slowQuote ? (
+                <DialogWarning status testId="buy-modal-quoting">
+                  {TEXT.quoting}
+                </DialogWarning>
+              ) : null
+            }
             onLeave={() => {
               if (!co.account || !cartLine) return null;
               attempt.current = stashBuyNowTopUp({ path: returnPath, account: co.account, lineId: cartLine.id, credits: priceCredits });

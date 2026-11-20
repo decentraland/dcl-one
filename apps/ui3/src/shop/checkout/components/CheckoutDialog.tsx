@@ -247,6 +247,13 @@ export function NoFundsBody(props: {
   items: ReactNode;
   /** The cart's banner puts Learn More on a line of its own, as upstream's. */
   learnMoreBelow?: boolean;
+  /**
+   * The price is still being checked: the shortfall is the shown offer's, which the check may change (a lower price, an
+   * item gone), so no pack can be bought until the check confirms the Credits still fall short.
+   */
+  checking?: boolean;
+  /** A status line above the buttons (why the purchase waits). */
+  notice?: ReactNode;
   testId: string;
   /** Leaves the hand-off; returns its attempt, which a failure drops. */
   onLeave(): string | null;
@@ -282,7 +289,7 @@ export function NoFundsBody(props: {
   const iap = isIapMode();
 
   async function buy() {
-    if (!selectedId) return;
+    if (!selectedId || props.checking) return;
     setBusy(true);
     setError(null);
     const leaving = props.onLeave();
@@ -358,12 +365,13 @@ export function NoFundsBody(props: {
           {error}
         </p>
       ) : null}
+      {props.notice}
       <DialogCtas>
         <DialogButton variant="outline" onClick={props.onCancel}>
           {TEXT.cancel}
         </DialogButton>
         {iap ? null : (
-          <DialogButton variant="gradient" onClick={() => void buy()} disabled={busy || !selectedId} data-testid={`${props.testId}-topup`}>
+          <DialogButton variant="gradient" onClick={() => void buy()} disabled={busy || !selectedId || !!props.checking} data-testid={`${props.testId}-topup`}>
             {TEXT.buy}
           </DialogButton>
         )}

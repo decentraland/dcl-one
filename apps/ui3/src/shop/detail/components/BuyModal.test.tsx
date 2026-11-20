@@ -163,6 +163,34 @@ describe("Buy now's dialog", () => {
     expect(authorizations(demo)).toHaveLength(0);
   });
 
+  it("short on Credits by the page's offer: no pack is bought until the check confirms the shortfall", async () => {
+    const check = heldOffers();
+    const { demo, line, lineId } = renderBuy({ session: "web2", balanceCents: 30 }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });
+    const dialog = await settledDialog();
+    expect(within(dialog).getByRole("heading", { name: "Buy Credits and Item" })).toBeTruthy();
+    const topUp = within(dialog).getByTestId("buy-modal-topup");
+    expect(topUp).toBeDisabled();
+    fireEvent.click(topUp);
+    expect(await within(dialog).findByTestId("buy-modal-quoting")).toBeTruthy();
+    expect(demo.shop.log.filter((r) => r.name === "createPackOrder")).toHaveLength(0);
+    // Still short at the checked price: the packs can be bought.
+    await check.answer({ [lineId]: line.seen! });
+    await waitFor(() => expect(within(dialog).getByTestId("buy-modal-topup")).toBeEnabled());
+    expect(within(dialog).queryByTestId("buy-modal-quoting")).toBeNull();
+  });
+
+  it("short by the page's offer but not at the checked price: the dialog turns to Buy, no pack offered", async () => {
+    const check = heldOffers();
+    const { demo, line, lineId } = renderBuy({ session: "web2", balanceCents: 30 }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });
+    const dialog = await settledDialog();
+    expect(within(dialog).getByTestId("buy-modal-topup")).toBeDisabled();
+    const seen = line.seen!;
+    await check.answer({ [lineId]: { ...seen, quotes: seen.quotes.map((q) => (q.method === "credits" ? { ...q, quoted: usdCents(25) } : q)) } });
+    await waitFor(() => expect(within(dialog).getByTestId("buy-modal-buy")).toBeEnabled());
+    expect(within(dialog).queryByTestId("buy-modal-topup")).toBeNull();
+    expect(demo.shop.log.filter((r) => r.name === "createPackOrder")).toHaveLength(0);
+  });
+
   it("focus stays where the buyer put it while the dialog re-renders: ticking MANA keeps it on that row", async () => {
     renderBuy({ session: "web3" }, { tweak: holdMana(10n ** 21n) });
     const dialog = await settledDialog();
