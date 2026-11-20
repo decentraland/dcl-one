@@ -191,6 +191,11 @@ export async function verifyAuthChainRequest(
     const link = chain[i];
     const linkType: string = link.type;
     const isEphemeral = linkType === "ECDSA_EPHEMERAL" || linkType === "ECDSA_PERSONAL_EPHEMERAL";
+    const isSignedEntity = linkType === "ECDSA_SIGNED_ENTITY" || linkType === "ECDSA_PERSONAL_SIGNED_ENTITY";
+    // As in `dcl-auth`: only delegations precede the signed entity, which ends the chain.
+    if (isSignedEntity && i !== chain.length - 1) {
+      return { ok: false, status: 401, error: `${linkType} at link ${i} must be the last link` };
+    }
     const eph = isEphemeral ? parseEphemeral(link.payload) : null;
     if (isEphemeral) {
       if (!eph) {
@@ -221,10 +226,7 @@ export async function verifyAuthChainRequest(
 
     if (eph) {
       authority = eph.address;
-    } else if (
-      linkType === "ECDSA_SIGNED_ENTITY" ||
-      linkType === "ECDSA_PERSONAL_SIGNED_ENTITY"
-    ) {
+    } else if (isSignedEntity) {
       finalPayload = link.payload;
     } else {
       return {

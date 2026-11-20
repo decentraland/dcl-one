@@ -2,7 +2,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { describe, expect, it } from "vitest";
 
 import { createIdentityFromPrivateKey, generateEphemeralKey } from "./identity";
-import { signRequest } from "./signer";
+import { AUTH_CHAIN_HEADER_PREFIX, signRequest } from "./signer";
 import { parseExpiration, verifyAuthChainRequest } from "./verify-request.server";
 
 async function signed(
@@ -79,10 +79,44 @@ describe("verifyAuthChainRequest", () => {
     };
 
     expect((await delegatedWith("Decentraland Login")).ok).toBe(true);
-    for (const firstLine of ["Decentraland Storage Delegation", "Decentraland Login ", ""]) {
+    for (const firstLine of ["Decentraland Storage Delegation", "Decentraland Login ", "decentraland login", ""]) {
       const res = await delegatedWith(firstLine);
       expect(res).toEqual({ ok: false, status: 401, error: "malformed ephemeral payload" });
     }
+  });
+
+  it("refuses a delegation with no purpose line", async () => {
+    const res = await delegatedRequest(
+      (address) => `Ephemeral address: ${address}\nExpiration: ${new Date(Date.now() + 60_000).toISOString()}`,
+    );
+    expect(res).toEqual({ ok: false, status: 401, error: "malformed ephemeral payload" });
+  });
+
+  it("refuses any link after the signed request link", async () => {
+    const account = privateKeyToAccount(generatePrivateKey());
+    const ephemeral = generateEphemeralKey();
+    const expiration = new Date(Date.now() + 60_000).toISOString();
+    const message = `Decentraland Login\nEphemeral address: ${ephemeral.address}\nExpiration: ${expiration}`;
+    const signer = account.address.toLowerCase();
+    const identity = {
+      signer,
+      ephemeral,
+      expiration,
+      authChain: [
+        { type: "SIGNER" as const, payload: signer, signature: "" },
+        { type: "ECDSA_EPHEMERAL" as const, payload: message, signature: await account.signMessage({ message }) },
+      ],
+    };
+    const s = await signRequest(identity, "GET", "/v1/collections", {});
+    const headers = new Headers(s.headers);
+    const signedLink = JSON.parse(headers.get(`${AUTH_CHAIN_HEADER_PREFIX}2`)!);
+    const trailing = new Headers(headers);
+    trailing.set(`${AUTH_CHAIN_HEADER_PREFIX}3`, headers.get(`${AUTH_CHAIN_HEADER_PREFIX}1`)!);
+    expect(signedLink.type).toBe("ECDSA_SIGNED_ENTITY");
+
+    expect((await verifyAuthChainRequest(new Request("http://localhost/v1/collections", { headers }))).ok).toBe(true);
+    const res = await verifyAuthChainRequest(new Request("http://localhost/v1/collections", { headers: trailing }));
+    expect(res).toEqual({ ok: false, status: 401, error: "ECDSA_SIGNED_ENTITY at link 2 must be the last link" });
   });
 
   it("requires the ephemeral address on line 2 and the expiration on line 3", async () => {
