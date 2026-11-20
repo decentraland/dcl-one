@@ -455,16 +455,23 @@ pub fn ready_sql(alias: &str, now_p: &str) -> String {
     )
 }
 
-/// A liveness heuristic for whether a walk serves `indexer` at `now`: ready,
-/// or with its whole history walked, advanced within [`READY_WINDOW`] and its
-/// last block under `horizon` old. It does not measure the walk's speed or
-/// publish lag. A future `updated_at` (written by the database clock) counts
-/// as advanced.
+/// How far ahead of the caller's clock the database's `updated_at` may be and
+/// still count as advanced.
+const MAX_CLOCK_SKEW: ChronoDuration = ChronoDuration::minutes(10);
+
+/// A liveness heuristic for whether cursor `c` serves its index at `now`:
+/// ready, or with its whole history walked, advanced within [`READY_WINDOW`]
+/// and its last block under `horizon` old. It does not measure the walk's speed
+/// or publish lag. An `updated_at` ahead of `now` (written by the database
+/// clock) counts as advanced up to [`MAX_CLOCK_SKEW`], and not past it.
 pub fn is_walked(c: &Cursor, now: DateTime<Utc>, horizon: ChronoDuration) -> bool {
     if is_ready(c, now) {
         return true;
     }
     let advanced = now.naive_utc().signed_duration_since(c.updated_at);
+    if advanced < -MAX_CLOCK_SKEW {
+        return false;
+    }
     let near_head = c
         .last_block_time
         .is_some_and(|t| now.timestamp() - t <= horizon.num_seconds());
@@ -1020,6 +1027,10 @@ mod tests {
         assert!(
             is_walked(&walking(true, minutes(-5), minutes(5)), now, hour),
             "a database clock ahead"
+        );
+        assert!(
+            !is_walked(&walking(true, minutes(-120), minutes(5)), now, hour),
+            "an updated_at too far in the future is no sign of life"
         );
         assert!(
             !is_walked(&walking(true, minutes(1), minutes(120)), now, hour),

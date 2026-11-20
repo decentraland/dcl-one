@@ -889,13 +889,31 @@ mod tests {
     }
 
     async fn publish_at(pool: &PgPool, block: i64, time: i64) {
+        put_cursor(pool, block, time, true, "0 seconds", true).await;
+    }
+
+    /// The `mana_transfers` cursor at `block` (mined at `time`), with its whole
+    /// history or not, last advanced `advanced` ago by the database clock, and
+    /// published there or not.
+    async fn put_cursor(
+        pool: &PgPool,
+        block: i64,
+        time: i64,
+        full: bool,
+        advanced: &str,
+        published: bool,
+    ) {
         sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_time, folded_block, folded_at, full_history) \
-             VALUES ('mana_transfers', 'matic', 0, $1, $2, $1, timezone('UTC', now()), true) \
-             ON CONFLICT (indexer, network) DO UPDATE SET last_block = $1, last_block_time = $2, folded_block = $1",
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_time, folded_block, folded_at, full_history, updated_at) \
+             VALUES ('mana_transfers', 'matic', 0, $1, $2, CASE WHEN $3 THEN $1 END, CASE WHEN $3 THEN timezone('UTC', now()) END, $4, timezone('UTC', now()) - $5::interval) \
+             ON CONFLICT (indexer, network) DO UPDATE SET last_block = $1, last_block_time = $2, \
+               folded_block = EXCLUDED.folded_block, folded_at = EXCLUDED.folded_at, full_history = $4, updated_at = EXCLUDED.updated_at",
         )
         .bind(block)
         .bind(time)
+        .bind(published)
+        .bind(full)
+        .bind(advanced)
         .execute(pool)
         .await
         .unwrap();
@@ -940,12 +958,13 @@ mod tests {
     fn forward_app(trusted: &[&str]) -> Router {
         let mut settings = crate::market::Settings::for_tests();
         settings.market.trusted_proxy_cidrs = trusted.iter().map(|c| c.parse().unwrap()).collect();
-        Router::new().nest(
-            "/events-notifier",
-            router(crate::market::tests::support::state_without_db_settings(
-                settings,
-            )),
-        )
+        forward_router(crate::market::tests::support::state_without_db_settings(
+            settings,
+        ))
+    }
+
+    fn forward_router(state: SharedState) -> Router {
+        Router::new().nest("/events-notifier", router(state))
     }
 
     const PATH: &str = "/events-notifier/forward-blockchain";
@@ -1279,11 +1298,11 @@ mod tests {
             );
         }
         assert_eq!(tip_count(pool).await, 2);
-        let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM shop.tip_claim")
-            .fetch_one(pool)
-            .await
-            .unwrap();
-        assert_eq!(pending, 0, "every verdict settles its claim");
+        assert_eq!(
+            claim_count(pool).await,
+            0,
+            "every verdict settles its claim"
+        );
         let lenient = TipSettings::parse("1", 10 * 86_400, 10).unwrap();
         transfer(pool, 16, 0, &hash(7), TIPPER, RECEIVER, "1", t - 2 * 86_400).await;
         assert_eq!(
@@ -1511,10 +1530,7 @@ mod tests {
     #[tokio::test]
     async fn an_unsigned_forward_is_refused() {
         use tower::ServiceExt;
-        let app = Router::new().nest(
-            "/events-notifier",
-            router(crate::market::tests::support::state_without_db()),
-        );
+        let app = forward_router(crate::market::tests::support::state_without_db());
         let res = app
             .oneshot(
                 axum::http::Request::post("/events-notifier/forward-blockchain")
@@ -1541,14 +1557,11 @@ mod tests {
         let app_with = |enabled: bool| {
             let mut settings = crate::market::Settings::for_tests();
             settings.market.indexes.mana_transfers_enabled = enabled;
-            Router::new().nest(
-                "/events-notifier",
-                router(std::sync::Arc::new(crate::market::MarketplaceState::new(
-                    db.pool.clone(),
-                    crate::http::Outbound::for_tests(),
-                    settings,
-                ))),
-            )
+            forward_router(std::sync::Arc::new(crate::market::MarketplaceState::new(
+                db.pool.clone(),
+                crate::http::Outbound::for_tests(),
+                settings,
+            )))
         };
         let off = app_with(false);
         let w = crate::outfits::testkit::scratch_wallet();
@@ -1567,23 +1580,17 @@ mod tests {
         );
         assert_eq!(claim_count(&db.pool).await, 0, "nothing stored");
 
-        // A whole-history walk this many minutes behind, last advanced
+        // An unpublished walk this many minutes behind, last advanced
         // `advanced` ago by the database clock.
         let walk = |full: bool, behind_mins: i64, advanced: &'static str| {
-            let pool = db.pool.clone();
-            async move {
-                sqlx::query(
-                    "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_time, full_history, updated_at) \
-                     VALUES ('mana_transfers', 'matic', 0, 10, $1, $2, timezone('UTC', now()) - $3::interval) \
-                     ON CONFLICT (indexer, network) DO UPDATE SET last_block_time = $1, full_history = $2, updated_at = EXCLUDED.updated_at",
-                )
-                .bind(now_secs() - behind_mins * 60)
-                .bind(full)
-                .bind(advanced)
-                .execute(&pool)
-                .await
-                .unwrap();
-            }
+            put_cursor(
+                &db.pool,
+                10,
+                now_secs() - behind_mins * 60,
+                full,
+                advanced,
+                false,
+            )
         };
         for (full, behind_mins, advanced, expected, why) in [
             (
@@ -1668,10 +1675,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_cursor_that_cannot_be_read_is_a_500() {
-        let app = Router::new().nest(
-            "/events-notifier",
-            router(crate::market::tests::support::state_without_db()),
-        );
+        let app = forward_router(crate::market::tests::support::state_without_db());
         let res = forward_tip(&app, &crate::outfits::testkit::scratch_wallet()).await;
         assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
@@ -1686,10 +1690,7 @@ mod tests {
     #[tokio::test]
     async fn a_cross_origin_forward_is_preflighted() {
         use tower::ServiceExt;
-        let app = Router::new().nest(
-            "/events-notifier",
-            router(crate::market::tests::support::state_without_db()),
-        );
+        let app = forward_router(crate::market::tests::support::state_without_db());
         let requested = "content-type,x-identity-auth-chain-0,x-identity-auth-chain-1,x-identity-auth-chain-2,x-identity-timestamp,x-identity-metadata";
         let res = app
             .clone()
