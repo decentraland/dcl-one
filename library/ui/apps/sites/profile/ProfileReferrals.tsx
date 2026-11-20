@@ -1,6 +1,6 @@
-import { useEffect, useId, useState, type CSSProperties } from 'react'
+import { useEffect, useId, useState } from 'react'
 
-import { Button, CopyFeedback, InputWebCreatorTools, Spinner } from '../../../index'
+import { Button, CopyFeedback, InputWebCreatorTools, ProgressBar, Spinner } from '../../../index'
 import envelopeImage from '../assets/referrals/referral-envelope.webp'
 import logoPointerImage from '../assets/referrals/logo-with-pointer.webp'
 import medalImage from '../assets/referrals/sports-medal.webp'
@@ -249,7 +249,6 @@ function ReferralJourney({ progress, onShown }: { progress: Journey; onShown: ()
     toNext > 0
       ? `${toNext} more ${toNext === 1 ? 'friend' : 'friends'} for your next reward`
       : 'Every reward unlocked'
-  const track = { '--journey-progress': `${progress.fraction * 100}%` } as CSSProperties
 
   return (
     <section className={styles.journey} aria-labelledby={titleId}>
@@ -264,18 +263,13 @@ function ReferralJourney({ progress, onShown }: { progress: Journey; onShown: ()
       <p className={styles.nextReward}>{nextText}</p>
       <div className={styles.scroller}>
         <div className={styles.lane}>
-          <div
-            className={styles.track}
-            style={track}
-            role="progressbar"
+          <ProgressBar
             aria-label="Reward journey"
-            aria-valuemin={0}
-            aria-valuemax={progress.goal}
-            aria-valuenow={Math.min(progress.accepted, progress.goal)}
+            value={progress.accepted}
+            max={progress.goal}
+            fraction={progress.fraction}
             aria-valuetext={`${joined}. ${nextText}.`}
-          >
-            <span className={styles.trackFill} />
-          </div>
+          />
           <ol className={styles.tiers}>
             {progress.tiers.map((tier) => (
               <RewardCard

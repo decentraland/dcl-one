@@ -10,6 +10,9 @@ export type Settlement = "pending" | "indexing" | "confirmed" | "failed" | "time
 
 export type OwnershipCheck = { owner: string; contractAddress: string; itemId: string };
 
+/** The receipt read's interval after the first window: waitForReceipt times its fast phase from each call. */
+const SLOW_POLL_MS = 2_000;
+
 export function useSettlement(
   txs: { hash: string; chainId: number }[],
   opts: { skip?: boolean; attempts?: number; windowMs?: number; ownership?: OwnershipCheck | null } = {},
@@ -31,7 +34,9 @@ export function useSettlement(
       const outcomes = await Promise.all(
         txs.map(async (tx) => {
           for (let i = 0; i < attempts && !cancelled; i++) {
-            const receipt = await waitForReceipt(reader, tx.chainId, tx.hash, { timeoutMs: opts.windowMs ?? wait?.timeoutMs ?? 15_000, pollMs: wait?.pollMs, sleep: wait?.sleep });
+            // Only the first window polls fast (waitForReceipt's first 15 s); every later one reads every 2 s.
+            const pollMs = wait?.pollMs ?? (i === 0 ? undefined : SLOW_POLL_MS);
+            const receipt = await waitForReceipt(reader, tx.chainId, tx.hash, { timeoutMs: opts.windowMs ?? wait?.timeoutMs ?? 15_000, pollMs, sleep: wait?.sleep });
             if (receipt) return receipt.status;
           }
           return null;

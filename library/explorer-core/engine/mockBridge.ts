@@ -1154,6 +1154,11 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     // no catalyst looks or browser to open in the mock
     if (msg.kind === 'showLook' || msg.kind === 'openLegal') return
+    // the mock has no engine to decode detail tiles: the map keeps its base imagery
+    if (msg.kind === 'getSatelliteTile') {
+      reply({ kind: 'satelliteTile', requestId: msg.requestId, ok: false, error: 'unsupported' })
+      return
+    }
     if (msg.kind === 'openExternalUrl') {
       reply({ kind: 'externalUrlOpened', requestId: msg.requestId, ok: true })
       return

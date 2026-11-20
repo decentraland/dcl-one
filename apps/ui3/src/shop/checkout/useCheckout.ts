@@ -37,7 +37,8 @@ export const CREDITS_SHORT = "Your Credits balance doesn't cover the Credits par
 export type ReviewState =
   | { kind: "empty" }
   | { kind: "outage"; reason: "no-quote-route" | "failed" }
-  | { kind: "checking" }
+  /** `seenRecently`: each line shows the offer the buyer saw moments ago until the check ends (see useCartRevalidation). */
+  | { kind: "checking"; seenRecently: boolean }
   | { kind: "changed"; changes: LineChange[] }
   | { kind: "current" };
 
@@ -227,7 +228,7 @@ export function useCheckout(
     switch (revalidation.status) {
       case "idle":
       case "checking":
-        return { kind: "checking" };
+        return { kind: "checking", seenRecently: revalidation.status === "checking" && revalidation.seenRecently };
       case "failed":
         return { kind: "outage", reason: "failed" };
       case "changed":
@@ -235,7 +236,7 @@ export function useCheckout(
       case "current":
         return { kind: "current" };
     }
-  }, [allLines.length, lines.length, fetchOffers, revalidation.status, revalidation.changes]);
+  }, [allLines.length, lines.length, fetchOffers, revalidation.status, revalidation.seenRecently, revalidation.changes]);
 
   const reviewChanges = useMemo(() => revalidation.changes.filter((c) => c.kind !== "quoteUnavailable"), [revalidation.changes]);
   const quoteOutage = useMemo(() => {

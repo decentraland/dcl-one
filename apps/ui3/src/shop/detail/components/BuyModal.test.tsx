@@ -11,7 +11,10 @@ import { takeBuyNowReturn, takeTopUpReturn } from "../../credits/returns";
 import { requireContracts } from "../../checkout/chain/contracts";
 import { batchAuthorization, type FakeHandlers } from "../../checkout/fakes";
 import { CHAIN } from "@shop/model/chain";
+import { usdCents } from "@shop/model/money";
+import type { PurchaseOffer } from "@shop/model/purchase";
 import { BOOK, storeMint } from "@shop/payment/fixtures";
+import type { OfferFetcher } from "../../cart/revalidate";
 import BuyModal, { resetBuyNowCarts, splitReason } from "./BuyModal";
 import { readSentSplit, SENT_HOLD_MS } from "./CombinedBuy";
 
@@ -31,13 +34,16 @@ type Opts = {
   strict?: boolean;
   tweak?: (demo: ReturnType<typeof createDemo>) => void;
   onResumeUsed?: () => void;
+  /** When the server quoted the offer the page showed (epoch ms); the fixture's is long ago. */
+  seenAt?: number;
 };
 
 function renderBuy(s: Omit<DemoScenario, "lines">, opts: Opts = {}) {
   const demo = createDemo({ ...s, lines: [{ offer: (x) => storeMint(x), name: "Rainbow Hat", rarity: "epic", category: "wearable" }] });
   opts.tweak?.(demo);
   const first = demo.lines[0]!;
-  const line: CartAddInput = { asset: first.asset, listing: first.listing, display: first.display, seen: first.seen };
+  const seen = first.seen && opts.seenAt !== undefined ? { ...first.seen, quotedAt: opts.seenAt } : first.seen;
+  const line: CartAddInput = { asset: first.asset, listing: first.listing, display: first.display, seen };
   // The buyer's own cart holds nothing, and Buy now never puts anything in it.
   demo.cart.clear();
   const opened: string[] = [];
@@ -77,7 +83,61 @@ async function pressBuy(dialog: HTMLElement) {
   await act(async () => fireEvent.click(buy));
 }
 
+/** The dialog's price check, answered only when the test says so. */
+function heldOffers() {
+  let answer: (offers: Record<string, PurchaseOffer | null>) => void = () => {};
+  const fetchOffers = vi.fn<OfferFetcher>(() => new Promise((resolve) => (answer = resolve)));
+  return { fetchOffers, answer: (offers: Record<string, PurchaseOffer | null>) => act(async () => answer(offers)) };
+}
+
+const phaseOf = (dialog: HTMLElement) => dialog.querySelector("[data-phase]")?.getAttribute("data-phase");
+
 describe("Buy now's dialog", () => {
+  it("the offer the page showed moments ago shows the price at once; Buy waits for the check", async () => {
+    const check = heldOffers();
+    const { line, lineId } = renderBuy({ session: "web2" }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });
+    const dialog = await settledDialog();
+    expect(check.fetchOffers).toHaveBeenCalledTimes(1);
+    expect(within(dialog).getByRole("heading", { name: "Buy Item" })).toBeTruthy();
+    expect(within(dialog).getByTestId("buy-modal-asset")).toHaveTextContent("Rainbow Hat");
+    expect(within(dialog).getByTestId("buy-modal-buy")).toBeDisabled();
+    await check.answer({ [lineId]: line.seen! });
+    await waitFor(() => expect(within(dialog).getByTestId("buy-modal-buy")).toBeEnabled());
+    expect(within(dialog).queryByTestId("price-changed")).toBeNull();
+  });
+
+  it("a check still running after a moment says why Buy waits, and the notice goes with the answer", async () => {
+    const check = heldOffers();
+    const { line, lineId } = renderBuy({ session: "web2" }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });
+    const dialog = await settledDialog();
+    expect(within(dialog).queryByTestId("buy-modal-quoting")).toBeNull();
+    expect(await within(dialog).findByTestId("buy-modal-quoting")).toHaveTextContent("Checking prices and availability…");
+    expect(within(dialog).getByTestId("buy-modal-buy")).toBeDisabled();
+    await check.answer({ [lineId]: line.seen! });
+    await waitFor(() => expect(within(dialog).getByTestId("buy-modal-buy")).toBeEnabled());
+    expect(within(dialog).queryByTestId("buy-modal-quoting")).toBeNull();
+  });
+
+  it("a check that finds the price changed turns the shown price to the change notice", async () => {
+    const check = heldOffers();
+    const { line, lineId } = renderBuy({ session: "web2" }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });
+    const dialog = await settledDialog();
+    const seen = line.seen!;
+    await check.answer({ [lineId]: { ...seen, quotes: seen.quotes.map((q) => (q.method === "credits" ? { ...q, quoted: usdCents(135) } : q)) } });
+    expect(await within(dialog).findByTestId("price-changed")).toBeTruthy();
+    expect(within(dialog).getByTestId("buy-modal-asset")).toHaveTextContent("14");
+  });
+
+  it("an offer the page showed long ago waits for the check", async () => {
+    const check = heldOffers();
+    const { line, lineId } = renderBuy({ session: "web2" }, { tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });
+    const dialog = await screen.findByTestId("buy-modal");
+    await waitFor(() => expect(check.fetchOffers).toHaveBeenCalledTimes(1));
+    expect(phaseOf(dialog)).toBe("loading");
+    await check.answer({ [lineId]: line.seen! });
+    await waitFor(() => expect(phaseOf(dialog)).toBe("ready"));
+  });
+
   it("short on Credits with no MANA to pay: Buy Credits and Item, the shortfall, the packs that finish it, and Stripe", async () => {
     const { demo, opened, lineId } = renderBuy({ session: "web2", balanceCents: 30 });
     const dialog = await settledDialog();
@@ -101,6 +161,56 @@ describe("Buy now's dialog", () => {
     expect(takeTopUpReturn(Date.now(), "order-pack_10")?.path).toBe(`${PATH}?buy=resume`);
     expect(takeBuyNowReturn(PATH, BOOK.buyer, "order-pack_10")).toMatchObject({ lineId, credits: 12, orderId: "order-pack_10" });
     expect(authorizations(demo)).toHaveLength(0);
+  });
+
+  it("short on Credits by the page's offer: no pack is bought until the check confirms the shortfall", async () => {
+    const check = heldOffers();
+    const { demo, line, lineId } = renderBuy({ session: "web2", balanceCents: 30 }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });
+    const dialog = await settledDialog();
+    expect(within(dialog).getByRole("heading", { name: "Buy Credits and Item" })).toBeTruthy();
+    const topUp = within(dialog).getByTestId("buy-modal-topup");
+    expect(topUp).toBeDisabled();
+    fireEvent.click(topUp);
+    expect(await within(dialog).findByTestId("buy-modal-quoting")).toBeTruthy();
+    expect(demo.shop.log.filter((r) => r.name === "createPackOrder")).toHaveLength(0);
+    // Still short at the checked price: the packs can be bought.
+    await check.answer({ [lineId]: line.seen! });
+    await waitFor(() => expect(within(dialog).getByTestId("buy-modal-topup")).toBeEnabled());
+    expect(within(dialog).queryByTestId("buy-modal-quoting")).toBeNull();
+  });
+
+  it("a pack picked during the check that the checked shortfall no longer offers is not bought: the buyer picks again", async () => {
+    const check = heldOffers();
+    const { demo, line, lineId } = renderBuy({ session: "web2", balanceCents: 30 }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });
+    const dialog = await settledDialog();
+    fireEvent.click(within(dialog).getAllByTestId("credit-pack")[0]!);
+    expect(within(dialog).getAllByTestId("credit-pack")[0]).toHaveAttribute("aria-pressed", "true");
+    // The checked price leaves 57 Credits short: the 40-Credit pack the buyer picked is no longer offered.
+    const seen = line.seen!;
+    await check.answer({ [lineId]: { ...seen, quotes: seen.quotes.map((q) => (q.method === "credits" ? { ...q, quoted: usdCents(600) } : q)) } });
+    await waitFor(() => expect(within(dialog).getAllByTestId("credit-pack").map((p) => p.textContent)).toEqual(["100($11.99)", "260($29.99)", "540($59.99)"]));
+    expect(within(dialog).getAllByTestId("credit-pack").some((p) => p.getAttribute("aria-pressed") === "true")).toBe(false);
+    const topUp = within(dialog).getByTestId("buy-modal-topup");
+    expect(topUp).toBeDisabled();
+    fireEvent.click(topUp);
+    expect(demo.shop.log.filter((r) => r.name === "createPackOrder")).toHaveLength(0);
+
+    fireEvent.click(within(dialog).getAllByTestId("credit-pack")[0]!);
+    expect(within(dialog).getByTestId("buy-modal-topup")).toBeEnabled();
+    fireEvent.click(within(dialog).getByTestId("buy-modal-topup"));
+    await waitFor(() => expect(demo.shop.log.filter((r) => r.name === "createPackOrder").map((r) => r.body)).toEqual([expect.objectContaining({ packId: "pack_10" })]));
+  });
+
+  it("short by the page's offer but not at the checked price: the dialog turns to Buy, no pack offered", async () => {
+    const check = heldOffers();
+    const { demo, line, lineId } = renderBuy({ session: "web2", balanceCents: 30 }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });
+    const dialog = await settledDialog();
+    expect(within(dialog).getByTestId("buy-modal-topup")).toBeDisabled();
+    const seen = line.seen!;
+    await check.answer({ [lineId]: { ...seen, quotes: seen.quotes.map((q) => (q.method === "credits" ? { ...q, quoted: usdCents(25) } : q)) } });
+    await waitFor(() => expect(within(dialog).getByTestId("buy-modal-buy")).toBeEnabled());
+    expect(within(dialog).queryByTestId("buy-modal-topup")).toBeNull();
+    expect(demo.shop.log.filter((r) => r.name === "createPackOrder")).toHaveLength(0);
   });
 
   it("focus stays where the buyer put it while the dialog re-renders: ticking MANA keeps it on that row", async () => {

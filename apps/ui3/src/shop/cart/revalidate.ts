@@ -79,6 +79,14 @@ export async function revalidateCart(
 
 export type RevalidationStatus = "idle" | "checking" | "current" | "changed" | "failed";
 
+/** How old an offer the buyer was shown can be and still stand on screen while the server prices the line again. */
+export const SEEN_RECENT_MS = 20_000;
+
+/** The line holds an offer the buyer was shown moments ago (the page's), so its payment options can show before the check ends. */
+export function seenRecently(line: CartLine, now: number = Date.now()): boolean {
+  return !!line.seen && Math.abs(now - line.seen.quotedAt) <= SEEN_RECENT_MS;
+}
+
 /** What a price check is for: each line, its quantity and its method. A check answers only the lines it was asked. */
 export function revalidationIdentity(lines: readonly CartLine[]): string {
   return lines.map((l) => `${l.id}x${l.quantity}:${l.method ?? "-"}`).join(",");
@@ -86,6 +94,11 @@ export function revalidationIdentity(lines: readonly CartLine[]): string {
 
 export type CartRevalidation = {
   status: RevalidationStatus;
+  /**
+   * While `checking`: every line shows an offer the buyer saw moments ago, under the session and revision the hook
+   * started with. It can stand on screen until the check ends; confirmation still waits for the check.
+   */
+  seenRecently: boolean;
   offers: Record<string, PurchaseOffer | null>;
   changes: LineChange[];
   error: unknown;
@@ -109,8 +122,9 @@ export function useCartRevalidation(
   opts: { enabled?: boolean; revision?: string | number; onSeen?: (lineId: string, offer: PurchaseOffer | null) => void } = {},
 ): CartRevalidation {
   const enabled = opts.enabled ?? true;
-  const [state, setState] = useState<{ status: RevalidationStatus; result: RevalidationResult; error: unknown; pricedFor: string | null }>({
+  const [state, setState] = useState<{ status: RevalidationStatus; seenRecently: boolean; result: RevalidationResult; error: unknown; pricedFor: string | null }>({
     status: "idle",
+    seenRecently: false,
     result: { offers: {}, changes: [] },
     error: null,
     pricedFor: null,
@@ -121,24 +135,27 @@ export function useCartRevalidation(
 
   const identity = useMemo(() => revalidationIdentity(lines), [lines]);
   const sessionKey = session.kind === "signedOut" ? "out" : `${session.kind}:${session.kind === "web2" ? session.account : session.wallet}`;
+  // The session and revision the seen offers were quoted under: a switch, or a re-check the buyer asked for, waits for the server.
+  const firstAsked = useRef(`${sessionKey}|${opts.revision ?? ""}`);
 
   useEffect(() => {
     if (!enabled || latest.current.lines.length === 0) {
-      setState({ status: "idle", result: { offers: {}, changes: [] }, error: null, pricedFor: null });
+      setState({ status: "idle", seenRecently: false, result: { offers: {}, changes: [] }, error: null, pricedFor: null });
       return;
     }
     const controller = new AbortController();
-    setState((s) => ({ ...s, status: "checking", error: null }));
     const { lines: current, session: who, fetchOffers: fetcher } = latest.current;
+    const recent = tick === 0 && firstAsked.current === `${sessionKey}|${opts.revision ?? ""}` && current.every((l) => seenRecently(l));
+    setState((s) => ({ ...s, status: "checking", seenRecently: recent, error: null }));
     const asked = revalidationIdentity(current);
     revalidateCart(current, who, fetcher, controller.signal).then(
       (result) => {
         if (controller.signal.aborted) return;
-        setState({ status: result.changes.length === 0 ? "current" : "changed", result, error: null, pricedFor: asked });
+        setState({ status: result.changes.length === 0 ? "current" : "changed", seenRecently: false, result, error: null, pricedFor: asked });
       },
       (error: unknown) => {
         if (controller.signal.aborted) return;
-        setState((s) => ({ ...s, status: "failed", error }));
+        setState((s) => ({ ...s, status: "failed", seenRecently: false, error }));
       },
     );
     return () => controller.abort();
@@ -157,6 +174,7 @@ export function useCartRevalidation(
 
   return {
     status: state.status,
+    seenRecently: state.seenRecently,
     offers: state.result.offers,
     changes: state.result.changes,
     error: state.error,

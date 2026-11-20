@@ -1,7 +1,7 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { useId, useRef } from "react";
 
-import { Button, Spinner } from "@dcl/one-ui";
+import { Button, Spinner, Tag } from "@dcl/one-ui";
 import { GeneralVerified } from "@dcl/one-ui/foundations/icons";
 
 import { useAuth } from "@/data/lib/auth/context";
@@ -104,7 +104,7 @@ function MemberRow({ member }: { member: CommunityMember }) {
             </span>
           ) : null}
         </span>
-        <span className={styles.role}>{roleLabel(member.role)}</span>
+        <Tag variant="role">{roleLabel(member.role)}</Tag>
       </span>
     </li>
   );

@@ -808,8 +808,16 @@ fn row_to_item(r: &sqlx::postgres::PgRow) -> Item {
     }
 }
 
-/// The page, then its total: the rows themselves when the first page came
-/// back short, one key-only count otherwise.
+/// The most rows a filter that names one contract and one item id can
+/// match: `shop.items` keys on (network, contract_address, item_id) and holds
+/// two networks.
+fn key_fixed_rows(f: &ItemFilters) -> Option<i64> {
+    (f.contract_addresses.len() == 1 && f.item_id.is_some()).then_some(2)
+}
+
+/// The page, then its total: a key-fixed filter reads all its rows in one
+/// statement and pages them here; otherwise the rows themselves when the
+/// first page came back short, one key-only count when it is full.
 async fn run_items(
     state: &MarketplaceState,
     f: &ItemFilters,
@@ -818,12 +826,32 @@ async fn run_items(
 ) -> Result<(Vec<sqlx::postgres::PgRow>, i64), ApiError> {
     let now = Utc::now().naive_utc();
     let since = super::trades::mirrored_since(&state.settings, now);
-    let (sql, args) = build_items_query(f, rate, catalog, now, since, false);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
+    let whole = key_fixed_rows(f).map(|rows| ItemFilters {
+        first: Some(rows),
+        skip: None,
+        ..f.clone()
+    });
+    let (sql, args) = build_items_query(
+        whole.as_ref().unwrap_or(f),
+        rate,
+        catalog,
+        now,
+        since,
+        false,
+    );
+    let mut rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
         .fetch_all(&state.pool)
         .await?;
     let (limit, offset) = (clamp_first(f.first, DEFAULT_LIMIT), clamp_skip(f.skip));
-    let total = if offset == 0 && (rows.len() as i64) < limit {
+    let total = if whole.is_some() {
+        let total = rows.len() as i64;
+        rows = rows
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect();
+        total
+    } else if offset == 0 && (rows.len() as i64) < limit {
         rows.len() as i64
     } else {
         let (sql, args) = build_items_query(f, rate, catalog, now, since, true);
@@ -1345,6 +1373,28 @@ mod tests {
         raw.iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    #[test]
+    fn only_one_contract_and_one_item_id_read_without_a_count() {
+        const C: &str = "0x0768847951fddd4e73e670800da26d953a77059b";
+        const D: &str = "0x1111111111111111111111111111111111111111";
+        let rows = |raw: &[(&str, &str)]| key_fixed_rows(&parse_filters(&pairs(raw)).unwrap());
+        assert_eq!(
+            rows(&[("contractAddress", C), ("itemId", "0"), ("first", "1")]),
+            Some(2),
+            "the item page's read: one row per network"
+        );
+        assert_eq!(rows(&[("contractAddress", C), ("first", "1")]), None);
+        assert_eq!(rows(&[("itemId", "0"), ("first", "1")]), None);
+        assert_eq!(
+            rows(&[
+                ("contractAddress", C),
+                ("contractAddress", D),
+                ("itemId", "0")
+            ]),
+            None
+        );
     }
 
     #[test]

@@ -3,3 +3,5 @@ The files in this directory are copied byte for byte from decentraland/sites (ht
 genesis-plaza.webp is src/images/creator-fund/scene-genesis-plaza.jpg from decentraland/sites at revision dd905b2a98d3450d73c8f8c562881ad45ff3c83c, resized to 640px wide and re-encoded as WebP.
 
 Some files show third-party marks: the App Store badge and Apple logo (download-on-the-app-store.svg, ios-logo.svg), the Google Play badge and icon (google_play_cta.svg, google_play_icon.svg), the Epic Games icon (epic_icon.svg). Their use follows the owners' brand guidelines, not the Apache License. The Decentraland logo (dcl-logo.svg) is a Decentraland mark.
+
+notifications/*.svg are the standalone SVG artworks extracted from src/components/Icon/Notifications in decentraland/ui2 at 4d8daf0bad212577d660f2adab71a663984c5100 (Apache License 2.0).

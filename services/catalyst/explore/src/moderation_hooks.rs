@@ -492,6 +492,7 @@ mod tests {
             base: "https://example.org".into(),
             jump_in_site_url: "https://decentraland.org/jump".into(),
             asset_base: "https://example.org/events".into(),
+            public_base: Some("https://example.org".into()),
         };
         pass(
             &pool,

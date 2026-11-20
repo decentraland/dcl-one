@@ -1,6 +1,4 @@
-/* The Referral Rewards tab: the invite link with its steps, and the reward tiers on a track. The
- * design system has no tier card, step list or progress track; they are drawn here from tokens.
- * The 150px tier column and the 4px track follow the source and have no token. */
+/* The tier cards use 150px columns along the reward journey. */
 .root {
   display: flex;
   flex-direction: column;
@@ -225,22 +223,6 @@
   gap: var(--dcl-space-12);
   width: max-content;
   min-width: 100%;
-}
-
-.track {
-  position: relative;
-  overflow: hidden;
-  height: 4px;
-  border-radius: var(--dcl-radius-full);
-  background: var(--dcl-transparencies-white-20);
-}
-
-.trackFill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: var(--journey-progress, 0%);
-  border-radius: var(--dcl-radius-full);
-  background: var(--dcl-gradient-rainbow);
 }
 
 .tiers {
