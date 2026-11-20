@@ -128,7 +128,6 @@ impl Plugin for RestrictedActionsPlugin {
             )
                 .in_set(SceneSets::RestrictedActions),
         );
-        app.add_systems(Update, home::handle_home_scene);
         app.init_resource::<PendingPortableCommands>();
         app.init_resource::<ExplorerUiState>();
         // headless has no InputManagerPlugin; open_explorer_ui still needs the (empty) streams
@@ -139,6 +138,7 @@ impl Plugin for RestrictedActionsPlugin {
         app.add_plugins(smart_wearables::SmartWearablesPlugin);
         app.add_plugins(portables::PortablesPlugin);
         app.add_plugins(world_access::WorldAccessPlugin);
+        app.add_plugins(home::HomePlugin);
         app.add_plugins(map_pins::MapPinsPlugin);
         app.add_plugins(item_purchase::ItemPurchasePlugin);
     }

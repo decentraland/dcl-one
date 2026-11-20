@@ -622,18 +622,16 @@ pub fn home_account(address: &Address) -> String {
 #[derive(Serialize, Deserialize, Resource, Clone)]
 #[serde(default)]
 pub struct AppConfig {
-    /// A home pinned for no account: the one an install kept before homes were per account,
-    /// which the first account to sign in adopts ([`Self::adopt_home`]), and the headless
-    /// server's boot target. --realm / --position are startup params (like the web's ?realm= /
-    /// ?position=) and are deliberately never merged in here — the config file is
-    /// rewritten wholesale on any settings change, which would silently persist a
-    /// one-off CLI target as home.
+    /// A home pinned for no account: the first account to sign in adopts it
+    /// ([`Self::adopt_home`]), and the headless server boots from it. --realm / --position are
+    /// startup params (like the web's ?realm= / ?position=) and are deliberately never merged
+    /// in here — the config file is rewritten wholesale on any settings change, which would
+    /// silently persist a one-off CLI target as home.
     pub home_realm: Option<String>,
     pub home_location: Option<IVec2>,
-    /// The home each account pinned, by [`home_account`]. Written ONLY by SetHomeScene and
-    /// ClearHomeScene; an account with no entry has no home, and starts at the
-    /// base-domain-derived default realm, on 0,0. A pinned home persists (and survives
-    /// switching base domains) even when it happens to equal some domain's default.
+    /// The home each account pinned, by [`home_account`]. An account with no entry has no home,
+    /// and starts at the base-domain-derived default realm, on 0,0. A pinned home persists (and
+    /// survives switching base domains) even when it happens to equal some domain's default.
     pub homes: HashMap<String, PinnedHome>,
     /// The account a home was last read for: the one whose home applies at startup when no
     /// sign-in is stored.

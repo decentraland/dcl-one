@@ -10,7 +10,6 @@ export function minimapHomeTarget(linkRealm: string, parcel: Vec2): { realm: str
   return linkRealm === DEFAULT_REALM ? { realm: DEFAULT_REALM, parcel } : { realm: linkRealm, parcel: { x: 0, y: 0 } }
 }
 
-/** Where Jump back to Genesis City lands: the Genesis City home parcel, else Genesis Plaza. */
 export function genesisStartParcel(home: Home): Vec2 {
   return home.parcel ?? { x: 0, y: 0 }
 }

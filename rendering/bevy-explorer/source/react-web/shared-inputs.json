@@ -6823,7 +6823,7 @@
     },
     {
       "path": "library/explorer-core/features/minimap/minimapHome.ts",
-      "sha256": "a98d1305cb655ebcf22d069d57e302d90b64afd4e0d2a5bb37528a65da77fd89"
+      "sha256": "3d2984c430e2eabda9cafad4e2887914e0a69f87a936703aa4ecffae4439c4ae"
     },
     {
       "path": "library/explorer-core/features/minimap/minimapLayers.ts",

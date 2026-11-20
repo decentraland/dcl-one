@@ -3,12 +3,23 @@ use common::structs::{default_home_realm, home_account, AppConfig, PinnedHome};
 use system_bridge::{HomeScene, SystemApi};
 use wallet::Wallet;
 
+mod diagnostics;
+
+pub(crate) struct HomePlugin;
+
+impl Plugin for HomePlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Update, handle_home_scene)
+            .add_plugins(diagnostics::HomeDebugPanelPlugin);
+    }
+}
+
 /// The home belongs to the signed-in account: read, pinned and cleared for it alone. Before
 /// sign-in it is the startup account's, and nothing is written.
-pub(crate) fn handle_home_scene(
+fn handle_home_scene(
     mut ev: EventReader<SystemApi>,
     mut config: ResMut<AppConfig>,
-    wallet: Option<Res<Wallet>>,
+    wallet: Res<Wallet>,
 ) {
     for ev in ev.read() {
         if !matches!(
@@ -17,10 +28,7 @@ pub(crate) fn handle_home_scene(
         ) {
             continue;
         }
-        let account = wallet
-            .as_ref()
-            .and_then(|wallet| wallet.address())
-            .map(|address| home_account(&address));
+        let account = wallet.address().map(|address| home_account(&address));
         // adopting a home on a read is saved without waking the systems that watch the config
         if apply(ev, config.bypass_change_detection(), account.as_deref()) {
             if !matches!(ev, SystemApi::GetHomeScene(_)) {
