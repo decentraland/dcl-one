@@ -258,7 +258,7 @@ export async function findCreditRecord(account: string, creditId: string, client
  */
 export async function settleSplitHold(
   hold: SplitHold,
-  deps: { account: string | null; reader: ChainReader; client: ShopClient; now?: number },
+  deps: { account: string | null; reader: ChainReader; client: ShopClient; now?: number; sleep?: (ms: number) => Promise<void> },
 ): Promise<SplitSettlement | null> {
   const now = deps.now ?? Date.now();
   if (!hold.creditId) return splitHoldFresh(hold, now) ? null : { kind: "released" };
@@ -266,7 +266,7 @@ export async function settleSplitHold(
   if (!sale) return null;
   const evidence = evidenceOf(deps.reader);
   if (hold.txHash) {
-    const own = await splitExecution(evidence, sale, hold.txHash);
+    const own = await splitExecution(evidence, sale, hold.txHash, { sleep: deps.sleep });
     if (own === "bought") return { kind: "spent", txHash: hold.txHash };
     // Its own bytes reverted, another execution, none yet, or one this page can't read: the node's record decides.
   }
@@ -279,7 +279,7 @@ export async function settleSplitHold(
   }
   if (credit?.status === "SETTLED") {
     if (!credit.txHash) return null;
-    const spent = await splitExecution(evidence, sale, credit.txHash);
+    const spent = await splitExecution(evidence, sale, credit.txHash, { sleep: deps.sleep });
     if (spent === "bought") return { kind: "spent", txHash: credit.txHash };
     if (spent === "other") return { kind: "elsewhere" };
     return null;

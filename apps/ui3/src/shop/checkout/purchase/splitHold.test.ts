@@ -299,7 +299,7 @@ describe("what settles a hold", () => {
     expect(await settleSplitHold(hold({ txHash: HASH }), foreign.deps)).toBeNull();
     const unread = deps(null);
     unread.chain.receipts.set(HASH, "success");
-    expect(await settleSplitHold(hold({ txHash: HASH }), unread.deps)).toBeNull();
+    expect(await settleSplitHold(hold({ txHash: HASH }), { ...unread.deps, sleep: async () => {} })).toBeNull();
   });
 
   it("then the node's record of its credit: SETTLED by this split completes it, by another purchase is spent elsewhere, unread holds", async () => {

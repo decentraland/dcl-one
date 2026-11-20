@@ -719,6 +719,23 @@ describe("a split whose outcome is not known", () => {
     expect(demo.shop.log.filter((r) => r.name === "userPurchases")).toHaveLength(reads);
   });
 
+  it("a node that serves the receipt a moment before the transaction gets one more look: the purchase completes, not left confirming", async () => {
+    const { demo } = setup(undefined, undefined, MANA, undefined, { userPurchases: () => ({ purchases: [], total: 0 }) });
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    const read = demo.chain.transaction!;
+    let first = true;
+    demo.chain.transaction = async (chainId, hash) => {
+      if (first) {
+        first = false;
+        return null;
+      }
+      return read(chainId, hash);
+    };
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(first).toBe(false);
+  });
+
   it("a successful receipt for a transaction that is not this sale's, with nothing in the history, is held confirming with that hash, never complete", async () => {
     const { demo, line } = setup(undefined, undefined, MANA, undefined, { userPurchases: () => ({ purchases: [], total: 0 }) });
     demo.chain.allowances.set(managerKey(), 10n ** 21n);

@@ -4,7 +4,7 @@ import { OFFCHAIN_META_TX_ABI } from '@shop/checkout/chain/abi'
 import { BOOK, ITEM } from '@shop/payment/fixtures'
 import { encodeExecuteMetaTransaction } from '../chain/metatx'
 import { buildStoreBuyCalldata, buildStoreUseCreditsArgs, encodeUseCredits, type SpendableCredit, type StoreItemToBuy } from './encoding'
-import { carriesSale, isSplitSale, splitEnvelope, splitExecution, type SplitSale } from './splitEvidence'
+import { carriesSale, isSplitSale, splitEnvelope, splitExecution, SPLIT_TX_RETRY_MS, type SplitSale } from './splitEvidence'
 
 const BUYER = BOOK.buyer.toLowerCase()
 const MANAGER = '0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5'
@@ -107,8 +107,28 @@ describe('which transaction is an in-world split purchase', () => {
     expect(await splitExecution(evidence(undefined, 'success') as never, sale, '0xabc')).toBe('unknown')
   })
 
+  it('gives a transaction its receipt ran ahead of one more look, a moment later: a mined purchase reads as bought', async () => {
+    const mine = relayed()
+    let reads = 0
+    const evidence = {
+      transaction: async () => (reads++ === 0 ? null : { to: MANAGER, input: mine }),
+      receipt: async () => ({ transactionHash: '0x' + 'e'.repeat(64), status: 'success' as const, blockNumber: 1n })
+    }
+    const waits: number[] = []
+    const sleep = async (ms: number) => void waits.push(ms)
+    expect(await splitExecution(evidence as never, sale, '0xabc', { sleep })).toBe('bought')
+    expect(waits).toEqual([SPLIT_TX_RETRY_MS])
+    // Still missing after that one look: nothing said. With no receipt either, no look at all.
+    waits.length = 0
+    expect(await splitExecution(evidenceOf(null, 'success') as never, sale, '0xabc', { sleep })).toBe('unknown')
+    expect(waits).toHaveLength(1)
+    waits.length = 0
+    expect(await splitExecution(evidenceOf(null, null) as never, sale, '0xabc', { sleep })).toBe('unknown')
+    expect(waits).toHaveLength(0)
+  })
+
   it('says nothing yet without a transaction, without a receipt for its own, or when a read fails', async () => {
-    expect(await splitExecution(evidenceOf(null, 'success') as never, sale, '0xabc')).toBe('unknown')
+    expect(await splitExecution(evidenceOf(null, 'success') as never, sale, '0xabc', { sleep: async () => {} })).toBe('unknown')
     expect(await splitExecution(evidenceOf({ to: MANAGER, input: relayed() }, null) as never, sale, '0xabc')).toBe('unknown')
     const failing = { transaction: async () => Promise.reject(new Error('rpc down')), receipt: async () => null }
     expect(await splitExecution(failing as never, sale, '0xabc')).toBe('unknown')

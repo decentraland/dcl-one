@@ -10,7 +10,7 @@
 
 import { decodeFunctionData, keccak256, type Hex } from 'viem'
 import { CREDITS_MANAGER_ABI, OFFCHAIN_META_TX_ABI } from '@shop/checkout/chain/abi'
-import type { TxReceipt } from '../chain/rpc'
+import { defaultSleep, type TxReceipt } from '../chain/rpc'
 import { idToSalt } from './encoding'
 
 /**
@@ -151,14 +151,30 @@ export function carriesSale(tx: SplitTransaction, sale: SplitSale): boolean {
   return readSale(tx, sale) === 'match'
 }
 
-/** What the transaction at `hash` says about the sale (see SplitOutcome). A read that fails is `unknown`, never `other`. */
-export async function splitExecution(evidence: SplitEvidenceReader, sale: SplitSale, hash: string): Promise<SplitOutcome> {
+/** How long the one second look at a transaction waits, when its receipt is read and the transaction itself isn't yet. */
+export const SPLIT_TX_RETRY_MS = 1_000
+
+/**
+ * What the transaction at `hash` says about the sale (see SplitOutcome). A read that fails is `unknown`, never `other`. A
+ * node that serves a receipt a moment before the transaction it is for gets one more look, `SPLIT_TX_RETRY_MS` later
+ * (`sleep` stands in for the wait in tests), so a mined purchase isn't left confirming for that alone.
+ */
+export async function splitExecution(
+  evidence: SplitEvidenceReader,
+  sale: SplitSale,
+  hash: string,
+  opts: { sleep?: (ms: number) => Promise<void> } = {}
+): Promise<SplitOutcome> {
   let receipt: TxReceipt | null
   let tx: SplitTransaction | null
   try {
     ;[receipt, tx] = await Promise.all([evidence.receipt(sale.chainId, hash), evidence.transaction(sale.chainId, hash)])
   } catch {
     return 'unknown'
+  }
+  if (!tx && receipt) {
+    await (opts.sleep ?? defaultSleep)(SPLIT_TX_RETRY_MS)
+    tx = await evidence.transaction(sale.chainId, hash).catch(() => null)
   }
   if (!tx) return 'unknown'
   const read = readSale(tx, sale)
