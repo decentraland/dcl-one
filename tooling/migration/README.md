@@ -76,20 +76,31 @@ in-app purchases cannot be clawed back by a later Apple refund
   catalyst content import-denylist --file denylist.txt --added-by 0x<operator wallet>
   ```
 
-  Each new id becomes a console row added by that wallet, with its
-  `content`/`denylist.add` audit row; an id already listed is left alone, so
-  a re-run imports nothing. A line that is not an id (not UTF-8, longer than
-  512 bytes, or holding whitespace, such as `id # note`) imports nothing and
-  is named by number: fix the copy and run again. The command prints
-  `lines`, `blank`, `comments`, `duplicates`, `distinct`, `imported` and
-  `already_present`. Verify that `distinct` is the file's count of distinct
-  non-blank, non-`#` lines, that `imported + already_present = distinct`, and
-  that no id of the file is missing from the table (GNU sed; for a file with
-  lone `\r` line endings the command's `distinct` is the count to trust):
+  The old server matched those ids only as entity ids and content hashes,
+  so only lines that are one (an IPFS CIDv0 `Qm...` or CIDv1 `ba...`) are
+  imported. Any other line, a pointer such as `0,0` included, is skipped
+  and counted in `skipped_not_a_hash`, with the first 50 line numbers in
+  `skipped_not_a_hash_lines`. Each new id becomes a console row added by that
+  wallet, with its `content`/`denylist.add` audit row; an id already listed
+  is left alone, so a re-run imports nothing. A line that is not an id (not
+  UTF-8, longer than 512 bytes, or holding whitespace, such as `id # note`)
+  imports nothing and is named by number: fix the copy and run again.
+
+  Imported ids are public, as console entries are: the Registry
+  `GET /denylist` lists every `content.denylist` row, with the importing
+  wallet as its `created_by`.
+
+  The command prints `lines`, `blank`, `comments`, `duplicates`,
+  `skipped_not_a_hash`, `skipped_not_a_hash_lines`, `distinct`, `imported`
+  and `already_present`, where `distinct` counts the file's distinct entity
+  ids and hashes. Verify that `distinct` matches the count below, that
+  `imported + already_present = distinct`, and that none of those ids is
+  missing from the table (GNU sed; for a file with lone `\r` line endings
+  the command's `distinct` is the count to trust):
 
   ```sh
   sed -e 's/^\xEF\xBB\xBF//' -e 's/\r$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' denylist.txt \
-    | grep -v -e '^$' -e '^#' | sort -u > denylist.ids
+    | grep -E '^(Qm[A-Za-z0-9]{44}|ba[A-Za-z0-9]{57})$' | sort -u > denylist.ids
   wc -l < denylist.ids    # = distinct
   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
     -c 'CREATE TEMP TABLE f (id text)' -c '\copy f FROM denylist.ids' \
@@ -98,12 +109,7 @@ in-app purchases cannot be clawed back by a later Apple refund
 
   A running `serve` hides the new ids within a minute (its denylist reload),
   a starting one at boot. The remote lists (`DENYLIST_URLS`) are not
-  imported: the node fetches them itself. Every `content.denylist` row is
-  published on the anonymous Registry `GET /denylist` with `added_by` as its
-  `created_by`, so the file's ids and the importing wallet become public. The
-  node also matches a listed id as a pointer (reads and deploys), where the
-  old server matched entity ids and content hashes only, so check that a
-  pointer-shaped line (`0,0`) is meant to block that parcel.
+  imported: the node fetches them itself.
 - **Same secrets.** Values the upstream encrypted (world env variables) are
   copied as ciphertext; the node must run with the upstream key.
 

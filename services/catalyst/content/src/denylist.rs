@@ -42,7 +42,7 @@ use serde::de::{self, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use sqlx::PgExecutor;
 
 use super::ContentState;
-use super::entity::Entity;
+use super::entity::{Entity, is_ipfs_v1, is_ipfs_v2};
 use crate::http::Outbound;
 use crate::jobs::{Jobs, PeriodicCfg};
 
@@ -137,21 +137,33 @@ pub struct FileList {
     pub lines: u64,
     pub blank: u64,
     pub comments: u64,
-    /// Valid lines naming an id an earlier line already named.
+    /// Hash lines naming a hash an earlier line already named.
     pub duplicates: u64,
-    /// The distinct valid ids, in file order.
+    /// Valid lines that are not an entity id or content hash (a pointer,
+    /// say): never matched by the old server, so not imported.
+    pub skipped_not_a_hash: u64,
+    /// The first [`SKIPPED_LINES_SHOWN`] of those, by line number.
+    pub skipped_not_a_hash_lines: Vec<u64>,
+    /// The distinct entity ids and content hashes, in file order.
     pub ids: Vec<String>,
     /// `line N: reason` for each line [`valid_id`] refuses.
     pub malformed: Vec<String>,
 }
+
+/// How many skipped line numbers [`parse_file`] lists.
+pub const SKIPPED_LINES_SHOWN: usize = 50;
 
 /// Parses the old content server's denylist file
 /// (`<STORAGE_ROOT_FOLDER>/<DENYLIST_FILE_NAME>`, `denylist.txt` by default;
 /// `decentraland/catalyst:src/adapters/denylist/component.ts:36-57`) by its
 /// rules: one id a line (`\n`, `\r\n` or `\r`), trimmed (a byte-order mark
 /// included, as JS `trim` does), a blank line or one starting with `#`
-/// skipped, the rest an id verbatim. Beyond the old server: a line that is
-/// not UTF-8 or that [`valid_id`] refuses is malformed, not guessed at.
+/// skipped, the rest an id verbatim. The old server matched those ids only
+/// as entity ids and content hashes, so a line that is neither (an IPFS
+/// CIDv0 or CIDv1, [`is_ipfs_v1`]/[`is_ipfs_v2`]) is skipped and counted:
+/// listed here it would also deny a pointer. Beyond the old server: a line
+/// that is not UTF-8 or that [`valid_id`] refuses is malformed, not guessed
+/// at.
 pub fn parse_file(bytes: &[u8]) -> FileList {
     let mut out = FileList::default();
     let mut seen = std::collections::HashSet::new();
@@ -185,6 +197,11 @@ pub fn parse_file(bytes: &[u8]) -> FileList {
                 "holds whitespace or a control character"
             };
             out.malformed.push(format!("line {}: {reason}", out.lines));
+        } else if !is_ipfs_v1(id) && !is_ipfs_v2(id) {
+            out.skipped_not_a_hash += 1;
+            if out.skipped_not_a_hash_lines.len() < SKIPPED_LINES_SHOWN {
+                out.skipped_not_a_hash_lines.push(out.lines);
+            }
         } else if seen.insert(id.to_string()) {
             out.ids.push(id.to_string());
         } else {
@@ -201,13 +218,17 @@ pub struct FileImport {
     pub blank: u64,
     pub comments: u64,
     pub duplicates: u64,
-    /// The file's distinct valid ids: `imported + already_present`.
+    pub skipped_not_a_hash: u64,
+    pub skipped_not_a_hash_lines: Vec<u64>,
+    /// The file's distinct entity ids and content hashes:
+    /// `imported + already_present`.
     pub distinct: u64,
     pub imported: u64,
     pub already_present: u64,
 }
 
-/// Lists every id of a legacy denylist file ([`parse_file`]) in one
+/// Lists every entity id and content hash of a legacy denylist file
+/// ([`parse_file`]) in one
 /// transaction, each new row as the console writes it: [`add`] with
 /// `added_by` (the operator's wallet) and its `content`/`denylist.add`
 /// audit row. A listed id is left alone and audits nothing, so a re-run adds
@@ -251,6 +272,8 @@ pub async fn import_file(
         blank: file.blank,
         comments: file.comments,
         duplicates: file.duplicates,
+        skipped_not_a_hash: file.skipped_not_a_hash,
+        skipped_not_a_hash_lines: file.skipped_not_a_hash_lines,
         distinct: file.ids.len() as u64,
         imported,
         already_present,
@@ -826,39 +849,58 @@ mod tests {
         assert_eq!(get(true).await.unwrap().status(), StatusCode::NOT_FOUND);
     }
 
+    /// A CIDv1 entity id or content hash, unique to `tag` and `n`.
+    fn cid(tag: &str, n: char) -> String {
+        let id = format!("bafkrei{tag}{}", n.to_string().repeat(20));
+        assert!(crate::entity::is_ipfs_v2(&id), "{id}");
+        id
+    }
+
     /// The old server's file rules: one id a line under any line ending,
     /// trimmed (a byte-order mark too), blank and `#` lines skipped, an id
-    /// kept verbatim; a repeat counts once and a line no id rule accepts is
-    /// reported by number, not imported.
+    /// kept verbatim; a repeat counts once, a line that is no entity id or
+    /// content hash (a pointer) is skipped and counted by line number, and a
+    /// line no id rule accepts is reported by number, not imported.
     #[test]
     fn a_legacy_file_parses_by_the_old_servers_rules() {
+        let (v1, v0) = (
+            cid("0123456789abcdef0123456789abcdef", 'a'),
+            format!("Qm{}", "b".repeat(44)),
+        );
         let long = "a".repeat(513);
         let mut bytes = format!(
-            "\u{feff}bafyfirst\r\n  QmSecond  \n\n# a comment\n   #indented comment\r0,0\r\nbafyfirst\nbad id\n{long}\n"
+            "\u{feff}{v1}\r\n  {v0}  \n\n# a comment\n   #indented comment\r0,0\r\n{v1}\nbad id\n{long}\nbafyshort\n"
         )
         .into_bytes();
-        bytes.extend_from_slice(b"\xff\xfe\nbafylast");
+        bytes.extend_from_slice(b"\xff\xfe\nQmLast");
         let file = parse_file(&bytes);
         assert_eq!(
             file,
             FileList {
-                lines: 11,
+                lines: 12,
                 blank: 1,
                 comments: 2,
                 duplicates: 1,
-                ids: ["bafyfirst", "QmSecond", "0,0", "bafylast"]
-                    .map(String::from)
-                    .to_vec(),
+                skipped_not_a_hash: 3,
+                skipped_not_a_hash_lines: vec![6, 10, 12],
+                ids: vec![v1, v0],
                 malformed: vec![
                     "line 8: holds whitespace or a control character".to_string(),
                     "line 9: longer than 512 bytes".to_string(),
-                    "line 10: not UTF-8".to_string(),
+                    "line 11: not UTF-8".to_string(),
                 ],
             }
         );
         assert_eq!(parse_file(b""), FileList::default());
         assert_eq!(parse_file(b"\n").blank, 1);
         assert_eq!(parse_file(b"bafy # note").malformed.len(), 1);
+        let pointers = parse_file("0,0\n".repeat(60).as_bytes());
+        assert_eq!(pointers.skipped_not_a_hash, 60);
+        assert_eq!(
+            pointers.skipped_not_a_hash_lines,
+            (1..=50).collect::<Vec<u64>>()
+        );
+        assert!(pointers.ids.is_empty() && pointers.malformed.is_empty());
     }
 
     /// An import lists the file's ids as console rows with their audit
@@ -868,14 +910,10 @@ mod tests {
     async fn a_file_import_is_idempotent_and_refuses_a_malformed_file() {
         require_test_db!(Some(pool) = crate::db::scratch::pool(2).await);
         let tag = uuid::Uuid::new_v4().simple().to_string();
-        let (a, b, c) = (
-            format!("bafy-file-{tag}-a"),
-            format!("bafy-file-{tag}-b"),
-            format!("bafy-file-{tag}-c"),
-        );
+        let (a, b, c) = (cid(&tag, 'a'), cid(&tag, 'b'), cid(&tag, 'c'));
         let actor = "0x00000000000000000000000000000000000000aa";
         assert!(add(&pool, &c, "0xconsole").await.unwrap());
-        let body = format!("# exported\n{a}\n\n{b}\n{a}\n{c}\n");
+        let body = format!("# exported\n{a}\n\n{b}\n{a}\n0,0\n{c}\n");
         let audited = |pool: sqlx::PgPool, prefix: String| async move {
             let n: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM ops.admin_audit WHERE domain = 'content' \
@@ -887,16 +925,18 @@ mod tests {
             .unwrap();
             n
         };
-        let prefix = format!("bafy-file-{tag}-");
+        let prefix = format!("bafkrei{tag}");
 
         let first = import_file(&pool, body.as_bytes(), actor).await.unwrap();
         assert_eq!(
             first,
             FileImport {
-                lines: 6,
+                lines: 7,
                 blank: 1,
                 comments: 1,
                 duplicates: 1,
+                skipped_not_a_hash: 1,
+                skipped_not_a_hash_lines: vec![6],
                 distinct: 3,
                 imported: 2,
                 already_present: 1,
@@ -918,12 +958,20 @@ mod tests {
             ]
         );
         assert_eq!(audited(pool.clone(), prefix.clone()).await, 2);
+        let pointer: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM content.denylist WHERE id = '0,0' AND added_by = $1",
+        )
+        .bind(actor)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(pointer, 0, "a pointer line is not imported");
 
         let again = import_file(&pool, body.as_bytes(), actor).await.unwrap();
         assert_eq!((again.imported, again.already_present), (0, 3));
         assert_eq!(audited(pool.clone(), prefix.clone()).await, 2);
 
-        let d = format!("bafy-file-{tag}-d");
+        let d = cid(&tag, 'd');
         let err = import_file(&pool, format!("{d}\nnot valid\n").as_bytes(), actor)
             .await
             .unwrap_err();

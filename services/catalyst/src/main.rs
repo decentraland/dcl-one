@@ -257,13 +257,14 @@ enum BuilderCommand {
 
 #[derive(Subcommand)]
 enum ContentCommand {
-    /// List every id of the old content server's denylist file
-    /// (`<STORAGE_ROOT_FOLDER>/<DENYLIST_FILE_NAME>` on that server,
-    /// `denylist.txt` by default) in `content.denylist`, as console rows
-    /// added by `--added-by` (`content::denylist::import_file`). One id a
-    /// line; blank lines and lines starting with `#` are skipped. A listed
-    /// id is left alone, so a re-run adds nothing. A malformed line imports
-    /// nothing and names itself. Prints the counts as JSON; a running
+    /// List every entity id and content hash of the old content server's
+    /// denylist file (`<STORAGE_ROOT_FOLDER>/<DENYLIST_FILE_NAME>` on that
+    /// server, `denylist.txt` by default) in `content.denylist`, as console
+    /// rows added by `--added-by` (`content::denylist::import_file`). One id
+    /// a line; blank lines and lines starting with `#` are skipped, and so
+    /// are lines that are no entity id or hash (pointers), counted with
+    /// their line numbers. A listed id is left alone, so a re-run adds
+    /// nothing. A malformed line imports nothing and names itself. Prints the counts as JSON; a running
     /// `serve` hides the new ids within a minute. Not behind
     /// OPS_WRITES_ENABLED: an import is operator data.
     ImportDenylist {
