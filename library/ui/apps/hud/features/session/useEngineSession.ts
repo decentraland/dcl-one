@@ -2916,9 +2916,13 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // Genesis City advertises its map and a world goes by its name; any other realm (a scene
   // preview, a realm of its own, one not reported yet) is neither.
   const hereRef = useRef<GotoHere>({ kind: 'other', realm: null, parcel: mapParcel })
-  // Right after a travel the realm is the one travelled to, whatever the last report says.
-  const world = worldOfRealm(arrivedRealm ?? realmName ?? '')
-  const genesis = arrivedRealm != null ? arrivedRealm === DEFAULT_REALM : isGenesisSatelliteView(satelliteView)
+  // Right after a travel the realm is the one travelled to, whatever the last report says, when
+  // its address tells its kind: Genesis City's own, or a world's. Any other address says nothing
+  // (Genesis City is reached by more than one), so the reports decide.
+  const arrivedWorld = worldOfRealm(arrivedRealm ?? '')
+  const arrived = arrivedRealm === DEFAULT_REALM ? 'genesis' : arrivedWorld != null ? 'world' : null
+  const world = arrived === 'world' ? arrivedWorld : arrived == null ? worldOfRealm(realmName ?? '') : null
+  const genesis = arrived != null ? arrived === 'genesis' : isGenesisSatelliteView(satelliteView)
   hereRef.current = { kind: genesis ? 'genesis' : world != null ? 'world' : 'other', realm: world, parcel: mapParcel }
   const goto = useCallback(
     async (target: GotoTarget, local: boolean) => {
@@ -2929,13 +2933,16 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       }
       let destination = target
       if (target.random || target.crowd) {
+        const signOut = signOuts.current
         try {
           destination = { ...target, random: false, crowd: false, parcel: target.random ? randomParcel() : await fetchCrowd() }
         } catch (e) {
           console.warn('[chat] /goto crowd', e)
-          pushSystemMessage('🔴 Error running command.')
+          if (signOuts.current === signOut) pushSystemMessage('🔴 Error running command.')
           return
         }
+        // signed out while the busiest scene was read: the command is that session's
+        if (signOuts.current !== signOut) return
       }
       const plan = resolveGoto(destination, local, hereRef.current, DEFAULT_REALM)
       if (plan.kind === 'reply') {

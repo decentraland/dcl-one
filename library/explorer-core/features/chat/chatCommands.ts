@@ -8,7 +8,7 @@
 // Any other `/word args` is passed through to the engine console (`consoleCommand`), except the
 // HUD_HIDDEN_COMMANDS below; the engine itself only registers dev/cheat commands in preview mode.
 
-import { type GotoTarget, WORLD_PARCEL_LIMIT, isGenesisParcel, isWorldName, parseGotoTarget, worldName } from '../lobby/goto'
+import { type GotoTarget, WORLD_PARCEL_LIMIT, isGenesisParcel, isWorldName, parseGotoTarget, worldName, worldOfRealm } from '../lobby/goto'
 
 export type ChatCommand =
   /** Not a command (no leading `/`) — send as a normal chat message. */
@@ -206,7 +206,8 @@ export function resolveGoto(target: GotoTarget, local: boolean, here: GotoHere, 
   // a parcel of Genesis City or of a world, within its bounds; a realm given by address has its own
   if (target.parcel != null && !url && !(toGenesis ? inGenesis(target.parcel) : inWorld(target.parcel))) return outside(target.parcel)
   const realm = toGenesis ? genesisRealm : url ? name : worldName(name)
-  const there = toGenesis ? here.kind === 'genesis' : here.kind === 'world' && here.realm === realm.toLowerCase()
+  // a world is the same one by its name or by its address on a worlds server
+  const there = toGenesis ? here.kind === 'genesis' : here.kind === 'world' && here.realm === worldOfRealm(realm)
   if (there) {
     if (target.parcel == null && spawnPoint == null) return { kind: 'reply', message: `🟡 You are already in ${name}!` }
     const parcel = target.parcel ?? here.parcel

@@ -1,6 +1,6 @@
 // Rich chat text: a raw message as URLs, worlds, locations, @mentions and bold/italic tags, as
 // tokens <MessageText> renders (library/ui/apps/hud/features/chat/chatText.tsx). Pure, so it is unit-testable.
-import { MENTION_PATTERN, mentionName, mentionsName } from '../../engine/mention'
+import { MENTION_PATTERN, STYLE_TAG_PATTERN, mentionName, mentionsName } from '../../engine/mention'
 import type { NearbyMember } from '../../engine/protocol'
 
 export type Token =
@@ -13,15 +13,14 @@ export type Token =
   | { type: 'tag'; value: string; style: 'b' | 'i'; close: boolean }
 
 // Tag → URL → world name → location (x,y) → @mention, scanned in one pass to keep original order.
-// The tags are lowercase b and i, opening or closing, with up to 32 characters after whitespace
-// before the `>` (none of them `<`, so a tag never takes in the text up to a later tag's end):
-// the two the Unity client's chat also styles, so a message reads alike in both. Any other tag is
-// text. Worlds are ENS
-// names (e.g. boedo.dcl.eth) → clickable "jump to realm". Coords require both signs/commas so we
-// don't linkify every number; mentions use the shared MENTION_PATTERN.
+// The tags are the two the Unity client's chat also styles, so a message reads alike in both; any
+// other tag is text. Worlds are ENS names (e.g. boedo.dcl.eth) → clickable "jump to realm". Coords
+// require both signs/commas so we don't linkify every number; mentions use the shared
+// MENTION_PATTERN. The scan is case-sensitive, for the tags and the mentions' own boundaries: the
+// URL scheme and the world suffix spell out either case.
 const TOKEN_RE = new RegExp(
-  String.raw`(?<tag><(?<close>\/)?(?<style>[bi])(?:\s[^<>]{0,32})?>)|(?<url>https?:\/\/[^\s<>"']+)|(?<world>[a-z0-9][\w-]*\.(?:dcl\.)?eth\b)|(?<loc>-?\d{1,3}\s*,\s*-?\d{1,3})|` + MENTION_PATTERN,
-  'gi'
+  String.raw`(?<tag>${STYLE_TAG_PATTERN})|(?<url>[hH][tT][tT][pP][sS]?:\/\/[^\s<>"']+)|(?<world>[A-Za-z0-9][\w-]*\.(?:[dD][cC][lL]\.)?[eE][tT][hH]\b)|(?<loc>-?\d{1,3}\s*,\s*-?\d{1,3})|` + MENTION_PATTERN,
+  'g'
 )
 
 export function parseMessage(text: string): Token[] {
@@ -30,8 +29,6 @@ export function parseMessage(text: string): Token[] {
   for (const m of text.matchAll(TOKEN_RE)) {
     const i = m.index ?? 0
     const g = m.groups ?? {}
-    // the scan ignores case, the tags don't: <B> stays in the text around it
-    if (g.tag && g.style !== 'b' && g.style !== 'i') continue
     if (i > last) tokens.push({ type: 'text', value: text.slice(last, i) })
     if (g.tag) {
       tokens.push({ type: 'tag', value: g.tag, style: g.style as 'b' | 'i', close: g.close != null })

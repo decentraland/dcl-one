@@ -46,6 +46,13 @@ describe('parseMessage', () => {
     ])
   })
 
+  it('reads a URL scheme and a world suffix in either case', () => {
+    expect(parseMessage('HTTPS://Dcl.org/X')).toEqual([{ type: 'url', value: 'HTTPS://Dcl.org/X' }])
+    expect(parseMessage('Http://dcl.org')).toEqual([{ type: 'url', value: 'Http://dcl.org' }])
+    expect(parseMessage('Boedo.DCL.ETH')).toEqual([{ type: 'world', value: 'Boedo.DCL.ETH' }])
+    expect(parseMessage('Name.Eth')).toEqual([{ type: 'world', value: 'Name.Eth' }])
+  })
+
   it('handles a message mixing all three', () => {
     const t = parseMessage('@Alice come to 5,5 see https://x.io')
     expect(t.map((x) => x.type)).toEqual(['mention', 'text', 'location', 'text', 'url'])
@@ -92,8 +99,11 @@ describe('bold and italic tags', () => {
     // a tag ends a word as a space does: a mention may stand right inside one
     expect(parseMessage('<b>@Alice</b>')).toEqual([tag('<b>', 'b'), { type: 'mention', value: '@Alice', name: 'Alice', tag: undefined }, tag('</b>', 'b', true)])
     expect(parseMessage('<i>hi @Bob#12ab</i>').map((t) => t.type)).toEqual(['tag', 'text', 'mention', 'tag'])
-    // any other tag is text, and no boundary
+    // a tag with more in its brackets is one too
+    expect(parseMessage('<b x>@Alice').map((t) => t.type)).toEqual(['tag', 'mention'])
+    // any other tag is text, and no boundary: an uppercase one among them
     expect(parseMessage('<u>@Alice</u>')).toEqual([{ type: 'text', value: '<u>@Alice</u>' }])
+    expect(parseMessage('<B>@Alice</B>')).toEqual([{ type: 'text', value: '<B>@Alice</B>' }])
     expect(parseMessage('mail@Alice')).toEqual([{ type: 'text', value: 'mail@Alice' }])
     expect(parseMessage('<b>https://dcl.org/x</b>')).toEqual([tag('<b>', 'b'), { type: 'url', value: 'https://dcl.org/x' }, tag('</b>', 'b', true)])
     expect(parseMessage('<i>10,20</i>')[1]).toEqual({ type: 'location', value: '10,20', x: 10, y: 20 })
@@ -117,8 +127,15 @@ describe('buildNameIndex + mentionsMe', () => {
   it('a claimed name is mentioned by name alone', () => {
     const me = { address: '0x00000000000000000000000000000000000000aa', name: 'Me', hasClaimedName: true }
     expect(mentionsMe('hey @Me!', me)).toBe(true)
-    expect(mentionsMe('<b>@Me</b>', me)).toBe(true)
-    expect(mentionsMe('<u>@Me</u>', me)).toBe(false)
+    // what renders as a mention is what counts as one
+    for (const text of ['<b>@Me</b>', '<b x>@Me', 'hi<i>@Me</i >there']) {
+      expect(mentionsMe(text, me)).toBe(true)
+      expect(parseMessage(text).some((t) => t.type === 'mention')).toBe(true)
+    }
+    for (const text of ['<u>@Me</u>', '<B>@Me</B>', '<I>@Me']) {
+      expect(mentionsMe(text, me)).toBe(false)
+      expect(parseMessage(text).some((t) => t.type === 'mention')).toBe(false)
+    }
     expect(mentionsMe('hey @Alice', me)).toBe(false)
   })
 

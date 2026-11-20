@@ -196,6 +196,9 @@ describe('resolveGoto', () => {
     expect(resolve('genesis', inGenesis)).toEqual({ kind: 'reply', message: '🟡 You are already in genesis!' })
     expect(resolve('boedo/3,4', inWorld)).toMatchObject({ kind: 'teleport', x: 3, y: 4 })
     expect(resolve('boedo/roof', inWorld)).toEqual({ kind: 'teleport', x: 1, y: 2, spawnPoint: 'roof', reply: '🟢 You teleported to 1,2.' })
+    // by its address on a worlds server too
+    expect(resolve('https://worlds.example/world/Boedo.dcl.eth', inWorld)).toEqual({ kind: 'reply', message: '🟡 You are already in https://worlds.example/world/Boedo.dcl.eth!' })
+    expect(resolve('https://worlds.example/world/mana.dcl.eth', inWorld).kind).toBe('travel')
     // Genesis City is no world, whatever a world is called
     expect(resolve('boedo', inGenesis).kind).toBe('travel')
   })

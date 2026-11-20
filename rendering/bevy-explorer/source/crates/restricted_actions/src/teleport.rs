@@ -1,4 +1,8 @@
-use bevy::{math::Vec3Swizzles, prelude::*};
+use bevy::{
+    ecs::{schedule::ScheduleConfigs, system::ScheduleSystem},
+    math::Vec3Swizzles,
+    prelude::*,
+};
 use bevy_console::ConsoleCommand;
 use common::{
     rpc::{RpcCall, RpcCallEvent, RpcResultSender},
@@ -28,10 +32,25 @@ type TeleportAction = (
     bool,
 );
 
+/// The longest spawn point name a teleport may ask for, in bytes.
+const MAX_SPAWN_POINT_NAME: usize = 128;
+
 /// The last landing that looked for a spawn point by name, and whether its scene had one of
 /// that name: the debug panel's Teleport section shows it.
 #[derive(Resource, Default)]
 pub(crate) struct LastNamedLanding(Option<(String, bool)>);
+
+/// The teleport and the landing, in the order they need. A landing is placed before a new
+/// teleport moves the player: the move is immediate and the new landing's `OutOfWorld` is
+/// deferred, so the other order would place the old landing, by its spawn point, at the new
+/// position.
+pub(crate) fn landing_systems() -> ScheduleConfigs<ScheduleSystem> {
+    (
+        teleport_player.after(super::change_realm),
+        handle_out_of_world.before(teleport_player),
+    )
+        .into_configs()
+}
 
 pub fn teleport_player(
     mut commands: Commands,
@@ -97,6 +116,17 @@ pub fn teleport_player(
             response,
         } = request
         {
+            // whoever asks (the HUD's bridge scene, the console): the name is kept on the
+            // landing and logged, so it is bounded here, where every such request arrives
+            if spawn_point
+                .as_ref()
+                .is_some_and(|name| name.len() > MAX_SPAWN_POINT_NAME)
+            {
+                response.send(Err(format!(
+                    "spawn point name is longer than {MAX_SPAWN_POINT_NAME} bytes"
+                )));
+                continue;
+            }
             actions.push((
                 (*to, realm.clone(), response.clone(), false),
                 spawn_point.clone(),
@@ -758,5 +788,100 @@ mod tests {
                 spawn_point: Some("door".to_owned()),
             }
         );
+    }
+
+    #[test]
+    fn a_spawn_point_name_too_long_is_refused() {
+        let (mut app, player) = teleports();
+        let (response, mut answer) = RpcResultSender::channel();
+        app.world_mut().send_event(SystemApi::Teleport {
+            to: Some(IVec2::new(1, 1)),
+            realm: None,
+            spawn_point: Some("x".repeat(MAX_SPAWN_POINT_NAME + 1)),
+            response,
+        });
+        app.update();
+
+        assert!(matches!(answer.try_recv(), Ok(Err(reason)) if reason.contains("128")));
+        assert_eq!(landing_spawn_point(&app, player), None);
+        // the longest one allowed goes through
+        hud_teleport(
+            &mut app,
+            (1, 1),
+            None,
+            Some(&"x".repeat(MAX_SPAWN_POINT_NAME)),
+        );
+        assert!(landing_spawn_point(&app, player).is_some());
+    }
+
+    // The schedule the plugin runs: a landing whose scene is ready in the frame a new teleport
+    // arrives is placed first, by its own spawn point, and the teleport then moves the player.
+    #[test]
+    fn a_landing_is_placed_before_a_teleport_arriving_in_the_same_frame() {
+        let (mut landed, _) = landing(Some("roof"), Some((None, two_spawn_points())));
+        // the scene also covers the parcel the teleport goes to: placed after the move, the old
+        // landing would find its spawn point there
+        let mut pointers = landed.remove_resource::<ScenePointers>().unwrap();
+        pointers.insert(
+            IVec2::new(1, 1),
+            PointerResult::Exists {
+                hash: "scene".to_owned(),
+                urn: None,
+            },
+        );
+        let live_scenes = landed.remove_resource::<LiveScenes>().unwrap();
+        let wallet = landed.remove_resource::<Wallet>().unwrap();
+        let scene = live_scenes.scenes["scene"];
+        let context = landed
+            .entity_mut(scene)
+            .take::<RendererSceneContext>()
+            .unwrap();
+
+        let mut app = App::new();
+        app.add_event::<RpcCallEvent>()
+            .add_event::<SystemApi>()
+            .add_event::<PermissionUsed>()
+            .add_event::<ChangeRealmEvent>()
+            .add_event::<ReturnedToWorld>()
+            .init_resource::<PermissionManager>()
+            .init_resource::<AppConfig>()
+            .init_resource::<CurrentRealm>()
+            .init_resource::<PortableScenes>()
+            .init_resource::<LastNamedLanding>()
+            .insert_resource(RealmInitialLocation::None)
+            .insert_resource(wallet)
+            .add_systems(Update, landing_systems());
+        let scene = app
+            .world_mut()
+            .spawn((SceneHash("scene".to_owned()), context))
+            .id();
+        let mut live_scenes = LiveScenes::default();
+        live_scenes.scenes.insert("scene".to_owned(), scene);
+        app.insert_resource(live_scenes).insert_resource(pointers);
+        let player = app
+            .world_mut()
+            .spawn((
+                PrimaryUser::default(),
+                OutOfWorld {
+                    spawn_point: Some("roof".to_owned()),
+                },
+                Transform::from_xyz(8.0, 0.0, -8.0),
+                GlobalTransform::default(),
+                AvatarDynamicState::default(),
+            ))
+            .id();
+        app.insert_resource(PrimaryPlayerRes(player));
+
+        hud_teleport(&mut app, (1, 1), None, None);
+
+        // the old landing found its spawn point, and is over
+        assert_eq!(
+            app.world().resource::<LastNamedLanding>().0,
+            Some(("roof".to_owned(), true))
+        );
+        // the new one names none, and starts from the parcel it asked for
+        assert_eq!(landing_spawn_point(&app, player), Some(None));
+        let position = app.world().entity(player).get::<Transform>().unwrap();
+        assert_eq!(position.translation.xz(), Vec2::new(24.0, -24.0));
     }
 }

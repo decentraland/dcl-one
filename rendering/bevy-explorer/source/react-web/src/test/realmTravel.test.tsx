@@ -161,6 +161,39 @@ describe('in-world realm change', () => {
     expect(systemLines(h).at(-1)).toBe('🟡 You are already in mana!')
   })
 
+  it('a travel to an address that tells no kind leaves the realm to the engine to report', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    inGenesis(h)
+    // Genesis City by another address: its report already came, and no other follows
+    act(() => h.session().chat.send('/goto https://other.example/main'))
+    act(() => h.driver.emit({ kind: 'travelResult', travelId: 2, realm: 'https://other.example/main', ok: true }))
+    act(() => h.session().chat.send('/goto genesis'))
+    expect(systemLines(h).at(-1)).toBe('🟡 You are already in genesis!')
+    act(() => h.session().chat.send('/goto 200,200'))
+    expect(systemLines(h).at(-1)).toBe('🔴 Error: Parcel (200, 200) is outside of the bounds.')
+  })
+
+  it('a /goto crowd answered after a sign-out neither travels nor posts', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    let answer: (response: Response) => void = () => undefined
+    const fetched = vi.spyOn(globalThis, 'fetch').mockReturnValue(new Promise<Response>((resolve) => (answer = resolve)))
+    try {
+      act(() => h.session().chat.send('/goto crowd'))
+      const before = systemLines(h)
+      act(() => h.session().logout())
+      await act(async () => {
+        answer(new Response(JSON.stringify([{ baseCoords: [5, 6] }])))
+        await Promise.resolve()
+      })
+      expect(h.driver.sentOf('teleport')).toEqual([])
+      expect(systemLines(h)).toEqual(before)
+    } finally {
+      fetched.mockRestore()
+    }
+  })
+
   it('a /goto that a later travel replaced says it was canceled', async () => {
     const h = renderSession()
     await enterAsGuest(h)

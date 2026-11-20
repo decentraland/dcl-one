@@ -12,14 +12,21 @@ export function mentionName(name: string, address: string, claimed?: boolean): s
   return (claimed ?? looksClaimed(name)) || address.length < 4 ? base : `${base}#${address.slice(-4)}`
 }
 
-// A bare bold or italic tag of a chat message ends a word as a space does, so a mention may
-// stand right inside one: <b>@Name</b>.
-const STYLE_TAG = String.raw`<\/?[bi]>`
+/** A bold or italic tag of a chat message: lowercase b or i, opening or closing, with up to 32
+ *  characters after whitespace before the `>`, none of them `<` (so a tag never takes in the text
+ *  up to a later tag's end). Its groups are `close` and `style`; the pattern is case-sensitive. The
+ *  chat's parser and the mention pattern below share it, and the engine's bubbles read the same
+ *  (`style_tag_len` in `nametag/bubble.rs`). */
+export const STYLE_TAG_PATTERN = String.raw`<(?<close>\/)?(?<style>[bi])(?:\s[^<>]{0,32})?>`
+// the same, without its named groups: it stands twice in the mention pattern
+const STYLE_TAG = String.raw`<\/?[bi](?:\s[^<>]{0,32})?>`
+
+// A tag ends a word as a space does, so a mention may stand right inside one: <b>@Name</b>.
 
 /** A written @mention: on its own word, up to 15 letters/digits, an optional 4-char #tag, then a
  *  space, end or punctuation; a bold or italic tag on either side counts as a space. Its
- *  `mention` group is the name after "@". The chat's link parser embeds this same pattern, so what
- *  renders as a mention is exactly what counts as one. */
+ *  `mention` group is the name after "@". The chat's link parser embeds this same pattern, with no
+ *  flag that changes its reading, so what renders as a mention is exactly what counts as one. */
 export const MENTION_PATTERN = String.raw`(?<=^|\s|${STYLE_TAG})@(?<mention>[A-Za-z0-9]{1,15}(?:#[A-Za-z0-9]{4})?)(?=\s|!|\?|\.|,|$|${STYLE_TAG})`
 const MENTION_RE = new RegExp(MENTION_PATTERN, 'g')
 

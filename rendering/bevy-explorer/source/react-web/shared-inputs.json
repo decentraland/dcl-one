@@ -6350,7 +6350,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/realmTravel.test.tsx",
-      "sha256": "6cced39bb3cf23c7df640b4bcdb0b37188f68d9000e116b016123d431a207688"
+      "sha256": "0ba0fc7ab592024b78d61008731387b72bfcb6973131ba5de54d25a63e2fe917"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/recoverSigner.ts",
@@ -6556,7 +6556,7 @@
     },
     {
       "path": "library/explorer-core/engine/mention.ts",
-      "sha256": "9d6aa0e0983eab8d586f2ac78e5d52c82151b41c8c687d1a9735a9d7b282a0d5"
+      "sha256": "7d7da8929f792573686d98bd8e0bd264642f45ac6196354f021b0541d6bae936"
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
@@ -6644,15 +6644,15 @@
     },
     {
       "path": "library/explorer-core/features/chat/chatCommands.test.ts",
-      "sha256": "211aa646515e4c835348c55fd1d489ed62b409e8077baad1f1fd93fdebb3e5ff"
+      "sha256": "8f3274ab031f3b2a528ba048834e5651b96a91e533b83dfb9b2d497d589ef508"
     },
     {
       "path": "library/explorer-core/features/chat/chatCommands.ts",
-      "sha256": "009cf34358e75195c4665076738979e7d72a4f432a723402beef44d89f772f31"
+      "sha256": "12fbe671ec5b55b1c023efced0f2b6a3b54e20553c1c8528dc486e53c7a07823"
     },
     {
       "path": "library/explorer-core/features/chat/chatParse.ts",
-      "sha256": "a3dc1fd75b8450838066a3dcd978561ee06011826b0f58896cc839287e8037fe"
+      "sha256": "60aa7162caa802a768e50fd12d973f6b45e65c1bcb703c86f43dc1bfaf83d9c7"
     },
     {
       "path": "library/explorer-core/features/chat/lineIds.test.ts",
@@ -10140,7 +10140,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "f7b2a5f69a9938849589b2d7abb63de2051fe7d52cd3f7c911e4f0dcf0a8092c"
+      "sha256": "5a2e50c628637262dd9243e0e65d142c49d4b261c86d264ab77bb8b7f535da61"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10440,7 +10440,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/chatText.test.ts",
-      "sha256": "629276ad93296997c4363ed8162ccd845b90a6661b1ed67e4d8db494ee66093b"
+      "sha256": "74b0d005caeba47fe4b101ed82f602153fd2f0624bdb1b89c438e3d5e53e68d5"
     },
     {
       "path": "library/ui/apps/hud/test/colorPicker.test.tsx",

@@ -456,9 +456,6 @@ pub fn op_set_lobby_stage(state: Rc<RefCell<impl State>>, stage: Option<LobbySta
         .unwrap();
 }
 
-/// The longest spawn point name a teleport may ask for, in bytes.
-const MAX_SPAWN_POINT_NAME: usize = 128;
-
 pub async fn op_teleport(
     state: Rc<RefCell<impl State>>,
     position_x: Option<i32>,
@@ -466,12 +463,6 @@ pub async fn op_teleport(
     realm: Option<String>,
     spawn_point: Option<String>,
 ) -> Result<(), anyhow::Error> {
-    if spawn_point
-        .as_ref()
-        .is_some_and(|name| name.len() > MAX_SPAWN_POINT_NAME)
-    {
-        anyhow::bail!("spawn point name is longer than {MAX_SPAWN_POINT_NAME} bytes");
-    }
     let (sx, rx) = RpcResultSender::channel();
 
     state
