@@ -33,8 +33,10 @@ use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
-/// The least a request reserves, covering its fields and per-request
-/// overhead, so the budget also bounds how many deploys run at once.
+/// The fixed share of a request: its fields and per-request overhead. The
+/// spool budget holds it for every admitted request from admission, so that
+/// budget also bounds how many deploys run at once; the memory budget holds
+/// nothing until the form is read, then this share and the real sizes.
 pub const MIN_UPLOAD_RESERVATION_BYTES: u64 = 16 * 1024 * 1024;
 
 pub const BUDGET_EXHAUSTED_MESSAGE: &str =
@@ -67,6 +69,7 @@ impl UploadBudget {
 
     /// Reserves `bytes` (at least [`MIN_UPLOAD_RESERVATION_BYTES`]); `None`
     /// when they do not fit beside what is already reserved.
+    #[cfg(test)]
     pub fn try_reserve(&self, bytes: u64) -> Option<Reservation<'_>> {
         let bytes = bytes.max(MIN_UPLOAD_RESERVATION_BYTES);
         let mut reserved = self.reserved.lock();
@@ -132,6 +135,7 @@ impl Reservation<'_> {
     }
 }
 
+#[cfg(test)]
 impl UploadBudget {
     /// The bytes it admits at once.
     pub fn capacity(&self) -> u64 {

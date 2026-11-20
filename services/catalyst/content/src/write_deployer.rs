@@ -38,7 +38,7 @@ use crate::auth::verify::verify_auth_chain_async;
 use crate::auth::{AuthChain, AuthError, Eip1654Validator, hash_bytes, hash_bytes_v1};
 use crate::land_authz::LandAuthzState;
 use crate::storage::Storage;
-use crate::storage::upload_spool::SpooledFile;
+use crate::storage::upload_spool::{SpooledFile, names_bytes};
 use crate::validator::types::UploadedFile;
 
 /// The local write decision, separate from its unchanged wire message.
@@ -150,14 +150,14 @@ pub(crate) struct StoredEntity {
 }
 
 struct HashedUpload {
-    v0: String,
+    v0: Option<String>,
     v1: String,
     file: UploadedFile,
 }
 
 impl HashedUpload {
     fn names(&self, hash: &str) -> bool {
-        self.v1 == hash || self.v0 == hash
+        names_bytes(&self.v1, self.v0.as_deref(), hash)
     }
 }
 
@@ -191,7 +191,7 @@ async fn hash_uploads(files: Vec<Upload>) -> Result<Vec<HashedUpload>, String> {
             .into_iter()
             .map(|upload| match upload {
                 Upload::Bytes(bytes) => HashedUpload {
-                    v0: hash_bytes(&bytes),
+                    v0: Some(hash_bytes(&bytes)),
                     v1: hash_bytes_v1(&bytes),
                     file: UploadedFile::Bytes(bytes),
                 },
@@ -209,24 +209,17 @@ async fn hash_uploads(files: Vec<Upload>) -> Result<Vec<HashedUpload>, String> {
     .await
 }
 
-/// The entity file among `uploads` (the one hashing to `entity_id`),
-/// parsed, with its pointers lowercased and the request's id. A spooled one
-/// is read here; a failed read is this node's 503.
-async fn entity_of(
-    uploads: &[HashedUpload],
-    entity_id: &str,
-) -> Result<(Entity, Bytes), DeployFailure> {
-    let entity_file = uploads
+/// The entity file among `uploads` (the first one hashing to `entity_id`),
+/// parsed, with its pointers lowercased and the request's id. It is in
+/// memory: `POST /entities` reads the part hashing to the id onto the heap
+/// under its memory budget, and a partial upload publishes its entity bytes.
+fn entity_of(uploads: &[HashedUpload], entity_id: &str) -> Result<(Entity, Bytes), DeployFailure> {
+    let entity_bytes = uploads
         .iter()
         .find(|upload| upload.names(entity_id))
-        .map(|upload| &upload.file)
+        .and_then(|upload| upload.file.bytes())
+        .cloned()
         .ok_or_else(|| vec!["Failed to find the entity file.".to_string()])?;
-    let entity_bytes = entity_file.read().await.map_err(|e| {
-        tracing::error!(entity_id, error = %e, "a spooled entity file could not be read");
-        DeployFailure::Unavailable(vec![
-            super::create_entity::SPOOL_UNAVAILABLE_MESSAGE.to_string(),
-        ])
-    })?;
 
     // Upstream answers the bare sentence; the parser's text is logged.
     let mut entity: Entity = serde_json::from_slice(&entity_bytes).map_err(|e| {
@@ -255,7 +248,12 @@ fn deployment_files(
 ) -> HashMap<String, UploadedFile> {
     let by_hash: HashMap<&str, &HashedUpload> = uploads
         .iter()
-        .flat_map(|upload| [(upload.v0.as_str(), upload), (upload.v1.as_str(), upload)])
+        .flat_map(|upload| {
+            let v0 = upload.v0.as_deref();
+            v0.into_iter()
+                .chain([upload.v1.as_str()])
+                .map(move |hash| (hash, upload))
+        })
         .collect();
     let mut files = HashMap::from([(entity.id.clone(), entity_bytes.clone().into())]);
     for content in &entity.content {
@@ -1167,23 +1165,13 @@ pub(crate) fn newer_entity_message(entity: &Entity) -> String {
 pub(crate) const REQUEST_TTL_FORWARDS_MS: i64 = 15 * 60 * 1000;
 
 impl WriteDeployer {
-    /// `context` is `"LOCAL"` for a deploy against this node's write API (a local scene then
-    /// gets its `local_entities` provenance row); anything else is a mirrored write.
+    /// `files` are bytes or spooled parts ([`Upload`]). `context` is
+    /// `"LOCAL"` for a deploy against this node's write API (a local scene
+    /// then gets its `local_entities` provenance row); anything else is a
+    /// mirrored write.
     pub async fn deploy_entity(
         &self,
-        files: Vec<Bytes>,
-        entity_id: &str,
-        auth_chain: Value,
-        context: &str,
-    ) -> Result<i64, DeployFailure> {
-        self.deploy_entity_anchored(files, entity_id, auth_chain, context, None)
-            .await
-    }
-
-    /// [`Self::deploy_entity`] over uploads that may name their spool files.
-    pub(crate) async fn deploy_uploads(
-        &self,
-        files: Vec<Upload>,
+        files: Vec<impl Into<Upload>>,
         entity_id: &str,
         auth_chain: Value,
         context: &str,
@@ -1252,7 +1240,7 @@ impl WriteDeployer {
                 .await
                 .map_err(|e| deploy_error(entity_id, &e))?;
         }
-        let (entity, _) = entity_of(&uploads, entity_id).await?;
+        let (entity, _) = entity_of(&uploads, entity_id)?;
         self.refuse_denylisted(&entity)?;
         let auth_chain = auth_chain_of(auth_chain.clone())?;
         self.check_signature(entity_id, &auth_chain, entity.timestamp)
@@ -1311,7 +1299,7 @@ impl WriteDeployer {
             .await
             .map_err(|e| deploy_error(entity_id, &e))?;
         let hash_us = started.elapsed().as_micros() as u64;
-        let (entity, entity_bytes) = entity_of(&uploads, entity_id).await?;
+        let (entity, entity_bytes) = entity_of(&uploads, entity_id)?;
 
         self.refuse_denylisted(&entity)?;
 
@@ -1419,8 +1407,12 @@ impl WriteDeployer {
         for upload in &uploads {
             let key = if declared.contains(upload.v1.as_str()) {
                 &upload.v1
-            } else if declared.contains(upload.v0.as_str()) {
-                &upload.v0
+            } else if let Some(v0) = upload
+                .v0
+                .as_ref()
+                .filter(|v0| declared.contains(v0.as_str()))
+            {
+                v0
             } else {
                 &upload.v1
             };

@@ -2425,11 +2425,47 @@ async fn a_request_without_a_client_address_skips_the_quota() {
     }
 }
 
+/// The deploy spool computes each part's CIDv0 as well: an entity named by
+/// its CIDv0 (`Qm...`) is found among the spooled parts and goes on to the
+/// signature check.
+#[tokio::test]
+async fn an_entity_named_by_its_cid_v0_is_found_through_the_spool() {
+    let node = deploying_node("spool-cid-v0", Settings::for_tests()).await;
+    let entity = Bytes::from(
+        json!({"version": "v3", "type": "scene", "pointers": ["0,0"], "timestamp": 1, "content": []})
+            .to_string(),
+    );
+    let id = crate::auth::hash_bytes(&entity);
+    assert!(id.starts_with("Qm"));
+    let chain = serde_json::from_str::<Value>(&entity_form()[1].1).unwrap();
+    let req = deploy_request("/content/entities", &id, &chain, &[(&id, &entity)]);
+    let (status, _, body) = call(&node.router(), req).await;
+    let errors = json_of(&body)["errors"].clone();
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{errors}");
+    assert!(
+        errors[0]
+            .as_str()
+            .is_some_and(|e| e.starts_with("The signature is invalid.")),
+        "the entity file was found and its chain checked: {errors}"
+    );
+}
+
 /// A chunked body (no `Content-Length`) reserves only the minimum of the
 /// spool budget and grows it with what it spools: it is admitted beside
-/// uploads that leave little room, and refused with 503 once it outgrows it.
+/// uploads that leave little room, and refused with 503 once it outgrows it,
+/// the bytes it had sent recorded (a declared body refused unread is not).
 #[tokio::test]
 async fn a_chunked_body_grows_its_spool_reservation_as_it_arrives() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let _metrics = metrics::set_default_local_recorder(&recorder);
+    let refused_after = || {
+        recorder.handle().render().lines().find_map(|line| {
+            line.strip_prefix(
+                "upload_budget_refused_received_bytes_count{route=\"content-entities\"} ",
+            )
+            .map(str::to_string)
+        })
+    };
     let min = super::upload_admission::MIN_UPLOAD_RESERVATION_BYTES;
     let settings = Settings {
         max_upload_total_bytes: 64 * 1024 * 1024,
@@ -2464,6 +2500,7 @@ async fn a_chunked_body_grows_its_spool_reservation_as_it_arrives() {
         "a declared body that does not fit"
     );
     assert_eq!(headers[header::RETRY_AFTER], "30");
+    assert_eq!(refused_after(), None, "refused before its body");
 
     let small = Bytes::from_static(b"small");
     let (status, _, body) = call(&router, chunked(&[("a", &small)])).await;
@@ -2486,6 +2523,11 @@ async fn a_chunked_body_grows_its_spool_reservation_as_it_arrives() {
         "one that outgrows it is refused as it arrives"
     );
     assert_eq!(headers[header::RETRY_AFTER], "30");
+    assert_eq!(
+        refused_after().as_deref(),
+        Some("1"),
+        "refused after its bytes"
+    );
     assert_eq!(
         budget.reserved(),
         capacity - min,

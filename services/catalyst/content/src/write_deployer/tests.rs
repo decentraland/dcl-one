@@ -69,7 +69,7 @@ async fn deployment_files_reuse_both_cid_versions_and_deduplicate_references() {
         Upload::Spooled(SpooledFile {
             name: "second".to_string(),
             hash: hash_bytes_v1(&second),
-            hash_v0: hash_bytes(&second),
+            hash_v0: Some(hash_bytes(&second)),
             len: second.len(),
             path: spooled.clone(),
         }),
@@ -95,7 +95,10 @@ async fn deployment_files_reuse_both_cid_versions_and_deduplicate_references() {
     let files = deployment_files(&entity, &entity_bytes, &uploads);
     assert_eq!(files.len(), 3);
     assert_eq!(files[&entity.id], UploadedFile::Bytes(entity_bytes));
-    assert_eq!(files[&uploads[1].v0], UploadedFile::Bytes(first));
+    assert_eq!(
+        files[uploads[1].v0.as_deref().unwrap()],
+        UploadedFile::Bytes(first)
+    );
     assert_eq!(
         files[&uploads[2].v1],
         UploadedFile::Spooled {
@@ -421,29 +424,31 @@ async fn a_copy_answered_from_the_in_process_memo_proves_the_replay() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
-/// A spooled entity file the disk cannot give back is this node's failure:
-/// `Unavailable` (503, the spool's text), never a refusal or a crash.
+/// The deployer reads the entity file only from memory: a spooled part
+/// hashing to the id, even a readable one, is not taken as the entity file,
+/// so no entity file reaches the heap outside `POST /entities`' memory budget.
 #[tokio::test]
-async fn an_unreadable_spooled_entity_file_is_unavailable() {
-    let (deployer, tmp) = deployer_over_temp_storage("unreadable-spool").await;
+async fn a_spooled_part_is_never_read_as_the_entity_file() {
+    let (deployer, tmp) = deployer_over_temp_storage("spooled-entity").await;
     let (bytes, id, chain) =
         signed_scene(&["5,5".to_string()], chrono::Utc::now().timestamp_millis()).await;
-    let gone = Upload::Spooled(SpooledFile {
+    let path = tmp.join("spooled-entity-part");
+    std::fs::write(&path, &bytes).unwrap();
+    let spooled = Upload::Spooled(SpooledFile {
         name: id.clone(),
         hash: id.clone(),
-        hash_v0: hash_bytes(&bytes),
+        hash_v0: Some(hash_bytes(&bytes)),
         len: bytes.len(),
-        path: tmp.join("removed-spool-part"),
+        path,
     });
     match deployer
-        .deploy_entity_anchored(vec![gone], &id, chain, "LOCAL", None)
+        .deploy_entity_anchored(vec![spooled], &id, chain, "LOCAL", None)
         .await
     {
-        Err(DeployFailure::Unavailable(errors)) => assert_eq!(
-            errors,
-            [crate::create_entity::SPOOL_UNAVAILABLE_MESSAGE.to_string()]
-        ),
-        other => panic!("an unreadable spool must be this node's 503, got {other:?}"),
+        Err(DeployFailure::Rejected(_, errors)) => {
+            assert_eq!(errors, ["Failed to find the entity file.".to_string()])
+        }
+        other => panic!("a spooled entity part must not be read, got {other:?}"),
     }
     let _ = std::fs::remove_dir_all(&tmp);
 }

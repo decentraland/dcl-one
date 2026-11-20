@@ -1912,6 +1912,7 @@ dependencies = [
  "ipnet",
  "libc",
  "metrics",
+ "metrics-exporter-prometheus",
  "parking_lot",
  "regex",
  "reqwest 0.13.5",

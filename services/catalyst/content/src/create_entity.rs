@@ -446,7 +446,7 @@ async fn read_form(
                 // Checked after the limits: an oversize body gets the final
                 // 413, never the retryable 503.
                 if !disk.grow(total_bytes as u64 + charged) {
-                    return Ok(Form::Refused(budget_exhausted()));
+                    return Ok(Form::Refused(budget_exhausted_after(total_bytes as u64)));
                 }
                 if let Some(source) = source.as_deref_mut()
                     && !source.grow(total_bytes as u64)
@@ -502,6 +502,15 @@ fn spool_unavailable(e: &std::io::Error) -> Response {
     )
 }
 
+/// [`budget_exhausted`] for a request whose body had begun to arrive:
+/// the bytes it sent, which a retrying client sends again, are recorded in
+/// `upload_budget_refused_received_bytes`.
+fn budget_exhausted_after(received: u64) -> Response {
+    metrics::histogram!("upload_budget_refused_received_bytes", "route" => SPOOL_ROUTE)
+        .record(received as f64);
+    budget_exhausted()
+}
+
 /// The 503 of a full upload budget, memory or spool.
 fn budget_exhausted() -> Response {
     with_retry_after(
@@ -528,14 +537,15 @@ async fn uploads_of(
     let entity_at = fields
         .get("entityId")
         .and_then(|id| parts.iter().position(|part| part.names(id)));
+    let received: u64 = parts.iter().map(|part| part.len() as u64).sum();
     if !memory.grow(super::upload_admission::MIN_UPLOAD_RESERVATION_BYTES) {
-        return Err(budget_exhausted());
+        return Err(budget_exhausted_after(received));
     }
     let mut entity = None;
     if let Some(at) = entity_at {
         let part = &parts[at];
         if !memory.grow(memory.bytes() + part.len() as u64) {
-            return Err(budget_exhausted());
+            return Err(budget_exhausted_after(received));
         }
         let bytes = Bytes::from(part.read().await.map_err(|e| spool_unavailable(&e))?);
         let inspected = serde_json::from_slice::<crate::entity::Entity>(&bytes)
@@ -550,7 +560,7 @@ async fn uploads_of(
             })
             .unwrap_or(0);
         if !memory.grow(memory.bytes() + inspected) {
-            return Err(budget_exhausted());
+            return Err(budget_exhausted_after(received));
         }
         entity = Some(bytes);
     }
@@ -1004,7 +1014,7 @@ async fn deploy_form(
     let settings = &state.settings;
     // Removed, with every file in it, when this request ends however it
     // ends, after the deploy stored what it keeps.
-    let mut spool = match UploadSpool::create(&state.spool_root, SPOOL_ROUTE).await {
+    let mut spool = match UploadSpool::create(&state.spool_root, SPOOL_ROUTE, true).await {
         Ok(spool) => spool,
         Err(e) => return Ok(spool_unavailable(&e)),
     };
@@ -1171,7 +1181,7 @@ async fn deploy_regular(
     let multipart_us = request_started.elapsed().as_micros() as u64;
     let deploy_started = std::time::Instant::now();
     match deployer
-        .deploy_uploads(uploads, &entity_id, auth_chain, "LOCAL")
+        .deploy_entity(uploads, &entity_id, auth_chain, "LOCAL")
         .await
     {
         Ok(creation_timestamp) => {
@@ -1286,7 +1296,7 @@ mod tests {
             SpooledFile {
                 name: name.to_string(),
                 hash: hash.to_string(),
-                hash_v0: format!("Qm{hash}"),
+                hash_v0: Some(format!("Qm{hash}")),
                 len: bytes.len(),
                 path: dir.join(name),
             }
@@ -1317,11 +1327,21 @@ mod tests {
 
         let small = super::super::upload_admission::UploadBudget::new(most - 1);
         let mut memory = small.try_reserve(0).unwrap();
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let guard = metrics::set_default_local_recorder(&recorder);
         let refused = uploads_of(&fields, parts.clone(), &mut memory)
             .await
             .unwrap_err();
+        drop(guard);
         assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert!(refused.headers().contains_key(header::RETRY_AFTER));
+        let received = entity.len() + 3000 + 50_000;
+        assert!(
+            recorder.handle().render().contains(&format!(
+                "upload_budget_refused_received_bytes_sum{{route=\"content-entities\"}} {received}"
+            )),
+            "the form's bytes are recorded with the refusal"
+        );
         drop(memory);
 
         let mut gone = parts;

@@ -209,7 +209,7 @@ pub(super) async fn read_deploy_form(
             }
             if spool.is_none() {
                 spool = Some(
-                    UploadSpool::create(spool_root, "entities")
+                    UploadSpool::create(spool_root, "entities", false)
                         .await
                         .map_err(spool_failed)?,
                 );

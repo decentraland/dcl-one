@@ -16,17 +16,19 @@ const WRITE_BUFFER_BYTES: usize = 256 * 1024;
 pub struct UploadSpool {
     dir: PathBuf,
     next: usize,
+    /// Whether parts also compute their CIDv0 ([`SpooledFile::hash_v0`]).
+    cid_v0: bool,
     /// The route label of the cleanup-failure counter.
     route: &'static str,
 }
 
-/// A spooled file part: its form name, the CIDv1 and CIDv0 of its bytes,
-/// size and path inside the spool.
+/// A spooled file part: its form name, the CIDv1 of its bytes and, when its
+/// spool computes it, their CIDv0, size and path inside the spool.
 #[derive(Debug, Clone)]
 pub struct SpooledFile {
     pub name: String,
     pub hash: String,
-    pub hash_v0: String,
+    pub hash_v0: Option<String>,
     pub len: usize,
     pub path: PathBuf,
 }
@@ -42,7 +44,7 @@ impl SpooledFile {
 
     /// Whether `hash` names this part's bytes, as a CIDv1 or a CIDv0.
     pub fn names(&self, hash: &str) -> bool {
-        self.hash == hash || self.hash_v0 == hash
+        names_bytes(&self.hash, self.hash_v0.as_deref(), hash)
     }
 
     pub async fn read(&self) -> std::io::Result<Vec<u8>> {
@@ -50,8 +52,16 @@ impl SpooledFile {
     }
 }
 
+/// Whether `hash` names bytes whose CIDv1 is `v1` and CIDv0 `v0`: a deploy
+/// may name a file by either.
+pub fn names_bytes(v1: &str, v0: Option<&str>, hash: &str) -> bool {
+    v1 == hash || v0 == Some(hash)
+}
+
 impl UploadSpool {
-    pub async fn create(root: &Path, route: &'static str) -> std::io::Result<Self> {
+    /// A new spool directory under `root`. `cid_v0` makes every part also
+    /// compute its CIDv0, for a route that accepts files named by one.
+    pub async fn create(root: &Path, route: &'static str, cid_v0: bool) -> std::io::Result<Self> {
         let dir = root.join(format!(
             "{}-{}",
             std::process::id(),
@@ -61,6 +71,7 @@ impl UploadSpool {
         Ok(Self {
             dir,
             next: 0,
+            cid_v0,
             route,
         })
     }
@@ -81,7 +92,7 @@ impl UploadSpool {
         Ok(SpoolWriter {
             file: tokio::io::BufWriter::with_capacity(WRITE_BUFFER_BYTES, file),
             hasher: HashV1Writer::new(),
-            hasher_v0: HashV0Writer::new(),
+            hasher_v0: self.cid_v0.then(HashV0Writer::new),
             len: 0,
             path,
         })
@@ -113,7 +124,7 @@ impl Drop for UploadSpool {
 pub struct SpoolWriter {
     file: tokio::io::BufWriter<tokio::fs::File>,
     hasher: HashV1Writer,
-    hasher_v0: HashV0Writer,
+    hasher_v0: Option<HashV0Writer>,
     len: usize,
     path: PathBuf,
 }
@@ -129,7 +140,9 @@ impl SpoolWriter {
 
     pub async fn write(&mut self, chunk: &[u8]) -> std::io::Result<()> {
         self.hasher.update(chunk);
-        self.hasher_v0.update(chunk);
+        if let Some(hasher_v0) = &mut self.hasher_v0 {
+            hasher_v0.update(chunk);
+        }
         self.len += chunk.len();
         self.file.write_all(chunk).await
     }
@@ -140,7 +153,7 @@ impl SpoolWriter {
         Ok(SpooledFile {
             name,
             hash: self.hasher.finish(),
-            hash_v0: self.hasher_v0.finish(),
+            hash_v0: self.hasher_v0.map(HashV0Writer::finish),
             len: self.len,
             path: self.path,
         })
@@ -207,7 +220,7 @@ mod tests {
     #[tokio::test]
     async fn parts_hash_like_the_buffered_path_and_the_directory_goes_on_drop() {
         let root = std::env::temp_dir().join(format!("catalyst-spool-{}", uuid::Uuid::new_v4()));
-        let mut spool = UploadSpool::create(&root, "test").await.unwrap();
+        let mut spool = UploadSpool::create(&root, "test", true).await.unwrap();
         let dir = spool.dir().to_path_buf();
         let mut part = spool.part().await.unwrap();
         let bytes: Vec<u8> = (0..600_000u32).map(|i| (i % 251) as u8).collect();
@@ -217,10 +230,29 @@ mod tests {
         let file = part.finish("f".to_string()).await.unwrap();
         assert_eq!(file.hash, dcl_auth::hash_bytes_v1(&bytes));
         assert_eq!(file.len(), bytes.len());
-        assert_eq!(file.hash_v0, dcl_auth::hash_bytes(&bytes));
+        assert_eq!(file.hash_v0, Some(dcl_auth::hash_bytes(&bytes)));
+        assert!(file.names(&dcl_auth::hash_bytes(&bytes)) && file.names(&file.hash));
         assert_eq!(file.read().await.unwrap(), bytes);
         drop(spool);
         wait_gone(&dir).await;
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A spool created without `cid_v0` computes only the CIDv1, so a part
+    /// is named by that alone, never by its CIDv0 nor by an empty hash.
+    #[tokio::test]
+    async fn a_spool_without_cid_v0_names_parts_by_their_cid_v1_only() {
+        let root = std::env::temp_dir().join(format!("catalyst-spool-{}", uuid::Uuid::new_v4()));
+        let mut spool = UploadSpool::create(&root, "test", false).await.unwrap();
+        let mut part = spool.part().await.unwrap();
+        part.write(b"bytes").await.unwrap();
+        let file = part.finish("f".to_string()).await.unwrap();
+        assert_eq!(file.hash, dcl_auth::hash_bytes_v1(b"bytes"));
+        assert_eq!(file.hash_v0, None);
+        assert!(file.names(&file.hash));
+        assert!(!file.names(&dcl_auth::hash_bytes(b"bytes")));
+        assert!(!file.names(""));
+        drop(spool);
         let _ = std::fs::remove_dir_all(&root);
     }
 
