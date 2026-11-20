@@ -8,6 +8,10 @@ workspace = true
 
 [lib]
 
+[features]
+# resolve a pointer to a hash directly, for other crates' tests
+test-support = []
+
 [dependencies]
 common = { workspace = true }
 console = { workspace = true }

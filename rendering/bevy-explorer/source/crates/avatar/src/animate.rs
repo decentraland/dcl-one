@@ -220,7 +220,7 @@ pub(crate) fn file_emote_downloads(
             .filter(|_| is_player)
             .into_iter()
             .flat_map(|shape| shape.0.emotes.iter())
-            .flat_map(|urn| EmoteUrn::new(urn).ok())
+            .flat_map(|urn| EmoteUrn::new_quiet(urn).ok())
             .collect::<Vec<_>>();
         let hashes = emote_download_hashes(
             std::iter::once(&active.urn).chain(masked).chain(&equipped),
@@ -259,20 +259,36 @@ pub(crate) fn emote_download_hashes<'a>(
 #[derive(Component, Default)]
 pub struct LastEmoteCommand(EmoteCommand);
 
+/// The body shape and equipped emote urns whose clips have all loaded, on the player. Present
+/// only while it matches what they have equipped; `preload_equipped_emotes` stops asking while it
+/// does.
+#[derive(Component, Debug, Clone, PartialEq)]
+pub struct EquippedEmotesLoaded {
+    pub body_shape: String,
+    pub urns: Vec<String>,
+}
+
 /// Loads the local player's equipped emotes once their avatar is built, so the first press of
 /// each plays at once instead of waiting on the pointer, entity and clip fetches. Loaded emotes
 /// stay in the collectible cache, so this stops asking once every equipped clip has loaded, and
 /// asks again when the equipped set or the body shape changes. `file_emote_downloads` files the
 /// equipped emotes under the player, so their downloads rank with the player's own.
-fn preload_equipped_emotes(
-    player: Query<(&AvatarShape, &Children), With<PrimaryUser>>,
+pub(crate) fn preload_equipped_emotes(
+    mut commands: Commands,
+    player: Query<
+        (
+            Entity,
+            &AvatarShape,
+            &Children,
+            Option<&EquippedEmotesLoaded>,
+        ),
+        With<PrimaryUser>,
+    >,
     definitions: Query<&AvatarDefinition>,
     mut emote_loader: CollectibleManager<Emote>,
     gltfs: Res<Assets<Gltf>>,
-    // the body shape and equipped urns whose clips have all loaded
-    mut loaded: Local<Option<(String, Vec<String>)>>,
 ) {
-    let Ok((shape, children)) = player.single() else {
+    let Ok((player, shape, children, loaded)) = player.single() else {
         return;
     };
     let Some(definition) = children.iter().flat_map(|c| definitions.get(c).ok()).next() else {
@@ -280,15 +296,15 @@ fn preload_equipped_emotes(
     };
     let bodyshape = &definition.render.body_shape;
     let equipped = &shape.0.emotes;
-    if loaded
-        .as_ref()
-        .is_some_and(|(shape, urns)| shape == bodyshape && urns == equipped)
-    {
+    if loaded.is_some_and(|loaded| &loaded.body_shape == bodyshape && &loaded.urns == equipped) {
         return;
     }
 
     let mut pending = false;
-    for urn in equipped.iter().flat_map(|urn| EmoteUrn::new(urn).ok()) {
+    for urn in equipped
+        .iter()
+        .flat_map(|urn| EmoteUrn::new_quiet(urn).ok())
+    {
         match emote_loader.get_representation(&urn, bodyshape) {
             Ok(emote) => pending |= emote.avatar_animation(&gltfs).is_err(),
             Err(CollectibleError::Loading) => pending = true,
@@ -298,7 +314,12 @@ fn preload_equipped_emotes(
     }
 
     if !pending {
-        *loaded = Some((bodyshape.clone(), equipped.clone()));
+        commands.entity(player).try_insert(EquippedEmotesLoaded {
+            body_shape: bodyshape.clone(),
+            urns: equipped.clone(),
+        });
+    } else if loaded.is_some() {
+        commands.entity(player).try_remove::<EquippedEmotesLoaded>();
     }
 }
 
