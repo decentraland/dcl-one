@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { AuthIdentity } from "../auth/types";
 import { postJSON, signedGetJSON } from "../catalyst/client";
-import { normalizeAddress } from "../catalyst/social/profile";
+import { isEthAddress, normalizeAddress } from "../catalyst/social/profile";
 
 /** How the signed-in member and another one stand, as the header shows it. */
 export type Friendship = "none" | "request_sent" | "request_received" | "friends" | "blocked" | "blocked_by";
@@ -21,6 +21,11 @@ const FRIENDSHIP_BY_STATUS: Readonly<Record<number, Friendship>> = {
 
 const StatusSchema = z.object({ data: z.object({ status: z.number() }) });
 const TotalSchema = z.object({ data: z.object({ total: z.number().int().nonnegative() }) });
+const FriendsPageSchema = z.object({
+  data: TotalSchema.shape.data.extend({
+    results: z.array(z.object({ address: z.string().refine(isEthAddress) })),
+  }),
+});
 const BlockingSchema = z.object({
   data: z.object({ blockedUsers: z.array(z.string()), blockedByUsers: z.array(z.string()) }),
 });
@@ -39,6 +44,17 @@ export async function fetchFriendship(identity: AuthIdentity, address: string, o
 export async function fetchFriendsCount(identity: AuthIdentity, opts: ReadOptions = {}): Promise<number> {
   const raw = await signedGetJSON<unknown>("/v2/friends", { identity, signal: opts.signal, query: { limit: 1, offset: 0 } });
   return TotalSchema.parse(raw).data.total;
+}
+
+/** One page of the signed-in member's friends, in the order the service returned them. */
+export async function fetchFriendsPage(
+  identity: AuthIdentity,
+  query: { offset: number; limit: number },
+  opts: ReadOptions = {},
+): Promise<{ addresses: string[]; total: number }> {
+  const raw = await signedGetJSON<unknown>("/v2/friends", { identity, signal: opts.signal, query });
+  const { results, total } = FriendsPageSchema.parse(raw).data;
+  return { addresses: results.map((result) => normalizeAddress(result.address)), total };
 }
 
 /** How many friends the member and another one share. */

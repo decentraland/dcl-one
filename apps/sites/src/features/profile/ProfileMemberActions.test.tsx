@@ -15,6 +15,7 @@ vi.hoisted(() => {
 const net = vi.hoisted(() => ({
   fetchFriendship: vi.fn(),
   fetchFriendsCount: vi.fn(),
+  fetchFriendsPage: vi.fn(),
   fetchMutualFriendsCount: vi.fn(),
   fetchBlocking: vi.fn(),
   changeFriendship: vi.fn(),
@@ -25,6 +26,7 @@ const auth = vi.hoisted(() => ({ state: { identity: null as unknown, isConnected
 vi.mock("@/data/lib/friends/friends", () => ({
   fetchFriendship: net.fetchFriendship,
   fetchFriendsCount: net.fetchFriendsCount,
+  fetchFriendsPage: net.fetchFriendsPage,
   fetchMutualFriendsCount: net.fetchMutualFriendsCount,
   fetchBlocking: net.fetchBlocking,
   changeFriendship: net.changeFriendship,
@@ -37,7 +39,8 @@ vi.mock("@/data/lib/catalyst/social/badges", () => ({ fetchUserBadges: () => Pro
 import { emptyProfile } from "@/data/lib/catalyst/social/profile";
 import { friendsKeys } from "@/data/lib/friends/queries";
 
-import { ProfileFriendsCount, ProfileMemberActions } from "./ProfileMemberActions";
+import { ProfileMemberActions } from "./ProfileMemberActions";
+import { ProfileFriendsCount, ProfileInviteFriends } from "./ProfileOwnerActions";
 import { ProfileShell } from "./ProfileShell";
 
 const ME = "0x4e9c4a2502fdf71e93ed8ed6ca9ddbd891d6f295";
@@ -53,6 +56,19 @@ function show(ui = <ProfileMemberActions address={OTHER} name="Bob" />) {
 
 const button = (name: string) => screen.getByRole("button", { name });
 const findButton = (name: string) => screen.findByRole("button", { name });
+const item = (name: string) => screen.getByRole("menuitem", { name });
+type User = ReturnType<typeof userEvent.setup>;
+async function openMenu(user: User) {
+  const more = button("More actions");
+  if (more.getAttribute("aria-expanded") !== "true") await user.click(more);
+  return screen.getAllByRole("menuitem").map((entry) => entry.textContent);
+}
+/** Opens the menu and waits for the block lists: Block, or Unblock, takes a press only then. */
+async function findBlockItem(user: User, name = "Block") {
+  await openMenu(user);
+  await waitFor(() => expect(item(name)).toHaveProperty("disabled", false));
+  return item(name);
+}
 
 beforeEach(() => {
   auth.state = { identity, isConnected: true, address: ME };
@@ -81,22 +97,26 @@ describe("a member's header actions, signed out", () => {
     await user.click(button("Add friend"));
 
     expect(net.openSignIn).toHaveBeenCalledWith({ inPlace: true });
-    expect(screen.queryByRole("button", { name: "Block" })).toBeNull();
+    expect(await openMenu(user)).toEqual(["Share"]);
     expect(net.fetchFriendship).not.toHaveBeenCalled();
     expect(net.fetchBlocking).not.toHaveBeenCalled();
     expect(net.changeFriendship).not.toHaveBeenCalled();
   });
 
-  it("copies the profile's link from Share and says so", async () => {
+  it("copies the profile's link from Share in the menu, closes the menu and says so", async () => {
     const user = userEvent.setup();
     const writeText = vi.fn(async () => {});
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
     show();
 
-    await user.click(button("Share"));
+    await openMenu(user);
+    await user.click(item("Share"));
 
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(button("More actions"));
     expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/profile/${OTHER}`);
     expect(await screen.findByText("Profile link copied")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe("Profile link copied");
   });
 });
 
@@ -106,7 +126,6 @@ describe("a member's header actions, friendship", () => {
     net.fetchFriendship.mockReturnValue(new Promise<string>((resolve) => (answer = resolve)));
     show();
 
-    // A loading Button keeps the focus and refuses the press.
     expect(button("Loading friendship").getAttribute("aria-disabled")).toBe("true");
     answer("none");
 
@@ -125,7 +144,7 @@ describe("a member's header actions, friendship", () => {
     expect(net.changeFriendship).toHaveBeenCalledWith(identity, OTHER, "request");
     expect(await screen.findByText("Friend request sent.")).toBeTruthy();
     expect(await screen.findByText("Request sent")).toBeTruthy();
-    expect(button("Cancel request")).toBeTruthy();
+    expect(button("Request sent Cancel request")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Add friend" })).toBeNull();
   });
 
@@ -133,7 +152,7 @@ describe("a member's header actions, friendship", () => {
     const user = userEvent.setup();
     net.fetchFriendship.mockResolvedValue("request_sent");
     show();
-    const cancel = await findButton("Cancel request");
+    const cancel = await findButton("Request sent Cancel request");
     net.fetchFriendship.mockResolvedValue("none");
 
     await user.click(cancel);
@@ -143,7 +162,7 @@ describe("a member's header actions, friendship", () => {
     expect(screen.getByText("Friend request cancelled.")).toBeTruthy();
   });
 
-  it("accepts a request the member received, and then shows Friends with Unfriend", async () => {
+  it("accepts a request the member received, and then shows Friend with Unfriend", async () => {
     const user = userEvent.setup();
     net.fetchFriendship.mockResolvedValue("request_received");
     show();
@@ -154,8 +173,7 @@ describe("a member's header actions, friendship", () => {
     await user.click(accept);
 
     expect(net.changeFriendship).toHaveBeenCalledWith(identity, OTHER, "accept");
-    expect(await findButton("Unfriend")).toBeTruthy();
-    expect(screen.getByText("Friends")).toBeTruthy();
+    expect(await findButton("Friend Unfriend")).toBeTruthy();
     expect(screen.getByText("You and Bob are now friends.")).toBeTruthy();
   });
 
@@ -173,7 +191,7 @@ describe("a member's header actions, friendship", () => {
     const user = userEvent.setup();
     net.fetchFriendship.mockResolvedValue("friends");
     show();
-    const unfriend = await findButton("Unfriend");
+    const unfriend = await findButton("Friend Unfriend");
     net.fetchFriendship.mockResolvedValue("none");
 
     await user.click(unfriend);
@@ -215,15 +233,14 @@ describe("a member's header actions, block", () => {
     const user = userEvent.setup();
     show();
     await findButton("Add friend");
-    const block = await findButton("Block");
-    await waitFor(() => expect(block).toHaveProperty("disabled", false));
+    const block = await findBlockItem(user);
     net.fetchBlocking.mockResolvedValue({ blocked: [OTHER], blockedBy: [] });
 
     await user.click(block);
 
     expect(net.setBlocked).toHaveBeenCalledWith(identity, OTHER, true);
-    expect(await findButton("Unblock")).toBeTruthy();
-    expect(screen.getByText("Blocked")).toBeTruthy();
+    expect(await findButton("Blocked Unblock")).toBeTruthy();
+    expect(await openMenu(user)).toEqual(["Unblock", "Share"]);
     expect(screen.getByText("Bob has been blocked.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Add friend" })).toBeNull();
   });
@@ -232,7 +249,7 @@ describe("a member's header actions, block", () => {
     const user = userEvent.setup();
     net.fetchBlocking.mockResolvedValue({ blocked: [OTHER], blockedBy: [] });
     show();
-    const unblock = await findButton("Unblock");
+    const unblock = await findButton("Blocked Unblock");
     net.fetchBlocking.mockResolvedValue({ blocked: [], blockedBy: [] });
 
     await user.click(unblock);
@@ -242,11 +259,26 @@ describe("a member's header actions, block", () => {
     expect(screen.getByText("Bob has been unblocked.")).toBeTruthy();
   });
 
+  it("unblocks a blocked member from the menu", async () => {
+    const user = userEvent.setup();
+    net.fetchBlocking.mockResolvedValue({ blocked: [OTHER], blockedBy: [] });
+    show();
+    const unblock = await findBlockItem(user, "Unblock");
+    net.fetchBlocking.mockResolvedValue({ blocked: [], blockedBy: [] });
+
+    await user.click(unblock);
+
+    expect(net.setBlocked).toHaveBeenCalledWith(identity, OTHER, false);
+    expect(await screen.findByText("Bob has been unblocked.")).toBeTruthy();
+    expect(await openMenu(user)).toEqual(["Block", "Share"]);
+  });
+
   it("offers no friend action to a visitor the member blocked", async () => {
+    const user = userEvent.setup();
     net.fetchBlocking.mockResolvedValue({ blocked: [], blockedBy: [OTHER] });
     show();
 
-    await waitFor(() => expect(button("Block")).toHaveProperty("disabled", false));
+    await findBlockItem(user);
     expect(screen.queryByRole("button", { name: "Add friend" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Loading friendship" })).toBeNull();
   });
@@ -255,27 +287,25 @@ describe("a member's header actions, block", () => {
     const user = userEvent.setup();
     net.setBlocked.mockRejectedValue(new Error("500"));
     show();
-    const block = await findButton("Block");
-    await waitFor(() => expect(block).toHaveProperty("disabled", false));
 
-    await user.click(block);
+    await user.click(await findBlockItem(user));
 
     expect((await screen.findByRole("alert")).textContent).toBe("Bob could not be blocked. Try again.");
-    expect(button("Block")).toBeTruthy();
+    expect(await openMenu(user)).toEqual(["Block", "Share"]);
   });
 
-  it("says when the block lists cannot be read, with no dead Block button, and reads again on Try again", async () => {
+  it("says when the block lists cannot be read, with no dead Block item, and reads again on Try again", async () => {
     const user = userEvent.setup();
     net.fetchBlocking.mockRejectedValueOnce(new Error("502"));
     show();
 
     expect(await screen.findByText("Block unavailable")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Block" })).toBeNull();
+    expect(await openMenu(user)).toEqual(["Share"]);
     // The friendship was read: its action stays.
     expect(await findButton("Add friend")).toBeTruthy();
     await user.click(button("Try again"));
 
-    await waitFor(() => expect(button("Block")).toHaveProperty("disabled", false));
+    await findBlockItem(user);
     expect(screen.queryByText("Block unavailable")).toBeNull();
     expect(net.fetchFriendship).toHaveBeenCalledTimes(1);
   });
@@ -287,12 +317,52 @@ describe("a member's header actions, block", () => {
     show();
 
     expect(await screen.findByText("Friendship unavailable")).toBeTruthy();
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Block" })).toBeNull());
+    await waitFor(() => expect(client.getQueryState(friendsKeys.blocking(ME))?.status).toBe("error"));
+    expect(await openMenu(user)).toEqual(["Share"]);
     expect(screen.getAllByRole("button", { name: "Try again" })).toHaveLength(1);
     await user.click(button("Try again"));
 
     expect(await findButton("Add friend")).toBeTruthy();
-    await waitFor(() => expect(button("Block")).toHaveProperty("disabled", false));
+    await findBlockItem(user);
+  });
+});
+
+describe("a member's header actions, the More actions menu", () => {
+  it("opens from the keyboard, moves with the arrow keys, and gives the focus back on Escape", async () => {
+    const user = userEvent.setup();
+    show();
+    const more = button("More actions");
+    expect(more.getAttribute("aria-haspopup")).toBe("menu");
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    await findBlockItem(user);
+    await user.keyboard("{Escape}");
+    expect(document.activeElement).toBe(more);
+
+    await user.keyboard("{ArrowDown}");
+
+    expect(more.getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement).toBe(item("Block"));
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(item("Share"));
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(item("Block"));
+    await user.keyboard("{ArrowUp}");
+    expect(document.activeElement).toBe(item("Share"));
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(more);
+    expect(net.setBlocked).not.toHaveBeenCalled();
+  });
+
+  it("closes on a press outside", async () => {
+    const user = userEvent.setup();
+    show();
+    await openMenu(user);
+
+    await user.click(document.body);
+
+    expect(screen.queryByRole("menu")).toBeNull();
   });
 });
 
@@ -331,6 +401,33 @@ describe("friends counters", () => {
     expect(net.fetchFriendsCount.mock.calls[0]?.[0]).toBe(identity);
   });
 
+  it("loads the signed friends list only after the owner opens it and can retry a failed read", async () => {
+    const user = userEvent.setup();
+    net.fetchFriendsPage.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({ addresses: [], total: 0 });
+    show(<ProfileFriendsCount address={ME} />);
+
+    const trigger = await findButton("17 Friends");
+    expect(net.fetchFriendsPage).not.toHaveBeenCalled();
+    await user.click(trigger);
+    expect(await screen.findByRole("dialog", { name: "Friends" })).toBeTruthy();
+    expect(await screen.findByText("Friends are unavailable right now.")).toBeTruthy();
+    await user.click(button("Try again"));
+    expect(await screen.findByText("You don't have any friends yet.")).toBeTruthy();
+    expect(net.fetchFriendsPage.mock.calls[0]?.[0]).toBe(identity);
+  });
+
+  it("copies the wallet invite from the owner header", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    show(<ProfileInviteFriends address={ME} />);
+
+    await user.click(button("Invite Friends"));
+
+    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/invite/${ME}`);
+    expect(await findButton("Invite Copied")).toBeTruthy();
+  });
+
   it("reads no friends count with another wallet's identity", () => {
     show(<ProfileFriendsCount address={OTHER} />);
 
@@ -355,12 +452,11 @@ describe("the profile header", () => {
     );
   }
 
-  it("gives another member's profile the friendship, block and share actions", async () => {
+  it("gives another member's profile the friendship action and the More actions menu", async () => {
     shell(false);
 
     expect(await findButton("Add friend")).toBeTruthy();
-    expect(button("Block")).toBeTruthy();
-    expect(button("Share")).toBeTruthy();
+    expect(button("More actions")).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Get a Unique Name" })).toBeNull();
   });
 
@@ -370,7 +466,7 @@ describe("the profile header", () => {
     expect(await screen.findByText("17 Friends")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Get a Unique Name" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Add friend" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Block" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "More actions" })).toBeNull();
     expect(net.fetchFriendship).not.toHaveBeenCalled();
   });
 });

@@ -13,6 +13,7 @@ import {
   changeFriendship,
   fetchBlocking,
   fetchFriendsCount,
+  fetchFriendsPage,
   fetchFriendship,
   fetchMutualFriendsCount,
   setBlocked,
@@ -68,6 +69,24 @@ describe("friends reads", () => {
       ["/v2/friends", { limit: 1, offset: 0 }],
       [`/v2/users/${OTHER}/mutual-friends`, { limit: 1, offset: 0 }],
     ]);
+  });
+
+  it("reads a signed page of friends using the requested offset", async () => {
+    client.signedGetJSON.mockResolvedValue({ data: { results: [{ address: MIXED }], total: 17 } });
+
+    await expect(fetchFriendsPage(identity, { limit: 5, offset: 10 })).resolves.toEqual({
+      addresses: [MIXED.toLowerCase()],
+      total: 17,
+    });
+    expect(client.signedGetJSON).toHaveBeenCalledWith("/v2/friends", {
+      identity, signal: undefined, query: { limit: 5, offset: 10 },
+    });
+  });
+
+  it("rejects a broken friends page instead of presenting an empty list", async () => {
+    client.signedGetJSON.mockResolvedValue({ data: { total: 17 } });
+
+    await expect(fetchFriendsPage(identity, { limit: 5, offset: 0 })).rejects.toThrow();
   });
 
   it("reads the member's block lists, lowercased", async () => {

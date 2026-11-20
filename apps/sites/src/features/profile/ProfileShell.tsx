@@ -10,7 +10,8 @@ import { shortAddress } from "@/data/lib/catalyst/format/address";
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
 
 import { ProfileHeader } from "./ProfileHeader";
-import { ProfileFriendsCount, ProfileMemberActions } from "./ProfileMemberActions";
+import { ProfileMemberActions } from "./ProfileMemberActions";
+import { ProfileFriendsCount, ProfileInviteFriends } from "./ProfileOwnerActions";
 import styles from "./ProfileShell.module.css";
 import { revealTab } from "./reveal-tab";
 
@@ -64,7 +65,6 @@ export function ProfileShell({ profile, own, tabs, active, onTab, aside, childre
 
   const actions = own ? (
     <>
-      <ProfileFriendsCount address={profile.address} />
       {profile.hasClaimedName ? (
         <Button href={MANAGE_WORLD_HREF} size="md">
           Manage World
@@ -74,6 +74,8 @@ export function ProfileShell({ profile, own, tabs, active, onTab, aside, childre
           Get a Unique Name
         </Button>
       )}
+      <ProfileFriendsCount address={profile.address} />
+      <ProfileInviteFriends address={profile.address} />
     </>
   ) : (
     // Keyed by address: another profile starts with no result of the last one's actions.
@@ -94,10 +96,11 @@ export function ProfileShell({ profile, own, tabs, active, onTab, aside, childre
             avatarUrl={profile.avatarUrl || undefined}
             actions={actions}
           />
-          <TabsBar label="Profile sections" inset="content" scrollable>
+          <TabsBar label="Profile sections" inset="content" className={styles.sectionBar} scrollable>
             {tabs.map((tab) => (
               <Tabs
                 key={tab.id}
+                className={styles.sectionTab}
                 id={tabId(tab.id)}
                 label={tab.label}
                 href={tab.href}

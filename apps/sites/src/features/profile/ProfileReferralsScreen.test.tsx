@@ -217,14 +217,17 @@ describe("Referral Rewards tab", () => {
     expect(await screen.findByText("Couldn't copy the link")).toBeTruthy();
   });
 
-  it("uses the claimed NAME in the link, and shares it on X in a new tab", async () => {
+  it("shares the claimed NAME link on X from the Share menu", async () => {
+    const user = userEvent.setup();
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
     show({ hasClaimedName: true, name: "Billyjuice" });
 
     const field = (await screen.findByLabelText("Your invite link")) as HTMLInputElement;
     expect(field.value).toBe(`${window.location.origin}/invite/Billyjuice`);
-    const share = screen.getByRole("link", { name: "Share on X" });
-    expect(share.getAttribute("target")).toBe("_blank");
-    expect(share.getAttribute("href")).toContain(encodeURIComponent(`${window.location.origin}/invite/Billyjuice`));
+    await user.click(screen.getByRole("button", { name: /^Share$/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Share on X" }));
+    expect(open).toHaveBeenCalledWith(expect.stringContaining(encodeURIComponent(field.value)), "_blank", "noopener,noreferrer");
+    open.mockRestore();
   });
 
   it("links the program's terms and opens its three steps on request", async () => {
@@ -232,6 +235,7 @@ describe("Referral Rewards tab", () => {
     show();
 
     const toggle = await screen.findByRole("button", { name: "How it works" });
+    await user.click(screen.getByRole("button", { name: "Referral program details" }));
     expect(screen.getByRole("link", { name: "Terms & Conditions" }).getAttribute("href")).toBe(REFERRAL_TERMS_HREF);
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     const steps = screen.getByText(/jump in on 3 separate days/).closest("ol") as HTMLElement;

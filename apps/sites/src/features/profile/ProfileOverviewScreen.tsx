@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import { Button } from "@dcl/one-ui";
 import {
+  GeneralEdit,
   GeneralLink,
   ProfileCountry,
   ProfileGender,
@@ -13,6 +14,7 @@ import {
   ProfileRelationship,
 } from "@dcl/one-ui/foundations/icons";
 
+import { playUrl } from "@/data/lib/catalyst/bases";
 import type { ProfileBadge } from "@/data/lib/catalyst/social/badges";
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
 
@@ -144,6 +146,18 @@ export function ProfileOverviewScreen({
     >
       <div className={styles.root}>
         <section className={styles.surface}>
+          {own ? (
+            <Button
+              className={styles.edit}
+              variant="dark"
+              size="md"
+              href={playUrl()}
+              aria-label="Edit profile in Decentraland"
+              trailingIcon={<GeneralEdit size={18} aria-hidden="true" />}
+            >
+              Edit
+            </Button>
+          ) : null}
           <div className={styles.section}>
             <ProfileBadges
               badges={badgeItems(badges.data ?? [])}

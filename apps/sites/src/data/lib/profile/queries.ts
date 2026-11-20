@@ -14,7 +14,7 @@ import {
 import { fetchFavoritePlaces, fetchProfilePlaces } from "../catalyst/places/profile-places";
 import { fetchUserBadges } from "../catalyst/social/badges";
 import { fetchPhoto, fetchUserPhotos } from "../catalyst/social/photos";
-import { fetchMyCommunities } from "../catalyst/social/profile-communities";
+import { fetchMemberCommunities, fetchMyCommunities } from "../catalyst/social/profile-communities";
 import { fetchReferralProgress } from "../catalyst/social/referrals";
 import {
   fetchProfile,
@@ -57,6 +57,7 @@ export const profileKeys = {
   /** The wallets behind a list of places, sorted so the same set is one entry. */
   placeOwners: (addresses: readonly string[]) =>
     ["profile", "place-owners", [...new Set(addresses.map(normalizeAddress))].sort()] as const,
+  communities: (address: string) => ["profile", "communities", normalizeAddress(address)] as const,
   myCommunities: (account: string) =>
     ["private", normalizeAddress(account), "profile", "communities"] as const,
   myFavoritePlaces: (account: string) =>
@@ -198,13 +199,21 @@ export const myFavoritePlacesQuery = (identity: AuthIdentity) =>
     queryFn: ({ signal }) => fetchFavoritePlaces(identity, { limit: PROFILE_PLACES_LIMIT }, { signal }),
   });
 
-/** The identity signs the request and is never cached; the key names only its account. */
-export const myCommunitiesQuery = (identity: AuthIdentity) =>
-  queryOptions({
-    queryKey: profileKeys.myCommunities(identity.signer),
+/**
+ * A wallet's communities. Signed by that wallet's own identity it is every community of the member,
+ * with its members count and privacy, under the account's private key; otherwise it is the public,
+ * listed ones anyone sees. The identity signs the request and is never cached, and another wallet's
+ * identity is never sent.
+ */
+export const communitiesQuery = (address: string, identity: AuthIdentity | null = null) => {
+  const owner = signsFor(identity, address) ? identity : undefined;
+  return queryOptions({
+    queryKey: owner ? profileKeys.myCommunities(owner.signer) : profileKeys.communities(address),
     staleTime: PROFILE_STALE_MS,
-    queryFn: ({ signal }) => fetchMyCommunities(identity, { signal }),
+    queryFn: ({ signal }) =>
+      owner ? fetchMyCommunities(owner, { signal }) : fetchMemberCommunities(normalizeAddress(address), { signal }),
   });
+};
 
 /** The member's own referral progress; signed like the communities read, and keyed by account. */
 export const referralProgressQuery = (identity: AuthIdentity) =>

@@ -83,13 +83,29 @@
     "primitives": 0,
     "tokens": 18
   },
+  "apps/sites/src/features/profile/ProfileCommunitiesScreen.module.css": {
+    "primitives": 0,
+    "tokens": 29
+  },
   "apps/sites/src/features/profile/ProfileHeader.module.css": {
     "primitives": 0,
-    "tokens": 19
+    "tokens": 15
+  },
+  "apps/sites/src/features/profile/ProfileMemberActions.module.css": {
+    "primitives": 0,
+    "tokens": 5
+  },
+  "apps/sites/src/features/profile/ProfileMoreActions.module.css": {
+    "primitives": 0,
+    "tokens": 12
   },
   "apps/sites/src/features/profile/ProfileOverviewScreen.module.css": {
     "primitives": 0,
-    "tokens": 30
+    "tokens": 35
+  },
+  "apps/sites/src/features/profile/ProfileOwnerActions.module.css": {
+    "primitives": 0,
+    "tokens": 5
   },
   "apps/sites/src/features/profile/ProfilePhotosScreen.module.css": {
     "primitives": 0,
@@ -99,9 +115,13 @@
     "primitives": 0,
     "tokens": 9
   },
+  "apps/sites/src/features/profile/ProfileReferralsScreen.module.css": {
+    "primitives": 0,
+    "tokens": 82
+  },
   "apps/sites/src/features/profile/ProfileShell.module.css": {
     "primitives": 0,
-    "tokens": 10
+    "tokens": 7
   },
   "apps/sites/src/features/profile/collectibles.module.css": {
     "primitives": 0,
@@ -203,10 +223,6 @@
     "primitives": 0,
     "tokens": 37
   },
-  "apps/ui3/src/web/pages/stprofilecommunitiestab.css": {
-    "primitives": 15,
-    "tokens": 0
-  },
   "apps/ui3/src/web/pages/stprofileoverviewtab.css": {
     "primitives": 12,
     "tokens": 0
@@ -255,9 +271,17 @@
     "primitives": 0,
     "tokens": 16
   },
+  "library/ui/components/CloseButton/CloseButton.module.css": {
+    "primitives": 0,
+    "tokens": 11
+  },
   "library/ui/components/EventCard/EventCard.module.css": {
     "primitives": 0,
     "tokens": 71
+  },
+  "library/ui/components/FriendCTA/FriendCTA.module.css": {
+    "primitives": 0,
+    "tokens": 14
   },
   "library/ui/components/InputField/InputField.module.css": {
     "primitives": 0,
@@ -266,6 +290,10 @@
   "library/ui/components/JumpInCTA/JumpInCTA.module.css": {
     "primitives": 0,
     "tokens": 25
+  },
+  "library/ui/components/Modal/Modal.module.css": {
+    "primitives": 0,
+    "tokens": 22
   },
   "library/ui/components/NavBar/NavBar.module.css": {
     "primitives": 0,
@@ -295,6 +323,14 @@
     "primitives": 0,
     "tokens": 55
   },
+  "library/ui/components/ProfilePic/ConnectionStatus.module.css": {
+    "primitives": 0,
+    "tokens": 3
+  },
+  "library/ui/components/ProfilePic/ProfilePic.module.css": {
+    "primitives": 0,
+    "tokens": 5
+  },
   "library/ui/components/SearchBar/SearchBar.module.css": {
     "primitives": 0,
     "tokens": 9
@@ -323,8 +359,16 @@
     "primitives": 0,
     "tokens": 31
   },
+  "library/ui/components/Tag/Tag.module.css": {
+    "primitives": 0,
+    "tokens": 29
+  },
   "library/ui/components/TitleBar/TitleBar.module.css": {
     "primitives": 0,
     "tokens": 13
+  },
+  "library/ui/components/Toast/Toast.module.css": {
+    "primitives": 0,
+    "tokens": 16
   }
 }

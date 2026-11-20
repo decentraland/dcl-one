@@ -8,8 +8,8 @@ import {
   assetsQuery,
   canReadProfile,
   badgesQuery,
+  communitiesQuery,
   creationsQuery,
-  myCommunitiesQuery,
   myFavoritePlacesQuery,
   photoQuery,
   photosQuery,
@@ -101,14 +101,19 @@ export function useProfilePhoto(id: string | null) {
   return useQuery({ ...options, queryFn: id === null ? skipToken : options.queryFn });
 }
 
-
-/** The signed-in member's communities; nothing is requested without an identity. */
-export function useMyCommunities(identity: AuthIdentity | null, enabled = true) {
-  const options = identity ? myCommunitiesQuery(identity) : null;
+/**
+ * A profile's communities: the member's own signed list (private ones included) with their identity,
+ * the public list otherwise. While the signed list first loads, the public one already on screen
+ * stays; never the other way round, so a signed-out page never keeps private rows.
+ */
+export function useProfileCommunities(address: string, identity: AuthIdentity | null) {
+  const signed = signsFor(identity, address);
+  const publicKey = profileKeys.communities(address);
   return useQuery({
-    queryKey: options?.queryKey ?? profileKeys.myCommunities(""),
-    queryFn: identity && enabled ? myCommunitiesQuery(identity).queryFn : skipToken,
-    staleTime: PROFILE_STALE_MS,
+    ...communitiesQuery(address, identity),
+    enabled: canReadProfile(address),
+    placeholderData: (previous, previousQuery) =>
+      signed && previousQuery && hashKey(previousQuery.queryKey) === hashKey(publicKey) ? previous : undefined,
     // A failed read is reported once; returning to the tab does not retry it on every focus.
     refetchOnWindowFocus: false,
   });

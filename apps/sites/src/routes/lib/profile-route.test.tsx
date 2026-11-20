@@ -20,6 +20,7 @@ vi.hoisted(() => {
 const net = vi.hoisted(() => ({
   fetchProfile: vi.fn(),
   fetchMyCommunities: vi.fn(),
+  fetchMemberCommunities: vi.fn(),
   fetchProfilePlaces: vi.fn(),
   fetchProfileCreations: vi.fn(),
   fetchProfileAssets: vi.fn(),
@@ -33,7 +34,10 @@ vi.mock("@/data/lib/catalyst/social/profile", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/social/profile")>()),
   fetchProfile: net.fetchProfile,
 }));
-vi.mock("@/data/lib/catalyst/social/profile-communities", () => ({ fetchMyCommunities: net.fetchMyCommunities }));
+vi.mock("@/data/lib/catalyst/social/profile-communities", () => ({
+  fetchMyCommunities: net.fetchMyCommunities,
+  fetchMemberCommunities: net.fetchMemberCommunities,
+}));
 vi.mock("@/data/lib/catalyst/places/profile-places", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/places/profile-places")>()),
   fetchProfilePlaces: net.fetchProfilePlaces,
@@ -63,7 +67,6 @@ const { stub } = vi.hoisted(() => ({
   }),
 }));
 vi.mock("@ui/web/pages/StProfileOverviewTab", () => stub("overview"));
-vi.mock("@ui/web/pages/StProfileCommunitiesTab", () => stub("communities"));
 
 import { CatalystError } from "@/data/lib/catalyst/client";
 import { mapProfile } from "@/data/lib/catalyst/social/profile";
@@ -505,13 +508,19 @@ describe("profile route, communities", () => {
     expect(net.fetchMyCommunities).toHaveBeenCalledTimes(1);
   });
 
-  it("neither reads nor reports communities on another member's profile", async () => {
+  it("lists another member's public communities in the profile's frame, unsigned", async () => {
     auth.state = { isConnected: true, address: "0x1111111111111111111111111111111111111111", identity };
     net.fetchProfile.mockResolvedValue(avatar("Alice"));
+    net.fetchMemberCommunities.mockResolvedValue({
+      communities: [{ id: "c1", name: "Builders", role: "owner", membersCount: null, privacy: null, thumbnailUrl: null }],
+      total: 1,
+    });
 
     mount(`/profile/${A}/communities`);
 
-    expect(await screen.findByRole("heading", { name: "Alice" })).toBeTruthy();
+    expect((await screen.findByRole("link", { name: /Builders/ })).getAttribute("href")).toBe("/social/communities/c1");
+    expect(screen.getByRole("tab", { name: "Communities" }).getAttribute("aria-selected")).toBe("true");
+    expect(net.fetchMemberCommunities).toHaveBeenCalledWith(A, expect.anything());
     expect(net.fetchMyCommunities).not.toHaveBeenCalled();
     expect(net.track.mock.calls.some(([event]) => event === "profile_communities_load_failed")).toBe(false);
   });

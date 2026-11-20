@@ -1,5 +1,3 @@
-/* Another member's header actions. The design system's friendship button (Figma FriendCTA) is not
- * in the shared library yet: its states are the shared Button plus a state label drawn here. */
 .root {
   display: flex;
   flex-direction: column;
@@ -23,21 +21,6 @@
   font-size: var(--dcl-font-size-body-sm);
   font-weight: 600;
   white-space: nowrap;
-}
-
-.notice,
-.error {
-  margin: 0;
-  color: var(--dcl-text-secondary);
-  font-size: var(--dcl-font-size-body-sm);
-}
-
-.error {
-  color: var(--dcl-feedback-error);
-}
-
-.notice:empty {
-  display: none;
 }
 
 @media (min-width: 1024px) {

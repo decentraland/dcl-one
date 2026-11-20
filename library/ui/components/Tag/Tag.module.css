@@ -1,0 +1,253 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+/* Figma Tags page. `Status`: Live and Online are 26px rows without a surface (a mark, then 14px
+ * semibold text); Streaming and Listening are 26px shadow chips, radius 8px; StreamingLarge is an
+ * 18px row with a green 13px label; Featured is a 26px chip on the light rainbow. `Location`: 23px,
+ * radius 6px, white at 5%, a 14px pin and 12px text at 70%. `CommunityType`: a 10px mark and 12px
+ * text at 70%. `ModeratonType`: 18px, radius 6px, white at 10%, 13px text. `Realm`: a 20px pill,
+ * white at 10%, 11px semibold capitals. `AgeRatingAlpha`: a 16px square, radius 4px, the rating's
+ * colour at 15% under its letter. The greens, the yellow, the red, white at 5% and white at 70%
+ * have no token. */
+@layer dcl.components {
+  .root {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    box-sizing: border-box;
+    max-width: 100%;
+    color: var(--dcl-text-primary);
+    font-family: Inter, sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.25;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+
+  .icon {
+    flex: none;
+  }
+
+  .text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .count {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .visuallyHidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .root[data-variant='live'] {
+    gap: var(--dcl-space-4);
+    height: 26px;
+    padding: 0 6px;
+    border-radius: var(--dcl-radius-sm);
+    text-transform: uppercase;
+  }
+
+  .root[data-variant='online'] {
+    gap: var(--dcl-space-4);
+    height: 26px;
+    padding: 0 6px;
+    border-radius: var(--dcl-radius-sm);
+  }
+
+  .dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--dcl-radius-full);
+    background: #30cd00;
+  }
+
+  .root[data-variant='online'] .count {
+    gap: var(--dcl-space-4);
+  }
+
+  .root[data-variant='streaming'] {
+    gap: 2px;
+    height: 26px;
+    padding: 0 var(--dcl-space-4);
+    border-radius: var(--dcl-radius-sm);
+    background: var(--dcl-neutrals-shadow);
+  }
+
+  .root[data-variant='streaming'] > .icon {
+    color: #30cd00;
+  }
+
+  .root[data-variant='listening'] {
+    gap: var(--dcl-space-4);
+    height: 26px;
+    padding: 0 6px;
+    border-radius: var(--dcl-radius-sm);
+    background: var(--dcl-neutrals-shadow);
+    font-size: 12px;
+  }
+
+  .root[data-variant='listening'] > .icon {
+    color: #30cd00;
+  }
+
+  .root[data-variant='voiceStream'] {
+    gap: var(--dcl-space-4);
+    min-height: 18px;
+    font-size: 13px;
+  }
+
+  .root[data-variant='voiceStream'] .text {
+    color: #30cd00;
+  }
+
+  /* An 18px box holds the 22px mark; the 31px halo behind it does not take space. */
+  .halo {
+    position: relative;
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    color: #30cd00;
+  }
+
+  .halo::before {
+    position: absolute;
+    inset: -6px;
+    border-radius: var(--dcl-radius-full);
+    background: rgb(9 202 64 / 20%);
+    content: '';
+  }
+
+  .halo > .icon {
+    position: relative;
+  }
+
+  .root[data-variant='voiceStream'] .count {
+    gap: var(--dcl-space-4);
+    color: rgb(255 255 255 / 70%);
+    font-size: 14px;
+  }
+
+  .root[data-variant='featured'] {
+    gap: var(--dcl-space-4);
+    height: 26px;
+    padding: 0 6px;
+    border-radius: var(--dcl-radius-sm);
+    background: var(--dcl-gradient-light-rainbow);
+  }
+
+  .root[data-variant='location'] {
+    gap: var(--dcl-space-4);
+    height: 23px;
+    padding: 0 var(--dcl-space-8) 0 var(--dcl-space-4);
+    border-radius: var(--dcl-radius-xs);
+    background: rgb(255 255 255 / 5%);
+    color: rgb(255 255 255 / 70%);
+    font-size: 12px;
+    font-weight: 400;
+  }
+
+  .root[data-variant='public'],
+  .root[data-variant='private'] {
+    gap: var(--dcl-space-4);
+    min-height: 18px;
+    color: rgb(255 255 255 / 70%);
+    font-size: 12px;
+    font-weight: 400;
+  }
+
+  .root[data-variant='role'] {
+    height: 18px;
+    padding: 0 var(--dcl-space-4);
+    border-radius: var(--dcl-radius-xs);
+    background: var(--dcl-transparencies-white-10);
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1;
+  }
+
+  /* The capture draws the two ends as half circles of 7px. */
+  .root[data-variant='realm'] {
+    gap: var(--dcl-space-4);
+    height: 20px;
+    padding: 0 7px;
+    border-radius: 7px;
+    background: var(--dcl-transparencies-white-10);
+    font-size: 11px;
+    line-height: 1;
+    text-transform: uppercase;
+  }
+
+  .root[data-variant='teen'],
+  .root[data-variant='adult'],
+  .root[data-variant='restricted'] {
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 1;
+    text-transform: uppercase;
+  }
+
+  .root[data-variant='teen'] {
+    background: rgb(54 212 29 / 15%);
+    color: #28ac00;
+  }
+
+  .root[data-variant='adult'] {
+    background: rgb(255 214 0 / 15%);
+    color: #ffd600;
+  }
+
+  .root[data-variant='restricted'] {
+    background: rgb(255 0 0 / 15%);
+    color: #f00;
+  }
+
+  @media (forced-colors: active) {
+    .root {
+      border: 1px solid CanvasText;
+      background: Canvas;
+      color: CanvasText;
+      forced-color-adjust: none;
+    }
+
+    .root[data-variant='live'],
+    .root[data-variant='online'],
+    .root[data-variant='voiceStream'],
+    .root[data-variant='public'],
+    .root[data-variant='private'] {
+      border: 0;
+    }
+
+    .root .text,
+    .root .count,
+    .root .icon,
+    .halo {
+      color: CanvasText;
+    }
+
+    .dot {
+      background: CanvasText;
+    }
+
+    .halo::before {
+      display: none;
+    }
+  }
+}

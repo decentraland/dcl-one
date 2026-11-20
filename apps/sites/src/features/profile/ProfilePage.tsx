@@ -1,8 +1,5 @@
-import { useEffect, useRef, useState, type ComponentProps } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-
-import { ProfileNavigationContext } from "@ui/web/frames/ProfileNavigation";
-import StProfileCommunitiesTab from "@ui/web/pages/StProfileCommunitiesTab";
 
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 import { track } from "@/core/lib/telemetry/track";
@@ -12,12 +9,13 @@ import { canReadProfile } from "@/data/lib/profile/queries";
 
 import { ProfileRouteError } from "./errors";
 import { ProfileAssetsScreen } from "./ProfileAssetsScreen";
+import { ProfileCommunitiesScreen } from "./ProfileCommunitiesScreen";
 import { ProfileCreationsScreen } from "./ProfileCreationsScreen";
 import { ProfileOverviewScreen } from "./ProfileOverviewScreen";
 import { ProfilePhotosScreen } from "./ProfilePhotosScreen";
 import { ProfilePlacesScreen } from "./ProfilePlacesScreen";
 import { ProfileReferralsScreen } from "./ProfileReferralsScreen";
-import { useMyCommunities, useProfileFlags, useRequiredProfile } from "./hooks";
+import { useProfileFlags, useRequiredProfile } from "./hooks";
 import {
   isLegacyTabSegment,
   isOwnProfile,
@@ -28,9 +26,6 @@ import {
 } from "./tabs";
 
 const STORY: StoryId = "landings/profile";
-
-type TabList = { id: string; label: string }[];
-type TabProps = { address: string; profile: ProfileVM; own: boolean; tabs: TabList; sid: string };
 
 export type ProfilePageProps = {
   address: string;
@@ -79,15 +74,10 @@ export function ProfilePage({ address: rawAddress, tabSegment, ownOnServer, sid 
   const tabs = profileTabs(own, { referral }).map((entry) => ({ id: entry.id, label: entry.label }));
   const onTab = (next: string) => track("profile_tab_changed", { tab: next as ProfileTab }, { sid, story: STORY });
 
-  const navigation = {
-    tabs: tabs.map((entry) => ({ ...entry, href: profileHref(address, entry.id) })),
-    active: activeTab,
-    onTab,
-  };
+  const navigation = { tabs: tabs.map((entry) => ({ ...entry, href: profileHref(address, entry.id) })) };
 
-  // Overview, Creations, Places, Assets, Photos and Referral Rewards have the profile site's layout: its own tab bar
-  // (scrollable on narrow screens) and no section side panel, so they stay outside the context the
-  // Sites chrome turns into that panel.
+  // Every tab has the profile site's layout: its own tab bar (scrollable on narrow screens) and no
+  // section side panel.
   if (activeTab === "overview") {
     return (
       <ProfileOverviewScreen
@@ -131,36 +121,8 @@ export function ProfilePage({ address: rawAddress, tabSegment, ownOnServer, sid 
     return <ProfileReferralsScreen profile={profile} own={own} tabs={navigation.tabs} onTab={onTab} />;
   }
 
-  // Communities, the one tab left: it reads only its own data, as every tab does.
-  return (
-    <div className="landings-profile">
-      <ProfileNavigationContext value={navigation}>
-        <CommunitiesTab address={address} profile={profile} own={own} tabs={tabs} sid={sid} />
-      </ProfileNavigationContext>
-    </div>
-  );
-}
-
-function CommunitiesTab({ address, profile, own, tabs, sid }: TabProps) {
-  const { identity } = useAuth();
-  const query = useMyCommunities(identity, own);
-  const failed = own && query.isError;
-  const reported = useRef(false);
-  useEffect(() => {
-    if (!failed || reported.current) return;
-    reported.current = true;
-    track("profile_communities_load_failed", { address }, { sid, story: STORY });
-  }, [failed, address, sid]);
-
-  return (
-    <StProfileCommunitiesTab
-      profile={profile as never}
-      tabs={tabs}
-      communities={(own ? (query.data ?? []) : []) as ComponentProps<typeof StProfileCommunitiesTab>["communities"]}
-      isOwnProfile={own}
-      loading={own && !!identity && query.isPending}
-    />
-  );
+  // Keyed by address: another profile reports its own failed read.
+  return <ProfileCommunitiesScreen key={profile.address} profile={profile} own={own} tabs={navigation.tabs} onTab={onTab} sid={sid} />;
 }
 
 function useProfileViewed(

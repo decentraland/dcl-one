@@ -36,64 +36,83 @@
   margin: 0;
 }
 
-.hero,
-.journey {
-  box-sizing: border-box;
-  width: 100%;
-  padding: var(--dcl-space-16);
-  border-radius: var(--dcl-radius-lg);
-  background: var(--dcl-transparencies-black-20);
-}
-
 .hero {
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--dcl-space-16);
+  padding: var(--dcl-space-48) 0 var(--dcl-space-24);
+  border-bottom: 1px solid var(--dcl-border-subtle);
+  text-align: center;
 }
 
 .envelope {
-  width: 120px;
+  width: 72px;
   height: auto;
+  filter: drop-shadow(0 0 var(--dcl-space-24) var(--dcl-brand-purple));
 }
 
 .heroBody {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--dcl-space-12);
   min-width: 0;
   width: 100%;
 }
 
 .heroTitle {
-  composes: text68656164696e672f34 from "@dcl/one-ui/text-styles.module.css";
+  composes: text68656164696e672f6c67 from "@dcl/one-ui/text-styles.module.css";
   margin: 0;
   color: var(--dcl-text-primary);
 }
 
+.subtitle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-4);
+}
+
 .heroSubtitle {
-  composes: text626f64792f6c67 from "@dcl/one-ui/text-styles.module.css";
   margin: 0;
   color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-body-lg);
+}
+
+.termsButton {
+  min-width: 32px;
+  padding-inline: 0;
 }
 
 .invite {
   display: flex;
-  flex-direction: column;
-  gap: var(--dcl-space-12);
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dcl-space-8);
   width: 100%;
 }
 
 .inviteField {
+  display: flex;
+  flex: 0 1 260px;
+  align-items: center;
+  min-width: min(100%, 230px);
+  max-width: 100%;
+  background: var(--dcl-transparencies-black-40);
+  border-radius: var(--dcl-radius-md);
+}
+
+.inviteField > :first-child {
   flex: 1 1 auto;
   min-width: 0;
 }
 
-.inviteActions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--dcl-space-8);
+.copy {
+  flex: 0 0 auto;
+  padding-inline: var(--dcl-space-8);
 }
 
 .copied {
@@ -106,8 +125,17 @@
 }
 
 .terms {
+  position: absolute;
+  z-index: 1;
+  inset: 100% auto auto 50%;
+  translate: -50% 0;
+  box-sizing: border-box;
+  width: min(300px, 80vw);
   margin: 0;
-  color: var(--dcl-text-secondary);
+  padding: var(--dcl-space-12);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-bg-surface);
+  color: var(--dcl-text-primary);
   font-size: var(--dcl-font-size-body-sm);
   line-height: 1.5;
 }
@@ -178,16 +206,17 @@
 }
 
 .journeyTitle {
-  composes: text68656164696e672f35 from "@dcl/one-ui/text-styles.module.css";
   margin: 0;
   color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-heading-2);
+  font-weight: 400;
 }
 
 .joined {
   margin: 0;
-  padding: var(--dcl-space-4) var(--dcl-space-12);
-  border-radius: var(--dcl-radius-full);
-  background: var(--dcl-transparencies-white-10);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-4);
   color: var(--dcl-text-primary);
   font-size: var(--dcl-font-size-body-md);
   font-weight: 600;
@@ -343,26 +372,6 @@
 }
 
 @media (min-width: 768px) {
-  .hero {
-    flex-direction: row;
-    align-items: flex-start;
-    gap: var(--dcl-space-24);
-    padding: var(--dcl-space-24);
-  }
-
-  .journey {
-    padding: var(--dcl-space-24);
-  }
-
-  .envelope {
-    width: 160px;
-  }
-
-  .invite {
-    flex-direction: row;
-    align-items: flex-end;
-  }
-
   .steps {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -370,5 +379,11 @@
   .step {
     flex-direction: column;
     align-items: flex-start;
+  }
+}
+
+@media (min-width: 1024px) {
+  .hero {
+    padding-top: var(--dcl-space-64);
   }
 }

@@ -1,18 +1,17 @@
 import type { CSSProperties, ReactNode } from "react";
 
+import { ProfilePic } from "@dcl/one-ui";
 import { GeneralVerified, GeneralWallet } from "@dcl/one-ui/foundations/icons";
 
 import { CopyAddress } from "../components/CopyAddress";
 
 import styles from "./ProfileHeader.module.css";
-import { useBrokenImage } from "./useBrokenImage";
 
 type ProfileHeaderProps = {
   address: string;
   /** The address as the app shortens it for display (`0x1234…abcd`); the copy button copies `address`. */
   addressLabel: string;
   name: string;
-  /** The profile's name color, also the avatar fallback background. */
   nameColor: string;
   /** A claimed NAME shows the verified mark; an unclaimed one the `#1234` suffix. */
   hasClaimedName: boolean;
@@ -20,27 +19,6 @@ type ProfileHeaderProps = {
   /** Buttons on the right: the owner's calls to action, or a member's. */
   actions?: ReactNode;
 };
-
-function firstGrapheme(value: string): string {
-  for (const ch of value) return ch;
-  return "";
-}
-
-/** The round face snapshot with a soft border; the initial on the name color without one, or when it fails. */
-function Avatar({ imageUrl, name }: { imageUrl?: string; name: string }) {
-  const { broken, ref, onError } = useBrokenImage(imageUrl);
-  return (
-    <span className={styles.avatar}>
-      {imageUrl && !broken ? (
-        <img ref={ref} className={styles.avatarImage} src={imageUrl} alt={name} onError={onError} />
-      ) : (
-        <span className={styles.avatarInitial} aria-hidden="true">
-          {(firstGrapheme(name) || "?").toUpperCase()}
-        </span>
-      )}
-    </span>
-  );
-}
 
 /** Avatar, name and address on the left, actions on the right; stacked on narrow screens. */
 export function ProfileHeader({
@@ -52,11 +30,10 @@ export function ProfileHeader({
   avatarUrl,
   actions,
 }: ProfileHeaderProps) {
-  const style = { "--name-color": nameColor } as CSSProperties;
   return (
-    <header className={styles.root} style={style}>
+    <header className={styles.root} style={{ "--name-color": nameColor } as CSSProperties}>
       <div className={styles.identity}>
-        <Avatar imageUrl={avatarUrl} name={name} />
+        <ProfilePic className={styles.avatar} name={name} src={avatarUrl} size={48} nameColor={nameColor} />
         <div className={styles.nameBlock}>
           <div className={styles.nameRow}>
             <h1 className={styles.name}>{name}</h1>

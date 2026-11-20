@@ -1,6 +1,4 @@
-/* The profile frame around the shared TabsBar and Tabs: brand gradient, centred content, header, tab
- * bar and an optional avatar column. The source's radial gradient (#7434B1 -> #481C6C -> #2B1040) has
- * no token; the closest brand tokens stand in for it. */
+/* The production Profile gradient runs across the chrome and the section content. */
 .root {
   position: relative;
   isolation: isolate;
@@ -11,12 +9,9 @@
    * it, so the page keeps the bar's height free above its own gap. */
   padding-top: calc(var(--site-header-h, 64px) + var(--dcl-space-16));
   padding-bottom: var(--dcl-space-64);
-  background: radial-gradient(
-    123.58% 82% at 9.01% 25.79%,
-    var(--dcl-brand-purple) 0%,
-    var(--dcl-brand-purple-dark) 37.11%,
-    var(--dcl-neutrals-black) 100%
-  );
+  --profile-background: radial-gradient(123.58% 82% at 9.01% 25.79%, #7434b1 0%, #481c6c 37.11%, #2b1040 100%);
+
+  background: var(--profile-background);
   color: var(--dcl-text-primary);
 }
 
@@ -27,6 +22,10 @@
   width: 100%;
   max-width: 1650px;
   margin: 0 auto;
+}
+
+.sectionBar {
+  background: transparent;
 }
 
 .body {
@@ -49,11 +48,19 @@
 
 @media (min-width: 1024px) {
   .root {
-    padding-top: calc(var(--site-header-h, 92px) + var(--dcl-space-24));
+    padding-top: calc(var(--site-header-h, 92px) + var(--dcl-space-4));
   }
 
   .content {
     padding: 0 var(--dcl-space-32);
+  }
+
+  .sectionBar {
+    padding-inline: 0;
+  }
+
+  .sectionTab {
+    height: 46px;
   }
 
   .withAside {

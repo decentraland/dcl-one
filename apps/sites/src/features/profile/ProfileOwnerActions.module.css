@@ -1,0 +1,33 @@
+.friends {
+  display: grid;
+  gap: var(--dcl-space-8);
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.friend {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  padding: var(--dcl-space-4);
+  color: var(--dcl-text-primary);
+  text-decoration: none;
+}
+
+.friend:hover {
+  text-decoration: underline;
+}
+
+.more {
+  margin-top: var(--dcl-space-16);
+}
+
+.announcement {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}

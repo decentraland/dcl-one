@@ -1,0 +1,109 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+/* Figma `Toast` (Property 1=TextOnly|IconText|TextIconText|Error|ErrorClose|ErrorCTA): a shadow
+ * surface with a 1px pale-black border, radius 12px, 12 by 16px padding and a body/sm-strong
+ * message; a 24px mark 6px before the text of a confirmation, 16px before the text of an error. */
+@layer dcl.components {
+  .region[data-placement='viewport'] {
+    position: fixed;
+    right: var(--dcl-space-16);
+    bottom: var(--dcl-space-24);
+    left: var(--dcl-space-16);
+    z-index: 1000;
+    display: flex;
+    justify-content: center;
+    pointer-events: none;
+  }
+
+  .region[data-placement='inline'] {
+    display: flex;
+    max-width: 100%;
+  }
+
+  .region:empty {
+    display: none;
+  }
+
+  .toast {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--dcl-space-16);
+    box-sizing: border-box;
+    max-width: 100%;
+    min-height: 40px;
+    padding: var(--dcl-space-8) var(--dcl-space-16);
+    border: 1px solid var(--dcl-neutrals-pale-black);
+    border-radius: var(--dcl-radius-md);
+    background: var(--dcl-neutrals-shadow);
+    box-shadow: 0 4px 4px var(--dcl-transparencies-black-10);
+    color: var(--dcl-neutrals-snow);
+    pointer-events: auto;
+  }
+
+  .toast[data-variant='confirmation'] {
+    gap: 6px;
+    padding-left: 10px;
+  }
+
+  /* The error toasts of the capture are 60px high, 14px above and below the text. */
+  .toast[data-variant='error'] {
+    min-height: 60px;
+    padding-top: 14px;
+    padding-bottom: 14px;
+  }
+
+  .toast[data-rich] {
+    padding-right: 14px;
+  }
+
+  .icon {
+    flex: none;
+  }
+
+  .message {
+    composes: text626f64792f736d2d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /* The capture's 20px close box at white 10%, in a 24px target. */
+  .close {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    margin: 0;
+    padding: 0;
+    border: 2px solid var(--dcl-neutrals-shadow);
+    border-radius: var(--dcl-radius-xs);
+    background: var(--dcl-transparencies-white-10);
+    background-clip: padding-box;
+    color: var(--dcl-neutrals-snow);
+    cursor: pointer;
+  }
+
+  .close:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 0;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .toast {
+      animation: appear 150ms ease-out;
+    }
+  }
+
+  @keyframes appear {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
+
+  @media (forced-colors: active) {
+    .toast {
+      border-color: CanvasText;
+    }
+  }
+}

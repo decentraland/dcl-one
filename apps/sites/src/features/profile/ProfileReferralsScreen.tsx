@@ -17,6 +17,8 @@ import {
   GeneralCheck,
   GeneralCopy,
   GeneralDownArrow,
+  GeneralFavoritesFilled,
+  GeneralInfoButton,
   GeneralLock,
   GeneralUpArrow,
   SocialX,
@@ -38,6 +40,7 @@ import { signsFor } from "@/data/lib/profile/queries";
 import { useCopyStatus } from "../components/useCopyStatus";
 
 import { useReferralProgress, useReferralTiersSeen } from "./hooks";
+import { ProfileMoreActions } from "./ProfileMoreActions";
 import styles from "./ProfileReferralsScreen.module.css";
 import { ProfileShell, type ProfileShellTab } from "./ProfileShell";
 
@@ -92,6 +95,8 @@ export type ProfileReferralsScreenProps = {
 function ReferralHero({ profile }: { profile: ProfileVM }) {
   const stepsId = useId();
   const [stepsOpen, setStepsOpen] = useState(false);
+  const [termsOpen, setTermsOpen] = useState(false);
+  const termsId = useId();
   const { state, announcement, copy } = useCopyStatus();
   // A claimed NAME makes the shorter link; the wallet always works.
   const handle = profile.hasClaimedName && profile.name ? profile.name : profile.address;
@@ -104,29 +109,48 @@ function ReferralHero({ profile }: { profile: ProfileVM }) {
         <h2 id={`${stepsId}-title`} className={styles.heroTitle}>
           Decentraland is Better With Friends
         </h2>
-        <p className={styles.heroSubtitle}>Invite yours and get rewards!</p>
+        <div className={styles.subtitle}>
+          <p className={styles.heroSubtitle}>Invite yours and get rewards!</p>
+          <Button
+            variant="text"
+            size="sm"
+            className={styles.termsButton}
+            aria-label="Referral program details"
+            aria-expanded={termsOpen}
+            aria-controls={termsId}
+            onClick={() => setTermsOpen((open) => !open)}
+          >
+            <GeneralInfoButton size={16} aria-hidden="true" />
+          </Button>
+          <p id={termsId} className={styles.terms} hidden={!termsOpen}>
+            Invitees must be new to Decentraland and must jump in-world on 3 separate days to count toward reward goals.
+            See{" "}
+            <a className={styles.termsLink} href={REFERRAL_TERMS_HREF} target="_blank" rel="noopener noreferrer">
+              Terms &amp; Conditions
+            </a>
+            .
+          </p>
+        </div>
         <div className={styles.invite}>
-          <InputWebCreatorTools
-            className={styles.inviteField}
-            label="Your invite link"
-            value={inviteUrl}
-            readOnly
-            onFocus={(event) => event.currentTarget.select()}
-          />
-          <div className={styles.inviteActions}>
-            <Button size="md" leadingIcon={<GeneralCopy size={18} aria-hidden="true" />} onClick={() => copy(inviteUrl)}>
-              Copy link
-            </Button>
-            <Button
-              variant="secondary"
-              size="md"
-              href={shareOnXHref(inviteUrl)}
-              target="_blank"
-              leadingIcon={<SocialX size={18} aria-hidden="true" />}
-            >
-              Share on X
+          <div className={styles.inviteField}>
+            <InputWebCreatorTools
+              label="Your invite link"
+              labelHidden
+              value={inviteUrl}
+              readOnly
+              onFocus={(event) => event.currentTarget.select()}
+            />
+            <Button variant="text" size="sm" aria-label="Copy link" className={styles.copy} onClick={() => copy(inviteUrl)}>
+              <GeneralCopy size={18} aria-hidden="true" />
             </Button>
           </div>
+          <ProfileMoreActions
+            label="Share"
+            actions={[
+              { label: "Copy link", icon: <GeneralCopy size={18} aria-hidden="true" />, onSelect: () => copy(inviteUrl) },
+              { label: "Share on X", icon: <SocialX size={18} aria-hidden="true" />, onSelect: () => window.open(shareOnXHref(inviteUrl), "_blank", "noopener,noreferrer") },
+            ]}
+          />
         </div>
         <p className={state === "idle" ? styles.visuallyHidden : styles.copied} role="status">
           <Fragment key={announcement}>
@@ -138,14 +162,6 @@ function ReferralHero({ profile }: { profile: ProfileVM }) {
               "Couldn't copy the link"
             ) : null}
           </Fragment>
-        </p>
-        <p className={styles.terms}>
-          Invitees must be new to Decentraland and must jump in-world on 3 separate days to count toward reward goals.
-          See{" "}
-          <a className={styles.termsLink} href={REFERRAL_TERMS_HREF} target="_blank" rel="noopener noreferrer">
-            Terms &amp; Conditions
-          </a>
-          .
         </p>
         <Button
           variant="text"
@@ -224,7 +240,7 @@ function ReferralJourney({ progress, onShown }: { progress: ReferralProgress; on
         <h2 id={titleId} className={styles.journeyTitle}>
           Your Reward Journey
         </h2>
-        <p className={styles.joined}>{joined}</p>
+        <p className={styles.joined}><GeneralFavoritesFilled size={18} aria-hidden="true" /> {joined}</p>
       </div>
       <p className={styles.nextReward}>{nextText}</p>
       <div className={styles.scroller}>
