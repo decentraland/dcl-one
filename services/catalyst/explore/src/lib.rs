@@ -1422,18 +1422,15 @@ mod tests {
     #[tokio::test]
     async fn unknown_api_routes_answer_the_upstream_json_404() {
         let app = router(offline_state());
-        let nested = Router::new()
-            .nest("/places", router(offline_state()))
-            .nest("/events", router(offline_state()));
+        let nested = NESTS.into_iter().fold(Router::new(), |nested, nest| {
+            nested.nest(nest, router(offline_state()))
+        });
         let expected = json!({"ok": false, "error": "NotFound", "code": "not_found"});
-        for (app, uri) in [
-            (&app, "/api/nope"),
-            (&app, "/api/places/x/nope/deeper"),
-            (&app, "/api"),
-            (&nested, "/places/api/nope"),
-            (&nested, "/events/api/nope"),
-        ] {
-            let (status, headers, body) = send(app, Method::GET, uri, &[]).await;
+        let root =
+            ["/api/nope", "/api/places/x/nope/deeper", "/api"].map(|uri| (&app, uri.to_string()));
+        let mounts = NESTS.map(|nest| (&nested, format!("{nest}/api/nope")));
+        for (app, uri) in root.into_iter().chain(mounts) {
+            let (status, headers, body) = send(app, Method::GET, &uri, &[]).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
             assert_eq!(body, expected, "{uri}");
             assert_eq!(headers["content-type"], "application/json", "{uri}");

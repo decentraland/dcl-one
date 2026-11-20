@@ -1889,7 +1889,8 @@ mod tests {
         assert_eq!(answer["error"], "Schedule request already applied");
     }
 
-    /// A write signed over the events host's `/api/...` path passes the nest.
+    /// A write signed over the events host's `/api/...` path passes the nest;
+    /// without the forwarded path it is refused.
     #[tokio::test]
     async fn a_write_signed_on_the_events_host_passes_the_rewrite() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
