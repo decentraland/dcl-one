@@ -563,6 +563,7 @@ pub async fn serve(
         Some(market.index.clone()),
     ));
     explore.places.set_land_authz(land.clone());
+    explorer_api.attach_land_authz(land.clone());
 
     // The content server's local write path (src/content/{create_entity,
     // unpublish_scene,land_publish}): the write deployer over the ONE pool

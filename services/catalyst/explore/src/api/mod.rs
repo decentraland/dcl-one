@@ -190,6 +190,9 @@ pub struct Settings {
     /// `MAP_EXTERNAL_BASE_URL`: the marketplace the metadata's `external_url`
     /// links to; unset yields no link rather than one to production.
     pub map_external_base_url: Option<String>,
+    /// `MAP_DISSOLVED_ESTATE_IMAGE_URL`: where an estate's `map.png`
+    /// redirects when the grid holds none of its parcels.
+    pub map_dissolved_estate_image_url: String,
     /// The LAND and Estate registries of `ETH_NETWORK`, lowercase (the
     /// `/v2/contracts/{address}/tokens/{id}` dispatch and `external_url`).
     pub land_contract_address: String,
@@ -271,6 +274,7 @@ impl Settings {
             mirrors_enabled: config.explore.explorer_mirrors_enabled,
             map_image_base_url: format!("{public_url}/api/v1"),
             map_external_base_url: None,
+            map_dissolved_estate_image_url: config.ab_cdn.map_dissolved_estate_image_url.clone(),
             land_contract_address: land.land_registry,
             estate_contract_address: land.estate_registry,
             ab_cdn_enabled: true,
@@ -362,6 +366,7 @@ impl Settings {
             mirrors_enabled: true,
             map_image_base_url: "http://localhost/api/v1".into(),
             map_external_base_url: None,
+            map_dissolved_estate_image_url: "http://localhost/dissolved_estate.png".into(),
             land_contract_address: crate::land_authz::LAND_REGISTRY_MAINNET.into(),
             estate_contract_address: crate::land_authz::ESTATE_REGISTRY_MAINNET.into(),
             ab_cdn_enabled: true,
@@ -526,6 +531,9 @@ pub struct State {
     /// The auth relay's budget of contract-wallet (`isValidSignature`) calls,
     /// per network and per replica.
     pub contract_checks: auth_api::ContractChecks,
+    /// The LAND index, attached after construction (`attach_land_authz`):
+    /// the Estate metadata of estates the grid no longer holds.
+    pub land_authz: std::sync::OnceLock<Arc<crate::land_authz::LandAuthzState>>,
 }
 
 pub type Shared = Arc<State>;
@@ -570,6 +578,7 @@ impl State {
             registry_denylist: Default::default(),
             eip1654: std::sync::OnceLock::new(),
             contract_checks: Default::default(),
+            land_authz: std::sync::OnceLock::new(),
         });
         state
             .denylist
@@ -827,6 +836,11 @@ impl State {
     /// The attached EIP-1654 validator, if any.
     pub fn eip1654_validator(&self) -> Option<&dyn crate::auth::eip1654::Eip1654Validator> {
         self.eip1654.get().map(|v| &**v)
+    }
+
+    /// Attaches the LAND index; `false` if one was attached already.
+    pub fn attach_land_authz(&self, land: Arc<crate::land_authz::LandAuthzState>) -> bool {
+        self.land_authz.set(land).is_ok()
     }
 }
 

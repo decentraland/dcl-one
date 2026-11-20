@@ -9,10 +9,21 @@ import { detectPlatform } from "@/features/download/options";
 import { jumpInFor, mobileLaunch } from "@/features/jump/mobileLaunch";
 import { cardProps } from "@/features/jump/view";
 
+import { EVENTS_SECTION, destinationMeta, jumpCanonicalPath, jumpPosition, parcelCard, sectionCard, worldCard } from "../lib/destination-meta";
+import { absoluteUrl, publicBase } from "../lib/social-meta";
 import type { Route } from "./+types/jump.places._index";
 
-export function meta() {
-  return [{ title: "Jump into Decentraland" }];
+/**
+ * The card of the World or parcel the link names, from the catalogue row the loader read; a link naming
+ * neither gets the section card, as decentraland.org's did.
+ */
+export function meta({ loaderData, location, matches }: Route.MetaArgs) {
+  const params = new URLSearchParams(location.search);
+  const world = readJumpTarget(params).realm;
+  const position = jumpPosition(params);
+  const row = loaderData?.place ?? null;
+  const card = world ? worldCard(world, row) : position ? parcelCard(position, row) : sectionCard(EVENTS_SECTION);
+  return destinationMeta(card, { url: absoluteUrl(publicBase(matches), jumpCanonicalPath(location.pathname, params, "place")) });
 }
 
 const INVALID = "/jump/places/invalid";
@@ -44,6 +55,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const creator = owner ? await loadCreator(owner, opts).catch(() => null) : parcelCreator;
   const card = place.record ? toPlaceCard(place.record) : genericPlaceCard(target.coordinates, target.realm);
   return {
+    place: place.record,
     card: cardProps(card, creator),
     launch: mobileLaunch(detectPlatform(request.headers.get("user-agent")), card),
   };

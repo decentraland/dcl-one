@@ -93,6 +93,7 @@ const JumpEventRow = EventRecordSchema.pick({
   coordinates: true,
   user: true,
   user_name: true,
+  scene_name: true,
   total_attendees: true,
   live: true,
   world: true,
