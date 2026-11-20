@@ -585,11 +585,12 @@ describe('the purchase dialog', () => {
       expect(h.onAuthorize).toHaveBeenCalledTimes(1)
     })
 
-    it('says an exact allowance is that amount for this purchase alone, never unlimited', () => {
+    it('says an exact allowance is that amount for this purchase, never unlimited, and what stays when it doesn’t go through', () => {
       show({ ...view, venue: 'Decentraland Credits', state: 'ready', allowance: 'exact' })
       const text = screen.getByRole('dialog', { name: 'Authorize MANA' }).textContent
       expect(text).toContain('allow Decentraland Credits on Polygon to spend MANA')
-      expect(text).toContain('The allowance is exactly 12.5 MANA, for this purchase alone: the next one asks again.')
+      expect(text).toContain('The allowance is exactly 12.5 MANA, for this purchase. Any of it left unspent, if the purchase doesn’t go through, stays allowed until a purchase you sign uses it or you revoke it.')
+      expect(text).not.toContain('asks again')
       expect(text).not.toContain('unlimited')
     })
 

@@ -26,12 +26,12 @@ import type { Hex } from 'viem'
 import { releaseAuthorizing, runGroup, splitPriceOf, watchGroup, type CheckoutDeps, type GroupResult, type SplitPlan } from '../../../shop/checkout/purchase/executor'
 import { buildAcceptCalldata, buildAcceptWithCouponCalldata, buildStoreBuyCalldata } from '../../../shop/checkout/purchase/encoding'
 import { purchaseTargetFor } from '../../../shop/checkout/purchase/cart'
-import { claimSplitHold, clearSettledSplitHold, clearSplitHold, findCreditRecord, readSplitHoldRecord, splitHoldLine, writeSplitHold, type SplitHold, type SplitHoldClearing } from '../../../shop/checkout/purchase/splitHold'
+import { claimSplitHold, clearSettledSplitHold, clearSplitHold, findCreditRecord, readSplitHold, readSplitHoldRecord, splitHoldLine, splitsInFlight, writeSplitHold, type SplitHold, type SplitHoldClearing } from '../../../shop/checkout/purchase/splitHold'
 import { ensureAuthorization, exactAllowanceReady, exactGrantLock, getManaSpendingAuthorization } from '../../../shop/checkout/lib/authorizations'
 import { pageLocks, webLock as lockIfFree } from '../../../shop/checkout/lib/web-lock'
 import type { RailContext } from '../../../shop/checkout/purchase/rail'
 import { createSpendGuard } from '@shop/checkout/purchase/spend-guard'
-import { fetchUserPurchases, getUsdBalance, type PurchaseRecord, type UsdBalance } from '@shop/credits/credits'
+import { getUsdBalance, type PurchaseRecord, type UsdBalance } from '@shop/credits/credits'
 import type { OfferSource } from '../../../shop/detail/offers'
 import { fetchShopItems } from '@shop/discovery/api'
 import { isResale } from '@shop/market/access-rule'
@@ -186,6 +186,10 @@ export function createDialogSlot(ui: ShellShopUi): DialogSlot {
 /** A split whose credit the node says another transaction spent: not this item, and not Credits to give back. */
 const SPLIT_SPENT_ELSEWHERE = "This purchase's Credits were spent by another transaction, so this item wasn't bought here."
 const SPLIT_SPENT_ELSEWHERE_PART = 'its Credits were spent by another transaction, so it wasn’t bought here.'
+/** Another of the buyer's purchases with Credits and MANA, of another item, may still spend the MANA it approved. */
+const SPLIT_IN_FLIGHT = 'Another purchase with Credits and MANA is still confirming. Try again once it’s done. Nothing was charged here.'
+const SPLIT_APPROVING_ELSEWHERE = 'A purchase with Credits and MANA, or its MANA approval, is in progress in another window. Nothing was charged here.'
+const SPLIT_ITEM_HELD = 'A purchase of this item with Credits and MANA is still confirming. Nothing was charged here.'
 
 /** What a wallet asks its owner to approve: a signature, a transaction, a network to move to. */
 const WALLET_PROMPTS = new Set(['eth_signTypedData_v4', 'eth_signTypedData_v3', 'eth_signTypedData', 'eth_sendTransaction', 'personal_sign', 'eth_sign', 'wallet_switchEthereumChain', 'wallet_addEthereumChain'])
@@ -313,6 +317,22 @@ const WATCH_BACKOFF_MS = [5_000, 10_000, 20_000, 40_000, 60_000]
 export function claimLock(locks: LockManager | undefined, id: string, wait = false): Promise<(() => void) | null> {
   return webLock(locks, `dcl-inworld-shop:operation:${id}`, wait)
 }
+/**
+ * What the node's record says of a group's credits, each found by its salt among its lines (`<salt>:<line>`) and paged as
+ * the web Shop reads them (findCreditRecord): `settled` once any was spent, `expired` once every one is listed EXPIRED,
+ * else `open` (one not listed yet, or still reserved: the watcher reads again). A read that fails throws.
+ */
+export async function creditRecordOutcome(buyer: string, creditIds: string[], client: ShopClient): Promise<'settled' | 'expired' | 'open'> {
+  if (creditIds.length === 0) return 'open'
+  let expired = 0
+  for (const id of creditIds) {
+    const record = await findCreditRecord(buyer, id, client)
+    if (record?.status === 'SETTLED') return 'settled'
+    if (record?.status === 'EXPIRED') expired++
+  }
+  return expired === creditIds.length ? 'expired' : 'open'
+}
+
 /** A credit the server reports expired and unused, with no receipt for the hash, is read again this much later
  *  before the purchase is taken as never gone through: past the index's lag, an expired credit can't be spent. */
 const EXPIRY_CONFIRM_MS = 15 * 60_000
@@ -388,14 +408,7 @@ const LIVE: ShellShopServices = {
   },
   run: runGroup,
   watch: watchGroup,
-  creditRecord: async (buyer, creditIds, client) => {
-    const { items } = await fetchUserPurchases(buyer, { all: true, first: 50 }, client)
-    // A record's id is its credit's salt and its line (`<salt>:<line>`).
-    const salts = creditIds.map((id) => id.toLowerCase())
-    const mine = items.filter((p) => salts.includes(p.id.split(':')[0]!.toLowerCase()))
-    if (mine.some((p) => p.status === 'SETTLED')) return 'settled'
-    return mine.length > 0 && mine.every((p) => p.status === 'EXPIRED') ? 'expired' : 'open'
-  },
+  creditRecord: (buyer, creditIds, client) => creditRecordOutcome(buyer, creditIds, client),
   // Paged by the rows the server sent (shop/checkout/purchase/splitHold), as the web Shop reads the same record.
   creditRecordOf: (buyer, creditId, client) => findCreditRecord(buyer, creditId, client),
   creatorName: async (address) => {
@@ -1000,12 +1013,43 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
    * one of this page's, is never touched.
    */
   const strandedOwnHold = async (buyer: string, line: string, hold: SplitHold): Promise<boolean> => {
-    if (!hold.attempt) return false
-    const mine = ledger.load(buyer).find((r) => r.split?.hold?.attempt === hold.attempt && r.split.hold.line === line)
-    if (!mine || !TERMINAL_STATES.includes(mine.state)) return false
-    // claimSplitHold let the item's lock go just before, so a lock still taken is asked for again.
+    if (!ownFinished(buyer, line, hold)) return false
+    // A lock still taken is asked for again: claimSplitHold may have let the item's lock go just before.
     const cleared = await relock(() => clearSettledSplitHold(svc.locks(), buyer, line, hold).catch((): SplitHoldClearing => ({ kind: 'busy' })), lockBusy)
     return cleared.kind === 'cleared'
+  }
+
+  /** Whether one of this buyer's own operations wrote `hold` on `line` and is over: its sale can't spend anything more. */
+  const ownFinished = (buyer: string, line: string, hold: SplitHold): boolean =>
+    hold.attempt !== null && ledger.load(buyer).some((r) => r.split?.hold?.attempt === hold.attempt && r.split.hold.line === line && TERMINAL_STATES.includes(r.state))
+
+  /**
+   * Whether a split of `buyer`'s of another item than `line` may still spend the MANA allowance (splitsInFlight), on any
+   * surface; one of this page's own that is over never counts. Storage it can't read counts as one.
+   */
+  const otherSplitInFlight = (buyer: string, line: string): boolean => {
+    try {
+      return splitsInFlight(buyer).some((other) => other.line !== line && !ownFinished(buyer, other.line, other.hold))
+    } catch {
+      return true
+    }
+  }
+
+  /** Read only: whether another page holds `name` now (what an `ifAvailable` request would find); false where it can't say. */
+  const lockTaken = async (locks: LockManager, name: string): Promise<boolean> => {
+    try {
+      const { held } = await locks.query()
+      return (held ?? []).some((lock) => lock.name === name)
+    } catch {
+      return false
+    }
+  }
+
+  /** Read only: why this item can't be split now (a hold another purchase keeps), clearing one of this buyer's that is over. */
+  const itemHeld = async (buyer: string, line: string): Promise<string | null> => {
+    const hold = readSplitHold(buyer, line)
+    if (!hold || (await strandedOwnHold(buyer, line, hold))) return null
+    return SPLIT_ITEM_HELD
   }
 
   /**
@@ -1701,8 +1745,9 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           move(run, 'failed')
           break
         }
-        // Nothing of the checkout was handed off.
-        if (outcome.topUp != null) present(op, req, { ...quote, balance: outcome.topUp })
+        // Nothing of the checkout was handed off. A balance that fell short shows the terms again at that balance; a split's
+        // parts follow the balance, so its terms are read anew (a fresh quote), never shown at the old ones.
+        if (outcome.topUp != null) quote.split ? restart(op, req, 'cancelled') : present(op, req, { ...quote, balance: outcome.topUp })
         else if (outcome.switchTo != null) failSwitching(op, outcome.message, outcome.switchTo, wallet, () => restart(op, req, 'failed'))
         else fail(op, outcome.message, outcome.retry === 'cancelled' ? again : outcome.retry === 'failed' ? () => restart(op, req, 'failed') : undefined)
         return
@@ -1769,29 +1814,44 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     // The exact approval and the sale each run in one window at a time; without Web Locks nothing proves that.
     const locks = svc.locks()
     if (!locks) return { why: "This browser can't keep a purchase with Credits and MANA to one window, so nothing was charged." }
+    const line = part.priced[0]!.line
+    const holdLine = splitHoldLine(line.asset)
+    const grantLock = exactGrantLock(auth, quote.buyer)
+    const elsewhere = (): string | null => (otherSplitInFlight(quote.buyer, holdLine) ? SPLIT_IN_FLIGHT : null)
+    // Before anything is asked (no approval left behind for a purchase that can't go ahead), read without taking anything:
+    // another item's split still able to spend the allowance, an approval running in another window, this item held.
+    // Each is checked again where it counts: under the approval's lock, then under the item's.
+    const blocked = elsewhere() ?? ((await lockTaken(locks, grantLock)) ? SPLIT_APPROVING_ELSEWHERE : null) ?? (await itemHeld(quote.buyer, holdLine))
+    if (blocked) return { why: blocked }
     // An approval of this account still able to run (its answer lost) holds the sale even where the allowance looks covered.
     const ready = await exactAllowanceReady(auth, quote.buyer, gap, svc.reader()).catch(() => false)
-    if (!ready && !(await authorizeGap(op, quote, part, wallet, current, auth, gap))) return 'stop'
+    if (!ready && !(await authorizeGap(op, quote, part, wallet, current, auth, gap, elsewhere))) return 'stop'
     if (op.state !== 'reviewing' || !slot.holds(op) || !current()) return 'stop'
     // The approval's lock, held through the sale's hand-off, and the allowance read again under it. Right after this
     // page's own approval let it go, it is asked for again (RELOCK_TRIES); otherwise once, as another window's.
-    const grantLock = exactGrantLock(auth, quote.buyer)
     const release = await relock(() => lockIfFree(locks, grantLock), (got) => got === null, ready ? 1 : RELOCK_TRIES)
-    if (!release) return { why: 'A purchase with Credits and MANA, or its MANA approval, is in progress in another window. Nothing was charged here.' }
+    if (!release) return { why: SPLIT_APPROVING_ELSEWHERE }
+    // Under it, no other split of this buyer's can start (each hands off holding it, its hold written by then): one of
+    // another item still able to spend the allowance holds this one.
+    const inFlight = elsewhere()
+    if (inFlight) {
+      release()
+      return { why: inFlight }
+    }
     const stillReady = await exactAllowanceReady(auth, quote.buyer, gap, svc.reader()).catch(() => false)
     if (!stillReady) {
       release()
       return { why: 'Your MANA approval is still confirming. Nothing was charged; try again in a minute.' }
     }
     // The item's hold, shared with the web Shop: one split of it at a time, on either, until the last one is found out.
-    const line = part.priced[0]!.line
-    const holdLine = splitHoldLine(line.asset)
     let claim: Awaited<ReturnType<typeof claimSplitHold>>
     try {
-      claim = await claimSplitHold(locks, quote.buyer, holdLine)
-      // A hold one of this buyer's own finished operations left behind (its cleanup was busy or didn't stick) goes first;
-      // the item's lock its cleanup just let go is asked for again.
-      if (claim.kind === 'held' && (await strandedOwnHold(quote.buyer, holdLine, claim.hold))) claim = await relock(() => claimSplitHold(locks, quote.buyer, holdLine), (got) => got.kind === 'busy')
+      // The item's lock, which this page may have just let go (its hold read or cleaned up before the approval), is asked
+      // for again while taken.
+      const take = () => relock(() => claimSplitHold(locks, quote.buyer, holdLine), (got) => got.kind === 'busy')
+      claim = await take()
+      // A hold one of this buyer's own finished operations left behind (its cleanup was busy or didn't stick) goes first.
+      if (claim.kind === 'held' && (await strandedOwnHold(quote.buyer, holdLine, claim.hold))) claim = await take()
     } catch (e) {
       release()
       throw e
@@ -1801,7 +1861,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       return {
         why:
           claim.kind === 'held'
-            ? 'A purchase of this item with Credits and MANA is still confirming. Nothing was charged here.'
+            ? SPLIT_ITEM_HELD
             : claim.kind === 'busy'
               ? 'This item is being bought in another window. Nothing was charged here.'
               : "This browser can't keep a purchase with Credits and MANA to one window, so nothing was charged."
@@ -1819,10 +1879,21 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
    * and the fee-free relay only (the guard admits that approve, of that amount, only while AUTHORIZE runs). True once the
    * allowance covers the gap; CANCEL (or Escape) closes the purchase with nothing reserved.
    */
-  const authorizeGap = (op: Operation, quote: Quote, part: QuotePart, wallet: Eip1193Provider, current: () => boolean, auth: ReturnType<typeof getManaSpendingAuthorization>, gap: bigint): Promise<boolean> =>
+  const authorizeGap = (
+    op: Operation,
+    quote: Quote,
+    part: QuotePart,
+    wallet: Eip1193Provider,
+    current: () => boolean,
+    auth: ReturnType<typeof getManaSpendingAuthorization>,
+    gap: bigint,
+    elsewhere: () => string | null
+  ): Promise<boolean> =>
     new Promise((resolve) => {
       let answered = false
       let approving = false
+      // Why the approval was held back under its lock (another split may still spend the allowance), if it was.
+      let heldBack: string | null = null
       let state: 'ready' | 'waiting' | 'failed' = 'ready'
       let message: string | undefined
       const answer = (granted: boolean): void => {
@@ -1884,15 +1955,20 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
             walletKind: quote.kind,
             reader: svc.reader(),
             locks: svc.locks(),
-            // Read after the wallet signs and before anything is recorded or sent: a CANCEL meanwhile leaves no grant.
-            live: () => approving && !answered && slot.holds(op) && current(),
+            // Read after the wallet signs and before anything is recorded or sent, under the approval's lock: a CANCEL
+            // meanwhile leaves no grant, and neither does another item's split that may still spend the allowance (an
+            // exact approve would take its MANA from under it).
+            live: () => {
+              heldBack = elsewhere()
+              return heldBack === null && approving && !answered && slot.holds(op) && current()
+            },
             relayerUrl: rail.relayerUrl,
             fetchImpl: gated
           })
         } catch (e) {
           if (answered) return
           state = 'failed'
-          message = isRejection(e) ? 'You declined the authorization in your wallet.' : friendlyError(e, "The authorization didn't go through. Try again.")
+          message = heldBack ?? (isRejection(e) ? 'You declined the authorization in your wallet.' : friendlyError(e, "The authorization didn't go through. Try again."))
           draw()
           return
         } finally {

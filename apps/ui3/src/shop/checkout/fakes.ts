@@ -301,7 +301,7 @@ export function createFakeLocks(config: { freesAfterMs?: number } = {}): LockMan
       else setTimeout(() => held.delete(name), config.freesAfterMs);
     }
   };
-  return { held, request, query: async () => ({ held: [], pending: [] }) } as unknown as LockManager & { held: Set<string> };
+  return { held, request, query: async () => ({ held: [...held].map((name) => ({ name, mode: "exclusive" })), pending: [] }) } as unknown as LockManager & { held: Set<string> };
 }
 
 /** The MANA approve a relayed NativeMetaTransaction carries, if any: (owner, spender, amount). */

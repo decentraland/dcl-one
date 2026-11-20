@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Eip1193Provider } from '../../data/auth/wallet'
 import type { CartGroup } from '@shop/cart/partition'
-import { createFakeWallet, creatorTrade, type FakeWallet } from '../../shop/checkout/fakes'
+import { createFakeShop, createFakeWallet, creatorTrade, type FakeWallet } from '../../shop/checkout/fakes'
 import type { CheckoutDeps, GroupResult } from '../../shop/checkout/purchase/executor'
 import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
 import type { UsdCents } from '@shop/model/money'
@@ -13,7 +13,7 @@ import type { GroupProgress } from '@shop/model/purchase'
 import { BOOK, creatorOrder, ITEM, storeMint } from '@shop/payment/fixtures'
 import type { StoredLogin } from '@explorer-core/features/auth/sso'
 import { SHOP_BUSY, SHOP_EVENT, SHOP_PROTOCOL, type ShopNamesMode, type ShopOperation, type ShopOperationEvent } from '@dcl/one-ui/apps/shop/shopProtocol'
-import { claimLock, createShellShop, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices, type ShellShopWallet } from '../shell/shop/purchase'
+import { claimLock, createShellShop, creditRecordOutcome, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices, type ShellShopWallet } from '../shell/shop/purchase'
 import { NAME_SIMULATION_MS } from '../shell/shop/namePurchase'
 import { createLedger, type OperationRecord } from '../shell/shop/ledger'
 import type { PurchaseIntent } from '../shell/shop/walletGuard'
@@ -1071,6 +1071,44 @@ describe('the shell purchase', () => {
   it('reads the balance for the login, and none signed out', async () => {
     expect(await setup({ balanceCents: 1234 }).shop.request('shop.balance', undefined)).toEqual({ v: 1, credits: 123 })
     expect(await setup({ login: () => null }).shop.request('shop.balance', undefined)).toBeNull()
+  })
+})
+
+describe('the node’s record of a Credits purchase’s credits', () => {
+  const CREDIT = '0x' + 'a1'.repeat(32)
+  const OTHER = '0x' + 'b2'.repeat(32)
+  /** The buyer's purchases, `per` a page, listed by line (`<salt>:0`), as the node lists them. */
+  const shopWith = (rows: { id: string; status: 'PENDING' | 'SETTLED' | 'EXPIRED' }[], per = 200) => {
+    const pages: number[] = []
+    const shop = createFakeShop({
+      userPurchases: ({ query }) => {
+        const offset = Number(query.get('offset') ?? 0)
+        pages.push(offset)
+        const page = rows.slice(offset, offset + Math.min(per, Number(query.get('limit') ?? per)))
+        return { purchases: page.map((r) => ({ ...r, usdCents: 50, createdAt: 1, txHash: null })), total: rows.length }
+      }
+    })
+    return { client: shop.client, pages }
+  }
+  const filler = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `0x${i.toString(16).padStart(64, '0')}:0`, status: 'SETTLED' as const }))
+
+  it('finds a credit by its salt among its lines (`<salt>:0`): spent is settled, expired is expired, reserved is open', async () => {
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT], shopWith([{ id: `${CREDIT}:0`, status: 'SETTLED' }]).client)).toBe('settled')
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT], shopWith([{ id: `${CREDIT.toUpperCase().replace('0X', '0x')}:0`, status: 'EXPIRED' }]).client)).toBe('expired')
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT], shopWith([{ id: `${CREDIT}:0`, status: 'PENDING' }]).client)).toBe('open')
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT], shopWith([{ id: `${OTHER}:0`, status: 'SETTLED' }]).client)).toBe('open')
+  })
+
+  it('reads past the first page for a credit listed further down', async () => {
+    const { client, pages } = shopWith([...filler(250), { id: `${CREDIT}:0`, status: 'SETTLED' }])
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT], client)).toBe('settled')
+    expect(pages).toEqual([0, 200])
+  })
+
+  it('is expired only once every credit of the group is listed expired', async () => {
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT, OTHER], shopWith([{ id: `${CREDIT}:0`, status: 'EXPIRED' }]).client)).toBe('open')
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT, OTHER], shopWith([{ id: `${CREDIT}:0`, status: 'EXPIRED' }, { id: `${OTHER}:0`, status: 'EXPIRED' }]).client)).toBe('expired')
+    expect(await creditRecordOutcome(BOOK.buyer, [], shopWith([]).client)).toBe('open')
   })
 })
 

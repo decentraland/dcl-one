@@ -137,6 +137,28 @@ export function readSplitHold(account: string | null, lineId: string, now: numbe
 }
 
 /**
+ * The splits of `account` that may still spend its MANA allowance, on any surface: every kept hold whose credit is still
+ * spendable, and, before a credit is reserved, a run still preparing (a fresh hold). An exact approval sets the allowance
+ * to one gap, so another split's approval would take an earlier one's, and another split finding the allowance covered
+ * could spend it: while one is listed, a split of another item doesn't start. One whose credit can no longer be spent
+ * can't pull the allowance, so it isn't listed. Throws where the storage can't be read: the caller holds the split.
+ */
+export function splitsInFlight(account: string, now: number = Date.now()): { line: string; hold: SplitHold }[] {
+  const storage = holdStorage();
+  if (!storage) return [];
+  const prefix = splitHoldKey(account, "");
+  const lines: string[] = [];
+  for (let i = 0; i < storage.length; i++) {
+    const key = storage.key(i);
+    if (key && key.startsWith(prefix) && key.length > prefix.length) lines.push(key.slice(prefix.length));
+  }
+  return lines.flatMap((line) => {
+    const hold = readSplitHold(account, line, now);
+    return hold && (hold.creditId === null ? splitHoldFresh(hold, now) : !splitHoldCreditOver(hold, now)) ? [{ line, hold }] : [];
+  });
+}
+
+/**
  * Writes `hold` unless another attempt's record still holds the item; whether it was kept (written and read back). The
  * run holding the claim calls it before the sale may leave, and sends nothing when it answers false.
  */
