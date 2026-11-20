@@ -30,8 +30,10 @@ const wornItemUrn = (urn: string) => {
   return p.length === 7 && /^collections-v[12]$/.test(p[3] ?? "") ? p.slice(0, 6).join(":") : urn;
 };
 
-async function fetchWornOutfit(account: string, tryOn: { urn: string; category: string } | null, signal: AbortSignal): Promise<OutfitData | null> {
-  const avatar = (await fetchProfile(account, { signal }))?.avatar;
+type WearerProfile = Awaited<ReturnType<typeof fetchProfile>>;
+
+async function fetchWornOutfit(profile: WearerProfile, tryOn: { urn: string; category: string } | null): Promise<OutfitData | null> {
+  const avatar = profile?.avatar;
   if (!avatar?.bodyShape) return null;
   const worn = [...new Set((avatar.wearables ?? []).map(wornItemUrn))];
   // The body and the item join this read; the preview mounts them next from the same entity cache.
@@ -68,8 +70,9 @@ export default function ItemPreview({ item, avatarShape = null, renderer }: { it
   const { account } = useShopWallet();
   const tryOn = isEmote ? null : { urn: urn!, category: item.wearableCategory ?? "" };
   const wearer = account ?? defaultProfileFor(urn ?? item.id);
-  const worn = useShopQuery(canPreview && show3d ? ["worn-outfit", wearer, urn, tryOn?.category ?? null] : null, (signal) => fetchWornOutfit(wearer, tryOn, signal), { staleMs: 5 * 60_000 });
-  const waiting = canPreview && show3d && worn.isLoading;
+  const profile = useShopQuery(canPreview && show3d ? ["wearer-profile", wearer] : null, (signal) => fetchProfile(wearer, { signal }), { staleMs: 5 * 60_000 });
+  const worn = useShopQuery(profile.data !== undefined ? ["worn-outfit", wearer, urn, tryOn?.category ?? null] : null, () => fetchWornOutfit(profile.data!, tryOn), { staleMs: 5 * 60_000 });
+  const waiting = canPreview && show3d && (profile.isLoading || worn.isLoading);
   const wornShape = profileShape(worn.data ? { avatar: worn.data } : null);
   const shopperShape = avatarShape ?? (account ? wornShape : null);
   const shapes = itemShapes(item);
@@ -77,33 +80,35 @@ export default function ItemPreview({ item, avatarShape = null, renderer }: { it
   const mismatch = !!shopperShape && !shapes.includes(shopperShape);
   const outfit = worn.data && !mismatch && (!wornShape || shapes.includes(wornShape)) ? worn.data : undefined;
   const failed = status === "error" || status === "empty";
+  // The scene's WebGL start runs during the outfit's entity read (during the profile read the page still renders), and
+  // the scene loads its parts after that read; the thumbnail stays over the canvas until the first drawn frame.
+  const preview3d = show3d && canPreview && !failed && (isEmote || view === "avatar");
+  const scene = preview3d && !profile.isLoading;
   const clip = useShopQuery(isEmote && urn && show3d && !waiting ? ["emote-clip", urn, body] : null, (signal) => fetchEmoteClipUrl(urn!, body, signal), { staleMs: 30 * 60_000 });
 
   return (
     <div className="shop-preview" data-status={show3d ? status : "thumbnail"}>
-      {!show3d || failed || !canPreview || (view === "item" && !isEmote) ? (
-        item.thumbnail ? <img className="shop-preview__thumb" src={item.thumbnail} alt={item.name} /> : null
-      ) : waiting ? (
-        <div className="shop-preview__loading" role="status">{t("itemDetail.previewLoading")}</div>
-      ) : (
-        <>
-          <WearablePreview
-            urns={isEmote ? [] : [urn!]}
-            body={body}
-            outfit={outfit}
-            emote={isEmote ? (clip.data ?? "idle") : undefined}
-            emoteNonce={replay}
-            spin={!isEmote}
-            zoom={1.05}
-            onStatus={setStatus}
-          />
-          {status === "loading" ? (
-            <div className="shop-preview__loading" role="status">
-              {t("itemDetail.previewLoading")}
-            </div>
-          ) : null}
-        </>
-      )}
+      {scene ? (
+        <WearablePreview
+          urns={isEmote ? [] : [urn!]}
+          body={body}
+          outfit={outfit}
+          outfitPending={waiting}
+          emote={isEmote ? (clip.data ?? "idle") : undefined}
+          emoteNonce={replay}
+          spin={!isEmote}
+          zoom={1.05}
+          onStatus={setStatus}
+        />
+      ) : null}
+      {item.thumbnail && (!preview3d || status !== "ready") ? (
+        <img className={preview3d ? "shop-preview__thumb shop-preview__thumb--cover" : "shop-preview__thumb"} src={item.thumbnail} alt={item.name} />
+      ) : null}
+      {preview3d && status === "loading" && !item.thumbnail ? (
+        <div className="shop-preview__loading" role="status">
+          {t("itemDetail.previewLoading")}
+        </div>
+      ) : null}
       {show3d && failed ? (
         <p className="shop-preview__note" role="status">
           {t("itemDetail.previewUnavailable")}

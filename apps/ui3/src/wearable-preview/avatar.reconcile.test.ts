@@ -547,3 +547,30 @@ test("every file of the parts downloads once, all when the entities arrive, and 
   scene.dispose();
   container.remove();
 });
+
+test("a scene built while its outfit is read loads no part until the outfit comes, then loads that outfit at once", async () => {
+  const HAT8 = "urn:decentraland:matic:collections-v2:0xhat:8";
+  const HAT9 = "urn:decentraland:matic:collections-v2:0xhat:9";
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const onStatus = vi.fn();
+  const scene = createAvatarScene(container, { body: BODY, urns: [HAT8], outfitPending: true, onStatus });
+  expect(container.querySelector("canvas")).not.toBeNull();
+  await scene.setOutfit({ body: FEMALE, urns: [HAT8], outfitPending: true });
+  await new Promise((r) => setTimeout(r, OUTFIT_SWAP_DEBOUNCE_MS * 2));
+  expect(loads).toEqual([]);
+  expect(vi.mocked(fetch).mock.calls.some(([, init]) => String(init?.body).includes("0xhat:"))).toBe(false);
+  expect(onStatus.mock.calls).toEqual([["loading"]]);
+
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const done = scene.setOutfit({ body: BODY, urns: [HAT8], outfit: { bodyShape: BODY, wearables: [HAT9] }, outfitPending: false });
+  await vi.advanceTimersByTimeAsync(OUTFIT_SWAP_DEBOUNCE_MS - 1);
+  expect(loads).toEqual(expect.arrayContaining([contentUrl(BODY), contentUrl(HAT9)]));
+  expect(loads).not.toContain(contentUrl(HAT8));
+  vi.useRealTimers();
+  await done;
+  expect(onStatus).toHaveBeenLastCalledWith("ready");
+
+  scene.dispose();
+  container.remove();
+});

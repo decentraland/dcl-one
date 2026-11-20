@@ -56,6 +56,8 @@ export interface AvatarSceneOptions {
   body?: string;
   urns?: string[] | string;
   outfit?: OutfitData | null;
+  /** The outfit is still being read: the scene is built now and loads no part until an outfit comes without this flag. */
+  outfitPending?: boolean;
   profile?: string;
   /**
    * Report "empty" unless at least one requested wearable mounted: the bare body alone is not the picture asked for
@@ -69,7 +71,7 @@ export type AvatarCameraOptions = Pick<
   "zoom" | "yaw" | "pitch" | "fov" | "targetY"
 >;
 
-export type AvatarOutfitOptions = Pick<AvatarSceneOptions, "profile" | "urns" | "body" | "outfit">;
+export type AvatarOutfitOptions = Pick<AvatarSceneOptions, "profile" | "urns" | "body" | "outfit" | "outfitPending">;
 
 export interface AvatarScene {
   resize: () => void;
@@ -232,6 +234,7 @@ export function createAvatarScene(
   let currentBodyShape = "";
   let revealed = false;
   let loadGen = 0;
+  let awaitingOutfit = !opts.model && !!opts.outfitPending;
   let swapTimer: ReturnType<typeof setTimeout> | null = null;
   let swapSettle: (() => void) | null = null;
   let lastFrame = performance.now();
@@ -909,6 +912,13 @@ export function createAvatarScene(
     Object.assign(opts, next);
     const gen = ++loadGen;
     settleSwap();
+    if (opts.outfitPending) return Promise.resolve();
+    // Nothing is on screen to swap from: the outfit the scene waited for loads at once.
+    if (awaitingOutfit) {
+      awaitingOutfit = false;
+      setStatus("loading");
+      return refresh(gen);
+    }
     return new Promise((resolve) => {
       swapSettle = resolve;
       swapTimer = setTimeout(() => {
@@ -945,7 +955,7 @@ export function createAvatarScene(
 
   setStatus("loading");
   if (opts.model) void loadModel(opts.model);
-  else void refresh(++loadGen);
+  else if (!awaitingOutfit) void refresh(++loadGen);
 
   function dispose() {
     disposed = true;
