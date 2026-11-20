@@ -95,6 +95,27 @@ fn avatars_whose_parts_are_not_written_are_not_processed() {
 
 #[cfg(feature = "explorer")]
 #[test]
+fn the_explorers_plugin_registers_the_diagnostic_and_measures_every_frame() {
+    use bevy::diagnostic::DiagnosticsStore;
+    use scene_runner::scene_spawn_slice::spawn_timing::AVATAR_PROCESSING;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .init_resource::<AvatarProcessingRun>()
+        .add_plugins(super::AvatarProcessingTimingPlugin);
+
+    app.update();
+    app.update();
+
+    let store = app.world().resource::<DiagnosticsStore>();
+    let diagnostic = store
+        .get(&AVATAR_PROCESSING)
+        .expect("a registered diagnostic");
+    assert_eq!(diagnostic.history_len(), 2);
+}
+
+#[cfg(feature = "explorer")]
+#[test]
 fn the_explorer_measures_the_run_into_the_diagnostic() {
     use bevy::diagnostic::{Diagnostic, DiagnosticsStore};
     use scene_runner::scene_spawn_slice::spawn_timing::AVATAR_PROCESSING;

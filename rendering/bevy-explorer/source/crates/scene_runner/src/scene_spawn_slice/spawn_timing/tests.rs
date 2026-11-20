@@ -38,14 +38,6 @@ fn every_frame_measures_the_spawner_and_processing() {
 }
 
 #[test]
-fn avatar_processing_has_a_diagnostic_for_the_avatar_crate_to_measure_into() {
-    let app = app();
-
-    let store = app.world().resource::<DiagnosticsStore>();
-    assert!(store.get(&AVATAR_PROCESSING).is_some());
-}
-
-#[test]
 fn the_slowest_model_is_the_one_that_took_longest() {
     let mut slowest = SlowestProcessing::default();
 

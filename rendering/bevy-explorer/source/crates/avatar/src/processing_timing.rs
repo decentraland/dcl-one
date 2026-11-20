@@ -26,7 +26,10 @@ pub(crate) use explorer::AvatarProcessingTimingPlugin;
 mod explorer {
     use std::time::Duration;
 
-    use bevy::{diagnostic::Diagnostics, prelude::*};
+    use bevy::{
+        diagnostic::{Diagnostic, Diagnostics, RegisterDiagnostic},
+        prelude::*,
+    };
     use scene_runner::scene_spawn_slice::spawn_timing::AVATAR_PROCESSING;
 
     use super::AvatarProcessingRun;
@@ -38,8 +41,9 @@ mod explorer {
 
     impl Plugin for AvatarProcessingTimingPlugin {
         fn build(&self, app: &mut App) {
-            // `process_avatar` ran in `Update`: no ordering against it is needed here
-            app.add_systems(PostUpdate, measure_avatar_processing);
+            app.register_diagnostic(Diagnostic::new(AVATAR_PROCESSING).with_suffix("ms"))
+                // `process_avatar` ran in `Update`: no ordering against it is needed here
+                .add_systems(PostUpdate, measure_avatar_processing);
         }
     }
 
