@@ -225,8 +225,9 @@ async fn bootstrap_callbacks_require_success_and_keep_parent_cancellation_scope(
             client.clone(),
             storage.clone(),
             pool.clone(),
-            Arc::new(LiveSyncDeployer::without_store(
+            Arc::new(LiveSyncDeployer::new(
                 pool.clone(),
+                storage.clone(),
                 1,
                 SyncValidation::AuthChainOnly,
             )),

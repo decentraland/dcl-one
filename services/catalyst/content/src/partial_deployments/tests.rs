@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use super::*;
-use crate::tests::support::require_test_db;
+use crate::tests::support::{require_test_db, store_lock_waiters};
 use crate::write_deployer::WriteDeployer;
 use crate::{ContentState, Settings, SharedState, SyncState, build_router};
 
@@ -37,8 +37,23 @@ impl Node {
         .await
     }
 
+    /// [`Node::new`] over a database of its own: no other test's deploy holds
+    /// its store lock, and no other test's cleanup takes its uploads.
+    async fn isolated(tag: &str, limits: Limits) -> Option<Self> {
+        let pool = crate::db::scratch::isolated_pool(6).await?;
+        let settings = Settings {
+            partial_uploads: limits,
+            ..Settings::for_tests()
+        };
+        Some(Self::on(pool, tag, settings).await)
+    }
+
     async fn with_settings(tag: &str, settings: Settings) -> Option<Self> {
         let pool = crate::db::scratch::pool(6).await?;
+        Some(Self::on(pool, tag, settings).await)
+    }
+
+    async fn on(pool: PgPool, tag: &str, settings: Settings) -> Self {
         let tmp = std::env::temp_dir().join(format!(
             "catalyst-partial-{tag}-{}-{}",
             std::process::id(),
@@ -50,7 +65,7 @@ impl Node {
         let deployer = WriteDeployer::with_partial_validation_for_tests(pool, storage, None)
             .with_denylist(state.denylist.clone());
         assert!(state.attach_writes(true, Arc::new(deployer)));
-        Some(Self { state, tmp })
+        Self { state, tmp }
     }
 
     fn router(&self) -> Router {
@@ -126,18 +141,6 @@ async fn make_scene_listing(signer: &PrivateKeySigner, files: &[&[u8]], extra: &
     scene.id = hash_bytes_v1(&scene.bytes);
     scene.chain = chain_for(signer, &scene.id).await;
     scene
-}
-
-/// Backdates a stored blob past the collector's age floor.
-async fn age_blob(storage: &Storage, hash: &str) {
-    let path = storage.file_path(hash).await.unwrap().expect("stored");
-    let past = std::time::SystemTime::now() - Duration::from_secs(3 * 3600);
-    std::fs::File::options()
-        .write(true)
-        .open(path)
-        .unwrap()
-        .set_modified(past)
-        .unwrap();
 }
 
 /// Cleanup reclaims every expired upload in the process's shared scratch
@@ -715,17 +718,7 @@ async fn cleanup_waits_for_a_sync_hold_and_tolerates_a_missing_blob() {
 /// Waits until a session queues for the exclusive side of the store lock.
 async fn wait_for_exclusive_store_lock(pool: &PgPool) {
     for _ in 0..200 {
-        let waiting: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM pg_locks \
-             WHERE locktype = 'advisory' AND mode = 'ExclusiveLock' AND NOT granted \
-               AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) \
-               AND (classid::bigint << 32 | objid::bigint) = $1",
-        )
-        .bind(gc::STORE_LOCK_KEY)
-        .fetch_one(pool)
-        .await
-        .unwrap();
-        if waiting >= 1 {
+        if !store_lock_waiters(pool, "ExclusiveLock").await.is_empty() {
             return;
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
@@ -889,12 +882,138 @@ async fn insert_expired(pool: &PgPool, ids: &[String]) {
     .unwrap();
 }
 
+/// Stores a blob of its own for each upload `ids` names and records it as
+/// written by that upload; answers the keys.
+async fn insert_written(pool: &PgPool, storage: &Storage, ids: &[String]) -> Vec<String> {
+    let mut keys = Vec::new();
+    for id in ids {
+        let bytes = Bytes::from(format!("written-by-{id}"));
+        let key = hash_bytes_v1(&bytes);
+        storage.store(&key, bytes).await.unwrap();
+        sqlx::query(
+            "INSERT INTO content.pending_deployment_files (entity_id, hash, size, stored, written)
+             VALUES ($1, $2, 1, true, true)",
+        )
+        .bind(id)
+        .bind(&key)
+        .execute(pool)
+        .await
+        .unwrap();
+        keys.push(key);
+    }
+    keys
+}
+
 async fn pending_among(pool: &PgPool, ids: &[String]) -> i64 {
     sqlx::query_scalar("SELECT count(*) FROM content.pending_deployments WHERE entity_id = ANY($1)")
         .bind(ids)
         .fetch_one(pool)
         .await
         .unwrap()
+}
+
+/// Uploads that wrote no blob go without the store lock: deploys holding its
+/// shared side do not delay them.
+#[tokio::test]
+async fn uploads_that_wrote_nothing_go_without_the_store_lock() {
+    require_test_db!(Some(pool) = crate::db::scratch::isolated_pool(4).await);
+    let tmp = std::env::temp_dir().join(format!(
+        "catalyst-partial-unwritten-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = Storage::from_config(&tmp).await.unwrap();
+    let tag = uuid::Uuid::new_v4().simple().to_string();
+    let ids = vec![format!("unwritten-{tag}-a"), format!("unwritten-{tag}-b")];
+    insert_expired(&pool, &ids).await;
+    let limits = Limits {
+        store_lock_wait: Duration::from_millis(300),
+        ..Limits::default()
+    };
+
+    let mut deploy = pool.begin().await.unwrap();
+    gc::lock_store_shared(&mut deploy).await.unwrap();
+    assert_eq!(
+        cleanup_expired(&pool, &storage, &limits).await.unwrap(),
+        ids.len()
+    );
+    assert_eq!(pending_among(&pool, &ids).await, 0);
+    deploy.commit().await.unwrap();
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// A superseded upload is released within its request without queueing on
+/// the store lock: while a deploy holds the lock's shared side the request
+/// answers at once and leaves the upload expired, and the next cleanup run
+/// reclaims it with its staged blobs.
+#[tokio::test]
+async fn a_superseded_upload_never_waits_for_the_store_lock() {
+    require_test_db!(Some(node) = Node::isolated("superseded-busy", Limits::default()).await);
+    let router = node.router();
+    let pool = &node.state.pool;
+    let storage = &node.state.storage;
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"superseded-a", b"superseded-b"], "scene").await;
+    let (status, _, _) = send(
+        &router,
+        &scene,
+        &scene.chain,
+        vec![entity_file(&scene), scene.files[0].clone()],
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let mut newer: Value = serde_json::from_slice(&scene.bytes).unwrap();
+    newer["timestamp"] = json!(newer["timestamp"].as_u64().unwrap() + 1);
+    let newer = Bytes::from(serde_json::to_vec(&newer).unwrap());
+    let newer_id = hash_bytes_v1(&newer);
+    node.state
+        .writes
+        .get()
+        .unwrap()
+        .deployer
+        .deploy_entity(
+            vec![newer, scene.files[0].1.clone(), scene.files[1].1.clone()],
+            &newer_id,
+            chain_for(&signer, &newer_id).await,
+            "LOCAL",
+        )
+        .await
+        .unwrap();
+
+    let mut deploy = pool.begin().await.unwrap();
+    gc::lock_store_shared(&mut deploy).await.unwrap();
+    let started = std::time::Instant::now();
+    let (status, _, body) = send(&router, &scene, &scene.chain, vec![scene.files[1].clone()]).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "answered without waiting: {:?}",
+        started.elapsed()
+    );
+    assert!(store_lock_waiters(pool, "ExclusiveLock").await.is_empty());
+    let expired: bool = sqlx::query_scalar(
+        "SELECT created_at < timezone('UTC', now()) - interval '1 day'
+         FROM content.pending_deployments WHERE entity_id = $1",
+    )
+    .bind(&scene.id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(expired, "left to the cleanup job, already expired");
+    assert!(storage.exist(&scene.id).await.unwrap());
+
+    deploy.commit().await.unwrap();
+    cleanup_expired(pool, storage, &Limits::default())
+        .await
+        .unwrap();
+    assert_eq!(pending_rows(pool, &scene.id).await, 0);
+    assert!(
+        !storage.exist(&scene.id).await.unwrap(),
+        "its staged entity file goes"
+    );
+    assert!(
+        storage.exist(&scene.files[0].0).await.unwrap(),
+        "the newer deployment names it"
+    );
 }
 
 /// While deploys keep the store lock's shared side past the cleanup's wait,
@@ -916,6 +1035,7 @@ async fn a_busy_store_lock_ends_the_cleanup_run() {
         .map(|i| format!("deferred-{tag}-{i}"))
         .collect();
     insert_expired(&pool, &ids).await;
+    insert_written(&pool, &storage, &ids).await;
     let limits = Limits {
         store_lock_wait: Duration::from_millis(300),
         ..Limits::default()
@@ -934,17 +1054,7 @@ async fn a_busy_store_lock_ends_the_cleanup_run() {
             // Each attempt is a transaction of its own queued on the exclusive side.
             let mut seen = std::collections::HashSet::new();
             while !done.load(Ordering::SeqCst) {
-                let waiting: Vec<String> = sqlx::query_scalar(
-                    "SELECT virtualtransaction FROM pg_locks \
-                     WHERE locktype = 'advisory' AND mode = 'ExclusiveLock' AND NOT granted \
-                       AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) \
-                       AND (classid::bigint << 32 | objid::bigint) = $1",
-                )
-                .bind(gc::STORE_LOCK_KEY)
-                .fetch_all(&pool)
-                .await
-                .unwrap();
-                seen.extend(waiting);
+                seen.extend(store_lock_waiters(&pool, "ExclusiveLock").await);
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
             seen
@@ -976,22 +1086,7 @@ async fn an_unlink_failure_keeps_only_its_upload() {
     let tag = uuid::Uuid::new_v4().simple().to_string();
     let ids = vec![format!("unlinks-{tag}"), format!("fails-{tag}")];
     insert_expired(&pool, &ids).await;
-    let mut keys = Vec::new();
-    for (id, label) in ids.iter().zip(["unlinks", "fails"]) {
-        let bytes = Bytes::from(format!("{label}-{tag}"));
-        let key = hash_bytes_v1(&bytes);
-        storage.store(&key, bytes).await.unwrap();
-        sqlx::query(
-            "INSERT INTO content.pending_deployment_files (entity_id, hash, size, stored, written)
-             VALUES ($1, $2, 1, true, true)",
-        )
-        .bind(id)
-        .bind(&key)
-        .execute(&pool)
-        .await
-        .unwrap();
-        keys.push(key);
-    }
+    let keys = insert_written(&pool, &storage, &ids).await;
     // A directory where the second blob was: removing it as a file fails.
     let path = storage.file_path(&keys[1]).await.unwrap().expect("stored");
     std::fs::remove_file(&path).unwrap();
@@ -1028,7 +1123,7 @@ async fn an_unlink_failure_keeps_only_its_upload() {
 /// as written is still kept by the collector's fixed references.
 #[tokio::test]
 async fn cleanup_leaves_blobs_the_upload_did_not_write_and_the_collectors_fixed_set() {
-    require_test_db!(Some(node) = Node::new("fixed-set", Limits::default()).await);
+    require_test_db!(Some(node) = Node::isolated("fixed-set", Limits::default()).await);
     let router = node.router();
     let pool = &node.state.pool;
     let storage = &node.state.storage;
@@ -1076,16 +1171,6 @@ async fn cleanup_leaves_blobs_the_upload_did_not_write_and_the_collectors_fixed_
         let ours = *hash == scene.id || *hash == scene.files[0].0;
         assert_eq!(*written, ours, "{hash}");
     }
-    for hash in [
-        &global_hash,
-        &global_id,
-        &other_hash,
-        &scene.files[0].0,
-        &scene.id,
-    ] {
-        age_blob(storage, hash).await;
-    }
-    let _reclaim = RECLAIM.lock().await;
     expire(pool, &scene.id).await;
     cleanup_expired(pool, storage, &limits).await.unwrap();
     assert_eq!(pending_rows(pool, &scene.id).await, 0);
@@ -1118,7 +1203,6 @@ async fn cleanup_leaves_blobs_the_upload_did_not_write_and_the_collectors_fixed_
         .execute(pool)
         .await
         .unwrap();
-    age_blob(storage, &scene.files[0].0).await;
     let lock = EntityLock::try_acquire(pool, &scene.id)
         .await
         .unwrap()
@@ -1158,7 +1242,6 @@ async fn cleanup_skips_an_upload_whose_lock_is_held() {
         .expect("free");
     let _reclaim = RECLAIM.lock().await;
     expire(pool, &scene.id).await;
-    age_blob(storage, &scene.files[0].0).await;
     assert!(
         EntityLock::try_acquire(pool, &scene.id)
             .await
@@ -1466,7 +1549,7 @@ fn quota_retry_waits_for_the_cleanup_after_the_oldest_upload_expires() {
 
 #[tokio::test]
 async fn finalization_retains_rate_limited_uploads_and_releases_superseded_ones() {
-    require_test_db!(Some(node) = Node::new("finalize-kinds", Limits::default()).await);
+    require_test_db!(Some(node) = Node::isolated("finalize-kinds", Limits::default()).await);
     let signer = PrivateKeySigner::random();
     let scene = make_scene(&signer, &[b"finalize-kinds-content"], "scene").await;
     let (status, _, _) = send(

@@ -138,9 +138,12 @@ uploads' `content.pending_deployments` rows and unlinks the files they wrote
 (`pending_deployment_files.written`) that no reference names in one
 transaction under the exclusive lock. It reads the world scenes' content
 lists before taking the lock and, under it, only the rows written since; a
-lock still busy after 30 s ends the run. Builder's item file and project
-blob uploads also take the shared side before checking whether a blob is
-stored and hold it until the `builder.uploaded_contents` row (and, for an
+lock still busy after 30 s ends the run, and uploads that wrote no file go
+without it. An upload a newer deployment overtook is released the same way
+within its request, which takes the lock only if it is free and otherwise
+marks the upload expired for the cleanup's next run. Builder's item file and
+project blob uploads also take the shared side (waiting at most 5 s, then
+503) before checking whether a blob is stored and hold it until the `builder.uploaded_contents` row (and, for an
 item file, the `builder.item_contents` row) naming it commits. The store's other writers
 (the asset-pack catalogue import, camera reel, social, worlds thumbnails
 and the like) do not take the lock and rely on the collector's age floor,

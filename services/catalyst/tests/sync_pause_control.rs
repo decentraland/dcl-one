@@ -90,8 +90,9 @@ async fn a_pause_stops_a_running_pointer_changes_stream_at_its_next_poll() {
         client.clone(),
         storage.clone(),
         pool.clone(),
-        Arc::new(LiveSyncDeployer::without_store(
+        Arc::new(LiveSyncDeployer::new(
             pool.clone(),
+            storage.clone(),
             DEFAULT_FLUSH_CONCURRENCY,
             catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,
         )),

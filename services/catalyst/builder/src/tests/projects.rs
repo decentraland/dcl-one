@@ -1148,3 +1148,30 @@ async fn a_blob_upload_waits_for_an_unlink_batch_and_stores_what_it_removed() {
         .await
         .unwrap();
 }
+
+/// Behind an unlink batch that outlasts the store lock wait, the upload
+/// answers 503 instead of holding its connection.
+#[tokio::test]
+async fn a_blob_upload_behind_a_long_unlink_batch_answers_503() {
+    // A database of its own: the held lock would turn other tests' uploads away.
+    let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+        return;
+    };
+    let blobs = temp_storage().await;
+    let bytes = unique("blocked project blob");
+    let hash = hash_bytes_v1(&bytes);
+    let batch = crate::storage::gc::lock_store_exclusive(&pool)
+        .await
+        .unwrap();
+    let owner = owner_address(OWNER_KEY);
+    let upload = crate::projects::accept_blob(&pool, &blobs, &owner, &hash, bytes.into());
+    let answered = tokio::time::timeout(std::time::Duration::from_secs(10), upload)
+        .await
+        .expect("bounded wait");
+    batch.commit().await.unwrap();
+    match answered {
+        Err(crate::projects::ProjectError::Api(e)) => assert_eq!(e.status(), 503),
+        other => panic!("expected a 503, got {:?}", other.map(|_| ())),
+    }
+    assert!(!blobs.exist(&hash).await.unwrap(), "nothing was stored");
+}

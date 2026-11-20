@@ -216,6 +216,25 @@ pub(super) const ITEM_DRAFT_PROJECTION: &str = "to_jsonb(i) || jsonb_build_objec
 
 const FK_VIOLATION: &str = "23503";
 
+/// How long a blob writer waits for the store lock's shared side behind an unlink batch, as a
+/// local content deploy does.
+const STORE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The store lock's shared side for a blob writer (`gc::lock_store_shared`), waited for at most
+/// [`STORE_LOCK_WAIT`]: past it the request answers 503 instead of holding its connection and
+/// row locks while unlink batches run.
+pub(crate) async fn lock_store_shared(conn: &mut sqlx::PgConnection) -> Result<(), ApiError> {
+    use crate::storage::gc;
+    match gc::lock_store_shared_within(conn, STORE_LOCK_WAIT).await {
+        Ok(()) => Ok(()),
+        Err(gc::GcError::LockTimeout) => Err(ApiError::service_unavailable(
+            "The content store is being collected; retry shortly",
+        )),
+        Err(gc::GcError::Database(e)) => Err(e.into()),
+        Err(e) => Err(ApiError::internal(e.to_string())),
+    }
+}
+
 /// The bound of the committee-wide and the public listings: the per-owner
 /// ones are a wallet's own handful, these span every wallet.
 pub const LISTING_LIMIT: i64 = 1000;
@@ -485,7 +504,7 @@ impl ItemsComponent {
                 "Item is publishing, published, or belongs to another wallet",
             ));
         }
-        crate::storage::gc::lock_store_shared(&mut tx).await?;
+        lock_store_shared(&mut tx).await?;
         let mut contents = BTreeMap::new();
         for (file, bytes) in files {
             if !valid_filename(&file) {

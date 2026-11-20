@@ -859,8 +859,9 @@ mod module_sources {
                 ..Default::default()
             },
         );
-        let deployer = LiveSyncDeployer::without_store(
+        let deployer = LiveSyncDeployer::new(
             pool.clone(),
+            storage.clone(),
             1,
             SyncValidation::Content(Arc::new(sources)),
         );

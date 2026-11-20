@@ -1429,17 +1429,10 @@ async fn a_flush_waits_for_the_exclusive_store_lock() {
         {
             panic!("the flush did not wait for the unlink batch: {done:?}");
         }
-        let waiting: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM pg_locks \
-             WHERE locktype = 'advisory' AND mode = 'ShareLock' AND NOT granted \
-               AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) \
-               AND (classid::bigint << 32 | objid::bigint) = $1",
-        )
-        .bind(crate::storage::gc::STORE_LOCK_KEY)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        if waiting >= 1 {
+        if !crate::tests::support::store_lock_waiters(&pool, "ShareLock")
+            .await
+            .is_empty()
+        {
             queued = true;
             break;
         }

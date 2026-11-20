@@ -60,6 +60,31 @@ pub async fn lock_store_shared(conn: &mut sqlx::PgConnection) -> Result<(), sqlx
     Ok(())
 }
 
+/// [`lock_store_shared`] in a transaction, waiting at most `timeout` behind an unlink batch
+/// ([`GcError::LockTimeout`] after it); the transaction's later statements keep the default wait.
+pub async fn lock_store_shared_within(
+    conn: &mut sqlx::PgConnection,
+    timeout: Duration,
+) -> Result<(), GcError> {
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT set_config('lock_timeout', '{}ms', true)",
+        timeout.as_millis().max(1)
+    )))
+    .execute(&mut *conn)
+    .await?;
+    match lock_store_shared(&mut *conn).await {
+        Ok(()) => {}
+        Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("55P03") => {
+            return Err(GcError::LockTimeout);
+        }
+        Err(e) => return Err(e.into()),
+    }
+    sqlx::query("SET LOCAL lock_timeout TO DEFAULT")
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 /// The exclusive side of [`lock_store_shared`], held by the returned transaction until it ends.
 pub async fn lock_store_exclusive(
     pool: &PgPool,
@@ -92,6 +117,22 @@ pub async fn lock_store_exclusive_within(
         }
         Err(e) => Err(e.into()),
     }
+}
+
+/// [`lock_store_exclusive`] without waiting, so no shared request queues behind it: `None` while
+/// any other session holds either side.
+pub async fn try_lock_store_exclusive(
+    pool: &PgPool,
+) -> Result<Option<sqlx::Transaction<'static, sqlx::Postgres>>, GcError> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET LOCAL idle_in_transaction_session_timeout = 0")
+        .execute(&mut *tx)
+        .await?;
+    let held: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock($1)")
+        .bind(STORE_LOCK_KEY)
+        .fetch_one(&mut *tx)
+        .await?;
+    Ok(held.then_some(tx))
 }
 
 /// One run at a time across the fleet: `None` while another run holds it.

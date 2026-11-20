@@ -757,10 +757,11 @@ mod tests {
         let batch = BatchDeployer::new(
             BatchDeployerConfig::default(),
             crate::sync::test_sync_client(reqwest::Client::new()),
-            storage,
+            storage.clone(),
             pool.clone(),
-            Arc::new(LiveSyncDeployer::without_store(
+            Arc::new(LiveSyncDeployer::new(
                 pool.clone(),
+                storage.clone(),
                 2,
                 crate::sync_deployer::SyncValidation::AuthChainOnly,
             )),

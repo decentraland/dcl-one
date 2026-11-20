@@ -519,8 +519,9 @@ mod tests {
         let entity_id = hash_bytes_v1(&body);
         let (base, server) = spawn_content_server(body, None).await;
         let (storage, tmp) = temp_storage("batch").await;
-        let deployer = Arc::new(LiveSyncDeployer::without_store(
+        let deployer = Arc::new(LiveSyncDeployer::new(
             pool.clone(),
+            storage.clone(),
             2,
             crate::sync_deployer::SyncValidation::AuthChainOnly,
         ));
@@ -749,8 +750,9 @@ mod tests {
             .store(&hash_bytes_v1(MODEL), MODEL.into())
             .await
             .unwrap();
-        let deployer = Arc::new(LiveSyncDeployer::without_store(
+        let deployer = Arc::new(LiveSyncDeployer::new(
             pool.clone(),
+            storage.clone(),
             2,
             crate::sync_deployer::SyncValidation::Content(Arc::new(
                 crate::validator::Sources::new(
@@ -1008,8 +1010,9 @@ mod tests {
         let chain =
             fake_chain::serve(land_held_until(parcel, Some(at_deployment(timestamp)))).await;
         let (storage, tmp) = temp_storage("access-passed").await;
-        let deployer = LiveSyncDeployer::without_store(
+        let deployer = LiveSyncDeployer::new(
             pool.clone(),
+            storage.clone(),
             1,
             crate::sync_deployer::SyncValidation::Content(Arc::new(
                 crate::validator::Sources::new(
