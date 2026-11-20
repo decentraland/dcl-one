@@ -734,6 +734,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Distance. Bevy has one sea plane, a single opaque quad that casts no shadows, so hiding it would
   save almost nothing, and the water material draws without fog, so nothing would soften it
   appearing and disappearing.
+- **The wave ocean is not ported.** Unity's ocean (a wave grid, foam and an alpha-blended surface)
+  was ported and compared in the same views, and it looked worse than Bevy's current sea, so the
+  sea stays as it is.
 - **The lens flare's rings are procedural, and its random copies use a hash.** Unity draws the
   rings from URP's sample textures, which are not carried; Bevy draws bands of colour measured
   from them (radius, width and brightness per channel, and the partial ring's arc). Unity places

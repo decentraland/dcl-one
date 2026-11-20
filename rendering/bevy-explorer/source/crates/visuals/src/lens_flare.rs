@@ -1,7 +1,7 @@
 //! The lens flare of the directional light, the sun by day and the moon by night, added onto the
-//! frame before bloom. The flare data and its intensity by time of day are the sky preset's; the
-//! element placement, the random copies and the shapes follow the data-driven lens flare Unity
-//! draws.
+//! frame before bloom. The flare data and its intensity by time of day are the sky preset's. Each
+//! element is a circle, a rounded polygon or a ring placed along the line from the light through
+//! the screen centre; some repeat as copies along it, with hashed spacing, size and tint.
 //!
 //! Each element copy is a quad placed here, on the CPU, once per view and frame, and drawn as one
 //! instanced draw (`lens_flare.wgsl`). The vertex stage tests how much of the light is hidden:
@@ -31,8 +31,7 @@ use bevy::{
         },
         render_resource::{
             binding_types::{
-                texture_2d, texture_2d_multisampled, texture_depth_2d,
-                texture_depth_2d_multisampled, uniform_buffer,
+                texture_2d, texture_depth_2d, texture_depth_2d_multisampled, uniform_buffer,
             },
             BindGroupEntries, BindGroupLayout, BlendComponent, BlendFactor, BlendOperation,
             BlendState, CachedRenderPipelineId, ColorTargetState, ColorWrites,
@@ -62,8 +61,8 @@ pub enum FlareKind {
         sides: u32,
         roundness: f32,
     },
-    /// a thin band of colours, or with `partial` only a red and violet arc on one side, drawn
-    /// procedurally in the colours of the ring images Unity draws
+    /// a thin band of red, green and blue by radius, or with `partial` only a red and violet arc
+    /// on one side, drawn procedurally
     Ring {
         partial: bool,
     },
@@ -311,11 +310,11 @@ const RANDOM_TINT: [(f32, Vec3); 3] = [
 /// An element's half size on screen, in half screen heights, is `size_xy * scale` times this.
 const SCALE_SIZE: f32 = 0.1;
 
-/// The occlusion test samples a disc around the light whose radius is this share of the
-/// projected size of a body `CELESTIAL_ANGULAR_RADIUS_DEGREES` across.
+/// The occlusion test samples a disc around the light whose radius is `OCCLUSION_RADIUS` times
+/// the projected radius of a body `CELESTIAL_ANGULAR_DIAMETER_DEGREES` across.
 const OCCLUSION_SAMPLES: u32 = 32;
 const OCCLUSION_RADIUS: f32 = 0.1;
-const CELESTIAL_ANGULAR_RADIUS_DEGREES: f32 = 3.3;
+const CELESTIAL_ANGULAR_DIAMETER_DEGREES: f32 = 3.3;
 
 /// The flare in use at `day_fraction`.
 pub fn flare_set(day_fraction: f32) -> &'static [FlareElement] {
@@ -631,10 +630,9 @@ pub(crate) fn light_on_screen(
     if ndc.abs().max_element() > 1.0 {
         return None;
     }
-    let edge = project(
-        toward + camera_up * OCCLUSION_RADIUS * CELESTIAL_ANGULAR_RADIUS_DEGREES.to_radians().tan(),
-    )?;
-    Some((ndc, intensity, 0.5 * (edge - ndc).length()))
+    let angular_radius = 0.5 * CELESTIAL_ANGULAR_DIAMETER_DEGREES.to_radians();
+    let edge = project(toward + camera_up * OCCLUSION_RADIUS * angular_radius.tan())?;
+    Some((ndc, intensity, (edge - ndc).length()))
 }
 
 /// The flare as a view sees it, or none where it draws none (see [`light_on_screen`]).
@@ -745,31 +743,26 @@ impl FromWorld for LensFlarePipeline {
             .load("embedded://shaders/lens_flare.wgsl");
         let device = world.resource::<RenderDevice>();
 
+        // the focus texture is single-sampled, and depth of field yields to MSAA
+        // (`DofSetting::apply_to_camera`), so only single-sampled views read it
         let mut layouts = HashMap::default();
-        for samples in [1, 2, 4, 8] {
-            for focus in [false, true] {
-                let depth = if samples > 1 {
-                    texture_depth_2d_multisampled()
-                } else {
-                    texture_depth_2d()
-                };
-                let mut entries = vec![
-                    depth.build(0, ShaderStages::VERTEX),
-                    uniform_buffer::<LensFlareUniform>(true).build(1, ShaderStages::VERTEX),
-                ];
-                if focus {
-                    let sample_type = TextureSampleType::Float { filterable: false };
-                    let texture = if samples > 1 {
-                        texture_2d_multisampled(sample_type)
-                    } else {
-                        texture_2d(sample_type)
-                    };
-                    entries.push(texture.build(2, ShaderStages::VERTEX));
-                }
-                let layout =
-                    device.create_bind_group_layout(Some("lens flare bind group layout"), &entries);
-                layouts.insert((samples, focus), layout);
+        for (samples, focus) in [(1, false), (1, true), (2, false), (4, false), (8, false)] {
+            let depth = if samples > 1 {
+                texture_depth_2d_multisampled()
+            } else {
+                texture_depth_2d()
+            };
+            let mut entries = vec![
+                depth.build(0, ShaderStages::VERTEX),
+                uniform_buffer::<LensFlareUniform>(true).build(1, ShaderStages::VERTEX),
+            ];
+            if focus {
+                let sample_type = TextureSampleType::Float { filterable: false };
+                entries.push(texture_2d(sample_type).build(2, ShaderStages::VERTEX));
             }
+            let layout =
+                device.create_bind_group_layout(Some("lens flare bind group layout"), &entries);
+            layouts.insert((samples, focus), layout);
         }
 
         Self { shader, layouts }
@@ -860,10 +853,11 @@ fn prepare_lens_flare_pipelines(
     >,
 ) {
     for (entity, view, msaa, focus) in views.iter() {
+        let samples = msaa.samples();
         let key = LensFlarePipelineKey {
-            samples: msaa.samples(),
+            samples,
             hdr: view.hdr,
-            focus,
+            focus: focus && samples == 1,
         };
         let id = pipelines.specialize(&pipeline_cache, &pipeline, key);
         commands

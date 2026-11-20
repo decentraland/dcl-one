@@ -121,7 +121,8 @@ fn light_colour_tints_only_modulated_elements() {
 /// The flare pipelines compile on this machine's adapter, and the node draws with them, in a
 /// renderer with no window: a multisampled camera, an HDR one without MSAA and one with depth of
 /// field (so with the transparent focus texture), all with `LensFlare`, facing a directional
-/// light at noon. Needs a GPU, so `#[ignore]`d and skipped by CI:
+/// light at noon. Needs a GPU, so `#[ignore]`d: skipped by the default run; CI's Linux job runs
+/// it:
 ///
 /// ```text
 /// cargo test -p visuals lens_flare_pipelines_compile -- --ignored --nocapture
@@ -363,8 +364,8 @@ fn toward_test_light() -> Vec3 {
 }
 
 /// The flare draws on the light's pixel and across the screen, and hides behind an opaque wall
-/// and, through the focus texture, behind a transparent sheet. Needs a GPU, so `#[ignore]`d and
-/// skipped by CI:
+/// and, through the focus texture, behind a transparent sheet. Needs a GPU, so `#[ignore]`d:
+/// skipped by the default run; CI's Linux job runs it:
 ///
 /// ```text
 /// cargo test -p visuals lens_flare_renders -- --ignored --nocapture

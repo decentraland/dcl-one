@@ -35,12 +35,9 @@ struct LensFlare {
 #endif
 @group(0) @binding(1) var<uniform> flare: LensFlare;
 #ifdef FOCUS
-// depth of field's transparent focus texture: the transparent surfaces' coverage in g
-#ifdef MULTISAMPLED
-@group(0) @binding(2) var focus_texture: texture_multisampled_2d<f32>;
-#else
+// depth of field's transparent focus texture: the transparent surfaces' coverage in g. It is
+// single-sampled, and depth of field yields to MSAA, so FOCUS never meets MULTISAMPLED
 @group(0) @binding(2) var focus_texture: texture_2d<f32>;
-#endif
 #endif
 
 const PI: f32 = 3.14159265;
@@ -168,8 +165,8 @@ fn band(x: f32, peak: f32, height: f32, inner: f32, outer: f32) -> f32 {
     return height * exp(-0.5 * d * d);
 }
 
-// The ring images Unity's flares draw, as bands of colour by radius. The ring: red, green, then
-// blue outward, around two thirds of the quad out
+// The rings as bands of colour by radius. The ring: red, green, then blue outward, around two
+// thirds of the quad out
 fn ring(v: vec2<f32>) -> vec3<f32> {
     let r = length(v);
     return vec3<f32>(
