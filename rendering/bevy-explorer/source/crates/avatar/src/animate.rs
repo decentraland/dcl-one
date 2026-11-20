@@ -44,7 +44,7 @@ use scene_runner::{asset_preload::plugin::PreloadedGltf, permissions::Permission
 
 use crate::{
     hover_glow::{can_glow, set_hover_glows},
-    process_avatar, upload_cpu_mesh, AvatarDefinition,
+    process_avatar, upload_cpu_mesh, AvatarDefinition, AvatarShape,
 };
 
 #[derive(Component)]
@@ -172,6 +172,8 @@ impl Plugin for AvatarAnimationPlugin {
                     .chain()
                     .after(process_avatar),
                 play_scene_driven_sounds.after(process_avatar),
+                // after the filing, so a preloaded emote's first request has the player as owner
+                preload_equipped_emotes.after(file_emote_downloads),
             )
                 .in_set(SceneSets::PostLoop),
         );
@@ -189,7 +191,8 @@ impl Plugin for AvatarAnimationPlugin {
 }
 
 /// File each avatar's emote downloads under the avatar, as its wearables are: the entity hashes
-/// of the emotes it plays (the full-body one and the upper-body request) go on the avatar as
+/// of the emotes it plays (the full-body one and the upper-body request), and for the player
+/// the emotes they have equipped (`preload_equipped_emotes`), go on the avatar as
 /// `PartitionedEmoteDownloads`, so the request slots rank an emote's definition, model and
 /// sounds in the avatar tier at this avatar's partition. With no owner they rank after every
 /// scene in range. A scene emote downloads under its scene's hash and a built-in one does not
@@ -202,18 +205,27 @@ pub(crate) fn file_emote_downloads(
             &ActiveEmote,
             Option<&MaskedEmote>,
             Option<&PartitionedEmoteDownloads>,
+            Option<&AvatarShape>,
+            Has<PrimaryUser>,
         ),
         With<AvatarAnimPlayer>,
     >,
     mut emote_loader: CollectibleManager<Emote>,
 ) {
-    for (entity, active, masked, filed) in &avatars {
+    for (entity, active, masked, filed, shape, is_player) in &avatars {
         let masked = masked
             .and_then(|masked| masked.request.as_ref())
             .map(|request| &request.urn);
-        let hashes = emote_download_hashes(std::iter::once(&active.urn).chain(masked), |urn| {
-            emote_loader.get_hash(urn).ok()
-        });
+        let equipped = shape
+            .filter(|_| is_player)
+            .into_iter()
+            .flat_map(|shape| shape.0.emotes.iter())
+            .flat_map(|urn| EmoteUrn::new(urn).ok())
+            .collect::<Vec<_>>();
+        let hashes = emote_download_hashes(
+            std::iter::once(&active.urn).chain(masked).chain(&equipped),
+            |urn| emote_loader.get_hash(urn).ok(),
+        );
         match (filed, hashes.is_empty()) {
             (None, true) => {}
             (Some(filed), false) if filed.0 == hashes => {}
@@ -246,6 +258,49 @@ pub(crate) fn emote_download_hashes<'a>(
 
 #[derive(Component, Default)]
 pub struct LastEmoteCommand(EmoteCommand);
+
+/// Loads the local player's equipped emotes once their avatar is built, so the first press of
+/// each plays at once instead of waiting on the pointer, entity and clip fetches. Loaded emotes
+/// stay in the collectible cache, so this stops asking once every equipped clip has loaded, and
+/// asks again when the equipped set or the body shape changes. `file_emote_downloads` files the
+/// equipped emotes under the player, so their downloads rank with the player's own.
+fn preload_equipped_emotes(
+    player: Query<(&AvatarShape, &Children), With<PrimaryUser>>,
+    definitions: Query<&AvatarDefinition>,
+    mut emote_loader: CollectibleManager<Emote>,
+    gltfs: Res<Assets<Gltf>>,
+    // the body shape and equipped urns whose clips have all loaded
+    mut loaded: Local<Option<(String, Vec<String>)>>,
+) {
+    let Ok((shape, children)) = player.single() else {
+        return;
+    };
+    let Some(definition) = children.iter().flat_map(|c| definitions.get(c).ok()).next() else {
+        return;
+    };
+    let bodyshape = &definition.render.body_shape;
+    let equipped = &shape.0.emotes;
+    if loaded
+        .as_ref()
+        .is_some_and(|(shape, urns)| shape == bodyshape && urns == equipped)
+    {
+        return;
+    }
+
+    let mut pending = false;
+    for urn in equipped.iter().flat_map(|urn| EmoteUrn::new(urn).ok()) {
+        match emote_loader.get_representation(&urn, bodyshape) {
+            Ok(emote) => pending |= emote.avatar_animation(&gltfs).is_err(),
+            Err(CollectibleError::Loading) => pending = true,
+            // missing, failed or not made for this body shape: playing it fails the same way
+            Err(_) => {}
+        }
+    }
+
+    if !pending {
+        *loaded = Some((bodyshape.clone(), equipped.clone()));
+    }
+}
 
 #[cfg(feature = "explorer")]
 fn handle_trigger_emotes(
