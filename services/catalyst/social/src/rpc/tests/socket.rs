@@ -635,6 +635,11 @@ fn source_numeric_auth_timer_buckets_remain_independent_from_signature_windows()
         Settings::default().auth_signature_expiration(),
         Duration::from_secs(300)
     );
+    let legacy = Settings {
+        auth_window_secs: 7,
+        ..Settings::default()
+    };
+    assert_eq!(legacy.auth_signature_expiration(), Duration::from_secs(7));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

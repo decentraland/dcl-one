@@ -84,13 +84,13 @@ use crate::shared::rpc::ws::{AxumWsTransport, OrdinaryQueueConfig};
 /// replace).
 #[derive(Clone, Debug)]
 pub struct Settings {
-    /// `AUTH_WINDOW_SECS`: how long the first frame may take to arrive when
-    /// `WS_AUTH_TIMEOUT_IN_MS` is unset.
+    /// `AUTH_WINDOW_SECS`: how long the first frame may take to arrive, and how
+    /// old its signature may be, when the `WS_AUTH_*` settings are unset.
     pub auth_window_secs: i64,
     /// WS_AUTH_TIMEOUT_IN_MS; unset keeps the legacy AUTH_WINDOW_SECS fallback.
     pub ws_auth_timeout_ms: Option<f64>,
     /// WS_AUTH_SIGNATURE_EXPIRATION_IN_MS, independent from the first-frame timer;
-    /// unset is 60 s.
+    /// unset keeps the legacy AUTH_WINDOW_SECS fallback.
     pub ws_auth_signature_expiration_ms: Option<f64>,
     /// WS_IDLE_TIMEOUT_IN_SECONDS; zero disables automatic ping/idle expiry.
     pub ws_idle_timeout_secs: u64,
@@ -178,12 +178,12 @@ impl Settings {
         Duration::from_millis(ms)
     }
     /// The handshake signature window: `WS_AUTH_SIGNATURE_EXPIRATION_IN_MS`,
-    /// else 300 s as the source service. Zero, negative or NaN accepts no past
-    /// signature; an infinite one never expires.
+    /// else `AUTH_WINDOW_SECS` (300 s, the source's default). Zero, negative or
+    /// NaN accepts no past signature; an infinite one never expires.
     pub(crate) fn auth_signature_expiration(&self) -> Duration {
-        let Some(ms) = self.ws_auth_signature_expiration_ms else {
-            return Duration::from_secs(300);
-        };
+        let ms = self
+            .ws_auth_signature_expiration_ms
+            .unwrap_or(self.auth_window_secs as f64 * 1000.0);
         if ms.is_nan() || ms <= 0.0 {
             return Duration::ZERO;
         }

@@ -4,7 +4,7 @@
 //! socket's own paths. The first path is the source protocol path; each
 //! further one, a mounted alias kept for shipped clients, is tried only after
 //! a 401. Proxy headers never add a path. The window is
-//! `WS_AUTH_SIGNATURE_EXPIRATION_IN_MS`, 60 s when unset.
+//! `WS_AUTH_SIGNATURE_EXPIRATION_IN_MS`, else `AUTH_WINDOW_SECS` (300 s).
 
 use axum::http::HeaderMap;
 use thiserror::Error;
