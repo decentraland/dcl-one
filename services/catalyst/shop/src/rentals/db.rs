@@ -230,7 +230,10 @@ impl Database {
 
     /// Updates the listing's asset row from a fresh reader row and returns
     /// the refreshed listing in one statement; `None` when the rental (or
-    /// its periods) is missing.
+    /// its periods) is missing, or when the reader row is older than the
+    /// stored one (`nft_updated_at`): a reader answering from an older block
+    /// replaces nothing, so the stored time never moves backwards and
+    /// [`super::status::sync_listing`] keeps ignoring rows that old.
     pub async fn refresh_metadata_for_rental(
         &self,
         rental_id: &str,
@@ -512,7 +515,8 @@ WITH a AS ( \
   ON CONFLICT (contract_address, token_id) DO UPDATE SET \
     category = EXCLUDED.category, search_text = EXCLUDED.search_text, \
     distance_to_plaza = EXCLUDED.distance_to_plaza, adjacent_to_road = EXCLUDED.adjacent_to_road, \
-    estate_size = EXCLUDED.estate_size, nft_updated_at = EXCLUDED.nft_updated_at, fetched_at = EXCLUDED.fetched_at \
+    estate_size = EXCLUDED.estate_size, \
+    nft_updated_at = GREATEST(rental_assets.nft_updated_at, EXCLUDED.nft_updated_at), fetched_at = EXCLUDED.fetched_at \
   RETURNING contract_address, token_id, nft_id, category, search_text, nft_created_at \
 ), r AS ( \
   INSERT INTO signatures.rentals \
@@ -540,9 +544,11 @@ const REFRESH_LISTING_SQL: &str = "\
 WITH upd AS ( \
   UPDATE signatures.rental_assets a SET \
     category = $2, search_text = $3, distance_to_plaza = $4::smallint, \
-    adjacent_to_road = $5, estate_size = $6::smallint, nft_updated_at = $7, fetched_at = $8 \
+    adjacent_to_road = $5, estate_size = $6::smallint, \
+    nft_updated_at = GREATEST(a.nft_updated_at, $7), fetched_at = $8 \
   FROM signatures.rentals r \
   WHERE r.id = $1 AND a.contract_address = r.contract_address AND a.token_id = r.token_id \
+    AND a.nft_updated_at <= $7 \
   RETURNING a.contract_address, a.token_id, a.nft_id, a.category, a.search_text, a.nft_created_at \
 ) \
 SELECT rentals.id, rentals.contract_address, rentals.token_id::text AS token_id, rentals.network, rentals.chain_id, \

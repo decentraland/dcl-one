@@ -398,6 +398,7 @@ pub async fn refresh_rentals_listing(
             {
                 return Ok(Ok2(StatusCode::OK, refreshed).into_response());
             }
+            // No row: the reader's is older than the stored one, which stays.
         }
         Ok(None) => {
             tracing::debug!(rental_id = %id, "NFT not found in the marketplace subgraph during refresh; metadata unchanged");

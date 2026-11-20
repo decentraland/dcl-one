@@ -265,7 +265,8 @@ pub async fn run_pass(
 /// open, expiry and the asset row the route has just read (`nft`; `None`
 /// when the reader found no such token, which decides nothing). The asset
 /// row counts only when its `updated_at` is newer than the stored
-/// `rental_assets.nft_updated_at`, which the route refreshes after this.
+/// `rental_assets.nft_updated_at`, which the route then raises to it and
+/// never lowers (`refresh_metadata_for_rental`).
 pub async fn sync_listing(
     pool: &PgPool,
     id: Uuid,

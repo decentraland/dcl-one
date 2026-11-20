@@ -1811,7 +1811,9 @@ without parcels once the index head is newer than the listing. The index
 reads run only on a published land-authz snapshot. The refresh route
 (`PATCH /v1/rentals-listings/{id}`) applies the fold and the same cancellation
 rules to one listing, using the asset row that the marketplace subgraph reader
-returned when that row is newer than `rental_assets.nft_updated_at`.
+returned when that row is newer than `rental_assets.nft_updated_at`. The
+route then writes the row to `signatures.rental_assets` only when it is no
+older than the stored one, so a lagging reader replaces no metadata.
 
 Workload: mainnet holds thousands of listings, of which hundreds are open
 (an estimate, not a measurement). Each pass does the following:
@@ -1828,6 +1830,11 @@ Workload: mainnet holds thousands of listings, of which hundreds are open
 Invariants:
 
 - `cancel_reason` is NULL unless the status is `cancelled` (a row `CHECK`).
+- `rental_assets.nft_updated_at` never moves backwards. The refresh route
+  skips a reader row older than the stored one, and the create route's upsert
+  keeps the greater time. A reader that answers from an older block and then
+  from a less old one therefore cannot pass the refresh route's newer-row
+  test.
 - A cancellation with no recorded cause keeps NULL. Rows imported from
   signatures-server, which records no cause, are of this kind.
 - A reopening never makes a second open listing of an asset

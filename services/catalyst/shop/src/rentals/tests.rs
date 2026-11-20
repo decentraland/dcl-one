@@ -844,6 +844,115 @@ async fn create_refresh_and_list_over_the_stub_subgraph() {
     cleanup(&pool, &[token]).await;
 }
 
+/// A reader that lags answers from older blocks: neither read replaces the
+/// newer stored asset row, so the stored time stays and the second, less
+/// stale read (the previous owner's) is still too old to close the listing.
+#[tokio::test]
+async fn a_stale_refresh_keeps_the_stored_asset_row_and_the_listing() {
+    let Some(pool) = crate::db::scratch::pool(4).await else {
+        return;
+    };
+    let db = Database::new(pool.clone());
+    let graph = stub_graph().await;
+    let token = random_token_id();
+    let listing = insert(&db, &token, LESSOR, &format!("0xsig-{token}"))
+        .await
+        .unwrap();
+    // The lessor received the asset at T5.
+    let (t3, t4, t5) = (1_700_000_300i64, 1_700_000_400i64, 1_700_000_500i64);
+    sqlx::query(
+        "UPDATE signatures.rental_assets SET nft_updated_at = to_timestamp($3) AT TIME ZONE 'UTC' \
+         WHERE contract_address = $1 AND token_id = $2::numeric",
+    )
+    .bind(LAND)
+    .bind(&token)
+    .bind(t5 as f64)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let previous_owner = format!("0x{}", "c3".repeat(20));
+    for (read_at, label) in [(t3, "a stale read"), (t4, "a later, less stale read")] {
+        *graph.answer.lock().unwrap() = nft_row(&previous_owner, "parcel", None);
+        graph.answer.lock().unwrap()["data"]["nfts"][0]["updatedAt"] = json!(read_at.to_string());
+        graph.answer.lock().unwrap()["data"]["nfts"][0]["searchText"] = json!("Older name");
+        // A state of its own: the reader caches an asset's row.
+        let state = state_over(
+            pool.clone(),
+            Some(market_with(Some(graph.url.clone()))),
+            true,
+        );
+        let (status, _, out) = send(
+            router(state),
+            "PATCH",
+            &format!("/v1/rentals-listings/{}", listing.id),
+            vec![],
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{label}: {out}");
+        assert_eq!(out["data"]["status"], "open", "{label}: {out}");
+        assert_eq!(out["data"]["searchText"], "-10,20", "{label}: {out}");
+        let (stored_at, search_text): (i64, String) = sqlx::query_as(
+            "SELECT extract(epoch FROM nft_updated_at)::bigint, search_text FROM signatures.rental_assets \
+             WHERE contract_address = $1 AND token_id = $2::numeric",
+        )
+        .bind(LAND)
+        .bind(&token)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((stored_at, search_text.as_str()), (t5, "-10,20"), "{label}");
+    }
+    cleanup(&pool, &[token]).await;
+}
+
+/// A relisting whose reader row is older than the stored asset row keeps
+/// the stored time: the refresh route's guard compares against it.
+#[tokio::test]
+async fn a_relisting_never_lowers_the_stored_asset_time() {
+    let Some(pool) = crate::db::scratch::pool(4).await else {
+        return;
+    };
+    let db = Database::new(pool.clone());
+    let token = random_token_id();
+    let first = insert(&db, &token, LESSOR, &format!("0xsig-a-{token}"))
+        .await
+        .unwrap();
+    let stored_at = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT extract(epoch FROM nft_updated_at)::bigint FROM signatures.rental_assets \
+             WHERE contract_address = $1 AND token_id = $2::numeric",
+        )
+        .bind(LAND)
+        .bind(&token)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    let ahead = chrono::Utc::now().timestamp() + 3_600;
+    sqlx::query(
+        "UPDATE signatures.rental_assets SET nft_updated_at = to_timestamp($3) AT TIME ZONE 'UTC' \
+         WHERE contract_address = $1 AND token_id = $2::numeric",
+    )
+    .bind(LAND)
+    .bind(&token)
+    .bind(ahead as f64)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE signatures.rentals SET status = 'cancelled' WHERE id = $1::uuid")
+        .bind(&first.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    insert(&db, &token, LESSOR, &format!("0xsig-b-{token}"))
+        .await
+        .unwrap();
+    assert_eq!(stored_at().await, ahead);
+    cleanup(&pool, &[token]).await;
+}
+
 /// `CATALYST_LIVE_MARKETPLACE_SUBGRAPH_URL=https://...` reads Genesis
 /// Plaza's parcel (token 0 of the LAND registry) from the real subgraph.
 #[tokio::test]
