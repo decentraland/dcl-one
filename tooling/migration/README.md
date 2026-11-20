@@ -84,7 +84,8 @@ in-app purchases cannot be clawed back by a later Apple refund
   wallet as `added_by`, and a `content`/`denylist.add` audit row whose actor
   is `cli:<wallet>`, since the wallet is not a signed-in session. An id already listed is left alone, so a re-run imports nothing.
   A line that is not an id (not UTF-8, longer than 512 bytes, or holding
-  whitespace, such as `id # note`) imports nothing; the first 50 are named
+  whitespace or a control character, such as `id # note`, after the same
+  trim as JS `String.prototype.trim`) imports nothing; the first 50 are named
   by number: fix the copy and run again. A file larger than 60 MB, or one
   that would take the table past 100,000 ids, imports nothing.
 

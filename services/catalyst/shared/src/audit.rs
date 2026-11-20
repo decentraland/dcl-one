@@ -78,12 +78,7 @@ impl<'a> Entry<'a> {
 /// moved money names it). A domain outside [`AUDIT_DOMAINS`] is refused
 /// here before the CHECK does, with the domain in the message.
 pub async fn record<'e, E: PgExecutor<'e>>(executor: E, entry: &Entry<'_>) -> sqlx::Result<i64> {
-    if !AUDIT_DOMAINS.contains(&entry.domain) {
-        return Err(sqlx::Error::Protocol(format!(
-            "ops.admin_audit: unknown domain {:?}",
-            entry.domain
-        )));
-    }
+    known_domain(entry)?;
     sqlx::query_scalar(
         "INSERT INTO ops.admin_audit (actor, domain, action, target, detail, result)
          VALUES ($1, $2, $3, $4, $5, $6)
@@ -97,6 +92,48 @@ pub async fn record<'e, E: PgExecutor<'e>>(executor: E, entry: &Entry<'_>) -> sq
     .bind(entry.result)
     .fetch_one(executor)
     .await
+}
+
+/// [`record`] for many rows in one statement (a bulk operator command),
+/// in `entries` order. Any domain outside [`AUDIT_DOMAINS`] refuses the
+/// whole batch before anything is written.
+pub async fn record_all<'e, E: PgExecutor<'e>>(
+    executor: E,
+    entries: &[Entry<'_>],
+) -> sqlx::Result<()> {
+    for entry in entries {
+        known_domain(entry)?;
+    }
+    if entries.is_empty() {
+        return Ok(());
+    }
+    sqlx::query(
+        "INSERT INTO ops.admin_audit (actor, domain, action, target, detail, result)
+         SELECT actor, domain, action, target, detail, result
+         FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::jsonb[], $6::text[])
+         WITH ORDINALITY AS r(actor, domain, action, target, detail, result, n)
+         ORDER BY n",
+    )
+    .bind(entries.iter().map(|e| e.actor).collect::<Vec<_>>())
+    .bind(entries.iter().map(|e| e.domain).collect::<Vec<_>>())
+    .bind(entries.iter().map(|e| e.action).collect::<Vec<_>>())
+    .bind(entries.iter().map(|e| e.target).collect::<Vec<_>>())
+    .bind(entries.iter().map(|e| e.detail.clone()).collect::<Vec<_>>())
+    .bind(entries.iter().map(|e| e.result).collect::<Vec<_>>())
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+fn known_domain(entry: &Entry<'_>) -> sqlx::Result<()> {
+    if AUDIT_DOMAINS.contains(&entry.domain) {
+        Ok(())
+    } else {
+        Err(sqlx::Error::Protocol(format!(
+            "ops.admin_audit: unknown domain {:?}",
+            entry.domain
+        )))
+    }
 }
 
 /// For a mutation that already took effect outside SQL: the row is best

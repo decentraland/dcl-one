@@ -175,8 +175,8 @@ pub fn read_file(reader: impl std::io::Read) -> anyhow::Result<Vec<u8>> {
 /// Parses the old content server's denylist file
 /// (`<STORAGE_ROOT_FOLDER>/<DENYLIST_FILE_NAME>`, `denylist.txt` by default;
 /// `decentraland/catalyst:src/adapters/denylist/component.ts:36-57`) by its
-/// rules: one id a line (`\n`, `\r\n` or `\r`), trimmed (a byte-order mark
-/// included, as JS `trim` does), a blank line or one starting with `#`
+/// rules: one id a line (`\n`, `\r\n` or `\r`), trimmed as JS `trim` does
+/// ([`js_trimmed`]), a blank line or one starting with `#`
 /// skipped, the rest an id verbatim. The old server matched those ids only
 /// as entity ids and content hashes, so a line that is neither (an IPFS
 /// CIDv0 or CIDv1, [`is_ipfs_v1`]/[`is_ipfs_v2`]) is skipped and counted:
@@ -204,7 +204,7 @@ pub fn parse_file(bytes: &[u8]) -> FileList {
             out.refuse("not UTF-8");
             continue;
         };
-        let id = line.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+        let id = line.trim_matches(js_trimmed);
         if id.is_empty() {
             out.blank += 1;
         } else if id.starts_with('#') {
@@ -227,6 +227,25 @@ pub fn parse_file(bytes: &[u8]) -> FileList {
         }
     }
     out
+}
+
+/// The characters JS `String.prototype.trim` strips: ECMAScript
+/// WhiteSpace (tab, VT, FF, space, NBSP, the byte-order mark and every
+/// `Zs`) and LineTerminator (LF, CR, U+2028, U+2029). Unlike
+/// [`char::is_whitespace`] it keeps U+0085 (NEL), a control character
+/// [`valid_id`] then refuses.
+fn js_trimmed(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200a}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202f}'
+                | '\u{205f}'
+                | '\u{3000}'
+                | '\u{feff}'
+    )
 }
 
 impl FileList {
@@ -322,12 +341,15 @@ async fn import(
     .fetch_all(&mut *tx)
     .await?;
     let actor = format!("cli:{added_by}");
-    for id in &added {
-        let entry = catalyst_shared::audit::Entry::new(&actor, "content", "denylist.add")
-            .target(Some(id))
-            .detail(serde_json::json!({ "id": id, "added": true, "source": "denylist-file" }));
-        catalyst_shared::audit::record(&mut *tx, &entry).await?;
-    }
+    let entries: Vec<_> = added
+        .iter()
+        .map(|id| {
+            catalyst_shared::audit::Entry::new(&actor, "content", "denylist.add")
+                .target(Some(id))
+                .detail(serde_json::json!({ "id": id, "added": true, "source": "denylist-file" }))
+        })
+        .collect();
+    catalyst_shared::audit::record_all(&mut *tx, &entries).await?;
     tx.commit().await?;
     Ok(FileImport {
         lines: file.lines,
@@ -963,6 +985,24 @@ mod tests {
         assert_eq!((padded.ids, padded.malformed), (vec![v1.clone()], 0));
         let inner = parse_file(format!("{}\u{a0}{}\n", &v1[..30], &v1[30..]).as_bytes());
         assert_eq!(inner.malformed, 1);
+        // JS `trim` keeps NEL (U+0085), so the id keeps it and is refused,
+        // where the old server listed it and never matched it.
+        let nel = parse_file(format!("{v1}\u{85}\n\u{85}{v1}\n").as_bytes());
+        assert_eq!((nel.ids.len(), nel.malformed), (0, 2));
+        // Exactly what `(c + "x").trim() === "x"` holds for in Node.
+        let stripped: Vec<u32> = (0..=0x10ffff)
+            .filter_map(char::from_u32)
+            .filter(|c| js_trimmed(*c))
+            .map(u32::from)
+            .collect();
+        assert_eq!(
+            stripped,
+            [
+                0x9, 0xa, 0xb, 0xc, 0xd, 0x20, 0xa0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003,
+                0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a, 0x2028, 0x2029, 0x202f,
+                0x205f, 0x3000, 0xfeff,
+            ]
+        );
         let bad = "bad id\n".repeat(60);
         let many = parse_file(bad.as_bytes());
         assert_eq!(many.malformed, 60);
@@ -1050,6 +1090,24 @@ mod tests {
             ]
         );
         assert_eq!(audited(pool.clone(), prefix.clone()).await, 2);
+        let audit: Vec<(String, serde_json::Value, String)> = sqlx::query_as(
+            "SELECT target, detail, result FROM ops.admin_audit WHERE domain = 'content' \
+             AND action = 'denylist.add' AND target LIKE $1 || '%' ORDER BY target",
+        )
+        .bind(&prefix)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            audit,
+            [&a, &b]
+                .map(|id| (
+                    id.clone(),
+                    serde_json::json!({ "id": id, "added": true, "source": "denylist-file" }),
+                    "ok".to_string(),
+                ))
+                .to_vec()
+        );
         let pointer: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM content.denylist WHERE id = '0,0' AND added_by = $1",
         )
