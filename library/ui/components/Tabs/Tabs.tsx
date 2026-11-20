@@ -11,8 +11,8 @@ type TabsBaseProps = {
   label: ReactNode
   /** The current tab: `aria-selected`, and the only one in the tab order (TabsBar moves focus with the arrows). */
   selected?: boolean
-  /** `underline` is the Figma tab; `pill` is the rounded tab decentraland.org shows on the events page. */
-  variant?: 'underline' | 'pill'
+  /** `compact` uses a shorter desktop underline; `pill` is the rounded filter tab. */
+  variant?: 'underline' | 'compact' | 'pill'
   /** Fixes the Figma device size; without it the tab follows the viewport. */
   device?: 'mobile' | 'desktop'
 }

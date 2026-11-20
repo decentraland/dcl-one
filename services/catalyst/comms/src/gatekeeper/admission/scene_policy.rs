@@ -114,6 +114,61 @@ struct LeaseAuthorization {
     addresses: Vec<String>,
     #[serde(default)]
     plots: Vec<String>,
+    #[serde(default, rename = "startDate")]
+    start_date: Option<String>,
+    #[serde(default, rename = "endDate")]
+    end_date: Option<String>,
+    #[serde(default, rename = "onlyDev")]
+    only_dev: Option<bool>,
+}
+
+impl LeaseAuthorization {
+    /// Whether the entry grants at `now`, as linker-server reads it: not before `startDate`, not
+    /// after `endDate`, and `onlyDev` entries only on a development node. A date that does not
+    /// parse grants nothing.
+    fn in_force(&self, now: chrono::DateTime<chrono::Utc>, dev_entries: bool) -> bool {
+        if self.only_dev == Some(true) && !dev_entries {
+            return false;
+        }
+        let bound = |raw: &Option<String>| match raw.as_deref().map(str::trim) {
+            None | Some("") => Ok(None),
+            Some(raw) => lease_date(raw).map(Some).ok_or(()),
+        };
+        match (bound(&self.start_date), bound(&self.end_date)) {
+            (Ok(start), Ok(end)) => {
+                start.is_none_or(|start| start <= now) && end.is_none_or(|end| end >= now)
+            }
+            _ => false,
+        }
+    }
+}
+
+/// The document's entries that read as lease entries; a malformed one is skipped (it grants
+/// nothing) instead of failing the whole document.
+fn lease_entries(entries: Vec<serde_json::Value>) -> Vec<LeaseAuthorization> {
+    let total = entries.len();
+    let parsed: Vec<LeaseAuthorization> = entries
+        .into_iter()
+        .filter_map(|entry| serde_json::from_value(entry).ok())
+        .collect();
+    if parsed.len() < total {
+        tracing::warn!(
+            skipped = total - parsed.len(),
+            "lease authorizations entries skipped as malformed"
+        );
+    }
+    parsed
+}
+
+/// A lease date as JavaScript's `Date` reads the published ones: `YYYY-MM-DD` is UTC midnight,
+/// otherwise an RFC 3339 timestamp.
+fn lease_date(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    if let Ok(day) = chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d") {
+        return Some(day.and_hms_opt(0, 0, 0)?.and_utc());
+    }
+    chrono::DateTime::parse_from_rfc3339(raw)
+        .ok()
+        .map(|at| at.with_timezone(&chrono::Utc))
 }
 
 /// The upstream caches: the lease authorizations and the ENS names.
@@ -229,8 +284,9 @@ pub async fn get_extra_addresses(state: &CommsState, place: &PlaceInfo) -> BTree
 
 /// Holders of a linker-server lease over any of `parcels`, from the document
 /// at `LEASE_AUTHORIZATIONS_URL` (the mirror posture's: Decentraland's
-/// linker-server-authorizations list); no URL or an unreadable document
-/// reads as no holder, as upstream.
+/// linker-server-authorizations list), counting only entries in force
+/// ([`LeaseAuthorization::in_force`]); no URL or an unreadable document reads
+/// as no holder, as upstream.
 pub async fn get_lease_holders_for_parcels(
     state: &CommsState,
     parcels: &[String],
@@ -271,9 +327,9 @@ pub(crate) async fn try_get_lease_holders_for_parcels(
             if !resp.status().is_success() {
                 return Err(format!("lease authorizations returned {}", resp.status()));
             }
-            resp.json::<Vec<LeaseAuthorization>>()
+            resp.json::<Vec<serde_json::Value>>()
                 .await
-                .map(Arc::new)
+                .map(|entries| Arc::new(lease_entries(entries)))
                 .map_err(|e| e.to_string())
         })
         .await;
@@ -287,11 +343,13 @@ pub(crate) async fn try_get_lease_holders_for_parcels(
         }
     };
     let parcel_set: BTreeSet<&str> = parcels.iter().map(String::as_str).collect();
+    let now = chrono::Utc::now();
     for auth in auths.iter() {
-        if auth
-            .plots
-            .iter()
-            .any(|plot| parcel_set.contains(plot.as_str()))
+        if auth.in_force(now, state.settings.lease_dev_entries)
+            && auth
+                .plots
+                .iter()
+                .any(|plot| parcel_set.contains(plot.as_str()))
         {
             holders.extend(auth.addresses.iter().map(|a| a.to_lowercase()));
         }
@@ -492,4 +550,60 @@ pub async fn holds_extended_permission(
         get_lease_holders_for_parcels(state, &place.positions)
     );
     Ok(operators?.contains(signer.as_str()) || leases.contains(signer.as_str()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(doc: serde_json::Value) -> LeaseAuthorization {
+        serde_json::from_value(doc).unwrap()
+    }
+
+    fn at(raw: &str) -> chrono::DateTime<chrono::Utc> {
+        lease_date(raw).unwrap()
+    }
+
+    #[test]
+    fn a_lease_entry_grants_only_within_its_dates() {
+        let dated = entry(serde_json::json!({
+            "addresses": ["0xa"], "plots": ["1,1"],
+            "startDate": "2024-03-01", "endDate": "2024-03-30"
+        }));
+        assert!(!dated.in_force(at("2024-02-29T23:59:59Z"), false));
+        assert!(dated.in_force(at("2024-03-01"), false));
+        assert!(dated.in_force(at("2024-03-30"), false));
+        assert!(!dated.in_force(at("2024-03-30T00:00:01Z"), false));
+        let open = entry(serde_json::json!({
+            "addresses": ["0xa"], "plots": ["1,1"],
+            "startDate": null, "endDate": "", "onlyDev": null
+        }));
+        assert!(open.in_force(at("2030-01-01"), false));
+        let precise = entry(serde_json::json!({
+            "addresses": ["0xa"], "plots": ["1,1"], "endDate": "2024-03-30T12:00:00+02:00"
+        }));
+        assert!(precise.in_force(at("2024-03-30T10:00:00Z"), false));
+        assert!(!precise.in_force(at("2024-03-30T10:00:01Z"), false));
+    }
+
+    #[test]
+    fn a_lease_entry_with_an_unreadable_date_grants_nothing() {
+        let unreadable = entry(serde_json::json!({
+            "addresses": ["0xa"], "plots": ["1,1"], "endDate": "next spring"
+        }));
+        assert!(!unreadable.in_force(at("2024-03-01"), true));
+    }
+
+    #[test]
+    fn a_dev_only_lease_entry_grants_only_on_a_development_node() {
+        let dev = entry(serde_json::json!({
+            "addresses": ["0xa"], "plots": ["1,1"], "onlyDev": true
+        }));
+        assert!(!dev.in_force(at("2024-03-01"), false));
+        assert!(dev.in_force(at("2024-03-01"), true));
+        let explicit = entry(serde_json::json!({
+            "addresses": ["0xa"], "plots": ["1,1"], "onlyDev": false
+        }));
+        assert!(explicit.in_force(at("2024-03-01"), false));
+    }
 }

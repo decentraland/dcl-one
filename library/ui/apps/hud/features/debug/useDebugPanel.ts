@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
 import { bugReportUrl } from '@explorer-core/lib/bugReport'
 import { isNativeHud, serviceUrl, siteRevision } from '@hud-host'
 import type { EngineSession } from '../session/useEngineSession'
@@ -88,25 +88,6 @@ export function useDebugPanelState(): DebugPanelState {
   return useSyncExternalStore(subscribe, () => panel)
 }
 
-type RunDebugCommand = EngineSession['runDebugCommand']
-const developmentBuilds = new WeakMap<RunDebugCommand, Promise<boolean>>()
-
-/** Asks `/debug_panel --dev-build` once per command runner; `false` until it answers or if it fails. */
-export function useDevelopmentBuild(runDebugCommand: RunDebugCommand): boolean {
-  const [value, setValue] = useState(false)
-  useEffect(() => {
-    let active = true
-    let answer = developmentBuilds.get(runDebugCommand)
-    if (answer == null) {
-      answer = (async () => JSON.parse(await runDebugCommand('/debug_panel --dev-build')) === true)().catch(() => false)
-      developmentBuilds.set(runDebugCommand, answer)
-    }
-    void answer.then((next) => { if (active) setValue(next) })
-    return () => { active = false }
-  }, [runDebugCommand])
-  return value
-}
-
 /** The chat entry point uses the same in-world panel as the sidebar. */
 export function requestDebugPanel(target: string, report: Request['report']) {
   window.dispatchEvent(new CustomEvent<Request>(REQUEST, { detail: { target, report } }))
@@ -145,5 +126,5 @@ export function useDebugPanel(session: EngineSession) {
     window.addEventListener(REQUEST, onRequest)
     return () => { window.removeEventListener(REQUEST, onRequest); closeDebugPanel() }
   }, [run])
-  return { state, run, developmentBuild: useDevelopmentBuild(session.runDebugCommand) }
+  return { state, run }
 }

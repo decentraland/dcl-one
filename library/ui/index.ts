@@ -17,7 +17,6 @@ export type {
 export {
   decentralandNavigation,
   decentralandNavigationSection,
-  decentralandNavSections,
   decentralandPublicNavSections
 } from './components/NavBar/NavBar.navigation'
 export type {
@@ -65,6 +64,12 @@ export type { InputExplorerNamesProps } from './components/InputExplorerNames/In
 export { InputWebCreatorTools } from './components/InputWebCreatorTools/InputWebCreatorTools'
 export type { InputWebCreatorToolsProps } from './components/InputWebCreatorTools/InputWebCreatorTools'
 
+export { WebSelect, WebTextarea } from './components/InputField/InputFieldWebControls'
+export type {
+  WebSelectProps,
+  WebTextareaProps
+} from './components/InputField/InputFieldWebControls'
+
 export { Switch } from './components/Switch/Switch'
 export type { SwitchProps } from './components/Switch/Switch'
 
@@ -74,3 +79,24 @@ export type {
   TitleBarSection,
   TitleBarLinkProps
 } from './components/TitleBar/TitleBar'
+
+export { ProfilePic } from './components/ProfilePic/ProfilePic'
+export type { ProfilePicProps, ProfilePicSize } from './components/ProfilePic/ProfilePic'
+
+export { Tag } from './components/Tag/Tag'
+export type { TagProps, TagVariant } from './components/Tag/Tag'
+
+export { FriendCTA } from './components/FriendCTA/FriendCTA'
+export type {
+  FriendCTALabels,
+  FriendCTAProps,
+  FriendCTAStatus
+} from './components/FriendCTA/FriendCTA'
+
+export { CloseButton } from './components/CloseButton/CloseButton'
+export type { CloseButtonProps, CloseButtonVariant } from './components/CloseButton/CloseButton'
+export { Modal } from './components/Modal/Modal'
+export type { ModalProps } from './components/Modal/Modal'
+
+export { Toast } from './components/Toast/Toast'
+export type { ToastProps, ToastVariant } from './components/Toast/Toast'

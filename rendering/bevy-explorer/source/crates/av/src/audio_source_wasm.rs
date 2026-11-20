@@ -191,7 +191,7 @@ fn manage_audio_sources(
 
         let source_volume = match emitter.ty {
             AudioType::Voice => settings.voice(),
-            AudioType::System => settings.system(),
+            AudioType::System => emitter.volume * settings.system(),
             AudioType::Avatar => settings.avatar(),
             AudioType::Scene => {
                 if maybe_scene_ent.is_some_and(|se| current_scenes.contains(&se.root)) {

@@ -639,6 +639,16 @@ async fn trade_events_walk_under_a_budget_resume_after_a_kill_fold_the_verdicts_
         .await
         .unwrap();
     }
+    sqlx::query(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, minters, created_at, updated_at, reviewed_at, mirrored_at) \
+         VALUES ('matic', $1, 137, 'Hats', $2, $2, 'urn:decentraland:matic:collections-v2:0xc1', true, true, false, ARRAY[$3], 1, 1, 1, timezone('UTC', now()))",
+    )
+    .bind(item)
+    .bind(ALICE)
+    .bind(market)
+    .execute(&db.pool)
+    .await
+    .unwrap();
     let s = start;
     let logs = vec![
         traded(s + 100, 0, market, CARL, ALICE, &sold.1),

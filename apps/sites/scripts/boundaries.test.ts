@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript6";
 import { describe, expect, it } from "vitest";
 
 const SITES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -55,7 +56,6 @@ const rel = (abs: string) => path.relative(SITES, abs);
 
 const WAIVED = new Set([
   "src/data/lib/auth/pair-store.test.ts -> @/routes/routes/internal.pair",
-  "src/data/lib/catalyst/creator-hub/scene-drafts.test.ts -> @/routes/routes/api.creator-hub.drafts.$",
   "src/data/lib/catalyst/creator-hub/wearable-publish-collection.ts -> @/features/creator-hub/wearable-publish-collection/machine",
   "src/data/lib/catalyst/creator-hub/wearable-publish-collection.ts -> @/features/creator-hub/wearable-publish-collection/PublishCollectionWizard",
   "src/data/lib/catalyst/landings/rsvp.ts -> @/features/social/rsvp-event/machine",
@@ -97,7 +97,13 @@ function importViolations(): { key: string; message: string }[] {
 
 describe("layer boundaries", () => {
   it("every layer directory exists and the rules form the intended layering", () => {
-    expect(layers.map((l) => l.name).sort()).toEqual(["core", "data", "features", "routes"]);
+    expect(rules).toEqual({
+      core: [],
+      data: ["core"],
+      features: ["core", "data"],
+      pages: ["core", "data", "features"],
+      routes: ["core", "data", "features", "pages"],
+    });
     for (const l of layers) {
       expect(fs.existsSync(l.absRoot), `src/${l.name} exists`).toBe(true);
       for (const dep of l.mayImport) {
@@ -150,10 +156,13 @@ describe("layer boundaries", () => {
       const allowed = new Set(l.mayImport);
       for (const file of walk(l.absRoot)) {
         const src = fs.readFileSync(file, "utf8");
-        const dense = src.replace(/\s+/g, "");
+        // Source attribution comments can mention paths from other repositories.
+        const syntax = ts.createSourceFile(file, src, ts.ScriptTarget.Latest);
+        const code = ts.createPrinter({ removeComments: true }).printFile(syntax);
+        const dense = code.replace(/\s+/g, "");
         for (const r of roots) {
           if (r.layer.name === l.name || allowed.has(r.layer.name)) continue;
-          if (dense.includes(r.joined) || r.slash.test(src)) {
+          if (dense.includes(r.joined) || r.slash.test(code)) {
             found.push(`${rel(file)} -> ${r.layer.name}`);
           }
         }

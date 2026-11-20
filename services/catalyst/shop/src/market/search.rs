@@ -13,10 +13,13 @@
 //! starts with it, then any other match. The creator directory (approved
 //! creators with their item and collection counts, the active profile's name
 //! and face, their NAMEs) is one statement cached for 15 minutes: creators
-//! number in the thousands and a dropdown asks on every keystroke.
+//! number in the thousands and a dropdown asks on every keystroke. Each read
+//! applies the content denylist to the cached profiles, so a new listing does
+//! not wait for the next refresh.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Json;
 use axum::extract::{Query, State};
@@ -25,6 +28,9 @@ use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::Row;
+
+use crate::content::Denylist;
+use crate::content::queries::non_denylisted;
 
 use super::catalog::escape_like;
 use super::items::{self, CreditCatalogItem};
@@ -124,8 +130,15 @@ fn name_tier(name: &Forms, query: &Forms, terms: &[String]) -> Option<u8> {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CreatorEntry {
     pub address: String,
+    /// The active profile's entity, which the content denylist can withhold.
+    #[serde(default)]
+    pub entity_id: Option<String>,
     pub name: Option<String>,
     pub face: Option<String>,
+    /// Whether the creator holds a NAME spelled as the profile name, as
+    /// `/lambdas/profiles` sets `hasClaimedName`, from the NFT index.
+    #[serde(default)]
+    pub claimed: bool,
     pub names: Vec<String>,
     pub items: i64,
     pub collections: i64,
@@ -136,6 +149,103 @@ impl CreatorEntry {
     pub fn display_name(&self) -> Option<String> {
         self.name.clone().or_else(|| self.names.first().cloned())
     }
+
+    /// The entry without its profile's name, face and claim when the content
+    /// denylist lists the profile's entity, as `/lambdas/profiles` then has no
+    /// profile to answer. The NAMEs stay: they come from the NFT index.
+    fn without_denylisted_profile(mut self, denylist: &Denylist) -> Self {
+        if self
+            .entity_id
+            .as_deref()
+            .is_some_and(|id| !non_denylisted(id, denylist))
+        {
+            self.name = None;
+            self.face = None;
+            self.claimed = false;
+        }
+        self
+    }
+}
+
+/// A creator's profile as a feed carries it inline (`creatorProfile`), so a
+/// card names its creator without asking `/lambdas/profiles`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "market/"))]
+pub struct CreatorProfile {
+    /// The active profile's name; empty without one.
+    pub name: String,
+    pub face: Option<String>,
+    pub claimed: bool,
+}
+
+/// How long a feed waits for a creator directory this node has not read yet.
+const DIRECTORY_WAIT: Duration = Duration::from_millis(500);
+/// How old an expired directory a feed still serves while it is refreshed (a failed refresh
+/// keeps it).
+const DIRECTORY_STALE_FOR: Duration = Duration::from_secs(3600);
+
+/// The creator directory for a feed, which it never holds up: the fresh copy; else an expired one
+/// (up to [`DIRECTORY_STALE_FOR`] old) while one background read refreshes it; else, with none
+/// yet, that read for at most [`DIRECTORY_WAIT`]. `None` answers without inline profiles, and the
+/// cards ask for them; a failed read is logged, and only one read runs at a time.
+pub async fn directory_snapshot(state: &SharedState) -> Option<Arc<Value>> {
+    let readers = &state.readers;
+    if let Some(fresh) = readers.fresh(Ttl::M15, CREATOR_DIRECTORY_KEY) {
+        return Some(fresh);
+    }
+    let refresh = readers.begin_refresh(CREATOR_DIRECTORY_KEY).then(|| {
+        let state = Arc::clone(state);
+        tokio::spawn(async move {
+            let read = directory_value(&state).await;
+            state.readers.end_refresh(CREATOR_DIRECTORY_KEY);
+            read.inspect_err(|e| tracing::warn!(error = ?e, "creator directory unavailable; feeds answer without creator profiles"))
+                .ok()
+        })
+    });
+    if let Some(stale) = readers.within(Ttl::M15, CREATOR_DIRECTORY_KEY, DIRECTORY_STALE_FOR) {
+        return Some(stale);
+    }
+    match refresh {
+        Some(read) => tokio::time::timeout(DIRECTORY_WAIT, read)
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .flatten(),
+        // Another feed's read is in flight: wait on it as long.
+        None => tokio::time::timeout(DIRECTORY_WAIT, directory_value(state))
+            .await
+            .ok()
+            .and_then(Result::ok),
+    }
+}
+
+/// The profile of each of `addresses` (lowercase) the directory holds, after
+/// the content denylist.
+pub fn creator_profiles(
+    directory: &Value,
+    addresses: &HashSet<String>,
+    denylist: &Denylist,
+) -> HashMap<String, CreatorProfile> {
+    directory
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|e| {
+            e.get("address")
+                .and_then(Value::as_str)
+                .is_some_and(|a| addresses.contains(a))
+        })
+        .filter_map(|e| CreatorEntry::deserialize(e).ok())
+        .map(|c| {
+            let c = c.without_denylisted_profile(denylist);
+            let profile = CreatorProfile {
+                name: c.name.unwrap_or_default(),
+                face: c.face,
+                claimed: c.claimed,
+            };
+            (c.address, profile)
+        })
+        .collect()
 }
 
 /// A creator the dropdown can offer.
@@ -156,8 +266,10 @@ const CREATOR_DIRECTORY_SQL: &str = "WITH creators AS ( \
        FROM shop.items WHERE search_is_collection_approved = true AND creator IS NOT NULL GROUP BY 1 \
      ) \
      SELECT c.address, c.items, c.collections, d.entity_id, \
-            NULLIF(trim(d.entity_metadata->'avatars'->0->>'name'), '') AS name, \
-            d.entity_metadata->'avatars'->0->'avatar'->'snapshots'->>'face256' AS face, \
+            NULLIF(trim(d.entity_metadata->'v'->'avatars'->0->>'name'), '') AS name, \
+            d.entity_metadata->'v'->'avatars'->0->'avatar'->'snapshots'->>'face256' AS face, \
+            EXISTS (SELECT 1 FROM shop.nft n WHERE n.owner = c.address \
+                    AND n.ens_subdomain = d.entity_metadata->'v'->'avatars'->0->>'name') AS claimed, \
             COALESCE((SELECT array_agg(n.ens_subdomain ORDER BY n.minted_block, n.ens_subdomain) FROM shop.nft n \
                       WHERE n.owner = c.address AND n.ens_subdomain IS NOT NULL), '{}') AS names \
      FROM creators c \
@@ -184,11 +296,25 @@ fn face_url(state: &MarketplaceState, entity_id: &str, face: Option<&str>) -> Op
         .map(str::to_string)
 }
 
+/// The cached directory, after the content denylist.
 pub async fn creator_directory(state: &MarketplaceState) -> Result<Vec<CreatorEntry>, ApiError> {
-    let value = cached(
+    let value = directory_value(state).await?;
+    let entries: Vec<CreatorEntry> = serde_json::from_value(Arc::unwrap_or_clone(value))
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(entries
+        .into_iter()
+        .map(|c| c.without_denylisted_profile(&state.denylist))
+        .collect())
+}
+
+/// The creator directory's memo key, under [`Ttl::M15`].
+pub(crate) const CREATOR_DIRECTORY_KEY: &str = "search:creator-directory";
+
+async fn directory_value(state: &MarketplaceState) -> Result<Arc<Value>, ApiError> {
+    cached(
         state,
         Ttl::M15,
-        "search:creator-directory".to_string(),
+        CREATOR_DIRECTORY_KEY.to_string(),
         || async {
             let rows = sqlx::query(CREATOR_DIRECTORY_SQL)
                 .fetch_all(&state.pool)
@@ -207,6 +333,8 @@ pub async fn creator_directory(state: &MarketplaceState) -> Result<Vec<CreatorEn
                         face: entity_id
                             .as_deref()
                             .and_then(|id| face_url(state, id, face.as_deref())),
+                        entity_id,
+                        claimed: r.get("claimed"),
                         names,
                         items: r.get("items"),
                         collections: r.get("collections"),
@@ -221,9 +349,7 @@ pub async fn creator_directory(state: &MarketplaceState) -> Result<Vec<CreatorEn
         },
     )
     .await
-    .map_err(ApiError::Internal)?;
-    serde_json::from_value(Arc::unwrap_or_clone(value))
-        .map_err(|e| ApiError::Internal(e.to_string()))
+    .map_err(ApiError::Internal)
 }
 
 /// Creators whose profile name or a NAME matches every term, best first:
@@ -488,12 +614,109 @@ mod tests {
     fn creator(address: &str, name: Option<&str>, names: &[&str], items: i64) -> CreatorEntry {
         CreatorEntry {
             address: address.into(),
+            entity_id: None,
             name: name.map(str::to_string),
             face: None,
+            claimed: false,
             names: names.iter().map(|n| n.to_string()).collect(),
             items,
             collections: 1,
         }
+    }
+
+    /// A feed never waits long on the creator directory. With none read yet and that read held up
+    /// (the items table locked), it answers without profiles within `DIRECTORY_WAIT` while the
+    /// read carries on and fills the directory; once expired, the old copy answers at once while
+    /// one background read makes it fresh again.
+    #[tokio::test]
+    async fn a_feed_never_waits_long_on_the_creator_directory() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let state =
+            crate::market::tests::support::state_with_empty_readers(Some(pool.clone())).await;
+        let until_fresh = |state: SharedState| async move {
+            tokio::time::timeout(Duration::from_secs(20), async {
+                while !state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY) {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .expect("the background read fills the directory");
+        };
+
+        let mut lock = pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE shop.items IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+        let asked = std::time::Instant::now();
+        let held = tokio::time::timeout(Duration::from_secs(10), directory_snapshot(&state))
+            .await
+            .expect("the feed is not held up by the directory's read");
+        assert!(held.is_none());
+        assert!(
+            asked.elapsed() < DIRECTORY_WAIT + Duration::from_secs(5),
+            "{:?}",
+            asked.elapsed()
+        );
+        assert!(!state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
+        lock.rollback().await.unwrap();
+        until_fresh(state.clone()).await;
+        let read = directory_snapshot(&state)
+            .await
+            .expect("the fresh directory");
+
+        state.readers.backdate(
+            Ttl::M15,
+            CREATOR_DIRECTORY_KEY,
+            Ttl::M15.duration() + Duration::from_secs(60),
+        );
+        assert!(!state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
+        let mut lock = pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE shop.items IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+        assert_eq!(
+            directory_snapshot(&state).await,
+            Some(read),
+            "the expired copy answers while its refresh is held up"
+        );
+        lock.rollback().await.unwrap();
+        until_fresh(state.clone()).await;
+    }
+
+    #[test]
+    fn a_feed_takes_the_profiles_of_its_creators_only() {
+        let mut quack = creator("0xaa", Some("Quack"), &["quack"], 3);
+        quack.face = Some("https://cdn.example/entities/bafy/face.png".into());
+        quack.claimed = true;
+        let directory = serde_json::to_value(vec![
+            quack,
+            creator("0xbb", None, &[], 1),
+            creator("0xdd", Some("Dee"), &[], 1),
+        ])
+        .unwrap();
+        let wanted: HashSet<String> = ["0xaa", "0xbb", "0xcc"].map(String::from).into();
+        let profiles = creator_profiles(&directory, &wanted, &Denylist::default());
+        assert_eq!(profiles.len(), 2, "{profiles:?}");
+        assert_eq!(
+            profiles["0xaa"],
+            CreatorProfile {
+                name: "Quack".into(),
+                face: Some("https://cdn.example/entities/bafy/face.png".into()),
+                claimed: true
+            }
+        );
+        assert_eq!(
+            profiles["0xbb"],
+            CreatorProfile {
+                name: String::new(),
+                face: None,
+                claimed: false
+            }
+        );
     }
 
     #[test]
@@ -625,20 +848,40 @@ mod tests {
         )
         .bind(&creator)
         .bind(&entity)
-        .bind(json!({ "avatars": [{ "name": "Quackmaster", "avatar": { "snapshots": { "face256": "bafyface" } } }] }).to_string())
+        .bind(json!({ "v": { "avatars": [{ "name": "Quackmaster", "avatar": { "snapshots": { "face256": "bafyface" } } }] } }).to_string())
         .execute(&pool)
         .await
         .unwrap();
         sqlx::query("INSERT INTO content.active_pointers (pointer, entity_id, entity_type) VALUES ($1, $2, 'profile')").bind(&creator).bind(&entity).execute(&pool).await.unwrap();
+        let names = format!("0x{tag}dddddddd");
+        sqlx::query(
+            "INSERT INTO shop.nft (network, contract_address, token_id, owner, ens_subdomain, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+             VALUES ('ethereum', $1, 1, $2, 'Quackmaster', 1, 1, 1, 0, 1)",
+        )
+        .bind(&names)
+        .bind(&creator)
+        .execute(&pool)
+        .await
+        .unwrap();
         let directory = creator_directory(&state).await.unwrap();
         let entry = directory
             .iter()
             .find(|c| c.address == creator)
             .expect("the creator is in the directory");
         assert_eq!(
-            (entry.name.as_deref(), entry.items, entry.collections),
-            (Some("Quackmaster"), 1, 1)
+            (
+                entry.name.as_deref(),
+                entry.items,
+                entry.collections,
+                entry.claimed
+            ),
+            (Some("Quackmaster"), 1, 1, true)
         );
+        let snapshot = directory_snapshot(&state).await.unwrap();
+        let wanted = HashSet::from([creator.clone()]);
+        let profiles = creator_profiles(&snapshot, &wanted, &state.denylist);
+        assert_eq!(profiles[&creator].name, "Quackmaster");
+        assert!(profiles[&creator].claimed);
         assert!(
             entry
                 .face
@@ -651,6 +894,32 @@ mod tests {
             hits.first().map(|h| h.address.as_str()),
             Some(creator.as_str())
         );
+        // A denylisted profile entity leaves the cached directory's reads at
+        // once, as /lambdas/profiles leaves it out; the NAMEs stay.
+        let listed = "https://registry.example/denylist";
+        state.denylist.set_remote(listed, [entity.clone()]);
+        let directory = creator_directory(&state).await.unwrap();
+        let entry = directory.iter().find(|c| c.address == creator).unwrap();
+        assert_eq!(
+            (entry.name.as_deref(), entry.face.as_deref(), entry.claimed),
+            (None, None, false)
+        );
+        assert_eq!(entry.display_name().as_deref(), Some("Quackmaster"));
+        let profiles = creator_profiles(&snapshot, &wanted, &state.denylist);
+        assert_eq!(
+            profiles[&creator],
+            CreatorProfile {
+                name: String::new(),
+                face: None,
+                claimed: false
+            }
+        );
+        state.denylist.set_remote(listed, Vec::<String>::new());
+        sqlx::query("DELETE FROM shop.nft WHERE contract_address = $1")
+            .bind(&names)
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("DELETE FROM content.active_pointers WHERE pointer = $1")
             .bind(&creator)
             .execute(&pool)
