@@ -37,7 +37,7 @@ import { readWallet } from "@/data/lib/auth/wallet-cookie";
 import { browserCatalystBase } from "@/data/lib/catalyst/bases";
 import { isCommitteeMember } from "@/data/lib/catalyst/creator-hub/committee-membership.server";
 import { serverShopApiMode } from "@/data/lib/shop/mode";
-import { homeMeta, notFoundMeta, publicBase } from "./lib/social-meta";
+import { homeMeta, notFoundMeta } from "./lib/social-meta";
 import type { Route } from "./+types/root";
 
 /** Reads or mints the session id once per request, before every loader, and sets its cookie once. */
@@ -119,10 +119,13 @@ export function shouldRevalidate({
   return defaultShouldRevalidate;
 }
 
-/** The shell card: every page without a head of its own, and the 404 for an unknown path. */
-export function meta({ error, matches }: Route.MetaArgs) {
+/**
+ * The shell card for every page without a head of its own, without a canonical: naming the home page
+ * there would tell search engines those pages duplicate it. The 404 of an unknown path has no card.
+ */
+export function meta({ error }: Route.MetaArgs) {
   if (isRouteErrorResponse(error) && error.status === 404) return notFoundMeta();
-  return homeMeta(publicBase(matches));
+  return homeMeta(undefined);
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {

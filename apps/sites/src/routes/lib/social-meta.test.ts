@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SOCIAL_IMAGE, absoluteUrl, homeMeta, notFoundMeta, oneLine, publicBase, socialMeta } from "./social-meta";
+import { DEFAULT_SOCIAL_IMAGE, absoluteImage, absoluteUrl, homeMeta, notFoundMeta, oneLine, publicBase, socialMeta } from "./social-meta";
 import { tagContent as content } from "./social-meta.test-utils";
 
 describe("socialMeta", () => {
@@ -68,6 +68,16 @@ describe("helpers", () => {
     expect(publicBase([{ id: "root", loaderData: undefined }, undefined])).toBeUndefined();
     expect(absoluteUrl("https://dcl.test/", "/blog")).toBe("https://dcl.test/blog");
     expect(absoluteUrl(undefined, "/blog")).toBeUndefined();
+  });
+
+  it("keeps an absolute image, roots a site path under the base and drops anything else", () => {
+    expect(absoluteImage("https://dcl.test", "https://img.test/a.png")).toBe("https://img.test/a.png");
+    expect(absoluteImage("https://dcl.test/", "/assets-cdn/a.png")).toBe("https://dcl.test/assets-cdn/a.png");
+    expect(absoluteImage(undefined, "/assets-cdn/a.png")).toBeUndefined();
+    expect(absoluteImage("https://dcl.test", "//evil.test/a.png")).toBeUndefined();
+    expect(absoluteImage("https://dcl.test", "data:image/png;base64,AA")).toBeUndefined();
+    expect(absoluteImage("https://dcl.test", "")).toBeUndefined();
+    expect(absoluteImage("https://dcl.test", null)).toBeUndefined();
   });
 
   it("collapses whitespace and treats an empty text as missing", () => {

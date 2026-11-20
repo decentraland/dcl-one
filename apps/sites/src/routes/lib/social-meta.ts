@@ -7,6 +7,7 @@ import type { MetaDescriptor } from "react-router";
  */
 
 export const SITE_NAME = "Decentraland";
+export const SCHEMA_ORG = "https://schema.org";
 export const TWITTER_HANDLE = "@decentraland";
 
 /** The card image of every page without one of its own. */
@@ -85,6 +86,16 @@ export function publicBase(matches: readonly ({ id: string; loaderData?: unknown
 /** `base + path`, or undefined when the base is unknown (a canonical must be absolute). */
 export function absoluteUrl(base: string | undefined, path: string): string | undefined {
   return base ? base.replace(/\/+$/, "") + path : undefined;
+}
+
+/**
+ * An image a crawler can fetch: an http(s) URL as it is, a path of this site under `base`, else
+ * undefined (the card then shows the shared image).
+ */
+export function absoluteImage(base: string | undefined, src: string | null | undefined): string | undefined {
+  if (!src) return undefined;
+  if (/^https?:\/\//i.test(src)) return src;
+  return src.startsWith("/") && !src.startsWith("//") ? absoluteUrl(base, src) : undefined;
 }
 
 /** The head of a page whose entity does not exist: no card, out of the index. */
