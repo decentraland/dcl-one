@@ -14,7 +14,9 @@
 //! measurement window) never publishes, and neither does one held short by
 //! `MARKETPLACE_INDEX_STOP_BLOCK_*`. Readers trust an index through
 //! [`is_ready`]: `folded_block = last_block` and `folded_at` at most
-//! [`READY_WINDOW`] old at the caller's clock.
+//! [`READY_WINDOW`] old at the caller's clock. Accepting work that waits on
+//! an index (tip claims) uses the liveness view [`is_walked`] instead: ready,
+//! or a full-history walk advancing near the head.
 
 use std::collections::{BTreeSet, HashMap};
 use std::time::Duration;
