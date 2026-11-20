@@ -9,6 +9,7 @@ import {
   fetchEntities,
   fileMapFor,
   representationContents,
+  representationHashes,
   representationMainFile,
   resolveOutfit,
 } from "./outfit";
@@ -55,6 +56,8 @@ export interface AvatarSceneOptions {
   body?: string;
   urns?: string[] | string;
   outfit?: OutfitData | null;
+  /** The outfit is still being read: the scene is built now and loads no part until an outfit comes without this flag. */
+  outfitPending?: boolean;
   profile?: string;
   /**
    * Report "empty" unless at least one requested wearable mounted: the bare body alone is not the picture asked for
@@ -68,7 +71,7 @@ export type AvatarCameraOptions = Pick<
   "zoom" | "yaw" | "pitch" | "fov" | "targetY"
 >;
 
-export type AvatarOutfitOptions = Pick<AvatarSceneOptions, "profile" | "urns" | "body" | "outfit">;
+export type AvatarOutfitOptions = Pick<AvatarSceneOptions, "profile" | "urns" | "body" | "outfit" | "outfitPending">;
 
 export interface AvatarScene {
   resize: () => void;
@@ -154,6 +157,8 @@ export function createAvatarScene(
     opts.onStatus?.(next);
   };
   let disposed = false;
+  /** Aborted on dispose: every part file still downloading stops with the preview. */
+  const downloads = new AbortController();
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -231,6 +236,7 @@ export function createAvatarScene(
   let currentBodyShape = "";
   let revealed = false;
   let loadGen = 0;
+  let awaitingOutfit = !opts.model && !!opts.outfitPending;
   let swapTimer: ReturnType<typeof setTimeout> | null = null;
   let swapSettle: (() => void) | null = null;
   let lastFrame = performance.now();
@@ -382,7 +388,45 @@ export function createAvatarScene(
     });
   }
 
-  async function loadEntityGlb(entity: Entity, bodyShape: string): Promise<THREE.Object3D | null> {
+  // The parts' files by content hash, each download started once when the entities arrive, so a GLB's textures
+  // download beside it instead of after its parse.
+  // `signal` ends the wave: the preview's disposal or the parts' timeout.
+  type HeldFiles = Map<string, Promise<Blob | null>> & { signal: AbortSignal };
+
+  /**
+   * Starts the downloads of an entity's files under the wave's signal. A failed answer's body is cancelled. A file
+   * that did not download (a failed answer, a network error) is null and left to the loader.
+   */
+  function holdFiles(files: HeldFiles, entity: Entity, bodyShape: string): void {
+    for (const hash of representationHashes(entity, bodyShape)) {
+      if (files.has(hash)) continue;
+      const download = fetch(`${base}/content/contents/${hash}`, { signal: files.signal }).then(async (r) => {
+        if (r.ok) return r.blob();
+        await r.body?.cancel().catch(() => {});
+        return null;
+      });
+      files.set(hash, download.catch(() => null));
+    }
+  }
+
+  /**
+   * Object URLs of the held files among `hashes`; a file that did not download is left to the loader. Once the wave
+   * has ended it throws instead: the part is not loaded, so its loader does not download its files again, and the
+   * failure drops the part from its cache, so wearing it again loads it anew.
+   */
+  async function heldUrls(files: HeldFiles, hashes: string[]): Promise<Map<string, string>> {
+    const blobs: (Blob | null | undefined)[] = [];
+    for (const hash of hashes) blobs.push(await files.get(hash));
+    if (files.signal.aborted) throw new DOMException("the part's downloads ended", "AbortError");
+    const urls = new Map<string, string>();
+    hashes.forEach((hash, i) => {
+      const blob = blobs[i];
+      if (blob) urls.set(hash, URL.createObjectURL(blob));
+    });
+    return urls;
+  }
+
+  async function loadEntityGlb(entity: Entity, bodyShape: string, files: HeldFiles): Promise<THREE.Object3D | null> {
     const main = representationMainFile(entity, bodyShape);
     if (!main) return null;
     const fileMap = fileMapFor(entity);
@@ -391,21 +435,29 @@ export function createAvatarScene(
       fileMap.get(main.toLowerCase()) ??
       (mainBase !== undefined ? fileMap.get(mainBase.toLowerCase()) : undefined);
     if (!mainHash) return null;
+    const mainUrl = `${base}/content/contents/${mainHash}`;
+    const held = await heldUrls(files, representationHashes(entity, bodyShape));
     const manager = new THREE.LoadingManager();
     manager.setURLModifier((url) => {
       if (/^(blob:|data:)/.test(url)) return url;
+      if (url === mainUrl) return held.get(mainHash) ?? url;
       const path = url.split("?")[0] ?? url;
       const baseName = (path.split("/").pop() ?? "").toLowerCase();
       const hash = fileMap.get(baseName);
-      return hash ? `${base}/content/contents/${hash}` : url;
+      return hash ? (held.get(hash) ?? `${base}/content/contents/${hash}`) : url;
     });
-    const gltf = await new GLTFLoader(manager).loadAsync(`${base}/content/contents/${mainHash}`);
-    return gltf.scene;
+    try {
+      const gltf = await new GLTFLoader(manager).loadAsync(mainUrl);
+      return gltf.scene;
+    } finally {
+      for (const url of held.values()) URL.revokeObjectURL(url);
+    }
   }
 
   async function loadFacialFeature(
     entity: Entity,
     bodyShape: string,
+    files: HeldFiles,
   ): Promise<FacialFeature | null> {
     const names = representationContents(entity, bodyShape);
     const fileMap = fileMapFor(entity);
@@ -413,18 +465,23 @@ export function createAvatarScene(
       n ? (fileMap.get(n) ?? fileMap.get(n.split("/").pop() ?? "") ?? null) : null;
     const texHash = hashOf(names.find((n) => n.endsWith(".png") && !n.endsWith("_mask.png")));
     if (!texHash) return null;
+    const maskHash = hashOf(names.find((n) => n.endsWith("_mask.png")));
+    const held = await heldUrls(files, maskHash ? [texHash, maskHash] : [texHash]);
     const loadTex = async (hash: string, srgb: boolean): Promise<THREE.Texture> => {
-      const t = await new THREE.TextureLoader().loadAsync(`${base}/content/contents/${hash}`);
+      const t = await new THREE.TextureLoader().loadAsync(held.get(hash) ?? `${base}/content/contents/${hash}`);
       t.flipY = false;
       if (srgb) t.colorSpace = THREE.SRGBColorSpace;
       t.needsUpdate = true;
       return t;
     };
-    const maskHash = hashOf(names.find((n) => n.endsWith("_mask.png")));
-    return {
-      tex: await loadTex(texHash, true),
-      mask: maskHash ? await loadTex(maskHash, false) : null,
-    };
+    try {
+      return {
+        tex: await loadTex(texHash, true),
+        mask: maskHash ? await loadTex(maskHash, false) : null,
+      };
+    } finally {
+      for (const url of held.values()) URL.revokeObjectURL(url);
+    }
   }
 
   function trimPartCache(): void {
@@ -438,20 +495,20 @@ export function createAvatarScene(
     }
   }
 
-  function cachedPart(key: string, entity: Entity, bodyShape: string): Promise<THREE.Object3D | null> {
+  function cachedPart(key: string, entity: Entity, bodyShape: string, files: HeldFiles): Promise<THREE.Object3D | null> {
     let pending = partCache.get(key);
     if (pending) {
       partCache.delete(key);
       partCache.set(key, pending);
       return pending;
     }
-    pending = withTimeout(loadEntityGlb(entity, bodyShape), GLB_TIMEOUT_MS)
+    pending = withTimeout(loadEntityGlb(entity, bodyShape, files), GLB_TIMEOUT_MS)
       .then((obj) => {
         if (obj) mattify(obj);
         return obj;
       })
       .catch((err) => {
-        console.warn("[wearable-preview] failed", key, err);
+        if (!disposed) console.warn("[wearable-preview] failed", key, err);
         partCache.delete(key);
         return null;
       });
@@ -460,11 +517,11 @@ export function createAvatarScene(
     return pending;
   }
 
-  function cachedFeature(key: string, entity: Entity, bodyShape: string): Promise<FacialFeature | null> {
+  function cachedFeature(key: string, entity: Entity, bodyShape: string, files: HeldFiles): Promise<FacialFeature | null> {
     let pending = featureCache.get(key);
     if (!pending) {
-      pending = loadFacialFeature(entity, bodyShape).catch((err) => {
-        console.warn("[wearable-preview] failed", key, err);
+      pending = loadFacialFeature(entity, bodyShape, files).catch((err) => {
+        if (!disposed) console.warn("[wearable-preview] failed", key, err);
         featureCache.delete(key);
         return null;
       });
@@ -723,13 +780,22 @@ export function createAvatarScene(
     }
   }
 
-  async function bindInitialEmote(bodyShape: string): Promise<void> {
+  // The first motion's file (the outfit's emote item, else the one asked, else idle), found and loaded while the
+  // parts load, not after them.
+  async function initialEmoteUrl(bodyShape: string, gen: number): Promise<string> {
     const wanted = opts.emotes?.length ? opts.emotes[0] : opts.emote;
     const listed = await outfitEmoteUrl(bodyShape).catch(() => null);
-    outfitEmote = listed;
+    if (!stale(gen)) outfitEmote = listed;
     const item = listed ?? (wanted?.startsWith("urn:") ? await emoteItemUrl(wanted, bodyShape).catch(() => null) : null);
+    const url = item ?? emoteUrlFor(wanted) ?? (EMOTES.idle as string);
+    if (!stale(gen)) void loadEmote(url);
+    return url;
+  }
+
+  async function bindInitialEmote(emoteUrl: Promise<string>): Promise<void> {
+    const url = await emoteUrl;
     if (disposed) return;
-    await playEmote(item ?? emoteUrlFor(wanted) ?? (EMOTES.idle as string));
+    await playEmote(url);
     if (disposed) return;
     reveal();
     if (opts.emotes?.length) void runEmoteCycle(opts.emotes);
@@ -760,9 +826,16 @@ export function createAvatarScene(
       else wantParts.push({ key: partKey(urn, bodyLc), urn, isBody: false, entity: e });
     }
 
+    // The wave ends with the preview or with the parts' own timeout. An outfit change does not end it: the parts it
+    // feeds stay in the part cache, where the next outfit picks them up.
+    const files: HeldFiles = Object.assign(new Map<string, Promise<Blob | null>>(), {
+      signal: AbortSignal.any([downloads.signal, AbortSignal.timeout(GLB_TIMEOUT_MS)]),
+    });
+    for (const p of wantParts) if (!partCache.has(p.key)) holdFiles(files, p.entity, bodyShape);
+    for (const f of wantFeatures) if (!featureCache.has(f.key)) holdFiles(files, f.entity, bodyShape);
     const [objs, feats] = await Promise.all([
-      Promise.all(wantParts.map((p) => cachedPart(p.key, p.entity, bodyShape))),
-      Promise.all(wantFeatures.map((f) => cachedFeature(f.key, f.entity, bodyShape))),
+      Promise.all(wantParts.map((p) => cachedPart(p.key, p.entity, bodyShape, files))),
+      Promise.all(wantFeatures.map((f) => cachedFeature(f.key, f.entity, bodyShape, files))),
     ]);
     if (stale(gen)) return null;
 
@@ -821,6 +894,7 @@ export function createAvatarScene(
     try {
       const target = await resolveOutfit(base, opts);
       if (stale(gen)) return;
+      const firstEmote = initial ? initialEmoteUrl(target.bodyShape, gen) : null;
       const result = await reconcile(target, gen);
       if (!result) return;
       if (!result.count) {
@@ -830,8 +904,8 @@ export function createAvatarScene(
       }
       if (initial || result.bodyChanged) frame();
       currentBodyShape = target.bodyShape;
-      if (initial) {
-        await bindInitialEmote(target.bodyShape);
+      if (firstEmote) {
+        await bindInitialEmote(firstEmote);
         if (stale(gen)) return;
       } else {
         await followOutfitEmote(target.bodyShape, gen);
@@ -860,6 +934,13 @@ export function createAvatarScene(
     Object.assign(opts, next);
     const gen = ++loadGen;
     settleSwap();
+    if (opts.outfitPending) return Promise.resolve();
+    // Nothing is on screen to swap from: the outfit the scene waited for loads at once.
+    if (awaitingOutfit) {
+      awaitingOutfit = false;
+      setStatus("loading");
+      return refresh(gen);
+    }
     return new Promise((resolve) => {
       swapSettle = resolve;
       swapTimer = setTimeout(() => {
@@ -896,10 +977,11 @@ export function createAvatarScene(
 
   setStatus("loading");
   if (opts.model) void loadModel(opts.model);
-  else void refresh(++loadGen);
+  else if (!awaitingOutfit) void refresh(++loadGen);
 
   function dispose() {
     disposed = true;
+    downloads.abort();
     cycleGen++;
     loadGen++;
     settleSwap();

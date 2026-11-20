@@ -80,7 +80,7 @@ export function ConversationRail({ chat, onClose }: { chat: ChatState; onClose: 
   return (
     <nav className={styles.rail} aria-label="Conversations">
       <div className={styles.railHead}>
-        <ControlButton variant="dark" aria-label="Close chat" onClick={onClose}>
+        <ControlButton variant="dark" aria-label="Close chat" onClick={onClose} data-ui-sound="soft">
           <MaskIcon src={closeIcon} size={10} />
         </ControlButton>
       </div>

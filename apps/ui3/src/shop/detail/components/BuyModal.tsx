@@ -76,7 +76,11 @@ const TEXT = {
   gone: "This item is no longer available.",
   itemFallback: "Item",
   priceChanged: "The price for this item changed while you were here. Check the new amount and confirm to continue.",
+  quoting: "Checking prices and availability…",
 } as const;
+
+/** How long the page's offer stands on screen with Buy waiting before the dialog says it is still checking. */
+const SLOW_QUOTE_MS = 1_500;
 
 /**
  * The checkout's reasons Buy waits that the dialog shows: the wallet's, with the way back the cart offers, and the
@@ -242,12 +246,25 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
   // Sold or withdrawn since the page showed it: nothing left to price, which the failure panel says.
   const gone = !!cartLine && co.review.kind !== "checking" && co.reviewChanges.some((c) => c.lineId === cartLine.id && c.kind === "unavailable");
   // Loading is the first check only: a re-price after the buyer picks how to pay keeps the screen, with Buy held until
-  // the new price is in (the checkout's own blocker).
+  // the new price is in (the checkout's own blocker). The offer the page showed moments ago shows the screen at once;
+  // a check that finds it changed turns to the price-change notice, and Buy waits for the check either way.
   const [priced, setPriced] = useState(false);
   const checked = !!view && co.review.kind !== "checking";
+  const shown = checked || (!!view && co.review.kind === "checking" && co.review.seenRecently);
   useEffect(() => {
-    if (checked) setPriced(true);
-  }, [checked]);
+    if (shown) setPriced(true);
+  }, [shown]);
+  // The page's offer is on screen while the new quote runs: past a moment, the dialog says why Buy waits.
+  const quoting = shown && !checked;
+  const [slowQuote, setSlowQuote] = useState(false);
+  useEffect(() => {
+    if (!quoting) {
+      setSlowQuote(false);
+      return;
+    }
+    const timer = setTimeout(() => setSlowQuote(true), SLOW_QUOTE_MS);
+    return () => clearTimeout(timer);
+  }, [quoting]);
 
   // The split's approval counts as its purchase running, as the checkout's own does: nothing closes the dialog under it.
   const phase: Phase =
@@ -269,7 +286,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
                     ? "error"
                     : outage || gone
                       ? "error"
-                      : !view || (!priced && !checked) || (co.balance === undefined && !co.balanceError)
+                      : !view || (!priced && !shown) || (co.balance === undefined && !co.balanceError)
                         ? "loading"
                         : (creditsShort !== null || co.topUp || result?.status === "failed") && !manaRail
                           ? "nofunds"
@@ -397,7 +414,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
             onBuy={buyWith}
             onClose={close}
             notice={
-              priceChanged || stepHeld ? (
+              priceChanged || stepHeld || slowQuote ? (
                 <span className={styles.notes}>
                   {priceChanged ? <span data-testid="price-changed">{TEXT.priceChanged}</span> : null}
                   {stepHeld ? (
@@ -405,6 +422,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
                       <HeldText block={stepHeld} wallet={co.wallet} web3={co.session.kind === "web3"} />
                     </span>
                   ) : null}
+                  {slowQuote ? <span data-testid="buy-modal-quoting">{TEXT.quoting}</span> : null}
                 </span>
               ) : null
             }
@@ -434,6 +452,14 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
             units={1}
             items={<DialogAsset display={display} priceCredits={priceCredits} testId="buy-modal-asset" flapTestId="buy-modal-flap" />}
             shortfall={Math.max(1, creditsShort ?? (co.topUp ? creditsCeil(co.topUp.shortCents) : priceCredits - (co.balance?.credits ?? 0)))}
+            checking={!checked}
+            notice={
+              slowQuote ? (
+                <DialogWarning status testId="buy-modal-quoting">
+                  {TEXT.quoting}
+                </DialogWarning>
+              ) : null
+            }
             onLeave={() => {
               if (!co.account || !cartLine) return null;
               attempt.current = stashBuyNowTopUp({ path: returnPath, account: co.account, lineId: cartLine.id, credits: priceCredits });
@@ -466,6 +492,11 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
             {held ? (
               <DialogWarning status testId="buy-modal-held">
                 <HeldText block={held} wallet={co.wallet} web3={co.session.kind === "web3"} />
+              </DialogWarning>
+            ) : null}
+            {slowQuote ? (
+              <DialogWarning status testId="buy-modal-quoting">
+                {TEXT.quoting}
               </DialogWarning>
             ) : null}
             <DialogCtas>

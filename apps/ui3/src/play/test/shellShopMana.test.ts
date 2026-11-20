@@ -90,7 +90,7 @@ afterEach(() => {
 type World = ReturnType<typeof world>
 
 /** The fakes a purchase runs against, shared by the pages (shells) made over them, as a reload shares them. */
-function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: number } = {}) {
+function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: number; advancing?: boolean } = {}) {
   vi.stubEnv('VITE_SHOP_CHAIN_ID', '137')
   const chain = createFakeChain()
   if (opts.allowance != null) chain.allowances.set(`137:${BUYER}:${STORE}`, opts.allowance)
@@ -103,6 +103,8 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
       const [to, input] = (body as { transactionData: { params: [string, Hex] } }).transactionData.params
       // `foreignHash`: the relay answers the hash of some other transaction than the one it was given.
       txs.set(hash.toLowerCase(), { to, input: onChain.foreignHash ? ('0xdeadbeef' as Hex) : input })
+      // `advancing`: it lands just past the latest finalized block read (its sale's checkpoint).
+      if (opts.advancing) onChain.blocks.set(hash.toLowerCase(), onChain.head + 1n)
     }
   })
   /**
@@ -125,7 +127,14 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
     hold: null as Promise<void> | null,
     finalizedReads: 0,
     /** Holds the next finalized-block read only, until released. */
-    holdNext: null as Promise<void> | null
+    holdNext: null as Promise<void> | null,
+    /**
+     * `advancing` (several sales, each with its own checkpoint): every finalized-block read is past the one before
+     * (`head`), unless `frozen` (finality lagging), and each relayed transaction lands at its own block (`blocks`).
+     */
+    head: 1000n,
+    frozen: false,
+    blocks: new Map<string, bigint>()
   }
   const evidence: ManaEvidence = {
     finalized: async () => {
@@ -134,6 +143,10 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
       onChain.holdNext = null
       if (next) await next
       if (onChain.hold && onChain.finalizedReads > 1) await onChain.hold
+      if (opts.advancing) {
+        if (!onChain.frozen) onChain.head += 100n
+        return onChain.head
+      }
       return onChain.finalizedReads === 1 ? onChain.checkpoint : onChain.finalized
     },
     nonceAt: async (_c, venue, user, block) => {
@@ -149,7 +162,7 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
     transaction: async (_c, hash) => txs.get(hash.toLowerCase()) ?? null,
     receipt: async (_c, hash) => {
       const status = chain.receipts.get(hash.toLowerCase())
-      return status ? { transactionHash: hash as Hex, status, blockNumber: onChain.receiptBlock } : null
+      return status ? { transactionHash: hash as Hex, status, blockNumber: onChain.blocks.get(hash.toLowerCase()) ?? onChain.receiptBlock } : null
     }
   }
   const clock = { now: 1_000_000 }
@@ -279,15 +292,20 @@ describe('the in-world purchase with MANA', () => {
       }
     })
 
-    it.each([
-      ['an in-app wallet', { kind: 'managed' as const }, false],
-      ['a cart', {}, true]
-    ])('isn’t offered for %s', async (_what, opts, cart) => {
+    it('isn’t offered for an in-app wallet', async () => {
       const w = world()
-      const p = page(w, opts)
-      await p.open(cart)
+      const p = page(w, { kind: 'managed' })
+      await p.open()
       await p.until('confirm')
       expect(p.manaReads).toEqual([])
+    })
+
+    it('is offered for a cart, as for one item', async () => {
+      const w = world()
+      const p = page(w)
+      await p.open(true)
+      const { view } = await p.until('method')
+      expect(view).toMatchObject({ mana: { price: BigInt(PRICE), pays: true } })
     })
 
     it('leaves MANA out when the buyer’s MANA can’t be read', async () => {
@@ -1564,6 +1582,451 @@ describe('the in-world purchase with MANA', () => {
       const again = page(w, { flag: false })
       const list = (await again.shell.request('shop.status', {})) as { operation: string }[]
       expect(list.map((o) => o.operation)).toContain(op)
+    })
+  })
+
+  describe('a cart paid in MANA', () => {
+    const MARKET = BOOK.marketplace.contract.toLowerCase()
+    /** Another verified marketplace (OffChainMarketplaceV2): a listing there is a sale of its own. */
+    const MARKET_V2 = '0xa40b1d129b8906888720686f3a01921ddf37716f'
+    const BOOTS = '8'
+    const HAT = '9'
+    const CAPE = '10'
+    const NAMES: Record<string, string> = { [BOOTS]: 'Silver Boots', [HAT]: 'Straw Hat', [String(ITEM)]: 'Golden Armour', [CAPE]: 'Velvet Cape' }
+    const itemOf = (asset: { token: { kind: string; itemId?: string } }): string => (asset.token.kind === 'item' ? (asset.token.itemId ?? '') : '')
+    /** The creator's MANA listing of CAPE on OffChainMarketplaceV2. */
+    const capeOffer = (session: Session): PurchaseOffer =>
+      serverOffer(
+        {
+          asset: itemAsset(CHAIN.POLYGON, BOOK.collection, BigInt(CAPE)),
+          kind: 'wearable',
+          sale: 'primaryMint',
+          price: { manaWei: storePrice('wearable') },
+          venues: { mana: { ...BOOK.marketplace, contract: MARKET_V2 as typeof BOOK.marketplace.contract } },
+          call: { kind: 'accept' },
+          available: 10
+        },
+        session
+      )
+    /**
+     * A cart of a Collection Store mint (BOOTS) and a creator's MANA listing on the Marketplace (ITEM): two sales, one
+     * per venue. `items` changes what is in it: ITEM is the Marketplace's listing, CAPE another marketplace's
+     * (OffChainMarketplaceV2), and any other item a store mint.
+     */
+    const cartPage = (w: World, opts: Parameters<typeof page>[1] & { items?: string[] } = {}) => {
+      const listing = manaTrade()
+      const cape = creatorTrade({
+        contract: MARKET_V2 as typeof BOOK.marketplace.contract,
+        sent: [{ assetType: ASSET_TYPE.COLLECTION_ITEM, contractAddress: BOOK.collection, itemId: CAPE, extra: '0x' }],
+        received: [{ assetType: ASSET_TYPE.ERC20, contractAddress: BOOK.mana, amount: PRICE, extra: '0x', beneficiary: BOOK.creator }]
+      })
+      const trade = opts.trade ?? (() => listing)
+      const items = opts.items ?? [BOOTS, String(ITEM)]
+      const p = page(w, {
+        ...opts,
+        services: {
+          fetchItem: async (_c, itemId) => ({ ...LISTING, id: `listing-${itemId}`, itemId, name: NAMES[itemId] }) as unknown as CatalogItem,
+          offers: () => async (queries, session) =>
+            Object.fromEntries(
+              queries.map((q) => {
+                const itemId = itemOf(q.asset)
+                return [q.key, itemId === String(ITEM) ? manaListingOffer(session) : itemId === CAPE ? capeOffer(session) : storeMint(session, 'wearable', BigInt(itemId))]
+              })
+            ),
+          resolvers: () => ({ trade: async (line) => (itemOf(line.asset) === CAPE ? cape : trade()), store: async () => ({ priceWei: PRICE, available: 10 }) }),
+          ...opts.services
+        }
+      })
+      const openCart = () => p.shell.request('shop.buy', { v: SHOP_PROTOCOL, items: items.map((itemId) => ({ contract: CONTRACT, itemId, quantity: 1 })), method: 'credits', cart: true })
+      const payMana = async () => {
+        await openCart()
+        ;(await p.until('method')).handlers.onPay?.('mana')
+      }
+      return { ...p, openCart, payMana }
+    }
+    const allowed = (w: World, ...venues: string[]) => venues.forEach((venue) => w.chain.allowances.set(`137:${BUYER}:${venue}`, maxUint256))
+    /** Each step shown with a payment count, in order: "processing 1/2". */
+    const counted = (p: ReturnType<typeof page>) => p.shown.flatMap((s) => ('progress' in s.view && s.view.progress ? [`${s.view.step} ${s.view.progress.at}/${s.view.progress.of}`] : []))
+    /** Each operation's last state, in the order they started. */
+    const ends = (p: ReturnType<typeof page>) => [...new Map(p.events.map((e) => [e.operation, e.state])).values()]
+    const relayAt = (w: World, refuse: string) =>
+      (async (url: string, init?: RequestInit) => {
+        const target = String((JSON.parse(String(init?.body)) as { transactionData: { params: unknown[] } }).transactionData.params[0]).toLowerCase()
+        if (target === refuse) Object.assign(w.relay.state, { mode: 'refuse', refuseStatus: 429, refuseBody: { error: 'quota_reached', quota: 30 } })
+        return w.relay.fetchImpl(url, init)
+      }) as unknown as typeof fetch
+
+    it('offers MANA for all of it at its sales’ total, beside Credits that can’t buy one of its items', async () => {
+      const w = world({ advancing: true })
+      const p = cartPage(w)
+      await p.openCart()
+      const { view } = await p.until('method')
+      expect(view).toMatchObject({ step: 'method', credits: { price: null, pays: false }, mana: { price: 2n * BigInt(PRICE), balance: 40n * WEI, pays: true } })
+    })
+
+    it('shows MANA the buyer holds that can’t pay for all of it, beside Credits that do', async () => {
+      const w = world({ advancing: true })
+      const p = cartPage(w, { items: [BOOTS, HAT], manaBalance: 3n * WEI })
+      await p.openCart()
+      const { view } = await p.until('method')
+      expect(view).toMatchObject({ credits: { price: 24, pays: true }, mana: { price: 2n * BigInt(PRICE), balance: 3n * WEI, pays: false } })
+    })
+
+    it('leaves MANA out of all of it when MANA can’t buy one of its items', async () => {
+      const w = world({ advancing: true })
+      const two = creatorTrade({
+        received: [
+          { assetType: ASSET_TYPE.ERC20, contractAddress: BOOK.mana, amount: PRICE, extra: '0x', beneficiary: BOOK.creator },
+          { assetType: ASSET_TYPE.ERC20, contractAddress: BOOK.mana, amount: '1', extra: '0x', beneficiary: BOOK.creator }
+        ]
+      })
+      const p = cartPage(w, { trade: () => two })
+      await p.openCart()
+      await p.until('failed')
+      expect(p.manaReads).toEqual([137])
+      expect(p.shown.some((x) => x.view.step === 'method')).toBe(false)
+    })
+
+    it('buys it one sale per venue, one after another, saying which payment is running', async () => {
+      const w = world({ advancing: true })
+      allowed(w, STORE, MARKET)
+      const listing = manaTrade()
+      let reads = 0
+      const p = cartPage(w, { trade: () => (reads++, listing) })
+      await p.payMana()
+      const done = await p.until('success')
+      expect(done.view).toMatchObject({ step: 'success', items: [{ name: 'Silver Boots' }, { name: 'Golden Armour' }] })
+      expect(relayedTo(w)).toEqual([STORE, MARKET])
+      expect([...new Set(counted(p))]).toEqual(['processing 1/2', 'processing 2/2'])
+      // Processing stays up between the sales: nothing says it is in progress, closable, while the rest is still to run.
+      const second = p.shown.findIndex((s) => s.view.step === 'processing' && s.view.progress?.at === 2)
+      expect(p.shown.slice(0, second).some((s) => s.view.step === 'pending')).toBe(false)
+      // The listing read for the terms, then once when every sale was reviewed before any ran: never again to run it.
+      expect(reads).toBe(2)
+      expect(ends(p)).toEqual(['succeeded', 'succeeded'])
+      expect(w.wallet.sent).toHaveLength(0)
+    })
+
+    it('pays a cart whose items are one sale as one purchase, with no count', async () => {
+      const w = world({ advancing: true })
+      allowed(w, STORE)
+      const p = cartPage(w, { items: [BOOTS, HAT] })
+      await p.openCart()
+      const method = await p.until('method')
+      expect(method.view).toMatchObject({ mana: { price: 2n * BigInt(PRICE), pays: true } })
+      method.handlers.onPay?.('mana')
+      await p.until('success')
+      expect(relayedTo(w)).toEqual([STORE])
+      expect(counted(p)).toEqual([])
+      expect(ends(p)).toEqual(['succeeded'])
+    })
+
+    it('asks each venue for its allowance in its turn, counted', async () => {
+      const w = world({ advancing: true })
+      const p = cartPage(w)
+      await p.payMana()
+      const first = await p.until('authorize')
+      expect(first.view).toMatchObject({ venue: 'the Collection Store', progress: { at: 1, of: 2 } })
+      first.handlers.onAuthorize?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'authorize', venue: 'the Marketplace', state: 'ready', progress: { at: 2, of: 2 } }))
+      p.shown.at(-1)!.handlers.onAuthorize?.()
+      await p.until('success')
+      expect(relayedTo(w)).toEqual([MANA, STORE, MANA, MARKET])
+    })
+
+    it('refuses all of it, with nothing signed or sent, when a later sale changed since it was shown', async () => {
+      const w = world({ advancing: true })
+      allowed(w, STORE, MARKET)
+      const shown = manaTrade()
+      const other = { ...shown, signature: `0x${'cd'.repeat(65)}` }
+      let reads = 0
+      const p = cartPage(w, { trade: () => (++reads === 1 ? shown : other) })
+      await p.payMana()
+      const failed = await p.until('failed')
+      expect(failed.view).toMatchObject({ retry: true, message: 'The price or terms of one of these items changed. Try again to see the new ones. No MANA was spent.' })
+      expect(w.wallet.requests.some((q) => q.method === 'eth_signTypedData_v4' || q.method === 'eth_sendTransaction')).toBe(false)
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('refuses all of it as one purchase when its first sale is refused, with TRY AGAIN', async () => {
+      const w = world({ advancing: true })
+      allowed(w, STORE, MARKET)
+      const p = cartPage(w, { services: { rail: () => ({ relayerUrl: 'https://node.test/transactions-api/v1', fetchImpl: relayAt(w, STORE), gasless: true, wait: { timeoutMs: 30, pollMs: 10 } }) } })
+      await p.payMana()
+      const failed = await p.until('failed')
+      expect(failed.view).toMatchObject({ retry: true })
+      expect((failed.view as { message: string }).message).not.toMatch(/^Part of this purchase/)
+      expect(relayedTo(w)).toEqual([STORE])
+    })
+
+    it('holds the rest while a sale isn’t confirmed, and says what went once the chain settles it', async () => {
+      const w = world({ advancing: true })
+      allowed(w, STORE, MARKET)
+      w.relay.state.confirm = 'none'
+      const p = cartPage(w)
+      await p.payMana()
+      const pending = await p.until('pending')
+      // Its step says the rest never went and waits in the cart, while it may take a long while to settle.
+      expect(pending.view).toMatchObject({ check: 'ready', message: 'Checking your purchase. You can close this window. Part of this purchase wasn’t sent while another part is being confirmed; it’s still in your cart.' })
+      expect(relayedTo(w)).toEqual([STORE])
+      // The chain shows it now: CHECK AGAIN settles it, and the dialog says what went and what didn't.
+      for (const hash of w.txs.keys()) w.chain.receipts.set(hash, 'success')
+      pending.handlers.onCheckAgain?.()
+      const failed = await p.until('failed')
+      expect(failed.view).toMatchObject({
+        retry: false,
+        message: 'Part of this purchase went through, but not all of it: the rest wasn’t sent while an earlier part was still being confirmed; no MANA was spent for it. What wasn’t bought is still in your cart.'
+      })
+      expect(relayedTo(w)).toEqual([STORE])
+      expect(ends(p)).toEqual(['succeeded'])
+    })
+
+    it('says nothing was bought and no MANA spent once the chain finds the sale that held the rest never ran', async () => {
+      const w = world({ advancing: true })
+      allowed(w, STORE, MARKET)
+      w.relay.state.mode = 'down'
+      const p = cartPage(w)
+      await p.payMana()
+      const pending = await p.until('pending')
+      // Its nonce went to another call by the buyer, and nothing of ours ran: it can never run.
+      w.chain.nonces.set(`${STORE}:${BUYER}`, 1n)
+      w.onChain.executions = [{ user: BUYER, call: '0xbeef', txHash: ('0x' + 'cd'.repeat(32)) as Hex, blockNumber: w.onChain.head + 50n, logIndex: 3 }]
+      pending.handlers.onCheckAgain?.()
+      const failed = await p.until('failed')
+      expect(failed.view).toMatchObject({ retry: false, message: 'None of its transactions went through: nothing was bought and no MANA was spent. Everything is still in your cart.' })
+      expect(ends(p)).toEqual(['failed'])
+    })
+
+    it('says what went when a later sale is refused, and that it spent no MANA', async () => {
+      const w = world({ advancing: true })
+      allowed(w, STORE, MARKET)
+      const p = cartPage(w, { services: { rail: () => ({ relayerUrl: 'https://node.test/transactions-api/v1', fetchImpl: relayAt(w, MARKET), gasless: true, wait: { timeoutMs: 30, pollMs: 10 } }) } })
+      await p.payMana()
+      const failed = await p.until('failed')
+      const message = (failed.view as { message: string }).message
+      expect(message).toMatch(/^Part of this purchase went through, but not all of it: /)
+      expect(message).toContain("You've used all 30 fee-free transactions this account gets in 24 hours.")
+      expect(message).toMatch(/No MANA was spent for it\. What wasn’t bought is still in your cart\.$/)
+      expect(failed.view).toMatchObject({ retry: false })
+      expect(relayedTo(w)).toEqual([STORE, MARKET])
+      expect(ends(p)).toEqual(['succeeded', 'failed'])
+    })
+
+    it('runs nothing more when this page can’t hold a later sale’s own operation, keeping what went', async () => {
+      const w = world({ advancing: true })
+      allowed(w, STORE, MARKET)
+      // The first operation's lock, then none for the second (another live tab holds it, say).
+      let claims = 0
+      const p = cartPage(w, { services: { claim: async () => (++claims === 2 ? null : () => {}) } })
+      await p.payMana()
+      const failed = await p.until('failed')
+      expect(failed.view).toMatchObject({
+        retry: false,
+        message: 'Part of this purchase went through, but not all of it: this browser couldn’t keep the rest of the purchase to this tab; no MANA was spent for it. What wasn’t bought is still in your cart.'
+      })
+      expect(relayedTo(w)).toEqual([STORE])
+      expect(ends(p)).toEqual(['succeeded', 'cancelled'])
+    })
+
+    it('ends the rest when its allowance is cancelled, keeping what went', async () => {
+      const w = world({ advancing: true })
+      allowed(w, STORE)
+      const p = cartPage(w)
+      await p.payMana()
+      const auth = await p.until('authorize')
+      expect(auth.view).toMatchObject({ venue: 'the Marketplace', progress: { at: 2, of: 2 } })
+      auth.handlers.onClose()
+      const failed = await p.until('failed')
+      expect(failed.view).toMatchObject({
+        retry: false,
+        message: 'Part of this purchase went through, but not all of it: the rest was cancelled before it was paid; no MANA was spent for it. What wasn’t bought is still in your cart.'
+      })
+      expect(relayedTo(w)).toEqual([STORE])
+      expect(ends(p)).toEqual(['succeeded', 'cancelled'])
+    })
+
+    it('holds the rest when the relay’s hash for a sale names another transaction, however well its receipt reads', async () => {
+      const w = world({ advancing: true })
+      allowed(w, STORE, MARKET)
+      // A successful receipt for the hash the relay gave, which isn't the sale's signed execution; finality lags.
+      w.onChain.foreignHash = true
+      w.onChain.frozen = true
+      const p = cartPage(w)
+      await p.payMana()
+      const pending = await p.until('pending')
+      expect(relayedTo(w)).toEqual([STORE])
+      expect(pending.view).toMatchObject({ message: 'Checking your purchase. You can close this window. Part of this purchase wasn’t sent while another part is being confirmed; it’s still in your cart.' })
+      expect(ends(p)).toEqual(['pending'])
+    })
+
+    it('ends a later sale the relay refused past its deadline through the checkout: what went, and what didn’t', async () => {
+      const w = world({ advancing: true })
+      allowed(w, STORE, MARKET)
+      let release!: () => void
+      const held = new Promise<void>((r) => (release = r))
+      // The Marketplace's relay request is refused (marked as never sent), and the answer comes after the send's deadline.
+      const lateAtMarket = (async (url: string, init?: RequestInit) => {
+        const target = String((JSON.parse(String(init?.body)) as { transactionData: { params: unknown[] } }).transactionData.params[0]).toLowerCase()
+        if (target !== MARKET) return w.relay.fetchImpl(url, init)
+        w.relay.state.mode = 'refuse'
+        const res = await w.relay.fetchImpl(url, init)
+        await held
+        return res
+      }) as unknown as typeof fetch
+      const sleepers: (() => void)[] = []
+      const wake = () => sleepers.splice(0).forEach((r) => r())
+      const p = cartPage(w, {
+        services: {
+          rail: () => ({ relayerUrl: 'https://node.test/transactions-api/v1', fetchImpl: lateAtMarket, gasless: true, wait: { timeoutMs: 30, pollMs: 10 } }),
+          sleep: () => new Promise<void>((r) => sleepers.push(r)),
+          manaTimeouts: () => ({ sendMs: 50, readMs: 50 })
+        }
+      })
+      await p.payMana()
+      await p.until('pending')
+      const [, market] = [...new Set(p.events.map((e) => e.operation))]
+      await new Promise((r) => setTimeout(r, 120))
+      release()
+      await new Promise((r) => setTimeout(r, 30))
+      wake()
+      await vi.waitFor(() => expect(p.events.filter((e) => e.operation === market).at(-1)?.state).toBe('failed'))
+      const failed = await p.until('failed')
+      expect(failed.view).toMatchObject({
+        retry: false,
+        message: 'Part of this purchase went through, but not all of it: one of its transactions couldn’t go out; no MANA was spent for it. What wasn’t bought is still in your cart.'
+      })
+      expect(ends(p)).toEqual(['succeeded', 'failed'])
+    })
+
+    it('goes on when the chain finalizes a sale while whether it is on chain is still being read', async () => {
+      const w = world({ advancing: true })
+      allowed(w, STORE, MARKET)
+      // The read that would show the Store's sale on chain is held, then finds nothing; meanwhile the watch finalizes it.
+      const receipt = w.evidence.receipt
+      let release: (() => void) | null = null
+      const held = new Promise<void>((r) => (release = r))
+      let holding = true
+      w.evidence.receipt = async (chainId, hash) => {
+        if (holding && new Error().stack?.includes('manaIncluded')) {
+          holding = false
+          await held
+          return null
+        }
+        return receipt(chainId, hash)
+      }
+      const p = cartPage(w)
+      await p.payMana()
+      await vi.waitFor(() => expect(holding).toBe(false))
+      const [store] = [...new Set(p.events.map((e) => e.operation))]
+      await vi.waitFor(() => expect(p.events.filter((e) => e.operation === store).at(-1)?.state).toBe('succeeded'))
+      release!()
+      await p.until('success')
+      expect(relayedTo(w)).toEqual([STORE, MARKET])
+      expect(ends(p)).toEqual(['succeeded', 'succeeded'])
+    })
+
+    it('stops, saying only why, when the chain finds a sale never ran while whether it is on chain is still being read', async () => {
+      const w = world({ advancing: true })
+      allowed(w, STORE, MARKET, MARKET_V2)
+      // The Marketplace's sale: the relay's hash names another transaction, and the sale's nonce went to another call.
+      // The read that would show it on chain is held until the watch has ended it, then finds nothing.
+      const receipt = w.evidence.receipt
+      let release: (() => void) | null = null
+      const held = new Promise<void>((r) => (release = r))
+      let holding = false
+      let engaged = false
+      w.evidence.receipt = async (chainId, hash) => {
+        if (holding && new Error().stack?.includes('manaIncluded')) {
+          holding = false
+          engaged = true
+          await held
+          return null
+        }
+        return receipt(chainId, hash)
+      }
+      const elsewhereAtMarket = (async (url: string, init?: RequestInit) => {
+        const target = String((JSON.parse(String(init?.body)) as { transactionData: { params: unknown[] } }).transactionData.params[0]).toLowerCase()
+        w.onChain.foreignHash = target === MARKET
+        const res = await w.relay.fetchImpl(url, init)
+        if (target === MARKET) {
+          w.chain.nonces.set(`${MARKET}:${BUYER}`, 1n)
+          w.onChain.executions = [{ user: BUYER, call: '0xbeef', txHash: ('0x' + 'cd'.repeat(32)) as Hex, blockNumber: w.onChain.head + 1n, logIndex: 0 }]
+          holding = true
+        }
+        return res
+      }) as unknown as typeof fetch
+      const p = cartPage(w, {
+        items: [BOOTS, String(ITEM), CAPE],
+        services: { rail: () => ({ relayerUrl: 'https://node.test/transactions-api/v1', fetchImpl: elsewhereAtMarket, gasless: true, wait: { timeoutMs: 30, pollMs: 10 } }) }
+      })
+      await p.payMana()
+      await vi.waitFor(() => expect(engaged).toBe(true))
+      const [, market] = [...new Set(p.events.map((e) => e.operation))]
+      await vi.waitFor(() => expect(p.events.filter((e) => e.operation === market).at(-1)?.state).toBe('failed'))
+      release!()
+      const failed = await p.until('failed')
+      expect(failed.view).toMatchObject({
+        retry: false,
+        message: 'Part of this purchase went through, but not all of it: one of its transactions didn’t go through; no MANA was spent for it. What wasn’t bought is still in your cart.'
+      })
+      expect(relayedTo(w)).toEqual([STORE, MARKET])
+      expect(ends(p)).toEqual(['succeeded', 'failed'])
+    })
+
+    it('says on the step shown that part wasn’t sent, while an earlier sale awaits finality and a later one holds the rest', async () => {
+      const w = world({ advancing: true })
+      allowed(w, STORE, MARKET, MARKET_V2)
+      // The Store's sale lands (finality lags); the Marketplace's gets no receipt; the third never goes.
+      w.onChain.frozen = true
+      const noReceiptAtMarket = (async (url: string, init?: RequestInit) => {
+        const target = String((JSON.parse(String(init?.body)) as { transactionData: { params: unknown[] } }).transactionData.params[0]).toLowerCase()
+        w.relay.state.confirm = target === MARKET ? 'none' : 'success'
+        return w.relay.fetchImpl(url, init)
+      }) as unknown as typeof fetch
+      const p = cartPage(w, {
+        items: [BOOTS, String(ITEM), CAPE],
+        services: { rail: () => ({ relayerUrl: 'https://node.test/transactions-api/v1', fetchImpl: noReceiptAtMarket, gasless: true, wait: { timeoutMs: 30, pollMs: 10 } }) }
+      })
+      await p.openCart()
+      const method = await p.until('method')
+      expect(method.view).toMatchObject({ mana: { price: 3n * BigInt(PRICE) } })
+      method.handlers.onPay?.('mana')
+      const first = await p.until('pending')
+      expect(relayedTo(w)).toEqual([STORE, MARKET])
+      const [store, market] = [...new Set(p.events.map((e) => e.operation))]
+      // The Store's sale is the one shown (the first still in progress), and it says that part of the purchase never went.
+      expect(first.view).toMatchObject({ check: 'ready', message: 'Checking your purchase. You can close this window. Part of this purchase wasn’t sent while another part is being confirmed; it’s still in your cart.' })
+      // Its CHECK AGAIN looks at the Store's sale: once final, it ends bought, and the Marketplace's is shown, saying the same.
+      w.onChain.frozen = false
+      first.handlers.onCheckAgain?.()
+      await vi.waitFor(() => expect(p.events.filter((e) => e.operation === store).at(-1)?.state).toBe('succeeded'))
+      const second = await p.until('pending')
+      expect(second.view).toMatchObject({ message: 'Checking your purchase. You can close this window. Part of this purchase wasn’t sent while another part is being confirmed; it’s still in your cart.' })
+      expect(p.events.filter((e) => e.operation === market).at(-1)?.state).toBe('pending')
+      expect(relayedTo(w)).toEqual([STORE, MARKET])
+    })
+
+    it('goes on once the executor sees a sale confirmed, and shows each one still being finalized until the chain settles all of it', async () => {
+      const w = world({ advancing: true })
+      allowed(w, STORE, MARKET)
+      // Both sales confirm while finality lags: the cart runs both, and the chain hasn't settled either yet.
+      w.onChain.frozen = true
+      const p = cartPage(w)
+      await p.payMana()
+      const first = await p.until('pending')
+      expect(relayedTo(w)).toEqual([STORE, MARKET])
+      const [firstOp, secondOp] = [...new Set(p.events.map((e) => e.operation))]
+      w.onChain.frozen = false
+      first.handlers.onCheckAgain?.()
+      await vi.waitFor(() => expect(p.events.filter((e) => e.operation === firstOp).at(-1)).toMatchObject({ state: 'succeeded' }))
+      // The one still in progress now: the second, with its own CHECK AGAIN.
+      const second = await p.until('pending')
+      expect(second).not.toBe(first)
+      expect(p.events.filter((e) => e.operation === secondOp).at(-1)).toMatchObject({ state: 'pending' })
+      second.handlers.onCheckAgain?.()
+      const done = await p.until('success')
+      expect(done.view).toMatchObject({ items: [{ name: 'Silver Boots' }, { name: 'Golden Armour' }] })
+      expect(ends(p)).toEqual(['succeeded', 'succeeded'])
     })
   })
 })

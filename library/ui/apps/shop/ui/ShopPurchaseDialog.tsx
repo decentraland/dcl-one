@@ -20,7 +20,8 @@
 //    It says that it is unlimited and stays after this purchase. CANCEL stays live while it confirms: whoever shows
 //    the step decides what a late confirmation may still do.
 // A purchase still being confirmed may offer CHECK AGAIN, or RETRY (armed, as BUY), and say in its own words what is
-// known about it.
+// known about it. A cart paid in MANA may take more than one payment (one per sale venue), each signed on its own:
+// Processing and Authorize MANA then say which one they are for ("Payment 1 of 2"), as the web Shop counts them.
 //
 // Every unit is one row (two of an item are two rows), and the title counts them. Past two rows the list
 // scrolls, with the Shop's scroll thumb beside it, as the Cart flow draws it. Purchase successful shows
@@ -92,12 +93,18 @@ export interface ShopManaChoice {
   pays: boolean
 }
 
+/** Which of a checkout's payments a step is for: the `at`th of `of`, counted from 1. Said only when there are several. */
+export interface ShopPaymentProgress {
+  at: number
+  of: number
+}
+
 export type ShopPurchaseStep =
   /** `count`: the units being bought (one unless said); `subject: 'name'`: a NAME is. */
   | ({ step: 'loading'; count?: number; subject?: 'name' } & Simulated)
   | ({ step: 'confirm'; items: ShopPurchaseItem[]; balance: number } & Simulated)
   | ({ step: 'insufficient'; items: ShopPurchaseItem[]; balance: number; /** Credits short of the price. */ need: number } & Simulated)
-  | ({ step: 'processing'; balance: number | null; count?: number; subject?: 'name' } & Simulated)
+  | ({ step: 'processing'; balance: number | null; count?: number; subject?: 'name'; progress?: ShopPaymentProgress } & Simulated)
   | ({ step: 'success'; items: ShopPurchaseItem[] } & Simulated)
   /**
    * Choose your payment method. `initial`: the buyer's earlier pick (the step shown again after a failure), picked
@@ -109,7 +116,7 @@ export type ShopPurchaseStep =
    * `required`: the MANA this purchase needs, in wei. `waiting`: the wallet or the chain is confirming it; `failed`:
    * it didn't go through (`message` says why), and AUTHORIZE tries again.
    */
-  | { step: 'authorize'; venue: string; network: string; required: bigint; state: 'ready' | 'waiting' | 'failed'; message?: string }
+  | { step: 'authorize'; venue: string; network: string; required: bigint; state: 'ready' | 'waiting' | 'failed'; message?: string; progress?: ShopPaymentProgress }
   /**
    * Still being confirmed. `message`: what is known about it, in place of the step's own words. `check`: CHECK AGAIN
    * is offered (`checking` while it looks). `retry`: RETRY is offered in its place (the same purchase sent again, which
@@ -246,6 +253,7 @@ export function ShopPurchaseDialog({
         >
           <h2 className={styles.title}>{buyTitle(view.count ?? 1, view.subject === 'name')}</h2>
           {view.balance != null && <Balance credits={view.balance} />}
+          <PaymentCount progress={view.progress} />
           <ShopModalGap count={2} />
           <Working label={view.simulation ? 'Simulating your purchase' : 'Processing your purchase'} />
           <ShopModalGap />
@@ -309,6 +317,7 @@ export function ShopPurchaseDialog({
           }
         >
           <h2 className={styles.title}>Authorize MANA</h2>
+          <PaymentCount progress={view.progress} />
           <ShopModalGap />
           <p className={styles.note}>
             To buy with MANA, allow <strong>{view.venue}</strong> on {view.network} to spend MANA from your wallet. This purchase needs{' '}
@@ -417,6 +426,16 @@ export function ShopPurchaseDialog({
         </ShopModal>
       )
   }
+}
+
+/** "Payment 1 of 2": the payment a step is for, in a checkout of several; nothing for a checkout of one. */
+function PaymentCount({ progress }: { progress?: ShopPaymentProgress }): React.JSX.Element | null {
+  if (!progress || progress.of < 2) return null
+  return (
+    <p className={styles.note} role="status">
+      Payment {progress.at} of {progress.of}
+    </p>
+  )
 }
 
 /** "Your Credits Balance: ©700". */

@@ -6,6 +6,7 @@
 
 import { shopPeers } from "../../api/host";
 import { peerUrlFor } from "@shop/detail/lib/urn";
+import { fetchEntities, type Entity } from "../../../wearable-preview/outfit";
 
 export type WearableRule = { urn: string; category: string; hides: string[]; replaces: string[] };
 
@@ -38,46 +39,33 @@ export function faceOnly(equipped: WearableRule[]): string[] {
   return equipped.filter((rule) => FACE_CATEGORIES.has(rule.category)).map((r) => r.urn);
 }
 
-type ActiveEntity = {
-  pointers?: string[];
-  metadata?: { data?: { category?: string; hides?: string[]; replaces?: string[]; blockVrmExport?: boolean } };
-};
-
-async function fetchActiveEntities(urns: string[], signal?: AbortSignal): Promise<ActiveEntity[]> {
-  const res = await fetch(`${peerUrlFor(urns, shopPeers())}/content/entities/active`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ pointers: urns }),
-    signal,
-  });
-  if (!res.ok) return [];
-  return (await res.json()) as ActiveEntity[];
+/** Entities by lowercased pointer, through the preview's entity cache: what is read here, the preview does not read again. */
+function readEntities(urns: string[]): Promise<Map<string, Entity>> {
+  return fetchEntities(peerUrlFor(urns, shopPeers()), urns);
 }
 
 /** Whether VRM export is blocked for the wearable; null when it could not be read (no badge on a guess). */
-export async function fetchVrmExportBlocked(urn: string, signal?: AbortSignal): Promise<boolean | null> {
+export async function fetchVrmExportBlocked(urn: string): Promise<boolean | null> {
   try {
-    const data = (await fetchActiveEntities([urn], signal))[0]?.metadata?.data;
+    const data = (await readEntities([urn])).get(urn.toLowerCase())?.metadata?.data;
     return data ? !!data.blockVrmExport : null;
   } catch {
     return null;
   }
 }
 
-/** The rules for a list of equipped URNs in one request, in the order asked; unknown URNs are absent. */
-export async function fetchWearableRules(urns: string[], signal?: AbortSignal): Promise<WearableRule[]> {
-  if (urns.length === 0) return [];
+/**
+ * The rules for a list of equipped URNs, in the order asked; unknown URNs are absent. `alsoRead` (the body and the
+ * item the preview mounts next) goes in the same request, so the preview finds those entities cached.
+ */
+export async function fetchWearableRules(urns: string[], alsoRead: string[] = []): Promise<WearableRule[]> {
+  if (urns.length === 0 && alsoRead.length === 0) return [];
   try {
-    const entities = await fetchActiveEntities(urns, signal);
-    const byUrn = new Map<string, WearableRule>();
-    for (const entity of entities) {
-      const data = entity.metadata?.data;
-      if (!data?.category) continue;
-      for (const pointer of entity.pointers ?? []) {
-        byUrn.set(pointer.toLowerCase(), { urn: pointer, category: data.category, hides: data.hides ?? [], replaces: data.replaces ?? [] });
-      }
-    }
-    return urns.map((urn) => byUrn.get(urn.toLowerCase())).filter((r): r is WearableRule => !!r);
+    const entities = await readEntities([...urns, ...alsoRead]);
+    return urns.flatMap((urn) => {
+      const data = entities.get(urn.toLowerCase())?.metadata?.data;
+      return data?.category ? [{ urn, category: data.category, hides: data.hides ?? [], replaces: data.replaces ?? [] }] : [];
+    });
   } catch {
     return [];
   }

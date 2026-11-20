@@ -22,6 +22,7 @@ export {
   type ShopCreditsChoice,
   type ShopManaChoice,
   type ShopPaymentMethod,
+  type ShopPaymentProgress,
   type ShopPurchaseDialogProps,
   type ShopPurchaseItem,
   type ShopPurchaseStep
