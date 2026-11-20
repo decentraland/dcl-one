@@ -127,7 +127,7 @@ export async function waitForReceipt(
   for (;;) {
     if (opts.signal?.aborted) throw new DOMException("Aborted", "AbortError");
     try {
-      const receipt = await reader.receipt(chainId, txHash);
+      const receipt = await reader.receipt(chainId, txHash, opts.signal);
       if (receipt) return receipt;
     } catch (e) {
       if ((e as { name?: string } | null)?.name === "AbortError") throw e;

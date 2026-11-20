@@ -28,6 +28,8 @@ export function useSettlement(
       return;
     }
     let cancelled = false;
+    // Leaving the page stops the receipt reads at once, the one in flight and the wait before the next.
+    const stop = new AbortController();
     const attempts = opts.attempts ?? 8;
     const sleep = wait?.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
     const run = async () => {
@@ -36,7 +38,7 @@ export function useSettlement(
           for (let i = 0; i < attempts && !cancelled; i++) {
             // Only the first window polls fast (waitForReceipt's first 15 s); every later one reads every 2 s.
             const pollMs = wait?.pollMs ?? (i === 0 ? undefined : SLOW_POLL_MS);
-            const receipt = await waitForReceipt(reader, tx.chainId, tx.hash, { timeoutMs: opts.windowMs ?? wait?.timeoutMs ?? 15_000, pollMs, sleep: wait?.sleep });
+            const receipt = await waitForReceipt(reader, tx.chainId, tx.hash, { timeoutMs: opts.windowMs ?? wait?.timeoutMs ?? 15_000, pollMs, sleep: wait?.sleep, signal: stop.signal });
             if (receipt) return receipt.status;
           }
           return null;
@@ -56,9 +58,13 @@ export function useSettlement(
       }
       if (!cancelled) setState("timed-out");
     };
-    void run();
+    void run().catch((e: unknown) => {
+      // Stopped by leaving the page: nothing is left to report.
+      if (!cancelled) throw e;
+    });
     return () => {
       cancelled = true;
+      stop.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, opts.skip, ownerKey]);
