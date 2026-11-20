@@ -538,6 +538,30 @@ describe('the in-world purchase with MANA', () => {
       expect(relayedTo(w)).toEqual([MANAGER])
     })
 
+    it('sends no approval when the buyer cancels while the wallet signs it, and reserves nothing', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      const original = w.wallet.request.bind(w.wallet)
+      let sign: () => void = () => {}
+      const held = new Promise<void>((r) => (sign = r))
+      w.wallet.request = (async (args: { method: string; params?: unknown[] }) => {
+        if (args.method === 'eth_signTypedData_v4') await held
+        return original(args)
+      }) as typeof w.wallet.request
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      ;(await p.until('authorize')).handlers.onAuthorize?.()
+      const asking = await p.until('wallet')
+      asking.handlers.onClose()
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'cancelled' }))
+      sign()
+      await new Promise((r) => setTimeout(r, 50))
+      expect(w.relay.posts).toHaveLength(0)
+      expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
+    })
+
     it('reserves nothing when the buyer cancels Authorize MANA', async () => {
       on()
       const w = world()

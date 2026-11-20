@@ -125,7 +125,17 @@ export type ShopPurchaseStep =
    * `required`: the MANA this purchase needs, in wei. `waiting`: the wallet or the chain is confirming it; `failed`:
    * it didn't go through (`message` says why), and AUTHORIZE tries again.
    */
-  | { step: 'authorize'; venue: string; network: string; required: bigint; state: 'ready' | 'waiting' | 'failed'; message?: string; progress?: ShopPaymentProgress }
+  | {
+      step: 'authorize'
+      venue: string
+      network: string
+      required: bigint
+      state: 'ready' | 'waiting' | 'failed'
+      message?: string
+      progress?: ShopPaymentProgress
+      /** `exact`: the allowance asked is exactly `required`, for this purchase alone (Credits and MANA together); else unlimited. */
+      allowance?: 'exact'
+    }
   /**
    * Confirm in your wallet: the buyer's own wallet is asking them to sign. `close`: the label of the button the step it
    * covers offered to leave it (CANCEL on Authorize MANA), which leaves it the same way here; absent, nothing to press.
@@ -393,10 +403,16 @@ export function ShopPurchaseDialog({
               To buy with MANA, allow <strong>{view.venue}</strong> on {view.network} to spend MANA from your wallet. This purchase needs{' '}
               <strong>{formatMana(view.required as ManaWei, { group: true })} MANA</strong>.
             </p>
-            <p className={styles.text}>
-              The allowance is unlimited and stays after this purchase, so buying there again won’t ask for it. You can revoke it at any time in the Shop’s
-              Settings on the website.
-            </p>
+            {view.allowance === 'exact' ? (
+              <p className={styles.text}>
+                The allowance is exactly {formatMana(view.required as ManaWei, { group: true })} MANA, for this purchase alone: the next one asks again.
+              </p>
+            ) : (
+              <p className={styles.text}>
+                The allowance is unlimited and stays after this purchase, so buying there again won’t ask for it. You can revoke it at any time in the
+                Shop’s Settings on the website.
+              </p>
+            )}
           </div>
           {waiting && <Working label="Waiting for the authorization to confirm" size="small" />}
           {view.state === 'failed' && view.message && (

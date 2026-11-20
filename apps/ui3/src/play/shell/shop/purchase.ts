@@ -1619,7 +1619,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         if (!slot.holds(op)) return answer(false)
         show(
           op,
-          { step: 'authorize', venue: 'Decentraland Credits', network: chainLabel(auth.chainId), required: gap, state, ...(message ? { message } : {}) },
+          { step: 'authorize', venue: 'Decentraland Credits', network: chainLabel(auth.chainId), required: gap, allowance: 'exact', state, ...(message ? { message } : {}) },
           {
             onClose: () => {
               if (answered) return
@@ -1636,6 +1636,16 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         message = undefined
         draw()
         const rail = svc.rail()
+        const send = rail.fetchImpl ?? ((...a: Parameters<typeof fetch>) => fetch(...a))
+        // The approval goes out only while this AUTHORIZE is still the question: a CANCEL (or another step) while the
+        // wallet signs leaves the signed approval unsent. It throws rather than answering `not_sent`, so a stored approval
+        // whose earlier send was ambiguous keeps its record.
+        const gated = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+          if ((init?.method ?? 'GET').toUpperCase() === 'POST' && (!approving || answered || !slot.holds(op) || !current())) {
+            throw new Error('The authorization was cancelled before it was sent.')
+          }
+          return send(input, init)
+        }) as typeof fetch
         approving = true
         try {
           await ensureAuthorization({
@@ -1648,7 +1658,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
             reader: svc.reader(),
             locks: svc.locks(),
             relayerUrl: rail.relayerUrl,
-            ...(rail.fetchImpl ? { fetchImpl: rail.fetchImpl } : {})
+            fetchImpl: gated
           })
         } catch (e) {
           if (answered) return
