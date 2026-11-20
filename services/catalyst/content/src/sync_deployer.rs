@@ -915,7 +915,7 @@ impl LiveSyncDeployer {
             context,
             report,
             retry_state,
-            Vec::new(),
+            None,
         )
         .await
     }
@@ -923,9 +923,11 @@ impl LiveSyncDeployer {
     /// Validates the entity ([`Self::verify_entity`]), then buffers it; returns once it is buffered, so the
     /// write itself is asynchronous (see [`LiveSyncDeployer::flush`]). `retry_state` is the
     /// (attempts spent, backoff) of the retry worker's attempt, kept for the failure record a
-    /// failed flush writes. `extra_files` (`(key, hash)`, keys `content[]` does not hold) are
-    /// recorded in `content_files` beside `content[]`: the stored avatar renders a profile
-    /// names only in its metadata.
+    /// failed flush writes. `renders` (`(key, hash)`, keys `content[]` does not hold: the avatar
+    /// renders a profile names only in its metadata) are recorded in `content_files` beside
+    /// `content[]` when the store holds them: each is touched
+    /// ([`crate::deploy_remote_entity::touch_renders`]) once the entity is verified and holds
+    /// its backlog slot, just before it is buffered.
     #[allow(clippy::too_many_arguments)]
     pub async fn deploy_entity_with_files(
         &self,
@@ -935,10 +937,9 @@ impl LiveSyncDeployer {
         _context: DeploymentContext,
         report: Option<&Arc<DeploymentReport>>,
         retry_state: Option<(u32, u64)>,
-        extra_files: Vec<(String, String)>,
+        renders: Option<(&crate::storage::Storage, Vec<(String, String)>)>,
     ) -> Result<(), SyncError> {
         let mut parsed = parse_entity_for_deploy(entity_data, entity_id, auth_chain)?;
-        parsed.content.extend(extra_files);
         let verdict = self
             .verify_entity(entity_data, entity_id, auth_chain, SyncedContent::Fetched)
             .await?;
@@ -973,6 +974,11 @@ impl LiveSyncDeployer {
                 .await
                 .map_err(|_| SyncError::Stopped)?,
         );
+        if let Some((storage, renders)) = renders {
+            parsed.content.extend(
+                crate::deploy_remote_entity::touch_renders(storage, entity_id, renders).await?,
+            );
+        }
 
         let mut buf = self.batch.lock().await;
         buf.push(parsed);

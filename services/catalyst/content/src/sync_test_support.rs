@@ -89,6 +89,15 @@ pub(crate) async fn temp_storage(tag: &str) -> (Arc<Storage>, std::path::PathBuf
     (Arc::new(storage), tmp)
 }
 
+/// Removes a test's directory when dropped, so a test that panics leaves no tree behind.
+pub(crate) struct RemoveOnDrop(pub std::path::PathBuf);
+
+impl Drop for RemoveOnDrop {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 pub(crate) async fn spawn_content_server(
     body: Vec<u8>,
     encoding: Option<&'static str>,

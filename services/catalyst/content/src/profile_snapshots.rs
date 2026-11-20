@@ -1,7 +1,8 @@
 //! Avatar renders a profile names in `metadata.avatars[].avatar.snapshots` but not in
 //! `content[]`: a profile could reference images an earlier version of it uploaded. Sync
 //! fetches them as the reference snapshots-fetcher does, and records the stored ones in
-//! `content.content_files` so the blob collector and the history prune keep them. [`repair`]
+//! `content.content_files`; once that row commits, the blob collector and the history prune
+//! keep them. [`repair`]
 //! adds the rows to profiles stored without them, as the reference catalyst's content-files
 //! fixer did (`catalyst content repair-profile-snapshots`).
 
@@ -13,7 +14,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 use crate::auth::is_canonical_cid;
-use crate::deploy_remote_entity::{ByteBudget, download_render};
+use crate::deploy_remote_entity::{ByteBudget, DownloadPolicy, download_file};
 use crate::http::CheckedRedirectClient;
 use crate::storage::Storage;
 
@@ -90,8 +91,10 @@ pub struct RepairReport {
 /// [`snapshot_files`] finds missing from the profile's `content_files` is fetched from
 /// `servers` when the store lacks it, and gets its row once the blob is stored. Rows are
 /// inserted under the store's shared lock after the blobs are re-checked, so a collector batch
-/// never unlinks a blob a row it did not see names; a row already present is kept, so a pass
-/// can be repeated or interrupted. A store fault ends the pass with an error.
+/// never unlinks a blob a row it did not see names, and only for the deployments still active
+/// once they are row-locked (`FOR KEY SHARE`): the history prune skips a locked deployment,
+/// and one it locked first is gone when the lock is granted, so no row outlives its deployment. A row already present
+/// is kept, so a pass can be repeated or interrupted. A store fault ends the pass with an error.
 pub async fn repair(
     pool: &PgPool,
     storage: &Storage,
@@ -148,10 +151,10 @@ pub async fn repair(
             .exist_multiple(&hashes.into_iter().collect::<Vec<_>>())
             .await?;
         let budget = &budget;
-        let fetches = held
-            .iter()
-            .filter(|(_, held)| !**held)
-            .map(|(hash, _)| download_render(client, storage, hash, servers, Some(budget)));
+        let fetches = held.iter().filter(|(_, held)| !**held).map(|(hash, _)| {
+            let policy = DownloadPolicy::BestEffort;
+            download_file(client, storage, hash, servers, Some(budget), policy)
+        });
         let fetched: Vec<bool> = futures::stream::iter(fetches)
             .buffer_unordered(REPAIR_FETCH_CONCURRENCY)
             .try_collect()
@@ -174,11 +177,13 @@ pub async fn repair(
             }
         }
         let inserted = sqlx::query(
-            "INSERT INTO content.content_files (deployment, key, content_hash) \
+            "WITH live AS (SELECT id FROM content.deployments \
+                           WHERE id = ANY($1) AND deleter_deployment IS NULL \
+                           ORDER BY id FOR KEY SHARE) \
+             INSERT INTO content.content_files (deployment, key, content_hash) \
              SELECT r.deployment, r.key, r.hash \
              FROM unnest($1::int[], $2::text[], $3::text[]) AS r(deployment, key, hash) \
-             WHERE EXISTS (SELECT 1 FROM content.deployments d \
-                           WHERE d.id = r.deployment AND d.deleter_deployment IS NULL) \
+             JOIN live ON live.id = r.deployment \
              ON CONFLICT (deployment, key) DO NOTHING",
         )
         .bind(&deployments)

@@ -471,7 +471,15 @@ pub async fn deploy_entity_streaming(
     // The read-through never removes a file held here until the flush takes the entity.
     let _in_flight = crate::sync_deployer::hold_buffered(entity_id);
     let budget = deployer.inflight_bytes();
-    download_file_with_retries(client, storage.as_ref(), entity_id, servers, Some(budget)).await?;
+    download_file(
+        client,
+        storage.as_ref(),
+        entity_id,
+        servers,
+        Some(budget),
+        DownloadPolicy::Required,
+    )
+    .await?;
 
     let entity_data =
         storage
@@ -527,13 +535,14 @@ pub async fn deploy_entity_streaming(
 
         tasks.spawn(async move {
             let _permit = sem.acquire().await.map_err(|_| SyncError::Stopped)?;
-            if render {
-                download_render(&client, &storage, &hash, &servers, Some(&budget))
-                    .await
-                    .map(drop)
+            let policy = if render {
+                DownloadPolicy::BestEffort
             } else {
-                download_file_with_retries(&client, &storage, &hash, &servers, Some(&budget)).await
-            }
+                DownloadPolicy::Required
+            };
+            download_file(&client, &storage, &hash, &servers, Some(&budget), policy)
+                .await
+                .map(drop)
         });
     }
 
@@ -558,15 +567,6 @@ pub async fn deploy_entity_streaming(
         return Err(e);
     }
 
-    // A render already stored may be an aged orphan the collector is about to take: touching
-    // it restarts the age floor that covers the gap until the flush commits its row.
-    let mut snapshots = Vec::with_capacity(files.snapshots.len());
-    for (key, hash) in files.snapshots {
-        if storage.touch(&hash).await? {
-            snapshots.push((key, hash));
-        }
-    }
-
     deployer
         .deploy_entity_with_files(
             &entity_data,
@@ -575,11 +575,37 @@ pub async fn deploy_entity_streaming(
             context,
             report,
             retry_state,
-            snapshots,
+            Some((storage.as_ref(), files.snapshots)),
         )
         .await?;
 
     Ok(())
+}
+
+/// The renders of `entity_id` the store holds, each touched first: a render already stored may
+/// be an aged orphan the collector is about to take, and touching it restarts the age floor
+/// that covers the gap until the flush commits its row. A render absent from the store, or one
+/// the process may not touch (another uid's blob), gets no row; the second is logged at `warn`.
+/// Any other store fault is an error.
+pub(crate) async fn touch_renders(
+    storage: &Storage,
+    entity_id: &str,
+    renders: Vec<(String, String)>,
+) -> Result<Vec<(String, String)>, SyncError> {
+    let mut held = Vec::with_capacity(renders.len());
+    for (key, hash) in renders {
+        match storage.touch(&hash).await {
+            Ok(true) => held.push((key, hash)),
+            Ok(false) => {}
+            Err(crate::storage::StorageError::Io(e))
+                if e.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                warn!(entity_id, hash, error = %e, "a stored render could not be touched; it gets no row");
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(held)
 }
 
 fn entity_parse_error(
@@ -647,39 +673,64 @@ fn entity_files(entity_data: &[u8]) -> Result<EntityFiles, serde_json::Error> {
 /// Redirects a content file download follows (a peer may serve its files elsewhere).
 pub(crate) const MAX_FILE_REDIRECTS: usize = 2;
 
-/// Tries up to [`MAX_DOWNLOAD_RETRIES`] peers, starting at a random one, and stores the file
-/// only once its decoded bytes hash to `hash`. With a `budget`, the decoded body is held
-/// against it from its first chunk until the file is stored.
-pub async fn download_file_with_retries(
+/// How [`download_file`] treats a file no server serves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DownloadPolicy {
+    /// A file the entity needs: [`MAX_DOWNLOAD_RETRIES`] attempts over the servers in turn,
+    /// with a growing wait between them; the last failure is the error.
+    Required,
+    /// A best-effort file, such as a render a profile names only in its metadata: one request
+    /// to each of up to [`MAX_DOWNLOAD_RETRIES`] servers, without waiting between them, so a
+    /// hash no peer has costs no backoff while the caller holds a download permit. No server
+    /// serving it is `Ok(false)`, logged at `warn` unless each answered 404; only a store fault
+    /// is an error.
+    BestEffort,
+}
+
+/// Downloads `hash` from `servers`, starting at a random one, and stores the file only once its
+/// decoded bytes hash to `hash`; `Ok(true)` once it is stored (or already was). With a
+/// `budget`, the decoded body is held against it from its first chunk until the file is
+/// stored. `policy` sets the attempts and what a failure answers.
+pub async fn download_file(
     client: &CheckedRedirectClient,
     storage: &Storage,
     hash: &str,
     servers: &[String],
     budget: Option<&ByteBudget>,
-) -> Result<(), SyncError> {
+    policy: DownloadPolicy,
+) -> Result<bool, SyncError> {
     if storage.exist(hash).await? {
-        return Ok(());
+        return Ok(true);
     }
-
+    let required = policy == DownloadPolicy::Required;
     if servers.is_empty() {
-        return Err(SyncError::Other("No servers available".into()));
+        if required {
+            return Err(SyncError::Other("No servers available".into()));
+        }
+        return Ok(false);
     }
+    let attempts = if required {
+        MAX_DOWNLOAD_RETRIES
+    } else {
+        servers.len().min(MAX_DOWNLOAD_RETRIES as usize) as u32
+    };
 
-    let mut last_error = None;
+    let mut failure = None;
     let start = (uuid::Uuid::new_v4().as_u128() % servers.len() as u128) as usize;
-    for attempt in 0..MAX_DOWNLOAD_RETRIES {
+    for attempt in 0..attempts {
         let server = &servers[(start + attempt as usize) % servers.len()];
         match fetch_verified(client, hash, server, attempt, budget).await {
             Ok((bytes, reservation)) => {
                 storage.store(hash, bytes.into()).await?;
                 drop(reservation);
                 debug!(hash, "Downloaded content file");
-                return Ok(());
+                return Ok(true);
             }
-            Err(e) => last_error = Some(e),
+            Err(SyncError::NotFound(_)) if !required => {}
+            Err(e) => failure = Some(e),
         }
 
-        if attempt + 1 < MAX_DOWNLOAD_RETRIES {
+        if required && attempt + 1 < attempts {
             tokio::time::sleep(std::time::Duration::from_millis(
                 RETRY_WAIT_MS
                     .saturating_mul(1u64 << attempt.min(6))
@@ -689,38 +740,10 @@ pub async fn download_file_with_retries(
         }
     }
 
-    Err(last_error
-        .unwrap_or_else(|| SyncError::Other(format!("Failed to download {} after retries", hash))))
-}
-
-/// A best-effort file, such as a render a profile names only in its metadata: one request to
-/// each of up to [`MAX_DOWNLOAD_RETRIES`] servers, without waiting between them, so a hash no
-/// peer has costs no backoff while the caller holds a download permit. `Ok(true)` once stored;
-/// `Ok(false)` when no server served it, logged at `warn` unless each answered 404. Only a store
-/// fault is an error.
-pub(crate) async fn download_render(
-    client: &CheckedRedirectClient,
-    storage: &Storage,
-    hash: &str,
-    servers: &[String],
-    budget: Option<&ByteBudget>,
-) -> Result<bool, SyncError> {
-    if storage.exist(hash).await? {
-        return Ok(true);
-    }
-    let start = (uuid::Uuid::new_v4().as_u128() % servers.len().max(1) as u128) as usize;
-    let mut failure = None;
-    for attempt in 0..servers.len().min(MAX_DOWNLOAD_RETRIES as usize) {
-        let server = &servers[(start + attempt) % servers.len()];
-        match fetch_verified(client, hash, server, attempt as u32, budget).await {
-            Ok((bytes, reservation)) => {
-                storage.store(hash, bytes.into()).await?;
-                drop(reservation);
-                return Ok(true);
-            }
-            Err(SyncError::NotFound(_)) => {}
-            Err(e) => failure = Some(e),
-        }
+    if required {
+        return Err(failure.unwrap_or_else(|| {
+            SyncError::Other(format!("Failed to download {} after retries", hash))
+        }));
     }
     match failure {
         Some(error) => warn!(hash, %error, "a best-effort file could not be downloaded"),
@@ -919,7 +942,7 @@ mod tests {
     use crate::auth::{hash_bytes, hash_bytes_v1};
     #[cfg(unix)]
     use crate::storage::hex_prefix;
-    use crate::sync_test_support::{spawn_content_server, temp_storage};
+    use crate::sync_test_support::{RemoveOnDrop, spawn_content_server, temp_storage};
 
     fn files_of(entity: serde_json::Value) -> EntityFiles {
         entity_files(&serde_json::to_vec(&entity).unwrap()).unwrap()
@@ -1128,6 +1151,7 @@ mod tests {
         ]))
         .await;
         let (storage, tmp) = temp_storage("profile-renders").await;
+        let _tmp = RemoveOnDrop(tmp.clone());
         // A render the store already holds, past the collector's age floor.
         storage.store(&face128_hash, face128.into()).await.unwrap();
         let held = storage.file_path(&face128_hash).await.unwrap().unwrap();
@@ -1176,7 +1200,7 @@ mod tests {
             .unwrap_or_default();
         assert!(
             held_age < std::time::Duration::from_secs(600),
-            "a held render is touched before its row is buffered: {held_age:?}"
+            "a held render is touched before the entity is buffered: {held_age:?}"
         );
         let mut rows: Vec<(String, String)> = sqlx::query_as(
             "SELECT cf.key, cf.content_hash FROM content.content_files cf \
@@ -1196,7 +1220,6 @@ mod tests {
             ]
         );
         server.abort();
-        let _ = std::fs::remove_dir_all(tmp);
     }
 
     /// A stored profile whose only file is a render named in its metadata, and a deployer that is
@@ -1255,12 +1278,12 @@ mod tests {
     #[tokio::test]
     async fn a_stop_while_fetching_a_render_fails_the_deploy() {
         let (storage, tmp, id, _, _) = stored_profile_with_a_render("render-stop").await;
+        let _tmp = RemoveOnDrop(tmp);
         let closed = Arc::new(Semaphore::new(1));
         closed.close();
         let servers = vec!["http://127.0.0.1:1".to_string()];
         let result = deploy_stored(storage, &id, &servers, closed).await;
         assert!(matches!(result, Err(SyncError::Stopped)), "{result:?}");
-        let _ = std::fs::remove_dir_all(tmp);
     }
 
     /// A render is best-effort, but a store that cannot keep the bytes a peer served fails the
@@ -1270,6 +1293,7 @@ mod tests {
     async fn a_store_fault_on_a_render_fails_the_deploy() {
         let (storage, tmp, id, render_hash, render) =
             stored_profile_with_a_render("render-store").await;
+        let _tmp = RemoveOnDrop(tmp.clone());
         // A dangling link where the render's shard belongs: a read finds it absent, a write
         // cannot create the shard (even as root).
         let shard = storage.root().join(hex_prefix(&render_hash));
@@ -1281,7 +1305,116 @@ mod tests {
         let result = deploy_stored(storage, &id, &[url], Arc::new(Semaphore::new(1))).await;
         assert!(matches!(result, Err(SyncError::Storage(_))), "{result:?}");
         server.abort();
-        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    /// An entity whose signature does not verify never touches the renders it names: the touch
+    /// runs only once the entity is verified, so an unsigned entity cannot keep an orphan alive.
+    #[tokio::test]
+    async fn an_unverified_profile_leaves_its_held_render_aged() {
+        let (storage, tmp, id, render_hash, render) =
+            stored_profile_with_a_render("render-unverified").await;
+        let _tmp = RemoveOnDrop(tmp);
+        storage.store(&render_hash, render.into()).await.unwrap();
+        let held = storage.file_path(&render_hash).await.unwrap().unwrap();
+        let aged = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
+        std::fs::File::options()
+            .write(true)
+            .open(&held)
+            .unwrap()
+            .set_modified(aged)
+            .unwrap();
+
+        let result = deploy_stored(storage, &id, &[], Arc::new(Semaphore::new(1))).await;
+        assert!(result.is_err(), "an empty auth chain is rejected");
+        assert_eq!(std::fs::metadata(&held).unwrap().modified().unwrap(), aged);
+    }
+
+    /// A render the process may not touch gets no row and fails nothing; an absent one gets no
+    /// row either.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_render_that_cannot_be_touched_is_skipped() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if unsafe { libc::geteuid() } == 0 {
+            return; // root ignores the permission bits this test relies on
+        }
+        let (storage, tmp) = temp_storage("render-untouchable").await;
+        let _tmp = RemoveOnDrop(tmp);
+        let [held, refused, absent] =
+            [b"held".as_slice(), b"refused", b"absent"].map(hash_bytes_v1);
+        assert_ne!(hex_prefix(&held), hex_prefix(&refused));
+        storage
+            .store(&held, b"held".as_slice().into())
+            .await
+            .unwrap();
+        storage
+            .store(&refused, b"refused".as_slice().into())
+            .await
+            .unwrap();
+        // A shard the process may not enter, as another uid's tree answers.
+        let shard = storage.root().join(hex_prefix(&refused));
+        std::fs::set_permissions(&shard, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let renders = vec![
+            ("face.png".to_string(), held.clone()),
+            ("body.png".to_string(), refused),
+            ("face256.png".to_string(), absent),
+        ];
+        let touched = touch_renders(&storage, "entity", renders).await;
+        std::fs::set_permissions(&shard, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(touched.unwrap(), vec![("face.png".to_string(), held)]);
+    }
+
+    /// A best-effort file a peer fails on (an error status, not a 404) is no error, and nor is
+    /// having no servers; a required file with no servers is.
+    #[tokio::test]
+    async fn a_best_effort_file_survives_a_failing_peer_and_no_peers() {
+        let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let servers = vec![format!("http://{}", listener.local_addr().unwrap())];
+        let counted = hits.clone();
+        let app = axum::Router::new().route(
+            "/contents/{hash}",
+            axum::routing::get(move || {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async { axum::http::StatusCode::INTERNAL_SERVER_ERROR }
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let (storage, tmp) = temp_storage("render-500").await;
+        let _tmp = RemoveOnDrop(tmp);
+        let client = crate::sync::test_sync_client(reqwest::Client::new());
+        let hash = hash_bytes_v1(b"a render a peer fails on");
+
+        let best_effort = |servers: Vec<String>| {
+            let (client, storage, hash) = (&client, &storage, &hash);
+            async move {
+                download_file(
+                    client,
+                    storage,
+                    hash,
+                    &servers,
+                    None,
+                    DownloadPolicy::BestEffort,
+                )
+                .await
+            }
+        };
+        assert!(!best_effort(servers).await.unwrap());
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(!best_effort(Vec::new()).await.unwrap());
+        let required = download_file(
+            &client,
+            &storage,
+            &hash,
+            &[],
+            None,
+            DownloadPolicy::Required,
+        )
+        .await;
+        assert!(matches!(required, Err(SyncError::Other(_))), "{required:?}");
+        server.abort();
     }
 
     /// A render no peer serves costs one request to each peer, with no backoff between them.
@@ -1306,18 +1439,23 @@ mod tests {
             }));
         }
         let (storage, tmp) = temp_storage("render-404").await;
+        let _tmp = RemoveOnDrop(tmp.clone());
         let client = crate::sync::test_sync_client(reqwest::Client::new());
         let hash = hash_bytes_v1(b"a render no peer has");
-        let started = std::time::Instant::now();
-        let stored = download_render(&client, &storage, &hash, &servers, None)
-            .await
-            .unwrap();
+        let stored = download_file(
+            &client,
+            &storage,
+            &hash,
+            &servers,
+            None,
+            DownloadPolicy::BestEffort,
+        )
+        .await
+        .unwrap();
         assert!(!stored);
+        // A required download would ask a third time, after a wait.
         assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
-        // A retried download would ask a third time and wait at least 1.5 s.
-        assert!(started.elapsed() < std::time::Duration::from_millis(2 * RETRY_WAIT_MS));
         handles.iter().for_each(tokio::task::JoinHandle::abort);
-        let _ = std::fs::remove_dir_all(tmp);
     }
 
     #[tokio::test]
@@ -1501,12 +1639,13 @@ mod tests {
         let (base, server) = spawn_content_server(wire, Some("gzip")).await;
         let (storage, tmp) = temp_storage("gzip-wire").await;
 
-        download_file_with_retries(
+        download_file(
             &crate::sync::test_sync_client(reqwest::Client::new()),
             &storage,
             &cid,
             &[base],
             None,
+            DownloadPolicy::Required,
         )
         .await
         .expect("a gzip-labeled body whose decoded bytes match the CID must be accepted");
@@ -1530,12 +1669,13 @@ mod tests {
         let (base, server) = spawn_content_server(PAYLOAD.to_vec(), Some("gzip")).await;
         let (storage, tmp) = temp_storage("raw-labeled").await;
 
-        let err = download_file_with_retries(
+        let err = download_file(
             &crate::sync::test_sync_client(reqwest::Client::new()),
             &storage,
             &cid,
             &[base],
             None,
+            DownloadPolicy::Required,
         )
         .await
         .expect_err("a non-gzip body labeled gzip must fail transfer decoding");
@@ -1558,12 +1698,13 @@ mod tests {
         let (base, server) = spawn_content_server(wire, Some("gzip")).await;
         let (storage, tmp) = temp_storage("gzip-corrupt").await;
 
-        let err = download_file_with_retries(
+        let err = download_file(
             &crate::sync::test_sync_client(reqwest::Client::new()),
             &storage,
             &cid,
             &[base],
             None,
+            DownloadPolicy::Required,
         )
         .await
         .expect_err("decoded bytes that mismatch the CID must still be rejected");
