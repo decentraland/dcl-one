@@ -1595,8 +1595,10 @@ Workload: the item page's listing read and the checkout's store-mint and
 coupon reads (`/v3/catalog/unified?contractAddress=&itemId=`), and
 `/v3/catalog/shop?contractAddress=`, run on each item view and each purchase
 confirmation. Each read builds the `unified_trades` CTE
-(`catalog::unified_trades_cte_of`). Two UNION branches reference it, so
-PostgreSQL materializes it before the branches filter by contract. Without a
+(`catalog::unified_trades_cte_of`). When two UNION branches reference it
+(`/v3/catalog/unified` without `source`), PostgreSQL materializes it before
+the branches filter by contract; with one reference (`/v3/catalog/shop`,
+`source=native`, `source=legacy`) it inlines the CTE. Materialized without a
 scope, the CTE reads every open trade.
 
 When a read names contracts (`contractAddress`, or the contracts of its
