@@ -543,6 +543,10 @@ pub struct PrimaryPlayerRes(pub Entity);
 #[derive(Resource)]
 pub struct PrimaryCameraRes(pub Entity);
 
+/// A camera that draws the lens flare of the directional light (`visuals::lens_flare`).
+#[derive(Component, Clone, Copy, Default)]
+pub struct LensFlare;
+
 /// World-space head gaze angles, in degrees. On the local player, written each frame
 /// from the real camera (and zeroed/disabled when a scene-driven camera is active). On
 /// remote players, written from the incoming rfc4::Movement head-sync fields. The
@@ -633,6 +637,9 @@ pub struct AppConfig {
     /// behind the camera together: the nearest in view start first, and with none free one
     /// behind the camera makes way for one in view. A near LOD's colliders take no place.
     pub max_near_lods: usize,
+    /// How many scenes may load or show a far LOD (the asset pipeline's simplified mesh) at once,
+    /// in view and behind the camera together, as `max_near_lods` counts near LODs.
+    pub max_far_lods: usize,
     pub scene_imposter_distances: Vec<f32>,
     pub scene_imposter_multisample: bool,
     pub scene_imposter_multisample_amount: f32,
@@ -704,6 +711,7 @@ impl Default for AppConfig {
             scene_load_distance: 10.0,
             scene_unload_extra_distance: 10.0,
             max_near_lods: 12,
+            max_far_lods: 200,
             scene_imposter_distances: vec![100.0, 200.0, 400.0, 800.0, 1600.0, 99999.0],
             scene_imposter_multisample: false,
             scene_imposter_multisample_amount: 0.0,
@@ -823,6 +831,7 @@ impl AppConfig {
         self.scene_load_distance = default.scene_load_distance;
         self.scene_unload_extra_distance = default.scene_unload_extra_distance;
         self.max_near_lods = default.max_near_lods;
+        self.max_far_lods = default.max_far_lods;
         self.scene_imposter_distances = default.scene_imposter_distances.clone();
         self.scene_imposter_multisample = default.scene_imposter_multisample;
         self.scene_imposter_multisample_amount = default.scene_imposter_multisample_amount;
@@ -1039,6 +1048,8 @@ pub struct GraphicsSettings {
     /// share of the window's device pixels the world renders at, upscaled to the window with FSR
     /// (`visuals::upscale`); the UI stays at full resolution
     pub render_scale: f32,
+    /// draw the lens flare of the sun by day and of the moon at night (`visuals::lens_flare`)
+    pub lens_flare: bool,
 }
 
 /// The ambient brightness setting at which the Trilight ambient is the sky preset's
@@ -1099,6 +1110,7 @@ impl Default for GraphicsSettings {
             spring_bones: false,
             gpu_bytes_per_frame: 10_000_000,
             render_scale: 1.0,
+            lens_flare: true,
         }
     }
 }
@@ -1116,6 +1128,7 @@ impl GraphicsSettings {
         self.shadow_distance = preset.shadow_distance;
         self.light_count = preset.light_count;
         self.shadow_caster_count = preset.shadow_caster_count;
+        self.lens_flare = preset.lens_flare;
         self.dof = preset.dof;
         self.ssao = preset.ssao;
         self.fog = preset.fog;
@@ -2890,6 +2903,7 @@ mod tests {
         (g.vsync, g.fps_target, g.render_scale) = (false, 144, 0.5);
         (g.msaa, g.bloom, g.dof) = (AaSetting::FxaaLow, BloomSetting::High, DofSetting::Off);
         (g.shadow_distance, g.light_count, g.shadow_caster_count) = (200.0, 32, 8);
+        g.lens_flare = false;
         (g.ambient_brightness, g.oob, g.cel_shading) = (10, 0.0, false);
         config.reset_outdated_settings();
 

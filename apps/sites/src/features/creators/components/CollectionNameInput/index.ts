@@ -1,0 +1,1 @@
+export { CollectionNameInput } from './CollectionNameInput'

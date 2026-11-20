@@ -73,6 +73,7 @@ pub(crate) use catalyst_storage as storage;
 
 pub mod auth;
 pub mod catalog;
+pub mod committee;
 pub mod drafts;
 pub mod handlers;
 pub mod http;
@@ -109,10 +110,8 @@ use dcl_http::Outbound;
 
 use catalog::{CatalogStore, PullSource};
 use items::{ItemsComponent, NewsletterComponent};
-use onchain::CommitteeMemberOut;
 
 pub const ADMIN_TOKEN_ENV: &str = "CATALYRST_BUILDER_ADMIN_TOKEN";
-const COMMITTEE_MEMO_TTL: Duration = Duration::from_secs(300);
 const EXISTS_TTL: Duration = Duration::from_secs(300);
 const EXISTS_CACHE_MAX: usize = 8192;
 /// How long a published collection's on-chain `creator()` read (or its
@@ -270,7 +269,6 @@ pub struct State {
     /// withheld (rejected or deleted photo) is a 404 on `/contents/{hash}`
     /// here too, not only on the content server's routes.
     pub denylist: Arc<crate::content::Denylist>,
-    pub(crate) committee_memo: TtlMap<(), Arc<Vec<CommitteeMemberOut>>>,
     pub(crate) exists_memo: TtlMap<String, bool>,
     /// A published collection's `creator()` by contract; `None` is a failed
     /// read, reused for the TTL too.
@@ -315,7 +313,6 @@ impl State {
             foundation: linked_publication_review::foundation_client(),
             eip1654,
             denylist,
-            committee_memo: TtlMap::new(COMMITTEE_MEMO_TTL),
             exists_memo: TtlMap::bounded(EXISTS_TTL, EXISTS_CACHE_MAX),
             creator_memo: TtlMap::bounded(CREATOR_MEMO_TTL, CREATOR_MEMO_MAX),
             polygon_checked: tokio::sync::OnceCell::new(),
@@ -554,7 +551,6 @@ impl State {
             foundation: self.foundation.clone(),
             eip1654: None,
             denylist: self.denylist.clone(),
-            committee_memo: TtlMap::new(COMMITTEE_MEMO_TTL),
             exists_memo: TtlMap::bounded(EXISTS_TTL, EXISTS_CACHE_MAX),
             creator_memo: TtlMap::bounded(CREATOR_MEMO_TTL, CREATOR_MEMO_MAX),
             polygon_checked: tokio::sync::OnceCell::new(),

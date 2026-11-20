@@ -56,8 +56,6 @@ const rel = (abs: string) => path.relative(SITES, abs);
 
 const WAIVED = new Set([
   "src/data/lib/auth/pair-store.test.ts -> @/routes/routes/internal.pair",
-  "src/data/lib/catalyst/creator-hub/wearable-publish-collection.ts -> @/features/creator-hub/wearable-publish-collection/machine",
-  "src/data/lib/catalyst/creator-hub/wearable-publish-collection.ts -> @/features/creator-hub/wearable-publish-collection/PublishCollectionWizard",
   "src/data/lib/catalyst/landings/rsvp.ts -> @/features/social/rsvp-event/machine",
 ]);
 

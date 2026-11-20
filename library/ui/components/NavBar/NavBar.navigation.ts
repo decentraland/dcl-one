@@ -49,7 +49,7 @@ const publicNavigation: readonly (Omit<DecentralandNavigationEntry, 'items'> & {
     href: '/create',
     items: [
       { label: 'Create in Decentraland', href: '/create' },
-      { label: 'Publish Wearables & Emotes', href: '/create/wearables' },
+      { label: 'Publish Wearables & Emotes', href: '/create/collections' },
       { label: 'Publish LAND', href: '/download/creator-hub' }
     ]
   },

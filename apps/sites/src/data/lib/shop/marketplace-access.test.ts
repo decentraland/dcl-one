@@ -63,6 +63,17 @@ describe("the Marketplace on sites' own pages", () => {
     expect(primed.calls).toBe(1);
   });
 
+  it("uses only the Sites flag reader on mount and focus before the first answer", () => {
+    const external = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));
+    facts.identity = { signer: ACCOUNT, expiration: LATER };
+    facts.kind = "web3";
+    const { result } = renderHook(() => useMarketplaceHere(ACCOUNT));
+    window.dispatchEvent(new Event("focus"));
+    expect(primed.calls).toBe(2);
+    expect(result.current).toBe(false);
+    expect(external).not.toHaveBeenCalled();
+  });
+
   it("skips both flag reads and focus refreshes for a signed-out visitor", () => {
     const readFlags = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));
     const { result } = renderHook(() => useMarketplaceHere(null));
