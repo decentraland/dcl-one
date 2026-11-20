@@ -54,8 +54,8 @@ const MANA_NEVER_WENT_PART = 'one of its transactions never went out; no MANA wa
 const MANA_AFTER_PENDING_PART = 'the rest wasn’t sent while an earlier part was still being confirmed; no MANA was spent for it.'
 /** How a MANA checkout says the rest was cancelled on Authorize MANA. */
 const MANA_REST_CANCELLED_PART = 'the rest was cancelled before it was paid; no MANA was spent for it.'
-/** What the step of a sale holding the rest of its checkout adds: the rest never went, and waits in the cart. */
-const restHeld = (cart: boolean): string => ` The rest of this purchase wasn’t sent while this part is being confirmed${cart ? ', and it’s still in your cart' : ''}.`
+/** What a step in progress adds while part of its checkout is held behind a sale not yet on chain: it never went. */
+const restHeld = (cart: boolean): string => ` Part of this purchase wasn’t sent while another part is being confirmed${cart ? '; it’s still in your cart' : ''}.`
 /** How a MANA checkout says this page couldn't hold the rest's own operation. */
 const MANA_REST_UNHELD_PART = 'this browser couldn’t keep the rest of the purchase to this tab; no MANA was spent for it.'
 /** A MANA sale's refusal (nothing of it went), as one transaction of a checkout: it spent no MANA. */
@@ -163,8 +163,9 @@ export function createManaFlow(host: ManaFlowHost): ManaFlow {
   const showPending = (op: Operation): void => {
     const kind = manaPendingKind(op)
     op.manaShown = kind
-    // A sale holding the rest of its checkout says so, whatever else it offers: settling it may take a long while.
-    const held = op.checkout?.heldBy === op ? restHeld(op.checkout.cart) : ''
+    // While part of its checkout was held behind a sale not yet on chain, whichever of its sales is shown says so, whatever
+    // else it offers: settling them may take a long while. CHECK AGAIN and RETRY stay this sale's own.
+    const held = op.checkout?.heldBy ? restHeld(op.checkout.cart) : ''
     if (kind === 'retry') {
       show(op, { step: 'pending', message: MANA_RETRY + held, retry: true }, { onClose: () => hide(op), onRetry: () => void retryMana(op) })
       return
@@ -409,14 +410,19 @@ export function createManaFlow(host: ManaFlowHost): ManaFlow {
       }
       const ran = await runMana(run, quote, sale, wallet, current, { release: () => {}, cart: { progress: { at: i + 1, of }, sale: sales[i] } })
       if (ran.kind === 'went') {
+        // The last: nothing comes after it to wait for it.
+        if (i === of - 1) break
         // Confirmed, and found on chain as this sale itself past its checkpoint: its nonce is spent by it, so the next may
         // go, while the watch waits for the chain to finalize it.
-        if (ran.confirmed && (await included(run))) continue
-        // Handed off and not shown on chain as itself: what comes after it never starts, and its step says so.
-        if (i < of - 1) {
-          co.failures.push(MANA_AFTER_PENDING_PART)
-          co.heldBy = run
-        }
+        const onChain = ran.confirmed && stillPending(run) && (await included(run))
+        // The watch may have ended it while that was read: its end decides. Bought goes on; not bought stops, its reason
+        // kept by the checkout.
+        if (run.state === 'succeeded') continue
+        if (!stillPending(run)) break
+        if (onChain) continue
+        // Handed off and not shown on chain as itself: what comes after it never starts, and the step shown says so.
+        co.failures.push(MANA_AFTER_PENDING_PART)
+        co.heldBy = run
         break
       }
       // Ended already: bought, or (its reason kept by the checkout) not, and then nothing more starts.
