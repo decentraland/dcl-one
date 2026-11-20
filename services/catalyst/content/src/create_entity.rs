@@ -879,7 +879,10 @@ async fn deploy_regular(
                 .verify_replay(named.as_ref(), &files, &entity_id, &auth_chain)
                 .await
             {
-                return Ok(failed(failure, is_refundable(&files, &entity_id)));
+                // Only a 503 is refundable; the check parses the form again.
+                let refundable = matches!(failure, DeployFailure::Unavailable(_))
+                    && is_refundable(&files, &entity_id);
+                return Ok(failed(failure, refundable));
             }
             tracing::info!(entity_id = %entity_id, "POST /entities - Entity already deployed");
             return Ok(Answer::Decided(created_response(creation_timestamp)));
@@ -944,8 +947,10 @@ async fn deploy_regular(
 /// A batch of a partial upload. As upstream's `withDeploymentQuota`, the
 /// daily quota counts the upload once, when its first batch creates it, and
 /// a batch refused with a 400 before joining its upload (a missing
-/// `entityId` or a bad chain included); its 429s, 503s and replays are not
-/// counted. A spent source may only resume the signer's own upload.
+/// `entityId` or a bad chain included), and a replay of a deployed entity
+/// that is not answered its timestamp; its other 429s and 503s, its resumes
+/// and its answered replays are not counted. A spent source may only resume
+/// the signer's own upload or replay a deployed entity.
 async fn partial_batch(
     state: &SharedState,
     deployer: &super::write_deployer::WriteDeployer,
@@ -997,7 +1002,10 @@ async fn partial_batch(
     )
     .await
     .unwrap_or_else(|_| processing_timed_out(timeout));
-    if admission.created || (response.status() == StatusCode::BAD_REQUEST && !admission.admitted) {
+    if admission.created
+        || admission.replay_unanswered
+        || (response.status() == StatusCode::BAD_REQUEST && !admission.admitted)
+    {
         count();
     }
     if response.status() == StatusCode::OK {

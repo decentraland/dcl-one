@@ -403,6 +403,72 @@ async fn a_copy_answered_from_the_in_process_memo_proves_the_replay() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
+/// A contract-wallet validator that answers only once released.
+#[derive(Default)]
+struct Gate {
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+#[async_trait]
+impl Eip1654Validator for Gate {
+    async fn validate_signature(
+        &self,
+        _contract_address: &str,
+        _hash: &[u8],
+        _signature: &[u8],
+    ) -> Result<bool, AuthError> {
+        self.entered.notify_one();
+        self.release.notified().await;
+        Ok(true)
+    }
+}
+
+/// A copy answered from the in-process memo is verified without the
+/// entity's lock: another copy of the id takes it while the first one's
+/// contract wallet is being asked.
+#[tokio::test]
+async fn a_copy_answered_from_the_memo_is_verified_unlocked() {
+    let (storage, tmp) = temp_storage("memo-unlocked").await;
+    let gate = Arc::new(Gate::default());
+    let deployer =
+        WriteDeployer::with_partial_validation_for_tests(lazy_pool(), storage, Some(gate.clone()));
+    let (files, id, _, _) = signed_scene_at(chrono::Utc::now().timestamp_millis()).await;
+    let mut first = deployer.deploying.lock(&id).await;
+    *first = Some(42);
+    let held = deployer
+        .deploying
+        .0
+        .lock()
+        .get(&id)
+        .and_then(std::sync::Weak::upgrade)
+        .unwrap();
+    drop(first);
+    let chain = serde_json::to_value(
+        crate::sync_test_support::signed_chain_behind_contract(
+            &id,
+            &(chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339(),
+        )
+        .await,
+    )
+    .unwrap();
+
+    let replay = deployer.deploy_entity_anchored(files, &id, chain, "LOCAL", None);
+    let other_copy = async {
+        gate.entered.notified().await;
+        let memo = tokio::time::timeout(Duration::from_secs(5), deployer.deploying.lock(&id))
+            .await
+            .expect("the lock is free while the replay is verified");
+        assert_eq!(*memo, Some(42));
+        drop(memo);
+        gate.release.notify_one();
+    };
+    let (answer, ()) = tokio::join!(replay, other_copy);
+    assert_eq!(answer.unwrap_or_else(|e| panic!("{:?}", e.errors())), 42);
+    drop(held);
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 #[tokio::test]
 async fn a_deploy_with_a_bad_or_missing_signature_does_not_hold_its_pointers() {
     let (deployer, tmp) = deployer_over_temp_storage("bad-signature").await;

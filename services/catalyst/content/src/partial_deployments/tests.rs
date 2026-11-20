@@ -391,10 +391,11 @@ async fn a_replay_batch_needs_a_chain_that_signs_the_id() {
     }
 }
 
-/// An id denylisted after its deploy gets the regular path's denylist 400 on
-/// a replay batch, which may carry no entity file.
+/// An id, content hash or pointer denylisted after the deploy gets the
+/// regular path's denylist 400 on a replay batch, which may carry no entity
+/// file: the stored entity's hashes and pointers are checked.
 #[tokio::test]
-async fn a_replay_batch_of_a_denylisted_id_is_refused() {
+async fn a_replay_batch_of_a_denylisted_entity_is_refused() {
     require_test_db!(Some(node) = Node::new("replay-denylisted", Limits::default()).await);
     let router = node.router();
     let signer = PrivateKeySigner::random();
@@ -405,16 +406,30 @@ async fn a_replay_batch_of_a_denylisted_id_is_refused() {
     assert_eq!(status, StatusCode::OK, "{body}");
     let created = body["creationTimestamp"].clone();
 
-    node.state.denylist.operator_insert(&scene.id);
-    let (status, _, body) = send(&router, &scene, &scene.chain, vec![]).await;
-    node.state.denylist.operator_remove(&scene.id);
-    assert_eq!(
-        (status, body),
+    let hash = &scene.files[0].0;
+    let pointer = &scene.pointers[0];
+    for (listed, error) in [
         (
-            StatusCode::BAD_REQUEST,
-            json!({"errors": [format!("The entity {} is denylisted on this node.", scene.id)]})
-        )
-    );
+            &scene.id,
+            format!("The entity {} is denylisted on this node.", scene.id),
+        ),
+        (
+            hash,
+            format!("These content files are denylisted on this node: {hash}"),
+        ),
+        (
+            pointer,
+            format!("These pointers are denylisted on this node: {pointer}"),
+        ),
+    ] {
+        node.state.denylist.operator_insert(listed);
+        let (status, _, body) = send(&router, &scene, &scene.chain, vec![]).await;
+        node.state.denylist.operator_remove(listed);
+        assert_eq!(
+            (status, body),
+            (StatusCode::BAD_REQUEST, json!({"errors": [error]}))
+        );
+    }
     let (status, _, body) = send(&router, &scene, &scene.chain, vec![]).await;
     assert_eq!(
         (status, &body["creationTimestamp"]),
@@ -974,6 +989,60 @@ async fn the_daily_quota_counts_partial_batches_as_upstream() {
         quota.counted_for(ip),
         3,
         "resumes, 429s and replays are not counted"
+    );
+}
+
+/// A replay batch that is not answered its timestamp counts, as a regular
+/// replay does: its check may ask a contract wallet's RPC. A spent source's
+/// contract-wallet replay is refused before that check; its own chain still
+/// replays.
+#[tokio::test]
+async fn a_refused_replay_batch_counts_and_a_spent_source_skips_the_contract_check() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 2,
+        ..Settings::for_tests()
+    };
+    require_test_db!(Some(node) = Node::with_settings("replay-quota", settings).await);
+    let router = node.router();
+    let ip = "203.0.113.7";
+    let quota = &node.state.deploy_quota;
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"replay-quota"], "scene").await;
+    let mut files = vec![entity_file(&scene)];
+    files.extend(scene.files.iter().cloned());
+    let (status, _, body) = send(&router, &scene, &scene.chain, files).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let created = body["creationTimestamp"].clone();
+    assert_eq!(quota.counted_for(ip), 1);
+
+    // This node has no contract-wallet validator: the check answers 503.
+    let contract = serde_json::to_value(
+        crate::sync_test_support::signed_chain_behind_contract(
+            &scene.id,
+            &(chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339(),
+        )
+        .await,
+    )
+    .unwrap();
+    let (status, _, body) = send(&router, &scene, &contract, vec![]).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(quota.counted_for(ip), 2, "a refused replay counts");
+
+    let (status, headers, body) = send(&router, &scene, &contract, vec![]).await;
+    assert_eq!(
+        (status, &body["errors"][0]),
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            &json!(
+                "The daily deployment quota for this client is exhausted. A replay signed by a contract wallet is checked only within the quota."
+            )
+        )
+    );
+    assert!(headers.contains_key(header::RETRY_AFTER));
+    let (status, _, body) = send(&router, &scene, &scene.chain, vec![]).await;
+    assert_eq!(
+        (status, &body["creationTimestamp"]),
+        (StatusCode::OK, &created)
     );
 }
 
