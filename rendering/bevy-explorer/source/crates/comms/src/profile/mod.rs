@@ -178,8 +178,9 @@ impl ProfileEntry {
     }
 
     /// nothing better to look for. A compact reader takes any data; a full reader takes
-    /// the catalyst's answer, or a guest peer's own answer (which the catalyst never
-    /// holds), at the announced version
+    /// the catalyst's answer, or a throwaway guest's own answer, at the announced version: a
+    /// throwaway guest's profile is never on the catalyst, and says nothing about web3. A guest
+    /// account's is on the catalyst, so its own answer is only a stand-in, as any account's.
     fn satisfied(&self) -> bool {
         if self.wanted == ProfileTier::Compact {
             return self.data.is_some() || self.compact.is_some();
@@ -187,7 +188,8 @@ impl ProfileEntry {
         self.data.as_ref().is_some_and(|(profile, source)| {
             profile.version >= self.announced
                 && (*source == ProfileSource::Catalyst
-                    || (*source == ProfileSource::Peer && profile_is_guest(profile)))
+                    || (*source == ProfileSource::Peer
+                        && profile.content.has_connected_web3.is_none()))
         })
     }
 
@@ -805,12 +807,19 @@ fn due_announcement(
 /// Announce `profile`'s version over Pulse, converted to a `ProfileVersionAnnouncement`.
 fn announce_version(transports: &Query<&Transport>, profile: &UserProfile) {
     debug!("announcing profile new version {:?}", profile.version);
+    let serialized_profile = match serde_json::to_string(&profile.content) {
+        Ok(serialized_profile) => serialized_profile,
+        Err(e) => {
+            error_once!("not announcing profile, serialization failed: {e}");
+            return;
+        }
+    };
     broadcast(
         transports.iter(),
         BroadcastTarget::PULSE,
         false,
         ProfileUpdate {
-            serialized_profile: serde_json::to_string(&profile.content).unwrap(),
+            serialized_profile,
             base_url: profile.base_url.clone(),
             version: profile.version,
         },
@@ -1292,14 +1301,20 @@ pub fn process_profile_events(
                             return;
                         };
 
+                        let serialized_profile =
+                            match serde_json::to_string(&current_profile.content) {
+                                Ok(serialized_profile) => serialized_profile,
+                                Err(e) => {
+                                    error_once!("not sending profile, serialization failed: {e}");
+                                    continue;
+                                }
+                            };
+
                         debug!("sending my profile");
                         let response = rfc4::Packet {
                             message: Some(rfc4::packet::Message::ProfileResponse(
                                 rfc4::ProfileResponse {
-                                    serialized_profile: serde_json::to_string(
-                                        &current_profile.content,
-                                    )
-                                    .unwrap(),
+                                    serialized_profile,
                                     base_url: current_profile.base_url.clone(),
                                 },
                             )),
@@ -1866,6 +1881,7 @@ fn process_profile(
     mut processing: Local<Option<ProcessProfileState>>,
     mut deployed: EventReader<ProfileDeployedEvent>,
     config: Res<AppConfig>,
+    wallet: Res<Wallet>,
 ) {
     if let Some(SystemApi::SetAvatar(set_avatar, sender)) = e
         .read()
@@ -1877,12 +1893,11 @@ fn process_profile(
             current_profile.deploy_held = false;
         }
 
-        // an edit that will deploy keeps the profile from before it until the deploy settles
-        if current_profile
-            .profile
-            .as_ref()
-            .is_some_and(|profile| profile.content.has_connected_web3.unwrap_or_default())
-        {
+        // A signed-in account deploys its edits, a guest account's included; a throwaway guest
+        // (no sign-in) keeps them local. An edit that will deploy keeps the profile from before
+        // it until the deploy settles.
+        let deploys = !wallet.is_guest();
+        if deploys && current_profile.profile.is_some() {
             current_profile.snapshot_for_revert();
         }
 
@@ -1967,7 +1982,6 @@ fn process_profile(
         debug!("{:#?}", profile.content);
         let address = profile.content.eth_address.as_h160();
         let version = profile.version;
-        let deploys = profile.content.has_connected_web3.unwrap_or_default();
 
         // The deploy this edit replaces hears its own result if that has already come in, else
         // "cancelled": the new deploy carries its change too. Every result queued now settled
@@ -2218,6 +2232,26 @@ mod tests {
         connected.content.has_connected_web3 = Some(true);
         peer.apply(connected, ProfileSource::Peer);
         assert!(!peer.satisfied());
+
+        // so is a guest account's: its profile is on the catalyst too
+        let mut account = ProfileEntry {
+            announced: 5,
+            wanted: ProfileTier::Full,
+            ..Default::default()
+        };
+        let mut guest_account = profile(5, "guest account");
+        guest_account.content.has_connected_web3 = Some(false);
+        account.apply(guest_account, ProfileSource::Peer);
+        assert!(!account.satisfied());
+
+        // a throwaway guest's own answer is final: the catalyst never holds it
+        let mut throwaway = ProfileEntry {
+            announced: 5,
+            wanted: ProfileTier::Full,
+            ..Default::default()
+        };
+        throwaway.apply(profile(5, "throwaway"), ProfileSource::Peer);
+        assert!(throwaway.satisfied());
     }
 
     fn profile_of(address: Address, version: u32, name: &str) -> UserProfile {
@@ -2650,13 +2684,35 @@ mod tests {
     /// `process_profile` alone: edits go in as `SetAvatar`s, deploys settle as events.
     struct Saves(App);
 
+    /// A signed-in account (a sign-in chain), a guest account's when `guest_account`.
+    fn signed_in(guest_account: bool) -> Wallet {
+        let mut wallet = Wallet::default();
+        let link = common::structs::ChainLink {
+            ty: "SIGNER".to_owned(),
+            payload: format!("{:#x}", Address::repeat_byte(7)),
+            signature: String::new(),
+        };
+        wallet.finalize(
+            Address::repeat_byte(7),
+            alloy_signer_local::PrivateKeySigner::random(),
+            vec![link],
+            guest_account,
+        );
+        wallet
+    }
+
     impl Saves {
         fn new(profile: UserProfile) -> Self {
+            Self::with_wallet(profile, signed_in(false))
+        }
+
+        fn with_wallet(profile: UserProfile, wallet: Wallet) -> Self {
             let mut app = App::new();
             app.add_event::<SystemApi>()
                 .add_event::<ProfileDeployedEvent>()
                 .insert_resource(AppConfig::default())
                 .insert_resource(deployed(profile))
+                .insert_resource(wallet)
                 .add_systems(Update, process_profile);
             Self(app)
         }
@@ -2687,6 +2743,29 @@ mod tests {
         fn current(&mut self) -> Mut<'_, CurrentUserProfile> {
             self.0.world_mut().resource_mut::<CurrentUserProfile>()
         }
+    }
+
+    #[test]
+    fn a_guest_accounts_edit_deploys() {
+        let mut guest = own(5, "guest");
+        guest.content.has_connected_web3 = Some(false);
+        let mut saves = Saves::with_wallet(guest, signed_in(true));
+        let mut edit = saves.edit();
+        saves.0.update();
+        assert_eq!(edit.poll_once(), Ok(None));
+        saves.settle(6, true);
+        saves.0.update();
+        assert_eq!(edit.poll_once(), Ok(Some(Ok(6))));
+    }
+
+    #[test]
+    fn a_throwaway_guests_edit_stays_local() {
+        let mut wallet = Wallet::default();
+        wallet.finalize_as_guest();
+        let mut saves = Saves::with_wallet(own(5, "guest"), wallet);
+        let mut edit = saves.edit();
+        saves.0.update();
+        assert_eq!(edit.poll_once(), Ok(Some(Ok(u32::MAX))));
     }
 
     #[test]

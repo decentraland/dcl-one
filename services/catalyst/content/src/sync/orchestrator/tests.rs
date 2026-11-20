@@ -306,3 +306,63 @@ async fn bootstrap_callbacks_require_success_and_keep_parent_cancellation_scope(
         let _ = std::fs::remove_dir_all(temp);
     }
 }
+
+#[test]
+fn stream_backoff_resets_only_after_a_settled_poll_and_a_full_cycle() {
+    let cfg = SyncOrchestratorConfig::default();
+    let base = cfg.syncing_reconnect_time_ms as f64;
+    let short = Duration::from_millis(10);
+    let healthy = Duration::from_millis(cfg.pointer_changes_wait_time_ms);
+    let grown = base * 1.2;
+
+    let mut delay = base;
+    for _ in 0..100 {
+        delay = cfg.next_syncing_backoff(delay, true, true, short);
+    }
+    assert_eq!(
+        delay, 3_600_000.0,
+        "short failures grow up to the one-hour cap"
+    );
+    assert_eq!(cfg.next_syncing_backoff(base, true, true, short), grown);
+
+    assert_eq!(
+        cfg.next_syncing_backoff(delay, true, true, healthy),
+        base,
+        "a failure after a settled poll and a full cycle reconnects at the base delay"
+    );
+    assert_eq!(
+        cfg.next_syncing_backoff(base, true, true, healthy - Duration::from_millis(1)),
+        grown,
+        "a run just short of a full cycle still grows the delay"
+    );
+    assert_eq!(cfg.next_syncing_backoff(delay, false, false, short), base);
+}
+
+#[test]
+fn a_stalled_stream_run_grows_the_backoff_however_long_it_lasted() {
+    let cfg = SyncOrchestratorConfig::default();
+    let base = cfg.syncing_reconnect_time_ms as f64;
+    // A peer that served a page, then hung for an hour before erroring: no poll settled.
+    assert_eq!(
+        cfg.next_syncing_backoff(base, true, false, Duration::from_secs(3_600)),
+        base * 1.2
+    );
+}
+
+#[test]
+fn stream_backoff_needs_the_longer_of_the_poll_wait_and_the_base_delay() {
+    let cfg = SyncOrchestratorConfig {
+        pointer_changes_wait_time_ms: 1_000,
+        syncing_reconnect_time_ms: 5_000,
+        ..SyncOrchestratorConfig::default()
+    };
+    let base = cfg.syncing_reconnect_time_ms as f64;
+    assert_eq!(
+        cfg.next_syncing_backoff(base, true, true, Duration::from_millis(4_999)),
+        base * 1.2
+    );
+    assert_eq!(
+        cfg.next_syncing_backoff(base * 1.2, true, true, Duration::from_millis(5_000)),
+        base
+    );
+}

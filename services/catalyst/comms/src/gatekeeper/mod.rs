@@ -134,6 +134,8 @@ pub struct RawSettings {
     /// `LEASE_AUTHORIZATIONS_URL`: the linker-server lease document; unset
     /// lists no lease holder.
     pub lease_authorizations_url: Option<String>,
+    /// Whether lease entries marked `onlyDev` count (only on a Sepolia `ETH_NETWORK`).
+    pub lease_dev_entries: bool,
     /// `VOICE_CHAT_CONNECTION_INTERRUPTED_TTL` (ms, default 300000).
     pub voice_connection_interrupted_ttl_ms: i64,
     /// `VOICE_CHAT_INITIAL_CONNECTION_TTL` (ms, default 300000).
@@ -184,6 +186,8 @@ pub struct Settings {
     /// The lease document [`admission::scene::get_lease_holders_for_parcels`] reads;
     /// `None` lists no lease holder and fetches nothing.
     pub lease_authorizations_url: Option<String>,
+    /// Whether lease entries marked `onlyDev` count; false on a production node.
+    pub lease_dev_entries: bool,
     pub voice: VoiceDbConfig,
     /// Declared evidence bytes the player report intake accepts in 24 hours
     /// from all wallets and addresses ([`reports`]). The value is the
@@ -216,6 +220,7 @@ impl std::fmt::Debug for Settings {
             )
             .field("land_operators_url", &self.land_operators_url)
             .field("lease_authorizations_url", &self.lease_authorizations_url)
+            .field("lease_dev_entries", &self.lease_dev_entries)
             .field("voice", &self.voice)
             .field(
                 "report_evidence_daily_bytes",
@@ -341,6 +346,7 @@ impl Settings {
             gatekeeper_auth_token,
             land_operators_url,
             lease_authorizations_url,
+            lease_dev_entries: raw.lease_dev_entries,
             voice: VoiceDbConfig {
                 connection_interrupted_ttl_ms: raw.voice_connection_interrupted_ttl_ms,
                 initial_connection_ttl_ms: raw.voice_initial_connection_ttl_ms,
@@ -374,6 +380,7 @@ impl Settings {
             gatekeeper_auth_token: None,
             land_operators_url: None,
             lease_authorizations_url: None,
+            lease_dev_entries: false,
             voice: VoiceDbConfig::default(),
             report_evidence_daily_bytes: i64::from(
                 RawSettings::defaults().report_evidence_daily_mib,

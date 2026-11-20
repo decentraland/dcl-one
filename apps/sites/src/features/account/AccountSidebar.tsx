@@ -20,10 +20,11 @@ import styles from "./AccountSidebar.module.css";
 import type { AccountLinkState } from "./AccountLayout";
 import { ACCOUNT_COPY } from "./copy";
 
-export type AccountSection = "notifications" | "credits";
+export type AccountSection = "wallets" | "notifications" | "credits";
 
-/** Wallets, security and account deletion are not built yet, so they are not listed. */
+/** Security and account deletion are not built yet, so they are not listed. */
 const SECTIONS: readonly { id: AccountSection; href: string; Icon: ComponentType<IconProps> }[] = [
+  { id: "wallets", href: "/account/wallets", Icon: GeneralWallet },
   { id: "notifications", href: "/account/notifications", Icon: MenusNotifications },
   { id: "credits", href: "/account/credits", Icon: GeneralGift },
 ];

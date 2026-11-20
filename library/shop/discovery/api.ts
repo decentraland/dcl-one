@@ -4,6 +4,7 @@
 //       webapp/src/modules/{account,collection,contract,item,nft}/actions.ts (the FETCH_* reads)
 // Licence of the Marketplace parts: Apache-2.0, Copyright 2020 Metaverse Holdings Ltd.
 
+import type { CreatorProfile } from "@catalyst-api/market/CreatorProfile";
 import type { ShopCoupon } from "@catalyst-api/market/ShopCoupon";
 import type { SuggestionReason } from "@catalyst-api/market/SuggestionReason";
 import { type ShopClient } from "../api/shop";
@@ -56,6 +57,7 @@ export type ShopListingRaw = {
   saleEndsAt?: number | null;
   coupon?: ShopCoupon | null;
   saleUnitsLeft?: number | null;
+  creatorProfile?: CreatorProfile;
 };
 
 export type UnifiedListingRaw = ShopListingRaw & { source: ListingSource; acquisition?: ListingAcquisition; manaWei?: string | null };
@@ -142,6 +144,7 @@ export function shopListingToItem(raw: ShopListingRaw, creatorSales: boolean): C
     coupon: l.coupon ?? undefined,
     saleUnitsLeft: l.saleUnitsLeft ?? undefined,
     onSale: true,
+    creatorProfile: l.creatorProfile ?? undefined,
   };
 }
 
@@ -484,7 +487,7 @@ export async function searchCollections(search: string, { onSale, first = 10 }: 
   return (json.data ?? []).filter((row) => row.contractAddress).map(toCollection);
 }
 
-export type ShopCreatorRank = { id: string; volumeWei?: string; sales: number; totalSales?: number; collections?: number; items?: number };
+export type ShopCreatorRank = { id: string; volumeWei?: string; sales: number; totalSales?: number; collections?: number; items?: number; profile?: CreatorProfile };
 
 export async function fetchShopTopCreators(first: number, days: number, opts: Opts): Promise<ShopCreatorRank[]> {
   const json = await opts.client.catalog.creators<{ data?: ShopCreatorRank[] }>({ first, days }, o(opts));

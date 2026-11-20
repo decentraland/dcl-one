@@ -99,8 +99,12 @@ export function startBridge(register: (ctx: Ctx) => void): void {
     // Each handler is isolated: one domain throwing must not stop the others from seeing the
     // message they also registered for.
     const fail = (err: unknown): void => {
-      console.error(`[bridge] ${env.msg.kind} failed`, err)
-      ctx.send({ kind: 'requestFailed', request: env.msg.kind, error: String(err) })
+      const { msg } = env
+      console.error(`[bridge] ${msg.kind} failed`, err)
+      const profileRead = msg.kind === 'getUserProfile' && msg.requestId != null
+        ? { address: msg.address, requestId: msg.requestId }
+        : undefined
+      ctx.send({ kind: 'requestFailed', request: msg.kind, error: String(err), ...(profileRead != null && { profileRead }) })
     }
     for (const handler of list) {
       try {

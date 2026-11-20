@@ -3,8 +3,8 @@ import type { SubscriptionGroupKey } from "@/data/lib/account/notifications";
 /** The account settings' wording, as decentraland.org's account pages have it. */
 export const ACCOUNT_COPY = {
   title: "Account Settings",
-  sections: { notifications: "Notifications", credits: "Credits Settings" },
-  logout: "Log out",
+  sections: { wallets: "Wallets", notifications: "Notifications", credits: "Credits Settings" },
+  logout: "Logout",
   back: "back to Account Settings",
   close: "Close",
   checking: "Checking your session…",

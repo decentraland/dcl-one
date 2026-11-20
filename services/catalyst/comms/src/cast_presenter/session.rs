@@ -770,6 +770,16 @@ impl Session {
                     tracing::warn!(presentation = %self.id, "navigate dropped: no render thread free");
                 }
             },
+            Command::VideoPlay(video_index) => {
+                // The slide still lists its videos, so the play control is
+                // live in the clients: answer it instead of staying silent.
+                let scene_id = self.state.lock().await.scene_id.clone();
+                let packet =
+                    wire::encode_packet(&wire::video_unavailable_message(video_index), &scene_id);
+                if let Err(e) = self.bot.publish_data(packet).await {
+                    tracing::warn!(presentation = %self.id, "error broadcast failed: {e}");
+                }
+            }
             Command::Unsupported(kind) => {
                 tracing::info!(presentation = %self.id, kind, "command not supported by this node");
             }

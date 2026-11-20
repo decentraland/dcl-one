@@ -8,7 +8,7 @@ import {
   Scripts,
   ScrollRestoration,
   useRouteLoaderData,
-  useLocation,
+  useMatches,
 } from "react-router";
 
 // The shared tokens, not foundations.css: the Inter faces are the app's own (@ui/atoms/inter.css, through primitives.css).
@@ -25,14 +25,13 @@ import ChromeNavBridge from "@/features/components/chrome/ChromeNavBridge";
 import RoutePending, { NAV_PENDING_SCRIPT } from "@/features/components/chrome/RoutePending";
 import EmbedBridge from "@/features/components/chrome/EmbedBridge";
 import { reloadingForAccount } from "@/features/components/chrome/explorer-host";
-import SyncEngineBridge from "@/features/components/creator-hub/SyncEngineBridge";
 import NotFoundPage from "@/features/not-found/NotFoundPage";
 import StatusPage from "@ui/components/StatusPage";
 import { EMBED_BOOT_SCRIPT } from "@ui/web/frames/embed";
 import { ThumbnailPublicBase } from "@ui/data/thumbnail";
 import type { ShouldRevalidateFunctionArgs } from "react-router";
 import { pageSid, parseCookies, publicResponseContext, sessionMiddleware } from "@/core/lib/telemetry/session";
-import { SitesLocaleContext, sitesLanguage, type SitesLocale } from "@ui/web/frames/sites-locale";
+import { SitesLocaleContext, sitesLanguage, type SitesLocale, type SitesLocaleHandle } from "@ui/web/frames/sites-locale";
 import { readWallet } from "@/data/lib/auth/wallet-cookie";
 import { browserCatalystBase } from "@/data/lib/catalyst/bases";
 import { isCommitteeMember } from "@/data/lib/catalyst/creator-hub/committee-membership.server";
@@ -132,7 +131,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [selectedLocale, setLocale] = useState<SitesLocale>();
   const homeData = useRouteLoaderData("routes/_index") as { locale?: SitesLocale } | undefined;
   const locale = selectedLocale ?? homeData?.locale ?? data?.locale ?? "en";
-  const { pathname } = useLocation();
+  const localized = useMatches().some(({ handle }) => (handle as SitesLocaleHandle | undefined)?.sitesLocalized === true);
   const publicEnv = JSON.stringify({
     thirdwebClientId: data?.thirdwebClientId ?? "",
     walletConnectProjectId: data?.walletConnectProjectId ?? "",
@@ -151,7 +150,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     // The docs theme boot script sets data-docs-theme* on <html> before hydration.
-    <html lang={pathname === "/" ? locale : "en"} suppressHydrationWarning>
+    <html lang={localized ? locale : "en"} suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -323,7 +322,6 @@ export default function App() {
           <Outlet />
           <EmbedBridge />
           <SignInModalHost />
-          <SyncEngineBridge />
         </ChromeNavBridge>
       </ChromeAuthBridge>
     </QueryClientProvider>
@@ -389,13 +387,11 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
     }
   }, [isRouteError, routeStatus, name, message, stack]);
 
-  if (isRouteError) {
-    return <RouteErrorView error={error} />;
-  }
-
-  // Every visitor gets the branded 500 screen, the dev server's too (dev and prod serve
-  // alike); the trace goes to the client-error report above.
-  return <StatusPage status={500} />;
+  return (
+    <div lang="en">
+      {isRouteError ? <RouteErrorView error={error} /> : <StatusPage status={500} />}
+    </div>
+  );
 }
 
 function RouteErrorView({

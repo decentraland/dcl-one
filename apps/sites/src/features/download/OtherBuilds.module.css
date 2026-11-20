@@ -1,0 +1,24 @@
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dcl-space-4);
+  margin-top: var(--dcl-space-8);
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-body-sm);
+}
+.build {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dcl-space-4);
+  /* A 44px touch target: the row is a set of small glyphs. */
+  min-width: 44px;
+  height: 44px;
+  padding: 0 var(--dcl-space-12);
+  border-radius: var(--dcl-radius-full);
+  color: var(--dcl-neutrals-white);
+  text-decoration: none;
+}
+.build:hover { background: var(--dcl-bg-hover); }
+.build:focus-visible { outline: 2px solid var(--dcl-neutrals-white); outline-offset: 2px; }
