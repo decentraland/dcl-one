@@ -4,7 +4,7 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue};
 use catalyst_comms::gatekeeper::auth::verify_wallet_signed_fetch;
 use catalyst_comms_e2e::gatekeeper::{scene_adapter_metadata, signed_path};
 use catalyst_comms_e2e::identity::{Identity, now_ms};
-use dcl_auth::signed_fetch::{FIVE_MINUTES, SignedPath};
+use dcl_auth::signed_fetch::{SIGNED_FETCH_WINDOW_SECS, SignedPath};
 
 fn headers(pairs: Vec<(String, String)>) -> HeaderMap {
     let mut map = HeaderMap::new();
@@ -87,7 +87,7 @@ async fn a_stale_fetch_is_refused() {
         &scene_fetch(
             &identity,
             &signed_path(ROUTE),
-            now_ms() - (FIVE_MINUTES + 1) * 1000,
+            now_ms() - (SIGNED_FETCH_WINDOW_SECS + 1) * 1000,
         ),
         "post",
         &served(),
