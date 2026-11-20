@@ -641,7 +641,9 @@ impl Referral {
                 // tier keeps one hourly request. Moved rows keep their order a
                 // microsecond apart, and the responder goes last so the next
                 // reply comes from another row. The predicates imply
-                // referral_progress_reward_due_idx.
+                // referral_progress_reward_due_idx. "New" means never deferred:
+                // a grant first held back by a ban check or a missing key has a
+                // retry time and gathers too, which only delays the tier's POSTs.
                 let gather = if previous.is_none() {
                     "0"
                 } else {

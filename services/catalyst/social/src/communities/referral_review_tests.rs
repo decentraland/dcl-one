@@ -1408,6 +1408,41 @@ async fn stub_referral(
     )
 }
 
+/// A referral whose rewards backend always reports an empty supply, and the
+/// beneficiaries it was asked for, in order.
+async fn recording_stub(
+    pool: &sqlx::PgPool,
+) -> (
+    Referral,
+    Arc<std::sync::Mutex<Vec<String>>>,
+    tokio::task::JoinHandle<()>,
+) {
+    let asked = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let observed = asked.clone();
+    let app = axum::Router::new().route(
+        "/api/rewards",
+        axum::routing::post(move |Json(body): Json<Value>| {
+            let asked = observed.clone();
+            async move {
+                asked
+                    .lock()
+                    .unwrap()
+                    .push(body["beneficiary"].as_str().unwrap().to_string());
+                Json(json!({"ok": true, "data": []}))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let settings = Settings {
+        reward_server_url: Some(url),
+        ..Settings::for_tests()
+    };
+    let referral = Referral::new(pool.clone(), Outbound::for_tests(), settings);
+    (referral, asked, server)
+}
+
 /// Insert an unclaimed grant of `tier`, due after `wait` (an interval from
 /// now) or new when `wait` is `None`, and return its invited wallet.
 async fn grant_reward(pool: &sqlx::PgPool, tier: i32, wait: Option<&str>) -> Address {
@@ -1520,29 +1555,7 @@ async fn an_empty_reward_supply_rotates_the_row_it_asks() {
         return;
     };
     let pool = database.pool.clone();
-    let asked = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-    let observed = asked.clone();
-    let app = axum::Router::new().route(
-        "/api/rewards",
-        axum::routing::post(move |Json(body): Json<Value>| {
-            let asked = observed.clone();
-            async move {
-                asked
-                    .lock()
-                    .unwrap()
-                    .push(body["beneficiary"].as_str().unwrap().to_string());
-                Json(json!({"ok": true, "data": []}))
-            }
-        }),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let settings = Settings {
-        reward_server_url: Some(url),
-        ..Settings::for_tests()
-    };
-    let referral = Referral::new(pool.clone(), Outbound::for_tests(), settings);
+    let (referral, asked, server) = recording_stub(&pool).await;
     for _ in 0..3 {
         grant_reward(&pool, 5, None).await;
     }
@@ -1669,32 +1682,11 @@ async fn an_empty_reward_supply_still_asks_older_rows_while_grants_arrive() {
         return;
     };
     let pool = database.pool.clone();
-    let asked = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-    let observed = asked.clone();
-    let app = axum::Router::new().route(
-        "/api/rewards",
-        axum::routing::post(move |Json(body): Json<Value>| {
-            let asked = observed.clone();
-            async move {
-                asked
-                    .lock()
-                    .unwrap()
-                    .push(body["beneficiary"].as_str().unwrap().to_string());
-                Json(json!({"ok": true, "data": []}))
-            }
-        }),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let settings = Settings {
-        reward_server_url: Some(url),
-        ..Settings::for_tests()
-    };
-    let referral = Referral::new(pool.clone(), Outbound::for_tests(), settings);
-    let older = wallet();
+    let (referral, asked, server) = recording_stub(&pool).await;
+    // The provider is asked for the referrer, so record that wallet.
+    let older_referrer = wallet();
     sqlx::query("INSERT INTO social.referral_progress(referrer,invited_user,status,tier_granted,reward_tier,reward_retry_at) VALUES($1,$2,'tier_granted',true,5,timezone('UTC', now()) + interval '30 minutes')")
-        .bind(&older).bind(wallet()).execute(&pool).await.unwrap();
+        .bind(&older_referrer).bind(wallet()).execute(&pool).await.unwrap();
 
     // A new grant every twenty minutes for three hours, in ten-minute steps.
     let mut grants = 0;
@@ -1710,7 +1702,7 @@ async fn an_empty_reward_supply_still_asks_older_rows_while_grants_arrive() {
     assert!(
         asked
             .iter()
-            .any(|beneficiary| beneficiary == older.as_str()),
+            .any(|beneficiary| beneficiary == older_referrer.as_str()),
         "the older row is asked"
     );
     assert_eq!(
