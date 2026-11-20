@@ -846,6 +846,10 @@ class DevTest(unittest.TestCase):
         for key in ('MARKETPLACE_MIRRORS_ENABLED', 'MARKETPLACE_NFT_INDEX_ENABLED', 'LAND_AUTHZ_INDEX_ENABLED',
                     'SHOP_RENTALS_INDEX_ENABLED', 'MARKETPLACE_COMMITTEE_INDEX_ENABLED'):
             self.assertEqual(env[key], 'true', key)
+        # The mirror posture's pause between index passes, and the tag naming dev stacks in the RPC's logs.
+        self.assertEqual(env['MARKETPLACE_INDEX_INTERVAL_SECS'], '30')
+        for key in ('ETH_RPC_URL', 'RPC_ENDPOINT_POLYGON'):
+            self.assertTrue(env[key].endswith('?project=dcl-one-dev'), key)
         self.assertTrue(env['MATIC_COLLECTIONS_SUBGRAPH_URL'].startswith('https://'))
         self.assertIn('index', dev.project({**self.config, 'profile': 'mirror'})['processes'])
         self.assertNotIn('index', dev.project(self.config)['processes'])
@@ -881,6 +885,8 @@ class DevTest(unittest.TestCase):
         # On-chain cancels and executions close local trades: the trade-events index walks the testnets.
         self.assertEqual(env['MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'], 'true')
         self.assertEqual((env['MARKETPLACE_INDEX_CHAIN_ID_MATIC'], env['MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM']), ('80002', '11155111'))
+        # A trade signed into the stack closes within seconds: the testnet keeps the binary's pause, not the mirror's.
+        self.assertEqual((env['MARKETPLACE_INDEX_INTERVAL_SECS'], mirror['MARKETPLACE_INDEX_INTERVAL_SECS']), ('5', '30'))
         self.assertEqual(mirror['MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'], 'false')
         self.assertNotIn('MARKETPLACE_INDEX_CHAIN_ID_MATIC', mirror)
         # The NFT index knows mainnet's contracts only, so it does not walk the testnets.
