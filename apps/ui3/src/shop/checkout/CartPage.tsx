@@ -300,7 +300,7 @@ function CartScreen() {
                 title={broadcasting ? "A purchase from this cart is still being confirmed" : "A purchase from this cart didn't finish"}
                 action={
                   <span className="shop-cart__actions">
-                    <Button size="sm" onClick={() => void co.resume()} disabled={!co.account || (!broadcasting && !co.canResume)} data-testid="resume-checkout">
+                    <Button size="sm" onClick={() => void (broadcasting ? co.checkAgain() : co.resume())} disabled={!co.account || (!broadcasting && !co.canResume)} data-testid="resume-checkout">
                       {broadcasting ? "Check again" : "Resume"}
                     </Button>
                     {!broadcasting ? (

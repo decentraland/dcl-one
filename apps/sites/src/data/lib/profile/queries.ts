@@ -4,22 +4,27 @@ import { fetchCommunityProfiles } from "@ui/data/hooks/useCommunityProfiles";
 
 import type { AuthIdentity } from "../auth/types";
 import {
+  fetchProfileAssetCount,
   fetchProfileAssets,
   fetchProfileCreations,
+  fetchWornCollectibles,
   type AssetCategory,
   type CollectiblePage,
   type CreationsCategory,
+  type OptionalAssetCategory,
 } from "../catalyst/marketplace/profile-collectibles";
 import { fetchFavoritePlaces, fetchProfilePlaces } from "../catalyst/places/profile-places";
 import { fetchUserBadges } from "../catalyst/social/badges";
 import { fetchPhoto, fetchUserPhotos } from "../catalyst/social/photos";
-import { fetchMyCommunities } from "../catalyst/social/profile-communities";
+import { fetchMemberCommunities, fetchMyCommunities } from "../catalyst/social/profile-communities";
+import { fetchReferralProgress } from "../catalyst/social/referrals";
 import {
   fetchProfile,
   isEthAddress,
   mapProfile,
   normalizeAddress,
 } from "../catalyst/social/profile";
+import { fetchProfileFlags } from "./flags";
 
 /** Page sizes the profile reads use. Creations, assets and photos load more a page at a time; photos keep the profile site's 24. */
 export const PROFILE_COLLECTIBLES_PAGE = 24;
@@ -31,6 +36,9 @@ export const DEFAULT_CREATIONS_CATEGORY: CreationsCategory = "wearable";
 /** The Sites root default, declared here so a loader's dehydrated data and the page agree on freshness. */
 export const PROFILE_STALE_MS = 30_000;
 
+/** The server reads the rollout flags once a minute; the page asks no more often. */
+export const PROFILE_FLAGS_STALE_MS = 60_000;
+
 /** Public keys are `["profile", part, address]`; the member's own reads sit under `["private", account, ...]`. */
 export const profileKeys = {
   all: ["profile"] as const,
@@ -41,6 +49,10 @@ export const profileKeys = {
   /** `all` is the unfiltered list. */
   assets: (address: string, category: AssetCategory | null) =>
     ["profile", "assets", normalizeAddress(address), category ?? "all"] as const,
+  assetCount: (address: string, category: OptionalAssetCategory) =>
+    ["profile", "asset-count", normalizeAddress(address), category] as const,
+  /** The catalogue cards of a set of worn items; the same set, in the same order, is one entry. */
+  wornCollectibles: (urns: readonly string[]) => ["profile", "worn-collectibles", [...urns]] as const,
   places: (address: string) => ["profile", "places", normalizeAddress(address)] as const,
   photos: (address: string) => ["profile", "photos", normalizeAddress(address)] as const,
   /** One snapshot by id, for a link to a photo past the pages loaded. */
@@ -49,12 +61,17 @@ export const profileKeys = {
   /** The wallets behind a list of places, sorted so the same set is one entry. */
   placeOwners: (addresses: readonly string[]) =>
     ["profile", "place-owners", [...new Set(addresses.map(normalizeAddress))].sort()] as const,
+  communities: (address: string) => ["profile", "communities", normalizeAddress(address)] as const,
   myCommunities: (account: string) =>
     ["private", normalizeAddress(account), "profile", "communities"] as const,
   myFavoritePlaces: (account: string) =>
     ["private", normalizeAddress(account), "profile", "favorite-places"] as const,
   /** The owner's own gallery, private snapshots included; its pages live under the same key. */
   myPhotos: (account: string) => ["private", normalizeAddress(account), "profile", "photos"] as const,
+  myReferralProgress: (account: string) =>
+    ["private", normalizeAddress(account), "profile", "referral-progress"] as const,
+  /** The rollout flags a profile reads; the same for every visitor. */
+  flags: () => ["profile", "flags"] as const,
 };
 
 /** Reads only run for a wallet address; anything else is a profile that cannot exist. */
@@ -109,6 +126,23 @@ export const assetsQuery = (address: string, category: AssetCategory | null) =>
       ),
     getNextPageParam: nextCollectiblesPage,
   });
+
+export const assetCountQuery = (address: string, category: OptionalAssetCategory) =>
+  queryOptions({
+    queryKey: profileKeys.assetCount(address, category),
+    staleTime: PROFILE_STALE_MS,
+    queryFn: ({ signal }) => fetchProfileAssetCount(normalizeAddress(address), category, { signal }),
+  });
+
+/** The catalogue cards of the collectibles an avatar wears. */
+export const wornCollectiblesQuery = (urns: readonly string[]) => {
+  const queryKey = profileKeys.wornCollectibles(urns);
+  return queryOptions({
+    queryKey,
+    staleTime: PROFILE_STALE_MS,
+    queryFn: ({ signal }) => fetchWornCollectibles(queryKey[2], { signal }),
+  });
+};
 
 export const placesQuery = (address: string) =>
   queryOptions({
@@ -176,10 +210,34 @@ export const myFavoritePlacesQuery = (identity: AuthIdentity) =>
     queryFn: ({ signal }) => fetchFavoritePlaces(identity, { limit: PROFILE_PLACES_LIMIT }, { signal }),
   });
 
-/** The identity signs the request and is never cached; the key names only its account. */
-export const myCommunitiesQuery = (identity: AuthIdentity) =>
-  queryOptions({
-    queryKey: profileKeys.myCommunities(identity.signer),
+/**
+ * A wallet's communities. Signed by that wallet's own identity it is every community of the member,
+ * with its members count and privacy, under the account's private key; otherwise it is the public,
+ * listed ones anyone sees. The identity signs the request and is never cached, and another wallet's
+ * identity is never sent.
+ */
+export const communitiesQuery = (address: string, identity: AuthIdentity | null = null) => {
+  const owner = signsFor(identity, address) ? identity : undefined;
+  return queryOptions({
+    queryKey: owner ? profileKeys.myCommunities(owner.signer) : profileKeys.communities(address),
     staleTime: PROFILE_STALE_MS,
-    queryFn: ({ signal }) => fetchMyCommunities(identity, { signal }),
+    queryFn: ({ signal }) =>
+      owner ? fetchMyCommunities(owner, { signal }) : fetchMemberCommunities(normalizeAddress(address), { signal }),
+  });
+};
+
+/** The member's own referral progress; signed like the communities read, and keyed by account. */
+export const referralProgressQuery = (identity: AuthIdentity) =>
+  queryOptions({
+    queryKey: profileKeys.myReferralProgress(identity.signer),
+    staleTime: PROFILE_STALE_MS,
+    queryFn: ({ signal }) => fetchReferralProgress(identity, { signal }),
+  });
+
+/** The rollout flags: the loader seeds them on a document request, the browser reads them otherwise. */
+export const profileFlagsQuery = () =>
+  queryOptions({
+    queryKey: profileKeys.flags(),
+    staleTime: PROFILE_FLAGS_STALE_MS,
+    queryFn: ({ signal }) => fetchProfileFlags({ signal }),
   });

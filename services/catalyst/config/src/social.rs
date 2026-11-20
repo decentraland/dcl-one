@@ -494,6 +494,11 @@ pub struct SocialConfig {
     )]
     pub private_messages_room_id: String,
 
+    /// Give a local preview scene (a `b64-` id or a `preview`/`localpreview`
+    /// realm) a Genesis scene token without a deployed scene behind it.
+    #[arg(long, env = "ALLOW_LOCAL_PREVIEW", default_value_t = false, action = clap::ArgAction::Set)]
+    pub allow_local_preview: bool,
+
     /// The one wallet that may mint the authoritative-server host token; unset refuses /get-server-scene-adapter.
     #[arg(long, env = "AUTHORITATIVE_SERVER_ADDRESS")]
     pub authoritative_server_address: Option<String>,
@@ -535,9 +540,11 @@ pub struct SocialConfig {
     #[arg(long, env = "COMMS_LAND_OPERATORS_URL")]
     pub comms_land_operators_url: Option<String>,
 
-    /// The linker-server lease document (`[{addresses, plots}]`) whose
-    /// holders administer the scenes on their plots (the mirror posture's:
-    /// Decentraland's published list); empty lists no lease holder.
+    /// The linker-server lease document (`[{addresses, plots, startDate?,
+    /// endDate?, onlyDev?}]`) whose holders administer the scenes on their
+    /// plots while an entry is within its dates (`onlyDev` entries only on a
+    /// Sepolia `ETH_NETWORK`; the mirror posture's: Decentraland's published
+    /// list); empty lists no lease holder.
     #[arg(long, env = "LEASE_AUTHORIZATIONS_URL", default_value = "")]
     pub lease_authorizations_url: String,
 

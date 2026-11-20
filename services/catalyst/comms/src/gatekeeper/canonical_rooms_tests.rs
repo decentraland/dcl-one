@@ -792,6 +792,58 @@ async fn canonical_relay_world_rooms_keep_world_policy_deployment_bans_and_host_
     );
 }
 
+/// A ban of the world scene is answered 403 apart from the world's own 401,
+/// whichever key the permission core found it under.
+#[tokio::test]
+async fn a_world_scene_ban_at_the_adapter_is_answered_apart_from_the_world_refusal() {
+    use crate::access::{Access, Ban};
+    let key = random_key();
+    let metadata = serde_json::json!({
+        "signer": "dcl:explorer", "realmName": "mixed.dcl.eth", "sceneId": "SceneA",
+    })
+    .to_string();
+    for (access, expected) in [
+        (
+            Access::Banned(Ban::Scene),
+            (403, crate::gatekeeper::moderation::store::SCENE_BANNED_MSG),
+        ),
+        (
+            Access::NotAllowed,
+            (
+                401,
+                "Access denied, you are not authorized to access this world",
+            ),
+        ),
+    ] {
+        let Some(pool) = scratch().await else { return };
+        sqlx::query(
+            "INSERT INTO worlds.worlds (name) VALUES ('mixed.dcl.eth') ON CONFLICT DO NOTHING",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // The platform and scene-key bans are read from the store; the
+        // world's own answer is the stub's.
+        let mut state = comms_state(pool, with_authoritative(AUTHORITATIVE_KEY));
+        state.scenes = Arc::new(Catalogue);
+        state.presence.complete_empty_fixture();
+        state.policy = Arc::new(StubPolicy {
+            access: Ok(access),
+            ..StubPolicy::default()
+        });
+        let err = handlers::get_scene_adapter(
+            State(Arc::new(state)),
+            at("/get-scene-adapter"),
+            signed(&key, "post", "/get-scene-adapter", &metadata).await,
+            writes_on(),
+            axum::body::Bytes::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!((err.code, err.message.as_str()), expected);
+    }
+}
+
 #[tokio::test]
 async fn canonical_adapter_rejects_malformed_signed_keys_and_cross_world_deployments() {
     let state = Arc::new(canonical_state());

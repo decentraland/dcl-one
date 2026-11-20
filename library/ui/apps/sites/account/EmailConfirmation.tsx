@@ -1,6 +1,6 @@
+import { Button } from '@dcl/one-ui'
 import { useId, type ReactNode } from 'react'
 import decentralandLogo from '../assets/dcl-logo.svg'
-import { Button } from '../../../components/Button/Button'
 import styles from './EmailConfirmation.module.css'
 
 type EmailConfirmationSource = 'account' | 'credits'

@@ -33,7 +33,9 @@ type EventDetailModalProps = {
   jumpIn?: JumpIn
   remind?: RemindControl
   calendarHref?: string
-  shareUrl: string
+  shareUrl?: string
+  actions?: ReactNode
+  feedback?: ReactNode
   onClose: () => void
 }
 
@@ -225,10 +227,12 @@ function EventDetailModal(props: EventDetailModalProps) {
               <GeneralAddToCalendar size={20} aria-hidden="true" />
             </a>
           ) : null}
-          <CopyLink url={shareUrl} />
+          {shareUrl ? <CopyLink url={shareUrl} /> : null}
+          {props.actions}
         </div>
       </Hero>
       <div className={styles.body}>
+        {props.feedback}
         {description ? (
           <>
             <h3 className={styles.label}>{text('What to expect')}</h3>

@@ -34,9 +34,9 @@ describe("asking the reader to sign in", () => {
 
   it("keeps a reader mid-task on the page, in the sign-in modal", async () => {
     const store = await import("./signin-store");
-    store.openSignIn({ inPlace: true, redirectTo: "/create/storage?step=edit" });
+    store.openSignIn({ inPlace: true, redirectTo: "/create/preview?step=edit" });
     expect(assign).not.toHaveBeenCalled();
-    expect(store.takePendingRedirect()).toBe("/create/storage?step=edit");
+    expect(store.takePendingRedirect()).toBe("/create/preview?step=edit");
   });
 
   it("leaves the Explorer's own sign-in, and the desktop shell's modal, as they were", async () => {

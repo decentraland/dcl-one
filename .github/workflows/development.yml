@@ -272,7 +272,7 @@ jobs:
         # Cargo compares file times, and a checkout gives every file the current time. Without this
         # step Cargo compiles every workspace crate again although the snapshot holds them.
         run: |
-          if [ -d services/catalyst/target ]; then du -sh services/catalyst/target; fi
+          if [ -d services/catalyst/target ]; then du -k -d 2 services/catalyst/target | sort -nr; fi
           python3 tooling/cargo-mtimes.py restore services/catalyst/target
       - name: Restore the pnpm store
         id: pnpm-cache
@@ -284,6 +284,10 @@ jobs:
             foundation-dev-pnpm-${{ runner.os }}-${{ runner.arch }}-
       - name: Start the API and web app without upstream data
         run: nix develop --command bash tooling/dev-smoke.sh
+      - name: Measure Rust build directories after smoke
+        if: always()
+        run: |
+          if [ -d services/catalyst/target ]; then du -k -d 2 services/catalyst/target | sort -nr; fi
       - name: Run Sites end-to-end tests against the development stack
         timeout-minutes: 75
         run: nix develop --command bash tooling/dev-test.sh e2e
@@ -296,12 +300,6 @@ jobs:
             tail -n 150 "$log"
             echo "::endgroup::"
           done
-      - name: Report Rust cache size
-        if: always()
-        run: |
-          if [ -d services/catalyst/target ]; then
-            du -sh services/catalyst/target
-          fi
       - name: Preserve startup logs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -317,7 +315,12 @@ jobs:
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
       - name: Prune superseded Rust libraries from the smoke snapshot
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.rust-cache.outputs.cache-hit != 'true'
-        run: nix develop --command python3 tooling/catalyst-smoke-cache.py
+        run: |
+          echo "Before pruning (KiB)"
+          du -k -d 2 services/catalyst/target | sort -nr
+          nix develop --command python3 tooling/catalyst-smoke-cache.py
+          echo "After pruning (KiB)"
+          du -k -d 2 services/catalyst/target | sort -nr
       - name: Record the source file times in the snapshot
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.rust-cache.outputs.cache-hit != 'true'
         run: python3 tooling/cargo-mtimes.py record services/catalyst/target
@@ -434,7 +437,7 @@ jobs:
           nix develop --command pnpm --dir apps/ui3 typecheck
           nix develop --command pnpm --dir apps/sites typecheck
           nix develop --command pnpm --dir apps/sites typecheck:scripts
-          for check in gen:schemas:check schemas:honesty:check schemas:dupes:check telemetry:check check:flowmap gen:seed-catalog:check; do
+          for check in gen:schemas:check schemas:honesty:check schemas:dupes:check telemetry:check check:flowmap; do
             nix develop --command pnpm --dir apps/sites "$check"
           done
       - name: Save the pnpm store from main

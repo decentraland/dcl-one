@@ -1,7 +1,7 @@
+import { Button } from '@dcl/one-ui'
 import { useId, type ReactNode } from 'react'
 import helpGirl from '../assets/help/help_girl.webp'
 import { AnimatedBackground } from '../shared/AnimatedBackground/AnimatedBackground'
-import { Button } from '../../../components/Button/Button'
 import styles from './HelpChatBanner.module.css'
 
 type HelpChatBannerProps = {

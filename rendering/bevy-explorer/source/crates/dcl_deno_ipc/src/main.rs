@@ -3,7 +3,7 @@
 use anyhow::Result;
 use bevy::{
     log::{
-        debug, info,
+        debug, error, info,
         tracing_subscriber::{self, EnvFilter},
         warn,
     },
@@ -131,7 +131,13 @@ async fn scene_ipc_in(
             warn!("scene_ipc_in exit on truncated message: {e}");
             break;
         }
-        let msg: EngineToScene = rmp_serde::from_slice(&buffer).unwrap();
+        let msg: EngineToScene = match rmp_serde::from_slice(&buffer) {
+            Ok(msg) => msg,
+            Err(e) => {
+                error!("scene_ipc_in exit on undecodable message: {e}");
+                break;
+            }
+        };
 
         match msg {
             EngineToScene::NewScene(id, new_scene_info) => {

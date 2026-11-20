@@ -306,6 +306,28 @@ pub fn state_message(state: &PresentationState) -> String {
     .expect("state serializes")
 }
 
+/// Upstream's `broadcastError` for a play that failed:
+/// `{"type":"presentation:error","code":"video-playback-failed","message":..,"videoIndex":..}`.
+pub fn video_unavailable_message(video_index: Option<u64>) -> String {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Failure {
+        code: &'static str,
+        message: &'static str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        video_index: Option<u64>,
+    }
+    serde_json::to_string(&Typed {
+        kind: "presentation:error",
+        body: &Failure {
+            code: "video-playback-failed",
+            message: "Video playback is not available on this server",
+            video_index,
+        },
+    })
+    .expect("error serializes")
+}
+
 /// `{"type":"presentation:stopped","id":<id>}`.
 pub fn stopped_message(id: &str) -> String {
     #[derive(Serialize)]
@@ -356,7 +378,10 @@ pub enum Command {
     GetState,
     Stop,
     Overlay(OverlayPatch),
-    /// `presentation:video:*` and `presentation:presenter:claim`: known to
+    /// `presentation:video:play` with its `videoIndex`: this node plays no
+    /// video, and says so with upstream's error event.
+    VideoPlay(Option<u64>),
+    /// The other `presentation:video:*` and `presentation:presenter:claim`: known to
     /// upstream, not acted on here (no video playback, no client composition).
     Unsupported(String),
 }
@@ -387,8 +412,10 @@ pub fn parse_command(message: &serde_json::Map<String, Value>) -> Option<Command
             let patch = parse_overlay_update(message)?;
             (!patch.is_empty()).then_some(Command::Overlay(patch))
         }
-        kind @ ("presentation:video:play"
-        | "presentation:video:pause"
+        "presentation:video:play" => Some(Command::VideoPlay(
+            message.get("videoIndex").and_then(Value::as_u64),
+        )),
+        kind @ ("presentation:video:pause"
         | "presentation:video:stop"
         | "presentation:presenter:claim") => Some(Command::Unsupported(kind.to_string())),
         _ => None,

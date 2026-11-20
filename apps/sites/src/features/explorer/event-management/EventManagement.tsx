@@ -1,22 +1,27 @@
-import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
-import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router";
 import { sitesFooterCopy } from "@dcl/one-ui/apps/sites/chrome/footer-copy";
+import { EventDetailModal } from "@dcl/one-ui/apps/sites/events/DetailModal";
+import { Dialog } from "@dcl/one-ui/apps/sites/events/Dialog";
+import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
+import { CardImage } from "@dcl/one-ui/components/CardImage/CardImage";
+import { useQueryClient } from "@tanstack/react-query";
+import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
+import { useEffect, useId, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router";
 import SitesChrome from "@ui/web/frames/SitesChrome";
 import { useAuth } from "@/data/lib/auth/context";
 import { getIdentity } from "@/data/lib/auth/session";
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { CatalystError } from "@/data/lib/catalyst/client";
+import { invalidateEventsAfterWrite } from "@/data/lib/catalyst/places/events-page";
 import { openSignIn } from "../../components/auth/signin-store";
 import {
-  EVENT_PERMISSIONS, loadEventProfile, loadEventProfiles, loadManagedEvents,
+  EVENT_PERMISSIONS, loadEventProfile, loadEventProfiles, loadModerationEvents, loadOwnedEvents,
   moderateEvent, saveEventPermissions, type EventProfile, type ManagedEvent,
 } from "@/data/lib/catalyst/places/event-management";
 import styles from "./EventManagement.module.css";
 
 type Mode = "mine" | "pending" | "users";
 const PAGE_SIZE = 25;
-const TITLES: Record<Mode, string> = { mine: "My Hangouts", pending: "Hangout moderation", users: "User permissions" };
 const message = (error: unknown) => error instanceof Error ? error.message : "The request could not be completed.";
 const has = (profile: EventProfile | null, permission: string) => profile?.permissions.includes(permission) ?? false;
 const canModerate = (profile: EventProfile | null) => has(profile, "approve_any_event") || has(profile, "edit_any_event");
@@ -75,9 +80,43 @@ export default function EventManagement({ mode }: { mode: Mode }) {
   return <ManagementSession key={`${identity?.signer.toLowerCase() ?? "anonymous"}:${mode}`} identity={identity} mode={mode} />;
 }
 
-type Read = { key: string; events: ManagedEvent[]; hasMore: boolean; error?: string };
+function ModerationCards({ events, onOpen }: { events: ManagedEvent[]; onOpen: (event: ManagedEvent) => void }) {
+  const { locale, text } = useEventsCopy();
+  const statusPrefix = useId();
+  return (
+    <ul className={styles.pendingGrid}>
+      {events.map((event) => {
+        const start = event.next_start_at ?? event.start_at;
+        const statusId = `${statusPrefix}-${event.id}`;
+        return (
+          <li key={event.id}>
+            <button className={styles.pendingCard} data-pending={!event.approved} type="button" aria-label={event.name} aria-describedby={statusId} onClick={() => onOpen(event)}>
+              <span className={styles.pendingCover}>
+                <CardImage className={styles.pendingImage} src={event.image} alt="" />
+                <span className={styles.pendingChips}>
+                  {start && <time dateTime={start}>{new Date(start).toLocaleDateString(locale, { month: "short", day: "numeric" })}</time>}
+                  <span className={styles.pendingStatus} id={statusId}>{text(event.approved ? "Approved" : "Pending")}</span>
+                </span>
+              </span>
+              <span className={styles.pendingDetails}>
+                <span className={styles.pendingName}>{event.name}</span>
+                {event.user_name && <span>{text("By")} {event.user_name}</span>}
+              </span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+type Read = { key: string; events: ManagedEvent[]; recentlyApproved?: ManagedEvent[]; hasMore: boolean; error?: string };
 function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdentity | null }) {
   const { locale, text, errorText } = useEventsCopy();
+  const navigate = useNavigate();
+  const rejectionTitle = useId();
+  const client = useQueryClient();
+  const [review, setReview] = useState<ManagedEvent | null>(null);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
@@ -112,7 +151,10 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
     const current = latestIdentity.current;
     if (!current || !allowed || mode === "users") return;
     const controller = new AbortController();
-    loadManagedEvents(current, { own: mode === "mine", offset: page * PAGE_SIZE, limit: PAGE_SIZE, search: query }, controller.signal).then(
+    const request = mode === "pending"
+      ? loadModerationEvents(current, controller.signal)
+      : loadOwnedEvents(current, { offset: page * PAGE_SIZE, limit: PAGE_SIZE, search: query }, controller.signal);
+    request.then(
       (data) => { if (!controller.signal.aborted) setRead({ key, ...data }); },
       (error: unknown) => { if (!controller.signal.aborted) setRead({ key, events: [], hasMore: false, error: message(error) }); },
     );
@@ -128,17 +170,37 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
-  function resetSelection() { setRejection(null); setFeedback(null); setEditingProfile(false); }
+  function resetSelection() { setReview(null); setRejection(null); setFeedback(null); setEditingProfile(false); }
   function changePage(next: number) { resetSelection(); setPage(next); }
+
+  function openReview(event: ManagedEvent) {
+    setFeedback(null);
+    setRejection(null);
+    setReview(event);
+  }
+
+  function openRejection(event: ManagedEvent) {
+    setFeedback(null);
+    setReview(null);
+    setRejection({ id: event.id, name: event.name, reason: "" });
+  }
+
+  function closeReview() {
+    if (busy) return;
+    setReview(null);
+    setFeedback(null);
+  }
 
   async function applyModeration(id: string, action: "approve" | "reject", reason?: string) {
     const signer = getIdentity();
     if (!signer || signer.signer.toLowerCase() !== identity?.signer.toLowerCase()) { openSignIn(); return; }
+    if (busy) return;
     setBusy(true); setFeedback(null);
     try {
       await moderateEvent(signer, id, action, reason);
+      void invalidateEventsAfterWrite(client);
       if (!mounted.current) return;
-      setRejection(null); setVersion((previous) => previous + 1);
+      setReview(null); setRejection(null); setVersion((previous) => previous + 1);
       setFeedback(action === "approve" ? "Hangout approved." : "Hangout rejected.");
     } catch (error) { if (mounted.current) setFeedback(message(error)); }
     finally { if (mounted.current) setBusy(false); }
@@ -165,11 +227,26 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
     setAddress(profile?.user ?? ""); setPermissions(profile?.permissions ?? []); setEditingProfile(true);
   }
 
+  const reviewCanModerate = review && !review.approved && (mode === "mine" || has(access.profile, "approve_any_event"));
+  const rejectionFields = rejection && (
+    <>
+      <h2 id={rejectionTitle}>{text("Reject {name}", { name: rejection.name })}</h2>
+      {mode === "pending" && feedback && <p role="alert">{errorText(feedback)}</p>}
+      <label className={styles.label}>{text("Reason")}
+        <textarea className={styles.input} maxLength={500} value={rejection.reason} onChange={(event) => setRejection({ ...rejection, reason: event.target.value })} />
+      </label>
+      <div className={styles.moderationActions}>
+        <Button variant="tertiary" disabled={busy} onClick={() => { setFeedback(null); setRejection(null); }}>{text("Cancel")}</Button>
+        <Button disabled={busy || !rejection.reason.trim()} onClick={() => { void applyModeration(rejection.id, "reject", rejection.reason); }}>{text("Confirm rejection")}</Button>
+      </div>
+    </>
+  );
+
   return (
-    <SitesChrome active="whatson" footerCopy={sitesFooterCopy[locale]}>
-      <main className={styles.root}>
-        <EventNavigation profile={access.profile} canManageUsers={canManageUsers} />
-        <h1>{mode === "mine" ? text("My Hangouts") : TITLES[mode]}</h1>
+    <SitesChrome active="whatson" headerSurface={mode === "pending" ? "overlay" : "solid"} overlayNav={mode === "pending"} footerCopy={sitesFooterCopy[locale]}>
+      <main className={mode === "pending" ? styles.pendingRoot : styles.root}>
+        {mode !== "pending" && <EventNavigation profile={access.profile} canManageUsers={canManageUsers} />}
+        <h1 id={mode === "pending" ? "pending-events-heading" : undefined}>{mode === "users" ? "User permissions" : text(mode === "mine" ? "My Hangouts" : "Pending Events")}</h1>
         {!identity ? (
           <div>
             <p>{mode === "mine" ? text("Sign in to manage your hangouts.") : "Sign in to continue."}</p>
@@ -182,17 +259,29 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
             : "Your account does not have permission to manage this area."}</p>
           : (
             <>
-              <label className={styles.label}>
-                {mode === "mine" ? text("Search hangouts") : mode === "users" ? "Search wallets" : "Search hangouts"}
-                <input className={styles.input} type="search" value={search} disabled={busy} onChange={(event) => { resetSelection(); setSearch(event.target.value); }} />
-              </label>
-              {search.trim().length > 0 && search.trim().length < 3 && <p>{text("Enter at least three characters to search.")}</p>}
-              {feedback && <p role="status">{errorText(feedback)}</p>}
+              {mode !== "pending" && <>
+                <label className={styles.label}>
+                  {mode === "mine" ? text("Search hangouts") : "Search wallets"}
+                  <input className={styles.input} type="search" value={search} disabled={busy} onChange={(event) => { resetSelection(); setSearch(event.target.value); }} />
+                </label>
+                {search.trim().length > 0 && search.trim().length < 3 && <p>{text("Enter at least three characters to search.")}</p>}
+              </>}
+              {feedback && !review && !(mode === "pending" && rejection) && <p role="status">{errorText(feedback)}</p>}
               {loading ? <p role="status">{text("Loading…")}</p> : current?.error && mode !== "users" ? (
                 <div>
                   <p role="alert">{errorText(current.error)}</p>
                   <button className={styles.button} onClick={() => setVersion((previous) => previous + 1)}>{text("Retry")}</button>
                 </div>
+              ) : mode === "pending" ? (
+                <>
+                  <section aria-labelledby="pending-events-heading">
+                    {events.length > 0 ? <ModerationCards events={events} onOpen={openReview} /> : <p className={styles.pendingEmpty}>{text("No events waiting for approval")}</p>}
+                  </section>
+                  <section className={styles.recentlyApproved} aria-labelledby="recently-approved-heading">
+                    <h2 id="recently-approved-heading">{text("Recently Approved")} <span>{text("(Last 24hs)")}</span></h2>
+                    <ModerationCards events={current?.recentlyApproved ?? []} onOpen={openReview} />
+                  </section>
+                </>
               ) : mode === "users" ? (
                 <>
                   <button className={styles.button} onClick={() => editProfile()}>Add permissions for a wallet</button>
@@ -221,12 +310,12 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
                             <p>{event.description}</p>
                             <p>{event.start_at ? new Date(event.start_at).toLocaleString(locale) : text("Date not published")} · {event.world ? event.server || text("World location not published") : `${event.x},${event.y}`}</p>
                             <p>{text(event.rejected ? "Rejected" : event.approved ? "Approved" : "Pending review")}{event.rejection_reason ? `: ${event.rejection_reason}` : ""}</p>
-                            {(mode === "mine" || has(access.profile, "edit_any_event")) && <Link className={styles.link} to={`/events/edit-event/${encodeURIComponent(event.id)}`}>{text("Edit hangout")}</Link>}
+                            <Link className={styles.link} to={`/events/edit-event/${encodeURIComponent(event.id)}`}>{text("Edit hangout")}</Link>
                             {event.approved && <Link className={styles.link} to={`/events?id=${encodeURIComponent(event.id)}`}>{text("View hangout")}</Link>}
                             {mayApprove && (
                               <div>
-                                <button className={styles.button} disabled={busy} onClick={() => { void applyModeration(event.id, "approve"); }}>{text("Approve {name}", { name: event.name })}</button>
-                                <button className={styles.button} disabled={busy} onClick={() => setRejection({ id: event.id, name: event.name, reason: "" })}>{text("Reject {name}", { name: event.name })}</button>
+                                <button className={styles.button} disabled={busy} onClick={() => openReview(event)}>{text("Approve {name}", { name: event.name })}</button>
+                                <button className={styles.button} disabled={busy} onClick={() => openRejection(event)}>{text("Reject {name}", { name: event.name })}</button>
                               </div>
                             )}
                           </div>
@@ -234,24 +323,38 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
                       );
                     })}
                   </ul>
-                  {events.length === 0 && <p>{mode === "mine" ? text("No hangouts found. Create your first hangout to get started.") : "No pending hangouts on this page."}</p>}
+                  {events.length === 0 && <p>{text("No hangouts found. Create your first hangout to get started.")}</p>}
                 </>
               )}
-              <nav className={styles.pager} aria-label={text("Hangout pages")}>
+              {mode !== "pending" && <nav className={styles.pager} aria-label={text("Hangout pages")}>
                 <button className={styles.button} disabled={page === 0 || loading || busy} onClick={() => changePage(page - 1)}>{text("Previous page")}</button>
                 <span>{text("Page {page}", { page: page + 1 })}</span>
                 <button className={styles.button} disabled={!more || loading || busy} onClick={() => changePage(page + 1)}>{text("Next page")}</button>
-              </nav>
-              {rejection && (
-                <section className={styles.editor} aria-label={text("Reject {name}", { name: rejection.name })}>
-                  <h2>{text("Reject {name}", { name: rejection.name })}</h2>
-                  <label className={styles.label}>{text("Reason")}
-                    <textarea className={styles.input} maxLength={500} value={rejection.reason} onChange={(event) => setRejection({ ...rejection, reason: event.target.value })} />
-                  </label>
-                  <button className={styles.button} disabled={busy || !rejection.reason.trim()} onClick={() => { void applyModeration(rejection.id, "reject", rejection.reason); }}>{text("Confirm rejection")}</button>
-                  <button className={styles.button} disabled={busy} onClick={() => setRejection(null)}>{text("Cancel")}</button>
-                </section>
+              </nav>}
+              {review && (
+                <EventDetailModal
+                  title={review.name}
+                  image={review.image}
+                  live={false}
+                  when={review.start_at ? { label: new Date(review.start_at).toLocaleString(locale), dateTime: review.start_at } : undefined}
+                  location={{ world: review.world, label: review.world ? review.server || text("World location not published") : `${review.x},${review.y}` }}
+                  description={review.description ?? undefined}
+                  creator={review.user_name ? { name: review.user_name } : undefined}
+                  onClose={closeReview}
+                  feedback={feedback && <p role="alert">{errorText(feedback)}</p>}
+                  actions={<>
+                    {mode === "pending" && has(access.profile, "edit_any_event") && <Button variant="tertiary" disabled={busy} onClick={() => navigate(`/events/edit-event/${encodeURIComponent(review.id)}`)}>{text("Edit Event")}</Button>}
+                    {mode === "pending" && reviewCanModerate && <Button variant="tertiary" disabled={busy} onClick={() => openRejection(review)}>{text("Reject")}</Button>}
+                    {mode === "mine" && <Button variant="tertiary" disabled={busy} onClick={closeReview}>{text("Cancel")}</Button>}
+                    {reviewCanModerate && <Button disabled={busy} onClick={() => { void applyModeration(review.id, "approve"); }}>{text("Approve event")}</Button>}
+                  </>}
+                />
               )}
+              {rejectionFields && (mode === "pending"
+                ? <Dialog labelledBy={rejectionTitle} onClose={() => { if (!busy) { setFeedback(null); setRejection(null); } }}>
+                    <div className={styles.rejectDialog}>{rejectionFields}</div>
+                  </Dialog>
+                : <section className={styles.editor} aria-labelledby={rejectionTitle}>{rejectionFields}</section>)}
               {editingProfile && (
                 <section className={styles.editor} aria-label="Edit user permissions">
                   <h2>Edit user permissions</h2>

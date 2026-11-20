@@ -33,6 +33,7 @@ import {
   getDeepLinkTarget,
   getExplorerDeeplink,
   getSigninDeeplink,
+  identityBindingFor,
   isBridgeOnlyEnabled,
   isDeepLinkFlowEnabled,
   isValidUuidV4,
@@ -577,7 +578,12 @@ function AuthRequestPage({ loaded }: { loaded: LoadedRequest }) {
         createIdentity: (sender) =>
           createIdentityFor(sender, { expirationMs: DEEPLINK_IDENTITY_EXPIRATION_MS }),
         postIdentity: (identity) =>
-          handoffWithDeadline((opts) => postIdentityHandoff(identity, loaded.authApiUrl, opts)),
+          handoffWithDeadline((opts) =>
+            postIdentityHandoff(identity, loaded.authApiUrl, {
+              ...opts,
+              authRequestId: identityBindingFor(loaded),
+            }),
+          ),
         isUserRejection,
       });
 
@@ -601,7 +607,14 @@ function AuthRequestPage({ loaded }: { loaded: LoadedRequest }) {
           return;
       }
     });
-  }, [phase, loaded.loginMethod, loaded.authApiUrl]);
+  }, [
+    phase,
+    loaded.loginMethod,
+    loaded.authApiUrl,
+    loaded.deepLinkIdValid,
+    loaded.id,
+    loaded.target,
+  ]);
 
   const onRetryClientLogin = useCallback(() => {
     if (loaded.deepLinkIdValid) {

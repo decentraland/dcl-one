@@ -17,11 +17,12 @@ export type TxReceipt = {
   blockNumber: bigint;
 };
 
+/** Each read takes an optional `signal`: a reader that honours it lets the read go once it is aborted (a deadline passed). */
 export type ChainReader = {
-  call(chainId: ChainId, to: string, data: Hex): Promise<Hex>;
-  receipt(chainId: ChainId, txHash: string): Promise<TxReceipt | null>;
-  balance(chainId: ChainId, address: string): Promise<bigint>;
-  code(chainId: ChainId, address: string): Promise<Hex>;
+  call(chainId: ChainId, to: string, data: Hex, signal?: AbortSignal): Promise<Hex>;
+  receipt(chainId: ChainId, txHash: string, signal?: AbortSignal): Promise<TxReceipt | null>;
+  balance(chainId: ChainId, address: string, signal?: AbortSignal): Promise<bigint>;
+  code(chainId: ChainId, address: string, signal?: AbortSignal): Promise<Hex>;
 };
 
 export class RpcError extends Error {
@@ -43,24 +44,29 @@ export function createRpcReader(opts: { url?: (chainId: ChainId) => string | nul
   const urlFor = opts.url ?? rpcUrl;
   const fetchImpl = opts.fetchImpl ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
 
-  async function rpc<T>(chainId: ChainId, method: string, params: unknown[]): Promise<T> {
+  async function rpc<T>(chainId: ChainId, method: string, params: unknown[], signal?: AbortSignal): Promise<T> {
     const url = urlFor(chainId);
     if (!url) throw new RpcError(`No RPC is configured for chain ${chainId}`);
     const res = await fetchImpl(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: nextId++, method, params }),
+      ...(signal ? { signal } : {}),
     });
-    if (!res.ok) throw new RpcError(`RPC ${method} answered HTTP ${res.status}`);
+    if (!res.ok) {
+      // An error's body is let go, never left open: a reader that polls would leak one stream per failed read.
+      void res.body?.cancel().catch(() => undefined);
+      throw new RpcError(`RPC ${method} answered HTTP ${res.status}`);
+    }
     const body = (await res.json()) as RpcResponse;
     if (body.error) throw new RpcError(body.error.message ?? `RPC ${method} failed`, body.error.code ?? null, body.error.data ?? null);
     return body.result as T;
   }
 
   return {
-    call: (chainId, to, data) => rpc<Hex>(chainId, "eth_call", [{ to, data }, "latest"]),
-    async receipt(chainId, txHash) {
-      const raw = await rpc<{ transactionHash: Hex; status: Hex; blockNumber: Hex } | null>(chainId, "eth_getTransactionReceipt", [txHash]);
+    call: (chainId, to, data, signal) => rpc<Hex>(chainId, "eth_call", [{ to, data }, "latest"], signal),
+    async receipt(chainId, txHash, signal) {
+      const raw = await rpc<{ transactionHash: Hex; status: Hex; blockNumber: Hex } | null>(chainId, "eth_getTransactionReceipt", [txHash], signal);
       if (!raw) return null;
       return {
         transactionHash: raw.transactionHash,
@@ -68,8 +74,8 @@ export function createRpcReader(opts: { url?: (chainId: ChainId) => string | nul
         blockNumber: BigInt(raw.blockNumber),
       };
     },
-    balance: async (chainId, address) => BigInt(await rpc<Hex>(chainId, "eth_getBalance", [address, "latest"])),
-    code: (chainId, address) => rpc<Hex>(chainId, "eth_getCode", [address, "latest"]),
+    balance: async (chainId, address, signal) => BigInt(await rpc<Hex>(chainId, "eth_getBalance", [address, "latest"], signal)),
+    code: (chainId, address, signal) => rpc<Hex>(chainId, "eth_getCode", [address, "latest"], signal),
   };
 }
 

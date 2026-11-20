@@ -913,6 +913,21 @@ async fn realm_about_keeps_the_upstream_shape_and_reflects_the_sync_state() {
     let node = node_without_db(Settings::for_tests(Sources::defaults())).await;
     let app = router(node.state.clone());
 
+    let ping = app
+        .clone()
+        .oneshot(
+            axum::http::Request::get("/realm-provider-ea/ping")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ping.status(), StatusCode::OK);
+    assert_eq!(
+        axum::body::to_bytes(ping.into_body(), 64).await.unwrap(),
+        "/ping"
+    );
+
     let (status, ours) = call_json(&app, "GET", "/realm-provider-ea/main/about", None).await;
     assert_eq!(status, StatusCode::OK);
     let theirs: Value = serde_json::from_str(include_str!("about-upstream.json")).unwrap();

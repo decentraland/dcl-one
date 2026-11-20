@@ -17,6 +17,14 @@ export { ShopNameCard, type ShopNameCardProps } from './ShopNameCard'
 export { ShopNameTile, type ShopNameTileProps } from './ShopNameTile'
 export { ShopNames, type ShopNameStatus, type ShopNamesProps, type ShopNamesTab } from './ShopNames'
 export { pressedWith, type PressedWith } from './pressedWith'
-export { ShopPurchaseDialog, type ShopPurchaseDialogProps, type ShopPurchaseItem, type ShopPurchaseStep } from './ShopPurchaseDialog'
+export {
+  ShopPurchaseDialog,
+  type ShopCreditsChoice,
+  type ShopManaChoice,
+  type ShopPaymentMethod,
+  type ShopPurchaseDialogProps,
+  type ShopPurchaseItem,
+  type ShopPurchaseStep
+} from './ShopPurchaseDialog'
 export { CreditsIcon } from './CreditsIcon'
 export { ShopCart, ShopCartBadge, ShopCartToast, type ShopCartLine, type ShopCartProps } from './ShopCart'

@@ -85,17 +85,22 @@ pub(super) fn unified_selection(
         alternatives.push(format!("mv.contract_address = ANY({p})"));
     }
     if !items.is_empty() {
-        let mut item_contracts: Vec<String> = items
-            .iter()
-            .filter_map(|id| id.rsplit_once('-').map(|(c, _)| c.to_lowercase()))
-            .collect();
-        item_contracts.sort();
-        item_contracts.dedup();
-        let contracts_p = b.bind_strings(&item_contracts);
+        let contracts_p = b.bind_strings(&id_contracts(items));
         let items_p = b.bind_strings(&items.iter().map(|id| id.to_lowercase()).collect::<Vec<_>>());
         alternatives.push(format!("(mv.contract_address = ANY({contracts_p}) AND mv.contract_address || '-' || mv.item_id::text = ANY({items_p}))"));
     }
     Some(format!("({})", alternatives.join(" OR ")))
+}
+
+/// The distinct lowercase contracts of `<contract>-<itemId>` ids.
+pub(super) fn id_contracts(ids: &[String]) -> Vec<String> {
+    let mut contracts: Vec<String> = ids
+        .iter()
+        .filter_map(|id| id.rsplit_once('-').map(|(c, _)| c.to_lowercase()))
+        .collect();
+    contracts.sort();
+    contracts.dedup();
+    contracts
 }
 
 /// The filters every feed shares, over the `mv` alias of [`branch_base`].
@@ -571,7 +576,8 @@ pub fn build_unified_items_sql(
     b
 }
 
-/// The item core restricted to `<contract>-<itemId>` ids; order is the caller's.
+/// The item core restricted to `<contract>-<itemId>` ids, over the open
+/// trades of the ids' contracts only; order is the caller's.
 pub fn build_items_by_ids_sql(
     ids: &[String],
     f: &UnifiedCatalogFilters,
@@ -579,7 +585,13 @@ pub fn build_items_by_ids_sql(
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
-    with_trades(&mut b, since);
+    let now_p = b.bind_time(Utc::now().naive_utc());
+    let since_p = b.bind_opt_time(since);
+    let contracts_p = b.bind_strings(&id_contracts(ids));
+    b.push(&format!(
+        "WITH {} ",
+        unified_trades_cte_of(&now_p, &since_p, Some(&contracts_p))
+    ));
     let core = item_unified_core(&mut b, f, rate);
     let ids_p = b.bind_strings(ids);
     b.push(&format!("SELECT d.* FROM ({core}) d WHERE d.usd_wei > 0 AND (d.contract_address || '-' || d.item_id) = ANY({ids_p})"));
