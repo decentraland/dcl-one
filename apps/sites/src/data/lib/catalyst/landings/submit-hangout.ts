@@ -131,6 +131,8 @@ export function toCreateEventBody(draft: HangoutDraft, original?: EditableHangou
     featured_item: draft.featuredItem?.trim() || null,
     ...(privileged && schedulesChanged ? { schedules: scheduleIds } : {}),
     ...(privileged && (!original || joinUrl !== originalJoinUrl) ? { url: joinUrl } : {}),
+    // As decentraland.org's editor (useCreateEventForm): saving a rejected event sends it back to review.
+    ...(original?.rejected ? { rejected: false } : {}),
   };
 }
 
