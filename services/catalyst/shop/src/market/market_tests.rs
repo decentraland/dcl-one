@@ -447,7 +447,7 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     let pool = state.pool.clone();
     let t = tag();
     let (c1, c2, c_nft) = (contract_of(&t, 1), contract_of(&t, 2), contract_of(&t, 3));
-    let v3_minter = listings::offchain_marketplace_v2(137).unwrap().address;
+    let v3_minter = listings::offchain_marketplace_v3(137).unwrap().address;
 
     let mut collections = vec![
         mirrors::collections::fixture(&c1, "First", CREATOR, true),

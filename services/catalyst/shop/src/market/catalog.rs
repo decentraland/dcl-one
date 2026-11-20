@@ -70,14 +70,11 @@ pub const MAX_NUMERIC_NUMBER: &str =
 /// that gives an nft-order leg its item without an nft table.
 pub use crate::shared::collections::ITEM_SHIFT as ITEM_ID_SHIFT;
 
-/// The chains [`super::trade_events::deployments`] lists.
-const OFFCHAIN_MARKETPLACE_CHAINS: [i64; 4] = [1, 137, 80_002, 11_155_111];
-
 /// The off-chain marketplace contracts of every version, mainnets and
 /// testnets: a collection listing one of them as a minter is what the squid
 /// flagged `search_is_marketplace_v3_minter`.
 pub static OFFCHAIN_MARKETPLACE_MINTERS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    let mut minters: Vec<&str> = OFFCHAIN_MARKETPLACE_CHAINS
+    let mut minters: Vec<&str> = super::trade_events::OFFCHAIN_MARKETPLACE_CHAINS
         .iter()
         .flat_map(|&chain| super::trade_events::deployments(chain))
         .map(|&(address, _, _)| address)
@@ -627,7 +624,12 @@ fn build_offchain_orders_cte(b: &mut Builder, f: &CatalogFilters) {
                   (array_agg(id::text ORDER BY amount_received, created_at DESC, id) FILTER (WHERE type = 'public_item_order'))[1] AS open_item_trade_id, \
                   MIN(amount_received) FILTER (WHERE type = 'public_item_order') AS open_item_trade_price, \
                   MIN(created_at) FILTER (WHERE type = 'public_item_order') AS item_first_listed_at \
-           FROM unified_trades WHERE item_id IS NOT NULL",
+           FROM unified_trades WHERE item_id IS NOT NULL \
+             AND (type <> 'public_item_order' OR EXISTS ( \
+                   SELECT 1 FROM shop.collections mc \
+                   WHERE mc.network = lower(unified_trades.network) \
+                     AND mc.contract_address = lower(contract_address_sent) \
+                     AND lower(trade_contract) = ANY(mc.minters)))",
     );
     if f.only_minting {
         b.push(" AND type = 'public_item_order'");
@@ -1601,6 +1603,18 @@ mod tests {
         .await
         .unwrap();
         let marketplace = listings::offchain_marketplace_v3(137).unwrap();
+        sqlx::query(
+            "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, \
+                 is_approved, is_editable, minters, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ('matic', $1, 137, 'Minter fixture', lower($2), lower($2), $3, true, true, false, ARRAY[$4], 0, 0, 0, now())",
+        )
+        .bind(&contract)
+        .bind(&signer)
+        .bind(format!("urn:decentraland:matic:collections-v2:{contract}"))
+        .bind(marketplace.address.to_lowercase())
+        .execute(pool)
+        .await
+        .unwrap();
         let mut ids = Vec::new();
         for salt in ["0x21", "0x22"] {
             let mut order = test_support::parse(
@@ -1635,22 +1649,35 @@ mod tests {
             .await
             .unwrap();
         }
-        let mut b = Builder::new();
-        let now_p = b.bind_time(chrono::Utc::now().naive_utc());
-        let since_p = b.bind_opt_time(None);
-        b.push("WITH ");
-        b.push(&unified_trades_cte(&now_p, &since_p));
-        build_offchain_orders_cte(&mut b, &CatalogFilters::default());
-        let contract_p = b.bind_string(contract.clone());
-        b.push(&format!(
-            " SELECT open_item_trade_id, open_item_trade_price::text FROM offchain_orders \
-              WHERE contract_address_sent = {contract_p}"
-        ));
-        let row: (String, String) = sqlx::query_as_with(sqlx::AssertSqlSafe(b.sql), b.args)
-            .fetch_one(pool)
-            .await
-            .unwrap();
-        assert_eq!(row, (cheap, "5".to_string()));
+        let open_item_orders = || async {
+            let mut b = Builder::new();
+            let now_p = b.bind_time(chrono::Utc::now().naive_utc());
+            let since_p = b.bind_opt_time(None);
+            b.push("WITH ");
+            b.push(&unified_trades_cte(&now_p, &since_p));
+            build_offchain_orders_cte(&mut b, &CatalogFilters::default());
+            let contract_p = b.bind_string(contract.clone());
+            b.push(&format!(
+                " SELECT open_item_trade_id, open_item_trade_price::text FROM offchain_orders \
+                  WHERE contract_address_sent = {contract_p}"
+            ));
+            sqlx::query_as_with::<_, (String, String), _>(sqlx::AssertSqlSafe(b.sql), b.args)
+                .fetch_optional(pool)
+                .await
+                .unwrap()
+        };
+        assert_eq!(open_item_orders().await, Some((cheap, "5".to_string())));
+
+        // A marketplace the collection does not list as a minter cannot sell its items.
+        sqlx::query(
+            "UPDATE shop.collections SET minters = ARRAY['0x0000000000000000000000000000000000000001'] \
+             WHERE network = 'matic' AND contract_address = $1",
+        )
+        .bind(&contract)
+        .execute(pool)
+        .await
+        .unwrap();
+        assert_eq!(open_item_orders().await, None);
 
         for id in &ids {
             sqlx::query("DELETE FROM shop.trades WHERE id = $1::uuid")
@@ -1659,10 +1686,15 @@ mod tests {
                 .await
                 .unwrap();
         }
-        sqlx::query("DELETE FROM shop.items WHERE contract_address = $1")
-            .bind(&contract)
-            .execute(pool)
-            .await
-            .unwrap();
+        for delete in [
+            "DELETE FROM shop.items WHERE contract_address = $1",
+            "DELETE FROM shop.collections WHERE contract_address = $1",
+        ] {
+            sqlx::query(delete)
+                .bind(&contract)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
     }
 }
