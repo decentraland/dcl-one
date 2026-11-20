@@ -34,8 +34,8 @@ const SAMPLE_MS = 250
 const POLL_MS = 500
 const READY_TIMEOUT_MS = 180_000
 const IN_WORLD_TIMEOUT_MS = 300_000
-/** `/avatar_demo cap`'s ceiling: every demo avatar and the player (`debug_avatars.rs`). */
-const CAP_ALL = 1025
+/** `/avatar_demo cap`'s highest number (`debug_avatars.rs`); `all` is no cap. */
+const MAX_CAP = 1025
 /** `/avatar_demo spawn`'s population ceiling (`MAX_DEMOS`). */
 const MAX_DEMOS = 1024
 
@@ -74,8 +74,8 @@ function seconds(name: string, value: string): number {
 
 const counts = list(values.counts).map(Number)
 if (counts.some((n) => !Number.isInteger(n) || n < 0 || n > MAX_DEMOS)) throw new Error(`--counts takes integers from 0 to ${MAX_DEMOS}`)
-const caps = list(values.caps).map((cap) => (cap === 'all' ? CAP_ALL : Number(cap)))
-if (caps.some((cap) => !Number.isInteger(cap) || cap < 1 || cap > CAP_ALL)) throw new Error(`--caps takes integers from 1 to ${CAP_ALL}, or all`)
+const caps = list(values.caps).map((cap): number | 'all' => (cap === 'all' ? 'all' : Number(cap)))
+if (caps.some((cap) => cap !== 'all' && (!Number.isInteger(cap) || cap < 1 || cap > MAX_CAP))) throw new Error(`--caps takes integers from 1 to ${MAX_CAP}, or all`)
 const emotes = list(values.emotes)
 const nametags = list(values.nametags).map((value) => {
   if (value !== 'on' && value !== 'off') throw new Error('--nametags takes on, off, or on,off for both')
@@ -117,7 +117,7 @@ interface DemoReply {
   built: number
   shown: number
   drawn: number
-  cap: number
+  cap: number | 'all'
   emote: string
 }
 
@@ -173,7 +173,7 @@ try {
     return world.inWorld ? true : undefined
   })
   const first = await run<DemoReply>('/avatar_demo clear')
-  if (typeof first !== 'object' || typeof first.cap !== 'number') {
+  if (typeof first !== 'object' || first.cap === undefined) {
     throw new Error(`/avatar_demo is unavailable (scene preview mode is needed): ${JSON.stringify(first)}`)
   }
   before = { emote: first.emote, nametags: (await run<{ visible: boolean }>('/nametags')).visible }
@@ -218,7 +218,7 @@ try {
             shown: after.shown,
             drawn: after.drawn,
             loadSeconds,
-            cap: cap === CAP_ALL ? 'all' : cap,
+            cap,
             emote,
             nametags: tags ? 'on' : 'off',
             layout: values.layout,

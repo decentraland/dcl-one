@@ -16,8 +16,32 @@ use crate::{nametag::NametagContent, AvatarProcessed, AvatarSelection, AvatarSha
 
 /// Enough to find where frame time breaks down, well past the Max Avatars setting's range.
 const MAX_DEMOS: usize = 1024;
-/// The highest session cap `/avatar_demo cap` takes: every demo avatar and the player.
+/// The highest number `/avatar_demo cap` takes: every demo avatar and the player.
 const MAX_CAP: usize = MAX_DEMOS + 1;
+/// `/avatar_demo cap all`: no cap, so real players and scene avatars count against nothing.
+const UNCAPPED: usize = usize::MAX;
+const DEMO_LAYOUTS: &[(&str, &str)] = &[("Grid", "grid"), ("Around", "around")];
+
+/// `/avatar_demo cap`'s argument: a number, or `all` for no cap.
+fn parse_cap(value: &str) -> Result<usize, String> {
+    match value {
+        "all" => Ok(UNCAPPED),
+        _ => value
+            .parse::<usize>()
+            .ok()
+            .filter(|cap| (1..=MAX_CAP).contains(cap))
+            .ok_or_else(|| format!("choose a cap from 1 to {MAX_CAP}, or all")),
+    }
+}
+
+/// A cap as the reply gives it: `all` for no cap.
+fn cap_json(cap: usize) -> serde_json::Value {
+    if cap == UNCAPPED {
+        json!("all")
+    } else {
+        json!(cap)
+    }
+}
 /// Demo avatars stand in a square grid in front of the player, this many to a row. A row fills
 /// from its centre outwards, so the first avatar stands straight ahead.
 const GRID_COLUMNS: u64 = 32;
@@ -112,10 +136,14 @@ impl Plugin for DebugAvatarsPlugin {
                 fields: &[
                     ("Spawned demo avatars", "count"),
                     ("Built demo avatars", "built"),
+                    ("Shown (not hidden by the cap)", "shown"),
+                    ("Drawn in a view this frame", "drawn"),
                     ("Max avatars this session", "cap"),
                 ],
                 actions: &[
+                    ("Show every avatar", "/avatar_demo cap all"),
                     ("Use the Max Avatars setting", "/avatar_demo cap"),
+                    ("New crowd each time", "/avatar_demo seed"),
                     ("Destroy demo avatars", "/avatar_demo clear"),
                     ("Destroy random number", "/avatar_demo remove-random"),
                     ("Randomize demo wearables", "/avatar_demo randomize"),
@@ -134,6 +162,22 @@ impl Plugin for DebugAvatarsPlugin {
                         kind: DebugInputKind::Number {
                             min: 1.0,
                             max: MAX_CAP as f64,
+                            step: 1.0,
+                        },
+                    },
+                    DebugInput {
+                        label: "Where new demo avatars stand",
+                        field: "layout",
+                        command: "/avatar_demo layout {value}",
+                        kind: DebugInputKind::Select(DEMO_LAYOUTS),
+                    },
+                    DebugInput {
+                        label: "Crowd seed (the same looks every session)",
+                        field: "seed",
+                        command: "/avatar_demo seed {value}",
+                        kind: DebugInputKind::Number {
+                            min: 0.0,
+                            max: 999_999_999_999_999.0,
                             step: 1.0,
                         },
                     },
@@ -265,9 +309,10 @@ enum DemoAction {
     Emote {
         name: String,
     },
-    /// Set Max Avatars for this session only, past the setting's range, to measure crowds; no
-    /// value goes back to the setting.
+    /// Set Max Avatars for this session only, past the setting's range, to measure crowds; `all`
+    /// is no cap, and no value goes back to the setting.
     Cap {
+        #[arg(value_parser = parse_cap)]
         max: Option<usize>,
     },
     /// Where new demo avatars stand: `grid` in front of the player, or `around` them.
@@ -301,6 +346,8 @@ fn demo_command(
 ) {
     let Some(Ok(args)) = cmd.take() else { return };
     let mut count = demos.iter().len();
+    // despawned at the end of the frame: not counted in this reply
+    let mut removed = Vec::new();
     let mut rng = rand::thread_rng();
     match args.action {
         Some(DemoAction::MaleOnly { enabled }) => creator.male_only = enabled,
@@ -313,10 +360,6 @@ fn demo_command(
             creator.wearables = wearables;
         }
         Some(DemoAction::Cap { max }) => {
-            if max.is_some_and(|max| !(1..=MAX_CAP).contains(&max)) {
-                cmd.reply_failed(format!("choose a cap from 1 to {MAX_CAP}"));
-                return;
-            }
             // with the session's settings, not in the config: a change to the config is written
             // to the stored one
             session.max_avatars = max;
@@ -336,8 +379,9 @@ fn demo_command(
             } else {
                 rng.gen_range(0..=count)
             };
-            for entity in demos.iter().map(|(e, _)| e).choose_multiple(&mut rng, n) {
-                commands.entity(entity).despawn();
+            removed = demos.iter().map(|(e, _)| e).choose_multiple(&mut rng, n);
+            for entity in &removed {
+                commands.entity(*entity).despawn();
             }
             count -= n;
             if count == 0 {
@@ -448,7 +492,7 @@ fn demo_command(
     // Of those, `shown` are not hidden (by the cap, say) and `drawn` have a mesh in some view
     // this frame, the camera's or a shadow's
     let (mut built, mut shown, mut drawn) = (0, 0, 0);
-    for (entity, _) in &demos {
+    for (entity, _) in demos.iter().filter(|(entity, _)| !removed.contains(entity)) {
         let Some(build) = children
             .get(entity)
             .ok()
@@ -467,7 +511,7 @@ fn demo_command(
             }
         }
     }
-    cmd.reply_ok(json!({"count":count, "built":built, "shown":shown, "drawn":drawn, "cap":session.max_avatars(&config), "sessionCap":session.max_avatars, "layout":creator.layout.name(), "seed":creator.seed, "maleOnly":creator.male_only, "wearables":creator.wearables.join(","), "emote":creator.emote.as_deref().unwrap_or("none")}).to_string());
+    cmd.reply_ok(json!({"count":count, "built":built, "shown":shown, "drawn":drawn, "cap":cap_json(session.max_avatars(&config)), "sessionCap":session.max_avatars.map(cap_json), "layout":creator.layout.name(), "seed":creator.seed, "maleOnly":creator.male_only, "wearables":creator.wearables.join(","), "emote":creator.emote.as_deref().unwrap_or("none")}).to_string());
 }
 
 /// Temporarily render a fetched profile's appearance on the local player.
@@ -586,6 +630,17 @@ mod tests {
         assert_eq!(look(7).1.len(), 8);
         // and different indexes differ
         assert!((0..20).any(|index| look(index) != look(7)));
+    }
+
+    #[test]
+    fn a_cap_is_a_number_in_range_or_all() {
+        assert_eq!(parse_cap("all"), Ok(UNCAPPED));
+        assert_eq!(parse_cap("20"), Ok(20));
+        assert_eq!(parse_cap(&MAX_CAP.to_string()), Ok(MAX_CAP));
+        assert!(parse_cap("0").is_err());
+        assert!(parse_cap(&(MAX_CAP + 1).to_string()).is_err());
+        assert_eq!(cap_json(UNCAPPED), json!("all"));
+        assert_eq!(cap_json(20), json!(20));
     }
 
     #[test]
