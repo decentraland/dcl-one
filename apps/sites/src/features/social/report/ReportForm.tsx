@@ -1,5 +1,5 @@
 // The report form: one form with decentraland.org's fields, copy and order; the submission goes through the node (data/lib/catalyst/landings/report.ts).
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 
 import { Button, CheckboxLabel, InputWebCreatorTools, WebSelect, WebTextarea } from "@dcl/one-ui";
@@ -210,14 +210,11 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
     setReattachEvidence(saved.hadEvidence);
   }, [reportedParam, returnTo]);
 
-  useEffect(
-    () =>
-      onBeforeBrowserSignIn((destination) => {
-        if (destination !== returnTo) return;
-        saveSignInDraft(returnTo, { reportedAddress, reason, description, comments, hadEvidence: reattachEvidence || evidence.length > 0 });
-      }),
-    [returnTo, reportedAddress, reason, description, comments, reattachEvidence, evidence.length],
-  );
+  const saveBrowserDraft = useEffectEvent((destination: string) => {
+    if (destination !== returnTo) return;
+    saveSignInDraft(returnTo, { reportedAddress, reason, description, comments, hadEvidence: reattachEvidence || evidence.length > 0 });
+  });
+  useEffect(() => onBeforeBrowserSignIn((destination) => saveBrowserDraft(destination)), []);
 
   const [startCtx] = useState(trackCtx);
   useEffect(() => {
@@ -225,6 +222,10 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
   }, [startCtx]);
 
   const mismatch = !!wallet && !!playerParam && wallet.toLowerCase() !== playerParam.toLowerCase();
+  const mismatchAlert = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (mismatch) mismatchAlert.current?.focus();
+  }, [mismatch]);
   const draft: ReportDraft = {
     playerAddress: wallet,
     reportedAddress,
@@ -261,7 +262,7 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
     track("report_review_reached", {}, trackCtx);
     const invalid = Object.entries(errors).flatMap(([field, e]) => (e ? [field] : []));
     if (invalid.length || mismatch) {
-      focusInvalid.current = true;
+      focusInvalid.current = !mismatch;
       track("report_validation_failed", { fields: mismatch ? [...invalid, "player"] : invalid, step: "form" }, trackCtx);
       return;
     }
@@ -296,7 +297,7 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
             </div>
 
             {mismatch && (
-              <div className={styles.mismatch}>
+              <div className={styles.mismatch} ref={mismatchAlert} tabIndex={-1}>
                 The connected wallet does not match the player address. Please connect with the correct wallet to submit this report.
               </div>
             )}

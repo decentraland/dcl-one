@@ -192,6 +192,23 @@ describe("when a signed-in visitor submits an incomplete report", () => {
   });
 });
 
+describe("when the connected wallet does not match the report link", () => {
+  beforeEach(() => {
+    auth.address = "0x1111111111111111111111111111111111111111";
+    auth.isConnected = true;
+    render(
+      <MemoryRouter initialEntries={["/report?player_address=0x2222222222222222222222222222222222222222"]}>
+        <ReportForm trackCtx={{ sid: "sid", story: "report" } as never} />
+      </MemoryRouter>,
+    );
+  });
+
+  it("should focus the wallet warning and prevent submission", () => {
+    expect(document.activeElement).toBe(screen.getByText(/The connected wallet does not match the player address/));
+    expect(screen.getByRole("button", { name: "Submit Report" })).toHaveProperty("disabled", true);
+  });
+});
+
 describe("when the browser has no crypto.randomUUID", () => {
   let user: ReturnType<typeof userEvent.setup>;
   let input: HTMLElement;

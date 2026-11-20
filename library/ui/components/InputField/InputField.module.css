@@ -193,12 +193,12 @@
     opacity: 1;
   }
   @media (hover: hover) {
-    .webField:hover:not(:focus-within, [data-invalid], :has(:disabled)) {
+    .webField:hover:not(:focus-within, [data-invalid], :has(> .input:disabled)) {
       background: var(--dcl-transparencies-white-20);
       box-shadow: inset 0 0 0 1px var(--dcl-transparencies-white-60);
     }
   }
-  .nativeField:has(:disabled) {
+  .nativeField:has(> .input:disabled) {
     opacity: 0.4;
   }
   .nativeField .input:disabled {
