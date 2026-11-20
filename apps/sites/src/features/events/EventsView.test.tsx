@@ -79,8 +79,8 @@ function setup(path: string, platform: DetectedPlatform = DESKTOP) {
   return { router, user: userEvent.setup(), client };
 }
 
-// Midday UTC keeps soon(-0.5) on today's column from UTC-11 to UTC+14; only Date is faked so RTL polling runs.
-const NOW = new Date("2026-11-19T12:00:00.000Z");
+// Local midday keeps soon(-0.5) and soon(3) on today's column in any TZ; only Date is faked so RTL polling runs.
+const NOW = new Date(2026, 10, 19, 12);
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
