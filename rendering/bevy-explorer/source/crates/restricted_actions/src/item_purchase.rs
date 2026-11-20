@@ -76,36 +76,26 @@ impl Plugin for ItemPurchasePlugin {
     }
 }
 
-/// 2^256 - 1, the largest item id a collection can hold.
-const UINT256_MAX: &str =
-    "115792089237316195423570985008687907853269984665640564039457584007913129639935";
-
 /// The collection item a scene's urn names: `urn:decentraland:{matic|amoy}:collections-v2:
 /// {contract}:{item id}`, and nothing else. A token id, a third-party collection or trailing
 /// text is refused, so what reaches the HUD is only ever a contract address and a number.
 fn parse_item_urn(urn: &str) -> Option<ItemPurchaseItem> {
+    use alloy_core::primitives::{Address, U256};
+
     let mut parts = urn.strip_prefix("urn:decentraland:")?.split(':');
     let (network, kind, contract, item_id) =
         (parts.next()?, parts.next()?, parts.next()?, parts.next()?);
     if parts.next().is_some() || !matches!(network, "matic" | "amoy") || kind != "collections-v2" {
         return None;
     }
-    let hex = contract.strip_prefix("0x")?;
-    if hex.len() != 40 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return None;
-    }
-    // a uint256 has at most 78 decimal digits; one spelling of each id, the one the Shop takes
-    if item_id.is_empty()
-        || item_id.len() > 78
-        || !item_id.bytes().all(|b| b.is_ascii_digit())
-        || (item_id.len() > 1 && item_id.starts_with('0'))
-        // same length, so the decimal strings order as the numbers do
-        || (item_id.len() == UINT256_MAX.len() && item_id > UINT256_MAX)
-    {
+    let contract: Address = contract.strip_prefix("0x")?.parse().ok()?;
+    // a uint256, in the one spelling the Shop takes
+    let id = U256::from_str_radix(item_id, 10).ok()?;
+    if id.to_string() != item_id {
         return None;
     }
     Some(ItemPurchaseItem {
-        contract: contract.to_ascii_lowercase(),
+        contract: format!("{contract:#x}"),
         item_id: item_id.to_owned(),
     })
 }
@@ -638,7 +628,8 @@ mod tests {
         );
         assert!(parse_item_urn(&URN.replace("matic", "amoy")).is_some());
         assert!(parse_item_urn(&URN.replace(":12", ":0")).is_some());
-        assert!(parse_item_urn(&URN.replace(":12", &format!(":{UINT256_MAX}"))).is_some());
+        let max = alloy_core::primitives::U256::MAX;
+        assert!(parse_item_urn(&URN.replace(":12", &format!(":{max}"))).is_some());
         for bad in [
             "",
             "urn:item",
@@ -662,6 +653,8 @@ mod tests {
             // one spelling of each id
             &URN.replace(":12", ":012"),
             &URN.replace(":12", ":00"),
+            &URN.replace(":12", ":1_2"),
+            &URN.replace(":12", ":+12"),
             &format!("{URN}{}", "0".repeat(77)),
             &format!(" {URN}"),
         ] {
@@ -852,7 +845,6 @@ mod tests {
             app.add_event::<RpcCallEvent>()
                 .add_event::<SystemApi>()
                 .add_event::<PermissionUsed>()
-                .init_resource::<ItemPurchases>()
                 .init_resource::<PermissionManager>()
                 .init_resource::<AppConfig>()
                 .init_resource::<CurrentRealm>()
@@ -860,14 +852,12 @@ mod tests {
                 .init_resource::<LiveScenes>()
                 .init_resource::<PortableScenes>()
                 .init_resource::<Time>()
-                .add_systems(
-                    Update,
-                    (
-                        open_item_purchase,
-                        track_item_purchase.after(open_item_purchase),
-                        write_owed_closed.after(track_item_purchase),
-                    ),
-                );
+                // what the plugin's console commands read
+                .init_resource::<bevy_console::ConsoleConfiguration>()
+                .add_event::<bevy_console::ConsoleCommandEntered>()
+                .add_event::<bevy_console::PrintConsoleLine>()
+                // the plugin itself, so its systems run in the order and set it gives them
+                .add_plugins(ItemPurchasePlugin);
             let player = app
                 .world_mut()
                 .spawn((PrimaryUser::default(), GlobalTransform::default()))
