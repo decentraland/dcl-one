@@ -10,6 +10,9 @@ export type Settlement = "pending" | "indexing" | "confirmed" | "failed" | "time
 
 export type OwnershipCheck = { owner: string; contractAddress: string; itemId: string };
 
+/** The receipt read's interval after the first window: waitForReceipt times its fast phase from each call. */
+const SLOW_POLL_MS = 2_000;
+
 export function useSettlement(
   txs: { hash: string; chainId: number }[],
   opts: { skip?: boolean; attempts?: number; windowMs?: number; ownership?: OwnershipCheck | null } = {},
@@ -25,13 +28,17 @@ export function useSettlement(
       return;
     }
     let cancelled = false;
+    // Leaving the page stops the receipt reads at once, the one in flight and the wait before the next.
+    const stop = new AbortController();
     const attempts = opts.attempts ?? 8;
     const sleep = wait?.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
     const run = async () => {
       const outcomes = await Promise.all(
         txs.map(async (tx) => {
           for (let i = 0; i < attempts && !cancelled; i++) {
-            const receipt = await waitForReceipt(reader, tx.chainId, tx.hash, { timeoutMs: opts.windowMs ?? wait?.timeoutMs ?? 15_000, pollMs: wait?.pollMs, sleep: wait?.sleep });
+            // Only the first window polls fast (waitForReceipt's first 15 s); every later one reads every 2 s.
+            const pollMs = wait?.pollMs ?? (i === 0 ? undefined : SLOW_POLL_MS);
+            const receipt = await waitForReceipt(reader, tx.chainId, tx.hash, { timeoutMs: opts.windowMs ?? wait?.timeoutMs ?? 15_000, pollMs, sleep: wait?.sleep, signal: stop.signal });
             if (receipt) return receipt.status;
           }
           return null;
@@ -51,9 +58,13 @@ export function useSettlement(
       }
       if (!cancelled) setState("timed-out");
     };
-    void run();
+    void run().catch((e: unknown) => {
+      // Stopped by leaving the page: nothing is left to report.
+      if (!cancelled) throw e;
+    });
     return () => {
       cancelled = true;
+      stop.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, opts.skip, ownerKey]);

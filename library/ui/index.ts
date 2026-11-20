@@ -30,6 +30,7 @@ export { Button } from './components/Button/Button'
 export type { ButtonProps } from './components/Button/Button'
 
 export * from './components/CardActionButton/CardActionButton'
+export * from './components/CommunityCard/CommunityCard'
 export * from './components/CopyFeedback/CopyFeedback'
 export * from './components/EventCard/EventCard'
 export * from './components/JumpInCTA/JumpInCTA'

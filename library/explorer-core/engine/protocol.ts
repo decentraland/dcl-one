@@ -280,6 +280,7 @@ export type PageToScene =
   | AcceptWelcomeRequest
   | OpenLegalRequest
   | OpenExternalUrlRequest
+  | GetSatelliteTileRequest
   | TeleportRequest
   | ChangeRealmRequest
   | MinimapConfigRequest
@@ -959,6 +960,25 @@ export interface ExternalUrlOpenedMessage {
   kind: 'externalUrlOpened'
   requestId: number
   ok: boolean
+}
+
+/** One deep-zoom satellite detail tile of the full-screen map. `path` is relative to the tile
+ *  source (`sections/{sx}%2C{sy}/{version}/{level}/{i}%2C{j}.ktx2`); the engine decodes the
+ *  Basis KTX2 file and answers with a SatelliteTileMessage. */
+export interface GetSatelliteTileRequest {
+  kind: 'getSatelliteTile'
+  requestId: number
+  path: string
+}
+
+/** The answer to a GetSatelliteTileRequest: `data` is the tile as base64 JPEG bytes (no `data:`
+ *  prefix) when `ok`; otherwise `error` says why, including a build without tile decoding. */
+export interface SatelliteTileMessage {
+  kind: 'satelliteTile'
+  requestId: number
+  ok: boolean
+  data?: string
+  error?: string
 }
 
 export interface WelcomeAcceptedMessage {
@@ -2604,6 +2624,7 @@ export type SceneToPage =
   | WelcomeMessage
   | WelcomeAcceptedMessage
   | ExternalUrlOpenedMessage
+  | SatelliteTileMessage
   | PlayerPoseMessage
   | RealmInfoMessage
   | SceneInfoMessage

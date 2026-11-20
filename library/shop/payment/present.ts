@@ -84,6 +84,25 @@ export type PaymentPresentation = {
   inconsistencies: Inconsistency[];
 };
 
+/**
+ * Whether Credits and MANA may pay one line together (upstream's 'combined' rail: the MANA option's `mixed`). Off: this
+ * deployment's credits node authorizes a line only at its whole quoted price and reserves that whole charge, so the
+ * partial credit the split asks for is refused ("Price changed", or Insufficient when the balance is short) and the split
+ * could never settle. It is offered again once the node authorizes a partial credit.
+ */
+export const SPLIT_PAYMENT = false;
+
+let splitOffered = SPLIT_PAYMENT;
+
+/** Turns the split on or off (tests of the split turn it on); returns the undo. */
+export function setSplitPayment(on: boolean): () => void {
+  const previous = splitOffered;
+  splitOffered = on;
+  return () => {
+    splitOffered = previous;
+  };
+}
+
 export type PaymentContext = {
   /** The buyer's spendable credit balance, when known. */
   creditsBalance?: UsdCents | null;
@@ -185,7 +204,7 @@ export function presentPayment(offer: PurchaseOffer, session: Session, ctx: Paym
 
   const manaOption = options.find((o) => o.method === "mana");
   const creditsQuote = options.find((o) => o.method === "credits")?.quote;
-  if (!manaOnly && manaOption?.quote?.method === "mana" && creditsQuote?.method === "credits") {
+  if (!manaOnly && splitOffered && manaOption?.quote?.method === "mana" && creditsQuote?.method === "credits") {
     manaOption.mixed = mixedPayment(creditsQuote.quoted, manaOption.quote.amount, ctx);
   }
 

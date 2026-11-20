@@ -2542,3 +2542,205 @@ async fn an_orphaned_reset_becomes_a_revocation_after_an_hour() {
         Some("streaming_key_reset")
     );
 }
+
+/// Every extended holder of a place (LAND-document owner, operator, update
+/// operator, update manager or approved-for-all address, lease holder, a
+/// world-wide grantee) manages its stream access and Cast presenters and is
+/// promoted on join, as upstream's `isSceneOwnerOrAdmin`; an outsider gets the
+/// manager gate's refusal on every route, as does the lease holder on a place
+/// outside its lease. The stub's grantees ignore parcels, so the world case
+/// shows admission, not grant scoping.
+#[tokio::test]
+async fn extended_holders_manage_stream_access_and_cast_presenters() {
+    use crate::gatekeeper::streaming::NOT_AUTHORIZED_TO_STREAM_MSG;
+    use crate::gatekeeper::streaming::cast::{NOT_PRESENTER_ADMIN_MSG, NOT_STREAM_LINK_ADMIN_MSG};
+    // Own database: a revocation whose delivery fails leaves a cleanup row another test's drain would pick up.
+    let Some(database) =
+        crate::db::scratch::OwnedDatabase::new("castholders", crate::db::scratch::Schema::Full, 8)
+            .await
+    else {
+        return;
+    };
+    let pool = database.pool.clone();
+    let holder = address_of(KEY);
+    let lease_scene = genesis_scene();
+    let (lease_url, lease_server) =
+        lease_document(&checksummed(&holder), &lease_scene.parcel).await;
+
+    let genesis = |scene: &Scene| {
+        (
+            resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel),
+            scene_metadata(scene),
+        )
+    };
+    let world = WorldName::parse(&format!("castholders{}.dcl.eth", tag())).unwrap();
+    seed_world(&pool, &world).await;
+    let world_scene = format!("bafkreiholders{}", tag());
+    let world_place = format!("cast-holders-{}", tag());
+    seed_place(
+        &pool,
+        &world_place,
+        json!({"world": true, "world_name": world.display(), "positions": ["5,6"]}),
+        "5,6",
+    )
+    .await;
+    let world_metadata = json!({
+        "signer": SCENE_SIGNER,
+        "sceneId": world_scene,
+        "parcel": "5,6",
+        "realm": {"serverName": world.display(), "hostname": "worlds-content-server.example", "protocol": "v3"},
+    });
+
+    let mut cases = Vec::new();
+    for (role, doc) in extended_land_roles(&holder) {
+        let scene = genesis_scene();
+        seed_genesis_place(&pool, &scene, None).await;
+        cases.push((role, land_policy(doc), genesis(&scene), None));
+    }
+    seed_genesis_place(&pool, &lease_scene, None).await;
+    cases.push((
+        "lease holder",
+        StubPolicy::default(),
+        genesis(&lease_scene),
+        Some(lease_url.clone()),
+    ));
+    cases.push((
+        "world grantee",
+        StubPolicy {
+            grantees: Ok([Address::parse(&holder).unwrap()].into_iter().collect()),
+            ..StubPolicy::default()
+        },
+        (
+            resolved_room(RealmId::World(world.clone()), &world_scene, "5,6"),
+            world_metadata,
+        ),
+        None,
+    ));
+
+    for (role, policy, (room, metadata), lease_url) in cases {
+        let room_name = room.room.clone();
+        let h = harness_tuned(pool.clone(), Some(room), policy, None, |state| {
+            state.settings.lease_authorizations_url = lease_url;
+        })
+        .await;
+        let outsider = async |method: &str, path: &str, message: &str| {
+            let (status, body) = h.signed(OUTSIDER_KEY, method, path, &metadata, None).await;
+            assert_eq!(
+                status,
+                StatusCode::FORBIDDEN,
+                "{role}: outsider {method} {path}"
+            );
+            assert_eq!(
+                body,
+                json!({ "error": message }),
+                "{role}: outsider {method} {path}"
+            );
+        };
+
+        let access = "/scene-stream-access";
+        outsider("GET", access, NOT_AUTHORIZED_TO_STREAM_MSG).await;
+        let (status, body) = h.signed(KEY, "GET", access, &metadata, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{role}: {body}");
+        outsider("POST", access, NOT_AUTHORIZED_TO_STREAM_MSG).await;
+        let (status, body) = h.signed(KEY, "POST", access, &metadata, None).await;
+        assert_eq!(status, StatusCode::OK, "{role}: {body}");
+        outsider("PUT", access, NOT_AUTHORIZED_TO_STREAM_MSG).await;
+        let (status, body) = h.signed(KEY, "PUT", access, &metadata, None).await;
+        assert_eq!(status, StatusCode::OK, "{role} reset: {body}");
+
+        let link = "/cast/generate-stream-link";
+        outsider("GET", link, NOT_STREAM_LINK_ADMIN_MSG).await;
+        let (status, body) = h.signed(KEY, "GET", link, &metadata, None).await;
+        assert_eq!(status, StatusCode::OK, "{role}: {body}");
+
+        let presenter = format!("/cast/presenters/{}", address_of(&random_key()));
+        for (method, path) in [
+            ("GET", "/cast/presenters"),
+            ("PUT", presenter.as_str()),
+            ("DELETE", presenter.as_str()),
+        ] {
+            outsider(method, path, NOT_PRESENTER_ADMIN_MSG).await;
+            let (status, body) = h.signed(KEY, method, path, &metadata, None).await;
+            assert_eq!(status, StatusCode::OK, "{role} {method} {path}: {body}");
+        }
+
+        let add = crate::gatekeeper::streaming::cast::add_admin_presenter_on_join;
+        let stranger = Address::parse(&address_of(OUTSIDER_KEY)).unwrap();
+        assert!(
+            !add(&h.state, &room_name, &stranger).await.unwrap(),
+            "{role}"
+        );
+        let joined = Address::parse(&holder).unwrap();
+        assert!(add(&h.state, &room_name, &joined).await.unwrap(), "{role}");
+
+        // A revocation skips the ban checks but not the manager gate.
+        outsider("DELETE", access, NOT_AUTHORIZED_TO_STREAM_MSG).await;
+        let (status, body) = h.signed(KEY, "DELETE", access, &metadata, None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{role}: {body}");
+    }
+
+    // The lease holder is refused on a place outside its lease document.
+    let unleased = genesis_scene();
+    seed_genesis_place(&pool, &unleased, None).await;
+    let (room, metadata) = genesis(&unleased);
+    // An active stream, so the presenter route reaches its gate.
+    seed_access(
+        &pool,
+        &unleased.place_id,
+        Some(&room.room),
+        chrono::Duration::hours(1),
+    )
+    .await;
+    let h = harness_tuned(
+        pool.clone(),
+        Some(room),
+        StubPolicy::default(),
+        None,
+        |state| {
+            state.settings.lease_authorizations_url = Some(lease_url);
+        },
+    )
+    .await;
+    // A readable document fills the harness's lease cache, so the gate refuses from it.
+    let leases = crate::gatekeeper::admission::scene::try_get_lease_holders_for_parcels;
+    let leased = leases(&h.state, std::slice::from_ref(&lease_scene.parcel))
+        .await
+        .unwrap();
+    assert!(leased.contains(&holder), "{leased:?}");
+    let unleased_holders = leases(&h.state, std::slice::from_ref(&unleased.parcel))
+        .await
+        .unwrap();
+    assert!(unleased_holders.is_empty(), "{unleased_holders:?}");
+    let presenter = format!("/cast/presenters/{}", address_of(&random_key()));
+    for (method, path, message) in [
+        ("GET", "/scene-stream-access", NOT_AUTHORIZED_TO_STREAM_MSG),
+        ("POST", "/scene-stream-access", NOT_AUTHORIZED_TO_STREAM_MSG),
+        ("PUT", "/scene-stream-access", NOT_AUTHORIZED_TO_STREAM_MSG),
+        (
+            "GET",
+            "/cast/generate-stream-link",
+            NOT_STREAM_LINK_ADMIN_MSG,
+        ),
+        ("GET", "/cast/presenters", NOT_PRESENTER_ADMIN_MSG),
+        ("PUT", presenter.as_str(), NOT_PRESENTER_ADMIN_MSG),
+        ("DELETE", presenter.as_str(), NOT_PRESENTER_ADMIN_MSG),
+        (
+            "DELETE",
+            "/scene-stream-access",
+            NOT_AUTHORIZED_TO_STREAM_MSG,
+        ),
+    ] {
+        let (status, body) = h.signed(KEY, method, path, &metadata, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "unleased {method} {path}");
+        assert_eq!(
+            body,
+            json!({ "error": message }),
+            "unleased {method} {path}"
+        );
+    }
+    let add = crate::gatekeeper::streaming::cast::add_admin_presenter_on_join;
+    let joined = Address::parse(&holder).unwrap();
+    assert!(!add(&h.state, &unleased.room, &joined).await.unwrap());
+    lease_server.abort();
+    database.drop().await;
+}

@@ -1,32 +1,58 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { installFakeCms } from "@/data/lib/blog/cms.test-utils";
 
 import { loader } from "./api.blog.search";
 
-afterEach(() => {
-  vi.unstubAllEnvs();
-  vi.unstubAllGlobals();
-});
-
 const req = () => new Request("https://sites.test/api/blog/search?q=news");
 
 describe("GET /api/blog/search", () => {
-  it("answers JSON with a short public cache", async () => {
+  let response: Response;
+
+  beforeEach(() => {
     installFakeCms();
-    const response = await loader({ request: req() });
-    expect(response.status).toBe(200);
-    expect(response.headers.get("Cache-Control")).toBe("public, max-age=60");
-    expect(await response.json()).toMatchObject({ query: "news", total: 9 });
   });
 
-  it("answers an uncached 503 without upstream details when the CMS is not configured", async () => {
-    installFakeCms();
-    vi.stubEnv("BLOG_CMS_URL", "");
-    const response = await loader({ request: req() });
-    expect(response.status).toBe(503);
-    expect(response.headers.get("Cache-Control")).toBe("no-store");
-    expect(response.headers.get("Retry-After")).toBe("300");
-    expect(await response.json()).toEqual({ error: "Blog search unavailable" });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  describe("when the CMS is configured", () => {
+    beforeEach(async () => {
+      response = await loader({ request: req() });
+    });
+
+    it("should answer 200", () => {
+      expect(response.status).toBe(200);
+    });
+
+    it("should set a short public cache", () => {
+      expect(response.headers.get("Cache-Control")).toBe("public, max-age=60");
+    });
+
+    it("should answer the search results as JSON", async () => {
+      expect(await response.json()).toMatchObject({ query: "news", total: 9 });
+    });
+  });
+
+  describe("when the CMS is not configured", () => {
+    beforeEach(async () => {
+      vi.stubEnv("BLOG_CMS_URL", "");
+      response = await loader({ request: req() });
+    });
+
+    it("should answer 503", () => {
+      expect(response.status).toBe(503);
+    });
+
+    it("should not be cached and ask to retry later", () => {
+      expect(response.headers.get("Cache-Control")).toBe("no-store");
+      expect(response.headers.get("Retry-After")).toBe("300");
+    });
+
+    it("should answer an error without upstream details", async () => {
+      expect(await response.json()).toEqual({ error: "Blog search unavailable" });
+    });
   });
 });

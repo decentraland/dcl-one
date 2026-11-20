@@ -107,6 +107,29 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The prices, right-aligned 4px apart: the credits, and under them the MANA equivalent (Figma "Price"). */
+.prices {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.manaPrice {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--silver);
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+/* The MANA mark in Snow, beside the grey amount. */
+.manaPrice > svg {
+  flex: none;
+  color: var(--text);
+}
 .price {
   display: inline-flex;
   flex: none;

@@ -16,6 +16,7 @@ common = { workspace = true }
 console = { workspace = true }
 platform = { workspace = true }
 ipfs = { workspace = true }
+system_bridge = { workspace = true }
 
 bevy = { workspace = true }
 anyhow = { workspace = true }

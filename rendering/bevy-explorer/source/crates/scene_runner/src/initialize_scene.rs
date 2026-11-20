@@ -49,6 +49,7 @@ use crate::{
         SCENE_JS_SPAWN_TICK,
     },
     ring_parcels,
+    scene_lod::Rings,
     scene_partition::camera_facing,
     update_world::{visibility::VisibilityComponent, ComponentTracker},
     vec3_to_parcel, ContainerEntity, DeletedSceneEntities, MobileUiEmulation, OutOfWorld,
@@ -1698,15 +1699,6 @@ pub struct CurrentImposterScene(pub Option<(PointerResult, bool)>);
 #[derive(Resource, Default)]
 pub struct CurrentSceneLoading(pub bool);
 
-/// A scene goes live once its nearest parcel is within this Chebyshev parcel ring of the player's
-/// parcel. A larger load distance widens the live area; a smaller one does not shrink it below
-/// this ring. A negative load distance (no loading by position) turns the ring off too.
-const LIVE_RING: i32 = 1;
-
-/// A live scene is kept until its nearest parcel is past this ring and past the load distance
-/// plus the unload margin.
-const LIVE_KEEP_RING: i32 = 2;
-
 /// How many scenes beyond the player's own, portables, system scenes and the imposter-bake scene
 /// may be loading at once.
 /// The next one spawns when one of them is ready, so the scenes in range come in waves, nearest
@@ -1751,7 +1743,9 @@ pub fn process_scene_lifecycle(
     mut current_scene_loading_res: ResMut<CurrentSceneLoading>,
     startup_scenes: Option<Res<StartupScenes>>,
     time: Res<Time>,
+    config: Res<AppConfig>,
 ) {
+    let rings = Rings::from_config(&config);
     let mut required_scene_ids: HashMap<(String, Option<String>), bool> = HashMap::new();
 
     // add nearby scenes to requirements
@@ -1803,9 +1797,11 @@ pub fn process_scene_lifecycle(
             .map(|(h, u)| ((h, u), false)),
     );
 
-    // the scenes with a parcel within a ring of the player's parcel. Only adds to what the load
-    // distance loads: a negative one (a headless worker fed scenes by its control channel) loads
-    // nothing by position, the ring included
+    // the scenes with a parcel within a ring of the player's parcel. Those of the live ring go
+    // live whatever the load distance: a larger load distance widens the live area, a smaller one
+    // does not shrink it below the ring. The ring only adds to what the load distance loads: a
+    // negative one (a headless worker fed scenes by its control channel) loads nothing by
+    // position, the ring included
     let focus_parcel = vec3_to_parcel(focus.translation());
     let ring_on = range.load >= 0.0;
     let ring_scenes = |ring: i32| {
@@ -1813,7 +1809,7 @@ pub fn process_scene_lifecycle(
         ring_parcels(focus_parcel, if ring_on { ring } else { -1 })
             .filter_map(move |parcel| pointers.get(parcel).and_then(PointerResult::hash_and_urn))
     };
-    required_scene_ids.extend(ring_scenes(LIVE_RING).map(|(h, u)| ((h, u), false)));
+    required_scene_ids.extend(ring_scenes(rings.live.into()).map(|(h, u)| ((h, u), false)));
 
     // add any portables to requirements. Portables are exempt from the
     // current-scene deferral below (see `retain`) so they load immediately
@@ -1848,7 +1844,7 @@ pub fn process_scene_lifecycle(
             None
         }
     }));
-    keep_scene_ids.extend(ring_scenes(LIVE_KEEP_RING));
+    keep_scene_ids.extend(ring_scenes(rings.live_keep.into()));
 
     // record which scene entities we should keep
     let keep_entities: HashMap<_, _> = keep_scene_ids
@@ -1986,7 +1982,7 @@ pub fn process_scene_lifecycle(
     if wave.len() > free && free > 0 {
         let mut parcels_by_hash: HashMap<&str, Vec<IVec2>> = HashMap::new();
         // the parcels in range, and those of the live ring, which the load distance may not reach
-        let live_ring = ring_parcels(focus_parcel, LIVE_RING);
+        let live_ring = ring_parcels(focus_parcel, i32::from(rings.live));
         for parcel in pir.iter().map(|(parcel, _)| *parcel).chain(live_ring) {
             if let Some(PointerResult::Exists { hash, .. }) = pointers.get(parcel) {
                 parcels_by_hash

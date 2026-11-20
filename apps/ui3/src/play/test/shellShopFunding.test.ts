@@ -80,6 +80,7 @@ async function shortOnSites(search: string) {
       primeFlags: async () => {},
       claim: async () => () => {},
       creatorName: async () => null,
+      creatorFace: async () => null,
       manager: (chainId) => ({ chainId, address: MANAGER, name: 'Decentraland Credits', version: '1.0.0' }),
       storage: () => memoryStorage()
     }
