@@ -423,7 +423,9 @@ fn backoff(ms: f64, exponent: f64, max_ms: u64) -> f64 {
 
 impl SyncOrchestratorConfig {
     /// Next stream reconnect delay: a run that ended cleanly, or settled a poll and stayed up
-    /// for a full poll cycle, resets it; any other failed run grows it.
+    /// for a full poll cycle, resets it; any other failed run grows it. A settled poll already
+    /// implies a run of at least the poll wait, so the elapsed check only matters when
+    /// `syncing_reconnect_time_ms` is the larger value.
     fn next_syncing_backoff(
         &self,
         backoff_ms: f64,
