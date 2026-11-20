@@ -18,6 +18,7 @@ import { CART_KEY_PREFIX, CHECKOUT_KEY_PREFIX, createCartStore, type CartStorage
 import type { GroupProgress, GroupStatus } from '@shop/model/purchase'
 import { MAX_PURCHASE_UNITS, OPERATION_STATES, parseLines, TERMINAL_STATES, type ShopLine, type ShopOperationState } from '@dcl/one-ui/apps/shop/shopProtocol'
 import { isManaAttempt, type ManaAttemptRecord } from './manaPurchase'
+import { isSplitSale, type SplitSale } from './splitEvidence'
 
 /** What the buyer is told when a write the purchase depends on was refused: nothing goes without its record. */
 export const STORAGE_REFUSED = "This browser can't keep a record of the purchase right now (its storage is full or blocked), so nothing was bought."
@@ -53,6 +54,11 @@ export interface OperationRecord {
   displays?: PurchaseDisplay[]
   /** Paid in MANA: how far its sale got on each way it was sent (./manaPurchase). A Credits purchase has none. */
   mana?: ManaAttemptRecord
+  /**
+   * Paid with Credits and MANA together: its sale's terms, kept before it was signed (./splitEvidence). Only an execution
+   * carrying exactly these counts as this purchase, live or after a reload.
+   */
+  split?: SplitSale
   createdAt: number
   updatedAt: number
 }
@@ -142,6 +148,7 @@ function isRecord(v: unknown, buyer: string): v is OperationRecord {
     (v.progress === undefined || isProgress(v.progress)) &&
     (v.displays === undefined || (Array.isArray(v.displays) && v.displays.length <= MAX_DISPLAYS && v.displays.every(isDisplay))) &&
     (v.mana === undefined || isManaAttempt(v.mana)) &&
+    (v.split === undefined || isSplitSale(v.split)) &&
     isTime(v.createdAt) &&
     isTime(v.updatedAt)
   )

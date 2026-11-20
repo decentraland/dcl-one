@@ -30,7 +30,7 @@ import { ensureAuthorization, exactAllowanceReady, exactGrantLock, getManaSpendi
 import { pageLocks, webLock as lockIfFree } from '../../../shop/checkout/lib/web-lock'
 import type { RailContext } from '../../../shop/checkout/purchase/rail'
 import { createSpendGuard } from '@shop/checkout/purchase/spend-guard'
-import { fetchUserPurchases, getUsdBalance, type UsdBalance } from '@shop/credits/credits'
+import { fetchUserPurchases, getUsdBalance, type PurchaseRecord, type UsdBalance } from '@shop/credits/credits'
 import type { OfferSource } from '../../../shop/detail/offers'
 import { fetchShopItems } from '@shop/discovery/api'
 import { isResale } from '@shop/market/access-rule'
@@ -85,6 +85,7 @@ import { trustedCreditsManager, type TrustedManager } from './config'
 import { createLedger, STORAGE_REFUSED, type OperationRecord } from './ledger'
 import { createManaFlow, MANA_BALANCE_TIMEOUT_MS } from './manaFlow'
 import { seesMana, seesSplit } from './manaGate'
+import { splitExecution, type SplitSale } from './splitEvidence'
 import { createNamePurchase, nameBuild, namesModeFor, type NameStanding } from './namePurchase'
 import { assertWalletAccount, guardedProvider, WalletRefusal, type PurchaseIntent } from './walletGuard'
 import { hostApiOptions } from '../../../shop/api/host'
@@ -182,6 +183,10 @@ export function createDialogSlot(ui: ShellShopUi): DialogSlot {
 }
 
 /** What a wallet asks its owner to approve: a signature, a transaction, a network to move to. */
+/** A split whose credit the node says another transaction spent: not this item, and not Credits to give back. */
+const SPLIT_SPENT_ELSEWHERE = "This purchase's Credits were spent by another transaction, so this item wasn't bought here."
+const SPLIT_SPENT_ELSEWHERE_PART = 'its Credits were spent by another transaction, so it wasn’t bought here.'
+
 const WALLET_PROMPTS = new Set(['eth_signTypedData_v4', 'eth_signTypedData_v3', 'eth_signTypedData', 'eth_sendTransaction', 'personal_sign', 'eth_sign', 'wallet_switchEthereumChain', 'wallet_addEthereumChain'])
 
 /**
@@ -227,6 +232,8 @@ export interface ShellShopServices {
   watch(deps: CheckoutDeps, progress: GroupProgress): Promise<GroupResult>
   /** The server's record of the operation's own credits: settled, expired unused, or still open. */
   creditRecord(buyer: string, creditIds: string[], client: ShopClient): Promise<'settled' | 'expired' | 'open'>
+  /** The node's record of one credit (its `<salt>:<line>` rows), searched through every page; null when none lists it. */
+  creditRecordOf(buyer: string, creditId: string, client: ShopClient): Promise<PurchaseRecord | null>
   /** The creator's display name, read here (its profile), never taken from the app. */
   creatorName(address: string): Promise<string | null>
   /** The creator's profile picture, read here (its profile), or null while it has none. */
@@ -366,9 +373,21 @@ const LIVE: ShellShopServices = {
   watch: watchGroup,
   creditRecord: async (buyer, creditIds, client) => {
     const { items } = await fetchUserPurchases(buyer, { all: true, first: 50 }, client)
-    const mine = items.filter((p) => creditIds.includes(p.id))
+    // A record's id is its credit's salt and its line (`<salt>:<line>`).
+    const salts = creditIds.map((id) => id.toLowerCase())
+    const mine = items.filter((p) => salts.includes(p.id.split(':')[0]!.toLowerCase()))
     if (mine.some((p) => p.status === 'SETTLED')) return 'settled'
     return mine.length > 0 && mine.every((p) => p.status === 'EXPIRED') ? 'expired' : 'open'
+  },
+  creditRecordOf: async (buyer, creditId, client) => {
+    const salt = creditId.toLowerCase()
+    for (let skip = 0; ; ) {
+      const { items, total } = await fetchUserPurchases(buyer, { all: true, first: 200, skip }, client)
+      const found = items.find((p) => p.id.split(':')[0]!.toLowerCase() === salt)
+      if (found) return found
+      skip += items.length
+      if (items.length === 0 || skip >= total) return null
+    }
   },
   creatorName: async (address) => {
     const avatar = await creatorProfile(address)
@@ -940,8 +959,60 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
 
 
   /** One look at an unsettled operation: true once it settled. Anything it can't read is for the next look. */
+  /**
+   * A handed-off split, found out by its own execution: the hash it was sent as, else the transaction the node indexed its
+   * credit's consumption in, each read and matched against the terms kept before it was signed. Bought only by a match; a
+   * credit the node says was spent by another call is neither released nor this item bought; a reverted execution of its
+   * own, or a credit expired unused (past the index's lag), ends it unbought. Anything unread keeps it pending. Null: not
+   * handed off, for the Credits path to decide.
+   */
+  const checkSplit = async (op: Operation & { buyer: string }, sale: SplitSale, store: CartStore): Promise<boolean | null> => {
+    const progress = latest(store.getSnapshot().checkout?.groups[0] ?? null, op.progress ?? null)
+    const hash = progress?.txHash ?? op.txHash ?? null
+    const handedOff = op.state === 'pending' || !!hash || (progress != null && ['submitted', 'pending', 'confirmed'].includes(progress.status))
+    if (!handedOff) return null
+    const evidence = svc.manaEvidence()
+    if (hash) {
+      const outcome = await splitExecution(evidence, sale, hash)
+      if (outcome === 'bought') {
+        settled(op, 'succeeded', { txHash: hash })
+        return true
+      }
+      if (outcome === 'reverted') {
+        settled(op, 'failed', {}, 'The transaction failed on-chain. Nothing was bought.', REVERTED_PART)
+        return true
+      }
+      if (outcome === 'unknown') return false
+    }
+    const record = await svc.creditRecordOf(op.buyer, sale.creditId, client(op.buyer)).catch(() => null)
+    if (record?.status === 'SETTLED' && record.txHash) {
+      const outcome = await splitExecution(evidence, sale, record.txHash)
+      if (outcome === 'bought') {
+        settled(op, 'succeeded', { txHash: record.txHash })
+        return true
+      }
+      if (outcome === 'other') {
+        settled(op, 'failed', {}, SPLIT_SPENT_ELSEWHERE, SPLIT_SPENT_ELSEWHERE_PART)
+        return true
+      }
+      return false
+    }
+    if (record?.status === 'EXPIRED') {
+      op.expiredSince ??= svc.now()
+      if (svc.now() - op.expiredSince >= EXPIRY_CONFIRM_MS) {
+        settled(op, 'failed', {}, 'This purchase expired before its Credits were spent on chain: nothing was bought.', 'one of its transactions expired before its Credits were spent on chain.')
+        return true
+      }
+    } else op.expiredSince = undefined
+    return false
+  }
+
   const check = async (op: Operation & { buyer: string }, store: CartStore): Promise<boolean> => {
     if (op.mana) return manaFlow.checkMana(op, op.mana)
+    if (op.split) {
+      const decided = await checkSplit(op, op.split, store)
+      if (decided !== null) return decided
+    }
     const progress = latest(store.getSnapshot().checkout?.groups[0] ?? null, op.progress ?? null)
     const handedOff = op.state === 'pending' || !!op.txHash || !!progress?.txHash || (progress != null && (progress.status === 'submitted' || progress.status === 'pending'))
     if (progress?.status === 'confirmed') {
@@ -1776,7 +1847,19 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           ctx: { buyer: quote.buyer, provider: svc.guard(prompting(op, wallet, quote.kind), intent), reader: svc.reader(), client: quote.client, walletKind: quote.kind, ...rail, fetchImpl: relay },
           store,
           guard: createSpendGuard(),
-          ...(split ? { split: { ...split.plan, onCredit: (credit: { id: string }) => void (issued = credit) } } : {})
+          ...(split
+            ? {
+                split: {
+                  ...split.plan,
+                  // Kept before anything is signed for it: what its execution must carry to count as this purchase.
+                  onCredit: (credit: { id: string }) => {
+                    issued = credit
+                    op.split = { buyer: quote.buyer, chainId, manager: manager.address, creditId: credit.id, creditWei: split.creditWei.toString(), gapWei: split.gapWei.toString(), callData: split.callData }
+                    keep(op)
+                  }
+                }
+              }
+            : {})
         },
         group,
         resolved
@@ -1794,9 +1877,18 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       return refused("We couldn't start this purchase. Nothing was charged.", 'the rest of it couldn’t start.', 'cancelled')
     }
     switch (result.status) {
-      case 'confirmed':
+      case 'confirmed': {
+        // A split is bought only by its own execution: a successful receipt for the hash the relay answered isn't enough.
+        if (op.split) {
+          const outcome = result.txHash ? await splitExecution(svc.manaEvidence(), op.split, result.txHash) : 'unknown'
+          if (outcome !== 'bought') {
+            move(op, 'pending', { txHash: outcome === 'other' ? null : result.txHash })
+            return { kind: 'pending' }
+          }
+        }
         move(op, 'succeeded', { txHash: result.txHash })
         return { kind: 'confirmed' }
+      }
       case 'pending':
         move(op, 'pending', { txHash: result.txHash })
         return { kind: 'pending' }
