@@ -2070,9 +2070,16 @@ identities (100 per network). No production rate is measured.
 Caps: once its chain passes the checks that need no RPC, a request create
 counts its network's live requests without any lock and refuses one over the
 per-network cap (429) there, so a flood from one network neither reaches the
-contract-wallet RPC nor queues on the lock. Refused contract-wallet checks are
-budgeted per network in process memory (no table): a forged chain stores no
-row for the caps to count. Then a create takes `pg_advisory_xact_lock` on one key per table
+contract-wallet RPC nor queues on the lock. Contract-wallet calls
+(`isValidSignature`, including those of the signed-fetch chain on
+`POST /identities`) are budgeted in process memory (no table), since a forged
+chain stores no row for the caps to count: 20 calls per network per minute,
+200 shared by requests with no network, 200 shared by networks past 4,096
+tracked ones, and 1,000 per replica; the calls behind a request, outcome or
+identity that is stored are given back. A network past its budget gets a 429
+before the RPC. During an RPC outage the refused calls are not given back, so
+after 20 failed calls (about 10 sign-ins) a network sees that 429, not the
+503, for up to a minute. Then a create takes `pg_advisory_xact_lock` on one key per table
 (`hashtextextended('explore_api.auth_requests:admission', 0)` and the
 identities' twin), counts the live rows and those of its network in one pass
 and inserts in the same transaction, so concurrent creates on every replica

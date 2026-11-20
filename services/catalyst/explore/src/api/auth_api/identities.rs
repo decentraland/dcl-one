@@ -12,10 +12,11 @@ use crate::api::internal_error;
 use crate::auth::AuthChain;
 use crate::shared::signed_fetch::{self, PayloadPolicy, Signer};
 
-use super::validation::{needs_contract_check, validate_identity_chain};
+use super::contract_checks::Budgeted;
+use super::validation::{ChainRefusal, needs_contract_check, validate_identity_chain};
 use super::{
-    ErrorBody, EvictedBody, admission_lock, bad_request, chain_refused, client_ip,
-    contract_checked, ips_match, is_valid_uuid, naive, normalize_ip, now_micros,
+    ErrorBody, EvictedBody, admission_lock, as_validator, bad_request, budgeted, chain_refused,
+    client_ip, ips_match, is_valid_uuid, naive, normalize_ip, now_micros, under,
 };
 use crate::api::Shared as AppState;
 
@@ -116,10 +117,20 @@ pub(super) async fn create_identity(
     headers: HeaderMap,
     Json(body): Json<IdentityRequestBody>,
 ) -> Response {
-    let request_signer = match verify_identity_post(&state, &headers, uri.path()).await {
-        Ok(signer) => signer,
-        Err(refusal) => return *refusal,
-    };
+    let source = super::request_source(
+        &headers,
+        peer.map(|axum::Extension(axum::extract::ConnectInfo(p))| p),
+        &state.settings.trusted_proxy_cidrs,
+    );
+    let budget = budgeted(&state, source.as_deref());
+    let request_signer =
+        match verify_identity_post(&headers, uri.path(), as_validator(&budget)).await {
+            Ok(signer) => signer,
+            Err(_) if budget.as_ref().is_some_and(Budgeted::spent) => {
+                return chain_refused(ChainRefusal::Throttled);
+            }
+            Err(refusal) => return *refusal,
+        };
     if body.identity.is_null() {
         return bad_request("AuthIdentity is required in request body");
     }
@@ -130,28 +141,13 @@ pub(super) async fn create_identity(
     if let Some(err) = identity_shape_error(&body.identity) {
         return bad_request(&format!("Invalid AuthIdentity: {err}"));
     }
-    let source = super::request_source(
-        &headers,
-        peer.map(|axum::Extension(axum::extract::ConnectInfo(p))| p),
-        &state.settings.trusted_proxy_cidrs,
-    );
+    // Contract-wallet links are taken as signed until every other check passed.
     let chain = &parsed.auth_chain;
-    let offline = validate_identity_chain(chain, Some(&crate::auth::PeerValidated)).await;
-    let checked = match offline {
-        Ok(_) if needs_contract_check(chain) => {
-            contract_checked(
-                &state,
-                source.as_deref(),
-                validate_identity_chain(chain, state.eip1654_validator()),
-            )
-            .await
-        }
-        offline => offline,
-    };
-    let (owner, final_authority) = match checked {
-        Ok(authorities) => authorities,
-        Err(refusal) => return chain_refused(refusal),
-    };
+    let (owner, final_authority) =
+        match validate_identity_chain(chain, Some(&crate::auth::PeerValidated)).await {
+            Ok(authorities) => authorities,
+            Err(refusal) => return chain_refused(refusal),
+        };
     if !parsed
         .ephemeral_identity
         .address
@@ -174,6 +170,11 @@ pub(super) async fn create_identity(
     if !derives_address {
         return forbidden("Ephemeral private key does not match the provided address");
     }
+    if needs_contract_check(chain)
+        && let Err(refusal) = validate_identity_chain(chain, as_validator(&budget)).await
+    {
+        return chain_refused(under(&budget, refusal));
+    }
 
     let identity_id = Uuid::new_v4().to_string();
     let now = now_micros();
@@ -182,7 +183,7 @@ pub(super) async fn create_identity(
         identity_id: identity_id.clone(),
         identity: body.identity,
         ip_address: client_ip(&headers),
-        source,
+        source: source.clone(),
         is_mobile: body.is_mobile.unwrap_or(false),
         created_at: now,
         expiration,
@@ -191,6 +192,9 @@ pub(super) async fn create_identity(
         Ok(None) => {}
         Ok(Some(refusal)) => return refusal,
         Err(err) => return internal_error("auth-api: storing the identity", err),
+    }
+    if let Some(budget) = budget {
+        budget.refund();
     }
     (
         StatusCode::CREATED,
@@ -300,9 +304,9 @@ pub(super) async fn insert_identity(
 /// `x-original-path`, which this handler sets from the request's own path when
 /// the client did not); a chain a scene signed on a player's behalf is refused.
 async fn verify_identity_post(
-    state: &AppState,
     headers: &HeaderMap,
     public_path: &str,
+    validator: Option<&dyn crate::auth::eip1654::Eip1654Validator>,
 ) -> Result<Signer, Box<Response>> {
     let mut headers = headers.clone();
     if !headers.contains_key(signed_fetch::ORIGINAL_PATH_HEADER)
@@ -315,7 +319,7 @@ async fn verify_identity_post(
         "post",
         IDENTITY_SIGNED_PATH,
         PayloadPolicy::V6Only,
-        state.eip1654_validator(),
+        validator,
     )
     .await
     .map_err(|err| {

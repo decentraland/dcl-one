@@ -31,6 +31,7 @@ mod contract_checks;
 mod identities;
 mod validation;
 
+use contract_checks::Budgeted;
 pub use contract_checks::ContractChecks;
 
 use identities::{create_identity, get_identity};
@@ -756,16 +757,11 @@ async fn create_request(
         Ok(true) => return too_many_from_network(),
         Err(err) => return internal_error("auth-api: counting the network's requests", err),
     }
+    let budget = budgeted(&state, source.as_deref());
     let sender = if needs_contract_check(chain) {
-        match contract_checked(
-            &state,
-            source.as_deref(),
-            validate_auth_chain(chain, state.eip1654_validator()),
-        )
-        .await
-        {
+        match validate_auth_chain(chain, as_validator(&budget)).await {
             Ok(verified) => verified.sender,
-            Err(refusal) => return chain_refused(refusal),
+            Err(refusal) => return chain_refused(under(&budget, refusal)),
         }
     } else {
         offline.sender
@@ -788,12 +784,15 @@ async fn create_request(
         expiration,
         requires_validation: false,
         status: ChallengeStatus::Pending,
-        source,
+        source: source.clone(),
     };
     match admit_request(&state, &record, now).await {
         Ok(None) => {}
         Ok(Some(refusal)) => return refusal,
         Err(err) => return internal_error("auth-api: storing the request", err),
+    }
+    if let Some(budget) = budget {
+        budget.refund();
     }
 
     (
@@ -991,25 +990,20 @@ async fn submit_outcome(
         return already_answered(&id, record.status);
     }
 
+    let source = request_source(
+        &headers,
+        peer.map(|Extension(ConnectInfo(p))| p),
+        &state.settings.trusted_proxy_cidrs,
+    );
+    let budget = budgeted(&state, source.as_deref());
     if let Some(chain) = body.auth_chain.as_ref() {
         if let Err(refusal) = validate_auth_chain(chain, Some(&crate::auth::PeerValidated)).await {
             return chain_refused(refusal);
         }
-        if needs_contract_check(chain) {
-            let source = request_source(
-                &headers,
-                peer.map(|Extension(ConnectInfo(p))| p),
-                &state.settings.trusted_proxy_cidrs,
-            );
-            if let Err(refusal) = contract_checked(
-                &state,
-                source.as_deref(),
-                validate_auth_chain(chain, state.eip1654_validator()),
-            )
-            .await
-            {
-                return chain_refused(refusal);
-            }
+        if needs_contract_check(chain)
+            && let Err(refusal) = validate_auth_chain(chain, as_validator(&budget)).await
+        {
+            return chain_refused(under(&budget, refusal));
         }
     }
 
@@ -1035,7 +1029,12 @@ async fn submit_outcome(
     .execute(&state.pool)
     .await;
     match stored {
-        Ok(done) if done.rows_affected() > 0 => StatusCode::OK.into_response(),
+        Ok(done) if done.rows_affected() > 0 => {
+            if let Some(budget) = budget {
+                budget.refund();
+            }
+            StatusCode::OK.into_response()
+        }
         Ok(_) => match found_request(&state, &id, now).await {
             Ok(record) => already_answered(&id, record.status),
             Err(answer) => *answer,
@@ -1141,25 +1140,29 @@ fn gone_already_fulfilled(id: &str) -> Response {
         .into_response()
 }
 
-/// `verify`, the contract-wallet check of a chain whose other links passed,
-/// charged to `source`'s budget of refused checks; one that verifies is
-/// given back.
-async fn contract_checked<T>(
-    state: &AppState,
-    source: Option<&str>,
-    verify: impl std::future::Future<Output = Result<T, ChainRefusal>>,
-) -> Result<T, ChainRefusal> {
-    let Some(charge) = state
-        .contract_checks
-        .charge(source, std::time::Instant::now())
-    else {
-        return Err(ChainRefusal::Throttled);
-    };
-    let verified = verify.await;
-    if verified.is_ok() {
-        state.contract_checks.refund(charge);
+/// The state's validator with its calls charged to `source`'s budget of
+/// contract-wallet checks; `None` without a validator.
+fn budgeted<'a>(state: &'a AppState, source: Option<&'a str>) -> Option<Budgeted<'a>> {
+    state
+        .eip1654_validator()
+        .map(|v| Budgeted::new(v, &state.contract_checks, source))
+}
+
+fn as_validator<'a>(
+    budget: &'a Option<Budgeted<'_>>,
+) -> Option<&'a dyn crate::auth::eip1654::Eip1654Validator> {
+    budget
+        .as_ref()
+        .map(|b| b as &dyn crate::auth::eip1654::Eip1654Validator)
+}
+
+/// `refusal`, or a 429 when a call was refused because the budget was spent.
+fn under(budget: &Option<Budgeted<'_>>, refusal: ChainRefusal) -> ChainRefusal {
+    if budget.as_ref().is_some_and(Budgeted::spent) {
+        ChainRefusal::Throttled
+    } else {
+        refusal
     }
-    verified
 }
 
 fn chain_refused(refusal: ChainRefusal) -> Response {
@@ -1169,7 +1172,7 @@ fn chain_refused(refusal: ChainRefusal) -> Response {
             StatusCode::TOO_MANY_REQUESTS,
             Json(ErrorBody {
                 error:
-                    "Too many refused contract wallet signatures from this network, try again later"
+                    "Too many contract wallet signature checks from this network, try again later"
                         .into(),
             }),
         )
@@ -1578,11 +1581,62 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     }
 
+    /// An identity post from the contract wallet: its signed-fetch chain's
+    /// contract link signed `header_sig`, its identity chain's `identity_sig`.
+    fn contract_identity_post(header_sig: &str, identity_sig: &str, peer: &str) -> Request {
+        use crate::shared::signed_fetch as sf;
+        use alloy_signer::SignerSync;
+        use validation::contract_wallet::chain;
+        let ephemeral = alloy_signer_local::PrivateKeySigner::random();
+        let eph_address = format!("{:#x}", ephemeral.address());
+        let identity = json!({
+            "ephemeralIdentity": { "address": eph_address, "privateKey": format!("0x{}", hex::encode(ephemeral.to_bytes())), "publicKey": "0x04" },
+            "expiration": "2100-01-01T00:00:00.000Z",
+            "authChain": chain(&eph_address, identity_sig),
+        });
+        let mut req = from_peer(
+            json_post(
+                "/auth-api/identities",
+                serde_json::to_vec(&json!({ "identity": identity })).unwrap(),
+            ),
+            peer,
+        );
+        let timestamp = Utc::now().timestamp_millis().to_string();
+        let payload = sf::build_payload_v6("post", "/auth-api/identities", &timestamp, "{}");
+        let signature = ephemeral.sign_message_sync(payload.as_bytes()).unwrap();
+        let mut links = chain(&eph_address, header_sig);
+        links.push(crate::auth::AuthLink {
+            link_type: crate::auth::AuthLinkType::EcdsaSignedEntity,
+            payload,
+            signature: Some(signature.to_string()),
+        });
+        let headers = req.headers_mut();
+        headers.insert(sf::AUTH_TIMESTAMP_HEADER, timestamp.parse().unwrap());
+        headers.insert(sf::AUTH_METADATA_HEADER, "{}".parse().unwrap());
+        for (i, link) in links.iter().enumerate() {
+            headers.insert(
+                axum::http::HeaderName::try_from(format!("{}{i}", sf::AUTH_CHAIN_HEADER_PREFIX))
+                    .unwrap(),
+                serde_json::to_string(link).unwrap().parse().unwrap(),
+            );
+        }
+        req
+    }
+
     #[tokio::test]
-    async fn a_contract_wallet_identity_chain_needs_the_validator() {
+    async fn a_contract_wallet_identity_is_checked_without_the_rpc_until_its_owner_matches() {
         use validation::contract_wallet::{SIGNATURE, Wallet, chain};
         let state = crate::api::tests_support::state_without_db().await;
         let app = Router::new().nest("/auth-api", routes().with_state(state.clone()));
+        let (status, err) = call(
+            &app,
+            contract_identity_post(SIGNATURE, SIGNATURE, "203.0.113.5:1"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "no validator: {err}");
+
+        let wallet = std::sync::Arc::new(Wallet::default());
+        assert!(state.attach_eip1654(Some(wallet.clone())));
         let ephemeral = alloy_signer_local::PrivateKeySigner::random();
         let eph_address = format!("{:#x}", ephemeral.address());
         let identity = json!({
@@ -1590,96 +1644,93 @@ mod tests {
             "expiration": "2100-01-01T00:00:00.000Z",
             "authChain": chain(&eph_address, SIGNATURE),
         });
-        let body = serde_json::to_vec(&json!({ "identity": identity })).unwrap();
-        let signed = || async {
-            let mut req = json_post("/auth-api/identities", body.clone());
-            req.headers_mut().extend(
-                crate::shared::signed_fetch::test_support::signed_headers(
-                    "post",
-                    "/auth-api/identities",
-                    "{}",
-                    true,
-                )
-                .await,
-            );
-            req
-        };
-        let (status, err) = call(&app, signed().await).await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{err}");
-        assert_eq!(
-            err["error"],
-            "Contract wallet signature verification unavailable"
+        let mut req = json_post(
+            "/auth-api/identities",
+            serde_json::to_vec(&json!({ "identity": identity })).unwrap(),
         );
-
-        assert!(state.attach_eip1654(Some(std::sync::Arc::new(Wallet::default()))));
-        let (status, err) = call(&app, signed().await).await;
+        req.headers_mut().extend(
+            crate::shared::signed_fetch::test_support::signed_headers(
+                "post",
+                "/auth-api/identities",
+                "{}",
+                true,
+            )
+            .await,
+        );
+        let (status, err) = call(&app, req).await;
         assert_eq!(
             (status, err["error"].as_str()),
             (
                 StatusCode::FORBIDDEN,
                 Some("Request sender does not match identity owner")
-            ),
-            "the contract chain verified; the EOA signer does not own it"
+            )
         );
+        assert_eq!(wallet.calls(), 0, "a 403 costs no contract call");
+
+        let (status, err) = call(
+            &app,
+            contract_identity_post(SIGNATURE, "0xbad0", "203.0.113.5:1"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{err}");
+        assert!(wallet.calls() > 0);
     }
 
     #[tokio::test]
-    async fn a_network_that_spends_its_refused_contract_checks_reaches_no_validator() {
-        use validation::contract_wallet::{Wallet, chain};
+    async fn a_network_that_spends_its_contract_checks_reaches_no_validator() {
+        use validation::contract_wallet::{SIGNATURE, Wallet};
         let state = crate::api::tests_support::state_without_db().await;
         let wallet = std::sync::Arc::new(Wallet::default());
         assert!(state.attach_eip1654(Some(wallet.clone())));
         let app = Router::new().nest("/auth-api", routes().with_state(state.clone()));
-        let post = |peer: &'static str| async move {
-            let ephemeral = alloy_signer_local::PrivateKeySigner::random();
-            let eph_address = format!("{:#x}", ephemeral.address());
-            let identity = json!({
-                "ephemeralIdentity": { "address": eph_address, "privateKey": format!("0x{}", hex::encode(ephemeral.to_bytes())), "publicKey": "0x04" },
-                "expiration": "2100-01-01T00:00:00.000Z",
-                "authChain": chain(&eph_address, "0xbad0"),
-            });
-            let mut req = from_peer(
-                json_post(
-                    "/auth-api/identities",
-                    serde_json::to_vec(&json!({ "identity": identity })).unwrap(),
-                ),
-                peer,
-            );
-            req.headers_mut().extend(
-                crate::shared::signed_fetch::test_support::signed_headers(
-                    "post",
-                    "/auth-api/identities",
-                    "{}",
-                    true,
-                )
-                .await,
-            );
-            req
+        let mut refused = 0;
+        let throttled = loop {
+            let (status, err) = call(
+                &app,
+                contract_identity_post("0xbad0", SIGNATURE, "203.0.113.5:1"),
+            )
+            .await;
+            if status != StatusCode::UNAUTHORIZED {
+                break (status, err);
+            }
+            refused += 1;
+            assert!(refused <= contract_checks::PER_SOURCE, "never throttled");
         };
-        for _ in 0..contract_checks::PER_SOURCE {
-            let (status, err) = call(&app, post("203.0.113.5:1").await).await;
-            assert_eq!(status, StatusCode::BAD_REQUEST, "{err}");
-        }
-        let asked = wallet.calls();
-        let (status, err) = call(&app, post("203.0.113.5:2").await).await;
         assert_eq!(
-            (status, err["error"].as_str()),
+            (throttled.0, throttled.1["error"].as_str()),
             (
                 StatusCode::TOO_MANY_REQUESTS,
                 Some(
-                    "Too many refused contract wallet signatures from this network, try again later"
+                    "Too many contract wallet signature checks from this network, try again later"
                 )
-            )
+            ),
+            "the signed-fetch chain is charged too"
         );
+        assert_eq!(
+            wallet.calls() as u32,
+            contract_checks::PER_SOURCE,
+            "each call is charged"
+        );
+        let asked = wallet.calls();
+        let (status, _) = call(
+            &app,
+            contract_identity_post("0xbad0", SIGNATURE, "203.0.113.5:2"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(
             wallet.calls(),
             asked,
             "a spent network reaches no validator"
         );
-        let (status, _) = call(&app, post("198.51.100.7:1").await).await;
+        let (status, _) = call(
+            &app,
+            contract_identity_post("0xbad0", SIGNATURE, "198.51.100.7:1"),
+        )
+        .await;
         assert_eq!(
             status,
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNAUTHORIZED,
             "another network is still asked"
         );
         assert!(wallet.calls() > asked);
@@ -1795,9 +1846,13 @@ mod tests {
         let post = |signature: &str, peer: &str| {
             from_peer(json_post(&outcome, contract_outcome(signature)), peer)
         };
-        for _ in 0..contract_checks::PER_SOURCE {
+        let before = wallet.calls();
+        let mut refused = 0;
+        while wallet.calls() - before < contract_checks::PER_SOURCE as usize {
             let (status, body) = call(&app, post("0xbad0", "203.0.113.5:1")).await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+            refused += 1;
+            assert!(refused <= contract_checks::PER_SOURCE);
         }
         let asked = wallet.calls();
         let (status, body) = call(&app, post(SIGNATURE, "203.0.113.5:2")).await;
