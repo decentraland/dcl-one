@@ -15,8 +15,8 @@
 //! whose content list cannot be read exactly aborts the run, a candidate
 //! is re-checked (references and age) right before it is unlinked, under
 //! the exclusive store lock that content deploys (local and synced), world
-//! scene deploys and builder's item and project file uploads take shared
-//! (other writers rely on the age floor alone), an empty reference set with
+//! scene deploys and the writers committing a row naming a blob take shared
+//! ([`store_for_row`]; read-through copies refetch), an empty reference set with
 //! candidates is refused unless asked for, and the dry run reports without
 //! deleting. A writer reclaiming the blobs it staged ([`scan_scenes`], then
 //! [`unlink_orphans_on`]) runs the same reference check under the same lock,

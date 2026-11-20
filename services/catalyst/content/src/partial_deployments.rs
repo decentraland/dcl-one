@@ -1721,11 +1721,15 @@ struct Reclaimed {
 /// accounting only once every unlink succeeded. An upload whose entity a
 /// sync or read-through download of this process holds is skipped (checked
 /// under the lock), so that download is not sent to the retry worker. The
-/// store's other writers (the asset-pack catalogue import, camera reel,
-/// social, worlds thumbnails and the like) do not take the lock and are not
-/// ordered against these unlinks, which have no age floor: one of them
-/// reusing a blob an expired upload staged, between its existence check and
-/// its row, loses it.
+/// store's other writers that commit a row naming a blob (the asset-pack
+/// catalogue build, the camera-reel import, social's thumbnails, contents,
+/// MLS blobs and profile images, worlds settings thumbnails and mirror
+/// passes, event posters, outfit thumbnails) store or re-check it under the
+/// shared side in the row's transaction ([`gc::store_for_row`]), so they are
+/// ordered the same way. Camera-reel uploads and report evidence commit their
+/// row before the blob, so the reference read keeps it, and read-through
+/// copies (explore's mirrors, the asset catalogue pull) fetch a removed blob
+/// again on its next read.
 async fn reclaim_uploads(
     pool: &PgPool,
     storage: &Storage,

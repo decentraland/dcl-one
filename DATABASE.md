@@ -144,10 +144,20 @@ within its request, which takes the lock only if it is free and otherwise
 marks the upload expired for the cleanup's next run. Builder's item file and
 project blob uploads also take the shared side (waiting at most 5 s, then
 503) before checking whether a blob is stored and hold it until the `builder.uploaded_contents` row (and, for an
-item file, the `builder.item_contents` row) naming it commits. The store's other writers
-(the asset-pack catalogue import, camera reel, social, worlds thumbnails
-and the like) do not take the lock and rely on the collector's age floor,
-which these two unlinkers do not apply.
+item file, the `builder.item_contents` row) naming it commits. The other
+writers that commit a row naming a blob do the same through
+`gc::store_for_row` (the shared side, at most 5 s, then the blob stored
+unless present, in the row's transaction): the asset-pack catalogue build
+(which re-checks every walked file and stores a removed one again), the
+camera-reel import, community thumbnails and contents, MLS blobs, cached
+profile images, worlds settings thumbnails, event posters and outfit
+thumbnails. A worlds mirror pass re-checks the blobs its rows name under
+the shared side and fails when one is gone, for the next pass to fetch
+again. Camera-reel uploads and player report evidence commit their row
+before storing the blob, so an unlink batch's reference read keeps it.
+Read-through copies (explore's satellite, manifest and poster mirrors, the
+asset catalogue pull) take no lock: a removed blob is fetched again on its
+next read.
 
 Genesis storage management requires LAND rights at the requested parcel, using
 the published LAND manager index or its configured document source. Without a
