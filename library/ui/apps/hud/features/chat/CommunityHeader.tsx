@@ -5,7 +5,7 @@
 
 import { createPortal } from 'react-dom'
 import type { CommunityConversation } from '../session/useEngineSession'
-import { Avatar, ContextMenu, ControlButton, MaskIcon } from '../../design'
+import { Avatar, Button, ContextMenu, ControlButton, MaskIcon } from '../../design'
 import { openCommunityModal } from '../communities/CommunityModal'
 import { ConversationMenu, MENU_LAYER, useAnchoredMenu } from './ConversationMenu'
 import playersIcon from '../../assets/chat/players.png'
@@ -62,9 +62,10 @@ function CommunityTitle({ community }: { community: CommunityConversation }): Re
   const { open, at, button, menu, toggle, close } = useAnchoredMenu(underTitle)
   return (
     <>
-      <button
+      <Button
         ref={button}
-        type="button"
+        size="bare"
+        variant="clear"
         className={`${styles.navLeft} ${styles.communityTitle}`}
         aria-label={`${community.name} options`}
         aria-haspopup="menu"
@@ -73,7 +74,7 @@ function CommunityTitle({ community }: { community: CommunityConversation }): Re
       >
         <Avatar src={community.thumbnail || undefined} name={community.name} size={28} framed className={styles.channelIcon} />
         <span className={styles.navTitle} title={community.name}>{community.name}</span>
-      </button>
+      </Button>
       {open && at != null &&
         createPortal(
           <div ref={menu} className={styles.menuLayer} style={at} {...{ [MENU_LAYER]: '' }}>

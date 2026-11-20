@@ -253,18 +253,32 @@ describe('announcements tab', () => {
   })
 
   it('closes the emoji panel on a press in the field, on POST, and keeps it open on a pick', async () => {
-    const card = renderCard('owner', posts([]))
-    const field = screen.getByRole('textbox', { name: 'New announcement' })
-    await userEvent.click(screen.getByRole('button', { name: 'Emoji' }))
-    const panel = screen.getByRole('dialog', { name: 'Emoji picker' })
-    await userEvent.click(within(panel).getByTitle(EMOJI_GROUPS[0].emojis[0].expression))
-    expect(screen.getByRole('dialog', { name: 'Emoji picker' })).toBeInTheDocument()
-    await userEvent.click(field)
-    expect(screen.queryByRole('dialog', { name: 'Emoji picker' })).not.toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: 'Emoji' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Post announcement' }))
-    expect(card.onPost).toHaveBeenCalled()
-    expect(screen.queryByRole('dialog', { name: 'Emoji picker' })).not.toBeInTheDocument()
+    // jsdom has no IntersectionObserver: without one every emoji (~3,600 buttons) would mount
+    class IdleObserver {
+      observe(): void {}
+      disconnect(): void {}
+    }
+    vi.stubGlobal('IntersectionObserver', IdleObserver)
+    try {
+      const card = renderCard('owner', posts([]))
+      // captured before the panel opens: a role query with it open names every emoji button
+      const field = screen.getByRole('textbox', { name: 'New announcement' })
+      const emoji = screen.getByRole('button', { name: 'Emoji' })
+      const post = screen.getByRole('button', { name: 'Post announcement' })
+      await userEvent.click(emoji)
+      const panel = screen.getByRole('dialog', { name: 'Emoji picker' })
+      await userEvent.click(within(panel).getByTitle(EMOJI_GROUPS[0].emojis[0].expression))
+      expect(panel).toBeInTheDocument()
+      await userEvent.click(field)
+      expect(panel).not.toBeInTheDocument()
+      await userEvent.click(emoji)
+      expect(screen.getByPlaceholderText('Search emoji')).toBeInTheDocument()
+      await userEvent.click(post)
+      expect(card.onPost).toHaveBeenCalled()
+      expect(screen.queryByPlaceholderText('Search emoji')).toBeNull()
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it("shows the author's marks: verified or #tag, and official", () => {

@@ -8819,7 +8819,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Button.tsx",
-      "sha256": "07b23a8731d8fc2997d66840523dc11f3a0899fd516b8350c5d5d52bc4236682"
+      "sha256": "4d9a42eb909a8b650cc2f03d2070d3a33c19e1b2f19ef5874474fe728555ae59"
     },
     {
       "path": "library/ui/apps/hud/design/CharCounter.module.css",
@@ -9231,7 +9231,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.module.css",
-      "sha256": "5fb1918e7f1398976568eae28c6c19883effca67b0befb055775ed10e4cb30e4"
+      "sha256": "2fb04291d5b19b643da3974413ec0d83b645a18827183140a63bc8a6d5125c05"
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.tsx",
@@ -9243,7 +9243,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/CommunityHeader.tsx",
-      "sha256": "92c74f53cda12491ec77621570ff7f58f2e4e415b728812657a708db115dbe76"
+      "sha256": "c2350af99be1724fbabdf417fbb4af634a1fbb523d4300a3f115f3b35c742eba"
     },
     {
       "path": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
@@ -10623,7 +10623,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
-      "sha256": "8d44024658bd11cc71c5a9f8643532ff9b968343cc82f705b09bc7303d95ec80"
+      "sha256": "925e52c27a75017129b9bbdc7062e63e8a20186895d1f8f6b0eb2fe98a6bffb9"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.clicks.test.tsx",

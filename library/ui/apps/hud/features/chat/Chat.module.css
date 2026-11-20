@@ -209,19 +209,14 @@
   text-align: left;
 }
 /* The community's thumbnail and name open its menu: the button's look, tinted on hover and while open. */
+/* the community's thumbnail and name: a bare clear Button laid out as the title */
 .communityTitle {
+  flex: 0 1 auto;
+  justify-content: flex-start;
   padding: 0 6px 0 0;
-  border: none;
-  border-radius: var(--r-md);
-  background: none;
-  color: inherit;
-  cursor: pointer;
-  text-align: left;
-  transition: background var(--dur-hover) var(--ease-outquad);
 }
-.communityTitle:hover,
 .communityTitle[aria-expanded='true'] {
-  background: var(--chat-hover);
+  background: var(--tint-clear-hover);
 }
 .dmNames {
   display: flex;
