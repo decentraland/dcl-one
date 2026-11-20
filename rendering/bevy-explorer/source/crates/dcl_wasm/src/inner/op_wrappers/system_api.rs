@@ -115,8 +115,10 @@ pub async fn op_set_avatar(state: &WorkerContext, avatar: JsValue) -> Result<u32
 }
 
 #[wasm_bindgen]
-pub async fn op_native_input(state: &WorkerContext) -> String {
-    dcl_js::system_api::op_native_input(state.rc()).await
+pub async fn op_native_input(state: &WorkerContext) -> Result<String, WasmError> {
+    dcl_js::system_api::op_native_input(state.rc())
+        .await
+        .map_err(WasmError::from)
 }
 
 #[wasm_bindgen]

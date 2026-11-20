@@ -13,11 +13,11 @@ import { ProfileHeader } from "./ProfileHeader";
 import styles from "./ProfileShell.module.css";
 
 /**
- * A NAME is bought in the Shop's NAMEs page; worlds are managed under Create. Both are the
- * canonical paths, not the redirects (`/shop/items?category=names`, the legacy `/builder/worlds`).
+ * A NAME is bought in the Shop's NAMEs page (the canonical path, not `/shop/items?category=names`);
+ * worlds are managed in the Creator Hub desktop app.
  */
 export const GET_A_NAME_HREF = `${SHOP_BASE}/names`;
-export const MANAGE_WORLD_HREF = "/create/worlds";
+export const MANAGE_WORLD_HREF = "/download/creator-hub";
 
 export type ProfileShellTab = { id: string; label: string; href: string };
 

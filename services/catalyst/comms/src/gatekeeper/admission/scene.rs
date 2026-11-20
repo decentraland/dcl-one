@@ -419,4 +419,61 @@ mod tests {
         );
         assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
+
+    /// Only entries in force today count: expired, not yet started and unreadable dates never
+    /// do, and `onlyDev` entries only when the node takes development entries. A malformed entry
+    /// is skipped without hiding the others.
+    #[tokio::test]
+    async fn lease_holders_skip_entries_out_of_their_dates_and_dev_only_entries() {
+        let stub = axum::Router::new().route(
+            "/authorizations.json",
+            axum::routing::get(|| async {
+                axum::Json(json!([
+                    { "addresses": ["0x1111111111111111111111111111111111111111"], "plots": ["1,2"], "startDate": "2000-01-01", "endDate": "2999-01-01" },
+                    { "addresses": ["0x2222222222222222222222222222222222222222"], "plots": ["1,2"], "endDate": "2001-01-01" },
+                    { "addresses": ["0x3333333333333333333333333333333333333333"], "plots": ["1,2"], "startDate": "2999-01-01" },
+                    { "addresses": ["0x4444444444444444444444444444444444444444"], "plots": ["1,2"], "onlyDev": true },
+                    { "addresses": ["0x5555555555555555555555555555555555555555"], "plots": ["1,2"], "endDate": "soon" },
+                    { "addresses": ["0x6666666666666666666666666666666666666666"], "plots": ["1,2"], "onlyDev": "true" },
+                    { "addresses": ["0x7777777777777777777777777777777777777777"], "plots": ["1,2"], "endDate": 20240101 },
+                    "not an entry"
+                ]))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
+        let state_with = |dev_entries: bool| {
+            let settings = crate::gatekeeper::Settings {
+                lease_authorizations_url: Some(format!("http://{addr}/authorizations.json")),
+                lease_dev_entries: dev_entries,
+                ..crate::gatekeeper::Settings::for_tests()
+            };
+            let pool = sqlx::PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres")
+                .expect("a lazy pool never connects");
+            CommsState::new(
+                pool,
+                crate::http::Outbound::for_tests(),
+                settings,
+                None,
+                None,
+                Arc::new(StubPolicy::default()),
+                Arc::new(StubScenes::default()),
+                Arc::new(crate::presence::Presence::new()),
+                Arc::new(crate::interfaces::test_support::StubDirectory::default()),
+            )
+        };
+        let parcels = vec!["1,2".to_string()];
+        assert_eq!(
+            get_lease_holders_for_parcels(&state_with(false), &parcels).await,
+            BTreeSet::from(["0x1111111111111111111111111111111111111111".to_string()])
+        );
+        assert_eq!(
+            get_lease_holders_for_parcels(&state_with(true), &parcels).await,
+            BTreeSet::from([
+                "0x1111111111111111111111111111111111111111".to_string(),
+                "0x4444444444444444444444444444444444444444".to_string(),
+            ])
+        );
+    }
 }

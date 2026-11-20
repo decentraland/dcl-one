@@ -328,6 +328,36 @@ pub async fn validate(
     .into_result()
 }
 
+/// The access step alone, asked of the chain as it stands now instead of at
+/// the entity timestamp: a deployer must still hold the pointers of an
+/// entity published after `REQUEST_TTL_BACKWARDS` (a partial upload). The
+/// block five minutes before now still grants, as for every access check.
+pub async fn validate_current_access(
+    entity: &Entity,
+    ctx: &Context<'_>,
+) -> Result<(), Vec<ValidationError>> {
+    let now = Entity {
+        timestamp: chrono::Utc::now().timestamp_millis(),
+        ..entity.clone()
+    };
+    let files = HashMap::new();
+    let deployment = Deployment {
+        entity: &now,
+        files: &files,
+        auth_chain: ctx.auth_chain,
+    };
+    ContentValidator {
+        external_calls: ctx.sources,
+        blockchain_checker: ctx.sources,
+        ignore_blockchain_access: ctx.sources.ignore_blockchain_access,
+        synced: false,
+        access_passed: false,
+    }
+    .validate_access_only(&deployment)
+    .await
+    .into_result()
+}
+
 /// Validates one batch of a partial upload ([`ContentValidator::validate_staging`]):
 /// `files` holds the entity file under its id and the batch's other keys
 /// (their bytes are not read).

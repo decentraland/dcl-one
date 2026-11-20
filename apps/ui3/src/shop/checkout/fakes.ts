@@ -273,6 +273,8 @@ export function createFakeRelay(
     mode?: "ok" | "refuse" | "down" | "fail-after-send";
     refuseStatus?: number;
     refuseEvidence?: boolean;
+    /** Fields the refusal answers with over its defaults (its `error`, a quota's `retryAt` and `quota`). */
+    refuseBody?: Record<string, unknown>;
     failStatus?: number;
     failBody?: unknown;
     onRelay?: (hash: Hex, body: unknown) => void; chain?: FakeChain; confirm?: TxReceipt["status"] | "none"; chainId?: number } = {},
@@ -284,6 +286,7 @@ export function createFakeRelay(
     confirm: opts.confirm ?? "success",
     refuseStatus: opts.refuseStatus ?? 400,
     refuseEvidence: opts.refuseEvidence ?? true,
+    refuseBody: opts.refuseBody ?? {},
     failStatus: opts.failStatus ?? 504,
     failBody: opts.failBody ?? ({ ok: false, error: "unknown", message: "Unknown error" } as unknown),
   };
@@ -294,7 +297,7 @@ export function createFakeRelay(
     if (state.mode === "refuse") {
       const error = state.refuseStatus === 503 ? "high_congestion" : "invalid_transaction";
       const evidence = state.refuseEvidence ? { not_sent: true } : {};
-      return new Response(JSON.stringify({ ok: false, error, message: "execution reverted", ...evidence }), { status: state.refuseStatus });
+      return new Response(JSON.stringify({ ok: false, error, message: "execution reverted", ...evidence, ...state.refuseBody }), { status: state.refuseStatus });
     }
     const hash = `0x${"f".repeat(56)}${(++n).toString(16).padStart(8, "0")}` as Hex;
     if (opts.chain) {

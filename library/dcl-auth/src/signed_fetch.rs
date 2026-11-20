@@ -31,8 +31,9 @@ pub const AUTH_TIMESTAMP_HEADER: &str = "x-identity-timestamp";
 pub const AUTH_METADATA_HEADER: &str = "x-identity-metadata";
 pub const ORIGINAL_PATH_HEADER: &str = "x-original-path";
 
-/// Upstream's freshness window.
-pub const FIVE_MINUTES: i64 = 5 * 60;
+/// How old a signed-fetch timestamp may be, in seconds: `@dcl/crypto-middleware`'s
+/// default expiration, one window for every signed route.
+pub const SIGNED_FETCH_WINDOW_SECS: i64 = 60;
 
 /// How far ahead of now a signed timestamp may be, whatever the window.
 pub const MAX_FUTURE_SKEW_SECS: i64 = 60;

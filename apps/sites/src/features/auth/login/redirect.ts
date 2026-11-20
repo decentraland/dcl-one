@@ -2,13 +2,18 @@
 //       (extractRedirectToFromSearchParameters); @dcl/schemas validateUrlInstance (allowLocalhost, allowedPorts)
 // decentraland/auth is Apache-2.0.
 // Where the page sends a reader once signed in. Only this site qualifies: a path, or an absolute URL with this page's
-// exact origin, over https (http only on a local host). Anything else lands on the home page, so a crafted link cannot
+// exact origin, over https (plain HTTP URLs only on loopback). A root-relative path keeps the current scheme
+// and origin, including on a LAN preview. Anything else lands on the home page, so a crafted link cannot
 // carry a fresh session somewhere else. The answer is a path, never a URL, so whatever follows it (a full navigation,
 // or the social callback's in-app one) cannot leave the site either.
 
 export const HOME = "/";
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+function isRootRelative(path: string): boolean {
+  return /^\/(?![/\\])/.test(path);
+}
 
 /** The query's `redirectTo` as a path on this site (query and fragment kept), or `HOME` when it is not one. */
 export function safeRedirectTarget(redirectTo: string | null, here: URL): string {
@@ -19,10 +24,10 @@ export function safeRedirectTarget(redirectTo: string | null, here: URL): string
   } catch {
     return HOME;
   }
-  const schemeOk = target.protocol === "https:" || (target.protocol === "http:" && LOCAL_HOSTS.has(target.hostname));
+  const schemeOk =
+    target.protocol === "https:" || (target.protocol === "http:" && (isRootRelative(redirectTo) || LOCAL_HOSTS.has(target.hostname)));
   // A path opening with `//` or `/\` reads as another host to whatever parses it next (history, the address bar).
-  const pathOk = target.pathname.startsWith("/") && !/^\/[/\\]/.test(target.pathname);
-  if (!schemeOk || !pathOk || target.origin !== here.origin) return HOME;
+  if (!schemeOk || !isRootRelative(target.pathname) || target.origin !== here.origin) return HOME;
   return `${target.pathname}${target.search}${target.hash}`;
 }
 

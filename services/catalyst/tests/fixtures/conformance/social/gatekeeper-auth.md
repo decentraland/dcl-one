@@ -66,6 +66,7 @@ scene and world administration and moderation.
 | Device bans; connection IP/device recorded; null upsert keeps the stored value (21f055b, 0a7c499) | `player-connection-db.ts` | `store.rs:30-37,630-651`; IP from socket or trusted proxy only (`G/auth.rs:455-461`) | MATCH (IP source is a documented divergence) | `a_lookup_without_a_device_id_is_widened_to_the_recorded_device`, `the_scene_adapter_records_the_pinned_client_ip_not_a_client_set_header` |
 | Platform bans held in memory (8be80d5) | `adapters/ban-registry/*` | SQL on every check; Pulse polls `GET /bans` with ETag | DIVERGENCE (never stale) | – |
 | Island mints check bans **and** the deny list | `cluster-subscriber/component.ts:372-381` | bans and blocked wallets only (`G/admission/cluster/gateway.rs:68-81`); the comment at `subscriber.rs:576-577` says no deny-list store exists, but `CommsState.deny_list` does | GAP-AU-1 | `a_banned_wallet_is_skipped_entirely` (bans only) |
+| Island mint when the ban lookup fails | deferred: nothing minted, `dcl_gatekeeper_cluster_access_check_failed_total`, a later hint retries (`cluster-subscriber/component.ts:379-383`) | deferred: nothing minted or remembered, `comms_cluster_access_check_failed_total` only, a later hint or reconnect retries (`G/admission/cluster/subscriber.rs`, `admission_withheld`) | MATCH | `an_access_check_failure_defers_the_assignment` |
 
 ## 4. Scene admins (`/scene-admin`)
 
