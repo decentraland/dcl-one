@@ -160,9 +160,41 @@ describe('bridge community card places', () => {
     const h = fakeCtx()
     await h.req({ kind: 'getCommunityDetail', id: 'c1' })
     expect(detail(h.sent)?.places).toEqual([
-      { id: 'land-1', title: 'Plaza', thumbnail: undefined, positions: '1,2', likeRate: undefined, isMine: true },
-      { id: 'world-1', title: 'Mansion', thumbnail: undefined, positions: 'me.dcl.eth', likeRate: undefined, isMine: false }
+      { id: 'land-1', title: 'Plaza', thumbnail: undefined, positions: '1,2', likeRate: undefined, isMine: true, detail: expect.objectContaining({ id: 'land-1', world: false, positions: ['1,2'] }) },
+      { id: 'world-1', title: 'Mansion', thumbnail: undefined, positions: 'me.dcl.eth', likeRate: undefined, isMine: false, detail: expect.objectContaining({ id: 'world-1', world: true, world_name: 'me.dcl.eth' }) }
     ])
+  })
+
+  // The card's JUMP IN and Place Detail read `world` and `positions`; a row without them still reads right.
+  it('reads a World from its name and the parcels from the base position when the row leaves them out', async () => {
+    serve({ [`GET ${cardPlaces}`]: { results: [{ id: 'land-1' }, { id: 'world-1' }] }, [`POST ${DESTINATIONS}`]: [land, world] })
+    const h = fakeCtx()
+    await h.req({ kind: 'getCommunityDetail', id: 'c1' })
+    const [plaza, mansion] = detail(h.sent)?.places.map((p) => p.detail) ?? []
+    expect(plaza).toMatchObject({ world: false, positions: ['1,2'], image: '', description: '' })
+    expect(mansion).toMatchObject({ world: true, world_name: 'me.dcl.eth' })
+  })
+
+  // As unity-explorer's card: the photos taken in the community's places, one signed POST.
+  it("reads the photos taken in the community's places", async () => {
+    const photos = 'https://cameraReel.example/api/places/images?limit=30&offset=0'
+    serve({
+      [`GET ${cardPlaces}`]: { results: [{ id: 'land-1' }, { id: 'world-1' }] },
+      [`POST ${DESTINATIONS}`]: [land, world],
+      [`POST ${photos}`]: { images: [{ id: 'ph1', url: 'https://img/1.png', thumbnailUrl: 'https://img/1-t.png' }, { id: 'ph2' }] }
+    })
+    const h = fakeCtx()
+    await h.req({ kind: 'getCommunityDetail', id: 'c1' })
+    expect(signed).toHaveBeenCalledWith(photos, 'POST', { placesIds: ['land-1', 'world-1'] })
+    expect(detail(h.sent)?.photos).toEqual([{ id: 'ph1', url: 'https://img/1.png', thumbnail: 'https://img/1-t.png' }])
+  })
+
+  it('reads no photos for a community with no places', async () => {
+    serve({ [`GET ${cardPlaces}`]: { results: [] } })
+    const h = fakeCtx()
+    await h.req({ kind: 'getCommunityDetail', id: 'c1' })
+    expect(signed.mock.calls.some(([url]) => String(url).includes('cameraReel'))).toBe(false)
+    expect(detail(h.sent)?.photos).toEqual([])
   })
 
   it("falls back to the social service's rows when the places service fails", async () => {

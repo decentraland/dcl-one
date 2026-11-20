@@ -328,6 +328,65 @@ describe('community card places', () => {
   })
 })
 
+// As unity-explorer's PlaceCardView: a place the places service read shows Like, Dislike, Favorite,
+// Set as Home, Share and JUMP IN (on hover; jsdom has no layout, so they are in the tree), JUMP IN
+// travels and closes the card, and a press on the card opens Place Detail.
+describe('community card place actions', () => {
+  const detailOf = (over: Record<string, unknown> = {}) => ({ id: 'pl-1', title: 'Plaza', description: '', image: '', positions: ['3,4'], base_position: '3,4', owner: null, user_like: true, ...over })
+  function renderCard(place: CommunityDetailMessage['places'][number]) {
+    const session = fakeSession()
+    const onClose = vi.fn()
+    render(
+      <SessionProvider value={session}>
+        <PopupHost />
+        <CommunityModal
+          community={community({ id: 'c1', name: 'Builders', role: 'member' })}
+          detail={{ kind: 'communityDetail', id: 'c1', members: [], places: [place], events: [], photos: [] }}
+          onJoin={vi.fn()}
+          onRequestToJoin={vi.fn()}
+          onCancelRequest={vi.fn()}
+          onLeave={vi.fn()}
+          onOpenChat={vi.fn()}
+          onClose={onClose}
+        />
+      </SessionProvider>
+    )
+    return { session, onClose }
+  }
+  const openPlaces = async (): Promise<void> => userEvent.click(screen.getByRole('tab', { name: 'PLACES' }))
+
+  it("shows the place's actions with the user's own vote, and JUMP IN travels and closes the card", async () => {
+    const { session, onClose } = renderCard({ id: 'pl-1', title: 'Plaza', positions: '3,4', detail: detailOf() })
+    await openPlaces()
+    expect(screen.getByRole('button', { name: 'Like' })).toHaveAttribute('aria-pressed', 'true')
+    for (const name of ['Dislike', 'Favorite', 'Set as Home', 'Share']) expect(screen.getByRole('button', { name })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Jump in to Plaza' }))
+    expect(session.map.teleportToPlace).toHaveBeenCalledWith(3, 4)
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('jumps to a World by its realm', async () => {
+    const { session } = renderCard({ id: 'w-1', title: 'Mansion', positions: 'me.dcl.eth', detail: detailOf({ id: 'w-1', title: 'Mansion', world: true, world_name: 'me.dcl.eth' }) })
+    await openPlaces()
+    await userEvent.click(await screen.findByRole('button', { name: 'Jump in to Mansion' }))
+    expect(session.map.changeRealm).toHaveBeenCalledWith('me.dcl.eth')
+  })
+
+  it('opens Place Detail from the card', async () => {
+    renderCard({ id: 'pl-1', title: 'Plaza', positions: '3,4', detail: detailOf() })
+    await openPlaces()
+    await userEvent.click(screen.getByRole('button', { name: 'Open Plaza' }))
+    expect(screen.getByRole('dialog', { name: 'Plaza' })).toBeInTheDocument()
+  })
+
+  it("shows no actions for a place the places service didn't read", async () => {
+    renderCard({ id: 'pl-1', title: 'Plaza', positions: '3,4' })
+    await openPlaces()
+    expect(screen.queryByRole('button', { name: 'Like' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Jump in/ })).toBeNull()
+  })
+})
+
 // The create form, as unity-explorer's: it holds typed details (the scrim refuses, the deliberate
 // closes ask), needs a name and a description, waits for the content check, and shows how it ended.
 /** The form's places as the session holds them once read: none owned, none linked. */

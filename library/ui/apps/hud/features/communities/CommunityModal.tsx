@@ -13,7 +13,10 @@ import { nameColor, splitName } from '@explorer-core/lib/identity'
 import { relationshipOf, type Relationship } from '@explorer-core/lib/relationship'
 import { knownUserColor } from '../session/profileStore'
 import { isMemberRole, memberActions, roleLabel } from '@explorer-core/features/communities/roles'
-import { useSession } from '../session/SessionContext'
+import { useOptionalSession, useSession } from '../session/SessionContext'
+import { openPlaceDetail } from '../places/PlaceDetail'
+import { PlaceActionButtons, PlaceJumpIn, usePlaceActions } from '../places/PlaceActions'
+import { placeTeleport } from '@explorer-core/features/places/placesApi'
 import { openCommunityEditModal } from './CommunityCreateModal'
 import { RequestRowActions } from './RequestRowActions'
 import { openPassport } from '../profile/Passport'
@@ -31,7 +34,8 @@ import type {
   CommunityMemberSectionMessage,
   CommunityRequestMember,
   CommunityPhoto,
-  CommunityPlace
+  CommunityPlace,
+  DiscoverPlace
 } from '@explorer-core/engine/protocol'
 import type { CommunityPosts } from '../session/useEngineSession'
 import { Announcements } from './Announcements'
@@ -215,13 +219,26 @@ function MemberTabs({ tabs, value, requests, onChange }: { tabs: MemberTab[]; va
   return <Tabs variant="subtab" className={styles.memberTabs} items={items} value={value} onChange={onChange} aria-label="Member sections" />
 }
 
-function PlaceCard({ place, onDelete, deleting = false }: { place: CommunityPlace; onDelete?: () => void; deleting?: boolean }): React.JSX.Element {
+/** A linked place: cover, name, like rate and position, and delete for a place the user owns. With
+ *  the places service's row and a session, as unity-explorer's PlaceCardView: hovering (or focusing)
+ *  shows Like, Dislike, Favorite, Set as Home, Share and JUMP IN, and a press on the card opens
+ *  Place Detail. A jump closes the community card (`onTravelled`). */
+function PlaceCard({ place, onDelete, deleting = false, onTravelled }: { place: CommunityPlace; onDelete?: () => void; deleting?: boolean; onTravelled: () => void }): React.JSX.Element {
+  const session = useOptionalSession()
+  if (session == null || place.detail == null) return <PlaceCardFace place={place} onDelete={onDelete} deleting={deleting} />
+  return <ActionablePlaceCard place={place} detail={place.detail} onDelete={onDelete} deleting={deleting} onTravelled={onTravelled} />
+}
+
+function PlaceCardFace({ place, onDelete, deleting, actions, onOpen }: { place: CommunityPlace; onDelete?: () => void; deleting: boolean; actions?: React.ReactNode; onOpen?: () => void }): React.JSX.Element {
   return (
-    <div className={styles.place}>
+    <div className={`${styles.place} ${actions != null ? styles.placeActionable : ''}`.trim()} onClick={onOpen}>
       <div className={styles.placeCover} style={{ background: place.thumbnail ? undefined : nameColor(place.id) }}>
         {place.thumbnail && <img src={place.thumbnail} alt="" />}
+        {onOpen != null && (
+          <button type="button" className={styles.placeOpen} aria-label={`Open ${place.title}`} onClick={(e) => { e.stopPropagation(); onOpen() }} />
+        )}
         {onDelete != null && (
-          <button type="button" className={styles.placeDelete} aria-label={`Delete ${place.title}`} disabled={deleting} onClick={onDelete}>
+          <button type="button" className={styles.placeDelete} aria-label={`Delete ${place.title}`} disabled={deleting} onClick={(e) => { e.stopPropagation(); onDelete() }}>
             <Trash size={14} />
           </button>
         )}
@@ -231,7 +248,39 @@ function PlaceCard({ place, onDelete, deleting = false }: { place: CommunityPlac
         {place.likeRate != null && <span className={styles.placeLike}>👍 {Math.round(place.likeRate * 100)}%</span>}
         {place.positions && <span className={styles.placePos}><PinIcon /> {place.positions}</span>}
       </div>
+      {actions}
     </div>
+  )
+}
+
+function ActionablePlaceCard({ place, detail, onDelete, deleting, onTravelled }: { place: CommunityPlace; detail: DiscoverPlace; onDelete?: () => void; deleting: boolean; onTravelled: () => void }): React.JSX.Element {
+  const session = useSession()
+  // the row came from a signed read, so it already carries the user's votes and favourite
+  const actions = usePlaceActions(detail, { readSigned: false })
+  const travel = (to: DiscoverPlace): boolean => {
+    const t = placeTeleport(to)
+    if (t == null) return false
+    const outcome = t.kind === 'world' ? session.map.changeRealm(t.realm) : session.map.teleportToPlace(t.x, t.y)
+    if (outcome === 'refused') return false
+    onTravelled()
+    return true
+  }
+  const open = (): void => openPlaceDetail({ place: detail, onJumpIn: travel })
+  return (
+    <PlaceCardFace
+      place={place}
+      onDelete={onDelete}
+      deleting={deleting}
+      onOpen={open}
+      actions={
+        <div className={styles.placeActions} onClick={(e) => e.stopPropagation()}>
+          <div className={styles.placeButtons}>
+            <PlaceActionButtons actions={actions} iconSize={20} toggle={styles.placeToggle} share={styles.placeToggle} />
+          </div>
+          <PlaceJumpIn actions={actions} iconSize={20} className={styles.placeJump} onJumpIn={() => travel(detail)} />
+        </div>
+      }
+    />
   )
 }
 
@@ -689,6 +738,7 @@ export function CommunityModal({
                     place={p}
                     onDelete={canModify && p.isMine === true && onRemovePlace != null ? () => confirmRemovePlace(p) : undefined}
                     deleting={removing.has(p.id)}
+                    onTravelled={onClose}
                   />
                 ))}
               </div>

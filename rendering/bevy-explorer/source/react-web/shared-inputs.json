@@ -4519,6 +4519,10 @@
       "path": "library/ui/apps/hud/features/places",
       "entries": [
         {
+          "name": "PlaceActions.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "PlaceCard.module.css",
           "kind": "regular"
         },
@@ -5942,7 +5946,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/communities.ts",
-      "sha256": "1ac20e352d3935761c25cc4a4a35c20fd45d6d6a46d9e5aa0ca14208dccb28cc"
+      "sha256": "7cd9ee1c473b93603ae8e20e909c16ffcd42bec06b6f9bf29dc791b2438a1780"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/connectivity.ts",
@@ -6030,7 +6034,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/voiceChat.ts",
-      "sha256": "9d62fd01146da4b24ce2ae8bacb7ba420dd50d36e55436d5357babcb02a457e3"
+      "sha256": "88c07ed9fe3569e7b957ec54b55f722bee60d81322f3f6c1b27a871f797be320"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/wearables.ts",
@@ -6182,7 +6186,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
-      "sha256": "bbd2c735a2fdff85c397c7cb2f9b5529a29f4700c74c8e6d6eddcc910cff7f4b"
+      "sha256": "fb7da633b05174be73a6ce6bf0c9a830650bb75ae0bd4221f03b3802ccba06e9"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
@@ -6262,7 +6266,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
-      "sha256": "809082502001ff082e036dea2e02552fceaff138811d99ac8c93ec56f8a0e92e"
+      "sha256": "270e74903e7e7f0065f3fdd774486c5a861a1715d8a92c6f7c1ce43dcf66bee7"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
@@ -6547,7 +6551,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "fe882c52ddb2b3ed297ebf7b598c6d1fb63af63a5dd7914fa619e81294935742"
+      "sha256": "7d69e30c569ee2696b6b5272ce7087476e64a9701d0b065f742e1d064a5ef8e6"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -6587,7 +6591,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "c0aa82ebcc0a40560ebc404979ea516813a9aa4ede2eac55cb24b7423f77df57"
+      "sha256": "9cc2e9642d81dea63c20890868934a6906fa17b56064cf66390ea433f2282656"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -9187,11 +9191,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.module.css",
-      "sha256": "228d230d44a31f95e3478456084395be2291c7168b79fd1fef8dabda32bf4664"
+      "sha256": "5fb1918e7f1398976568eae28c6c19883effca67b0befb055775ed10e4cb30e4"
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.tsx",
-      "sha256": "0251bb18b38712d441168b0b3cccebcd981780050f4d5087d2711feeb0eca41f"
+      "sha256": "d96c22c311a17ada58e8343d8dd27620f76708f555501da3deff342f20ff2733"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ChatIcons.tsx",
@@ -9199,7 +9203,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/CommunityHeader.tsx",
-      "sha256": "ae9e54ddec41bc5afcab1fab9c27d032567cdd100ce068d5bf1429cc1f98fb05"
+      "sha256": "e3891f2d433fa42790ad1a95454ed4e226dcd1b77841cb0953bddabc55cbc57f"
     },
     {
       "path": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
@@ -9227,7 +9231,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
-      "sha256": "12014be22fa589d360b338545f939257a7b0726f76328b944c64cc11e168f137"
+      "sha256": "2ae219ed519261c1b02bbcc4d1b9a2ef3cfbdd665f4a83d0482f39e159b380a1"
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiSuggestList.module.css",
@@ -9283,7 +9287,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/Announcements.tsx",
-      "sha256": "8c5c56628ede1c581c94d6137b2986fac4d2fe3352ee88d2313f4115d14d6dd4"
+      "sha256": "52142f02d6a8cfefd62b58757c4358f96c31e60417ee5148b008796c76d7a7bc"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.module.css",
@@ -9303,11 +9307,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityModal.module.css",
-      "sha256": "8d6ab062285496a52d1f902464253a96b165921b781d12b00d8daf1a15f6f008"
+      "sha256": "920b6803c8dfb685a4220273673dd744817f7d25c52c5a1854718de5a5609e0c"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
-      "sha256": "ee424616c8142c8e83912220d6cd7731ef24349042715e53078bbecbc0187991"
+      "sha256": "36b433a4215504a74576a29ba924c2395a4f80cdefe40402db7ce1521ac9cc71"
     },
     {
       "path": "library/ui/apps/hud/features/communities/InviteToCommunity.tsx",
@@ -9974,6 +9978,10 @@
       "sha256": "a00a8ea4080c8fa8da77b02e390f0f2baf2587a2e6bd766a20401c8a0d7f9a9f"
     },
     {
+      "path": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "sha256": "ae71ce7584368d1c97f90fc0feda9cc975baa43a19fac1739093a6145d0c317a"
+    },
+    {
       "path": "library/ui/apps/hud/features/places/PlaceCard.module.css",
       "sha256": "955d0a076ffc8353c1fddf063269f23138b5b95a4c3e0f07f6ed164fb8e50f10"
     },
@@ -9987,7 +9995,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "sha256": "a4eb98487570a34bd3e71d6b0ce2f31c0e7cec3cf2d53496f90728da1d66d565"
+      "sha256": "fb4fdf65096cc59f269b4f9a4a8efd3c04f57801144ab17dfe3a94d7ea212d25"
     },
     {
       "path": "library/ui/apps/hud/features/places/PlacesBrowser.tsx",
@@ -10559,11 +10567,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
-      "sha256": "edd8566f3455f44928b96ebdb7749488eda3566b9fa6657115fee04de403e003"
+      "sha256": "755468e3fb5e932e61b682aab6032b79b485e9a1135ada8b7a3453351f51c4ab"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.clicks.test.tsx",
-      "sha256": "4e435d3b33fbe479ae7b1efe90bafc64aefa9a8cde4399221faec1646a994ad6"
+      "sha256": "d9a3abd52f8a730d5f694dbfb3cd583828078bd4d932e7e9744ccabb49796fcb"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.invites.test.tsx",
@@ -10579,7 +10587,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
-      "sha256": "6c946efb5de21992786f6f532696f3166dac3c7d55f25a99dceee4d2c8337a21"
+      "sha256": "b999b84f94c95d13ea8b07d12ecbd5c4dbc35a6928a60849aa4997b5ede77507"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communityChat.test.tsx",
@@ -20032,6 +20040,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/chat/CommunityHeader.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/CommunityHeader.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/CommunityHeader.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/CommunityHeader.tsx",
       "to": "library/ui/apps/hud/assets/chat/players.png",
       "kind": "native:runtime"
     },
@@ -21427,6 +21450,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/explorer-core/features/places/placesApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/explorer-core/features/places/placesApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/explorer-core/features/places/placesApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
       "to": "library/explorer-core/lib/hudScale.ts",
       "kind": "native:runtime"
     },
@@ -21633,6 +21671,36 @@
     {
       "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
       "to": "library/ui/apps/hud/features/friends/friendDialogs.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
       "kind": "test:runtime"
     },
     {
@@ -30921,6 +30989,276 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/events/link-icn.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/events/link-icn.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/events/link-icn.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/events/x-icn.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/events/x-icn.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/events/x-icn.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/dislike-outline.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/dislike-outline.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/dislike-outline.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/favourite-outline.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/favourite-outline.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/favourite-outline.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/favourite-solid.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/favourite-solid.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/favourite-solid.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/home-outline.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/home-outline.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/home-outline.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/home-solid.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/home-solid.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/home-solid.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/jump-in.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/jump-in.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/jump-in.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/like-outline.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/like-outline.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/like-outline.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/like-solid.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/like-solid.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/like-solid.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/share.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/share.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/share.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/places/dislike-solid.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/places/dislike-solid.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/places/dislike-solid.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceDetail.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceDetail.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceDetail.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/features/places/placeDetailFormat.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/features/places/placeDetailFormat.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/features/places/placeDetailFormat.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/places/PlaceCard.tsx",
       "to": "library/explorer-core/features/places/placesApi.ts",
       "kind": "native:runtime"
@@ -30997,36 +31335,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/explorer-core/features/map/home.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/explorer-core/features/map/home.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/explorer-core/features/map/home.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/explorer-core/features/map/mapApi.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/explorer-core/features/map/mapApi.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/explorer-core/features/map/mapApi.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
       "to": "library/explorer-core/features/map/navigation.ts",
       "kind": "native:runtime"
     },
@@ -31072,36 +31380,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/events/link-icn.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/events/link-icn.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/events/link-icn.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/events/x-icn.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/events/x-icn.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/events/x-icn.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
       "to": "library/ui/apps/hud/assets/map/icons/layer-poi.png",
       "kind": "native:runtime"
     },
@@ -31128,126 +31406,6 @@
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
       "to": "library/ui/apps/hud/assets/map/panel/default-place.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/dislike-outline.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/dislike-outline.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/dislike-outline.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/favourite-outline.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/favourite-outline.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/favourite-outline.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/favourite-solid.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/favourite-solid.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/favourite-solid.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/home-outline.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/home-outline.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/home-outline.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/home-solid.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/home-solid.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/home-solid.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/jump-in.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/jump-in.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/jump-in.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/like-outline.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/like-outline.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/like-outline.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/like-solid.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/like-solid.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/like-solid.png",
       "kind": "test:runtime"
     },
     {
@@ -31293,36 +31451,6 @@
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
       "to": "library/ui/apps/hud/assets/map/panel/players.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/share.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/share.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/share.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/places/dislike-solid.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/places/dislike-solid.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/places/dislike-solid.png",
       "kind": "test:runtime"
     },
     {
@@ -31428,6 +31556,21 @@
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
       "to": "library/ui/apps/hud/features/map/mapArt.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceActions.tsx",
       "kind": "test:runtime"
     },
     {
@@ -47568,6 +47711,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/photoMode/PhotoModeOverlay.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/places/PlaceActions.tsx",
       "kind": "type"
     },
     {

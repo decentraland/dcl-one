@@ -33,6 +33,7 @@ import type {
   CommunityRequestMember,
   CommunityRequestsGroup,
   CommunitySaveResultMessage,
+  DiscoverPlace,
   ManageCommunityRequestRequest
 } from '@explorer-core/engine/protocol'
 
@@ -275,6 +276,22 @@ function mapMember(m: MemberRaw, identity: (address: string) => ProfileIdentity)
   }
 }
 
+/** A places-service row as the card's actions and Place Detail read it: a World is one with a name
+ *  even when the row leaves out `world`, and the texts and parcels are never missing. */
+function placeDetail(row: PlaceRaw & Partial<DiscoverPlace>): DiscoverPlace {
+  const worldName = row.world_name ?? ''
+  return {
+    ...row,
+    title: row.title ?? row.name ?? '',
+    description: row.description ?? '',
+    image: row.image ?? '',
+    owner: row.owner ?? null,
+    positions: row.positions ?? (row.base_position != null ? [row.base_position] : []),
+    world: row.world ?? worldName !== '',
+    world_name: worldName !== '' ? worldName : undefined
+  }
+}
+
 async function detail(id: string): Promise<{ members: CommunityMember[]; places: CommunityPlace[]; events: CommunityEvent[]; photos: CommunityPhoto[] }> {
   const b = await base('v2')
   const placesBase = await base('v1')
@@ -298,7 +315,7 @@ async function detail(id: string): Promise<{ members: CommunityMember[]; places:
   const [destinations, photosRes] = await Promise.all([
     placeRows.length > 0
       ? serviceBase('places')
-          .then((b) => signed<PlaceRaw[]>(`${b}/api/destinations`, 'POST', placeRows.map((pl) => pl.id)))
+          .then((b) => signed<(PlaceRaw & Partial<DiscoverPlace>)[]>(`${b}/api/destinations`, 'POST', placeRows.map((pl) => pl.id)))
           .catch((e: unknown) => {
             console.error('[communities] places details failed', e)
             return undefined
@@ -320,14 +337,16 @@ async function detail(id: string): Promise<{ members: CommunityMember[]; places:
   const byId = new Map((destinations ?? []).map((d) => [d.id, d]))
   const me = (getPlayer()?.userId ?? '').toLowerCase()
   const places: CommunityPlace[] = placeRows.map((row) => {
-    const pl = byId.get(row.id) ?? row
+    const read = byId.get(row.id)
+    const pl = read ?? row
     return {
       id: pl.id,
       title: pl.title ?? pl.name ?? '',
       thumbnail: pl.image,
       positions: (pl.world_name ?? '') !== '' ? (pl.world_name ?? undefined) : (pl.base_position ?? pl.positions?.[0]),
       likeRate: pl.like_rate ?? pl.likeRate,
-      isMine: me !== '' && (pl.owner ?? '').toLowerCase() === me
+      isMine: me !== '' && (pl.owner ?? '').toLowerCase() === me,
+      ...(read != null ? { detail: placeDetail(read) } : {})
     }
   })
   const events: CommunityEvent[] = (eventsRes?.data?.events ?? []).map((e) => ({
