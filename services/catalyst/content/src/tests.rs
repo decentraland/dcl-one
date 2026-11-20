@@ -1341,6 +1341,72 @@ async fn collection_listing_parses_the_urn_like_upstream() {
     unseed(&pool, tag).await;
 }
 
+/// A `%` or `_` in the collection URN is a literal in the pointer prefix, not
+/// a LIKE wildcard.
+#[tokio::test]
+async fn collection_listing_matches_percent_and_underscore_literally() {
+    require_test_db!(Some(node) = TestNode::with_db("likeescape").await);
+    let pool = node.state.pool.clone();
+    let tag = "likeescape";
+    unseed(&pool, tag).await;
+    let base = "urn:decentraland:off-chain:base-avatars:likeprefixtest";
+    let seeded = [
+        format!("{base}_eyes"),
+        format!("{base}xeyes"),
+        format!("{base}%25hat"),
+        format!("{base}x25hat"),
+    ];
+    let mut ids = Vec::new();
+    for (n, pointer) in seeded.iter().enumerate() {
+        let entity =
+            seed_deployment(&pool, tag, n as u32, "wearable", pointer, 1_700_000_000_000).await;
+        ids.push(entity.id);
+    }
+    // `_` sent as `%5F`, and the URN's `%25` sent as `%2525`.
+    for (path, id) in [
+        (format!("{base}%5F"), &ids[0]),
+        (format!("{base}%2525"), &ids[2]),
+    ] {
+        let (status, body) = get_json(
+            node.router(),
+            &format!("/content/entities/active/collections/{path}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{path}: {body}");
+        assert_eq!(body["total"], 1, "{path}: {body}");
+        assert_eq!(body["entities"][0]["id"], json!(id), "{path}: {body}");
+    }
+    unseed(&pool, tag).await;
+}
+
+/// `parseUrn` throwing on a malformed escape inside a matched route answers
+/// "Invalid URN format"; a malformed escape in a path no route matches
+/// answers the collection sentence.
+#[tokio::test]
+async fn collection_listing_answers_a_malformed_escape_like_upstream() {
+    let node = TestNode::without_db("urnescape").await;
+    for (path, urn, error) in [
+        (
+            "urn:decentraland:off-chain:base-emotes:%25ZZ",
+            "urn:decentraland:off-chain:base-emotes:%ZZ",
+            "Invalid URN format: urn:decentraland:off-chain:base-emotes:%ZZ",
+        ),
+        (
+            "urn:decentraland:off-chain:base-emotes:%25ZZ:extra",
+            "urn:decentraland:off-chain:base-emotes:%ZZ:extra",
+            "Invalid collection urn param, it must be a valid urn prefix of a collection or a third party id, instead: 'urn:decentraland:off-chain:base-emotes:%ZZ:extra'",
+        ),
+    ] {
+        let (status, body) = get_json(
+            node.router(),
+            &format!("/content/entities/active/collections/{path}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{urn}");
+        assert_eq!(body, json!({ "error": error }), "{urn}");
+    }
+}
+
 async fn unseed(pool: &sqlx::PgPool, tag: &str) {
     let like = format!("test-{tag}-%");
     sqlx::query("DELETE FROM content.content_files WHERE content_hash LIKE $1")

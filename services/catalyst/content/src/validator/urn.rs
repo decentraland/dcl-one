@@ -2,9 +2,10 @@
 //! the input is read as a WHATWG URL (`url`), a `urn:` path is matched
 //! against the resolver's routes (case-sensitive literals, `[^:]+` groups,
 //! each group percent-decoded) and a legacy `dcl://` address is rewritten to
-//! its URN first. A URN that matches no route, names an unknown network or a
-//! network without the contract the route needs, or holds a malformed
-//! percent escape, does not resolve.
+//! its URN first. A URN that matches no route, or names an unknown network or
+//! a network without the contract the route needs, does not resolve.
+//! `parseUrn` throws where the input is not a URL, or where a path matches a
+//! route but one of its groups holds a malformed percent escape.
 
 use url::Url;
 
@@ -43,9 +44,39 @@ const TPR_NETWORKS: &[&str] = &["matic", "mumbai", "amoy"];
 /// The networks with a LAND contract (`LANDProxy`).
 const LAND_NETWORKS: &[&str] = &["ethereum", "sepolia", "goerli"];
 
-/// The resolved type of `input`, `None` when `parseUrn` resolves nothing.
+/// Where `parseUrn` throws instead of resolving.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Throws;
+
+/// A URN `parseUrn` resolved: its type and its decoded path parts (the URN
+/// without `urn:`, split on `:`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Parsed {
+    pub kind: UrnType,
+    parts: Vec<String>,
+}
+
+impl Parsed {
+    /// The decoded `{registry}` of an off-chain URN
+    /// (`decentraland:off-chain:{registry}:{name}`).
+    pub fn off_chain_registry(&self) -> Option<&str> {
+        match (self.kind, self.parts.as_slice()) {
+            (UrnType::OffChain, [_, _, registry, _]) => Some(registry),
+            _ => None,
+        }
+    }
+}
+
+/// `parseUrn(input)`: `Ok(None)` where it resolves nothing, `Err` where it
+/// throws.
+pub fn parse_urn(input: &str) -> Result<Option<Parsed>, Throws> {
+    Ok(resolved(input)?.map(|(parsed, _)| parsed))
+}
+
+/// The resolved type of `input`, `None` when `parseUrn` resolves nothing or
+/// throws.
 pub fn parse(input: &str) -> Option<UrnType> {
-    resolved(input).map(|(kind, _)| kind)
+    parse_urn(input).ok().flatten().map(|parsed| parsed.kind)
 }
 
 /// `input`'s segments as the resolver reads them, each as `(raw, decoded)`:
@@ -53,7 +84,7 @@ pub fn parse(input: &str) -> Option<UrnType> {
 /// newline, query or fragment), a legacy `dcl://` address as its URN; `None`
 /// when it does not resolve.
 pub fn segments(input: &str) -> Option<Vec<(String, String)>> {
-    let (_, urn) = resolved(input)?;
+    let (_, urn) = resolved(input).ok().flatten()?;
     let path = urn.strip_prefix("urn:")?;
     let mut segments = vec![("urn".to_string(), "urn".to_string())];
     for part in path.split(':') {
@@ -68,23 +99,27 @@ pub fn is_v1_contract(raw: &str) -> bool {
     is_hex(raw)
 }
 
-fn resolved(input: &str) -> Option<(UrnType, String)> {
-    let url = Url::parse(input).ok()?;
+fn resolved(input: &str) -> Result<Option<(Parsed, String)>, Throws> {
+    let url = Url::parse(input).map_err(|_| Throws)?;
     match url.scheme() {
-        "urn" => resolve(url.path()).map(|kind| (kind, format!("urn:{}", url.path()))),
+        "urn" => Ok(resolve(url.path())?.map(|parsed| (parsed, format!("urn:{}", url.path())))),
         "dcl" => {
-            let urn = legacy_dcl_urn(&url)?;
-            Some((parse_urn_scheme(&urn)?, urn))
+            let Some(urn) = legacy_dcl_urn(&url) else {
+                return Ok(None);
+            };
+            Ok(parse_urn_scheme(&urn)?.map(|parsed| (parsed, urn)))
         }
-        _ => None,
+        _ => Ok(None),
     }
 }
 
-fn parse_urn_scheme(input: &str) -> Option<UrnType> {
-    let url = Url::parse(input).ok()?;
-    (url.scheme() == "urn")
-        .then(|| resolve(url.path()))
-        .flatten()
+fn parse_urn_scheme(input: &str) -> Result<Option<Parsed>, Throws> {
+    let url = Url::parse(input).map_err(|_| Throws)?;
+    if url.scheme() == "urn" {
+        resolve(url.path())
+    } else {
+        Ok(None)
+    }
 }
 
 /// `dcl://{collection}/{name}`: a base avatar or emote, or a collections-v1
@@ -142,16 +177,59 @@ fn is_digits(s: &str) -> bool {
     !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
 }
 
-fn resolve(path: &str) -> Option<UrnType> {
+fn resolve(path: &str) -> Result<Option<Parsed>, Throws> {
     let parts: Vec<&str> = path.split(':').collect();
     // Every route segment is a literal or a non-empty `[^:]+` group.
     if parts.iter().any(|p| p.is_empty()) {
-        return None;
+        return Ok(None);
     }
-    let decoded = parts
-        .iter()
-        .map(|p| decode(p))
-        .collect::<Option<Vec<_>>>()?;
+    let Some(decoded) = parts.iter().map(|p| decode(p)).collect::<Option<Vec<_>>>() else {
+        // A literal never holds a `%`, so the malformed escape is in a group
+        // of every route the path matches, and decoding it throws.
+        return if matches_a_route(&parts) {
+            Err(Throws)
+        } else {
+            Ok(None)
+        };
+    };
+    Ok(route(&parts, &decoded).map(|kind| Parsed {
+        kind,
+        parts: decoded,
+    }))
+}
+
+/// Whether `parts` matches one of the resolver's route patterns, before its
+/// handler checks the network, contract or position.
+fn matches_a_route(parts: &[&str]) -> bool {
+    let item_id = |id: &str| is_hex(id) || is_digits(id);
+    match parts {
+        ["decentraland", "off-chain", _, _] | ["decentraland", "entity", _] => true,
+        ["decentraland", _, "collections-v1", rest @ ..] => match rest {
+            [_] | [_, _] => true,
+            [_, _, token] => is_digits(token),
+            _ => false,
+        },
+        ["decentraland", _, "collections-v2", contract, rest @ ..] if is_hex(contract) => {
+            match rest {
+                [] => true,
+                [id] => item_id(id),
+                [id, token] => item_id(id) && is_digits(token),
+                _ => false,
+            }
+        }
+        ["decentraland", _, "LAND", _] => true,
+        ["decentraland", _, "collections-thirdparty", rest @ ..] => match rest {
+            [_] | [_, _] | [_, _, _] => true,
+            [_, _, _, _, contract, token] => is_hex(contract) && is_digits(token),
+            _ => false,
+        },
+        ["decentraland", _, "erc721", contract, _] => is_hex(contract),
+        _ => false,
+    }
+}
+
+/// The type `parseUrn` gives a path whose groups all decode.
+fn route(parts: &[&str], decoded: &[String]) -> Option<UrnType> {
     let in_set = |set: &[&str], network: &str| set.contains(&network.to_lowercase().as_str());
     match parts[..] {
         ["decentraland", "off-chain", _, _] => Some(UrnType::OffChain),
@@ -417,6 +495,54 @@ mod tests {
         );
         assert_eq!(
             segments(&format!("urn:decentraland:matic:collections-v2:{C}:%zz:2")),
+            None
+        );
+    }
+
+    #[test]
+    fn a_malformed_escape_throws_only_inside_a_matched_route() {
+        for urn in [
+            "urn:decentraland:off-chain:base-emotes:%ZZ".to_string(),
+            "urn:decentraland:off-chain:%zz:x".into(),
+            format!("urn:decentraland:%ZZ:collections-v2:{C}"),
+            "urn:decentraland:bogusnet:LAND:%ZZ".into(),
+            "urn:decentraland:matic:collections-v1:%ZZ".into(),
+            "urn:decentraland:matic:collections-thirdparty:%E0%A4".into(),
+            "dcl://base-avatars/%ZZ".into(),
+            "not-a-real-urn".into(),
+        ] {
+            assert_eq!(parse_urn(&urn), Err(Throws), "{urn}");
+            assert_eq!(parse(&urn), None, "{urn}");
+        }
+        for urn in [
+            "urn:decentraland:off-chain:base-emotes:%ZZ:extra".to_string(),
+            "urn:decentraland:matic:collections-v2:%ZZ".into(),
+            format!("urn:decentraland:matic:collections-v2:{C}:%zz:2"),
+            "urn:foo:%ZZ".into(),
+        ] {
+            assert_eq!(parse_urn(&urn), Ok(None), "{urn}");
+        }
+    }
+
+    #[test]
+    fn the_off_chain_registry_is_read_decoded() {
+        let registry = |urn: &str| {
+            parse_urn(urn)
+                .unwrap()
+                .unwrap()
+                .off_chain_registry()
+                .map(str::to_string)
+        };
+        assert_eq!(
+            registry("urn:decentraland:off-chain:base%2Demotes:wave").as_deref(),
+            Some("base-emotes")
+        );
+        assert_eq!(
+            registry("dcl://base-avatars/eyes_00").as_deref(),
+            Some("base-avatars")
+        );
+        assert_eq!(
+            registry(&format!("urn:decentraland:matic:collections-v2:{C}")),
             None
         );
     }

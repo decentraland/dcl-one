@@ -50,7 +50,7 @@ serves the same router at the root and under `/content`
 | # | method | upstream path | prod prefix | dcl-one route(s) | status |
 |---|---|---|---|---|---|
 | 1 | GET (and implicit HEAD) | `/entities/:type` | `/content` | `services/catalyst/content/src/lib.rs:630` -> `active_entities.rs:123` | DIVERGENT |
-| 2 | GET | `/entities/active/collections/:collectionUrn` | `/content` | `services/catalyst/content/src/lib.rs:631-634` -> `active_entities.rs:252` | DIVERGENT |
+| 2 | GET | `/entities/active/collections/:collectionUrn` | `/content` | `services/catalyst/content/src/lib.rs:760-763` -> `active_entities.rs:264` | DIVERGENT |
 | 3 | POST | `/entities/active` | `/content` | `services/catalyst/content/src/lib.rs:635-638` -> `active_entities.rs:98` | DIVERGENT |
 | 4 | GET | `/contents/:hashId` | `/content` | `services/catalyst/content/src/lib.rs:639-642` -> `get_content.rs:90` | DIVERGENT |
 | 5 | HEAD | `/contents/:hashId` | `/content` | `services/catalyst/content/src/lib.rs:641` -> `get_content.rs:90` | DIVERGENT |
@@ -153,12 +153,12 @@ that does not sync a type answers `[]` for it (upstream full nodes hold every ty
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
-| `parseUrn` throws (e.g. `not-a-real-urn`) | 400 | `{"error":"Invalid URN format: <urn>"}` | `filter-by-urn-handler.ts:16-20` | `active_entities.rs:256-262` (`url::Url::parse`, the WHATWG parser `new URL` uses) | MATCH (`test/unit/controllers/filter-by-urn-handler.spec.ts:102-110`, fixture `tests/fixtures/content/entities-by-collection-400-invalid-urn.json`), except a malformed percent escape inside a matched route group, on which `parseUrn` throws and dcl-one answers the next row |
-| parsed but not a collection (LAND, ESTATE, `collections-thirdparty:<tp>:<collection>`, off-chain other registry) | 400 | `{"error":"Invalid collection urn param, it must be a valid urn prefix of a collection or a third party id, instead: '<urn>'"}` | `filter-by-urn-handler.ts:22-35` | `active_entities.rs:244-262`, on the client's spelling with `validator::urn` (the `@dcl/urn-resolver` port) | MATCH |
+| `parseUrn` throws (e.g. `not-a-real-urn`) | 400 | `{"error":"Invalid URN format: <urn>"}` | `filter-by-urn-handler.ts:16-20` | `active_entities.rs:245-261` (`validator::urn::parse_urn` throws where the input is not a WHATWG URL, or where a group of a route the path matches holds a malformed percent escape, e.g. `urn:decentraland:off-chain:base-emotes:%ZZ`) | MATCH (`test/unit/controllers/filter-by-urn-handler.spec.ts:102-110`, fixture `tests/fixtures/content/entities-by-collection-400-invalid-urn.json`, test `collection_listing_answers_a_malformed_escape_like_upstream`) |
+| parsed but not a collection (LAND, ESTATE, `collections-thirdparty:<tp>:<collection>`, off-chain other registry) | 400 | `{"error":"Invalid collection urn param, it must be a valid urn prefix of a collection or a third party id, instead: '<urn>'"}` | `filter-by-urn-handler.ts:22-35` | `active_entities.rs:245-261`, on the client's spelling with `validator::urn` (the `@dcl/urn-resolver` port) | MATCH |
 | `pageSize`/`pageNum` not a positive integer | 400 | `{"error":"pageSize must be a positive integer"}` / `{"error":"pageNum must be a positive integer"}` | `utils.ts:11-17` | `shared/src/query_params.rs` `parse_content_pagination` | MATCH: a present value is read with `parseInt` (`10abc` is 10, `1.5` is 1); an unparseable or empty one is a 400 (CR-10) |
 | `pageSize` > 1000 | 400 | `{"error":"max allowed pageSize is 1000"}` | `utils.ts:19-21` | `query_params.rs` `parse_content_pagination` | MATCH |
-| success | 200 | `{"total": number, "entities": Entity[]}`; `total` counts matching pointers before the denylist filter | `filter-by-urn-handler.ts:40-55` | `active_entities.rs:264-281`, `queries.rs:277-310` | MATCH (entity shape as section 1) |
-| no match | 200 | `{"total":0,"entities":[]}` | `logic/active-entities/component.ts:373-375` | `queries.rs:284-290` | MATCH |
+| success | 200 | `{"total": number, "entities": Entity[]}`; `total` counts matching pointers before the denylist filter | `filter-by-urn-handler.ts:40-55` | `active_entities.rs:264-289`, `queries.rs:425-460` | MATCH (entity shape as section 1; `%` and `_` in the URN match literally, test `collection_listing_matches_percent_and_underscore_literally`) |
+| no match | 200 | `{"total":0,"entities":[]}` | `logic/active-entities/component.ts:373-375` | `queries.rs:425-460` | MATCH |
 
 Order: upstream pages the id list in `active_pointers` scan order and then re-orders by cache
 state (`component.ts:377-380`); dcl-one orders by pointer (`queries.rs:292-300`). Not a contract.
@@ -594,13 +594,12 @@ Verdict: MATCH under `/content/` (CR-11).
       The history routes' timestamps are CS-19.
     - Severity: none (closed).
 
-20. **CR-20** Differential tests for the hand-written validators.
-    - Gap: `is_valid_collection_urn` and `is_canonical_cid` replace `@dcl/urn-resolver` and `@dcl/schemas`
-      `IPFSv1/IPFSv2`; equality is shown only for the upstream test inputs.
-    - Expected: the same accept/reject and message for a corpus of URNs (networks, `collections-v1` names
-      on non-ethereum networks, upper case) and hashes (`bafy`/`bafk`/other `ba` prefixes, lengths).
-    - Place: `services/catalyst/content/src/active_entities.rs:183-249`, `library/dcl-auth/src/hash.rs:176-192`; fixtures
-      under `services/catalyst/tests/fixtures/content/` captured from a peer.
+20. **CR-20** Differential tests for the hand-written CID check.
+    - Gap: `is_canonical_cid` replaces `@dcl/schemas` `IPFSv1/IPFSv2`; equality is shown only for the
+      upstream test inputs.
+    - Expected: the same accept/reject for a corpus of hashes (`bafy`/`bafk`/other `ba` prefixes, lengths).
+    - Place: `library/dcl-auth/src/hash.rs:176-192`; fixtures under `services/catalyst/tests/fixtures/content/`
+      captured from a peer.
     - Severity: P2.
 
 ## dcl-one routes in this area that upstream does not serve

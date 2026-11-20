@@ -239,25 +239,24 @@ fn invalid_collection_urn_param_message(urn: &str) -> String {
     )
 }
 
-/// The collections `parseUrn` resolves that list items: a v1 or v2
-/// collection, a third party by name, or the base avatars or emotes.
-fn is_listable_collection(input: &str) -> bool {
-    match urn::parse(input) {
-        Some(UrnType::CollectionV1 | UrnType::CollectionV2 | UrnType::ThirdPartyName) => true,
-        Some(UrnType::OffChain) => urn::segments(input).is_some_and(|segments| {
-            matches!(segments[3].1.as_str(), "base-avatars" | "base-emotes")
-        }),
-        _ => false,
-    }
-}
-
-/// Upstream answers two different sentences: a string `parseUrn` throws on
-/// (not a URL), and one it reads but that is not a listable collection.
-fn collection_urn_rejection_message(urn: &str) -> String {
-    if url::Url::parse(urn).is_err() {
-        invalid_urn_format_message(urn)
+/// Upstream's check of a collection URN: `parseUrn` throwing answers one
+/// sentence, and a URN it reads but that is not a listable collection (v1,
+/// v2, a third party by name, or the base avatars or emotes) the other.
+fn check_collection_urn(input: &str) -> Result<(), String> {
+    let parsed = urn::parse_urn(input).map_err(|urn::Throws| invalid_urn_format_message(input))?;
+    let listable = parsed.is_some_and(|parsed| {
+        matches!(
+            parsed.kind,
+            UrnType::CollectionV1 | UrnType::CollectionV2 | UrnType::ThirdPartyName
+        ) || matches!(
+            parsed.off_chain_registry(),
+            Some("base-avatars" | "base-emotes")
+        )
+    });
+    if listable {
+        Ok(())
     } else {
-        invalid_collection_urn_param_message(urn)
+        Err(invalid_collection_urn_param_message(input))
     }
 }
 
@@ -267,11 +266,7 @@ pub async fn get_entities_by_collection(
     Path(collection_urn): Path<String>,
     request: Request,
 ) -> AppResult<impl IntoResponse> {
-    if !is_listable_collection(&collection_urn) {
-        return Err(AppError::invalid(collection_urn_rejection_message(
-            &collection_urn,
-        )));
-    }
+    check_collection_urn(&collection_urn).map_err(AppError::invalid)?;
 
     let params = parse_query_string(request.uri().query().unwrap_or(""));
     let pagination = parse_content_pagination(&params, 1000).map_err(AppError::invalid)?;
@@ -365,8 +360,7 @@ mod tests {
     }
 
     fn rejection_message(urn: &str) -> String {
-        assert!(!is_listable_collection(urn), "{urn}");
-        collection_urn_rejection_message(urn)
+        check_collection_urn(urn).unwrap_err()
     }
 
     const C: &str = "0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d";
@@ -391,7 +385,7 @@ mod tests {
             "urn:decentraland:off-chain:base%2Demotes:wave".into(),
             "dcl://base-avatars/eyes_00".into(),
         ] {
-            assert!(is_listable_collection(&urn), "{urn}");
+            assert_eq!(check_collection_urn(&urn), Ok(()), "{urn}");
         }
     }
 
@@ -417,6 +411,7 @@ mod tests {
             "urn:decentraland:ethereum:collections-thirdparty:crypto-motors".into(),
             "urn:decentraland:amoy:collections-thirdparty:aThirdParty:winterCollection".into(),
             "urn:decentraland:ethereum:LAND:0,0".into(),
+            "urn:decentraland:off-chain:base-emotes:%ZZ:extra".into(),
             "https://example.com/x".into(),
         ] {
             assert_eq!(
@@ -424,7 +419,14 @@ mod tests {
                 invalid_collection_urn_param_message(&urn)
             );
         }
-        for urn in ["not-a-real-urn", "0xdeadbeef", "", "1urn:decentraland"] {
+        for urn in [
+            "not-a-real-urn",
+            "0xdeadbeef",
+            "",
+            "1urn:decentraland",
+            "urn:decentraland:off-chain:base-emotes:%ZZ",
+            "urn:decentraland:%ZZ:collections-v2:0x1",
+        ] {
             assert_eq!(rejection_message(urn), invalid_urn_format_message(urn));
         }
     }
