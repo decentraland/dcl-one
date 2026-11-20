@@ -1912,6 +1912,7 @@ dependencies = [
  "ipnet",
  "libc",
  "metrics",
+ "metrics-exporter-prometheus",
  "parking_lot",
  "regex",
  "reqwest 0.13.5",
@@ -2563,7 +2564,7 @@ checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
 dependencies = [
  "serde",
  "termcolor",
- "unicode-width 0.1.14",
+ "unicode-width 0.2.2",
 ]
 
 [[package]]

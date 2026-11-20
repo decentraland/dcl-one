@@ -7400,7 +7400,7 @@ async fn an_oversized_deploy_body_answers_413() {
 }
 
 async fn wait_spool_empty(f: &Fixture) {
-    let root = super::upload_spool::spool_root(&f.storage);
+    let root = super::spool_root(&f.storage);
     for _ in 0..200 {
         let empty = match std::fs::read_dir(&root) {
             Ok(mut entries) => entries.next().is_none(),

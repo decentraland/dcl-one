@@ -703,6 +703,7 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
         anyhow::bail!("SYNC_ENABLED=true with an empty SYNC_SOURCE: there is no peer to sync from");
     }
     config.content.denylist_urls()?;
+    config.content.check_upload_limits()?;
     let Some(posture) = posture else {
         return Ok(());
     };

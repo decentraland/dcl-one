@@ -148,7 +148,7 @@ class ConfigurationTest(unittest.TestCase):
         table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [],
                  "deploy": ["/entities", "/content/entities"]}
         text = gateway.render(table, cfg, "/mime.types")
-        deploy = re.search(r'location ~\* "([^"]+)" \{\n[^}]*client_max_body_size 248m;', text)[1]
+        deploy = re.search(rf'location ~\* "([^"]+)" \{{\n[^}}]*client_max_body_size {gateway.CONTENT_DEPLOY_CAP};', text)[1]
         for path in ["/entities", "/content/entities", "/content/Entities", "/ENTITIES/"]:
             with self.subTest(path=path):
                 # ~* matches ignoring case, as the content server's rewrite does.
@@ -287,25 +287,43 @@ class ConfigurationTest(unittest.TestCase):
         root = Path(__file__).parents[3] / "services/catalyst"
         source = (root / "content/src/create_entity.rs").read_text()
         consts = dict(re.findall(r"const (\w+): usize = ([^;]+);", source))
-
-        def value(name):
-            expr = consts[name]
-            for ref in re.findall(r"[A-Z_]{2,}", expr):
-                expr = expr.replace(ref, f"({value(ref)})")
-            self.assertRegex(expr, r"^[\d\s()*+]+$")
-            return eval(expr)
-
-        formula = re.search(r"fn max_deployment_body_bytes\(max_fields: usize\) -> usize \{\s*([^}]+?)\s*\}",
-                            source)[1]
-        self.assertEqual(formula, "MAX_DEPLOYMENT_BYTES + (MAX_DEPLOY_FILES + max_fields + 1) * "
-                                  "MULTIPART_PART_FRAMING_BYTES")
+        framing = consts["MULTIPART_PART_FRAMING_BYTES"]
+        self.assertRegex(framing, r"^[\d\s*+]+$")
+        formula = re.search(r"fn multipart_body_limit\(max_total: usize, max_files: usize, max_fields: usize\) "
+                            r"-> usize \{\s*([^}]+?)\s*\}", source)[1]
+        self.assertEqual(re.sub(r"\s+", "", formula),
+                         "max_total.saturating_add((max_files.saturating_add(max_fields).saturating_add(1))"
+                         ".saturating_mul(MULTIPART_PART_FRAMING_BYTES),)")
         config = (root / "config/src/content.rs").read_text()
-        fields = eval(re.search(r'env = "MAX_UPLOAD_FIELD_COUNT", default_value_t = ([\d\s*+]+)\)', config)[1])
-        route_limit = (value("MAX_DEPLOYMENT_BYTES")
-                       + (value("MAX_DEPLOY_FILES") + fields + 1) * value("MULTIPART_PART_FRAMING_BYTES"))
+
+        def default(env):
+            found = re.search(rf'env = "{env}",?\s*default_value_t = ([\d\s*+]+?),?\s*\)', config)
+            self.assertIsNotNone(found, env)
+            return eval(found[1])
+
+        route_limit = (default("MAX_UPLOAD_TOTAL_SIZE")
+                       + (default("MAX_UPLOAD_FILE_COUNT") + default("MAX_UPLOAD_FIELD_COUNT") + 1) * eval(framing))
+        self.assertEqual(route_limit, 2 * 1024 ** 3 + (3000 + 32 + 1) * (16 * 1024 + 128))
         cap = int(gateway.CONTENT_DEPLOY_CAP.removesuffix("m")) * 1024 * 1024
+        # The app warns at startup when its limits pass the cap it ships with.
+        self.assertEqual(eval(consts["SHIPPED_GATEWAY_DEPLOY_CAP_BYTES"]), cap)
         self.assertGreaterEqual(cap, route_limit)
         self.assertLess(cap - route_limit, 1024 * 1024, "rounded up to the next MiB")
+
+    def test_content_deploys_stream_to_the_app_unbuffered(self):
+        # The app spools the body under its own budgets and timeout; buffered here, a body of up
+        # to CONTENT_DEPLOY_CAP would land in the gateway's temp space (a tmpfs in the documented
+        # run) before the app could answer.
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [],
+                 "deploy": ["/entities", "/content/entities"]}
+        text = gateway.render(table, cfg, "/mime.types")
+        content = re.search(rf'location ~\* "[^"]+" \{{\n([^}}]*client_max_body_size '
+                            rf'{gateway.CONTENT_DEPLOY_CAP};[^}}]*)\}}', text)[1]
+        self.assertIn("proxy_request_buffering off;", content)
+        worlds = re.search(r'location ~ "\^/worlds-content-server/entities/\*\$" \{\n([^}]*)\}', text)[1]
+        self.assertNotIn("proxy_request_buffering", worlds)
+        self.assertEqual(text.count("proxy_request_buffering"), 1)
 
     def test_deploy_routes_cap_concurrent_uploads_per_address(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})

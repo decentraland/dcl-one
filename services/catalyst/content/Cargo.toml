@@ -64,4 +64,5 @@ catalyst-testing = { path = "../testing" }
 catalyst-db = { path = "../db", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
+metrics-exporter-prometheus.workspace = true
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }
