@@ -370,10 +370,6 @@
           "kind": "regular"
         },
         {
-          "name": "sign.test.ts",
-          "kind": "regular"
-        },
-        {
           "name": "sign.ts",
           "kind": "regular"
         },
@@ -6346,7 +6342,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/editorHostSigning.test.tsx",
-      "sha256": "84b09b4e0f89c4d30a84b434b8d23c38a7680ee1327eb7c12f7c6516d57072f3"
+      "sha256": "4586a4c39bdc87a369ffc0dfc196b4a87748c9e6c3edfd6b38fe1bc5b00cd9a5"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/editorScene.test.ts",
@@ -6745,10 +6741,6 @@
     {
       "path": "library/explorer-core/features/editorHost/host/host.ts",
       "sha256": "518a26c07d818e51c51a2b1a3d738ef434a42c356037a1ed2e3dbe15a88e9723"
-    },
-    {
-      "path": "library/explorer-core/features/editorHost/host/sign.test.ts",
-      "sha256": "f0978c8599d65f29d985fa2f1bebefb55844964168b2a09ee64cea8cc07afa90"
     },
     {
       "path": "library/explorer-core/features/editorHost/host/sign.ts",
@@ -11894,21 +11886,6 @@
     {
       "from": "library/explorer-core/features/editorHost/host/host.ts",
       "to": "library/explorer-core/lib/shell.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/explorer-core/features/editorHost/host/sign.test.ts",
-      "to": "library/explorer-core/features/editorHost/host/sign.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/explorer-core/features/editorHost/host/sign.test.ts",
-      "to": "library/explorer-core/features/editorHost/host/sign.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/explorer-core/features/editorHost/host/sign.test.ts",
-      "to": "library/explorer-core/features/editorHost/host/sign.ts",
       "kind": "test:runtime"
     },
     {
@@ -45924,11 +45901,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/features/editorHost/host/host.ts",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/explorer-core/features/editorHost/host/sign.test.ts",
       "kind": "type"
     },
     {

@@ -67,14 +67,14 @@ describe('editor host signing', () => {
     expect(fetched).not.toHaveBeenCalled()
 
     await signIn()
-    await host().signedFetch('http://localhost:8787/projects/p1/manifest?x=1', {
+    await host().signedFetch('http://localhost:8787/projects/p1/manifest?X=1', {
       method: 'put',
       body: '{}',
       headers: { 'content-type': 'application/json', 'X-Identity-Metadata': '{"signer":"decentraland-kernel-scene"}', 'x-forwarded-for': '1.2.3.4' }
     })
     const [url, init] = fetched.mock.lastCall!
     const headers = init!.headers as Record<string, string>
-    expect(url).toBe('http://localhost:8787/projects/p1/manifest?x=1')
+    expect(url).toBe('http://localhost:8787/projects/p1/manifest?X=1')
     expect(headers['content-type']).toBe('application/json')
     expect(headers['X-Identity-Metadata']).toBeUndefined()
     expect(headers['x-forwarded-for'], 'only the headers the host allows').toBeUndefined()
@@ -154,10 +154,10 @@ describe('editor host signing', () => {
       expect(fetched.mock.lastCall![0], url).toBe(url)
     }
 
-    const metadata = { signer: 'decentraland-kernel-scene', sceneId: 'bafkreiscene', realm: { hostname: 'boedo.dcl.eth' } }
+    const metadata = { signer: 'decentraland-kernel-scene', sceneId: 'BafkreiScene', realm: { hostname: 'Boedo.dcl.eth' } }
     const body = new FormData()
     const abort = new AbortController()
-    await host().signedFetch('https://storage.decentraland.org/players/0x1/values?key=a', {
+    await host().signedFetch('https://storage.decentraland.org/players/0xAB/values?key=a', {
       method: 'delete',
       body,
       metadata,
@@ -174,8 +174,9 @@ describe('editor host signing', () => {
     // the path without the query, as a scene's signed fetch signs it
     const chain = [0, 1, 2].map((i) => JSON.parse(headers[`x-identity-auth-chain-${i}`]))
     // crypto-middleware 6.x: method and path folded, the mixed-case metadata verbatim
-    const payload = `delete:/players/0x1/values:${headers['x-identity-timestamp']}:${headers['x-identity-metadata']}`
+    const payload = `delete:/players/0xab/values:${headers['x-identity-timestamp']}:${headers['x-identity-metadata']}`
     expect(await Authenticator.validateSignature(payload, chain, null)).toEqual({ ok: true, message: undefined })
+    expect((await Authenticator.validateSignature(payload.toLowerCase(), chain, null)).ok).toBe(false)
 
     // the project service keeps its own metadata
     await host().signedFetch('http://localhost:8787/projects', { metadata })
