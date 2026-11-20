@@ -716,7 +716,7 @@ async fn wait_for_lease(leases: &Arc<Leases>, name: &str, ctx: &JobContext) -> O
                 ctx.progress("standby: the lease connection is unavailable");
             }
         }
-        let wait = leases.settings.poll + first_fire_jitter(name, leases.settings.poll / 4);
+        let wait = leases.settings.standby_wait(name);
         if !sleep_or_cancel(&ctx.cancel, wait).await {
             return None;
         }
@@ -733,6 +733,15 @@ pub struct LeaseSettings {
     /// How often the lease connection is checked. A check that fails or takes
     /// longer than this loses every lease this process holds.
     pub keepalive: Duration,
+}
+
+impl LeaseSettings {
+    /// How long a job standing by waits before it asks for the lease `name`
+    /// again: [`LeaseSettings::poll`] plus up to a quarter of it, so standby
+    /// processes started together do not ask in lockstep.
+    pub fn standby_wait(&self, name: &str) -> Duration {
+        self.poll + first_fire_jitter(name, self.poll / 4)
+    }
 }
 
 impl Default for LeaseSettings {
@@ -813,11 +822,6 @@ impl LeaseGuard {
     /// ([`JobContext::lease`]), for work that holds the lease itself.
     pub fn control(&self) -> LeaseControl {
         LeaseControl::of(self)
-    }
-
-    /// The lease's name.
-    pub fn name(&self) -> &str {
-        &self.name
     }
 
     /// Runs a bounded control operation on the session that actually holds this lease.

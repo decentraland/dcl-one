@@ -5011,9 +5011,16 @@ mod supervisor {
             after > before + 10,
             "mana keeps its 50 ms cadence while the others fail, hang or panic: {before} -> {after}"
         );
+        eventually("a third panic", || {
+            let panics = panics.clone();
+            async move { panics.load(Ordering::SeqCst) >= 3 }
+        })
+        .await;
+        let panicked = panics.load(Ordering::SeqCst);
         assert!(
-            made.load(Ordering::SeqCst) > panics.load(Ordering::SeqCst).min(2),
-            "each retry after a panic runs on a fresh index"
+            made.load(Ordering::SeqCst) >= panicked,
+            "each retry after a panic runs on a fresh index: {} indexes for {panicked} panics",
+            made.load(Ordering::SeqCst)
         );
         assert!(
             cursor(&db.pool, chain_walk::INDEXER_TRADE_EVENTS, ChainNet::Matic)
@@ -5067,8 +5074,8 @@ mod supervisor {
             }
             self.inner.try_acquire(name).await
         }
-        fn poll(&self) -> Duration {
-            self.inner.settings().poll
+        fn standby_wait(&self, name: &str) -> Duration {
+            self.inner.settings().standby_wait(name)
         }
     }
 
@@ -5262,8 +5269,9 @@ mod supervisor {
     }
 
     /// Stopping lets a lease request in flight run to its end, lets go of
-    /// the lease it took, and asks for no other: committee, due after the
-    /// stop, is never asked for.
+    /// the lease it took, and asks for no lease again: committee, whose lease
+    /// another process holds, stops asking once the stop starts. A
+    /// supervisor that holds no lease reports standby.
     #[tokio::test]
     async fn stopping_lets_a_lease_request_finish_and_asks_for_no_other() {
         let Some(db) = ScratchDb::create().await else {
@@ -5274,20 +5282,20 @@ mod supervisor {
         let url = serve(chain.clone()).await;
         let st = state_over(db.pool.clone(), &url, walk_settings(), false);
         let namespace = format!("supervisor-stop-{}", std::process::id());
+        let elsewhere = Arc::new(crate::jobs::Leases::new(
+            db.pool.clone(),
+            lease_settings(&namespace, Duration::from_millis(100)),
+        ));
+        let committee_lease = elsewhere
+            .try_acquire("committee-index-matic")
+            .await
+            .unwrap()
+            .expect("another process holds committee's lease");
         let jobs = Arc::new(Jobs::with_leases(
             db.pool.clone(),
             lease_settings(&namespace, Duration::from_millis(100)),
         ));
         let (leases, gate, asked) = gated(&jobs, &["mana-transfers-index-matic"]);
-        let later = Projection {
-            cfg: PeriodicCfg::every(Duration::from_secs(1)).after_first_interval(),
-            ..projection(
-                "committee-index",
-                ChainNet::Matic,
-                &url,
-                Arc::new(|| Arc::new(super::super::committee_index::CommitteeIndex)),
-            )
-        };
         chain_jobs::spawn_with(
             &jobs,
             supervisor(
@@ -5300,41 +5308,132 @@ mod supervisor {
                         &url,
                         mana(ChainNet::Matic),
                     ),
-                    later,
+                    projection(
+                        "committee-index",
+                        ChainNet::Matic,
+                        &url,
+                        Arc::new(|| Arc::new(super::super::committee_index::CommitteeIndex)),
+                    ),
                 ],
             ),
             Some(leases),
         );
-        eventually("mana's lease asked for", || {
-            let asked = asked.clone();
-            async move { !asked.lock().is_empty() }
+        let committee_asks = || {
+            asked
+                .lock()
+                .iter()
+                .filter(|n| *n == "committee-index-matic")
+                .count()
+        };
+        eventually("committee asked again after its standby wait", || async {
+            committee_asks() >= 2
         })
         .await;
+        let report = jobs.report();
+        let job = report
+            .iter()
+            .find(|j| j.name == "chain-walk-matic")
+            .unwrap();
+        assert_eq!(job.state, JobState::Standby, "it holds no lease");
+
         let stopping = tokio::spawn({
             let jobs = jobs.clone();
             async move { jobs.shutdown(Duration::from_secs(10)).await }
         });
-        tokio::time::sleep(Duration::from_millis(1500)).await;
+        // A request already in flight when the stop starts still counts.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let at_stop = committee_asks();
+        tokio::time::sleep(Duration::from_millis(1200)).await;
         assert!(
             !stopping.is_finished(),
             "the request in flight runs to its end"
         );
+        assert_eq!(
+            committee_asks(),
+            at_stop,
+            "no lease asked for after the stop"
+        );
         gate.add_permits(1);
         assert!(stopping.await.unwrap().is_empty());
         assert_eq!(
-            *asked.lock(),
-            vec!["mana-transfers-index-matic".to_string()]
-        );
-        assert_eq!(
-            advisory_locks(&db.pool).await,
-            0,
-            "the lease it took was let go"
+            asked
+                .lock()
+                .iter()
+                .filter(|n| *n == "mana-transfers-index-matic")
+                .count(),
+            1
         );
         assert_eq!(
             chain.requests.load(Ordering::SeqCst),
             0,
             "no attempt after the stop"
         );
+        committee_lease.release().await;
+        assert_eq!(
+            advisory_locks(&db.pool).await,
+            0,
+            "the lease mana took was let go"
+        );
+        db.drop().await;
+    }
+
+    /// A gate that says wait ends a run of failures, as a pass that ran
+    /// does: the next failure backs off from the start, one interval (200
+    /// ms), not the fourth doubling (1.6 s).
+    #[tokio::test]
+    async fn a_waiting_gate_resets_the_backoff() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let amoy = FakeChain::new(100, vec![], 1000, 1000);
+        amoy.chain_id.store(80_002, Ordering::SeqCst);
+        let url = serve(amoy.clone()).await;
+        let st = state_over(db.pool.clone(), &url, walk_settings(), false);
+        let calls: Arc<Mutex<Vec<std::time::Instant>>> = Arc::default();
+        let gate: chain_jobs::Gate = {
+            let calls = calls.clone();
+            Arc::new(move || {
+                let calls = calls.clone();
+                Box::pin(async move {
+                    let n = {
+                        let mut calls = calls.lock();
+                        calls.push(std::time::Instant::now());
+                        calls.len()
+                    };
+                    match n {
+                        1..=3 => Err(anyhow::anyhow!("the venue check failed")),
+                        4 => Ok(Some("waiting for the mirror".to_string())),
+                        // Then the walk fails on another chain.
+                        _ => Ok(None),
+                    }
+                })
+            })
+        };
+        let projection = Projection {
+            cfg: PeriodicCfg::every(Duration::from_millis(200))
+                .with_error_backoff(Duration::from_secs(10)),
+            gate: Some(gate),
+            ..projection(
+                "mana-transfers-index",
+                ChainNet::Matic,
+                &url,
+                mana(ChainNet::Matic),
+            )
+        };
+        let jobs = Jobs::new().with_first_pass_now(true);
+        chain_jobs::spawn(&jobs, supervisor(&st, ChainNet::Matic, vec![projection]));
+        eventually("a sixth gate call", || {
+            let calls = calls.clone();
+            async move { calls.lock().len() >= 6 }
+        })
+        .await;
+        let calls = calls.lock().clone();
+        let after_failure = calls[5] - calls[4];
+        assert!(
+            after_failure < Duration::from_secs(1),
+            "one 200 ms interval after the first failure past the wait, not the 1.6 s of a fourth: {after_failure:?}"
+        );
+        assert!(jobs.shutdown(Duration::from_secs(5)).await.is_empty());
         db.drop().await;
     }
 
@@ -5568,6 +5667,10 @@ mod supervisor {
                 )],
             ),
         );
+        eventually("the first process walks mana", || {
+            published(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
+        })
+        .await;
         let second = Jobs::with_leases(
             db.pool.clone(),
             lease_settings(&namespace, Duration::from_millis(100)),

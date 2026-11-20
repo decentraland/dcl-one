@@ -12,8 +12,12 @@
 //! own as well, run to its end. A projection keeps its own cadence: the
 //! interval after an attempt that ran, its own doubling backoff after one
 //! that failed, so one projection failing, waiting on its endpoint or
-//! waiting for its lease never holds another back. A lost lease ends its
-//! acquisition, backoff included, as soon as the supervisor sees it.
+//! waiting for its lease never holds another back. As with a leased periodic
+//! job, every lease is asked for at once and each acquisition's first attempt
+//! waits the projection's first-pass delay (its jitter); a projection standing
+//! by asks again after the lease poll plus its jitter. A lost lease ends its
+//! acquisition, backoff included, as soon as the supervisor sees it. The
+//! supervisor reports standby while it holds no lease.
 //!
 //! An attempt ends as soon as its lease is lost or the process stops, even
 //! inside a fold: the supervisor collects it before the slot lets its lease
@@ -87,9 +91,9 @@ pub fn lease_name(job: &str, net: ChainNet) -> String {
 #[async_trait::async_trait]
 pub trait TakeLease: Send + Sync {
     async fn try_acquire(&self, name: &str) -> sqlx::Result<Option<LeaseGuard>>;
-    /// How long a projection whose lease another process holds waits before
-    /// asking again.
-    fn poll(&self) -> Duration;
+    /// How long a projection standing by for the lease `name` (another
+    /// process holds it, or it was lost) waits before asking again.
+    fn standby_wait(&self, name: &str) -> Duration;
 }
 
 struct ProcessLeases(Arc<Leases>);
@@ -99,9 +103,16 @@ impl TakeLease for ProcessLeases {
     async fn try_acquire(&self, name: &str) -> sqlx::Result<Option<LeaseGuard>> {
         self.0.try_acquire(name).await
     }
-    fn poll(&self) -> Duration {
-        self.0.settings().poll
+    fn standby_wait(&self, name: &str) -> Duration {
+        self.0.settings().standby_wait(name)
     }
+}
+
+/// The standby wait of `name`; a process without leases never stands by.
+fn standby_wait(leases: &Option<Arc<dyn TakeLease>>, name: &str) -> Duration {
+    leases
+        .as_ref()
+        .map_or(Duration::from_secs(15), |l| l.standby_wait(name))
 }
 
 /// Spawns the supervisor as a job of `jobs`, taking `jobs`' leases.
@@ -213,26 +224,33 @@ async fn run(
         return Ok(());
     }
     let supervisor = Arc::new(supervisor);
-    let poll = leases
-        .as_ref()
-        .map_or(Duration::from_secs(15), |l| l.poll());
+    // Every lease is asked for at once; each acquisition's first attempt
+    // waits the projection's first-pass delay, as a leased periodic job does.
     let start = Instant::now();
     let mut slots: Vec<Slot> = supervisor
         .projections
         .iter()
-        .zip(&cfgs)
-        .map(|(p, cfg)| Slot {
+        .map(|_| Slot {
             acquisition: None,
             phase: Phase::Idle,
-            due: start + cfg.first_delay(&p.lease),
-            line: "waiting for the first pass".into(),
+            due: start,
+            line: "asking for the lease".into(),
         })
         .collect();
     let mut tasks: JoinSet<Done> = JoinSet::new();
     let mut running: HashMap<tokio::task::Id, usize> = HashMap::new();
     // Stopping is terminal: nothing is dispatched once the token fires.
     while !ctx.cancel.is_cancelled() {
-        for (i, (projection, slot)) in supervisor.projections.iter().zip(&mut slots).enumerate() {
+        for (i, ((projection, cfg), slot)) in supervisor
+            .projections
+            .iter()
+            .zip(&cfgs)
+            .zip(&mut slots)
+            .enumerate()
+        {
+            if ctx.cancel.is_cancelled() {
+                break;
+            }
             if slot.phase != Phase::Idle {
                 continue;
             }
@@ -242,7 +260,12 @@ async fn run(
                 .as_ref()
                 .is_some_and(|a| a.lost.is_cancelled())
             {
-                lost_lease(projection, slot, now, poll);
+                lost_lease(
+                    projection,
+                    slot,
+                    now,
+                    standby_wait(&leases, &projection.lease),
+                );
             }
             if now < slot.due {
                 continue;
@@ -250,7 +273,8 @@ async fn run(
             if slot.acquisition.is_none() {
                 let Some(leases) = &leases else {
                     slot.acquisition = Some(Acquisition::new(projection, None));
-                    dispatch_attempt(&ctx, &supervisor, i, slot, &mut tasks, &mut running);
+                    slot.due = now + cfg.first_delay(&projection.lease);
+                    slot.line = "waiting for the first pass".into();
                     continue;
                 };
                 let (leases, name) = (leases.clone(), projection.lease.clone());
@@ -264,6 +288,9 @@ async fn run(
             dispatch_attempt(&ctx, &supervisor, i, slot, &mut tasks, &mut running);
         }
         ctx.progress(progress_line(&supervisor, &slots));
+        // Standing by while another process holds every lease.
+        let holding = slots.iter().any(|s| s.acquisition.is_some());
+        ctx.set_state((!holding).then_some(JobState::Standby));
         let next = slots
             .iter()
             .filter(|s| s.phase == Phase::Idle)
@@ -279,7 +306,7 @@ async fn run(
             biased;
             _ = ctx.cancel.cancelled() => break,
             Some(done) = tasks.join_next_with_id(), if !tasks.is_empty() => {
-                settle(&ctx, &supervisor, &cfgs, &mut slots, &mut running, done, poll, false).await;
+                settle(&ctx, &supervisor, &cfgs, &mut slots, &mut running, done, &leases, false).await;
             }
             _ = any_cancelled(idle_leases) => {}
             _ = sleep_until(next) => {}
@@ -296,7 +323,7 @@ async fn run(
             &mut slots,
             &mut running,
             done,
-            poll,
+            &leases,
             true,
         )
         .await;
@@ -337,12 +364,12 @@ fn dispatch_attempt(
 }
 
 /// Ends an acquisition whose lease was lost: the slot asks for the lease
-/// again after `poll`, and the next acquisition starts with no backoff.
-fn lost_lease(projection: &Projection, slot: &mut Slot, now: Instant, poll: Duration) {
+/// again after `standby`, and the next acquisition starts with no backoff.
+fn lost_lease(projection: &Projection, slot: &mut Slot, now: Instant, standby: Duration) {
     if let Some(a) = slot.acquisition.take() {
         tracing::warn!(lease = %projection.lease, acquisition = a.number, "marketplace chain index: lease lost; standing by");
     }
-    slot.due = now + poll;
+    slot.due = now + standby;
     slot.line = "lease lost; standing by".into();
 }
 
@@ -387,7 +414,7 @@ async fn settle(
     slots: &mut [Slot],
     running: &mut HashMap<tokio::task::Id, usize>,
     done: Result<(tokio::task::Id, Done), tokio::task::JoinError>,
-    poll: Duration,
+    leases: &Option<Arc<dyn TakeLease>>,
     stopping: bool,
 ) {
     let (i, done) = match done {
@@ -404,14 +431,15 @@ async fn settle(
     let cfg = &cfgs[i];
     let slot = &mut slots[i];
     let now = Instant::now();
+    let standby = standby_wait(leases, &projection.lease);
     // A crashed lease request fails like one, and is asked again after the
-    // poll; a crashed attempt is one that panicked.
+    // standby wait; a crashed attempt is one that panicked.
     let requesting = slot.phase == Phase::Requesting;
     slot.phase = Phase::Idle;
     if let (Done::Crashed(msg), true) = (&done, requesting) {
         ctx.error(format!("{}: lease request: {msg}", projection.lease));
         tracing::error!(lease = %projection.lease, error = %msg, "marketplace chain index: a lease request failed");
-        slot.due = now + poll;
+        slot.due = now + standby;
         slot.line = "standby: the lease request failed".into();
         return;
     }
@@ -424,18 +452,18 @@ async fn settle(
             let acquisition = Acquisition::new(projection, Some(guard));
             tracing::info!(lease = %projection.lease, acquisition = acquisition.number, "marketplace chain index: lease taken");
             slot.acquisition = Some(acquisition);
-            slot.due = now;
-            slot.line = "lease taken".into();
+            slot.due = now + cfg.first_delay(&projection.lease);
+            slot.line = "lease taken; waiting for the first pass".into();
             return;
         }
         Done::Requested(Ok(None)) => {
-            slot.due = now + poll;
+            slot.due = now + standby;
             slot.line = "standby: another process holds the lease".into();
             return;
         }
         Done::Requested(Err(err)) => {
             ctx.error(format!("{}: lease: {err}", projection.lease));
-            slot.due = now + poll;
+            slot.due = now + standby;
             slot.line = "standby: the lease connection is unavailable".into();
             return;
         }
@@ -456,6 +484,7 @@ async fn settle(
         }
         Attempt::Waiting(why) => {
             ctx.pass_done();
+            acquisition.failures = 0;
             slot.due = now + cfg.interval;
             slot.line = why;
         }
@@ -482,7 +511,7 @@ async fn settle(
         Attempt::Interrupted => {}
     }
     if acquisition.lost.is_cancelled() {
-        lost_lease(projection, slot, now, poll);
+        lost_lease(projection, slot, now, standby);
     }
 }
 
@@ -524,7 +553,9 @@ async fn attempt(
                 &supervisor.settings,
                 &holdings,
                 lease.as_ref(),
-                Some(&stop),
+                // The select below owns the interruption: it drops this
+                // pass at once on a stop or a lost lease.
+                None,
                 &progress,
             )
             .await,
@@ -701,22 +732,27 @@ pub fn spawn_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs, rentals: Option<bo
     }
 }
 
-/// The startup lines of the old per-index jobs: a switch that is off, or on
-/// with no endpoint on any network.
+/// Logs each index switch that is off, or on with no endpoint to read.
 fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
     let settings = &state.settings.market.indexes;
     let any_url =
         |f: &dyn Fn(ChainNet) -> Option<String>| ChainNet::ALL.into_iter().any(|n| f(n).is_some());
+    if !settings.sales_enabled {
+        tracing::info!(
+            job = "sales-index",
+            "marketplace chain index off: its routes answer the unavailable envelope"
+        );
+    } else if state.chain_rpc_url(ChainNet::Matic).is_none() {
+        tracing::warn!(
+            job = "sales-index",
+            "marketplace chain index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=): it stays off"
+        );
+    }
     for (enabled, job, has_url) in [
         (
             settings.nft_enabled,
             "nft-index",
             any_url(&|n| state.chain_rpc_url(n)),
-        ),
-        (
-            settings.sales_enabled,
-            "sales-index",
-            state.chain_rpc_url(ChainNet::Matic).is_some(),
         ),
         (
             settings.trade_events_enabled,
