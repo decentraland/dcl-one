@@ -135,7 +135,7 @@ pub struct IndexSettings {
     pub sales_enabled: bool,
     /// `MARKETPLACE_COMMITTEE_INDEX_ENABLED`: the Polygon curation committee.
     pub committee_enabled: bool,
-    /// `MARKETPLACE_INDEX_INTERVAL_SECS` (5): pause between passes.
+    /// `MARKETPLACE_INDEX_INTERVAL_SECS` (5; 30 under the mirror posture): pause between passes.
     pub interval: Duration,
     /// `MARKETPLACE_INDEX_REQUESTS_PER_PASS` (100): `eth_getLogs` calls one
     /// network's pass may make before it yields with its cursor durable.

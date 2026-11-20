@@ -193,6 +193,32 @@ fn a_mirror_refuses_a_blank_nft_worker() {
     check_of(&[db, (ENV, "journey")]).unwrap();
 }
 
+/// A mirror walks the chain every 30 s and keeps tracking open MANA
+/// executions every 5 s; island and journey keep the binary's pace.
+#[test]
+fn a_mirror_walks_the_chain_every_30_seconds() {
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    let mirror = parsed(&[db, (ENV, "mirror")]);
+    assert_eq!(
+        (
+            mirror.marketplace.marketplace_index_interval_secs,
+            mirror
+                .marketplace
+                .marketplace_executions_track_interval_secs
+        ),
+        (30, 5)
+    );
+    for posture in [Posture::Island, Posture::Journey] {
+        assert!(!expanded(posture, &[]).contains_key("MARKETPLACE_INDEX_INTERVAL_SECS"));
+    }
+    let own = parsed(&[
+        db,
+        (ENV, "mirror"),
+        ("MARKETPLACE_INDEX_INTERVAL_SECS", "5"),
+    ]);
+    assert_eq!(own.marketplace.marketplace_index_interval_secs, 5);
+}
+
 /// O-1: a mirror lists the approved third-party providers from lamb2's
 /// default registry and may not blank it; island and journey name none.
 #[test]

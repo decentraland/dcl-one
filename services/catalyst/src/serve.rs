@@ -1019,7 +1019,10 @@ pub async fn serve(
             shop::mana::Settings {
                 writes_enabled: config.writes.data_writes_enabled,
                 track_interval: Duration::from_secs(
-                    config.marketplace.marketplace_index_interval_secs,
+                    config
+                        .marketplace
+                        .marketplace_executions_track_interval_secs
+                        .max(1),
                 ),
                 collections_chain_id: config.economy.collections_chain_id,
             },

@@ -148,8 +148,19 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_COMMITTEE_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_committee_index_enabled: bool,
 
+    /// Pause between the end of one pass and the start of the next, for the nft, trade-events,
+    /// MANA transfers, sales, committee and rentals walks (30 under the mirror posture).
     #[arg(long, env = "MARKETPLACE_INDEX_INTERVAL_SECS", default_value_t = 5)]
     pub marketplace_index_interval_secs: u64,
+
+    /// Pause between two passes of the MANA executions tracker. A pass reads receipts only for
+    /// the executions still open, so an idle one costs a database query and no RPC call.
+    #[arg(
+        long,
+        env = "MARKETPLACE_EXECUTIONS_TRACK_INTERVAL_SECS",
+        default_value_t = 5
+    )]
+    pub marketplace_executions_track_interval_secs: u64,
 
     /// eth_getLogs calls one network's pass may make; the catch-up backpressure.
     #[arg(
@@ -689,9 +700,10 @@ mod tests {
                 c.marketplace.marketplace_index_interval_secs,
                 c.marketplace.marketplace_index_requests_per_pass,
                 c.marketplace.marketplace_index_window_blocks,
-                c.marketplace.marketplace_index_address_chunk
+                c.marketplace.marketplace_index_address_chunk,
+                c.marketplace.marketplace_executions_track_interval_secs
             ),
-            (5, 100, 10_000, 1_000)
+            (5, 100, 10_000, 1_000, 5)
         );
         assert!(
             c.marketplace
