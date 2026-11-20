@@ -625,6 +625,34 @@ describe("a split whose outcome is not known", () => {
     expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toBeNull();
   });
 
+  it.each([
+    ["refuses", true],
+    ["keeps without a word", false],
+  ] as const)("a live purchase whose record the storage %s is not shown complete: held with its hash, and Check again finishes it once the record can go", async (_, throws) => {
+    const { demo, line } = setup();
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    const removeItem = Storage.prototype.removeItem;
+    const stuck = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(function (this: Storage, key: string) {
+      if (!key.startsWith("dcl-shop-buynow-split:")) return removeItem.call(this, key);
+      if (throws) throw new DOMException("The operation is insecure.", "SecurityError");
+    });
+    try {
+      await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+      expect(await screen.findByTestId("combined-check-notice", {}, { timeout: 5000 })).toHaveTextContent("This browser couldn't update its record of this purchase. Check again in a moment.");
+      expect(screen.queryByText(/Purchase complete/)).toBeNull();
+      expect(screen.getByText(/still confirming/)).toBeTruthy();
+      expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toMatchObject({ txHash: expect.any(String), creditId: expect.any(String) });
+      expect(demo.shop.log.filter((r) => r.name === "cancelCreditAuthorizations")).toHaveLength(0);
+    } finally {
+      stuck.mockRestore();
+    }
+    await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
+    await act(async () => fireEvent.click(screen.getByTestId("combined-check-again")));
+    expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toBeNull();
+    expect(demo.relay.posts).toHaveLength(1);
+  });
+
   it("a successful receipt for a transaction that is not this sale's, with nothing in the history, is held confirming with that hash, never complete", async () => {
     const { demo, line } = setup(undefined, undefined, MANA, undefined, { userPurchases: () => ({ purchases: [], total: 0 }) });
     demo.chain.allowances.set(managerKey(), 10n ** 21n);
@@ -953,12 +981,15 @@ describe("a held split with no transaction to read", () => {
     expect(readSplitHold(BOOK.buyer, demo.lineId)).toMatchObject({ attempt: "a", txHash: HASH });
   });
 
-  it("an outcome this browser can't clear from its record is not applied: Check again says so, and completes once the storage recovers", async () => {
+  it.each([
+    ["refuses", true],
+    ["keeps without a word", false],
+  ] as const)("an outcome whose record the storage %s is not applied: Check again says so, and completes once the storage recovers", async (_, throws) => {
     const demo = heldSplit({ value: "SETTLED" }, nowSeconds() - 1, { attempt: "a" });
     const removeItem = Storage.prototype.removeItem;
     const refused = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(function (this: Storage, key: string) {
-      if (key.startsWith("dcl-shop-buynow-split:")) throw new DOMException("The operation is insecure.", "SecurityError");
-      removeItem.call(this, key);
+      if (!key.startsWith("dcl-shop-buynow-split:")) return removeItem.call(this, key);
+      if (throws) throw new DOMException("The operation is insecure.", "SecurityError");
     });
     try {
       await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));

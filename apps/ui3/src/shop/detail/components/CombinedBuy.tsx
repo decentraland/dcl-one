@@ -328,11 +328,18 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     /**
      * Applies what the chain and the node say of this run's sale as `record` (settleSplitHold), if that settles it: bought
      * completes it, its credit spent on another purchase lets the item go. Whether it did; anything less is the caller's.
+     * The outcome shows only once its record is gone (read back): one the storage kept would show the sale confirming on
+     * the next open after this one said it was done. Then it stays held, with what is known of it, and Check again applies
+     * the outcome once its record can go.
      */
     const settledLive = async (record: SplitHold): Promise<boolean> => {
       const settled = await settleSplitHold(record, { account: ctx.buyer, reader: ctx.reader, client: ctx.client }).catch(() => null);
       if (settled?.kind !== "spent" && settled?.kind !== "elsewhere") return false;
-      clearSplitHold(ctx.buyer, lineId, attempt);
+      if (!clearSplitHold(ctx.buyer, lineId, attempt)) {
+        holdConfirming(record);
+        setNotice(UNCLEARED);
+        return true;
+      }
       setSent(null);
       if (settled.kind === "spent") {
         setPhase({ kind: "success", txHash: settled.txHash });
