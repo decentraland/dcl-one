@@ -2733,6 +2733,16 @@ async fn extended_holders_manage_stream_access_and_cast_presenters() {
         },
     )
     .await;
+    // A readable document fills the harness's lease cache, so the gate refuses from it.
+    let leases = crate::gatekeeper::admission::scene::try_get_lease_holders_for_parcels;
+    let leased = leases(&h.state, std::slice::from_ref(&lease_scene.parcel))
+        .await
+        .unwrap();
+    assert!(leased.contains(&holder), "{leased:?}");
+    let unleased_holders = leases(&h.state, std::slice::from_ref(&unleased.parcel))
+        .await
+        .unwrap();
+    assert!(unleased_holders.is_empty(), "{unleased_holders:?}");
     for (method, path, message) in [
         ("GET", "/scene-stream-access", NOT_AUTHORIZED_TO_STREAM_MSG),
         ("POST", "/scene-stream-access", NOT_AUTHORIZED_TO_STREAM_MSG),
@@ -2759,16 +2769,6 @@ async fn extended_holders_manage_stream_access_and_cast_presenters() {
     let add = crate::gatekeeper::streaming::cast::add_admin_presenter_on_join;
     let joined = Address::parse(&holder).unwrap();
     assert!(!add(&h.state, &unleased.room, &joined).await.unwrap());
-    // The refusals come from a document this harness read, not an unreadable one.
-    let leases = crate::gatekeeper::admission::scene::try_get_lease_holders_for_parcels;
-    let leased = leases(&h.state, std::slice::from_ref(&lease_scene.parcel))
-        .await
-        .unwrap();
-    assert!(leased.contains(&holder), "{leased:?}");
-    let unleased_holders = leases(&h.state, std::slice::from_ref(&unleased.parcel))
-        .await
-        .unwrap();
-    assert!(unleased_holders.is_empty(), "{unleased_holders:?}");
     lease_server.abort();
     database.drop().await;
 }
