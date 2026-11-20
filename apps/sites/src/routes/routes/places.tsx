@@ -32,6 +32,8 @@ import { detectPlatform, type DetectedPlatform } from "@/features/download/optio
 import { modalPlace, placeCard, placeJumpIn, type CreatorProfiles } from "@/features/places/cards";
 import { useBrowsePlaces, useLiveRail, useMemberPlaces, usePlaceCreators } from "@/features/places/hooks";
 
+import { PLACES_SECTION, destinationMeta, sectionCard } from "../lib/destination-meta";
+import { absoluteUrl, publicBase } from "../lib/social-meta";
 import type { Route } from "./+types/places";
 
 const STORY: StoryId = "misc/browse-places";
@@ -88,11 +90,8 @@ const COPY = {
   loadMore: "Load more places",
 };
 
-export function meta() {
-  return [
-    { title: "Places | Decentraland" },
-    { name: "description", content: "Discover places in Decentraland, see who is online, and find your next virtual destination." },
-  ];
+export function meta({ matches }: Route.MetaArgs) {
+  return destinationMeta(sectionCard(PLACES_SECTION), { url: absoluteUrl(publicBase(matches), "/places") });
 }
 
 export const handle = { agentMarkdown: "placesIndex" } satisfies AgentMarkdownHandle;
