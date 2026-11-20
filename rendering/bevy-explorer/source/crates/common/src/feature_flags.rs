@@ -186,16 +186,6 @@ fn explorer_url() -> String {
     base_domain::url(Service::FeatureFlags, "/explorer.json")
 }
 
-/// The Decentraland deployment a resolved url runs on, when it is one that may be given the
-/// installation id: the rule comms applies to `deviceIdentifier` (https, and
-/// [`base_domain::decentraland_domain`]; comms is not a dependency of common). A node, a gateway
-/// or a local service gets none.
-fn trusted_domain(url: &str) -> Option<&'static str> {
-    url.starts_with("https://")
-        .then(|| base_domain::decentraland_domain(url))
-        .flatten()
-}
-
 /// What a native request sends as `Referer`, which a browser sets itself.
 #[cfg(not(target_arch = "wasm32"))]
 fn referer(domain: &str) -> String {
@@ -362,13 +352,13 @@ fn read_flags(
 }
 
 /// One read of the file. `X-Address-Hash` is what Unleash buckets a gradual rollout by; it and
-/// the native `Referer` go only where [`trusted_domain`] allows.
+/// the native `Referer` go only where [`base_domain::device_identifier_domain`] allows.
 async fn fetch(url: String, machine_id: String) -> Result<serde_json::Value, String> {
     let mut request = reqwest_client()
         .get(&url)
         .header("X-Debug", "false")
         .timeout(READ_TIMEOUT);
-    if let Some(domain) = trusted_domain(&url) {
+    if let Some(domain) = base_domain::device_identifier_domain(&url) {
         request = request.header("X-Address-Hash", machine_id);
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -558,34 +548,10 @@ mod tests {
             explorer_url(),
             "https://feature-flags.decentraland.org/explorer.json"
         );
-        assert_eq!(trusted_domain(&explorer_url()), Some("decentraland.org"));
-    }
-
-    #[test]
-    fn the_machine_id_goes_only_to_decentraland_hosts() {
-        for (url, domain) in [
-            (
-                "https://feature-flags.decentraland.org/explorer.json",
-                Some("decentraland.org"),
-            ),
-            (
-                "https://feature-flags.decentraland.zone/explorer.json",
-                Some("decentraland.zone"),
-            ),
-            (
-                "https://gateway.example.test/mount/feature-flags/explorer.json",
-                None,
-            ),
-            (
-                "https://feature-flags.decentraland.org.example.test/explorer.json",
-                None,
-            ),
-            ("http://feature-flags.decentraland.org/explorer.json", None),
-            ("http://127.0.0.1:5222/feature-flags/explorer.json", None),
-            ("http://localhost:3000/explorer.json", None),
-        ] {
-            assert_eq!(trusted_domain(url), domain, "{url}");
-        }
+        assert_eq!(
+            base_domain::device_identifier_domain(&explorer_url()),
+            Some("decentraland.org")
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
