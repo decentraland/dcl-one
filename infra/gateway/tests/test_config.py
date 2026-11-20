@@ -329,6 +329,9 @@ class ConfigurationTest(unittest.TestCase):
         self.assertNotIn("Cache-Control", body)
         self.assertIn("add_header Access-Control-Expose-Headers "
                       "$upstream_http_access_control_expose_headers always;", body)
+        # A blob opened as a page runs sandboxed behind the redirect too.
+        self.assertIn("add_header Content-Security-Policy "
+                      "$upstream_http_content_security_policy always;", body)
         # Ranges the app does not answer itself get the whole file, as upstream.
         self.assertIn("max_ranges 0;", body)
 

@@ -83,6 +83,11 @@ impl<'a> Window<'a> {
         }
     }
 
+    /// The window's bytes `start..end` in the file.
+    pub(crate) fn bounds(&self) -> (u64, u64) {
+        (self.base, self.end)
+    }
+
     /// The whole stored file's size.
     pub(crate) fn file_size(&self) -> u64 {
         self.opened.size

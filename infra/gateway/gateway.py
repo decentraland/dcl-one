@@ -411,8 +411,8 @@ def render(table, cfg, mime):
         # A host rewrite also marks a request internal in nginx. Require an
         # upstream response header as well; client headers cannot supply it.
         # nginx keeps the app's Content-Type, Accept-Ranges and Cache-Control on
-        # the redirect and drops its other headers, so ETag and the expose list
-        # are copied back. The app answers every Range it supports itself; one it
+        # the redirect and drops its other headers, so ETag, the expose list and
+        # the Content-Security-Policy are copied back. The app answers every Range it supports itself; one it
         # does not (multi-range, `bytes=-`) gets the whole file, as upstream.
         storage = (f'internal; alias {cfg["storage"]}/contents/; sendfile on; etag off;\n'
                    'max_ranges 0;\n'
@@ -420,6 +420,7 @@ def render(table, cfg, mime):
                    'add_header ETag $upstream_http_etag always;\n'
                    'add_header Access-Control-Expose-Headers $upstream_http_access_control_expose_headers always;\n'
                    'add_header Access-Control-Allow-Origin "*" always;\n'
+                   'add_header Content-Security-Policy $upstream_http_content_security_policy always;\n'
                    + security_headers)
     locations += location("= /__protected_storage", "return 404;")
     locations += location("^~ /__protected_storage/", storage)

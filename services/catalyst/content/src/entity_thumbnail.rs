@@ -190,7 +190,8 @@ async fn serve_content_blob(
         }
         Some(ParsedRange::Range { start, end }) => {
             // Upstream sniffs the ranged stream it serves.
-            let mime = content_type(&mut Window::range(&mut opened, start, end + 1)).await?;
+            let mime =
+                content_type(state, hash, &mut Window::range(&mut opened, start, end + 1)).await?;
             set_content_type(&mut base_headers, mime);
             let body = if *method == Method::HEAD {
                 Body::empty()
@@ -210,8 +211,10 @@ async fn serve_content_blob(
         }
         None => {
             let mut window = Window::new(&mut opened, total);
-            set_content_type(&mut base_headers, content_type(&mut window).await?);
-            let head = window.into_head().await?;
+            set_content_type(
+                &mut base_headers,
+                content_type(state, hash, &mut window).await?,
+            );
             if let Some(accel) =
                 x_accel_redirect_path(state.settings.storage_x_accel_base.as_deref(), hash)
             {
@@ -227,6 +230,7 @@ async fn serve_content_blob(
             let body = if *method == Method::HEAD {
                 Body::empty()
             } else {
+                let head = window.into_head().await?;
                 opened.into_body(head)
             };
             let mut response = (StatusCode::OK, body).into_response();
@@ -740,6 +744,49 @@ mod tests {
                 "application/octet-stream",
                 "{method}"
             );
+        }
+    }
+
+    /// The image and thumbnail routes keep a sniffed type per window, as `/contents/{hash}` does,
+    /// and serve every answer sandboxed with `nosniff`.
+    #[tokio::test]
+    async fn a_blob_keeps_its_sniffed_type_and_is_sandboxed() {
+        use crate::tests::support::{TEST_CID, TestNode};
+        let node = TestNode::without_db("blob-kept").await;
+        node.store(TEST_CID, Bytes::from_static(b"GIF89a\x01\x00\x01\x00"))
+            .await;
+        let mut ranged = HeaderMap::new();
+        ranged.insert(header::RANGE, "bytes=0-1".parse().unwrap());
+        let serve = |method: Method, headers: HeaderMap| {
+            let state = node.state.clone();
+            async move {
+                serve_content_blob(&state, TEST_CID, &method, &headers, "missing")
+                    .await
+                    .unwrap()
+            }
+        };
+        let first = serve(Method::HEAD, HeaderMap::new()).await;
+        assert_eq!(first.headers()[header::CONTENT_TYPE], "image/gif");
+
+        // Other bytes of the same size under the same key (a test can store them; a real key
+        // cannot change).
+        let bmp = Bytes::from_static(b"BM\x36\x00\x00\x00\x00\x00\x00\x00");
+        node.store(TEST_CID, bmp.clone()).await;
+        for (method, headers, mime) in [
+            (Method::GET, HeaderMap::new(), "image/gif"),
+            (Method::HEAD, HeaderMap::new(), "image/gif"),
+            (Method::GET, ranged, "image/bmp"),
+        ] {
+            let resp = serve(method.clone(), headers).await;
+            assert_eq!(resp.headers()[header::CONTENT_TYPE], mime, "{method}");
+            assert_eq!(resp.headers()["content-security-policy"], "sandbox");
+            assert_eq!(resp.headers()[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+            let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            if method == Method::GET && mime == "image/gif" {
+                assert_eq!(body, bmp, "the whole body after a kept type");
+            }
         }
     }
 

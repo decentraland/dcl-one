@@ -51,6 +51,8 @@ class Upstream(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Expose-Headers", "ETag, Content-Range, Accept-Ranges, Content-Length")
             self.send_header("Accept-Ranges", "bytes")
             self.send_header("Cache-Control", "public,max-age=31536000,s-maxage=31536000,immutable")
+            self.send_header("Content-Security-Policy", "sandbox")
+            self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
@@ -301,6 +303,7 @@ def client(args):
                            "referrer-policy": "strict-origin-when-cross-origin",
                            "cross-origin-opener-policy": "same-origin",
                            "access-control-allow-origin": "*", "etag": '"gateway-fixture"',
+                           "content-security-policy": "sandbox",
                            "content-type": "image/png", "accept-ranges": "bytes",
                            "cache-control": "public,max-age=31536000,s-maxage=31536000,immutable",
                            "access-control-expose-headers":

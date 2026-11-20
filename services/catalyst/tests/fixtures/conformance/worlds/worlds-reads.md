@@ -166,14 +166,14 @@ mount (`content/src/get_content.rs:99-167,187-349`) at both paths under the pref
 
 | case | upstream | dcl-one |
 |---|---|---|
-| 200 GET | `Content-Type` sniffed by `file-type` `fromStream` on the raw stream (4100-byte sample) else `application/octet-stream`; `ETag: "<hashId>"`; `Access-Control-Expose-Headers: ETag, Accept-Ranges, Content-Range`; `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`; `Accept-Ranges: bytes` (or `Content-Encoding` when compressed); `Content-Length` when known (`content-file-handler.ts:27-69`). | `content_file_headers` (`formatters.rs`): `Content-Type` from `file-type`'s checks ported in `content/src/file_type.rs` over the whole file, plus a JSON check (`get_content.rs`); `ETag: "<hashId>"` (the client's spelling, also for a SHA-256 key); `Access-Control-Expose-Headers: ETag, Content-Range, Accept-Ranges, Content-Length`; the same `Cache-Control`; `Accept-Ranges: bytes`; `Content-Length`. Sniffing differs for unported formats (WR-04). |
+| 200 GET | `Content-Type` sniffed by `file-type` `fromStream` on the raw stream (4100-byte sample) else `application/octet-stream`; `ETag: "<hashId>"`; `Access-Control-Expose-Headers: ETag, Accept-Ranges, Content-Range`; `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`; `Accept-Ranges: bytes` (or `Content-Encoding` when compressed); `Content-Length` when known (`content-file-handler.ts:27-69`). | `content_file_headers` (`formatters.rs`): `Content-Type` from `file-type`'s checks ported in `content/src/file_type.rs` over the whole file, plus a JSON check (`get_content.rs`); `ETag: "<hashId>"` (the client's spelling, also for a SHA-256 key); `Access-Control-Expose-Headers: ETag, Content-Range, Accept-Ranges, Content-Length`; the same `Cache-Control`; `Accept-Ranges: bytes`; `Content-Length`; `Content-Security-Policy: sandbox`; `X-Content-Type-Options: nosniff`. Sniffing differs for unported formats (WR-04). |
 | 200 HEAD | Same headers, no body (`get-endpoints.spec.ts:27-40`). | Same headers, sniffed, no body (`get_content.rs:304-321`). MATCH. |
 | 206 | The sniff reads the file's first 4100 bytes (a failed read falls back to octet-stream); `Content-Length` of the window; `Content-Range: bytes S-E/size` (`content-file-handler.ts:176-197`). | The same sniff over the file's first 4100 bytes; same `Content-Length` and `Content-Range`. MATCH except unported formats (WR-04). |
 | 416 | `Content-Range: bytes */size` only. | `Content-Range: bytes */size` and `Access-Control-Expose-Headers: Content-Range` (`get_content.rs:253-263`). MATCH (one extra header). |
 | 400 | Invalid key: empty body. | Not answered: an invalid key is a 404 (WR-02). |
 | 404 | Missing: empty body. | Empty body (`get_world_content`) (WR-03). |
 | 500 | A storage error other than `RangeError` rethrows → `{"error":"Internal Server Error"}` (`content-file-handler.ts:163-173`). | A storage fault → 500 `{"error":"Internal Server Error"}` (`content/src/errors.rs:56-61`). MATCH. |
-| Full GET with `STORAGE_X_ACCEL_BASE` | n/a | The app answers 200 with `X-Accel-Redirect` and its content headers; nginx serves the file with the app's `Content-Type`, `Cache-Control`, `ETag` and expose list (one value each) plus `Access-Control-Allow-Origin: *`, and gives a range the app does not support the whole file (`get_content.rs:323-336`, `infra/gateway/gateway.py:265-272`). MATCH (WR-25). |
+| Full GET with `STORAGE_X_ACCEL_BASE` | n/a | The app answers 200 with `X-Accel-Redirect` and its content headers; nginx serves the file with the app's `Content-Type`, `Cache-Control`, `ETag`, expose list and `Content-Security-Policy` (one value each) plus `Access-Control-Allow-Origin: *`, and gives a range the app does not support the whole file (`get_content.rs:323-336`, `infra/gateway/gateway.py:265-272`). MATCH (WR-25). |
 | CORS | `Access-Control-Allow-Origin: *` on a request with `Origin`. | `shared::cors` (WR-06; shape WR-32). |
 
 ### Data dependency
@@ -388,7 +388,8 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
      is kept per content key, so a file is sniffed once. Pinned by `content/src/file_type.rs`
      `the_worlds_sniff_answers_as_file_type` (every `worlds-sniff.tsv` row, whole and ranged) and
      `content/src/get_content.rs` `the_worlds_sniff_reads_past_the_window_on_a_whole_get_only`.
-   - Deliberate differences (`docs/worlds-compatibility.md` "Content types"): XML is
+   - Deliberate differences (`docs/worlds-compatibility.md` "Content types"): a document type
+     (`text/*`, `*/xml`, `*+xml` or HTML; of the ported checks, XML) is
      `application/octet-stream`, since this mount shares the node's origin and a browser runs an
      XHTML or SVG document's scripts; a file opening with `{` or `[` is `application/json`; a
      storage fault while sniffing is `application/octet-stream`, as upstream's catch. More than 16
@@ -597,8 +598,8 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
       (multi-range, `bytes=-`, another unit) gets the whole file (`content-file-handler.ts:27-111`).
     - dcl-one: the app answers a full GET with its content headers and `X-Accel-Redirect`
       (`content/src/get_content.rs:323-336`). nginx keeps the app's `Content-Type`, `Accept-Ranges`
-      and `Cache-Control` across the redirect; the protected-storage location copies back `ETag` and
-      `Access-Control-Expose-Headers`, adds no `Cache-Control` of its own, and with `max_ranges 0`
+      and `Cache-Control` across the redirect; the protected-storage location copies back `ETag`,
+      `Access-Control-Expose-Headers` and `Content-Security-Policy`, adds no `Cache-Control` of its own, and with `max_ranges 0`
       serves the whole file for a range the app passed on (`infra/gateway/gateway.py:265-272`). A
       capture through the gateway's rendered nginx config showed one value of each header and a 200
       for `bytes=0-1,3-4`, `bytes=-` and `items=0-1` on `/worlds-content-server/contents`, `/ipfs`, the
