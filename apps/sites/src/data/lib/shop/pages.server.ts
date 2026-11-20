@@ -64,36 +64,46 @@ export const SHOP_SSR_SHARE_MS = 10_000;
  */
 export const SHOP_SSR_STALE_MS = 60_000;
 const SHARED_MAX = 256;
-type Shared = { at: number; read: Promise<{ value: unknown; at: number }>; reloading?: boolean };
+/** `missed`: a read whose null answer means "not found" (`missIsFinal` off) answered null; it is not served past its share. */
+type Shared = { at: number; read: Promise<{ value: unknown; at: number }>; reloading?: boolean; missed?: boolean };
 const sharedReads = new Map<string, Shared>();
 
 type ReadCtx = { request: Request; now: () => number; share: boolean };
 
 /** Newest last, so the oldest entry goes first when the map is full. */
-function remember(key: string, entry: Shared): void {
+function remember(key: string, entry: Shared, trackMiss: boolean): void {
   sharedReads.delete(key);
   sharedReads.set(key, entry);
   if (sharedReads.size > SHARED_MAX) sharedReads.delete(sharedReads.keys().next().value!);
+  if (trackMiss)
+    entry.read.then(
+      ({ value }) => {
+        entry.missed = value === null || value === undefined;
+      },
+      () => {},
+    );
 }
 
 /**
  * A public read, shared across documents for SHOP_SSR_SHARE_MS on the server's own client. With `staleMs`, an
- * answer past its share serves for that much longer at once, and the first document then starts one reload.
+ * answer past its share serves for that much longer at once, and the first document then starts one reload. With
+ * `missIsFinal` off, a null answer (the asset is not known) is not served past its share: an item or collection
+ * indexed since then renders on the next document instead of a 404.
  */
-function publicRead<T>(ctx: ReadCtx, key: string, read: (signal: AbortSignal) => Promise<T>, staleMs = 0): Promise<{ value: T; at: number }> {
+function publicRead<T>(ctx: ReadCtx, key: string, read: (signal: AbortSignal) => Promise<T>, staleMs = 0, missIsFinal = true): Promise<{ value: T; at: number }> {
   if (!ctx.share) return read(deadline(ctx.request)).then((value) => ({ value, at: ctx.now() }));
   const at = ctx.now();
   const hit = sharedReads.get(key);
   if (hit && at - hit.at < SHOP_SSR_SHARE_MS) return hit.read as Promise<{ value: T; at: number }>;
   // Not tied to this visitor's request: a later document may be waiting on the same read.
   const load = () => read(AbortSignal.timeout(SHOP_SSR_READ_MS)).then((value) => ({ value, at }));
-  if (hit && at - hit.at < SHOP_SSR_SHARE_MS + staleMs) {
+  if (hit && !hit.missed && at - hit.at < SHOP_SSR_SHARE_MS + staleMs) {
     if (!hit.reloading) {
       hit.reloading = true;
       const next = load();
       next.then(
         () => {
-          if (sharedReads.get(key) === hit) remember(key, { at, read: next });
+          if (sharedReads.get(key) === hit) remember(key, { at, read: next }, !missIsFinal);
         },
         () => {
           hit.reloading = false;
@@ -103,7 +113,7 @@ function publicRead<T>(ctx: ReadCtx, key: string, read: (signal: AbortSignal) =>
     return hit.read as Promise<{ value: T; at: number }>;
   }
   const pending = load();
-  remember(key, { at, read: pending });
+  remember(key, { at, read: pending }, !missIsFinal);
   pending.catch(() => {
     if (sharedReads.get(key)?.read === pending) sharedReads.delete(key);
   });
@@ -119,6 +129,10 @@ async function settle<T>(read: Promise<T>): Promise<{ ok: true; value: T } | { o
 }
 
 const ADDRESS = /^0x[0-9a-f]{40}$/;
+const ITEM_ID = /^\d{1,78}$/;
+
+/** Shares only reads whose key parts are well formed, so made-up URLs cannot push real pages out of the share. */
+const sharedIf = (ctx: ReadCtx, wellFormed: boolean): ReadCtx => (wellFormed ? ctx : { ...ctx, share: false });
 
 type Collected = { queries: PrimedQuery[]; seo: ShopSeo; status: number };
 
@@ -132,17 +146,22 @@ async function itemPage(ctx: ReadCtx, client: ShopClient, params: ShopLoadInput[
   if (!ADDRESS.test(contract) || (token ? !tokenId : !itemId)) return { queries: [], seo, status: 404 };
 
   const opts = { client, creatorSales };
-  /** One of the item's public facts, shared across documents under its page key; it keeps the time it was read. */
-  const shared = async <T>(key: readonly unknown[], read: (signal: AbortSignal) => Promise<T>) => {
-    const answer = await settle(publicRead(ctx, JSON.stringify(key), read, SHOP_SSR_STALE_MS));
+  const itemCtx = sharedIf(ctx, ITEM_ID.test(itemId ?? ""));
+  /**
+   * One of the item's public facts, shared across documents under its page key; it keeps the time it was read. A
+   * fact whose null decides a 404 (`missIsFinal` off) is read again after its share instead of served stale.
+   */
+  const shared = async <T>(key: readonly unknown[], read: (signal: AbortSignal) => Promise<T>, missIsFinal = true) => {
+    const answer = await settle(publicRead(itemCtx, JSON.stringify(key), read, SHOP_SSR_STALE_MS, missIsFinal));
     return answer.ok ? { ok: true as const, key, ...answer.value } : answer;
   };
   const [listing, meta, collection, owned] = await Promise.all([
     // The creator's primary sale only: the page's first render reads it while the Marketplace (resales, for a web3
     // session with the rollout on) is still pending, so a resale is never server-rendered as the item's price.
     token ? Promise.resolve(null) : shared(itemListingKey(contract, itemId!, "primary"), (signal) => fetchPrimaryListingForItem(contract, itemId!, { ...opts, signal })),
-    itemId ? shared(["item-meta", contract, itemId], (signal) => fetchItemMeta(contract, itemId, { ...opts, signal })) : Promise.resolve(null),
-    shared(["collection-meta", contract], (signal) => fetchCollection(contract, { ...opts, signal })),
+    itemId ? shared(["item-meta", contract, itemId], (signal) => fetchItemMeta(contract, itemId, { ...opts, signal }), false) : Promise.resolve(null),
+    // Shared with the collection page under the same key, so with the same rule for a null.
+    shared(["collection-meta", contract], (signal) => fetchCollection(contract, { ...opts, signal }), false),
     // The owner changes with every transfer: read for this document only.
     token ? settle(fetchTokenById(contract, tokenId!, { ...opts, signal: deadline(request) })) : Promise.resolve(null),
   ]);
@@ -176,7 +195,7 @@ async function collectionPage(ctx: ReadCtx, client: ShopClient, params: ShopLoad
   const seo = defaultShopSeo("collection", publicPageUrl(ctx.request, `/shop/collection/${contract ?? ""}`, env));
   if (!contract) return { queries: [], seo, status: 404 };
   const key = ["collection-meta", contract];
-  const read = await settle(publicRead(ctx, JSON.stringify(key), (signal) => fetchCollection(contract, { client, creatorSales, signal }), SHOP_SSR_STALE_MS));
+  const read = await settle(publicRead(sharedIf(ctx, ADDRESS.test(contract.toLowerCase())), JSON.stringify(key), (signal) => fetchCollection(contract, { client, creatorSales, signal }), SHOP_SSR_STALE_MS, false));
   if (!read.ok) return { queries: [], seo, status: 200 };
   const found = read.value.value;
   const queries: PrimedQuery[] = [[key, found, read.value.at]];

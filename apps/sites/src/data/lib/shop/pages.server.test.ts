@@ -203,6 +203,32 @@ describe("the item and collection documents' shared reads", () => {
     expect((await collection()).data.queries).toEqual([[["collection-meta", other], expect.anything(), now()]]);
     expect(remote.asked.length - before).toBe(1);
   });
+
+  it("a miss is not served past its share, and a malformed item id is read for its document only", async () => {
+    const item = "0xabc0000000000000000000000000000000000005";
+    const routes: Route[] = [
+      { path: "/shop-api/v1/items", body: { data: [], total: 0 } },
+      { path: "/shop-api/v3/catalog/unified", body: { data: [], total: 0 } },
+      { path: "/shop-api/v1/collections", body: { data: [], total: 0 } },
+    ];
+    const remote = sharedNode(routes);
+    const t0 = 1_700_000_000_000;
+    let t = t0;
+    const load = (itemId = "7") => loadShopPage("itemDetail", { request: request(`/shop/item/${item}/${itemId}`), params: { contractAddress: item, itemId }, now: () => t, env, flags: {} });
+    expect((await load()).status).toBe(404);
+
+    // Indexed since: past the share, the next document reads again instead of serving the miss.
+    routes[0]!.body = { data: [{ name: "Pirate Hat", thumbnail: "https://img.test/hat.png", category: "wearable", chainId: 137, network: "MATIC", data: {} }], total: 1 };
+    t = t0 + SHOP_SSR_SHARE_MS;
+    const found = await load();
+    expect(found.status).toBe(200);
+    expect(found.data.seo.title).toBe("Pirate Hat");
+
+    const before = remote.asked.length;
+    await load("not-an-id");
+    await load("not-an-id");
+    expect(remote.asked.length - before).toBe(6);
+  });
 });
 
 describe("the other pages", () => {
