@@ -151,7 +151,7 @@ fn spawn_equipped_avatar(world: &mut World, emotes: &[&str], primary: bool) -> E
     for (urn, hash) in [(EQUIPPED_DANCE, "bafydance"), (EQUIPPED_CLAP, "bafyclap")] {
         world
             .resource_mut::<Collectibles<Emote>>()
-            .resolve_pointer(EmoteUrn::new(urn).unwrap(), hash);
+            .insert_inline(EmoteUrn::new(urn).unwrap(), hash.to_owned());
     }
     let shape = AvatarShape(PbAvatarShape {
         emotes: emotes.iter().map(|urn| urn.to_string()).collect(),

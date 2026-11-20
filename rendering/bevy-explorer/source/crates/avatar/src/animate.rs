@@ -263,9 +263,9 @@ pub struct LastEmoteCommand(EmoteCommand);
 /// only while it matches what they have equipped; `preload_equipped_emotes` stops asking while it
 /// does.
 #[derive(Component, Debug, Clone, PartialEq)]
-pub struct EquippedEmotesLoaded {
-    pub body_shape: String,
-    pub urns: Vec<String>,
+pub(crate) struct EquippedEmotesLoaded {
+    pub(crate) body_shape: String,
+    pub(crate) urns: Vec<String>,
 }
 
 /// Loads the local player's equipped emotes once their avatar is built, so the first press of

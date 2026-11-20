@@ -151,15 +151,6 @@ impl<T: CollectibleType> Collectibles<T> {
     }
 }
 
-#[cfg(feature = "test-support")]
-impl<T: CollectibleType> Collectibles<T> {
-    /// Resolve `urn` to the entity `hash`, as a catalyst answer would.
-    pub fn resolve_pointer(&mut self, urn: CollectibleUrn<T>, hash: &str) {
-        self.pointers
-            .insert(urn, PointerResult::Hash(hash.to_owned()));
-    }
-}
-
 impl<T: CollectibleType> Default for Collectibles<T> {
     fn default() -> Self {
         Self {
