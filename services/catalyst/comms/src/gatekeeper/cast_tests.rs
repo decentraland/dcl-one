@@ -2553,7 +2553,7 @@ async fn an_orphaned_reset_becomes_a_revocation_after_an_hour() {
 async fn extended_holders_manage_stream_access_and_cast_presenters() {
     use crate::gatekeeper::streaming::NOT_AUTHORIZED_TO_STREAM_MSG;
     use crate::gatekeeper::streaming::cast::{NOT_PRESENTER_ADMIN_MSG, NOT_STREAM_LINK_ADMIN_MSG};
-    // Its revocations leave cleanup rows another test's drain would pick up.
+    // Own database: a revocation whose delivery fails leaves a cleanup row another test's drain would pick up.
     let Some(database) =
         crate::db::scratch::OwnedDatabase::new("castholders", crate::db::scratch::Schema::Full, 8)
             .await

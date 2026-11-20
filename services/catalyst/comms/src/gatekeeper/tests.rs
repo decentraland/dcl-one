@@ -138,7 +138,7 @@ async fn seed_place(pool: &PgPool, id: &str, raw: serde_json::Value, base_positi
         .unwrap();
 }
 
-/// A lease authorizations document granting `holder` the `plot`; returns its URL.
+/// Serves a lease authorizations document granting `holder` the `plot`; returns its URL and the server task.
 async fn lease_document(holder: &str, plot: &str) -> (String, tokio::task::JoinHandle<()>) {
     let doc = serde_json::json!([{ "addresses": [holder], "plots": [plot] }]);
     let lease = axum::Router::new().route(

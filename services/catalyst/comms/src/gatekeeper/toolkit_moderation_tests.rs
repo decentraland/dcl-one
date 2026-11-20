@@ -796,7 +796,11 @@ async fn toolkit_store_fault_cannot_reach_media() {
             KEY,
         )
         .await;
-        assert!(status.is_server_error(), "{method} {path}: {value}");
+        assert_eq!(
+            (status, value),
+            past_gate_store_fault(method, path, false),
+            "{method} {path}"
+        );
     }
     assert!(
         media
@@ -1006,7 +1010,11 @@ async fn toolkit_ban_listings_admit_extended_holders() {
             let (status, value) = call(&app, method, path, meta, body.clone(), KEY).await;
             if outcome == StatusCode::INTERNAL_SERVER_ERROR {
                 // Past the gate: the store behind it has no database here.
-                assert!(status.is_server_error(), "{case} {method} {path}: {value}");
+                assert_eq!(
+                    (status, value),
+                    past_gate_store_fault(method, path, case == "world grantee"),
+                    "{case} {method} {path}"
+                );
             } else if outcome == StatusCode::UNAUTHORIZED {
                 // A write refuses with 403 where a listing answers 401.
                 assert_eq!(
@@ -1479,5 +1487,25 @@ async fn unban_commits_during_inventory_outage_and_preserves_a_reban_during_meta
             }
         }
         server.abort();
+    }
+}
+
+/// The answer of a moderation write whose caller passed the gate and whose
+/// store is closed. Removing an admin looks the target up first, and banning
+/// where the live scene rooms cannot be listed fails there; both answer 503.
+fn past_gate_store_fault(method: &str, path: &str, rooms_unlisted: bool) -> (StatusCode, Value) {
+    match (method, path) {
+        ("DELETE", "/scene-admin") => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"error": "could not determine authority: backing store social.scene_admins unavailable"}),
+        ),
+        ("POST", "/scene-bans") if rooms_unlisted => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"error": "Scene room inventory unavailable; retry the moderation request."}),
+        ),
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"error": "Internal Server Error"}),
+        ),
     }
 }
