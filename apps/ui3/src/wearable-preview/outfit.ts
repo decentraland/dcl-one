@@ -114,7 +114,12 @@ async function getJSON<T>(url: string, opts?: RequestInit): Promise<T> {
   }
 }
 
+/**
+ * The page's entities by `${base}|${pointer}`, oldest first: at most ENTITY_CACHE_MAX of them. A pointer with no
+ * active entity is not kept, so an item indexed since shows on its next read.
+ */
 const entityCache = new Map<string, Promise<Entity | null>>();
+const ENTITY_CACHE_MAX = 512;
 const queuedEntities = new Map<string, {
   pointers: Set<string>;
   result: Promise<Map<string, Entity>>;
@@ -152,25 +157,34 @@ function queueEntities(base: string) {
 
 export function fetchEntities(base: string, pointers: string[]): Promise<Map<string, Entity>> {
   const wanted = [...new Set(pointers.map((p) => p.toLowerCase()))];
-  const missing = wanted.filter((p) => !entityCache.has(`${base}|${p}`));
-  if (missing.length) {
-    const batch = queueEntities(base);
-    for (const p of missing) {
-      const key = `${base}|${p}`;
-      batch.pointers.add(p);
-      entityCache.set(
-        key,
-        batch.result
-          .then((entities) => entities.get(p) ?? null)
-          .catch((err) => {
-            entityCache.delete(key);
-            throw err;
-          }),
-      );
+  let batch: ReturnType<typeof queueEntities> | null = null;
+  const reads = wanted.map((p) => {
+    const key = `${base}|${p}`;
+    const held = entityCache.get(key);
+    if (held) {
+      // Most recently used last, so the bound drops the coldest entity.
+      entityCache.delete(key);
+      entityCache.set(key, held);
+      return [p, held] as const;
     }
-  }
+    batch ??= queueEntities(base);
+    batch.pointers.add(p);
+    const entry: Promise<Entity | null> = batch.result
+      .then((entities) => {
+        const entity = entities.get(p) ?? null;
+        if (!entity && entityCache.get(key) === entry) entityCache.delete(key);
+        return entity;
+      })
+      .catch((err) => {
+        if (entityCache.get(key) === entry) entityCache.delete(key);
+        throw err;
+      });
+    entityCache.set(key, entry);
+    return [p, entry] as const;
+  });
+  while (entityCache.size > ENTITY_CACHE_MAX) entityCache.delete(entityCache.keys().next().value!);
   return Promise.all(
-    wanted.map(async (p) => [p, await entityCache.get(`${base}|${p}`)] as const),
+    reads.map(async ([p, read]) => [p, await read] as const),
   ).then((pairs) => {
     const map = new Map<string, Entity>();
     for (const [p, e] of pairs) if (e) map.set(p, e);

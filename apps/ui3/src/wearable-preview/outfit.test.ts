@@ -70,6 +70,26 @@ test("a failed batch releases every preview pointer for retry", async () => {
   expect(fetch).toHaveBeenCalledTimes(2);
 });
 
+test("a pointer with no active entity is asked again, and the cache keeps at most 512 entities", async () => {
+  const fetch = vi.fn(async (_url: string, init: RequestInit) => ({
+    ok: true,
+    json: async () => (JSON.parse(String(init.body)).pointers as string[]).filter((p) => p !== "urn:new").map((p) => ({ pointers: [p] })),
+  }));
+  vi.stubGlobal("fetch", fetch);
+  expect((await fetchEntities("https://bound.test", ["urn:new"])).size).toBe(0);
+  fetch.mockImplementationOnce(async () => ({ ok: true, json: async () => [{ pointers: ["urn:new"] }] }));
+  expect((await fetchEntities("https://bound.test", ["urn:new"])).size).toBe(1);
+  expect(fetch).toHaveBeenCalledTimes(2);
+
+  // 512 more push the oldest out; the newest stay.
+  const many = Array.from({ length: 512 }, (_, index) => `urn:bound:${index}`);
+  expect((await fetchEntities("https://bound.test", many)).size).toBe(512);
+  await fetchEntities("https://bound.test", [many[511]!]);
+  expect(fetch).toHaveBeenCalledTimes(3);
+  await fetchEntities("https://bound.test", ["urn:new"]);
+  expect(fetch).toHaveBeenCalledTimes(4);
+});
+
 test("a representation's files to download: each hash once, the main model but no other model, else the main file", () => {
   const male = "urn:decentraland:off-chain:base-avatars:BaseMale";
   const content = [
