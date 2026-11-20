@@ -47,8 +47,8 @@ The creators pages move into `apps/sites` from `decentraland/creators-website` `
   `console.error`, which the site reports to `/internal/client-error` like any other page's.
 - **Styling.** CSS Modules, mostly over the shared `--dcl-*` tokens, with the creators base styles
   scoped to `[data-creators]`. Some colors are still the creators' own (`styles/tokens.css`): status
-  colors, translucent fills at opacities the foundations lack, and shades carried over from the Shop. The pages keep their own components for now; moving them to `@dcl/one-ui` is a
-  separate change.
+  colors, translucent fills at opacities the foundations lack, and shades carried over from the Shop.
+  The pages keep their own components for now; moving them to `@dcl/one-ui` is a separate change.
 - **Browser tests.** The mocked end-to-end suite runs as a local tool, `tooling/creators-e2e`
   (`playwright-core`, a fake wallet, chain and services, the Sites dev server). It is not part of
   CI. Unit tests run with the Sites suite.
@@ -75,7 +75,6 @@ The creators pages move into `apps/sites` from `decentraland/creators-website` `
    development, staging or production Foundation services and chains from the page's host. Each
    service leaves them when it moves behind the node and is reached like the rest of Sites; once the
    chain choice is deployment configuration too, the files and the host detection go.
-
 5. Move the creators colors onto `--dcl-*` tokens, adding the status colors and the missing opacity
    steps to `library/ui/foundations`. Do it with or after follow-up 1, since the shared components
    take many of these colors with them.
