@@ -104,6 +104,10 @@ describe("when a signed-out visitor fills the report form", () => {
     const other = openReport("/report?reported_address=0x2222222222222222222222222222222222222222");
     await user.type(screen.getByRole("textbox", { name: "Description" }), "A report I started in this view");
     await user.click(screen.getByRole("link", { name: "Original report" }));
+    expect(screen.getByRole("textbox", { name: "Reported User Wallet" })).toHaveProperty(
+      "value",
+      "0x1234567890abcdef1234567890abcdef12345678",
+    );
     expect(screen.getByRole("textbox", { name: "Description" })).toHaveProperty("value", "A report I started in this view");
     other.unmount();
 
@@ -120,6 +124,22 @@ describe("when a signed-out visitor fills the report form", () => {
 
     openReport(returnTo);
     expect(screen.getByRole("textbox", { name: "Description" })).toHaveProperty("value", description);
+  });
+
+  it("should restore a target corrected before sign-in", async () => {
+    const path = "/report?reported_address=invalid";
+    const report = openReport(path);
+    const wallet = screen.getByRole("textbox", { name: "Reported User Wallet" });
+    await user.clear(wallet);
+    await user.type(wallet, "0x2222222222222222222222222222222222222222");
+    await user.click(screen.getByRole("button", { name: "Sign In" }));
+    report.unmount();
+
+    openReport(path);
+    expect(screen.getByRole("textbox", { name: "Reported User Wallet" })).toHaveProperty(
+      "value",
+      "0x2222222222222222222222222222222222222222",
+    );
   });
 
   it("should keep the live draft without persisting it for Explorer sign-in", async () => {
@@ -206,6 +226,30 @@ describe("when a signed-in visitor submits an incomplete report", () => {
     const evidence = screen.getByRole("button", { name: "Add File", description: /Please upload the evidence/ });
     expect(document.activeElement).toBe(evidence);
     expect(evidence.hasAttribute("aria-invalid")).toBe(false);
+  });
+});
+
+describe("when a report link includes an invalid target wallet", () => {
+  let user: ReturnType<typeof userEvent.setup>;
+
+  beforeEach(() => {
+    auth.address = "0x1111111111111111111111111111111111111111";
+    auth.isConnected = true;
+    user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/report?reported_address=invalid"]}>
+        <ReportForm trackCtx={{ sid: "sid", story: "report" } as never} />
+      </MemoryRouter>,
+    );
+  });
+
+  it("should let the visitor correct the reported wallet after validation fails", async () => {
+    const target = screen.getByRole("textbox", { name: "Reported User Wallet" });
+    await user.click(screen.getByRole("button", { name: "Submit Report" }));
+    expect(document.activeElement).toBe(target);
+    await user.clear(target);
+    await user.type(target, "0x2222222222222222222222222222222222222222");
+    expect(target.getAttribute("aria-invalid")).toBeNull();
   });
 });
 

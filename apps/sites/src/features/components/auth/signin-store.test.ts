@@ -79,17 +79,20 @@ describe("when listening for browser sign-in", () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
-  it("should skip notifications for host, desktop-shell and in-place sign-in", () => {
+  it("should skip notifications for host sign-in", () => {
     const uninstall = store.installHostSignIn(vi.fn());
     store.openSignIn();
     uninstall();
     expect(listener).not.toHaveBeenCalled();
+  });
 
+  it("should skip notifications for desktop-shell sign-in", () => {
     (window as { __DCL_SHELL__?: unknown }).__DCL_SHELL__ = { shell: "tauri" };
     store.openSignIn();
-    delete (window as { __DCL_SHELL__?: unknown }).__DCL_SHELL__;
     expect(listener).not.toHaveBeenCalled();
+  });
 
+  it("should skip notifications for in-place sign-in", () => {
     store.openSignIn({ inPlace: true });
     expect(listener).not.toHaveBeenCalled();
   });

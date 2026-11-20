@@ -183,6 +183,7 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
 
   const playerParam = params.get("player_address") ?? "";
   const reportedParam = params.get("reported_address") ?? "";
+  const reportedAddressLocked = isEthAddress(reportedParam);
   const wallet = address ?? "";
 
   const [reportedAddress, setReportedAddress] = useState(reportedParam);
@@ -203,7 +204,7 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
   const restoreSignInDraft = useEffectEvent(() => {
     const saved = takeSignInDraft(returnTo);
     if (!saved) return;
-    setReportedAddress(reportedParam || saved.reportedAddress);
+    setReportedAddress(reportedAddressLocked ? reportedParam : saved.reportedAddress);
     setReason(saved.reason);
     setDescription(saved.description);
     setComments(saved.comments);
@@ -338,7 +339,7 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
                 value={reportedAddress}
                 onChange={(e) => setReportedAddress(e.target.value)}
                 onBlur={() => isEthAddress(reportedAddress) && track("report_target_set", { has_reporter: isEthAddress(wallet) }, trackCtx)}
-                disabled={!!reportedParam}
+                disabled={reportedAddressLocked}
               />
             </Field>
 

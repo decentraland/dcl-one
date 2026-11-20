@@ -40,3 +40,26 @@ describe('when a reader edits a shared web textarea', () => {
     expect(textarea).toHaveValue('First line\nSecond line')
   })
 })
+
+describe('when a shared web field receives an ARIA invalid state', () => {
+  it.each([
+    [true, 'true'],
+    ['true', 'true'],
+    ['false', null]
+  ] as const)('should reflect %s on both field frames', (invalid, expected) => {
+    render(
+      <>
+        <WebSelect aria-label="Reason" aria-invalid={invalid} />
+        <WebTextarea aria-label="Description" aria-invalid={invalid} />
+      </>
+    )
+    expect(
+      screen.getByRole('combobox', { name: 'Reason' }).parentElement?.getAttribute('data-invalid')
+    ).toBe(expected)
+    expect(
+      screen
+        .getByRole('textbox', { name: 'Description' })
+        .parentElement?.getAttribute('data-invalid')
+    ).toBe(expected)
+  })
+})
