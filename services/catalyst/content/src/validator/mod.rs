@@ -52,6 +52,7 @@ mod spring_bones;
 pub mod synced;
 pub mod third_party;
 pub mod types;
+pub(crate) mod urn;
 
 #[cfg(test)]
 mod tests;

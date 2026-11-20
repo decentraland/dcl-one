@@ -91,7 +91,7 @@ type SnapshotsByHash = HashMap<String, (Vec<SnapshotMetadata>, HashSet<String>)>
 /// ONE storage tree (a downloaded snapshot file is a blob in it, like any
 /// content file).
 pub struct SyncDependencies {
-    pub http_client: reqwest::Client,
+    pub http_client: crate::http::CheckedRedirectClient,
     pub storage: Arc<Storage>,
     pub deployer: Arc<BatchDeployer>,
     pub processed_store: Arc<LiveProcessedSnapshotStore>,
@@ -373,7 +373,7 @@ pub async fn run_sync_job(
 #[derive(Clone)]
 struct SyncOrchestratorRefs {
     config: SyncOrchestratorConfig,
-    http_client: reqwest::Client,
+    http_client: crate::http::CheckedRedirectClient,
     storage: Arc<Storage>,
     deployer: Arc<BatchDeployer>,
     processed_store: Arc<LiveProcessedSnapshotStore>,

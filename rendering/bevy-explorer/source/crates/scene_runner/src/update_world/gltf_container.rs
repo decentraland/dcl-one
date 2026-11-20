@@ -301,7 +301,7 @@ pub enum GltfPart {
 }
 
 #[derive(Component, Deref)]
-pub struct GltfReady(InstanceId);
+pub struct GltfReady(pub(super) InstanceId);
 
 fn clear_stale_instance(
     trigger: Trigger<OnReplace, GltfReady>,

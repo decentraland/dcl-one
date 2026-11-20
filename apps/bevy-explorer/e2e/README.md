@@ -162,7 +162,14 @@ What the driver does for every scenario, so a spec need not:
   wait out that window since the profile was last seen to change (`profileDeployWindow()`). A
   change and its restore would otherwise fail silently and leave the shared account changed.
 
-The in-world scenario in `specs/debug-panel.test.ts` uses the lower-right bug button in development builds and Sidebar settings → Debug panel in release builds. It reads the current realm, observes a live FPS-target change, checks that the player walks, clicks the world and opens Sidebar settings while the panel stays open, and verifies an avatar action against the engine. The same spec reads `/client_login_state` for an unsigned guest (a session the engine's `/login_guest`
+The in-world scenario in `specs/debug-panel.test.ts` checks that the lower-right bug button is hidden by
+default and opens the panel through Sidebar settings → Debug panel. To exercise the launcher, pass
+`--debug-panel` in `DCL_E2E_NATIVE_ARGS` when the driver starts desktop Explorer, or add
+`debugPanel=1` to `DCL_E2E_WEB_URL`. When attaching to desktop Explorer, start the client with
+`--debug-panel` before running the scenario. The driver uses whichever control the running HUD shows.
+The scenario reads the current realm, observes a live FPS-target change, checks that the player
+walks, clicks the world and opens Sidebar settings while the panel stays open, and verifies an
+avatar action against the engine. The same spec reads `/client_login_state` for an unsigned guest (a session the engine's `/login_guest`
 signs in, the guest a scene preview's `?guest=1` gets; the HUD's Continue as guest makes a signed
 guest account instead) and checks that authenticated login delivery is inactive. The **Client login events** section is included in the registered-reading
 check. `test/client-login-storage.test.ts` checks the browser queue's transaction acknowledgment,

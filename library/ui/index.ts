@@ -17,7 +17,6 @@ export type {
 export {
   decentralandNavigation,
   decentralandNavigationSection,
-  decentralandNavSections,
   decentralandPublicNavSections
 } from './components/NavBar/NavBar.navigation'
 export type {
@@ -64,6 +63,12 @@ export type { InputExplorerNamesProps } from './components/InputExplorerNames/In
 
 export { InputWebCreatorTools } from './components/InputWebCreatorTools/InputWebCreatorTools'
 export type { InputWebCreatorToolsProps } from './components/InputWebCreatorTools/InputWebCreatorTools'
+
+export { WebSelect, WebTextarea } from './components/InputField/InputFieldWebControls'
+export type {
+  WebSelectProps,
+  WebTextareaProps
+} from './components/InputField/InputFieldWebControls'
 
 export { Switch } from './components/Switch/Switch'
 export type { SwitchProps } from './components/Switch/Switch'

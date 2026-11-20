@@ -4,12 +4,14 @@ import { fetchCommunityProfiles } from "@ui/data/hooks/useCommunityProfiles";
 
 import type { AuthIdentity } from "../auth/types";
 import {
+  fetchProfileAssetCount,
   fetchProfileAssets,
   fetchProfileCreations,
   fetchWornCollectibles,
   type AssetCategory,
   type CollectiblePage,
   type CreationsCategory,
+  type OptionalAssetCategory,
 } from "../catalyst/marketplace/profile-collectibles";
 import { fetchFavoritePlaces, fetchProfilePlaces } from "../catalyst/places/profile-places";
 import { fetchUserBadges } from "../catalyst/social/badges";
@@ -47,6 +49,8 @@ export const profileKeys = {
   /** `all` is the unfiltered list. */
   assets: (address: string, category: AssetCategory | null) =>
     ["profile", "assets", normalizeAddress(address), category ?? "all"] as const,
+  assetCount: (address: string, category: OptionalAssetCategory) =>
+    ["profile", "asset-count", normalizeAddress(address), category] as const,
   /** The catalogue cards of a set of worn items; the same set, in the same order, is one entry. */
   wornCollectibles: (urns: readonly string[]) => ["profile", "worn-collectibles", [...urns]] as const,
   places: (address: string) => ["profile", "places", normalizeAddress(address)] as const,
@@ -121,6 +125,13 @@ export const assetsQuery = (address: string, category: AssetCategory | null) =>
         { signal },
       ),
     getNextPageParam: nextCollectiblesPage,
+  });
+
+export const assetCountQuery = (address: string, category: OptionalAssetCategory) =>
+  queryOptions({
+    queryKey: profileKeys.assetCount(address, category),
+    staleTime: PROFILE_STALE_MS,
+    queryFn: ({ signal }) => fetchProfileAssetCount(normalizeAddress(address), category, { signal }),
   });
 
 /** The catalogue cards of the collectibles an avatar wears. */

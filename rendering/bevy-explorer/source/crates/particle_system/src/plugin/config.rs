@@ -76,10 +76,11 @@ pub fn shader_defs(features: u32) -> Vec<ShaderDefVal> {
     defs
 }
 
-// the ShaderType derive emits a `check` fn per field that dead-code lints when the fields
-// are only ever written (see sky_envmap.rs for the same workaround)
 mod uniforms {
-    #![allow(dead_code)]
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
 
     use bevy::{prelude::*, render::render_resource::ShaderType};
 

@@ -14,7 +14,9 @@ import { warnInvalid } from "../warn";
 export type CreationsCategory = "wearable" | "emote";
 
 /** What a profile's Assets tab filters by; no category is every asset. */
-export type AssetCategory = "wearable" | "emote" | "ens" | "parcel" | "estate";
+export const OPTIONAL_ASSET_CATEGORIES = ["ens", "parcel", "estate"] as const;
+export type OptionalAssetCategory = (typeof OPTIONAL_ASSET_CATEGORIES)[number];
+export type AssetCategory = "wearable" | "emote" | OptionalAssetCategory;
 
 export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary" | "exotic" | "mythic" | "unique";
 
@@ -330,14 +332,11 @@ export async function fetchProfileCreations(
   };
 }
 
-/** The tokens a wallet owns, newest first, optionally of one category. */
-export async function fetchProfileAssets(
-  owner: string,
-  params: { category?: AssetCategory; first: number; skip?: number },
-  opts: GetOptions = {},
-): Promise<CollectiblePage<ProfileAsset>> {
+type OwnedAssetsParams = { category?: AssetCategory; first: number; skip?: number };
+
+async function readOwnedAssets(owner: string, params: OwnedAssetsParams, opts: GetOptions) {
   const path = "/marketplace-api/v1/nfts";
-  const page = requirePage(
+  return requirePage(
     await getJSON<unknown>(path, {
       ...opts,
       query: {
@@ -350,5 +349,20 @@ export async function fetchProfileAssets(
     }),
     path,
   );
+}
+
+/** The tokens a wallet owns, newest first, optionally of one category. */
+export async function fetchProfileAssets(
+  owner: string,
+  params: OwnedAssetsParams,
+  opts: GetOptions = {},
+): Promise<CollectiblePage<ProfileAsset>> {
+  const page = await readOwnedAssets(owner, params, opts);
   return { items: collect(page.data, toAsset), received: page.data.length, total: page.total };
+}
+
+/** The owned count covers the entire category, including tokens past the first page. */
+export async function fetchProfileAssetCount(owner: string, category: OptionalAssetCategory, opts: GetOptions = {}) {
+  const page = await readOwnedAssets(owner, { category, first: 1 }, opts);
+  return page.total;
 }
