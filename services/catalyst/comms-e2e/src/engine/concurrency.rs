@@ -64,7 +64,8 @@ impl Seeded {
 
     /// A gap in `0..=window`, in whole microseconds.
     pub fn gap(&mut self, window: Duration) -> Duration {
-        Duration::from_micros(self.below(window.as_micros() as u64 + 1))
+        let micros = u64::try_from(window.as_micros()).unwrap_or(u64::MAX);
+        Duration::from_micros(self.below(micros.saturating_add(1)))
     }
 }
 

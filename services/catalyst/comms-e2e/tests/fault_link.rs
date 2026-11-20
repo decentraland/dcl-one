@@ -1270,3 +1270,211 @@ async fn a_tcp_link_takes_its_delay_and_a_tcp_queue_holds_the_bytes_as_a_stall_d
         Some(&b"held"[..])
     );
 }
+
+/// What a queue kept for a flow that was half-opened or cut before the queue ended is lost with
+/// that flow: it does not go out through the old upstream socket.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_queue_ending_after_its_flow_ended_does_not_send_what_it_kept() {
+    for (name, end) in [("half-open", 0), ("cut", 1)] {
+        let ctx = ctx("udp-queue-generation");
+        let (server, mut seen) = udp_echo().await;
+        let link = FaultLink::udp(&ctx, "link", ANY.parse().unwrap(), server)
+            .await
+            .unwrap();
+        let client = udp_client(&link).await;
+        seen.recv().await.unwrap();
+        link.set(Direction::Both, Fault::Queue { limit: 10 });
+        client.send(b"kept one").await.unwrap();
+        client.send(b"kept two").await.unwrap();
+        expect_or(&ctx, "the queue keeps both", SOON, || {
+            (link.counters().queued == 2)
+                .then_some(())
+                .ok_or_else(|| "not yet".to_owned())
+        })
+        .await
+        .unwrap();
+        if end == 0 {
+            link.half_open();
+        } else {
+            link.cut();
+        }
+        let dropped = link.counters().dropped;
+        link.set(Direction::Both, Fault::Pass);
+        tokio::time::sleep(QUIET).await;
+        assert!(
+            seen.try_recv().is_err(),
+            "{name}: the stack heard what the queue kept for the old flow"
+        );
+        assert_eq!(receive(&client, QUIET).await, None, "{name}");
+        let counters = link.counters();
+        assert_eq!(
+            (counters.released, counters.dropped - dropped),
+            (0, 2),
+            "{name}: {counters:?}"
+        );
+    }
+}
+
+/// The history notes the datagrams the relay drops before any fault acts: those of a half-open
+/// flow, each way, and an answer that comes back while the port is closed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_history_notes_what_a_half_open_flow_or_a_closed_port_drops() {
+    let ctx = ctx("udp-history-drops");
+    let (server, _seen) = udp_echo().await;
+    let link = FaultLink::udp(&ctx, "link", ANY.parse().unwrap(), server)
+        .await
+        .unwrap();
+    let client = udp_client(&link).await;
+    // the datagram is on its way to the stack when the flow goes half-open: its answer is dropped
+    link.set(
+        Direction::Uplink,
+        Fault::Link {
+            delay: ms(200),
+            jitter: Duration::ZERO,
+            loss: 0.0,
+        },
+    );
+    client.send(b"late").await.unwrap();
+    expect_or(&ctx, "the link takes the datagram", SOON, || {
+        (link.history(Direction::Uplink).len() == 2)
+            .then_some(())
+            .ok_or_else(|| "not yet".to_owned())
+    })
+    .await
+    .unwrap();
+    link.half_open();
+    client.send(b"silent").await.unwrap();
+    assert_eq!(receive(&client, ms(600)).await, None);
+    let up: Vec<(usize, Fate)> = link
+        .history(Direction::Uplink)
+        .iter()
+        .map(|seen| (seen.bytes, seen.fate))
+        .collect();
+    assert_eq!(
+        up,
+        [(2, Fate::Passed), (4, Fate::Delayed), (6, Fate::Lost)],
+        "the half-open flow's datagram is noted as lost"
+    );
+    let down: Vec<(usize, Fate)> = link
+        .history(Direction::Downlink)
+        .iter()
+        .map(|seen| (seen.bytes, seen.fate))
+        .collect();
+    assert_eq!(down, [(7, Fate::Passed), (9, Fate::Lost)]);
+
+    // a new flow; its datagram waits on the uplink while the port closes, so the answer comes
+    // back to a closed port
+    let other = udp_client(&link).await;
+    let before = link.history(Direction::Downlink).len();
+    let noted = link.history(Direction::Uplink).len();
+    other.send(b"closing").await.unwrap();
+    expect_or(&ctx, "the link takes the datagram", SOON, || {
+        (link.history(Direction::Uplink).len() > noted)
+            .then_some(())
+            .ok_or_else(|| "not yet".to_owned())
+    })
+    .await
+    .unwrap();
+    link.close_port().unwrap();
+    tokio::time::sleep(ms(600)).await;
+    let down = link.history(Direction::Downlink);
+    assert_eq!(down.len(), before + 1, "{down:?}");
+    assert_eq!(
+        (down[before].bytes, down[before].fate),
+        (12, Fate::Lost),
+        "an answer sent while the port is closed is not noted as passed"
+    );
+}
+
+/// A delay keeps packets in order: one that arrives under a shorter delay waits for one still
+/// held under a longer path before it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_delay_keeps_packets_in_order() {
+    let ctx = ctx("udp-delay-order");
+    let (server, _seen) = udp_echo().await;
+    let link = FaultLink::udp(&ctx, "link", ANY.parse().unwrap(), server)
+        .await
+        .unwrap();
+    let client = udp_client(&link).await;
+    link.set(
+        Direction::Uplink,
+        Fault::Link {
+            delay: ms(300),
+            jitter: Duration::ZERO,
+            loss: 0.0,
+        },
+    );
+    client.send(&[1]).await.unwrap();
+    tokio::time::sleep(ms(20)).await;
+    link.set(Direction::Uplink, Fault::Delay { by: ms(10) });
+    client.send(&[2]).await.unwrap();
+    let mut back = Vec::new();
+    for _ in 0..2 {
+        back.push(echoed_byte(
+            &receive(&client, SOON).await.expect("it comes back"),
+        ));
+    }
+    assert_eq!(back, [1, 2], "a delayed packet overtook one before it");
+    // a burst under one delay arrives in the order it was sent
+    for index in 10..60u8 {
+        client.send(&[index]).await.unwrap();
+    }
+    let mut back = Vec::new();
+    while back.len() < 50 {
+        back.push(echoed_byte(
+            &receive(&client, SOON).await.expect("it comes back"),
+        ));
+    }
+    assert_eq!(back, (10..60).collect::<Vec<u8>>());
+}
+
+/// A delay too long for the clock holds what it delays; the relay goes on relaying.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_delay_too_long_for_the_clock_does_not_stop_the_relay() {
+    let ctx = ctx("udp-delay-forever");
+    let (server, _seen) = udp_echo().await;
+    let link = FaultLink::udp(&ctx, "link", ANY.parse().unwrap(), server)
+        .await
+        .unwrap();
+    let client = udp_client(&link).await;
+    for fault in [
+        Fault::Delay { by: Duration::MAX },
+        Fault::Reorder {
+            window: Duration::MAX,
+        },
+        Fault::Link {
+            delay: Duration::MAX,
+            jitter: Duration::MAX,
+            loss: 0.0,
+        },
+    ] {
+        link.set(Direction::Uplink, fault);
+        let packets = link.counters().up_packets;
+        client.send(b"one").await.unwrap();
+        client.send(b"two").await.unwrap();
+        expect_or(&ctx, "the relay takes both", SOON, || {
+            (link.counters().up_packets == packets + 2)
+                .then_some(())
+                .ok_or(format!("{fault:?}: {:?}", link.counters()))
+        })
+        .await
+        .unwrap();
+    }
+    assert_eq!(receive(&client, QUIET).await, None);
+
+    let (_ctx, tcp, _events) = tcp_link("tcp-delay-forever").await;
+    let mut stream = served(&tcp).await;
+    tcp.set(Direction::Uplink, Fault::Delay { by: Duration::MAX });
+    let bytes = tcp.counters().up_bytes;
+    stream.write_all(b"one").await.unwrap();
+    tokio::time::sleep(ms(100)).await;
+    stream.write_all(b"two").await.unwrap();
+    expect_or(&ctx, "the TCP relay reads both", SOON, || {
+        (tcp.counters().up_bytes == bytes + 6)
+            .then_some(())
+            .ok_or(format!("{:?}", tcp.counters()))
+    })
+    .await
+    .unwrap();
+    assert_eq!(read_some(&mut stream, QUIET).await, None);
+}

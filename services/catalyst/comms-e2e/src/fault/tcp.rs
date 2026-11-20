@@ -250,7 +250,7 @@ async fn pump<R, W>(
                     _ => Duration::ZERO,
                 };
                 held.push_back(Held {
-                    due: Instant::now() + delay,
+                    due: super::due(Instant::now(), delay),
                     bytes: buffer[..length].to_vec(),
                 });
                 held_bytes += length;

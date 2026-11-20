@@ -15,17 +15,19 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 
-use super::{Direction, Fate, Fault, Faults, Shared, ending};
+use super::{Direction, Fate, Fault, Faults, Shared, due, ending};
 
 const MAX_DATAGRAM: usize = 65_535;
 
 /// Sends one packet on, to where the packet was going.
 type Sender = Arc<dyn Fn(Vec<u8>) -> BoxFuture<'static, ()> + Send + Sync>;
 
-/// A packet a `Queue` keeps, and the way it goes on.
+/// A packet a `Queue` keeps, the way it goes on, and the generation of the flow it came on: if
+/// that flow has been half-opened or cut when the queue ends, the packet is lost with it.
 pub(crate) struct Queued {
     packet: Vec<u8>,
     send: Sender,
+    generation: u64,
 }
 
 /// A packet that waits in a line until it is due.
@@ -60,9 +62,9 @@ fn fault_of(faults: &Faults, direction: Direction) -> Fault {
 enum Action {
     Now,
     Twice,
-    /// After a wait of its own: it may overtake others (`Delay`, `Reorder`).
+    /// After a wait of its own: it may overtake others (`Reorder`).
     Alone(Instant),
-    /// In the line, once due: it never overtakes (`Link`).
+    /// In the line, once due: it never overtakes (`Delay`, `Link`).
     InLine(Instant),
     Lose,
 }
@@ -91,8 +93,8 @@ fn decide(shared: &Shared, direction: Direction, fault: Fault) -> Action {
                 Action::Now
             }
         }
-        Fault::Delay { by } => Action::Alone(now + by),
-        Fault::Reorder { window } => Action::Alone(now + shared.gap(direction, window)),
+        Fault::Delay { by } => Action::InLine(due(now, by)),
+        Fault::Reorder { window } => Action::Alone(due(now, shared.gap(direction, window))),
         Fault::Duplicate => Action::Twice,
         Fault::Link {
             delay,
@@ -107,11 +109,11 @@ fn decide(shared: &Shared, direction: Direction, fault: Fault) -> Action {
             } else {
                 shared.gap(direction, jitter)
             };
-            let wait = delay + extra;
+            let wait = delay.saturating_add(extra);
             if wait.is_zero() {
                 Action::Now
             } else {
-                Action::InLine(now + wait)
+                Action::InLine(due(now, wait))
             }
         }
     }
@@ -214,9 +216,20 @@ pub(super) fn release(shared: &Arc<Shared>, faults: &mut Faults, direction: Dire
         return 0;
     }
     let kept: Vec<Queued> = queue_of(faults, direction).drain(..).collect();
-    let count = kept.len();
-    shared.released.fetch_add(count as u64, Ordering::Relaxed);
-    for Queued { packet, send } in kept {
+    let mut count = 0;
+    for Queued {
+        packet,
+        send,
+        generation,
+    } in kept
+    {
+        if shared.fate(generation).is_some() {
+            // its flow was half-opened or cut while it waited: it goes nowhere
+            shared.dropped.fetch_add(1, Ordering::Relaxed);
+            continue;
+        }
+        count += 1;
+        shared.released.fetch_add(1, Ordering::Relaxed);
         match decide(shared, direction, fault) {
             Action::Now => join_line(shared, direction, Instant::now(), packet, send),
             Action::Twice => {
@@ -420,7 +433,7 @@ async fn uplink(
 ) {
     if shared.port_closed.load(Ordering::SeqCst) {
         // the port closed while this datagram was being received: a closed port passes nothing
-        shared.dropped.fetch_add(1, Ordering::Relaxed);
+        shared.lose(Direction::Uplink, packet.len());
         return;
     }
     let generation = shared.generation.load(Ordering::SeqCst);
@@ -430,7 +443,7 @@ async fn uplink(
     match fate {
         Some(ending::HALF_OPEN) => {
             // this flow is silent for good, whatever happened to the link since
-            shared.dropped.fetch_add(1, Ordering::Relaxed);
+            shared.lose(Direction::Uplink, packet.len());
             return;
         }
         // cut: the next packet starts a new flow, from a new upstream port
@@ -445,9 +458,11 @@ async fn uplink(
                 "flow failed",
                 format!("cannot bind an upstream socket on {}", client.ip()),
             );
+            shared.lose(Direction::Uplink, packet.len());
             return;
         };
         if socket.connect(upstream).await.is_err() {
+            shared.lose(Direction::Uplink, packet.len());
             return;
         }
         let socket = Arc::new(socket);
@@ -466,13 +481,20 @@ async fn uplink(
             pump: pump.abort_handle(),
         });
     }
-    let target = flows[&client].upstream.clone();
-    forward(shared, Direction::Uplink, packet, move |packet| {
-        let target = target.clone();
-        async move {
-            let _ = target.send(&packet).await;
-        }
-    })
+    let flow = &flows[&client];
+    let target = flow.upstream.clone();
+    forward(
+        shared,
+        Direction::Uplink,
+        flow.generation,
+        packet,
+        move |packet| {
+            let target = target.clone();
+            async move {
+                let _ = target.send(&packet).await;
+            }
+        },
+    )
     .await;
 }
 
@@ -491,35 +513,51 @@ async fn downlink(
         };
         if shared.fate(generation).is_some() {
             // half-open or cut: this flow answers nobody any more
-            shared.dropped.fetch_add(1, Ordering::Relaxed);
+            shared.lose(Direction::Downlink, length);
+            continue;
+        }
+        if shared.port_closed.load(Ordering::SeqCst) {
+            // a closed port has no socket to answer from
+            shared.lose(Direction::Downlink, length);
             continue;
         }
         let packet = buffer[..length].to_vec();
         let listen = listen.clone();
         let counted = shared.clone();
-        forward(&shared, Direction::Downlink, packet, move |packet| {
-            // the socket is looked up per packet: a closed port has none
-            let socket = listen.lock().clone();
-            let counted = counted.clone();
-            async move {
-                match socket {
-                    Some(socket) => {
-                        let _ = socket.send_to(&packet, client).await;
-                    }
-                    None => {
-                        counted.dropped.fetch_add(1, Ordering::Relaxed);
+        forward(
+            &shared,
+            Direction::Downlink,
+            generation,
+            packet,
+            move |packet| {
+                // the socket is looked up per packet: a closed port has none
+                let socket = listen.lock().clone();
+                let counted = counted.clone();
+                async move {
+                    match socket {
+                        Some(socket) => {
+                            let _ = socket.send_to(&packet, client).await;
+                        }
+                        None => {
+                            counted.dropped.fetch_add(1, Ordering::Relaxed);
+                        }
                     }
                 }
-            }
-        })
+            },
+        )
         .await;
     }
 }
 
-/// Notes one packet in the history, then applies the direction's fault to it and sends it on if
-/// the fault lets it.
-async fn forward<F, Fut>(shared: &Arc<Shared>, direction: Direction, packet: Vec<u8>, send: F)
-where
+/// Notes one packet of a flow of `generation` in the history, then applies the direction's fault
+/// to it and sends it on if the fault lets it.
+async fn forward<F, Fut>(
+    shared: &Arc<Shared>,
+    direction: Direction,
+    generation: u64,
+    packet: Vec<u8>,
+    send: F,
+) where
     F: Fn(Vec<u8>) -> Fut + Send + Sync + 'static,
     Fut: std::future::Future<Output = ()> + Send + 'static,
 {
@@ -532,7 +570,11 @@ where
         if let Fault::Queue { limit } = fault_of(&faults, direction) {
             let queue = queue_of(&mut faults, direction);
             let fate = if queue.len() < limit {
-                queue.push_back(Queued { packet, send });
+                queue.push_back(Queued {
+                    packet,
+                    send,
+                    generation,
+                });
                 shared.queued.fetch_add(1, Ordering::Relaxed);
                 Fate::Queued
             } else {
@@ -596,5 +638,12 @@ mod tests {
         assert!(arrived.is_err(), "a datagram crossed a closed port");
         assert_eq!(link.counters().dropped, 1);
         assert_eq!(link.counters().up_packets, 0);
+        // the history notes it, as lost
+        let up: Vec<(usize, Fate)> = link
+            .history(Direction::Uplink)
+            .iter()
+            .map(|seen| (seen.bytes, seen.fate))
+            .collect();
+        assert_eq!(up, [(4, Fate::Lost)]);
     }
 }

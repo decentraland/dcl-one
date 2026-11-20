@@ -2,8 +2,9 @@
 //!
 //! Faults act on whole packets (UDP) or on the byte stream (TCP) and never read the content. A
 //! stalled link drops what arrives, as a dead link does; a queue keeps it and lets it go together
-//! when it ends, as a link that buffers does. A UDP link notes every packet as it arrives, before
-//! its fault acts ([`FaultLink::history`]).
+//! when it ends, as a link that buffers does. A UDP link notes every packet it receives, as it
+//! arrives, before its fault acts ([`FaultLink::history`]): one it drops before any fault (a
+//! closed port, a half-open or cut flow, an upstream socket it cannot bind) is noted as lost.
 
 mod history;
 mod tcp;
@@ -45,7 +46,8 @@ pub enum Fault {
     Drop {
         share: f32,
     },
-    /// Everything arrives this much later, in order.
+    /// Everything arrives this much later, in order. A delay longer than [`HELD_FOR_GOOD`] holds
+    /// what it delays for that long, which is for good.
     Delay {
         by: Duration,
     },
@@ -67,7 +69,8 @@ pub enum Fault {
     },
     /// UDP: nothing gets through, and what arrives is kept, up to `limit` packets (the rest are
     /// lost). When the direction's fault changes, what was kept goes on at once, in the order it
-    /// came, through the fault set then. TCP: as `Stall`, where the bytes wait in the sockets.
+    /// came, through the fault set then; what a flow half-opened or cut meanwhile kept is lost
+    /// with it. TCP: as `Stall`, where the bytes wait in the sockets.
     Queue {
         limit: usize,
     },
@@ -91,6 +94,33 @@ pub struct Counters {
     pub released: u64,
     /// UDP: packets that arrived after the history of their direction was full.
     pub unrecorded: u64,
+}
+
+/// The longest any fault holds a packet or a byte: a longer delay, up to `Duration::MAX`, holds
+/// for this long.
+pub const HELD_FOR_GOOD: Duration = Duration::from_secs(60 * 60 * 24 * 365 * 30);
+
+/// When something delayed by `by` from `now` is due, never later than [`HELD_FOR_GOOD`] from
+/// `now`; where even that is past the end of the clock, at once.
+pub(crate) fn due<I: Later>(now: I, by: Duration) -> I {
+    now.later_by(by.min(HELD_FOR_GOOD)).unwrap_or(now)
+}
+
+/// A clock a relay reads: the standard one (UDP) or tokio's (TCP).
+pub(crate) trait Later: Copy {
+    fn later_by(self, by: Duration) -> Option<Self>;
+}
+
+impl Later for Instant {
+    fn later_by(self, by: Duration) -> Option<Self> {
+        self.checked_add(by)
+    }
+}
+
+impl Later for tokio::time::Instant {
+    fn later_by(self, by: Duration) -> Option<Self> {
+        self.checked_add(by)
+    }
 }
 
 pub(crate) struct Faults {
@@ -207,6 +237,13 @@ impl Shared {
         self.history
             .lock()
             .push(direction == Direction::Uplink, Seen { at, bytes, fate });
+    }
+
+    /// A packet of `direction` that arrived now and that the relay drops before any fault acts:
+    /// counted as dropped and noted as lost.
+    pub fn lose(&self, direction: Direction, bytes: usize) {
+        self.dropped.fetch_add(1, Ordering::Relaxed);
+        self.note(direction, self.started.elapsed(), bytes, Fate::Lost);
     }
 
     /// Packets waiting in the line of `direction`.
