@@ -15,8 +15,9 @@ use crate::shared::signed_fetch::{self, PayloadPolicy, Signer};
 use super::contract_checks::{Budgeted, Offline};
 use super::validation::{ChainRefusal, needs_contract_check, validate_identity_chain};
 use super::{
-    ErrorBody, EvictedBody, admission_lock, as_validator, bad_request, budgeted, chain_refused,
-    client_ip, ips_match, is_valid_uuid, naive, normalize_ip, now_micros, throttled_if_spent,
+    ErrorBody, EvictedBody, Pending, admission_lock, as_validator, bad_request, budgeted,
+    chain_refused, client_ip, ips_match, is_valid_uuid, naive, network_at_cap, normalize_ip,
+    now_micros, throttled_if_spent,
 };
 use crate::api::Shared as AppState;
 
@@ -156,7 +157,7 @@ pub(super) async fn create_identity(
     // Contract-wallet links are taken as signed until every other check passed.
     let chain = &parsed.auth_chain;
     let (owner, final_authority) =
-        match validate_identity_chain(chain, Some(&crate::auth::PeerValidated)).await {
+        match validate_identity_chain(chain, Some(&Offline::default())).await {
             Ok(authorities) => authorities,
             Err(refusal) => return chain_refused(refusal),
         };
@@ -183,9 +184,16 @@ pub(super) async fn create_identity(
         return forbidden("Ephemeral private key does not match the provided address");
     }
     let budget = budgeted(&state, source.as_deref());
+    // Without a validator no contract call is made: the 503 below needs no count.
     if budget.is_some() && (header_offline.asked() || needs_contract_check(chain)) {
-        // Before the RPC: a network at its cap costs no contract call.
-        match identity_network_over_cap(&state, source.as_deref(), now_micros()).await {
+        // A spent budget costs no database count; a network at its cap no contract call.
+        if let Err(spent) = state
+            .contract_checks
+            .has_room(source.as_deref(), std::time::Instant::now())
+        {
+            return chain_refused(ChainRefusal::Throttled(spent));
+        }
+        match network_at_cap(&state, Pending::Identities, source.as_deref(), now_micros()).await {
             Ok(false) => {}
             Ok(true) => return too_many_identities_from_network(),
             Err(err) => return internal_error("auth-api: counting the network's identities", err),
@@ -262,27 +270,6 @@ fn too_many_identities_from_network() -> Response {
         }),
     )
         .into_response()
-}
-
-/// Whether `source` holds its cap of pending identities, checked without the
-/// admission lock before a contract-wallet call; under the lock the count is
-/// taken again, exactly.
-async fn identity_network_over_cap(
-    state: &AppState,
-    source: Option<&str>,
-    now: DateTime<Utc>,
-) -> sqlx::Result<bool> {
-    let Some(source) = source else {
-        return Ok(false);
-    };
-    let from_source: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM explore_api.auth_identities WHERE source = $1 AND expiration >= $2",
-    )
-    .bind(source)
-    .bind(naive(now))
-    .fetch_one(&state.pool)
-    .await?;
-    Ok(from_source >= MAX_IDENTITIES_PER_SOURCE as i64)
 }
 
 /// The caps checked and the identity (and, while fewer than
@@ -380,8 +367,8 @@ async fn verify_identity_post(
     .await
     .map_err(|err| {
         let (status, message) = err.http_status_and_message();
-        // A contract wallet the RPC could not decide: as on the other relay routes.
-        if status == 503 {
+        // A contract wallet no validator could decide: as on the other relay routes.
+        if status == 503 || matches!(err, signed_fetch::SignedFetchError::EipNotImplemented) {
             return Box::new(chain_refused(ChainRefusal::Unavailable));
         }
         Box::new(

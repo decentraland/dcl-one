@@ -11,6 +11,7 @@
 //! process: each replica keeps its own.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
@@ -99,7 +100,8 @@ struct Windows {
     global_tripped: bool,
     /// While the table is full, no tracked window can end before this.
     next_prune: Option<Instant>,
-    /// Scans of the full table, for the tests.
+    /// Scans of the full table.
+    #[cfg(test)]
     prunes: u64,
 }
 
@@ -115,6 +117,7 @@ impl Default for ContractChecks {
                 global: Window::new(Instant::now()),
                 global_tripped: false,
                 next_prune: None,
+                #[cfg(test)]
                 prunes: 0,
             }),
         }
@@ -130,6 +133,29 @@ pub(super) struct Charge {
 }
 
 impl ContractChecks {
+    /// Whether `source` could be charged a call now, without charging it: a
+    /// spent budget is refused before any database count.
+    pub(super) fn has_room(&self, source: Option<&str>, now: Instant) -> Result<(), Spent> {
+        let windows = self.windows.lock();
+        let live = |w: &Window| now.saturating_duration_since(w.started) < WINDOW;
+        if live(&windows.global) && windows.global.count >= GLOBAL {
+            return Err(Spent::Replica);
+        }
+        let key = source.map_or(Key::NoSource, |s| Key::Source(network_key(s)));
+        let key = if windows.by_key.contains_key(&key)
+            || windows.by_key.len() < MAX_SOURCES
+            || !matches!(key, Key::Source(_))
+        {
+            key
+        } else {
+            Key::Overflow
+        };
+        match windows.by_key.get(&key) {
+            Some(w) if live(w) && w.count >= key.max() => Err(Spent::Network),
+            _ => Ok(()),
+        }
+    }
+
     /// Charges one call to `source`; refused when its budget or the replica's is spent.
     pub(super) fn charge(&self, source: Option<&str>, now: Instant) -> Result<Charge, Spent> {
         let mut windows = self.windows.lock();
@@ -155,7 +181,10 @@ impl ContractChecks {
             windows
                 .by_key
                 .retain(|_, w| now.saturating_duration_since(w.started) < WINDOW);
-            windows.prunes += 1;
+            #[cfg(test)]
+            {
+                windows.prunes += 1;
+            }
             windows.next_prune = windows.by_key.values().map(|w| w.started + WINDOW).min();
         }
         if !windows.by_key.contains_key(&key)
@@ -259,19 +288,19 @@ impl Eip1654Validator for Budgeted<'_> {
 /// Takes every contract-wallet link as signed, noting that one was asked: a
 /// chain's checks that need no RPC, before any budgeted call.
 #[derive(Default)]
-pub(super) struct Offline(Mutex<bool>);
+pub(super) struct Offline(AtomicBool);
 
 impl Offline {
     /// Whether the chain had a contract-wallet link.
     pub(super) fn asked(&self) -> bool {
-        *self.0.lock()
+        self.0.load(Ordering::Relaxed)
     }
 }
 
 #[async_trait::async_trait]
 impl Eip1654Validator for Offline {
     async fn validate_signature(&self, _: &str, _: &[u8], _: &[u8]) -> Result<bool, AuthError> {
-        *self.0.lock() = true;
+        self.0.store(true, Ordering::Relaxed);
         Ok(true)
     }
 }
@@ -329,6 +358,23 @@ mod tests {
         let windows = checks.windows.lock();
         assert_eq!(windows.prunes, 2);
         assert!(windows.by_key.len() <= 2, "the ended windows were dropped");
+    }
+
+    #[test]
+    fn room_is_checked_without_charging() {
+        let checks = ContractChecks::default();
+        let now = Instant::now();
+        for _ in 0..PER_SOURCE {
+            assert!(checks.has_room(Some("a"), now).is_ok());
+            assert!(checks.charge(Some("a"), now).is_ok());
+        }
+        assert!(matches!(
+            checks.has_room(Some("a"), now),
+            Err(Spent::Network)
+        ));
+        assert!(checks.has_room(Some("b"), now).is_ok());
+        assert!(checks.has_room(Some("a"), now + WINDOW).is_ok());
+        assert_eq!(checks.windows.lock().global.count, PER_SOURCE);
     }
 
     #[test]
@@ -390,18 +436,17 @@ mod tests {
     async fn calls_are_given_back_only_when_the_request_is_stored() {
         let checks = ContractChecks::default();
         let source = Some("a");
+        let accept = Offline::default();
         async fn ask(budget: Budgeted<'_>) -> Budgeted<'_> {
             for _ in 0..PER_SOURCE / 2 {
                 assert!(budget.validate_signature("0x", b"h", b"s").await.unwrap());
             }
             budget
         }
-        ask(Budgeted::new(&crate::auth::PeerValidated, &checks, source))
-            .await
-            .refund();
-        let dropped = ask(Budgeted::new(&crate::auth::PeerValidated, &checks, source)).await;
+        ask(Budgeted::new(&accept, &checks, source)).await.refund();
+        let dropped = ask(Budgeted::new(&accept, &checks, source)).await;
         drop(dropped);
-        let spent = ask(Budgeted::new(&crate::auth::PeerValidated, &checks, source)).await;
+        let spent = ask(Budgeted::new(&accept, &checks, source)).await;
         assert_eq!(spent.spent(), None);
         assert!(
             spent.validate_signature("0x", b"h", b"s").await.is_err(),

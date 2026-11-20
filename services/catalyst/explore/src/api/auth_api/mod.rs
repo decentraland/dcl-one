@@ -32,7 +32,7 @@ mod identities;
 mod validation;
 
 pub use contract_checks::ContractChecks;
-use contract_checks::{Budgeted, Spent};
+use contract_checks::{Budgeted, Offline, Spent};
 
 use identities::{create_identity, get_identity};
 pub use identities::{sweep_expired_identities, sweep_identity_tombstones};
@@ -756,17 +756,26 @@ async fn create_request(
         &state.settings.trusted_proxy_cidrs,
     );
     let chain = validated.auth_chain;
-    let offline = match validate_auth_chain(chain, Some(&crate::auth::PeerValidated)).await {
+    let offline = match validate_auth_chain(chain, Some(&Offline::default())).await {
         Ok(verified) => verified,
         Err(refusal) => return chain_refused(refusal),
     };
+    let budget = budgeted(&state, source.as_deref());
+    // A network with no contract-wallet budget left costs no database count.
+    if needs_contract_check(chain)
+        && budget.is_some()
+        && let Err(spent) = state
+            .contract_checks
+            .has_room(source.as_deref(), std::time::Instant::now())
+    {
+        return chain_refused(ChainRefusal::Throttled(spent));
+    }
     // Before the RPC and the admission lock.
     match network_over_cap(&state, source.as_deref(), now).await {
         Ok(false) => {}
         Ok(true) => return too_many_from_network(),
         Err(err) => return internal_error("auth-api: counting the network's requests", err),
     }
-    let budget = budgeted(&state, source.as_deref());
     let sender = if needs_contract_check(chain) {
         match validate_auth_chain(chain, as_validator(&budget)).await {
             Ok(verified) => verified.sender,
@@ -825,18 +834,57 @@ async fn network_over_cap(
     source: Option<&str>,
     now: DateTime<Utc>,
 ) -> sqlx::Result<bool> {
+    network_at_cap(state, Pending::Requests, source, now).await
+}
+
+/// The relay's tables with a per-network cap of live rows.
+#[derive(Clone, Copy)]
+enum Pending {
+    Requests,
+    Identities,
+}
+
+impl Pending {
+    /// A network's live rows, by `source` and the expiry bound.
+    fn count_sql(self) -> &'static str {
+        match self {
+            Pending::Requests => {
+                "SELECT count(*) FROM explore_api.auth_requests \
+                 WHERE source = $1 AND expiration >= $2 AND status <> 'fulfilled'"
+            }
+            Pending::Identities => {
+                "SELECT count(*) FROM explore_api.auth_identities \
+                 WHERE source = $1 AND expiration >= $2"
+            }
+        }
+    }
+
+    fn cap(self) -> usize {
+        match self {
+            Pending::Requests => MAX_REQUESTS_PER_SOURCE,
+            Pending::Identities => identities::MAX_IDENTITIES_PER_SOURCE,
+        }
+    }
+}
+
+/// Whether `source` holds its cap of live rows in `table`, counted without
+/// the admission lock; under the lock the count is taken again, exactly. No
+/// source has no per-network cap.
+async fn network_at_cap(
+    state: &AppState,
+    table: Pending,
+    source: Option<&str>,
+    now: DateTime<Utc>,
+) -> sqlx::Result<bool> {
     let Some(source) = source else {
         return Ok(false);
     };
-    let from_source: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM explore_api.auth_requests \
-         WHERE source = $1 AND expiration >= $2 AND status <> 'fulfilled'",
-    )
-    .bind(source)
-    .bind(naive(now))
-    .fetch_one(&state.pool)
-    .await?;
-    Ok(from_source >= MAX_REQUESTS_PER_SOURCE as i64)
+    let from_source: i64 = sqlx::query_scalar(table.count_sql())
+        .bind(source)
+        .bind(naive(now))
+        .fetch_one(&state.pool)
+        .await?;
+    Ok(from_source >= table.cap() as i64)
 }
 
 /// The caps checked and the request stored in one transaction under the
@@ -1006,7 +1054,7 @@ async fn submit_outcome(
     );
     let budget = budgeted(&state, source.as_deref());
     if let Some(chain) = body.auth_chain.as_ref() {
-        if let Err(refusal) = validate_auth_chain(chain, Some(&crate::auth::PeerValidated)).await {
+        if let Err(refusal) = validate_auth_chain(chain, Some(&Offline::default())).await {
             return chain_refused(refusal);
         }
         if needs_contract_check(chain)
@@ -1675,7 +1723,14 @@ mod tests {
         let state = crate::api::tests_support::state_without_db().await;
         let app = Router::new().nest("/auth-api", routes().with_state(state.clone()));
         let (status, err) = call(&app, contract_identity_post(SIGNATURE, SIGNATURE, None)).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "no validator: {err}");
+        assert_eq!(
+            (status, err["error"].as_str()),
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Some("Contract wallet signature verification unavailable")
+            ),
+            "no validator"
+        );
 
         let unreachable = crate::api::tests_support::state_without_db().await;
         assert!(unreachable.attach_eip1654(Some(std::sync::Arc::new(Unreachable))));
@@ -1809,6 +1864,48 @@ mod tests {
         );
         assert!(wallet.calls() > asked);
         db.teardown().await;
+    }
+
+    #[tokio::test]
+    async fn a_network_with_no_budget_left_is_refused_before_any_count() {
+        use validation::contract_wallet::{SIGNATURE, Wallet};
+        // No database behind this state: a count would answer 500.
+        let state = crate::api::tests_support::state_without_db().await;
+        let wallet = std::sync::Arc::new(Wallet::default());
+        assert!(state.attach_eip1654(Some(wallet.clone())));
+        for _ in 0..contract_checks::PER_SOURCE {
+            assert!(
+                state
+                    .contract_checks
+                    .charge(Some("203.0.113.5"), std::time::Instant::now())
+                    .is_ok()
+            );
+        }
+        let app = Router::new().nest("/auth-api", routes().with_state(state));
+        let spent =
+            Some("Too many contract wallet signature checks from this network, try again later");
+        let (status, err) = call(
+            &app,
+            from_peer(
+                json_post("/auth-api/requests", contract_request(SIGNATURE)),
+                "203.0.113.5:1",
+            ),
+        )
+        .await;
+        assert_eq!(
+            (status, err["error"].as_str()),
+            (StatusCode::TOO_MANY_REQUESTS, spent)
+        );
+        let (status, err) = call(
+            &app,
+            contract_identity_post(SIGNATURE, SIGNATURE, Some("203.0.113.5:1")),
+        )
+        .await;
+        assert_eq!(
+            (status, err["error"].as_str()),
+            (StatusCode::TOO_MANY_REQUESTS, spent)
+        );
+        assert_eq!(wallet.calls(), 0);
     }
 
     #[tokio::test]
