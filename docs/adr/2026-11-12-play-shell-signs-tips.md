@@ -76,6 +76,7 @@ the player owns.
   cursor without its whole history, or one nothing has advanced for hours) it answers 503 with the body code
   `tip-index-unavailable`, and the forward stops there. While the index walk lags, is paused or has not started yet it
   answers 503 with `Retry-After`, and when it cannot read the index cursor it answers 500; the forward retries both
-  within its window. The external auth dApp, which posts the same route, receives the same answers.
+  within its window. The age is read from the cursor alone, so an index process back after hours down answers the
+  coded 503 until its first pass advances the cursor, and a forward in that window stops early. The external auth dApp, which posts the same route, receives the same answers.
 - A second tip of the same amount to the same creator, signed in the watch window from another tab, could be taken
   for the first one's Transfer.

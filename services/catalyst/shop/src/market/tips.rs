@@ -20,13 +20,16 @@
 //! [`PREAUTH_PER_MINUTE_PER_48`]; a private or loopback peer (an unlisted
 //! gateway) is not limited before it.
 //! A signed forward the MANA transfer index cannot serve is refused and
-//! nothing is stored. With no `mana_transfers` cursor (the local setting off),
-//! one without its whole history, or one not advanced for
-//! [`INDEX_ABANDONED_SECS`], it is a 503 with the body code
-//! [`TIP_INDEX_UNAVAILABLE`]: its claim could only expire, so clients stop.
-//! With a whole-history walk lagging or paused ([`chain_walk::is_walked`]
-//! false), or the local walk not started yet, it is a 503 with `Retry-After`;
-//! when the cursor cannot be read, a 500.
+//! nothing is stored. With no `mana_transfers` cursor (past
+//! [`FIRST_PASS_GRACE`] with the local setting on), one without its whole
+//! history, or one not advanced for [`INDEX_ABANDONED_SECS`], it is a 503 with
+//! the body code [`TIP_INDEX_UNAVAILABLE`]: its claim could only expire, so
+//! clients stop. With a whole-history walk lagging or paused
+//! ([`chain_walk::is_walked`] false), or the local walk's first pass still to
+//! come, it is a 503 with `Retry-After`; when the cursor cannot be read, a
+//! 500. The age check sees only `updated_at`: an index process back after
+//! more than [`INDEX_ABANDONED_SECS`] down answers the coded 503 until its
+//! first window advances the cursor (one pass, seconds).
 //! The auth dApp posts cross-origin with signed-fetch headers, so the route
 //! answers the browser's preflight with the events-notifier's CORS ([`CORS`]).
 //! A transfer below the minimum amount, or mined longer than the maximum age
@@ -141,6 +144,7 @@ const CORS: crate::shared::cors::HttpServerCors = crate::shared::cors::HttpServe
 };
 
 pub fn router(state: SharedState) -> Router {
+    std::sync::LazyLock::force(&STARTED);
     Router::new()
         .route("/forward-blockchain", post(forward))
         .layer(axum::middleware::from_fn(|req, next| CORS.run(req, next)))
@@ -393,11 +397,28 @@ enum IndexState {
     /// No cursor (with the local setting off), one without its whole history,
     /// or one not advanced for [`INDEX_ABANDONED_SECS`]: no claim can settle.
     Off,
-    /// A whole-history walk lagging or paused, or the local walk not started
-    /// yet: it may serve again soon.
+    /// A whole-history walk lagging or paused, or, just after start, the local
+    /// walk not started yet: it may serve again soon.
     Behind,
     /// The cursor could not be read.
     Unknown,
+}
+
+/// When this process started serving forwards.
+static STARTED: std::sync::LazyLock<std::time::Instant> =
+    std::sync::LazyLock::new(std::time::Instant::now);
+/// How long after start a missing cursor, with the local setting on, reads as
+/// the walk's first pass still to come. The walk runs in the index role and
+/// may never start there (no Polygon RPC), so past this it reads as no index.
+const FIRST_PASS_GRACE: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// What a missing cursor means `uptime` after start.
+fn missing_cursor(enabled: bool, uptime: std::time::Duration) -> IndexState {
+    if enabled && uptime < FIRST_PASS_GRACE {
+        IndexState::Behind
+    } else {
+        IndexState::Off
+    }
 }
 
 async fn index_state(state: &SharedState) -> IndexState {
@@ -416,9 +437,10 @@ async fn index_state(state: &SharedState) -> IndexState {
             IndexState::Off
         }
         Ok(Some(_)) => IndexState::Behind,
-        // The local walk creates its cursor on its first pass.
-        Ok(None) if state.settings.market.indexes.mana_transfers_enabled => IndexState::Behind,
-        Ok(None) => IndexState::Off,
+        Ok(None) => missing_cursor(
+            state.settings.market.indexes.mana_transfers_enabled,
+            STARTED.elapsed(),
+        ),
         Err(e) => {
             tracing::error!(error = %e, "cannot read the MANA transfer cursor; refusing the tip forward");
             IndexState::Unknown
@@ -1682,6 +1704,18 @@ mod tests {
             "a database clock ahead of this node's"
         );
         db.drop().await;
+    }
+
+    #[test]
+    fn a_missing_cursor_waits_for_the_first_pass_only_briefly() {
+        let minute = std::time::Duration::from_secs(60);
+        assert_eq!(missing_cursor(true, minute), IndexState::Behind);
+        assert_eq!(
+            missing_cursor(true, FIRST_PASS_GRACE + minute),
+            IndexState::Off,
+            "a walk that never started on this database"
+        );
+        assert_eq!(missing_cursor(false, minute), IndexState::Off);
     }
 
     /// A 503's `Retry-After` and body.

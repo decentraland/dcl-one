@@ -547,9 +547,9 @@ web shell; null here, so this HUD shows no Donate). The shared HUD names a place
 - **Telling the creator:** once the tip is mined the shell forwards its hash to the catalyst
   (`features/donate/tip.ts` `forwardUntil`). A 429, a 5xx or no answer is asked again with backoff, never sooner than
   the server's Retry-After, until the delivery window ends; a 503 for a lagging index carries a Retry-After and is
-  asked again too. A 503 coded `tip-index-unavailable` (the node has no MANA transfer index, or its cursor lacks the
-  whole history) and any other 4xx end
-  the forward at once; the shell only logs that outcome, and the tip itself stays sent.
+  asked again too. A 503 coded `tip-index-unavailable` (the node has no MANA transfer index, its cursor lacks the
+  whole history, or nothing has advanced it for hours) and any other 4xx end the forward at once;
+  the shell only logs that outcome, and the tip itself stays sent.
 - Tests: `library/ui/apps/hud/test/donate.test.tsx` (gating, open, emote, notification),
   `library/ui/apps/hud/test/hosted/donateSend.test.tsx` (SEND TIP's wait),
   `library/explorer-core/test/donatePlace.test.ts`, `library/explorer-core/test/donateTip.test.ts` (the forward's
