@@ -206,10 +206,10 @@ pub async fn directory_snapshot(state: &SharedState) -> Option<Arc<Value>> {
     }
     let refresh = readers
         .begin_refresh(CREATOR_DIRECTORY_KEY, DIRECTORY_RETRY_AFTER)
-        .then(|| {
+        .map(|id| {
             // Released however the read ends, a panic included, and even when the task never
             // runs (a runtime shutting down drops it).
-            let mut claim = RefreshClaim::new(Arc::clone(state), CREATOR_DIRECTORY_KEY);
+            let mut claim = RefreshClaim::new(Arc::clone(state), CREATOR_DIRECTORY_KEY, id);
             let state = Arc::clone(state);
             tokio::spawn(async move {
                 // A read that hangs (a stuck connection, a lock) ends as failed at the limit, so
@@ -759,11 +759,14 @@ mod tests {
         assert!(directory_snapshot(&state).await.is_none());
         // With the table still locked the read cannot succeed, so a claim this test can take
         // means the read ended as failed and released it.
-        tokio::time::timeout(Duration::from_secs(20), async {
-            while !state
-                .readers
-                .begin_refresh(CREATOR_DIRECTORY_KEY, Duration::ZERO)
-            {
+        let claim = tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                if let Some(claim) = state
+                    .readers
+                    .begin_refresh(CREATOR_DIRECTORY_KEY, Duration::ZERO)
+                {
+                    break claim;
+                }
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
         })
@@ -774,7 +777,9 @@ mod tests {
             "{:?}",
             started.elapsed()
         );
-        state.readers.end_refresh(CREATOR_DIRECTORY_KEY, true);
+        state
+            .readers
+            .end_refresh(CREATOR_DIRECTORY_KEY, claim, true);
         lock.rollback().await.unwrap();
     }
 

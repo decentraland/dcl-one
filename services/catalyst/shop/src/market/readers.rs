@@ -11,6 +11,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use axum::response::{IntoResponse, Response};
@@ -54,6 +55,8 @@ pub struct Caches {
     /// The keys a background read is refreshing, or whose last refresh failed
     /// ([`Caches::begin_refresh`]).
     refreshing: parking_lot::Mutex<HashMap<String, Refresh>>,
+    /// The next [`ClaimId`] a refresh is given.
+    next_claim: AtomicU64,
     /// The last good answer of the keys served while they refresh ([`Caches::keep`]), apart from
     /// the bounded maps, whose eviction would drop an expired one first.
     kept: parking_lot::Mutex<HashMap<String, Kept>>,
@@ -73,11 +76,17 @@ impl Kept {
     }
 }
 
-/// A key's background refresh: running, or failed at an instant.
+/// A key's background refresh: running under the claim it was given, or failed at an instant.
 enum Refresh {
-    Running,
+    Running(ClaimId),
     FailedAt(Instant),
 }
+
+/// One claim on a key's refresh ([`Caches::begin_refresh`]). Its release acts only while the key
+/// still runs under it, so a claim that outlives a reset ([`Caches::clear`]) never releases or
+/// fails a newer one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClaimId(u64);
 
 impl Default for Caches {
     fn default() -> Self {
@@ -88,6 +97,7 @@ impl Default for Caches {
             m10: TtlMap::bounded(Ttl::M10.duration(), MAX_ENTRIES),
             m15: TtlMap::bounded(Ttl::M15.duration(), MAX_ENTRIES),
             refreshing: parking_lot::Mutex::default(),
+            next_claim: AtomicU64::new(0),
             kept: parking_lot::Mutex::default(),
         }
     }
@@ -145,25 +155,32 @@ impl Caches {
             .map(|held| Arc::clone(&held.value))
     }
 
-    /// Claims `key`'s background refresh: true for the one caller that is to run it and release
-    /// the claim with [`Caches::end_refresh`]. None while another runs, nor within `backoff` of a
+    /// Claims `key`'s background refresh: the claim for the one caller that is to run it and
+    /// release it with [`Caches::end_refresh`]. None while another runs, nor within `backoff` of a
     /// failed one, so a failing source is retried at most once per `backoff`.
-    pub fn begin_refresh(&self, key: &str, backoff: Duration) -> bool {
+    pub fn begin_refresh(&self, key: &str, backoff: Duration) -> Option<ClaimId> {
         let mut claims = self.refreshing.lock();
         let blocked = match claims.get(key) {
-            Some(Refresh::Running) => true,
+            Some(Refresh::Running(_)) => true,
             Some(Refresh::FailedAt(at)) => at.elapsed() < backoff,
             None => false,
         };
-        if !blocked {
-            claims.insert(key.to_string(), Refresh::Running);
+        if blocked {
+            return None;
         }
-        !blocked
+        let claim = ClaimId(self.next_claim.fetch_add(1, Ordering::Relaxed));
+        claims.insert(key.to_string(), Refresh::Running(claim));
+        Some(claim)
     }
 
-    /// Releases `key`'s claim: cleared when the refresh succeeded, else marked failed now.
-    pub fn end_refresh(&self, key: &str, succeeded: bool) {
+    /// Releases `claim` on `key`: cleared when the refresh succeeded, else marked failed now. A
+    /// claim the key no longer runs under (a reset dropped it, a newer one took the key) changes
+    /// nothing.
+    pub fn end_refresh(&self, key: &str, claim: ClaimId, succeeded: bool) {
         let mut claims = self.refreshing.lock();
+        if !matches!(claims.get(key), Some(Refresh::Running(held)) if *held == claim) {
+            return;
+        }
         if succeeded {
             claims.remove(key);
         } else {
@@ -199,14 +216,16 @@ impl Caches {
 pub struct RefreshClaim {
     state: super::SharedState,
     key: &'static str,
+    claim: ClaimId,
     succeeded: bool,
 }
 
 impl RefreshClaim {
-    pub fn new(state: super::SharedState, key: &'static str) -> Self {
+    pub fn new(state: super::SharedState, key: &'static str, claim: ClaimId) -> Self {
         Self {
             state,
             key,
+            claim,
             succeeded: false,
         }
     }
@@ -218,7 +237,9 @@ impl RefreshClaim {
 
 impl Drop for RefreshClaim {
     fn drop(&mut self) {
-        self.state.readers.end_refresh(self.key, self.succeeded);
+        self.state
+            .readers
+            .end_refresh(self.key, self.claim, self.succeeded);
     }
 }
 
@@ -881,33 +902,63 @@ mod refresh_tests {
         let readers = &state.readers;
         const KEY: &str = "refresh-claim";
         let hour = Duration::from_secs(3600);
-        assert!(readers.begin_refresh(KEY, hour));
+        let first = readers.begin_refresh(KEY, hour).expect("claimed");
         assert!(
-            !readers.begin_refresh(KEY, Duration::ZERO),
+            readers.begin_refresh(KEY, Duration::ZERO).is_none(),
             "one refresh at a time"
         );
-        readers.end_refresh(KEY, true);
+        readers.end_refresh(KEY, first, true);
+        let second = readers
+            .begin_refresh(KEY, hour)
+            .expect("a success clears the claim");
+        readers.end_refresh(KEY, second, false);
         assert!(
-            readers.begin_refresh(KEY, hour),
-            "a success clears the claim"
-        );
-        readers.end_refresh(KEY, false);
-        assert!(
-            !readers.begin_refresh(KEY, hour),
+            readers.begin_refresh(KEY, hour).is_none(),
             "a failure holds the next one off"
         );
-        assert!(readers.begin_refresh(KEY, Duration::ZERO));
+        let third = readers.begin_refresh(KEY, Duration::ZERO).expect("claimed");
         let held = Arc::clone(&state);
         let refresh = tokio::spawn(async move {
-            let _claim = RefreshClaim::new(held, KEY);
+            let _claim = RefreshClaim::new(held, KEY, third);
             panic!("a row that does not decode");
         });
         assert!(refresh.await.is_err());
         assert!(
-            !readers.begin_refresh(KEY, hour),
+            readers.begin_refresh(KEY, hour).is_none(),
             "released as failed, not held for good"
         );
-        assert!(readers.begin_refresh(KEY, Duration::ZERO));
+        assert!(readers.begin_refresh(KEY, Duration::ZERO).is_some());
+    }
+
+    /// A claim that outlives a reset releases nothing: whether its refresh ends well or not, the
+    /// newer claim keeps the key, so two reads never run at once and a healthy one is not failed.
+    #[tokio::test]
+    async fn a_claim_outliving_a_reset_leaves_the_newer_claim_alone() {
+        let state = crate::market::tests::support::state_with_empty_readers(None).await;
+        let readers = &state.readers;
+        const KEY: &str = "refresh-reset";
+        let old = readers.begin_refresh(KEY, Duration::ZERO).expect("claimed");
+        readers.clear();
+        let new = readers
+            .begin_refresh(KEY, Duration::ZERO)
+            .expect("a reset frees the key");
+        readers.end_refresh(KEY, old, false);
+        assert!(
+            readers.begin_refresh(KEY, Duration::ZERO).is_none(),
+            "the old claim's failure did not release the newer one"
+        );
+        readers.end_refresh(KEY, old, true);
+        assert!(
+            readers.begin_refresh(KEY, Duration::ZERO).is_none(),
+            "nor did its success"
+        );
+        readers.end_refresh(KEY, new, false);
+        assert!(
+            readers
+                .begin_refresh(KEY, Duration::from_secs(3600))
+                .is_none(),
+            "the newer claim's own failure still backs off"
+        );
     }
 
     /// A kept answer ages from the read that produced it: handing the same answer out again (a

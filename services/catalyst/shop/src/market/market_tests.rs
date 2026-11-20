@@ -1602,14 +1602,13 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     // A feed without the creator directory (here, its refresh held by another) answers without
     // profiles under a brief cache, never the hour these feeds had, so a CDN does not keep an
     // answer whose cards each ask /lambdas/profiles.
-    // No refresh is live here (the feeds above found the directory fresh), so no claim can drop
-    // over this hold once `clear()` has emptied the claims.
+    // A claim still live from the feeds above could not release this hold either: its release
+    // acts only on its own claim.
     state.readers.clear();
-    assert!(
-        state
-            .readers
-            .begin_refresh(CREATOR_DIRECTORY_KEY, Duration::ZERO)
-    );
+    let hold = state
+        .readers
+        .begin_refresh(CREATOR_DIRECTORY_KEY, Duration::ZERO)
+        .expect("a reset frees the directory's refresh");
     for uri in [
         "/v3/catalog/trending?first=10&days=3650",
         "/v3/catalog/creators?days=7",
@@ -1625,7 +1624,7 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         );
         assert_eq!(cache, "public,max-age=60,s-maxage=60", "{uri}");
     }
-    state.readers.end_refresh(CREATOR_DIRECTORY_KEY, true);
+    state.readers.end_refresh(CREATOR_DIRECTORY_KEY, hold, true);
 
     sqlx::query("DELETE FROM shop.usage_grants WHERE grantee_address = $1")
         .bind(WALLET_A)
