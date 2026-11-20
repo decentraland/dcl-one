@@ -108,11 +108,11 @@ pub(crate) struct WorldBuckets {
 pub(crate) fn classify_places(
     entries: &[RankingEntry],
     rows: &[CurationRow],
-    locally_served: &[String],
+    world_backed_ids: &[String],
 ) -> PlaceBuckets {
     let found: HashMap<&str, &CurationRow> =
         rows.iter().map(|row| (row.id.as_str(), row)).collect();
-    let local: HashSet<&str> = locally_served.iter().map(String::as_str).collect();
+    let local: HashSet<&str> = world_backed_ids.iter().map(String::as_str).collect();
     let mut buckets = PlaceBuckets::default();
     for entry in entries {
         match found.get(entry.id.as_str()) {
@@ -260,14 +260,21 @@ pub async fn set_ranking(
     Ok(written)
 }
 
-/// A world-scene place's curation as its projection reads it, its identity locked.
-const SCENE_CURATION_SQL: &str = "SELECT COALESCE(m.highlighted, wm.highlighted, false) \
-     OR COALESCE(r.overlay->'exclude_from_ranking' = 'true'::jsonb, false) \
-     FROM explore.world_scene_place p \
+/// A world-scene place `p` with its curation as its projection reads it:
+/// its own or its world's highlight, or its ranking exclusion.
+const SCENE_CURATION_FROM: &str = "FROM explore.world_scene_place p \
      LEFT JOIN explore.place_moderation m ON m.place_id = p.identity::text \
      LEFT JOIN explore.place_moderation wm ON wm.place_id = p.world_name \
-     LEFT JOIN explore.place_ranking r ON r.place_id = p.identity::text \
-     WHERE p.identity = $1 FOR UPDATE OF p";
+     LEFT JOIN explore.place_ranking r ON r.place_id = p.identity::text";
+const SCENE_CURATED: &str = "(COALESCE(m.highlighted, wm.highlighted, false) \
+     OR COALESCE(r.overlay->'exclude_from_ranking' = 'true'::jsonb, false))";
+
+/// A world-scene place's curation and canonical id, its identity locked.
+fn scene_curation_sql() -> String {
+    format!(
+        "SELECT {SCENE_CURATED}, p.identity::text {SCENE_CURATION_FROM} WHERE p.identity = $1 FOR UPDATE OF p"
+    )
+}
 
 fn curation_sql(table: &str) -> String {
     format!(
@@ -285,16 +292,22 @@ pub async fn set_ranking_from_score(
     let mut tx = pool.begin().await?;
     // Scene before catalogue row, the order every other curation write takes.
     lock_world_scenes(&mut tx, &[id.to_string()]).await?;
-    // A scene wins over a catalogue row with its id, as on read.
-    let mut curated = match uuid::Uuid::parse_str(id) {
+    // A scene wins over a catalogue row with its id, as on read, and is
+    // written under its canonical id, the one its projection reads.
+    let scene: Option<(bool, String)> = match uuid::Uuid::parse_str(id) {
         Ok(identity) => {
-            sqlx::query_scalar(SCENE_CURATION_SQL)
+            sqlx::query_as(sqlx::AssertSqlSafe(scene_curation_sql()))
                 .bind(identity)
                 .fetch_optional(&mut *tx)
                 .await?
         }
         Err(_) => None,
     };
+    let key = scene
+        .as_ref()
+        .map_or(id, |(_, canonical)| canonical.as_str())
+        .to_string();
+    let mut curated = scene.map(|(curated, _)| curated);
     if curated.is_none() {
         for table in ["explore.place", "explore.place_world_local"] {
             if let Some(row) = sqlx::query(sqlx::AssertSqlSafe(curation_sql(table)))
@@ -313,7 +326,7 @@ pub async fn set_ranking_from_score(
         Some(false) => {
             write_overlays(
                 &mut tx,
-                &[(id.to_string(), json!({ "ranking": ranking_value(ranking) }))],
+                &[(key, json!({ "ranking": ranking_value(ranking) }))],
                 actor,
             )
             .await?;
@@ -355,43 +368,39 @@ const LOCALLY_SERVED_WORLD_IDS: &str =
 const WORLD_SCENE_IDS: &str =
     "SELECT identity FROM explore.world_scene_place WHERE identity = ANY($1)";
 
-/// The ranked, uncurated world-scene places the places leg clears, curation
-/// read as the projection reads it (a scene wins over a catalogue row with
-/// its id). `$1` is spared; `$2`, when set, narrows them to `$2`.
-const SCENE_CLEAR_CANDIDATES: &str = "SELECT p.identity::text FROM explore.world_scene_place p \
-     JOIN explore.place_ranking r ON r.place_id = p.identity::text \
-     LEFT JOIN explore.place_moderation m ON m.place_id = p.identity::text \
-     LEFT JOIN explore.place_moderation wm ON wm.place_id = p.world_name \
-     WHERE jsonb_typeof(r.overlay->'ranking') = 'number' AND r.overlay->'ranking' <> '0'::jsonb \
-     AND NOT COALESCE(m.highlighted, wm.highlighted, false) \
-     AND NOT COALESCE(r.overlay->'exclude_from_ranking' = 'true'::jsonb, false) \
-     AND p.identity::text <> ALL($1::text[]) \
-     AND ($2::text[] IS NULL OR p.identity::text = ANY($2::text[])) \
-     ORDER BY p.identity";
+/// The ranked, uncurated world-scene places the places leg clears (a scene
+/// wins over a catalogue row with its id). `$1` is spared; `$2`, when set,
+/// narrows them to `$2`.
+fn scene_clear_candidates_sql() -> String {
+    format!(
+        "SELECT p.identity::text {SCENE_CURATION_FROM} \
+         WHERE jsonb_typeof(r.overlay->'ranking') = 'number' AND r.overlay->'ranking' <> '0'::jsonb \
+         AND NOT {SCENE_CURATED} AND p.identity::text <> ALL($1::text[]) \
+         AND ($2::text[] IS NULL OR p.identity::text = ANY($2::text[])) ORDER BY p.identity"
+    )
+}
 
+/// World rows by id or name; a row a scene shadows is left to the scene path.
 fn world_resolution_sql() -> String {
+    let scene = super::scene_identity::is_scene_id_sql("p.id");
     format!(
         "SELECT s.submitted AS submitted, p.id AS id, p.highlighted AS highlighted, {EXCLUDE_FROM_RANKING_SQL} AS exclude_from_ranking
          FROM unnest($1::text[]) AS s(submitted)
          JOIN explore.place_indexed p ON p.world IS TRUE AND (p.id = s.submitted OR lower(p.world_name) = lower(s.submitted))
+         WHERE NOT {scene}
          ORDER BY s.submitted, p.id"
     )
 }
 
 /// The automated rows of one leg the replace clears: ranked, uncurated, not
-/// kept. The places leg leaves a scene's id to the scene clear.
+/// kept, and not shadowed by a scene (the scene clear owns those).
 fn clear_candidates_sql(world: bool) -> String {
-    let (leg, scenes) = if world {
-        ("TRUE", "")
-    } else {
-        (
-            "FALSE",
-            " AND id NOT IN (SELECT identity::text FROM explore.world_scene_place)",
-        )
-    };
+    let leg = if world { "TRUE" } else { "FALSE" };
+    let scene = super::scene_identity::is_scene_id_sql("id");
     format!(
         "SELECT id FROM explore.place_indexed WHERE world IS {leg} AND highlighted IS FALSE
-         AND {EXCLUDE_FROM_RANKING_SQL} IS FALSE AND {RANKING_IS_SET_SQL} AND id <> ALL($1::text[]){scenes}"
+         AND {EXCLUDE_FROM_RANKING_SQL} IS FALSE AND {RANKING_IS_SET_SQL} AND id <> ALL($1::text[])
+         AND NOT {scene}"
     )
 }
 
@@ -411,7 +420,7 @@ pub async fn replace_ranking(
     let mut tx = pool.begin().await?;
     let place_ids: Vec<String> = places.iter().map(|e| e.id.clone()).collect();
     let mut curation = Vec::new();
-    let mut locally_served = Vec::new();
+    let mut world_backed_ids = Vec::new();
     if !place_ids.is_empty() {
         curation = sqlx::query(sqlx::AssertSqlSafe(place_curation_sql()))
             .bind(&place_ids)
@@ -425,7 +434,7 @@ pub async fn replace_ranking(
                 world: r.get("world"),
             })
             .collect();
-        locally_served = sqlx::query_scalar(LOCALLY_SERVED_WORLD_IDS)
+        world_backed_ids = sqlx::query_scalar(LOCALLY_SERVED_WORLD_IDS)
             .bind(&place_ids)
             .fetch_all(&mut *tx)
             .await?;
@@ -444,9 +453,9 @@ pub async fn replace_ranking(
             |id: &str| uuid::Uuid::parse_str(id).is_ok_and(|identity| scenes.contains(&identity));
         // A scene wins over a catalogue row with its id, as on read.
         curation.retain(|row| !is_scene(&row.id));
-        locally_served.extend(place_ids.iter().filter(|id| is_scene(id)).cloned());
+        world_backed_ids.extend(place_ids.iter().filter(|id| is_scene(id)).cloned());
     }
-    let place_buckets = classify_places(places, &curation, &locally_served);
+    let place_buckets = classify_places(places, &curation, &world_backed_ids);
 
     let world_ids: Vec<String> = worlds.iter().map(|e| e.id.clone()).collect();
     let mut matches = Vec::new();
@@ -522,7 +531,7 @@ pub async fn replace_ranking(
         let scene_ids: Vec<String> = if world {
             Vec::new()
         } else {
-            sqlx::query_scalar(SCENE_CLEAR_CANDIDATES)
+            sqlx::query_scalar(sqlx::AssertSqlSafe(scene_clear_candidates_sql()))
                 .bind(&spared)
                 .bind(None::<Vec<String>>)
                 .fetch_all(&mut *tx)
@@ -552,7 +561,7 @@ pub async fn replace_ranking(
         if !scene_ids.is_empty() {
             // Re-read under the lock: a scene curated meanwhile keeps its ranking.
             let scenes: Vec<(String, Value)> =
-                sqlx::query_scalar::<_, String>(SCENE_CLEAR_CANDIDATES)
+                sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(scene_clear_candidates_sql()))
                     .bind(&spared)
                     .bind(&scene_ids)
                     .fetch_all(&mut *tx)

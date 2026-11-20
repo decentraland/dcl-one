@@ -21,6 +21,14 @@ pub const BOUND_WORLD_SCENE_FROM: &str = "FROM explore.world_scene_place p \
     JOIN worlds.world_scenes s ON p.active AND s.world_name = p.world_name AND s.entity_id = p.entity_id \
     JOIN worlds.worlds w ON w.name = p.world_name";
 
+/// Whether catalogue id `column` names a world-scene identity, in any UUID
+/// spelling (`urn:uuid:`, any case); such a scene shadows that row.
+pub fn is_scene_id_sql(column: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM explore.world_scene_place scene WHERE scene.identity = CASE WHEN pg_input_is_valid(regexp_replace({column}, '^urn:uuid:', '', 'i'), 'uuid') THEN regexp_replace({column}, '^urn:uuid:', '', 'i')::uuid END)"
+    )
+}
+
 pub const LOCAL_WORLD_SCENE: &str = "(s.mirror_source IS NULL AND w.mirror_source IS NULL)";
 
 /// Locks the active identities of `worlds` in identity order, the order the
