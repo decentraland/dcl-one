@@ -80,27 +80,28 @@ in-app purchases cannot be clawed back by a later Apple refund
   so only lines that are one (an IPFS CIDv0 `Qm...` or CIDv1 `ba...`) are
   imported. Any other line, a pointer such as `0,0` included, is skipped
   and counted in `skipped_not_a_hash`, with the first 50 line numbers in
-  `skipped_not_a_hash_lines`. Each new id becomes a console row added by that
-  wallet, with its `content`/`denylist.add` audit row; an id already listed
-  is left alone, so a re-run imports nothing. A line that is not an id (not
-  UTF-8, longer than 512 bytes, or holding whitespace, such as `id # note`)
-  imports nothing and is named by number: fix the copy and run again.
+  `skipped_not_a_hash_lines`. Each new id becomes a console row with that
+  wallet as `added_by`, and a `content`/`denylist.add` audit row whose actor
+  is `cli:<wallet>`, since the wallet is not a signed-in session. An id already listed is left alone, so a re-run imports nothing.
+  A line that is not an id (not UTF-8, longer than 512 bytes, or holding
+  whitespace, such as `id # note`) imports nothing; the first 50 are named
+  by number: fix the copy and run again. A file larger than 60 MB, or one
+  that would take the table past 100,000 ids, imports nothing.
 
   Imported ids are public, as console entries are: the Registry
   `GET /denylist` lists every `content.denylist` row, with the importing
-  wallet as its `created_by`.
+  wallet as its `created_by`. As a console entry does, an imported content
+  hash also refuses a local deploy that references it.
 
   The command prints `lines`, `blank`, `comments`, `duplicates`,
   `skipped_not_a_hash`, `skipped_not_a_hash_lines`, `distinct`, `imported`
   and `already_present`, where `distinct` counts the file's distinct entity
-  ids and hashes. Verify that `distinct` matches the count below, that
-  `imported + already_present = distinct`, and that none of those ids is
-  missing from the table (GNU sed; for a file with lone `\r` line endings
-  the command's `distinct` is the count to trust):
+  ids and hashes. Verify that `imported + already_present = distinct`, and
+  that none of the ids the command reads from the file is missing from the
+  table. `--print-ids` prints those ids, one a line, and writes nothing:
 
   ```sh
-  sed -e 's/^\xEF\xBB\xBF//' -e 's/\r$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' denylist.txt \
-    | grep -E '^(Qm[A-Za-z0-9]{44}|ba[A-Za-z0-9]{57})$' | sort -u > denylist.ids
+  catalyst content import-denylist --file denylist.txt --print-ids > denylist.ids
   wc -l < denylist.ids    # = distinct
   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
     -c 'CREATE TEMP TABLE f (id text)' -c '\copy f FROM denylist.ids' \

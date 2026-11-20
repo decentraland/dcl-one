@@ -31,8 +31,9 @@ pub const AUDIT_DOMAINS: &[&str] = &[
 ];
 
 /// One operator action. `actor` is the authenticated identity (a console
-/// wallet, `token:<name>` for a bearer, `loopback`); `domain` one of
-/// [`AUDIT_DOMAINS`] (the table's CHECK); `action` the verb under it
+/// wallet, `token:<name>` for a bearer, `loopback`), or `cli:<wallet>` for
+/// an operator command whose wallet is the operator's own claim; `domain`
+/// one of [`AUDIT_DOMAINS`] (the table's CHECK); `action` the verb under it
 /// (`sync.pause`, `failed-deployments.retry`); `target` the row or key acted
 /// on; `result` the outcome (`ok`, `error`, ...).
 #[derive(Debug, Clone)]

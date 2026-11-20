@@ -142,16 +142,35 @@ pub struct FileList {
     /// Valid lines that are not an entity id or content hash (a pointer,
     /// say): never matched by the old server, so not imported.
     pub skipped_not_a_hash: u64,
-    /// The first [`SKIPPED_LINES_SHOWN`] of those, by line number.
+    /// The first [`LINES_SHOWN`] of those, by line number.
     pub skipped_not_a_hash_lines: Vec<u64>,
     /// The distinct entity ids and content hashes, in file order.
     pub ids: Vec<String>,
-    /// `line N: reason` for each line [`valid_id`] refuses.
-    pub malformed: Vec<String>,
+    /// Lines [`valid_id`] refuses.
+    pub malformed: u64,
+    /// `line N: reason` for the first [`LINES_SHOWN`] of those.
+    pub malformed_lines: Vec<String>,
 }
 
-/// How many skipped line numbers [`parse_file`] lists.
-pub const SKIPPED_LINES_SHOWN: usize = 50;
+/// How many skipped or malformed lines [`parse_file`] lists.
+pub const LINES_SHOWN: usize = 50;
+
+/// The largest file [`read_file`] accepts: [`MAX_ENTRIES`] ids of at most
+/// 512 bytes, with room for line endings, padding and comments.
+pub const MAX_FILE_BYTES: u64 = MAX_ENTRIES as u64 * 600;
+
+/// Reads a whole denylist file (or standard input), refusing one past
+/// [`MAX_FILE_BYTES`] instead of holding it in memory.
+pub fn read_file(reader: impl std::io::Read) -> anyhow::Result<Vec<u8>> {
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    reader.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes)?;
+    anyhow::ensure!(
+        bytes.len() as u64 <= MAX_FILE_BYTES,
+        "the file is larger than {MAX_FILE_BYTES} bytes; nothing was imported"
+    );
+    Ok(bytes)
+}
 
 /// Parses the old content server's denylist file
 /// (`<STORAGE_ROOT_FOLDER>/<DENYLIST_FILE_NAME>`, `denylist.txt` by default;
@@ -182,7 +201,7 @@ pub fn parse_file(bytes: &[u8]) -> FileList {
         rest = &rest[end + skip..];
         out.lines += 1;
         let Ok(line) = std::str::from_utf8(line) else {
-            out.malformed.push(format!("line {}: not UTF-8", out.lines));
+            out.refuse("not UTF-8");
             continue;
         };
         let id = line.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
@@ -191,15 +210,14 @@ pub fn parse_file(bytes: &[u8]) -> FileList {
         } else if id.starts_with('#') {
             out.comments += 1;
         } else if !valid_id(id) {
-            let reason = if id.len() > 512 {
+            out.refuse(if id.len() > 512 {
                 "longer than 512 bytes"
             } else {
                 "holds whitespace or a control character"
-            };
-            out.malformed.push(format!("line {}: {reason}", out.lines));
+            });
         } else if !is_ipfs_v1(id) && !is_ipfs_v2(id) {
             out.skipped_not_a_hash += 1;
-            if out.skipped_not_a_hash_lines.len() < SKIPPED_LINES_SHOWN {
+            if out.skipped_not_a_hash_lines.len() < LINES_SHOWN {
                 out.skipped_not_a_hash_lines.push(out.lines);
             }
         } else if seen.insert(id.to_string()) {
@@ -209,6 +227,18 @@ pub fn parse_file(bytes: &[u8]) -> FileList {
         }
     }
     out
+}
+
+impl FileList {
+    /// Counts the current line as malformed, listing it while fewer than
+    /// [`LINES_SHOWN`] are.
+    fn refuse(&mut self, reason: &str) {
+        self.malformed += 1;
+        if self.malformed_lines.len() < LINES_SHOWN {
+            self.malformed_lines
+                .push(format!("line {}: {reason}", self.lines));
+        }
+    }
 }
 
 /// What [`import_file`] did, beside what the file held.
@@ -227,45 +257,77 @@ pub struct FileImport {
     pub already_present: u64,
 }
 
+/// [`parse_file`], refusing a file with a malformed line.
+pub fn checked_file(bytes: &[u8]) -> anyhow::Result<FileList> {
+    let file = parse_file(bytes);
+    anyhow::ensure!(
+        file.malformed == 0,
+        "the file has {} malformed line(s); nothing was imported:\n{}{}",
+        file.malformed,
+        file.malformed_lines.join("\n"),
+        if file.malformed > LINES_SHOWN as u64 {
+            "\n..."
+        } else {
+            ""
+        }
+    );
+    Ok(file)
+}
+
 /// Lists every entity id and content hash of a legacy denylist file
-/// ([`parse_file`]) in one
-/// transaction, each new row as the console writes it: [`add`] with
-/// `added_by` (the operator's wallet) and its `content`/`denylist.add`
-/// audit row. A listed id is left alone and audits nothing, so a re-run adds
-/// nothing. A file with a malformed line, or one that would take the table
-/// past [`MAX_ENTRIES`], writes nothing and is an error.
+/// ([`checked_file`]) in one transaction, each new row as the console
+/// writes it, with `added_by` (the operator's wallet) and a
+/// `content`/`denylist.add` audit row. The wallet is the operator's own
+/// claim, not a signed-in session, so the audit actor is `cli:<wallet>`. A
+/// listed id is left alone and audits nothing, so a re-run adds nothing. A
+/// file with a malformed line, or one that would take the table past
+/// [`MAX_ENTRIES`], writes nothing and is an error.
 pub async fn import_file(
     pool: &sqlx::PgPool,
     bytes: &[u8],
     added_by: &str,
 ) -> anyhow::Result<FileImport> {
-    let file = parse_file(bytes);
-    anyhow::ensure!(
-        file.malformed.is_empty(),
-        "the file has {} malformed line(s); nothing was imported:\n{}",
-        file.malformed.len(),
-        file.malformed.join("\n")
-    );
+    import(pool, checked_file(bytes)?, added_by, MAX_ENTRIES).await
+}
+
+async fn import(
+    pool: &sqlx::PgPool,
+    file: FileList,
+    added_by: &str,
+    max: i64,
+) -> anyhow::Result<FileImport> {
     let mut tx = pool.begin().await?;
-    let (mut imported, mut already_present) = (0, 0);
-    for id in &file.ids {
-        if add(&mut *tx, id, added_by).await? {
-            imported += 1;
-            let entry = catalyst_shared::audit::Entry::new(added_by, "content", "denylist.add")
-                .target(Some(id))
-                .detail(serde_json::json!({ "id": id, "added": true, "source": "denylist-file" }));
-            catalyst_shared::audit::record(&mut *tx, &entry).await?;
-        } else {
-            already_present += 1;
-        }
-    }
-    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM content.denylist")
-        .fetch_one(&mut *tx)
+    // Every other writer (a console add, a second import) waits for the
+    // commit, so the count still holds when the rows land.
+    sqlx::query("LOCK TABLE content.denylist IN SHARE ROW EXCLUSIVE MODE")
+        .execute(&mut *tx)
         .await?;
+    let (rows, present): (i64, i64) = sqlx::query_as(
+        "SELECT count(*), count(*) FILTER (WHERE id = ANY($1)) FROM content.denylist",
+    )
+    .bind(&file.ids)
+    .fetch_one(&mut *tx)
+    .await?;
+    let after = rows + file.ids.len() as i64 - present;
     anyhow::ensure!(
-        rows <= MAX_ENTRIES,
-        "the import would list {rows} ids, more than {MAX_ENTRIES}; nothing was imported"
+        after <= max,
+        "the import would list {after} ids, more than {max}; nothing was imported"
     );
+    let added: Vec<String> = sqlx::query_scalar(
+        "INSERT INTO content.denylist (id, added_by) SELECT id, $2 FROM unnest($1::text[]) AS id \
+         ON CONFLICT (id) DO NOTHING RETURNING id",
+    )
+    .bind(&file.ids)
+    .bind(added_by)
+    .fetch_all(&mut *tx)
+    .await?;
+    let actor = format!("cli:{added_by}");
+    for id in &added {
+        let entry = catalyst_shared::audit::Entry::new(&actor, "content", "denylist.add")
+            .target(Some(id))
+            .detail(serde_json::json!({ "id": id, "added": true, "source": "denylist-file" }));
+        catalyst_shared::audit::record(&mut *tx, &entry).await?;
+    }
     tx.commit().await?;
     Ok(FileImport {
         lines: file.lines,
@@ -275,8 +337,8 @@ pub async fn import_file(
         skipped_not_a_hash: file.skipped_not_a_hash,
         skipped_not_a_hash_lines: file.skipped_not_a_hash_lines,
         distinct: file.ids.len() as u64,
-        imported,
-        already_present,
+        imported: added.len() as u64,
+        already_present: (file.ids.len() - added.len()) as u64,
     })
 }
 
@@ -883,8 +945,9 @@ mod tests {
                 duplicates: 1,
                 skipped_not_a_hash: 3,
                 skipped_not_a_hash_lines: vec![6, 10, 12],
-                ids: vec![v1, v0],
-                malformed: vec![
+                ids: vec![v1.clone(), v0],
+                malformed: 3,
+                malformed_lines: vec![
                     "line 8: holds whitespace or a control character".to_string(),
                     "line 9: longer than 512 bytes".to_string(),
                     "line 11: not UTF-8".to_string(),
@@ -893,14 +956,42 @@ mod tests {
         );
         assert_eq!(parse_file(b""), FileList::default());
         assert_eq!(parse_file(b"\n").blank, 1);
-        assert_eq!(parse_file(b"bafy # note").malformed.len(), 1);
+        assert_eq!(parse_file(b"bafy # note").malformed, 1);
+        // JS `trim` strips every Unicode space and a byte-order mark at
+        // either end; one inside an id makes it malformed.
+        let padded = parse_file(format!("\u{a0}\u{2003}{v1}\u{feff}\u{3000}\n").as_bytes());
+        assert_eq!((padded.ids, padded.malformed), (vec![v1.clone()], 0));
+        let inner = parse_file(format!("{}\u{a0}{}\n", &v1[..30], &v1[30..]).as_bytes());
+        assert_eq!(inner.malformed, 1);
+        let bad = "bad id\n".repeat(60);
+        let many = parse_file(bad.as_bytes());
+        assert_eq!(many.malformed, 60);
+        assert_eq!(many.malformed_lines.len(), LINES_SHOWN);
+        let err = checked_file(bad.as_bytes()).unwrap_err().to_string();
+        assert!(
+            err.contains("60 malformed") && err.contains("line 50:"),
+            "{err}"
+        );
+        assert!(!err.contains("line 51:") && err.ends_with("..."), "{err}");
         let pointers = parse_file("0,0\n".repeat(60).as_bytes());
         assert_eq!(pointers.skipped_not_a_hash, 60);
         assert_eq!(
             pointers.skipped_not_a_hash_lines,
             (1..=50).collect::<Vec<u64>>()
         );
-        assert!(pointers.ids.is_empty() && pointers.malformed.is_empty());
+        assert!(pointers.ids.is_empty() && pointers.malformed == 0);
+    }
+
+    /// A file or standard input is read whole up to [`MAX_FILE_BYTES`];
+    /// past that, as from a stream that never ends, it is refused.
+    #[test]
+    fn a_file_past_the_byte_cap_is_refused() {
+        use std::io::Read as _;
+        assert_eq!(read_file(&b"Qm\n"[..]).unwrap(), b"Qm\n");
+        let err = read_file(std::io::repeat(b'\n')).unwrap_err();
+        assert!(err.to_string().contains("larger than"), "{err}");
+        let at_cap = read_file(std::io::repeat(b'\n').take(MAX_FILE_BYTES)).unwrap();
+        assert_eq!(at_cap.len() as u64, MAX_FILE_BYTES);
     }
 
     /// An import lists the file's ids as console rows with their audit
@@ -917,9 +1008,10 @@ mod tests {
         let audited = |pool: sqlx::PgPool, prefix: String| async move {
             let n: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM ops.admin_audit WHERE domain = 'content' \
-                 AND action = 'denylist.add' AND target LIKE $1 || '%'",
+                 AND action = 'denylist.add' AND target LIKE $1 || '%' AND actor = $2",
             )
             .bind(prefix)
+            .bind(format!("cli:{actor}"))
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -987,6 +1079,35 @@ mod tests {
         for id in [&a, &b, &c] {
             remove(&pool, id).await.unwrap();
         }
+        pool.close().await;
+    }
+
+    /// An import that would take the table past the cap writes nothing,
+    /// checked before any row is inserted.
+    #[tokio::test]
+    async fn an_import_past_max_entries_writes_nothing() {
+        require_test_db!(Some(pool) = crate::db::scratch::pool(2).await);
+        let tag = uuid::Uuid::new_v4().simple().to_string();
+        let ids = [cid(&tag, 'a'), cid(&tag, 'b'), cid(&tag, 'c')];
+        let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM content.denylist")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let file = checked_file(ids.join("\n").as_bytes()).unwrap();
+        let err = import(
+            &pool,
+            file,
+            "0x00000000000000000000000000000000000000aa",
+            rows + 1,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("nothing was imported"), "{err:#}");
+        let listed = load(&pool).await.unwrap();
+        assert!(
+            ids.iter().all(|id| !listed.contains(id)),
+            "nothing was written"
+        );
         pool.close().await;
     }
 

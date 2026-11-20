@@ -264,20 +264,36 @@ enum ContentCommand {
     /// a line; blank lines and lines starting with `#` are skipped, and so
     /// are lines that are no entity id or hash (pointers), counted with
     /// their line numbers. A listed id is left alone, so a re-run adds
-    /// nothing. A malformed line imports nothing and names itself. Prints the counts as JSON; a running
-    /// `serve` hides the new ids within a minute. Not behind
-    /// OPS_WRITES_ENABLED: an import is operator data.
+    /// nothing. A malformed line imports nothing and names itself. Prints
+    /// the counts as JSON; a running `serve` hides the new ids within a
+    /// minute. Not behind OPS_WRITES_ENABLED: an import is operator data.
     ImportDenylist {
-        #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
-        database_url: String,
+        #[arg(
+            long,
+            env = "DATABASE_URL",
+            hide_env_values = true,
+            required_unless_present = "print_ids"
+        )]
+        database_url: Option<String>,
         /// The file; `-` reads standard input.
         #[arg(long)]
         file: String,
         /// The operator wallet recorded as each new row's `added_by` (the
-        /// console records the signed-in wallet).
+        /// console records the signed-in wallet); the audit actor is
+        /// `cli:<wallet>`.
+        #[arg(long, value_parser = wallet, required_unless_present = "print_ids")]
+        added_by: Option<String>,
+        /// Print the ids the import would list, one a line, and write
+        /// nothing.
         #[arg(long)]
-        added_by: String,
+        print_ids: bool,
     },
+}
+
+/// `--added-by`: a wallet address, lowercased.
+fn wallet(value: &str) -> Result<String, String> {
+    catalyst::auth::normalize_eth_address(value)
+        .ok_or_else(|| "must be a wallet address (0x and 40 hex digits)".to_string())
 }
 
 #[derive(Subcommand)]
@@ -672,23 +688,26 @@ async fn run(
                     database_url,
                     file,
                     added_by,
+                    print_ids,
                 },
         } => {
-            use std::io::Read;
-            tracing_subscriber::fmt().with_target(false).init();
-            let added_by = added_by.trim().to_lowercase();
-            anyhow::ensure!(
-                added_by.len() == 42
-                    && added_by.starts_with("0x")
-                    && added_by[2..].bytes().all(|b| b.is_ascii_hexdigit()),
-                "--added-by must be a wallet address (0x and 40 hex digits)"
-            );
-            let mut bytes = Vec::new();
-            if file == "-" {
-                std::io::stdin().read_to_end(&mut bytes)?;
+            let bytes = if file == "-" {
+                content::denylist::read_file(std::io::stdin().lock())?
             } else {
-                bytes = std::fs::read(&file).with_context(|| format!("reading {file}"))?;
+                let opened =
+                    std::fs::File::open(&file).with_context(|| format!("reading {file}"))?;
+                content::denylist::read_file(opened).with_context(|| format!("reading {file}"))?
+            };
+            if print_ids {
+                for id in content::denylist::checked_file(&bytes)?.ids {
+                    println!("{id}");
+                }
+                return Ok(());
             }
+            let (Some(database_url), Some(added_by)) = (database_url, added_by) else {
+                anyhow::bail!("--database-url and --added-by are required");
+            };
+            tracing_subscriber::fmt().with_target(false).init();
             let pool = db::connect_pool(
                 &database_url,
                 &db::PoolSettings {

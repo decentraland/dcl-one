@@ -583,8 +583,11 @@ stored client-supplied sale category never establishes eligibility.
 The anonymous Registry `GET /denylist` feed reads `content.denylist` through the
 existing content pool: `id`, `added_by` and `added_at`, ordered newest first.
 Expected lists contain hundreds of rows; the read checks overflow at 100,001 rows
-and refuses lists above 100,000. The shared Explore API state retains local
-rows for five seconds and coalesces concurrent refreshes. Database failures are
+and refuses lists above 100,000. Besides console edits, one bulk write fills
+the table: the one-off `catalyst content import-denylist` of the old content
+server's denylist file at cutover, one batched insert under a table lock that
+refuses to pass 100,000 rows. The shared Explore API state retains local rows
+for five seconds and coalesces concurrent refreshes. Database failures are
 retained for the same interval and return 500; a failed refresh never serves an
 expired successful list. Operator edits become visible on the next read after
 expiry, and process restart rebuilds on demand. Source moderation responses are
