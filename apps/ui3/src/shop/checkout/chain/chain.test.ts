@@ -324,6 +324,30 @@ describe("relaying a meta-transaction", () => {
     expect(asked).toEqual(["eth_signTypedData_v4"]);
   });
 
+  it("an exact nonce and a minimum above it can't both hold: refused before the wallet is asked or anything is sent", async () => {
+    const asked: { method: string; params?: unknown[] }[] = [];
+    const provider = {
+      request: async (args: { method: string; params?: unknown[] }) => {
+        asked.push(args);
+        return `0x${"22".repeat(65)}`;
+      },
+    };
+    const posts: unknown[] = [];
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      posts.push(init?.body);
+      return new Response(JSON.stringify({ ok: true, txHash: `0x${"ab".repeat(32)}` }), { status: 200 });
+    }) as unknown as typeof fetch;
+    // The contract's nonce reads 7.
+    await expect(relayMetaTransaction({ provider, reader: fakeReader(), target, from, functionData: "0x12", fetchImpl, exactNonce: 7n, minNonce: 8n })).rejects.toBeInstanceOf(RangeError);
+    expect(asked).toEqual([]);
+    expect(posts).toEqual([]);
+    // A minimum at or below it is no conflict: the exact nonce is the one signed.
+    expect(await relayMetaTransaction({ provider, reader: fakeReader(), target, from, functionData: "0x12", fetchImpl, exactNonce: 7n, minNonce: 6n })).toMatchObject({ nonce: 7n });
+    expect(asked.map((r) => r.method)).toEqual(["eth_signTypedData_v4"]);
+    expect((JSON.parse(String(asked[0]!.params![1])) as { message: { nonce: string } }).message.nonce).toBe("7");
+    expect(posts).toHaveLength(1);
+  });
+
   it("keeps the relay's own word for a refusal: its error code, and when a spent quota frees up", async () => {
     const provider = { request: async () => `0x${"22".repeat(65)}` };
     const answering = (status: number, body: unknown) => (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;

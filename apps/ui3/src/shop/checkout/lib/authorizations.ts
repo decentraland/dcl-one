@@ -385,10 +385,16 @@ async function grantExactlyHeld(opts: AuthorizationContext & { auth: ShopAuthori
   } catch (e) {
     // The nonce moved (or reads inconsistent) before a replacement was signed: nothing was asked, the replaced one stays.
     if (e instanceof NonceMovedError) throw new AuthorizationPendingError();
-    if (sent.grant && !provedNotSent(e) && !(e instanceof TxRevertedError)) throw e instanceof TxPendingError ? e : new AuthorizationPendingError();
-    // Never sent (declined, refused before it left, or as not sent) or reverted: its record goes, and nothing goes in its
-    // place. One it was to replace goes back in its place, in one write, since that one may still run; should that write
-    // fail, the replacement's record stays, at the same nonce, and the sale still waits on it.
+    if (sent.grant && !provedNotSent(e)) {
+      if (!(e instanceof TxRevertedError)) throw e instanceof TxPendingError ? e : new AuthorizationPendingError();
+      // A reverted receipt for the hash the relay answered proves nothing on its own: that hash may be another
+      // transaction's, and a reverted execution spends no nonce, so this signed approve may still run. Its record stays
+      // while its nonce can still be used (or can't be read); only once that nonce has passed can it never run.
+      if (await pendingGrantOpen(sent.grant, account, reader, target)) throw new AuthorizationPendingError();
+    }
+    // Never sent (declined, refused before it left, or marked as not sent), or reverted with its nonce passed: its record
+    // goes, and nothing goes in its place. One it was to replace goes back in its place, in one write, since that one may
+    // still run; should that write fail, the replacement's record stays, at the same nonce, and the sale still waits on it.
     if (supersede && sent.grant) replacePendingGrant(auth, account, sent.grant, supersede);
     else clearPendingGrant(auth, account, sent.grant);
     throw e;

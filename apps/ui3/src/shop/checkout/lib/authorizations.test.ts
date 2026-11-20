@@ -12,6 +12,7 @@ import type { ChainReader } from "../chain/rpc";
 import type { Eip1193Provider } from "../../../data/auth/wallet";
 import { createFakeChain, createFakeLocks, createFakeRelay, createFakeWallet, relayedApproval } from "../fakes";
 import { encodeExecuteMetaTransaction } from "../chain/metatx";
+import { TxRevertedError } from "../chain/wallet";
 import {
   AuthorizationKind,
   AuthorizationPendingError,
@@ -438,6 +439,50 @@ describe("an exact grant that may still land", () => {
     expect(await exactAllowanceReady(allowance, BOOK.buyer, GAP, reader)).toBe(false);
     down = false;
     await ensureAuthorization({ ...ctx, auth: allowance, requiredWei: GAP, exact: true });
+    expect(readPendingGrant(allowance, BOOK.buyer)).toBeNull();
+  });
+
+  it.each(SENDS)("%s the relay answers with another transaction's REVERTED hash keeps its record while its nonce can run: a reopen still waits", async (_, lost) => {
+    const { chain, relay, ctx } = rail("fail-after-send");
+    if (lost !== null) await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: lost })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    relay.state.mode = "ok";
+    // That hash reverted, another grant covers the allowance, and nonce 0 is unspent: the signed approve may still run.
+    const fetchImpl = (async () => {
+      chain.receipts.set(FOREIGN, "reverted");
+      chain.allowances.set(allowanceKey, 10n ** 21n);
+      return new Response(JSON.stringify({ ok: true, txHash: FOREIGN }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const clock = later(PENDING_GRANT_HOLD_MS + 1);
+    try {
+      await expect(setAuthorization({ ...ctx, fetchImpl, auth: allowance, active: true, amount: GAP })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    } finally {
+      clock.mockRestore();
+    }
+    expect(readPendingGrant(allowance, BOOK.buyer)).toMatchObject({ amount: "61", nonce: "0" });
+    // A reopen: the sale still waits on it, and nothing new is signed.
+    anotherTab();
+    expect(await exactAllowanceReady(allowance, BOOK.buyer, GAP, ctx.reader)).toBe(false);
+    await expect(ensureAuthorization({ ...ctx, auth: allowance, requiredWei: GAP, exact: true })).rejects.toBeInstanceOf(AuthorizationPendingError);
+  });
+
+  it("control: a first send the relay refused and marked as not sent leaves no record: an allowance another grant covers is ready", async () => {
+    const { chain, relay, ctx } = rail("refuse");
+    await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: GAP })).rejects.toThrow();
+    expect(relay.posts).toHaveLength(1);
+    expect(readPendingGrant(allowance, BOOK.buyer)).toBeNull();
+    chain.allowances.set(allowanceKey, 10n ** 21n);
+    expect(await exactAllowanceReady(allowance, BOOK.buyer, GAP, ctx.reader)).toBe(true);
+  });
+
+  it("control: its own hash reverted with its nonce passed (another call took it) lets the record go: that approve can never run", async () => {
+    const { chain, relay, ctx } = rail("fail-after-send", () => "reverted");
+    relay.state.mode = "ok";
+    const fetchImpl = (async (...args: Parameters<typeof fetch>) => {
+      const answer = await relay.fetchImpl(...args);
+      chain.nonces.set(nonceKey, 1n);
+      return answer;
+    }) as typeof fetch;
+    await expect(setAuthorization({ ...ctx, fetchImpl, auth: allowance, active: true, amount: GAP })).rejects.toBeInstanceOf(TxRevertedError);
     expect(readPendingGrant(allowance, BOOK.buyer)).toBeNull();
   });
 

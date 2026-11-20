@@ -165,7 +165,8 @@ export type RelayOptions = {
   minNonce?: bigint;
   /**
    * Sign only at this nonce: when the target's nonce reads as any other, nothing is asked of the wallet
-   * (`NonceMovedError`). A replacement that must compete with one signed call at its nonce, and no other, uses it.
+   * (`NonceMovedError`). A replacement that must compete with one signed call at its nonce, and no other, uses it. With a
+   * `minNonce` above it the two can't both hold: refused (`RangeError`) before anything is read, signed or sent.
    */
   exactNonce?: bigint;
   /** Fired once the buyer signed (the prompt is gone), before the relay is called. */
@@ -195,12 +196,15 @@ export class NonceMovedError extends Error {
 
 export async function relayMetaTransaction(opts: RelayOptions): Promise<Relayed> {
   const { provider, reader, target, from, functionData } = opts;
+  if (opts.exactNonce !== undefined && opts.minNonce !== undefined && opts.minNonce > opts.exactNonce) {
+    throw new RangeError(`A signature can't be at nonce ${opts.exactNonce} and at least ${opts.minNonce}`);
+  }
   const code = await reader.code(target.chainId, from).catch(() => "0x" as Hex);
   if (code && code !== "0x") throw new GaslessUnavailableError("Contract accounts are not supported", "contract-account");
 
   const read = await readMetaTxNonce(reader, target, from);
   if (opts.exactNonce !== undefined && read !== opts.exactNonce) throw new NonceMovedError(opts.exactNonce, read);
-  const nonce = opts.minNonce !== undefined && opts.minNonce > read ? opts.minNonce : read;
+  const nonce = opts.exactNonce ?? (opts.minNonce !== undefined && opts.minNonce > read ? opts.minNonce : read);
   const typed = metaTxTypedData(target, from, nonce, functionData);
 
   let signature: Hex;
