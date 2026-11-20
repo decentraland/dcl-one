@@ -5043,18 +5043,25 @@ mod supervisor {
         db.drop().await;
     }
 
-    /// The process's leases with a gate per name before the request, and
-    /// every name asked for, in order.
+    /// The process's leases with a gate per name before the request, names
+    /// whose request panics, and every name asked for, in order.
     struct GatedLeases {
         inner: Arc<crate::jobs::Leases>,
         gates: HashMap<String, Arc<tokio::sync::Semaphore>>,
+        panics: Vec<String>,
         asked: Arc<Mutex<Vec<String>>>,
+        /// When each panicking request started.
+        panicked_at: Arc<Mutex<Vec<std::time::Instant>>>,
     }
 
     #[async_trait::async_trait]
     impl chain_jobs::TakeLease for GatedLeases {
         async fn try_acquire(&self, name: &str) -> sqlx::Result<Option<crate::jobs::LeaseGuard>> {
             self.asked.lock().push(name.to_string());
+            if self.panics.iter().any(|n| n == name) {
+                self.panicked_at.lock().push(std::time::Instant::now());
+                panic!("a lease request panicked");
+            }
             if let Some(gate) = self.gates.get(name) {
                 gate.acquire().await.unwrap().forget();
             }
@@ -5081,9 +5088,91 @@ mod supervisor {
                 .iter()
                 .map(|n| (n.to_string(), gate.clone()))
                 .collect(),
+            panics: Vec::new(),
             asked: asked.clone(),
+            panicked_at: Arc::default(),
         });
         (leases, gate, asked)
+    }
+
+    /// A lease request that panics fails like one: the supervisor keeps
+    /// running, asks again only after the lease poll, and the other
+    /// projection keeps walking.
+    #[tokio::test]
+    async fn a_panicking_lease_request_is_asked_again_after_the_poll() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = FakeChain::new(100, vec![], 1000, 1000);
+        chain.finalized_lag.store(2, Ordering::SeqCst);
+        let url = serve(chain.clone()).await;
+        let st = state_over(db.pool.clone(), &url, walk_settings(), false);
+        let namespace = format!("supervisor-request-panic-{}", std::process::id());
+        let jobs = Jobs::with_leases(
+            db.pool.clone(),
+            lease_settings(&namespace, Duration::from_millis(200)),
+        )
+        .with_first_pass_now(true);
+        let panicked_at = Arc::new(Mutex::new(Vec::new()));
+        let leases = Arc::new(GatedLeases {
+            inner: jobs.leases().unwrap().clone(),
+            gates: HashMap::new(),
+            panics: vec!["committee-index-matic".to_string()],
+            asked: Arc::default(),
+            panicked_at: panicked_at.clone(),
+        });
+        chain_jobs::spawn_with(
+            &jobs,
+            supervisor(
+                &st,
+                ChainNet::Matic,
+                vec![
+                    projection(
+                        "mana-transfers-index",
+                        ChainNet::Matic,
+                        &url,
+                        mana(ChainNet::Matic),
+                    ),
+                    projection(
+                        "committee-index",
+                        ChainNet::Matic,
+                        &url,
+                        Arc::new(|| Arc::new(super::super::committee_index::CommitteeIndex)),
+                    ),
+                ],
+            ),
+            Some(leases),
+        );
+        eventually("mana published", || {
+            published(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
+        })
+        .await;
+        eventually("three panicking requests", || {
+            let panicked_at = panicked_at.clone();
+            async move { panicked_at.lock().len() >= 3 }
+        })
+        .await;
+        let starts = panicked_at.lock().clone();
+        for pair in starts.windows(2) {
+            let gap = pair[1] - pair[0];
+            assert!(
+                gap >= Duration::from_millis(200),
+                "asked again after the 200 ms poll, not in a loop: {gap:?}"
+            );
+        }
+        let report = jobs.report();
+        let job = report
+            .iter()
+            .find(|j| j.name == "chain-walk-matic")
+            .unwrap();
+        assert_eq!(job.state, JobState::Running);
+        assert!(
+            cursor(&db.pool, chain_walk::INDEXER_COMMITTEE, ChainNet::Matic)
+                .await
+                .is_none()
+        );
+        assert!(jobs.shutdown(Duration::from_secs(5)).await.is_empty());
+        db.drop().await;
     }
 
     /// A lease request held back holds back no other projection: mana

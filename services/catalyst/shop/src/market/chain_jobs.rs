@@ -141,6 +141,9 @@ enum Done {
     /// A lease request.
     Requested(sqlx::Result<Option<LeaseGuard>>),
     Attempted(Attempt),
+    /// A task that panicked outside an attempt's own catch (a lease request)
+    /// or was aborted.
+    Crashed(String),
 }
 
 /// One lease acquisition of a projection: its index, holdings and backoff
@@ -393,15 +396,25 @@ async fn settle(
             None => return,
         },
         Err(err) => match running.remove(&err.id()) {
-            Some(i) => (i, Done::Attempted(Attempt::Panicked(err.to_string()))),
+            Some(i) => (i, Done::Crashed(err.to_string())),
             None => return,
         },
     };
     let projection = &supervisor.projections[i];
     let cfg = &cfgs[i];
     let slot = &mut slots[i];
-    slot.phase = Phase::Idle;
     let now = Instant::now();
+    // A crashed lease request fails like one, and is asked again after the
+    // poll; a crashed attempt is one that panicked.
+    let requesting = slot.phase == Phase::Requesting;
+    slot.phase = Phase::Idle;
+    if let (Done::Crashed(msg), true) = (&done, requesting) {
+        ctx.error(format!("{}: lease request: {msg}", projection.lease));
+        tracing::error!(lease = %projection.lease, error = %msg, "marketplace chain index: a lease request failed");
+        slot.due = now + poll;
+        slot.line = "standby: the lease request failed".into();
+        return;
+    }
     let outcome = match done {
         Done::Requested(Ok(Some(guard))) => {
             if stopping {
@@ -427,6 +440,7 @@ async fn settle(
             return;
         }
         Done::Attempted(outcome) => outcome,
+        Done::Crashed(msg) => Attempt::Panicked(msg),
     };
     let Some(acquisition) = slot.acquisition.as_mut() else {
         return;
