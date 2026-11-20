@@ -4,7 +4,7 @@ import SitesChrome from "@ui/web/frames/SitesChrome";
 
 import { jumpTravelHref } from "@/data/lib/catalyst/jump/jump";
 
-export function JumpInvalidRoute({ kind }: { kind: "place" | "event" }) {
+export function JumpInvalidPage({ kind }: { kind: "place" | "event" }) {
   return (
     <SitesChrome active="play" overlayNav>
       <JumpPage invalid>
