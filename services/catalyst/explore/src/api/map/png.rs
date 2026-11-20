@@ -329,6 +329,9 @@ pub async fn estate_map_png(
     Path(estate_id): Path<String>,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
+    // The estate's number as the grid spells it, as the metadata routes
+    // read it; what is not a number matches no estate.
+    let estate_id = super::meta::canonical_estate_id(&estate_id).unwrap_or(estate_id);
     // An estate the grid holds no parcel of (dissolved, or never minted)
     // redirects to the dissolved-estate image before any conditional check,
     // as the atlas does; no grid falls through to the render path's 503.
@@ -708,6 +711,21 @@ mod tests {
             live.status(),
             StatusCode::OK,
             "an estate with tiles renders"
+        );
+        // Another spelling of its number is the same estate; what is not a
+        // number matches none.
+        for id in ["0500", "+500"] {
+            let resp = call(id, HeaderMap::new()).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{id}");
+            assert_eq!(
+                resp.headers()[header::ETAG],
+                live.headers()[header::ETAG],
+                "{id}"
+            );
+        }
+        assert_eq!(
+            call("abc", HeaderMap::new()).await.status(),
+            StatusCode::FOUND
         );
 
         // The grid losing the estate between the handler's check and the

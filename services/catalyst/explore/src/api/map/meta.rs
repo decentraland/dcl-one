@@ -319,7 +319,14 @@ fn with_grid(state: &Shared, headers: &HeaderMap, f: impl FnOnce(&Grid) -> Respo
     })
 }
 
-/// The document of estate `id` (decimal). One the grid holds is a grid
+/// An estate id as the grid and the LAND index both spell it: the decimal
+/// of the number, so `0500` and `+500` name estate `500`. `None` when `id`
+/// is not a number.
+pub(crate) fn canonical_estate_id(id: &str) -> Option<String> {
+    id.parse::<i64>().ok().map(|n| n.to_string())
+}
+
+/// The document of estate `id` (canonical decimal). One the grid holds is a grid
 /// answer ([`validated`]). One it does not hold answers from the LAND index:
 /// 200 when dissolved, 404 otherwise. The grid stamp says nothing of the
 /// index, so that answer carries the cache policy without `Last-Modified`
@@ -383,11 +390,11 @@ pub async fn get_estate(
     let Some(grid) = state.map.snapshot() else {
         return validated(&headers, last, not_ready);
     };
-    if id.parse::<i64>().is_err() {
+    let Some(id) = canonical_estate_id(&id) else {
         return validated(&headers, last, || {
             (StatusCode::FORBIDDEN, "Invalid id").into_response()
         });
-    }
+    };
     estate_response(&state, &headers, last, &grid, &id).await
 }
 
@@ -403,7 +410,9 @@ pub async fn get_token(
         return validated(&headers, last, not_ready);
     };
     let addr = address.to_lowercase();
-    if addr == state.settings.estate_contract_address && id.parse::<i64>().is_ok() {
+    if addr == state.settings.estate_contract_address
+        && let Some(id) = canonical_estate_id(&id)
+    {
         return estate_response(&state, &headers, last, &grid, &id).await;
     }
     if let Some(r) = http_cache::not_modified(
@@ -721,6 +730,30 @@ mod tests {
         }
     }
 
+    /// Every spelling of an estate's number answers that estate's document,
+    /// from the grid as from the LAND index; what is not a number keeps its
+    /// answer on each route.
+    #[tokio::test]
+    async fn an_estate_id_is_read_as_its_number() {
+        let state = crate::api::tests_support::state_without_db().await;
+        state.map.set(grid_with_estate("500"));
+        let canonical = estate_and_token(&state, "500").await;
+        for id in ["0500", "+500", "000500"] {
+            let answers = estate_and_token(&state, id).await;
+            for (status, body) in &answers {
+                assert_eq!(*status, StatusCode::OK, "{id}");
+                assert_eq!(body["id"], "500", "{id}");
+                assert_eq!(body["name"], "Kept", "{id}");
+            }
+            assert_eq!(answers, canonical, "{id}");
+        }
+        for id in ["abc", "5e2", "500 ", "99999999999999999999"] {
+            let [(estate, _), (token, _)] = estate_and_token(&state, id).await;
+            assert_eq!(estate, StatusCode::FORBIDDEN, "{id}");
+            assert_eq!(token, StatusCode::NOT_FOUND, "{id}");
+        }
+    }
+
     /// Without a LAND index an estate the grid does not hold stays 404 on
     /// both routes; one it holds answers 200.
     #[tokio::test]
@@ -826,6 +859,14 @@ mod tests {
                     })
                 );
             }
+        }
+        // Another spelling of a dissolved estate's number is that estate.
+        let canonical = estate_and_token(&state, "501").await;
+        for id in ["0501", "+501"] {
+            let answers = estate_and_token(&state, id).await;
+            assert_eq!(answers[0].0, StatusCode::OK, "{id}");
+            assert_eq!(answers[0].1["id"], "501", "{id}");
+            assert_eq!(answers, canonical, "{id}");
         }
         // Holding LAND, and never minted: a definite 404, cached as any
         // other answer of the index.
