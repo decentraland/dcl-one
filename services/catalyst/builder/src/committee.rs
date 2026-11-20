@@ -9,6 +9,10 @@
 use sqlx::PgPool;
 
 /// One statement, so the published block and the members are one snapshot.
+/// Unlike `chain_walk::is_ready` it does not require `folded_block =
+/// last_block`: a pass advances `last_block` before it republishes, and the
+/// rows are cut at `folded_block`, so the published membership stays
+/// readable during a pass. The window is `chain_walk::READY_WINDOW`.
 const MEMBERS_SQL: &str = "\
 WITH ready AS (
   SELECT folded_block FROM shop.chain_cursor

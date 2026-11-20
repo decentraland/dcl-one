@@ -453,18 +453,10 @@ pub async fn items_for_address(
     Ok(rows.into_iter().map(item_out).collect())
 }
 
-/// The committee's console rows: distinct lowercase addresses, sorted.
+/// The committee's console rows, from [`crate::committee::current_members`]
+/// (already lowercase, distinct and sorted).
 pub(crate) fn shape_committee(addresses: Vec<String>) -> Vec<CommitteeMemberOut> {
-    let mut distinct: Vec<String> = addresses
-        .into_iter()
-        .filter_map(|addr| {
-            let a = addr.trim().to_ascii_lowercase();
-            a.starts_with("0x").then_some(a)
-        })
-        .collect();
-    distinct.sort();
-    distinct.dedup();
-    distinct
+    addresses
         .into_iter()
         .map(|address| CommitteeMemberOut {
             name: short_address(&address),
@@ -889,20 +881,14 @@ mod tests {
             "name": "0xabcd\u{2026}ef01",
         });
         assert_eq!(serde_json::to_value(&member).unwrap(), old);
-        let shaped = shape_committee(vec![
-            "0xB".into(),
-            "0xa".into(),
-            " 0xb".into(),
-            "junk".into(),
-            " ".into(),
-        ]);
+        let shaped = shape_committee(vec!["0xa".into(), "0xb".into()]);
         assert_eq!(
             shaped
                 .iter()
                 .map(|m| m.address.as_str())
                 .collect::<Vec<_>>(),
             vec!["0xa", "0xb"],
-            "distinct, lowercased, sorted"
+            "the index's order"
         );
     }
 

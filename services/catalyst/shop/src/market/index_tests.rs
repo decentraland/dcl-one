@@ -3448,3 +3448,72 @@ async fn committee_index_keeps_member_set_logs_of_both_contracts() {
     assert_eq!(kept, vec![((s + 1) as i64, true)]);
     db.drop().await;
 }
+
+/// A quiet committee stays published: a pass that finds no new MemberSet
+/// still refreshes `folded_at`, so builder keeps reading non-admin members
+/// past the readiness window.
+#[tokio::test]
+async fn a_committee_pass_without_new_logs_refreshes_the_publish() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    use super::committee_index::{CONTRACTS, CommitteeIndex, MEMBER_SET, START_BLOCK};
+    let s = START_BLOCK;
+    let chain = FakeChain::new(
+        s + 100,
+        vec![crate::chain_index::rpc::RpcLog {
+            address: CONTRACTS[1].into(),
+            topics: vec![MEMBER_SET.into(), format!("0x{:0>64}", &ALICE[2..])],
+            data: format!("0x{:064x}", 1),
+            block_number: format!("0x{:x}", s + 1),
+            log_index: "0x0".into(),
+            block_timestamp: Some(format!("0x{:x}", time_of(s + 1))),
+            block_hash: None,
+            transaction_hash: Some(format!("0x{:064x}", s + 1)),
+        }],
+        10_000,
+        1000,
+    );
+    chain.finalized_lag.store(2, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let st = state_over(db.pool.clone(), &url, index_settings(100, 10_000), false);
+    assert!(pass(&st, &url, &CommitteeIndex).await.published);
+    let age_out = || async {
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET folded_at = folded_at - interval '2 hours' WHERE indexer = 'committee'",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    };
+    let ready = || async {
+        let cursor = chain_walk::cursor(&db.pool, chain_walk::INDEXER_COMMITTEE, ChainNet::Matic)
+            .await
+            .unwrap()
+            .unwrap();
+        (
+            chain_walk::is_ready(&cursor, chrono::Utc::now()),
+            cursor.folded_block,
+        )
+    };
+
+    // The head has not moved.
+    age_out().await;
+    assert!(!ready().await.0, "aged out");
+    let quiet = pass(&st, &url, &CommitteeIndex).await;
+    assert!(quiet.published, "{quiet:?}");
+    assert_eq!(quiet.rows_written, 0, "{quiet:?}");
+    let (is_ready, folded) = ready().await;
+    assert!(is_ready, "the same head republishes");
+
+    // New blocks, none with a MemberSet.
+    age_out().await;
+    *chain.head.lock() = s + 200;
+    let quiet = pass(&st, &url, &CommitteeIndex).await;
+    assert!(quiet.published, "{quiet:?}");
+    assert_eq!(quiet.rows_written, 0, "{quiet:?}");
+    let (is_ready, advanced) = ready().await;
+    assert!(is_ready, "empty blocks republish");
+    assert!(advanced > folded, "{advanced:?} > {folded:?}");
+    db.drop().await;
+}

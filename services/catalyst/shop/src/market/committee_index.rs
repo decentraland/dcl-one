@@ -17,8 +17,11 @@ use crate::chain_index::rpc::{RpcLog, hex_to_i64};
 /// `keccak256("MemberSet(address,bool)")`.
 pub const MEMBER_SET: &str = "0x4efc5168d98ad88d2d4784344a20876aea2fa3e8aa503b5fb3164a09019ca3d6";
 
-/// The two Polygon Committee contracts, in deployment order, and the block
-/// the first was deployed at.
+/// The two Polygon Committee contracts, in deployment order (`OldCommittee`
+/// and `Committee` under `matic` in `evm/addresses.json`), and the
+/// collections subgraph's start block for the first
+/// (`decentraland/collections-graph` `config/matic.json`
+/// `startBlock_old_committee` at ab6c586).
 pub const CONTRACTS: [&str; 2] = [
     "0x71d9350ef44e1e451f00e447c0dff2d1fb75510a",
     "0xaeec95a8aa671a6d3fec56594827d7804964fa70",
@@ -145,6 +148,14 @@ impl ChainIndex for CommitteeIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contracts_match_the_pinned_address_book() {
+        let pinned: serde_json::Value =
+            serde_json::from_str(include_str!("../evm/addresses.json")).unwrap();
+        let book = |name: &str| pinned["matic"][name].as_str().unwrap().to_lowercase();
+        assert_eq!(CONTRACTS, [book("OldCommittee"), book("Committee")]);
+    }
 
     fn log(contract: &str, member: &str, value: u8) -> RpcLog {
         RpcLog {

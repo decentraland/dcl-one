@@ -229,24 +229,24 @@ fn unauthorized_for(eth_address: &str) -> Response {
 
 /// The curation committee (builder-server's `isCommitteeMember`):
 /// `BUILDER_ADMIN_ADDRESSES` and the current members of the Polygon
-/// committee index ([`crate::committee`]); an unpublished index or a failed
-/// read admits only the configured addresses (a listing is never widened by
-/// an outage).
-pub(super) async fn is_committee(state: &SharedState, address: &str) -> bool {
+/// committee index ([`crate::committee`]); an unpublished index admits only
+/// the configured addresses, and a failed read answers 503 to anyone else, as
+/// the curation console does (a listing is never widened by an outage).
+pub(super) async fn is_committee(state: &SharedState, address: &str) -> Result<bool, ApiError> {
     if state
         .settings
         .admin_addresses
         .iter()
         .any(|a| a.eq_ignore_ascii_case(address))
     {
-        return true;
+        return Ok(true);
     }
     match crate::committee::current_members(state.items.pool()).await {
-        Ok(Some(members)) => members.iter().any(|m| m.eq_ignore_ascii_case(address)),
-        Ok(None) => false,
+        Ok(Some(members)) => Ok(members.iter().any(|m| m.eq_ignore_ascii_case(address))),
+        Ok(None) => Ok(false),
         Err(error) => {
-            tracing::warn!(error = %error, "committee lookup failed; the listing is refused");
-            false
+            tracing::warn!(error = %error, "committee read failed");
+            Err(ApiError::http(503, "committee unavailable"))
         }
     }
 }
@@ -262,7 +262,8 @@ async fn refusal_unless_own_or_committee(
     address: &str,
 ) -> Result<Option<Response>, ApiError> {
     let signer = signer(state, headers, "get", original, local).await?;
-    if signer.as_str().eq_ignore_ascii_case(address) || is_committee(state, signer.as_str()).await {
+    if signer.as_str().eq_ignore_ascii_case(address) || is_committee(state, signer.as_str()).await?
+    {
         return Ok(None);
     }
     Ok(Some(unauthorized_for(address)))
@@ -303,7 +304,7 @@ pub async fn get_collections(
     )
     .await
     {
-        Some(signer) if is_committee(&state, signer.as_str()).await => Ok(Json(ApiData::ok(
+        Some(signer) if is_committee(&state, signer.as_str()).await? => Ok(Json(ApiData::ok(
             state.items.collection_drafts_of_everyone().await?,
         ))
         .into_response()),
@@ -321,7 +322,7 @@ pub async fn get_items(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let signer = signer(&state, &headers, "get", &original, &uri).await?;
-    if !is_committee(&state, signer.as_str()).await {
+    if !is_committee(&state, signer.as_str()).await? {
         return Ok(unauthorized_for(signer.as_str()));
     }
     Ok(Json(ApiData::ok(state.items.item_drafts_of_everyone().await?)).into_response())
@@ -720,29 +721,35 @@ mod tests {
         };
 
         assert!(
-            !is_committee(&state, &member).await,
+            !is_committee(&state, &member).await.unwrap(),
             "no published index: not a member yet"
         );
-        assert!(is_committee(&state, &admin).await);
+        assert!(is_committee(&state, &admin).await.unwrap());
 
         publish("timezone('UTC', now())").await;
-        assert!(is_committee(&state, &member).await);
-        assert!(!is_committee(&state, &removed).await, "removed member");
+        assert!(is_committee(&state, &member).await.unwrap());
         assert!(
-            !is_committee(&state, pending).await,
+            !is_committee(&state, &removed).await.unwrap(),
+            "removed member"
+        );
+        assert!(
+            !is_committee(&state, pending).await.unwrap(),
             "past the published block"
         );
-        assert!(is_committee(&state, &admin).await);
+        assert!(is_committee(&state, &admin).await.unwrap());
 
         sqlx::query("UPDATE shop.chain_cursor SET last_block = 200 WHERE indexer = 'committee'")
             .execute(&pool)
             .await
             .unwrap();
         assert!(
-            is_committee(&state, &member).await,
+            is_committee(&state, &member).await.unwrap(),
             "a walk ahead of its last publish keeps the published membership"
         );
-        assert!(!is_committee(&state, pending).await, "until it publishes");
+        assert!(
+            !is_committee(&state, pending).await.unwrap(),
+            "until it publishes"
+        );
 
         let (status, _) = get(&app, "/v1/items", Some(COMMITTEE_KEY)).await;
         assert_eq!(status, StatusCode::OK, "a member that never curated");
@@ -753,8 +760,22 @@ mod tests {
         );
 
         publish("timezone('UTC', now()) - interval '2 hours'").await;
-        assert!(!is_committee(&state, &member).await, "a stale index");
-        assert!(is_committee(&state, &admin).await);
+        assert!(
+            !is_committee(&state, &member).await.unwrap(),
+            "a stale index"
+        );
+        assert!(is_committee(&state, &admin).await.unwrap());
+
+        // A failed read answers 503, not a refusal; the admin addresses
+        // need no read.
+        sqlx::query("ALTER TABLE shop.committee_event RENAME TO committee_event_gone")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, body) = get(&app, "/v1/items", Some(COMMITTEE_KEY)).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        let (status, body) = get(&app, "/v1/items", Some(OWNER_KEY)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
         pool.close().await;
     }
 
