@@ -85,6 +85,11 @@ describe("when the Sites host changes authenticated identity", () => {
       expect(client.getQueriesData({ queryKey: ["private", "0xa"] })).toEqual([]);
     });
 
+    it("should clear only the previous account's Credits balance", () => {
+      expect(client.getQueryData([CREDITS_BALANCE_QUERY_KEY, "0xa"])).toBeUndefined();
+      expect(client.getQueryData([CREDITS_BALANCE_QUERY_KEY, "0xb"])).toBe("new balance");
+    });
+
     it("should retain public data", () => {
       expect(client.getQueryData(["blog", "categories"])).toEqual([
         "Announcements",

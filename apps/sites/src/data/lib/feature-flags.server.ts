@@ -80,6 +80,11 @@ export function dappsFlagsAnswer(): Promise<DappsFlagsAnswer> {
   return flagsAnswer("dapps");
 }
 
+/** Whether starting a dapps read can use a memoized snapshot without waiting for the upstream service. */
+export function hasCachedDappsFlags(): boolean {
+  return read.peek(site(), "dapps") !== undefined;
+}
+
 /** For routes that must distinguish an unread flag from an explicitly disabled one. */
 export async function knownDappsFlags(): Promise<DappsFlags | null> {
   const answer = await flagsAnswer("dapps");

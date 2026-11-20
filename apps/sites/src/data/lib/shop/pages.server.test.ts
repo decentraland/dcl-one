@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { createShopClient, fetchTransport } from "@ui/shop/api";
 import { REMOTE_FLAG, remoteFlagVariant } from "@ui/shop/discovery/lib/remoteFlags";
@@ -6,7 +6,7 @@ import { REMOTE_FLAG, remoteFlagVariant } from "@ui/shop/discovery/lib/remoteFla
 import { resetDappsFlags } from "../feature-flags.server";
 import { serverShopApiMode } from "./mode";
 import { defaultShopSeo, shopMetaDescriptors } from "./pages";
-import { loadShopPage, serverShopClient, SHOP_SSR_SHARE_MS, SHOP_SSR_STALE_MS } from "./pages.server";
+import { loadShopPage, readBodyThenWait, serverShopClient, SHOP_SSR_SHARE_MS, SHOP_SSR_STALE_MS } from "./pages.server";
 import { LAND_NETWORKS } from "@shop/land/contracts";
 
 const C = "0xabc0000000000000000000000000000000000001";
@@ -150,7 +150,7 @@ describe("the page's flags, read by the server", () => {
     resetDappsFlags();
   });
 
-  it("maps the item's reads with the flags that belong to the page", async () => {
+  it("starts the item reads with the flags read, and maps an answer that arrives first with the page's flags", async () => {
     // Creator sales off from an earlier page: an answer mapped before this page's flags would lose its sale price.
     await loadShopPage("cart", { request: request("/shop/cart"), params: {}, client: node([]).client, now, env: {}, flags: {} });
     resetDappsFlags();
@@ -167,13 +167,70 @@ describe("the page's flags, read by the server", () => {
     });
 
     const load = loadShopPage("itemDetail", { request: request(`/shop/item/${C}/7`), params: { contractAddress: C, itemId: "7" }, now, env: { CATALYST_URL: "http://node.test" } });
-    await vi.waitFor(() => expect(answerFlags).toBeTypeOf("function"));
+    await vi.waitFor(() => expect(asked).toHaveLength(routes.length));
     answerFlags(new Response(JSON.stringify({ flags: { "dapps-shop-creator-sales": true } })));
     const { data } = await load;
     expect(data.featureFlags).toEqual({ "dapps-shop-creator-sales": true });
     expect(data.queries.find(([key]) => key[0] === "shop-item")?.[1]).toMatchObject({ priceCredits: 5, compareAtCredits: 7 });
   });
 
+  it("hands on an answer with no body (204, 304) as it came, and any other with its body", async () => {
+    for (const status of [204, 304]) {
+      const answer = await readBodyThenWait(async () => new Response(null, { status }), Promise.resolve())("http://node.test/x");
+      expect(answer.status).toBe(status);
+      expect(await answer.text()).toBe("");
+    }
+    const ok = await readBodyThenWait(async () => new Response('{"a":1}', { status: 200, headers: { "content-type": "application/json" } }), Promise.resolve())("http://node.test/x");
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get("content-type")).toBe("application/json");
+    expect(await ok.json()).toEqual({ a: 1 });
+  });
+
+  it("reads each answer's body under its own deadline before it waits for the flags", async () => {
+    // Every read's deadline, run out by the test while the flags are still unanswered.
+    const deadlines: AbortController[] = [];
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+      const controller = new AbortController();
+      deadlines.push(controller);
+      return controller.signal;
+    });
+    onTestFinished(() => timeout.mockRestore());
+    const item = "0xabc0000000000000000000000000000000000006";
+    const asked: string[] = [];
+    let answerFlags: (res: Response) => void = () => {};
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/dapps.json") return new Promise<Response>((resolve) => (answerFlags = resolve));
+      asked.push(url.pathname);
+      const hit = ITEM_ROUTES.find((r) => r.path === url.pathname);
+      const text = JSON.stringify(hit?.body ?? {});
+      // As a real fetch's: a body not read yet fails once the request's signal aborts.
+      let read = false;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          init?.signal?.addEventListener("abort", () => {
+            if (!read) controller.error(init.signal!.reason);
+          });
+        },
+        pull(controller) {
+          read = true;
+          controller.enqueue(new TextEncoder().encode(text));
+          controller.close();
+        },
+      }, { highWaterMark: 0 });
+      return new Response(body, { status: hit ? 200 : 404 });
+    });
+
+    const load = loadShopPage("itemDetail", { request: request(`/shop/item/${item}/7`), params: { contractAddress: item, itemId: "7" }, now, env: { CATALYST_URL: "http://node.test" } });
+    await vi.waitFor(() => expect(asked).toHaveLength(3));
+    await new Promise((settled) => setTimeout(settled, 10));
+    for (const deadline of deadlines) deadline.abort(new DOMException("Request deadline exceeded", "TimeoutError"));
+    answerFlags(new Response(JSON.stringify({ flags: {} })));
+    const { data, status } = await load;
+    expect(status).toBe(200);
+    expect(data.queries.map(([key]) => key[0])).toEqual(["shop-item", "item-meta", "collection-meta"]);
+    expect(data.seo.title).toBe("Pirate Hat");
+  });
 });
 
 describe("the item and collection documents' shared reads", () => {

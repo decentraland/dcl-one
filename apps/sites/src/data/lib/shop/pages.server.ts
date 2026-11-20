@@ -18,7 +18,7 @@ import { RAIL_KEYS, readDeals, readListings, readTrending } from "@ui/shop/disco
 import type { ShopPageId } from "@ui/shop/routes";
 
 import { catalystUrl, processEnv, publicPageUrl, type BaseEnv } from "../catalyst/bases";
-import { dappsFlagsAnswer, type DappsFlags, type DappsFlagsAnswer, type DappsFlagVariants } from "../feature-flags.server";
+import { dappsFlagsAnswer, hasCachedDappsFlags, type DappsFlags, type DappsFlagsAnswer, type DappsFlagVariants } from "../feature-flags.server";
 import { serverShopApiMode } from "./mode";
 import { defaultShopSeo, type PrimedQuery, type ShopPageData, type ShopSeo } from "./pages";
 
@@ -243,25 +243,48 @@ async function itemsPage(ctx: ReadCtx, client: ShopClient, env: BaseEnv): Promis
   return { queries: page.ok ? [[grid.key, page.value.value, page.value.at]] : [], seo, status: 200 };
 }
 
+/** Statuses whose response has no body (a Response built with one throws). */
+const NULL_BODY: ReadonlySet<number> = new Set([101, 204, 205, 304]);
+
+/**
+ * A fetch whose answers wait for `ready` (the page's flags) before they are handed on, with each body already read: the
+ * body is read under the request's own deadline, which waiting first would leave running against a slow `ready`.
+ */
+export function readBodyThenWait(fetchImpl: typeof fetch, ready: Promise<unknown>): typeof fetch {
+  return async (...args) => {
+    const res = await fetchImpl(...args);
+    const body = NULL_BODY.has(res.status) ? null : await res.arrayBuffer();
+    await ready;
+    return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
+  };
+}
+
 /** The SSR data for one /shop page: its head, its primed public reads and the HTTP status. */
 export async function loadShopPage(page: ShopPageId, input: ShopLoadInput): Promise<ShopPageLoad> {
   const env = input.env ?? processEnv();
-  const client = input.client ?? serverShopClient(env);
-  // The same answer drives this request's public reads, render and hydration.
-  const answer: DappsFlagsAnswer = input.flags
-    ? { flags: input.flags, variants: input.flagVariants ?? {} }
-    : input.client
-      ? { flags: {}, variants: {} }
-      : await dappsFlagsAnswer();
-  const now = input.now ?? Date.now;
   const { request, params } = input;
+  const now = input.now ?? Date.now;
   const pathname = new URL(request.url).pathname;
-  // Only the server's own client shares reads: an injected one (a test's node) always asks.
+  const detail = page === "itemDetail" || page === "tokenDetail" || page === "collection";
+  // A cold detail read can start before its flags, but cannot use a shared cache key until the flag is known.
+  const coldDetail = detail && !input.flags && !input.client && !hasCachedDappsFlags();
+  const flagsRead: Promise<DappsFlagsAnswer> = input.flags
+    ? Promise.resolve({ flags: input.flags, variants: input.flagVariants ?? {} })
+    : input.client
+      ? Promise.resolve({ flags: {}, variants: {} })
+      : dappsFlagsAnswer();
+  let creatorSales = false;
+  const ready = flagsRead.then((answer) => {
+    creatorSales = remoteFlagOn(answer, REMOTE_FLAG.creatorSales);
+    return answer;
+  });
+  if (!coldDetail) await ready;
+  const client = input.client ?? serverShopClient(env, coldDetail ? readBodyThenWait((...args) => fetch(...args), ready) : undefined);
   const ctx: ReadCtx = {
     request,
     now,
-    shareTarget: input.client ? null : shopTarget(env).key,
-    creatorSales: remoteFlagOn(answer, REMOTE_FLAG.creatorSales),
+    shareTarget: input.client || coldDetail ? null : shopTarget(env).key,
+    get creatorSales() { return creatorSales; },
   };
   let collected: Collected;
   switch (page) {
@@ -284,6 +307,7 @@ export async function loadShopPage(page: ShopPageId, input: ShopLoadInput): Prom
     default:
       collected = { queries: [], seo: defaultShopSeo(page, publicPageUrl(request, pathname, env)), status: 200 };
   }
+  const answer = await ready;
   const featureFlags = answer.flags;
   const featureFlagVariants = Object.keys(answer.variants).length > 0 ? answer.variants : undefined;
   return {
