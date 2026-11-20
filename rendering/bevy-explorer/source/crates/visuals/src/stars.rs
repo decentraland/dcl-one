@@ -104,8 +104,10 @@ impl Plugin for StarsPlugin {
 pub use settings::StarsSettings;
 
 mod settings {
-    // the ShaderType derive's layout check function is never called
-    #![allow(dead_code)]
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
 
     use super::*;
 
@@ -125,17 +127,17 @@ mod settings {
         /// seconds, for the twinkle
         pub time: f32,
     }
+}
 
-    impl Default for StarsSettings {
-        fn default() -> Self {
-            Self {
-                sun_position: Vec3::Y,
-                night: 0.0,
-                brightness: 4.0,
-                size: 1.0,
-                density: 0.65,
-                time: 0.0,
-            }
+impl Default for StarsSettings {
+    fn default() -> Self {
+        Self {
+            sun_position: Vec3::Y,
+            night: 0.0,
+            brightness: 4.0,
+            size: 1.0,
+            density: 0.65,
+            time: 0.0,
         }
     }
 }

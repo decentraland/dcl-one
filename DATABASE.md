@@ -1167,8 +1167,8 @@ change.
 
 `POST /social-api/v1/client-login` derives the invited wallet from ADR-44 signed
 fetch. Its signed metadata contains `loginId` and `occurredAt`; the timestamp
-limits admission to the preceding 24 hours with five minutes of future tolerance,
-matching the signed-fetch clock window.
+limits admission to the preceding 24 hours with five minutes of future tolerance.
+The request itself still passes the 60-second signed-fetch window.
 The client preserves these values across retries and signs each request afresh.
 The occurrence timestamp bounds replay acceptance, while login-day accounting
 continues to use the database's UTC processing date.
@@ -2021,6 +2021,29 @@ each publication or archive transition appends a row to
 `social.badge_catalog_audit`; `badge_admin_audit` keeps per-wallet grants and
 revokes, whose `address` a catalog write does not have.
 
+## Curation committee
+
+Builder's committee routes (the drafts and items of every wallet, another
+wallet's collections and items, the curation console's committee list)
+admit `BUILDER_ADMIN_ADDRESSES` and the current members of the Polygon
+curation committee. Shop's `committee` index
+(`MARKETPLACE_COMMITTEE_INDEX_ENABLED`) walks the two Committee contracts'
+`MemberSet` logs from the first one's deployment into `shop.committee_event`
+over the `TRADE_RPC_URLS` 137 entry, else on mainnet `RPC_ENDPOINT_POLYGON`,
+once the endpoint answers chain id 137 (tens of rows, appended with the cursor advance in `shop.chain_cursor`,
+deleted past a reorg rewind). Builder reads, never writes, both tables by
+shared SQL in one statement: `shop.committee_event` (`network`,
+`block_number`, `log_index`, `member`, `is_member`) and `shop.chain_cursor`
+(`indexer`, `network`, `full_history`, `folded_block`, `folded_at`). A
+wallet is a member when its latest event (block, log index) at or below the
+published block (`folded_block`) set it, so rows a pass adds before its
+publish wait for it. Unlike the shop routes' readiness rule, it does not
+require `folded_block = last_block`, so the published membership stays
+readable while a pass runs. An index that is off, not yet published or
+published more than 30 minutes ago (`READY_WINDOW`) admits only the
+configured addresses, and a failed read answers 503. Changing a column builder reads updates this section
+and the AGENTS.md "Ownership" entry in the same change.
+
 ## Auth API relay state workload
 
 `/auth-api` (`services/catalyst/explore/src/api/auth_api/`) is the sign-in
@@ -2056,9 +2079,16 @@ identities (100 per network). No production rate is measured.
   the backups, which keep it after the row is deleted for as long as they
   are retained. A copy of the key signs for the identity's account until the
   expiration in its auth chain.
-  The pickup consumes it with `DELETE ... RETURNING` in the transaction that
-  writes its tombstone, so exactly one pickup gets it; a concurrent one waits
-  on the row, finds it gone and reads the tombstone.
+  A deep-link create for a client that holds a verifier (Creator Hub) binds
+  it to the client's `authRequestId` (`auth_request_id`, lowercase), which
+  the client derives from the verifier it presents on pickup
+  (`x-identity-verifier`); other identities stay unbound and keep the IP
+  check. The pickup locks the row (`SELECT ... FOR UPDATE`), decides, and
+  deletes it in the transaction that writes its tombstone when it is served,
+  expired or refused for its IP, so exactly one pickup gets it; a concurrent
+  one waits on the row, finds it gone and reads the tombstone. A bound
+  identity is served only to its verifier, from any network; a pickup with a
+  wrong or missing one (401) leaves the row parked.
 - `auth_identity_tombstones`: why an identity is gone (`consumed`, `expired`,
   `ip_mismatch`, or NULL while parked and once evicted by the sweep or an
   operator's revoke), for the 404 bodies, kept 14 days and at most 50,000

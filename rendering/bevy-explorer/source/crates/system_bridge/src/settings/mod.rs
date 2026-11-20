@@ -73,6 +73,7 @@ pub mod fog_settings;
 pub mod frame_rate;
 pub mod imposter_settings;
 pub mod language_setting;
+pub mod lens_flare_setting;
 pub mod load_distance;
 pub mod max_avatars;
 pub mod max_downloads;
@@ -200,6 +201,12 @@ impl Plugin for SettingBridgePlugin {
         #[cfg(not(target_arch = "wasm32"))]
         add_enum_setting::<SsaoSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<SkyReflectionSetting>(app, &mut settings, &mut schedule, &config);
+        add_enum_setting::<lens_flare_setting::LensFlareSetting>(
+            app,
+            &mut settings,
+            &mut schedule,
+            &config,
+        );
         add_enum_setting::<OobSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<CelShadingSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AvatarOutlineSetting>(app, &mut settings, &mut schedule, &config);

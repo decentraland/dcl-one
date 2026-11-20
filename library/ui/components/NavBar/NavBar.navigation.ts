@@ -16,8 +16,11 @@ export type DecentralandNavigationEntry = {
   items?: readonly DecentralandNavigationItem[]
 }
 
-/** The default Decentraland site navigation. Every destination is a Sites route. */
-export const decentralandNavigation: readonly DecentralandNavigationEntry[] = [
+type PublicNavigationItem = DecentralandNavigationItem & { marketplaceOnly?: true }
+
+const publicNavigation: readonly (Omit<DecentralandNavigationEntry, 'items'> & {
+  items: readonly PublicNavigationItem[]
+})[] = [
   {
     id: 'discover',
     label: 'Discover',
@@ -27,13 +30,51 @@ export const decentralandNavigation: readonly DecentralandNavigationEntry[] = [
       { label: 'Places', href: '/places' }
     ]
   },
-  // The overview itself: /shop only redirects to it, one more route request before the page.
-  { id: 'shop', label: 'Shop', href: '/shop/overview' },
-  { id: 'create', label: 'Create', href: '/create' },
-  { id: 'learn', label: 'Learn', href: '/blog' }
+  {
+    id: 'shop',
+    label: 'Shop',
+    href: '/shop/overview',
+    items: [
+      { label: 'Shop All', href: '/shop/overview' },
+      { label: 'Wearables', href: '/shop/items?category=wearable' },
+      { label: 'Emotes', href: '/shop/items?category=emote' },
+      { label: 'NAMEs', href: '/shop/names' },
+      { label: 'LAND', href: '/shop/lands', marketplaceOnly: true },
+      { label: 'Merch', href: 'https://store.decentraland.org/', target: '_blank' }
+    ]
+  },
+  {
+    id: 'create',
+    label: 'Create',
+    href: '/create',
+    items: [
+      { label: 'Create in Decentraland', href: '/create' },
+      { label: 'Publish Wearables & Emotes', href: '/create/collections' },
+      { label: 'Publish LAND', href: '/download/creator-hub' }
+    ]
+  },
+  {
+    id: 'learn',
+    label: 'Learn',
+    href: '/blog',
+    items: [
+      { label: 'Get Started', href: '/docs/player/' },
+      { label: 'Start Creating', href: '/docs/creator/' },
+      { label: 'See What’s New', href: '/blog' }
+    ]
+  }
 ]
 
-const SECTION_OF_AREA: Record<DecentralandNavigationArea, DecentralandNavigationSectionId | undefined> = {
+/** Navigation for hosts that use a single link for all sections except Discover. */
+export const decentralandNavigation: readonly DecentralandNavigationEntry[] = publicNavigation.map(
+  ({ id, label, href, items }) =>
+    id === 'discover' ? { id, label, href, items } : { id, label, href }
+)
+
+const SECTION_OF_AREA: Record<
+  DecentralandNavigationArea,
+  DecentralandNavigationSectionId | undefined
+> = {
   explore: 'discover',
   whatson: 'discover',
   events: 'discover',
@@ -51,50 +92,6 @@ export function decentralandNavigationSection(
 
 const underPath = (pathname: string, path: string) =>
   pathname === path || pathname.startsWith(`${path}/`)
-
-/** NavBar sections for the default navigation: the area selects a section, the pathname one of its items. */
-export function decentralandNavSections(
-  area: DecentralandNavigationArea | '' | undefined,
-  pathname: string
-): NavBarSection[] {
-  const current = decentralandNavigationSection(area)
-  return decentralandNavigation.map(({ id, label, href, items }) => {
-    const active = id === current
-    if (!items) return { label, href, active }
-    return {
-      label,
-      active,
-      items: items.map((item) => ({
-        ...item,
-        active: active && underPath(pathname, item.href)
-      }))
-    }
-  })
-}
-
-const publicSectionItems: Record<
-  Exclude<DecentralandNavigationSectionId, 'discover'>,
-  readonly DecentralandNavigationItem[]
-> = {
-  shop: [
-    { label: 'Shop All', href: '/shop/overview' },
-    { label: 'Wearables', href: '/shop/items?category=wearable' },
-    { label: 'Emotes', href: '/shop/items?category=emote' },
-    { label: 'NAMEs', href: '/shop/names' },
-    { label: 'LAND', href: '/shop/lands' },
-    { label: 'Merch', href: 'https://store.decentraland.org/', target: '_blank' }
-  ],
-  create: [
-    { label: 'Create in Decentraland', href: '/create' },
-    { label: 'Publish Wearables & Emotes', href: '/create/wearables' },
-    { label: 'Publish LAND', href: '/download/creator-hub' }
-  ],
-  learn: [
-    { label: 'Get Started', href: '/docs/player/' },
-    { label: 'Start Creating', href: '/docs/creator/' },
-    { label: 'See What’s New', href: '/blog' }
-  ]
-}
 
 function matchingPublicItem(
   items: readonly DecentralandNavigationItem[],
@@ -126,18 +123,19 @@ export function decentralandPublicNavSections(
   const params = new URLSearchParams(search)
   const desktop: NavBarSection[] = []
   const mobile: NavBarSection[] = []
-  for (const { id, label, href, items } of decentralandNavigation) {
+  for (const { id, label, href, items } of publicNavigation) {
     const active = id === current
-    const extraItems = id === 'discover' ? items ?? [] : publicSectionItems[id]
-    const visible =
-      id === 'shop' && !marketplaceEligible
-        ? extraItems.filter((item) => item.href !== '/shop/lands')
-        : extraItems
+    const visible = items.filter((item) => !item.marketplaceOnly || marketplaceEligible)
     const match = active ? matchingPublicItem(visible, path, params) : undefined
     const section = {
       label,
       active,
-      items: visible.map((item) => ({ ...item, active: item === match }))
+      items: visible.map((item) => ({
+        label: item.label,
+        href: item.href,
+        ...(item.target ? { target: item.target } : {}),
+        active: item === match
+      }))
     }
     desktop.push(id === 'learn' ? { label, href, active } : section)
     mobile.push(section)

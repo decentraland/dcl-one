@@ -98,8 +98,7 @@ export default function BuilderRedirectsMetricsRoute({
                   {r.param && (
                     <span style={S.note}>
                       {" "}
-                      (:{r.param.name} &rarr;{" "}
-                      {r.param.queryKey ? `?${r.param.queryKey}` : "path"})
+                      (:{r.param.name} &rarr; path)
                     </span>
                   )}
                 </td>

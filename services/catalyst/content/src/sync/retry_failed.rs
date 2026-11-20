@@ -153,7 +153,7 @@ fn classify(failure: &FailedDeployment, max_retries: u32, now_ms: i64) -> RetryD
 
 pub struct RetryFailedDeployments {
     config: RetryFailedConfig,
-    http_client: reqwest::Client,
+    http_client: crate::http::CheckedRedirectClient,
     storage: Arc<Storage>,
     deployer: Arc<LiveSyncDeployer>,
     failed_store: Arc<LiveFailedDeploymentsStore>,
@@ -163,7 +163,7 @@ pub struct RetryFailedDeployments {
 impl RetryFailedDeployments {
     pub fn new(
         config: RetryFailedConfig,
-        http_client: reqwest::Client,
+        http_client: crate::http::CheckedRedirectClient,
         storage: Arc<Storage>,
         deployer: Arc<LiveSyncDeployer>,
         failed_store: Arc<LiveFailedDeploymentsStore>,

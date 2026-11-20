@@ -543,6 +543,10 @@ pub struct PrimaryPlayerRes(pub Entity);
 #[derive(Resource)]
 pub struct PrimaryCameraRes(pub Entity);
 
+/// A camera that draws the lens flare of the directional light (`visuals::lens_flare`).
+#[derive(Component, Clone, Copy, Default)]
+pub struct LensFlare;
+
 /// World-space head gaze angles, in degrees. On the local player, written each frame
 /// from the real camera (and zeroed/disabled when a scene-driven camera is active). On
 /// remote players, written from the incoming rfc4::Movement head-sync fields. The
@@ -1039,6 +1043,8 @@ pub struct GraphicsSettings {
     /// share of the window's device pixels the world renders at, upscaled to the window with FSR
     /// (`visuals::upscale`); the UI stays at full resolution
     pub render_scale: f32,
+    /// draw the lens flare of the sun by day and of the moon at night (`visuals::lens_flare`)
+    pub lens_flare: bool,
 }
 
 /// The ambient brightness setting at which the Trilight ambient is the sky preset's
@@ -1099,6 +1105,7 @@ impl Default for GraphicsSettings {
             spring_bones: false,
             gpu_bytes_per_frame: 10_000_000,
             render_scale: 1.0,
+            lens_flare: true,
         }
     }
 }
@@ -1116,6 +1123,7 @@ impl GraphicsSettings {
         self.shadow_distance = preset.shadow_distance;
         self.light_count = preset.light_count;
         self.shadow_caster_count = preset.shadow_caster_count;
+        self.lens_flare = preset.lens_flare;
         self.dof = preset.dof;
         self.ssao = preset.ssao;
         self.fog = preset.fog;
@@ -1618,7 +1626,7 @@ impl PermissionStrings for PermissionType {
             PermissionType::Websocket => "Open Websocket",
             PermissionType::OpenUrl => "Open Url",
             PermissionType::CopyToClipboard => "Copy to Clipboard",
-            PermissionType::OpenExplorerUi => "Open Explorer Menu",
+            PermissionType::OpenExplorerUi => "Open Explorer Menu or Item Purchase",
         }
     }
 
@@ -1677,7 +1685,7 @@ impl PermissionStrings for PermissionType {
             PermissionType::OpenUrl => "open a url in your browser",
             PermissionType::CopyToClipboard => "copy text into the clipboard",
             PermissionType::OpenExplorerUi => {
-                "open an explorer menu panel (map, backpack, settings, ...)"
+                "open an explorer menu panel (map, backpack, settings, ...) or the purchase confirmation for an item"
             }
         }
     }
@@ -1701,7 +1709,9 @@ impl PermissionStrings for PermissionType {
             PermissionType::Websocket => "opening a websocket",
             PermissionType::OpenUrl => "opening a url in your browser",
             PermissionType::CopyToClipboard => "copying text into the clipboard",
-            PermissionType::OpenExplorerUi => "opening an explorer menu panel",
+            PermissionType::OpenExplorerUi => {
+                "opening an explorer menu panel or an item's purchase confirmation"
+            }
         }
     }
 }
@@ -2188,11 +2198,19 @@ pub struct PreviewMode {
     pub preview_parcel: Option<IVec2>,
 }
 
-/// Render out-of-bounds geometry (dithered) instead of culling it. Set at startup
-/// (preview, a loopback realm, or editor mode — never a public realm); read by
-/// scene_material's show-outside-bounds observer.
+/// Render out-of-bounds geometry (dithered) instead of culling it, and keep its colliders on.
+/// Set at startup (preview, a loopback realm, or editor mode — never a public realm); read by
+/// scene_material's show-outside-bounds observer and by the scene collider data.
 #[derive(Debug, Resource, Default)]
 pub struct ShowOutOfBounds(pub bool);
+
+impl ShowOutOfBounds {
+    /// The switch for a run on `realm`: on in the editor, in preview and on a loopback realm
+    /// (local development). A run with no realm of its own passes none.
+    pub fn for_run(editor: bool, preview: bool, realm: Option<&str>) -> Self {
+        Self(editor || preview || realm.is_some_and(crate::util::is_loopback_url))
+    }
+}
 
 /// True when the explorer is embedded in a scene editor (the explicit `--editor` arg /
 /// `editor` web boot param — the editor host is expected to unfreeze scenes when the
@@ -2363,6 +2381,16 @@ pub struct ServerConfiguration {
     pub local_scene_parcels: Option<Vec<String>>,
 }
 
+impl ServerConfiguration {
+    /// Whether the realm lists its scenes up front: a World, and also some previews and the
+    /// editor's realm. A city lists none and resolves its scenes around the player.
+    pub fn lists_scenes(&self) -> bool {
+        self.scenes_urn
+            .as_ref()
+            .is_some_and(|urns| !urns.is_empty())
+    }
+}
+
 #[derive(Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct MapData {
@@ -2501,6 +2529,21 @@ pub struct WorldPasswordPrompter(pub tokio::sync::mpsc::UnboundedSender<WorldPas
 mod tests {
     use super::*;
     use crate::inputs::CommonInputAction;
+
+    #[test]
+    fn out_of_bounds_geometry_shows_in_the_editor_in_preview_and_on_a_loopback_realm() {
+        let public = Some("https://realm.example.test/main");
+        assert!(!ShowOutOfBounds::for_run(false, false, public).0);
+        assert!(ShowOutOfBounds::for_run(true, false, public).0);
+        assert!(ShowOutOfBounds::for_run(false, true, public).0);
+        assert!(ShowOutOfBounds::for_run(false, false, Some("http://127.0.0.1:8000")).0);
+        assert!(ShowOutOfBounds::for_run(false, false, Some("http://localhost:8000")).0);
+        // a preview server reached by its LAN address
+        assert!(!ShowOutOfBounds::for_run(false, false, Some("http://192.168.1.20:8000")).0);
+        // no realm of its own
+        assert!(!ShowOutOfBounds::for_run(false, false, None).0);
+        assert!(ShowOutOfBounds::for_run(false, true, None).0);
+    }
 
     #[test]
     fn fog_reads_the_old_variants_as_on() {
@@ -2855,6 +2898,7 @@ mod tests {
         (g.vsync, g.fps_target, g.render_scale) = (false, 144, 0.5);
         (g.msaa, g.bloom, g.dof) = (AaSetting::FxaaLow, BloomSetting::High, DofSetting::Off);
         (g.shadow_distance, g.light_count, g.shadow_caster_count) = (200.0, 32, 8);
+        g.lens_flare = false;
         (g.ambient_brightness, g.oob, g.cel_shading) = (10, 0.0, false);
         config.reset_outdated_settings();
 
@@ -3128,6 +3172,14 @@ mod tests {
                 "{toggles}"
             );
         }
+    }
+
+    #[test]
+    fn a_realm_lists_scenes_only_with_a_scene_in_its_list() {
+        let config = |json: &str| serde_json::from_str::<ServerConfiguration>(json).unwrap();
+        assert!(config(r#"{"scenesUrn":["urn:decentraland:entity:a"]}"#).lists_scenes());
+        assert!(!config(r#"{"scenesUrn":[]}"#).lists_scenes());
+        assert!(!config(r#"{"realmName":"main"}"#).lists_scenes());
     }
 
     #[test]

@@ -52,11 +52,13 @@ const MAP_ORDER_BY: &[&str] = &["like_score", "updated_at", "created_at", "most_
 const WORLD_ORDER_BY: &[&str] = &["most_active", "like_score", "created_at"];
 
 /// The query of `GET /api/places` as the discovery server reads it
-/// (`get-places-handler.ts:12-34`, `query-params.ts:12-41`). A flag is true
-/// only as `true`. `limit` and `offset` are JavaScript non-negative integers;
-/// any other value is the default. `categories` and `names` split on commas.
-/// More than 1000 positions, categories or names is a 400. `names` turns
-/// `positions` off. An empty text parameter is absent.
+/// (`get-places-handler.ts:12-34`, `query-params.ts:12-41`), plus places'
+/// own `only_excluded_from_ranking` (`getPlaceList.ts:49-51`), which it does
+/// not read. A flag is true only as `true`, except that one, read as gatsby
+/// `bool()` reads it. `limit` and `offset` are JavaScript non-negative
+/// integers; any other value is the default. `categories` and `names` split
+/// on commas. More than 1000 positions, categories or names is a 400.
+/// `names` turns `positions` off. An empty text parameter is absent.
 fn list_filters(pairs: &[(String, String)]) -> Result<PlaceListFilters, ApiError> {
     let get = |k: &str| pairs.iter().find(|(p, _)| p == k).map(|(_, v)| v.as_str());
     let text = |k: &str| get(k).filter(|v| !v.is_empty()).map(str::to_string);
@@ -91,6 +93,7 @@ fn list_filters(pairs: &[(String, String)]) -> Result<PlaceListFilters, ApiError
         positions: if names.is_empty() { positions } else { vec![] },
         categories,
         only_highlighted,
+        only_excluded_from_ranking: get("only_excluded_from_ranking").is_some_and(gatsby_bool),
         search: text("search"),
         creator_address: text("creator_address").map(|s| s.to_lowercase()),
         sdk: text("sdk"),
@@ -1015,6 +1018,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn only_excluded_from_ranking_narrows_the_places_list() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let token = uuid::Uuid::new_v4().simple().to_string();
+        let [absent, kept, unset, excluded] = [(); 4].map(|_| uuid::Uuid::new_v4().to_string());
+        for (id, pointer, raw) in [
+            (&absent, "-150,-150", json!({"positions": ["-150,-150"]})),
+            (
+                &kept,
+                "-150,-152",
+                json!({"positions": ["-150,-152"], "exclude_from_ranking": false}),
+            ),
+            (
+                &unset,
+                "-150,-153",
+                json!({"positions": ["-150,-153"], "exclude_from_ranking": null}),
+            ),
+            (
+                &excluded,
+                "-150,-151",
+                json!({"positions": ["-150,-151"], "exclude_from_ranking": true}),
+            ),
+        ] {
+            sqlx::query(
+                "INSERT INTO explore.place (id, base_position, title, raw) VALUES ($1, $2, $3, $4)",
+            )
+            .bind(id)
+            .bind(pointer)
+            .bind(&token)
+            .bind(raw)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let state = Arc::new(crate::ExploreState::new(
+            pool.clone(),
+            crate::Settings::for_tests(),
+            None,
+        ));
+        let all = response(state.clone(), &format!("/api/places?search={token}")).await;
+        assert_eq!(all["total"], 4, "{all}");
+        for order in ["like_score", "most_active"] {
+            let uri = format!(
+                "/api/places?search={token}&order_by={order}&only_excluded_from_ranking=true"
+            );
+            let body = response(state.clone(), &uri).await;
+            assert_eq!(body["total"], 1, "{uri}: {body}");
+            assert_eq!(body["data"][0]["id"], excluded, "{uri}");
+        }
+    }
+
+    #[tokio::test]
     async fn owner_pointer_opt_out_and_world_names_keep_their_independent_meanings() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
@@ -1826,6 +1882,7 @@ mod tests {
             ("sdk", "7"),
             ("creator_address", "0xABC"),
             ("only_highlighted", "true"),
+            ("only_excluded_from_ranking", "true"),
             ("positions", "1,2"),
             ("categories", "art,poi"),
             ("limit", "500"),
@@ -1836,7 +1893,7 @@ mod tests {
         assert_eq!(f.categories, vec!["art", "poi"]);
         assert_eq!(f.sdk.as_deref(), Some("7"));
         assert_eq!(f.creator_address.as_deref(), Some("0xabc"));
-        assert!(f.only_highlighted);
+        assert!(f.only_highlighted && f.only_excluded_from_ranking);
         assert!(f.positions.is_empty(), "names turn positions off");
         assert_eq!((f.limit, f.offset), (100, 2));
         // `places-repository/component.ts:65-67`: names and only_highlighted lift `world IS false`.
@@ -1848,12 +1905,20 @@ mod tests {
             ("search", ""),
             ("sdk", ""),
             ("only_highlighted", "1"),
+            ("only_excluded_from_ranking", "1"),
             ("order", "ASC"),
         ]))
         .unwrap();
         assert_eq!((default.limit, default.offset), (100, 0));
         assert!(default.search.is_none() && default.sdk.is_none());
         assert!(!default.only_highlighted && default.only_places && default.order_desc);
+        // gatsby `bool()` for the places-only flag: `1` is true, `yes` is not.
+        assert!(default.only_excluded_from_ranking);
+        assert!(
+            !list_filters(&pairs(&[("only_excluded_from_ranking", "yes")]))
+                .unwrap()
+                .only_excluded_from_ranking
+        );
         assert!(
             !list_filters(&pairs(&[("order", "asc")]))
                 .unwrap()

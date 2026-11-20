@@ -15,6 +15,7 @@ import {
 import "@dcl/one-ui/foundations/colors/colors.css";
 import "@dcl/one-ui/foundations/spacing/spacing.css";
 import "@dcl/one-ui/foundations/layout/layout.css";
+import "@dcl/one-ui/apps/sites/profile-tokens.css";
 import "@ui/atoms/primitives.css";
 import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
 

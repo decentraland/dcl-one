@@ -374,7 +374,7 @@ impl DownloadSlot {
 struct Upstream {
     pool: PgPool,
     storage: Arc<Storage>,
-    client: reqwest::Client,
+    client: crate::http::CheckedRedirectClient,
     sources: Vec<String>,
     /// Asked for a content file only, after `sources`: the worlds content server the worlds
     /// read-through mirrors from (`WORLDS_CONTENT_MIRROR_SOURCE`), whose scene files a world's
@@ -401,7 +401,7 @@ impl ReadThrough {
     pub fn new(
         pool: PgPool,
         storage: Arc<Storage>,
-        client: reqwest::Client,
+        client: crate::http::CheckedRedirectClient,
         sources: Vec<String>,
         entity_types: Option<HashSet<String>>,
         fills: Fills,
@@ -432,7 +432,7 @@ impl ReadThrough {
         own_urls: &[String],
         pool: PgPool,
         storage: Arc<Storage>,
-        client: reqwest::Client,
+        client: crate::http::CheckedRedirectClient,
         validator: Arc<Sources>,
     ) -> anyhow::Result<Option<Self>> {
         if !config.content.read_through_enabled {
@@ -735,6 +735,7 @@ impl Upstream {
             .send()
             .await?
             .error_for_status()?;
+        let resp = crate::sync_types::refuse_redirect(resp, "/entities/active")?;
         match read_json(resp).await? {
             Value::Array(docs) => Ok(docs),
             _ => Err(SyncError::Other(
@@ -757,10 +758,12 @@ impl Upstream {
                 .send()
                 .await
                 .and_then(reqwest::Response::error_for_status)
+                .map_err(SyncError::from)
+                .and_then(|resp| crate::sync_types::refuse_redirect(resp, "/audit"))
             {
                 Ok(resp) => resp,
                 Err(e) => {
-                    last = e.into();
+                    last = e;
                     continue;
                 }
             };

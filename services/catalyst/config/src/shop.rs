@@ -141,6 +141,11 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_SALES_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_sales_index_enabled: bool,
 
+    /// Walk the Polygon Committee contracts' MemberSet logs (builder's curation committee)
+    /// over the `TRADE_RPC_URLS` 137 entry, else on mainnet `RPC_ENDPOINT_POLYGON`.
+    #[arg(long, env = "MARKETPLACE_COMMITTEE_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub marketplace_committee_index_enabled: bool,
+
     #[arg(long, env = "MARKETPLACE_INDEX_INTERVAL_SECS", default_value_t = 5)]
     pub marketplace_index_interval_secs: u64,
 
@@ -483,7 +488,7 @@ pub struct ShopConfig {
     pub credits_checkout_cancel_url: String,
 
     // The shop-server fold (src/shop/{outfits,subscriptions,treasury}).
-    /// The outfit authoring allowlist (comma or newline separated wallets, the signed-fetch signer compared lowercase); empty refuses every outfit write.
+    /// A local override of the outfit authoring allowlist (comma or newline separated wallets, the signed-fetch signer compared lowercase); blank reads the `dapps-shop-outfit-creators` flag variant per request, and a set value with no valid wallet lets no one author.
     #[arg(long, env = "SHOP_OUTFIT_CREATORS", default_value = "")]
     pub shop_outfit_creators: String,
 
@@ -673,7 +678,8 @@ mod tests {
         assert!(
             !c.marketplace.marketplace_nft_index_enabled
                 && !c.marketplace.marketplace_trade_events_index_enabled
-                && !c.marketplace.marketplace_sales_index_enabled,
+                && !c.marketplace.marketplace_sales_index_enabled
+                && !c.marketplace.marketplace_committee_index_enabled,
             "the chain indexes are opt-in"
         );
         assert_eq!(

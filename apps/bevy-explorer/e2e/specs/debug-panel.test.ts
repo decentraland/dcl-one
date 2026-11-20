@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spec, until } from '../driver/index.ts'
+import { readTarget, spec, until } from '../driver/index.ts'
 
 const scenario = spec(import.meta.url)
 const panel = { role: 'dialog', name: 'Debug panel' } as const
@@ -35,9 +35,18 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
   // release builds (CI's among them) leave out
   const profilerBuild = (await explorer.json<{ title: string }[]>('/debug_panel'))
     .some((section) => section.title === 'Profiler')
-  const developmentBuild = await explorer.json<boolean>('/debug_panel --dev-build')
-  const sidebarSettings = button('Sidebar settings')
+  const target = readTarget()
   const nativeHud = explorer.console.kind === 'native'
+  const sidebarSettings = button('Sidebar settings')
+  await explorer.hud.wait(sidebarSettings)
+  const launcher = button('Toggle debug panel')
+  const launcherEnabled = await explorer.hud.isVisible(launcher)
+  if (!nativeHud) {
+    const requested = target.webUrl != null && new URL(target.webUrl).searchParams.get('debugPanel') === '1'
+    assert.equal(launcherEnabled, requested)
+  } else if (target.native.bin) {
+    assert.equal(launcherEnabled, target.native.args.includes('--debug-panel'))
+  }
   if (nativeHud) {
     await explorer.hud.click(sidebarSettings)
     await explorer.hud.wait(button('Debug panel'))
@@ -48,16 +57,14 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     { timeoutMs: 10_000, what: 'a CEF repaint while the debug panel is closed' })
     assert.ok(cef.paintSize?.every(size => size > 0))
     // the open popup's backdrop covers its handle: Escape closes the popup
-    if (developmentBuild) await explorer.escape()
+    if (launcherEnabled) await explorer.escape()
   }
   const waitTarget = (fps: number) => until(() => explorer.hud.get(panel),
     (read) => read.text.includes('Target frame rate (FPS) ' + fps),
     { timeoutMs: 10_000, what: 'the open panel to show a target of ' + fps + ' FPS' })
-  const launcher = button('Toggle debug panel')
-  if (developmentBuild) {
+  if (launcherEnabled) {
     await explorer.hud.click(launcher)
   } else {
-    assert.equal(await explorer.hud.isVisible(launcher), false)
     if (!nativeHud) await explorer.hud.click(sidebarSettings)
     await explorer.hud.click(button('Debug panel'))
   }

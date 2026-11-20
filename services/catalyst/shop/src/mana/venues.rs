@@ -110,6 +110,7 @@ impl Book {
                 listings::offchain_marketplace_v3(1),
                 listings::offchain_marketplace_v2(1),
                 Some(listings::OffChainMarketplace {
+                    contract: "OffChainMarketplaceV1",
                     name: "DecentralandMarketplaceEthereum",
                     version: "1.0.0",
                     address: "0x2d6b3508f9aca32d2550f92b2addba932e73c1ff",
@@ -137,6 +138,7 @@ impl Book {
                 listings::offchain_marketplace_v3(137),
                 listings::offchain_marketplace_v2(137),
                 Some(listings::OffChainMarketplace {
+                    contract: "OffChainMarketplaceV1",
                     name: "DecentralandMarketplacePolygon",
                     version: "1.0.0",
                     address: "0x540fb08edb56aae562864b390542c97f562825ba",

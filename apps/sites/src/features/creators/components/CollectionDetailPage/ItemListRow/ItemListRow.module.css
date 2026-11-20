@@ -1,0 +1,401 @@
+/* Shared by the header and the rows so they stay aligned: every track depends on the row width alone, never on its
+   content, so each row resolves the same widths. The name gets twice the room of the other fields; the pill columns
+   keep a floor so their nowrap pills never spill into the next cell. Layered so the row's and the header's own
+   display, gap and alignment win. */
+@layer foundations {
+  .columns {
+    display: grid;
+    grid-template-columns: 74px minmax(0, 1.5fr) repeat(3, minmax(0, 1fr)) minmax(56px, auto);
+    align-items: center;
+    gap: 16px;
+
+    &[data-with-play-mode] {
+      grid-template-columns: 74px minmax(0, 1.5fr) repeat(4, minmax(0, 1fr)) minmax(56px, auto);
+    }
+    &[data-with-market] {
+      grid-template-columns: 74px minmax(0, 1.5fr) repeat(5, minmax(0, 1fr)) minmax(124px, 1fr) minmax(56px, auto);
+    }
+    &[data-with-play-mode][data-with-market] {
+      grid-template-columns: 74px minmax(0, 1.5fr) repeat(6, minmax(0, 1fr)) minmax(124px, 1fr) minmax(56px, auto);
+    }
+    &[data-with-status] {
+      grid-template-columns: 74px minmax(0, 1.5fr) repeat(3, minmax(0, 1fr)) minmax(136px, 1fr) minmax(56px, auto);
+    }
+    &[data-with-play-mode][data-with-status] {
+      grid-template-columns: 74px minmax(0, 1.5fr) repeat(4, minmax(0, 1fr)) minmax(136px, 1fr) minmax(56px, auto);
+    }
+    &[data-with-market][data-with-status] {
+      grid-template-columns:
+        74px minmax(0, 1.5fr) repeat(5, minmax(0, 1fr)) minmax(124px, 1fr) minmax(136px, 1fr)
+        minmax(56px, auto);
+    }
+    &[data-with-play-mode][data-with-market][data-with-status] {
+      grid-template-columns:
+        74px minmax(0, 1.5fr) repeat(6, minmax(0, 1fr)) minmax(124px, 1fr) minmax(136px, 1fr)
+        minmax(56px, auto);
+    }
+  }
+}
+
+.row {
+  padding: 12px 24px 12px 12px;
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-40);
+
+  /* Inset shadows, not borders, so flagged rows stay aligned with the header's columns. */
+  &[data-validation="errors"] {
+    box-shadow: inset 3px 0 0 var(--dcl-system-red-dark-1);
+    background: var(--color-error-surface);
+  }
+
+  &[data-validation="warnings"] {
+    box-shadow: inset 3px 0 0 var(--color-amber);
+  }
+
+  @media (max-width: 900px) {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+  }
+}
+
+/* Transparent in the table so name and fields stay grid children; a wrapping row beside the thumbnail in the card. */
+.content {
+  display: contents;
+
+  @media (max-width: 900px) {
+    display: flex;
+    flex: 1;
+    flex-wrap: wrap;
+    align-items: center;
+    min-width: 0;
+    row-gap: 6px;
+    column-gap: 16px;
+  }
+}
+
+.thumb {
+  flex: none;
+  width: 74px;
+  height: 74px;
+  border-radius: 6px;
+  overflow: hidden;
+
+  @media (max-width: 900px) {
+    width: 62px;
+    height: 62px;
+  }
+}
+
+.name {
+  min-width: 0;
+  max-width: 100%;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--dcl-neutrals-snow);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+
+  /* The rename button's padding and hidden pencil already space the badge. */
+  &:has(> button) {
+    gap: 0;
+  }
+}
+
+.nameText {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The whole name is the edit trigger; it keeps the text's ellipsis and sits flush with the column. */
+.nameButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--dcl-radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  min-width: 0;
+  max-width: calc(100% + 8px);
+  margin-left: -8px;
+  padding: 0 4px 0 8px;
+  text-align: left;
+
+  & > svg {
+    flex: none;
+    width: 0;
+    font-size: 18px;
+    opacity: 0;
+    transition:
+      width 0.15s ease,
+      opacity 0.15s ease;
+  }
+  &:hover,
+  &:focus-visible {
+    background: var(--dcl-transparencies-white-10);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-white);
+    outline-offset: 2px;
+  }
+  &:hover > svg,
+  &:focus-visible > svg {
+    width: 18px;
+    opacity: 1;
+  }
+}
+
+.nameEditor {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: calc(100% + 8px);
+  margin-left: -8px;
+}
+
+.nameInput {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--dcl-neutrals-snow);
+  border-radius: var(--radius-chip);
+  background: var(--dcl-transparencies-white-10);
+  color: var(--dcl-neutrals-snow);
+  font-size: 14px;
+  font-weight: 700;
+  outline: none;
+
+  &[data-invalid] {
+    border-color: var(--dcl-system-red);
+  }
+  &:disabled {
+    opacity: 0.6;
+  }
+}
+
+.editorButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dcl-radius-sm);
+  background: none;
+  color: var(--dcl-neutrals-white);
+  cursor: pointer;
+
+  & svg {
+    font-size: 20px;
+  }
+  &[data-variant="cancel"] {
+    background: var(--dcl-transparencies-black-40);
+    border: 1px solid var(--dcl-neutrals-graffito);
+
+    &:hover {
+      border-color: var(--dcl-neutrals-silver);
+    }
+  }
+  &[data-variant="save"] {
+    background: var(--dcl-brand-ruby);
+
+    &:hover {
+      background: var(--color-dcl-red-hover);
+    }
+  }
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  &:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-white);
+    outline-offset: 2px;
+  }
+}
+
+.thumbButton {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-white);
+    outline-offset: -2px;
+  }
+}
+
+.thumbBadge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--dcl-neutrals-white);
+  color: var(--dcl-neutrals-cloudy-sky);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+
+  & svg {
+    font-size: 16px;
+  }
+  button:hover > &,
+  button:focus-visible > & {
+    opacity: 1;
+  }
+}
+
+/* Reads as plain text at rest; a glass pill with a pencil once hovered or focused. */
+.priceButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--dcl-radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  padding: 0 10px;
+
+  & > svg {
+    flex: none;
+    width: 0;
+    font-size: 18px;
+    opacity: 0;
+    transition:
+      width 0.15s ease,
+      opacity 0.15s ease;
+  }
+  &:hover,
+  &:focus-visible {
+    background: var(--dcl-transparencies-white-10);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-white);
+    outline-offset: 2px;
+  }
+  &:hover > svg,
+  &:focus-visible > svg {
+    width: 18px;
+    opacity: 1;
+  }
+}
+
+.smartBadge {
+  display: inline-flex;
+  color: var(--dcl-neutrals-snow);
+  background: var(--color-glass-hover);
+  border-radius: var(--radius-chip);
+  padding: 1px;
+
+  & svg {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+.validationChip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  background: var(--color-warning-overlay);
+  color: var(--color-amber);
+
+  &[data-status="errors"] {
+    background: var(--color-error-overlay);
+    color: var(--dcl-system-red);
+  }
+
+  & svg {
+    width: 20px;
+    height: 20px;
+  }
+}
+
+.cell {
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.57;
+  color: var(--dcl-neutrals-snow);
+  display: flex;
+  justify-content: center;
+
+  @media (max-width: 900px) {
+    justify-content: flex-start;
+
+    /* The table grid needs the "—" to keep columns aligned; the wrapped card does not. */
+    &[data-empty] {
+      display: none;
+    }
+  }
+}
+
+.amount {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+/* The price a buyer pays and the one it replaces, as the Shop's cards draw them: the price in plain ink (the tag
+   already says "on sale" in red), the old one struck through in grey. */
+.salePrice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dcl-neutrals-snow);
+  font-weight: 700;
+}
+
+.originalPrice {
+  color: var(--dcl-neutrals-silver);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.actionsCell {
+  display: flex;
+  justify-content: flex-end;
+
+  @media (max-width: 900px) {
+    flex: none;
+    margin-left: auto;
+  }
+}

@@ -92,6 +92,20 @@ pub const AMBIENT_GROUND_RAMP: [(f32, Vec3); 6] = [
     (1.0, Vec3::new(0.56078434, 0.24313724, 0.26083013)),
 ];
 
+/// The lens flare's intensity, by day fraction.
+pub const LENS_FLARE_INTENSITY_BY_TIME: [(f32, f32); 10] = [
+    (0.0, 0.6),
+    (0.0723, 0.6),
+    (0.1410, 0.0018),
+    (0.2738, 0.0),
+    (0.35, 1.0),
+    (0.7, 1.0),
+    (0.7584, 0.0),
+    (0.8655, 0.0),
+    (0.9319, 0.6),
+    (1.0, 0.6),
+];
+
 /// Linear between keys, clamped outside the range. `keys` must be sorted ascending.
 fn sample<T: Copy>(keys: &[(f32, T)], t: f32, lerp: impl Fn(T, T, f32) -> T) -> T {
     let (first, last) = (keys[0], keys[keys.len() - 1]);
