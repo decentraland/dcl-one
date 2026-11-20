@@ -2089,7 +2089,8 @@ fold record, a publish and a rewind; the table stays at a dozen rows.
 **Ownership.** Each network has a supervisor job, `chain-walk-ethereum` and
 `chain-walk-matic`, in the process that runs the indexes. It walks each
 projection that process enables under the projection's own lease,
-`<index>-index-<network>` (`nft-index-matic`, `rentals-index-ethereum`), so
+`<index job>-<network>` (`nft-index-matic`, `trade-events-index-matic`,
+`rentals-index-ethereum`), so
 processes with different projections enabled share a network. Each
 projection keeps its own cadence and backoff. A process that runs no fleet
 jobs (`FLEET_JOBS_ENABLED=false`) takes no lease and walks nothing.
