@@ -280,7 +280,7 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
         _ if name.is_empty() => ("Event".to_string(), description),
         _ => (name.to_string(), description),
     };
-    let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":catalyst_explore::events::posters::notice_image_url(text(&intent.event,"image"),links.public_base.as_deref(),&links.asset_base),"link":link,"occurredAt":intent.occurred_at.and_utc().to_rfc3339()});
+    let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":catalyst_explore::node_assets::notice_image_url(text(&intent.event,"image"),links.public_base.as_deref(),&links.asset_base),"link":link,"occurredAt":intent.occurred_at.and_utc().to_rfc3339()});
     if matches!(
         intent.kind.as_str(),
         "events_starts_soon" | "events_started" | "event_created"
@@ -1833,6 +1833,18 @@ mod tests {
                 },
             );
             assert_eq!(payload["image"], absolute, "{stored}");
+        }
+        // An image the read side drops is sent empty.
+        for dropped in ["javascript:x", "/other/a.webp"] {
+            let payload = metadata(
+                &intent("event_approved", json!({"name":"Dropped","image":dropped})),
+                &recipient(false, false),
+                &origins(
+                    "https://web.example.org",
+                    "https://assets.example.org/events",
+                ),
+            );
+            assert_eq!(payload["image"], "", "{dropped}");
         }
         // Without `PUBLIC_URL` a poster stays relative, as `GET` serves it.
         let payload = metadata(

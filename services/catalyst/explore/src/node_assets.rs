@@ -25,12 +25,13 @@ pub(crate) fn event_image_url(
     configured_public_base: Option<&str>,
     events_asset_base: &str,
 ) -> String {
-    let url = image_url(image, configured_public_base, events_asset_base);
     if poster_path(image).is_some() {
-        url
-    } else {
-        to_node(&url, rewrite_base)
+        return mounted_poster_url(image, configured_public_base);
     }
+    to_node(
+        &absolute_default_image(image, events_asset_base),
+        rewrite_base,
+    )
 }
 
 /// The bundled default on the events asset mount; anything else as stored.
@@ -42,24 +43,15 @@ fn absolute_default_image(image: &str, events_asset_base: &str) -> String {
     }
 }
 
-/// Posters on their mount and the default on the asset mount; anything else as stored.
-fn image_url(image: &str, configured_public_base: Option<&str>, events_asset_base: &str) -> String {
-    if poster_path(image).is_some() {
-        return mounted_poster_url(image, configured_public_base);
-    }
-    absolute_default_image(image, events_asset_base)
-}
-
-/// A notice's image, sanitized as on read (empty when the read side drops
-/// it), without the read side's `asset_rewrite_base` mapping of upstream
-/// asset URLs to this node.
+/// A notice's image as the read projection serves it, without its
+/// `asset_rewrite_base` mapping of upstream asset URLs to this node; empty
+/// when the read side drops it.
 pub fn notice_image_url(
     image: &str,
     configured_public_base: Option<&str>,
     events_asset_base: &str,
 ) -> String {
-    crate::sanitize::sanitize_asset_url(image)
-        .map(|image| image_url(&image, configured_public_base, events_asset_base))
+    crate::events::project_event_image(image, None, configured_public_base, events_asset_base)
         .unwrap_or_default()
 }
 
@@ -412,7 +404,6 @@ mod tests {
             super::notice_image_url("/other/a.webp", public.as_deref(), &assets),
             ""
         );
-        assert!(crate::sanitize::sanitize_asset_url("/other/a.webp").is_err());
     }
 
     #[test]
