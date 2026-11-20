@@ -2,7 +2,7 @@
 // to a signed send ends it as bought, and only a consumed nonce with no possible match ends it as not bought.
 import { describe, expect, it, vi } from 'vitest'
 import { encodeAbiParameters, encodeEventTopics, keccak256, parseAbiItem, type Hex } from 'viem'
-import { boundedReader, createManaEvidence, decodeExecution, resolveMana, type ManaEvidence, type ManaExecution } from '../shell/shop/manaEvidence'
+import { boundedReader, createManaEvidence, decodeExecution, manaIncluded, resolveMana, type ManaEvidence, type ManaExecution } from '../shell/shop/manaEvidence'
 import { createRpcReader } from '../../shop/checkout/chain/rpc'
 import type { ManaAttemptRecord } from '../shell/shop/manaPurchase'
 
@@ -238,5 +238,31 @@ describe('a MANA sale on chain', () => {
     const evidence = createManaEvidence({ url: () => 'https://rpc.test', fetchImpl: fetchImpl as unknown as typeof fetch, reader })
     await expect(evidence.finalized(137)).rejects.toThrow(/HTTP 503/)
     await vi.waitFor(() => expect(cancelled).toBe(true))
+  })
+})
+
+describe('a MANA sale on chain before it is final', () => {
+  const included = (rec: ManaAttemptRecord, evidence: ManaEvidence) => manaIncluded(rec, { chainId: 137, buyer: BUYER, venue: { address: STORE, metaTx: 'functionSignature' }, evidence })
+  const sent = record({ sends: [{ id: 's2', stage: 'dispatched', payload: keccak256(SIGNED), at: 1, hash: RELAY_HASH }] })
+
+  it('holds once the relay’s hash is this sale’s own signed execution past the checkpoint, final or not', async () => {
+    expect(await included(sent, chain({ txs: { [RELAY_HASH]: { to: STORE, input: SIGNED } }, receipts: { [RELAY_HASH]: { status: 'success', blockNumber: F + 50n } } }))).toBe(true)
+  })
+
+  it('doesn’t hold on a receipt alone: another transaction, another contract, at or before the checkpoint, reverted, or no hash', async () => {
+    const ok = { status: 'success' as const, blockNumber: 300n }
+    expect(await included(sent, chain({ txs: { [RELAY_HASH]: { to: STORE, input: OTHER_SIGNED } }, receipts: { [RELAY_HASH]: ok } }))).toBe(false)
+    expect(await included(sent, chain({ txs: { [RELAY_HASH]: { to: '0x' + '99'.repeat(20), input: SIGNED } }, receipts: { [RELAY_HASH]: ok } }))).toBe(false)
+    expect(await included(sent, chain({ txs: { [RELAY_HASH]: { to: STORE, input: SIGNED } }, receipts: { [RELAY_HASH]: { status: 'success', blockNumber: 100n } } }))).toBe(false)
+    expect(await included(sent, chain({ txs: { [RELAY_HASH]: { to: STORE, input: SIGNED } }, receipts: { [RELAY_HASH]: { status: 'reverted', blockNumber: 300n } } }))).toBe(false)
+    expect(await included(record(), chain({ txs: { [RELAY_HASH]: { to: STORE, input: SIGNED } }, receipts: { [RELAY_HASH]: ok } }))).toBe(false)
+  })
+
+  it('holds for a forwarder’s transaction whose block holds the execution that consumed the nonce with this call, never another call', async () => {
+    const forwarder = '0x' + '99'.repeat(20)
+    const at = (call: Hex) =>
+      chain({ now: 8n, executions: [execution({ blockNumber: 300n, txHash: RELAY_HASH, call })], txs: { [RELAY_HASH]: { to: forwarder, input: OTHER_SIGNED } }, receipts: { [RELAY_HASH]: { status: 'success', blockNumber: 300n } } })
+    expect(await included(sent, at(CALL))).toBe(true)
+    expect(await included(sent, at('0xbeef'))).toBe(false)
   })
 })

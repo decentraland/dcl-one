@@ -1,6 +1,6 @@
 import type { DehydratedState } from "@tanstack/react-query";
 import { RouterContextProvider } from "react-router";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { destination } from "@/data/lib/catalyst/places/destination.fixture";
 import { fetchDestinations } from "@/data/lib/catalyst/places/destinations";
@@ -24,62 +24,122 @@ function keys(state: DehydratedState) {
   return state.queries.map((query) => query.queryKey);
 }
 
-afterEach(() => vi.resetAllMocks());
+const EMPTY = { data: [], total: 0, received: 0, copy: null };
 
 describe("when the /places document loads", () => {
-  it("should dehydrate the first Explore page and Live Now", async () => {
-    vi.mocked(fetchDestinations).mockResolvedValue({ data: [destination()], total: 1, received: 1, copy: null });
-    const { payload, status } = await run("http://localhost/places");
-    expect(status).toBe(200);
-    expect(keys(payload.dehydratedState)).toEqual(expect.arrayContaining([["places", "browse", "all", ""], ["places", "live"]]));
-    expect(payload.platform.kind).toBe("desktop");
-  });
+  let result: Awaited<ReturnType<typeof run>>;
 
-  it("should pass the category and search of the URL to the feed", async () => {
-    vi.mocked(fetchDestinations).mockResolvedValue({ data: [], total: 0, received: 0, copy: null });
-    const { payload } = await run("http://localhost/places?category=Featured&search=plaza");
-    expect(fetchDestinations).toHaveBeenCalledWith(expect.objectContaining({ only_highlighted: true, search: "plaza", limit: 48 }), expect.anything());
-    // A search collapses Live Now, so its feed is not read.
-    expect(fetchDestinations).toHaveBeenCalledTimes(1);
-    expect(keys(payload.dehydratedState)).toEqual([["places", "browse", "featured", "plaza"]]);
-  });
+  afterEach(() => vi.resetAllMocks());
 
-  it("should answer 503 and dehydrate no failed query when the catalogue is unavailable", async () => {
-    vi.mocked(fetchDestinations).mockRejectedValue(new Error("Catalyst returned 502"));
-    const { payload, status } = await run("http://localhost/places");
-    expect(status).toBe(503);
-    expect(payload.unavailable).toBe(true);
-    expect(payload.dehydratedState.queries.filter((query) => query.state.status !== "success")).toEqual([]);
-  });
-
-  it("should still render with Live Now missing when only its read fails", async () => {
-    vi.mocked(fetchDestinations).mockImplementation(async (params) => {
-      if (params?.limit === 40) throw new Error("timeout");
-      return { data: [destination()], total: 1, received: 1, copy: null };
+  describe("and the catalogue answers", () => {
+    beforeEach(async () => {
+      vi.mocked(fetchDestinations).mockResolvedValue({ data: [destination()], total: 1, received: 1, copy: null });
+      result = await run("http://localhost/places");
     });
-    const { status, payload } = await run("http://localhost/places");
-    expect(status).toBe(200);
-    expect(keys(payload.dehydratedState)).toEqual([["places", "browse", "all", ""]]);
+
+    it("should answer 200", () => {
+      expect(result.status).toBe(200);
+    });
+
+    it("should dehydrate the first Explore page and Live Now", () => {
+      expect(keys(result.payload.dehydratedState)).toEqual(expect.arrayContaining([["places", "browse", "all", ""], ["places", "live"]]));
+    });
+
+    it("should detect a desktop from the user agent", () => {
+      expect(result.payload.platform.kind).toBe("desktop");
+    });
   });
 
-  it("should not read the browse feed for a member section", async () => {
-    vi.mocked(fetchDestinations).mockResolvedValue({ data: [], total: 0, received: 0, copy: null });
-    const { status } = await run("http://localhost/places?tab=favourites");
-    expect(status).toBe(200);
-    expect(fetchDestinations).toHaveBeenCalledTimes(1);
-    expect(fetchDestinations).toHaveBeenCalledWith({ limit: 40, offset: 0 }, expect.anything());
+  describe("and the URL carries a category and a search", () => {
+    beforeEach(async () => {
+      vi.mocked(fetchDestinations).mockResolvedValue(EMPTY);
+      result = await run("http://localhost/places?category=Featured&search=plaza");
+    });
+
+    it("should pass the category and search to the feed", () => {
+      expect(fetchDestinations).toHaveBeenCalledWith(expect.objectContaining({ only_highlighted: true, search: "plaza", limit: 48 }), expect.anything());
+    });
+
+    it("should not read the Live Now feed, which a search collapses", () => {
+      expect(fetchDestinations).toHaveBeenCalledTimes(1);
+    });
+
+    it("should dehydrate only the searched feed", () => {
+      expect(keys(result.payload.dehydratedState)).toEqual([["places", "browse", "featured", "plaza"]]);
+    });
   });
 
-  it("should detect a phone from the user agent", async () => {
-    vi.mocked(fetchDestinations).mockResolvedValue({ data: [], total: 0, received: 0, copy: null });
-    const { payload } = await run("http://localhost/places", "Mozilla/5.0 (Linux; Android 14)");
-    expect(payload.platform).toEqual({ kind: "mobile", os: "android" });
+  describe("and the catalogue is unavailable", () => {
+    beforeEach(async () => {
+      vi.mocked(fetchDestinations).mockRejectedValue(new Error("Catalyst returned 502"));
+      result = await run("http://localhost/places");
+    });
+
+    it("should answer 503", () => {
+      expect(result.status).toBe(503);
+    });
+
+    it("should flag the page unavailable", () => {
+      expect(result.payload.unavailable).toBe(true);
+    });
+
+    it("should dehydrate no failed query", () => {
+      expect(result.payload.dehydratedState.queries.filter((query) => query.state.status !== "success")).toEqual([]);
+    });
+  });
+
+  describe("and only the Live Now read fails", () => {
+    beforeEach(async () => {
+      vi.mocked(fetchDestinations).mockImplementation(async (params) => {
+        if (params?.limit === 40) throw new Error("timeout");
+        return { data: [destination()], total: 1, received: 1, copy: null };
+      });
+      result = await run("http://localhost/places");
+    });
+
+    it("should still answer 200", () => {
+      expect(result.status).toBe(200);
+    });
+
+    it("should render with Live Now missing", () => {
+      expect(keys(result.payload.dehydratedState)).toEqual([["places", "browse", "all", ""]]);
+    });
+  });
+
+  describe("and the URL opens a member section", () => {
+    beforeEach(async () => {
+      vi.mocked(fetchDestinations).mockResolvedValue(EMPTY);
+      result = await run("http://localhost/places?tab=favourites");
+    });
+
+    it("should answer 200", () => {
+      expect(result.status).toBe(200);
+    });
+
+    it("should not read the browse feed, only Live Now", () => {
+      expect(fetchDestinations).toHaveBeenCalledTimes(1);
+      expect(fetchDestinations).toHaveBeenCalledWith({ limit: 40, offset: 0 }, expect.anything());
+    });
+  });
+
+  describe("and the user agent is a phone", () => {
+    beforeEach(async () => {
+      vi.mocked(fetchDestinations).mockResolvedValue(EMPTY);
+      result = await run("http://localhost/places", "Mozilla/5.0 (Linux; Android 14)");
+    });
+
+    it("should detect a phone", () => {
+      expect(result.payload.platform).toEqual({ kind: "mobile", os: "android" });
+    });
   });
 });
 
 describe("when the visitor disconnects during the document read", () => {
-  it("should abort the upstream reads and not report an outage", async () => {
-    const signals: AbortSignal[] = [];
+  let signals: AbortSignal[];
+  let result: { data: Payload; init: ResponseInit | null };
+
+  beforeEach(async () => {
+    signals = [];
     vi.mocked(fetchDestinations).mockImplementation(
       (_params, options) =>
         new Promise((_resolve, reject) => {
@@ -93,8 +153,16 @@ describe("when the visitor disconnects during the document read", () => {
     const pending = loader({ request, params: {}, context: new RouterContextProvider() } as never);
     await vi.waitFor(() => expect(signals).toHaveLength(2));
     controller.abort();
-    const result = (await pending) as unknown as { data: Payload; init: ResponseInit | null };
+    result = (await pending) as unknown as { data: Payload; init: ResponseInit | null };
+  });
+
+  afterEach(() => vi.resetAllMocks());
+
+  it("should abort the upstream reads", () => {
     expect(signals.every((signal) => signal.aborted)).toBe(true);
+  });
+
+  it("should not report an outage", () => {
     expect(result.data.unavailable).toBe(false);
   });
 });

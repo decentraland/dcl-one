@@ -452,4 +452,20 @@ describe("the RPC reader", () => {
     await expect(reader.balance(137, "0x00")).rejects.toThrow(/HTTP 502/);
     await vi.waitFor(() => expect(cancelled).toBe(true));
   });
+
+  it("polls every 500 ms for the first 15 s, then every 2 s, unless the caller sets the interval", async () => {
+    const waits = async (pollMs?: number) => {
+      let clock = 0;
+      const slept: number[] = [];
+      const reader = fakeReader({ receipt: async () => (clock >= 20_000 ? { transactionHash: "0x03", status: "success", blockNumber: 1n } : null) });
+      const sleep = async (ms: number) => {
+        slept.push(ms);
+        clock += ms;
+      };
+      expect(await waitForReceipt(reader, 137, "0x03", { pollMs, now: () => clock, sleep })).toMatchObject({ transactionHash: "0x03" });
+      return slept;
+    };
+    expect(await waits()).toEqual([...Array(30).fill(500), 2_000, 2_000, 2_000]);
+    expect(new Set(await waits(5_000))).toEqual(new Set([5_000]));
+  });
 });

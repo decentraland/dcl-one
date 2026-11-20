@@ -523,6 +523,9 @@ pub struct State {
     pub registry_denylist: registry::LocalDenylist,
     /// The ONE EIP-1654 validator, attached after construction (`attach_eip1654`).
     pub eip1654: std::sync::OnceLock<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
+    /// The auth relay's budget of contract-wallet (`isValidSignature`) calls,
+    /// per network and per replica.
+    pub contract_checks: auth_api::ContractChecks,
 }
 
 pub type Shared = Arc<State>;
@@ -566,6 +569,7 @@ impl State {
             onboarding,
             registry_denylist: Default::default(),
             eip1654: std::sync::OnceLock::new(),
+            contract_checks: Default::default(),
         });
         state
             .denylist
@@ -818,6 +822,11 @@ impl State {
         validator: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     ) -> bool {
         validator.is_some_and(|v| self.eip1654.set(v).is_ok())
+    }
+
+    /// The attached EIP-1654 validator, if any.
+    pub fn eip1654_validator(&self) -> Option<&dyn crate::auth::eip1654::Eip1654Validator> {
+        self.eip1654.get().map(|v| &**v)
     }
 }
 

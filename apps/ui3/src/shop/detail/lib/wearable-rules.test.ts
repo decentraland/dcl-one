@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 
 
+import { fetchEntities } from "../../../wearable-preview/outfit"
 import {
   fetchWearableRules,
   fetchVrmExportBlocked,
@@ -17,9 +18,13 @@ function rule(urn: string, category: string, hides: string[] = [], replaces: str
   return { urn, category: category as WearableRule["category"], hides, replaces }
 }
 
+// Entities stay cached for the page's life (the preview shares the cache), so each test reads from its own peer.
+let peers = 0
+let peer = ""
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn())
-  ;(window as unknown as { __CATALYST_BASE__?: string }).__CATALYST_BASE__ = "https://peer.test"
+  peer = `https://peer-${++peers}.test`
+  ;(window as unknown as { __CATALYST_BASE__?: string }).__CATALYST_BASE__ = peer
 })
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -117,7 +122,7 @@ describe("when reading the rules from the Catalyst", () => {
     expect(rules.map(r => r.urn)).toEqual(["urn:a", "urn:b"])
     expect(rules[0]).toEqual({ urn: "urn:a", category: "skin", hides: ["hat"], replaces: ["head"] })
     const [url, init] = vi.mocked(fetch).mock.calls[0]!
-    expect(url).toBe("https://peer.test/content/entities/active")
+    expect(url).toBe(`${peer}/content/entities/active`)
     const body = (init as RequestInit).body
     expect(JSON.parse(typeof body === "string" ? body : "")).toEqual({ pointers: ["urn:a", "urn:b"] })
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1)
@@ -148,6 +153,31 @@ describe("when reading the rules from the Catalyst", () => {
     expect(await fetchWearableRules([])).toEqual([])
     expect(vi.mocked(fetch)).not.toHaveBeenCalled()
   })
+
+  it("should read the body and the item in the same request and leave them cached for the preview", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { pointers: ["urn:a"], metadata: { data: { category: "hat" } } },
+        { pointers: ["urn:body"], metadata: { data: { category: "body_shape" } } },
+        { pointers: ["urn:item"], metadata: { data: { category: "upper_body" } } }
+      ]
+    } as Response)
+
+    expect((await fetchWearableRules(["urn:a"], ["urn:body", "urn:item"])).map(r => r.urn)).toEqual(["urn:a"])
+    const body = (vi.mocked(fetch).mock.calls[0]![1] as RequestInit).body
+    expect(JSON.parse(typeof body === "string" ? body : "")).toEqual({ pointers: ["urn:a", "urn:body", "urn:item"] })
+
+    const cached = await fetchEntities(peer, ["urn:a", "urn:body", "urn:item"])
+    expect([...cached.keys()]).toEqual(["urn:a", "urn:body", "urn:item"])
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1)
+  })
+
+  it("should still read the body and the item when nothing is worn", async () => {
+    vi.mocked(fetch).mockResolvedValue({ ok: true, json: async () => [] } as Response)
+    expect(await fetchWearableRules([], ["urn:body"])).toEqual([])
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1)
+  })
 })
 
 // `blockVrmExport` exists on the entity and on no marketplace endpoint, which is why it has its own read.
@@ -177,6 +207,13 @@ describe("when asking whether VRM export is blocked", () => {
     expect(await fetchVrmExportBlocked("urn:a")).toBeNull()
 
     vi.mocked(fetch).mockRejectedValue(new Error("offline"))
-    expect(await fetchVrmExportBlocked("urn:a")).toBeNull()
+    expect(await fetchVrmExportBlocked("urn:b")).toBeNull()
+  })
+
+  it("should leave the item cached, so the preview's read of it makes no request", async () => {
+    vi.mocked(fetch).mockResolvedValue(entity(false))
+    expect(await fetchVrmExportBlocked("urn:a")).toBe(false)
+    expect(await fetchWearableRules([], ["urn:a"])).toEqual([])
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1)
   })
 })

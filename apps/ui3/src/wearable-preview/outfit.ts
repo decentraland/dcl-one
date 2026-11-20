@@ -32,6 +32,7 @@ interface EntityData {
   hides?: string[];
   replaces?: string[];
   removesDefaultHiding?: string[];
+  blockVrmExport?: boolean;
 }
 
 export interface Entity {
@@ -113,7 +114,12 @@ async function getJSON<T>(url: string, opts?: RequestInit): Promise<T> {
   }
 }
 
+/**
+ * The page's entities by `${base}|${pointer}`, oldest first: at most ENTITY_CACHE_MAX of them. A pointer with no
+ * active entity is not kept, so an item indexed since shows on its next read.
+ */
 const entityCache = new Map<string, Promise<Entity | null>>();
+const ENTITY_CACHE_MAX = 512;
 const queuedEntities = new Map<string, {
   pointers: Set<string>;
   result: Promise<Map<string, Entity>>;
@@ -151,25 +157,34 @@ function queueEntities(base: string) {
 
 export function fetchEntities(base: string, pointers: string[]): Promise<Map<string, Entity>> {
   const wanted = [...new Set(pointers.map((p) => p.toLowerCase()))];
-  const missing = wanted.filter((p) => !entityCache.has(`${base}|${p}`));
-  if (missing.length) {
-    const batch = queueEntities(base);
-    for (const p of missing) {
-      const key = `${base}|${p}`;
-      batch.pointers.add(p);
-      entityCache.set(
-        key,
-        batch.result
-          .then((entities) => entities.get(p) ?? null)
-          .catch((err) => {
-            entityCache.delete(key);
-            throw err;
-          }),
-      );
+  let batch: ReturnType<typeof queueEntities> | null = null;
+  const reads = wanted.map((p) => {
+    const key = `${base}|${p}`;
+    const held = entityCache.get(key);
+    if (held) {
+      // Most recently used last, so the bound drops the coldest entity.
+      entityCache.delete(key);
+      entityCache.set(key, held);
+      return [p, held] as const;
     }
-  }
+    batch ??= queueEntities(base);
+    batch.pointers.add(p);
+    const entry: Promise<Entity | null> = batch.result
+      .then((entities) => {
+        const entity = entities.get(p) ?? null;
+        if (!entity && entityCache.get(key) === entry) entityCache.delete(key);
+        return entity;
+      })
+      .catch((err) => {
+        if (entityCache.get(key) === entry) entityCache.delete(key);
+        throw err;
+      });
+    entityCache.set(key, entry);
+    return [p, entry] as const;
+  });
+  while (entityCache.size > ENTITY_CACHE_MAX) entityCache.delete(entityCache.keys().next().value!);
   return Promise.all(
-    wanted.map(async (p) => [p, await entityCache.get(`${base}|${p}`)] as const),
+    reads.map(async ([p, read]) => [p, await read] as const),
   ).then((pairs) => {
     const map = new Map<string, Entity>();
     for (const [p, e] of pairs) if (e) map.set(p, e);
@@ -177,22 +192,38 @@ export function fetchEntities(base: string, pointers: string[]): Promise<Map<str
   });
 }
 
-export function representationMainFile(entity: Entity, bodyShape: string): string | null {
+function representationFor(entity: Entity, bodyShape: string): Representation | undefined {
   const reps = entity?.metadata?.data?.representations || [];
   const bs = bodyShape.toLowerCase();
-  const rep =
-    reps.find((r) => (r.bodyShapes || []).some((b) => String(b).toLowerCase() === bs)) || reps[0];
-  return rep?.mainFile || null;
+  return reps.find((r) => (r.bodyShapes || []).some((b) => String(b).toLowerCase() === bs)) || reps[0];
+}
+
+export function representationMainFile(entity: Entity, bodyShape: string): string | null {
+  return representationFor(entity, bodyShape)?.mainFile || null;
 }
 
 export function representationContents(entity: Entity, bodyShape: string): string[] {
-  const reps = entity?.metadata?.data?.representations || [];
-  const bs = bodyShape.toLowerCase();
-  const rep =
-    reps.find((r) => (r.bodyShapes || []).some((b) => String(b).toLowerCase() === bs)) || reps[0];
+  const rep = representationFor(entity, bodyShape);
   return (rep?.contents?.length ? rep.contents : (entity.content || []).map((c) => c.file)).map(
     (n) => String(n).toLowerCase(),
   );
+}
+
+/**
+ * The content hashes of the files this body's representation lists (else of its main file), each once. Another model
+ * file is left out: the main model never loads one, and some representations list the other body's model.
+ */
+export function representationHashes(entity: Entity, bodyShape: string): string[] {
+  const rep = representationFor(entity, bodyShape);
+  const main = rep?.mainFile;
+  const listed = rep?.contents?.length ? rep.contents : main ? [main] : [];
+  const files = listed.filter((f) => f === main || !/\.(glb|gltf)$/i.test(f));
+  const fileMap = fileMapFor(entity);
+  const hashes = files.map((f) => {
+    const name = String(f).toLowerCase();
+    return fileMap.get(name) ?? fileMap.get(name.split("/").pop() ?? "");
+  });
+  return [...new Set(hashes.filter((h): h is string => Boolean(h)))];
 }
 
 export function fileMapFor(entity: Entity): Map<string, string> {

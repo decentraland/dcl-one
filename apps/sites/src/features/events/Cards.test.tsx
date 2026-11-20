@@ -6,7 +6,8 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ComponentProps } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { DayCard, UpcomingCard } from "@dcl/one-ui/apps/sites/events/cards";
 vi.hoisted(() =>
   Object.assign(window, {
@@ -15,31 +16,40 @@ vi.hoisted(() =>
     $RefreshSig$: () => (type: unknown) => type,
   }),
 );
-const toggle = vi.fn();
-const copy = vi.fn();
-const props = {
-  id: "event",
-  title: "Poker Night",
-  image: null,
-  href: "/events?id=event",
-  creator: { name: "Host", href: "/profile/host" },
-  time: { label: "Tomorrow", dateTime: "2026-11-13T12:00:00Z" },
-  remind: { active: false, pending: false, onToggle: toggle },
-  calendarHref: "https://calendar.google.com/calendar/render?action=TEMPLATE",
-};
+type JumpIn = (event: { preventDefault: () => void }) => void;
+
+let toggle: Mock<() => void>;
+let copy: Mock<(text: string) => Promise<void>>;
+let open: Mock<() => void>;
+let onJumpIn: Mock<JumpIn>;
+let props: ComponentProps<typeof UpcomingCard>;
 beforeEach(() => {
-  toggle.mockReset();
-  copy.mockReset().mockResolvedValue(undefined);
+  toggle = vi.fn();
+  copy = vi.fn().mockResolvedValue(undefined);
+  open = vi.fn();
+  onJumpIn = vi.fn((event: { preventDefault: () => void }) =>
+    event.preventDefault(),
+  );
+  props = {
+    id: "event",
+    title: "Poker Night",
+    image: null,
+    href: "/events?id=event",
+    creator: { name: "Host", href: "/profile/host" },
+    time: { label: "Tomorrow", dateTime: "2026-11-13T12:00:00Z" },
+    remind: { active: false, pending: false, onToggle: toggle },
+    calendarHref: "https://calendar.google.com/calendar/render?action=TEMPLATE",
+  };
   vi.stubGlobal("navigator", { clipboard: { writeText: copy } });
 });
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.resetAllMocks();
 });
 describe("when event cards reveal their actions", () => {
-  it.each(["upcoming", "day"])(
-    "should keep the %s card time and all three independent actions mounted",
-    (kind) => {
+  describe.each(["upcoming", "day"])("and the card is the %s card", (kind) => {
+    beforeEach(() => {
       render(
         kind === "upcoming" ? (
           <UpcomingCard {...props} />
@@ -47,196 +57,268 @@ describe("when event cards reveal their actions", () => {
           <DayCard {...props} live={false} />
         ),
       );
+    });
+    it("should keep the card time mounted", () => {
       expect(screen.getByText("Tomorrow").closest("time")?.dateTime).toBe(
-        props.time.dateTime,
+        props.time?.dateTime,
       );
+    });
+    it("should keep Remind me mounted", () => {
       expect(
         screen.getByRole("button", { name: "Remind me: Poker Night" }),
       ).toBeDefined();
+    });
+    it("should keep Add to calendar mounted with the calendar link", () => {
       expect(
         screen
           .getByRole("link", { name: "Add to calendar: Poker Night" })
           .getAttribute("href"),
       ).toBe(props.calendarHref);
+    });
+    it("should keep Copy link as an independent button outside the card link", () => {
       expect(
         screen
           .getByRole("button", { name: "Copy link: Poker Night" })
           .closest("a"),
       ).toBeNull();
-    },
-  );
-  it("should render the upcoming card as the public EventCard small variant with icon-only actions", () => {
-    render(<UpcomingCard {...props} />);
-    const card = screen.getByRole("article");
-    expect(card.className).toContain("small");
-    expect(card.textContent).toContain("by Host");
-    for (const name of ["Remind me: Poker Night", "Copy link: Poker Night"])
-      expect(screen.getByRole("button", { name }).textContent).toBe("");
-    expect(screen.queryByText("Remind me")).toBeNull();
-  });
-  it("should mark an active reminder as pressed and disable it while pending", () => {
-    render(
-      <UpcomingCard
-        {...props}
-        remind={{ active: true, pending: true, onToggle: toggle }}
-      />,
-    );
-    const button = screen.getByRole("button", {
-      name: "Remind me: Poker Night",
-    }) as HTMLButtonElement;
-    expect(button.getAttribute("aria-pressed")).toBe("true");
-    expect(button.disabled).toBe(true);
-    fireEvent.click(button);
-    expect(toggle).not.toHaveBeenCalled();
-  });
-  it("should leave out Remind me and Add to calendar when the page offers neither", () => {
-    render(
-      <UpcomingCard {...props} remind={undefined} calendarHref={undefined} />,
-    );
-    expect(screen.queryByRole("button", { name: /Remind me/ })).toBeNull();
-    expect(screen.queryByRole("link", { name: /Add to calendar/ })).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Copy link: Poker Night" }),
-    ).toBeDefined();
-  });
-  it("should show a live event's badges, JUMP IN and Copy link instead of Remind me", () => {
-    const onJumpIn = vi.fn((event: { preventDefault: () => void }) =>
-      event.preventDefault(),
-    );
-    const open = vi.fn();
-    render(
-      <UpcomingCard
-        {...props}
-        remind={undefined}
-        live
-        users={16}
-        usersLabel="16 online"
-        jumpIn={{ href: "/play?position=1,1", onJumpIn }}
-        onOpen={open}
-      />,
-    );
-    expect(screen.getByRole("article").className).toContain("isLive");
-    expect(screen.getByText("LIVE")).toBeDefined();
-    expect(screen.getByText("16 online")).toBeDefined();
-    const jump = screen.getByRole("link", { name: "Jump in: Poker Night" });
-    expect(jump.getAttribute("href")).toBe("/play?position=1,1");
-    fireEvent.click(jump);
-    expect(onJumpIn).toHaveBeenCalledOnce();
-    expect(open).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: /Remind me/ })).toBeNull();
-    expect(screen.queryByRole("link", { name: /Add to calendar/ })).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Copy link: Poker Night" }),
-    ).toBeDefined();
-  });
-  describe("and a live event is in a desktop day column", () => {
-    const href = "/play?realm=gallery.dcl.eth";
-    const onJumpIn = vi.fn((event: { preventDefault: () => void }) =>
-      event.preventDefault(),
-    );
-    const onOpen = vi.fn();
-
-    beforeEach(() => {
-      onJumpIn.mockClear();
-      onOpen.mockClear();
     });
-
-    it("should expose Jump In independently of the detail link", () => {
+  });
+  describe("and the card is the upcoming card", () => {
+    it("should render it as the public EventCard small variant with icon-only actions", () => {
+      render(<UpcomingCard {...props} />);
+      const card = screen.getByRole("article");
+      expect(card.className).toContain("small");
+      expect(card.textContent).toContain("by Host");
+      for (const name of ["Remind me: Poker Night", "Copy link: Poker Night"])
+        expect(screen.getByRole("button", { name }).textContent).toBe("");
+      expect(screen.queryByText("Remind me")).toBeNull();
+    });
+  });
+  describe("and the reminder is active and pending", () => {
+    let button: HTMLButtonElement;
+    beforeEach(() => {
       render(
-        <DayCard
+        <UpcomingCard
           {...props}
-          live
-          users={0}
-          jumpIn={{ href, onJumpIn }}
-          onOpen={onOpen}
+          remind={{ active: true, pending: true, onToggle: toggle }}
         />,
       );
-      const link = screen.getByRole("link", { name: "Jump in: Poker Night" });
-      expect(link.getAttribute("href")).toBe(href);
-      fireEvent.click(link);
-      expect(onJumpIn).toHaveBeenCalledOnce();
-      expect(onOpen).not.toHaveBeenCalled();
+      button = screen.getByRole("button", {
+        name: "Remind me: Poker Night",
+      }) as HTMLButtonElement;
     });
-
-    it("should offer Copy link even if no launch destination was supplied", () => {
-      render(<DayCard {...props} live />);
-      expect(screen.queryByRole("link", { name: /Jump in/ })).toBeNull();
+    it("should mark the reminder as pressed", () => {
+      expect(button.getAttribute("aria-pressed")).toBe("true");
+    });
+    it("should disable the reminder so a click does not toggle it", () => {
+      expect(button.disabled).toBe(true);
+      fireEvent.click(button);
+      expect(toggle).not.toHaveBeenCalled();
+    });
+  });
+  describe("and the page offers neither a reminder nor a calendar link", () => {
+    beforeEach(() => {
+      render(
+        <UpcomingCard {...props} remind={undefined} calendarHref={undefined} />,
+      );
+    });
+    it("should leave out Remind me", () => {
+      expect(screen.queryByRole("button", { name: /Remind me/ })).toBeNull();
+    });
+    it("should leave out Add to calendar", () => {
+      expect(screen.queryByRole("link", { name: /Add to calendar/ })).toBeNull();
+    });
+    it("should still offer Copy link", () => {
       expect(
         screen.getByRole("button", { name: "Copy link: Poker Night" }),
       ).toBeDefined();
     });
   });
-  it("should keep a live event without a jump target to Copy link, with no unknown count", () => {
-    render(<UpcomingCard {...props} remind={undefined} live image={null} />);
-    expect(screen.queryByRole("link", { name: /Jump in/ })).toBeNull();
-    expect(screen.getByText("LIVE")).toBeDefined();
-    expect(screen.queryByText(/online/)).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Copy link: Poker Night" }),
-    ).toBeDefined();
-  });
-  it("should render a card with no host and no image", () => {
-    render(<UpcomingCard {...props} creator={undefined} image={null} />);
-    expect(screen.getByRole("article").textContent).not.toContain("by ");
-    expect(screen.getByRole("link", { name: "Poker Night" })).toBeDefined();
-  });
-  it("should toggle a reminder without opening the card", () => {
-    const open = vi.fn();
-    render(<UpcomingCard {...props} onOpen={open} />);
-    fireEvent.click(
-      screen.getByRole("button", { name: "Remind me: Poker Night" }),
-    );
-    expect(toggle).toHaveBeenCalledOnce();
-    expect(open).not.toHaveBeenCalled();
-  });
-  it("should copy the actual card link without navigating", async () => {
-    const open = vi.fn();
-    render(<UpcomingCard {...props} onOpen={open} />);
-    fireEvent.click(
-      screen.getByRole("button", { name: "Copy link: Poker Night" }),
-    );
-    await waitFor(() =>
-      expect(screen.getByRole("status").textContent).toBe("Copied"),
-    );
-    expect(copy).toHaveBeenCalledWith(
-      new URL(props.href, window.location.href).href,
-    );
-    expect(open).not.toHaveBeenCalled();
-  });
-  it("should report a clipboard failure without changing the reminder", async () => {
-    copy.mockRejectedValue(new Error("denied"));
-    render(<UpcomingCard {...props} />);
-    fireEvent.click(
-      screen.getByRole("button", { name: "Copy link: Poker Night" }),
-    );
-    await waitFor(() =>
-      expect(screen.getByRole("status").textContent).toContain("Couldn't copy"),
-    );
-    expect(toggle).not.toHaveBeenCalled();
-  });
-  it("should handle a missing clipboard API", async () => {
-    vi.stubGlobal("navigator", {});
-    render(<UpcomingCard {...props} />);
-    fireEvent.click(
-      screen.getByRole("button", { name: "Copy link: Poker Night" }),
-    );
-    await waitFor(() =>
-      expect(screen.getByRole("status").textContent).toContain("Couldn't copy"),
-    );
-  });
-  it("should recover when copying succeeds after a denied attempt", async () => {
-    copy.mockRejectedValueOnce(new Error("denied"));
-    render(<UpcomingCard {...props} />);
-    const button = screen.getByRole("button", {
-      name: "Copy link: Poker Night",
+  describe("and the event is live with a jump target", () => {
+    beforeEach(() => {
+      render(
+        <UpcomingCard
+          {...props}
+          remind={undefined}
+          live
+          users={16}
+          usersLabel="16 online"
+          jumpIn={{ href: "/play?position=1,1", onJumpIn }}
+          onOpen={open}
+        />,
+      );
     });
-    fireEvent.click(button);
-    await waitFor(() =>
-      expect(screen.getByRole("status").textContent).toContain("Couldn't copy"),
-    );
-    fireEvent.click(button);
-    await waitFor(() =>
-      expect(screen.getByRole("status").textContent).toBe("Copied"),
-    );
+    it("should show the live badges", () => {
+      expect(screen.getByRole("article").className).toContain("isLive");
+      expect(screen.getByText("LIVE")).toBeDefined();
+      expect(screen.getByText("16 online")).toBeDefined();
+    });
+    it("should jump in through JUMP IN without opening the card", () => {
+      const jump = screen.getByRole("link", { name: "Jump in: Poker Night" });
+      expect(jump.getAttribute("href")).toBe("/play?position=1,1");
+      fireEvent.click(jump);
+      expect(onJumpIn).toHaveBeenCalledOnce();
+      expect(open).not.toHaveBeenCalled();
+    });
+    it("should show Copy link instead of Remind me and Add to calendar", () => {
+      expect(screen.queryByRole("button", { name: /Remind me/ })).toBeNull();
+      expect(screen.queryByRole("link", { name: /Add to calendar/ })).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Copy link: Poker Night" }),
+      ).toBeDefined();
+    });
+  });
+  describe("and a live event is in a desktop day column", () => {
+    const href = "/play?realm=gallery.dcl.eth";
+
+    describe("and it has a launch destination", () => {
+      it("should expose Jump In independently of the detail link", () => {
+        render(
+          <DayCard
+            {...props}
+            live
+            users={0}
+            jumpIn={{ href, onJumpIn }}
+            onOpen={open}
+          />,
+        );
+        const link = screen.getByRole("link", { name: "Jump in: Poker Night" });
+        expect(link.getAttribute("href")).toBe(href);
+        fireEvent.click(link);
+        expect(onJumpIn).toHaveBeenCalledOnce();
+        expect(open).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("and no launch destination was supplied", () => {
+      beforeEach(() => {
+        render(<DayCard {...props} live />);
+      });
+      it("should not offer Jump in", () => {
+        expect(screen.queryByRole("link", { name: /Jump in/ })).toBeNull();
+      });
+      it("should offer Copy link", () => {
+        expect(
+          screen.getByRole("button", { name: "Copy link: Poker Night" }),
+        ).toBeDefined();
+      });
+    });
+  });
+  describe("and a live event has no jump target and no player count", () => {
+    beforeEach(() => {
+      render(<UpcomingCard {...props} remind={undefined} live image={null} />);
+    });
+    it("should not offer Jump in", () => {
+      expect(screen.queryByRole("link", { name: /Jump in/ })).toBeNull();
+    });
+    it("should show the LIVE badge without an unknown count", () => {
+      expect(screen.getByText("LIVE")).toBeDefined();
+      expect(screen.queryByText(/online/)).toBeNull();
+    });
+    it("should keep Copy link", () => {
+      expect(
+        screen.getByRole("button", { name: "Copy link: Poker Night" }),
+      ).toBeDefined();
+    });
+  });
+  describe("and the card has no host and no image", () => {
+    beforeEach(() => {
+      render(<UpcomingCard {...props} creator={undefined} image={null} />);
+    });
+    it("should leave out the by-line", () => {
+      expect(screen.getByRole("article").textContent).not.toContain("by ");
+    });
+    it("should still link the card", () => {
+      expect(screen.getByRole("link", { name: "Poker Night" })).toBeDefined();
+    });
+  });
+  describe("and Remind me is clicked", () => {
+    beforeEach(() => {
+      render(<UpcomingCard {...props} onOpen={open} />);
+      fireEvent.click(
+        screen.getByRole("button", { name: "Remind me: Poker Night" }),
+      );
+    });
+    it("should toggle the reminder", () => {
+      expect(toggle).toHaveBeenCalledOnce();
+    });
+    it("should not open the card", () => {
+      expect(open).not.toHaveBeenCalled();
+    });
+  });
+  describe("and Copy link is clicked", () => {
+    describe("and the clipboard accepts the link", () => {
+      beforeEach(() => {
+        render(<UpcomingCard {...props} onOpen={open} />);
+        fireEvent.click(
+          screen.getByRole("button", { name: "Copy link: Poker Night" }),
+        );
+      });
+      it("should announce that the link was copied", async () => {
+        await waitFor(() =>
+          expect(screen.getByRole("status").textContent).toBe("Copied"),
+        );
+      });
+      it("should copy the actual card link without navigating", async () => {
+        await waitFor(() => expect(copy).toHaveBeenCalled());
+        expect(copy).toHaveBeenCalledWith(
+          new URL(props.href, window.location.href).href,
+        );
+        expect(open).not.toHaveBeenCalled();
+      });
+    });
+    describe("and the clipboard denies the write", () => {
+      beforeEach(() => {
+        copy.mockRejectedValue(new Error("denied"));
+        render(<UpcomingCard {...props} />);
+        fireEvent.click(
+          screen.getByRole("button", { name: "Copy link: Poker Night" }),
+        );
+      });
+      it("should report the clipboard failure", async () => {
+        await waitFor(() =>
+          expect(screen.getByRole("status").textContent).toContain("Couldn't copy"),
+        );
+      });
+      it("should not change the reminder", async () => {
+        await waitFor(() =>
+          expect(screen.getByRole("status").textContent).toContain("Couldn't copy"),
+        );
+        expect(toggle).not.toHaveBeenCalled();
+      });
+    });
+    describe("and the clipboard API is missing", () => {
+      beforeEach(() => {
+        vi.stubGlobal("navigator", {});
+        render(<UpcomingCard {...props} />);
+        fireEvent.click(
+          screen.getByRole("button", { name: "Copy link: Poker Night" }),
+        );
+      });
+      it("should report the failure", async () => {
+        await waitFor(() =>
+          expect(screen.getByRole("status").textContent).toContain("Couldn't copy"),
+        );
+      });
+    });
+    describe("and a denied attempt is followed by one that succeeds", () => {
+      beforeEach(() => {
+        copy.mockRejectedValueOnce(new Error("denied"));
+      });
+      it("should recover and announce that the link was copied", async () => {
+        render(<UpcomingCard {...props} />);
+        const button = screen.getByRole("button", {
+          name: "Copy link: Poker Night",
+        });
+        fireEvent.click(button);
+        await waitFor(() =>
+          expect(screen.getByRole("status").textContent).toContain("Couldn't copy"),
+        );
+        fireEvent.click(button);
+        await waitFor(() =>
+          expect(screen.getByRole("status").textContent).toBe("Copied"),
+        );
+      });
+    });
   });
 });

@@ -605,7 +605,7 @@
       },
       "files": {
         "library/ui/figma/MAINTENANCE.md": {
-          "sha256": "e69e118a1394e89b0460e4955ebad8527942881d579863ff242643d10c4d59f1",
+          "sha256": "82555a9334f21354fee8b4220547406993042eaf7f35acdbf0e3551975ea4f2c",
           "fds": null,
           "deviation": [
             "live-access-removed",
@@ -626,7 +626,8 @@
             "hand-written-public-components",
             "install-file-ownership",
             "promotion-include-scope",
-            "preview-selection-cleanup"
+            "preview-selection-cleanup",
+            "mapping-manifest"
           ]
         },
         "library/ui/figma/agent-kit/cli.mjs": {
@@ -700,7 +701,7 @@
           ]
         },
         "library/ui/figma/agent-kit/skills/maintain-figma-library/SKILL.md": {
-          "sha256": "9aa01c78fbc1be6f822ca33329119561278d3cce8b6e3c2fdb88b676797347f3",
+          "sha256": "2a523b1cb8a635f4e001610297e251f963cdaa9b44ae11c8dff2f9fefc95fe32",
           "fds": null,
           "deviation": [
             "port-command",
@@ -708,7 +709,8 @@
             "port-command-followups",
             "port-safe-restore",
             "hand-written-public-components",
-            "install-file-ownership"
+            "install-file-ownership",
+            "mapping-manifest"
           ]
         },
         "library/ui/figma/component-generation.mjs": {
@@ -2504,7 +2506,7 @@
           ]
         },
         "library/ui/figma/src/cli.ts": {
-          "sha256": "fce4dd173d21dfada533c477be78d579de1e5439c9a138ddd7249703ed6d8fed",
+          "sha256": "d1a59fba14af4f2f7f6570ae303c98caccd318d0fc131146f406170b444c8d4b",
           "fds": {
             "path": "dcl-mcp-figma/src/cli.ts",
             "sha256": "e90f73241aaa4750f564e48c836d169a903a24cbcc53fb2b2d55952aa5b9eda4"
@@ -2523,7 +2525,8 @@
             "skill-kit-followups",
             "resolver-followups",
             "generation-import-closure",
-            "preview-selection-cleanup"
+            "preview-selection-cleanup",
+            "mapping-manifest"
           ]
         },
         "library/ui/figma/src/component-generation.test.ts": {
@@ -2600,7 +2603,7 @@
           ]
         },
         "library/ui/figma/src/contract/diagnostics.ts": {
-          "sha256": "abf2493013468d4ea7867ff5535a59c1d7ff8a55c1915bfc18d6ead9d35688db",
+          "sha256": "b300a40e97ad0149c7987353f9812f5481beac6724cd02f17d45f8052da36bc1",
           "fds": {
             "path": "dcl-mcp-figma/src/contract/diagnostics.ts",
             "sha256": "ad74f960ce5ba957ba964bb2e7710261088331cc7a0c16eabfab0ec075cda12a"
@@ -2609,7 +2612,8 @@
             "resolver-contract",
             "name-identity",
             "accepted-limits",
-            "resolver-followups"
+            "resolver-followups",
+            "mapping-manifest"
           ]
         },
         "library/ui/figma/src/contract/figma-index.test.ts": {
@@ -2648,6 +2652,20 @@
             "resolver-followups"
           ]
         },
+        "library/ui/figma/src/contract/manifest-refresh.test.ts": {
+          "sha256": "faa97cffd3d7024cb5ae2400811a33cf9b8e02f775222598ee093097e5cbe5dd",
+          "fds": null,
+          "deviation": [
+            "mapping-manifest"
+          ]
+        },
+        "library/ui/figma/src/contract/manifest-refresh.ts": {
+          "sha256": "63933bb37e7c1b5a79d16b33b16fb96af5f5ea6600ccc657229395f8655700b1",
+          "fds": null,
+          "deviation": [
+            "mapping-manifest"
+          ]
+        },
         "library/ui/figma/src/contract/mapping-file.test.ts": {
           "sha256": "ec450643f0d40c75b419f7792c02ca2283445ef5bf8682e909397db2641f74b8",
           "fds": {
@@ -2672,6 +2690,20 @@
             "resolver-followups"
           ],
           "note": "differed from figma-design-system before this pull request; this pull request removes its live Figma access"
+        },
+        "library/ui/figma/src/contract/mapping-manifest.test.ts": {
+          "sha256": "f25e04bcf1ed0bf30e0ccaca5e9335cb8e1f8528b33864b39ba316b12a20daf1",
+          "fds": null,
+          "deviation": [
+            "mapping-manifest"
+          ]
+        },
+        "library/ui/figma/src/contract/mapping-manifest.ts": {
+          "sha256": "6d0236219b875c8530540d07b88c51fc2bc168767194e42d49a2336f2200aa0f",
+          "fds": null,
+          "deviation": [
+            "mapping-manifest"
+          ]
         },
         "library/ui/figma/src/contract/name-identity.ts": {
           "sha256": "9a13c4bd35f1696db42e30b1de189dc72d7f89fdf3cd31d3f0dcf4f91e3612de",
@@ -2698,7 +2730,7 @@
           ]
         },
         "library/ui/figma/src/contract/resolve.ts": {
-          "sha256": "bc2127ff71d76d06f9f55a4906fa54ff238eb679b8401e4fad2af383efd7f2ad",
+          "sha256": "625e4cd8c53aefbaf719bde48bf37d0e1e549d1491dc00361dd410405ac562ae",
           "fds": {
             "path": "dcl-mcp-figma/src/contract/resolve.ts",
             "sha256": "cac48b26148bef9db5d087d2857a7e9eaf89ae33745125d47957678de71dc596"
@@ -2709,7 +2741,8 @@
             "name-identity",
             "accepted-limits",
             "skill-kit-followups",
-            "resolver-followups"
+            "resolver-followups",
+            "mapping-manifest"
           ]
         },
         "library/ui/figma/src/contract/test-fixtures.ts": {
@@ -4426,7 +4459,7 @@
           "deviation": "capture-removed"
         },
         "library/ui/figma/test/workflows.test.ts": {
-          "sha256": "e669685b01ca09181d71594aa5aed5a5a70d7378e56326aa1af6c3800a0a6c8f",
+          "sha256": "2d18cc5f9112072a445682773eca783ff7d9e3183b984ccda143494578bf098d",
           "fds": null,
           "deviation": [
             "capture-removed",
@@ -4437,7 +4470,8 @@
             "key-scan-repair",
             "key-guard-integrity",
             "key-download-identity",
-            "skill-kit-followups"
+            "skill-kit-followups",
+            "mapping-manifest"
           ]
         },
         "library/ui/figma/tsconfig.json": {
@@ -4477,6 +4511,7 @@
         "live-access-removed": "Live Figma access and capture ingest are removed: figma-design-system owns every read of Figma. Gone are pull-live and its automation modules, the REST source and its mappers, the Figma REST client, probe, the figma_screenshot MCP tool, the --source rest option, the capture-ingest and capture-merge commands with merge-component-chunks and split-icon-frames, the figma/capture plugin scripts and ingest-text-metrics, and their tests. The MCP tools that read the fetch-source cache stay. ingest-chunks and png-decode go too: strip-image-metadata keeps its own copy of the transport checksum, and its test proves byte equality instead of decoding. The key guard is the only reader of FIGMA_FILE_KEY: stripFileKey, stripFileKeyText and the CLI and MCP error text replace fileKey fields and Figma file URLs by pattern and read no environment, which also makes fetch-source's keyless transform independent of the environment. image-metadata-scan and its gate (figma/test/image-metadata.test.ts) stay: they check that no raster under library/ui/figma or in the public component assets carries non-rendering metadata, which covers product assets.",
         "live-read-restored": "Owner decision: stored captures leave this tree, live Figma read access stays for local inspection. Restored from before the removal: the Figma REST client and token provider, the REST source and its mappers (their two helpers, download and svgProblem, now live in sources/rest-assets.ts because the live pull and chunk ingest stay removed), probe, `--source rest` for diff and the MCP read tools, figma_screenshot (the PNG is returned to the caller in memory, never written), and the env-only file-key readers (readFileKey, requireFileKey, redactFileKey), with error text redacting the key again. Shipped output comes from the pinned capture only: sync refuses the live source, figma_export_icons refuses to write live icons to disk, and no CI job runs live code or sets FIGMA_TOKEN. pull-live and the chunk ingest stay removed: they write captures. The verified-cache boundary: createApp requires snapshotLock unless a test opts out explicitly, sync and retire verify the cache before reading anything derived from it, and an unreadable marker or capture is an FdsCacheError; test fixtures carry their own lock and marker.",
         "local-components-plan": "Add a source-neutral component installation plan and retire public mock asset exceptions. The shared installation dispatch and product controls remain pending.",
+        "mapping-manifest": "check-mappings reads the tracked library/ui/figma-mapping-manifest.json instead of the page capture: src/contract/mapping-manifest.ts parses and writes it (schema 1, node ids and plain names only, refusing a Figma URL, a key-shaped string, a repeated node or an unknown field, and writing it in one rename), src/contract/manifest-refresh.ts builds it from the nodes the mappings name through the REST nodes endpoint and reports differences, cli.ts adds manifest refresh and manifest verify and checks the library's own mappings against the manifest, resolve.ts fails a mapping the manifest lacks and an entry no mapping names, diagnostics.ts adds the manifest-orphan reason, and MAINTENANCE.md and the maintain-figma-library skill describe the workflow.",
         "name-identity": "Component identity across files (owner decision: component keys are never committed). In a design file a library instance carries neither the library node ids nor anything the capture records except its set name and variant properties, so without a capture a set name resolves to exactly one mapping (component header, template id, or the code name componentNames gives it, read with the contract block) and only after the instance's variant properties fit that mapping; an unconfirmed or incompatible name is identity-uncertain, two matches are identity-ambiguous, and every name match carries the identity-name-match warning. With a capture, sets captured on two pages count once and a name shared by distinct sets resolves only when the variant properties fit exactly one. The fallback is marked TODO(figma-identity) in src/contract/name-identity.ts. resolve --batch resolves a JSON list in input order with a summary and exits 1 on any failure. Review follow-up: two mappings answering to one name are identity-ambiguous name-mappings with a report action; a name is confirmed only when at least one enum property the mapping reads is given; the fallback lives in src/contract/name-identity.ts; a batch repeat shares the earlier answer and node ids are normalized for that comparison; a refused entry echoes only accepted fields and the names of others; an unreadable batch exits 2; the skill script returns name, variantProperties and texts and the example reads standard input.",
         "navigation-settle": "The Review build checks read a page only after its navigation settles: capture-browser tracks the top frame's document-replacing navigations, its loading state (from the navigation request to frameStoppedLoading) and its committed loaders from Page events; session.navigate resolves once the document of the loader Page.navigate started has committed and the frame stopped loading; an evaluation that an observed navigation interrupted rejects with NavigationInterrupted, and any other lost context stays an ordinary error. check-build navigates through session.navigate, polls only an idle frame, keeps a value only when no navigation started while it was read, and reads a poll again after an interruption; navbar-bounds and runtime-cascade navigate through session.navigate.",
         "note": null,

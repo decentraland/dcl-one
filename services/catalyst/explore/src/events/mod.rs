@@ -1021,7 +1021,7 @@ struct RecordView<'a> {
     foundation: foundation::Names,
 }
 
-fn project_event_image(
+pub(crate) fn project_event_image(
     image: &str,
     rewrite_base: Option<&str>,
     configured_public_base: Option<&str>,

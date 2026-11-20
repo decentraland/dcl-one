@@ -122,6 +122,9 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+      # Every hand-written mapping names a component of the tracked mapping manifest and reads its properties.
+      # Offline: no capture and no Figma credentials.
+      - run: pnpm --silent figma check-mappings --mapping-only
       - run: pnpm review:build
       # The built gallery works where it is served: catalog and variant navigation and a non-empty render.
       - run: node figma/review/scripts/check-build.mjs figma/review/review-dist

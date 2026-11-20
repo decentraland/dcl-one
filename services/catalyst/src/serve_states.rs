@@ -73,14 +73,37 @@ pub(super) async fn ops_states(
         pool.clone(),
     );
 
+    // The upstream is checked like every mirror source: public, and not this node.
+    let imposters_upstream =
+        match non_empty(&Some(config.imposters.bvimposters_upstream_url.clone())) {
+            Some(url) => {
+                let bind_url = format!("http://{}", config.node.bind_addr());
+                let local_urls: Vec<&str> =
+                    [Some(sources.public_url), config.node.content_url.as_deref()]
+                        .into_iter()
+                        .flatten()
+                        .chain(std::iter::once(bind_url.as_str()))
+                        .collect();
+                Some(
+                    explore::MirrorSource::checked(&url, &local_urls)
+                        .context("BVIMPOSTERS_UPSTREAM_URL")?
+                        .base()
+                        .to_string(),
+                )
+            }
+            None => None,
+        };
     let imposters = explore::imposters::State::new(
         explore::imposters::Settings::resolve(explore::imposters::RawSettings {
             store_root: non_empty(&Some(config.imposters.bvimposters_store_root.clone())),
             store_max_bytes: Some(config.imposters.bvimposters_store_max_bytes),
             mem_cache_bytes: Some(config.imposters.bvimposters_mem_cache_bytes),
+            upstream_url: imposters_upstream,
+            upstream_realm: non_empty(&Some(config.imposters.bvimposters_upstream_realm.clone())),
             bake: imposters_bake_settings(config),
         })
         .context("BVIMPOSTERS_* configuration")?,
+        http_client.clone(),
     )
     .await
     .context("opening the imposter store")?;
@@ -703,6 +726,7 @@ pub(super) fn social_states(
             admin_token: non_empty(&config.social.catalyrst_notifications_admin_token),
             events_base_url: public_url.clone(),
             events_asset_base_url: explore.settings.events_asset_base_url.clone(),
+            events_public_base: explore.settings.configured_public_base.clone(),
             signing_key: non_empty(&config.social.signing_key),
             service_base_url: config.social.notifications_service_base_url.clone(),
             community_cdn_url: communities.settings.cdn_url.clone(),

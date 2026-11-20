@@ -4,7 +4,7 @@ import { Component } from './Component'
 
 describe('Component', () => {
   describe('when rendered with content', () => {
-    it('displays its content', () => {
+    it('should display its content', () => {
       render(<Component>Example content</Component>)
       expect(screen.getByText('Example content')).toBeInTheDocument()
     })

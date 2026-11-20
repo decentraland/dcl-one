@@ -10,6 +10,8 @@ figma/review/src/generated
 figma/review/src/review/catalog.json
 # Written by lock-digests --write and fetch-source --seal.
 upstream.lock.json
+# Written by pnpm figma manifest refresh.
+figma-mapping-manifest.json
 
 # Generated installation output is preserved byte for byte.
 components/*

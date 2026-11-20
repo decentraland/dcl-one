@@ -38,32 +38,36 @@ async function previousFocus() {
   })
 }
 describe('when public components share a production CSS bundle', () => {
-  it('should preserve native tab typography when Button CSS is emitted first', async () => {
-    await ready()
-    const values = await evaluate<{ size: string; weight: string; clipped: boolean }[]>(
-      '(()=>[...document.querySelectorAll("#mixed-tabs a")].map(e=>({size:getComputedStyle(e).fontSize,weight:getComputedStyle(e).fontWeight,clipped:e.querySelector("span").scrollWidth>e.querySelector("span").clientWidth})))()'
-    )
-    expect(values).toEqual([
-      { size: '15px', weight: '700', clipped: false },
-      { size: '16px', weight: '600', clipped: false }
-    ])
+  describe('and Button CSS is emitted first', () => {
+    it('should preserve native tab typography', async () => {
+      await ready()
+      const values = await evaluate<{ size: string; weight: string; clipped: boolean }[]>(
+        '(()=>[...document.querySelectorAll("#mixed-tabs a")].map(e=>({size:getComputedStyle(e).fontSize,weight:getComputedStyle(e).fontWeight,clipped:e.querySelector("span").scrollWidth>e.querySelector("span").clientWidth})))()'
+      )
+      expect(values).toEqual([
+        { size: '15px', weight: '700', clipped: false },
+        { size: '16px', weight: '600', clipped: false }
+      ])
+    })
   })
   for (const [id, steps] of [
     ['web-invalid', 1],
     ['explorer-invalid', 2]
   ] as const)
-    it(`should preserve a distinct keyboard focus cue on ${id}`, async () => {
-      await ready()
-      await clickOutside()
-      const shadow = () =>
-        evaluate<string>(
-          `getComputedStyle(document.getElementById('${id}').parentElement).boxShadow`
-        )
-      const before = await shadow()
-      for (let n = 0; n < steps; n++) await previousFocus()
-      expect(await evaluate('document.activeElement.id')).toBe(id)
-      const after = await shadow()
-      expect(after).not.toBe(before)
-      expect(after).toContain(before)
+    describe(`and keyboard focus moves back to ${id}`, () => {
+      it('should preserve a distinct keyboard focus cue', async () => {
+        await ready()
+        await clickOutside()
+        const shadow = () =>
+          evaluate<string>(
+            `getComputedStyle(document.getElementById('${id}').parentElement).boxShadow`
+          )
+        const before = await shadow()
+        for (let n = 0; n < steps; n++) await previousFocus()
+        expect(await evaluate('document.activeElement.id')).toBe(id)
+        const after = await shadow()
+        expect(after).not.toBe(before)
+        expect(after).toContain(before)
+      })
     })
 })
