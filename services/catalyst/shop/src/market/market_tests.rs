@@ -464,7 +464,7 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     let pool = state.pool.clone();
     let t = tag();
     let (c1, c2, c_nft) = (contract_of(&t, 1), contract_of(&t, 2), contract_of(&t, 3));
-    let v3_minter = listings::offchain_marketplace_v2(137).unwrap().address;
+    let v3_minter = listings::offchain_marketplace_v3(137).unwrap().address;
 
     let mut collections = vec![
         mirrors::collections::fixture(&c1, "First", CREATOR, true),
@@ -1454,6 +1454,45 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         "{body}"
     );
 
+    // A marketplace the collection does not list as a minter cannot mint: every leg drops its order.
+    let set_minter = |minter: &'static str| {
+        let (pool, c1) = (pool.clone(), c1.clone());
+        async move {
+            sqlx::query(
+                "UPDATE shop.collections SET minters = ARRAY[$2] WHERE contract_address = $1",
+            )
+            .bind(&c1)
+            .bind(minter)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    set_minter(listings::offchain_marketplace_v2(137).unwrap().address).await;
+    state.readers.clear();
+    let (status, body) = get(app(), &format!("/v1/items?contractAddress={c1}&itemId=1")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["data"][0]["tradeId"].is_null(), "{}", body["data"][0]);
+    let (status, body) = get(app(), &format!("/v2/catalog?id={c1}-1")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["data"][0]["tradeId"].is_null(), "{}", body["data"][0]);
+    let (status, body) = get(app(), &format!("/v3/catalog/shop?contractAddress={c1}")).await;
+    assert_eq!(
+        (status, body["total"].as_i64()),
+        (StatusCode::OK, Some(0)),
+        "{body}"
+    );
+    set_minter(listings::offchain_marketplace_v3(137).unwrap().address).await;
+    state.readers.clear();
+    let (status, body) = get(app(), &format!("/v1/items?contractAddress={c1}&itemId=1")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["data"][0]["tradeId"].as_str(),
+        Some(primary_id.as_str()),
+        "{}",
+        body["data"][0]
+    );
+
     // The trending rail's memo is filled right before the cancellation below, so the few reads in
     // between are all that separate it from the check that it still answers: its 30 s cannot lapse
     // over the rest of this test on a slow runner.
@@ -1977,6 +2016,20 @@ async fn seed_item_row(pool: &PgPool, contract: &str, item_id: &str, creator: &s
     .execute(pool)
     .await
     .unwrap();
+    // Its collection lets the v3 marketplace mint, so its item orders are served.
+    sqlx::query(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, \
+             is_approved, is_editable, minters, created_at, updated_at, reviewed_at, mirrored_at) \
+         VALUES ('matic', lower($1), 137, 'Item fixture', lower($2), lower($2), $3, true, true, false, ARRAY[$4], 0, 0, 0, now()) \
+         ON CONFLICT (network, contract_address) DO NOTHING",
+    )
+    .bind(contract)
+    .bind(creator)
+    .bind(format!("urn:decentraland:matic:collections-v2:{contract}"))
+    .bind(listings::offchain_marketplace_v3(137).unwrap().address)
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 /// The `public_item_order` ids the shared `unified_trades` view serves now.
@@ -2117,6 +2170,19 @@ async fn a_signed_item_order_is_stored_once_and_only_behind_the_write_switch() {
     assert_eq!(status, StatusCode::CREATED, "{body}");
     assert_eq!(body["ok"], true);
     let created = body["data"]["id"].as_str().unwrap().to_string();
+    // The 201 carries the stored trade, `received` included, as the read answers it.
+    assert_eq!(
+        body["data"]["received"].as_array().map(Vec::len),
+        Some(1),
+        "{body}"
+    );
+    let (status, read) = get(
+        market_router(state.clone()),
+        &format!("/v1/trades/{created}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(body["data"], read["data"]);
     let (status, body) = call(
         market_router(state.clone()),
         "POST",

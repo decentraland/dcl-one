@@ -50,6 +50,7 @@ import { registerPermissions } from './domains/permissions'
 import { registerMapPins } from './domains/mapPins'
 import { registerPortables } from './domains/portables'
 import { registerWorldAccess } from './domains/worldAccess'
+import { registerItemPurchase } from './domains/itemPurchase'
 import { registerPlatformBan } from './domains/platformBan'
 import { registerEditor } from './domains/editor'
 
@@ -99,6 +100,7 @@ export function main(): void {
     registerPortables(ctx)
     registerMapPins(ctx)
     registerWorldAccess(ctx)
+    registerItemPurchase(ctx)
     registerPlatformBan(ctx)
     registerEditor(ctx)
     registerAvatarPreview(ctx)

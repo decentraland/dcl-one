@@ -1,10 +1,10 @@
+import { cloneElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   Button,
   NavBar,
   NavCreditsBalance,
   NavMenuItem,
-  decentralandNavSections,
   decentralandPublicNavSections
 } from '@dcl/one-ui'
 import '../../foundations/foundations.css'
@@ -13,7 +13,7 @@ const params = new URLSearchParams(location.search)
 const requested = params.get('case')
 const publicNavigation = params.has('public')
   ? decentralandPublicNavSections('events', '/events')
-  : undefined
+  : decentralandPublicNavSections('', '/')
 const example = nativeNavBarCases.find((value) => value.id === requested)
 const root = createRoot(document.getElementById('native-bounds-root')!)
 // Opened by hand without a known case: list the cases so the fixture can be browsed.
@@ -41,11 +41,14 @@ const authentication = example.signedIn
       ]
     }
   : { signIn: { href: '/sign-in' } }
-root.render(
+const profileBalances = params.get('profile') === 'balances'
+const navbar = (
   <NavBar
     {...authentication}
-    sections={publicNavigation?.desktop ?? decentralandNavSections('', '/')}
-    mobileSections={publicNavigation?.mobile}
+    accountMenuAppearance={params.has('profile') ? 'profile' : undefined}
+    accountMenuBalancesPending={profileBalances}
+    sections={publicNavigation.desktop}
+    mobileSections={params.has('public') ? publicNavigation.mobile : undefined}
     balances={example.balances}
     surface={example.surface}
     balanceAction={
@@ -88,3 +91,18 @@ root.render(
     }
   />
 )
+
+root.render(navbar)
+if (profileBalances) {
+  window.addEventListener(
+    'fixture:load-profile-balances',
+    (event) =>
+      root.render(
+        cloneElement(navbar, {
+          accountMenuBalances: (event as CustomEvent).detail,
+          accountMenuBalancesPending: false
+        })
+      ),
+    { once: true }
+  )
+}

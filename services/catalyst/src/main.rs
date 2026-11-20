@@ -13,6 +13,8 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[cfg(test)]
 mod cli_tests;
+#[cfg(test)]
+mod preflight_tests;
 
 #[derive(Parser)]
 #[command(name = "catalyst", version, about = "Decentraland Catalyst node")]
@@ -404,7 +406,7 @@ fn main() -> anyhow::Result<()> {
             if let Some(arguments) = matches.subcommand_matches("serve") {
                 config.refuse_argv_secrets(arguments)?;
             }
-            check_posture(config)?;
+            serve_preflight(config, &|key: &str| std::env::var(key).ok())?;
             catalyst::worlds::scene_state::jsruntime::ensure_v8_initialized();
             // SAFETY: This startup thread performs the first common initialization.
             // All runtime/blocking workers descend from it afterwards. Prepared
@@ -435,6 +437,14 @@ fn main() -> anyhow::Result<()> {
 /// The refusals of [`posture::check`] against this process's environment.
 fn check_posture(config: &Config) -> anyhow::Result<()> {
     posture::check(config, &|key: &str| std::env::var(key).ok())
+}
+
+/// `serve`'s config refusals: the shared posture checks, then the DCL NAME
+/// reader that world writes need (`index` takes no world writes).
+fn serve_preflight(config: &Config, env: &posture::Lookup) -> anyhow::Result<()> {
+    posture::check(config, env)?;
+    posture::worlds_names_reader(config)?;
+    Ok(())
 }
 
 async fn run(

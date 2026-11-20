@@ -543,6 +543,10 @@ pub struct PrimaryPlayerRes(pub Entity);
 #[derive(Resource)]
 pub struct PrimaryCameraRes(pub Entity);
 
+/// A camera that draws the lens flare of the directional light (`visuals::lens_flare`).
+#[derive(Component, Clone, Copy, Default)]
+pub struct LensFlare;
+
 /// World-space head gaze angles, in degrees. On the local player, written each frame
 /// from the real camera (and zeroed/disabled when a scene-driven camera is active). On
 /// remote players, written from the incoming rfc4::Movement head-sync fields. The
@@ -633,6 +637,9 @@ pub struct AppConfig {
     /// behind the camera together: the nearest in view start first, and with none free one
     /// behind the camera makes way for one in view. A near LOD's colliders take no place.
     pub max_near_lods: usize,
+    /// How many scenes may load or show a far LOD (the asset pipeline's simplified mesh) at once,
+    /// in view and behind the camera together, as `max_near_lods` counts near LODs.
+    pub max_far_lods: usize,
     pub scene_imposter_distances: Vec<f32>,
     pub scene_imposter_multisample: bool,
     pub scene_imposter_multisample_amount: f32,
@@ -680,7 +687,7 @@ pub struct AppConfig {
 
 /// bump to run one-time migrations of the preset-managed settings in existing configs
 /// (see [`AppConfig::reset_outdated_settings`])
-pub const SETTINGS_GENERATION: u32 = 4;
+pub const SETTINGS_GENERATION: u32 = 5;
 
 /// bump to run one-time migrations of saved input binding tables
 /// (see [`AppConfig::migrate_inputs`])
@@ -704,6 +711,7 @@ impl Default for AppConfig {
             scene_load_distance: 10.0,
             scene_unload_extra_distance: 10.0,
             max_near_lods: 12,
+            max_far_lods: 200,
             scene_imposter_distances: vec![100.0, 200.0, 400.0, 800.0, 1600.0, 99999.0],
             scene_imposter_multisample: false,
             scene_imposter_multisample_amount: 0.0,
@@ -779,6 +787,8 @@ impl AppConfig {
     /// gen 3: native gpu uploads became capped by default; move configs still uncapped (0).
     /// gen 4: the defaults became the Medium graphics preset; reset the settings the presets set,
     /// so every saved config lands on Medium.
+    /// gen 5: Render Resolution moves in 10% steps; move a value saved between steps to its
+    /// nearest step.
     pub fn reset_outdated_settings(&mut self) {
         if self.settings_generation >= SETTINGS_GENERATION {
             return;
@@ -795,6 +805,10 @@ impl AppConfig {
         }
         if self.settings_generation < 4 {
             self.graphics.reset_quality_preset(&default.graphics);
+        }
+        if self.settings_generation < 5 {
+            self.graphics
+                .set_render_scale_steps(self.graphics.render_scale_steps());
         }
         self.settings_generation = SETTINGS_GENERATION;
     }
@@ -817,6 +831,7 @@ impl AppConfig {
         self.scene_load_distance = default.scene_load_distance;
         self.scene_unload_extra_distance = default.scene_unload_extra_distance;
         self.max_near_lods = default.max_near_lods;
+        self.max_far_lods = default.max_far_lods;
         self.scene_imposter_distances = default.scene_imposter_distances.clone();
         self.scene_imposter_multisample = default.scene_imposter_multisample;
         self.scene_imposter_multisample_amount = default.scene_imposter_multisample_amount;
@@ -1033,11 +1048,33 @@ pub struct GraphicsSettings {
     /// share of the window's device pixels the world renders at, upscaled to the window with FSR
     /// (`visuals::upscale`); the UI stays at full resolution
     pub render_scale: f32,
+    /// draw the lens flare of the sun by day and of the moon at night (`visuals::lens_flare`)
+    pub lens_flare: bool,
 }
 
 /// The ambient brightness setting at which the Trilight ambient is the sky preset's
 /// (visuals::sky_envmap).
 pub const AMBIENT_BRIGHTNESS_DEFAULT: i32 = 50;
+
+impl GraphicsSettings {
+    /// Render Resolution steps in a render scale of 1: one step is 10%.
+    pub const RENDER_SCALE_STEPS: i32 = 10;
+    /// The lowest Render Resolution a player can choose, in steps (50%). Hosts may go lower for
+    /// the session ([`SessionGraphics::MIN_RENDER_SCALE`]).
+    pub const MIN_PLAYER_RENDER_SCALE_STEPS: i32 = 5;
+
+    /// The saved render scale at its nearest Render Resolution step within the player's range.
+    pub fn render_scale_steps(&self) -> i32 {
+        ((self.render_scale * Self::RENDER_SCALE_STEPS as f32).round() as i32).clamp(
+            Self::MIN_PLAYER_RENDER_SCALE_STEPS,
+            Self::RENDER_SCALE_STEPS,
+        )
+    }
+
+    pub fn set_render_scale_steps(&mut self, steps: i32) {
+        self.render_scale = steps as f32 / Self::RENDER_SCALE_STEPS as f32;
+    }
+}
 
 /// The defaults are the Medium graphics preset, the one a new install gets: the HUD's Graphics
 /// Preset (`react-web/bridge-scene/src/domains/graphicsPresets.ts`) reads Medium off each
@@ -1073,6 +1110,7 @@ impl Default for GraphicsSettings {
             spring_bones: false,
             gpu_bytes_per_frame: 10_000_000,
             render_scale: 1.0,
+            lens_flare: true,
         }
     }
 }
@@ -1090,6 +1128,7 @@ impl GraphicsSettings {
         self.shadow_distance = preset.shadow_distance;
         self.light_count = preset.light_count;
         self.shadow_caster_count = preset.shadow_caster_count;
+        self.lens_flare = preset.lens_flare;
         self.dof = preset.dof;
         self.ssao = preset.ssao;
         self.fog = preset.fog;
@@ -1592,7 +1631,7 @@ impl PermissionStrings for PermissionType {
             PermissionType::Websocket => "Open Websocket",
             PermissionType::OpenUrl => "Open Url",
             PermissionType::CopyToClipboard => "Copy to Clipboard",
-            PermissionType::OpenExplorerUi => "Open Explorer Menu",
+            PermissionType::OpenExplorerUi => "Open Explorer Menu or Item Purchase",
         }
     }
 
@@ -1651,7 +1690,7 @@ impl PermissionStrings for PermissionType {
             PermissionType::OpenUrl => "open a url in your browser",
             PermissionType::CopyToClipboard => "copy text into the clipboard",
             PermissionType::OpenExplorerUi => {
-                "open an explorer menu panel (map, backpack, settings, ...)"
+                "open an explorer menu panel (map, backpack, settings, ...) or the purchase confirmation for an item"
             }
         }
     }
@@ -1675,7 +1714,9 @@ impl PermissionStrings for PermissionType {
             PermissionType::Websocket => "opening a websocket",
             PermissionType::OpenUrl => "opening a url in your browser",
             PermissionType::CopyToClipboard => "copying text into the clipboard",
-            PermissionType::OpenExplorerUi => "opening an explorer menu panel",
+            PermissionType::OpenExplorerUi => {
+                "opening an explorer menu panel or an item's purchase confirmation"
+            }
         }
     }
 }
@@ -2162,11 +2203,19 @@ pub struct PreviewMode {
     pub preview_parcel: Option<IVec2>,
 }
 
-/// Render out-of-bounds geometry (dithered) instead of culling it. Set at startup
-/// (preview, a loopback realm, or editor mode — never a public realm); read by
-/// scene_material's show-outside-bounds observer.
+/// Render out-of-bounds geometry (dithered) instead of culling it, and keep its colliders on.
+/// Set at startup (preview, a loopback realm, or editor mode — never a public realm); read by
+/// scene_material's show-outside-bounds observer and by the scene collider data.
 #[derive(Debug, Resource, Default)]
 pub struct ShowOutOfBounds(pub bool);
+
+impl ShowOutOfBounds {
+    /// The switch for a run on `realm`: on in the editor, in preview and on a loopback realm
+    /// (local development). A run with no realm of its own passes none.
+    pub fn for_run(editor: bool, preview: bool, realm: Option<&str>) -> Self {
+        Self(editor || preview || realm.is_some_and(crate::util::is_loopback_url))
+    }
+}
 
 /// True when the explorer is embedded in a scene editor (the explicit `--editor` arg /
 /// `editor` web boot param — the editor host is expected to unfreeze scenes when the
@@ -2337,6 +2386,16 @@ pub struct ServerConfiguration {
     pub local_scene_parcels: Option<Vec<String>>,
 }
 
+impl ServerConfiguration {
+    /// Whether the realm lists its scenes up front: a World, and also some previews and the
+    /// editor's realm. A city lists none and resolves its scenes around the player.
+    pub fn lists_scenes(&self) -> bool {
+        self.scenes_urn
+            .as_ref()
+            .is_some_and(|urns| !urns.is_empty())
+    }
+}
+
 #[derive(Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct MapData {
@@ -2475,6 +2534,21 @@ pub struct WorldPasswordPrompter(pub tokio::sync::mpsc::UnboundedSender<WorldPas
 mod tests {
     use super::*;
     use crate::inputs::CommonInputAction;
+
+    #[test]
+    fn out_of_bounds_geometry_shows_in_the_editor_in_preview_and_on_a_loopback_realm() {
+        let public = Some("https://realm.example.test/main");
+        assert!(!ShowOutOfBounds::for_run(false, false, public).0);
+        assert!(ShowOutOfBounds::for_run(true, false, public).0);
+        assert!(ShowOutOfBounds::for_run(false, true, public).0);
+        assert!(ShowOutOfBounds::for_run(false, false, Some("http://127.0.0.1:8000")).0);
+        assert!(ShowOutOfBounds::for_run(false, false, Some("http://localhost:8000")).0);
+        // a preview server reached by its LAN address
+        assert!(!ShowOutOfBounds::for_run(false, false, Some("http://192.168.1.20:8000")).0);
+        // no realm of its own
+        assert!(!ShowOutOfBounds::for_run(false, false, None).0);
+        assert!(ShowOutOfBounds::for_run(false, true, None).0);
+    }
 
     #[test]
     fn fog_reads_the_old_variants_as_on() {
@@ -2731,6 +2805,25 @@ mod tests {
     }
 
     #[test]
+    fn reset_outdated_settings_moves_render_scale_to_a_ten_percent_step() {
+        for (saved, migrated) in [
+            (0.97, 1.0),
+            (0.84, 0.8),
+            (0.53, 0.5),
+            (0.3, 0.5),
+            (0.7, 0.7),
+        ] {
+            let mut config = AppConfig {
+                settings_generation: 4,
+                ..Default::default()
+            };
+            config.graphics.render_scale = saved;
+            config.reset_outdated_settings();
+            assert_eq!(config.graphics.render_scale, migrated);
+        }
+    }
+
+    #[test]
     fn default_graphics_are_the_medium_preset() {
         let g = GraphicsSettings::default();
         assert_eq!((g.fps_target, g.render_scale), (60, 1.0));
@@ -2810,6 +2903,7 @@ mod tests {
         (g.vsync, g.fps_target, g.render_scale) = (false, 144, 0.5);
         (g.msaa, g.bloom, g.dof) = (AaSetting::FxaaLow, BloomSetting::High, DofSetting::Off);
         (g.shadow_distance, g.light_count, g.shadow_caster_count) = (200.0, 32, 8);
+        g.lens_flare = false;
         (g.ambient_brightness, g.oob, g.cel_shading) = (10, 0.0, false);
         config.reset_outdated_settings();
 
@@ -3083,6 +3177,14 @@ mod tests {
                 "{toggles}"
             );
         }
+    }
+
+    #[test]
+    fn a_realm_lists_scenes_only_with_a_scene_in_its_list() {
+        let config = |json: &str| serde_json::from_str::<ServerConfiguration>(json).unwrap();
+        assert!(config(r#"{"scenesUrn":["urn:decentraland:entity:a"]}"#).lists_scenes());
+        assert!(!config(r#"{"scenesUrn":[]}"#).lists_scenes());
+        assert!(!config(r#"{"realmName":"main"}"#).lists_scenes());
     }
 
     #[test]

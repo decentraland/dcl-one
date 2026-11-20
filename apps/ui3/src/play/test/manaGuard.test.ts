@@ -5,7 +5,7 @@
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeFunctionData, maxUint256, type Hex } from 'viem'
 import { ERC20_ABI } from '@shop/checkout/chain/abi'
 import { BOOK, CREATOR_COUPON_ADDRESS, ITEM } from '@shop/payment/fixtures'
@@ -13,7 +13,7 @@ import { metaTxTypedData } from '../../shop/checkout/chain/metatx'
 import { creatorTrade } from '../../shop/checkout/fakes'
 import { getCouponManagerForTrade } from '../../shop/checkout/lib/marketplace'
 import { ASSET_TYPE, encodeMarketplaceCall, encodeStoreBuy, type ListingCoupon, type StoreItemToBuy } from '../../shop/checkout/purchase/encoding'
-import { checkManaTerms, checkMetaTransaction, checkTransaction, manaGuardedProvider, type ManaPurchaseIntent, type ManaSaleTerms } from '../shell/shop/manaGuard'
+import { checkManaTerms, checkMetaTransaction, checkTransaction, manaGuardedProvider, type ManaHandOff, type ManaPurchaseIntent, type ManaSaleTerms } from '../shell/shop/manaGuard'
 import { WalletRefusal } from '../shell/shop/walletGuard'
 
 const FILE = join(__dirname, '../../../../../services/catalyst/tests/fixtures/shop/mana-purchase-guard-vectors.json')
@@ -60,8 +60,8 @@ const listings = (calldata: Hex = encodeMarketplaceCall([manaListing()], BUYER),
 })
 const mints = (maxWei = PRICE, over: Partial<Extract<ManaSaleTerms, { kind: 'mints' }>> = {}): ManaSaleTerms => ({ kind: 'mints', venue: STORE, units: ONE_UNIT, maxWei, ...over })
 const approve = (spender = MARKETPLACE, amount = maxUint256) => encodeFunctionData({ abi: ERC20_ABI, functionName: 'approve', args: [spender as Hex, amount] })
-const typed = (domain: typeof MANA_DOMAIN | typeof MARKET_DOMAIN | typeof STORE_DOMAIN, data: Hex, from = BUYER) =>
-  JSON.parse(JSON.stringify(metaTxTypedData(domain as never, from, 0n, data))) as Record<string, Record<string, unknown>>
+const typed = (domain: typeof MANA_DOMAIN | typeof MARKET_DOMAIN | typeof STORE_DOMAIN, data: Hex, from = BUYER, nonce = 0n) =>
+  JSON.parse(JSON.stringify(metaTxTypedData(domain as never, from, nonce, data))) as Record<string, Record<string, unknown>>
 
 // ---- Vectors ------------------------------------------------------------------------------------
 
@@ -179,28 +179,82 @@ function wallet(chain = CHAIN) {
   }
 }
 
-function guarded(sale: ManaSaleTerms, opts: { chain?: number; chainId?: number; handOff?: () => boolean; current?: () => boolean } = {}) {
+function guarded(
+  sale: ManaSaleTerms,
+  opts: { chain?: number; chainId?: number; handOff?: (attempt: ManaHandOff) => boolean; current?: () => boolean; mayApprove?: () => boolean } = {}
+) {
   const w = wallet(opts.chain ?? opts.chainId)
   const handOff = vi.fn(opts.handOff ?? (() => true))
-  const intent: ManaPurchaseIntent = { buyer: BUYER, chainId: opts.chainId ?? CHAIN, sale, current: opts.current ?? (() => true), handOff }
+  const intent: ManaPurchaseIntent = {
+    buyer: BUYER,
+    chainId: opts.chainId ?? CHAIN,
+    sale,
+    current: opts.current ?? (() => true),
+    handOff,
+    mayApprove: opts.mayApprove ?? (() => true)
+  }
   return { w, handOff, intent, provider: manaGuardedProvider(w, intent) }
 }
 const reached = (w: ReturnType<typeof wallet>, method: string) => w.requests.filter((r) => r.method === method)
 
 describe('the MANA guard’s provider', () => {
+  // The listing fixtures stamp their checks from now: a test that builds the terms and then the request it signs builds
+  // the listing twice, which must read the same clock, however long the gap between them.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(NOW_MS))
+  })
+  afterEach(() => void vi.useRealTimers())
+
   it('refuses terms it can’t bound before asking the wallet anything: a USD-priced listing, an unlisted venue', () => {
     expect(() => guarded(listings(encodeMarketplaceCall([creatorTrade()], BUYER)))).toThrow(WalletRefusal)
     expect(() => guarded(listings(undefined, { venue: OTHER }))).toThrow(WalletRefusal)
     expect(() => checkManaTerms({ buyer: BUYER, chainId: 1, sale: listings() })).toThrow(WalletRefusal)
   })
 
-  it('signs the approve without a hand-off, and the sale only after one', async () => {
+  it('signs the approve without a hand-off, and the sale only after one, naming the relay and the nonce it signs', async () => {
     const g = guarded(listings())
     await g.provider.request({ method: 'eth_signTypedData_v4', params: [BUYER, JSON.stringify(typed(MANA_DOMAIN, approve()))] })
     expect(g.handOff).not.toHaveBeenCalled()
-    await g.provider.request({ method: 'eth_signTypedData_v4', params: [BUYER, JSON.stringify(typed(MARKET_DOMAIN, encodeMarketplaceCall([manaListing()], BUYER)))] })
+    await g.provider.request({ method: 'eth_signTypedData_v4', params: [BUYER, JSON.stringify(typed(MARKET_DOMAIN, encodeMarketplaceCall([manaListing()], BUYER), BUYER, 41n))] })
     expect(g.handOff).toHaveBeenCalledTimes(1)
+    expect(g.handOff).toHaveBeenCalledWith({ rail: 'relay', nonce: 41n, data: encodeMarketplaceCall([manaListing()], BUYER) })
     expect(reached(g.w, 'eth_signTypedData_v4')).toHaveLength(2)
+  })
+
+  it('forwards MANA’s approve only while the host says the buyer is authorizing it; the sale needs no such word', async () => {
+    let authorizing = false
+    const g = guarded(listings(), { mayApprove: () => authorizing })
+    await expect(g.provider.request({ method: 'eth_signTypedData_v4', params: [BUYER, JSON.stringify(typed(MANA_DOMAIN, approve()))] })).rejects.toThrow(WalletRefusal)
+    await expect(g.provider.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: MANA, data: approve() }] })).rejects.toThrow(WalletRefusal)
+    expect(reached(g.w, 'eth_signTypedData_v4')).toHaveLength(0)
+    expect(reached(g.w, 'eth_sendTransaction')).toHaveLength(0)
+    authorizing = true
+    await g.provider.request({ method: 'eth_signTypedData_v4', params: [BUYER, JSON.stringify(typed(MANA_DOMAIN, approve()))] })
+    expect(reached(g.w, 'eth_signTypedData_v4')).toHaveLength(1)
+    authorizing = false
+    await g.provider.request({ method: 'eth_signTypedData_v4', params: [BUYER, JSON.stringify(typed(MARKET_DOMAIN, encodeMarketplaceCall([manaListing()], BUYER)))] })
+    expect(reached(g.w, 'eth_signTypedData_v4')).toHaveLength(2)
+  })
+
+
+  it('refuses a listing paid in more than one entry, even when the first is the price', () => {
+    const two = manaListing({
+      received: [
+        { assetType: ASSET_TYPE.ERC20, contractAddress: BOOK.mana, amount: PRICE.toString(), extra: '0x', beneficiary: BOOK.creator },
+        { assetType: ASSET_TYPE.ERC20, contractAddress: BOOK.mana, amount: '1', extra: '0x', beneficiary: BOOK.creator }
+      ]
+    })
+    expect(() => checkManaTerms({ buyer: BUYER, chainId: CHAIN, sale: listings(encodeMarketplaceCall([two], BUYER)) })).toThrow(WalletRefusal)
+  })
+
+  it('hands a sale sent from the wallet off as direct, its nonce the wallet’s to pick', async () => {
+    const g = guarded(listings())
+    await g.provider.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: MANA, data: approve() }] })
+    expect(g.handOff).not.toHaveBeenCalled()
+    await g.provider.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: MARKETPLACE, data: encodeMarketplaceCall([manaListing()], BUYER) }] })
+    expect(g.handOff).toHaveBeenCalledTimes(1)
+    expect(g.handOff).toHaveBeenCalledWith({ rail: 'direct' })
   })
 
   it('takes a sale with no approve at all, when an allowance stands already', async () => {

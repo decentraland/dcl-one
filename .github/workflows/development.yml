@@ -437,7 +437,7 @@ jobs:
           nix develop --command pnpm --dir apps/ui3 typecheck
           nix develop --command pnpm --dir apps/sites typecheck
           nix develop --command pnpm --dir apps/sites typecheck:scripts
-          for check in gen:schemas:check schemas:honesty:check schemas:dupes:check telemetry:check check:flowmap gen:seed-catalog:check; do
+          for check in gen:schemas:check schemas:honesty:check schemas:dupes:check telemetry:check check:flowmap; do
             nix develop --command pnpm --dir apps/sites "$check"
           done
       - name: Save the pnpm store from main

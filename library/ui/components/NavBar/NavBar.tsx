@@ -17,7 +17,6 @@ import {
 import {
   GeneralBell,
   GeneralClose,
-  GeneralCopy,
   GeneralDecentralandColor,
   GeneralDownArrow,
   GeneralMana,
@@ -90,7 +89,6 @@ export type NavBarLabels = {
   account: (name: string) => string
   userId: string
   copyUserId: string
-  addressCopied?: string
   userIdCopied: string
   copyUserIdError: string
   openMenu: string
@@ -122,9 +120,14 @@ type NavBarCommonProps = {
   notifications?: NavBarNotifications
   /** Signed in: the account menu's entries, for example profile links and sign out. */
   accountActions?: readonly NavBarAccountAction[]
-  accountMenuAppearance?: 'default' | 'sites' | 'profile'
-  /** Optional balances and network control inside the profile panel. */
+  accountMenuAppearance?: 'default' | 'profile'
+  /** Reports when the account menu opens and when it closes or unmounts while open. */
+  onAccountMenuOpenChange?: (open: boolean) => void
+  /** Profile panel balances. Header balances stay separate. */
   accountMenuBalances?: NavBarBalances
+  /** Reserves a profile balance row while an eligible balance request is pending. */
+  accountMenuBalancesPending?: boolean
+  /** Optional network control inside the profile panel. */
   accountMenuNetwork?: ReactNode
   linkComponent?: NavBarLinkComponent
   labels?: Partial<NavBarLabels>
@@ -292,6 +295,7 @@ type SectionActivation = 'hover' | 'pressed'
 
 function SectionDropdown({
   section,
+  index,
   renderLink,
   compact,
   activation,
@@ -299,21 +303,23 @@ function SectionDropdown({
   onClose
 }: {
   section: Extract<NavBarSection, { items: readonly NavBarLink[] }>
+  index: number
   renderLink: LinkRenderer
   compact: boolean
   activation: SectionActivation | undefined
-  onOpen: (activation: SectionActivation) => void
-  onClose: () => void
+  onOpen: (index: number, activation: SectionActivation) => void
+  onClose: (index: number) => void
 }) {
   const rootRef = useRef<HTMLLIElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const listId = useId()
   const open = activation !== undefined
+  const close = useCallback(() => onClose(index), [onClose, index])
   const { onKeyDown, onBlur } = usePopupDismissal(
     rootRef,
     triggerRef,
     open,
-    onClose,
+    close,
     activation === 'hover'
   )
   const active = section.active || section.items.some((item) => item.active)
@@ -324,12 +330,12 @@ function SectionDropdown({
       onKeyDown={onKeyDown}
       onBlur={onBlur}
       onPointerEnter={(event) => {
-        if (event.pointerType === 'mouse' && !open) onOpen('hover')
+        if (event.pointerType === 'mouse' && !open) onOpen(index, 'hover')
       }}
       onPointerLeave={(event) => {
         if (event.pointerType !== 'mouse' || activation !== 'hover') return
         const focused = event.currentTarget.contains(document.activeElement)
-        if (!focused || document.activeElement === triggerRef.current) onClose()
+        if (!focused || document.activeElement === triggerRef.current) close()
       }}
     >
       <button
@@ -341,8 +347,8 @@ function SectionDropdown({
         aria-controls={listId}
         onClick={(event) => {
           event.currentTarget.focus({ preventScroll: true })
-          if (activation === 'pressed') onClose()
-          else onOpen('pressed')
+          if (activation === 'pressed') close()
+          else onOpen(index, 'pressed')
         }}
       >
         {section.label}
@@ -362,7 +368,7 @@ function SectionDropdown({
               target: item.target,
               className: styles.dropdownLink,
               'aria-current': item.active ? 'page' : undefined,
-              onClick: onClose,
+              onClick: close,
               children: item.label
             })}
           </li>
@@ -580,8 +586,10 @@ function AccountMenu({
   labels,
   renderLink,
   onDone,
+  onOpenChange,
   appearance,
   balances,
+  balancesPending,
   network,
   format
 }: {
@@ -590,8 +598,10 @@ function AccountMenu({
   labels: NavBarLabels
   renderLink: LinkRenderer
   onDone?: () => void
+  onOpenChange?: NavBarCommonProps['onAccountMenuOpenChange']
   appearance?: NavBarCommonProps['accountMenuAppearance']
   balances?: NavBarBalances
+  balancesPending?: boolean
   network?: ReactNode
   format: Intl.NumberFormat
 }) {
@@ -601,14 +611,21 @@ function AccountMenu({
   const { open, setOpen, toggle, onKeyDown, onBlur } = usePopup(rootRef, triggerRef)
   const displayName = account.name || shortAddress(account.address)
   const profile = appearance === 'profile'
-  const sites = profile || appearance === 'sites'
   const [failedBodyUrl, setFailedBodyUrl] = useState<string>()
   const bodyUrl = account.bodyUrl === failedBodyUrl ? undefined : account.bodyUrl
+  const openObserver = useRef(onOpenChange)
+  useEffect(() => {
+    openObserver.current = onOpenChange
+  }, [onOpenChange])
+  useEffect(() => {
+    if (!open) return
+    openObserver.current?.(true)
+    return () => openObserver.current?.(false)
+  }, [open])
   return (
     <div
       ref={rootRef}
       className={profile ? `${styles.account} ${profileStyles.account}` : styles.account}
-      data-appearance={appearance}
       onKeyDown={onKeyDown}
       onBlur={onBlur}
     >
@@ -637,27 +654,22 @@ function AccountMenu({
           </div>
         ) : null}
         <div className={profile ? profileStyles.content : undefined}>
-          <div className={profile ? `${styles.accountHeader} ${profileStyles.header}` : styles.accountHeader}>
-            {sites ? (
-              <div className={profile ? profileStyles.face : styles.accountMenuAvatar}>
+          {profile ? (
+            <div className={profileStyles.header}>
+              <div className={profileStyles.face}>
                 <Avatar account={account} />
               </div>
-            ) : null}
-            <div className={styles.accountDetails}>
-              <p className={profile ? profileStyles.name : styles.accountName}>{displayName}</p>
-              {sites ? (
-                <div className={profile ? profileStyles.identity : styles.accountIdentity}>
-                  <span className={profile ? profileStyles.identityLabel : undefined}>{labels.userId}</span>
-                  {!profile ? (
-                    <span title={account.address}>{shortAddress(account.address)}</span>
-                  ) : null}
+              <div className={profileStyles.details}>
+                <p className={profileStyles.name}>{displayName}</p>
+                <div className={profileStyles.identity}>
+                  <span className={profileStyles.identityLabel}>{labels.userId}</span>
                   {open ? (
                     <CopyFeedback
                       value={account.address}
-                      inlineValue={profile ? (
+                      inlineValue={
                         <span title={account.address}>{shortAddress(account.address)}</span>
-                      ) : undefined}
-                      copiedLabel={profile ? labels.addressCopied ?? 'Address copied!' : undefined}
+                      }
+                      copiedLabel={labels.userIdCopied}
                       successAnnouncement={labels.userIdCopied}
                       errorAnnouncement={labels.copyUserIdError}
                     >
@@ -668,29 +680,32 @@ function AccountMenu({
                           className={styles.iconButton}
                           onClick={copy}
                         >
-                          {profile ? (
-                            <MenusCopy size={16} aria-hidden="true" />
-                          ) : (
-                            <GeneralCopy size={16} aria-hidden="true" />
-                          )}
+                          <MenusCopy size={16} aria-hidden="true" />
                         </button>
                       )}
                     </CopyFeedback>
                   ) : null}
                 </div>
-              ) : account.name ? (
+                {balances || balancesPending ? (
+                  <div className={profileStyles.balances} aria-busy={balancesPending || undefined}>
+                    {balances ? (
+                      <Balances balances={balances} labels={labels} format={format} profile />
+                    ) : null}
+                  </div>
+                ) : null}
+                {open && network ? <div className={profileStyles.network}>{network}</div> : null}
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className={styles.accountName}>{displayName}</p>
+              {account.name ? (
                 <p className={styles.accountAddress} title={account.address}>
                   {shortAddress(account.address)}
                 </p>
               ) : null}
-              {profile && balances ? (
-                <div className={profileStyles.balances}>
-                  <Balances balances={balances} labels={labels} format={format} profile />
-                </div>
-              ) : null}
-              {profile && open && network ? <div className={profileStyles.network}>{network}</div> : null}
-            </div>
-          </div>
+            </>
+          )}
           {actions.length > 0 ? (
             <AccountActionList
               actions={actions}
@@ -898,7 +913,9 @@ export function NavBar({
   notifications,
   accountActions = [],
   accountMenuAppearance,
+  onAccountMenuOpenChange,
   accountMenuBalances,
+  accountMenuBalancesPending,
   accountMenuNetwork,
   linkComponent,
   labels: labelOverrides,
@@ -922,6 +939,32 @@ export function NavBar({
     index: number
     activation: SectionActivation
   }>()
+  const desktopSectionsRef = useRef<HTMLUListElement>(null)
+  const accountMenuOpen = useRef(false)
+  const openDesktopSection = useCallback((index: number, activation: SectionActivation) => {
+    if (activation === 'hover') {
+      const trigger = desktopSectionsRef.current?.querySelector('button[aria-expanded="true"]')
+      const focus = trigger?.ownerDocument.activeElement
+      // Moving the mouse must not hide a focused link or interrupt someone using their account.
+      if (
+        accountMenuOpen.current ||
+        (focus !== trigger && trigger?.parentElement?.contains(focus ?? null))
+      )
+        return
+    }
+    setDesktopSection({ index, activation })
+  }, [])
+  const closeDesktopSection = useCallback((index: number) => {
+    setDesktopSection((current) => (current?.index === index ? undefined : current))
+  }, [])
+  const handleAccountMenuOpenChange = useCallback(
+    (open: boolean) => {
+      accountMenuOpen.current = open
+      if (open) setDesktopSection(undefined)
+      onAccountMenuOpenChange?.(open)
+    },
+    [onAccountMenuOpenChange]
+  )
   const [drawerClosingFrom, setDrawerClosingFrom] = useState<DrawerExitFrame | null>(null)
   const drawerPanelRef = useRef<HTMLDivElement>(null)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
@@ -1009,21 +1052,20 @@ export function NavBar({
             )
           })}
           {brand}
-          <ul className={styles.sections} hidden={drawerOpen}>
+          <ul ref={desktopSectionsRef} className={styles.sections} hidden={drawerOpen}>
             {sections.map((section, index) =>
               section.items ? (
                 <SectionDropdown
                   key={index}
+                  index={index}
                   section={section}
                   renderLink={renderLink}
                   compact={mobileSections !== undefined}
                   activation={
                     desktopSection?.index === index ? desktopSection.activation : undefined
                   }
-                  onOpen={(activation) => setDesktopSection({ index, activation })}
-                  onClose={() =>
-                    setDesktopSection((current) => (current?.index === index ? undefined : current))
-                  }
+                  onOpen={openDesktopSection}
+                  onClose={closeDesktopSection}
                 />
               ) : (
                 <li key={index} className={styles.section}>
@@ -1077,13 +1119,15 @@ export function NavBar({
               key={account.address}
               account={account}
               appearance={accountMenuAppearance}
-              balances={accountMenuBalances ?? balances}
+              balances={accountMenuBalances}
+              balancesPending={accountMenuBalancesPending}
               network={accountMenuNetwork}
               format={format}
               actions={accountActions}
               labels={labels}
               renderLink={renderLink}
               onDone={drawerOpen ? closeDrawer : undefined}
+              onOpenChange={handleAccountMenuOpenChange}
             />
           ) : (
             renderSignIn(drawerOpen ? dismissDrawer : undefined)

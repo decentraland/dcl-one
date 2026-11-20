@@ -435,8 +435,8 @@ function SaleRentBox({ result, land, account, onSignIn, onChanged }: SaleRentBox
             {!isOwner ? (
               <>
                 {isTenant && !ended ? (
-                  <a className="shop-landtoken__primary shop-landtoken__primary--builder" href="/create/land">
-                    Manage in Builder
+                  <a className="shop-landtoken__primary shop-landtoken__primary--builder" href="/download/creator-hub">
+                    Manage in Creator Hub
                   </a>
                 ) : null}
                 <div className="shop-landtoken__sale-buttons">
