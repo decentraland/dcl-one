@@ -263,8 +263,8 @@ impl SceneRoomModeration {
     }
 
     /// Only explicit arrays replace lists. Missing or non-array fields retain known state;
-    /// an empty array clears its list. An array containing an invalid address retains the
-    /// known list, including when other entries are valid.
+    /// an empty array clears its list. Invalid entries are skipped. An entirely unusable ban
+    /// array retains known bans; an entirely unusable admin array removes admin trust.
     pub(crate) fn update_from_metadata(&mut self, metadata: &str) -> Result<(), MetadataError> {
         if metadata.trim().is_empty() {
             return Ok(());
@@ -274,16 +274,29 @@ impl SceneRoomModeration {
         let object = value.as_object().ok_or(MetadataError::NotAnObject)?;
         let addresses = |key: &str| -> Option<HashSet<Address>> {
             object.get(key).and_then(|v| v.as_array()).and_then(|list| {
-                let addresses: Option<HashSet<_>> = list
+                let mut skipped = 0;
+                let addresses: HashSet<_> = list
                     .iter()
-                    .map(|entry| entry.as_str().and_then(|s| s.as_h160()))
+                    .filter_map(|entry| {
+                        let address = entry.as_str().and_then(|s| s.as_h160());
+                        if address.is_none() {
+                            skipped += 1;
+                        }
+                        address
+                    })
                     .collect();
-                if addresses.is_none() {
+                if skipped > 0 {
                     bevy::log::warn!(
-                        "scene room metadata {key} contains an invalid address; retaining its list"
+                        skipped,
+                        key,
+                        "scene room metadata contains invalid addresses"
                     );
                 }
-                addresses
+                if key == "bannedAddresses" && !list.is_empty() && addresses.is_empty() {
+                    None
+                } else {
+                    Some(addresses)
+                }
             })
         };
         if let Some(addresses) = addresses("bannedAddresses") {

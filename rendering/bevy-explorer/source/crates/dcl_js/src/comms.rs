@@ -12,7 +12,7 @@ use dcl_types::{CommsMessageType, RpcCalls, SceneResourceCounters};
 use super::State;
 
 use dcl_types::MAX_BINARY_MESSAGE_BYTES;
-pub use dcl_types::MAX_COMMS_MESSAGE_BYTES;
+use dcl_types::MAX_COMMS_MESSAGE_BYTES;
 const MAX_NETWORK_MESSAGE_QUEUE: usize = 1024;
 pub const MAX_SEND_MESSAGES_PER_TICK: usize = 512;
 

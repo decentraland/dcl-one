@@ -1158,6 +1158,58 @@ mod metadata_tests {
     }
 
     #[test]
+    fn malformed_entries_cannot_discard_new_bans_or_keep_revoked_admins() {
+        let banned = Address::repeat_byte(1);
+        let admin = Address::repeat_byte(2);
+        let replacement = Address::repeat_byte(3);
+        for populated in [false, true] {
+            let initial = if populated {
+                SceneRoomModeration {
+                    banned_addresses: [banned].into_iter().collect(),
+                    scene_admins: [admin].into_iter().collect(),
+                }
+            } else {
+                SceneRoomModeration::default()
+            };
+            for (metadata, expected_bans, expected_admins) in [
+                (
+                    serde_json::json!({"bannedAddresses": [replacement.to_string(), "invalid"]}),
+                    [replacement].into_iter().collect(),
+                    initial.scene_admins.clone(),
+                ),
+                (
+                    serde_json::json!({"bannedAddresses": ["invalid", null]}),
+                    initial.banned_addresses.clone(),
+                    initial.scene_admins.clone(),
+                ),
+                (
+                    serde_json::json!({"sceneAdmins": [replacement.to_string(), "invalid"]}),
+                    initial.banned_addresses.clone(),
+                    [replacement].into_iter().collect(),
+                ),
+                (
+                    serde_json::json!({"sceneAdmins": [false, null]}),
+                    initial.banned_addresses.clone(),
+                    Default::default(),
+                ),
+            ] {
+                let mut world = World::new();
+                let room = world.spawn(initial.clone()).id();
+                apply_scene_room_metadata(&mut world.commands(), room, &metadata.to_string());
+                world.flush();
+                assert_eq!(
+                    world.get::<SceneRoomModeration>(room).unwrap(),
+                    &SceneRoomModeration {
+                        banned_addresses: expected_bans,
+                        scene_admins: expected_admins,
+                    },
+                    "{metadata}, populated={populated}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn scene_room_metadata_without_arrays_keeps_previous_lists() {
         let initial = SceneRoomModeration {
             banned_addresses: [Address::repeat_byte(1)].into_iter().collect(),
@@ -1170,9 +1222,6 @@ mod metadata_tests {
             r#"{"unrelated":true}"#,
             r#"{"bannedAddresses":null,"sceneAdmins":false}"#,
             r#"{"bannedAddresses":"not a list","sceneAdmins":42}"#,
-            r#"{"bannedAddresses":["0XABCD",{}],"sceneAdmins":[false]}"#,
-            r#"{"bannedAddresses":["invalid"],"sceneAdmins":[null]}"#,
-            r#"{"bannedAddresses":["0x3333333333333333333333333333333333333333","invalid"]}"#,
             "not json",
             "[]",
             "null",

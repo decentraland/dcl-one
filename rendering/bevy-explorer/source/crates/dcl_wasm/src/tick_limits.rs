@@ -19,7 +19,6 @@ pub fn tick_limit_broken(calls: &[RpcCall]) -> Option<&'static str> {
         match call {
             RpcCall::SendMessageBus { data, .. } => {
                 sends += 1;
-                // the message plus its one-byte type tag
                 if !dcl_types::scene_message_fits(data) {
                     return Some("message bus send too large");
                 }
