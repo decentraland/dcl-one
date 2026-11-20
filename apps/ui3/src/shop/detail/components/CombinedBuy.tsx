@@ -21,9 +21,9 @@ import { invalidateAfterPurchase } from "../../checkout/lib/after-purchase";
 import { isSignatureDeclined } from "../../checkout/chain/metatx";
 import { isPendingTxError, isRevertedTxError } from "../../checkout/chain/wallet";
 import AuthorizeStep from "../../checkout/components/AuthorizeStep";
-import { exactAllowanceReady, exactGrantLock, getManaSpendingAuthorization, GrantNotRecordedError, isAuthorizationPending, needsApprovalStep, setAuthorization, type ShopAuthorization } from "../../checkout/lib/authorizations";
+import { exactAllowanceReady, ExactGrantUnavailableError, exactGrantLock, getManaSpendingAuthorization, GrantNotRecordedError, isAuthorizationPending, needsApprovalStep, setAuthorization, type ShopAuthorization } from "../../checkout/lib/authorizations";
 import { friendlyError, isRejection } from "../../checkout/lib/errors";
-import { webLock } from "../../checkout/lib/web-lock";
+import { newAttemptId, webLock } from "../../checkout/lib/web-lock";
 import { isSettlementPending } from "../../checkout/purchase/gasless";
 import { purchaseTargetFor, resolveLine, tradeManaPrice } from "../../checkout/purchase/cart";
 import { buyMintWithCreditsAndMana, buyWithCreditsAndMana, manaSpenderFor, splitTerms, type PurchaseTarget } from "../../checkout/purchase/mana";
@@ -71,6 +71,11 @@ const NOT_RECORDED = "Your browser couldn't keep a record of this purchase, so i
 const ELSEWHERE = "This item is being bought in another window. Nothing was charged here.";
 const APPROVING_ELSEWHERE = "A purchase with Credits and MANA, or its MANA approval, is in progress in another window. Try again in a moment. Nothing was charged here.";
 const UNGUARDED = "This browser can't make sure a purchase with Credits and MANA is sent only once, so it can't be paid this way here.";
+const CHECKING_ELSEWHERE = "This purchase is being paid or checked in another window. Check again in a moment.";
+const UNCHECKABLE = "This browser can't check this purchase safely here. Open it in a browser with Web Locks, or check your purchases.";
+/** How often, and how far apart, the sale asks again for the grant's lock right after this tab's own approval let it go. */
+const GRANT_LOCK_TRIES = 5;
+const GRANT_LOCK_RETRY_MS = 50;
 /** The node's purchase history, read this many lines at a time (its most) while looking for one credit. */
 const HISTORY_PAGE = 200;
 
@@ -167,13 +172,6 @@ function clearSentSplit(account: string | null, lineId: string, attempt: string 
   }
 }
 
-/** A new run's own id. */
-function newAttempt(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 /** The node's record of one credit (listed by its lines, `<salt>:<position>`), read page by page until found or the end. */
 async function findCreditRecord(account: string, creditId: string, client: ShopClient): Promise<PurchaseRecord | null> {
   const salt = creditId.toLowerCase();
@@ -181,8 +179,9 @@ async function findCreditRecord(account: string, creditId: string, client: ShopC
     const { items, total } = await fetchUserPurchases(account, { all: true, first: HISTORY_PAGE, skip }, client);
     const found = items.find((p) => p.id.split(":")[0]!.toLowerCase() === salt);
     if (found) return found;
-    skip += items.length;
-    if (items.length === 0 || skip >= total) return null;
+    // By the page asked for: rows the decoder drops (a status it does not know) still take their place on the server's page.
+    skip += HISTORY_PAGE;
+    if (skip >= total) return null;
   }
 }
 
@@ -214,6 +213,8 @@ type CombinedBuyRun = {
    */
   checkable: boolean;
   checking: boolean;
+  /** Why the last Check again did nothing: another window holds the item, or this browser cannot take its lock. */
+  notice: string | null;
   /**
    * Reads the sent split's receipt: confirmed completes it, reverted fails it (retiring its credit). With no receipt yet, or
    * none to read, the node's record of its credit decides once that credit can no longer be spent: spent completes it,
@@ -264,6 +265,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     return () => clearTimeout(t);
   }, [sent]);
   const [checking, setChecking] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const provider = wallet.session.kind === "web3" ? (wallet.host?.provider?.() ?? null) : null;
   const busy = phase.kind === "working";
   const blocked = !provider || !wallet.account ? "Connect your wallet to pay with Credits and MANA." : wallet.accountMismatch ? "Your wallet is on another account than the one you're signed in with." : null;
@@ -343,7 +345,19 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     }
   }
 
-  async function pay(ctx: RailContext, agreedTerms: Terms, known?: PurchaseTarget) {
+  /**
+   * The grant's lock, asked for `tries` times a little apart: right after this tab's own approval let it go, the browser
+   * frees it a turn later, and that must not read as another window's approval.
+   */
+  async function grantLock(name: string, tries: number): Promise<(() => void) | null> {
+    for (let i = 1; ; i++) {
+      const release = await webLock(services.locks, name);
+      if (release || i >= tries) return release;
+      await new Promise((resolve) => setTimeout(resolve, GRANT_LOCK_RETRY_MS));
+    }
+  }
+
+  async function pay(ctx: RailContext, agreedTerms: Terms, known?: PurchaseTarget, afterApproval = false) {
     setPhase({ kind: "working" });
     if (!services.locks) {
       setPhase({ kind: "error", message: UNGUARDED });
@@ -359,7 +373,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     // The exact grant's lock, then the item's, in every window in that order: the sale reconciles and spends the manager's
     // allowance with no approval starting beside it, and holds the item's record from its first read to its last write,
     // so two windows never both find it free and both send.
-    const grantRelease = await webLock(services.locks, exactGrantLock(spendingAuth(target), ctx.buyer));
+    const grantRelease = await grantLock(exactGrantLock(spendingAuth(target), ctx.buyer), afterApproval ? GRANT_LOCK_TRIES : 1);
     if (!grantRelease) {
       setPhase({ kind: "error", message: APPROVING_ELSEWHERE });
       return;
@@ -388,7 +402,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       setPhase({ kind: "review" });
       return;
     }
-    const attempt = newAttempt();
+    const attempt = newAttemptId();
     let creditId: string | null = null;
     let creditExpiresAt: number | null = null;
     let sentHash: string | null = null;
@@ -475,7 +489,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       const message =
         e instanceof SplitNotRecorded
           ? NOT_RECORDED
-          : e instanceof GrantNotRecordedError
+          : e instanceof GrantNotRecordedError || e instanceof ExactGrantUnavailableError
             ? `${e.message} Nothing was bought.`
             : isAuthorizationPending(e) || (stillPending && !dispatched)
               ? "Your MANA approval is still confirming, so nothing was bought. Try again in a moment."
@@ -541,7 +555,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     },
     approved: () => {
       const ctx = context();
-      if (mounted.current && ctx && terms.current) void pay(ctx, terms.current);
+      if (mounted.current && ctx && terms.current) void pay(ctx, terms.current, undefined, true);
     },
     declined: () => setPhase({ kind: "error", message: "MANA spending was not approved, so nothing was bought." }),
     reset: () => {
@@ -555,7 +569,9 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       ((!!sent.txHash && sent.chainId !== null) ||
         (!held(sent, Date.now()) && (!!sent.txHash || !sent.creditId || creditOver(sent, Date.now())))),
     checking,
+    notice,
     checkAgain: async () => {
+      setNotice(null);
       const account = wallet.account;
       // Read even past the hold: a purchase that mined in the meantime is completed, never offered a second time.
       const record = readSentRecord(account, lineId);
@@ -575,7 +591,10 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       // Applied under the item's lock, and only to the attempt that was read: another tab may have settled it meanwhile
       // and sent a new split, whose record an outcome of this one never wipes.
       const release = await webLock(services.locks, sentLock(account, lineId));
-      if (!release) return;
+      if (!release) {
+        setNotice(services.locks ? CHECKING_ELSEWHERE : UNCHECKABLE);
+        return;
+      }
       try {
         const current = readSentRecord(account, lineId);
         const same = current !== null && current.attempt === record.attempt && (record.attempt !== null || current.at === record.at);
@@ -606,7 +625,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
 }
 
 export default function CombinedBuy({ line, offer, mixed, onClose, onDone, portal }: CombinedBuyProps) {
-  const { phase, busy, agreed, blocked, start, grant, approved, declined, remembered, checkable, checking, checkAgain } = useCombinedBuy({ line, offer, mixed, onDone });
+  const { phase, busy, agreed, blocked, start, grant, approved, declined, remembered, checkable, checking, notice, checkAgain } = useCombinedBuy({ line, offer, mixed, onDone });
   const title = `Buy ${line.display.name}`;
   const credits = `${mixed.credits} ${mixed.credits === 1 ? "Credit" : "Credits"}`;
   const mana = `${formatMana(mixed.manaWei, { group: true })} MANA`;
@@ -628,6 +647,11 @@ export default function CombinedBuy({ line, offer, mixed, onClose, onDone, porta
           // Still confirming, from this run or one sent earlier: never a second one beside it.
           <>
             <p role="status">The purchase was sent and is still confirming. It was not sent twice; check your purchases in a moment.</p>
+            {notice ? (
+              <p className="shop-orderbuy__note" role="status" data-testid="combined-check-notice">
+                {notice}
+              </p>
+            ) : null}
             <div className="shop-orderbuy__actions">
               <Button onClick={() => void checkAgain()} disabled={checking || !checkable} data-testid="combined-check-again">
                 Check again

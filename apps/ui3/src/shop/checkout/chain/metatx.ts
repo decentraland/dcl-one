@@ -6,7 +6,7 @@
 // `executeMetaTransaction` and pays. The nonce is read from the target over our RPC, exactly as the
 // relay re-reads it to recover the signer, so both sides hash the same digest.
 
-import { decodeFunctionResult, encodeFunctionData, pad, toHex, type Hex } from "viem";
+import { decodeFunctionData, decodeFunctionResult, encodeFunctionData, pad, toHex, type Hex } from "viem";
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
 import type { ChainId } from "@shop/model/chain";
@@ -134,6 +134,18 @@ export function encodeExecuteMetaTransaction(style: MetaTxStyle, from: string, f
   }
   const { r, s, v } = splitSignature(signature);
   return encodeFunctionData({ abi: NATIVE_META_TX_ABI, functionName: "executeMetaTransaction", args: [from as Hex, functionData, r, s, v] });
+}
+
+/** Who an `executeMetaTransaction` calldata of the target's style runs as, and the call it runs; null when it is not one. */
+export function decodeExecuteMetaTransaction(style: MetaTxStyle, data: Hex): { from: string; functionData: Hex } | null {
+  try {
+    const abi = style === "functionData" ? OFFCHAIN_META_TX_ABI : NATIVE_META_TX_ABI;
+    const { functionName, args } = decodeFunctionData({ abi, data });
+    if (functionName !== "executeMetaTransaction") return null;
+    return { from: String(args[0]).toLowerCase(), functionData: args[1] as Hex };
+  } catch {
+    return null;
+  }
 }
 
 function declined(e: unknown): boolean {

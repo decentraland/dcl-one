@@ -13,7 +13,8 @@ import { CREDITS_MANAGER_ABI, OFFCHAIN_META_TX_ABI } from "@shop/checkout/chain/
 
 import { requireContracts } from "../../checkout/chain/contracts";
 import { batchAuthorization, createFakeLocks, creatorTrade, relayedApproval } from "../../checkout/fakes";
-import { exactGrantLock, getManaSpendingAuthorization } from "../../checkout/lib/authorizations";
+import { encodeExecuteMetaTransaction } from "../../checkout/chain/metatx";
+import { encodeAuthorizationCall, exactGrantLock, getManaSpendingAuthorization, metaTxTargetFor } from "../../checkout/lib/authorizations";
 import { CHAIN } from "@shop/model/chain";
 import { createDemo, DemoShell } from "../../checkout/demo";
 import { usdCents } from "@shop/model/money";
@@ -497,6 +498,43 @@ describe("a split whose outcome is not known", () => {
     expect(demo.relay.posts).toHaveLength(0);
   });
 
+  it("with the relay off, the approval says it can't be sent from here: nothing is signed or sent", async () => {
+    const { demo } = setup();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    const approve = await screen.findByTestId("authorize-step-action");
+    (window as { __SHOP_CHAIN__?: unknown }).__SHOP_CHAIN__ = { gasless: false };
+    try {
+      await act(async () => fireEvent.click(approve));
+      expect(await screen.findByText(/The MANA approval can't be sent from here right now, so nothing was sent\. Try again later\./)).toBeTruthy();
+    } finally {
+      delete (window as { __SHOP_CHAIN__?: unknown }).__SHOP_CHAIN__;
+    }
+    expect(demo.wallet.requests.filter((r) => r.method === "eth_signTypedData_v4" || r.method === "eth_sendTransaction")).toEqual([]);
+    expect(demo.relay.posts).toHaveLength(0);
+  });
+
+  it("right after its own approval, the sale waits a moment for the grant's lock the approval let go, rather than calling it another window's", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    const base = demo.services.locks as LockManager;
+    const auth = getManaSpendingAuthorization(CHAIN.POLYGON, requireContracts(CHAIN.POLYGON).creditsManager!.address);
+    const name = exactGrantLock(auth, BOOK.buyer);
+    // The approval takes the lock first; the browser frees it a little late, so the sale's next two asks find it taken.
+    let asked = 0;
+    demo.services.locks = {
+      query: base.query.bind(base),
+      request: ((n: string, options: LockOptions, callback: LockGrantedCallback<unknown>) => {
+        if (n === name && (++asked === 2 || asked === 3)) return Promise.resolve(callback(null));
+        return base.request(n, options, callback);
+      }) as LockManager["request"],
+    } as LockManager;
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(asked).toBe(4);
+  });
+
   it("without Web Locks no approval is asked for: nothing is signed, authorized or sent", async () => {
     const { demo, unmount, again } = setup();
     unmount();
@@ -529,7 +567,14 @@ describe("a split whose outcome is not known", () => {
     const mana = requireContracts(CHAIN.POLYGON).mana.address.toLowerCase();
     localStorage.setItem(
       `dcl-shop-exact-grant:v2:${BOOK.buyer.toLowerCase()}:${CHAIN.POLYGON}:${mana}:${auth.spenderAddress}`,
-      JSON.stringify({ at: Date.now(), attempt: "other", amount: (13n * 10n ** 17n).toString(), to: mana, data: "0x00", nonce: "0" }),
+      JSON.stringify({
+        at: Date.now(),
+        attempt: "other",
+        amount: (13n * 10n ** 17n).toString(),
+        to: mana,
+        data: encodeExecuteMetaTransaction(metaTxTargetFor(auth)!.metaTx, BOOK.buyer, encodeAuthorizationCall(auth, true, 13n * 10n ** 17n), `0x${"11".repeat(64)}1b`),
+        nonce: "0",
+      }),
     );
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
     // Not ready: the approval step, whose retry within the hold sends nothing.
@@ -675,6 +720,30 @@ describe("a held split with no transaction to read", () => {
     await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
     expect(screen.getByText(/still confirming/)).toBeTruthy();
     expect(readSentSplit(BOOK.buyer, demo.lineId)).not.toBeNull();
+  });
+
+  it("Check again says so when another window holds the item, and keeps the hold", async () => {
+    const demo = heldSplit({ value: "EXPIRED" }, nowSeconds() - 1);
+    (demo.services.locks as ReturnType<typeof createFakeLocks>).held.add(`dcl-shop-buynow-split:${BOOK.buyer.toLowerCase()}:${demo.lineId}`);
+    await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
+    expect(await screen.findByTestId("combined-check-notice")).toHaveTextContent("This purchase is being paid or checked in another window. Check again in a moment.");
+    expect(readSentSplit(BOOK.buyer, demo.lineId)).not.toBeNull();
+    expect(screen.queryByTestId("combined-confirm")).toBeNull();
+  });
+
+  it("pages the history by the page it asked for, so rows the decoder drops neither repeat a page nor end it early", async () => {
+    const lines = Array.from({ length: 450 }, (_, n) => ({ id: `0x${n.toString(16).padStart(64, "0")}:0`, status: n % 20 === 0 ? "SOMETHING_NEW" : "SETTLED", usdCents: 10, createdAt: 1, txHash: null }));
+    lines[420] = { id: `${CREDIT}:0`, status: "EXPIRED", usdCents: 50, createdAt: 1, txHash: null };
+    const demo = heldSplit({ value: null }, nowSeconds() - 1, {
+      userPurchases: ({ query }) => {
+        const offset = Number(query.get("offset") ?? 0);
+        const limit = Number(query.get("limit") ?? 50);
+        return { purchases: lines.slice(offset, offset + limit), total: lines.length };
+      },
+    });
+    await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
+    expect(await screen.findByTestId("combined-confirm")).toBeEnabled();
+    expect(demo.shop.log.filter((r) => r.name === "userPurchases").map((r) => r.query.get("offset"))).toEqual(["0", "200", "400"]);
   });
 
   it("finds its credit past the newest lines: the history is read page by page until it is found", async () => {

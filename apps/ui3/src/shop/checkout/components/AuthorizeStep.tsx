@@ -12,7 +12,7 @@ import { chainLabel } from "@shop/model/chain";
 import { formatMana, type ManaWei } from "@shop/model/money";
 import { contractAt } from "../chain/contracts";
 import { TxPendingError } from "../chain/wallet";
-import { GrantInProgressElsewhereError, GrantNotRecordedError, isAuthorizationPending, type ShopAuthorization } from "../lib/authorizations";
+import { ExactGrantUnavailableError, GrantInProgressElsewhereError, GrantNotRecordedError, isAuthorizationPending, type ShopAuthorization } from "../lib/authorizations";
 import { friendlyError, isRejection } from "../lib/errors";
 import "./authorizestep.css";
 
@@ -47,7 +47,7 @@ export default function AuthorizeStep({ auth, step, requiredWei, grant, onAuthor
             ? e.message
             : isAuthorizationPending(e) || e instanceof TxPendingError
               ? "Your approval was sent and is still confirming. Try again in a moment: no second approval goes out until it lands."
-              : e instanceof GrantNotRecordedError
+              : e instanceof GrantNotRecordedError || e instanceof ExactGrantUnavailableError
                 ? e.message
                 : friendlyError(e, "The approval didn't go through. Try again."),
       );

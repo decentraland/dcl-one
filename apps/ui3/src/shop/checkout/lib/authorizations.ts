@@ -8,11 +8,11 @@ import type { WalletKind } from "../../wallet/session";
 import { COLLECTION_MINTER_ABI, ERC20_ABI, ERC721_ABI } from "@shop/checkout/chain/abi";
 import { gaslessEnabled, rpcUrl } from "../chain/config";
 import { COLLECTION_V2_DOMAIN, requireContracts } from "../chain/contracts";
-import { isSignatureDeclined, provedNotSent, readMetaTxNonce, relayMetaTransaction, relaySignedMetaTransaction, type MetaTxTarget } from "../chain/metatx";
+import { decodeExecuteMetaTransaction, isSignatureDeclined, provedNotSent, readMetaTxNonce, relayMetaTransaction, relaySignedMetaTransaction, type MetaTxTarget } from "../chain/metatx";
 import { shopChainReader, waitForReceipt, type ChainReader } from "../chain/rpc";
 import { sendAndConfirm, TxPendingError, TxRevertedError } from "../chain/wallet";
 import { activeChainId } from "./network";
-import { pageLocks, webLock } from "./web-lock";
+import { newAttemptId, pageLocks, webLock } from "./web-lock";
 import { canPayGasItself, showsWalletConfirmations } from "./wallet-kind";
 
 export enum AuthorizationKind {
@@ -199,17 +199,30 @@ export function exactGrantLock(auth: ShopAuthorization, account: string): string
 
 const digits = (v: unknown): v is string => typeof v === "string" && /^\d+$/.test(v);
 
-/** The exact grant to `auth` this account sent, from any tab, as recorded; whether it can still run is `pendingGrantOpen`'s. */
+/**
+ * The exact grant to `auth` this account sent, from any tab, as recorded; whether it can still run is `pendingGrantOpen`'s.
+ * A record whose call is not this account's approve of its `amount` to `auth`'s spender, at `auth`'s token, is none: it is
+ * no signed call of this code, and nothing would be sent again from it.
+ */
 export function readPendingGrant(auth: ShopAuthorization, account: string): PendingGrant | null {
   try {
     const raw = grantStorage()?.getItem(pendingGrantKey(auth, account)) ?? null;
     const g = raw ? (JSON.parse(raw) as Record<string, unknown> | null) : null;
     if (!g || typeof g.at !== "number" || typeof g.attempt !== "string" || !digits(g.amount)) return null;
     if (typeof g.to !== "string" || typeof g.data !== "string" || !digits(g.nonce)) return null;
-    return { at: g.at, attempt: g.attempt, amount: g.amount, to: g.to, data: g.data as Hex, nonce: g.nonce };
+    const grant: PendingGrant = { at: g.at, attempt: g.attempt, amount: g.amount, to: g.to, data: g.data as Hex, nonce: g.nonce };
+    return signedCallMatches(grant, auth, account) ? grant : null;
   } catch {
     return null;
   }
+}
+
+/** Whether a recorded call is `account`'s relayed approve of the recorded amount to `auth`'s spender, at `auth`'s token. */
+function signedCallMatches(grant: PendingGrant, auth: ShopAuthorization, account: string): boolean {
+  const target = metaTxTargetFor(auth);
+  if (!target || grant.to.toLowerCase() !== target.address.toLowerCase()) return false;
+  const call = decodeExecuteMetaTransaction(target.metaTx, grant.data);
+  return !!call && call.from === account.toLowerCase() && call.functionData.toLowerCase() === encodeAuthorizationCall(auth, true, BigInt(grant.amount)).toLowerCase();
 }
 
 /** Whether the record was kept (written and read back): a grant is sent only once it is. */
@@ -255,12 +268,6 @@ export async function exactAllowanceReady(auth: ShopAuthorization, account: stri
   return getAuthorizationStatus(auth, account, amount, reader).catch(() => false);
 }
 
-function newGrantAttempt(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 /** Runs `run` under the exact grant's lock, unless the caller holds it: none to take (or no Web Locks) sends nothing. */
 async function underGrantLock<T>(opts: AuthorizationContext & { auth: ShopAuthorization }, run: () => Promise<T>): Promise<T> {
   if (opts.grantLockHeld) return run();
@@ -299,16 +306,25 @@ async function grantExactlyHeld(opts: AuthorizationContext & { auth: ShopAuthori
   const reader = opts.reader ?? readProvider();
   const target = metaTxTargetFor(auth);
   const pending = readPendingGrant(auth, account);
+  // A recorded approve that may still run, which a new one at its very nonce replaces (see below).
+  let supersede: PendingGrant | null = null;
   if (pending) {
     if (await pendingGrantOpen(pending, account, reader, target)) {
-      if (BigInt(pending.amount) === amount && gaslessEnabled() && Date.now() - pending.at >= PENDING_GRANT_HOLD_MS) return resendPendingGrant(opts, pending, reader);
-      throw new AuthorizationPendingError();
+      // Only the relay moves its nonce: without it nothing can, so this says so rather than "still confirming".
+      if (!gaslessEnabled() || !target) throw new ExactGrantUnavailableError();
+      if (Date.now() - pending.at < PENDING_GRANT_HOLD_MS) throw new AuthorizationPendingError();
+      // Past the hold, the same terms send that same signed call again. Other terms sign a new approve, for this amount,
+      // at the recorded one's own nonce: whichever of the two runs, the other never can, so the old amount is never sent
+      // for another gap, and a lost approve never keeps this account waiting.
+      if (BigInt(pending.amount) === amount) return resendPendingGrant(opts, pending, reader);
+      supersede = pending;
+    } else {
+      clearPendingGrant(auth, account, pending);
     }
-    clearPendingGrant(auth, account, pending);
   }
-  if (await getAuthorizationStatus(auth, account, amount, reader)) return;
+  if (!supersede && (await getAuthorizationStatus(auth, account, amount, reader))) return;
   if (!gaslessEnabled() || !target) throw new ExactGrantUnavailableError();
-  const attempt = newGrantAttempt();
+  const attempt = newAttemptId();
   const functionData = encodeAuthorizationCall(auth, true, amount);
   const sent: { grant: PendingGrant | null } = { grant: null };
   try {
@@ -320,9 +336,12 @@ async function grantExactlyHeld(opts: AuthorizationContext & { auth: ShopAuthori
       functionData,
       relayerUrl: opts.relayerUrl,
       fetchImpl: opts.fetchImpl,
+      ...(supersede ? { minNonce: BigInt(supersede.nonce) } : {}),
       onSignedCall: ({ to, data, nonce }) => {
+        // A replacement goes only at the nonce it replaces (one that moved meanwhile reconciles the old one on the next try).
+        if (supersede && nonce !== BigInt(supersede.nonce)) throw new AuthorizationPendingError();
         // Never over another attempt's record (one written by a window without the lock): this one is not sent.
-        if (readPendingGrant(auth, account)) throw new AuthorizationPendingError();
+        if (readPendingGrant(auth, account)?.attempt !== supersede?.attempt) throw new AuthorizationPendingError();
         const grant: PendingGrant = { at: Date.now(), attempt, amount: amount.toString(), to, data, nonce: nonce.toString() };
         if (!writePendingGrant(auth, account, grant)) throw new GrantNotRecordedError();
         sent.grant = grant;
@@ -334,8 +353,10 @@ async function grantExactlyHeld(opts: AuthorizationContext & { auth: ShopAuthori
     clearPendingGrant(auth, account, sent.grant);
   } catch (e) {
     if (sent.grant && !provedNotSent(e) && !(e instanceof TxRevertedError)) throw e instanceof TxPendingError ? e : new AuthorizationPendingError();
-    // Never sent (declined, refused before it left, or as not sent) or reverted: its record goes, and nothing goes in its place.
+    // Never sent (declined, refused before it left, or as not sent) or reverted: its record goes, and nothing goes in its
+    // place. One it was to replace is put back: that one may still run.
     clearPendingGrant(auth, account, sent.grant);
+    if (supersede && sent.grant) writePendingGrant(auth, account, supersede);
     throw e;
   }
 }

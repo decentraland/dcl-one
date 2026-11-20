@@ -25,3 +25,10 @@ export function pageLocks(): LockManager | null {
     return null;
   }
 }
+
+/** A new id for one run of something held under a lock (a sale's or an approval's attempt): what its records are kept by. */
+export function newAttemptId(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}

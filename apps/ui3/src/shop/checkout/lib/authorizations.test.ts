@@ -11,6 +11,7 @@ import { requireContracts } from "../chain/contracts";
 import type { ChainReader } from "../chain/rpc";
 import type { Eip1193Provider } from "../../../data/auth/wallet";
 import { createFakeChain, createFakeLocks, createFakeRelay, createFakeWallet, relayedApproval } from "../fakes";
+import { encodeExecuteMetaTransaction } from "../chain/metatx";
 import {
   AuthorizationKind,
   AuthorizationPendingError,
@@ -20,6 +21,7 @@ import {
   ExactGrantUnavailableError,
   getManaSpendingAuthorization,
   GrantNotRecordedError,
+  metaTxTargetFor,
   PENDING_GRANT_HOLD_MS,
   readPendingGrant,
   setAuthorization,
@@ -91,6 +93,9 @@ describe("an exact grant that may still land", () => {
     const signatures = () => signed().length;
     return { chain, relay, wallet, ctx, sent, signed, signatures };
   }
+  /** A relayed approve of `amount` from the buyer, as this code records one (any signature: only its shape is checked). */
+  const signedApprove = (amount: bigint) =>
+    encodeExecuteMetaTransaction(metaTxTargetFor(allowance)!.metaTx, BOOK.buyer, encodeAuthorizationCall(allowance, true, amount), `0x${"11".repeat(64)}1b`);
   /** Another tab of this browser: its session storage starts empty; the local storage and the Web Locks are the same. */
   const anotherTab = () => sessionStorage.clear();
   const later = (ms: number) => vi.spyOn(Date, "now").mockReturnValue(Date.now() + ms);
@@ -197,16 +202,14 @@ describe("an exact grant that may still land", () => {
     expect(readPendingGrant(allowance, BOOK.buyer)).toBeNull();
   });
 
-  it("other terms wait for the recorded one: after a lost approve of 100, a gap of 1 resends nothing and signs nothing", async () => {
+  it("the same terms resend the recorded approve; within the hold, other terms wait", async () => {
     const { relay, ctx, sent, signed } = rail("fail-after-send");
     await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: 100n })).rejects.toBeInstanceOf(AuthorizationPendingError);
     relay.state.mode = "ok";
+    await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: 1n })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    expect(signed()).toEqual(["0"]);
     const clock = later(PENDING_GRANT_HOLD_MS + 1);
     try {
-      await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: 1n })).rejects.toBeInstanceOf(AuthorizationPendingError);
-      expect(relay.posts).toHaveLength(1);
-      expect(signed()).toEqual(["0"]);
-      // The same terms send that same signed approve again.
       await setAuthorization({ ...ctx, auth: allowance, active: true, amount: 100n });
     } finally {
       clock.mockRestore();
@@ -215,6 +218,61 @@ describe("an exact grant that may still land", () => {
     expect(relay.posts[1]).toEqual(relay.posts[0]);
     expect(relayedApproval(relay.posts[1])?.amount).toBe(100n);
     expect(sent()).toEqual([]);
+  });
+
+  it("a lost approve of 100 never keeps a gap of 1 waiting: past the hold, an approve of 1 is signed at the very same nonce, never the 100 again", async () => {
+    const { relay, ctx, sent, signed } = rail("fail-after-send");
+    await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: 100n })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    relay.state.mode = "ok";
+    const clock = later(PENDING_GRANT_HOLD_MS + 1);
+    try {
+      await setAuthorization({ ...ctx, auth: allowance, active: true, amount: 1n });
+    } finally {
+      clock.mockRestore();
+    }
+    // Both signed at nonce 0: whichever runs, the other never can.
+    expect(signed()).toEqual(["0", "0"]);
+    expect(relay.posts.map((p) => relayedApproval(p)?.amount)).toEqual([100n, 1n]);
+    expect(sent()).toEqual([]);
+    expect(readPendingGrant(allowance, BOOK.buyer)).toBeNull();
+  });
+
+  it("a replacement the relay refuses as not sent puts the replaced approve back: that one may still run", async () => {
+    const { relay, ctx } = rail("fail-after-send");
+    await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: 100n })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    const replaced = readPendingGrant(allowance, BOOK.buyer)!;
+    relay.state.mode = "refuse";
+    const clock = later(PENDING_GRANT_HOLD_MS + 1);
+    try {
+      await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: 1n })).rejects.toThrow();
+    } finally {
+      clock.mockRestore();
+    }
+    expect(readPendingGrant(allowance, BOOK.buyer)).toEqual(replaced);
+    expect(await exactAllowanceReady(allowance, BOOK.buyer, 1n, ctx.reader)).toBe(false);
+  });
+
+  it("with the relay off, a recorded approve that may still run says the approval can't be sent from here, not that it is confirming", async () => {
+    const { ctx } = rail("fail-after-send");
+    await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: GAP })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    (window as { __SHOP_CHAIN__?: unknown }).__SHOP_CHAIN__ = { gasless: false };
+    await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: GAP })).rejects.toBeInstanceOf(ExactGrantUnavailableError);
+  });
+
+  it("a record whose call is not this account's approve of its amount is none: nothing is sent from it", async () => {
+    const { relay, ctx, signed } = rail("fail-after-send");
+    relay.state.mode = "ok";
+    const record = { at: Date.now() - PENDING_GRANT_HOLD_MS - 1, attempt: "odd", amount: "61", to: MANA, nonce: "0" };
+    for (const data of ["0x00", signedApprove(62n)]) {
+      localStorage.setItem(recordKey, JSON.stringify({ ...record, data }));
+      expect(readPendingGrant(allowance, BOOK.buyer)).toBeNull();
+    }
+    localStorage.setItem(recordKey, JSON.stringify({ ...record, data: signedApprove(61n), to: BOOK.collection }));
+    expect(readPendingGrant(allowance, BOOK.buyer)).toBeNull();
+    // A fresh approve goes instead, recorded over it.
+    await setAuthorization({ ...ctx, auth: allowance, active: true, amount: GAP });
+    expect(signed()).toEqual(["0"]);
+    expect(relayedApproval(relay.posts[0])?.amount).toBe(GAP);
   });
 
   it("two windows approving at once: the one holding the grant's lock signs and sends; the other asks the wallet nothing", async () => {
@@ -239,7 +297,7 @@ describe("an exact grant that may still land", () => {
     const signer = signingLater(wallet);
     const pending = setAuthorization({ ...ctx, provider: signer.provider, auth: allowance, active: true, amount: GAP });
     await vi.waitFor(() => expect(signer.asked()).toBe(1));
-    const other = { at: Date.now(), attempt: "other", amount: "61", to: MANA, data: "0x00", nonce: "0" };
+    const other = { at: Date.now(), attempt: "other", amount: "61", to: MANA, data: signedApprove(61n), nonce: "0" };
     localStorage.setItem(recordKey, JSON.stringify(other));
     signer.sign();
     await expect(pending).rejects.toBeInstanceOf(AuthorizationPendingError);
