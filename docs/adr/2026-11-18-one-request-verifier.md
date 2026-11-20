@@ -86,17 +86,22 @@ available.
   with the default 60 s window this is the reference's bound.
 - A date-time expiration without an offset reads as UTC; the servers run in
   UTC, where the reference reads it the same way.
-- A contract wallet's acceptance is reused for 60 s; refusals and failures
-  are not cached.
+- A contract wallet's acceptance at the latest block is reused for 60 s, and
+  one at a given past block for 1 h; refusals and failures are not cached.
 
 ## Consequences
 
 - One stage order and one set of answers for every surface once it moves.
 - Stored entities keep their own rules: content deployments and sync accept
-  ECDSA signatures without `0x` and delegations of any purpose. A local deployment reads an expiration with
-  `Date.parse` first, then the shapes stored entities carry; an entity
-  mirrored from a peer reads only those shapes and takes any other expiration
-  on the peer's word, as before.
+  ECDSA signatures without `0x` and delegations of any purpose.
+- Every chain walker other than content sync now reads an expiration with
+  `Date.parse` first, then the shapes it read before, so each accepts the
+  forms `Date.parse` reads that it used to refuse: local content and worlds
+  deployments, worlds mirroring, signed-fetch routes not yet on the verifier
+  (comms, worlds storage, shop lambdas), the archipelago and Pulse logins,
+  explore's auth API, the social webhooks and the scene CLI. Content entities
+  synced from a peer read only the earlier shapes and take any other
+  expiration on the peer's word, as before.
 - `fixtures/request-vectors.json` holds requests signed by the reference
   clients with the reference's answers; regenerating it with
   `fixtures/gen-request-vectors.js` re-checks parity against a new release.

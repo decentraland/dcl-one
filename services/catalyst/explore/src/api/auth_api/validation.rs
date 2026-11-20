@@ -893,6 +893,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_scoped_login_is_refused() {
+        let (root, ephemeral) = (
+            crate::auth::Wallet::random().unwrap(),
+            crate::auth::Wallet::random().unwrap(),
+        );
+        let grants = [crate::auth::scoped_login::ScopedLoginGrant {
+            service: "explore".into(),
+            operation: "*".into(),
+            resource: None,
+        }];
+        let chain: AuthChain = serde_json::from_value(
+            crate::auth::create_scoped_auth_chain(
+                &root,
+                &ephemeral,
+                4_000_000_000_000,
+                &grants,
+                "payload",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(validate_auth_chain(&chain, None).await.is_err());
+
+        for link_type in [
+            AuthLinkType::EcdsaScopedEphemeral,
+            AuthLinkType::EcdsaEip1654ScopedEphemeral,
+        ] {
+            let mut identity = chain[..2].to_vec();
+            identity[1].link_type = link_type;
+            assert_eq!(
+                invalid(validate_auth_chain(&identity, None).await),
+                "Could not get final authority from auth chain"
+            );
+            assert!(validate_identity_chain(&identity, None).await.is_err());
+        }
+    }
+
+    #[tokio::test]
     async fn validate_auth_chain_rejects_a_lone_signer_with_no_signature() {
         let err = invalid(validate_auth_chain(&stub_auth_chain(), None).await);
         assert_eq!(err, "Auth chain must have at least 2 links");

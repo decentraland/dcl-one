@@ -319,8 +319,11 @@ impl Eip1654Validator for RpcEip1654Validator {
             .await
     }
 
-    async fn verification_time_block(&self, started_ms: i64) -> Result<u64, AuthError> {
-        VerificationBlocks::new(self).select(started_ms).await
+    async fn verification_time_block(&self, started_ms: i64) -> Result<Option<u64>, AuthError> {
+        VerificationBlocks::new(self)
+            .select(started_ms)
+            .await
+            .map(Some)
     }
 }
 

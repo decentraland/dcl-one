@@ -1,5 +1,6 @@
-//! Memoizes EIP-1654 contract answers. Only `Ok(true)` is stored, for
-//! [`DEFAULT_SUCCESS_TTL`] (a rejection or RPC fault is retried next time);
+//! Memoizes EIP-1654 contract answers. Only `Ok(true)` is stored: for
+//! [`DEFAULT_SUCCESS_TTL`] at the latest block, for [`DEFAULT_PAST_BLOCK_TTL`]
+//! at a given past block (a rejection or RPC fault is retried next time);
 //! concurrent misses for one key coalesce into a single inner call.
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -29,7 +30,8 @@ pub fn cached_rpc_validator(
 /// wallet upgrade takes effect within this window.
 pub const DEFAULT_SUCCESS_TTL: Duration = Duration::from_secs(60);
 
-pub const DEFAULT_FAILURE_TTL: Duration = Duration::from_secs(300);
+/// How long an acceptance at a given past block is reused: that answer never changes.
+pub const DEFAULT_PAST_BLOCK_TTL: Duration = Duration::from_secs(3600);
 
 pub const DEFAULT_MAX_ENTRIES: usize = 100_000;
 
@@ -77,7 +79,7 @@ pub struct ValidationCache {
     insertion_order: RwLock<Vec<CacheKey>>,
     in_flight: Mutex<HashMap<CacheKey, Arc<Notify>>>,
     success_ttl: Duration,
-    failure_ttl: Duration,
+    past_block_ttl: Duration,
     max_entries: usize,
 }
 
@@ -86,15 +88,17 @@ impl ValidationCache {
         Self::with_config(
             inner,
             DEFAULT_SUCCESS_TTL,
-            DEFAULT_FAILURE_TTL,
+            DEFAULT_PAST_BLOCK_TTL,
             DEFAULT_MAX_ENTRIES,
         )
     }
 
+    /// `success_ttl` for acceptances at the latest block, `past_block_ttl` for those at a
+    /// given past block.
     pub fn with_config(
         inner: Arc<dyn Eip1654Validator>,
         success_ttl: Duration,
-        failure_ttl: Duration,
+        past_block_ttl: Duration,
         max_entries: usize,
     ) -> Self {
         Self {
@@ -103,7 +107,7 @@ impl ValidationCache {
             insertion_order: RwLock::new(Vec::new()),
             in_flight: Mutex::new(HashMap::new()),
             success_ttl,
-            failure_ttl,
+            past_block_ttl,
             max_entries,
         }
     }
@@ -148,18 +152,18 @@ impl ValidationCache {
         }
     }
 
-    fn insert(&self, key: CacheKey, result: bool) {
+    fn insert(&self, key: CacheKey) {
         if self.cache.read().len() >= self.max_entries {
             self.evict_oldest();
         }
 
-        let ttl = if result {
-            self.success_ttl
+        let ttl = if key.block.is_some() {
+            self.past_block_ttl
         } else {
-            self.failure_ttl
+            self.success_ttl
         };
         let entry = CacheEntry {
-            result,
+            result: true,
             created_at: Instant::now(),
             ttl,
         };
@@ -204,7 +208,7 @@ impl Eip1654Validator for ValidationCache {
         .await
     }
 
-    async fn verification_time_block(&self, started_ms: i64) -> Result<u64, AuthError> {
+    async fn verification_time_block(&self, started_ms: i64) -> Result<Option<u64>, AuthError> {
         self.inner.verification_time_block(started_ms).await
     }
 }
@@ -253,7 +257,7 @@ impl ValidationCache {
         let result = ask().await;
 
         if let Ok(true) = &result {
-            self.insert(lead.key.clone(), true);
+            self.insert(lead.key.clone());
         }
 
         result
@@ -452,12 +456,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn past_block_answers_outlive_latest_ones() {
+        assert_eq!(DEFAULT_SUCCESS_TTL, Duration::from_secs(60));
+        assert_eq!(DEFAULT_PAST_BLOCK_TTL, Duration::from_secs(3600));
+        let inner = Arc::new(CountingValidator::new());
+        let cache = ValidationCache::with_config(
+            inner.clone(),
+            Duration::from_millis(0),
+            Duration::from_secs(3600),
+            100,
+        );
+
+        cache.validate_signature("0xabc", b"h", b"s").await.unwrap();
+        cache.validate_signature("0xabc", b"h", b"s").await.unwrap();
+        assert_eq!(inner.call_count(), 2, "latest: asked again");
+
+        cache
+            .validate_signature_at_block("0xabc", b"h", b"s", 7)
+            .await
+            .unwrap();
+        cache
+            .validate_signature_at_block("0xabc", b"h", b"s", 7)
+            .await
+            .unwrap();
+        assert_eq!(inner.call_count(), 3, "past block: reused");
+    }
+
+    #[tokio::test]
     async fn eviction_on_overflow() {
         let inner = Arc::new(CountingValidator::new());
         let cache = ValidationCache::with_config(
             inner.clone(),
             DEFAULT_SUCCESS_TTL,
-            DEFAULT_FAILURE_TTL,
+            DEFAULT_PAST_BLOCK_TTL,
             2,
         );
 
@@ -497,7 +528,7 @@ mod tests {
         let cache = ValidationCache::new(inner);
 
         let key = CacheKey::new("0xabc", b"h", b"s", None);
-        cache.insert(key, true);
+        cache.insert(key);
         assert_eq!(cache.len(), 1);
 
         cache.clear();

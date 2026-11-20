@@ -352,11 +352,14 @@ mod tests {
         ) -> Result<bool, crate::auth::AuthError> {
             Ok(false)
         }
-        async fn verification_time_block(&self, _: i64) -> Result<u64, crate::auth::AuthError> {
+        async fn verification_time_block(
+            &self,
+            _: i64,
+        ) -> Result<Option<u64>, crate::auth::AuthError> {
             if self.hold_lookup {
                 self.release.acquire().await.unwrap().forget();
             }
-            Ok(4)
+            Ok(Some(4))
         }
         async fn validate_signature_at_block(
             &self,

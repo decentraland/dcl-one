@@ -88,10 +88,10 @@ impl Eip1654Validator for FakeContract {
         self.validate_signature(contract, hash, signature).await
     }
 
-    async fn verification_time_block(&self, _: i64) -> Result<u64, AuthError> {
+    async fn verification_time_block(&self, _: i64) -> Result<Option<u64>, AuthError> {
         match self.0 {
             "down" => Err(AuthError::Eip1654ValidationFailed("down".into())),
-            _ => Ok(100),
+            _ => Ok(Some(100)),
         }
     }
 }
@@ -442,6 +442,28 @@ async fn a_stalled_contract_check_is_unavailable_after_the_deadline() {
     assert_eq!(started.elapsed(), SIGNATURE_VALIDATION_TIMEOUT);
 }
 
+/// Refuses every signature and keeps no history.
+struct RefusesAtLatest;
+
+#[async_trait]
+impl Eip1654Validator for RefusesAtLatest {
+    async fn validate_signature(&self, _: &str, _: &[u8], _: &[u8]) -> Result<bool, AuthError> {
+        Ok(false)
+    }
+}
+
+#[tokio::test]
+async fn a_validator_without_history_refuses_as_invalid() {
+    let options = VerifyOptions::builder()
+        .eip1654(Arc::new(RefusesAtLatest))
+        .build()
+        .unwrap();
+    let err = verify_request_at(&contract_parts(), &options, NOW)
+        .await
+        .unwrap_err();
+    assert_eq!(err.status(), 401, "{err:?}");
+}
+
 #[tokio::test]
 async fn a_contract_link_without_a_validator_is_invalid() {
     let err = verify_request_at(&contract_parts(), &VerifyOptions::default(), NOW)
@@ -625,6 +647,75 @@ mod rpc {
         let (result, calls) = verdict(server_error_with_magic, contract_parts()).await;
         assert_eq!(result.unwrap_err(), RequestAuthError::Unavailable);
         assert_eq!(calls, 1);
+    }
+
+    /// A contract refusing every hash on a node whose head is behind the request time.
+    async fn refusing_node(methods: Arc<std::sync::Mutex<Vec<String>>>) -> String {
+        let app = axum::Router::new().route(
+            "/",
+            post(move |Json(body): Json<Value>| {
+                let methods = methods.clone();
+                async move {
+                    let method = body["method"].as_str().unwrap_or_default().to_string();
+                    let tag = body["params"]
+                        .as_array()
+                        .and_then(|p| p.iter().find_map(Value::as_str))
+                        .unwrap_or_default()
+                        .to_string();
+                    methods.lock().unwrap().push(format!("{method} {tag}"));
+                    let head = NOW / 1000 - 12;
+                    let id = body["id"].clone();
+                    Json(match method.as_str() {
+                        "eth_call" => {
+                            json!({ "jsonrpc": "2.0", "id": id, "error": { "code": 3, "message": "execution reverted" } })
+                        }
+                        "eth_blockNumber" => json!({ "jsonrpc": "2.0", "id": id, "result": "0x64" }),
+                        _ => {
+                            let n = if tag == "latest" {
+                                100
+                            } else {
+                                i64::from_str_radix(tag.trim_start_matches("0x"), 16).unwrap()
+                            };
+                            let timestamp = format!("0x{:x}", head - (100 - n) * 12);
+                            json!({ "jsonrpc": "2.0", "id": id, "result": { "timestamp": timestamp } })
+                        }
+                    })
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        url
+    }
+
+    /// The reference's calls: the hash pair at latest, the block lookup, the pair at the head.
+    #[tokio::test]
+    async fn a_refused_contract_link_costs_eight_calls_like_the_reference() {
+        let methods = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let url = refusing_node(methods.clone()).await;
+        let rpc = Arc::new(RpcEip1654Validator::new(url, reqwest::Client::new()));
+        let options = VerifyOptions::builder()
+            .eip1654(Arc::new(ValidationCache::new(rpc)))
+            .build()
+            .unwrap();
+        let err = verify_request_at(&contract_parts(), &options, NOW)
+            .await
+            .unwrap_err();
+        assert_eq!(err.status(), 401, "{err:?}");
+        assert_eq!(
+            *methods.lock().unwrap(),
+            [
+                "eth_call latest",
+                "eth_call latest",
+                "eth_getBlockByNumber latest",
+                "eth_blockNumber ",
+                "eth_getBlockByNumber 0x1",
+                "eth_blockNumber ",
+                "eth_call 0x64",
+                "eth_call 0x64",
+            ]
+        );
     }
 
     #[tokio::test]

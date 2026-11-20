@@ -378,6 +378,7 @@ async function main() {
     add('eip1654: accepted', request('GET', '/v1/ping', { prefix: contractChain() }), { provider: 'accept' })
     add('eip1654: refused', request('GET', '/v1/ping', { prefix: contractChain() }), { provider: 'reject' })
     add('eip1654: rpc down', request('GET', '/v1/ping', { prefix: contractChain() }), { provider: 'down' })
+    add('eip1654: rpc down, optional', request('GET', '/v1/ping', { prefix: contractChain() }), { provider: 'down', optional: true })
     add('eip1654: precompile address', request('GET', '/v1/ping', { prefix: contractChain(LOW_ADDRESS) }), { provider: 'accept' }, {
       rust: { status: 401, reason: 'addresses 0x00..00 to 0x00..ff are not asked' }
     })
