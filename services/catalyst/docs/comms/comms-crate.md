@@ -403,10 +403,14 @@ current payload only, the scene signer refused (400), EIP-1654 links through
 the node's validator (503 when it cannot be asked). The signature window is
 `WS_AUTH_SIGNATURE_EXPIRATION_IN_MS` milliseconds, else `AUTH_WINDOW_SECS`
 (300 s by default, as the source service). A zero, negative or NaN value accepts no past signature and an
-infinite one never expires; the future side stops at 60 s whatever the
-window. The timestamp is digits only, where the source reads it as a
-JavaScript Number, so the `timestamps` cases of `ws-numbers-source-cases.json`
-that accept other forms are refused here.
+infinite one never expires. The future side is bounded by the window and
+never exceeds 60 s, the cap of the
+[signed-fetch window ADR](../../../../docs/adr/2026-11-13-signed-fetch-window.md);
+the source accepts a timestamp up to the whole window ahead (300 s by
+default). The timestamp is digits only, where the source reads it as a
+JavaScript Number: the `timestamps` cases of `ws-numbers-source-cases.json`
+are replayed against these rules, and the other forms the source accepts
+(`0x…`, `…e0`, padded) are refused.
 
 Social signatures bind the source protocol paths: `/` for RPC, and `/v1/stream`
 for both JSON handshakes. Connecting through `/social-rpc` or

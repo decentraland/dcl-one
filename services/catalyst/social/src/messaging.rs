@@ -1564,10 +1564,10 @@ mod tests {
 
     /// The MLS caller is the wallet itself: scene metadata and a re-spelled
     /// `signer` key are refused under either payload shape; wallet metadata
-    /// is served as the wallet.
+    /// is served as the wallet, signed over the current payload only.
     #[tokio::test]
     async fn auth_serves_the_wallet_and_refuses_scene_metadata() {
-        use crate::shared::test_keys::{KEY, SHAPES, signed_as};
+        use crate::shared::test_keys::{KEY, SHAPES, Shape, signed_as};
 
         let pool = PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap();
         let dir = std::env::temp_dir().join(format!("mls-auth-{}", uuid::Uuid::new_v4()));
@@ -1594,6 +1594,16 @@ mod tests {
                 );
             }
         }
+        // Mixed-case metadata: the legacy payload lowercases it, so only the current one verifies.
+        let metadata = r#"{"signer":"dcl:explorer","Intent":"Join"}"#;
+        let legacy = signed_as(KEY, Shape::Legacy, "post", PATH, metadata, metadata).await;
+        let err = auth(&state, &legacy, "post", &path).await.unwrap_err();
+        assert_eq!(err.code, 401, "{err}");
+        let current = signed_as(KEY, Shape::V6, "post", PATH, metadata, metadata).await;
+        assert_eq!(
+            auth(&state, &current, "post", &path).await.unwrap(),
+            address_of(KEY)
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

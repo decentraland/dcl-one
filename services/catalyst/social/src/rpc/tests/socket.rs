@@ -920,3 +920,61 @@ async fn socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases() {
     }
     server.jobs.shutdown(Duration::from_secs(2)).await;
 }
+
+/// The source's timestamp captures under the shared verifier: digits only, then
+/// the window. Other forms a JavaScript Number reads (`0x…`, `…e0`, padding) are refused.
+#[tokio::test]
+async fn source_timestamp_cases_follow_the_digits_only_verdicts() {
+    use crate::shared::rpc::handshake::test_support::{ROOT_WALLET, frame_with};
+    use crate::shared::rpc::handshake::{frame_fields, frame_parts};
+    use crate::shared::signed_fetch::{SignedPath, build_payload_v6};
+
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/ws-numbers-source-cases.json"
+    )))
+    .unwrap();
+    let now = fixture["now"].as_i64().unwrap();
+    let mut refused_forms = 0;
+    for case in fixture["timestamps"].as_array().unwrap() {
+        let raw = case["raw"].as_str();
+        let payload = build_payload_v6("get", "/", raw.unwrap_or(""), "{}");
+        let (_, frame) = frame_with(&ROOT_WALLET, now, &payload, "{}").await;
+        let mut fields = frame_fields(&frame).unwrap();
+        match raw {
+            Some(raw) => fields.insert("x-identity-timestamp".into(), raw.into()),
+            None => fields.remove("x-identity-timestamp"),
+        };
+        let window = case["window"]
+            .as_f64()
+            .unwrap_or_else(|| case["window"].as_str().unwrap().parse().unwrap());
+        let expiration = Settings {
+            ws_auth_signature_expiration_ms: Some(window),
+            ..Settings::default()
+        }
+        .auth_signature_expiration();
+        let options =
+            crate::request_auth::build(crate::request_auth::builder(None).expiration(expiration));
+        let parts = frame_parts(&fields, "get", SignedPath::local("/"));
+        let result = crate::auth::request::verify_request_at(&parts, &options, now).await;
+
+        // Absent or empty reads as 0; the future side stops at the window, at most 60 s.
+        let text = raw.filter(|r| !r.is_empty()).unwrap_or("0");
+        let digits = Some(text).filter(|r| r.bytes().all(|b| b.is_ascii_digit()));
+        let window_ms = expiration.as_millis();
+        let expected = digits
+            .and_then(|r| r.parse::<i64>().ok())
+            .is_some_and(|ts| {
+                (ts - now) as i128 <= window_ms.min(60_000) as i128
+                    && (expiration == Duration::MAX || (now - ts) as u128 <= window_ms)
+            });
+        if digits.is_none() && case["accepted"].as_bool().unwrap() {
+            refused_forms += 1;
+        }
+        assert_eq!(result.is_ok(), expected, "{case} {result:?}");
+    }
+    assert!(
+        refused_forms > 0,
+        "the capture holds forms only the source accepts"
+    );
+}
