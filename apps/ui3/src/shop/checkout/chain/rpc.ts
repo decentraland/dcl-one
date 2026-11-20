@@ -23,6 +23,11 @@ export type ChainReader = {
   receipt(chainId: ChainId, txHash: string, signal?: AbortSignal): Promise<TxReceipt | null>;
   balance(chainId: ChainId, address: string, signal?: AbortSignal): Promise<bigint>;
   code(chainId: ChainId, address: string, signal?: AbortSignal): Promise<Hex>;
+  /**
+   * A transaction's sender, target and input (null when the chain doesn't know it): what tells a split's sale apart
+   * (purchase/splitEvidence.ts). Optional: a reader without it attributes nothing, and a split it checks stays held.
+   */
+  transaction?(chainId: ChainId, txHash: string, signal?: AbortSignal): Promise<{ from: string | null; to: string | null; input: Hex } | null>;
 };
 
 export class RpcError extends Error {
@@ -76,6 +81,11 @@ export function createRpcReader(opts: { url?: (chainId: ChainId) => string | nul
     },
     balance: async (chainId, address, signal) => BigInt(await rpc<Hex>(chainId, "eth_getBalance", [address, "latest"], signal)),
     code: (chainId, address, signal) => rpc<Hex>(chainId, "eth_getCode", [address, "latest"], signal),
+    async transaction(chainId, txHash, signal) {
+      const raw = await rpc<{ from?: string | null; to?: string | null; input?: Hex } | null>(chainId, "eth_getTransactionByHash", [txHash], signal);
+      if (!raw || typeof raw.input !== "string") return null;
+      return { from: raw.from ?? null, to: raw.to ?? null, input: raw.input };
+    },
   };
 }
 

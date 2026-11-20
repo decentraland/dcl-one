@@ -12,7 +12,7 @@ import { setSplitPaymentForTests } from "@shop/payment/present";
 import { CREDITS_MANAGER_ABI, OFFCHAIN_META_TX_ABI } from "@shop/checkout/chain/abi";
 
 import { requireContracts } from "../../checkout/chain/contracts";
-import { batchAuthorization, createFakeLocks, creatorTrade, relayedApproval } from "../../checkout/fakes";
+import { batchAuthorization, createFakeLocks, creatorTrade, relayedApproval, splitSaleTransaction, type FakeHandlers } from "../../checkout/fakes";
 import { encodeExecuteMetaTransaction } from "../../checkout/chain/metatx";
 import { encodeAuthorizationCall, exactGrantLock, getManaSpendingAuthorization, metaTxTargetFor } from "../../checkout/lib/authorizations";
 import { CHAIN } from "@shop/model/chain";
@@ -24,7 +24,8 @@ import type { ManaWei } from "@shop/model/money";
 import type { PurchaseOffer } from "@shop/model/purchase";
 import { ASSET_TYPE } from "../../checkout/purchase/encoding";
 import { SHOP_QUERY_KEYS } from "../../checkout/lib/after-purchase";
-import { readSplitHold, SPLIT_HOLD_MS, splitHoldLine } from "../../checkout/purchase/splitHold";
+import { readSplitHold, SPLIT_EXPIRY_CONFIRM_MS, SPLIT_HOLD_MS, splitHoldLine } from "../../checkout/purchase/splitHold";
+import type { SplitSale } from "../../checkout/purchase/splitEvidence";
 import CombinedBuy from "./CombinedBuy";
 
 afterEach(() => {
@@ -48,8 +49,11 @@ function relayedUseCredits(body: unknown): { maxCreditedValue: bigint; maxUncred
   return decodeFunctionData({ abi: CREDITS_MANAGER_ABI, data: meta.args[1] as Hex }).args[0] as { maxCreditedValue: bigint; maxUncreditedValue: bigint };
 }
 
-/** The node answers a credit for the Credits part (`creditsCents`), worth `value` (1 MANA by default), spendable `expiresIn` s. */
-function setup(signedFor?: string, confirm?: "none" | "reverted", value = MANA, expiresIn?: number) {
+/**
+ * The node answers a credit for the Credits part (`creditsCents`), worth `value` (1 MANA by default), spendable `expiresIn`
+ * s; `handlers` answer the node's other routes.
+ */
+function setup(signedFor?: string, confirm?: "none" | "reverted", value = MANA, expiresIn?: number, handlers: FakeHandlers = {}) {
   const demo = createDemo({
     session: "web3",
     ...(confirm ? { confirm } : {}),
@@ -66,6 +70,7 @@ function setup(signedFor?: string, confirm?: "none" | "reverted", value = MANA, 
         };
         return { ...one, credit, maxCreditedValue: value.toString(), usdCents: cents };
       },
+      ...handlers,
     },
   });
   const offer = storeMint(demo.session);
@@ -305,6 +310,69 @@ describe("a split whose outcome is not known", () => {
     expect(screen.queryByTestId("combined-confirm")).toBeNull();
   });
 
+  it("a direct sale the wallet sent and lost the answer to is settled by its credit's record: its own useCredits, read by its sender, completes it", async () => {
+    // The credit the node issues (batchAuthorization's salt), listed SETTLED by the wallet's transaction once it says so.
+    const credit = `0x${"a1".repeat(32)}`;
+    const listed: { txHash: string | null } = { txHash: null };
+    const { demo, line, unmount, again } = setup(undefined, undefined, MANA, 60, {
+      userPurchases: () => ({
+        purchases: listed.txHash ? [{ id: `${credit}:0`, status: "SETTLED", usdCents: 50, createdAt: 1, txHash: listed.txHash }] : [],
+        total: listed.txHash ? 1 : 0,
+      }),
+    });
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    demo.relay.state.mode = "refuse";
+    demo.wallet.next = "lost";
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText(/still confirming/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toMatchObject({ txHash: null, sale: expect.objectContaining({ creditId: credit }) });
+    // The wallet's own transaction, mined: the node lists the credit SETTLED by it.
+    const [sentHash] = [...demo.chain.transactions.entries()].find(([, tx]) => tx.from === BOOK.buyer.toLowerCase())!;
+    demo.chain.receipts.set(sentHash, "success");
+    listed.txHash = sentHash;
+    // Past its hold and its credit's expiry, opened again: Check again has something to do.
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + SPLIT_HOLD_MS + 120_000);
+    try {
+      unmount();
+      again();
+      await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
+      expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
+    } finally {
+      clock.mockRestore();
+    }
+    expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
+  });
+
+  it("the record written before the sale leaves carries its terms: a tab that dies mid-send leaves them for any surface to settle", async () => {
+    const { demo, line, unmount, again } = setup();
+    unmount();
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    // The relay is slow to answer: the sale is out of this page's hands, its outcome not yet known.
+    let answer!: () => void;
+    const slow = new Promise<void>((resolve) => (answer = resolve));
+    const relayed = demo.services.fetchImpl!;
+    demo.services.fetchImpl = (async (...args: Parameters<typeof fetch>) => {
+      await slow;
+      return relayed(...args);
+    }) as typeof fetch;
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await waitFor(() => expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).not.toBeNull());
+    expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toMatchObject({
+      txHash: null,
+      sale: {
+        buyer: BOOK.buyer.toLowerCase(),
+        manager: requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase(),
+        creditWei: MANA.toString(),
+        gapWei: ((13n * MANA) / 10n).toString(),
+        target: BOOK.store.contract.toLowerCase(),
+        hold: { line: splitHoldLine(line.asset) },
+      },
+    });
+    answer();
+    expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
+  });
+
   const OTHER = `0x${"0e".repeat(32)}`;
   const holdKey = (line: ReturnType<typeof setup>["line"]) => `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${splitHoldLine(line.asset)}`;
   const nowSeconds = () => Math.floor(Date.now() / 1000);
@@ -317,7 +385,18 @@ describe("a split whose outcome is not known", () => {
   it("a sale sent sixteen minutes ago with a hash, its credit still spendable, is kept on reopen: no Pay, and a missing receipt lets nothing go", async () => {
     const { demo, line, unmount, again } = setup();
     unmount();
-    const record = { at: Date.now() - 16 * 60 * 1000, attempt: "a1", txHash: `0x${"5a".repeat(32)}`, chainId: CHAIN.POLYGON, creditId: OTHER, creditExpiresAt: nowSeconds() + 300 };
+    const sale: SplitSale = {
+      buyer: BOOK.buyer.toLowerCase(),
+      chainId: CHAIN.POLYGON,
+      manager: requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase(),
+      creditId: OTHER,
+      creditWei: MANA.toString(),
+      gapWei: ((13n * MANA) / 10n).toString(),
+      target: BOOK.store.contract.toLowerCase(),
+      selector: "0x12345678",
+      callData: "0xabcdef",
+    };
+    const record = { at: Date.now() - 16 * 60 * 1000, attempt: "a1", txHash: `0x${"5a".repeat(32)}`, chainId: CHAIN.POLYGON, creditId: OTHER, creditExpiresAt: nowSeconds() + 300, sale };
     localStorage.setItem(holdKey(line), JSON.stringify(record));
     again();
     expect(await screen.findByText(/still confirming/)).toBeTruthy();
@@ -326,8 +405,8 @@ describe("a split whose outcome is not known", () => {
     expect(screen.getByText(/still confirming/)).toBeTruthy();
     expect(screen.queryByTestId("combined-confirm")).toBeNull();
     expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toMatchObject({ attempt: "a1", txHash: record.txHash });
-    // Its credit can still be spent, so the node is not even asked.
-    expect(demo.shop.log.some((r) => r.name === "userPurchases")).toBe(false);
+    // Nothing on chain to read: the node is asked, lists nothing for its credit, and that settles nothing.
+    expect(demo.shop.log.some((r) => r.name === "userPurchases")).toBe(true);
   });
 
   it("a dialog left open past the hold keeps a sale with a hash whose receipt is not in, while its credit can still be spent", async () => {
@@ -629,13 +708,35 @@ describe("a split whose outcome is not known", () => {
 describe("a held split with no transaction to read", () => {
   const CREDIT = `0x${"c1".repeat(32)}`;
   type Listing = (req: { query: URLSearchParams }) => unknown;
-  function heldSplit(status: { value: "PENDING" | "SETTLED" | "EXPIRED" | null }, creditExpiresAt: number, opts: { userPurchases?: Listing; attempt?: string; txHash?: string } = {}) {
+  /** Its terms, kept with the hold: what an execution must carry to count as this split. */
+  const SALE: SplitSale = {
+    buyer: BOOK.buyer.toLowerCase(),
+    chainId: CHAIN.POLYGON,
+    manager: requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase(),
+    creditId: CREDIT,
+    creditWei: MANA.toString(),
+    gapWei: ((13n * MANA) / 10n).toString(),
+    target: BOOK.store.contract.toLowerCase(),
+    selector: "0x12345678",
+    callData: "0xabcdef",
+  };
+  const SETTLED_BY = `0x${"ab".repeat(32)}`;
+  /**
+   * A split held for the store's Rainbow Hat, sent sixteen minutes ago, its credit expiring at `creditExpiresAt`. The node
+   * lists its credit as `status` says; SETTLED by `SETTLED_BY`, which the chain shows as this split (`settledBy: "this"`,
+   * the default), as another purchase ("other") or not at all ("none").
+   */
+  function heldSplit(
+    status: { value: "PENDING" | "SETTLED" | "EXPIRED" | null },
+    creditExpiresAt: number,
+    opts: { userPurchases?: Listing; attempt?: string; txHash?: string; settledBy?: "this" | "other" | "none"; expiredSeenAt?: number } = {},
+  ) {
     const demo = createDemo({
       session: "web3",
       handlers: {
         userPurchases: opts.userPurchases ?? (() => ({
           // As the node lists it: the credit's salt and the line's position.
-          purchases: status.value ? [{ id: `${CREDIT}:0`, status: status.value, usdCents: 50, createdAt: 1, txHash: status.value === "SETTLED" ? `0x${"ab".repeat(32)}` : null }] : [],
+          purchases: status.value ? [{ id: `${CREDIT}:0`, status: status.value, usdCents: 50, createdAt: 1, txHash: status.value === "SETTLED" ? SETTLED_BY : null }] : [],
           total: status.value ? 1 : 0,
         })),
       },
@@ -643,10 +744,24 @@ describe("a held split with no transaction to read", () => {
     const offer = storeMint(demo.session);
     const mixed = presentPayment(offer, demo.session, { creditsBalance: usdCents(50), report: () => {} }).options.find((o) => o.method === "mana")!.mixed as MixedPayment;
     const line = { asset: offer.asset, listing: { acquisition: "store" as const }, display: { name: "Rainbow Hat" } };
-    // Sent sixteen minutes ago, past the hold; the relay lost its answer, so no hash.
+    const settledBy = opts.settledBy ?? "this";
+    if (settledBy !== "none") {
+      demo.chain.transactions.set(SETTLED_BY, splitSaleTransaction(settledBy === "this" ? SALE : { ...SALE, callData: "0x0bad" }));
+      demo.chain.receipts.set(SETTLED_BY, "success");
+    }
+    // Sent sixteen minutes ago, past the hold; the relay lost its answer, so no hash (unless one is given).
     localStorage.setItem(
       `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${splitHoldLine(line.asset)}`,
-      JSON.stringify({ at: Date.now() - 16 * 60 * 1000, ...(opts.attempt ? { attempt: opts.attempt } : {}), txHash: opts.txHash ?? null, chainId: CHAIN.POLYGON, creditId: CREDIT, creditExpiresAt }),
+      JSON.stringify({
+        at: Date.now() - 16 * 60 * 1000,
+        ...(opts.attempt ? { attempt: opts.attempt } : {}),
+        txHash: opts.txHash ?? null,
+        chainId: CHAIN.POLYGON,
+        creditId: CREDIT,
+        creditExpiresAt,
+        sale: SALE,
+        ...(opts.expiredSeenAt !== undefined ? { expiredSeenAt: opts.expiredSeenAt } : {}),
+      }),
     );
     render(
       <DemoShell demo={demo} path="/shop/item/x/7">
@@ -673,17 +788,59 @@ describe("a held split with no transaction to read", () => {
     status.value = null;
     await act(async () => fireEvent.click(screen.getByTestId("combined-check-again")));
     expect(screen.getByText(/still confirming/)).toBeTruthy();
+    // Released unspent: seen so, it is let go only once that has lasted the whole grace.
     status.value = "EXPIRED";
     await act(async () => fireEvent.click(screen.getByTestId("combined-check-again")));
-    expect(await screen.findByTestId("combined-confirm")).toBeEnabled();
-    expect(demo.shop.log.filter((r) => r.name === "userPurchases")).toHaveLength(3);
+    expect(await screen.findByTestId("combined-check-notice")).toHaveTextContent(/expired unspent/);
+    expect(screen.getByText(/still confirming/)).toBeTruthy();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + SPLIT_EXPIRY_CONFIRM_MS + 1_000);
+    try {
+      await act(async () => fireEvent.click(screen.getByTestId("combined-check-again")));
+      expect(await screen.findByTestId("combined-confirm")).toBeEnabled();
+    } finally {
+      clock.mockRestore();
+    }
+    expect(demo.shop.log.filter((r) => r.name === "userPurchases")).toHaveLength(4);
   });
 
-  it("a credit the node says was spent completes the purchase, never offering it again", async () => {
+  it("a credit the node says this split spent completes the purchase, never offering it again", async () => {
     heldSplit({ value: "SETTLED" }, nowSeconds() - 1);
     await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
     expect(await screen.findByText(/Purchase complete/)).toBeTruthy();
     expect(screen.queryByTestId("combined-confirm")).toBeNull();
+  });
+
+  it("a credit the node says another purchase spent: nothing was bought here, nothing to give back, and the item is let go", async () => {
+    const demo = heldSplit({ value: "SETTLED" }, nowSeconds() - 1, { settledBy: "other" });
+    await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
+    expect(await screen.findByText("The Credits this purchase held were spent on another purchase, so nothing was bought here.")).toBeTruthy();
+    expect(screen.queryByText(/Purchase complete/)).toBeNull();
+    expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
+    expect(readSplitHold(BOOK.buyer, demo.lineId)).toBeNull();
+  });
+
+  it("SETTLED alone, with no transaction to read, proves the credit was spent, not on what: the split stays held", async () => {
+    const demo = heldSplit({ value: "SETTLED" }, nowSeconds() - 1, { settledBy: "none" });
+    await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
+    await waitFor(() => expect(demo.shop.log.some((r) => r.name === "userPurchases")).toBe(true));
+    await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
+    expect(screen.getByText(/still confirming/)).toBeTruthy();
+    expect(readSplitHold(BOOK.buyer, demo.lineId)).not.toBeNull();
+  });
+
+  it("after another surface's dispatch, a FOREIGN hash leaves its unresolved attempt held on the web", async () => {
+    // The in-world Shop sent this split and recorded a hash the chain shows as someone else's useCredits.
+    const FOREIGN = `0x${"f0".repeat(32)}`;
+    const demo = heldSplit({ value: "PENDING" }, nowSeconds() - 1, { attempt: "play-attempt", txHash: FOREIGN });
+    demo.chain.transactions.set(FOREIGN, splitSaleTransaction(SALE, { user: `0x${"cc".repeat(20)}` }));
+    demo.chain.receipts.set(FOREIGN, "success");
+    await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
+    await waitFor(() => expect(demo.shop.log.some((r) => r.name === "userPurchases")).toBe(true));
+    await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
+    expect(screen.queryByText(/Purchase complete/)).toBeNull();
+    expect(screen.getByText(/still confirming/)).toBeTruthy();
+    expect(readSplitHold(BOOK.buyer, demo.lineId)).toMatchObject({ attempt: "play-attempt", txHash: FOREIGN });
+    expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
   });
 
   it("a stale outcome never wipes a newer attempt's record: another tab settled this one and sent anew while Check again read", async () => {
@@ -712,9 +869,14 @@ describe("a held split with no transaction to read", () => {
       ["SETTLED", true],
       ["EXPIRED", false],
     ] as const) {
-      const demo = heldSplit({ value }, nowSeconds() - 1, { txHash: `0x${"5a".repeat(32)}` });
-      demo.chain.receipt = async () => {
-        throw new Error("the RPC is down");
+      const own = `0x${"5a".repeat(32)}`;
+      // EXPIRED seen so for the whole grace already, so it decides on this click.
+      const demo = heldSplit({ value }, nowSeconds() - 1, { txHash: own, expiredSeenAt: Date.now() - SPLIT_EXPIRY_CONFIRM_MS - 1_000 });
+      // Its own receipt can't be read; the node's evidence (the SETTLED transaction) can.
+      const read = demo.chain.receipt;
+      demo.chain.receipt = async (chainId, hash) => {
+        if (hash.toLowerCase() === own) throw new Error("the RPC is down");
+        return read(chainId, hash);
       };
       await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
       if (settled) expect(await screen.findByText(/Purchase complete/)).toBeTruthy();
@@ -751,6 +913,7 @@ describe("a held split with no transaction to read", () => {
     const lines = Array.from({ length: 400 }, (_, n) => ({ id: `0x${n.toString(16).padStart(64, "0")}:0`, status: "SETTLED", usdCents: 10, createdAt: 1, txHash: null }));
     lines[170] = { id: `${CREDIT}:0`, status: "EXPIRED", usdCents: 50, createdAt: 1, txHash: null };
     const demo = heldSplit({ value: null }, nowSeconds() - 1, {
+      expiredSeenAt: Date.now() - SPLIT_EXPIRY_CONFIRM_MS - 1_000,
       // It sends 150 rows a page whatever was asked.
       userPurchases: ({ query }) => {
         const offset = Number(query.get("offset") ?? 0);
@@ -766,6 +929,7 @@ describe("a held split with no transaction to read", () => {
     const lines = Array.from({ length: 450 }, (_, n) => ({ id: `0x${n.toString(16).padStart(64, "0")}:0`, status: n % 20 === 0 ? "SOMETHING_NEW" : "SETTLED", usdCents: 10, createdAt: 1, txHash: null }));
     lines[420] = { id: `${CREDIT}:0`, status: "EXPIRED", usdCents: 50, createdAt: 1, txHash: null };
     const demo = heldSplit({ value: null }, nowSeconds() - 1, {
+      expiredSeenAt: Date.now() - SPLIT_EXPIRY_CONFIRM_MS - 1_000,
       userPurchases: ({ query }) => {
         const offset = Number(query.get("offset") ?? 0);
         const limit = Number(query.get("limit") ?? 50);
@@ -781,6 +945,7 @@ describe("a held split with no transaction to read", () => {
     const lines = Array.from({ length: 450 }, (_, n) => ({ id: `0x${n.toString(16).padStart(64, "0")}:0`, status: "SETTLED", usdCents: 10, createdAt: 1, txHash: null }));
     lines[420] = { id: `${CREDIT}:0`, status: "EXPIRED", usdCents: 50, createdAt: 1, txHash: null };
     const demo = heldSplit({ value: null }, nowSeconds() - 1, {
+      expiredSeenAt: Date.now() - SPLIT_EXPIRY_CONFIRM_MS - 1_000,
       userPurchases: ({ query }) => {
         const offset = Number(query.get("offset") ?? 0);
         const limit = Number(query.get("limit") ?? 50);

@@ -6,10 +6,11 @@
 //
 // One run at a time per account and line: `claimSplitHold` takes the line's Web Lock (only if free) and reads the record
 // inside it. The run holding the claim writes the record before the sale may leave (`writeSplitHold`: a browser that
-// cannot keep it does not send), rewrites it with what it learns, and clears only its own attempt's (`clearSplitHold`). A
-// record whose credit is known stays until the sale's receipt, or the node's record of that credit once it can no longer
-// be spent, says what became of it (`settleSplitHold`, then `clearSettledSplitHold`): time alone never lets it go. Only a
-// record from before credits were kept with it (no credit) is let go once `SPLIT_HOLD_MS` has passed.
+// cannot keep it does not send), with the sale's terms (`SplitSale`), rewrites it with what it learns, and clears only its
+// own attempt's (`clearSplitHold`). A record whose credit is known stays until an execution attributable to those terms,
+// or the node's record of that credit, says what became of it (`settleSplitHold`, then `clearSettledSplitHold`): time
+// alone never lets it go. Only a record from before credits were kept with it (no credit) is let go once `SPLIT_HOLD_MS`
+// has passed.
 
 import type { ShopClient } from "@shop/api/shop";
 import { fetchUserPurchases, type PurchaseRecord } from "@shop/credits/credits";
@@ -17,17 +18,25 @@ import { assetKey, type AssetId } from "@shop/model/asset";
 import type { CartListingRef } from "@shop/model/purchase";
 import type { ChainReader } from "../chain/rpc";
 import { newAttemptId, webLock } from "../lib/web-lock";
+import { isSplitSale, splitExecution, type SplitEvidenceReader, type SplitSale } from "./splitEvidence";
 
 const KEY = "dcl-shop-buynow-split:v1:";
 /** How long a record from before credits were kept with it holds; and how long Check again waits on a fresh one. */
 export const SPLIT_HOLD_MS = 15 * 60 * 1000;
 /** The node's purchase history, read this many lines at a time (its most) while looking for one credit. */
 const HISTORY_PAGE = 200;
+/**
+ * How long a credit the node reports EXPIRED (unspent) must stay so, from when that was first seen, before its split is
+ * taken as never gone through: past the index's lag, an expired credit can't be spent. As the in-world Shop waits.
+ */
+export const SPLIT_EXPIRY_CONFIRM_MS = 15 * 60 * 1000;
 
 /**
  * A split sent and not settled. `attempt`: the run that wrote it, the only one that changes or clears it. `txHash` and
  * `chainId`: the sale's transaction, once one is known. `creditId`: the credit the split reserved (a sale found reverted
- * retires it). `creditExpiresAt` (unix seconds): when that credit stops being spendable.
+ * retires it). `creditExpiresAt` (unix seconds): when that credit stops being spendable. `sale`: its terms, what an
+ * execution must carry to count as this split (none on a record from before they were kept: nothing settles it then).
+ * `expiredSeenAt`: when the node was first seen to report its credit EXPIRED.
  */
 export type SplitHold = {
   at: number;
@@ -36,6 +45,8 @@ export type SplitHold = {
   chainId: number | null;
   creditId: string | null;
   creditExpiresAt: number | null;
+  sale?: SplitSale | null;
+  expiredSeenAt?: number | null;
 };
 
 /**
@@ -81,6 +92,8 @@ export function readSplitHoldRecord(account: string | null, lineId: string): Spl
       chainId: typeof hold.chainId === "number" ? hold.chainId : null,
       creditId: typeof hold.creditId === "string" ? hold.creditId : null,
       creditExpiresAt: typeof hold.creditExpiresAt === "number" ? hold.creditExpiresAt : null,
+      sale: isSplitSale(hold.sale) ? hold.sale : null,
+      expiredSeenAt: typeof hold.expiredSeenAt === "number" ? hold.expiredSeenAt : null,
     };
   } catch {
     return null;
@@ -168,8 +181,27 @@ export async function claimSplitHold(locks: LockManager | null | undefined, acco
   return { kind: "claimed", attempt: newSplitAttempt(), release };
 }
 
-/** What became of a held split: spent (completed), reverted (its credit unspent, to retire), or released by the node. */
-export type SplitOutcome = { kind: "spent"; txHash: string | null } | { kind: "reverted" } | { kind: "released" };
+/**
+ * What became of a held split. `spent`: an execution of exactly its terms mined (complete it). `reverted`: its own execution
+ * mined and reverted (its credit unspent: retire it). `released`: the node reported its credit EXPIRED, unspent, for the
+ * whole grace. `elsewhere`: the node reports its credit SETTLED by an execution that is provably not this split (nothing
+ * to complete, and its credit is gone). `expiring`: the node reports it EXPIRED, not yet for the whole grace (the caller
+ * notes when that was first seen, `noteSplitHoldExpiry`).
+ */
+export type SplitSettlement =
+  | { kind: "spent"; txHash: string }
+  | { kind: "reverted" }
+  | { kind: "released" }
+  | { kind: "elsewhere" }
+  | { kind: "expiring" };
+
+/** A chain reader as attribution reads it: one without `transaction` attributes nothing. */
+function evidenceOf(reader: ChainReader): SplitEvidenceReader {
+  return {
+    transaction: (chainId, hash) => (reader.transaction ? reader.transaction(chainId, hash) : Promise.resolve(null)),
+    receipt: (chainId, hash) => reader.receipt(chainId, hash),
+  };
+}
 
 /** The node's record of one credit (listed by its lines, `<salt>:<position>`), read page by page until found or the end. */
 async function findCreditRecord(account: string, creditId: string, client: ShopClient): Promise<PurchaseRecord | null> {
@@ -186,28 +218,68 @@ async function findCreditRecord(account: string, creditId: string, client: ShopC
 }
 
 /**
- * What became of a held split, from its receipt; else, once its credit can no longer be spent, from the node's record of
- * that credit (SETTLED: spent; EXPIRED: released). Null while nothing says (still reserved, not listed, a failed read),
- * however long ago it was sent. A receipt read that fails is no answer, as no receipt is none: the credit is asked next.
+ * What became of a held split, decided only by its terms (the same rules the in-world Shop follows):
+ * - its own transaction, read and matched (`splitExecution`): bought completes it, reverted releases its credit;
+ * - else the node's record of its credit: SETTLED by an execution of exactly its terms completes it, by one provably not
+ *   it is `elsewhere`; EXPIRED releases it once that has been seen for `SPLIT_EXPIRY_CONFIRM_MS` (`expiring` before);
+ * - anything else (no transaction, one this page can't read, a failed read, a credit still reserved or not listed): null,
+ *   still held, however long ago it was sent.
+ * A record with a credit and no terms is never settled. One from before credits were kept with it is let go once its hold
+ * has run out.
  */
-export async function settleSplitHold(hold: SplitHold, deps: { account: string | null; reader: ChainReader; client: ShopClient }): Promise<SplitOutcome | null> {
-  if (hold.txHash && hold.chainId !== null) {
-    const receipt = await deps.reader.receipt(hold.chainId, hold.txHash).catch(() => null);
-    if (receipt) return receipt.status === "reverted" ? { kind: "reverted" } : { kind: "spent", txHash: hold.txHash };
+export async function settleSplitHold(
+  hold: SplitHold,
+  deps: { account: string | null; reader: ChainReader; client: ShopClient; now?: number },
+): Promise<SplitSettlement | null> {
+  const now = deps.now ?? Date.now();
+  if (!hold.creditId) return splitHoldFresh(hold, now) ? null : { kind: "released" };
+  const sale = hold.sale;
+  if (!sale) return null;
+  const evidence = evidenceOf(deps.reader);
+  if (hold.txHash) {
+    const own = await splitExecution(evidence, sale, hold.txHash);
+    if (own === "bought") return { kind: "spent", txHash: hold.txHash };
+    if (own === "reverted") return { kind: "reverted" };
+    // Another execution, none yet, or one this page can't read: the node's record of the credit is read next.
   }
-  if (hold.creditId) {
-    if (!splitHoldCreditOver(hold, Date.now()) || !deps.account) return null;
-    try {
-      const credit = await findCreditRecord(deps.account, hold.creditId, deps.client);
-      if (credit?.status === "SETTLED") return { kind: "spent", txHash: credit.txHash ?? hold.txHash };
-      if (credit?.status === "EXPIRED") return { kind: "released" };
-    } catch {
-      // Not an answer: still held.
-    }
+  if (!deps.account) return null;
+  const credit = await findCreditRecord(deps.account, hold.creditId, deps.client).catch(() => null);
+  if (credit?.status === "SETTLED" && credit.txHash) {
+    const spent = await splitExecution(evidence, sale, credit.txHash);
+    if (spent === "bought") return { kind: "spent", txHash: credit.txHash };
+    if (spent === "other") return { kind: "elsewhere" };
     return null;
   }
-  // A record from before credits were kept with it: let go once its hold has run out.
-  return splitHoldFresh(hold, Date.now()) ? null : { kind: "released" };
+  if (credit?.status === "EXPIRED") {
+    const seen = hold.expiredSeenAt ?? null;
+    return seen !== null && now >= seen && now - seen >= SPLIT_EXPIRY_CONFIRM_MS ? { kind: "released" } : { kind: "expiring" };
+  }
+  return null;
+}
+
+/**
+ * Notes, under the line's lock and only on the attempt that was read, when its credit was first seen EXPIRED: the grace
+ * runs from then, in every tab and surface, and survives a restart. `noted` (or already), `replaced` (another attempt's
+ * record is there now, or none), or `busy` (a run holds the line's lock, or there are no Web Locks).
+ */
+export async function noteSplitHoldExpiry(
+  locks: LockManager | null | undefined,
+  account: string,
+  lineId: string,
+  read: SplitHold,
+  now: number = Date.now(),
+): Promise<"noted" | "replaced" | "busy"> {
+  if (read.expiredSeenAt != null) return "noted";
+  const release = await webLock(locks, splitHoldLockName(account, lineId));
+  if (!release) return "busy";
+  try {
+    const current = readSplitHoldRecord(account, lineId);
+    if (!current || current.attempt !== read.attempt || (read.attempt === null && current.at !== read.at)) return "replaced";
+    if (current.expiredSeenAt != null) return "noted";
+    return writeSplitHold(account, lineId, { ...current, expiredSeenAt: now }) ? "noted" : "busy";
+  } finally {
+    release();
+  }
 }
 
 /**

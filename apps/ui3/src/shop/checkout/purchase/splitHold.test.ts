@@ -6,14 +6,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CHAIN } from "@shop/model/chain";
 import { itemAsset } from "@shop/model/asset";
 import { BOOK } from "@shop/payment/fixtures";
-import { createFakeChain, createFakeLocks, createFakeShop } from "../fakes";
+import { createFakeChain, createFakeLocks, createFakeShop, splitSaleTransaction } from "../fakes";
 import {
   claimSplitHold,
   clearSettledSplitHold,
   clearSplitHold,
   readSplitHold,
   readSplitHoldRecord,
+  noteSplitHoldExpiry,
   settleSplitHold,
+  SPLIT_EXPIRY_CONFIRM_MS,
   SPLIT_HOLD_MS,
   splitHoldKey,
   splitHoldLine,
@@ -21,6 +23,7 @@ import {
   writeSplitHold,
   type SplitHold,
 } from "./splitHold";
+import type { SplitSale } from "./splitEvidence";
 
 afterEach(() => {
   localStorage.clear();
@@ -32,7 +35,29 @@ const ASSET = itemAsset(CHAIN.POLYGON, BOOK.collection, "7");
 const LINE = splitHoldLine(ASSET, { acquisition: "store" });
 const CREDIT = `0x${"c1".repeat(32)}`;
 const seconds = () => Math.floor(Date.now() / 1000);
-const hold = (over: Partial<SplitHold> = {}): SplitHold => ({ at: Date.now(), attempt: "a", txHash: null, chainId: CHAIN.POLYGON, creditId: CREDIT, creditExpiresAt: seconds() + 300, ...over });
+/** A split's terms, as the web Shop's dialog or the in-world Shop keeps them with its hold. */
+const SALE: SplitSale = {
+  buyer: ACCOUNT.toLowerCase(),
+  chainId: CHAIN.POLYGON,
+  manager: "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5",
+  creditId: CREDIT,
+  creditWei: "1000000000000000000",
+  gapWei: "1300000000000000000",
+  target: BOOK.store.contract.toLowerCase(),
+  selector: "0x12345678",
+  callData: "0xabcdef",
+};
+const hold = (over: Partial<SplitHold> = {}): SplitHold => ({
+  at: Date.now(),
+  attempt: "a",
+  txHash: null,
+  chainId: CHAIN.POLYGON,
+  creditId: CREDIT,
+  creditExpiresAt: seconds() + 300,
+  sale: SALE,
+  expiredSeenAt: null,
+  ...over,
+});
 
 describe("what a hold is kept under", () => {
   it("the item, whatever listing a surface buys it through: the same item is one hold, another item another", () => {
@@ -136,41 +161,79 @@ describe("the record of an attempt", () => {
 });
 
 describe("what settles a hold", () => {
-  function deps(listed: { status: "PENDING" | "SETTLED" | "EXPIRED" } | null) {
+  const HASH = `0x${"5a".repeat(32)}`;
+  const SETTLED_BY = `0x${"ab".repeat(32)}`;
+  function deps(listed: { status: "PENDING" | "SETTLED" | "EXPIRED"; txHash?: string } | null) {
     const chain = createFakeChain();
     const shop = createFakeShop({
       userPurchases: () => ({
-        purchases: listed ? [{ id: `${CREDIT}:0`, status: listed.status, usdCents: 50, createdAt: 1, txHash: listed.status === "SETTLED" ? `0x${"ab".repeat(32)}` : null }] : [],
+        purchases: listed ? [{ id: `${CREDIT}:0`, status: listed.status, usdCents: 50, createdAt: 1, txHash: listed.txHash ?? null }] : [],
         total: listed ? 1 : 0,
       }),
     });
     return { chain, shop, deps: { account: ACCOUNT, reader: chain, client: shop.client } };
   }
-  const HASH = `0x${"5a".repeat(32)}`;
+  const mined = (chain: ReturnType<typeof createFakeChain>, hash: string, tx: ReturnType<typeof splitSaleTransaction>, status: "success" | "reverted" = "success") => {
+    chain.transactions.set(hash.toLowerCase(), tx);
+    chain.receipts.set(hash.toLowerCase(), status);
+  };
 
-  it("its own receipt: mined completes it, reverted says its credit went unspent", async () => {
+  it("its own transaction, carrying exactly its terms: mined completes it, reverted says its credit went unspent", async () => {
     const ok = deps(null);
-    ok.chain.receipts.set(HASH, "success");
+    mined(ok.chain, HASH, splitSaleTransaction(SALE));
     expect(await settleSplitHold(hold({ txHash: HASH }), ok.deps)).toEqual({ kind: "spent", txHash: HASH });
     const reverted = deps(null);
-    reverted.chain.receipts.set(HASH, "reverted");
+    mined(reverted.chain, HASH, splitSaleTransaction(SALE), "reverted");
     expect(await settleSplitHold(hold({ txHash: HASH }), reverted.deps)).toEqual({ kind: "reverted" });
   });
 
-  it("no receipt (or a read that fails) while its credit can still be spent: nothing says, the node is not asked", async () => {
-    const { chain, shop, deps: d } = deps({ status: "EXPIRED" });
-    chain.receipt = async () => {
-      throw new Error("the RPC is down");
-    };
-    expect(await settleSplitHold(hold({ txHash: HASH }), d)).toBeNull();
-    expect(shop.log.some((r) => r.name === "userPurchases")).toBe(false);
+  it("a successful receipt for a transaction that is not this split's (another buyer's, or none to read) completes nothing", async () => {
+    const foreign = deps(null);
+    mined(foreign.chain, HASH, splitSaleTransaction(SALE, { user: `0x${"cc".repeat(20)}` }));
+    expect(await settleSplitHold(hold({ txHash: HASH }), foreign.deps)).toBeNull();
+    const unread = deps(null);
+    unread.chain.receipts.set(HASH, "success");
+    expect(await settleSplitHold(hold({ txHash: HASH }), unread.deps)).toBeNull();
   });
 
-  it("once its credit can no longer be spent, the node's record of it decides: spent, released, or still held", async () => {
-    const over = hold({ txHash: HASH, creditExpiresAt: seconds() - 1 });
-    expect(await settleSplitHold(over, deps({ status: "SETTLED" }).deps)).toEqual({ kind: "spent", txHash: `0x${"ab".repeat(32)}` });
-    expect(await settleSplitHold(over, deps({ status: "EXPIRED" }).deps)).toEqual({ kind: "released" });
-    expect(await settleSplitHold(over, deps({ status: "PENDING" }).deps)).toBeNull();
-    expect(await settleSplitHold(over, deps(null).deps)).toBeNull();
+  it("then the node's record of its credit: SETTLED by this split completes it, by another purchase is spent elsewhere, unread holds", async () => {
+    const own = deps({ status: "SETTLED", txHash: SETTLED_BY });
+    mined(own.chain, SETTLED_BY, splitSaleTransaction(SALE));
+    expect(await settleSplitHold(hold({ txHash: HASH }), own.deps)).toEqual({ kind: "spent", txHash: SETTLED_BY });
+    const elsewhere = deps({ status: "SETTLED", txHash: SETTLED_BY });
+    mined(elsewhere.chain, SETTLED_BY, splitSaleTransaction({ ...SALE, callData: "0x0bad" }));
+    expect(await settleSplitHold(hold(), elsewhere.deps)).toEqual({ kind: "elsewhere" });
+    // SETTLED alone, with nothing on chain to read: the salt says the credit was spent, not on what.
+    expect(await settleSplitHold(hold(), deps({ status: "SETTLED", txHash: SETTLED_BY }).deps)).toBeNull();
+    expect(await settleSplitHold(hold(), deps({ status: "PENDING" }).deps)).toBeNull();
+    expect(await settleSplitHold(hold(), deps(null).deps)).toBeNull();
+  });
+
+  it("EXPIRED lets it go only once seen so for the whole grace: before, it is expiring", async () => {
+    const { deps: d } = deps({ status: "EXPIRED" });
+    expect(await settleSplitHold(hold(), d)).toEqual({ kind: "expiring" });
+    const seen = Date.now() - SPLIT_EXPIRY_CONFIRM_MS + 1_000;
+    expect(await settleSplitHold(hold({ expiredSeenAt: seen }), d)).toEqual({ kind: "expiring" });
+    expect(await settleSplitHold(hold({ expiredSeenAt: seen }), { ...d, now: seen + SPLIT_EXPIRY_CONFIRM_MS })).toEqual({ kind: "released" });
+  });
+
+  it("a record with a credit and no terms is never settled, whatever its receipt says", async () => {
+    const { chain, deps: d } = deps({ status: "EXPIRED" });
+    mined(chain, HASH, splitSaleTransaction(SALE));
+    expect(await settleSplitHold(hold({ txHash: HASH, sale: null, expiredSeenAt: 1 }), d)).toBeNull();
+  });
+
+  it("when its credit was first seen EXPIRED is noted on the attempt that was read, under the line's lock", async () => {
+    const locks = createFakeLocks();
+    const read = hold({ attempt: "a" });
+    writeSplitHold(ACCOUNT, LINE, read);
+    expect(await noteSplitHoldExpiry(locks, ACCOUNT, LINE, read, 5_000)).toBe("noted");
+    expect(readSplitHoldRecord(ACCOUNT, LINE)?.expiredSeenAt).toBe(5_000);
+    // Noted once: a later look does not move it.
+    expect(await noteSplitHoldExpiry(locks, ACCOUNT, LINE, read, 9_000)).toBe("noted");
+    expect(readSplitHoldRecord(ACCOUNT, LINE)?.expiredSeenAt).toBe(5_000);
+    expect(await noteSplitHoldExpiry(locks, ACCOUNT, LINE, hold({ attempt: "older" }))).toBe("replaced");
+    locks.held.add(splitHoldLockName(ACCOUNT, LINE));
+    expect(await noteSplitHoldExpiry(locks, ACCOUNT, LINE, hold({ attempt: "a" }))).toBe("busy");
   });
 });

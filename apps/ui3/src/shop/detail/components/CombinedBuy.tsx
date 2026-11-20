@@ -39,8 +39,10 @@ import {
   splitHoldReleasableAt,
   writeSplitHold,
   type SplitHold,
-  type SplitOutcome,
+  noteSplitHoldExpiry,
+  type SplitSettlement,
 } from "../../checkout/purchase/splitHold";
+import type { SplitSale } from "../../checkout/purchase/splitEvidence";
 import { createSpendGuard } from "@shop/checkout/purchase/spend-guard";
 import { isMetaTxPending } from "../../checkout/purchase/tx-confirm";
 import { useShopServices } from "../../checkout/services";
@@ -81,6 +83,8 @@ const APPROVING_ELSEWHERE = "A purchase with Credits and MANA, or its MANA appro
 const UNGUARDED = "This browser can't make sure a purchase with Credits and MANA is sent only once, so it can't be paid this way here.";
 const CHECKING_ELSEWHERE = "This purchase is being paid or checked in another window. Check again in a moment.";
 const UNCHECKABLE = "This browser can't check this purchase safely here. Open it in a browser with Web Locks, or check your purchases.";
+const SPENT_ELSEWHERE = "The Credits this purchase held were spent on another purchase, so nothing was bought here.";
+const EXPIRING = "This purchase's Credits expired unspent. The item is let go once that is confirmed, in a few minutes: check again then.";
 /** How often, and how far apart, the sale asks again for the grant's lock right after this tab's own approval let it go. */
 const GRANT_LOCK_TRIES = 5;
 const GRANT_LOCK_RETRY_MS = 50;
@@ -307,6 +311,8 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     let creditExpiresAt: number | null = null;
     let sentHash: string | null = null;
     let sentChain: number | null = null;
+    // The sale's terms, kept with the hold before it may leave: what tells its execution apart (purchase/splitEvidence.ts).
+    let sale: SplitSale | null = null;
     // Set once the sale itself goes to the relay or the wallet: before it, a failure is the MANA approval's, and no sale left.
     let dispatched = false;
     try {
@@ -353,8 +359,20 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
         },
         onUnobservable: () => guard.current.unobservable(id),
         // Recorded before it may leave, for every tab and a restart: a split the browser cannot record is not sent.
-        onDispatch: () => {
-          if (!writeSplitHold(ctx.buyer, lineId, { at: Date.now(), attempt, txHash: null, chainId: sentChain, creditId: id, creditExpiresAt })) {
+        onDispatch: (call: { manager: string; target: string; selector: `0x${string}`; callData: `0x${string}` }) => {
+          sale = {
+            buyer: ctx.buyer.toLowerCase(),
+            chainId: sentChain!,
+            manager: call.manager.toLowerCase(),
+            creditId: id,
+            creditWei: authorized.credit.amount,
+            gapWei: gap.toString(),
+            target: call.target.toLowerCase(),
+            selector: call.selector,
+            callData: call.callData,
+            hold: { line: lineId, attempt },
+          };
+          if (!writeSplitHold(ctx.buyer, lineId, { at: Date.now(), attempt, txHash: null, chainId: sentChain, creditId: id, creditExpiresAt, sale })) {
             throw new SplitNotRecorded(NOT_RECORDED);
           }
           dispatched = true;
@@ -377,7 +395,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       if (dispatched && (stillPending || (creditId !== null && guard.current.mayBeConsumed(creditId)))) {
         // Recorded for the account that sent it, whatever the wallet shows by now, with its hash when there is one. Should
         // this write fail, the record made before it left stays: held, with no hash, until the node settles its credit.
-        const record: SplitHold = { at: Date.now(), attempt, txHash: sentHash, chainId: sentChain, creditId, creditExpiresAt };
+        const record: SplitHold = { at: Date.now(), attempt, txHash: sentHash, chainId: sentChain, creditId, creditExpiresAt, sale };
         writeSplitHold(ctx.buyer, lineId, record);
         setSent(record);
         setPhase({ kind: "pending" });
@@ -451,13 +469,20 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
         return;
       }
       setChecking(true);
-      let settled: SplitOutcome | null;
+      let settled: SplitSettlement | null;
       try {
         settled = await settleSplitHold(record, { account, reader: services.reader, client: services.client });
       } finally {
         setChecking(false);
       }
       if (!settled || !account) return;
+      if (settled.kind === "expiring") {
+        // Its credit expired unspent: noted, so the grace runs from now in every tab, and the item stays held until it ends.
+        const noted = await noteSplitHoldExpiry(services.locks, account, lineId, record);
+        setSent(readSplitHold(account, lineId));
+        setNotice(noted === "busy" ? (services.locks ? CHECKING_ELSEWHERE : UNCHECKABLE) : noted === "noted" ? EXPIRING : null);
+        return;
+      }
       // Applied under the item's lock, and only to the attempt that was read: another tab or surface may have settled it
       // meanwhile and sent a new split, whose record an outcome of this one never wipes.
       const clearing = await clearSettledSplitHold(services.locks, account, lineId, record);
@@ -479,6 +504,9 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       } else if (settled.kind === "spent") {
         setPhase({ kind: "success", txHash: settled.txHash });
         finished(settled.txHash);
+      } else if (settled.kind === "elsewhere") {
+        // Its credit paid for something else: nothing was bought here, and there is no credit left to give back.
+        setPhase({ kind: "error", message: SPENT_ELSEWHERE });
       } else if (phase.kind === "pending") {
         setPhase({ kind: "review" });
       }

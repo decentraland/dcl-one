@@ -17,7 +17,7 @@ import { isRevertedTxError, isWalletRefusal, revertedTxHash, sendAndConfirm, TxP
 import { AuthorizationKind, ensureAuthorization } from "../lib/authorizations";
 import { getMarketplaceForTrade } from "../lib/marketplace";
 import { canPayGasItself } from "../lib/wallet-kind";
-import { buyOneWithCredits, creditsManagerFor, type AnyPurchase } from "./credits";
+import { buildGroupUseCreditsArgs, buyOneWithCredits, creditsManagerFor, groupPurchases, type AnyPurchase } from "./credits";
 import { encodeMarketplaceCall, encodeStoreBuy, type ListingCoupon, type SignedTrade, type SpendableCredit, type StoreItemToBuy } from "./encoding";
 import { buyOneGasless, isSettlementPending, waitForSettlement } from "./gasless";
 import type { RailContext } from "./rail";
@@ -226,15 +226,19 @@ export function splitTerms(opts: {
   return { creditWei: share, gapWei };
 }
 
+/** The call a split's sale makes: the CreditsManager it goes to, and the external call it runs there. */
+export type SplitDispatch = { manager: string; target: Hex; selector: Hex; callData: Hex };
+
 type GapOptions = {
   credits: SpendableCredit[];
   manaGapWei: bigint;
   /**
    * Right before the sale goes to the relay or the wallet, once the allowance is in place: from here on it may be sent,
-   * so a failure after this is a sale whose outcome must be found out, not one that never left. A throw here stops the
-   * sale before anything is sent (the caller could not record it).
+   * so a failure after this is a sale whose outcome must be found out, not one that never left. It is given the call the
+   * sale makes (its CreditsManager and its external call), which the caller keeps to tell this sale's execution apart
+   * (splitEvidence.ts). A throw here stops the sale before anything is sent (the caller could not record it).
    */
-  onDispatch?: () => void;
+  onDispatch?: (call: SplitDispatch) => void;
   onBroadcast?: (info: { txHash: Hex }) => void;
   onReverted?: (info: { txHash: string | null }) => void;
   onUnobservable?: () => void;
@@ -255,7 +259,9 @@ async function payGapWithMana(ctx: RailContext, target: PurchaseTarget, opts: Ga
   await ensureManaAllowance(ctx, chainId, spender, opts.manaGapWei, true);
   const creditsValue = opts.credits.reduce((acc, c) => acc + BigInt(c.availableAmount), 0n);
   const purchase: AnyPurchase = { ...purchaseFor(target, opts.credits, creditsValue.toString()), maxUncreditedValue: opts.manaGapWei.toString() };
-  opts.onDispatch?.();
+  // The call both rails send (the relay's meta-transaction wraps it; the wallet sends it as is), built as they build it.
+  const built = buildGroupUseCreditsArgs(groupPurchases([purchase])[0]!, ctx.buyer);
+  opts.onDispatch?.({ manager: built.manager.address, target: built.args.externalCall.target, selector: built.args.externalCall.selector, callData: built.args.externalCall.data });
   if (ctx.gasless ?? gaslessEnabled()) {
     let relayed: Hex | undefined;
     try {

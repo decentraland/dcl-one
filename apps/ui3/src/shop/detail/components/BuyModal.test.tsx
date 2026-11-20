@@ -18,7 +18,7 @@ import type { PurchaseOffer } from "@shop/model/purchase";
 import { BOOK, storeMint } from "@shop/payment/fixtures";
 import type { OfferFetcher } from "../../cart/revalidate";
 import BuyModal, { resetBuyNowCarts, splitReason } from "./BuyModal";
-import { readSplitHold, SPLIT_HOLD_MS, splitHoldLine } from "../../checkout/purchase/splitHold";
+import { readSplitHold, SPLIT_EXPIRY_CONFIRM_MS, SPLIT_HOLD_MS, splitHoldLine } from "../../checkout/purchase/splitHold";
 
 const PATH = "/shop/item/0x00000000000000000000000000000000000000c0/7";
 
@@ -580,10 +580,18 @@ describe("Buy now's dialog", () => {
     const sent = readSplitHold(BOOK.buyer, first.holdLine);
     expect(sent?.txHash).toBeTruthy();
     expect(sent?.creditId).toBeTruthy();
+    // The relayed transaction the chain carries for it, which a dialog opened later reads to tell it is this split.
+    const tx = first.demo.chain.transactions.get(sent!.txHash!.toLowerCase())!;
+    expect(tx).toBeTruthy();
     first.unmount();
     resetBuyNowCarts();
-    return { ...sent!, lineId: first.holdLine };
+    return { ...sent!, lineId: first.holdLine, tx };
   }
+  /** The chain a dialog opened later reads: the split's own transaction, mined as `status`. */
+  const mined = (demo: ReturnType<typeof createDemo>, sent: Awaited<ReturnType<typeof sendSplitThatStaysPending>>, status: "success" | "reverted") => {
+    demo.chain.transactions.set(sent.txHash!.toLowerCase(), sent.tx);
+    demo.chain.receipts.set(sent.txHash!.toLowerCase(), status);
+  };
 
   it("a split still confirming is remembered: opened again, the dialog shows it confirming and offers no second one", async () => {
     const sent = await sendSplitThatStaysPending();
@@ -602,7 +610,7 @@ describe("Buy now's dialog", () => {
     const sent = await sendSplitThatStaysPending();
     const { demo, holdLine: lineId } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
     const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
-    demo.chain.receipts.set(sent.txHash!.toLowerCase(), "success");
+    mined(demo, sent, "success");
     await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
     expect(await screen.findByTestId("buy-modal-complete", undefined, { timeout: 5000 })).toBeTruthy();
     expect(readSplitHold(BOOK.buyer, lineId)).toBeNull();
@@ -612,7 +620,7 @@ describe("Buy now's dialog", () => {
     const sent = await sendSplitThatStaysPending();
     const { demo, holdLine: lineId } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
     const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
-    demo.chain.receipts.set(sent.txHash!.toLowerCase(), "reverted");
+    mined(demo, sent, "reverted");
     await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
     // The credit it reserved went into nothing that mined: retired now, that one and no other. Retired Credits come back
     // with the expiry sweep, which is what the copy says.
@@ -628,7 +636,7 @@ describe("Buy now's dialog", () => {
     const sent = await sendSplitThatStaysPending();
     const { demo } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
     const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
-    demo.chain.receipts.set(sent.txHash!.toLowerCase(), "success");
+    mined(demo, sent, "success");
     const later = Date.now() + SPLIT_HOLD_MS + 1;
     const clock = vi.spyOn(Date, "now").mockReturnValue(later);
     try {
@@ -663,11 +671,15 @@ describe("Buy now's dialog", () => {
       await checkAgain();
       expect(within(modal).getByTestId("buy-modal-pending")).toBeTruthy();
       expect(readSplitHold(BOOK.buyer, lineId)).not.toBeNull();
-      // Released unspent: the item is offered again.
+      // Released unspent: seen so first (still held, and said), then let go once that has lasted the whole grace.
       listed.status = "EXPIRED";
+      await checkAgain();
+      expect(within(modal).getByTestId("buy-modal-check-notice")).toHaveTextContent(/expired unspent/);
+      expect(readSplitHold(BOOK.buyer, lineId)).not.toBeNull();
+      clock.mockReturnValue(Math.max(Date.now() + SPLIT_HOLD_MS, sent.creditExpiresAt! * 1000) + SPLIT_EXPIRY_CONFIRM_MS + 2);
       await act(async () => fireEvent.click(within(screen.getByTestId("buy-modal-pending")).getByRole("button", { name: "Check again" })));
       expect(await within(modal).findByTestId("payment-method-step", undefined, { timeout: 5000 })).toBeTruthy();
-      expect(demo.shop.log.filter((r) => r.name === "userPurchases").length).toBeGreaterThanOrEqual(3);
+      expect(demo.shop.log.filter((r) => r.name === "userPurchases").length).toBeGreaterThanOrEqual(4);
     } finally {
       clock.mockRestore();
     }

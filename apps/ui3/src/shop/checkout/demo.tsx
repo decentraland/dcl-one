@@ -116,7 +116,18 @@ export function createDemo(s: DemoScenario) {
     createPackOrder: ({ body }) => ({ orderId: `order-${(body as { packId: string }).packId}`, url: "https://checkout.stripe.com/c/pay/demo" }),
     ...s.handlers,
   });
-  const wallet = createFakeWallet({ chainId: s.walletChainId ?? 137, account: s.walletAccount ?? BOOK.buyer });
+  // What the wallet sends lands on the fake chain as a transaction (its receipt stays the test's to give), so its sale
+  // can be read back as a direct useCredits from its sender.
+  let sends = 0;
+  const wallet = createFakeWallet({
+    chainId: s.walletChainId ?? 137,
+    account: s.walletAccount ?? BOOK.buyer,
+    onSend: (tx) => {
+      const hash = `0x${(++sends).toString(16).padStart(64, "0")}` as `0x${string}`;
+      chain.transactions.set(hash, { from: ((tx as { from?: string }).from ?? s.walletAccount ?? BOOK.buyer).toLowerCase(), to: tx.to, input: tx.data });
+      return hash;
+    },
+  });
 
   const offersMode = s.offers ?? "live";
   const fetchOffers: OfferFetcher | null =
