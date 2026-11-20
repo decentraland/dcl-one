@@ -6547,7 +6547,7 @@
     },
     {
       "path": "library/explorer-core/engine/mention.ts",
-      "sha256": "415a8a4f505003b9a0611bc7acd84a085fc13f670b5792381682b11b9d4eec89"
+      "sha256": "11cf5a47f8b4ad82c18fbc58fffb0a9306c3b44e9febf567a4443eb52f24c781"
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
@@ -6655,7 +6655,7 @@
     },
     {
       "path": "library/explorer-core/features/chat/translation.ts",
-      "sha256": "5f4da4df1edf9d67725224847b779c9ba9e96ea93c0b43fa45f399da0cdba275"
+      "sha256": "f7f05666183b6fbc2c5fea7a1344928256d6ddcff3795b8ffb7c9a0620c250aa"
     },
     {
       "path": "library/explorer-core/features/communities/notifications.ts",
@@ -10431,7 +10431,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/chatText.test.ts",
-      "sha256": "7ebf1bc0e87d1596486f42fc60d54edcc83fe7c0744e8ca61880eee1b79ce0cf"
+      "sha256": "23e9d1606174f80044818121afb38d39e3d69c29b3ed0225677c54708c64bd25"
     },
     {
       "path": "library/ui/apps/hud/test/colorPicker.test.tsx",
@@ -10559,7 +10559,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chatTranslation.test.tsx",
-      "sha256": "61c948ac4f92d67d2c2f47d5cee78c7a7097e44b729dab7d140c684664cb5368"
+      "sha256": "abc75106488d4ed2bd1f6bedab34c7c1d3c2c10fe62b6cd21f335d00826ea3ef"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/clicks.test.tsx",
@@ -11651,6 +11651,21 @@
     {
       "from": "library/explorer-core/features/chat/lineIds.test.ts",
       "to": "library/explorer-core/features/chat/lineIds.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/translation.ts",
+      "to": "library/explorer-core/engine/mention.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/translation.ts",
+      "to": "library/explorer-core/engine/mention.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/translation.ts",
+      "to": "library/explorer-core/engine/mention.ts",
       "kind": "test:runtime"
     },
     {

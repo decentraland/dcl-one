@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { Chat } from '../../features/chat/Chat'
 import { SettingsPanel } from '../../features/settings/SettingsPanel'
 import type { ChatLine, ChatState } from '../../features/session/useEngineSession'
-import { TRANSLATE_URL, languageFromSettings, matchLanguage, resetTranslations, setAutoTranslate, setAutoTranslateDefault, splitForTranslation, systemLanguage, translateText } from '@explorer-core/features/chat/translation'
+import { TRANSLATE_URL, hasTranslatableText, languageFromSettings, matchLanguage, resetTranslations, setAutoTranslate, setAutoTranslateDefault, splitForTranslation, systemLanguage, translateText } from '@explorer-core/features/chat/translation'
 import { PREF, getPref } from '@explorer-core/lib/prefs'
 import { pingModeFor, resetPingPrefs, setPingDefault, setPingMode } from '../../features/chat/ping'
 import { fakeProfileState, fakeSession } from '../harness'
@@ -73,6 +73,17 @@ describe('splitting a message for translation', () => {
       { value: '</i>', translate: false },
       { value: ' <br>', translate: true }
     ])
+  })
+
+  it('keeps back a tag shown as written, which alone is nothing to translate', () => {
+    expect(splitForTranslation('hola amigo</b> <b></b>')).toEqual([
+      { value: 'hola amigo', translate: true },
+      { value: '</b>', translate: false },
+      { value: ' ', translate: false },
+      { value: '<b>', translate: false },
+      { value: '</b>', translate: false }
+    ])
+    for (const text of ['</b>', '<b></b>', '<i x>']) expect(hasTranslatableText(text)).toBe(false)
   })
 
   it('a message of emoji and numbers has nothing to translate', async () => {

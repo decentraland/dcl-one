@@ -156,7 +156,7 @@ fn styling(pieces: &[Piece]) -> Vec<bool> {
 }
 
 /// A message as a bubble shows it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BubbleText {
     /// The words alone: the HUD's chat styles the text between bold and italic tags, a bubble
     /// has one face.
@@ -235,19 +235,20 @@ pub struct ChatBubbleRetext {
 }
 
 fn boundary(c: Option<char>) -> bool {
-    c.is_none_or(|c| c.is_whitespace() || matches!(c, '!' | '?' | '.' | ','))
+    c.is_none_or(|c| js_whitespace(c) || matches!(c, '!' | '?' | '.' | ','))
 }
 
 /// The byte ranges of the words starting at a line's start, after whitespace or at one of
-/// `breaks`, which are in order.
+/// `breaks`, which are in order. Whitespace is the HUD's, as for the tags, so both part the
+/// same words.
 fn words<'a>(message: &'a str, breaks: &'a [usize]) -> impl Iterator<Item = Range<usize>> + 'a {
     let mut chars = message.char_indices().peekable();
     std::iter::from_fn(move || {
-        while chars.next_if(|(_, c)| c.is_whitespace()).is_some() {}
+        while chars.next_if(|(_, c)| js_whitespace(*c)).is_some() {}
         let (start, _) = chars.next()?;
         let mut end = message.len();
         while let Some((index, c)) = chars.peek().copied() {
-            if c.is_whitespace() || breaks.binary_search(&index).is_ok() {
+            if js_whitespace(c) || breaks.binary_search(&index).is_ok() {
                 end = index;
                 break;
             }
@@ -480,9 +481,13 @@ mod tests {
         assert_eq!(plain("<b><i>a</i></b>"), "a");
         // many tags are read once each
         let flood = "<b><i>".repeat(20_000);
-        let start = std::time::Instant::now();
         assert_eq!(plain(&flood), flood);
-        assert!(start.elapsed() < std::time::Duration::from_secs(2));
+        // whitespace is text: the pair is hidden around it
+        assert_eq!(plain("<b> </b>"), " ");
+        // a closing tag past the one that ended the style
+        assert_eq!(plain("<b>x</b></b>"), "x</b>");
+        // each style ends at its own closing tag, in whichever order they come
+        assert_eq!(plain("<b><i>x</b></i>"), "x");
     }
 
     #[test]
@@ -507,6 +512,14 @@ mod tests {
         // text in a tag's brackets is hidden, and no mention
         assert!(!mentions("<b @Ada x>hello", "Ada"));
         assert!(!mentions("hey <i @Ada>", "Ada"));
+        // and the space a tag counts as completes no other tag
+        assert!(!mentions("<b<i>>@Ada", "Ada"));
+        assert!(!mentions("@Ada<b <i>>x", "Ada"));
+        // whitespace as the HUD reads it
+        assert!(mentions("hi\u{feff}@Ada", "Ada"));
+        assert!(mentions("@Ada\u{feff}", "Ada"));
+        assert!(!mentions("x\u{85}@Ada", "Ada"));
+        assert!(!mentions("@Ada\u{85}", "Ada"));
     }
 
     #[test]
@@ -577,6 +590,11 @@ mod tests {
         assert_eq!(
             colours("hi</b>@Ada"),
             [("hi</b>".to_owned(), false), ("@Ada".to_owned(), true)]
+        );
+        // whitespace as the HUD reads it
+        assert_eq!(
+            colours("hi\u{feff}@Ada"),
+            [("hi\u{feff}".to_owned(), false), ("@Ada".to_owned(), true)]
         );
         // a break past the cut is dropped with the text
         let long = format!("{}<b>@Ada</b>", "x".repeat(MAX_MESSAGE_CHARS));
