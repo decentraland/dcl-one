@@ -204,10 +204,11 @@ pub struct ContentConfig {
     #[arg(long, env = "UPLOAD_SPOOL_FOLDER")]
     pub upload_spool_folder: Option<std::path::PathBuf>,
 
-    /// Bytes `POST /entities` requests buffer in memory at once: each holds
-    /// 16 MiB for its fields and parsing, plus, once the form is read, its
-    /// entity file and the largest file its validation reads (an item's
-    /// thumbnail, a profile's face256); the other files stay spooled on disk.
+    /// Bytes `POST /entities` requests buffer in memory at once: a request is
+    /// admitted when 16 MiB for its fields and parsing fits, and once its
+    /// form is read reserves that, its entity file and the largest file its
+    /// validation reads (an item's thumbnail, a profile's face256); the other
+    /// files stay spooled on disk.
     /// Never below one request's most (16 MiB plus twice
     /// `MAX_UPLOAD_FILE_SIZE`), so a form within the limits always fits an
     /// idle node. A request that does not fit answers 503 (unread when it
@@ -333,16 +334,18 @@ pub struct ContentConfig {
     )]
     pub max_concurrent_uploads_per_source: u32,
 
-    /// Bytes of `POST /entities` bodies (declared, else `MAX_UPLOAD_TOTAL_SIZE`)
-    /// one client address may have in flight, its share of the upload spool.
-    /// The worlds uploads read it too, so a set value must fit one 350 MiB
-    /// world deploy (below that the config is refused); a value below
-    /// `MAX_UPLOAD_TOTAL_SIZE` is logged at startup, since a larger content
-    /// upload is then always refused. Unset, each route keeps one maximum-size upload of its
-    /// own (content `MAX_UPLOAD_TOTAL_SIZE`, worlds 350 MiB): a source with one large or
-    /// undeclared-length (chunked) body in flight is turned away (429) until
-    /// it ends, whatever `MAX_CONCURRENT_UPLOADS_PER_SOURCE` allows; raise it
-    /// to let one source upload several large bodies at once.
+    /// Bytes of `POST /entities` bodies one client address may have in
+    /// flight, its share of the upload spool. A content upload is admitted
+    /// when its declared length (else `MAX_UPLOAD_TOTAL_SIZE`) fits beside the
+    /// bytes the source's uploads have received, and then holds only the bytes
+    /// it receives (429 once they outgrow the share), so a slow sender does not
+    /// hold what it has not sent. The worlds uploads read it too, so a set
+    /// value must fit one 350 MiB world deploy (below that the config is
+    /// refused); a value below `MAX_UPLOAD_TOTAL_SIZE` is logged at startup,
+    /// since a larger content upload is then always refused. Unset, each route
+    /// keeps one maximum-size upload of its own (content
+    /// `MAX_UPLOAD_TOTAL_SIZE`, worlds 350 MiB); raise it to let one source
+    /// upload several large bodies at once.
     #[arg(
         long,
         env = "MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE",

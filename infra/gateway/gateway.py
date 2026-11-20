@@ -283,7 +283,8 @@ def render(table, cfg, mime):
     # (upstream's 200 per 60 s, answered as JSON with Retry-After), so a
     # client within that limit never meets nginx's HTML 429. Content deploys
     # are not buffered: the body streams to the app, which spools it to disk
-    # under its own budgets, upload timeout and unread-body drain, so a body
+    # under its own budgets (holding only the bytes received), upload
+    # timeout and unread-body drain (with its own deadline), so a body
     # of up to CONTENT_DEPLOY_CAP never lands in the gateway's temp space (a
     # tmpfs in the documented run). Concurrent uploads per address are
     # capped on both deploy routes.

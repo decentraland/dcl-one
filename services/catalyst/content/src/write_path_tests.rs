@@ -2510,6 +2510,100 @@ async fn spool_is_empty(state: &SharedState) -> bool {
     false
 }
 
+/// A slow sender declaring the largest form holds only what it has sent:
+/// its spool reservation stays at the minimum and its source lease at the
+/// bytes received, so another deploy from the same source or another one
+/// is admitted beside it, as upstream admits on the declared size and grows
+/// with the bytes spooled.
+#[tokio::test]
+async fn a_slow_sender_holds_only_what_it_sent() {
+    let min = super::upload_admission::MIN_UPLOAD_RESERVATION_BYTES;
+    let total = 64 * 1024 * 1024;
+    let settings = Settings {
+        max_upload_total_bytes: total,
+        max_upload_file_count: 4,
+        max_in_flight_upload_bytes: 1,
+        max_in_flight_upload_bytes_per_source: total as u64,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("slow-sender", settings).await;
+    let router = node.router();
+    let spool = &node.state.spool_budget;
+    let declared = super::create_entity::max_deployment_body_bytes(&node.state.settings);
+    assert!(
+        spool.capacity() < min + total as u64,
+        "holding its declared payload, the slow sender would leave no room"
+    );
+
+    let (mut tx, rx) = futures::channel::mpsc::channel::<Result<Bytes, std::io::Error>>(4);
+    let boundary = "catalyst-admission-boundary";
+    let chain = entity_form()[1].1.clone();
+    tx.try_send(Ok(Bytes::from(format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"entityId\"\r\n\r\nbafy\r\n\
+         --{boundary}\r\nContent-Disposition: form-data; name=\"authChain\"\r\n\r\n{chain}\r\n\
+         --{boundary}\r\nContent-Disposition: form-data; name=\"a\"; filename=\"a\"\r\n\
+         Content-Type: application/octet-stream\r\n\r\n"
+    ))))
+    .unwrap();
+    let sent = 300 * 1024;
+    tx.try_send(Ok(Bytes::from(vec![b'x'; sent]))).unwrap();
+    let req = Request::post("/content/entities")
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .header(header::CONTENT_LENGTH, declared)
+        .header("x-real-ip", "203.0.113.20")
+        .body(Body::from_stream(rx))
+        .unwrap();
+    let pending = tokio::spawn(router.clone().oneshot(req));
+    let mut waited = 0;
+    while spool.reserved() == 0 || !node.state.spool_root.exists() {
+        assert!(waited < 500, "the slow sender was never admitted");
+        waited += 1;
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(
+        spool.reserved(),
+        min,
+        "the undelivered bytes of the declared body are not held"
+    );
+    assert_eq!(
+        node.state.upload_budget.reserved(),
+        0,
+        "nor any memory while the body arrives"
+    );
+
+    for ip in ["203.0.113.20", "203.0.113.21"] {
+        let (status, _, body) = call(&router, form_request(ip, &entity_form())).await;
+        assert_eq!(
+            (status, json_of(&body)),
+            (
+                StatusCode::BAD_REQUEST,
+                json!({"errors": ["Failed to find the entity file."]})
+            ),
+            "a deploy from {ip} is admitted beside the slow sender"
+        );
+    }
+    let sources = &node.state.source_uploads;
+    let mut beside = sources
+        .try_acquire("203.0.113.20", total as u64 - sent as u64 - 4096)
+        .unwrap()
+        .expect("the source's share holds only the bytes received");
+    assert!(
+        !beside.grow(total as u64),
+        "a lease grows only into the share left"
+    );
+    drop(beside);
+
+    pending.abort();
+    let _ = pending.await;
+    drop(tx);
+    assert_eq!(spool.reserved(), 0);
+    assert!(spool_is_empty(&node.state).await);
+}
+
 /// A client that disconnects mid-upload gives back its budgets and source
 /// share, and its spooled part is removed.
 #[tokio::test]
@@ -2562,7 +2656,11 @@ async fn a_disconnected_upload_returns_its_reservations_and_spool() {
         waited += 1;
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    assert!(node.state.upload_budget.reserved() > 0);
+    assert_eq!(
+        node.state.upload_budget.reserved(),
+        0,
+        "memory is reserved once the form is read, not while it arrives"
+    );
     assert!(node.state.spool_budget.reserved() > 0);
     let sources = &node.state.source_uploads;
     assert!(

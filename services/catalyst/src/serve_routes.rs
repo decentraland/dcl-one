@@ -272,8 +272,7 @@ pub(super) fn build_routes(
     // `MAX_UPLOAD_TOTAL_SIZE` plus framing): the drain discards each chunk
     // as it arrives, so the bound costs bandwidth, never memory or disk. A
     // content deploy streams through nginx unbuffered, so its drain runs at
-    // the client's pace, bounded by nginx's `client_body_timeout` between
-    // reads, not by a deadline of its own.
+    // the client's pace; it ends at `DRAIN_DEADLINE` (300 s) whatever is left.
     // Forwarding headers name the client only from a loopback or listed proxy.
     let app =
         shared::client_ip::pin_client_headers(app, config.node.http_trusted_proxy_cidrs.clone());

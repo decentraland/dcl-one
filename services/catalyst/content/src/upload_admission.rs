@@ -79,6 +79,34 @@ impl UploadBudget {
             bytes,
         })
     }
+
+    /// Admits a body declaring `declared` bytes when they would fit beside
+    /// what is reserved now, as upstream's `acquire(0, declaredPayload)`,
+    /// but reserves only [`MIN_UPLOAD_RESERVATION_BYTES`]: the reservation
+    /// grows with what arrives ([`Reservation::grow`]), so a body declaring
+    /// more than it sends never holds the bytes it does not send.
+    pub fn try_admit(&self, declared: u64) -> Option<Reservation<'_>> {
+        self.admit(declared, MIN_UPLOAD_RESERVATION_BYTES)
+    }
+
+    /// Admits a request whose first need, `needed`, would fit beside what
+    /// is reserved now, holding nothing until it [`Reservation::grow`]s to
+    /// the real sizes, as upstream's memory admission only checks `fits`.
+    pub fn try_admit_empty(&self, needed: u64) -> Option<Reservation<'_>> {
+        self.admit(needed, 0)
+    }
+
+    fn admit(&self, fits: u64, hold: u64) -> Option<Reservation<'_>> {
+        let mut reserved = self.reserved.lock();
+        if reserved.saturating_add(fits.max(hold)) > self.capacity {
+            return None;
+        }
+        *reserved += hold;
+        Some(Reservation {
+            budget: self,
+            bytes: hold,
+        })
+    }
 }
 
 impl Reservation<'_> {
@@ -161,12 +189,15 @@ impl SourceUploads {
         }
     }
 
-    /// Admits an upload of up to `bytes` from `client_ip`: `Err` when the
-    /// source already has its share in flight, `Ok(None)` without a source.
+    /// Admits an upload declaring `declared` bytes from `client_ip` when the
+    /// source has an upload slot and the bytes would fit beside what its
+    /// uploads hold now; the lease holds nothing until bytes arrive
+    /// ([`SourceLease::grow`]). `Err` when the source is busy, `Ok(None)`
+    /// without a source.
     pub fn try_acquire(
         &self,
         client_ip: &str,
-        bytes: u64,
+        declared: u64,
     ) -> Result<Option<SourceLease<'_>>, SourceBusy> {
         if client_ip.trim().is_empty() {
             return Ok(None);
@@ -174,15 +205,36 @@ impl SourceUploads {
         let key = source_key(client_ip);
         let mut in_flight = self.in_flight.lock();
         let (uploads, held) = in_flight.get(&key).copied().unwrap_or((0, 0));
-        if uploads >= self.max_uploads || held.saturating_add(bytes) > self.max_bytes {
+        if uploads >= self.max_uploads || held.saturating_add(declared) > self.max_bytes {
             return Err(SourceBusy);
         }
-        in_flight.insert(key.clone(), (uploads + 1, held + bytes));
+        in_flight.insert(key.clone(), (uploads + 1, held));
         Ok(Some(SourceLease {
             limits: self,
             key,
-            bytes,
+            bytes: 0,
         }))
+    }
+}
+
+impl SourceLease<'_> {
+    /// Grows the lease to `bytes` when it holds less; `false`, keeping what
+    /// it holds, when the source's share does not have the room.
+    pub fn grow(&mut self, bytes: u64) -> bool {
+        if bytes <= self.bytes {
+            return true;
+        }
+        let mut in_flight = self.limits.in_flight.lock();
+        let Some((_, held)) = in_flight.get_mut(&self.key) else {
+            return false;
+        };
+        let more = bytes - self.bytes;
+        if held.saturating_add(more) > self.limits.max_bytes {
+            return false;
+        }
+        *held += more;
+        self.bytes = bytes;
+        true
     }
 }
 
@@ -324,12 +376,21 @@ mod tests {
     #[test]
     fn a_source_holds_at_most_its_uploads_and_bytes_in_flight() {
         let limits = SourceUploads::new(2, 100);
-        let first = limits.try_acquire("203.0.113.1", 60).unwrap();
+        let mut first = limits.try_acquire("203.0.113.1", 100).unwrap().unwrap();
+        assert!(
+            limits
+                .try_acquire("203.0.113.1", 100)
+                .is_ok_and(|lease| lease.is_some()),
+            "a declared size holds nothing before its bytes arrive"
+        );
+        assert!(first.grow(60));
         assert!(
             limits.try_acquire("203.0.113.1", 41).is_err(),
             "past the byte share"
         );
-        let second = limits.try_acquire("203.0.113.1", 40).unwrap();
+        let mut second = limits.try_acquire("203.0.113.1", 40).unwrap().unwrap();
+        assert!(!second.grow(41), "a grow past the share fails");
+        assert!(second.grow(40));
         assert!(
             limits.try_acquire("203.0.113.1", 0).is_err(),
             "past the upload count"
@@ -360,6 +421,44 @@ mod tests {
         assert!(growing.grow(3 * min));
         drop(growing);
         assert_eq!(budget.reserved(), 0);
+    }
+
+    #[test]
+    fn admission_checks_the_declared_size_but_reserves_the_minimum() {
+        let min = MIN_UPLOAD_RESERVATION_BYTES;
+        let budget = UploadBudget::new(4 * min);
+        let mut slow = budget.try_admit(4 * min).expect("fits an empty budget");
+        assert_eq!(budget.reserved(), min, "only the minimum is held");
+        assert!(slow.grow(2 * min), "grows with what arrives");
+        assert!(
+            budget.try_admit(3 * min).is_none(),
+            "does not fit beside it"
+        );
+        let other = budget
+            .try_admit(2 * min)
+            .expect("fits beside what it holds");
+        assert!(!slow.grow(4 * min), "the rest is taken");
+        drop((slow, other));
+        assert_eq!(budget.reserved(), 0);
+
+        let memory = UploadBudget::new(2 * min);
+        let mut reading = memory.try_admit_empty(min).expect("its share fits");
+        assert_eq!(
+            memory.reserved(),
+            0,
+            "nothing is held while the body arrives"
+        );
+        let busy = memory.try_reserve(2 * min).unwrap();
+        assert!(
+            memory.try_admit_empty(min).is_none(),
+            "no room for its share"
+        );
+        assert!(
+            !reading.grow(min),
+            "real sizes are reserved once known, if they fit"
+        );
+        drop(busy);
+        assert!(reading.grow(min));
     }
 
     #[test]

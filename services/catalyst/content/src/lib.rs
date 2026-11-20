@@ -594,8 +594,9 @@ pub struct ContentState {
     /// share per request (fields, parsing) plus its entity file and the
     /// largest file its validation reads.
     pub upload_budget: upload_admission::UploadBudget,
-    /// The disk the `POST /entities` spool may take at once: each request's
-    /// declared payload, grown to its spooled bytes (plus a per-file charge).
+    /// The disk the `POST /entities` spool may take at once: each request
+    /// admitted when its declared payload fits, holding a minimum grown to
+    /// its spooled bytes (plus a per-file charge).
     pub spool_budget: upload_admission::UploadBudget,
     /// Where each `POST /entities` request spools its files
     /// ([`Settings::upload_spool_folder`]).
@@ -604,7 +605,7 @@ pub struct ContentState {
     pub deploy_quota: upload_admission::DailyQuota,
     /// `POST /entities` requests per client address and burst window.
     pub deploy_burst: upload_admission::DailyQuota,
-    /// `POST /entities` bodies and bytes in flight per client address.
+    /// `POST /entities` bodies and received bytes in flight per client address.
     pub source_uploads: upload_admission::SourceUploads,
     /// The `/contents/{hash}` burst and quotas per client, this process's.
     pub content_get_limit: content_get_limit::ContentGetLimit,

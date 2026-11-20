@@ -39,17 +39,22 @@
 //! heap, and the deployer reads any other part only when a validation
 //! inspects its bytes (a thumbnail), with ordinary I/O whose failure is the
 //! spool's 503, and stores each one from its spool file. Two budgets admit
-//! a request before its body: the spool budget (`MAX_IN_FLIGHT_UPLOAD_BYTES`,
-//! never below one maximal form) takes its declared payload, none for a
-//! chunked body, and grows with what it writes; the memory budget
-//! (`MAX_IN_MEMORY_DEPLOYMENT_BYTES`, never below [`max_heap_share`]) takes a
-//! fixed 16 MiB for its fields and parsing, grown once the form is read by
+//! a request before its body, as upstream's: the spool budget
+//! (`MAX_IN_FLIGHT_UPLOAD_BYTES`, never below one maximal form) admits it
+//! when its declared payload (none for a chunked body) fits beside what is
+//! reserved, reserves 16 MiB and grows with what it writes, so a slow or
+//! short body never holds bytes it has not sent; the memory budget
+//! (`MAX_IN_MEMORY_DEPLOYMENT_BYTES`, never below [`max_heap_share`]) admits
+//! it when a fixed 16 MiB for its fields and parsing fits, holding nothing
+//! while the body arrives, and once the form is read reserves that share,
 //! its entity file and the largest file its validation reads. A budget that
 //! does not fit, or a spool the disk refuses (full, failing), answers 503
 //! with `Retry-After`.
 //! Before the body is read, in upstream's order: a client address past its
 //! daily quota 429, a body that does not fit the in-memory upload budget
-//! 503, and a client with its uploads or bytes in flight 429
+//! 503, and a client with its uploads in flight, or without room in its byte
+//! share for the declared body, 429; the share then grows with the bytes
+//! received, a 429 when it runs out
 //! ([`super::upload_admission`], per process), each with `Retry-After`; a
 //! body that is not a form, or declares more than a form can hold, then
 //! answers 400 or 413. The quota counts a request once its form is read,
@@ -91,7 +96,7 @@ use serde_json::{Value, json};
 
 use super::errors::{AppError, AppResult};
 use super::partial_deployments;
-use super::upload_admission::Reservation;
+use super::upload_admission::{Reservation, SourceLease};
 use super::write_deployer::{DeployFailure, Upload};
 use super::writes;
 use super::{Settings, SharedState};
@@ -347,11 +352,12 @@ enum Form {
     Refused(Response),
 }
 
-/// What a request spools into: its directory and its share of the spool
-/// budget, grown as its files arrive.
-struct Spooling<'a, 'b> {
+/// What a request spools into: its directory, and its share of the spool
+/// budget and of its source's allowance, both grown as its bytes arrive.
+struct Spooling<'a, 'b, 'c> {
     spool: &'a mut UploadSpool,
     disk: &'a mut Reservation<'b>,
+    source: Option<&'a mut SourceLease<'c>>,
 }
 
 /// Reads the whole form with upstream's multipart limits and answers
@@ -370,7 +376,7 @@ struct Spooling<'a, 'b> {
 async fn read_form(
     multipart: &mut Multipart,
     settings: &Settings,
-    spooling: Spooling<'_, '_>,
+    spooling: Spooling<'_, '_, '_>,
     before_files: impl AsyncFnOnce(&BTreeMap<String, String>) -> Option<Response>,
 ) -> AppResult<Form> {
     let max_fields = settings.max_upload_field_count;
@@ -378,7 +384,11 @@ async fn read_form(
     let max_files = settings.max_upload_file_count;
     let max_file_bytes = settings.max_upload_file_bytes;
     let max_total = settings.max_upload_total_bytes;
-    let Spooling { spool, disk } = spooling;
+    let Spooling {
+        spool,
+        disk,
+        mut source,
+    } = spooling;
     let mut fields: BTreeMap<String, String> = BTreeMap::new();
     let mut files: Vec<SpooledFile> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
@@ -437,6 +447,11 @@ async fn read_form(
                 // 413, never the retryable 503.
                 if !disk.grow(total_bytes as u64 + charged) {
                     return Ok(Form::Refused(budget_exhausted()));
+                }
+                if let Some(source) = source.as_deref_mut()
+                    && !source.grow(total_bytes as u64)
+                {
+                    return Ok(Form::Refused(source_busy()));
                 }
                 if let Err(e) = part.write(&chunk).await {
                     return Ok(Form::Refused(spool_unavailable(&e)));
@@ -500,9 +515,10 @@ fn budget_exhausted() -> Response {
 
 /// The form's files as the deployer takes them, by field name: the entity
 /// file (the first part hashing to `entityId`) read onto the heap and
-/// returned beside them, every other part from its spool file. Before the
-/// read, `memory` grows by the entity file; once it parses, by the largest
-/// part its validation reads ([`crate::validator::rules::inspected_hashes`]).
+/// returned beside them, every other part from its spool file. `memory`,
+/// empty while the body arrived, is reserved the fixed share, then the
+/// entity file before the read and, once it parses, the largest part its
+/// validation reads ([`crate::validator::rules::inspected_hashes`]).
 /// A grow that does not fit is the budget's 503, a failed read the spool's.
 async fn uploads_of(
     fields: &BTreeMap<String, String>,
@@ -512,6 +528,9 @@ async fn uploads_of(
     let entity_at = fields
         .get("entityId")
         .and_then(|id| parts.iter().position(|part| part.names(id)));
+    if !memory.grow(super::upload_admission::MIN_UPLOAD_RESERVATION_BYTES) {
+        return Err(budget_exhausted());
+    }
     let mut entity = None;
     if let Some(at) = entity_at {
         let part = &parts[at];
@@ -705,8 +724,8 @@ fn quota_exceeded_response(retry_after_secs: u64) -> Response {
     )
 }
 
-/// The bytes a body can occupy: its declared length, else
-/// `MAX_UPLOAD_TOTAL_SIZE`.
+/// The bytes a body may grow to, which its source's share must have room
+/// for on admission: its declared length, else `MAX_UPLOAD_TOTAL_SIZE`.
 fn declared_body_bytes(headers: &HeaderMap, settings: &Settings) -> u64 {
     declared_length(headers)
         .unwrap_or(u64::MAX)
@@ -822,27 +841,29 @@ pub async fn create_entity(
         return Ok(quota_exceeded_response(retry_after));
     }
 
-    // Memory: the fixed share every request holds (its fields, parsing),
-    // grown once the form is read ([`uploads_of`]). Disk: the declared
-    // payload (none for a chunked body), grown to what the spool holds.
-    let Some(mut memory) = state.upload_budget.try_reserve(0) else {
+    // Admission checks fit and reserves only a minimum; each reservation
+    // grows with what is real, so a slow or short body holds only what it
+    // sent. Memory: its fixed share (fields, parsing) must fit; it is
+    // reserved with the real sizes once the form is read ([`uploads_of`]),
+    // as upstream's memory admission only checks `fits`. Disk: the
+    // declared payload must fit (none for a chunked body); the reservation
+    // grows with what the spool holds. Source: the declared body must fit its
+    // share; the lease grows with the bytes received.
+    let Some(mut memory) = state
+        .upload_budget
+        .try_admit_empty(super::upload_admission::MIN_UPLOAD_RESERVATION_BYTES)
+    else {
         return Ok(budget_exhausted());
     };
     let declared_payload = declared_length(&headers)
         .unwrap_or(0)
         .min(state.settings.max_upload_total_bytes as u64);
-    let Some(mut disk) = state.spool_budget.try_reserve(declared_payload) else {
+    let Some(mut disk) = state.spool_budget.try_admit(declared_payload) else {
         return Ok(budget_exhausted());
     };
     let body_bytes = declared_body_bytes(&headers, &state.settings);
-    let Ok(_source_lease) = state.source_uploads.try_acquire(&client_ip, body_bytes) else {
-        return Ok(with_retry_after(
-            super::errors::json_error(
-                StatusCode::TOO_MANY_REQUESTS,
-                super::upload_admission::SOURCE_BUSY_MESSAGE,
-            ),
-            header::HeaderValue::from(super::upload_admission::SOURCE_BUSY_RETRY_AFTER_SECS),
-        ));
+    let Ok(mut source_lease) = state.source_uploads.try_acquire(&client_ip, body_bytes) else {
+        return Ok(source_busy());
     };
     let received = Arc::new(AtomicU64::new(0));
     let multipart = Multipart::from_request(counting_body(request, Arc::clone(&received)), &())
@@ -874,8 +895,20 @@ pub async fn create_entity(
         multipart,
         &mut memory,
         &mut disk,
+        source_lease.as_mut(),
     )
     .await
+}
+
+/// Upstream's 429 for a source past its uploads or bytes in flight.
+fn source_busy() -> Response {
+    with_retry_after(
+        super::errors::json_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            super::upload_admission::SOURCE_BUSY_MESSAGE,
+        ),
+        header::HeaderValue::from(super::upload_admission::SOURCE_BUSY_RETRY_AFTER_SECS),
+    )
 }
 
 /// `request` with its body's bytes added to `received` as they arrive.
@@ -966,6 +999,7 @@ async fn deploy_form(
     mut multipart: Multipart,
     memory: &mut Reservation<'_>,
     disk: &mut Reservation<'_>,
+    source: Option<&mut SourceLease<'_>>,
 ) -> AppResult<Response> {
     let settings = &state.settings;
     // Removed, with every file in it, when this request ends however it
@@ -983,6 +1017,7 @@ async fn deploy_form(
         Spooling {
             spool: &mut spool,
             disk,
+            source,
         },
         async |fields: &BTreeMap<String, String>| {
             if !request.declared_partial && !is_partial(fields) {
