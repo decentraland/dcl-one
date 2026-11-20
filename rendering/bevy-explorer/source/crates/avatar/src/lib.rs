@@ -88,7 +88,9 @@ use crate::{
 };
 use common::{
     asset_cache::{clean_asset_cache, AssetCache},
-    structs::{AppConfig, AttachPoints, Clips, EmoteCommand, EmoteMask, PrimaryUser},
+    structs::{
+        AppConfig, AttachPoints, Clips, EmoteCommand, EmoteMask, PrimaryUser, SessionGraphics,
+    },
     util::{SceneSpawnerPlus, TryPushChildrenEx},
 };
 #[cfg(feature = "explorer")]
@@ -172,6 +174,8 @@ impl Plugin for AvatarRenderPlugin {
         app.add_event::<AvatarLoadReport>();
         // the emote lifecycle feed; comms and the emote report add it too, idempotently
         app.add_event::<common::structs::EmoteLifecycleEvent>();
+        // the session's Max Avatars; the Explorer's settings initialise it too
+        app.init_resource::<SessionGraphics>();
         // read by emote playback; the Explorer's input crate initialises it too
         app.init_resource::<common::structs::SceneDrivenAnimationFeedback>();
         app.add_plugins(MaskMaterialPlugin);
@@ -2311,19 +2315,6 @@ fn calculate_local_aabb(
 #[derive(Component)]
 pub struct BeyondMaxAvatars;
 
-/// Max Avatars for this session, when `/avatar_demo cap` has set one: it wins over the player's
-/// setting, takes values past the setting's range and is never saved.
-#[derive(Resource, Default)]
-pub(crate) struct SessionMaxAvatars(pub(crate) Option<usize>);
-
-impl SessionMaxAvatars {
-    pub(crate) fn effective(session: Option<&Self>, config: &AppConfig) -> usize {
-        session
-            .and_then(|session| session.0)
-            .unwrap_or(config.max_avatars)
-    }
-}
-
 fn set_avatar_visibility(
     mut commands: Commands,
     mut q: Query<
@@ -2338,12 +2329,12 @@ fn set_avatar_visibility(
     beyond_max: Query<(), With<BeyondMaxAvatars>>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
     config: Res<AppConfig>,
-    session_max: Option<Res<SessionMaxAvatars>>,
+    session: Res<SessionGraphics>,
 ) {
     let Ok(player_pos) = player.single().map(|gt| gt.translation()) else {
         return;
     };
-    let max_avatars = SessionMaxAvatars::effective(session_max.as_deref(), &config);
+    let max_avatars = session.max_avatars(&config);
 
     let default_layer = RenderLayers::layer(0);
     let mut distances = q

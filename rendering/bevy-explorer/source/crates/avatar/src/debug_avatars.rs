@@ -4,6 +4,7 @@ use bevy_console::ConsoleCommand;
 use collectibles::base_wearables;
 use common::structs::{
     AppConfig, AttachPoints, AvatarDynamicState, EmoteCommand, EmoteMask, PrimaryUser,
+    SessionGraphics,
 };
 use comms::profile::{name_color::name_color, ProfileManager, UserProfile};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
@@ -11,9 +12,7 @@ use dcl_component::proto_components::sdk::components::PbAvatarShape;
 use rand::{rngs::StdRng, seq::IteratorRandom, Rng, SeedableRng};
 use serde_json::json;
 
-use crate::{
-    nametag::NametagContent, AvatarProcessed, AvatarSelection, AvatarShape, SessionMaxAvatars,
-};
+use crate::{nametag::NametagContent, AvatarProcessed, AvatarSelection, AvatarShape};
 
 /// Enough to find where frame time breaks down, well past the Max Avatars setting's range.
 const MAX_DEMOS: usize = 1024;
@@ -94,7 +93,6 @@ impl Plugin for DebugAvatarsPlugin {
             return;
         }
         app.init_resource::<Creator>()
-            .init_resource::<SessionMaxAvatars>()
             .add_preview_console_command::<DemoCommand, _>(demo_command)
             .add_preview_console_command::<LookCommand, _>(look_command)
             .add_observer(clear_on_logout)
@@ -294,7 +292,7 @@ fn demo_command(
     player: Query<&GlobalTransform, With<PrimaryUser>>,
     mut demos: Query<(Entity, &mut AvatarSelection), With<DemoAvatar>>,
     config: Res<AppConfig>,
-    mut session_max: ResMut<SessionMaxAvatars>,
+    mut session: ResMut<SessionGraphics>,
     (children, processed, drawn_meshes): (
         Query<&Children>,
         Query<&InheritedVisibility, With<AvatarProcessed>>,
@@ -319,8 +317,9 @@ fn demo_command(
                 cmd.reply_failed(format!("choose a cap from 1 to {MAX_CAP}"));
                 return;
             }
-            // beside the config, not in it: a change to the config is written to the stored one
-            session_max.0 = max;
+            // with the session's settings, not in the config: a change to the config is written
+            // to the stored one
+            session.max_avatars = max;
         }
         Some(DemoAction::Layout { layout }) => creator.layout = layout,
         Some(DemoAction::Seed { seed }) => creator.seed = seed,
@@ -468,7 +467,7 @@ fn demo_command(
             }
         }
     }
-    cmd.reply_ok(json!({"count":count, "built":built, "shown":shown, "drawn":drawn, "cap":SessionMaxAvatars::effective(Some(&*session_max), &config), "sessionCap":session_max.0, "layout":creator.layout.name(), "seed":creator.seed, "maleOnly":creator.male_only, "wearables":creator.wearables.join(","), "emote":creator.emote.as_deref().unwrap_or("none")}).to_string());
+    cmd.reply_ok(json!({"count":count, "built":built, "shown":shown, "drawn":drawn, "cap":session.max_avatars(&config), "sessionCap":session.max_avatars, "layout":creator.layout.name(), "seed":creator.seed, "maleOnly":creator.male_only, "wearables":creator.wearables.join(","), "emote":creator.emote.as_deref().unwrap_or("none")}).to_string());
 }
 
 /// Temporarily render a fetched profile's appearance on the local player.

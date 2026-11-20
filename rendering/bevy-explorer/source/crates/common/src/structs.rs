@@ -1098,6 +1098,8 @@ pub struct SessionGraphics {
     pub fps_target: Option<usize>,
     pub parcel_grass: Option<ParcelGrassSetting>,
     pub render_scale: Option<f32>,
+    /// Set by the preview's `/avatar_demo cap`, which takes values past the setting's range.
+    pub max_avatars: Option<usize>,
 }
 
 impl SessionGraphics {
@@ -1108,6 +1110,10 @@ impl SessionGraphics {
 
     pub fn fps_target(&self, config: &AppConfig) -> usize {
         self.fps_target.unwrap_or(config.graphics.fps_target)
+    }
+
+    pub fn max_avatars(&self, config: &AppConfig) -> usize {
+        self.max_avatars.unwrap_or(config.max_avatars)
     }
 
     /// The frame rate the explorer paces to: the session's target, else the player's, and with
