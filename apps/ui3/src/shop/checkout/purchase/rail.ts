@@ -24,6 +24,10 @@ export type RailContext = {
    * answer is lost can be retried with the same meta-transaction nonce and land at most once.
    */
   relayOnly?: boolean;
+  /** The browser's Web Locks an exact MANA grant runs under (the page's by default; null: none). */
+  locks?: LockManager | null;
+  /** The caller already holds the exact grant's lock (`exactGrantLock`): a credits + MANA sale takes it before its item's. */
+  grantLockHeld?: boolean;
   /** Receipt/nonce wait tuning, for tests. */
   wait?: { timeoutMs?: number; pollMs?: number; now?: () => number; sleep?: (ms: number) => Promise<void> };
 };

@@ -65,6 +65,8 @@ async function ensureManaAllowance(ctx: RailContext, chainId: ChainId, spender: 
     reader: ctx.reader,
     relayerUrl: ctx.relayerUrl,
     fetchImpl: ctx.fetchImpl,
+    locks: ctx.locks,
+    grantLockHeld: ctx.grantLockHeld,
     requiredWei,
     exact,
   });

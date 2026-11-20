@@ -4,7 +4,7 @@
 // declined signature releasing the credit.
 
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { decodeFunctionData, type Hex } from "viem";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setSplitPaymentForTests } from "@shop/payment/present";
@@ -12,7 +12,8 @@ import { setSplitPaymentForTests } from "@shop/payment/present";
 import { CREDITS_MANAGER_ABI, OFFCHAIN_META_TX_ABI } from "@shop/checkout/chain/abi";
 
 import { requireContracts } from "../../checkout/chain/contracts";
-import { batchAuthorization, creatorTrade, relayedApproval } from "../../checkout/fakes";
+import { batchAuthorization, createFakeLocks, creatorTrade, relayedApproval } from "../../checkout/fakes";
+import { exactGrantLock, getManaSpendingAuthorization } from "../../checkout/lib/authorizations";
 import { CHAIN } from "@shop/model/chain";
 import { createDemo, DemoShell } from "../../checkout/demo";
 import { usdCents } from "@shop/model/money";
@@ -254,6 +255,8 @@ describe("buying with Credits and MANA", () => {
 
 describe("a split whose outcome is not known", () => {
   const managerKey = () => `${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase()}`;
+  /** The buyer's meta-transaction nonce on MANA, as the fake chain answers `getNonce`. */
+  const manaNonceKey = () => `${requireContracts(CHAIN.POLYGON).mana.address.toLowerCase()}:${BOOK.buyer.toLowerCase()}`;
   const authorizations = (demo: ReturnType<typeof createDemo>) => demo.shop.log.filter((r) => r.name === "authorizeCredit").length;
 
   it("a sale the relay may have sent (its answer lost) is held confirming, kept on reopen, and nothing is authorized or sent again", async () => {
@@ -354,7 +357,8 @@ describe("a split whose outcome is not known", () => {
       fireEvent.click(second!);
     });
     expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
-    expect(await screen.findByText("This item is being bought in another window. Nothing was charged here.")).toBeTruthy();
+    // The second finds the manager's grant lock taken (a sale takes it before its item's).
+    expect(await screen.findByText(/is in progress in another window\. Try again in a moment\. Nothing was charged here\./)).toBeTruthy();
     expect(authorizations(demo)).toBe(1);
     expect(demo.relay.posts).toHaveLength(1);
   });
@@ -444,6 +448,48 @@ describe("a split whose outcome is not known", () => {
     expect(screen.getByTestId("combined-confirm")).toBeEnabled();
   });
 
+  it("without Web Locks no approval is asked for: nothing is signed, authorized or sent", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    demo.services.locks = null;
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText(/can't make sure a purchase with Credits and MANA is sent only once/)).toBeTruthy();
+    expect(screen.queryByTestId("authorize-step")).toBeNull();
+    expect(demo.wallet.requests.filter((r) => r.method === "eth_signTypedData_v4" || r.method === "eth_sendTransaction")).toEqual([]);
+    expect(authorizations(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
+  });
+
+  it("while another window holds the manager's grant lock, the sale stops before any credit: nothing authorized or sent", async () => {
+    const { demo } = setup();
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    const auth = getManaSpendingAuthorization(CHAIN.POLYGON, requireContracts(CHAIN.POLYGON).creditsManager!.address);
+    (demo.services.locks as ReturnType<typeof createFakeLocks>).held.add(exactGrantLock(auth, BOOK.buyer));
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText(/is in progress in another window\. Try again in a moment\. Nothing was charged here\./)).toBeTruthy();
+    expect(authorizations(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
+  });
+
+  it("an approval another window lost, which can still run, keeps the sale from spending an allowance another grant covers", async () => {
+    const { demo } = setup();
+    // Another grant covers the gap; the recorded approve (nonce 0, unspent) could still land after a sale spends it.
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    const auth = getManaSpendingAuthorization(CHAIN.POLYGON, requireContracts(CHAIN.POLYGON).creditsManager!.address);
+    const mana = requireContracts(CHAIN.POLYGON).mana.address.toLowerCase();
+    localStorage.setItem(
+      `dcl-shop-exact-grant:v2:${BOOK.buyer.toLowerCase()}:${CHAIN.POLYGON}:${mana}:${auth.spenderAddress}`,
+      JSON.stringify({ at: Date.now(), attempt: "other", amount: (13n * 10n ** 17n).toString(), to: mana, data: "0x00", nonce: "0" }),
+    );
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    // Not ready: the approval step, whose retry within the hold sends nothing.
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    expect(await screen.findByText(/Your approval was sent and is still confirming/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(authorizations(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
+  });
+
   it("an approval whose answer was lost stays pending through Approve and its retry: no second grant, and no credit or sale until it lands", async () => {
     const { demo } = setup();
     demo.relay.state.mode = "fail-after-send";
@@ -459,8 +505,9 @@ describe("a split whose outcome is not known", () => {
     expect(demo.relay.posts).toHaveLength(1);
     expect(demo.wallet.requests.some((r) => r.method === "eth_sendTransaction")).toBe(false);
     expect(authorizations(demo)).toBe(0);
-    // It lands: the retry finds it, grants nothing more, and the purchase goes on.
+    // It lands (its nonce is spent and the allowance set): the retry finds it, grants nothing more, and the purchase goes on.
     demo.chain.allowances.set(managerKey(), 13n * 10n ** 17n);
+    demo.chain.nonces.set(manaNonceKey(), 1n);
     demo.relay.state.mode = "ok";
     await act(async () => fireEvent.click(screen.getByTestId("authorize-step-action")));
     expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
@@ -472,7 +519,7 @@ describe("a split whose outcome is not known", () => {
 describe("a held split with no transaction to read", () => {
   const CREDIT = `0x${"c1".repeat(32)}`;
   type Listing = (req: { query: URLSearchParams }) => unknown;
-  function heldSplit(status: { value: "PENDING" | "SETTLED" | "EXPIRED" | null }, creditExpiresAt: number, opts: { userPurchases?: Listing; attempt?: string } = {}) {
+  function heldSplit(status: { value: "PENDING" | "SETTLED" | "EXPIRED" | null }, creditExpiresAt: number, opts: { userPurchases?: Listing; attempt?: string; txHash?: string } = {}) {
     const demo = createDemo({
       session: "web3",
       handlers: {
@@ -489,7 +536,7 @@ describe("a held split with no transaction to read", () => {
     // Sent sixteen minutes ago, past the hold; the relay lost its answer, so no hash.
     localStorage.setItem(
       `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${cartLineId(line.asset, line.listing)}`,
-      JSON.stringify({ at: Date.now() - 16 * 60 * 1000, ...(opts.attempt ? { attempt: opts.attempt } : {}), txHash: null, chainId: CHAIN.POLYGON, creditId: CREDIT, creditExpiresAt }),
+      JSON.stringify({ at: Date.now() - 16 * 60 * 1000, ...(opts.attempt ? { attempt: opts.attempt } : {}), txHash: opts.txHash ?? null, chainId: CHAIN.POLYGON, creditId: CREDIT, creditExpiresAt }),
     );
     render(
       <DemoShell demo={demo} path="/shop/item/x/7">
@@ -548,6 +595,37 @@ describe("a held split with no transaction to read", () => {
     expect(readSentSplit(BOOK.buyer, demo.lineId)).toMatchObject({ attempt: "newer" });
     expect(screen.getByText(/still confirming/)).toBeTruthy();
     expect(screen.queryByTestId("combined-confirm")).toBeNull();
+  });
+
+  it("a receipt read that fails is no answer: once its credit expired, the node's record of it decides, spent or released", async () => {
+    for (const [value, settled] of [
+      ["SETTLED", true],
+      ["EXPIRED", false],
+    ] as const) {
+      const demo = heldSplit({ value }, nowSeconds() - 1, { txHash: `0x${"5a".repeat(32)}` });
+      demo.chain.receipt = async () => {
+        throw new Error("the RPC is down");
+      };
+      await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
+      if (settled) expect(await screen.findByText(/Purchase complete/)).toBeTruthy();
+      else expect(await screen.findByTestId("combined-confirm")).toBeEnabled();
+      expect(demo.shop.log.some((r) => r.name === "userPurchases")).toBe(true);
+      expect(readSentSplit(BOOK.buyer, demo.lineId)).toBeNull();
+      cleanup();
+      localStorage.clear();
+    }
+  });
+
+  it("a receipt read that fails, and a credit the node does not list, keep the split held", async () => {
+    const demo = heldSplit({ value: null }, nowSeconds() - 1, { txHash: `0x${"5a".repeat(32)}` });
+    demo.chain.receipt = async () => {
+      throw new Error("the RPC is down");
+    };
+    await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
+    await waitFor(() => expect(demo.shop.log.some((r) => r.name === "userPurchases")).toBe(true));
+    await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
+    expect(screen.getByText(/still confirming/)).toBeTruthy();
+    expect(readSentSplit(BOOK.buyer, demo.lineId)).not.toBeNull();
   });
 
   it("finds its credit past the newest lines: the history is read page by page until it is found", async () => {

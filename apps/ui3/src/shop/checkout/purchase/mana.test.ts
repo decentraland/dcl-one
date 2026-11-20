@@ -10,7 +10,7 @@ import { CHAIN } from "@shop/model/chain";
 import { BOOK } from "@shop/payment/fixtures";
 import { requireContracts } from "../chain/contracts";
 import { GaslessUnavailableError, provedNotSent } from "../chain/metatx";
-import { createFakeChain, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade, relayedApproval } from "../fakes";
+import { createFakeChain, createFakeLocks, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade, relayedApproval } from "../fakes";
 import { buildGroupUseCreditsArgs, groupPurchases } from "./credits";
 import type { SpendableCredit } from "./encoding";
 import { tradeManaPrice } from "./cart";
@@ -40,6 +40,8 @@ function rail() {
     walletKind: "web3",
     relayerUrl: "https://node.test/transactions-api/v1",
     fetchImpl: relay.fetchImpl,
+    // One browser's Web Locks: an exact grant runs under its own.
+    locks: createFakeLocks(),
     gasless: true,
     wait: {
       timeoutMs: 30,

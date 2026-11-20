@@ -18,11 +18,10 @@ import Modal from "../../../components/Modal";
 import type { ShopClient } from "@shop/api/shop";
 import { authorizeUsdCredit, cancelUsdIntents, fetchUserPurchases, type PurchaseRecord } from "@shop/credits/credits";
 import { invalidateAfterPurchase } from "../../checkout/lib/after-purchase";
-import { requireContracts } from "../../checkout/chain/contracts";
 import { isSignatureDeclined } from "../../checkout/chain/metatx";
 import { isPendingTxError, isRevertedTxError } from "../../checkout/chain/wallet";
 import AuthorizeStep from "../../checkout/components/AuthorizeStep";
-import { AuthorizationKind, getAuthorizationStatus, GrantNotRecordedError, isAuthorizationPending, needsApprovalStep, setAuthorization, type ShopAuthorization } from "../../checkout/lib/authorizations";
+import { exactAllowanceReady, exactGrantLock, getManaSpendingAuthorization, GrantNotRecordedError, isAuthorizationPending, needsApprovalStep, setAuthorization, type ShopAuthorization } from "../../checkout/lib/authorizations";
 import { friendlyError, isRejection } from "../../checkout/lib/errors";
 import { webLock } from "../../checkout/lib/web-lock";
 import { isSettlementPending } from "../../checkout/purchase/gasless";
@@ -70,6 +69,7 @@ const SENT_KEY = "dcl-shop-buynow-split:v1:";
 export const SENT_HOLD_MS = 15 * 60 * 1000;
 const NOT_RECORDED = "Your browser couldn't keep a record of this purchase, so it wasn't sent. Nothing was charged.";
 const ELSEWHERE = "This item is being bought in another window. Nothing was charged here.";
+const APPROVING_ELSEWHERE = "A purchase with Credits and MANA, or its MANA approval, is in progress in another window. Try again in a moment. Nothing was charged here.";
 const UNGUARDED = "This browser can't make sure a purchase with Credits and MANA is sent only once, so it can't be paid this way here.";
 /** The node's purchase history, read this many lines at a time (its most) while looking for one credit. */
 const HISTORY_PAGE = 200;
@@ -280,7 +280,14 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       fetchImpl: services.fetchImpl,
       gasless: services.gasless,
       wait: services.wait,
+      locks: services.locks,
     };
+  }
+
+  /** The MANA allowance the sale's CreditsManager pulls the gap through, which an exact grant sets. */
+  function spendingAuth(target: PurchaseTarget): ShopAuthorization {
+    const { spender, chainId } = manaSpenderFor("combined", target);
+    return getManaSpendingAuthorization(chainId, spender);
   }
 
   async function resolveTarget(ctx: RailContext, offer: PurchaseOffer): Promise<PurchaseTarget> {
@@ -312,15 +319,20 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       setPhase({ kind: "review" });
       return;
     }
+    // Without Web Locks nothing proves the approval or the sale goes out once: nothing is asked of the wallet.
+    if (!services.locks) {
+      setPhase({ kind: "error", message: UNGUARDED });
+      return;
+    }
     const agreedTerms: Terms = { offer, mixed };
     terms.current = agreedTerms;
     setAgreed(mixed);
     setPhase({ kind: "working" });
     try {
       const target = await resolveTarget(ctx, agreedTerms.offer);
-      const { spender, chainId } = manaSpenderFor("combined", target);
-      const auth: ShopAuthorization = { kind: AuthorizationKind.Allowance, contractAddress: requireContracts(chainId).mana.address, spenderAddress: spender, chainId };
-      const allowed = await getAuthorizationStatus(auth, ctx.buyer, agreedTerms.mixed.manaWei, ctx.reader).catch(() => false);
+      const auth = spendingAuth(target);
+      // Ready only with no recorded approval that may still run: an allowance another grant covers does not retire one.
+      const allowed = await exactAllowanceReady(auth, ctx.buyer, agreedTerms.mixed.manaWei, ctx.reader);
       if (!allowed && needsApprovalStep(ctx.walletKind, false)) {
         setPhase({ kind: "approve", auth });
         return;
@@ -333,21 +345,42 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
 
   async function pay(ctx: RailContext, agreedTerms: Terms, known?: PurchaseTarget) {
     setPhase({ kind: "working" });
-    // One split of this item runs at a time in this browser: the run holds the item's lock from its first read of the
-    // record to its last write, so two tabs never both find it free and both send.
-    const release = await webLock(services.locks, sentLock(ctx.buyer, lineId));
-    if (!release) {
-      setPhase({ kind: "error", message: services.locks ? ELSEWHERE : UNGUARDED });
+    if (!services.locks) {
+      setPhase({ kind: "error", message: UNGUARDED });
+      return;
+    }
+    let target: PurchaseTarget;
+    try {
+      target = known ?? (await resolveTarget(ctx, agreedTerms.offer));
+    } catch (e) {
+      setPhase({ kind: "error", message: friendlyError(e, FALLBACK, { sale: true }) });
+      return;
+    }
+    // The exact grant's lock, then the item's, in every window in that order: the sale reconciles and spends the manager's
+    // allowance with no approval starting beside it, and holds the item's record from its first read to its last write,
+    // so two windows never both find it free and both send.
+    const grantRelease = await webLock(services.locks, exactGrantLock(spendingAuth(target), ctx.buyer));
+    if (!grantRelease) {
+      setPhase({ kind: "error", message: APPROVING_ELSEWHERE });
       return;
     }
     try {
-      await payHeld(ctx, agreedTerms, known);
+      const release = await webLock(services.locks, sentLock(ctx.buyer, lineId));
+      if (!release) {
+        setPhase({ kind: "error", message: ELSEWHERE });
+        return;
+      }
+      try {
+        await payHeld({ ...ctx, grantLockHeld: true }, agreedTerms, target);
+      } finally {
+        release();
+      }
     } finally {
-      release();
+      grantRelease();
     }
   }
 
-  async function payHeld(ctx: RailContext, { offer, mixed }: Terms, known?: PurchaseTarget) {
+  async function payHeld(ctx: RailContext, { mixed }: Terms, target: PurchaseTarget) {
     // Read under the lock: a split another tab sent since this screen opened is shown confirming, and nothing is authorized.
     const earlier = readSentSplit(ctx.buyer, lineId);
     if (earlier) {
@@ -363,7 +396,6 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     // Set once the sale itself goes to the relay or the wallet: before it, a failure is the MANA approval's, and no sale left.
     let dispatched = false;
     try {
-      const target = known ?? (await resolveTarget(ctx, offer));
       sentChain = manaSpenderFor("combined", target).chainId;
       // The MANA the sale moves: the mint's price, or the listing's after its coupon. A USD-pegged listing's is only fixed
       // at settlement, so it has no split, and nothing is authorized for one.
@@ -462,12 +494,9 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
    */
   async function settle(record: SentSplit, account: string | null): Promise<Settled | null> {
     if (record.txHash && record.chainId !== null) {
-      try {
-        const receipt = await services.reader.receipt(record.chainId, record.txHash);
-        if (receipt) return receipt.status === "reverted" ? { kind: "reverted" } : { kind: "spent", txHash: record.txHash };
-      } catch {
-        return null;
-      }
+      // A receipt read that fails is no answer, as no receipt is none: either way the credit's record is asked next.
+      const receipt = await services.reader.receipt(record.chainId, record.txHash).catch(() => null);
+      if (receipt) return receipt.status === "reverted" ? { kind: "reverted" } : { kind: "spent", txHash: record.txHash };
     }
     if (record.creditId) {
       if (!creditOver(record, Date.now()) || !account) return null;
@@ -507,6 +536,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
         reader: ctx.reader,
         relayerUrl: ctx.relayerUrl,
         fetchImpl: ctx.fetchImpl,
+        locks: ctx.locks,
       });
     },
     approved: () => {
