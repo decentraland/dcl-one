@@ -240,7 +240,7 @@ const LIVE: ShellDonateServices = {
       await res.body?.cancel().catch(() => {})
       return
     }
-    // The status decides a retry (forwardUntil: a 429 or 5xx is asked again, any other 4xx is the catalyst refusing
+    // The status decides a retry (forwardUntil: a 429 or 5xx but 503 is asked again, any other 4xx is the catalyst refusing
     // the claim), never sooner than the Retry-After the server repeats in its body.
     const body = (await res.json().catch(() => null)) as { retryAfter?: unknown } | null
     const err = new CatalystError(`The tip forward answered ${res.status}`, url, res.status)

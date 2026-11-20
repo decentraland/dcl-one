@@ -1,5 +1,5 @@
 // A mined tip's forward to the catalyst (features/donate/tip): retried while it may still succeed, never sooner
-// than the server's Retry-After, never after a refusal.
+// than the server’s Retry-After, never after a refusal or a 503 (no tip index to confirm it).
 import { describe, expect, it, vi } from 'vitest'
 import { forwardUntil } from '../features/donate/tip'
 
@@ -15,7 +15,7 @@ function clock() {
 describe('forwarding a mined tip', () => {
   it('retries a 5xx, a 429 and no answer with backoff, until the catalyst takes it', async () => {
     const c = clock()
-    const forward = vi.fn().mockRejectedValueOnce(failed(503)).mockRejectedValueOnce(new Error('offline')).mockResolvedValue(undefined)
+    const forward = vi.fn().mockRejectedValueOnce(failed(502)).mockRejectedValueOnce(new Error('offline')).mockResolvedValue(undefined)
     expect(await forwardUntil(HASH, forward, { ...c, deadline: 600_000 })).toBe('notified')
     expect(c.waits).toEqual([5_000, 10_000])
   })
@@ -35,5 +35,11 @@ describe('forwarding a mined tip', () => {
     expect(await forwardUntil(HASH, down, { ...clock(), deadline: 20_000 })).toBe('gave-up')
     // At 0, 5 s and 15 s; the next wait (20 s) would end past the deadline.
     expect(down).toHaveBeenCalledTimes(3)
+  })
+
+  it('stops at once when the catalyst has no tip index to confirm it', async () => {
+    const unavailable = vi.fn().mockRejectedValue(failed(503))
+    expect(await forwardUntil(HASH, unavailable, { ...clock(), deadline: 600_000 })).toBe('unavailable')
+    expect(unavailable).toHaveBeenCalledOnce()
   })
 })

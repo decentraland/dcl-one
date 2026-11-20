@@ -176,14 +176,14 @@ describe("deliverTip", () => {
   });
 
   it("retries 429, 5xx and network failures with growing backoff and stops at the first answer", async () => {
-    const h = harness([{ status: "0x1" }], [429, 503, 0, null]);
+    const h = harness([{ status: "0x1" }], [429, 502, 0, null]);
     expect(await deliverTip(h.provider, hash, h.opts)).toBe("notified");
     expect(h.forwards).toHaveLength(4);
     expect(h.slept).toEqual([5_000, 10_000, 20_000]);
   });
 
   it("waits at least the server's Retry-After, bounded by the longest backoff", async () => {
-    const h = harness([{ status: "0x1" }], [{ status: 429, retryAfter: 2 }, { status: 429, retryAfter: 60 }, { status: 503, retryAfter: 600 }, null]);
+    const h = harness([{ status: "0x1" }], [{ status: 429, retryAfter: 2 }, { status: 429, retryAfter: 60 }, { status: 502, retryAfter: 600 }, null]);
     expect(await deliverTip(h.provider, hash, h.opts)).toBe("notified");
     expect(h.slept).toEqual([5_000, 60_000, 120_000]);
   });
@@ -191,6 +191,12 @@ describe("deliverTip", () => {
   it("stops without retrying when the server refuses the tip", async () => {
     const h = harness([{ status: "0x1" }], [400, null]);
     expect(await deliverTip(h.provider, hash, h.opts)).toBe("refused");
+    expect(h.forwards).toHaveLength(1);
+  });
+
+  it("stops without retrying when the server has no tip index to confirm it", async () => {
+    const h = harness([{ status: "0x1" }], [503, null]);
+    expect(await deliverTip(h.provider, hash, h.opts)).toBe("unavailable");
     expect(h.forwards).toHaveLength(1);
   });
 

@@ -108,7 +108,7 @@ export async function forwardTip(transactionHash: string, opts: SendOpts = {}): 
   });
 }
 
-export type TipDelivery = "notified" | "reverted" | "refused" | "gave-up";
+export type TipDelivery = "notified" | "reverted" | "refused" | "unavailable" | "gave-up";
 
 export type TipDeliveryOpts = {
   forward?: (transactionHash: string) => Promise<void>;

@@ -645,8 +645,8 @@ describe('sending a tip', () => {
     expect(s.last()).toMatchObject({ step: 'processing', amount: '166' })
   })
 
-  it('forwards with retries on a 5xx, never on the catalyst’s refusal', async () => {
-    const retried = vi.fn().mockRejectedValueOnce(new CatalystError('busy', 'u', 503)).mockResolvedValue(undefined)
+  it('forwards with retries on a 5xx, never on the catalyst’s refusal or its missing tip index', async () => {
+    const retried = vi.fn().mockRejectedValueOnce(new CatalystError('busy', 'u', 502)).mockResolvedValue(undefined)
     const s = setup({ forward: retried, now: () => 0 })
     await open(s.donate)
     s.handlers().onSend?.('166')
@@ -660,6 +660,13 @@ describe('sending a tip', () => {
     await flush()
     await flush()
     expect(refused).toHaveBeenCalledOnce()
+    const unavailable = vi.fn().mockRejectedValue(new CatalystError('no index', 'u', 503))
+    const u = setup({ forward: unavailable, now: () => 0 })
+    await open(u.donate)
+    u.handlers().onSend?.('166')
+    await flush()
+    await flush()
+    expect(unavailable).toHaveBeenCalledOnce()
   })
 
   it('asks the places service on every donate.target: nothing is kept', async () => {

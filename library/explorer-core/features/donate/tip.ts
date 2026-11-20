@@ -19,8 +19,11 @@ export const TRANSFER_ABI = [
 const FIRST_RETRY_MS = 5_000
 const MAX_RETRY_MS = 120_000
 
-/** How a forward ended: the catalyst took it, refused it (asking again changes nothing), or time ran out. */
-export type ForwardOutcome = 'notified' | 'refused' | 'gave-up'
+/**
+ * How a forward ended: the catalyst took it, refused it (asking again changes nothing), had no tip index to confirm
+ * it with (503: its claim could only expire), or time ran out.
+ */
+export type ForwardOutcome = 'notified' | 'refused' | 'unavailable' | 'gave-up'
 
 /** A failed forward's HTTP status (0 or none: no answer) and the seconds the server asked to wait. */
 function failure(e: unknown): { status: number; retryAfterSecs: number } {
@@ -32,7 +35,7 @@ function failure(e: unknown): { status: number; retryAfterSecs: number } {
 }
 
 /**
- * Forwards a mined tip, retrying what may succeed later (429, 5xx, no answer) with backoff, never sooner than the
+ * Forwards a mined tip, retrying what may succeed later (429, 5xx but 503, no answer) with backoff, never sooner than the
  * server's Retry-After, until `deadline`. A failure carries its `status` and `retryAfterSecs` (as the catalyst
  * client's errors do). Never throws.
  */
@@ -51,6 +54,7 @@ export async function forwardUntil(
       return 'notified'
     } catch (e) {
       const { status, retryAfterSecs } = failure(e)
+      if (status === 503) return 'unavailable'
       if (!(status === 0 || status === 429 || status >= 500)) return 'refused'
       hint = retryAfterSecs * 1000
     }
