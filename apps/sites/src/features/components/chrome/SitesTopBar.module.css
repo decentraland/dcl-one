@@ -32,15 +32,13 @@
   position: absolute;
   inset: 0;
   z-index: -1;
-  background: var(--sites-header-background, var(--sites-top-bar-bg));
-  box-shadow: var(
-    --sites-header-shadow,
+  background: var(--sites-top-bar-bg);
+  box-shadow:
     0 1.333px 24px rgba(0, 0, 0, 0.12),
     0 8px 13.333px rgba(0, 0, 0, 0.14),
-    0 4px 6.667px var(--dcl-transparencies-black-20)
-  );
-  -webkit-backdrop-filter: var(--sites-header-filter, saturate(1.8) blur(20px));
-  backdrop-filter: var(--sites-header-filter, saturate(1.8) blur(20px));
+    0 4px 6.667px var(--dcl-transparencies-black-20);
+  -webkit-backdrop-filter: saturate(1.8) blur(20px);
+  backdrop-filter: saturate(1.8) blur(20px);
   pointer-events: none;
 }
 .root[data-transparent]::before {

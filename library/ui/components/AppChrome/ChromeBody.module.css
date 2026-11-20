@@ -36,7 +36,7 @@
   font-weight: 700;
   text-decoration: none;
   padding: 6px 12px;
-  border-radius: 10px;
+  border-radius: 6px;
   outline: 2px solid var(--dcl-primary-primary);
   outline-offset: 2px;
 }
