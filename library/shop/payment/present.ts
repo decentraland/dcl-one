@@ -90,10 +90,10 @@ export type PaymentPresentation = {
 };
 
 /**
- * Whether Credits and MANA may pay one line together (upstream's 'combined' rail: the MANA option's `mixed`). Off: this
- * deployment's credits node authorizes a line only at its whole quoted price and reserves that whole charge, so the
- * partial credit the split asks for is refused ("Price changed", or Insufficient when the balance is short) and the split
- * could never settle. It is offered again once the node authorizes a partial credit.
+ * Whether Credits and MANA may pay one line together (upstream's 'combined' rail: the MANA option's `mixed`), on the offers
+ * the node marks `splittable`. Off: it is switched on in its own change once the credits node this deployment talks to
+ * authorizes a partial credit (`creditsCents`); a node without it refuses one ("Price changed", or Insufficient when the
+ * balance is short) and the split could never settle. While it is off, an offer's `splittable` alone offers nothing.
  */
 export const SPLIT_PAYMENT = false;
 

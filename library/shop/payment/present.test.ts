@@ -279,14 +279,19 @@ describe("balances decide an option's state, never its method", () => {
     expect(show(priced, web3(), { creditsBalance: usdCents(327), manaBalance: manaFromWhole(8) }).view.options[1]!.mixed).toBeNull();
   });
 
-  it("offers no credits+MANA split by default, even on a line the node could split: it is switched on in its own change", () => {
-    undoSplit();
+  it("offers no credits+MANA split while its switch is off, even on an offer the node marks splittable", () => {
     const offer = storeMint(web3());
     const priced: PurchaseOffer = {
       ...offer,
       quotes: [{ method: "credits", quoted: usdCents(410) }, { method: "mana", amount: manaWei(41n * 10n ** 18n) }],
     };
-    const { view } = show(priced, web3(), { creditsBalance: usdCents(327), manaBalance: manaFromWhole(10) });
+    expect(priced.splittable).toBe(true);
+    const balances = { creditsBalance: usdCents(327), manaBalance: manaFromWhole(10) };
+    // On (as this file runs): the node's mark is enough.
+    expect(show(priced, web3(), balances).view.options.find((o) => o.method === "mana")!.mixed).not.toBeNull();
+    // Off (the deployed default): the mark alone offers nothing.
+    undoSplit();
+    const { view } = show(priced, web3(), balances);
     expect(view.options.find((o) => o.method === "mana")!.mixed).toBeNull();
     expect(view.options[0]!.state.kind).toBe("topUpRequired");
   });
