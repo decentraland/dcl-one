@@ -127,8 +127,14 @@ pub struct Settings {
     pub trial_mode: bool,
     /// `CREDITS_TRIAL_BUYERS` under `CREDITS_TRIAL_MODE`: the only wallets whose signed
     /// meta-transactions the relay accepts (`TransactionComponent::check_data`), so the trial's
-    /// funded relayer pays gas for its buyers alone. `None` outside a trial.
+    /// funded relayer pays gas for its buyers alone, unless [`Self::trial_relay_all_wallets`].
+    /// `None` outside a trial.
     pub trial_buyers: Option<crate::credits::trial::TrialBuyers>,
+    /// `CREDITS_TRIAL_RELAY_ALL_WALLETS` (false): under `CREDITS_TRIAL_MODE`, the relay accepts
+    /// every wallet's meta-transactions, not only the buyers'. It changes nothing else: the
+    /// credits lane keeps its own copy of the buyers, and the trial's one capped route and the
+    /// per-address quota stay. Ignored outside a trial.
+    pub trial_relay_all_wallets: bool,
     /// `OZ_RELAYER_URL`, `OZ_RELAYER_ID`, `OZ_RELAYER_API_KEY` (`_FILE`): the OZ Defender relayer, active with all three.
     pub oz_relayer_url: Option<String>,
     pub oz_relayer_id: Option<String>,
@@ -187,6 +193,7 @@ impl Settings {
             relayer_max_fee_per_gas_wei: None,
             trial_mode: false,
             trial_buyers: None,
+            trial_relay_all_wallets: false,
             oz_relayer_url: None,
             oz_relayer_id: None,
             oz_relayer_api_key: None,
@@ -293,7 +300,23 @@ impl Settings {
                 "CREDITS_TRIAL_MODE needs the relay to know the trial's buyers (CREDITS_TRIAL_BUYERS)"
             );
         }
+        // A relay for every wallet is bounded per address, and new addresses are free: only the
+        // budget across addresses caps how many free calls it reserves in 24 hours (the relayer's
+        // balance can still run out first).
+        if self.trial_relay_all_wallets && self.max_relayed_transactions_per_day <= 0 {
+            anyhow::bail!(
+                "CREDITS_TRIAL_RELAY_ALL_WALLETS needs a positive MAX_RELAYED_TRANSACTIONS_PER_DAY (0 is no limit across wallets)"
+            );
+        }
         Ok(())
+    }
+
+    /// The wallets the relay serves alone: the trial's buyers, unless the trial relays for every
+    /// wallet (`CREDITS_TRIAL_RELAY_ALL_WALLETS`). `None`: every wallet.
+    pub fn relay_only_for(&self) -> Option<&crate::credits::trial::TrialBuyers> {
+        self.trial_buyers
+            .as_ref()
+            .filter(|_| !self.trial_relay_all_wallets)
     }
 
     pub fn has_direct_broadcast(&self) -> bool {
@@ -384,6 +407,15 @@ impl State {
     pub fn new(pool: PgPool, http: Outbound, settings: Settings) -> anyhow::Result<Self> {
         if settings.trial_mode {
             settings.refuse_an_open_trial_relay()?;
+            if settings.trial_relay_all_wallets {
+                tracing::info!(
+                    "economy: the trial relay pays gas for every wallet's meta-transactions (CREDITS_TRIAL_RELAY_ALL_WALLETS); new credits still go to CREDITS_TRIAL_BUYERS only"
+                );
+            }
+        } else if settings.trial_relay_all_wallets {
+            tracing::warn!(
+                "economy: CREDITS_TRIAL_RELAY_ALL_WALLETS is set but CREDITS_TRIAL_MODE is false: ignored"
+            );
         }
         let chain = settings
             .polygon_rpc_url
@@ -532,11 +564,15 @@ impl State {
 /// broker, escrow, NAME custody and payments routes.
 ///
 /// The gate is `DATA_WRITES_ENABLED`, except under `CREDITS_TRIAL_MODE`. A
-/// trial's relay broadcasts only the trial buyers' meta-transactions, through
-/// its own capped signer ([`Settings::refuse_an_open_trial_relay`],
+/// trial's relay broadcasts only the trial buyers' meta-transactions (every
+/// wallet's with `CREDITS_TRIAL_RELAY_ALL_WALLETS`), through its own capped
+/// signer ([`Settings::refuse_an_open_trial_relay`],
 /// `TransactionComponent::check_data`): it is how those buyers spend their
 /// credits, so it opens with the credits switch, `OPS_WRITES_ENABLED`, and
-/// answers the credits 503. The relayer controls stay open on both gates.
+/// answers the credits 503. With `CREDITS_TRIAL_RELAY_ALL_WALLETS` that gate
+/// is deliberate too: the trial's relay is then a public relay for every
+/// wallet's admitted operations, open with the operator plane whatever
+/// `DATA_WRITES_ENABLED` says. The relayer controls stay open on both gates.
 pub fn router(state: SharedState) -> Router {
     let settings = &state.settings;
     let (trial, data_writes, ops_writes) = (
@@ -567,7 +603,7 @@ pub fn router(state: SharedState) -> Router {
             post(handlers::admin::relayer_signer),
         )
         .with_state(state);
-    if trial {
+    let guarded = if trial {
         crate::shared::writes::guard_with(
             api,
             crate::shared::writes::Gate {
@@ -578,7 +614,11 @@ pub fn router(state: SharedState) -> Router {
         )
     } else {
         DataWrites::guard(api, data_writes)
-    }
+    };
+    // Outside the gate, so a refused write still carries the CORS headers.
+    guarded.layer(axum::middleware::from_fn(
+        crate::shared::cors::decentraland_cors,
+    ))
 }
 
 /// The relayer controls: process-local atomics behind the admin bearer, open

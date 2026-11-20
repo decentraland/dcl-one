@@ -25,8 +25,8 @@ describe("old LAND URLs land on the pages that do the job", () => {
   });
 
   it("without a LAND to name, the Builder URLs go to the Creator Hub's LAND list (Builder authority)", () => {
-    expect(landRedirectTarget("operator", "")).toBe("/create/land");
-    expect(landRedirectTarget("transfer", "?ref=mail")).toBe("/create/land?ref=mail");
+    expect(landRedirectTarget("operator", "")).toBe("/profile/me/assets");
+    expect(landRedirectTarget("transfer", "?ref=mail")).toBe("/profile/me/assets?ref=mail");
   });
 
   it("reads every identity form, and nothing else", () => {

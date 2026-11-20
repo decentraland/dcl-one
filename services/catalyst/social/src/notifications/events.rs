@@ -1397,11 +1397,11 @@ mod tests {
 
     #[tokio::test]
     async fn bounded_work_preserves_fairness_cleanup_and_polling() {
-        let _guard = super::super::event_ended::TEST_LOCK.lock().await;
-        let Some(pool) = crate::db::scratch::pool(6).await else {
+        use crate::db::scratch::{OwnedDatabase, Schema};
+        let Some(db) = OwnedDatabase::new("event_fairness", Schema::Full, 6).await else {
             return;
         };
-        let pool = &pool;
+        let pool = &db.pool;
         let now = chrono::DateTime::from_timestamp_micros(Utc::now().timestamp_micros())
             .unwrap()
             .naive_utc();
@@ -1762,13 +1762,7 @@ mod tests {
             count(pool, &lock_event, "events_starts_soon", &address).await,
             1
         );
-        // This fixture's wall-clock events (a local community one among them)
-        // would otherwise count as endings in the metric tests of this process.
-        sqlx::query("DELETE FROM explore.event WHERE id LIKE $1")
-            .bind(format!("{prefix}-%"))
-            .execute(pool)
-            .await
-            .unwrap();
+        db.drop().await;
     }
 
     fn intent(kind: &str, event: Value) -> Intent {
