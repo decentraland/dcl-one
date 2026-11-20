@@ -73,31 +73,32 @@ afterAll(async () => {
 describe('when the home sections offer a mobile store download', () => {
   for (const store of ['google_play', 'app_store']) {
     for (const width of [320, 360, 390, 768]) {
-      it(`should contain and center the ${store} badge in both links at ${width}px`, async () => {
-        await session!.send('Emulation.setDeviceMetricsOverride', {
-          width,
-          height: 844,
-          deviceScaleFactor: 1,
-          mobile: true
-        })
-        await session!.navigate(`${server!.resolvedUrls!.local[0]}?store=${store}`)
-        await waitForLinks('a[target="_blank"]', 2)
-        await evaluate(`(async () => {
+      describe(`and the ${store} badge renders at ${width}px`, () => {
+        it('should contain and center the badge in both links', async () => {
+          await session!.send('Emulation.setDeviceMetricsOverride', {
+            width,
+            height: 844,
+            deviceScaleFactor: 1,
+            mobile: true
+          })
+          await session!.navigate(`${server!.resolvedUrls!.local[0]}?store=${store}`)
+          await waitForLinks('a[target="_blank"]', 2)
+          await evaluate(`(async () => {
           await document.fonts.ready;
           await Promise.all([...document.querySelectorAll('a[target="_blank"] img')].map(image=>image.decode()));
         })()`)
-        const measurements = await evaluate<{
-          overflow: boolean
-          sections: {
-            contains: boolean
-            centered: boolean
-            imageRatio: number
-            height: number
-            name: string
-            href: string
-            focusable: boolean
-          }[]
-        }>(`(() => ({
+          const measurements = await evaluate<{
+            overflow: boolean
+            sections: {
+              contains: boolean
+              centered: boolean
+              imageRatio: number
+              height: number
+              name: string
+              href: string
+              focusable: boolean
+            }[]
+          }>(`(() => ({
           overflow:document.documentElement.scrollWidth>innerWidth,
           sections:['hero','closing'].map(id=>{
             const link=document.querySelector('#'+id+' a[target="_blank"]');
@@ -108,44 +109,49 @@ describe('when the home sections offer a mobile store download', () => {
               imageRatio:i.width/i.height,height:a.height,name:link.getAttribute('aria-label'),href:link.href,focusable:document.activeElement===link};
           })
         }))()`)
-        expect(measurements.overflow).toBe(false)
-        for (const section of measurements.sections) {
-          expect(section.contains).toBe(true)
-          expect(section.centered).toBe(true)
-          expect(section.height).toBe(64)
-          expect(section.imageRatio).toBeCloseTo(store === 'google_play' ? 163 / 41 : 140 / 36, 2)
-          expect(section.name).toBe(
-            store === 'google_play' ? 'Get it on Google Play' : 'Download on the App Store'
-          )
-          expect(section.href).toContain(
-            store === 'google_play' ? 'play.google.com/' : 'apps.apple.com/'
-          )
-          expect(section.focusable).toBe(true)
-        }
-      }, 30_000)
+          expect(measurements.overflow).toBe(false)
+          for (const section of measurements.sections) {
+            expect(section.contains).toBe(true)
+            expect(section.centered).toBe(true)
+            expect(section.height).toBe(64)
+            expect(section.imageRatio).toBeCloseTo(store === 'google_play' ? 163 / 41 : 140 / 36, 2)
+            expect(section.name).toBe(
+              store === 'google_play' ? 'Get it on Google Play' : 'Download on the App Store'
+            )
+            expect(section.href).toContain(
+              store === 'google_play' ? 'play.google.com/' : 'apps.apple.com/'
+            )
+            expect(section.focusable).toBe(true)
+          }
+        }, 30_000)
+      })
     }
   }
 
-  it('should keep mobile store links hidden and desktop downloads available at 1440px', async () => {
-    await session!.send('Emulation.setDeviceMetricsOverride', {
-      width: 1440,
-      height: 900,
-      deviceScaleFactor: 1,
-      mobile: false
-    })
-    await session!.navigate(server!.resolvedUrls!.local[0]!)
-    await waitForLinks('a', 4)
-    const visible = await evaluate<{ stores: number; downloads: number }>(`(async () => {
+  describe('and the viewport is a 1440px desktop', () => {
+    it('should keep mobile store links hidden and desktop downloads available', async () => {
+      await session!.send('Emulation.setDeviceMetricsOverride', {
+        width: 1440,
+        height: 900,
+        deviceScaleFactor: 1,
+        mobile: false
+      })
+      await session!.navigate(server!.resolvedUrls!.local[0]!)
+      await waitForLinks('a', 4)
+      const visible = await evaluate<{ stores: number; downloads: number }>(`(async () => {
       return {stores:[...document.querySelectorAll('a[target="_blank"]')].filter(a=>a.getClientRects().length).length,
         downloads:[...document.querySelectorAll('a[href^="/download_success"]')].filter(a=>a.getClientRects().length).length};
     })()`)
-    expect(visible).toEqual({ stores: 0, downloads: 2 })
-  }, 30_000)
+      expect(visible).toEqual({ stores: 0, downloads: 2 })
+    }, 30_000)
+  })
 
-  it('should identify fixture links that never render before measuring them', async () => {
-    await session!.navigate(server!.resolvedUrls!.local[0]!)
-    await expect(waitForLinks('[data-missing-store-link]', 1)).rejects.toThrow(
-      'Fixture links did not render: [data-missing-store-link]'
-    )
+  describe('and a fixture link never renders', () => {
+    it('should reject with the missing selector before measuring', async () => {
+      await session!.navigate(server!.resolvedUrls!.local[0]!)
+      await expect(waitForLinks('[data-missing-store-link]', 1)).rejects.toThrow(
+        'Fixture links did not render: [data-missing-store-link]'
+      )
+    })
   })
 })
