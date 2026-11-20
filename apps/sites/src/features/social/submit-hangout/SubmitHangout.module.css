@@ -13,7 +13,7 @@
   background-attachment: fixed;
 }
 
-/* The editor's loading or failed-read notice, with its retry under it. */
+/* The editor's failed-read notice, with its retry under it. */
 .loadState {
   display: flex;
   flex-direction: column;

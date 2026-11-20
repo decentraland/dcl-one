@@ -34,7 +34,7 @@
   margin-top: var(--dcl-space-48);
 }
 
-/* A page's loading or failure notice, with its retry under it. */
+/* A page's failure notice with its retry under it, or the sign-in prompt. */
 .status {
   display: flex;
   flex-direction: column;

@@ -68,6 +68,29 @@ describe('AllEvents', () => {
     })
   })
 
+  describe('when the days are loading', () => {
+    it('should show a spinner named for the wait, not an empty day', () => {
+      mount({ status: 'loading' })
+      expect(
+        screen.getByRole('progressbar', { name: 'Loading events…' }).closest('[role=status]')
+      ).toBeTruthy()
+      expect(screen.queryByText('No events this day.')).toBeNull()
+      expect(screen.queryByRole('alert')).toBeNull()
+    })
+  })
+
+  describe('when the days could not be read', () => {
+    it('should report the failure with a Retry instead of a spinner', async () => {
+      const onRetry = vi.fn()
+      mount({ status: 'unavailable', onRetry })
+      const alert = screen.getByRole('alert')
+      expect(alert.textContent).toContain('Events are temporarily unavailable.')
+      expect(screen.queryByRole('progressbar')).toBeNull()
+      await userEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
+      expect(onRetry).toHaveBeenCalledTimes(1)
+    })
+  })
+
   describe('when a member is on My Events', () => {
     const views = { active: 'my' as const, hrefs: HREFS }
 
@@ -126,8 +149,10 @@ describe('AllEvents', () => {
 
     it('should say the events are loading, not that there are none', () => {
       mount({ views, mine: { cards: [], status: 'loading', createHref: '/events/new-event' } })
-      expect(screen.getByRole('status').textContent).toBe('Loading your events…')
-      expect(screen.getByRole('status').dataset.tone).toBe('info')
+      expect(
+        screen.getByRole('progressbar', { name: 'Loading your events…' }).closest('[role=status]')
+      ).toBeTruthy()
+      expect(screen.queryByRole('alert')).toBeNull()
       expect(screen.queryByText("You don't have any event created")).toBeNull()
     })
 

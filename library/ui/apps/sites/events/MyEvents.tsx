@@ -1,5 +1,6 @@
 import { GeneralAdd } from '../../../foundations/icons'
 import { Button } from '../shared/Button/Button'
+import { Busy } from './Busy'
 import { MyEventCard } from './cards'
 import { useEventsCopy } from './locale'
 import { Notice } from './Notice'
@@ -34,7 +35,7 @@ function MyEvents({ cards, status, createHref, onRetry }: MyEventsProps) {
   if (status === 'loading')
     return (
       <div className={styles.empty}>
-        <Notice>{text('Loading your events…')}</Notice>
+        <Busy layout="page">{text('Loading your events…')}</Busy>
       </div>
     )
   if (!cards.length)

@@ -3,6 +3,7 @@ import { GeneralLeftArrow, GeneralRightArrow } from '../../../foundations/icons'
 import { Tabs } from '../../../components/Tabs/Tabs'
 import { TabsBar } from '../../../components/TabsBar/TabsBar'
 import { Button } from '../shared/Button/Button'
+import { Busy } from './Busy'
 import { DayCard, UpcomingCard } from './cards'
 import { MyEvents, type MyEventsProps } from './MyEvents'
 import type { ExperienceCardProps } from './types'
@@ -185,9 +186,7 @@ function AllEvents({
               </Notice>
             </div>
           ) : status === 'loading' ? (
-            <div className={styles.message}>
-              <Notice>{text('Loading events…')}</Notice>
-            </div>
+            <Busy layout="page">{text('Loading events…')}</Busy>
           ) : layout === 'list' ? (
             list.length ? (
               <ul

@@ -210,6 +210,20 @@ describe("when an event is saved from the single-page editor", () => {
     });
   });
 
+  describe("and the submission is still running", () => {
+    beforeEach(async () => {
+      submit.mockReturnValueOnce(new Promise(() => {}));
+      render(page("create"));
+      await user.click(screen.getByRole("button", { name: "Submit Event" }));
+    });
+
+    it("should show a spinner named for the submission, with no failure", async () => {
+      const spinner = await screen.findByRole("progressbar", { name: "Submitting your hangout for review…" });
+      expect(spinner.closest("[role=status]")).toBeTruthy();
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+  });
+
   describe("and the new event comes back already approved", () => {
     beforeEach(async () => {
       submit.mockResolvedValueOnce({ id: "saved-event", approved: true });

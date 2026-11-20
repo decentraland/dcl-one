@@ -177,6 +177,13 @@ describe("when opening the Pending Events page", () => {
     expect(within(bar).getByRole("link", { name: "+ Create Event" }).getAttribute("href")).toBe("/events/new-event");
   });
 
+  it("should show a spinner while the page loads, then the queue in its place", async () => {
+    renderAdminPage(<PendingEventsPage />, PATH);
+    expect(screen.getByRole("progressbar", { name: "Loading…" }).closest("[role=status]")).toBeTruthy();
+    expect(await screen.findByRole("link", { name: "Moon concert" })).toBeTruthy();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+
   it("should list the pending events and the recently approved ones with their status", async () => {
     renderAdminPage(<PendingEventsPage />, PATH);
     const pending = await screen.findByRole("region", { name: "Pending Events" });

@@ -1,5 +1,6 @@
 import { adminCopy, rejectionReason, relativeDateLabel, type RejectReasonId } from "@dcl/one-ui/apps/sites/events/admin-copy";
 import { AdminPage, adminPageStyles } from "@dcl/one-ui/apps/sites/events/AdminPage";
+import { Busy } from "@dcl/one-ui/apps/sites/events/Busy";
 import { EventDetailModal } from "@dcl/one-ui/apps/sites/events/DetailModal";
 import { PendingEventCard } from "@dcl/one-ui/apps/sites/events/PendingEventCard";
 import { Notice } from "@dcl/one-ui/apps/sites/events/Notice";
@@ -147,7 +148,7 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
       <section className={adminPageStyles.section} aria-labelledby="pending-events-heading">
         <h1 id="pending-events-heading" className={adminPageStyles.title}>{adminCopy.pending.title}</h1>
         {queue.isPending ? (
-          <div className={adminPageStyles.status}><Notice>{adminCopy.pending.loading}</Notice></div>
+          <Busy layout="page">{adminCopy.pending.loading}</Busy>
         ) : queue.isError ? (
           <div className={adminPageStyles.status}>
             <Notice tone="error">{failure(queue.error)}</Notice>

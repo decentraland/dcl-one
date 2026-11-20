@@ -2,6 +2,7 @@ import { useEventsCopy, type EventsLocale } from "@dcl/one-ui/apps/sites/events/
 import { EventDetailModal } from "@dcl/one-ui/apps/sites/events/DetailModal";
 import { GeneralAdd, GeneralCamera, GeneralDelete, GeneralInfoButton } from "@dcl/one-ui/foundations/icons";
 import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
+import { Busy } from "@dcl/one-ui/apps/sites/events/Busy";
 import { Notice, type NoticeTone } from "@dcl/one-ui/apps/sites/events/Notice";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { useMachine } from "@xstate/react";
@@ -232,7 +233,7 @@ function SubmitHangoutInner({
     FORM_ORDER.every((section) => isStepValid(section, d));
   const onEdit = (patch: Partial<HangoutDraft>) => send({ type: "EDIT", patch });
   const uploadFeedback = uploadError ? <Notice tone="error">{errorText(uploadError)}</Notice>
-    : uploading ? <Notice>{text("Uploading image…")}</Notice> : null;
+    : uploading ? <Busy>{text("Uploading image…")}</Busy> : null;
 
   function fields(section: HangoutStateId) {
     return (
@@ -374,7 +375,7 @@ function SubmitHangoutInner({
         )}
 
         {value === "submitting" && (
-          <Notice>{text("Submitting your hangout for review…")}</Notice>
+          <Busy>{text("Submitting your hangout for review…")}</Busy>
         )}
         {value === "submitted" && !needsSignIn && <SubmitSuccess mode={mode} approved={state.context.result?.approved ?? false} />}
 
@@ -412,7 +413,7 @@ export function SubmitHangoutLoading({ mode, error, onRetry }: { mode: "create" 
           <Notice tone="error">{errorText(error)}</Notice>
           {onRetry && <Button variant="tertiary" onClick={onRetry}>{text("Retry")}</Button>}
         </div>
-      ) : <div className={styles.loadState}><Notice>{text("Loading your hangout…")}</Notice></div>}
+      ) : <Busy layout="page">{text("Loading your hangout…")}</Busy>}
     </div>
   );
 }

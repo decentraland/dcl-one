@@ -42,7 +42,7 @@ describe("when the actual hangout route renders the details step", () => {
 
     it("should render only the loading page while sign-in opens, with no form and no sign-in button", () => {
       html = renderRoute();
-      expect(html).toContain("Loading your hangout…");
+      expect(html).toMatch(/<p[^>]*role="status"[^>]*><span role="progressbar" aria-label="Loading your hangout…"/);
       expect(html).not.toContain("Sign In to continue");
       expect(html).not.toContain("Hangout Name");
     });

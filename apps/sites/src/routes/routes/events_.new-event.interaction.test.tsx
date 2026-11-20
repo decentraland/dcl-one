@@ -80,8 +80,8 @@ describe("when editing a hangout through its route", () => {
 
     it("should show the editor header and a loading status before the footer", () => {
       expect(screen.getByRole("heading", { name: "Edit Event" })).toBeTruthy();
-      expect(screen.getByRole("status").textContent).toBe("Loading your hangout…");
-      expect(screen.getByRole("status").dataset.tone).toBe("info");
+      expect(screen.getByRole("progressbar", { name: "Loading your hangout…" }).closest("[role=status]")).toBeTruthy();
+      expect(screen.queryByRole("alert")).toBeNull();
       expect(screen.getByRole("status").compareDocumentPosition(screen.getByRole("contentinfo")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
@@ -158,7 +158,7 @@ describe("when editing a hangout through its route", () => {
 
     it("should stay on the edit page showing only the loading state, without reading the event", () => {
       expect(router.state.location.pathname).toBe(EDIT_PATH);
-      expect(screen.getByRole("status").textContent).toBe("Loading your hangout…");
+      expect(screen.getByRole("progressbar", { name: "Loading your hangout…" }).closest("[role=status]")).toBeTruthy();
       expect(screen.queryByRole("button", { name: /sign in/i })).toBeNull();
       expect(authoring.loadEditableHangout).not.toHaveBeenCalled();
     });
@@ -177,7 +177,7 @@ describe("when editing a hangout through its route", () => {
     });
 
     it("should show only the loading state, not the form or a sign-in button", () => {
-      expect(screen.getByRole("status").textContent).toBe("Loading your hangout…");
+      expect(screen.getByRole("progressbar", { name: "Loading your hangout…" }).closest("[role=status]")).toBeTruthy();
       expect(screen.queryByRole("button", { name: /sign in/i })).toBeNull();
       expect(screen.queryByRole("textbox", { name: "Event Name" })).toBeNull();
     });
@@ -212,7 +212,7 @@ describe("when editing a hangout through its route", () => {
     });
 
     it("should wait for access without exposing an editor or delete action", () => {
-      expect(screen.getByRole("status").textContent).toBe("Loading your hangout…");
+      expect(screen.getByRole("progressbar", { name: "Loading your hangout…" }).closest("[role=status]")).toBeTruthy();
       expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
       expect(screen.queryByRole("textbox", { name: "Event Name" })).toBeNull();
     });
