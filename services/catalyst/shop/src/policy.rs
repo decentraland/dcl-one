@@ -113,6 +113,14 @@ pub enum Refusal {
     #[error("a credit of {value} exceeds its group's bound of {cap}")]
     CreditValueTooLarge { value: ManaWei, cap: ManaWei },
     #[error(
+        "a Credits part of {leg} for {asset} must be above zero and below its quote of {quoted}"
+    )]
+    PartialCreditOutOfRange {
+        asset: AssetId,
+        leg: UsdCents,
+        quoted: UsdCents,
+    },
+    #[error(
         "at the marketplace's feed the group needs {need}, above the {reference} its quote allows; not signed"
     )]
     SettlementNeedAboveReference { need: ManaWei, reference: ManaWei },
@@ -746,6 +754,49 @@ pub fn credit_cap(lines: &[Authoritative], sizing: &CreditSizing) -> Result<Mana
     Ok(sized.min(reference))
 }
 
+/// The most a credit for the Credits part (`leg`, in cents) of a one-line
+/// purchase may sign: the whole price's [`credit_cap`] pro rata,
+/// `floor(cap * leg / quoted)`, with the same rate, buffer, headroom and
+/// settlement feed. The buyer's MANA pays the rest of the line in the same
+/// `useCredits` call, so the credit never carries more than its share. A
+/// group of more than one line, a leg that is not strictly inside the line's
+/// quote, a line the session may not pay in MANA, a share that floors to zero
+/// and an overflow are refused.
+pub fn partial_credit_cap(
+    lines: &[Authoritative],
+    sizing: &CreditSizing,
+    leg: UsdCents,
+) -> Result<ManaWei, Refusal> {
+    let [line] = lines else {
+        return Err(if lines.is_empty() {
+            Refusal::EmptyGroup
+        } else {
+            Refusal::GroupTooLarge {
+                lines: lines.len(),
+                max: 1,
+            }
+        });
+    };
+    let asset = line.asset;
+    let quoted = credits_quote(line, Some(&sizing.rate()))?;
+    if leg.get() <= 0 || leg >= quoted {
+        return Err(Refusal::PartialCreditOutOfRange { asset, leg, quoted });
+    }
+    if !eligibility(line).allows(PaymentMethod::Mana) {
+        return Err(Refusal::ManaRemainderNotAllowed { asset });
+    }
+    let whole = credit_cap(lines, sizing)?;
+    let value = whole
+        .get()
+        .checked_mul(alloy_primitives::U256::from(leg.get().unsigned_abs()))
+        .and_then(|v| v.checked_div(alloy_primitives::U256::from(quoted.get().unsigned_abs())))
+        .ok_or(Refusal::AmountOverflow { asset })?;
+    if value.is_zero() {
+        return Err(Refusal::NonPositiveQuote { asset });
+    }
+    Ok(ManaWei::new(value))
+}
+
 /// The MANA a USD-pegged amount settles for: the coupon applied to the USD
 /// amount first (`price - floor(price * discount / 1e6)`, so the kept part
 /// rounds up), then converted at `rate`, flooring (`CollectionDiscountCoupon`
@@ -1180,6 +1231,7 @@ pub fn guard_group_credit_spend(
             chain_id,
             value,
             sizing,
+            leg,
         } => {
             if !chain_id.is_polygon() {
                 return Err(Refusal::CreditsChainUnsupported {
@@ -1198,7 +1250,13 @@ pub fn guard_group_credit_spend(
                     got: key.chain_id,
                 });
             }
-            let cap = credit_cap(lines, sizing)?;
+            // A credit for part of the price is bounded by that part's share of
+            // the whole-price cap: the whole cap alone would let a small
+            // reservation sign a full-value credit.
+            let cap = match leg {
+                Some(leg) => partial_credit_cap(lines, sizing, *leg)?,
+                None => credit_cap(lines, sizing)?,
+            };
             if *value > cap {
                 return Err(Refusal::CreditValueTooLarge { value: *value, cap });
             }

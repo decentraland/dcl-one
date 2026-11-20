@@ -22,7 +22,9 @@
 //! that names its purchase (`operationId`, a UUID the client keeps with it) is
 //! keyed by the signer and that id instead, so a retry signed again (a new
 //! timestamp, after a restart) still replays the same credit; the same id with
-//! other lines is refused (409) without a pledge.
+//! other lines is refused (409) without a pledge. A line's Credits part
+//! (`creditsCents`) is hashed with its whole quote, so the same id with
+//! another part is refused the same way.
 
 use axum::Json;
 use axum::extract::{OriginalUri, State};
@@ -96,6 +98,13 @@ fn hash_lines(h: &mut Sha256, lines: &[ValidatedLine]) {
             line.registered_name.clone(),
         ] {
             h.update(field.unwrap_or_default().as_bytes());
+            h.update([0x1e]);
+        }
+        // A Credits part is hashed beside the whole quote above, so another
+        // part is another request; a line without one keeps its earlier bytes.
+        if let Some(leg) = line.credits_cents {
+            h.update(b"creditsCents:");
+            h.update(leg.to_string().as_bytes());
             h.update([0x1e]);
         }
     }
@@ -408,6 +417,14 @@ mod tests {
             contract_address: None,
             item_id: None,
             registered_name: None,
+            credits_cents: None,
+        }
+    }
+
+    fn part(cents: i64, trade: Option<&str>, leg: i64) -> ValidatedLine {
+        ValidatedLine {
+            credits_cents: Some(leg),
+            ..line(cents, trade)
         }
     }
 
@@ -655,5 +672,40 @@ mod tests {
             derive_request_digest(&[line(500, Some("t1")), line(1, None)])
         );
         assert_eq!(derive_request_digest(&lines).len(), 64);
+    }
+
+    #[test]
+    fn a_credits_part_is_part_of_the_key_and_of_what_an_operation_binds() {
+        let whole = [line(500, Some("t1"))];
+        let part_100 = [part(500, Some("t1"), 100)];
+        let part_200 = [part(500, Some("t1"), 200)];
+        assert_ne!(
+            derive_request_digest(&whole),
+            derive_request_digest(&part_100),
+            "a Credits part is another request than the whole price"
+        );
+        assert_ne!(
+            derive_request_digest(&part_100),
+            derive_request_digest(&part_200),
+            "the same operation with another part is told apart"
+        );
+        assert_eq!(
+            derive_request_digest(&part_100),
+            derive_request_digest(&[part(500, Some("t1"), 100)])
+        );
+        assert_ne!(
+            derive_request_digest(&part_100),
+            derive_request_digest(&[part(510, Some("t1"), 100)]),
+            "the whole quote stays in the hash beside the part"
+        );
+        let ts = "1690000000000";
+        assert_ne!(
+            derive_idempotency_key("0xabc", &whole, ts),
+            derive_idempotency_key("0xabc", &part_100, ts)
+        );
+        assert_ne!(
+            derive_idempotency_key("0xabc", &part_100, ts),
+            derive_idempotency_key("0xabc", &part_200, ts)
+        );
     }
 }

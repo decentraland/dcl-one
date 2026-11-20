@@ -7902,6 +7902,7 @@ async fn a_discounted_purchase_offer_authorizes_its_discounted_credits_price() {
         contract_address: None,
         item_id: None,
         registered_name: None,
+        credits_cents: None,
     };
     let derived =
         super::batch::derive_line(&state, ChainId::POLYGON, session, rate, 0, &line(offered))
@@ -8549,6 +8550,303 @@ async fn an_operation_id_replays_its_credit_across_signatures_and_refuses_other_
     let (status, _) = authorize(opid_item(200, "200", None)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(authorized_count(&pool, &wallet.address).await, 4);
+
+    db.drop().await;
+}
+
+/// A request of one line of one unit may pay part of the price with credits
+/// (`creditsCents`) and the rest with MANA, on either route. The price check
+/// stays on the whole quote; the Credits part alone is reserved, recorded and
+/// echoed; the credit is that part's share of the whole price's cap; an
+/// operation binds the part. Every refusal comes before a reservation.
+#[tokio::test]
+async fn a_credits_part_of_one_line_reserves_the_part_and_signs_its_share() {
+    let Some((db, lane, wallet)) = opid_setup("credits-part").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let post = |w: &'static str, body: Value| {
+        let lane = &lane;
+        let wallet = &wallet;
+        async move { call(lane, wallet, "post", w, &[], Some(body)).await }
+    };
+    const SINGLE: &str = "/credits/credits/authorize";
+    const BATCH: &str = "/credits/credits/authorize/batch";
+    let part = |cents: i64, item: &str, leg: Value| {
+        let mut body = opid_item(cents, item, None);
+        body["creditsCents"] = leg;
+        body
+    };
+    // Item 200 is 4 MANA at 0.5 USD/MANA: a 200-cent quote and a 4.08 MANA whole cap.
+    let rate = crate::types::ManaUsdRate::parse_usd_per_mana("0.5").unwrap();
+    let whole = crate::types::CreditSizing::new(rate, 200, 100)
+        .unwrap()
+        .cap(UsdCents::new(200))
+        .unwrap()
+        .get();
+    let share = |leg: u64| {
+        (whole * alloy_primitives::U256::from(leg) / alloy_primitives::U256::from(200u64))
+            .to_string()
+    };
+
+    let mut two_units = part(200, "200", json!(120));
+    two_units["quantity"] = json!(2);
+    for (body, why) in [
+        (part(200, "200", json!(200)), "the whole price"),
+        (part(200, "200", json!(210)), "above the price"),
+        (part(200, "200", json!(125)), "not whole credits"),
+        (part(200, "200", json!(0)), "nothing"),
+        (part(200, "200", json!(-10)), "negative"),
+        (part(200, "200", json!("120")), "not a number"),
+        (two_units, "two units"),
+        (
+            json!({ "usdPriceCents": 500, "name": "mauri", "creditsCents": 100 }),
+            "a NAME registration",
+        ),
+    ] {
+        let (status, v) = post(SINGLE, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{why}: {v}");
+        assert!(
+            v["error"].as_str().unwrap().contains("\"creditsCents\""),
+            "{why}: the message names the field: {v}"
+        );
+    }
+    for (items, index) in [
+        (
+            json!([part(200, "200", json!(120)), opid_item(95, "95", None)]),
+            0,
+        ),
+        (
+            json!([opid_item(95, "95", None), part(200, "200", json!(120))]),
+            1,
+        ),
+    ] {
+        let (status, v) = post(BATCH, json!({ "items": items })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+        assert_eq!(
+            v["error"],
+            format!("items[{index}]: {}", super::batch::CREDITS_CENTS_ALONE),
+            "a Credits part beside another line"
+        );
+    }
+    let (status, v) = post(SINGLE, part(210, "200", json!(120))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{v}");
+    assert_eq!(
+        v["error"], "Price changed",
+        "the whole price is still checked"
+    );
+    let poor = scratch_wallet();
+    seed_paid_credits(&pool, &poor.address, "5").await;
+    let (status, v) = call(
+        &lane,
+        &poor,
+        "post",
+        SINGLE,
+        &[],
+        Some(part(200, "200", json!(120))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::PAYMENT_REQUIRED, "{v}");
+    assert_eq!(
+        (v["balanceCents"].as_i64(), v["requiredCents"].as_i64()),
+        (Some(50), Some(120)),
+        "the balance is checked against the part"
+    );
+    let (status, _) = call(
+        &lane,
+        &poor,
+        "post",
+        SINGLE,
+        &[],
+        Some(part(200, "200", json!(50))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "a part the balance covers");
+    assert_eq!(
+        authorized_count(&pool, &wallet.address).await,
+        0,
+        "no refused request reserved anything"
+    );
+
+    // The single route: the part is reserved and echoed, the credit is its share.
+    let (status, v) = post(SINGLE, part(200, "200", json!(120))).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["usdCents"], 120);
+    assert_eq!(
+        v["credit"]["amount"],
+        share(120),
+        "floor(4.08 MANA * 120 / 200)"
+    );
+    assert_eq!(v["maxCreditedValue"], v["credit"]["amount"]);
+    assert_eq!(authorized_sum_cents(&pool, &wallet.address).await, 120);
+    let salt = v["credit"]["id"].as_str().unwrap().to_string();
+    let (quoted, charged): (Option<i64>, i64) =
+        sqlx::query_as("SELECT quoted_cents, usd_cents FROM credits.authorizations WHERE id = $1")
+            .bind(&salt)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        (quoted, charged),
+        (Some(200), 120),
+        "the quote checked, the part charged"
+    );
+    let line: (i64, i64) = sqlx::query_as(
+        "SELECT quoted_cents, charged_cents FROM credits.authorization_lines WHERE authorization_id = $1",
+    )
+    .bind(&salt)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        line,
+        (120, 120),
+        "the line is its Credits part, quoted and charged"
+    );
+
+    // The batch route with one line, as the in-world Shop authorizes: the
+    // operation binds the part; a retry replays one credit, another part is
+    // refused without a reservation.
+    let op = "2b9e5c3a-7f1d-4c2b-9a8e-1d2c3b4a5f60";
+    let body = json!({ "operationId": op, "items": [part(200, "200", json!(80))] });
+    let (status, first) = post(BATCH, body.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(
+        (
+            first["usdCents"].as_i64(),
+            first["lines"][0]["usdCents"].as_i64()
+        ),
+        (Some(80), Some(80))
+    );
+    assert_eq!(first["credit"]["amount"], share(80));
+    assert_eq!(authorized_sum_cents(&pool, &wallet.address).await, 200);
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let (status, again) = post(BATCH, body).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(
+        again["credit"], first["credit"],
+        "a retry replays the operation's credit"
+    );
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 2);
+    for other in [
+        json!({ "operationId": op, "items": [part(200, "200", json!(90))] }),
+        json!({ "operationId": op, "items": [opid_item(200, "200", None)] }),
+    ] {
+        let (status, v) = post(BATCH, other).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{v}");
+        assert_eq!(v["code"], "operation_reused", "{v}");
+    }
+    assert_eq!(
+        (
+            authorized_count(&pool, &wallet.address).await,
+            authorized_sum_cents(&pool, &wallet.address).await
+        ),
+        (2, 200),
+        "the refused operations reserved nothing"
+    );
+
+    db.drop().await;
+}
+
+/// A USD-pegged trade's Credits part is sized at its marketplace's feed like
+/// the whole price: the part's credit is its share of the feed-sized cap.
+#[tokio::test]
+async fn a_credits_part_of_a_usd_pegged_trade_is_its_share_of_the_feed_sizing() {
+    let Some(db) = OwnDatabase::create("feed-part").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    sqlx::query("INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, folded_block, folded_at) VALUES (137, $1, 100, 100, timezone('UTC', now()))")
+        .bind(OPID_MANAGER)
+        .execute(&pool)
+        .await
+        .unwrap();
+    const LISTED: &str = "0xe38ef22abe871513555cba89adfe45ab4f548ada";
+    const MANA_POLYGON: &str = "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4";
+    // $2.00 pegged (USD wei) on Polygon's V3 marketplace.
+    let trade = json!({ "id": "x", "signer": CREATOR, "signature": "0x00", "type": "public_item_order", "network": "MATIC", "chainId": 137, "contract": LISTED,
+        "checks": { "uses": 1, "expiration": 4102444800000i64, "effective": 0, "salt": "0x", "contractSignatureIndex": 0, "signerSignatureIndex": 0 },
+        "sent": [{ "assetType": 4, "contractAddress": COLLECTION, "itemId": "4" }],
+        "received": [{ "assetType": 2, "contractAddress": MANA_POLYGON, "amount": "2000000000000000000", "beneficiary": CREATOR }] });
+    let market = FakeMarket::default()
+        .with_item(COLLECTION, "4", "4000000000000000000", true)
+        .with_trade("be6e", trade)
+        .with_mana_usd("0.5");
+    let feed = Arc::new(FakeFeed::default());
+    let mut settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        mock_card: true,
+        usage_chain_id: super::usage::CHAIN_AMOY,
+        credits_onchain_authorize_enabled: true,
+        credits_signer_key: Some(
+            "0x4c0883a69102937d6231471b5dbb6204fe512961708279f2e3e8a5d4b8e3e3e3".into(),
+        ),
+        credits_manager_contract: Some(OPID_MANAGER.to_string()),
+        mana_price_max_staleness_secs: 3600,
+        ..RawSettings::default()
+    })
+    .unwrap();
+    settings.usage = super::usage::Settings {
+        enabled: true,
+        rpc_url: Some("http://127.0.0.1:9/".into()),
+        chain_id: 137,
+        contract: Some(OPID_MANAGER.to_string()),
+        ..super::usage::Settings::default()
+    };
+    let state: SharedState = Arc::new(
+        State::with_sources(
+            pool.clone(),
+            Outbound::for_tests(),
+            settings,
+            Arc::new(market),
+            Arc::new(MockBroker::configured()),
+            None,
+        )
+        .with_gate(Arc::new(super::settlement::FixedGate(Ok(()))))
+        .with_feed(feed.clone()),
+    );
+    let lane = app(state);
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "50").await;
+    feed.answer(Address::from_str(LISTED).unwrap(), Ok("0.55"));
+    let authorize = |body: Value| {
+        let lane = &lane;
+        let wallet = &wallet;
+        async move {
+            call(
+                lane,
+                wallet,
+                "post",
+                "/credits/credits/authorize",
+                &[],
+                Some(body),
+            )
+            .await
+        }
+    };
+
+    let (status, part) =
+        authorize(json!({ "usdPriceCents": 200, "tradeId": "be6e", "creditsCents": 80 })).await;
+    assert_eq!(status, StatusCode::OK, "{part}");
+    let (status, whole) = authorize(json!({ "usdPriceCents": 200, "tradeId": "be6e" })).await;
+    assert_eq!(status, StatusCode::OK, "{whole}");
+    let amount = |v: &Value| {
+        alloy_primitives::U256::from_str(v["credit"]["amount"].as_str().unwrap()).unwrap()
+    };
+    assert!(
+        amount(&whole) < alloy_primitives::U256::from(4_080_000_000_000_000_000u64),
+        "the whole price is sized at the 0.55 feed, under the quote's 4.08 MANA: {whole}"
+    );
+    assert_eq!(
+        amount(&part),
+        amount(&whole) * alloy_primitives::U256::from(80u64) / alloy_primitives::U256::from(200u64),
+        "the part's credit is 80/200 of the feed-sized cap"
+    );
+    assert_eq!(
+        (part["usdCents"].as_i64(), whole["usdCents"].as_i64()),
+        (Some(80), Some(200))
+    );
+    assert_eq!(authorized_sum_cents(&pool, &wallet.address).await, 280);
 
     db.drop().await;
 }
