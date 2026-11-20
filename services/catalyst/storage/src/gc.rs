@@ -65,16 +65,16 @@ pub async fn lock_store_shared(conn: &mut sqlx::PgConnection) -> Result<(), sqlx
 }
 
 /// [`lock_store_shared`] in a transaction, waiting at most `timeout` behind an unlink batch
-/// ([`GcError::LockTimeout`] after it); the transaction's later statements keep the default wait.
+/// ([`GcError::LockTimeout`] after it); the transaction's later statements keep the wait they had.
 pub async fn lock_store_shared_within(
     conn: &mut sqlx::PgConnection,
     timeout: Duration,
 ) -> Result<(), GcError> {
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "SELECT set_config('lock_timeout', '{}ms', true)",
+    let previous: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT current_setting('lock_timeout'), set_config('lock_timeout', '{}ms', true)",
         timeout.as_millis().max(1)
     )))
-    .execute(&mut *conn)
+    .fetch_one(&mut *conn)
     .await?;
     match lock_store_shared(&mut *conn).await {
         Ok(()) => {}
@@ -83,7 +83,8 @@ pub async fn lock_store_shared_within(
         }
         Err(e) => return Err(e.into()),
     }
-    sqlx::query("SET LOCAL lock_timeout TO DEFAULT")
+    sqlx::query("SELECT set_config('lock_timeout', $1, true)")
+        .bind(previous)
         .execute(conn)
         .await?;
     Ok(())
@@ -1124,6 +1125,60 @@ mod tests {
         assert!(try_lock_run(&pool).await.unwrap().is_none());
         run.commit().await.unwrap();
         assert!(try_lock_run(&pool).await.unwrap().is_some());
+    }
+
+    /// A row writer waits for an unlink batch, stores again what it removed,
+    /// keeps the wait its transaction had, and past [`SHARED_LOCK_WAIT`]
+    /// answers [`GcError::LockTimeout`].
+    #[tokio::test]
+    async fn a_row_writer_waits_for_an_unlink_batch_and_stores_what_it_removed() {
+        // A database of its own: the long hold would delay other tests' writers.
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("gc-row-writer-{}", uuid::Uuid::new_v4()));
+        let storage = Storage::from_config(&dir).await.unwrap();
+        let bytes = bytes::Bytes::from(format!("row writer {}", uuid::Uuid::new_v4()));
+        let key = dcl_auth::hash_bytes_v1(&bytes);
+        storage.store(&key, bytes.clone()).await.unwrap();
+
+        let batch = lock_store_exclusive(&pool).await.unwrap();
+        let mut writer = pool.begin().await.unwrap();
+        sqlx::query("SET LOCAL lock_timeout = '2s'")
+            .execute(&mut *writer)
+            .await
+            .unwrap();
+        {
+            let write = store_for_row(&mut writer, &storage, &key, bytes.clone());
+            tokio::pin!(write);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(300), &mut write)
+                    .await
+                    .is_err(),
+                "the writer waits for the batch"
+            );
+            storage.delete_strict(&key).await.unwrap();
+            batch.commit().await.unwrap();
+            assert!(write.await.unwrap(), "stored again");
+        }
+        let kept: String = sqlx::query_scalar("SELECT current_setting('lock_timeout')")
+            .fetch_one(&mut *writer)
+            .await
+            .unwrap();
+        assert_eq!(kept, "2s");
+        writer.commit().await.unwrap();
+        assert!(storage.exist(&key).await.unwrap());
+
+        let batch = lock_store_exclusive(&pool).await.unwrap();
+        let mut writer = pool.begin().await.unwrap();
+        let waited = std::time::Instant::now();
+        assert!(matches!(
+            store_for_row(&mut writer, &storage, &key, bytes).await,
+            Err(GcError::LockTimeout)
+        ));
+        assert!(waited.elapsed() < SHARED_LOCK_WAIT + Duration::from_secs(2));
+        batch.commit().await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Under the lock only scenes and pending uploads written since the fence are read; the full check sees all.
