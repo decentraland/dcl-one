@@ -42,6 +42,21 @@ describe("when the hangout editor loads", () => {
     });
   });
 
+  describe("and a category has multiple translations", () => {
+    beforeEach(() => {
+      vi.mocked(fetchEventCategories).mockResolvedValueOnce([
+        { name: "music", active: true, i18n: { en: "Music", es: "Música" } },
+      ]);
+    });
+
+    it("should retain the translations for the locale selected on the client", async () => {
+      const { data } = await newLoader(args("/events/new-event"));
+      expect(data.categories).toEqual([
+        { name: "music", label: "Music", i18n: { en: "Music", es: "Música" } },
+      ]);
+    });
+  });
+
   describe("and the categories cannot be read", () => {
     beforeEach(() => {
       vi.mocked(fetchEventCategories).mockRejectedValue(new Error("down"));

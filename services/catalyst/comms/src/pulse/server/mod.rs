@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use anyhow::Context as _;
 use prost::Message as _;
 use sha2::{Digest, Sha256};
 
@@ -576,7 +577,7 @@ impl PulseServer {
                 return Admission::Deny(Box::new(Action::Reply(handshake_response(
                     false,
                     Some(
-                        "timestamp is ahead of this server; synchronize the clock and sign a new handshake"
+                        "timestamp is too far ahead of this server; synchronize the clock and sign a new handshake"
                             .into(),
                     ),
                 ))))
@@ -1377,7 +1378,7 @@ impl PulseServer {
                     }
                 }
                 serviced = transports.service() => {
-                    match serviced? {
+                    match serviced.context("the Pulse transport failed")? {
                         Some(Event::ReceiveLimitExceeded { peer, kind, .. }) => {
                             self.receive_limit(&mut transports, peer as u32, kind).await?;
                         }

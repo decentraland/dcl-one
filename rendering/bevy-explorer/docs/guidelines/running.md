@@ -172,7 +172,8 @@ not the shell page: pick the app frame in the DevTools context selector first.
 
 ## Runtime debug panel
 
-In a development engine build, click the bug button in the lower-right corner of the in-world HUD to toggle the panel.
+Launch the desktop client with `--debug-panel` or open the web page with `?debugPanel=1`
+to show the lower-right bug button. Click it to toggle the panel.
 In any build, open **Sidebar settings (•••) → Debug panel** or enter `/debug` in chat.
 Use `/debug help` to list the sections available in this client and `/debug <section>`
 to open one directly. Search matches both section titles and controls. Expand the
@@ -233,19 +234,22 @@ State, in every build:
   `preview`. Rendered URNs are normalised (lowercase, default wearables included); selected ones
   are as written. The HUD uses `/avatar_state --panel` for a single local-player report.
   It shows the completed model while a replacement loads and explains missing readings.
-- `/avatar_demo [spawn <n>|clear|cap [n]|layout <grid|around>|seed [n]|emote <name>|...]` (scene preview
+- `/avatar_demo [spawn <n>|clear|cap [n|all]|layout <grid|around>|seed [n]|emote <name>|...]` (scene preview
   only): local demo avatars with random base wearables, up to 1024. `layout grid` (the default)
   stands new ones in a 32-wide grid in front of the player, each row filled from straight ahead
   outwards; `layout around` fills a disc centred
   on the player, nearest first, so part of the crowd is behind the camera.
   `seed <n>` gives the avatar at each position the same look in every session of one build, so
   two runs compare the same crowd; `seed` alone goes back to a new crowd each time.
-  `cap <n>` sets Max Avatars for the session only (1 to 1025), past the setting's range: it wins
+  `cap <n>` sets Max Avatars for the session only (1 to 1025), past the setting's range, and
+  `cap all` sets no cap, so real players and scene avatars hide no demo avatar: either wins
   over the Max Avatars setting, which it neither changes nor saves, until `cap` alone goes back
   to the setting. The reply is JSON: `count`, `built` (demo avatars whose build finished), `shown` (not
-  hidden) and `drawn` (a mesh in some view this frame), `cap` (the one in force), `sessionCap`
-  (what `cap <n>` set, else `null`),
-  `layout`, `seed`, `maleOnly`, `wearables`, `emote`. The E2E package's `avatar-sweep` drives it.
+  hidden) and `drawn` (a mesh in some view this frame), `cap` (the one in force, `"all"` for none), `sessionCap`
+  (what `cap` set, else `null`),
+  `layout`, `seed`, `maleOnly`, `wearables`, `emote`; the avatars a `clear` or `remove-random`
+  removes are not counted in its own reply. The Avatar debug section of the debug panel shows
+  the counts and sets the cap, layout and seed. The E2E package's `avatar-sweep` drives it.
 - `/spring_bones [true|false]`: spring bones, the swing of a wearable's own bones (hair, tails,
   capes): `enabled` (the Jiggle Bones setting, which an argument sets and saves),
   `simulated_avatars` of at most `max_simulated_avatars`, `simulated_chains`, and for the player's
@@ -298,6 +302,15 @@ State, in every build:
   (the same per format: `ktx2-bc`, `glb`, and `glb-br` on web), `fallbacks` (files that loaded
   their original instead), `fallbacksByFormat` (those whose chosen variant failed, per format)
   and `recentFallbacks` (the last 20, with the file, its entity and the reason).
+- `/item_purchase_state`: the scene item purchase (`openExplorerUi` with `EU_ITEM_PURCHASE`) as
+  JSON, the Scene item purchase debug section's source: `hudListeners` (HUDs subscribed to
+  requests; with none, a request is answered `REJECTED_FEATURE_DISABLED`), `active` (the request
+  in flight: `state` waiting for the HUD or confirmation open, `scene`, `item` as the parsed
+  `contract:id` or "not a collection item", `requestId`), `last` (the same for the last request
+  that ended, with its `outcome`) and `closedOwed` (the scenes whose verdict is written and whose
+  `closed` event is still to come; such a scene's next request is `WAS_ALREADY_OPEN`). No price,
+  balance, wallet or scene-written text appears. `/item_purchase_cancel` drops the request in flight: an open one reports
+  `Dismissed` to its scene, and the HUD's confirmation stays up with its later reports ignored.
 - `/ban_block_state [address]`: the ban and block status as JSON: the local user's address, the
   social blocks (`state` live or unavailable with its `reason`, `blocked`, `blockedBy`), the
   platform ban (`state` unknown, checked or failed, `isBanned`, `source`, `reason`,
@@ -481,7 +494,11 @@ of the contract.
 
 - **Out-of-bounds culling can't be tested against localhost.** A loopback realm forces
   show-out-of-bounds on regardless of `--preview`. Point the client at the same preview server
-  by LAN address, `--realm http://$(ipconfig getifaddr en0):<port>`.
+  by LAN address, `--realm http://$(ipconfig getifaddr en0):<port>`. Colliders follow the same
+  switch: a run that shows out-of-bounds geometry keeps its colliders on, and any other run turns
+  off a collider that leaves the bounds and counts it in the debug panel's Scene Content section.
+  A local scene server is always a preview run, so it keeps those colliders on while a client
+  pointed at the LAN address does not.
 - **The bridge scene's build output is not what the engine loads.** After any bridge-scene
   source change run `pnpm run export-native` (native) or `pnpm run bundle` (web) from
   `react-web/bridge-scene/`, or the client runs the stale scene from the exported folder.

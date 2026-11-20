@@ -24,15 +24,16 @@ use serde_json::{Map, Value};
 use crate::auth_chain::{AuthChain, AuthLink, AuthLinkType, MAX_AUTH_CHAIN_LINKS};
 use crate::eip1654::Eip1654Validator;
 use crate::error::AuthError;
-use crate::verify::verify_auth_chain_async;
+use crate::verify::verify_login_chain_async;
 
 pub const AUTH_CHAIN_HEADER_PREFIX: &str = "x-identity-auth-chain-";
 pub const AUTH_TIMESTAMP_HEADER: &str = "x-identity-timestamp";
 pub const AUTH_METADATA_HEADER: &str = "x-identity-metadata";
 pub const ORIGINAL_PATH_HEADER: &str = "x-original-path";
 
-/// Upstream's freshness window.
-pub const FIVE_MINUTES: i64 = 5 * 60;
+/// How old a signed-fetch timestamp may be, in seconds: `@dcl/crypto-middleware`'s
+/// default expiration, one window for every signed route.
+pub const SIGNED_FETCH_WINDOW_SECS: i64 = 60;
 
 /// How far ahead of now a signed timestamp may be, whatever the window.
 pub const MAX_FUTURE_SKEW_SECS: i64 = 60;
@@ -390,7 +391,7 @@ async fn first_verifying(
 ) -> Result<(), SignatureRefusal> {
     let mut last = None;
     for payload in payloads {
-        match verify_auth_chain_async(chain, payload, Some(now_secs * 1000), validator).await {
+        match verify_login_chain_async(chain, payload, Some(now_secs * 1000), validator).await {
             Ok(()) => return Ok(()),
             Err(e) if is_invalid_signature(&e) => last = Some(e),
             Err(e) => return Err(SignatureRefusal::Settled(e)),
@@ -720,6 +721,56 @@ mod tests {
             .await,
             Err(SignatureRefusal::Settled(
                 AuthError::EphemeralExpired { .. }
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_delegation_signed_for_another_purpose_settles_as_refused() {
+        let ephemeral = Wallet::random().unwrap();
+        let signed = build_payload_v6("POST", "/a", "1000", "{}");
+        let chain_delegating = |first_line: &str| -> AuthChain {
+            let delegation = format!(
+                "{first_line}\nEphemeral address: {}\nExpiration: 2099-01-01T00:00:00.000Z",
+                ephemeral.address()
+            );
+            let link = |link_type, payload: &str, signature: String| AuthLink {
+                link_type,
+                payload: payload.to_string(),
+                signature: Some(signature),
+            };
+            vec![
+                link(AuthLinkType::SIGNER, &wallet().address(), String::new()),
+                link(
+                    AuthLinkType::EcdsaEphemeral,
+                    &delegation,
+                    wallet().sign_message(delegation.as_bytes()).unwrap(),
+                ),
+                link(
+                    AuthLinkType::EcdsaSignedEntity,
+                    &signed,
+                    ephemeral.sign_message(signed.as_bytes()).unwrap(),
+                ),
+            ]
+        };
+        let request = SignedRequest {
+            method: "POST",
+            paths: &["/a"],
+            timestamp: "1000",
+            metadata: "{}",
+        };
+        let verdict = async |chain: &AuthChain| {
+            verify_signature(chain, &request, 1, LegacyPayload::Accepted, None).await
+        };
+        assert!(
+            verdict(&chain_delegating("Decentraland Login"))
+                .await
+                .is_ok()
+        );
+        assert!(matches!(
+            verdict(&chain_delegating("Another Purpose")).await,
+            Err(SignatureRefusal::Settled(
+                AuthError::InvalidEphemeralPayload(_)
             ))
         ));
     }

@@ -42,7 +42,7 @@ use ipfs::{
     ipfs_path::IpfsPath, ActiveEntityTask, EntityDefinition, IpfsAssetServer, RealmInitialLocation,
     SceneIpfsLocation,
 };
-use scene_material::{BoundRegion, SceneBounds};
+use scene_material::{BoundRegion, SceneBounds, FIXED_SCENE_HEIGHT};
 use system_bridge::{LiveSceneInfo, SystemApi, SystemBridge};
 
 use super::{update_world::CrdtExtractors, LoadSceneEvent, PrimaryUser, SceneSets, SceneUpdates};
@@ -54,6 +54,7 @@ use crate::{
         SCENE_JS_SPAWN_TICK,
     },
     ring_parcels,
+    scene_lod::SceneLod,
     scene_partition::camera_facing,
     update_world::{visibility::VisibilityComponent, ComponentTracker},
     vec3_to_parcel, ContainerEntity, DeletedSceneEntities, MobileUiEmulation, OutOfWorld,
@@ -373,10 +374,7 @@ pub(crate) fn load_scene_javascript(
         let bounds = if portable.is_some() {
             Vec::default()
         } else {
-            scene_regions(parcels.clone().into_iter())
-                .into_iter()
-                .map(|region| BoundRegion::new(region.min, region.max, region.count))
-                .collect::<Vec<_>>()
+            scene_bound_regions(&parcels, &realm)
         };
 
         // get main.crdt
@@ -625,6 +623,24 @@ pub(crate) fn load_scene_javascript(
             },
         ));
     }
+}
+
+/// The regions a scene is clipped and collided to. A city scene has neighbours it must not build
+/// over, so its limit grows with each connected region's parcel count; every other realm (a
+/// World, a preview, an editor) gives its scenes one fixed height limit.
+fn scene_bound_regions(parcels: &HashSet<IVec2>, realm: &CurrentRealm) -> Vec<BoundRegion> {
+    let city = !realm.config.lists_scenes() && !realm.is_local();
+    scene_regions(parcels.iter().copied())
+        .into_iter()
+        .map(|region| {
+            let bound = BoundRegion::new(region.min, region.max, region.count);
+            if city {
+                bound
+            } else {
+                bound.with_height(FIXED_SCENE_HEIGHT)
+            }
+        })
+        .collect()
 }
 
 #[derive(Clone)]
@@ -955,6 +971,12 @@ pub struct ScenePointers {
     // The realm lists its scenes up front (a World) and they have all resolved, so a parcel none
     // of them covers is empty rather than unknown; there is no pointer request to answer for it.
     all_scenes_known: bool,
+    // each named scene's base parcel by hash, from its `scene.json` as the realm listed it: a far
+    // LOD is placed from it without loading the scene's entity definition. Cleared with the
+    // pointers; a hash a redeployment replaced keeps its entry until then
+    bases: HashMap<String, IVec2>,
+    // bumped whenever what `get` answers may have changed
+    generation: u64,
 }
 
 impl Default for ScenePointers {
@@ -966,6 +988,8 @@ impl Default for ScenePointers {
             crcs: Default::default(),
             terrain: Default::default(),
             all_scenes_known: false,
+            bases: Default::default(),
+            generation: 0,
         }
     }
 }
@@ -998,6 +1022,7 @@ impl ScenePointers {
     pub fn set_all_scenes_known(&mut self) {
         if !self.all_scenes_known {
             self.all_scenes_known = true;
+            self.generation += 1;
             // the terrain has been reading those parcels as unknown
             self.terrain.invalidate();
         }
@@ -1011,6 +1036,8 @@ impl ScenePointers {
         self.realm_bounds = (min_bound, max_bound);
         self.all_scenes_known = false;
         self.pointers.clear();
+        self.bases.clear();
+        self.generation += 1;
         self.crcs.clear();
         self.terrain.invalidate();
     }
@@ -1106,7 +1133,26 @@ impl ScenePointers {
         self.terrain
             .mark(parcel, matches!(result, PointerResult::Exists { .. }));
         self.pointers.insert(parcel, result);
+        self.generation += 1;
         res
+    }
+
+    /// Records the base parcel of the scene `hash`, as its `scene.json` names it.
+    pub(crate) fn set_base(&mut self, hash: &str, base: IVec2) {
+        self.bases.insert(hash.to_owned(), base);
+    }
+
+    /// The base parcel of a scene the pointers name, when the realm listed it with its
+    /// `scene.json`.
+    pub(crate) fn base(&self, hash: &str) -> Option<IVec2> {
+        self.bases.get(hash).copied()
+    }
+
+    /// Changes whenever what `get` answers may have changed, so a reader can keep what it worked
+    /// out from the pointers until then. Change detection on the resource cannot tell, since
+    /// `crc` and the terrain take it mutably.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
     }
 
     pub fn min(&self) -> IVec2 {
@@ -1325,13 +1371,7 @@ fn load_active_entities(
             }
         }
         pointers.set_realm(bounds_min, bounds_max);
-        pointers.reset_terrain(
-            current_realm
-                .config
-                .scenes_urn
-                .as_ref()
-                .is_some_and(|urns| !urns.is_empty()),
-        );
+        pointers.reset_terrain(current_realm.config.lists_scenes());
         for mut context in global_crdt.iter_mut() {
             context.set_bounds(bounds_min, bounds_max);
         }
@@ -1351,11 +1391,7 @@ fn load_active_entities(
         }
 
         if !current_realm.about_url.is_empty() && *teleport_target == RealmInitialLocation::Base {
-            let has_scene_urns = !current_realm
-                .config
-                .scenes_urn
-                .as_ref()
-                .is_none_or(Vec::is_empty);
+            let has_scene_urns = current_realm.config.lists_scenes();
 
             if !has_scene_urns {
                 // we want to go to base but there are no specific parcels
@@ -1423,11 +1459,7 @@ fn load_active_entities(
         }
     };
 
-    let has_scene_urns = !current_realm
-        .config
-        .scenes_urn
-        .as_ref()
-        .is_none_or(Vec::is_empty);
+    let has_scene_urns = current_realm.config.lists_scenes();
 
     if pointer_request.is_none()
         && !current_realm.address.is_empty()
@@ -1602,17 +1634,22 @@ fn load_active_entities(
                 }
             }
 
+            let parcel = |pointer: &str| {
+                let (x, y) = pointer.split_once(',')?;
+                let x = x.parse::<i32>().ok()?;
+                let y = y.parse::<i32>().ok()?;
+                Some(IVec2::new(x, y))
+            };
             let parcels = meta
                 .scene
                 .parcels
                 .iter()
-                .filter_map(|pointer| {
-                    let (x, y) = pointer.split_once(',')?;
-                    let x = x.parse::<i32>().ok()?;
-                    let y = y.parse::<i32>().ok()?;
-                    Some(IVec2::new(x, y))
-                })
+                .filter_map(|pointer| parcel(pointer))
                 .collect::<Vec<_>>();
+            // a far LOD's mesh is relative to it (`scene_lod`)
+            if let Some(base) = parcel(&meta.scene.base) {
+                pointers.set_base(&active_entity.id, base);
+            }
 
             // jump to target if we just resolved it
             if teleport_on_resolve
@@ -2153,6 +2190,8 @@ fn animate_ready_scene(
 #[derive(Component)]
 pub struct LoadingMaterialHandle(pub Handle<LoadingMaterial>);
 
+/// Keeps each loading wall at the player's height and lights it near the player. A scene whose
+/// near LOD is shown raises no walls: the stand-in already stands on its parcels.
 fn update_loading_quads(
     mut q: Query<
         (
@@ -2160,10 +2199,14 @@ fn update_loading_quads(
             &mut Transform,
             &MeshMaterial3d<LoadingMaterial>,
             &LoadingQuad,
+            &ChildOf,
+            &mut Visibility,
         ),
         Without<PrimaryUser>,
     >,
     player: Query<&Transform, With<PrimaryUser>>,
+    scenes: Query<&RendererSceneContext>,
+    lods: Query<&SceneLod>,
     mut mats: ResMut<Assets<LoadingMaterial>>,
     mut local_prev_active: Local<HashSet<AssetId<LoadingMaterial>>>,
 ) {
@@ -2172,8 +2215,25 @@ fn update_loading_quads(
     };
 
     let prev_active = std::mem::take(&mut *local_prev_active);
+    let stood_in = lods
+        .iter()
+        .filter(|lod| lod.shown())
+        .map(|lod| lod.hash.as_str())
+        .collect::<HashSet<_>>();
 
-    for (gt, mut trans, h_mat, loading) in q.iter_mut() {
+    for (gt, mut trans, h_mat, loading, child_of, mut visibility) in q.iter_mut() {
+        let hidden = scenes
+            .get(child_of.parent())
+            .is_ok_and(|ctx| stood_in.contains(&*ctx.hash));
+        visibility.set_if_neq(if hidden {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        });
+        if hidden {
+            continue;
+        }
+
         let nearest_point = player_translation.xz().clamp(
             gt.translation().xz()
                 - if loading.0 {

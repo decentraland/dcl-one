@@ -239,7 +239,8 @@ pub async fn genesis_scene_at(
     row.map(|r| genesis_row(realm, &r)).transpose()
 }
 
-/// A Genesis deployment by id, when it is active here.
+/// A Genesis deployment by id, when it is active here: a scene whose
+/// `deleter_deployment` is unset, whether or not it still holds a pointer.
 pub async fn genesis_scene(
     pool: &PgPool,
     realm: &RealmId,

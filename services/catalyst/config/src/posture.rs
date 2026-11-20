@@ -349,6 +349,7 @@ const ROWS: &[Row] = &[
     mirrored("indexes", "MARKETPLACE_NFT_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_SALES_INDEX_ENABLED"),
+    mirrored("indexes", "MARKETPLACE_COMMITTEE_INDEX_ENABLED"),
     // The MANA transfer walk stays an operator's opt-in under every posture.
     same(
         "indexes",
@@ -737,6 +738,29 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
         refuse_chain_read_third_party(config, env)?;
     }
     Ok(())
+}
+
+/// A DCL NAME world's owner is its NAME's holder, read from
+/// `MARKETPLACE_SUBGRAPH_URL`; without it no DCL NAME world has an owner. A
+/// `serve` taking world writes is refused without the reader, unless it
+/// skips the chain checks (`IGNORE_BLOCKCHAIN_ACCESS_CHECKS`), which gets the
+/// warning returned here and serves personal worlds only. The indexer takes
+/// no world writes, so only `serve` runs this.
+pub fn worlds_names_reader(config: &Config) -> anyhow::Result<Option<&'static str>> {
+    if !config.worlds.worlds_writes_enabled
+        || Config::non_empty(&config.market_upstreams.marketplace_subgraph_url).is_some()
+    {
+        return Ok(None);
+    }
+    if !config.validator.ignore_blockchain_access_checks {
+        anyhow::bail!(
+            "WORLDS_WRITES_ENABLED=true needs MARKETPLACE_SUBGRAPH_URL, the DCL NAME holder reader: \
+             set it, or IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true on a node without chain access"
+        );
+    }
+    Ok(Some(
+        "MARKETPLACE_SUBGRAPH_URL is unset: DCL NAME worlds have no owner here, only personal worlds take owner writes",
+    ))
 }
 
 /// A mirror replaces a Catalyst whose lambdas always check the profiles'

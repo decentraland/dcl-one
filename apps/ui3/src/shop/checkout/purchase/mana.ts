@@ -11,7 +11,7 @@ import type { Hex } from "viem";
 import type { ChainId } from "@shop/model/chain";
 import { gaslessEnabled } from "../chain/config";
 import { requireContracts } from "../chain/contracts";
-import { isGaslessUnavailable, isSignatureDeclined, relayMetaTransaction, type MetaTxTarget } from "../chain/metatx";
+import { GaslessUnavailableError, isGaslessUnavailable, isSignatureDeclined, relayMetaTransaction, type MetaTxTarget } from "../chain/metatx";
 import { sendAndConfirm, TxPendingError } from "../chain/wallet";
 import { AuthorizationKind, ensureAuthorization } from "../lib/authorizations";
 import { getMarketplaceForTrade } from "../lib/marketplace";
@@ -71,13 +71,17 @@ async function ensureManaAllowance(ctx: RailContext, chainId: ChainId, spender: 
  * Relay `data` to `target` when gasless is on; a declined prompt or a relayed-but-unconfirmed call
  * propagates (never re-submitted directly: that could run it twice). Otherwise the wallet sends it.
  * `onSigned` marks the hand-off: after the relayed signature (right before the relay is called), or
- * right before the wallet is asked to send. From then on the call may be broadcast.
+ * right before the wallet is asked to send. From then on the call may be broadcast. With `ctx.relayOnly`, a call the
+ * relay can't run (or the relay off) is never sent from the wallet instead.
  */
 async function relayOrSend(
   ctx: RailContext,
   opts: { target: MetaTxTarget; data: Hex; onSigned?: () => void; onBroadcast?: (txHash: Hex) => void; what: string },
 ): Promise<Hex> {
-  if (ctx.gasless ?? gaslessEnabled()) {
+  const gasless = ctx.gasless ?? gaslessEnabled();
+  // Relay only (ctx.relayOnly): with the relay off, or refusing, the purchase isn't sent at all.
+  if (ctx.relayOnly && !gasless) throw new GaslessUnavailableError("Fee-free checkout is off, so this purchase wasn't sent.", "relayer-rejected");
+  if (gasless) {
     try {
       const { txHash } = await relayMetaTransaction({
         provider: ctx.provider,
@@ -95,7 +99,7 @@ async function relayOrSend(
     } catch (e) {
       if (isSignatureDeclined(e) || isMetaTxPending(e)) throw e;
       if (isGaslessUnavailable(e) && e.reason === "relayer-unreachable") throw e;
-      if (!isGaslessUnavailable(e) || !canPayGasItself(ctx.walletKind)) throw e;
+      if (!isGaslessUnavailable(e) || !canPayGasItself(ctx.walletKind) || ctx.relayOnly) throw e;
     }
   }
   return sendAndConfirm({

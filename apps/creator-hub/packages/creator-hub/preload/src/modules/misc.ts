@@ -1,6 +1,6 @@
 import type { SaveDialogOptions } from 'electron';
 
-import type { DeploymentLogEntry } from '/shared/types/ipc';
+import type { DeploymentLogEntry, RendererErrorLogEntry } from '/shared/types/ipc';
 import { isUrl } from '/shared/utils';
 
 import { invoke } from '../services/ipc';
@@ -8,6 +8,11 @@ import { invoke } from '../services/ipc';
 export async function openExternal(url: string) {
   if (!isUrl(url)) throw new Error('Invalid URL provided');
   await invoke('electron.openExternal', url);
+}
+
+/** Opens a `decentraland://` link in the desktop client; false when it isn't installed. */
+export async function openDeepLink(url: string) {
+  return invoke('electron.openDeepLink', url);
 }
 
 export async function showSaveDialog(opts: Partial<SaveDialogOptions>) {
@@ -20,4 +25,8 @@ export async function copyToClipboard(text: string) {
 
 export async function logDeployment(entry: DeploymentLogEntry) {
   await invoke('electron.logDeployment', entry);
+}
+
+export async function logRendererError(entry: RendererErrorLogEntry) {
+  await invoke('electron.logRendererError', entry);
 }

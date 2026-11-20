@@ -116,13 +116,13 @@ many `built`, waits `--settle` seconds and samples `/performance_state` every 25
 pnpm run avatar-sweep                                          # 0..800 avatars, caps 20 and all, idle and dancing
 pnpm run avatar-sweep --counts 0,100,400 --caps all --emotes none --window 20 --out sweep.jsonl
 pnpm run avatar-sweep --url http://localhost:8080/            # an app served already
-pnpm run avatar-sweep --mirror ~/.cache/dcl-catalyst-mirror --port 8765 --mirror-port 8764   # repeated runs
+pnpm run avatar-sweep --profile ~/.cache/dcl-avatar-sweep-profile --port 8765   # repeated runs
 ```
 
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--counts` | `0,10,20,50,100,200,400,800` | Demo avatars per step, up to 1024 |
-| `--caps` | `20,all` | Max Avatars for the session (`/avatar_demo cap`: it wins over the setting and is never saved); `all` shows every avatar |
+| `--caps` | `20,all` | Max Avatars for the session (`/avatar_demo cap`: it wins over the setting and is never saved); `all` is no cap, so real players in the world hide no demo avatar |
 | `--emotes` | `none,dance` | What new demo avatars play, looped (`/avatar_demo emote`) |
 | `--nametags` | `on` | `on`, `off`, or `on,off` for both (`/nametags`) |
 | `--layout` | `grid` | `grid` stands the demo avatars in front of the player, each row filled from straight ahead outwards; `around` fills a disc centred on the player, nearest first, so part of the crowd is behind the camera (`/avatar_demo layout`) |
@@ -131,25 +131,24 @@ pnpm run avatar-sweep --mirror ~/.cache/dcl-catalyst-mirror --port 8765 --mirror
 | `--window`, `--settle`, `--load-timeout` | `10`, `3`, `180` | Seconds |
 | `--realm`, `--position` | the `genesispng.dcl.eth` world on zone, `0,0` | Where to stand |
 | `--web-app` or `--url`, `--out`, `--headless` | `dist/web` | What to open, a JSONL copy of stdout, headless Chrome (GPU timing may then be missing) |
-| `--port` | `0` (a free one) | The port `--web-app` is served on. A fixed one keeps the page's origin, and so the browser's caches for it, from run to run |
-| `--mirror`, `--mirror-port` | none, `0` | A directory to keep the catalyst's files in, and the port to serve them on (see below) |
+| `--port` | `0` (a free one) | The port `--web-app` is served on. A fixed one keeps the page's origin from run to run |
+| `--profile` | none (a temporary one, removed at the end) | A directory for Chrome's profile, kept between runs; needs a fixed `--port` (see below) |
 
 The demo avatars wear random base wearables: a few hundred models and textures from the
 catalyst, which a crowd of several hundred asks for all at once. Run after run, that is more than
 the catalyst allows one client, and it then refuses content files for hours. For anything beyond
-a single run, pass `--mirror <dir>`: the sweep serves a catalyst on loopback
-(`driver/catalyst-mirror.ts`) and points the explorer at it with the `catalyst` service override.
-The mirror keeps every content file and active-entity lookup it serves in `<dir>` and answers
-from there afterwards; what it does not have yet it asks the catalyst for, a few requests a
-second, waiting and trying again when refused. The first run fills the directory, slowly; later
-runs ask the catalyst for nothing. Other requests (profiles, `/about`) pass through, not kept.
-The mirror answers the sweep's own page only: a request from a page of another origin, or one
-that does not name loopback as its host, gets a 403, and a request body over 1 MiB a 413.
-The sweep's last stderr line counts each kind.
+a single run, pass `--profile <dir>` and a fixed `--port`: Chrome keeps its profile in `<dir>`
+instead of a temporary folder, and with it the engine's content cache, which holds every content
+file by its hash. The browser keeps that cache by the page's origin, so the port has to stay the
+same; the sweep refuses `--profile` with a port picked anew. The first run fills the cache; later
+runs take the files from it and ask the catalyst for little: a 200-avatar run downloaded 1565
+files on an empty profile and 16 on the next run. Active-entity lookups are not cached and go to
+the catalyst every run. `loadSeconds` follows: a first run is a first visit, a later one a
+returning player's. One Chrome at a time uses a profile, and a profile grows to several hundred
+megabytes. The sweep's last stderr line is `/content_request_state`: `success` counts the run's
+downloads and `cached` what the cache answered.
 
-The page stops on its launch-link warning for a `catalyst` outside Decentraland's own domains,
-which the mirror is: choose Advanced, then Continue anyway, in the window the sweep opens, once
-per run. The player enters the world at a different spot each session, so for runs that are
+The player enters the world at a different spot each session, so for runs that are
 compared, stand in one place first with `--setup "/move_player_to <x> <y> <z>"`.
 
 Each stdout line is one step: `count`, `built` (`-1` when the avatars did not finish building
@@ -224,7 +223,14 @@ What the driver does for every scenario, so a spec need not:
   wait out that window since the profile was last seen to change (`profileDeployWindow()`). A
   change and its restore would otherwise fail silently and leave the shared account changed.
 
-The in-world scenario in `specs/debug-panel.test.ts` uses the lower-right bug button in development builds and Sidebar settings → Debug panel in release builds. It reads the current realm, observes a live FPS-target change, checks that the player walks, clicks the world and opens Sidebar settings while the panel stays open, and verifies an avatar action against the engine. The same spec reads `/client_login_state` for an unsigned guest (a session the engine's `/login_guest`
+The in-world scenario in `specs/debug-panel.test.ts` checks that the lower-right bug button is hidden by
+default and opens the panel through Sidebar settings → Debug panel. To exercise the launcher, pass
+`--debug-panel` in `DCL_E2E_NATIVE_ARGS` when the driver starts desktop Explorer, or add
+`debugPanel=1` to `DCL_E2E_WEB_URL`. When attaching to desktop Explorer, start the client with
+`--debug-panel` before running the scenario. The driver uses whichever control the running HUD shows.
+The scenario reads the current realm, observes a live FPS-target change, checks that the player
+walks, clicks the world and opens Sidebar settings while the panel stays open, and verifies an
+avatar action against the engine. The same spec reads `/client_login_state` for an unsigned guest (a session the engine's `/login_guest`
 signs in, the guest a scene preview's `?guest=1` gets; the HUD's Continue as guest makes a signed
 guest account instead) and checks that authenticated login delivery is inactive. The **Client login events** section is included in the registered-reading
 check. `test/client-login-storage.test.ts` checks the browser queue's transaction acknowledgment,

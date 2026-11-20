@@ -72,7 +72,7 @@ fn metadata(row: &TransferRow, parcel: bool) -> serde_json::Value {
     json!({
         "title": "LAND received",
         "description": format!("Your wallet received Genesis {place}."),
-        "link": "/creator-hub/land",
+        "link": "/profile/me/assets",
         "category": if parcel { "parcel" } else { "estate" },
         "tokenId": row.token_id,
         "x": x,

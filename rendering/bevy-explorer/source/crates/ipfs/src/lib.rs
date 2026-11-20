@@ -405,6 +405,24 @@ impl IpfsAssetServer<'_, '_> {
             .load_with_settings(PathBuf::from(&ipfs_path), settings))
     }
 
+    /// A content file loaded for its colliders only ([`ipfs_path::COLLIDERS_PART`]): the same
+    /// file, downloaded and cached once with the whole file's loads, under an asset path of its
+    /// own, so these settings never reach the whole file's asset.
+    pub fn load_content_file_colliders<T: Asset, S: Settings>(
+        &self,
+        file_path: &str,
+        content_hash: &str,
+        settings: impl Fn(&mut S) + Send + Sync + 'static,
+    ) -> Handle<T> {
+        let ipfs_path = IpfsPath::new(IpfsType::new_content_file(
+            content_hash.to_owned(),
+            file_path.to_owned(),
+        ))
+        .with_keyvalue(IpfsKey::Part, ipfs_path::COLLIDERS_PART.to_owned());
+        self.server
+            .load_with_settings(PathBuf::from(&ipfs_path), settings)
+    }
+
     pub fn load_urn<T: IpfsAsset>(&self, urn: &str) -> Result<Handle<T>, anyhow::Error> {
         let ext = T::ext();
         let ipfs_path = IpfsPath::new_from_urn::<T>(urn)?;
@@ -546,14 +564,9 @@ pub struct ServerScenes {
     total: usize,
 }
 
-// This replicates the structure of a `scene.json`, maybe extend if needed, but
-// for multi-scene worlds, only `entity_id` is needed
-#[expect(dead_code)]
+// A world's scene entry: for multi-scene worlds, only `entity_id` is needed
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerScene {
-    #[serde(rename = "worldName")]
-    world_name: String,
-    deployer: String,
     #[serde(rename = "entityId")]
     entity_id: String,
 }
@@ -1964,12 +1977,10 @@ impl IpfsIo {
         about: &ServerAbout,
         new_realm: &str,
     ) -> Result<Option<IVec2>, anyhow::Error> {
-        let has_scene_urns = about.configurations.as_ref().is_some_and(|config| {
-            config
-                .scenes_urn
-                .as_ref()
-                .is_some_and(|urns| !urns.is_empty())
-        });
+        let has_scene_urns = about
+            .configurations
+            .as_ref()
+            .is_some_and(ServerConfiguration::lists_scenes);
         if !has_scene_urns {
             return Ok(None);
         }
@@ -2058,6 +2069,13 @@ impl IpfsIo {
                     return Ok(data);
                 }
             };
+
+            // an image a colliders-part glTF references is never sampled: no request
+            if ipfs_path.is_collider_texture() {
+                return Ok(Box::new(VecReader::new(
+                    ipfs_path::COLLIDER_TEXTURE_PNG.to_vec(),
+                )));
+            }
 
             #[cfg(target_arch = "wasm32")]
             if let Some(indexdb_path) = ipfs_path.to_indexdb() {

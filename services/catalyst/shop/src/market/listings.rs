@@ -1,11 +1,12 @@
 //! `POST /v1/trades`: a wallet-signed off-chain listing or bid accepted as
 //! local authority (`shop.trades`, `mirrored_from` NULL) behind
-//! `DATA_WRITES_ENABLED`. The old policy exactly: the signed-fetch chain
-//! must carry `signer` dcl:marketplace|dcl:builder and intent
-//! `dcl:create-trade`, the recovered address must be the trade's signer,
-//! the EIP-712 signature must verify against one of the chain's off-chain
-//! marketplaces (v3 first, then v2), an erc721 listing's token must be owned
-//! by the signer per `ownerOf` on `TRADE_RPC_URLS` (never the mirror: a
+//! `DATA_WRITES_ENABLED`. The old policy, except that only the current
+//! marketplace accepts new trades: the signed-fetch chain must carry
+//! `signer` dcl:marketplace|dcl:builder and intent `dcl:create-trade`, the
+//! recovered address must be the trade's signer, the EIP-712 signature must
+//! verify against the chain's current off-chain marketplace (v3; one that
+//! verifies only on v2 is a 400 naming v3), an erc721 listing's token must
+//! be owned by the signer per `ownerOf` on `TRADE_RPC_URLS` (never the mirror: a
 //! stale index is not a reason to accept a listing), and a duplicate
 //! signature is a 409. As marketplace-server ae872a4a
 //! (`src/ports/trades/utils.ts`) does, each side carries exactly one asset,
@@ -89,6 +90,8 @@ impl RpcEndpoints {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OffChainMarketplace {
+    /// The deployment's contract name, as error messages name it.
+    pub contract: &'static str,
     pub name: &'static str,
     pub version: &'static str,
     pub address: &'static str,
@@ -104,18 +107,21 @@ pub const MATIC_AMOY: i64 = 80002;
 pub fn offchain_marketplace_v2(chain_id: i64) -> Option<OffChainMarketplace> {
     match chain_id {
         ETHEREUM_MAINNET | ETHEREUM_SEPOLIA => Some(OffChainMarketplace {
+            contract: "OffChainMarketplaceV2",
             name: "DecentralandMarketplaceEthereum",
             version: "1.0.0",
             address: "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7",
             cancels_by_digest: false,
         }),
         MATIC_MAINNET => Some(OffChainMarketplace {
+            contract: "OffChainMarketplaceV2",
             name: "DecentralandMarketplacePolygon",
             version: "1.0.0",
             address: "0xa40b1d129b8906888720686f3a01921ddf37716f",
             cancels_by_digest: false,
         }),
         MATIC_AMOY => Some(OffChainMarketplace {
+            contract: "OffChainMarketplaceV2",
             name: "DecentralandMarketplacePolygon",
             version: "1.0.0",
             address: "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7",
@@ -128,24 +134,28 @@ pub fn offchain_marketplace_v2(chain_id: i64) -> Option<OffChainMarketplace> {
 pub fn offchain_marketplace_v3(chain_id: i64) -> Option<OffChainMarketplace> {
     match chain_id {
         ETHEREUM_MAINNET => Some(OffChainMarketplace {
+            contract: "OffChainMarketplaceV3",
             name: "DecentralandMarketplaceEthereum",
             version: "1.0.0",
             address: "0x0f11d0d1671519683bd48abf3dbe779e300941cd",
             cancels_by_digest: true,
         }),
         MATIC_MAINNET => Some(OffChainMarketplace {
+            contract: "OffChainMarketplaceV3",
             name: "DecentralandMarketplacePolygon",
             version: "1.0.0",
             address: "0xe38ef22abe871513555cba89adfe45ab4f548ada",
             cancels_by_digest: true,
         }),
         ETHEREUM_SEPOLIA => Some(OffChainMarketplace {
+            contract: "OffChainMarketplaceV3",
             name: "DecentralandMarketplaceEthereum",
             version: "1.0.0",
             address: "0x257db44ac97789c16ab277eae87dcde0c246cc9f",
             cancels_by_digest: true,
         }),
         MATIC_AMOY => Some(OffChainMarketplace {
+            contract: "OffChainMarketplaceV3",
             name: "DecentralandMarketplacePolygon",
             version: "1.0.0",
             address: "0x36fd1434a6c4b8ade80c9847c1d15033ce34488c",
@@ -774,6 +784,11 @@ pub enum TradeCreationError {
     },
     InvalidStructure(String),
     InvalidSignature(String),
+    /// Signed against an off-chain marketplace other than the chain's current one.
+    RetiredMarketplace {
+        signed_on: &'static str,
+        current: &'static str,
+    },
     OwnershipUnverifiable(i64),
     OwnershipLookupFailed(String),
     NotTheOwner {
@@ -815,6 +830,10 @@ impl std::fmt::Display for TradeCreationError {
             }
             Self::InvalidStructure(why) => write!(f, "invalid trade structure: {why}"),
             Self::InvalidSignature(why) => write!(f, "{why}"),
+            Self::RetiredMarketplace { signed_on, current } => write!(
+                f,
+                "Trades signed on {signed_on} are no longer accepted, sign it on {current}"
+            ),
             Self::OwnershipUnverifiable(chain) => write!(
                 f,
                 "ownership cannot be verified: no rpc endpoint is configured for chain {chain}"
@@ -1206,6 +1225,15 @@ pub async fn create_trade(
     validate_structure(trade)?;
     let matched = resolve_signature(trade, &candidates)
         .map_err(|e| TradeCreationError::InvalidSignature(e.to_string()))?;
+    // Candidates are newest first and non-empty; older versions still verify, so a trade
+    // signed on one is told where to sign instead.
+    let current = candidates[0];
+    if matched.marketplace != current {
+        return Err(TradeCreationError::RetiredMarketplace {
+            signed_on: matched.marketplace.contract,
+            current: current.contract,
+        });
+    }
     verify_sent_ownership(state, trade).await?;
     verify_estate_fingerprint(state, trade).await?;
     if trade.trade_type == TRADE_TYPE_PUBLIC_ITEM_ORDER {
@@ -1422,9 +1450,25 @@ async fn post_trade_inner(
         Err(e) => return Err(creation_error_to_api(e)),
     };
     state.catalog_cache.invalidate();
+    // The stored trade as `GET /v1/trades/{id}` answers it; its id alone if that read fails.
+    let data = match super::trades::get_trade_by_id(
+        &state.pool,
+        &id,
+        None,
+        super::trades::TradeScope::Any,
+    )
+    .await
+    {
+        Ok(Some(trade)) => json!(trade),
+        Ok(None) => json!({ "id": id }),
+        Err(e) => {
+            tracing::warn!(error = %e, trade_id = %id, "created trade could not be read back");
+            json!({ "id": id })
+        }
+    };
     Ok((
         StatusCode::CREATED,
-        Json(json!({ "ok": true, "data": { "id": id } })),
+        Json(json!({ "ok": true, "data": data })),
     )
         .into_response())
 }
@@ -1507,7 +1551,7 @@ pub(crate) mod test_support {
     pub fn signed_trade() -> TradeCreation {
         signed_trade_on(
             MATIC_MAINNET,
-            &offchain_marketplace_v2(MATIC_MAINNET).unwrap(),
+            &offchain_marketplace_v3(MATIC_MAINNET).unwrap(),
         )
     }
 }
@@ -1540,6 +1584,7 @@ mod tests {
     fn a_real_mainnet_trade_signature_recovers_its_signer() {
         const SIGNER: &str = "0x02d0bb59a5f04a12d883751dc1605e15b4959b7e";
         let marketplace = OffChainMarketplace {
+            contract: "OffChainMarketplaceV1",
             name: "DecentralandMarketplacePolygon",
             version: "1.0.0",
             address: "0x540fb08edb56aae562864b390542c97f562825ba",
@@ -1737,6 +1782,62 @@ mod tests {
         assert_ne!(status("[2001:db8:7:2::1]").await, 429, "another /64 posts");
     }
 
+    /// A trade that verifies only against an older off-chain marketplace is answered 400 naming
+    /// the contract to sign on, before ownership or the database is consulted.
+    #[tokio::test]
+    async fn a_trade_signed_on_an_older_marketplace_is_refused() {
+        let state = crate::market::tests::support::state_without_db();
+        for chain_id in [
+            MATIC_MAINNET,
+            ETHEREUM_MAINNET,
+            MATIC_AMOY,
+            ETHEREUM_SEPOLIA,
+        ] {
+            let mut trade = signed_trade_on(chain_id, &offchain_marketplace_v2(chain_id).unwrap());
+            if network_for_chain(chain_id) == Some("ETHEREUM") {
+                trade.network = "ETHEREUM".into();
+                sign(&mut trade, &offchain_marketplace_v2(chain_id).unwrap());
+            }
+            let err = create_trade(&state.pool, None, &trade, &trade.signer.clone(), 1_000)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, TradeCreationError::RetiredMarketplace { .. }),
+                "{chain_id}: {err}"
+            );
+            let response = creation_error_to_api(err).into_response();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let body: serde_json::Value = serde_json::from_slice(
+                &axum::body::to_bytes(response.into_body(), 1 << 16)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                body["message"],
+                "Trades signed on OffChainMarketplaceV2 are no longer accepted, sign it on OffChainMarketplaceV3"
+            );
+        }
+    }
+
+    /// The refusal names the marketplace the trade was signed on and the chain's current one.
+    #[test]
+    fn the_retired_marketplace_message_names_both_contracts() {
+        let current = offchain_marketplace_v3(MATIC_MAINNET).unwrap();
+        for signed_on in ["OffChainMarketplaceV1", "OffChainMarketplaceV2"] {
+            let err = TradeCreationError::RetiredMarketplace {
+                signed_on,
+                current: current.contract,
+            };
+            assert_eq!(
+                err.to_string(),
+                format!(
+                    "Trades signed on {signed_on} are no longer accepted, sign it on OffChainMarketplaceV3"
+                )
+            );
+        }
+    }
+
     #[tokio::test]
     async fn the_policy_refuses_before_any_signature_or_database_work() {
         let state = crate::market::tests::support::state_without_db();
@@ -1908,7 +2009,7 @@ mod tests {
         pegged.received[0].asset_type = ASSET_TYPE_USD_PEGGED_MANA;
         pegged.received[0].contract_address = NOT_MANA.into();
         for mut trade in [checksummed, pegged] {
-            sign(&mut trade, &offchain_marketplace_v2(MATIC_MAINNET).unwrap());
+            sign(&mut trade, &offchain_marketplace_v3(MATIC_MAINNET).unwrap());
             assert!(matches!(
                 create_trade(pool, None, &trade, &address, 1_000)
                     .await

@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
+import { SitesLocaleContext } from "@ui/web/frames/sites-locale";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import {
   createMemoryRouter,
   Link,
@@ -18,8 +19,8 @@ vi.hoisted(() =>
   }),
 );
 
-vi.mock("@ui/web/frames/SitesChrome", () => ({
-  default: ({ children }: { children: ReactNode }) => <>{children}</>,
+vi.mock("@ui/web/frames/DclTopBar", () => ({
+  default: () => null,
 }));
 vi.mock("@/data/lib/auth/context", () => ({
   useAuth: () => ({ identity: null, isConnected: false }),
@@ -126,9 +127,67 @@ describe("the /events route, rendered on the server and hydrated", () => {
       await screen.findByRole("dialog", { name: "Event deep" }),
     ).toBeTruthy();
     expect(client.getQueryData(eventsPageKeys.calendar())).toBeDefined();
+    expect(screen.getByRole("button", { name: "Subscribe" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Privacy Policy" })).toBeTruthy();
     expect(fetchEvents).not.toHaveBeenCalled();
     expect(fetchMostActivePlaces).not.toHaveBeenCalled();
     expect(fetchEvent).not.toHaveBeenCalled();
+  });
+
+  describe("and the shared locale is Spanish", () => {
+    let user: ReturnType<typeof userEvent.setup>;
+    let footer: ReturnType<typeof within>;
+
+    beforeEach(async () => {
+      user = userEvent.setup();
+      const data = await load("/events?id=deep");
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const router = createMemoryRouter(
+        [{ id: "events", path: "/events", Component: Events as never }],
+        { initialEntries: ["/events?id=deep"], hydrationData: { loaderData: { events: data } } },
+      );
+      render(
+        <SitesLocaleContext.Provider value={{ locale: "es", onSelect: vi.fn() }}>
+          <QueryClientProvider client={client}>
+            <RouterProvider router={router} />
+          </QueryClientProvider>
+        </SitesLocaleContext.Provider>,
+      );
+      footer = within(screen.getByRole("contentinfo"));
+    });
+
+    it("should translate listing, detail and footer controls while preserving the event name", async () => {
+      expect(await screen.findByRole("dialog", { name: "Event deep" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Cerrar" })).toBeTruthy();
+      expect(screen.getByText("Todos los eventos")).toBeTruthy();
+      expect(footer.getByRole("button", { name: "Suscribirse" })).toBeTruthy();
+      expect(footer.getByRole("textbox", { name: "Correo electrónico" })).toBeTruthy();
+      expect(footer.getByRole("link", { name: "Política de privacidad" }).getAttribute("href")).toBe("/privacy");
+      expect(footer.getByRole("link", { name: "Términos de uso" }).getAttribute("href")).toBe("/terms");
+      expect(footer.getByRole("link", { name: "Política de contenido" }).getAttribute("href")).toBe("/content-policy");
+      expect(footer.getByRole("link", { name: "Código de ética" }).getAttribute("href")).toBe("/ethics");
+    });
+
+    it("should show a localized validation error for an empty email without sending a request", async () => {
+      vi.mocked(fetch).mockClear();
+      await user.click(footer.getByRole("button", { name: "Suscribirse" }));
+      expect(footer.getByRole("alert").textContent).toBe("Ingresá un correo electrónico válido.");
+      expect(vi.mocked(fetch).mock.calls.some(([, options]) => options?.method === "POST")).toBe(false);
+    });
+
+    it.each([
+      { status: 201, role: "status", text: "¡Te suscribiste!", remainingEmail: "" },
+      { status: 503, role: "alert", text: "No se pudo completar la suscripción. Volvé a intentarlo.", remainingEmail: "person@example.org" },
+    ])("should show localized newsletter feedback for a $status response", async ({ status, role, text, remainingEmail }) => {
+      vi.mocked(fetch).mockImplementation(async (request) =>
+        request === "/v1/newsletter" ? new Response(null, { status }) : Response.json([]),
+      );
+      const email = footer.getByRole("textbox", { name: "Correo electrónico" }) as HTMLInputElement;
+      await user.type(email, "person@example.org");
+      await user.click(footer.getByRole("button", { name: "Suscribirse" }));
+      expect((await footer.findByRole(role)).textContent).toBe(text);
+      expect(email.value).toBe(remainingEmail);
+    });
   });
 
   it("should fetch through the browser's query cache on a client navigation, without the server loader", async () => {

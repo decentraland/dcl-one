@@ -352,13 +352,9 @@ pub(super) async fn join(ctx: &Ctx<'_>, id: &str) -> Response {
         Ok(c) => c,
         Err(r) => return *r,
     };
-    match super::super::queries::community_exists(&ctx.state.pool, community, false).await {
-        Ok(true) => {}
-        Ok(false) => return err_json(StatusCode::NOT_FOUND, "community not found"),
-        Err(e) => return db_err(e),
-    }
     match super::super::queries::is_private(&ctx.state.pool, community).await {
-        Ok(true) => {
+        Ok(None) => return err_json(StatusCode::NOT_FOUND, "community not found"),
+        Ok(Some(true)) => {
             return err_json(
                 StatusCode::UNAUTHORIZED,
                 format!(
@@ -366,7 +362,7 @@ pub(super) async fn join(ctx: &Ctx<'_>, id: &str) -> Response {
                 ),
             );
         }
-        Ok(false) => {}
+        Ok(Some(false)) => {}
         Err(e) => return db_err(e),
     }
     match is_banned(ctx.state, community, &signer).await {
@@ -895,16 +891,11 @@ pub(super) async fn like(ctx: &Ctx<'_>, id: &str, post: &str, liking: bool) -> R
     if post_id != post {
         return bad("post_id mismatch");
     }
-    let private =
-        match sqlx::query_scalar::<_, bool>("SELECT private FROM social.communities WHERE id = $1")
-            .bind(community)
-            .fetch_optional(&ctx.state.pool)
-            .await
-        {
-            Ok(Some(p)) => p,
-            Ok(None) => return err_json(StatusCode::NOT_FOUND, "community not found"),
-            Err(e) => return db_err(e),
-        };
+    let private = match super::super::queries::is_private(&ctx.state.pool, community).await {
+        Ok(Some(p)) => p,
+        Ok(None) => return err_json(StatusCode::NOT_FOUND, "community not found"),
+        Err(e) => return db_err(e),
+    };
     let standing = match load_standing(&ctx.state.pool, community, &signer).await {
         Ok(s) => s,
         Err(refusal) => return own_detail(&refusal),
@@ -1029,6 +1020,11 @@ pub(super) async fn request_status(ctx: &Ctx<'_>, id: &str, request: &str) -> Re
         let mut guard =
             super::super::write_support::acquire_membership(&ctx.state.pool, community).await?;
         let mut tx = guard.begin().await?;
+        // A closed community records nothing, so the envelope stays usable.
+        if let Err(refused) = super::super::requests::lock_open_community(&mut tx, community).await
+        {
+            return Ok(Err(*refused));
+        }
         let entry = Entry {
             kind: "request_status",
             target: Some(m.request_id.clone()),

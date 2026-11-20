@@ -56,8 +56,10 @@ describe('welcome page', () => {
 
     h.driver.emit({ kind: 'welcome', terms: true, newProfile: true })
     await waitFor(() => expect(h.session().phase).toBe('welcome'))
-    // the page shows the name
+    // the page shows the name the new profile offers
     expect(h.driver.sentOf('getProfile')).toHaveLength(1)
+    const offered = { address: '0xguest', name: 'MicaGreywood', hasClaimedName: false, isGuest: true }
+    h.driver.emit({ kind: 'profile', profile: offered })
     act(() => h.session().welcome.openLegal('terms'))
     expect(h.driver.last('openLegal')).toEqual({ kind: 'openLegal', doc: 'terms' })
 
@@ -69,6 +71,11 @@ describe('welcome page', () => {
     // a new account made here skips the lobby: it travels to its home (Genesis Plaza) at once
     await waitFor(() => expect(h.session().phase).toBe('entering'))
     expect(h.driver.last('teleport')).toMatchObject({ x: 0, y: 0 })
+    // the page's read held the offered name: the chosen one is read again, and the Me panel shows it
+    expect(h.session().profile.data?.name).toBe('MicaGreywood')
+    expect(h.driver.sentOf('getProfile')).toHaveLength(2)
+    h.driver.emit({ kind: 'profile', profile: { ...offered, name: 'NewName' } })
+    await waitFor(() => expect(h.session().profile.data?.name).toBe('NewName'))
   })
 
   it('runs a PLAY AS GUEST clicked before the engine was ready once it is', async () => {
