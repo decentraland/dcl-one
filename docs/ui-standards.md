@@ -219,6 +219,8 @@ the shared foundations and components. The app itself, under `apps/<app>`,
 keeps its pages, routes and data wiring and imports its UI from there. Until
 `library/ui` is implemented, app-specific UI stays where it is in the app.
 
+Sites composes its views in route modules or in `apps/sites/src/pages/<domain>/` when a screen needs app-level wiring. Its visual components and styles belong in `library/ui/apps/sites/<domain>/`. See [Sites page components](adr/2026-11-20-sites-pages.md).
+
 Until `library/ui` is implemented, Sites imports some UI source through the
 `@ui/*` alias (`apps/sites/tsconfig.json`, resolving to `apps/ui3/src`). Verify the
 actual importing surfaces of a component before assuming it has more than one
@@ -293,7 +295,7 @@ library/ui/
 - **App-specific UI:** keep components used by a single app in
   `apps/<app>/`, built from the shared foundations and components; only that
   app imports them. See [App-specific UI](#app-specific-ui).
-- **Web chrome contracts:** `components/chrome/` contains the shared contexts, router link adapter and structural layout slots. These contracts are imported by path and have no Figma component mapping.
+- **Web chrome contracts:** `components/AppChrome/` contains the shared contexts, router link adapter and structural layout slots. These contracts are imported by path and have no Figma component mapping.
 - **Figma tooling:** keep the MCP server and CLI in `figma/` and outside browser
   exports. Component mappings connect Figma nodes to shared components.
 

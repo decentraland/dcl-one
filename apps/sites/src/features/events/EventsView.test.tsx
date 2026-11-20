@@ -83,7 +83,12 @@ function setup(path: string, platform: DetectedPlatform = DESKTOP) {
   return { router, user: userEvent.setup(), client };
 }
 
+// Local midday keeps soon(-0.5) and soon(3) on today's column in any TZ; only Date is faked so RTL polling runs.
+const NOW = new Date(2026, 10, 19, 12);
+
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
   auth.identity = null;
   calendar = [soon("cal", "Poker Night")];
   upcoming = [soon("up", "Watch Party", 1)];
@@ -116,6 +121,7 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 const FACE = "https://profile-images.decentraland.org/entities/bafyface/face.png";

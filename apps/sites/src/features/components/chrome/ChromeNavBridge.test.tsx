@@ -6,10 +6,10 @@ import { MemoryRouter } from "react-router";
 
 import SitesChrome from "@ui/web/frames/SitesChrome";
 import SitesLayout from "./SitesLayout";
-import SiteLayout from "@dcl/one-ui/components/chrome/SiteLayout";
+import SiteLayout from "@dcl/one-ui/components/AppChrome/SiteLayout";
 import DclTopBar from "@ui/web/frames/DclTopBar";
-import ChromeLink from "@dcl/one-ui/components/chrome/ChromeLink";
-import { useChromeNav } from "@dcl/one-ui/components/chrome/chrome-nav";
+import ChromeLink from "@dcl/one-ui/components/AppChrome/ChromeLink";
+import { useChromeNav } from "@dcl/one-ui/components/AppChrome/chrome-nav";
 import ChromeNavBridge, { chromeHrefTarget, upstreamShopPath } from "./ChromeNavBridge";
 
 const ORIGIN = "https://example.org";
@@ -69,11 +69,11 @@ function Probe() {
 describe("ChromeNavBridge", () => {
   it("discovers application card links while keeping documents, downloads and fragments native", () => {
     const html = renderToString(<MemoryRouter><ChromeNavBridge>
-      <ChromeLink href="/create/scenes">Scenes</ChromeLink>
+      <ChromeLink href="/create/preview">Scenes</ChromeLink>
       <ChromeLink href="/play/">Play</ChromeLink>
       <ChromeLink href="/docs/">Docs</ChromeLink>
       <ChromeLink href="/social/">Community</ChromeLink>
-      <ChromeLink href="/create/scenes" download>Download</ChromeLink>
+      <ChromeLink href="/create/preview" download>Download</ChromeLink>
       <ChromeLink href="#main">Skip</ChromeLink>
     </ChromeNavBridge></MemoryRouter>);
     const anchors = html.match(/<a[^>]*>[^<]*<\/a>/g)!;
@@ -98,7 +98,7 @@ describe("ChromeNavBridge", () => {
   it("renders plain anchors without the bridge", () => {
     const html = renderToString(<DclTopBar variant="sites" active="shop" signedIn={false} />);
     expect(html).not.toContain("data-discover");
-    expect(html).toContain('href="/shop"');
+    expect(html).toContain('href="/shop/overview"');
   });
 });
 

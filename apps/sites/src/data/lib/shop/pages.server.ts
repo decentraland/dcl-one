@@ -6,7 +6,7 @@
 // own hooks keep it current (a money read such as a listing is refetched on mount, never trusted).
 
 import { createShopClient, hostApiOptions, type ShopClient } from "@ui/shop/api";
-import { fetchCollection, fetchShopItems, fetchTrendingItems } from "@shop/discovery/api";
+import { fetchCollection } from "@shop/discovery/api";
 import { fetchItemDescription, fetchItemMeta, fetchPrimaryListingForItem, fetchTokenById, itemListingKey } from "@shop/detail/api";
 import { LAND_NETWORKS } from "@shop/land/contracts";
 import { itemIdFromTokenId } from "@ui/shop/detail/lib/token-id";
@@ -14,6 +14,7 @@ import { routeSegment } from "@ui/shop/discovery/lib/routes";
 import { dealsRequestedIn, itemsFilterDefaults, itemsGrid, itemsQuery } from "@ui/shop/discovery/lib/itemsGrid";
 import { readUrlFilters } from "@ui/shop/discovery/hooks";
 import { REMOTE_FLAG, remoteFlagOn } from "@shop/discovery/lib/rolloutFlags";
+import { RAIL_KEYS, readDeals, readListings, readTrending } from "@ui/shop/discovery/pages/overviewRails";
 import type { ShopPageId } from "@ui/shop/routes";
 
 import { catalystUrl, processEnv, publicPageUrl, type BaseEnv } from "../catalyst/bases";
@@ -169,16 +170,15 @@ async function overviewPage(ctx: ReadCtx, client: ShopClient, env: BaseEnv): Pro
   const seo = defaultShopSeo("overview", publicPageUrl(ctx.request, "/shop/overview", env));
   // The server reads for no one, and the Marketplace is a web3 session's (market/access.tsx): primary sales only.
   const [listings, trending, deals] = await Promise.all([
-    settle(publicRead(ctx, "overview-listings", (signal) => fetchShopItems({ first: 12, sortBy: "newest", listingType: "primary" }, readOptions(ctx, client, signal)))),
-    settle(publicRead(ctx, "overview-trending|primary", (signal) => fetchTrendingItems({ first: 12, listingType: "primary" }, readOptions(ctx, client, signal)))),
-    ctx.creatorSales
-      ? settle(publicRead(ctx, "overview-deals", (signal) => fetchShopItems({ first: 12, discounted: true, sortBy: "discount", listingType: "primary" }, readOptions(ctx, client, signal))))
-      : Promise.resolve(null),
+    settle(publicRead(ctx, "overview-listings", (signal) => readListings(readOptions(ctx, client, signal)))),
+    settle(publicRead(ctx, "overview-trending|primary", (signal) => readTrending("primary", readOptions(ctx, client, signal)))),
+    ctx.creatorSales ? settle(publicRead(ctx, "overview-deals", (signal) => readDeals(readOptions(ctx, client, signal)))) : Promise.resolve(null),
   ]);
+  // Under the page's own keys (overviewRails.ts), so the page and a link's prefetch find them.
   const queries: PrimedQuery[] = [];
-  if (listings.ok) queries.push([["overview-listings"], listings.value.value, listings.value.at]);
-  if (trending.ok) queries.push([["overview-trending", "primary"], trending.value.value, trending.value.at]);
-  if (deals?.ok) queries.push([["overview-deals"], deals.value.value, deals.value.at]);
+  if (listings.ok) queries.push([RAIL_KEYS.listings, listings.value.value, listings.value.at]);
+  if (trending.ok) queries.push([RAIL_KEYS.trending("primary"), trending.value.value, trending.value.at]);
+  if (deals?.ok) queries.push([RAIL_KEYS.deals, deals.value.value, deals.value.at]);
   return { queries, seo, status: 200 };
 }
 

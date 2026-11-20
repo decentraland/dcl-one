@@ -17,7 +17,7 @@ vi.mock("@/data/lib/auth/index", () => ({ useAuth: () => state.auth }));
 vi.mock("../components/auth/signin-store", () => ({ openSignIn: state.openSignIn }));
 vi.mock("../components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
 
-import { ChromeAuthContext, type ChromeAuth } from "@dcl/one-ui/components/chrome/chrome-auth";
+import { ChromeAuthContext, type ChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
 
 import { AccountLayout, type AccountSection } from "./AccountLayout";
 
@@ -78,8 +78,9 @@ describe("AccountLayout", () => {
     show();
 
     const links = screen.getAllByRole("link").filter((link) => link.closest("nav"));
-    expect(links.map((link) => link.textContent)).toEqual(["Notifications", "Credits Settings"]);
-    expect(links[0]!.getAttribute("aria-current")).toBe("page");
+    expect(links.map((link) => link.textContent)).toEqual(["Wallets", "Notifications", "Credits Settings"]);
+    expect(links.map((link) => link.getAttribute("href"))).toEqual(["/account/wallets", "/account/notifications", "/account/credits"]);
+    expect(links.map((link) => link.getAttribute("aria-current"))).toEqual([null, "page", null]);
     expect(screen.getByText(`Settings for ${identity.signer}`)).toBeTruthy();
   });
 
@@ -114,16 +115,16 @@ describe("AccountLayout", () => {
     const onSignOut = vi.fn();
     show({ chrome: { ...signedOutChrome, signedIn: true, account: identity.signer, onSignOut } });
 
-    await user.click(screen.getByRole("button", { name: "Log out" }));
+    await user.click(screen.getByRole("button", { name: "Logout" }));
     expect(onSignOut).toHaveBeenCalledTimes(1);
 
     cleanup();
     show();
-    expect(screen.queryByRole("button", { name: "Log out" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Logout" })).toBeNull();
 
     cleanup();
     show({ chrome: { ...signedOutChrome, signedIn: true, account: "0x1111111111111111111111111111111111111111", onSignOut } });
-    expect(screen.queryByRole("button", { name: "Log out" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Logout" })).toBeNull();
   });
 
   it("shows the menu alone on /account, with no section header", () => {

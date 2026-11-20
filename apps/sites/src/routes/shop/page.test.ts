@@ -24,11 +24,11 @@ vi.hoisted(() => {
   });
 });
 
-vi.mock("@/data/lib/auth/index", () => ({ useAuth: () => ({ identity: null }) }));
+vi.mock("@/data/lib/auth/index", () => ({ useAuth: () => ({ identity: { signer: STORE_ACCOUNT, expiration: "2099-01-01T00:00:00.000Z" } }) }));
 
 vi.mock("./host", () => ({
   default: function ShopFrame({ children }: { children: ReactNode }) {
-    useMarketplaceHere();
+    useMarketplaceHere(STORE_ACCOUNT);
     return children;
   },
 }));

@@ -11,10 +11,16 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { getAddress } from "viem";
+import sitesLogo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url";
 import DclTopBar from "@ui/web/frames/DclTopBar";
-import SiteLayout from "@dcl/one-ui/components/chrome/SiteLayout";
-import { ChromeAuthContext, type ChromeAuth } from "@dcl/one-ui/components/chrome/chrome-auth";
-import { ChromeNavContext } from "@dcl/one-ui/components/chrome/chrome-nav";
+import SiteLayout from "@dcl/one-ui/components/AppChrome/SiteLayout";
+import { ChromeAuthContext, type ChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
+import { ChromeNavContext } from "@dcl/one-ui/components/AppChrome/chrome-nav";
+import { SitesLocaleContext, type SitesLocale } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
+import { forgetSignIn, recordSignIn } from "@/data/lib/auth/signin-kind";
+import { setIdentity } from "@/data/lib/auth/session";
+import { primeRemoteFlags } from "@dcl/one-ui/apps/shop/remote-flags";
 import ChromeNavBridge from "./ChromeNavBridge";
 
 vi.hoisted(() => {
@@ -25,9 +31,10 @@ vi.hoisted(() => {
   });
 });
 
-const marketplace = vi.hoisted(() => ({ eligible: false }));
-vi.mock("@/data/lib/shop/marketplace-access", () => ({
-  useMarketplaceHere: () => marketplace.eligible,
+const { readManaBalanceWei } = vi.hoisted(() => ({ readManaBalanceWei: vi.fn() }));
+vi.mock("@ui/shop/checkout/lib/mana", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@ui/shop/checkout/lib/mana")>(),
+  readManaBalanceWei,
 }));
 
 const baseAuth: ChromeAuth = {
@@ -41,10 +48,12 @@ function Host({
   auth = baseAuth,
   children = <DclTopBar active="shop" />,
   pathname = "/shop",
+  locale = "en",
 }: {
   auth?: ChromeAuth;
   children?: React.ReactNode;
   pathname?: string;
+  locale?: SitesLocale;
 }) {
   const [client] = React.useState(
     () => new QueryClient({ defaultOptions: { queries: { retry: false } } }),
@@ -53,15 +62,17 @@ function Host({
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[pathname]}>
         <ChromeAuthContext.Provider value={auth}>
-          <ChromeNavBridge>{children}</ChromeNavBridge>
+          <SitesLocaleContext.Provider value={{ locale, onSelect: () => {} }}>
+            <ChromeNavBridge>{children}</ChromeNavBridge>
+          </SitesLocaleContext.Provider>
         </ChromeAuthContext.Provider>
       </MemoryRouter>
     </QueryClientProvider>
   );
 }
 import * as React from "react";
-import sitesLogo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url";
 beforeEach(() => {
+  primeRemoteFlags({});
   window.matchMedia = vi.fn().mockImplementation((query) => ({
     matches: false,
     media: query,
@@ -77,24 +88,53 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
-  marketplace.eligible = false;
+  setIdentity(null);
+  primeRemoteFlags(null);
+  forgetSignIn();
+  readManaBalanceWei.mockReset();
   vi.unstubAllGlobals();
 });
 
 const shopAccount = "0x" + "ab".repeat(20);
+const otherAccount = "0x" + "cd".repeat(20);
+const checksummedAccount = getAddress(shopAccount);
+
+function enableMarketplace(signer = shopAccount) {
+  setIdentity({
+    signer,
+    ephemeral: { address: signer, privateKey: "0x00" },
+    expiration: new Date(Date.now() + 60_000).toISOString(),
+    authChain: [],
+  });
+  recordSignIn(signer, "web3");
+  primeRemoteFlags({ "dapps-shop-marketplace-features": true });
+}
+
+function walletEvents() {
+  type Listener = (...args: unknown[]) => void;
+  const listeners = new Map<string, Set<Listener>>();
+  return {
+    on(event: string, listener: Listener) {
+      const active = listeners.get(event) ?? new Set<Listener>();
+      active.add(listener);
+      listeners.set(event, active);
+    },
+    removeListener(event: string, listener: Listener) {
+      listeners.get(event)?.delete(listener);
+    },
+    emit(event: string, ...args: unknown[]) {
+      for (const listener of [...(listeners.get(event) ?? [])]) listener(...args);
+    },
+  };
+}
+
+function pendingWalletRead() {
+  let resolve!: (accounts: string[]) => void;
+  const promise = new Promise<string[]>((settle) => { resolve = settle; });
+  return { request: () => promise, resolve };
+}
 
 describe("Sites native chrome integration", () => {
-  it("draws the Decentraland logo in the banner as one decorative 40px image", () => {
-    render(<Host pathname="/places" />);
-    const logos = within(screen.getByRole("banner"))
-      .getAllByRole("presentation")
-      .filter((el) => el.tagName === "IMG" && el.getAttribute("width") === "40");
-    expect(logos).toHaveLength(1);
-    expect(logos[0]!.getAttribute("alt")).toBe("");
-    expect(logos[0]!.getAttribute("height")).toBe("40");
-    expect(logos[0]!.getAttribute("src")).toBe(sitesLogo);
-  });
-
   it("renders one banner and keeps signed-out links and dropdown destinations", () => {
     render(<Host />);
     expect(screen.getAllByRole("banner")).toHaveLength(1);
@@ -111,12 +151,23 @@ describe("Sites native chrome integration", () => {
     expect(screen.getByRole("link", { name: "Sign in" })).toBeTruthy();
     expect(screen.queryByLabelText("Credits")).toBeNull();
   });
+
+  it("shows the decorative 40px Decentraland logo in the banner", () => {
+    render(<Host />);
+
+    const logos = Array.from(screen.getByRole("banner").querySelectorAll("img"))
+      .filter((image) => image.getAttribute("src") === sitesLogo);
+    expect(logos).toHaveLength(1);
+    const [logo] = logos;
+    expect(logo?.getAttribute("alt")).toBe("");
+    expect(logo?.getAttribute("width")).toBe("40");
+    expect(logo?.getAttribute("height")).toBe("40");
+  });
   it("selects the Shop item from the router query and shows LAND after the wallet matches", async () => {
-    marketplace.eligible = true;
-    let resolveAccounts!: (accounts: string[]) => void;
-    vi.stubGlobal("ethereum", {
-      request: () => new Promise<string[]>((resolve) => { resolveAccounts = resolve; }),
-    });
+    enableMarketplace();
+    const wallet = walletEvents();
+    const { request, resolve } = pendingWalletRead();
+    vi.stubGlobal("ethereum", { ...wallet, request });
     render(
       <Host
         pathname="/shop/items?category=emote"
@@ -127,7 +178,7 @@ describe("Sites native chrome integration", () => {
     expect(screen.getByRole("link", { name: "Emotes" }).getAttribute("aria-current")).toBe("page");
     expect(screen.getByRole("link", { name: /names/i }).getAttribute("href")).toBe("/shop/names");
     expect(screen.queryByRole("link", { name: "LAND" })).toBeNull();
-    await act(async () => resolveAccounts([shopAccount]));
+    await act(async () => resolve([checksummedAccount]));
     expect((await screen.findByRole("link", { name: "LAND" })).getAttribute("href")).toBe("/shop/lands");
 
     fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
@@ -135,23 +186,52 @@ describe("Sites native chrome integration", () => {
     fireEvent.click(menu.getByRole("button", { name: "Shop" }));
     expect(menu.getByRole("link", { name: "LAND" }).getAttribute("href")).toBe("/shop/lands");
     expect(menu.getByRole("link", { name: "Emotes" }).getAttribute("aria-current")).toBe("page");
+    act(() => wallet.emit("accountsChanged", [otherAccount]));
+    expect(menu.queryByRole("link", { name: "LAND" })).toBeNull();
+    act(() => wallet.emit("accountsChanged", [checksummedAccount]));
+    expect(menu.getByRole("link", { name: "LAND" })).toBeTruthy();
   });
-  it("keeps LAND hidden for a different wallet, an empty list, or a rejected wallet read", async () => {
-    marketplace.eligible = true;
-    for (const accounts of [["0x" + "cd".repeat(20)], [], null]) {
+  it.each([
+    { accounts: [otherAccount], reason: "a different account" },
+    { accounts: [], reason: "an empty list" },
+    { accounts: null, reason: "a rejection" },
+  ])(
+    "keeps LAND hidden when the wallet read settles with $reason",
+    async ({ accounts }) => {
+      enableMarketplace();
       const request = vi.fn(async () => {
         if (accounts === null) throw new Error("Wallet read denied");
         return accounts;
       });
       vi.stubGlobal("ethereum", { request });
-      const view = render(<Host auth={{ ...baseAuth, signedIn: true, account: shopAccount }} />);
-      await act(async () => {});
+      render(<Host auth={{ ...baseAuth, signedIn: true, account: shopAccount }} />);
       expect(request).toHaveBeenCalledWith({ method: "eth_accounts" });
+      await act(async () => { await request.mock.results[0]!.value.catch(() => undefined); });
       fireEvent.click(screen.getByRole("button", { name: "Shop" }));
       expect(screen.getByRole("link", { name: /names/i })).toBeTruthy();
       expect(screen.queryByRole("link", { name: "LAND" })).toBeNull();
-      view.unmount();
-    }
+    },
+  );
+  it("keeps LAND hidden when the chrome account differs from the Sites session", async () => {
+    enableMarketplace(otherAccount);
+    const request = vi.fn().mockResolvedValue([checksummedAccount]);
+    vi.stubGlobal("ethereum", { request });
+    render(<Host auth={{ ...baseAuth, signedIn: true, account: shopAccount }} />);
+    await act(async () => { await request.mock.results[0]?.value; });
+    fireEvent.click(screen.getByRole("button", { name: "Shop" }));
+    expect(screen.queryByRole("link", { name: "LAND" })).toBeNull();
+  });
+  it("keeps LAND hidden when a stale wallet read resolves after an account change", async () => {
+    enableMarketplace();
+    const wallet = walletEvents();
+    const { request, resolve } = pendingWalletRead();
+    vi.stubGlobal("ethereum", { ...wallet, request });
+    render(<Host auth={{ ...baseAuth, signedIn: true, account: shopAccount }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Shop" }));
+
+    act(() => wallet.emit("accountsChanged", [otherAccount]));
+    await act(async () => resolve([checksummedAccount]));
+    expect(screen.queryByRole("link", { name: "LAND" })).toBeNull();
   });
   it("shows the canonical Events destination as selected inside the mobile menu", () => {
     render(
@@ -245,7 +325,7 @@ describe("Sites native chrome integration", () => {
         name: "Notifications",
       }),
     );
-    await screen.findByText("No notifications yet");
+    await screen.findByText("No Notifications Yet");
     view.rerender(<Host auth={{ ...a, account: "0xb" }} />);
     view.rerender(<Host auth={a} />);
     expect(screen.queryByRole("dialog", { name: "Notifications" })).toBeNull();
@@ -328,6 +408,161 @@ describe("when a Sites page reports its area", () => {
   });
 });
 
+describe("when the signed-in web visitor opens the profile", () => {
+  const logout = vi.fn();
+  const switchAccount = vi.fn();
+
+  beforeEach(() => {
+    logout.mockReset();
+    switchAccount.mockReset();
+    render(
+      <Host pathname="/events" auth={{
+        ...baseAuth, signedIn: true, account: "0xA", name: "Ada",
+        onSignOut: logout, onSwitchAccount: switchAccount,
+      }} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Account: Ada" }));
+  });
+
+  it("should show the profile links in order and keep the logout action", () => {
+    const profile = screen.getByRole("link", { name: "View Profile" });
+    const panel = profile.closest("[tabindex='-1']")!;
+    expect(within(panel as HTMLElement).getAllByRole("link").map((link) => link.getAttribute("href")))
+      .toEqual(["/profile/0xa", "/shop/my-items", "/account", "/shop/settings"]);
+    expect(screen.queryByRole("button", { name: "Switch account" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Logout" }));
+    expect(logout).toHaveBeenCalledOnce();
+  });
+});
+
+describe("when Nav Profile reads the matching browser wallet", () => {
+  const bodyUrl = "https://example.com/avatar-body.png";
+  let request: ReturnType<typeof vi.fn>;
+  let wallet: ReturnType<typeof walletEvents>;
+
+  beforeEach(() => {
+    wallet = walletEvents();
+    request = vi.fn(async ({ method }: { method: string }) => {
+      if (method === "eth_accounts") return [checksummedAccount];
+      if (method === "eth_chainId") return "0x1";
+      throw new Error(method);
+    });
+    vi.stubGlobal("ethereum", { ...wallet, request });
+    recordSignIn(shopAccount, "web3");
+    readManaBalanceWei.mockImplementation(async (_account, chain: number) => {
+      if (chain === 1) return 0n;
+      throw new Error("Polygon RPC unavailable");
+    });
+    render(
+      <Host
+        pathname="/"
+        locale="es"
+        auth={{ ...baseAuth, signedIn: true, account: shopAccount, name: "Ada", bodyUrl }}
+      />,
+    );
+  });
+
+  it("should defer MANA until the panel opens and keep the available balance after an RPC failure", async () => {
+    await act(async () => {});
+    expect(request).toHaveBeenCalledWith({ method: "eth_accounts" });
+    expect(readManaBalanceWei).not.toHaveBeenCalled();
+
+    const avatar = screen.getByRole("button", { name: "Cuenta: Ada" });
+    fireEvent.click(avatar);
+    expect(await screen.findByRole("combobox", { name: "Red de la billetera" })).toBeTruthy();
+    const panel = document.getElementById(avatar.getAttribute("aria-controls")!);
+    await waitFor(() => expect(panel?.querySelector('[data-balance="mana"]')?.textContent).toBe("MANA: 0"));
+    expect(readManaBalanceWei).toHaveBeenCalledTimes(2);
+    expect(panel?.querySelector('[data-balance="polygonMana"]')).toBeNull();
+    expect(panel?.querySelector('img[loading="lazy"]')?.getAttribute("src")).toBe(bodyUrl);
+  });
+
+  it("should hide the wallet controls after the connected wallet changes", async () => {
+    const avatar = screen.getByRole("button", { name: "Cuenta: Ada" });
+    fireEvent.click(avatar);
+    await screen.findByRole("combobox", { name: "Red de la billetera" });
+    await waitFor(() => expect(readManaBalanceWei).toHaveBeenCalledTimes(2));
+    await act(async () => wallet.emit("accountsChanged", [otherAccount]));
+    expect(screen.queryByRole("combobox", { name: "Red de la billetera" })).toBeNull();
+    expect(document.querySelector('[data-balance="mana"]')).toBeNull();
+    await act(async () => {
+      fireEvent.click(avatar);
+      fireEvent.click(avatar);
+    });
+    expect(readManaBalanceWei).toHaveBeenCalledTimes(2);
+  });
+
+  it("should reserve a balance row while the eligible MANA reads are pending", async () => {
+    let resolveBalance!: (value: bigint) => void;
+    const pending = new Promise<bigint>((resolve) => { resolveBalance = resolve; });
+    readManaBalanceWei.mockReturnValue(pending);
+    await act(async () => { await request.mock.results[0]!.value; });
+    const avatar = screen.getByRole("button", { name: "Cuenta: Ada" });
+    fireEvent.click(avatar);
+    const panel = document.getElementById(avatar.getAttribute("aria-controls")!)!;
+    expect(panel.querySelector('[aria-busy="true"]')).toBeTruthy();
+    expect(panel.querySelector("[data-balance]")).toBeNull();
+
+    await act(async () => resolveBalance(0n));
+    await waitFor(() => expect(panel.querySelector('[aria-busy="true"]')).toBeNull());
+    expect(panel.querySelector('[data-balance="polygonMana"]')?.textContent).toBe("MANA en Polygon: 0");
+  });
+
+  it("should retain the balance row without amounts when both MANA reads fail", async () => {
+    readManaBalanceWei.mockRejectedValue(new Error("RPC unavailable"));
+    await act(async () => { await request.mock.results[0]!.value; });
+    const avatar = screen.getByRole("button", { name: "Cuenta: Ada" });
+    fireEvent.click(avatar);
+    const panel = document.getElementById(avatar.getAttribute("aria-controls")!)!;
+    const row = panel.querySelector('[aria-busy="true"]');
+    expect(row).toBeTruthy();
+    await waitFor(() => expect(panel.querySelector('[aria-busy="true"]')).toBeNull());
+    expect(readManaBalanceWei).toHaveBeenCalledTimes(2);
+    expect(panel.contains(row)).toBe(true);
+    expect(panel.querySelector("[data-balance]")).toBeNull();
+  });
+
+  it("should confirm the address copy in the Sites locale", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Cuenta: Ada" }));
+      expect(screen.getByRole("link", { name: "Ver perfil" })).toBeTruthy();
+      expect(screen.getByRole("link", { name: "Mis activos" })).toBeTruthy();
+      expect(screen.getByRole("link", { name: "Configuración de la cuenta" })).toBeTruthy();
+      expect(screen.getByRole("link", { name: "Autorizaciones de la tienda" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Copiar ID de usuario" }));
+      await waitFor(() => expect(screen.getByRole("status").textContent).toBe("ID de usuario copiado"));
+      expect(screen.getAllByText("ID de usuario copiado")).toHaveLength(2);
+      expect(writeText).toHaveBeenCalledExactlyOnceWith(shopAccount);
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+});
+
+describe("when the embedded creator host owns the account", () => {
+  const switchAccount = vi.fn();
+
+  beforeEach(() => {
+    switchAccount.mockReset();
+    render(
+      <Host pathname="/create/home" auth={{
+        ...baseAuth, signedIn: true, account: "0xA", name: "Ada", onSwitchAccount: switchAccount,
+      }} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Account: Ada" }));
+  });
+
+  it("should keep the host switch action available", () => {
+    expect(screen.queryByRole("button", { name: "Logout" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Switch account" }));
+    expect(switchAccount).toHaveBeenCalledOnce();
+  });
+});
+
 it("restores the actual bell opener after pointer activation and dialog dismissal", async () => {
   render(
     <Host
@@ -341,9 +576,23 @@ it("restores the actual bell opener after pointer activation and dialog dismissa
   );
   const bell = screen.getByRole("button", { name: "Notifications" });
   fireEvent.click(bell);
-  await screen.findByText("No notifications yet");
+  await screen.findByText("No Notifications Yet");
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
   expect(document.activeElement).toBe(bell);
+});
+
+it("shows standalone artwork for a community event and a badged thumbnail for a sale", async () => {
+  const fetchNotifications = vi.fn().mockResolvedValue({ notifications: ["events_started", "item_sold"].map(type => ({
+    id: type, type, timestamp: Date.now(), metadata: { title: type, image: "https://example.org/item.png" }
+  })) });
+  render(<Host auth={{ ...baseAuth, signedIn: true, account: "0xa", fetchNotifications }} />);
+  fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
+  const event = (await screen.findByText("events_started")).closest("li")!;
+  const sale = screen.getByText("item_sold").closest("li")!;
+  expect(event.querySelectorAll("img")).toHaveLength(1);
+  expect(event.querySelector("img")?.getAttribute("src")).not.toBe("https://example.org/item.png");
+  expect(sale.querySelectorAll("img")).toHaveLength(2);
+  expect(sale.querySelector("img")?.getAttribute("src")).toBe("https://example.org/item.png");
 });
 
 it("keeps cached notifications alongside a background refresh error", async () => {
@@ -429,7 +678,7 @@ describe("when Home notifications are opened", () => {
     const bell = screen.getByRole("button", { name: "Notifications" });
     fireEvent.click(bell);
     const panel = screen.getByRole("dialog", { name: "Notifications" });
-    await screen.findByText("No notifications yet");
+    await screen.findByText("No Notifications Yet");
     const close = within(panel).getByRole("button", { name: "Close" });
     close.focus();
     fireEvent.keyDown(close, { key: "Escape" });

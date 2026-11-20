@@ -19,6 +19,11 @@ export type RailContext = {
   fetchImpl?: typeof fetch;
   /** Relayed rails on (the default) or off. */
   gasless?: boolean;
+  /**
+   * A MANA sale only through the relay, never sent from the wallet instead: the in-world Shop's, so a sale whose
+   * answer is lost can be retried with the same meta-transaction nonce and land at most once.
+   */
+  relayOnly?: boolean;
   /** Receipt/nonce wait tuning, for tests. */
   wait?: { timeoutMs?: number; pollMs?: number; now?: () => number; sleep?: (ms: number) => Promise<void> };
 };

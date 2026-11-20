@@ -11,7 +11,7 @@ import {
 const root = new URL("../../../../../../", import.meta.url);
 const css = [
   "apps/ui3/src/components/site-navigation.css",
-  "library/ui/components/chrome/SiteLayout.module.css",
+  "library/ui/components/AppChrome/SiteLayout.module.css",
   "apps/ui3/src/shop/discovery/frames/shoptheme.css",
   "apps/ui3/src/social/social-page.css",
 ]

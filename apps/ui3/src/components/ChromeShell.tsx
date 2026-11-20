@@ -1,9 +1,9 @@
 import { useId, type ReactNode } from "react";
 import DappFooter from "./DappFooter";
-import type { ChromeNavigate } from "@dcl/one-ui/components/chrome/chrome-nav";
-import ChromeLink from "@dcl/one-ui/components/chrome/ChromeLink";
+import type { ChromeNavigate } from "@dcl/one-ui/components/AppChrome/chrome-nav";
+import ChromeLink from "@dcl/one-ui/components/AppChrome/ChromeLink";
 import DclTopBar from "../web/frames/DclTopBar";
-import SiteLayout from "@dcl/one-ui/components/chrome/SiteLayout";
+import SiteLayout from "@dcl/one-ui/components/AppChrome/SiteLayout";
 import SiteSectionNavigation from "../web/frames/SiteSectionNavigation";
 import "./chromeshell.css";
 

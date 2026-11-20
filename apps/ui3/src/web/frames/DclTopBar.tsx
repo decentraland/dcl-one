@@ -17,14 +17,14 @@ import {
   relativeTime,
   type Notification,
 } from "@web-core/notifications/notificationsView";
-import { useChromeAuth } from "@dcl/one-ui/components/chrome/chrome-auth";
-import { useChromeNav, type ChromeTopBarProps } from "@dcl/one-ui/components/chrome/chrome-nav";
-import ChromeLink from "@dcl/one-ui/components/chrome/ChromeLink";
+import { useChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
+import { useChromeNav, type ChromeTopBarProps } from "@dcl/one-ui/components/AppChrome/chrome-nav";
+import ChromeLink from "@dcl/one-ui/components/AppChrome/ChromeLink";
 import AccountMenu from "./AccountMenu";
 import "../../atoms/maskicon.css";
 import "../../components/site-navigation.css";
 import "./dcltopbar.css";
-import { useSiteLayout } from "@dcl/one-ui/components/chrome/SiteLayout";
+import { useSiteLayout } from "@dcl/one-ui/components/AppChrome/SiteLayout";
 import { getAvatarBackgroundColor, getDisplayName } from "@web-core/profile/avatarColor";
 
 

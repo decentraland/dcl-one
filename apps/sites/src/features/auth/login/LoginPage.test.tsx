@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -307,6 +308,51 @@ describe("the sign-in page", () => {
     expect(auth.verifyEmailSignIn).toHaveBeenCalledWith("jane.doe@example.com", "123456", { expirationMs: 30 * 86_400_000, rethrow: true });
     expect(localStorage.getItem("dcl_thirdweb_user_email")).toBe("jane.doe@example.com");
     expect(assign).toHaveBeenCalledWith("/shop/items?sortBy=newest");
+  });
+
+  it("keeps NEXT busy and disabled while the code is being sent, on a form submit too", async () => {
+    let sent!: () => void;
+    auth.startEmailSignIn.mockImplementationOnce(() => new Promise<void>((resolve) => { sent = resolve; }));
+    page();
+    const input = screen.getByPlaceholderText("Enter Your Email");
+    fireEvent.change(input, { target: { value: "jane.doe@example.com" } });
+    await act(async () => {
+      fireEvent.submit(input.closest("form")!);
+    });
+    const next = screen.getByRole("button", { name: "NEXT" }) as HTMLButtonElement;
+    expect(next.type).toBe("submit");
+    expect(next.disabled).toBe(true);
+    expect(next.getAttribute("aria-busy")).toBe("true");
+    await act(async () => {
+      sent();
+    });
+  });
+
+  it("sends the code once when NEXT is clicked, and a second click while it sends does nothing", async () => {
+    let sent!: () => void;
+    auth.startEmailSignIn.mockImplementationOnce(() => new Promise<void>((resolve) => { sent = resolve; }));
+    const user = userEvent.setup();
+    page();
+    await user.type(screen.getByPlaceholderText("Enter Your Email"), "jane.doe@example.com");
+
+    await user.click(screen.getByRole("button", { name: "NEXT" }));
+    await user.click(screen.getByRole("button", { name: "NEXT" }));
+
+    expect(auth.startEmailSignIn).toHaveBeenCalledTimes(1);
+    expect(auth.startEmailSignIn).toHaveBeenCalledWith("jane.doe@example.com");
+    await act(async () => {
+      sent();
+    });
+  });
+
+  it("sends the code when Enter is pressed in the email input", async () => {
+    const user = userEvent.setup();
+    page();
+
+    await user.type(screen.getByPlaceholderText("Enter Your Email"), "jane.doe@example.com{Enter}");
+
+    expect(auth.startEmailSignIn).toHaveBeenCalledTimes(1);
+    expect(auth.startEmailSignIn).toHaveBeenCalledWith("jane.doe@example.com");
   });
 
   it("keeps the code modal open with upstream's message when the code does not verify", async () => {

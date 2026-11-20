@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ChromeAuthContext } from "@dcl/one-ui/components/chrome/chrome-auth";
+import { ChromeAuthContext } from "@dcl/one-ui/components/AppChrome/chrome-auth";
 import { createShopClient } from "@shop/api/shop";
 import { CREDITS_BALANCE_QUERY_KEY } from "@shop/credits/balance-query";
 import { sitesShopClient } from "@/data/lib/auth/shop-client";

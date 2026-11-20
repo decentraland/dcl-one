@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
-import ChromeLink from "@dcl/one-ui/components/chrome/ChromeLink";
+import ChromeLink from "@dcl/one-ui/components/AppChrome/ChromeLink";
 import "./eventdetail.css";
 
 type EventData = {

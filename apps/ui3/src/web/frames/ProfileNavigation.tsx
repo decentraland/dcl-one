@@ -1,7 +1,7 @@
 import { useContext } from "react";
-import ChromeLink from "@dcl/one-ui/components/chrome/ChromeLink";
+import ChromeLink from "@dcl/one-ui/components/AppChrome/ChromeLink";
 import "./profilenavigation.css";
-import { useSiteLayout } from "@dcl/one-ui/components/chrome/SiteLayout";
+import { useSiteLayout } from "@dcl/one-ui/components/AppChrome/SiteLayout";
 
 import { ProfileNavigationContext, type ProfileNavigationProps } from "@dcl/one-ui/apps/sites/chrome/profile-navigation";
 

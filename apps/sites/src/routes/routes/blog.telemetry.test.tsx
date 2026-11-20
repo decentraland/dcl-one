@@ -20,8 +20,8 @@ const track = vi.hoisted(() => vi.fn());
 vi.mock("@/core/lib/telemetry/track", () => ({ track }));
 vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children?: ReactNode }) => <>{children}</> }));
 
-import { BlogIndexView } from "@/features/blog/BlogIndexView";
-import { BlogPostView } from "@/features/blog/BlogPostView";
+import { BlogIndexView } from "@/pages/blog/BlogIndexView";
+import { BlogPostView } from "@/pages/blog/BlogPostView";
 import { installFakeCms } from "@/data/lib/blog/cms.test-utils";
 import { loadBlogAuthor, loadBlogCategory, loadBlogHome, loadBlogPost, loadBlogSearch, type BlogOutcome } from "@/data/lib/blog/pages";
 

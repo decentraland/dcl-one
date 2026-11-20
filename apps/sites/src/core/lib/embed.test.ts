@@ -46,10 +46,10 @@ describe("embed scope", () => {
 
   it("takes a host's own scope instead: the Explorer's Create panel keeps /create and lets the shop go", () => {
     const scope = ["/create"];
-    expect(isEmbedScopePath("/create/scenes", scope)).toBe(true);
+    expect(isEmbedScopePath("/create/preview", scope)).toBe(true);
     expect(embedEscapeHref("/create", "?creator=0xabc", "", scope)).toBeNull();
     expect(embedEscapeHref("/shop", "", "", scope)).toBe("/shop");
-    expect(embedLinkDisposition("/create/publish", ORIGIN, scope)).toBe("frame");
+    expect(embedLinkDisposition("/create/preview", ORIGIN, scope)).toBe("frame");
     expect(embedLinkDisposition("/marketplace", ORIGIN, scope)).toBe("top");
   });
 });
@@ -141,13 +141,13 @@ describe("installEmbedLinkGuard", () => {
   it("hands every link leaving a host's scope to the host, Explorer deep links included", () => {
     const host = vi.fn();
     uninstall = installEmbedLinkGuard(guardedWindow(), { scope: ["/create"], open: host });
-    expect(click(anchor("https://example.org/create/scenes").a).prevented).toBe(false);
+    expect(click(anchor("https://example.org/create/preview").a).prevented).toBe(false);
     expect(click(anchor("https://example.org/play/?position=1,2").a).prevented).toBe(true);
     expect(click(anchor("https://opensea.io/x").a).prevented).toBe(true);
     expect(click(anchor("decentraland://realm=main&position=3,4").a).prevented).toBe(true);
     expect(click(anchor("mailto:hi@example.org").a).prevented).toBe(false);
     expect(click(anchor("https://example.org/play?realm=boedo.dcl.eth", { target: "_blank" }).a).prevented).toBe(true);
-    expect(click(anchor("https://example.org/create/scenes", { target: "_blank" }).a).prevented).toBe(false);
+    expect(click(anchor("https://example.org/create/preview", { target: "_blank" }).a).prevented).toBe(false);
     expect(host.mock.calls.map(([url]) => url)).toEqual([
       "https://example.org/play/?position=1,2",
       "https://opensea.io/x",

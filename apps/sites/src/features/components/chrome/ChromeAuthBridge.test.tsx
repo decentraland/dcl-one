@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { expect, it, vi } from "vitest";
 import { renderToString } from "react-dom/server";
 
-import { useChromeAuth, type ChromeAuth } from "@dcl/one-ui/components/chrome/chrome-auth";
+import { useChromeAuth, type ChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
 
 import ChromeAuthBridge from "./ChromeAuthBridge";
 

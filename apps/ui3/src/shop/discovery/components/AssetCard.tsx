@@ -15,7 +15,7 @@ import { parseEvmAddress, shortAddress } from "@shop/model/address";
 import { useShopWallet } from "../../wallet/context";
 import { formatMana } from "@shop/model/money";
 import { cardPrice, type CardPrice } from "@shop/discovery/cardPrice";
-import { useCreatorProfile, useSaleActive } from "../hooks";
+import { useAfterHydration, useCreatorProfile, useSaleActive } from "../hooks";
 import { t } from "@shop/discovery/intl";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { genderIcon } from "../lib/itemIcons";
@@ -30,6 +30,7 @@ import PriceTag, { formatCredits, formatCreditsFull } from "./PriceTag";
 import SaleTag from "./SaleTag";
 import { useShopQuery } from "../query";
 import { publicThumbnail, publicThumbnailSet, useThumbnailPublicBase } from "../../../data/thumbnail";
+import { sameOriginContentUrl } from "../../../data/catalyst/profile";
 import coin from "./assets/credits-coin.svg?url";
 import "./assetcard.css";
 
@@ -114,10 +115,15 @@ function CardFav({ item }: { item: CatalogItem }) {
   );
 }
 
-// Held blank while the profile loads, so a fresh grid does not flash every creator's address first. Upstream
-// shows the name with no "By"; a screen reader still hears it.
-export function CardCreator({ address, name }: { address: string; name?: string | null }) {
-  const { profile, loading } = useCreatorProfile(address);
+// Held blank while the profile loads, so a fresh grid does not flash every creator's address first; a feed that
+// carries the profile paints it at once and asks for none (its face after hydration: the same-origin face URL is
+// the browser's). Upstream shows the name with no "By"; a screen reader still hears it.
+export function CardCreator({ address, name, carried }: { address: string; name?: string | null; carried?: CatalogItem["creatorProfile"] }) {
+  const asked = useCreatorProfile(carried ? null : address);
+  const hydrated = useAfterHydration();
+  const { profile, loading } = carried
+    ? { profile: { name: carried.name, picture: hydrated && carried.face ? sameOriginContentUrl(carried.face) : null }, loading: false }
+    : asked;
   const [broken, setBroken] = useState(false);
   const face = profile?.picture ?? null;
   useEffect(() => setBroken(false), [face]);
@@ -254,7 +260,7 @@ export default function AssetCard({ item, mode = "shop", source = "grid", positi
               </div>
             ) : item.creator ? (
               <div className="shop-card__creator" data-testid="card-author">
-                <CardCreator address={item.creator} name={creatorName} />
+                <CardCreator address={item.creator} name={creatorName} carried={item.creatorProfile} />
               </div>
             ) : (
               <div className="shop-card__sub">&nbsp;</div>

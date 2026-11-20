@@ -8,8 +8,10 @@ import type { DownloadOption, OsKey } from "@/data/lib/download/creator-hub.serv
 import { detectMacChip, isTouchMac, preferChip } from "@/data/lib/download/mac-chip";
 import { track } from "@/core/lib/telemetry/track";
 
+import { SubNav } from "../creators/components/SubNav";
 import { CREATOR_HUB_DOWNLOAD_STORY, useCreatorHubDownloadClick } from "./creator-hub-click";
-import OtherBuilds, { downloadFor, OsIcon } from "./OtherBuilds";
+import CreatorHubDownload from "./CreatorHubDownload";
+import CreatorHubElsewhere from "./CreatorHubElsewhere";
 import styles from "./CreatorHubDownloadPage.module.css";
 
 const copy = { title: "Decentraland Creator Hub" };
@@ -23,7 +25,7 @@ type Props = {
   macChipUnknown: boolean;
   detectedOs: OsKey;
   detectedArch: string;
-  /** None on phones, tablets and Linux, which then see the title and banner only. */
+  /** None on phones, tablets and Linux, which then get the docs and a link to send to a computer. */
   primary: DownloadOption | null;
   secondary: DownloadOption[];
 };
@@ -61,27 +63,20 @@ export default function CreatorHubDownloadPage({
 
   const main = offered.primary;
   return (
-    <SitesLayout active="none" overlayNav>
+    <SitesLayout active="create">
+      <SubNav />
       <main className={styles.root} data-os={main?.osKey} data-arch={main?.arch} data-version={version}>
         <div className={styles.card}>
           <div className={styles.info}>
             <img className={styles.logo} src={logo} alt="Decentraland" width="20" height="20" />
             <h1 className={styles.title}>{copy.title}</h1>
 
-            {main && (
+            {main ? (
               <div className={styles.actions}>
-                <a
-                  className={styles.cta}
-                  href={main.url}
-                  data-os={main.osKey}
-                  data-arch={main.arch}
-                  onClick={(event) => onDownload(main, "primary", event)}
-                >
-                  <span className={styles.ctaLabel}>{downloadFor(main)}</span>
-                  <OsIcon os={main.osKey} className={styles.btnIcon} />
-                </a>
-                <OtherBuilds options={offered.others} onDownload={(option, event) => onDownload(option, "secondary", event)} />
+                <CreatorHubDownload primary={main} others={offered.others} onDownload={onDownload} />
               </div>
+            ) : (
+              <CreatorHubElsewhere sid={sid} />
             )}
           </div>
 

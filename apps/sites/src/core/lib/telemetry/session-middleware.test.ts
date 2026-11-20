@@ -75,7 +75,7 @@ function app(seen: Seen) {
           throw new Error("boom");
         },
       }),
-      // A resource route with a publicly cacheable reply, like internal/dapps-flags.
+      // A resource route with a publicly cacheable reply, like internal/feature-flags.
       "routes/asset": route("routes/asset", "root", "asset", {
         default: undefined,
         loader: () => Response.json({ ok: true }, { headers: { "Cache-Control": "public, max-age=60" } }),

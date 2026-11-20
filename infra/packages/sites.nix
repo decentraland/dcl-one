@@ -23,7 +23,7 @@ let
     pnpm = pnpm';
     src = depsSrc;
     fetcherVersion = 4;
-    hash = "sha256-7Pa+AKdJfVnUK5PaZz5E/V7Cz+g6W7o5A/Bc4R7Dp8Y=";
+    hash = "sha256-RLpBnTbtZwL9R6fc+bnOlVOwZC4InF9ATdj+NPLyV74=";
   };
   runtimeDeps = stdenv.mkDerivation {
     pname = "foundation-sites-runtime-deps";
@@ -55,9 +55,9 @@ let
       (sites + /src) (sites + /scripts)
       (sites + /package.json) (sites + /pnpm-lock.yaml) (sites + /pnpm-workspace.yaml)
       (sites + /vite.config.ts) (sites + /react-router.config.ts) (sites + /tsconfig.json)
-      (ui + /src) (ui + /public)
-      (ui + /package.json)
-      (root + /library/catalyst-api) (root + /library/shop) (root + /library/web-core)
+      (ui + /src) (ui + /public) (ui + /scripts/gen-error-pages.mts)
+      (ui + /vite.validate.js) (ui + /package.json)
+      (root + /library/catalyst-api) (root + /library/shop) (root + /library/hashing/src) (root + /library/web-core)
       (root + /library/ui/index.ts)
       (root + /library/ui/css-modules.d.ts)
       (root + /library/ui/content.helpers.ts)

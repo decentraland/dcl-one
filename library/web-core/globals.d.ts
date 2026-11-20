@@ -10,6 +10,7 @@ interface Window {
 // Vite's build-time environment, when the host bundles with Vite.
 interface ImportMeta {
   readonly env?: {
+    readonly DEV?: boolean;
     readonly VITE_DCL_WALLETCONNECT_PROJECT_ID?: string;
     readonly VITE_SHOP_API_MODE?: string;
     readonly VITE_SHOP_CHAIN_ID?: string;

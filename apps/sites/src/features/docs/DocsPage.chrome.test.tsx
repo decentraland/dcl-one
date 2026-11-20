@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToString } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
-import { ChromeNavContext } from "@dcl/one-ui/components/chrome/chrome-nav";
+import { ChromeNavContext } from "@dcl/one-ui/components/AppChrome/chrome-nav";
 import type { DocsPageView } from "@/data/lib/docs/types";
 import DocsPage from "./DocsPage";
 const space = {

@@ -8,6 +8,11 @@ use clap::Args;
 pub struct ContentConfig {
     /// Comma-separated peer content URLs (`https://host/content`). Plaintext
     /// http:// is accepted for loopback hosts only. Empty: no sync configured.
+    /// Sync, read-through and their retries dial a host at private addresses
+    /// only when it is named here (or in WORLDS_CONTENT_MIRROR_SOURCE with the
+    /// read-through on, or ETH_RPC_URL with SYNC_FROM_DAO on), and never
+    /// through a proxy: list a peer that is private or behind split-horizon
+    /// DNS here. A redirect to another origin must reach a public host.
     #[arg(long, env = "SYNC_SOURCE", default_value = "http://127.0.0.1:5140")]
     pub sync_source: String,
 
@@ -457,6 +462,7 @@ pub struct ValidatorConfig {
     pub third_party_registry_l2_subgraph_url: Option<String>,
 
     /// Skip the chain-derived access checks of local deploys (LAND, names, items, collections, third party); the pointer-ownership rule still runs.
+    /// Also lets `WORLDS_WRITES_ENABLED=true` start without `MARKETPLACE_SUBGRAPH_URL`, with personal worlds only.
     #[arg(long, env = "IGNORE_BLOCKCHAIN_ACCESS_CHECKS", default_value_t = false, action = clap::ArgAction::Set)]
     pub ignore_blockchain_access_checks: bool,
 

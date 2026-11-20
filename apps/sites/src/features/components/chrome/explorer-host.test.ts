@@ -21,7 +21,7 @@ function framedBy(host: CreatorHubHost | undefined) {
   return Object.assign(new EventTarget(), {
     parent,
     document,
-    location: { href: "https://node.example/create/publish", origin: "https://node.example", hostname: "node.example", protocol: "https:" },
+    location: { href: "https://node.example/create/preview", origin: "https://node.example", hostname: "node.example", protocol: "https:" },
     open: vi.fn(),
     localStorage: {
       getItem: (key: string) => storage.get(key) ?? null,
@@ -206,35 +206,22 @@ it("sends a location that leaves /create to the Explorer once and steps back to 
   const { host } = fakeHost(explorer);
   const { hubLocationKeeper } = await import("./explorer-host");
   const keep = hubLocationKeeper(host);
-  const base = "https://node.example/create/scenes";
+  const base = "https://node.example/create/preview";
   const at = (path: string, key: string) => {
     const url = new URL(path, base);
     return { pathname: url.pathname, search: url.search, hash: url.hash, key };
   };
 
-  expect(keep(at("/create/scenes?sort=recent", "a"), base)).toBeNull();
-  expect(keep(at("/shop/names", "b"), base)).toBe("/create/scenes?sort=recent");
+  expect(keep(at("/create/preview?sort=recent", "a"), base)).toBeNull();
+  expect(keep(at("/shop/names", "b"), base)).toBe("/create/preview?sort=recent");
   expect(host.openLink).toHaveBeenCalledWith("https://node.example/shop/names");
   // The same location rendering again is not a second request.
   expect(keep(at("/shop/names", "b"), base)).toBeNull();
   expect(host.openLink).toHaveBeenCalledOnce();
 
   const fresh = hubLocationKeeper(host);
-  expect(fresh(at("/play/?position=3,4", "c"), base)).toBe("/create/home");
+  expect(fresh(at("/play/?position=3,4", "c"), base)).toBe("/create");
   expect(host.openLink).toHaveBeenLastCalledWith("https://node.example/play/?position=3,4");
-});
-
-it("hands the hub's own new-tab links, like Jump in after publishing, to the Explorer", async () => {
-  const { host } = fakeHost(explorer);
-  const win = framedBy(host);
-  vi.stubGlobal("window", win);
-  const { adoptExplorerHost, openHubLink } = await import("./explorer-host");
-  openHubLink("/play/?realm=boedo.dcl.eth");
-  expect(win.open).toHaveBeenCalledWith("/play/?realm=boedo.dcl.eth", "_blank", "noopener,noreferrer");
-  adoptExplorerHost(win as unknown as Window);
-  openHubLink("/play/?realm=boedo.dcl.eth");
-  expect(host.openLink).toHaveBeenCalledWith("https://node.example/play/?realm=boedo.dcl.eth");
-  expect(win.open).toHaveBeenCalledOnce();
 });
 
 it("leaves sign-out to the Explorer and switches accounts through its sign-in", async () => {

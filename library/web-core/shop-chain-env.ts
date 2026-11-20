@@ -1,7 +1,8 @@
-type ShopChainWindow = Window & {
-  __SHOP_CHAIN__?: { settlementChainId?: number; ethereumChainId?: number };
-  __SHOP_ETHEREUM_CHAIN_ID__?: number;
-};
+/** Test and development hosts can override Shop configuration from the page. */
+export function pageOverride<T>(name: string): T | undefined {
+  if (import.meta.env?.DEV !== true || typeof window === "undefined") return undefined;
+  return (window as unknown as Record<string, T | undefined>)[name];
+}
 
 export function parseShopChainId(value: string | undefined): number | undefined {
   const id = Number(value);
@@ -9,10 +10,11 @@ export function parseShopChainId(value: string | undefined): number | undefined 
 }
 
 export function shopChainEnvironment() {
-  const host = typeof window !== "undefined" ? (window as ShopChainWindow) : undefined;
+  const chains = pageOverride<{ settlementChainId?: number; ethereumChainId?: number }>("__SHOP_CHAIN__");
+  const landChain = pageOverride<unknown>("__SHOP_ETHEREUM_CHAIN_ID__");
   return {
-    settlementChainId: host?.__SHOP_CHAIN__?.settlementChainId ?? parseShopChainId(import.meta.env?.VITE_SHOP_CHAIN_ID),
-    ethereumChainId: host?.__SHOP_CHAIN__?.ethereumChainId ?? parseShopChainId(import.meta.env?.VITE_SHOP_ETHEREUM_CHAIN_ID),
-    landChainId: host?.__SHOP_ETHEREUM_CHAIN_ID__,
+    settlementChainId: chains?.settlementChainId ?? parseShopChainId(import.meta.env?.VITE_SHOP_CHAIN_ID),
+    ethereumChainId: chains?.ethereumChainId ?? parseShopChainId(import.meta.env?.VITE_SHOP_ETHEREUM_CHAIN_ID),
+    landChainId: typeof landChain === "number" ? landChain : undefined,
   };
 }

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 import { installHostSignIn, openSignIn } from "./signin-store";
 
@@ -42,5 +42,46 @@ describe("when a visitor requests sign-in", () => {
     (window as { __DCL_SHELL__?: unknown }).__DCL_SHELL__ = { shell: "tauri" };
     openSignIn({ redirectTo: "/create/storage?step=edit" });
     expect(assign).toHaveBeenCalledWith("/auth/login?redirectTo=%2Fcreate%2Fstorage%3Fstep%3Dedit");
+  });
+});
+
+describe("when listening for browser sign-in", () => {
+  let store: typeof import("./signin-store");
+  let listener: Mock<(returnTo: string) => void>;
+  let unsubscribe: () => void;
+
+  beforeEach(async () => {
+    store = await import("./signin-store");
+    listener = vi.fn<(returnTo: string) => void>();
+    unsubscribe = store.onBeforeBrowserSignIn(listener);
+  });
+
+  afterEach(() => {
+    unsubscribe();
+  });
+
+  it("should pass the return path until the listener unsubscribes", () => {
+    store.openSignIn({ redirectTo: "/report#evidence" });
+    expect(listener).toHaveBeenCalledExactlyOnceWith("/report#evidence");
+    unsubscribe();
+    store.openSignIn({ redirectTo: "/report" });
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("should skip notifications for host sign-in", () => {
+    const uninstall = store.installHostSignIn(vi.fn());
+    store.openSignIn();
+    uninstall();
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("should keep the page when a listener declines the navigation", () => {
+    const allow = store.onBeforeBrowserSignIn(() => false);
+    try {
+      store.openSignIn();
+      expect(assign).not.toHaveBeenCalled();
+    } finally {
+      allow();
+    }
   });
 });

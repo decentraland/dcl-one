@@ -58,8 +58,7 @@ export default function ExFlowMapPage({ LinkComponent = undefined }: ExFlowMapPa
             per-file fetch (log-only); imposter states surface only behind{" "}
             <code>/debug_imposters</code>.
             Deliberately excluded: the engine page's dev launcher form and <code>?preview</code>{" "}
-            editor mode. Sibling map:{" "}
-            <a href="/create/map">the Creator Hub</a>.
+            editor mode.
           </>
         ),
       }}

@@ -2,6 +2,8 @@ import { useSyncExternalStore } from "react";
 
 import { olderCopy, readCopy, type CopyStamp } from "@web-core/freshness/copyAsOf";
 
+export { olderCopy, readCopy, type CopyStamp } from "@web-core/freshness/copyAsOf";
+
 export type CopyDomain = "places" | "worlds" | "events" | "communities";
 
 const stamps = new Map<CopyDomain, CopyStamp | null>();

@@ -36,12 +36,6 @@ const en = {
     goTo: "Go to slide",
     position: "Slide {current} of {total}",
   },
-  account: {
-    userId: "User ID",
-    copyUserId: "Copy user ID",
-    userIdCopied: "User ID copied",
-    copyUserIdError: "Could not copy user ID",
-  },
   download: {
     forPlatform: "DOWNLOAD FOR",
     onStore: "DOWNLOAD ON",
@@ -88,12 +82,6 @@ export const homeCopy = {
       goTo: "Ir a la diapositiva",
       position: "Diapositiva {current} de {total}",
     },
-    account: {
-      userId: "ID de usuario",
-      copyUserId: "Copiar ID de usuario",
-      userIdCopied: "ID de usuario copiado",
-      copyUserIdError: "No se pudo copiar el ID de usuario",
-    },
     download: {
       forPlatform: "DOWNLOAD FOR",
       onStore: "DOWNLOAD ON",
@@ -134,12 +122,6 @@ export const homeCopy = {
       next: "Diapositive suivante",
       goTo: "Aller à la diapositive",
       position: "Diapositive {current} sur {total}",
-    },
-    account: {
-      userId: "Identifiant utilisateur",
-      copyUserId: "Copier l’identifiant utilisateur",
-      userIdCopied: "Identifiant utilisateur copié",
-      copyUserIdError: "Impossible de copier l’identifiant utilisateur",
     },
     download: {
       forPlatform: "DOWNLOAD FOR",
@@ -182,12 +164,6 @@ export const homeCopy = {
       goTo: "前往幻灯片",
       position: "第 {current} 张，共 {total} 张",
     },
-    account: {
-      userId: "用户 ID",
-      copyUserId: "复制用户 ID",
-      userIdCopied: "已复制用户 ID",
-      copyUserIdError: "无法复制用户 ID",
-    },
     download: {
       forPlatform: "DOWNLOAD FOR",
       onStore: "DOWNLOAD ON",
@@ -229,12 +205,6 @@ export const homeCopy = {
       goTo: "슬라이드로 이동",
       position: "슬라이드 {current}/{total}",
     },
-    account: {
-      userId: "사용자 ID",
-      copyUserId: "사용자 ID 복사",
-      userIdCopied: "사용자 ID를 복사했습니다",
-      copyUserIdError: "사용자 ID를 복사할 수 없습니다",
-    },
     download: {
       forPlatform: "DOWNLOAD FOR",
       onStore: "DOWNLOAD ON",
@@ -275,12 +245,6 @@ export const homeCopy = {
       next: "次のスライド",
       goTo: "スライドへ移動",
       position: "全 {total} 枚中 {current} 枚目",
-    },
-    account: {
-      userId: "ユーザーID",
-      copyUserId: "ユーザーIDをコピー",
-      userIdCopied: "ユーザーIDをコピーしました",
-      copyUserIdError: "ユーザーIDをコピーできませんでした",
     },
     download: {
       forPlatform: "DOWNLOAD FOR",

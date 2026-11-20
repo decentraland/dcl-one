@@ -3,7 +3,7 @@ import {
   chromeLinkProps,
   useChromeNav,
   type ChromeNavigate
-} from '../../../components/chrome/chrome-nav'
+} from '../../../components/AppChrome/chrome-nav'
 import wordmark from '../assets/dcl_name.svg'
 import { sitesFooterCopy, type SitesFooterCopy } from './footer-copy'
 import {

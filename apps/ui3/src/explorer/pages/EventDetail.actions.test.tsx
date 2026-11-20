@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EventDetail from "./EventDetail";
-import { ChromeNavContext, type ChromeNavigate } from "@dcl/one-ui/components/chrome/chrome-nav";
+import { ChromeNavContext, type ChromeNavigate } from "@dcl/one-ui/components/AppChrome/chrome-nav";
 
 describe("when a web event links to the RSVP flow", () => {
   let downloads: string[];

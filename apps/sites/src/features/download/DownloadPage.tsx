@@ -4,7 +4,7 @@ import { Button } from "@dcl/one-ui";
 import logo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url";
 import googlePlayBadge from "@dcl/one-ui/apps/sites/assets/google_play_cta.svg?url";
 import { VerifiedIcon } from "@dcl/one-ui/apps/sites/download/VerifiedIcon";
-import { useChromeAuth } from "@dcl/one-ui/components/chrome/chrome-auth";
+import { useChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
 import SitesLayout from "../components/chrome/SitesLayout";
 
 import { successHref, type Installer } from "@/data/lib/download/installers";

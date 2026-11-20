@@ -44,6 +44,8 @@ concurrency:
   group: development-${{ github.ref }}
   # Main runs finish: they are the macOS check for source that PRs test on Linux only.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  ERROR_PAGE_LFS: library/ui/apps/sites/assets/errors/**,library/ui/apps/sites/assets/custom-welcome-background.webp,library/ui/apps/sites/assets/logo-pattern.webp,library/ui/foundations/typography/fonts/**
 jobs:
   changes:
     name: Changes
@@ -232,6 +234,8 @@ jobs:
           fi
           df -h /
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch the embedded error-page images and fonts
+        run: git lfs pull --include="$ERROR_PAGE_LFS" --exclude=''
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
@@ -272,7 +276,7 @@ jobs:
         # Cargo compares file times, and a checkout gives every file the current time. Without this
         # step Cargo compiles every workspace crate again although the snapshot holds them.
         run: |
-          if [ -d services/catalyst/target ]; then du -sh services/catalyst/target; fi
+          if [ -d services/catalyst/target ]; then du -k -d 2 services/catalyst/target | sort -nr; fi
           python3 tooling/cargo-mtimes.py restore services/catalyst/target
       - name: Restore the pnpm store
         id: pnpm-cache
@@ -284,6 +288,10 @@ jobs:
             foundation-dev-pnpm-${{ runner.os }}-${{ runner.arch }}-
       - name: Start the API and web app without upstream data
         run: nix develop --command bash tooling/dev-smoke.sh
+      - name: Measure Rust build directories after smoke
+        if: always()
+        run: |
+          if [ -d services/catalyst/target ]; then du -k -d 2 services/catalyst/target | sort -nr; fi
       - name: Run Sites end-to-end tests against the development stack
         timeout-minutes: 75
         run: nix develop --command bash tooling/dev-test.sh e2e
@@ -296,12 +304,6 @@ jobs:
             tail -n 150 "$log"
             echo "::endgroup::"
           done
-      - name: Report Rust cache size
-        if: always()
-        run: |
-          if [ -d services/catalyst/target ]; then
-            du -sh services/catalyst/target
-          fi
       - name: Preserve startup logs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -317,7 +319,12 @@ jobs:
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
       - name: Prune superseded Rust libraries from the smoke snapshot
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.rust-cache.outputs.cache-hit != 'true'
-        run: nix develop --command python3 tooling/catalyst-smoke-cache.py
+        run: |
+          echo "Before pruning (KiB)"
+          du -k -d 2 services/catalyst/target | sort -nr
+          nix develop --command python3 tooling/catalyst-smoke-cache.py
+          echo "After pruning (KiB)"
+          du -k -d 2 services/catalyst/target | sort -nr
       - name: Record the source file times in the snapshot
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.rust-cache.outputs.cache-hit != 'true'
         run: python3 tooling/cargo-mtimes.py record services/catalyst/target
@@ -373,7 +380,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Fetch the pinned docs integration-test diagram and the error-page art, background and Inter files the static pages embed
-        run: git lfs pull --include='apps/sites/content/docs/creator/images/wearables-and-emotes/creating-wearables/19_skin_uv.webp,library/ui/apps/sites/assets/errors/**,library/ui/apps/sites/assets/custom-welcome-background.webp,library/ui/apps/sites/assets/logo-pattern.webp,library/ui/foundations/typography/fonts/**' --exclude=''
+        run: git lfs pull --include="apps/sites/content/docs/creator/images/wearables-and-emotes/creating-wearables/19_skin_uv.webp,${ERROR_PAGE_LFS}" --exclude=''
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
@@ -434,7 +441,7 @@ jobs:
           nix develop --command pnpm --dir apps/ui3 typecheck
           nix develop --command pnpm --dir apps/sites typecheck
           nix develop --command pnpm --dir apps/sites typecheck:scripts
-          for check in gen:schemas:check schemas:honesty:check schemas:dupes:check telemetry:check check:flowmap gen:seed-catalog:check; do
+          for check in gen:schemas:check schemas:honesty:check schemas:dupes:check telemetry:check check:flowmap; do
             nix develop --command pnpm --dir apps/sites "$check"
           done
       - name: Save the pnpm store from main

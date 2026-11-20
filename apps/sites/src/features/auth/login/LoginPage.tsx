@@ -10,6 +10,8 @@ import logo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url";
 import { DesktopLogin } from "@dcl/one-ui/apps/sites/auth/DesktopLogin";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 
+import { Button } from "@dcl/one-ui";
+
 import { useAuth } from "@/data/lib/auth/context";
 import { isIdentityExpired } from "@/data/lib/auth/expiry";
 import { beginShellBrowserSignIn, isDesktopShell } from "@/data/lib/auth/native-shell";
@@ -195,10 +197,9 @@ function EmailInput({ busy, error, onSubmit, onChange }: { busy: boolean; error:
           disabled={busy}
           autoComplete="email"
         />
-        <button type="submit" className={styles.next} data-busy={busy} disabled={busy || !valid} data-testid="email-submit-button">
-          <span>{t("email_input.next")}</span>
-          {busy ? <span className={styles.nextSpinner} aria-hidden="true" /> : null}
-        </button>
+        <Button type="submit" size="lg" loading={busy} disabled={busy || !valid} data-testid="email-submit-button">
+          {t("email_input.next")}
+        </Button>
       </div>
       {showInvalid ? <p className={styles.emailError}>{t("email_input.validation_error")}</p> : null}
       {error && !showInvalid ? (

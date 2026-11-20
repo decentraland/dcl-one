@@ -11,9 +11,10 @@ vi.hoisted(() => {
     $RefreshReg$: () => {},
   });
 });
-const communities = vi.hoisted(() => ({ fetch: vi.fn() }));
+const communities = vi.hoisted(() => ({ mine: vi.fn(), member: vi.fn() }));
 vi.mock("@/data/lib/catalyst/social/profile-communities", () => ({
-  fetchMyCommunities: communities.fetch,
+  fetchMyCommunities: communities.mine,
+  fetchMemberCommunities: communities.member,
 }));
 const photos = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("@/data/lib/catalyst/social/photos", () => ({ fetchUserPhotos: photos.fetch }));
@@ -21,9 +22,9 @@ vi.mock("@/data/lib/catalyst/social/photos", () => ({ fetchUserPhotos: photos.fe
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { profileKeys } from "@/data/lib/profile/queries";
 import {
-  useMyCommunities,
   useProfile,
   useProfileAssets,
+  useProfileCommunities,
   useProfileCreations,
   useProfilePhotos,
 } from "./hooks";
@@ -55,7 +56,8 @@ beforeEach(() => {
 afterEach(() => {
   client.clear();
   vi.unstubAllGlobals();
-  communities.fetch.mockReset();
+  communities.mine.mockReset();
+  communities.member.mockReset();
   photos.fetch.mockReset();
 });
 
@@ -125,40 +127,68 @@ describe("useProfileAssets", () => {
   });
 });
 
-describe("useMyCommunities", () => {
-  it("requests nothing without an identity", () => {
-    const { result } = renderHook(() => useMyCommunities(null), { wrapper });
+describe("useProfileCommunities", () => {
+  const OWNER = SIGNER.toLowerCase();
+  const row = (id: string) => ({ id, name: "Builders", role: "owner", membersCount: null, privacy: null, thumbnailUrl: null });
+  const page = (rows: unknown[]) => ({ communities: rows, total: rows.length });
+
+  it("requests nothing for a value that is not a wallet address", () => {
+    const { result } = renderHook(() => useProfileCommunities("alice", null), { wrapper });
 
     expect(result.current.fetchStatus).toBe("idle");
-    expect(communities.fetch).not.toHaveBeenCalled();
+    expect(communities.member).not.toHaveBeenCalled();
   });
 
-  it("requests nothing when the page is not the member's own", () => {
-    const { result } = renderHook(() => useMyCommunities(identity, false), { wrapper });
+  it("reads the public list of another member unsigned, also with a visitor's identity", async () => {
+    communities.member.mockResolvedValue(page([row("c1")]));
 
-    expect(result.current.fetchStatus).toBe("idle");
-    expect(communities.fetch).not.toHaveBeenCalled();
+    const { result } = renderHook(() => useProfileCommunities(ADDRESS, identity), { wrapper });
+
+    await waitFor(() => expect(result.current.data).toEqual(page([row("c1")])));
+    expect(communities.member).toHaveBeenCalledWith(ADDRESS, { signal: expect.any(AbortSignal) });
+    expect(communities.mine).not.toHaveBeenCalled();
+    expect(client.getQueryData(profileKeys.communities(ADDRESS))).toEqual(page([row("c1")]));
   });
 
-  it("caches the list under the signer's private prefix", async () => {
-    const row = { id: "c1", name: "Builders", membersCount: 3, role: "owner", thumb: null };
-    communities.fetch.mockResolvedValue([row]);
+  it("reads the member's own list signed and caches it under the signer's private prefix", async () => {
+    communities.mine.mockResolvedValue(page([row("c1")]));
 
-    const { result } = renderHook(() => useMyCommunities(identity), { wrapper });
+    const { result } = renderHook(() => useProfileCommunities(OWNER, identity), { wrapper });
 
-    await waitFor(() => expect(result.current.data).toEqual([row]));
-    expect(communities.fetch).toHaveBeenCalledWith(identity, { signal: expect.any(AbortSignal) });
-    const key = ["private", SIGNER.toLowerCase(), "profile", "communities"];
-    expect(client.getQueryData(key)).toEqual([row]);
+    await waitFor(() => expect(result.current.data).toEqual(page([row("c1")])));
+    expect(communities.mine).toHaveBeenCalledWith(identity, { signal: expect.any(AbortSignal) });
+    expect(communities.member).not.toHaveBeenCalled();
+    const key = ["private", OWNER, "profile", "communities"];
+    expect(client.getQueryData(key)).toEqual(page([row("c1")]));
 
-    client.removeQueries({ queryKey: ["private", SIGNER.toLowerCase()] });
+    client.removeQueries({ queryKey: ["private", OWNER] });
     expect(client.getQueryData(key)).toBeUndefined();
   });
 
-  it("reports a failed load as an error with no rows", async () => {
-    communities.fetch.mockRejectedValue(new Error("401"));
+  it("keeps the public list on screen while the signed one first loads, and drops private rows on sign-out", async () => {
+    communities.member.mockResolvedValue(page([row("public")]));
+    let settle: (value: unknown) => void = () => {};
+    communities.mine.mockReturnValue(new Promise((resolve) => (settle = resolve)));
 
-    const { result } = renderHook(() => useMyCommunities(identity), { wrapper });
+    const { result, rerender } = renderHook(({ who }: { who: AuthIdentity | null }) => useProfileCommunities(OWNER, who), {
+      wrapper,
+      initialProps: { who: null as AuthIdentity | null },
+    });
+    await waitFor(() => expect(result.current.data).toEqual(page([row("public")])));
+
+    rerender({ who: identity });
+    expect(result.current.data).toEqual(page([row("public")]));
+    settle(page([row("public"), row("private")]));
+    await waitFor(() => expect(result.current.data?.communities).toHaveLength(2));
+
+    rerender({ who: null });
+    expect(result.current.data).toEqual(page([row("public")]));
+  });
+
+  it("reports a failed load as an error with no rows", async () => {
+    communities.member.mockRejectedValue(new Error("503"));
+
+    const { result } = renderHook(() => useProfileCommunities(ADDRESS, null), { wrapper });
 
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.data).toBeUndefined();

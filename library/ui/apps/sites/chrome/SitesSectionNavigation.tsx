@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import ChromeLink from '../../../components/chrome/ChromeLink'
+import ChromeLink from '../../../components/AppChrome/ChromeLink'
 import styles from './SitesSectionNavigation.module.css'
 
 export type SitesSectionItem = { id: string; label: ReactNode; href?: string }

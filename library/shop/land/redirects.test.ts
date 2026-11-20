@@ -24,9 +24,9 @@ describe("old LAND URLs land on the pages that do the job", () => {
     expect(landRedirectTarget("assign-ens", `?contractAddress=${NET.estate.toUpperCase().replace("0X", "0x")}&tokenId=7`, CHAIN.ETHEREUM)).toBe(`/shop/token/${NET.estate}/7/manage`);
   });
 
-  it("without a LAND to name, the Builder URLs go to the Creator Hub's LAND list (Builder authority)", () => {
-    expect(landRedirectTarget("operator", "", CHAIN.ETHEREUM)).toBe("/create/land");
-    expect(landRedirectTarget("transfer", "?ref=mail", CHAIN.ETHEREUM)).toBe("/create/land?ref=mail");
+  it("without a LAND to name, the Builder URLs go to the account's assets", () => {
+    expect(landRedirectTarget("operator", "", CHAIN.ETHEREUM)).toBe("/profile/me/assets");
+    expect(landRedirectTarget("transfer", "?ref=mail", CHAIN.ETHEREUM)).toBe("/profile/me/assets?ref=mail");
   });
 
   it("reads every identity form, and nothing else", () => {

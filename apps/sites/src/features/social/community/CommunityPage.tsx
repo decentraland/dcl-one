@@ -12,7 +12,7 @@ import type { CommunityInfo } from "@/data/lib/catalyst/social/community-detail"
 import { communityQuery } from "@/data/lib/community/queries";
 
 import { useCreatorProfiles } from "../../events/useCreatorProfiles";
-import { useBrokenImage } from "../../profile/useBrokenImage";
+import { useBrokenImage } from "@dcl/one-ui/apps/sites/useBrokenImage";
 import { CommunityEvents } from "./CommunityEvents";
 import { CommunityMembers } from "./CommunityMembers";
 import styles from "./CommunityPage.module.css";
