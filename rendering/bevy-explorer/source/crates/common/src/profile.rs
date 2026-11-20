@@ -71,11 +71,12 @@ fn profile_version<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<
             Ok(version as i64)
         }
         _ => {
-            let shown = match &value {
-                serde_json::Value::Number(n) => n.to_string(),
-                _ => "that is not a number".to_owned(),
-            };
-            warn!("reading the invalid profile version {shown} as 0");
+            match &value {
+                serde_json::Value::Number(n) => {
+                    warn!("reading the invalid profile version {n} as 0")
+                }
+                _ => warn!("reading a non-numeric profile version as 0"),
+            }
             Ok(0)
         }
     }
