@@ -29,6 +29,8 @@ type Rect = { x: number; y: number; width: number; height: number }
 // and stage stay as they are on their own layer, out of its camera's sight.
 const LAYER = 10
 const BACKPACK_LAYER = 12
+// The Backpack's avatar is on this layer too, without its podium, for an outfit's picture.
+const CAPTURE_LAYER = 13
 // The Backpack background behind the avatar: the page's left-column purple, top to bottom.
 const BACKDROP_TOP = Color4.create(0.31, 0, 0.565, 1)
 const BACKDROP_BOTTOM = Color4.create(0.345, 0.078, 0.514, 1)
@@ -68,6 +70,8 @@ const PITCH_DROP = CAMERA_DISTANCE * Math.tan((CAMERA_PITCH * Math.PI) / 180)
 const ROTATION_FACTOR = -0.5
 const FACING = Quaternion.fromEulerDegrees(0, 180, 0)
 const THUMBNAIL_SIZE = 480
+// Frames for the picture's camera to be built and to have drawn the avatar.
+const CAPTURE_FRAMES = 5
 
 // The sign-in background, as the page draws it: the purple vignette, the logo pattern drifting over it
 // at 7% (650px tiles, one tile right every 5.65 s and up every 8.02 s), faded out towards the edges by
@@ -273,7 +277,7 @@ function createPreview(): void {
   const layer = lobby ? LAYER : BACKPACK_LAYER
   // the shape is added by syncShape once the player's look is known: an empty one would render
   // the default body, which the engine keeps on show until the real look has loaded
-  CameraLayers.create(a, { layers: [layer] })
+  CameraLayers.create(a, { layers: lobby ? [layer] : [layer, CAPTURE_LAYER] })
   Transform.create(a, {
     position: Vector3.create(8, 0, 8),
     rotation: FACING,
@@ -865,35 +869,57 @@ function applyFraming(f: { range: number; centerY: number }, z: number = zoom, s
   Transform.getMutable(cameraEntity).position = Vector3.create(8, centre + PITCH_DROP, 8 - CAMERA_DISTANCE)
 }
 
-/** The Backpack's preview avatar, whole body, facing forward, without the podium, as a PNG data URL — or
- *  null when the Backpack's preview isn't open or the engine can't capture. The lobby's camera draws its
- *  whole stage, so it is never captured. */
+// One picture at a time: the engine captures the first camera it finds on the capture layer.
+let capturing: Promise<unknown> = Promise.resolve()
+
+/** The Backpack's preview avatar, whole body, from its front, without the podium, as a PNG data URL — or
+ *  null when the Backpack's preview isn't open or the engine can't capture. The preview on show stays as
+ *  it is. The lobby's stage is never captured. */
 export async function captureAvatarThumbnail(): Promise<string | null> {
-  if (stage !== 'backpack' || avatarEntity == null || cameraEntity == null || BevyApi.consoleCommand == null) return null
+  const capture = capturing.then(takeThumbnail)
+  capturing = capture.catch(() => null)
+  return await capture
+}
+
+async function takeThumbnail(): Promise<string | null> {
+  if (stage !== 'backpack' || avatarEntity == null || BevyApi.consoleCommand == null) return null
   const avatar = avatarEntity
-  const rotation = Transform.get(avatar).rotation
-  Transform.getMutable(avatar).rotation = FACING
-  framingT = 1
-  // Whatever the page has zoomed to or frames the avatar in.
-  applyFraming(THUMBNAIL_FRAMING, 1, 0, WHOLE_RECT)
-  const podium = podiumEntities
-  podium.forEach((e) => { Transform.getMutable(e).scale = Vector3.Zero() })
+  // The avatar only ever turns about its vertical axis.
+  const turned = Transform.get(avatar).rotation
+  const yaw = (2 * Math.atan2(turned.y, turned.w) * 180) / Math.PI - 180
+  const stand = Vector3.rotate(Vector3.create(0, THUMBNAIL_FRAMING.centerY + PITCH_DROP, -CAMERA_DISTANCE), Quaternion.fromEulerDegrees(0, yaw, 0))
+  const camera = engine.addEntity()
+  CameraLayer.create(camera, {
+    layer: CAPTURE_LAYER,
+    directionalLight: false,
+    showAvatars: false,
+    showSkybox: false,
+    showFog: false,
+    ambientBrightnessOverride: 5
+  })
+  TextureCamera.create(camera, {
+    width: THUMBNAIL_SIZE * 2,
+    height: THUMBNAIL_SIZE * 2,
+    layer: CAPTURE_LAYER,
+    clearColor: Color4.create(0, 0, 0, 0),
+    mode: { $case: 'orthographic', orthographic: { verticalRange: THUMBNAIL_FRAMING.range } },
+    volume: 0
+  })
+  Transform.create(camera, {
+    position: Vector3.create(8 + stand.x, stand.y, 8 + stand.z),
+    rotation: Quaternion.fromEulerDegrees(CAMERA_PITCH, yaw, 0)
+  })
   try {
-    await waitFrames(3)
+    await waitFrames(CAPTURE_FRAMES)
     // the Backpack closed meanwhile
     if (stage !== 'backpack' || avatarEntity !== avatar) return null
-    const png = await BevyApi.consoleCommand('texture_camera_screenshot', [String(BACKPACK_LAYER), String(THUMBNAIL_SIZE)])
+    const png = await BevyApi.consoleCommand('texture_camera_screenshot', [String(CAPTURE_LAYER), String(THUMBNAIL_SIZE)])
     return `data:image/png;base64,${png}`
   } catch (e) {
     console.error('[avatarPreview] thumbnail capture failed', e)
     return null
   } finally {
-    if (avatarEntity === avatar) {
-      Transform.getMutable(avatar).rotation = rotation
-      if (framingT >= 1) framing = framingTo
-      applyFraming(framing)
-      showPodium(shopStage == null)
-    }
+    engine.removeEntity(camera)
   }
 }
 
