@@ -153,7 +153,9 @@ export function registerAvatarDraft(ctx: Ctx, sendEquipped: () => Promise<void>)
         for (const id of submitted.keys()) if (id <= close) submitted.delete(id)
       }
       if (draft && sameLook(draft, edited)) draft = null
-      if (look.wearables.length !== edited.wearables.length) await sendEquipped()
+      if (look.wearables.length !== edited.wearables.length) {
+        await sendEquipped().catch((e: unknown) => console.error('[avatar] refresh equipped wearables', e))
+      }
     } catch (e) {
       if (!isCurrent() || close < latestSubmission) return
       console.error('[avatar] deploy failed', e)

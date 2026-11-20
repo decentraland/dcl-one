@@ -51,7 +51,7 @@ const waitFrame = vi.fn<() => Promise<void>>()
 vi.mock('../../bridge-scene/src/domains/avatarPreview', () => ({ syncShape: () => {}, waitFrames: () => waitFrame() }))
 vi.mock('../../bridge-scene/src/system-helpers', () => ({ relay: () => {} }))
 
-async function bridge() {
+async function bridge(sendEquipped: () => Promise<void> = async () => {}) {
   vi.resetModules()
   const draft = await import('../../bridge-scene/src/domains/avatarDraft')
   const { registerProfile } = await import('../../bridge-scene/src/domains/profile')
@@ -69,7 +69,7 @@ async function bridge() {
   registerProfile(ctx)
   registerSession(ctx)
   registerWelcome(ctx)
-  draft.registerAvatarDraft(ctx, async () => {})
+  draft.registerAvatarDraft(ctx, sendEquipped)
   identity.observe(player?.userId ?? null)
   return {
     request: async (msg: PageToScene) => await handlers.get(msg.kind)?.(msg),
@@ -175,7 +175,7 @@ describe('Passport and Backpack deployments', () => {
     const { request, replies, draft } = await bridge()
     const backpack = deferred()
     setAvatar.mockReturnValueOnce(backpack.promise).mockRejectedValueOnce(Object.assign(
-      new Error('deploy failed'), { profile: { name: 'Last good', version: 5, description: 'Committed' } }
+      new Error('deploy failed'), { profile: { ethAddress: '0xABC', name: 'Last good', version: 5, description: 'Committed' } }
     ))
     vi.spyOn(console, 'error').mockImplementation(() => {})
     draft.editLook({ wearables: ['urn:hat'] })
@@ -190,6 +190,24 @@ describe('Passport and Backpack deployments', () => {
     expect(draft.hasDraft()).toBe(false)
   })
 
+  it('discards the save when the engine has already changed wallets and the scene still shows the previous player', async () => {
+    const { request, replies } = await bridge()
+    setAvatar.mockRejectedValueOnce(Object.assign(new Error('wallet changed'), { profile: null, accountChanged: true }))
+    await request({ kind: 'saveProfile', address: '0xabc', requestId: 19, description: 'Edit' })
+    expect(replies()).toEqual([{ kind: 'profileSaved', requestId: 19, ok: false, accountChanged: true,
+      error: 'The active account changed.' }])
+    expect(getUserProfile).not.toHaveBeenCalled()
+  })
+
+  it('reads the saved wallet again if a rejection carries a different wallet’s profile', async () => {
+    const { request, replies } = await bridge()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    setAvatar.mockRejectedValueOnce(Object.assign(new Error('deploy failed'), { profile: { ethAddress: '0xdef', name: 'Other' } }))
+    await request({ kind: 'saveProfile', requestId: 20, address: '0xabc', description: 'Edit' })
+    expect(getUserProfile).toHaveBeenCalledWith('0xabc')
+    expect(replies()).toMatchObject([{ kind: 'profileSaved', requestId: 20, ok: false, profile: { description: 'New' } }])
+  })
+
   it('preserves an explicitly absent committed profile on the first deploy failure', async () => {
     const { request, replies } = await bridge()
     vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -202,12 +220,25 @@ describe('Passport and Backpack deployments', () => {
   it('submits independent about-me fields and explicit clears, including both birthday spellings', async () => {
     const { request } = await bridge()
     setAvatar.mockResolvedValue(7)
-    await request({ kind: 'saveProfile', name: '', info: { country: 'Canada', realName: '' } })
-    await request({ kind: 'saveProfile', info: { birthdate: '' } })
+    await request({ kind: 'saveProfile', name: '', info: { country: 'Canada', language: 'English', birthdate: '2000-01-02' }, infoPatch: { country: 'Canada', realName: '' } })
+    await request({ kind: 'saveProfile', info: {}, infoPatch: { birthdate: '' } })
     expect(setAvatar.mock.calls.map(([patch]) => patch)).toEqual([
       { profileExtras: { country: 'Canada', realName: null } },
       { profileExtras: { birthDate: null, birthdate: null } }
     ])
+  })
+
+  it('replaces the full about-me section for an older HUD, including clears by omission', async () => {
+    const { request } = await bridge()
+    setAvatar.mockResolvedValue(7)
+    await request({ kind: 'saveProfile', info: { country: 'Canada', birthdate: '2000-01-02' } })
+    expect(setAvatar).toHaveBeenCalledWith({ profileExtras: {
+      country: 'Canada', language: null, gender: null, pronouns: null, relationshipStatus: null,
+      sexualOrientation: null, employmentStatus: null, profession: null, hobbies: null,
+      realName: null, birthDate: Date.UTC(2000, 0, 2) / 1000, birthdate: null
+    } })
+    await request({ kind: 'saveProfile', info: {} })
+    expect(setAvatar.mock.lastCall?.[0].profileExtras).toMatchObject({ country: null, birthDate: null, birthdate: null })
   })
 
   it.each([undefined, 'Welcome name'])('only names the Welcome look when supplied (%s)', async (name) => {
@@ -376,6 +407,20 @@ describe('Passport and Backpack deployments', () => {
     await add
     color.resolve(7)
     await tint
+    expect(draft.hasDraft()).toBe(false)
+  })
+
+  it('keeps a successful Backpack save when refreshing the fitted wearables fails', async () => {
+    const sendEquipped = vi.fn().mockRejectedValue(new Error('refresh unavailable'))
+    const { request, replies, draft } = await bridge(sendEquipped)
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    resolveDefs.mockResolvedValueOnce(new Map([['urn:hat', { data: { category: 'hat', representations: [] } }]]))
+    setAvatar.mockResolvedValue(7)
+    draft.editLook({ wearables: ['urn:hat'] })
+    await request({ kind: 'commitAvatar' })
+    expect(setAvatar).toHaveBeenCalledTimes(1)
+    expect(sendEquipped).toHaveBeenCalledOnce()
+    expect(replies()).toEqual([])
     expect(draft.hasDraft()).toBe(false)
   })
 

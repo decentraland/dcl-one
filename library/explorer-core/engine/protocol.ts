@@ -776,9 +776,7 @@ export interface ProfileChangedMessage {
   version: number
 }
 
-/** Edit the local player's own profile (passport edit mode). Every field is optional and an
- *  omitted one is left as it is, so this carries one save. Links replace the list; each about-me key is a patch and an
- *  empty string clears that field. */
+/** Edit the local player's own profile. Omitted sections are unchanged. Links replace the list. */
 export interface SaveProfileRequest {
   kind: 'saveProfile'
   requestId?: number
@@ -788,7 +786,10 @@ export interface SaveProfileRequest {
   name?: string
   description?: string
   links?: { title: string; url: string }[]
+  /** Complete about-me section. A missing key is cleared. Older bridges read this snapshot. */
   info?: ProfileInfo
+  /** Changed about-me keys. An empty string clears one field. Takes precedence over the snapshot. */
+  infoPatch?: ProfileInfo
   /** A claimed name's colour, sRGB channels 0–1. The engine applies it only while the name is
    *  claimed; an unclaimed name keeps its derived colour. */
   nameColor?: { r: number; g: number; b: number }
@@ -807,8 +808,8 @@ export interface ProfileSavedMessage {
   error?: string
 }
 
-/** A `saveProfile` without the wire tag — what the UI hands the session. */
-export type ProfileEdit = Omit<SaveProfileRequest, 'kind' | 'requestId' | 'address'>
+/** Changes from the form. The session also sends a full about-me snapshot to older bridges. */
+export type ProfileEdit = Omit<SaveProfileRequest, 'kind' | 'requestId' | 'address' | 'info'>
 
 /** The claimed (NFT) names this account owns — the display-name picker's options. */
 export interface GetOwnedNamesRequest {

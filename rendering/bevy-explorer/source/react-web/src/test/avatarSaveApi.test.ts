@@ -10,7 +10,7 @@ it('returns the saved version and carries the committed profile on a save reject
   const op = vi.fn()
     .mockResolvedValueOnce({ Ok: 4 })
     .mockResolvedValueOnce({ Err: { message: 'deploy failed', profile } })
-    .mockResolvedValueOnce({ Err: { message: 'no profile', profile: null } })
+    .mockResolvedValueOnce({ Err: { message: 'no profile', profile: null, accountChanged: true } })
     .mockRejectedValueOnce(new Error('worker closed'))
   const module = { exports: {} as { setAvatar: (data: SetAvatarData) => Promise<number> } }
   const source = readFileSync(resolve(process.cwd(), '../crates/dcl_js/src/modules/SystemApi.js'), 'utf8')
@@ -25,7 +25,7 @@ it('returns the saved version and carries the committed profile on a save reject
   const failed = module.exports.setAvatar(patch)
   await expect(failed).rejects.toBeInstanceOf(Error)
   await expect(failed).rejects.toMatchObject({ message: 'deploy failed', profile })
-  await expect(module.exports.setAvatar(patch)).rejects.toMatchObject({ message: 'no profile', profile: null })
+  await expect(module.exports.setAvatar(patch)).rejects.toMatchObject({ message: 'no profile', profile: null, accountChanged: true })
   await expect(module.exports.setAvatar(patch)).rejects.toThrow('worker closed')
   currentLogin.mockReturnValue(null)
   await expect(module.exports.setAvatar(patch)).rejects.toThrow('No player profile to edit')

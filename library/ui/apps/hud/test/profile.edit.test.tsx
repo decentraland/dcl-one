@@ -90,7 +90,7 @@ describe('passport edit mode', () => {
     await userEvent.clear(screen.getByLabelText('Real Name'))
     rerender(<ProfilePassport profile={{ ...profile, info: { gender: 'Female', realName: 'mo' } }} {...props} />)
     await userEvent.click(screen.getByRole('button', { name: 'SAVE' }))
-    expect(edit.save).toHaveBeenCalledWith({ info: { realName: '' } })
+    expect(edit.save).toHaveBeenCalledWith({ infoPatch: { realName: '' } })
   })
 
   it('sends only the field the player cleared', async () => {
@@ -98,7 +98,7 @@ describe('passport edit mode', () => {
     await openEditor(edit)
     await userEvent.clear(screen.getByLabelText('Real Name'))
     await userEvent.click(screen.getByRole('button', { name: 'SAVE' }))
-    expect(edit.save).toHaveBeenCalledWith({ info: { realName: '' } })
+    expect(edit.save).toHaveBeenCalledWith({ infoPatch: { realName: '' } })
   })
 
   it('refuses to save a link that is not a real http(s) URL', async () => {
@@ -203,7 +203,7 @@ describe('profile edit helpers', () => {
   })
 
   it('applies an edit the way a save will land', () => {
-    const next = applyProfileEdit(profile, { description: '', info: { realName: '' }, links: [] }, [])
+    const next = applyProfileEdit(profile, { description: '', infoPatch: { realName: '' }, links: [] }, [])
     expect(next.description).toBeUndefined()
     expect(next.links).toBeUndefined()
     expect(next.info).toEqual({ gender: 'Male' })

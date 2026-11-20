@@ -2,7 +2,7 @@
 // the deploy is in flight) and the mock bridge (its stand-in for the catalyst). Lives beside the
 // protocol rather than in features/: it describes the wire's semantics, not a screen.
 
-import type { Profile, ProfileEdit, ProfileInfo } from './protocol'
+import type { Profile, ProfileInfo, SaveProfileRequest } from './protocol'
 
 /** What the protocol appends to a non-claimed name: `#` and the last four characters of the address (the
  *  engine builds nametags the same way, `crates/avatar`); empty without an address. */
@@ -11,7 +11,7 @@ export const addressSuffix = (address: string): string => (address === '' ? '' :
 /** A name that isn't one of the wallet's claimed NAMEs is shown with four hex digits of the
  *  address appended — the engine builds nametags the same way (`crates/avatar`) and the bridge
  *  answers with the same, so the passport must not flash a bare name in between. */
-export function applyProfileEdit(profile: Profile, edit: ProfileEdit, ownedNames: readonly string[]): Profile {
+export function applyProfileEdit(profile: Profile, edit: Omit<SaveProfileRequest, 'kind'>, ownedNames: readonly string[]): Profile {
   const next = { ...profile }
   if (edit.name) {
     const name = edit.name
@@ -21,9 +21,10 @@ export function applyProfileEdit(profile: Profile, edit: ProfileEdit, ownedNames
   }
   if (edit.description !== undefined) next.description = edit.description.trim() || undefined
   if (edit.links !== undefined) next.links = edit.links.length > 0 ? edit.links : undefined
-  if (edit.info !== undefined) {
-    const info: ProfileInfo = { ...profile.info }
-    for (const [key, value] of Object.entries(edit.info) as [keyof ProfileInfo, string | undefined][]) {
+  const changes = edit.infoPatch ?? edit.info
+  if (changes !== undefined) {
+    const info: ProfileInfo = edit.infoPatch !== undefined ? { ...profile.info } : {}
+    for (const [key, value] of Object.entries(changes) as [keyof ProfileInfo, string | undefined][]) {
       if (value === '') delete info[key]
       else if (value !== undefined) info[key] = value
     }

@@ -2760,7 +2760,9 @@ pub fn process_startup_scenes(
 #[test]
 fn system_and_scene_self_reads_during_an_optimistic_edit() {
     use bevy::asset::io::memory::MemoryAssetReader;
-    use comms::profile::ProfileCache;
+    use bevy_console::{ConsoleCommandEntered, ConsoleConfiguration};
+    use common::structs::AppConfig;
+    use comms::{global_crdt::ProfileEvent, profile::UserProfilePlugin};
     use ipfs::IpfsResource;
 
     let owner = Address::repeat_byte(7);
@@ -2788,17 +2790,18 @@ fn system_and_scene_self_reads_during_an_optimistic_edit() {
         content: saved.clone(),
         ..default()
     });
-    current.begin_edits();
-    current.bump_version();
-    current.is_deployed = false;
-    current.profile.as_mut().unwrap().content.name = "Edited".into();
-    let edited = current.profile.as_ref().unwrap().content.clone();
+    // Hold the upload so both reads observe the same pending edit.
+    current.deploy_held = true;
 
     let mut app = App::new();
-    app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+    app.add_plugins((MinimalPlugins, AssetPlugin::default(), UserProfilePlugin))
         .insert_resource(wallet)
         .insert_resource(current)
-        .init_resource::<ProfileCache>()
+        .init_resource::<AppConfig>()
+        .init_resource::<ConsoleConfiguration>()
+        .add_event::<ConsoleCommandEntered>()
+        .add_event::<PrintConsoleLine>()
+        .add_event::<ProfileEvent>()
         .insert_resource(IpfsResource {
             inner: Arc::new(IpfsIo::new(
                 false,
@@ -2817,6 +2820,15 @@ fn system_and_scene_self_reads_during_an_optimistic_edit() {
     let mut contexts = CrdtContexts::default();
     contexts.0.insert(String::new(), shared);
     app.insert_resource(contexts);
+
+    let (reply, mut save) = RpcResultSender::channel();
+    app.world_mut().send_event(SystemApi::SetAvatar(
+        address.clone(),
+        serde_json::from_value(json!({ "profileExtras": { "description": "Edited" } })).unwrap(),
+        reply,
+    ));
+    app.update();
+    assert!(save.poll_once().unwrap().is_none());
 
     let (send, mut system) = RpcResultSender::channel();
     app.world_mut().send_event(SystemApi::GetUserProfile {
@@ -2838,7 +2850,9 @@ fn system_and_scene_self_reads_during_an_optimistic_edit() {
 
     assert_eq!(system.try_recv().unwrap(), Ok(saved));
     for mut read in scene_reads {
-        assert_eq!(read.try_recv().unwrap(), Ok(edited.clone()));
+        let edited = read.try_recv().unwrap().unwrap();
+        assert_eq!(edited.version, 2);
+        assert_eq!(edited.extra_fields["description"], "Edited");
     }
 }
 

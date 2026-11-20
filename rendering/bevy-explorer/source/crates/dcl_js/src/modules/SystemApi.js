@@ -119,11 +119,11 @@ module.exports.kernelFetch = async function (body) {
 // Resolves with the saved version. An engine rejection carries its last confirmed profile.
 module.exports.setAvatar = async function(avatar) {
     const owner = op_get_current_login()
-    if (!owner) throw new Error("No player profile to edit")
+    if (!owner) throw Object.assign(new Error("No player profile to edit"), { accountChanged: true })
     const result = await Deno.core.ops.op_set_avatar(owner, avatar)
     if ('Err' in result) {
-        const { message, profile } = result.Err
-        throw Object.assign(new Error(message), { profile })
+        const { message, profile, accountChanged } = result.Err
+        throw Object.assign(new Error(message), { profile, accountChanged })
     }
     return result.Ok
 }

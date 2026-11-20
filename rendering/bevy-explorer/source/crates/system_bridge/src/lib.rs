@@ -71,6 +71,8 @@ pub struct NewAccountPick {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SetAvatarError {
     pub message: String,
+    #[serde(default, rename = "accountChanged")]
+    pub account_changed: bool,
     /// Last confirmed profile for the account that submitted the edit.
     pub profile: Option<Box<SerializedProfile>>,
 }

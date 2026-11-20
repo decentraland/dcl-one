@@ -23,6 +23,7 @@ import type { Ctx } from '../bridge'
 /** A deployed profile as the engine holds it (`common::profile::SerializedProfile`, serde JSON).
  *  Only the keys the passport reads are typed here; anything else rides along untyped. */
 export type SerializedProfile = {
+  ethAddress?: string
   version?: number
   name?: string
   hasClaimedName?: boolean
@@ -352,12 +353,13 @@ function toProfileExtras(msg: SaveProfileRequest): Record<string, JsonValue> {
     const links = msg.links.filter((l) => l.url !== '')
     extras.links = links.length > 0 ? links : null
   }
-  if (msg.info !== undefined) {
+  const info = msg.infoPatch ?? msg.info
+  if (info !== undefined) {
     for (const [wireKey, profileKey] of Object.entries(INFO_KEYS) as Array<[keyof ProfileInfo, string]>) {
-      if (msg.info[wireKey] !== undefined) set(profileKey, msg.info[wireKey].trim())
+      if (msg.infoPatch === undefined || info[wireKey] !== undefined) set(profileKey, info[wireKey]?.trim())
     }
-    if (msg.info.birthdate !== undefined) {
-      set('birthDate', fromIsoDate(msg.info.birthdate))
+    if (msg.infoPatch === undefined || info.birthdate !== undefined) {
+      set('birthDate', fromIsoDate(info.birthdate))
       extras.birthdate = null // Also clear the legacy spelling when editing the birthday.
     }
   }
@@ -407,11 +409,13 @@ export function registerProfile(ctx: Ctx): void {
     try {
       await BevyApi.setAvatar(data)
     } catch (e) {
-      if (!isCurrent()) return accountChanged()
+      if (!isCurrent() || (e != null && typeof e === 'object' && 'accountChanged' in e && e.accountChanged === true)) return accountChanged()
       console.error('[profile] save failed', e)
-      const committed = e != null && typeof e === 'object' && 'profile' in e
-        ? (e as { profile: SerializedProfile | null }).profile
-        : await fetchProfile(player.userId)
+      const snapshot = e != null && typeof e === 'object' && 'profile' in e ? e.profile : undefined
+      const matchesOwner = (profile: unknown): profile is SerializedProfile =>
+        profile != null && typeof profile === 'object' && 'ethAddress' in profile &&
+        typeof profile.ethAddress === 'string' && profileKey(profile.ethAddress) === profileKey(player.userId)
+      const committed = snapshot === null || matchesOwner(snapshot) ? snapshot : await fetchProfile(player.userId)
       if (!isCurrent()) return accountChanged()
       ctx.send({
         kind: 'profileSaved', requestId: msg.requestId, ok: false, error: e instanceof Error ? e.message : String(e),

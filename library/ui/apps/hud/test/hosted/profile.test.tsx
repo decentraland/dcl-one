@@ -252,13 +252,15 @@ describe('profile domain', () => {
   it('keeps independent form edits and clears made while a previous save is pending', async () => {
     const h = renderSession()
     await enterAsGuest(h)
-    const saved = { ...profile, description: 'server update', version: 4, info: { country: 'US', realName: 'old' } }
+    const saved = { ...profile, description: 'server update', version: 4, info: { country: 'US', realName: 'old', birthdate: '2000-01-02' } }
     h.driver.emit({ kind: 'profile', profile })
     act(() => h.session().profile.save({ description: 'rejected' }))
-    act(() => h.session().profile.save({ info: { realName: '' } }))
-    act(() => h.session().profile.save({ info: { language: 'French' } }))
+    act(() => h.session().profile.save({ infoPatch: { realName: '' } }))
+    act(() => h.session().profile.save({ infoPatch: { language: 'French' } }))
     h.driver.emit({ kind: 'profileSaved', ok: false, profile: saved })
-    expect(h.driver.last('saveProfile')).toMatchObject({ info: { realName: '', language: 'French' } })
+    const request = h.driver.last('saveProfile')
+    expect(request?.info).toEqual({ country: 'US', language: 'French', birthdate: '2000-01-02' })
+    expect(request?.infoPatch).toEqual({ realName: '', language: 'French' })
     expect(h.session().profile.data).toMatchObject({ description: 'server update', info: { country: 'US', language: 'French' } })
     expect(h.session().profile.data?.info?.realName).toBeUndefined()
   })
@@ -269,7 +271,7 @@ describe('profile domain', () => {
     h.driver.emit({ kind: 'profile', profile })
     act(() => h.session().profile.save({ description: 'old session submit' }))
     const requestId = h.driver.last('saveProfile')?.requestId
-    act(() => h.session().profile.save({ info: { realName: 'old queued value' } }))
+    act(() => h.session().profile.save({ infoPatch: { realName: 'old queued value' } }))
     const reads = h.driver.sentOf('getProfile').length
     h.driver.emit({ kind: 'profileSaved', ok: false, accountChanged: true, requestId })
     expect(h.driver.sentOf('saveProfile')).toHaveLength(1)

@@ -4198,7 +4198,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     profileRef.current = next
     setProfile(next)
     beginProfileSave(address, (mine) => applyProfileEdit(mine, edit, ownedNamesRef.current))
-    driverRef.current?.send({ kind: 'saveProfile', requestId, address, ...edit })
+    // Older bridges replace the entire about-me section. Derive that snapshot from the latest
+    // confirmed profile so a queued edit also carries changes that landed before its turn.
+    const info = edit.infoPatch !== undefined && next != null ? next.info ?? {} : undefined
+    driverRef.current?.send({ kind: 'saveProfile', requestId, address, ...edit, info })
   }
   const queueOrStartProfileSave = useCallback((edit: ProfileEdit, quiet: boolean) => {
     if (!profileSubmit.current) {
@@ -4207,7 +4210,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     }
     const waiting = queuedProfileEditRef.current
     const merged = { ...waiting?.edit, ...edit }
-    if (waiting?.edit.info && edit.info) merged.info = { ...waiting.edit.info, ...edit.info }
+    if (waiting?.edit.infoPatch && edit.infoPatch) merged.infoPatch = { ...waiting.edit.infoPatch, ...edit.infoPatch }
     queuedProfileEditRef.current = { edit: merged, quiet: (waiting?.quiet ?? true) && quiet }
     if (!quiet) {
       setProfileSaveError(null)

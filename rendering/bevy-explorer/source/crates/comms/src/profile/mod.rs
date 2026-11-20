@@ -806,7 +806,7 @@ pub struct CurrentUserProfile {
     /// A new profile made while the world is held: the host's welcome page deploys it, with its
     /// save after the terms are accepted.
     pub deploy_held: bool,
-    pub saves: ProfileSaves,
+    pub(crate) saves: ProfileSaves,
     /// The highest version this session gave an edit of an account's profile. A deploy that
     /// failed here may still have reached the server (an error after the catalyst took it),
     /// and a peer that read it skips any other profile announced under the same number, so the
@@ -816,7 +816,7 @@ pub struct CurrentUserProfile {
 
 /// The base, active submission and edits waiting for the next payload, in arrival order.
 #[derive(Default)]
-pub struct ProfileSaves {
+pub(crate) struct ProfileSaves {
     session: u64,
     base: Option<UserProfile>,
     base_published: bool,
@@ -853,7 +853,7 @@ struct SubmittedProfile {
 
 impl CurrentUserProfile {
     /// Give the edited profile a fresh version even when an earlier write failed.
-    pub fn bump_version(&mut self) {
+    fn bump_version(&mut self) {
         let Some(profile) = self.profile.as_mut() else {
             return;
         };
@@ -866,7 +866,7 @@ impl CurrentUserProfile {
     }
 
     /// Keep the published profile, or the initial draft for an account creating its first profile.
-    pub fn begin_edits(&mut self) {
+    fn begin_edits(&mut self) {
         if self.saves.base.is_none() {
             self.saves.base = self.profile.clone();
             self.saves.base_published = self.is_deployed;
@@ -899,6 +899,7 @@ impl CurrentUserProfile {
         {
             sender.send(Err(SetAvatarError {
                 message: "Account changed before the profile was submitted.".to_owned(),
+                account_changed: true,
                 profile: None,
             }));
         }
@@ -996,7 +997,8 @@ impl CurrentUserProfile {
                     .map(|()| version)
                     .map_err(|message| SetAvatarError {
                         message: message.clone(),
-                        profile: if same_account {
+                        account_changed: !same_account || self.saves.session != session,
+                        profile: if same_account && self.saves.session == session {
                             self.peer_profile()
                                 .map(|profile| Box::new(profile.content.clone()))
                         } else {
@@ -2060,6 +2062,7 @@ fn process_profile(
         if address.is_none() || address != wallet.address() || address != expected.as_h160() {
             sender.send(Err(SetAvatarError {
                 message: "No profile for the active account.".to_owned(),
+                account_changed: true,
                 profile: None,
             }));
             continue;
@@ -2781,13 +2784,9 @@ mod tests {
         assert_eq!(batch.profile.version, 7);
         saves.finish(batch, false);
         for receiver in [&mut first, &mut second] {
-            assert!(receiver
-                .poll_once()
-                .unwrap()
-                .unwrap()
-                .unwrap_err()
-                .profile
-                .is_none());
+            let rejected = receiver.poll_once().unwrap().unwrap().unwrap_err();
+            assert!(!rejected.account_changed);
+            assert!(rejected.profile.is_none());
         }
         assert!(saves.current().peer_profile().is_none());
         assert!(saves.current().begin_deploy().is_none());
@@ -2810,21 +2809,13 @@ mod tests {
         let mut other = own(2, "other");
         other.content.eth_address = format!("{:#x}", Address::repeat_byte(9));
         *saves.current() = deployed(other.clone());
-        assert!(queued
-            .poll_once()
-            .unwrap()
-            .unwrap()
-            .unwrap_err()
-            .profile
-            .is_none());
+        let rejected = queued.poll_once().unwrap().unwrap().unwrap_err();
+        assert!(rejected.account_changed);
+        assert!(rejected.profile.is_none());
         saves.finish(batch, false);
-        assert!(submitted
-            .poll_once()
-            .unwrap()
-            .unwrap()
-            .unwrap_err()
-            .profile
-            .is_none());
+        let rejected = submitted.poll_once().unwrap().unwrap().unwrap_err();
+        assert!(rejected.account_changed);
+        assert!(rejected.profile.is_none());
         assert_eq!(saves.current().peer_profile(), Some(&other));
     }
 
@@ -2964,13 +2955,9 @@ mod tests {
             sender,
         ));
         saves.0.update();
-        assert!(receiver
-            .poll_once()
-            .unwrap()
-            .unwrap()
-            .unwrap_err()
-            .profile
-            .is_none());
+        let rejected = receiver.poll_once().unwrap().unwrap().unwrap_err();
+        assert!(rejected.account_changed);
+        assert!(rejected.profile.is_none());
         assert_eq!(
             saves.current().profile.as_ref().unwrap().content.name,
             "before"

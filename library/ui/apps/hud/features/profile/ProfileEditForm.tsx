@@ -51,7 +51,7 @@ function editOf(base: Draft, draft: Draft): ProfileEdit {
     const value = draft.info[key]?.trim() ?? ''
     if (value !== (base.info[key]?.trim() ?? '')) info[key] = value
   }
-  if (Object.keys(info).length > 0) edit.info = info
+  if (Object.keys(info).length > 0) edit.infoPatch = info
   return edit
 }
 

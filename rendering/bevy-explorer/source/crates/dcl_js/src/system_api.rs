@@ -1850,12 +1850,13 @@ mod profile_read_tests {
         };
         response.send(Err(system_bridge::SetAvatarError {
             message: "deploy failed".to_owned(),
+            account_changed: false,
             profile: Some(Box::new(profile.clone())),
         }));
         let result = block_on(save).unwrap();
         assert_eq!(
             serde_json::to_value(result).unwrap(),
-            serde_json::json!({ "Err": { "message": "deploy failed", "profile": profile } })
+            serde_json::json!({ "Err": { "message": "deploy failed", "accountChanged": false, "profile": profile } })
         );
     }
 
