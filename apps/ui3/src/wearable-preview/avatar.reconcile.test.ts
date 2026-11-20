@@ -352,6 +352,57 @@ test("a part whose held file stalls past the wait is still drawn: its loader rea
   container.remove();
 });
 
+test("a facial texture whose held copy never came and whose own read never answers costs only that feature", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  // Pointers no other test resolved: resolved entities are cached for the module's life.
+  const FACE_BODY = "urn:decentraland:off-chain:base-avatars:basemale_face";
+  const EYES = "urn:decentraland:matic:collections-v2:0xeyes:1";
+  const eyes = {
+    pointers: [EYES],
+    content: ["eyes.png", "eyes_mask.png"].map((file) => ({ file, hash: `h_${EYES}_${file}` })),
+    metadata: { data: { category: "eyes", representations: [{ bodyShapes: [FACE_BODY], mainFile: "eyes.png", contents: ["eyes.png", "eyes_mask.png"] }] } },
+  };
+  const body = { ...entityFor(FACE_BODY), metadata: { data: { category: "body_shape", representations: [{ bodyShapes: [FACE_BODY], mainFile: "model.glb" }] } } };
+  const waits: AbortController[] = [];
+  vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+    const ctl = new AbortController();
+    waits.push(ctl);
+    return ctl.signal;
+  });
+  const stalled: string[] = [];
+  globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    const path = String(url);
+    if (path.includes(`/content/contents/h_${EYES}`)) {
+      stalled.push(path);
+      return new Promise<Response>((_resolve, reject) =>
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))),
+      );
+    }
+    if (path.includes("/content/contents/")) return { ok: false, status: 404, body: null } as unknown as Response;
+    const asked = (JSON.parse(String(init?.body ?? "{}")) as { pointers?: string[] }).pointers ?? [];
+    return { ok: true, json: async () => asked.map((p) => (p === EYES ? eyes : p === FACE_BODY ? body : entityFor(p))) } as Response;
+  }) as unknown as typeof fetch;
+  // The loader's own read of the eyes never answers.
+  vi.spyOn(THREE.TextureLoader.prototype, "loadAsync").mockImplementation(() => new Promise<THREE.Texture>(() => {}));
+
+  // The feature's bound is a timer: faked from the start, so the test runs it out.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const container = document.createElement("div");
+  const onStatus = vi.fn();
+  const scene = createAvatarScene(container, { body: FACE_BODY, urns: [EYES], emote: "idle", onStatus });
+  await vi.waitFor(() => expect(stalled).toHaveLength(2));
+  waits.at(-1)!.abort();
+  await vi.advanceTimersByTimeAsync(20_000);
+  await vi.waitFor(() => expect(onStatus).toHaveBeenLastCalledWith("ready"));
+  const renderer = rendererInstances.at(-1)!;
+  renderer.loop!();
+  const group = renderer.lastScene?.getObjectByName("avatar");
+  expect((group?.children ?? []).map((c) => c.name)).toEqual([partName(FACE_BODY)]);
+
+  scene.dispose();
+  container.remove();
+});
+
 test("a preview disposed while its files download loads none of those parts", async () => {
   vi.spyOn(console, "warn").mockImplementation(() => {});
   const SLOW = "urn:decentraland:matic:collections-v2:0xhat:10";

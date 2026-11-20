@@ -525,7 +525,9 @@ export function createAvatarScene(
   function cachedFeature(key: string, entity: Entity, bodyShape: string, files: HeldFiles): Promise<FacialFeature | null> {
     let pending = featureCache.get(key);
     if (!pending) {
-      pending = loadFacialFeature(entity, bodyShape, files).catch((err) => {
+      // Bounded as a part is: a texture the loader reads itself (its held copy did not arrive) that never answers must
+      // not hold the avatar's other parts, and a failed feature leaves the cache so wearing it again reads it anew.
+      pending = withTimeout(loadFacialFeature(entity, bodyShape, files), GLB_TIMEOUT_MS).catch((err) => {
         if (!disposed) console.warn("[wearable-preview] failed", key, err);
         featureCache.delete(key);
         return null;
