@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { MaskIcon, SearchField } from '../../design'
+import { SOUND_ATTR } from './buttonSounds'
 import { EMOJI_BY_CODE, EMOJI_GROUPS, loadRecents, pushRecent, searchByShortcode, type Emoji } from './emojiData'
 import smileysIcon from '../../assets/chat/emoji-categories/smileyspeople.png'
 import animalsIcon from '../../assets/chat/emoji-categories/animals.png'
@@ -168,6 +169,7 @@ export function EmojiPicker({ onPick, onClose }: { onPick: (glyph: string) => vo
             className={`${styles.tab} ${t.section === section && !q ? styles.tabActive : ''}`.trim()}
             aria-label={t.label}
             aria-pressed={t.section === section && !q}
+            {...{ [SOUND_ATTR]: 'press' }}
             onClick={() => jump(t.section)}
           >
             <MaskIcon src={t.icon} size={25} />

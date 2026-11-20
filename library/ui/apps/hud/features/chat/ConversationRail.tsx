@@ -8,6 +8,7 @@ import { Avatar, ControlButton, DclLogo, MaskIcon, Tooltip } from '../../design'
 import { useOptionalSession } from '../session/SessionContext'
 import { inCommunityStream } from '../voiceChat/callGate'
 import { splitName, usePartner } from './chatIdentity'
+import { SOUND_ATTR } from './buttonSounds'
 import closeIcon from '../../assets/chat/close-thin.png'
 import streamActiveIcon from '../../assets/voice/stream-active.png'
 import streamListeningIcon from '../../assets/voice/stream-listening.png'
@@ -80,7 +81,7 @@ export function ConversationRail({ chat, onClose }: { chat: ChatState; onClose: 
   return (
     <nav className={styles.rail} aria-label="Conversations">
       <div className={styles.railHead}>
-        <ControlButton variant="dark" aria-label="Close chat" onClick={onClose}>
+        <ControlButton variant="dark" aria-label="Close chat" onClick={onClose} {...{ [SOUND_ATTR]: 'close' }}>
           <MaskIcon src={closeIcon} size={10} />
         </ControlButton>
       </div>
