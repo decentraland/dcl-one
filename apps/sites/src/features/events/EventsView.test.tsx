@@ -79,7 +79,12 @@ function setup(path: string, platform: DetectedPlatform = DESKTOP) {
   return { router, user: userEvent.setup(), client };
 }
 
+// Midday UTC keeps soon(-0.5) on today's column from UTC-11 to UTC+14; only Date is faked so RTL polling runs.
+const NOW = new Date("2026-11-19T12:00:00.000Z");
+
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
   auth.identity = null;
   calendar = [soon("cal", "Poker Night")];
   upcoming = [soon("up", "Watch Party", 1)];
@@ -112,6 +117,7 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 const FACE = "https://profile-images.decentraland.org/entities/bafyface/face.png";
