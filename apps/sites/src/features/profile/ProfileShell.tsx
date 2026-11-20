@@ -1,4 +1,4 @@
-import { useId, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useId, type MouseEvent, type ReactNode } from "react";
 import { Link } from "react-router";
 
 import SitesChrome from "@ui/web/frames/SitesChrome";
@@ -10,7 +10,9 @@ import { shortAddress } from "@/data/lib/catalyst/format/address";
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
 
 import { ProfileHeader } from "./ProfileHeader";
+import { ProfileFriendsCount, ProfileMemberActions } from "./ProfileMemberActions";
 import styles from "./ProfileShell.module.css";
+import { revealTab } from "./reveal-tab";
 
 /**
  * A NAME is bought in the Shop's NAMEs page (the canonical path, not `/shop/items?category=names`);
@@ -42,23 +44,41 @@ type ProfileShellProps = {
   children: ReactNode;
 };
 
-/** The profile site's frame every ported tab shares: Sites chrome, header with the owner's call to action, tab bar. */
+/**
+ * The profile site's frame every ported tab shares: Sites chrome, header with the owner's call to
+ * action or another member's friendship, block and share actions, tab bar.
+ */
 export function ProfileShell({ profile, own, tabs, active, onTab, aside, children }: ProfileShellProps) {
   const ids = useId();
   const tabId = (id: string) => `${ids}-tab-${id}`;
+  // On a narrow screen the bar scrolls sideways and opens at its start, where a late tab is out of sight.
+  const activeTabId = tabId(active);
+  useEffect(() => {
+    const reveal = () => revealTab(document.getElementById(activeTabId));
+    reveal();
+    // A turned phone or a resized window can put the tab out of sight again.
+    window.addEventListener("resize", reveal);
+    return () => window.removeEventListener("resize", reveal);
+  }, [activeTabId]);
   const panelId = `${ids}-panel`;
 
   const actions = own ? (
-    profile.hasClaimedName ? (
-      <Button href={MANAGE_WORLD_HREF} size="md">
-        Manage World
-      </Button>
-    ) : (
-      <Button href={GET_A_NAME_HREF} size="md">
-        Get a Unique Name
-      </Button>
-    )
-  ) : null;
+    <>
+      <ProfileFriendsCount address={profile.address} />
+      {profile.hasClaimedName ? (
+        <Button href={MANAGE_WORLD_HREF} size="md">
+          Manage World
+        </Button>
+      ) : (
+        <Button href={GET_A_NAME_HREF} size="md">
+          Get a Unique Name
+        </Button>
+      )}
+    </>
+  ) : (
+    // Keyed by address: another profile starts with no result of the last one's actions.
+    <ProfileMemberActions key={profile.address} address={profile.address} name={profile.name} />
+  );
 
   // No top-bar entry is highlighted on a profile ("play" maps to none), as on the profile site.
   return (

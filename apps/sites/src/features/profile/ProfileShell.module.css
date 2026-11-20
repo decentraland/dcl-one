@@ -7,8 +7,9 @@
   box-sizing: border-box;
   width: 100%;
   min-height: 100vh;
-  /* The Sites top bar sits above the page, not over it, so only the source's gap below it remains. */
-  padding-top: var(--dcl-space-16);
+  /* The Sites top bar lies over the top of the page (`overlayNav`) and the gradient shows through
+   * it, so the page keeps the bar's height free above its own gap. */
+  padding-top: calc(var(--site-header-h, 64px) + var(--dcl-space-16));
   padding-bottom: var(--dcl-space-64);
   background: radial-gradient(
     123.58% 82% at 9.01% 25.79%,
@@ -48,7 +49,7 @@
 
 @media (min-width: 1024px) {
   .root {
-    padding-top: var(--dcl-space-24);
+    padding-top: calc(var(--site-header-h, 92px) + var(--dcl-space-24));
   }
 
   .content {

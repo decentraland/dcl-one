@@ -2,7 +2,16 @@ import type { InfiniteData, UseInfiniteQueryResult } from "@tanstack/react-query
 import { useEffect, useId, useRef, useState, type MouseEvent, type ReactNode, type Ref } from "react";
 import { Link, useNavigate } from "react-router";
 
-import { Button, Spinner, Tabs, TabsBar, type ShopCardLinkProps } from "@dcl/one-ui";
+import {
+  Button,
+  ShopCard,
+  ShopCardPrice,
+  Spinner,
+  Tabs,
+  TabsBar,
+  type ShopCardCreator,
+  type ShopCardLinkProps,
+} from "@dcl/one-ui";
 import {
   BackpackBody,
   BackpackEarrings,
@@ -30,7 +39,8 @@ import {
   GeneralSmartItem,
 } from "@dcl/one-ui/foundations/icons";
 
-import type { CollectiblePage } from "@/data/lib/catalyst/marketplace/profile-collectibles";
+import { assetPage } from "@/core/lib/shop/redirects";
+import type { CollectiblePage, ProfileCreation } from "@/data/lib/catalyst/marketplace/profile-collectibles";
 
 import styles from "./collectibles.module.css";
 
@@ -502,5 +512,68 @@ export function collectibleBadges({
       {body ? <Badge icon={body.icon} label={body.label} /> : null}
       {isSmart ? <Badge icon={GeneralSmartItem} label="Smart wearable" /> : null}
     </>
+  );
+}
+
+/** The price as the Shop's card rule decided it: credits, MANA on its network, or why there is none. */
+function creationPrice(item: ProfileCreation) {
+  const payment = item.payment;
+  if (payment.kind === "credits") return <ShopCardPrice kind="credits" amount={payment.credits} />;
+  if (payment.kind === "mana") return <ShopCardPrice kind="mana" amount={payment.mana} network={item.network} />;
+  // A credit-eligible sale whose quote failed says so; anything else unpriced is not for sale.
+  return (
+    <ShopCardPrice
+      kind="none"
+      label={payment.kind === "creditsUnavailable" ? "Credits price unavailable" : "Not for sale"}
+    />
+  );
+}
+
+/**
+ * A catalogue item as the public ShopCard: its price by the Shop's rule and, unless `actions` is
+ * off, Buy when it is for sale or View in Shop when it is not.
+ */
+export function CreationCard({
+  item,
+  creator,
+  actions = true,
+}: {
+  item: ProfileCreation;
+  creator?: ShopCardCreator;
+  actions?: boolean;
+}) {
+  const routerClick = useRouterClick();
+  const href = assetPage(item.contractAddress, item.itemId, "item");
+  return (
+    <ShopCard
+      name={item.name}
+      image={item.thumbnail}
+      rarity={item.rarity}
+      creator={creator}
+      price={creationPrice(item)}
+      categoryIcon={categoryGlyph(item.traits.category)}
+      badges={collectibleBadges(item.traits)}
+      href={href}
+      linkComponent={ShopCardRouterLink}
+      variant="catalogue"
+      headingLevel={3}
+      actions={
+        !actions ? undefined : item.payment.kind !== "none" ? (
+          <Button href={href} onClick={routerClick(href)} size="md" aria-label={`Buy ${item.name}`}>
+            Buy
+          </Button>
+        ) : (
+          <Button
+            href={href}
+            onClick={routerClick(href)}
+            variant="secondary"
+            size="md"
+            aria-label={`View in Shop: ${item.name}`}
+          >
+            View in Shop
+          </Button>
+        )
+      }
+    />
   );
 }
