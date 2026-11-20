@@ -7,6 +7,7 @@ import userEvent from '@testing-library/user-event'
 import { CommunityModal, openCommunityModal } from '../../features/communities/CommunityModal'
 import { SessionProvider } from '../../features/session/SessionContext'
 import { NO_ANNOUNCEMENTS, postAge } from '../../features/communities/Announcements'
+import { EMOJI_GROUPS } from '../../features/chat/emojiData'
 import { PopupHost, ToastHost, resetPopups } from '../../design'
 import type { Community, CommunityPost } from '@explorer-core/engine/protocol'
 import type { CommunityPosts } from '../../features/session/useEngineSession'
@@ -256,7 +257,7 @@ describe('announcements tab', () => {
     const field = screen.getByRole('textbox', { name: 'New announcement' })
     await userEvent.click(screen.getByRole('button', { name: 'Emoji' }))
     const panel = screen.getByRole('dialog', { name: 'Emoji picker' })
-    await userEvent.click(within(panel).getAllByRole('button', { name: /^(?!Smileys|Animals|Food|Activities|Travel|Objects|Symbols|Flags)/ })[0])
+    await userEvent.click(within(panel).getByTitle(EMOJI_GROUPS[0].emojis[0].expression))
     expect(screen.getByRole('dialog', { name: 'Emoji picker' })).toBeInTheDocument()
     await userEvent.click(field)
     expect(screen.queryByRole('dialog', { name: 'Emoji picker' })).not.toBeInTheDocument()

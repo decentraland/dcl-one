@@ -2104,3 +2104,61 @@ async fn a_malformed_request_body_is_a_400_remote_error() {
         .unwrap_err();
     assert_eq!(err.error_code, 400);
 }
+
+/// Communities' online members come from the Pulse topology `start_topology` hands the
+/// social RPC: whichever of the two is attached first, the communities state reads it.
+#[tokio::test]
+async fn communities_read_the_topology_whichever_is_attached_first() {
+    use crate::comms::protocol::pulse::decentraland::kernel::comms::v3::{
+        IslandData, IslandStatusMessage,
+    };
+    const WALLET: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let frame = IslandStatusMessage {
+        data: vec![IslandData {
+            peers: vec![WALLET.into()],
+            ..Default::default()
+        }],
+    }
+    .encode_to_vec();
+    let dir = std::env::temp_dir().join(format!("catalyst-topology-wiring-{}", Uuid::new_v4()));
+    let storage = Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+    let communities = || {
+        let pool = closed_pool();
+        Arc::new(crate::communities::State::new(
+            pool.clone(),
+            storage.clone(),
+            crate::communities::Settings::for_tests(),
+            None,
+            &crate::http::Outbound::for_tests(),
+            crate::communities::State::explore_for_tests(&pool),
+        ))
+    };
+    let rpc = || {
+        let pool = closed_pool();
+        Arc::new(State::with_context(
+            Settings::default(),
+            test_ctx(Db::new(pool.clone()), Arc::new(FakeVoiceRooms::new(pool))),
+            None,
+        ))
+    };
+    let jobs = Jobs::new();
+
+    // serve's order: the communities first, then the topology
+    let (state, attached) = (rpc(), communities());
+    state.ctx.set_communities(attached.clone());
+    let topology = Arc::new(crate::comms::topology::Topology::default());
+    state.start_topology(&jobs, topology.clone());
+    topology.receive(&frame).unwrap();
+    assert_eq!(attached.online_wallets(), vec![WALLET.to_string()]);
+
+    // the topology first, then the communities
+    let (state, attached) = (rpc(), communities());
+    let topology = Arc::new(crate::comms::topology::Topology::default());
+    state.start_topology(&jobs, topology.clone());
+    state.ctx.set_communities(attached.clone());
+    topology.receive(&frame).unwrap();
+    assert_eq!(attached.online_wallets(), vec![WALLET.to_string()]);
+
+    jobs.shutdown(Duration::from_secs(2)).await;
+    let _ = std::fs::remove_dir_all(&dir);
+}

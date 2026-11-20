@@ -15,8 +15,7 @@ import { knownUserColor } from '../session/profileStore'
 import { isMemberRole, memberActions, roleLabel } from '@explorer-core/features/communities/roles'
 import { useOptionalSession, useSession } from '../session/SessionContext'
 import { openPlaceDetail } from '../places/PlaceDetail'
-import { PlaceActionButtons, PlaceJumpIn, usePlaceActions } from '../places/PlaceActions'
-import { placeTeleport } from '@explorer-core/features/places/placesApi'
+import { PlaceActionButtons, PlaceJumpIn, travelToPlace, usePlaceActions } from '../places/PlaceActions'
 import { openCommunityEditModal } from './CommunityCreateModal'
 import { RequestRowActions } from './RequestRowActions'
 import { openPassport } from '../profile/Passport'
@@ -258,10 +257,7 @@ function ActionablePlaceCard({ place, detail, onDelete, deleting, onTravelled }:
   // the row came from a signed read, so it already carries the user's votes and favourite
   const actions = usePlaceActions(detail, { readSigned: false })
   const travel = (to: DiscoverPlace): boolean => {
-    const t = placeTeleport(to)
-    if (t == null) return false
-    const outcome = t.kind === 'world' ? session.map.changeRealm(t.realm) : session.map.teleportToPlace(t.x, t.y)
-    if (outcome === 'refused') return false
+    if (travelToPlace(to, session.map) === 'refused') return false
     onTravelled()
     return true
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen, act, fireEvent, cleanup } from '@testing-library/react'
+import { render, screen, act, fireEvent, cleanup, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { CommunitiesPage } from '../../features/communities/CommunitiesPage'
 import { CommunityModal, openCommunityModal } from '../../features/communities/CommunityModal'
@@ -10,6 +10,12 @@ import type { Community, CommunityDetailMessage, CommunityPlaceOption, Community
 import type { CommunitiesState, CommunitySave } from '../../features/session/useEngineSession'
 import { fakeProfileState, fakeSession } from '../harness'
 import type { CardAction } from '../../features/chat/ProfileCardPresentation'
+import { setPlaceLike } from '@explorer-core/features/map/mapApi'
+
+vi.mock('@explorer-core/features/map/mapApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@explorer-core/features/map/mapApi')>()),
+  setPlaceLike: vi.fn()
+}))
 
 afterEach(resetPopups) // the community modal now lives on the module-level popup stack
 
@@ -333,14 +339,14 @@ describe('community card places', () => {
 // travels and closes the card, and a press on the card opens Place Detail.
 describe('community card place actions', () => {
   const detailOf = (over: Record<string, unknown> = {}) => ({ id: 'pl-1', title: 'Plaza', description: '', image: '', positions: ['3,4'], base_position: '3,4', owner: null, user_like: true, ...over })
-  function renderCard(place: CommunityDetailMessage['places'][number]) {
-    const session = fakeSession()
+  function renderCard(place: CommunityDetailMessage['places'][number], role = 'member', session = fakeSession()) {
     const onClose = vi.fn()
+    const onRemovePlace = vi.fn()
     render(
       <SessionProvider value={session}>
         <PopupHost />
         <CommunityModal
-          community={community({ id: 'c1', name: 'Builders', role: 'member' })}
+          community={community({ id: 'c1', name: 'Builders', role })}
           detail={{ kind: 'communityDetail', id: 'c1', members: [], places: [place], events: [], photos: [] }}
           onJoin={vi.fn()}
           onRequestToJoin={vi.fn()}
@@ -348,10 +354,12 @@ describe('community card place actions', () => {
           onLeave={vi.fn()}
           onOpenChat={vi.fn()}
           onClose={onClose}
+          onEdit={vi.fn()}
+          onRemovePlace={onRemovePlace}
         />
       </SessionProvider>
     )
-    return { session, onClose }
+    return { session, onClose, onRemovePlace }
   }
   const openPlaces = async (): Promise<void> => userEvent.click(screen.getByRole('tab', { name: 'PLACES' }))
 
@@ -377,6 +385,59 @@ describe('community card place actions', () => {
     await openPlaces()
     await userEvent.click(screen.getByRole('button', { name: 'Open Plaza' }))
     expect(screen.getByRole('dialog', { name: 'Plaza' })).toBeInTheDocument()
+  })
+
+  it("opens no Place Detail from the card's own buttons", async () => {
+    vi.mocked(setPlaceLike).mockResolvedValue({ likes: 1, dislikes: 0, user_like: false, user_dislike: false })
+    const { session } = renderCard({ id: 'pl-1', title: 'Plaza', positions: '3,4', isMine: true, detail: detailOf() }, 'owner')
+    vi.mocked(session.map.teleportToPlace).mockReturnValue('refused')
+    await openPlaces()
+    const detailOpen = (): boolean => screen.queryByRole('dialog', { name: 'Plaza' }) != null
+    await userEvent.click(screen.getByRole('button', { name: 'Like' }))
+    expect(setPlaceLike).toHaveBeenCalledWith('pl-1', null)
+    await userEvent.click(screen.getByRole('button', { name: 'Share' }))
+    expect(screen.getByRole('menuitem', { name: 'Copy link' })).toBeInTheDocument()
+    expect(detailOpen()).toBe(false)
+    act(() => closeTopPopup())
+    await userEvent.click(screen.getByRole('button', { name: 'Jump in to Plaza' }))
+    expect(session.map.teleportToPlace).toHaveBeenCalledWith(3, 4)
+    expect(detailOpen()).toBe(false)
+    await userEvent.click(screen.getByRole('button', { name: 'Delete Plaza' }))
+    expect(screen.getByRole('button', { name: 'DELETE' })).toBeInTheDocument()
+    expect(detailOpen()).toBe(false)
+  })
+
+  it('offers ENTER PASSWORD for a World that asks one, and nothing for an invite-only one', async () => {
+    const world = { id: 'w-1', title: 'Mansion', positions: 'me.dcl.eth', detail: detailOf({ id: 'w-1', title: 'Mansion', world: true, world_name: 'me.dcl.eth' }) }
+    const session = fakeSession()
+    vi.mocked(session.places.worldAccess).mockResolvedValue('password')
+    renderCard(world, 'member', session)
+    await openPlaces()
+    expect(await screen.findByRole('button', { name: 'ENTER PASSWORD' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Jump in to Mansion' })).toBeNull()
+    cleanup()
+    const closed = fakeSession()
+    vi.mocked(closed.places.worldAccess).mockResolvedValue('denied')
+    renderCard(world, 'member', closed)
+    await openPlaces()
+    await waitFor(() => expect(closed.places.worldAccess).toHaveBeenCalled())
+    expect(screen.queryByRole('button', { name: /ENTER PASSWORD|Jump in/ })).toBeNull()
+  })
+
+  it("shows on the card a vote changed in the Place Detail it opened, so it doesn't send it again", async () => {
+    vi.mocked(setPlaceLike).mockResolvedValue({ likes: 1, dislikes: 0, user_like: true, user_dislike: false })
+    renderCard({ id: 'pl-1', title: 'Plaza', positions: '3,4', detail: detailOf({ user_like: false }) })
+    await openPlaces()
+    expect(screen.getByRole('button', { name: 'Like' })).toHaveAttribute('aria-pressed', 'false')
+    await userEvent.click(screen.getByRole('button', { name: 'Open Plaza' }))
+    const detail = screen.getByRole('dialog', { name: 'Plaza' })
+    await userEvent.click(within(detail).getByRole('button', { name: 'Like' }))
+    expect(setPlaceLike).toHaveBeenLastCalledWith('pl-1', true)
+    await userEvent.click(within(detail).getByRole('button', { name: 'Close place detail' }))
+    const like = screen.getByRole('button', { name: 'Like' })
+    await waitFor(() => expect(like).toHaveAttribute('aria-pressed', 'true'))
+    await userEvent.click(like)
+    expect(setPlaceLike).toHaveBeenLastCalledWith('pl-1', null)
   })
 
   it("shows no actions for a place the places service didn't read", async () => {

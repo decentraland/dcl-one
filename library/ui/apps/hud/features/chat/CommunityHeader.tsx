@@ -3,13 +3,11 @@
 // (opens the members list), and the conversation menu: Notification Ping, Auto-Translate, View
 // Community, Delete Chat History, Close.
 
-import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import type { CommunityConversation } from '../session/useEngineSession'
 import { Avatar, ContextMenu, ControlButton, MaskIcon } from '../../design'
 import { openCommunityModal } from '../communities/CommunityModal'
-import { ConversationMenu, MENU_LAYER } from './ConversationMenu'
+import { ConversationMenu, MENU_LAYER, useAnchoredMenu } from './ConversationMenu'
 import playersIcon from '../../assets/chat/players.png'
 import styles from './Chat.module.css'
 
@@ -57,37 +55,11 @@ export function CommunityHeader({
 }
 
 const VIEW_COMMUNITY = 'View Community'
+const underTitle = (r: DOMRect): { left: number; top: number } => ({ left: r.left, top: r.bottom })
 
 /** The thumbnail and name: a press opens a menu under them with View Community. */
 function CommunityTitle({ community }: { community: CommunityConversation }): React.JSX.Element {
-  const [at, setAt] = useState<{ left: number; top: number } | null>(null)
-  const button = useRef<HTMLButtonElement>(null)
-  const menu = useRef<HTMLDivElement>(null)
-  const close = useCallback(() => {
-    if (menu.current?.contains(document.activeElement)) button.current?.focus()
-    setAt(null)
-  }, [])
-  const open = at != null
-  useEffect(() => {
-    if (!open) return
-    menu.current?.querySelector<HTMLElement>('[role^="menuitem"]')?.focus()
-    const onDown = (e: PointerEvent): void => {
-      const t = e.target as Node
-      if (button.current?.contains(t) || menu.current?.contains(t)) return
-      setAt(null)
-    }
-    document.addEventListener('pointerdown', onDown, true)
-    const off = registerCancelLayer(close)
-    return () => {
-      document.removeEventListener('pointerdown', onDown, true)
-      off()
-    }
-  }, [open, close])
-  const toggle = (): void => {
-    if (open) return close()
-    const r = button.current?.getBoundingClientRect()
-    setAt(r != null ? { left: r.left, top: r.bottom } : { left: 0, top: 0 })
-  }
+  const { open, at, button, menu, toggle, close } = useAnchoredMenu(underTitle)
   return (
     <>
       <button
@@ -102,7 +74,7 @@ function CommunityTitle({ community }: { community: CommunityConversation }): Re
         <Avatar src={community.thumbnail || undefined} name={community.name} size={28} framed className={styles.channelIcon} />
         <span className={styles.navTitle} title={community.name}>{community.name}</span>
       </button>
-      {at != null &&
+      {open && at != null &&
         createPortal(
           <div ref={menu} className={styles.menuLayer} style={at} {...{ [MENU_LAYER]: '' }}>
             <ContextMenu

@@ -3,6 +3,8 @@
 // Copy link), and JUMP IN, or ENTER PASSWORD for a World that asks one.
 // Votes and the favourite change at once and go back if the service refuses them. The place a list
 // hands over may lack the player's own votes and favourite: `readSigned` adds them with a signed read.
+// What the service confirms for a place reaches every open view of it (a card and the Place Detail
+// it opened), so neither shows, nor sends again, a vote the other already changed.
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { DEFAULT_REALM } from '@hud-host'
@@ -23,8 +25,9 @@ import type { SignedPlace } from '@explorer-core/engine/protocol'
 import type { WorldAccessVerdict as WorldAccess } from '@explorer-core/engine/generated'
 import { homeOf, isPlacePanelHome, placeHomeTarget } from '@explorer-core/features/map/home'
 import { likeRateOf, setPlaceFavorite, setPlaceLike } from '@explorer-core/features/map/mapApi'
-import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
+import { placeTeleport, type DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import { useSession } from '../session/SessionContext'
+import type { TravelOutcome } from '../session/useEngineSession'
 import { isWorldPlace, placeJumpLink, placeShareUrl } from './placeDetailFormat'
 import styles from './PlaceDetail.module.css'
 
@@ -41,6 +44,13 @@ interface Votes {
 }
 
 type Field = 'vote' | 'favorite'
+
+/** What the service confirmed for a place, told to the other views of it. */
+type Confirmed = { from: object; id: string } & ({ field: 'vote'; like: boolean; dislike: boolean; likeRate: number | null } | { field: 'favorite'; favorite: boolean; favorites: number })
+const listeners = new Set<(news: Confirmed) => void>()
+const tell = (news: Confirmed): void => {
+  for (const hear of listeners) hear(news)
+}
 const votesOf = (p: Partial<SignedPlace>): Votes => ({ like: p.user_like === true, dislike: p.user_dislike === true, favorite: p.user_favorite === true })
 
 export interface PlaceActions {
@@ -80,6 +90,7 @@ export function usePlaceActions(place: DetailPlace, { readSigned: read = true }:
   const [counts, setCounts] = useState<{ likeRate?: number | null; favorites?: number }>({})
   const [busy, setBusy] = useState<{ vote: boolean; favorite: boolean }>({ vote: false, favorite: false })
   const [access, setAccess] = useState<WorldAccess | 'checking'>(world ? 'checking' : 'allowed')
+  const self = useRef({}).current
 
   useEffect(() => {
     if (!read) return
@@ -101,6 +112,27 @@ export function usePlaceActions(place: DetailPlace, { readSigned: read = true }:
       live = false
     }
   }, [read, readSigned, place.id])
+
+  // another view's confirmed change wins over the signed read; one of this view in flight answers itself
+  useEffect(() => {
+    const hear = (news: Confirmed): void => {
+      if (news.from === self || news.id !== place.id || writes.current[news.field] === 'sent') return
+      answered.current[news.field] = true
+      if (news.field === 'vote') {
+        confirmed.current = { ...confirmed.current, like: news.like, dislike: news.dislike }
+        setVotes((v) => ({ ...v, like: news.like, dislike: news.dislike }))
+        setCounts((c) => ({ ...c, likeRate: news.likeRate }))
+      } else {
+        confirmed.current = { ...confirmed.current, favorite: news.favorite }
+        setVotes((v) => ({ ...v, favorite: news.favorite }))
+        setCounts((c) => ({ ...c, favorites: news.favorites }))
+      }
+    }
+    listeners.add(hear)
+    return () => {
+      listeners.delete(hear)
+    }
+  }, [self, place.id])
 
   const worldName = place.world_name ?? ''
   // the engine checks for the signed-in wallet, so a change of wallet asks again
@@ -125,7 +157,9 @@ export function usePlaceActions(place: DetailPlace, { readSigned: read = true }:
         writes.current.vote = 'none'
         answered.current.vote = true
         confirmed.current = { ...confirmed.current, like: result.user_like, dislike: result.user_dislike }
-        setCounts((c) => ({ ...c, likeRate: likeRateOf(result.likes, result.dislikes) }))
+        const likeRate = likeRateOf(result.likes, result.dislikes)
+        setCounts((c) => ({ ...c, likeRate }))
+        tell({ from: self, id: place.id, field: 'vote', like: result.user_like, dislike: result.user_dislike, likeRate })
         setVotes((v) => ({ ...v, like: result.user_like, dislike: result.user_dislike }))
         setBusy((b) => ({ ...b, vote: false }))
       },
@@ -148,6 +182,7 @@ export function usePlaceActions(place: DetailPlace, { readSigned: read = true }:
         answered.current.favorite = true
         confirmed.current = { ...confirmed.current, favorite: result.user_favorite }
         setCounts((c) => ({ ...c, favorites: result.favorites }))
+        tell({ from: self, id: place.id, field: 'favorite', favorite: result.user_favorite, favorites: result.favorites })
         setVotes((v) => ({ ...v, favorite: result.user_favorite }))
         setBusy((b) => ({ ...b, favorite: false }))
       },
@@ -185,6 +220,13 @@ export function usePlaceActions(place: DetailPlace, { readSigned: read = true }:
     favorite,
     setHome
   }
+}
+
+/** Travels to a place: a World changes realm, a parcel teleports; 'refused' when it is neither. */
+export function travelToPlace(place: DiscoverPlace, map: { teleportToPlace: (x: number, y: number) => TravelOutcome; changeRealm: (realm: string) => TravelOutcome }): TravelOutcome {
+  const t = placeTeleport(place)
+  if (t == null) return 'refused'
+  return t.kind === 'world' ? map.changeRealm(t.realm) : map.teleportToPlace(t.x, t.y)
 }
 
 function Toggle({ label, on, iconOn, iconOff, size, className, disabled, onClick }: { label: string; on: boolean; iconOn: string; iconOff: string; size: number; className: string; disabled?: boolean; onClick?: () => void }): React.JSX.Element {
