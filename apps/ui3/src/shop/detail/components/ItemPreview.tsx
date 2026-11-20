@@ -84,10 +84,16 @@ export default function ItemPreview({ item, avatarShape = null, renderer }: { it
   // the scene loads its parts after that read; the thumbnail stays over the canvas until the first drawn frame.
   const preview3d = show3d && canPreview && !failed && (isEmote || view === "avatar");
   const scene = preview3d && !profile.isLoading;
+  // A scene unmounted while it was ready (a new wearer's profile loads, the item view is picked) starts over when it
+  // mounts again: until it draws, the thumbnail is back over the box instead of a blank canvas.
+  useEffect(() => {
+    if (!scene && !failed) setStatus("loading");
+  }, [scene, failed]);
+  const shownStatus: AvatarStatus = !scene && !failed ? "loading" : status;
   const clip = useShopQuery(isEmote && urn && show3d && !waiting ? ["emote-clip", urn, body] : null, (signal) => fetchEmoteClipUrl(urn!, body, signal), { staleMs: 30 * 60_000 });
 
   return (
-    <div className="shop-preview" data-status={show3d ? status : "thumbnail"}>
+    <div className="shop-preview" data-status={show3d ? shownStatus : "thumbnail"}>
       {scene ? (
         <WearablePreview
           urns={isEmote ? [] : [urn!]}
@@ -101,10 +107,10 @@ export default function ItemPreview({ item, avatarShape = null, renderer }: { it
           onStatus={setStatus}
         />
       ) : null}
-      {item.thumbnail && (!preview3d || status !== "ready") ? (
+      {item.thumbnail && (!preview3d || shownStatus !== "ready") ? (
         <img className={preview3d ? "shop-preview__thumb shop-preview__thumb--cover" : "shop-preview__thumb"} src={item.thumbnail} alt={item.name} />
       ) : null}
-      {preview3d && status === "loading" && !item.thumbnail ? (
+      {preview3d && shownStatus === "loading" && !item.thumbnail ? (
         <div className="shop-preview__loading" role="status">
           {t("itemDetail.previewLoading")}
         </div>
