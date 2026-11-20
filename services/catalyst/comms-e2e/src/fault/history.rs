@@ -3,8 +3,10 @@
 //! what its sender sent, whatever the link then did to it.
 //!
 //! A history tells packets apart by size and time only, never by content. [`cadence`] reads the
-//! packets of at least a given size as a sender's data and measures the gaps between them: a
-//! sender that sends on a regular beat and stops for a while shows a gap longer than its beat.
+//! packets of at least a given size as a sender's data and measures the gaps between them, and
+//! from the start of each span to its first packet and from its last packet to the span's end: a
+//! sender that sends on a regular beat and stops for a while, or for good, shows a gap longer than
+//! its beat.
 
 use std::time::Duration;
 
@@ -35,7 +37,7 @@ pub struct Seen {
 /// Packets a history keeps per direction; later ones are counted, not kept.
 pub(crate) const HISTORY_LIMIT: usize = 500_000;
 
-/// The packets of each direction, in the order they arrived.
+/// The packets of each direction, in time order whichever task noted them.
 #[derive(Default)]
 pub(crate) struct History {
     pub up: Vec<Seen>,
@@ -48,7 +50,15 @@ impl History {
     pub fn push(&mut self, uplink: bool, seen: Seen) {
         let list = if uplink { &mut self.up } else { &mut self.down };
         if list.len() < HISTORY_LIMIT {
-            list.push(seen);
+            // A task that read the clock before another may push after it: such a packet goes
+            // in its place, which is near the end.
+            let place = list.len()
+                - list
+                    .iter()
+                    .rev()
+                    .take_while(|kept| kept.at > seen.at)
+                    .count();
+            list.insert(place, seen);
         } else {
             self.missed += 1;
         }
@@ -101,10 +111,12 @@ pub fn windows(
     out
 }
 
-/// One gap between two consecutive large packets inside a span.
+/// One gap inside a span: between two consecutive large packets, from the span's start to its
+/// first large packet, or from its last large packet (or the start of a span with none) to the
+/// span's end.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Gap {
-    /// When the packet before the gap arrived.
+    /// When the packet before the gap arrived, or the span's start.
     pub start: Duration,
     pub length: Duration,
     /// Which of the spans it lies in.
@@ -118,18 +130,21 @@ pub struct Cadence {
     pub large: usize,
     /// The spans' length together.
     pub span: Duration,
-    /// The median gap between two consecutive large packets: the sender's regular beat.
+    /// The median gap between two consecutive large packets: the sender's regular beat. The gaps
+    /// at the edges of a span are left out of it.
     pub median_gap: Duration,
     pub longest_gap: Duration,
-    /// Every gap between consecutive large packets of one span, in order. A gap across the edge
-    /// of a span is not one.
+    /// Every gap of each span, in order: from the span's start to its first large packet, between
+    /// consecutive ones, and from the last one to the span's end; a span with none is one gap.
+    /// Gaps at an edge that last nothing are left out. A gap across two spans is not one.
     pub gaps: Vec<Gap>,
 }
 
-/// The gaps between consecutive packets of at least `large_from` bytes inside each of `spans`
-/// (start, end), which must not overlap.
+/// The gaps of the packets of at least `large_from` bytes inside each of `spans` (start, end),
+/// which must not overlap. `seen` need not be in time order.
 pub fn cadence(seen: &[Seen], spans: &[(Duration, Duration)], large_from: usize) -> Cadence {
     let mut gaps = Vec::new();
+    let mut lengths = Vec::new();
     let mut large = 0;
     let mut span = Duration::ZERO;
     for (index, &(from, to)) in spans.iter().enumerate() {
@@ -137,25 +152,38 @@ pub fn cadence(seen: &[Seen], spans: &[(Duration, Duration)], large_from: usize)
             continue;
         }
         span += to - from;
-        let inside: Vec<Duration> = seen
+        let mut inside: Vec<Duration> = seen
             .iter()
             .filter(|packet| packet.bytes >= large_from && packet.at >= from && packet.at < to)
             .map(|packet| packet.at)
             .collect();
+        inside.sort();
         large += inside.len();
-        gaps.extend(inside.windows(2).map(|pair| Gap {
-            start: pair[0],
-            length: pair[1] - pair[0],
+        let gap = |start: Duration, end: Duration| Gap {
+            start,
+            length: end.saturating_sub(start),
             span: index,
-        }));
+        };
+        let first = inside.first().copied().unwrap_or(to);
+        if first > from {
+            gaps.push(gap(from, first));
+        }
+        for pair in inside.windows(2) {
+            gaps.push(gap(pair[0], pair[1]));
+            lengths.push(pair[1].saturating_sub(pair[0]));
+        }
+        if let Some(&last) = inside.last()
+            && to > last
+        {
+            gaps.push(gap(last, to));
+        }
     }
-    let mut lengths: Vec<Duration> = gaps.iter().map(|gap| gap.length).collect();
     lengths.sort();
     Cadence {
         large,
         span,
         median_gap: lengths.get(lengths.len() / 2).copied().unwrap_or_default(),
-        longest_gap: lengths.last().copied().unwrap_or_default(),
+        longest_gap: gaps.iter().map(|gap| gap.length).max().unwrap_or_default(),
         gaps,
     }
 }
@@ -213,7 +241,7 @@ impl Cadence {
         let mut periods: Vec<Duration> = gaps
             .windows(2)
             .filter(|pair| pair[0].span == pair[1].span)
-            .map(|pair| pair[1].start - pair[0].start)
+            .map(|pair| pair[1].start.saturating_sub(pair[0].start))
             .collect();
         periods.sort();
         Silences {
@@ -312,17 +340,83 @@ mod tests {
         let cadence = cadence(&seen, &[(ms(0), ms(8000))], 40);
         assert_eq!(cadence.median_gap, ms(100));
         let silences = cadence.silences(cadence.silence_threshold(ms(150)));
-        // the last stop runs to the end of the span: there is no packet after it
-        assert_eq!(silences.gaps.len(), 9);
+        // the last stop runs to the end of the span, from the last packet: it counts as well
+        assert_eq!(silences.gaps.len(), 10);
         for gap in &silences.gaps {
             assert_eq!(gap.length, ms(300), "{gap:?}");
         }
         assert_eq!(silences.longest, ms(300));
         assert_eq!(silences.period, Some(ms(800)));
-        // beyond the beat each stop lasts 200 ms: 1.8 s of 8 s
-        assert_eq!(silences.silent, ms(1800));
-        assert!((silences.share - 0.225).abs() < 1e-9, "{}", silences.share);
-        assert!((cadence.beyond_beat_share() - 0.225).abs() < 1e-9);
+        // beyond the beat each stop lasts 200 ms: 2 s of 8 s
+        assert_eq!(silences.silent, ms(2000));
+        assert!((silences.share - 0.25).abs() < 1e-9, "{}", silences.share);
+        assert!((cadence.beyond_beat_share() - 0.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_sender_that_stops_for_the_rest_of_a_span_shows_the_stop() {
+        // sends until 6 s of a 10 s span, then nothing
+        let seen = sender(100, 6000, &[]);
+        let cadence = cadence(&seen, &[(ms(0), ms(10_000))], 40);
+        assert_eq!(cadence.median_gap, ms(100));
+        let silences = cadence.silences(cadence.silence_threshold(ms(150)));
+        assert_eq!(silences.gaps.len(), 1, "{silences:?}");
+        assert_eq!(silences.gaps[0].start, ms(5900));
+        assert_eq!(silences.longest, ms(4100));
+    }
+
+    #[test]
+    fn a_sender_that_starts_late_in_a_span_shows_the_wait() {
+        let seen = sender(100, 10_000, &[(0, 3000)]);
+        let cadence = cadence(&seen, &[(ms(0), ms(10_000))], 40);
+        let silences = cadence.silences(cadence.silence_threshold(ms(150)));
+        assert_eq!(silences.gaps.len(), 1, "{silences:?}");
+        assert_eq!(
+            (silences.gaps[0].start, silences.longest),
+            (ms(0), ms(3000))
+        );
+    }
+
+    #[test]
+    fn a_span_with_no_packet_is_one_gap_as_long_as_the_span() {
+        let seen = sender(100, 10_000, &[(2000, 6000)]);
+        let cadence = cadence(&seen, &[(ms(0), ms(1000)), (ms(3000), ms(5000))], 40);
+        assert_eq!(cadence.large, 10);
+        let silences = cadence.silences(cadence.silence_threshold(ms(150)));
+        assert_eq!(silences.gaps.len(), 1, "{silences:?}");
+        assert_eq!(
+            (
+                silences.gaps[0].start,
+                silences.gaps[0].length,
+                silences.gaps[0].span
+            ),
+            (ms(3000), ms(2000), 1)
+        );
+        // and a sender that sends nothing at all is silent throughout
+        let quiet = sender(100, 10_000, &[(0, 10_000)]);
+        let cadence = super::cadence(&quiet, &[(ms(0), ms(4000)), (ms(5000), ms(9000))], 40);
+        let silences = cadence.silences(cadence.silence_threshold(ms(150)));
+        assert_eq!(silences.gaps.len(), 2);
+        assert_eq!(silences.silent, ms(8000));
+    }
+
+    #[test]
+    fn the_history_is_in_time_order_whatever_order_it_was_pushed_in() {
+        let mut history = History::default();
+        for at in [10, 30, 20, 40, 5] {
+            history.push(false, packet(at, 10));
+        }
+        let order: Vec<Duration> = history.down.iter().map(|seen| seen.at).collect();
+        assert_eq!(order, [ms(5), ms(10), ms(20), ms(30), ms(40)]);
+    }
+
+    #[test]
+    fn cadence_reads_packets_that_are_out_of_time_order() {
+        let mut seen: Vec<Seen> = (0..20).map(|index| packet(index * 100, 80)).collect();
+        seen.swap(3, 10);
+        let cadence = cadence(&seen, &[(ms(0), ms(2000))], 40);
+        assert_eq!(cadence.median_gap, ms(100));
+        assert_eq!(cadence.longest_gap, ms(100));
     }
 
     #[test]
@@ -350,6 +444,7 @@ mod tests {
         // the same packets in one span: the stop is there
         let whole = super::cadence(&seen, &[(ms(0), ms(4000))], 40);
         assert_eq!(whole.longest_gap, ms(2100));
+        assert_eq!(whole.median_gap, ms(100));
     }
 
     #[test]
