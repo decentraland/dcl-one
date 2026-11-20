@@ -730,6 +730,27 @@ describe("when /events opens My Events", () => {
       expect(vi.mocked(loadAllOwnedEvents)).toHaveBeenCalledTimes(2);
     });
 
+    it("should keep the listed events when a later read fails", async () => {
+      vi.mocked(loadAllOwnedEvents).mockResolvedValueOnce([
+        owned({ id: "kept", name: "Kept Party", start_at: at(5), finish_at: at(6), next_start_at: at(5), next_finish_at: at(6) }),
+      ]);
+      vi.mocked(loadAllOwnedEvents).mockRejectedValueOnce(new CatalystError("down", "/events/api/events", 503));
+      const { client } = setup("/events?tab=my");
+      const panel = await screen.findByRole("tabpanel", { name: "My Events" });
+      await within(panel).findByRole("link", { name: "Kept Party" });
+
+      // The observer reports on a later task, so the failed read is rendered before the page is read.
+      await act(async () => {
+        await client.refetchQueries();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(client.getQueryState(["private", SIGNER, "events", "mine"])?.status).toBe("error");
+
+      expect(vi.mocked(loadAllOwnedEvents)).toHaveBeenCalledTimes(2);
+      expect(within(panel).getByRole("link", { name: "Kept Party" })).toBeTruthy();
+      expect(screen.queryByText("Couldn't load your events.")).toBeNull();
+    });
+
     it("should go back to All Events from its tab without leaving the page", async () => {
       vi.mocked(loadAllOwnedEvents).mockResolvedValue([]);
       const { router, user } = setup("/events?tab=my");

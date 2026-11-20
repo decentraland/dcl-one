@@ -93,6 +93,19 @@ class CiLocalTest(unittest.TestCase):
                 with self.subTest(path=path, workflow=workflow):
                     self.assertTrue(ci.triggered(workflow, [path], event='push'))
 
+    def test_shared_ui_edits_run_the_sites_unit_tests_before_commit(self):
+        names = lambda changed: [step.name for step in ci.pre_commit_steps(changed)]
+        for path in ('library/ui/components/AppChrome/SiteLayout.tsx', 'library/ui/apps/sites/events/MyEvents.tsx',
+                     'apps/sites/src/routes/root.tsx'):
+            with self.subTest(path=path):
+                self.assertIn('sites unit tests', names({path}))
+                self.assertNotIn('ui3 unit tests', names({path}))
+        for path in ('library/ui/apps/shop/ShopChrome.tsx', 'library/ui/apps/hud/Panel.tsx'):
+            with self.subTest(path=path):
+                self.assertIn('ui3 unit tests', names({path}))
+                self.assertIn('sites unit tests', names({path}))
+        self.assertNotIn('sites unit tests', names({'docs/README.md'}))
+
     def test_engine_edits_select_the_engine_and_its_sites_consumer(self):
         changed = {'rendering/bevy-explorer/source/src/lib.rs'}
         self.assertTrue(ci.triggered('bevy-explorer-ci.yml', changed))

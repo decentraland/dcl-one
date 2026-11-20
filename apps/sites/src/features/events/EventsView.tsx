@@ -531,7 +531,7 @@ function useMyEventsTab(identity: AuthIdentity | null) {
   return {
     active,
     events: active ? query.data : undefined,
-    status: query.isError ? ("unavailable" as const) : query.data ? ("ready" as const) : ("loading" as const),
+    status: query.data ? ("ready" as const) : query.isError ? ("unavailable" as const) : ("loading" as const),
     retry: () => void query.refetch(),
   };
 }

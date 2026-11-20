@@ -67,8 +67,8 @@ let
       (root + /library/ui/components)
       (lib.fileset.maybeMissing (root + /library/ui/package.json))
       (lib.fileset.maybeMissing (root + /library/ui/tsconfig.json))
-      (lib.fileset.maybeMissing (root + /library/ui/foundations))
-      (lib.fileset.maybeMissing (root + /library/ui/apps/sites))
+      (root + /library/ui/foundations)
+      (root + /library/ui/apps/sites)
       (root + /library/ui/apps/hud) (root + /library/ui/apps/shop) (root + /library/explorer-core)
       (root + /library/ui/text-styles.ts)
     ];

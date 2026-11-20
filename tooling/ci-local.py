@@ -140,7 +140,7 @@ def pre_commit_steps(changed):
                           tools=('cargo',)))
     if touches(changed, 'apps/ui3/*', 'library/catalyst-api/*', 'library/shop/*', 'library/web-core/*', 'library/ui/apps/hud/*', 'library/ui/apps/shop/*', 'library/explorer-core/*'):
         steps += web_steps()
-    elif touches(changed, 'apps/sites/*'):
+    elif touches(changed, 'apps/sites/*', 'library/ui/*'):
         steps += web_steps(changed_ui3=False)
     return steps
 

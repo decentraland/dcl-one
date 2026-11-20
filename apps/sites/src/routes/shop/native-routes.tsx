@@ -15,6 +15,7 @@ import { shopRouteObjects } from "@ui/shop/routes";
 import type { ShopWalletHost } from "@ui/shop/wallet/session";
 import type { AuthIdentity } from "@web-core/auth/identity";
 
+import { landAliasOptions } from "@/core/lib/shop/land-redirects";
 import { legacyShopTarget } from "@/core/lib/shop/redirects";
 import { useAuth } from "@/data/lib/auth/context";
 import ChromeNavBridge from "@/features/components/chrome/ChromeNavBridge";
@@ -97,7 +98,7 @@ function NativeLayout({ host }: { host: ShopHost }) {
 
 /** The routes the native Shop serves: /shop (its index resolving v2's ?tab=) and the old /marketplace paths. */
 export function nativeShopRoutes(host: ShopHost): RouteObject[] {
-  const pages = shopRouteObjects().filter((route) => !route.index);
+  const pages = shopRouteObjects(landAliasOptions()).filter((route) => !route.index);
   return [
     {
       id: "root",

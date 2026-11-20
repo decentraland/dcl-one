@@ -6,8 +6,7 @@ export async function subscribeSiteNewsletter(email: string): Promise<void> {
     headers: { "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify({ email, source: siteHost() }),
   });
-  if (!response.ok) {
-    await response.body?.cancel().catch(() => undefined);
-    throw new Error(`Newsletter request returned ${response.status}`);
-  }
+  // Nothing in the answer is read, on success or failure: its body is let go either way.
+  await response.body?.cancel().catch(() => undefined);
+  if (!response.ok) throw new Error(`Newsletter request returned ${response.status}`);
 }
