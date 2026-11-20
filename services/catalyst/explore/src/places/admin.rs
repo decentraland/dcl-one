@@ -2898,23 +2898,34 @@ mod tests {
 
     /// The places leg clears a stale scene ranking; a scene it names (in any
     /// UUID spelling) is reported world-backed and kept, as are curated ones
-    /// (its own or its world's highlight, or an exclusion), and a scene id with
-    /// a world catalogue row is left to that row's leg. A worlds-only run
-    /// leaves scene rankings alone.
+    /// (its own or its world's highlight, or an exclusion). A scene wins over
+    /// a catalogue row with its id, as on read. A worlds-only run leaves scene
+    /// rankings alone.
     #[tokio::test]
     async fn the_replace_clears_world_scene_rankings_with_the_places_leg() {
         let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
-        let [named, urn, dropped, curated, lit, excluded, shared, plain] =
-            [(); 8].map(|_| uuid::Uuid::new_v4().to_string());
+        let [
+            named,
+            urn,
+            dropped,
+            curated,
+            lit,
+            excluded,
+            shared,
+            twin,
+            plain,
+        ] = [(); 9].map(|_| uuid::Uuid::new_v4().to_string());
         sqlx::query("INSERT INTO worlds.worlds (name) VALUES ('bulk.dcl.eth'), ('lit.dcl.eth')")
             .execute(&pool)
             .await
             .unwrap();
-        for (index, id) in [&named, &urn, &dropped, &curated, &lit, &excluded, &shared]
-            .into_iter()
-            .enumerate()
+        for (index, id) in [
+            &named, &urn, &dropped, &curated, &lit, &excluded, &shared, &twin,
+        ]
+        .into_iter()
+        .enumerate()
         {
             let world = if id == &lit {
                 "lit.dcl.eth"
@@ -2931,6 +2942,7 @@ mod tests {
         }
         for (id, raw) in [
             (&plain, json!({})),
+            (&twin, json!({})),
             (
                 &shared,
                 json!({"world": true, "world_name": "bulk.dcl.eth"}),
@@ -2954,6 +2966,7 @@ mod tests {
             (&lit, 7.0),
             (&excluded, 8.0),
             (&shared, 3.0),
+            (&twin, 2.5),
         ] {
             ranking::set_ranking(&pool, id, Some(value), "data")
                 .await
@@ -3011,6 +3024,10 @@ mod tests {
                     id: braced.clone(),
                     ranking: 9.0,
                 },
+                RankingEntry {
+                    id: twin.clone(),
+                    ranking: 9.0,
+                },
             ],
             &[],
             ranking::ReplaceScope {
@@ -3027,7 +3044,7 @@ mod tests {
                 result.places.cleared,
                 result.places.skipped_world_backed.clone()
             ),
-            (1, 1, vec![upper, braced])
+            (1, 2, vec![upper, braced, twin.clone()])
         );
         for (id, expected) in [
             (&named, json!(5.0)),
@@ -3036,10 +3053,23 @@ mod tests {
             (&curated, json!(4.0)),
             (&lit, json!(7.0)),
             (&excluded, json!(8.0)),
-            (&shared, json!(3.0)),
+            (&shared, json!(0)),
+            (&twin, json!(2.5)),
         ] {
             assert_eq!(stored(id.clone()).await, expected, "{id}");
         }
+        // The score path reads the scene's curation, not its catalogue twin's.
+        sqlx::query("UPDATE explore.place SET highlighted = true WHERE id = $1")
+            .bind(&shared)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            ranking::set_ranking_from_score(&pool, &shared, Some(1.0), "data")
+                .await
+                .unwrap(),
+            ScoreRankingOutcome::Stored
+        );
     }
 
     /// Orphan retirement locks a world's identities in identity order, the

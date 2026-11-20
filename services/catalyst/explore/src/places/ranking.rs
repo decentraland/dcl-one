@@ -285,24 +285,27 @@ pub async fn set_ranking_from_score(
     let mut tx = pool.begin().await?;
     // Scene before catalogue row, the order every other curation write takes.
     lock_world_scenes(&mut tx, &[id.to_string()]).await?;
-    let mut curated = None;
-    for table in ["explore.place", "explore.place_world_local"] {
-        if let Some(row) = sqlx::query(sqlx::AssertSqlSafe(curation_sql(table)))
-            .bind(id)
-            .fetch_optional(&mut *tx)
-            .await?
-        {
-            curated = Some(row.get::<bool, _>("highlighted") || row.get::<bool, _>("excluded"));
-            break;
+    // A scene wins over a catalogue row with its id, as on read.
+    let mut curated = match uuid::Uuid::parse_str(id) {
+        Ok(identity) => {
+            sqlx::query_scalar(SCENE_CURATION_SQL)
+                .bind(identity)
+                .fetch_optional(&mut *tx)
+                .await?
         }
-    }
-    if curated.is_none()
-        && let Ok(identity) = uuid::Uuid::parse_str(id)
-    {
-        curated = sqlx::query_scalar(SCENE_CURATION_SQL)
-            .bind(identity)
-            .fetch_optional(&mut *tx)
-            .await?;
+        Err(_) => None,
+    };
+    if curated.is_none() {
+        for table in ["explore.place", "explore.place_world_local"] {
+            if let Some(row) = sqlx::query(sqlx::AssertSqlSafe(curation_sql(table)))
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?
+            {
+                curated = Some(row.get::<bool, _>("highlighted") || row.get::<bool, _>("excluded"));
+                break;
+            }
+        }
     }
     let outcome = match curated {
         None => ScoreRankingOutcome::NotWritable,
@@ -353,8 +356,8 @@ const WORLD_SCENE_IDS: &str =
     "SELECT identity FROM explore.world_scene_place WHERE identity = ANY($1)";
 
 /// The ranked, uncurated world-scene places the places leg clears, curation
-/// read as the projection reads it; an id with a catalogue row is left to
-/// that row's leg. `$1` is spared; `$2`, when set, narrows them to `$2`.
+/// read as the projection reads it (a scene wins over a catalogue row with
+/// its id). `$1` is spared; `$2`, when set, narrows them to `$2`.
 const SCENE_CLEAR_CANDIDATES: &str = "SELECT p.identity::text FROM explore.world_scene_place p \
      JOIN explore.place_ranking r ON r.place_id = p.identity::text \
      LEFT JOIN explore.place_moderation m ON m.place_id = p.identity::text \
@@ -362,7 +365,6 @@ const SCENE_CLEAR_CANDIDATES: &str = "SELECT p.identity::text FROM explore.world
      WHERE jsonb_typeof(r.overlay->'ranking') = 'number' AND r.overlay->'ranking' <> '0'::jsonb \
      AND NOT COALESCE(m.highlighted, wm.highlighted, false) \
      AND NOT COALESCE(r.overlay->'exclude_from_ranking' = 'true'::jsonb, false) \
-     AND NOT EXISTS (SELECT 1 FROM explore.place_indexed c WHERE c.id = p.identity::text) \
      AND p.identity::text <> ALL($1::text[]) \
      AND ($2::text[] IS NULL OR p.identity::text = ANY($2::text[])) \
      ORDER BY p.identity";
@@ -376,12 +378,20 @@ fn world_resolution_sql() -> String {
     )
 }
 
-/// The automated rows of one leg the replace clears: ranked, uncurated, not kept.
+/// The automated rows of one leg the replace clears: ranked, uncurated, not
+/// kept. The places leg leaves a scene's id to the scene clear.
 fn clear_candidates_sql(world: bool) -> String {
-    let leg = if world { "TRUE" } else { "FALSE" };
+    let (leg, scenes) = if world {
+        ("TRUE", "")
+    } else {
+        (
+            "FALSE",
+            " AND id NOT IN (SELECT identity::text FROM explore.world_scene_place)",
+        )
+    };
     format!(
         "SELECT id FROM explore.place_indexed WHERE world IS {leg} AND highlighted IS FALSE
-         AND {EXCLUDE_FROM_RANKING_SQL} IS FALSE AND {RANKING_IS_SET_SQL} AND id <> ALL($1::text[])"
+         AND {EXCLUDE_FROM_RANKING_SQL} IS FALSE AND {RANKING_IS_SET_SQL} AND id <> ALL($1::text[]){scenes}"
     )
 }
 
@@ -430,14 +440,11 @@ pub async fn replace_ranking(
             .await?
             .into_iter()
             .collect();
-        locally_served.extend(
-            place_ids
-                .iter()
-                .filter(|id| {
-                    uuid::Uuid::parse_str(id).is_ok_and(|identity| scenes.contains(&identity))
-                })
-                .cloned(),
-        );
+        let is_scene =
+            |id: &str| uuid::Uuid::parse_str(id).is_ok_and(|identity| scenes.contains(&identity));
+        // A scene wins over a catalogue row with its id, as on read.
+        curation.retain(|row| !is_scene(&row.id));
+        locally_served.extend(place_ids.iter().filter(|id| is_scene(id)).cloned());
     }
     let place_buckets = classify_places(places, &curation, &locally_served);
 
@@ -554,6 +561,7 @@ pub async fn replace_ranking(
                     .map(|id| (id, json!({ "ranking": 0 })))
                     .collect();
             write_overlays(&mut tx, &scenes, actor).await?;
+            // Disjoint from the catalogue clear, which leaves scene ids out.
             cleared_count += scenes.len() as i64;
         }
         if world {
