@@ -848,6 +848,10 @@
           "kind": "regular"
         },
         {
+          "name": "holeClip.test.ts",
+          "kind": "regular"
+        },
+        {
           "name": "hudAutomation.test.ts",
           "kind": "regular"
         },
@@ -5098,6 +5102,10 @@
           "kind": "regular"
         },
         {
+          "name": "engineViewport.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "error.test.tsx",
           "kind": "regular"
         },
@@ -5938,7 +5946,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarPreview.tsx",
-      "sha256": "85338dca73d8bcd9636bb1de35eeacd78708f421f1b7fd8941c8adc0a9d1a49c"
+      "sha256": "1aef19308938648fc2a1482e3962b560a9d719c02d0f661fdb04e334e8297af8"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/chat.ts",
@@ -6242,7 +6250,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeOutfits.test.ts",
-      "sha256": "7c6572d4e1d62d07c67c46e44415bccd2bd8e863d8f7bf72295ce29b9ae4d3c5"
+      "sha256": "b0648f5f93f52685a6d9cc61630644c70850cb5e52ad532fb0cf80d59748f48b"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
@@ -6595,7 +6603,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "d5a9b2100c7c7daee6eff28c06ba6b1f000371512c152dc9e4bb274b2ca0e2de"
+      "sha256": "e457067dc6f2305cb60a4ac4508514c489c96c854dd108f24b267da29b90acb5"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -6923,7 +6931,7 @@
     },
     {
       "path": "library/explorer-core/lib/holeClip.ts",
-      "sha256": "fef63354a1ea28d390fcc14cf53fad51636122a3753a463fb0de313b87bef94e"
+      "sha256": "e5dba57481aba6e416b819da0b1b0a1f25405d47fcf2bc9952c21f7441e891f3"
     },
     {
       "path": "library/explorer-core/lib/hudAutomation.ts",
@@ -7096,6 +7104,10 @@
     {
       "path": "library/explorer-core/test/guestWalletEvent.test.ts",
       "sha256": "a2ceb8a45dde0094e91d218dbd03187739c988bdccbcc2d3493ecf97e832bd03"
+    },
+    {
+      "path": "library/explorer-core/test/holeClip.test.ts",
+      "sha256": "3dbe6a22ec977e35b1b61fbc03736b1b6d7ea6a4f5d69e79911a965f52e790ca"
     },
     {
       "path": "library/explorer-core/test/hudAutomation.test.ts",
@@ -9175,19 +9187,19 @@
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackModal.module.css",
-      "sha256": "f9f8984515ecf86940e90a0c194e7ad8c93d8b438a34fd84df6bc6d85d593b2d"
+      "sha256": "19bff884e4254b99fa2bef23a4aa92de1a25f3fb8be178452b525ea5f87d9c03"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackModal.tsx",
-      "sha256": "0f6b87a9d9b7b40378ad03a60807cd39db7d849c50d528e99868b21691d829b1"
+      "sha256": "8ddbf27111539d6509386517667423d79be61e8537c028311c19bbd1dff62670"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.module.css",
-      "sha256": "b87079fa64d38c5c317be496f12c621f258f22c8f039bd1541812551f77050c3"
+      "sha256": "4f07411301223b9f7b4ec9d121f84ec524f851c4547074762f2827d54b4ac23d"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
-      "sha256": "cab753b6f77e10fda9e298a81471209ecccda06f13533510baa754cc0727cbbc"
+      "sha256": "d9123c6fcfccdb6bd793681d23d4d12ae15a9408f102e35e00fea9a9f28f78b6"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
@@ -9443,7 +9455,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/engine/EngineViewport.tsx",
-      "sha256": "98cf5fe8d3efc5540df99ccd857356a8a64a3a8e7e945096dc3c43ba5ad370ab"
+      "sha256": "363b2c745f0bbed1b1f8ae4ea97aabf896069061df8de42c3bba5c2e56e2cae8"
     },
     {
       "path": "library/ui/apps/hud/features/error/ConnectivityFeedback.module.css",
@@ -9735,11 +9747,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.module.css",
-      "sha256": "7f3966cc447bae62629158837430066515c9cc5b66f7bc4edbbf533734955340"
+      "sha256": "885866d44eac6ada7820031a41d1d9c2f8000148f44b1d45a4ea8014b2135e9a"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "sha256": "b8c6471072e2e1c615b4a226893e472908d79848bbcab62238131a0450946cf2"
+      "sha256": "efc57770e26561393043a4a50179f8247cd1c0fca597763d9e7797490a56b457"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.module.css",
@@ -10143,7 +10155,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "df6c811bc2effa4899e1c88b8635e17d4c112ef88b113ee7a56d449d715db5e2"
+      "sha256": "891ef73351300ba97e6620a4ed6f243223a081f7765a499ebd90a3caa2d7374e"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10462,6 +10474,10 @@
       "sha256": "6ff187f0c763b8c51980477fe79611261e17f40836089bf5dd45159778e8c0ea"
     },
     {
+      "path": "library/ui/apps/hud/test/engineViewport.test.tsx",
+      "sha256": "d9cbaf74174df277064400d93749ff7694e82ede32b9d68a01fc6786e49d1f1d"
+    },
+    {
       "path": "library/ui/apps/hud/test/error.test.tsx",
       "sha256": "b0fa53ae546c421b7c4319e8ab5b9db966ec8cd1c1483b4dd351e0416a9d97be"
     },
@@ -10491,7 +10507,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/avatarPreview.test.tsx",
-      "sha256": "d331310f236b8a03f5689a8e90c604227f3781be1fe0926647bcd18ad3470726"
+      "sha256": "4369c86053c65684ee82762fde4e598a40228e52f58793c35eaea60ce2f68b83"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpack.clicks.test.tsx",
@@ -10695,7 +10711,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/home.session.test.tsx",
-      "sha256": "452415320e5b3409412d42e87421372e1633970d0b44630880dcba424af1f95f"
+      "sha256": "c597526f04631006eadf015f96f25038dca48866d2d33e83dbae808fc4a8a8b9"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/hudLogin.test.tsx",
@@ -13162,6 +13178,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/test/holeClip.test.ts",
+      "to": "library/explorer-core/lib/holeClip.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/holeClip.test.ts",
+      "to": "library/explorer-core/lib/holeClip.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/holeClip.test.ts",
+      "to": "library/explorer-core/lib/holeClip.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/test/hudAutomation.test.ts",
       "to": "library/explorer-core/lib/cefNativeBridge.ts",
       "kind": "native:runtime"
@@ -38134,6 +38165,21 @@
     {
       "from": "library/ui/apps/hud/test/donatePanel.test.ts",
       "to": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/engineViewport.test.tsx",
+      "to": "library/ui/apps/hud/features/engine/EngineViewport.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/engineViewport.test.tsx",
+      "to": "library/ui/apps/hud/features/engine/EngineViewport.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/engineViewport.test.tsx",
+      "to": "library/ui/apps/hud/features/engine/EngineViewport.tsx",
       "kind": "test:runtime"
     },
     {
@@ -46573,6 +46619,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/holeClip.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/hudAutomation.test.ts",
       "kind": "type"
     },
@@ -48039,6 +48090,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/donatePanel.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/engineViewport.test.tsx",
       "kind": "type"
     },
     {

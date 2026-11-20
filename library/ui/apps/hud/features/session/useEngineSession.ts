@@ -1217,7 +1217,8 @@ export interface EngineSession {
   setEngineViewport: (
     region: EngineViewportRegion,
     rect: { x: number; y: number; width: number; height: number } | null,
-    dpr?: number
+    dpr?: number,
+    focus?: { x: number; y: number; width: number; height: number }
   ) => void
   /** Report the screen area the persistent HUD occupies (see lib/hudInset.ts). */
   setInteractableArea: (area: InteractableArea) => void
@@ -4395,17 +4396,19 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const lobbyStageOptions = useRef({ preset: lobbyStagePreset(getPref(PREF.lobbyStagePreset)).id as string, idleEmotes: false })
   const lastLobbyReport = useRef<{ rect: { x: number; y: number; width: number; height: number } | null; dpr?: number } | null>(null)
   const setEngineViewport = useCallback(
-    (region: EngineViewportRegion, rect: { x: number; y: number; width: number; height: number } | null, dpr?: number) => {
+    (region: EngineViewportRegion, rect: { x: number; y: number; width: number; height: number } | null, dpr?: number, focus?: { x: number; y: number; width: number; height: number }) => {
       if (region === 'avatarPreview') setAvatarPreviewRect(rect)
       // a closed sign-in stage is drawn again from scratch: the page keeps its background until then
       if (region === 'signin' && rect == null) setSigninStageReady(false)
+      // likewise the lobby's, which the bridge announces again to the next report
+      if (region === 'lobby' && rect == null) setLobbyStageReady(false)
       if (region === 'lobby') {
         lastLobbyReport.current = { rect, dpr }
         const { preset, idleEmotes } = lobbyStageOptions.current
         driverRef.current?.send({ kind: 'engineViewport', region, rect, dpr, stagePreset: preset, idleEmotes })
         return
       }
-      driverRef.current?.send({ kind: 'engineViewport', region, rect, dpr })
+      driverRef.current?.send({ kind: 'engineViewport', region, rect, dpr, ...(focus != null && rect != null ? { focus } : {}) })
     },
     []
   )

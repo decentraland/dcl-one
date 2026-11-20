@@ -880,6 +880,47 @@ fn an_exhausted_gltf_fallback_reports_terminal_error_to_the_scene_crdt() {
     assert!(errors[0].timestamp > 0);
 }
 
+#[test]
+fn a_hidden_players_avatar_takes_no_max_avatars_slot() {
+    let mut app = App::new();
+    app.init_resource::<AppConfig>();
+    app.world_mut().resource_mut::<AppConfig>().max_avatars = 1;
+    app.init_resource::<SessionGraphics>();
+    let world = app.world_mut();
+    world.spawn((PrimaryUser::default(), GlobalTransform::default()));
+    // a built avatar at `distance` from the player, under a player root shown or hidden
+    let mut avatar = |distance: f32, shown: InheritedVisibility| {
+        let root = world.spawn(shown).id();
+        world
+            .spawn((
+                AvatarProcessed,
+                GlobalTransform::from_translation(Vec3::X * distance),
+                Visibility::Inherited,
+                ChildOf(root),
+            ))
+            .id()
+    };
+    // the nearest is hidden for another reason, such as a block
+    let blocked = avatar(1.0, InheritedVisibility::HIDDEN);
+    let near = avatar(2.0, InheritedVisibility::VISIBLE);
+    let far = avatar(3.0, InheritedVisibility::VISIBLE);
+
+    world.run_system_once(set_avatar_visibility).unwrap();
+
+    let visibility = |entity| *world.get::<Visibility>(entity).unwrap();
+    assert_eq!(
+        visibility(near),
+        Visibility::Inherited,
+        "the one slot is its"
+    );
+    assert_eq!(visibility(far), Visibility::Hidden);
+    assert_eq!(
+        visibility(blocked),
+        Visibility::Inherited,
+        "the cap leaves it alone: its player hides it"
+    );
+}
+
 fn render_definition(avatar_outline: bool, disable_dither: bool) -> AvatarRenderDefinition {
     AvatarRenderDefinition {
         body: Wearable {
