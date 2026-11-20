@@ -1,5 +1,5 @@
 export enum Env {
   DEV = 'dev',
-  STG = 'stg',
+  DCL_ONE = 'dcl-one',
   PROD = 'prod',
 }
