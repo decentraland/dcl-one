@@ -124,6 +124,8 @@ export type CheckoutLine = CreditLineRequest;
  * ONE credit for ONE settlement group (POST /shop-api/v1/credit-authorizations/batch). useCredits
  * consumes a list of credits in order until the call is covered, so per-line credits leave an
  * unreachable tail; one credit per transaction has none. Call once per group, never per item.
+ * A group of ONE line of one unit may carry that line's `creditsCents` (the Credits part, the rest
+ * paid in MANA); the node refuses it beside any other line.
  */
 export async function authorizeUsdCreditGroup(
   lines: CheckoutLine[],
@@ -133,10 +135,20 @@ export async function authorizeUsdCreditGroup(
   return client.authorizations.authorizeGroup({ items: lines, source });
 }
 
-/** One line's credit (POST /shop-api/v1/credit-authorizations): single purchases and NAME registrations. */
+/**
+ * One line's credit (POST /shop-api/v1/credit-authorizations): single purchases and NAME registrations. `usdPriceCents`
+ * is the line's whole quoted price; `creditsCents` asks for a credit for that part of it alone, the rest paid in MANA
+ * (the node reserves and signs only the part).
+ */
 export async function authorizeUsdCredit(
   usdPriceCents: number,
-  opts: { tradeId?: string; item?: { contractAddress: string; itemId: string }; registeredName?: string; source?: "website" | "client" } = {},
+  opts: {
+    tradeId?: string;
+    item?: { contractAddress: string; itemId: string };
+    registeredName?: string;
+    creditsCents?: number;
+    source?: "website" | "client";
+  } = {},
   client: ShopClient,
 ): Promise<CreditAuthorization> {
   return client.authorizations.authorize({
@@ -144,6 +156,7 @@ export async function authorizeUsdCredit(
     ...(opts.tradeId ? { tradeId: opts.tradeId } : {}),
     ...(opts.item ?? {}),
     ...(opts.registeredName ? { name: opts.registeredName } : {}),
+    ...(opts.creditsCents !== undefined ? { creditsCents: opts.creditsCents } : {}),
     source: opts.source ?? "website",
   });
 }

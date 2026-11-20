@@ -4,7 +4,8 @@
 // by the wallet (which must already be on the chain). Credits + MANA (only inside the MANA option of an
 // eligible primary line): useCredits with a partial credit and the remainder pulled from the buyer's
 // MANA by the CreditsManager. The allowance is checked first and sized to THIS purchase: a leftover
-// smaller one would revert the settlement.
+// smaller one would revert the settlement. The CreditsManager is never left an unlimited allowance:
+// it is approved exactly the gap, and only when what it already has falls short of it.
 
 import type { Hex } from "viem";
 
@@ -54,7 +55,8 @@ export function manaSpenderFor(rail: "mana" | "combined", target: PurchaseTarget
   return { spender: book.collectionStore.address, chainId };
 }
 
-async function ensureManaAllowance(ctx: RailContext, chainId: ChainId, spender: string, requiredWei: bigint | undefined): Promise<void> {
+/** `exact`: an allowance short of `requiredWei` is set to exactly `requiredWei` instead of in full. */
+async function ensureManaAllowance(ctx: RailContext, chainId: ChainId, spender: string, requiredWei: bigint | undefined, exact = false): Promise<void> {
   await ensureAuthorization({
     auth: { kind: AuthorizationKind.Allowance, contractAddress: requireContracts(chainId).mana.address, spenderAddress: spender, chainId },
     provider: ctx.provider,
@@ -64,6 +66,7 @@ async function ensureManaAllowance(ctx: RailContext, chainId: ChainId, spender: 
     relayerUrl: ctx.relayerUrl,
     fetchImpl: ctx.fetchImpl,
     requiredWei,
+    exact,
   });
 }
 
@@ -202,8 +205,9 @@ type GapOptions = {
 
 /**
  * Credits first, MANA for the remainder, in ONE useCredits: the CreditsManager pulls the gap from the
- * buyer's MANA, so its allowance is sized to the gap. Only ever reached from the MANA option of an
- * eligible primary line.
+ * buyer's MANA, so its allowance is exactly the gap. The two caps are encoded apart: `maxCreditedValue`
+ * is the credit's own value, `maxUncreditedValue` the gap the buyer confirmed, never raised here. Only
+ * ever reached from the MANA option of an eligible primary line.
  */
 async function payGapWithMana(ctx: RailContext, target: PurchaseTarget, opts: GapOptions): Promise<Hex> {
   if (opts.credits.length === 0) throw new Error("No credits to spend: use the MANA-only rail for that");
@@ -211,9 +215,9 @@ async function payGapWithMana(ctx: RailContext, target: PurchaseTarget, opts: Ga
   const chainId = targetChainId(target);
   // The book's manager, which pulls the gap: a credit signed for any other is refused before this approves.
   const spender = creditsManagerFor(chainId, opts.credits).address;
-  await ensureManaAllowance(ctx, chainId, spender, opts.manaGapWei);
+  await ensureManaAllowance(ctx, chainId, spender, opts.manaGapWei, true);
   const creditsValue = opts.credits.reduce((acc, c) => acc + BigInt(c.availableAmount), 0n);
-  const purchase = purchaseFor(target, opts.credits, (creditsValue + opts.manaGapWei).toString());
+  const purchase: AnyPurchase = { ...purchaseFor(target, opts.credits, creditsValue.toString()), maxUncreditedValue: opts.manaGapWei.toString() };
   if (ctx.gasless ?? gaslessEnabled()) {
     let relayed: Hex | undefined;
     try {

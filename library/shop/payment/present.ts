@@ -3,7 +3,8 @@
 // and took no sale kind; here the server's PurchaseOffer decides which methods exist (SHOP.md payment
 // table), balances only decide each option's state, and nothing ever moves a buyer to another method:
 // short credits mean an explicit top-up, a credits outage keeps credits as the (unavailable) main
-// action, and a restricted line never shows a credit price, a top-up or a credits+MANA option.
+// action, and a restricted line never shows a credit price, a top-up or a credits+MANA option. A NAME
+// registration never shows a credits+MANA option either: the credits node authorizes no part of one.
 
 import { assetKey } from "../model/asset";
 import {
@@ -44,8 +45,11 @@ export type OptionState =
    */
   | { kind: "unavailable"; missing: MissingFact | null; withheld?: boolean };
 
-/** Credits first, then MANA for the remainder: only ever inside the MANA option of an eligible line. */
-export type MixedPayment = { creditsCents: UsdCents; credits: number; manaWei: ManaWei };
+/**
+ * Credits first, then MANA for the remainder: only ever inside the MANA option of an eligible line. `priceCents` is the
+ * line's whole Credits quote, the price the credit is authorized against; `creditsCents` the part Credits pay.
+ */
+export type MixedPayment = { priceCents: UsdCents; creditsCents: UsdCents; credits: number; manaWei: ManaWei };
 
 export type PaymentOptionView = {
   method: PaymentMethod;
@@ -204,7 +208,8 @@ export function presentPayment(offer: PurchaseOffer, session: Session, ctx: Paym
 
   const manaOption = options.find((o) => o.method === "mana");
   const creditsQuote = options.find((o) => o.method === "credits")?.quote;
-  if (!manaOnly && splitOffered && manaOption?.quote?.method === "mana" && creditsQuote?.method === "credits") {
+  const nameRegistration = offer.sale === "primaryNameRegistration";
+  if (!manaOnly && splitOffered && !nameRegistration && manaOption?.quote?.method === "mana" && creditsQuote?.method === "credits") {
     manaOption.mixed = mixedPayment(creditsQuote.quoted, manaOption.quote.amount, ctx);
   }
 
@@ -263,5 +268,5 @@ function mixedPayment(priceCents: UsdCents, priceWei: ManaWei, ctx: PaymentConte
   const manaWei = remainder === null ? null : manaForRemainder(remainder, priceCents, priceWei);
   if (manaWei === null) return null;
   if (ctx.manaBalance != null && ctx.manaBalance < manaWei) return null;
-  return { creditsCents: leg, credits: creditsFloor(leg), manaWei };
+  return { priceCents, creditsCents: leg, credits: creditsFloor(leg), manaWei };
 }

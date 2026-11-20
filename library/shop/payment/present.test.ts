@@ -266,27 +266,39 @@ describe("balances decide an option's state, never its method", () => {
     ]);
   });
 
-  it("credits+MANA lives inside the MANA option: 327c held on a 410c NAME is 32 credits and 9 MANA", () => {
-    const offer = nameRegistration(web3());
+  it("credits+MANA lives inside the MANA option: 327c held on a 410c mint is 32 credits and 9 MANA, of the whole 410c price", () => {
+    const offer = storeMint(web3());
     const priced: PurchaseOffer = {
       ...offer,
       quotes: [{ method: "credits", quoted: usdCents(410) }, { method: "mana", amount: manaWei(41n * 10n ** 18n) }],
     };
     const { view } = show(priced, web3(), { creditsBalance: usdCents(327), manaBalance: manaFromWhole(10) });
     const mana = view.options.find((o) => o.method === "mana")!;
-    expect(mana.mixed).toEqual({ creditsCents: 320, credits: 32, manaWei: manaFromWhole(9) });
+    expect(mana.mixed).toEqual({ priceCents: 410, creditsCents: 320, credits: 32, manaWei: manaFromWhole(9) });
     expect(view.options[0]!.state.kind).toBe("topUpRequired");
     expect(show(priced, web3(), { creditsBalance: usdCents(327), manaBalance: manaFromWhole(8) }).view.options[1]!.mixed).toBeNull();
   });
 
-  it("offers no credits+MANA split by default: the credits node authorizes a line only at its whole price", () => {
+  it("offers no credits+MANA split by default, even on a line the node could split: it is switched on in its own change", () => {
     undoSplit();
+    const offer = storeMint(web3());
+    const priced: PurchaseOffer = {
+      ...offer,
+      quotes: [{ method: "credits", quoted: usdCents(410) }, { method: "mana", amount: manaWei(41n * 10n ** 18n) }],
+    };
+    const { view } = show(priced, web3(), { creditsBalance: usdCents(327), manaBalance: manaFromWhole(10) });
+    expect(view.options.find((o) => o.method === "mana")!.mixed).toBeNull();
+    expect(view.options[0]!.state.kind).toBe("topUpRequired");
+  });
+
+  it("a NAME registration offers no credits+MANA split: the credits node authorizes no part of one", () => {
     const offer = nameRegistration(web3());
     const priced: PurchaseOffer = {
       ...offer,
       quotes: [{ method: "credits", quoted: usdCents(410) }, { method: "mana", amount: manaWei(41n * 10n ** 18n) }],
     };
     const { view } = show(priced, web3(), { creditsBalance: usdCents(327), manaBalance: manaFromWhole(10) });
+    expect(view.options.map((o) => o.method)).toEqual(["credits", "mana"]);
     expect(view.options.find((o) => o.method === "mana")!.mixed).toBeNull();
     expect(view.options[0]!.state.kind).toBe("topUpRequired");
   });

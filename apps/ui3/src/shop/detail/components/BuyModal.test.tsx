@@ -10,7 +10,7 @@ import { createDemo, DemoShell, type DemoScenario } from "../../checkout/demo";
 import { RESUME_CART_KEY } from "../../checkout/purchase/cart";
 import { takeBuyNowReturn, takeTopUpReturn } from "../../credits/returns";
 import { requireContracts } from "../../checkout/chain/contracts";
-import { batchAuthorization, type FakeHandlers } from "../../checkout/fakes";
+import { batchAuthorization, relayedApproval, type FakeHandlers } from "../../checkout/fakes";
 import { CHAIN } from "@shop/model/chain";
 import { usdCents } from "@shop/model/money";
 import type { PurchaseOffer } from "@shop/model/purchase";
@@ -417,9 +417,13 @@ describe("Buy now's dialog", () => {
     expect(screen.getByRole("heading", { name: "Purchase complete!" })).toBeTruthy();
     const single = demo.shop.log.filter((r) => r.name === "authorizeCredit");
     expect(single).toHaveLength(1);
-    expect(single[0]!.body).toMatchObject({ usdPriceCents: 30 });
+    // The whole price is what the node checks; the credit is for the 3 Credits alone.
+    expect(single[0]!.body).toMatchObject({ usdPriceCents: 115, creditsCents: 30 });
     expect(authorizations(demo)).toHaveLength(0);
     expect(demo.relay.posts.length).toBeGreaterThan(0);
+    // The manager is approved exactly the 1.7 MANA shown, never an unlimited allowance.
+    const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
+    expect(demo.relay.posts.map(relayedApproval).filter((a) => a !== null)).toEqual([{ owner: BOOK.buyer.toLowerCase(), spender: manager, amount: 17n * 10n ** 17n }]);
   });
 
   it("the split with the wallet on another account: Buy waits, and the step says why with the cart's way back", async () => {

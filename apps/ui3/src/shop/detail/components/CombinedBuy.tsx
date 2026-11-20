@@ -4,10 +4,11 @@
 // Upstream's credits+MANA rail, kept INSIDE the MANA option of an eligible primary wearable or emote for a
 // web3 wallet (SHOP.md): the whole credits the balance holds first, then MANA for the remainder, in ONE
 // CreditsManager.useCredits. The MANA allowance for the manager is approved first (explicitly, for a
-// self-custody wallet), so no credit is held while the buyer decides; then ONE credit is authorized for
-// the credits leg, the MANA the contract would pull is checked against the amount shown, and the call is
-// relayed (or sent by the wallet when the relay cannot run). A credit is released only when nothing may
-// have consumed it; a broadcast that has not confirmed is pending, never re-sent.
+// self-custody wallet, and for exactly the MANA shown, never an unlimited one), so no credit is held while
+// the buyer decides; then ONE credit is authorized at the line's whole price for its Credits part, the
+// MANA the contract would pull is checked against the amount shown, and the call is relayed (or sent by
+// the wallet when the relay cannot run). A credit is released only when nothing may have consumed it; a
+// broadcast that has not confirmed is pending, never re-sent.
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
@@ -257,20 +258,23 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       const target = known ?? (await resolveTarget(ctx, offer));
       sentChain = manaSpenderFor("combined", target).chainId;
       const item = line.asset.token.kind === "item" ? { contractAddress: line.asset.contract, itemId: line.asset.token.itemId } : undefined;
+      // The whole price is what the node checks against its quote; the credit it signs is for the Credits part alone.
       const authorized = await authorizeUsdCredit(
-        mixed.creditsCents,
-        { ...(target.kind === "trade" ? { tradeId: target.trade.id } : {}), ...(item ? { item } : {}) },
+        mixed.priceCents,
+        { ...(target.kind === "trade" ? { tradeId: target.trade.id } : {}), ...(item ? { item } : {}), creditsCents: mixed.creditsCents },
         ctx.client,
       );
       creditId = authorized.credit.id;
       const price = target.kind === "trade" ? null : BigInt(target.mint.item.priceWei);
       const gap = price === null ? mixed.manaWei : price - BigInt(authorized.credit.availableAmount);
+      // The buyer confirmed `mixed.manaWei`: a gap above it is never paid, and no gap means the terms changed.
       if (gap > mixed.manaWei) throw new Error("The MANA this needs moved past the amount shown. Nothing was charged; check the price again.");
+      if (gap <= 0n) throw new Error("The price changed since you confirmed it. Nothing was charged; check the price again.");
       const id = creditId;
       guard.current.submitStarted(id);
       const gapArgs = {
         credits: [{ ...authorized.credit }],
-        manaGapWei: gap > 0n ? gap : mixed.manaWei,
+        manaGapWei: gap,
         onBroadcast: ({ txHash }: { txHash: string }) => {
           sentHash = txHash;
           guard.current.broadcast(id, txHash);
@@ -320,7 +324,20 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       const ctx = context();
       if (phase.kind !== "approve") return;
       if (!ctx) throw new Error("Connect your wallet again to approve.");
-      await setAuthorization({ auth: phase.auth, active: true, provider: ctx.provider, account: ctx.buyer, walletKind: ctx.walletKind, reader: ctx.reader, relayerUrl: ctx.relayerUrl, fetchImpl: ctx.fetchImpl });
+      const agreedTerms = terms.current;
+      if (!agreedTerms) throw new Error("Start the purchase again to approve.");
+      // Exactly the MANA the buyer agreed to pay, never an unlimited allowance to the CreditsManager.
+      await setAuthorization({
+        auth: phase.auth,
+        active: true,
+        amount: agreedTerms.mixed.manaWei,
+        provider: ctx.provider,
+        account: ctx.buyer,
+        walletKind: ctx.walletKind,
+        reader: ctx.reader,
+        relayerUrl: ctx.relayerUrl,
+        fetchImpl: ctx.fetchImpl,
+      });
     },
     approved: () => {
       const ctx = context();

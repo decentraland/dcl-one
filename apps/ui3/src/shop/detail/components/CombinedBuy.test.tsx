@@ -1,14 +1,18 @@
 // The credits+MANA rail inside the web3 MANA option, run end to end on the checkout demo's fake node,
-// chain and relay: the manager's MANA allowance approved first, ONE credit for the credits leg, the
-// MANA gap checked against what was shown, and a declined signature releasing the credit.
+// chain and relay: the manager's MANA allowance approved first (exactly the MANA shown), ONE credit
+// authorized at the whole price for the credits leg, the MANA gap checked against what was shown, and a
+// declined signature releasing the credit.
 
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import { decodeFunctionData, type Hex } from "viem";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setSplitPayment } from "@shop/payment/present";
 
+import { CREDITS_MANAGER_ABI, OFFCHAIN_META_TX_ABI } from "@shop/checkout/chain/abi";
+
 import { requireContracts } from "../../checkout/chain/contracts";
-import { batchAuthorization } from "../../checkout/fakes";
+import { batchAuthorization, relayedApproval } from "../../checkout/fakes";
 import { CHAIN } from "@shop/model/chain";
 import { createDemo, DemoShell } from "../../checkout/demo";
 import { usdCents } from "@shop/model/money";
@@ -27,16 +31,26 @@ function QueryProbe() {
   return null;
 }
 
-function setup(signedFor?: string, confirm?: "none") {
+const MANA = 10n ** 18n;
+
+/** The useCredits arguments a relayed CreditsManager meta-transaction carries. */
+function relayedUseCredits(body: unknown): { maxCreditedValue: bigint; maxUncreditedValue: bigint } {
+  const data = (body as { transactionData: { params: [string, Hex] } }).transactionData.params[1];
+  const meta = decodeFunctionData({ abi: OFFCHAIN_META_TX_ABI, data });
+  return decodeFunctionData({ abi: CREDITS_MANAGER_ABI, data: meta.args[1] as Hex }).args[0] as { maxCreditedValue: bigint; maxUncreditedValue: bigint };
+}
+
+/** The node answers a credit for the Credits part (`creditsCents`), worth `value` (1 MANA by default). */
+function setup(signedFor?: string, confirm?: "none", value = MANA) {
   const demo = createDemo({
     session: "web3",
     ...(confirm ? { confirm } : {}),
     handlers: {
       authorizeCredit: ({ body }) => {
-        const cents = (body as { usdPriceCents: number }).usdPriceCents;
+        const cents = (body as { creditsCents: number }).creditsCents;
         const one = batchAuthorization([{ usdPriceCents: cents }]);
-        const credit = { ...one.credit, amount: "1000000000000000000", availableAmount: "1000000000000000000", ...(signedFor ? { contract: signedFor } : {}) };
-        return { ...one, credit, maxCreditedValue: "1000000000000000000", usdCents: cents };
+        const credit = { ...one.credit, amount: value.toString(), availableAmount: value.toString(), ...(signedFor ? { contract: signedFor } : {}) };
+        return { ...one, credit, maxCreditedValue: value.toString(), usdCents: cents };
       },
     },
   });
@@ -64,9 +78,9 @@ beforeEach(() => {
 afterEach(() => undoSplit());
 
 describe("buying with Credits and MANA", () => {
-  it("approves the Credits manager's MANA, authorizes one credit for the credits leg, and relays one useCredits", async () => {
+  it("approves the Credits manager exactly the MANA shown, authorizes one credit at the whole price for the credits leg, and relays one useCredits", async () => {
     const { demo, mixed } = setup();
-    expect(mixed).toMatchObject({ credits: 5, creditsCents: 50 });
+    expect(mixed).toMatchObject({ priceCents: 115, credits: 5, creditsCents: 50 });
     expect(screen.getByTestId("combined-credits")).toHaveTextContent("5 Credits");
     expect(screen.getByTestId("combined-mana")).toHaveTextContent("1.3 MANA");
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
@@ -75,8 +89,12 @@ describe("buying with Credits and MANA", () => {
     expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
     const auth = demo.shop.log.filter((r) => r.name === "authorizeCredit");
     expect(auth).toHaveLength(1);
-    expect(auth[0]!.body).toMatchObject({ usdPriceCents: 50, contractAddress: BOOK.collection, itemId: "7" });
+    expect(auth[0]!.body).toMatchObject({ usdPriceCents: 115, creditsCents: 50, contractAddress: BOOK.collection, itemId: "7" });
+    const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
     expect(demo.relay.posts).toHaveLength(2);
+    expect(relayedApproval(demo.relay.posts[0])).toEqual({ owner: BOOK.buyer.toLowerCase(), spender: manager, amount: mixed.manaWei });
+    // The 2.3 MANA mint: the 1 MANA credit and the 1.3 MANA gap, each its own cap.
+    expect(relayedUseCredits(demo.relay.posts[1])).toMatchObject({ maxCreditedValue: MANA, maxUncreditedValue: (13n * MANA) / 10n });
     expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
   });
 
@@ -89,6 +107,28 @@ describe("buying with Credits and MANA", () => {
     await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
     expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
     expect(pageQueries!.getQueryState(balance)?.isInvalidated).toBe(true);
+  });
+
+  it("a credit that leaves more MANA to pay than was shown is refused, nothing is relayed, and the credit is released", async () => {
+    // A 0.5 MANA credit on the 2.3 MANA mint: 1.8 MANA, above the 1.3 the buyer confirmed.
+    const { demo } = setup(undefined, undefined, MANA / 2n);
+    const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
+    demo.chain.allowances.set(`${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${manager}`, 10n ** 21n);
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByRole("alert", {}, { timeout: 5000 })).toHaveTextContent("Nothing was charged.");
+    expect(demo.relay.posts).toHaveLength(0);
+    expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(true);
+  });
+
+  it("a credit that leaves no MANA to pay is refused, never paid with the gap shown before, and released", async () => {
+    // A 2.3 MANA credit on the 2.3 MANA mint: the terms the buyer confirmed no longer hold.
+    const { demo } = setup(undefined, undefined, (23n * MANA) / 10n);
+    const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
+    demo.chain.allowances.set(`${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${manager}`, 10n ** 21n);
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByRole("alert", {}, { timeout: 5000 })).toHaveTextContent("We couldn't complete the purchase. Nothing was charged.");
+    expect(demo.relay.posts).toHaveLength(0);
+    expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(true);
   });
 
   it("a declined signature releases the credit and says nothing was charged", async () => {

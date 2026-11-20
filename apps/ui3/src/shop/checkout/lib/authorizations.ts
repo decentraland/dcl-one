@@ -55,10 +55,14 @@ export async function getAuthorizationStatus(auth: ShopAuthorization, owner: str
   }
 }
 
-export function encodeAuthorizationCall(auth: ShopAuthorization, active: boolean): Hex {
+/**
+ * The call that grants or revokes `auth`. An allowance is granted in full (`maxUint256`) unless `amount` names it: an
+ * ERC-20 `approve` sets the allowance to that value, it does not add to it.
+ */
+export function encodeAuthorizationCall(auth: ShopAuthorization, active: boolean, amount?: bigint): Hex {
   switch (auth.kind) {
     case AuthorizationKind.Allowance:
-      return encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [auth.spenderAddress as Hex, active ? maxUint256 : 0n] });
+      return encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [auth.spenderAddress as Hex, active ? (amount ?? maxUint256) : 0n] });
     case AuthorizationKind.Approval:
       return encodeFunctionData({ abi: ERC721_ABI, functionName: "setApprovalForAll", args: [auth.spenderAddress as Hex, active] });
     case AuthorizationKind.Minter:
@@ -112,10 +116,14 @@ async function onChain(provider: Eip1193Provider, chainId: number): Promise<bool
   }
 }
 
-export async function setAuthorization(opts: AuthorizationContext & { auth: ShopAuthorization; active: boolean }): Promise<void> {
+/** `amount`: an allowance granted at exactly that value instead of in full (see `encodeAuthorizationCall`). */
+export async function setAuthorization(opts: AuthorizationContext & { auth: ShopAuthorization; active: boolean; amount?: bigint }): Promise<void> {
   const { auth, active, provider, account } = opts;
+  if (opts.amount !== undefined && (auth.kind !== AuthorizationKind.Allowance || opts.amount <= 0n)) {
+    throw new Error("An exact amount is granted only as a positive MANA allowance");
+  }
   const reader = opts.reader ?? readProvider();
-  const functionData = encodeAuthorizationCall(auth, active);
+  const functionData = encodeAuthorizationCall(auth, active, opts.amount);
   const target = metaTxTargetFor(auth);
   if (gaslessEnabled() && target) {
     try {
@@ -140,10 +148,18 @@ export async function setAuthorization(opts: AuthorizationContext & { auth: Shop
   await sendAndConfirm({ provider, reader, chainId: auth.chainId, from: account, to: auth.contractAddress, data: functionData, what: "The authorization" });
 }
 
-export async function ensureAuthorization(opts: AuthorizationContext & { auth: ShopAuthorization; requiredWei?: bigint }): Promise<void> {
+/**
+ * Grants `auth` unless it already covers `requiredWei`. With `exact`, an allowance short of `requiredWei` is set to exactly
+ * `requiredWei`, never more (the spender that pulls a credits + MANA gap); otherwise it is granted in full.
+ */
+export async function ensureAuthorization(opts: AuthorizationContext & { auth: ShopAuthorization; requiredWei?: bigint; exact?: boolean }): Promise<void> {
+  if (opts.exact && (opts.requiredWei === undefined || opts.requiredWei <= 0n)) {
+    throw new Error("An exact allowance needs a positive amount");
+  }
   const authorized = await getAuthorizationStatus(opts.auth, opts.account, opts.requiredWei, opts.reader ?? readProvider());
   if (authorized) return;
-  await setAuthorization({ ...opts, active: true });
+  const { exact, requiredWei, ...rest } = opts;
+  await setAuthorization({ ...rest, active: true, ...(exact ? { amount: requiredWei } : {}) });
 }
 
 export function needsApprovalStep(walletKind: WalletKind | null | undefined, isAuthorized: boolean): boolean {
