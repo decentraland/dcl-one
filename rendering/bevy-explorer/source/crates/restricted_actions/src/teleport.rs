@@ -31,7 +31,7 @@ type TeleportAction = (
 /// The last landing that looked for a spawn point by name, and whether its scene had one of
 /// that name: the debug panel's Teleport section shows it.
 #[derive(Resource, Default)]
-pub struct LastNamedLanding(Option<(String, bool)>);
+pub(crate) struct LastNamedLanding(Option<(String, bool)>);
 
 pub fn teleport_player(
     mut commands: Commands,
@@ -164,11 +164,12 @@ pub fn teleport_player(
 
 /// The scene's first spawn point of this name, whatever the case of either.
 fn named_spawn_point<'a>(spawn_points: &'a [SpawnPoint], name: &str) -> Option<&'a SpawnPoint> {
+    let name = name.to_lowercase();
     spawn_points.iter().find(|spawn_point| {
         spawn_point
             .name
             .as_deref()
-            .is_some_and(|own| own.eq_ignore_ascii_case(name))
+            .is_some_and(|own| own.to_lowercase() == name)
     })
 }
 
@@ -223,7 +224,7 @@ pub(crate) fn teleport_state(
     );
 }
 
-pub fn handle_out_of_world(
+pub(crate) fn handle_out_of_world(
     mut commands: Commands,
     mut scenes: Query<
         (
@@ -518,6 +519,11 @@ mod tests {
         assert_eq!(named("Roof"), Some(2.0));
         assert_eq!(named("cellar"), None);
         assert_eq!(named(""), None);
+        // beyond ASCII too
+        let accented = super::tests::spawn_points(serde_json::json!([
+            { "name": "Entrée", "position": { "x": 7, "y": 0, "z": 7 } },
+        ]));
+        assert!(named_spawn_point(&accented, "ENTRÉE").is_some());
         // without a name, the scene's default ones
         assert_eq!(default_spawn_points(&spawn_points).len(), 1);
         assert_eq!(default_spawn_points(&spawn_points[1..]).len(), 3);

@@ -32,13 +32,18 @@ pub fn capped(text: &str, max: usize) -> String {
     capped
 }
 
-/// The most characters a bold or italic tag holds between the whitespace after its letter and
-/// its `>`.
+/// The most a bold or italic tag holds between the whitespace after its letter and its `>`,
+/// in UTF-16 code units: what the HUD's pattern counts.
 const MAX_STYLE_TAG_REST: usize = 32;
 
+/// Whitespace as the HUD's pattern reads it (`\s` in JavaScript).
+fn js_whitespace(c: char) -> bool {
+    (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}'
+}
+
 /// The length of the bold or italic tag opening `text`: `<b>`, `</b>`, `<i>` or `</i>`, each
-/// also with whitespace and up to [`MAX_STYLE_TAG_REST`] characters, none of them `<`, before
-/// its `>`. The HUD's chat reads the same tags (`TOKEN_RE` in `chatParse.ts`).
+/// also with whitespace and up to [`MAX_STYLE_TAG_REST`] more, none of it `<`, before its `>`.
+/// The HUD's chat reads the same tags (`TOKEN_RE` in `chatParse.ts`).
 fn style_tag_len(text: &str) -> Option<usize> {
     let body = text.strip_prefix('<')?;
     let body = body.strip_prefix('/').unwrap_or(body);
@@ -47,31 +52,51 @@ fn style_tag_len(text: &str) -> Option<usize> {
     let mut chars = after.char_indices();
     match chars.next()?.1 {
         '>' => Some(name_end + 1),
-        c if c.is_whitespace() => chars
-            .take(MAX_STYLE_TAG_REST + 1)
-            .take_while(|(_, c)| *c != '<')
-            .find(|(_, c)| *c == '>')
-            .map(|(index, _)| name_end + index + 1),
+        c if js_whitespace(c) => {
+            let mut rest = 0;
+            for (index, c) in chars {
+                match c {
+                    '>' => return Some(name_end + index + 1),
+                    '<' => return None,
+                    _ => rest += c.len_utf16(),
+                }
+                if rest > MAX_STYLE_TAG_REST {
+                    return None;
+                }
+            }
+            None
+        }
         _ => None,
     }
 }
 
-/// `message` without its bold and italic tags: the HUD's chat styles the text between them, a
-/// bubble has one face and shows the words alone.
-pub(crate) fn without_style_tags(message: &str) -> String {
+/// `message` with each bold and italic tag replaced by `with`.
+fn replace_style_tags(message: &str, with: &str) -> String {
     let mut plain = String::with_capacity(message.len());
     let mut rest = message;
     while let Some(start) = rest.find('<') {
         plain.push_str(&rest[..start]);
         rest = &rest[start..];
-        let skipped = style_tag_len(rest).unwrap_or_else(|| {
-            plain.push('<');
-            1
-        });
+        let skipped = match style_tag_len(rest) {
+            Some(len) => {
+                plain.push_str(with);
+                len
+            }
+            None => {
+                plain.push('<');
+                1
+            }
+        };
         rest = &rest[skipped..];
     }
     plain.push_str(rest);
     plain
+}
+
+/// `message` without its bold and italic tags: the HUD's chat styles the text between them, a
+/// bubble has one face and shows the words alone.
+pub(crate) fn without_style_tags(message: &str) -> String {
+    replace_style_tags(message, "")
 }
 
 /// A chat message to show over its sender's nametag. Nothing is shown for a sender with no
@@ -247,8 +272,10 @@ pub fn mention_name(name: &str, address: &str, claimed: bool) -> String {
     }
 }
 
-/// Does the message @-mention exactly this mention name (case-insensitive)?
+/// Does the message @-mention exactly this mention name (case-insensitive)? A bold or italic
+/// tag ends a word as a space does, so a mention may stand right inside one (`<b>@Ada</b>`).
 pub fn mentions(message: &str, mention: &str) -> bool {
+    let message = &replace_style_tags(message, " ");
     !mention.is_empty()
         && words(message).any(|word| {
             let text = &message[word];
@@ -288,6 +315,14 @@ mod tests {
             without_style_tags("x <b hello <i>world"),
             "x <b hello world"
         );
+        // counted as the HUD counts: an emoji is two
+        let emoji = format!("<b {}>", "😀".repeat(MAX_STYLE_TAG_REST / 2 + 1));
+        assert_eq!(without_style_tags(&emoji), emoji);
+        let emoji = format!("<b {}>", "😀".repeat(MAX_STYLE_TAG_REST / 2));
+        assert_eq!(without_style_tags(&emoji), "");
+        // and whitespace as it reads it
+        assert_eq!(without_style_tags("<b\u{feff}x>"), "");
+        assert_eq!(without_style_tags("<b\u{85}x>"), "<b\u{85}x>");
         let long = format!("<b {}>", "x".repeat(MAX_STYLE_TAG_REST + 1));
         assert_eq!(without_style_tags(&long), long);
         let fits = format!("<b {}>", "x".repeat(MAX_STYLE_TAG_REST));
@@ -321,6 +356,11 @@ mod tests {
         assert!(!mentions("@Ada;", "Ada"));
         assert!(!mentions("@abcdefghijklmnop", "abcdefghijklmnop"));
         assert!(!mentions("hello", ""));
+        // right inside bold or italic tags
+        assert!(mentions("<b>@Ada</b>", "Ada"));
+        assert!(mentions("<b>hi @Ada</b>", "Ada"));
+        assert!(mentions("say<i>@Ada#12ab</i>now", "Ada#12ab"));
+        assert!(!mentions("<u>@Ada</u>", "Ada"));
     }
 
     #[test]

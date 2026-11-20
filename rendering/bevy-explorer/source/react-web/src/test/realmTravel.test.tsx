@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { SceneLoadingOverlay } from '@hud/features/session/SceneLoadingOverlay'
 import { DEFAULT_REALM } from '../lib/baseDomain'
@@ -50,6 +50,7 @@ describe('in-world realm change', () => {
     const h = renderSession()
     await enterAsGuest(h)
     act(() => h.session().chat.send('/world boedo.dcl.eth'))
+    act(() => h.driver.emit({ kind: 'travelResult', travelId: 2, realm: 'boedo.dcl.eth', ok: true }))
     act(() => h.session().chat.send('/goto genesis'))
     expect(h.driver.sentOf('changeRealm')).toEqual([
       { kind: 'changeRealm', realm: 'boedo.dcl.eth', travelId: 2 },
@@ -117,7 +118,7 @@ describe('in-world realm change', () => {
   it('/goto x,y in a scene preview, or before the realm is known, moves inside the realm', async () => {
     const h = renderSession()
     await enterAsGuest(h)
-    // nothing said of the realm yet
+    // the realm entered, before the engine reports on it
     act(() => h.session().chat.send('/goto 2,3'))
     // a preview's realm: no Genesis City map, no world's name
     act(() => h.driver.emit({ kind: 'realmInfo', realm: 'http://localhost:8000', satelliteView: null }))
@@ -139,6 +140,49 @@ describe('in-world realm change', () => {
     act(() => h.session().chat.send('/goto boedo/3,4'))
     expect(h.driver.sentOf('teleport')).toEqual([{ kind: 'teleport', x: 3, y: 4, travelId: -1 }])
     expect(h.driver.sentOf('changeRealm')).toEqual([])
+  })
+
+  it('the realm travelled to is known from the travel itself, before the engine next reports it', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    inGenesis(h)
+    act(() => h.session().chat.send('/goto boedo'))
+    act(() => h.driver.emit({ kind: 'travelResult', travelId: 2, realm: 'boedo.dcl.eth', ok: true }))
+    // no realmInfo yet: the last one still says Genesis City
+    act(() => h.session().chat.send('/goto 10,20'))
+    expect(h.driver.sentOf('teleport')).toEqual([{ kind: 'teleport', realm: DEFAULT_REALM, x: 10, y: 20, travelId: 3 }])
+    act(() => h.driver.emit({ kind: 'travelResult', travelId: 3, realm: DEFAULT_REALM, ok: true }))
+    // and back in the city a parcel is a teleport again
+    act(() => h.session().chat.send('/goto 1,1'))
+    expect(h.driver.sentOf('teleport')[1]).toEqual({ kind: 'teleport', x: 1, y: 1, travelId: -1 })
+    // the engine's report takes over once it comes
+    inWorld(h, 'mana.dcl.eth')
+    act(() => h.session().chat.send('/goto mana'))
+    expect(systemLines(h).at(-1)).toBe('🟡 You are already in mana!')
+  })
+
+  it('a /goto that a later travel replaced says it was canceled', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    act(() => h.session().chat.send('/goto first'))
+    act(() => h.session().chat.send('/goto second'))
+    act(() => h.driver.emit({ kind: 'travelResult', travelId: 2, realm: 'first.dcl.eth', ok: false, message: 'superseded by a later realm change' }))
+    expect(systemLines(h)).toEqual(['🔴 Error: The operation was canceled!'])
+    // the later one still travels
+    expect(h.session().travellingTo).toBe('second.dcl.eth')
+  })
+
+  it('/goto crowd says so when the busiest scene cannot be read', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const fetched = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'))
+    try {
+      act(() => h.session().chat.send('/goto crowd'))
+      await waitFor(() => expect(systemLines(h)).toEqual(['🔴 Error running command.']))
+      expect(h.driver.sentOf('teleport')).toEqual([])
+    } finally {
+      fetched.mockRestore()
+    }
   })
 
   it('/goto-local stays in the realm the player is in', async () => {

@@ -187,13 +187,12 @@ const REALM_URL = /^https?:\/\//i
  */
 export function resolveGoto(target: GotoTarget, local: boolean, here: GotoHere, genesisRealm: string): GotoPlan {
   const spawnPoint = target.spawnPoint ?? undefined
+  const inGenesis = (p: { x: number; y: number }): boolean => isGenesisParcel(p.x, p.y)
+  const inWorld = (p: { x: number; y: number }): boolean => Math.abs(p.x) <= WORLD_PARCEL_LIMIT && Math.abs(p.y) <= WORLD_PARCEL_LIMIT
   if (target.world == null) {
     const parcel = target.parcel ?? here.parcel
     const toGenesis = !local && here.kind === 'world'
-    const inside =
-      here.kind === 'genesis' || toGenesis
-        ? isGenesisParcel(parcel.x, parcel.y)
-        : here.kind === 'other' || (Math.abs(parcel.x) <= WORLD_PARCEL_LIMIT && Math.abs(parcel.y) <= WORLD_PARCEL_LIMIT)
+    const inside = here.kind === 'genesis' || toGenesis ? inGenesis(parcel) : here.kind === 'other' || inWorld(parcel)
     if (target.parcel != null && !inside) return outside(parcel)
     if (toGenesis) return { kind: 'travel', realm: genesisRealm, parcel, spawnPoint, reply: teleported(parcel) }
     return { kind: 'teleport', ...parcel, spawnPoint, reply: teleported(parcel) }
@@ -204,6 +203,8 @@ export function resolveGoto(target: GotoTarget, local: boolean, here: GotoHere, 
   const url = REALM_URL.test(name)
   // a realm's address goes as it is; anything else has to be a world's name
   if (!toGenesis && !url && !isWorldName(name)) return { kind: 'reply', message: usageReply(GOTO_USAGE) }
+  // a parcel of Genesis City or of a world, within its bounds; a realm given by address has its own
+  if (target.parcel != null && !url && !(toGenesis ? inGenesis(target.parcel) : inWorld(target.parcel))) return outside(target.parcel)
   const realm = toGenesis ? genesisRealm : url ? name : worldName(name)
   const there = toGenesis ? here.kind === 'genesis' : here.kind === 'world' && here.realm === realm.toLowerCase()
   if (there) {

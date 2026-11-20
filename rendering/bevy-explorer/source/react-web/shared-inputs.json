@@ -6021,6 +6021,10 @@
       "sha256": "c4a8eaa94177021bf9905c75d3cab9eea51d90323735a8d8c02899ec63a9e90a"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/teleport.ts",
+      "sha256": "99837dcca899a65d20fba5b860c1af2c9eac5e3920db270d462daa33d17e0614"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/textureOptimization.ts",
       "sha256": "db397fc04bacb8259322faebed4fb992af1c65611916c5ddfa088e6757d5ebba"
     },
@@ -6273,6 +6277,10 @@
       "sha256": "2a7d25c775f5d3bbac4a4a15296d428f034aff39b1d665c63961a58e44d64e92"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeTeleport.test.ts",
+      "sha256": "899cd34b1c9856357e20a912ce5d5436dd79bad8929f4141e6042c2a99fdbc72"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
       "sha256": "9215e44d8c803335b125591254a6584453268644d0d65b4b59fb375322ef83aa"
     },
@@ -6342,7 +6350,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/realmTravel.test.tsx",
-      "sha256": "e4f9ce07843ac85b41a2ded6a518761f04db617f462a8b601195dfd2dcbbe47d"
+      "sha256": "6cced39bb3cf23c7df640b4bcdb0b37188f68d9000e116b016123d431a207688"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/recoverSigner.ts",
@@ -6467,6 +6475,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneLookup.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeTeleport.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeVoice.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeVoiceChat.test.ts",
@@ -6547,7 +6556,7 @@
     },
     {
       "path": "library/explorer-core/engine/mention.ts",
-      "sha256": "528f3d3d9b5fb782901ae6f89f7bf9c09440e17ae4dde702fc17012c772a8d55"
+      "sha256": "9d6aa0e0983eab8d586f2ac78e5d52c82151b41c8c687d1a9735a9d7b282a0d5"
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
@@ -6635,11 +6644,11 @@
     },
     {
       "path": "library/explorer-core/features/chat/chatCommands.test.ts",
-      "sha256": "b72592856e11a705a11672059fcd5b8f81e421d7a323b1d8610d7d2e7b7c35f6"
+      "sha256": "211aa646515e4c835348c55fd1d489ed62b409e8077baad1f1fd93fdebb3e5ff"
     },
     {
       "path": "library/explorer-core/features/chat/chatCommands.ts",
-      "sha256": "12eb1cb75a402958ce8a85dde95ed625bf599d516f9d5e98fce7409ee804aea1"
+      "sha256": "009cf34358e75195c4665076738979e7d72a4f432a723402beef44d89f772f31"
     },
     {
       "path": "library/explorer-core/features/chat/chatParse.ts",
@@ -10131,7 +10140,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "47be8bdecbbf0488f30411df5d08cd6c3f0705798cc73e453bbc5f32aecf8708"
+      "sha256": "f7b2a5f69a9938849589b2d7abb63de2051fe7d52cd3f7c911e4f0dcf0a8092c"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10431,7 +10440,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/chatText.test.ts",
-      "sha256": "70f5965444a9d2d10e95b7a41ded34a9ebfc7df3fe3c9990582d14ce2311a378"
+      "sha256": "629276ad93296997c4363ed8162ccd845b90a6661b1ed67e4d8db494ee66093b"
     },
     {
       "path": "library/ui/apps/hud/test/colorPicker.test.tsx",

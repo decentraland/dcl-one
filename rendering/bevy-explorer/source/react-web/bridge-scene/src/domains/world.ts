@@ -1,7 +1,7 @@
 // World: current parcel + teleport, the live player pose for the minimap, the realm kind,
 // and the mic state.
 //   from: @dcl/sdk getPlayer().position (parcel), Transform of the player/camera entities
-//         (pose), RestrictedActions.teleportTo, Runtime.getRealm,
+//         (pose), ./teleport, Runtime.getRealm,
 //         BevyApi.getMicState() / setMicEnabled().
 import { Transform, engine } from '@dcl/sdk/ecs'
 import { Quaternion } from '@dcl/sdk/math'
@@ -12,6 +12,7 @@ import { BevyApi } from '../bevy-api'
 import type { Ctx } from '../bridge'
 import { createSceneLookup } from '../sceneLookup'
 import { throttleByDt, singleFlight } from '../system-helpers'
+import { teleport as teleportThrough, type TeleportDestination } from './teleport'
 import { setNearbyVoiceBlocked } from './voice'
 
 // Pose stream: ~20/s is smooth enough for the minimap once React interpolates between
@@ -31,13 +32,7 @@ function pushSystem(ctx: Ctx, message: string): void {
   ctx.send({ kind: 'chat', chat: { sender: '', message, channel: 'Nearby', messageId: '' } })
 }
 
-// A teleport to a parcel, a realm or both. One that names a spawn point goes through the engine's
-// teleport for the HUD, which carries the name to the landing; the scene API's teleportTo has no
-// such argument. An engine without that call lands on the scene's default spawn.
-function teleport(to: { parcel?: { x: number; y: number }; realm?: string }, spawnPoint: string | undefined): Promise<unknown> {
-  if (spawnPoint != null && BevyApi.teleport != null) return BevyApi.teleport({ ...to, spawnPoint })
-  return teleportTo({ worldCoordinates: to.parcel, realm: to.realm })
-}
+const teleport = (to: TeleportDestination): Promise<unknown> => teleportThrough(to, BevyApi.teleport, teleportTo)
 
 export function registerWorld(ctx: Ctx): void {
   ctx.on('getHomeScene', async () => {
@@ -72,7 +67,7 @@ export function registerWorld(ctx: Ctx): void {
 
   // A teleport inside the realm answers too when the page gave it an id (chat's /goto does).
   ctx.on('teleport', (msg) => {
-    const request = teleport({ parcel: { x: msg.x, y: msg.y }, realm: msg.realm }, msg.spawnPoint)
+    const request = teleport({ parcel: { x: msg.x, y: msg.y }, realm: msg.realm, spawnPoint: msg.spawnPoint })
     travel(msg.realm ?? '', msg.travelId, request)
   })
 
@@ -80,7 +75,7 @@ export function registerWorld(ctx: Ctx): void {
   // realm and no parcel (changeRealm is deprecated). The engine auto-grants ChangeRealm for our
   // super-user scene, so the React HUD owns the confirmation prompt.
   ctx.on('changeRealm', (msg) => {
-    travel(msg.realm, msg.travelId, teleport({ realm: msg.realm }, msg.spawnPoint))
+    travel(msg.realm, msg.travelId, teleport({ realm: msg.realm, spawnPoint: msg.spawnPoint }))
   })
 
   // `/reload` — reload the scene the player is standing in, resolved by parcel from liveSceneInfo;

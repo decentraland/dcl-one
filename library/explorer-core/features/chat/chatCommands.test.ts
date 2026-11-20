@@ -173,6 +173,23 @@ describe('resolveGoto', () => {
     }
   })
 
+  it('a parcel after a world or genesis is held to its bounds, wherever the player is', () => {
+    const out = (x: number, y: number) => ({ kind: 'reply', message: `🔴 Error: Parcel (${x}, ${y}) is outside of the bounds.` })
+    for (const here of [inGenesis, inWorld, elsewhere]) {
+      expect(resolve('genesis/152,0', here)).toEqual(out(152, 0))
+      expect(resolve('mana/999,999', here)).toEqual(out(999, 999))
+      expect(resolve('mana/0,-151/door', here)).toEqual(out(0, -151))
+    }
+    // the world the player is in, and Genesis City from inside it
+    expect(resolve('boedo/151,0', inWorld)).toEqual(out(151, 0))
+    expect(resolve('genesis/0,160', inGenesis)).toEqual(out(0, 160))
+    // inside: Genesis City's extension, a world's edge
+    expect(resolve('genesis/160,155', inWorld)).toMatchObject({ kind: 'travel', parcel: { x: 160, y: 155 } })
+    expect(resolve('mana/-150,150', inGenesis)).toMatchObject({ kind: 'travel', parcel: { x: -150, y: 150 } })
+    // a realm given by address has bounds of its own
+    expect(resolve('https://realm.example/other', inGenesis).kind).toBe('travel')
+  })
+
   it('the world the player is in is a teleport inside it, or nothing to do', () => {
     expect(resolve('boedo', inWorld)).toEqual({ kind: 'reply', message: '🟡 You are already in boedo!' })
     expect(resolve('Boedo.dcl.eth', inWorld)).toEqual({ kind: 'reply', message: '🟡 You are already in Boedo.dcl.eth!' })

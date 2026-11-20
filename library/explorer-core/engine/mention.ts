@@ -12,10 +12,15 @@ export function mentionName(name: string, address: string, claimed?: boolean): s
   return (claimed ?? looksClaimed(name)) || address.length < 4 ? base : `${base}#${address.slice(-4)}`
 }
 
+// A bare bold or italic tag of a chat message ends a word as a space does, so a mention may
+// stand right inside one: <b>@Name</b>.
+const STYLE_TAG = String.raw`<\/?[bi]>`
+
 /** A written @mention: on its own word, up to 15 letters/digits, an optional 4-char #tag, then a
- *  space, end or punctuation. Its `mention` group is the name after "@". The chat's link parser
- *  embeds this same pattern, so what renders as a mention is exactly what counts as one. */
-export const MENTION_PATTERN = String.raw`(?<=^|\s)@(?<mention>[A-Za-z0-9]{1,15}(?:#[A-Za-z0-9]{4})?)(?=\s|!|\?|\.|,|$)`
+ *  space, end or punctuation; a bold or italic tag on either side counts as a space. Its
+ *  `mention` group is the name after "@". The chat's link parser embeds this same pattern, so what
+ *  renders as a mention is exactly what counts as one. */
+export const MENTION_PATTERN = String.raw`(?<=^|\s|${STYLE_TAG})@(?<mention>[A-Za-z0-9]{1,15}(?:#[A-Za-z0-9]{4})?)(?=\s|!|\?|\.|,|$|${STYLE_TAG})`
 const MENTION_RE = new RegExp(MENTION_PATTERN, 'g')
 
 /** Does the message @-mention exactly this mention name (case-insensitive)? */

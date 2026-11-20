@@ -1649,6 +1649,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const [linkRealm, setLinkRealm] = useState<string | null>(null)
   /** The realm the engine is in, as it names itself (a world's name in a world); null until it says. */
   const [realmName, setRealmName] = useState<string | null>(null)
+  /** The realm a travel just ended in, until the engine next reports its realm: the report trails
+   *  the travel's answer. */
+  const [arrivedRealm, setArrivedRealm] = useState<string | null>(null)
   /** The scene (realm and hash) Donate's place was last taken from. */
   const donateSceneRef = useRef<string | null>(null)
   const [placesOpen, setPlacesOpen] = useState(false)
@@ -2480,6 +2483,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
         case 'realmInfo':
           setSatelliteView(msg.satelliteView)
           setRealmName(msg.realm)
+          setArrivedRealm(null)
           break
         case 'homeScene':
           setHome({ realm: msg.realm === DEFAULT_REALM ? null : msg.realm, parcel: `${msg.parcel.x},${msg.parcel.y}` })
@@ -2495,7 +2499,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           }
           // a teleport inside the realm: no realm was left, and no loader shown
           if (msg.travelId < 0) break
-          if (msg.ok) travelCount.traveled()
+          if (msg.ok) {
+            travelCount.traveled()
+            setArrivedRealm(msg.realm)
+          }
           if (msg.travelId !== travelSeq.current) break
           setTravellingTo(null)
           if (!msg.ok) {
@@ -2909,12 +2916,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // Genesis City advertises its map and a world goes by its name; any other realm (a scene
   // preview, a realm of its own, one not reported yet) is neither.
   const hereRef = useRef<GotoHere>({ kind: 'other', realm: null, parcel: mapParcel })
-  const world = realmName == null ? null : worldOfRealm(realmName)
-  hereRef.current = {
-    kind: isGenesisSatelliteView(satelliteView) ? 'genesis' : world != null ? 'world' : 'other',
-    realm: world,
-    parcel: mapParcel
-  }
+  // Right after a travel the realm is the one travelled to, whatever the last report says.
+  const world = worldOfRealm(arrivedRealm ?? realmName ?? '')
+  const genesis = arrivedRealm != null ? arrivedRealm === DEFAULT_REALM : isGenesisSatelliteView(satelliteView)
+  hereRef.current = { kind: genesis ? 'genesis' : world != null ? 'world' : 'other', realm: world, parcel: mapParcel }
   const goto = useCallback(
     async (target: GotoTarget, local: boolean) => {
       // no engine to ask: nothing would answer

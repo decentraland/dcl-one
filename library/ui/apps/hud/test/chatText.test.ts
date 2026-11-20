@@ -89,8 +89,12 @@ describe('bold and italic tags', () => {
 
   it('reads links between tags once a space parts them, and a URL up to a tag', () => {
     expect(parseMessage('<b> @Alice </b>').map((t) => t.type)).toEqual(['tag', 'text', 'mention', 'text', 'tag'])
-    // a mention needs a space before it
-    expect(parseMessage('<b>@Alice</b>').map((t) => t.type)).toEqual(['tag', 'text', 'tag'])
+    // a tag ends a word as a space does: a mention may stand right inside one
+    expect(parseMessage('<b>@Alice</b>')).toEqual([tag('<b>', 'b'), { type: 'mention', value: '@Alice', name: 'Alice', tag: undefined }, tag('</b>', 'b', true)])
+    expect(parseMessage('<i>hi @Bob#12ab</i>').map((t) => t.type)).toEqual(['tag', 'text', 'mention', 'tag'])
+    // any other tag is text, and no boundary
+    expect(parseMessage('<u>@Alice</u>')).toEqual([{ type: 'text', value: '<u>@Alice</u>' }])
+    expect(parseMessage('mail@Alice')).toEqual([{ type: 'text', value: 'mail@Alice' }])
     expect(parseMessage('<b>https://dcl.org/x</b>')).toEqual([tag('<b>', 'b'), { type: 'url', value: 'https://dcl.org/x' }, tag('</b>', 'b', true)])
     expect(parseMessage('<i>10,20</i>')[1]).toEqual({ type: 'location', value: '10,20', x: 10, y: 20 })
   })
@@ -113,6 +117,8 @@ describe('buildNameIndex + mentionsMe', () => {
   it('a claimed name is mentioned by name alone', () => {
     const me = { address: '0x00000000000000000000000000000000000000aa', name: 'Me', hasClaimedName: true }
     expect(mentionsMe('hey @Me!', me)).toBe(true)
+    expect(mentionsMe('<b>@Me</b>', me)).toBe(true)
+    expect(mentionsMe('<u>@Me</u>', me)).toBe(false)
     expect(mentionsMe('hey @Alice', me)).toBe(false)
   })
 
