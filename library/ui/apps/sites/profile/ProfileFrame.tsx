@@ -1,6 +1,5 @@
 import { useEffect, useId, type ComponentType, type MouseEvent, type ReactNode } from 'react'
 import { Tabs, TabsBar, type TabsLinkProps } from '../../../index'
-import '../profile-tokens.css'
 import styles from './ProfileFrame.module.css'
 import { revealTab } from './reveal-tab'
 

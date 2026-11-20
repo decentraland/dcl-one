@@ -22,6 +22,7 @@ type CommunityCardInfo = {
   id: string
   picture: string
   href: string
+  copyHref: string
   name: string
   joined: boolean
   role?: string
@@ -32,7 +33,6 @@ type CommunityCardInfo = {
 function CommunityCard({ community }: { community: CommunityCardInfo }) {
   const { href, picture, joined } = community
   const { broken, ref, onError } = useBrokenImage(picture)
-  const origin = typeof window === 'undefined' ? '' : window.location.origin
   return (
     <li className={styles.card}>
       <div className={styles.media}>
@@ -81,7 +81,7 @@ function CommunityCard({ community }: { community: CommunityCardInfo }) {
             {joined ? 'Joined' : 'View'}
           </Button>
           <CopyFeedback
-            value={`${origin}${href}`}
+            value={community.copyHref}
             successAnnouncement="Community link copied."
             errorAnnouncement="Couldn't copy the community link."
           >

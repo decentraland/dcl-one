@@ -1,10 +1,15 @@
 import { useCallback } from "react";
 
-import { hashKey, skipToken, useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import { hashKey, skipToken, useInfiniteQuery, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
-import type { AssetCategory, CreationsCategory } from "@/data/lib/catalyst/marketplace/profile-collectibles";
 import {
+  OPTIONAL_ASSET_CATEGORIES,
+  type AssetCategory,
+  type CreationsCategory,
+} from "@/data/lib/catalyst/marketplace/profile-collectibles";
+import {
+  assetCountQuery,
   assetsQuery,
   canReadProfile,
   badgesQuery,
@@ -49,6 +54,18 @@ export function useProfileCreations(address: string, category: CreationsCategory
 /** The tokens a wallet owns, every category or one, a page at a time. */
 export function useProfileAssets(address: string, category: AssetCategory | null) {
   return useInfiniteQuery({ ...assetsQuery(address, category), enabled: canReadProfile(address) });
+}
+
+/** Confirm a category from the entire owned catalogue. A failed read leaves its filter accessible. */
+export function useProfileAssetCategories(address: string) {
+  const enabled = canReadProfile(address);
+  const counts = useQueries({
+    queries: OPTIONAL_ASSET_CATEGORIES.map((category) => ({ ...assetCountQuery(address, category), enabled })),
+  });
+  return OPTIONAL_ASSET_CATEGORIES.filter((_, index) => {
+    const { data, isError } = counts[index];
+    return data === undefined ? isError : data > 0;
+  });
 }
 
 /** The catalogue cards of the collectibles an avatar wears; nothing is requested for an avatar that wears none. */

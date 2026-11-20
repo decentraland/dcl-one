@@ -25,7 +25,7 @@
   },
   "apps/sites/src/features/components/chrome/SitesTopBar.module.css": {
     "primitives": 0,
-    "tokens": 19
+    "tokens": 12
   },
   "apps/sites/src/features/components/chrome/routepending.css": {
     "primitives": 11,
@@ -45,7 +45,7 @@
   },
   "apps/sites/src/features/download/CreatorHubDownload.module.css": {
     "primitives": 0,
-    "tokens": 9
+    "tokens": 8
   },
   "apps/sites/src/features/download/CreatorHubDownloadPage.module.css": {
     "primitives": 0,
@@ -61,7 +61,7 @@
   },
   "apps/sites/src/features/explorer/event-management/EventManagement.module.css": {
     "primitives": 12,
-    "tokens": 22
+    "tokens": 0
   },
   "apps/sites/src/features/not-found/NotFoundPage.module.css": {
     "primitives": 0,
@@ -94,10 +94,6 @@
   "apps/sites/src/features/social/submit-hangout/HangoutAssociations.module.css": {
     "primitives": 1,
     "tokens": 0
-  },
-  "apps/sites/src/features/social/submit-hangout/SubmitHangout.module.css": {
-    "primitives": 0,
-    "tokens": 52
   },
   "apps/ui3/src/explorer/pages/eventdetail.css": {
     "primitives": 21,
@@ -279,13 +275,9 @@
     "primitives": 0,
     "tokens": 11
   },
-  "library/ui/components/CopyFeedback/CopyFeedback.module.css": {
-    "primitives": 0,
-    "tokens": 10
-  },
   "library/ui/components/EventCard/EventCard.module.css": {
     "primitives": 0,
-    "tokens": 82
+    "tokens": 71
   },
   "library/ui/components/FriendCTA/FriendCTA.module.css": {
     "primitives": 0,
@@ -305,11 +297,7 @@
   },
   "library/ui/components/NavBar/NavBar.module.css": {
     "primitives": 0,
-    "tokens": 141
-  },
-  "library/ui/components/NavBar/NavBar.profile.module.css": {
-    "primitives": 0,
-    "tokens": 47
+    "tokens": 133
   },
   "library/ui/components/NavCreditsBalance/NavCreditsBalance.module.css": {
     "primitives": 0,

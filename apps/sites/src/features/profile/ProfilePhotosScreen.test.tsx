@@ -725,6 +725,18 @@ describe("profile photos, the viewer", () => {
     expect(document.activeElement).not.toBe(dialog);
   });
 
+  it("keeps arrow navigation working after clicking the media around a photo", async () => {
+    const user = userEvent.setup();
+    net.fetchUserPhotos.mockResolvedValue(page([photo(0), photo(1)]));
+    show();
+    await user.click(await tile(0));
+
+    await user.click(screen.getByRole("img", { name: "Plaza 0" }).parentElement!);
+    await user.keyboard("{ArrowRight}");
+
+    expect(screen.getByRole("dialog", { name: `${tileName(1)}, 2 of 2` })).toBeTruthy();
+  });
+
   it("keeps focus in the dialog when a step removes the focused link", async () => {
     const user = userEvent.setup();
     net.fetchUserPhotos.mockResolvedValue(page([photo(0), photo(1, { scene: { name: "Nowhere", x: "", y: "" } })]));

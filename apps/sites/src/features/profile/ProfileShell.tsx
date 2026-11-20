@@ -72,7 +72,7 @@ export function ProfileShell({ profile, own, tabs, active, onTab, aside, childre
 
   // No top-bar entry is highlighted on a profile ("play" maps to none), as on the profile site.
   return (
-    <SitesChrome active="play" overlayNav>
+    <SitesChrome active="play">
       <ProfileFrame
         tabs={tabs}
         active={active}

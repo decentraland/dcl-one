@@ -4,18 +4,24 @@
   isolation: isolate;
   box-sizing: border-box;
   width: 100%;
-  min-height: 100vh;
-  /* The Sites top bar lies over the top of the page (`overlayNav`) and the gradient shows through
-   * it, so the page keeps the bar's height free above its own gap. */
-  padding-top: calc(var(--site-header-h, 64px) + var(--dcl-space-16));
+  min-height: calc(100vh - var(--site-header-h, 0px));
+  padding-top: var(--dcl-space-16);
   padding-bottom: var(--dcl-space-64);
+  color: var(--dcl-text-primary);
+}
+
+/* Paint behind the translucent navbar while the Sites layout reserves its height. */
+.root::before {
+  content: '';
+  position: absolute;
+  inset: calc(-1 * var(--site-header-h, 0px)) 0 0;
+  z-index: -1;
   background: radial-gradient(
     123.58% 82% at 9.01% 25.79%,
     var(--dcl-profile-gradient-start) 0%,
     var(--dcl-profile-gradient-middle) 37.11%,
     var(--dcl-profile-gradient-end) 100%
   );
-  color: var(--dcl-text-primary);
 }
 
 .content {
@@ -47,7 +53,7 @@
 
 @media (min-width: 1024px) {
   .root {
-    padding-top: calc(var(--site-header-h, 92px) + var(--dcl-space-4));
+    padding-top: var(--dcl-space-4);
   }
 
   .content {

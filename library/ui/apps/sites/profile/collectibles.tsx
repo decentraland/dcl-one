@@ -147,7 +147,7 @@ const FOCUSABLE = 'a:not([tabindex="-1"]), button:not([tabindex="-1"])'
 export type CategoryOption<T> = { value: T; label: string; icon?: ReactNode }
 
 /** The tabpanel the category tabs control. */
-export type CategoryPanel = {
+type CategoryPanel = {
   role: 'tabpanel'
   id: string
   'aria-labelledby': string
@@ -218,7 +218,7 @@ export type CollectiblesState =
       more?: ReactNode
     }
 
-export type CollectiblesPanelProps = {
+type CollectiblesPanelProps = {
   /** The category tabs; shown above every state. */
   filters?: ReactNode
   /** Beside the filters, e.g. a "View all" link. */

@@ -25,6 +25,7 @@ export function ProfileCommunitiesScreen({ profile, own, tabs, onTab, sid }: Pro
   const list = useProfileCommunities(profile.address, own ? identity : null);
   const failed = list.isError && !list.data;
   const communities = list.data?.communities;
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
 
   const reported = useRef(false);
   useEffect(() => {
@@ -41,16 +42,20 @@ export function ProfileCommunitiesScreen({ profile, own, tabs, onTab, sid }: Pro
         total={list.data?.total}
         retry={() => void list.refetch()}
         exploreHref={playUrl()}
-        communities={communities?.map((community) => ({
-          id: community.id,
-          name: community.name,
-          href: communityHref(community.id),
-          picture: thumbnailUrl(community),
-          joined: own && community.role === "member",
-          role: community.role === "member" ? undefined : roleLabel(community.role),
-          privacy: community.privacy ?? undefined,
-          members: community.membersCount === null ? undefined : membersLabel(community.membersCount),
-        }))}
+        communities={communities?.map((community) => {
+          const href = communityHref(community.id);
+          return {
+            id: community.id,
+            name: community.name,
+            href,
+            copyHref: `${origin}${href}`,
+            picture: thumbnailUrl(community),
+            joined: own && community.role === "member",
+            role: community.role === "member" ? undefined : roleLabel(community.role),
+            privacy: community.privacy ?? undefined,
+            members: community.membersCount === null ? undefined : membersLabel(community.membersCount),
+          };
+        })}
       />
     </ProfileShell>
   );

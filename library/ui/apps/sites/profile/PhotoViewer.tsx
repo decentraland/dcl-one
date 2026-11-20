@@ -97,6 +97,14 @@ export function PhotoViewer({
       initialFocusRef={closeRef}
       onClose={onClose}
       onKeyDown={onKeyDown}
+      onMouseDown={(event) => {
+        // Clicking blank gallery space keeps the current keyboard control focused.
+        const control =
+          event.target instanceof Element
+            ? event.target.closest('button, a[href], [tabindex]')
+            : null
+        if (!event.currentTarget.contains(control)) event.preventDefault()
+      }}
     >
       <Button
         ref={closeRef}
@@ -135,12 +143,7 @@ export function PhotoViewer({
               <GeneralInfoButton size={22} aria-hidden="true" />
             </Button>
           </div>
-          <img
-            className={styles.image}
-            src={imageUrl}
-            alt={alt}
-            onMouseDown={(event) => event.preventDefault()}
-          />
+          <img className={styles.image} src={imageUrl} alt={alt} />
           {onPrevious || onNext ? (
             <>
               <StepButton

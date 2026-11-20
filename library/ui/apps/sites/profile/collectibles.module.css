@@ -1,8 +1,5 @@
-/* The profile Creations and Assets panels around the shared Tabs, Button, Spinner and ShopCard. The
- * design system has no NAME row or collectibles grid yet, so they are drawn here. Grid: the source's
- * 250px column floor, 28px rows and 16px columns, two columns below the 900px MUI `md` breakpoint
- * with 16px rows and 12px columns; 28px has no spacing token. The NAME row's 10px tile radius and
- * 48px tile keep the source's sizes; its fills use the nearest transparencies. */
+/* The collectible grid uses two columns before the desktop breakpoint and a 250px column
+ * floor on desktop. NAME rows use compact tiles and the shared button styles. */
 .root {
   width: 100%;
 }

@@ -12,6 +12,7 @@ import { warnInvalid } from "../warn";
 import { tryQuoteCreditItems } from "./credit-quotes";
 import {
   CREATIONS_QUOTES_TIMEOUT_MS,
+  fetchProfileAssetCount,
   fetchProfileAssets,
   fetchProfileCreations,
   fetchWornCollectibles,
@@ -490,5 +491,18 @@ describe("fetchWornCollectibles", () => {
     vi.mocked(getJSON).mockRejectedValue(new CatalystError("Catalyst returned 502", "/marketplace-api/v2/catalog", 502));
 
     await expect(fetchWornCollectibles([matic(CONTRACT, "0")])).rejects.toBeInstanceOf(CatalystError);
+  });
+});
+
+describe("when checking whether the owner has assets in a category", () => {
+  beforeEach(() => {
+    json.mockResolvedValueOnce({ data: [token({})], total: 30 });
+  });
+
+  it("should use the inventory total even when only one result is requested", async () => {
+    await expect(fetchProfileAssetCount(CREATOR, "ens")).resolves.toBe(30);
+    expect(json).toHaveBeenCalledWith("/marketplace-api/v1/nfts", {
+      query: { owner: CREATOR.toLowerCase(), category: "ens", first: 1, skip: 0, sortBy: "newest" },
+    });
   });
 });

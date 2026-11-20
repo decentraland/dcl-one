@@ -46,6 +46,7 @@ vi.mock("@/data/lib/catalyst/marketplace/profile-collectibles", async (original)
   ...(await original<typeof import("@/data/lib/catalyst/marketplace/profile-collectibles")>()),
   fetchProfileCreations: net.fetchProfileCreations,
   fetchProfileAssets: net.fetchProfileAssets,
+  fetchProfileAssetCount: async () => 0,
 }));
 vi.mock("@/data/lib/catalyst/social/photos", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/social/photos")>()),
