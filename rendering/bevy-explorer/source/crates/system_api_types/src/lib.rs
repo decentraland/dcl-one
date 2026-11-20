@@ -955,6 +955,48 @@ pub enum PermissionRequestEvent {
     Cancelled { id: usize },
 }
 
+/// A scene asked to open the purchase confirmation for one item. The engine has applied its
+/// gates and parsed the item from the scene's urn; `item` is None when the urn names no
+/// purchasable collection item. The HUD answers each request with [`SetItemPurchaseState`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ItemPurchaseRequest {
+    pub id: u32,
+    pub item: Option<ItemPurchaseItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ItemPurchaseItem {
+    /// collection contract, `0x` + 40 hex digits
+    pub contract: String,
+    /// the item's id within the collection, decimal digits
+    pub item_id: String,
+}
+
+/// The HUD's report on an [`ItemPurchaseRequest`]: first `accepted` (the confirmation is
+/// showing) or `unavailable` (this host cannot buy), then for an accepted request exactly one
+/// of the outcomes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ItemPurchaseState {
+    Accepted,
+    Unavailable,
+    Purchased,
+    Dismissed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export)]
+pub struct SetItemPurchaseState {
+    pub id: u32,
+    pub state: ItemPurchaseState,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub struct SetSinglePermission {

@@ -2,6 +2,7 @@ use super::SocialServiceImpl;
 use super::domain::{bvis_to_db, pmp_from_db, pmp_to_db, settings_to_proto, sreact_to_db};
 use super::helpers::{SocialError, internal_err, invalid_req, normalize};
 use crate::rpc::context::Context;
+use crate::rpc::db::SocialSettingsRow;
 use crate::rpc::drpc::service_module_definition::ProcedureContext;
 use crate::rpc::proto::v2::*;
 
@@ -19,6 +20,42 @@ pub(crate) async fn private_messages_settings(
     let mut seen = std::collections::HashSet::new();
     targets.retain(|t| seen.insert(t.clone()));
     ctx.db().private_messages_settings(me, &targets).await
+}
+
+/// Stores the settings and shows a private-messages privacy change in the
+/// live room, for both transports. An error means nothing was stored, though
+/// a tightening the room already shows stays there until the wallet's next
+/// token. Tightening to `only_friends` reaches the room first and is refused
+/// when the room cannot be updated (including while LiveKit is unreachable);
+/// it is shown again after the write for a wallet that joined in between, and
+/// if that update fails such a wallet keeps `all` until its next token.
+/// Loosening is stored first and a room failure is only logged: the room
+/// keeps the stricter value until the wallet's next token.
+pub(crate) async fn update_social_settings(
+    ctx: &Context,
+    me: &str,
+    privacy: Option<&str>,
+    blocked_visibility: Option<&str>,
+    reactions: Option<&str>,
+) -> Result<SocialSettingsRow, String> {
+    let voice = ctx.voice();
+    if let Some(privacy @ "only_friends") = privacy {
+        voice
+            .publish_private_messages_privacy(me, privacy)
+            .await
+            .map_err(|error| format!("private messages privacy not shown in the room: {error}"))?;
+    }
+    let row = ctx
+        .db()
+        .upsert_social_settings(me, privacy, blocked_visibility, reactions)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(privacy) = privacy
+        && let Err(error) = voice.publish_private_messages_privacy(me, privacy).await
+    {
+        tracing::warn!(%error, address = %me, "private messages privacy not shown in the room");
+    }
+    Ok(row)
 }
 
 impl SocialServiceImpl {
@@ -94,37 +131,30 @@ impl SocialServiceImpl {
             .show_situation_reactions
             .map(|_| sreact_to_db(request.show_situation_reactions()));
 
-        match context
-            .server_context
-            .db()
-            .upsert_social_settings(&me, pmp.as_deref(), bvis.as_deref(), sreact.as_deref())
-            .await
+        match update_social_settings(
+            &context.server_context,
+            &me,
+            pmp.as_deref(),
+            bvis.as_deref(),
+            sreact.as_deref(),
+        )
+        .await
         {
-            Ok(row) => {
-                // Upstream's settings component calls the gatekeeper so the
-                // peers of the private-messages room see the change at once.
-                if let Some(privacy) = pmp.as_deref()
-                    && let Err(error) = context
-                        .server_context
-                        .voice()
-                        .publish_private_messages_privacy(&me, privacy)
-                        .await
-                {
-                    tracing::warn!(%error, address = %me, "private messages privacy not shown in the room");
-                }
+            Ok(row) => Ok(UpsertSocialSettingsResponse {
+                response: Some(upsert_social_settings_response::Response::Ok(
+                    settings_to_proto(&row),
+                )),
+            }),
+            Err(e) => {
+                tracing::warn!(error = %e, address = %me, "social settings not updated");
                 Ok(UpsertSocialSettingsResponse {
-                    response: Some(upsert_social_settings_response::Response::Ok(
-                        settings_to_proto(&row),
-                    )),
+                    response: Some(
+                        upsert_social_settings_response::Response::InternalServerError(
+                            internal_err(e),
+                        ),
+                    ),
                 })
             }
-            Err(e) => Ok(UpsertSocialSettingsResponse {
-                response: Some(
-                    upsert_social_settings_response::Response::InternalServerError(internal_err(
-                        e.to_string(),
-                    )),
-                ),
-            }),
         }
     }
 

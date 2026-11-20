@@ -61,11 +61,14 @@ async function tabTo(markup: string, target: string, painter: string) {
     expression: `(() => {
       const ring = (el) => { const s = getComputedStyle(el); return { outline: s.outlineStyle === "none" ? "none" : s.outlineStyle + " " + s.outlineWidth + " " + s.outlineOffset, boxShadow: s.boxShadow }; };
       const target = document.querySelector(${JSON.stringify(target)});
-      return { focused: document.activeElement === target && target.matches(":focus-visible"), target: ring(target), painter: ring(document.querySelector(${JSON.stringify(painter)})) };
+      const field = document.querySelector(${JSON.stringify(painter)});
+      return { focused: document.activeElement === target && target.matches(":focus-visible"), target: ring(target), painter: ring(field), opacity: getComputedStyle(field).opacity };
     })()`,
     returnByValue: true,
   })) as {
-    result: { value: { focused: boolean; target: Ring; painter: Ring } };
+    result: {
+      value: { focused: boolean; target: Ring; painter: Ring; opacity: string };
+    };
   };
   return response.result.value;
 }
@@ -74,13 +77,37 @@ describe("when a keyboard user focuses an element inside the Sites surface", () 
   describe("and the element belongs to a web InputField, which rings its field", () => {
     it("should paint only the field's ring, not the surface outline on the input", async () => {
       const result = await tabTo(
-        `<div class="root" data-surface="web"><div class="field"><input class="input" aria-label="Email"></div></div>`,
+        `<div class="root" data-surface="web"><div class="field webField"><input class="input" aria-label="Email"></div></div>`,
         ".input",
         ".field",
       );
       expect(result.focused).toBe(true);
       expect(result.target.outline).toBe("none");
       expect(result.painter.boxShadow).toMatch(/ 0px 0px 0px 2px inset$/);
+    });
+  });
+
+  describe("and the element is a web select with a disabled placeholder", () => {
+    it("should remain visibly enabled and paint the shared field ring", async () => {
+      const result = await tabTo(
+        `<div class="field webField nativeField"><select class="input nativeSelect" aria-label="Reason"><option value="" disabled selected>Choose a reason</option><option>Harassment</option></select></div>`,
+        ".input",
+        ".field",
+      );
+      expect(result.opacity).toBe("1");
+      expect(result.focused).toBe(true);
+      expect(result.target.outline).toBe("none");
+      expect(result.painter.boxShadow).toMatch(/ 0px 0px 0px 2px inset$/);
+    });
+
+    it("should dim the frame and skip focus for a disabled control", async () => {
+      const result = await tabTo(
+        `<div class="field webField nativeField"><select class="input nativeSelect" aria-label="Reason" disabled><option>Harassment</option></select></div>`,
+        ".input",
+        ".field",
+      );
+      expect(result.opacity).toBe("0.4");
+      expect(result.focused).toBe(false);
     });
   });
 

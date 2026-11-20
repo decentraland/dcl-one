@@ -1426,7 +1426,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     // no engine to apply the decision in, and no editor in mock mode
-    if (msg.kind === 'permissionResolve' || msg.kind === 'permissionRule' || msg.kind === 'resetPermissions' || msg.kind === 'editorScene') return
+    if (msg.kind === 'itemPurchaseState' || msg.kind === 'permissionResolve' || msg.kind === 'permissionRule' || msg.kind === 'resetPermissions' || msg.kind === 'editorScene') return
     if (msg.kind === 'getPermissionRules') {
       reply({
         kind: 'permissionRules',

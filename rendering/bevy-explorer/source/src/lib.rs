@@ -486,9 +486,11 @@ impl DecentralandApp {
         };
         // Show out-of-bounds geometry in preview, on a loopback realm (local dev) and in
         // the editor, never on a public realm; the same runs are a local scene to analytics.
-        let show_out_of_bounds = decentraland_app_config.arguments.client.editor
-            || decentraland_app_config.arguments.launch.preview
-            || common::util::is_loopback_url(&boot_server);
+        let ShowOutOfBounds(show_out_of_bounds) = ShowOutOfBounds::for_run(
+            decentraland_app_config.arguments.client.editor,
+            decentraland_app_config.arguments.launch.preview,
+            Some(&boot_server),
+        );
 
         // Resources
         app.insert_resource(Version(version))

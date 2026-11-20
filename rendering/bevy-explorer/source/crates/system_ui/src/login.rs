@@ -694,8 +694,19 @@ fn process_login_bridge(
                             }
                         };
 
-                    let local_wallet =
-                        PrivateKeySigner::from_bytes(&B256::from_slice(&ephemeral_key)).unwrap();
+                    // the stored key must be exactly 32 bytes
+                    let local_wallet = match B256::try_from(ephemeral_key.as_slice())
+                        .map_err(|e| e.to_string())
+                        .and_then(|key| {
+                            PrivateKeySigner::from_bytes(&key).map_err(|e| e.to_string())
+                        }) {
+                        Ok(local_wallet) => local_wallet,
+                        Err(e) => {
+                            rpc_result_sender
+                                .send(Err(format!("Previous login has an invalid key: {e}")));
+                            return Err(());
+                        }
+                    };
 
                     Ok((
                         previous_login.root_address,

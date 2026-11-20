@@ -103,6 +103,53 @@ async fn webhook_voice_settings() -> (Settings, tokio::task::JoinHandle<()>) {
     (settings, task)
 }
 
+/// The private-messages room as a Twirp fixture: GetParticipant answers
+/// `participant` (not found while `None`) or a 500 while `fail` is set, and
+/// every UpdateParticipant body is recorded.
+#[derive(Default)]
+struct PrivateRoomFixture {
+    participant: parking_lot::Mutex<Option<serde_json::Value>>,
+    fail: std::sync::atomic::AtomicBool,
+    updates: parking_lot::Mutex<Vec<serde_json::Value>>,
+}
+
+async fn private_room_settings(
+    fixture: Arc<PrivateRoomFixture>,
+) -> (Settings, tokio::task::JoinHandle<()>) {
+    let read = fixture.clone();
+    let router = axum::Router::new()
+        .route(
+            "/twirp/livekit.RoomService/GetParticipant",
+            axum::routing::post(move || async move {
+                if read.fail.load(std::sync::atomic::Ordering::SeqCst) {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({})),
+                    );
+                }
+                match read.participant.lock().clone() {
+                    Some(participant) => (StatusCode::OK, Json(participant)),
+                    None => (
+                        StatusCode::NOT_FOUND,
+                        Json(serde_json::json!({ "code": "not_found" })),
+                    ),
+                }
+            }),
+        )
+        .route(
+            "/twirp/livekit.RoomService/UpdateParticipant",
+            axum::routing::post(move |Json(body): Json<serde_json::Value>| async move {
+                fixture.updates.lock().push(body);
+                Json(serde_json::json!({}))
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut settings = Settings::for_tests();
+    settings.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (settings, task)
+}
+
 async fn body_json(resp: axum::response::Response) -> (StatusCode, serde_json::Value) {
     let status = resp.status();
     let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
@@ -905,7 +952,7 @@ fn meta(realm: &str, scene: &str, device: Option<&str>) -> String {
 #[tokio::test]
 async fn the_scene_adapter_records_the_pinned_client_ip_not_a_client_set_header() {
     let Some(pool) = scratch().await else { return };
-    let state = state_with(pool.clone(), Settings::for_tests());
+    let state = genesis_state(pool.clone());
     let key = random_key();
     let me = Address::parse(&address_of(&key)).unwrap();
     let scene_id = format!("bafkrei{}", tag());
@@ -942,7 +989,7 @@ async fn the_scene_adapter_records_the_pinned_client_ip_not_a_client_set_header(
 #[tokio::test]
 async fn the_scene_adapter_route_records_an_untrusted_peer_by_its_socket_address() {
     let Some(pool) = scratch().await else { return };
-    let state = state_with(pool.clone(), Settings::for_tests());
+    let state = genesis_state(pool.clone());
     let peer: std::net::SocketAddr = "203.0.113.50:40000".parse().unwrap();
     let router = crate::shared::client_ip::pin_client_headers(super::router(state), Vec::new())
         .layer(axum::Extension(crate::writes::Switch(true)));
@@ -979,10 +1026,132 @@ async fn the_scene_adapter_route_records_an_untrusted_peer_by_its_socket_address
     assert_eq!(recorded.as_deref(), Some("203.0.113.50"));
 }
 
+/// A shared-realm adapter call to the handler over `scenes`, on a closed store.
+async fn genesis_adapter_error(
+    scenes: DeployedGenesis,
+    settings: Settings,
+    denylisted: &[&str],
+    realm: &str,
+    scene_id: &str,
+) -> super::errors::ApiError {
+    let mut state = comms_state(lazy_pool(), settings);
+    state.scenes = Arc::new(scenes);
+    for id in denylisted {
+        state.content_denylist.operator_insert(id);
+    }
+    let key = random_key();
+    let path = "/get-scene-adapter";
+    handlers::get_scene_adapter(
+        State(Arc::new(state)),
+        at(path),
+        signed(&key, "post", path, &meta(realm, scene_id, None)).await,
+        writes_on(),
+        axum::body::Bytes::new(),
+    )
+    .await
+    .unwrap_err()
+}
+
+/// A Genesis scene token names a scene active here: an unknown id is 404, before any ban or
+/// connection work.
+#[tokio::test]
+async fn the_scene_adapter_refuses_a_genesis_scene_that_is_not_deployed() {
+    let error = genesis_adapter_error(
+        DeployedGenesis::only(&["bafkreideployed"]),
+        Settings::for_tests(),
+        &[],
+        "main",
+        "bafkreiinvented",
+    )
+    .await;
+    assert_eq!(error.code, 404);
+    assert!(
+        error.message.contains("bafkreiinvented"),
+        "{}",
+        error.message
+    );
+}
+
+/// A catalogue read that fails answers 503 and mints nothing.
+#[tokio::test]
+async fn the_scene_adapter_answers_503_when_the_genesis_catalogue_is_unreadable() {
+    let error = genesis_adapter_error(
+        DeployedGenesis::unreadable(),
+        Settings::for_tests(),
+        &[],
+        "main",
+        "bafkreideployed",
+    )
+    .await;
+    assert_eq!(error.code, 503);
+    assert_eq!(
+        error.message,
+        "Scene verification is temporarily unavailable"
+    );
+}
+
+/// A deployed scene on content's denylist is answered as unknown.
+#[tokio::test]
+async fn the_scene_adapter_refuses_a_denylisted_genesis_scene() {
+    let error = genesis_adapter_error(
+        DeployedGenesis::every_scene(),
+        Settings::for_tests(),
+        &["bafkreidenied"],
+        "main",
+        "bafkreidenied",
+    )
+    .await;
+    assert_eq!(error.code, 404);
+}
+
+/// Without `ALLOW_LOCAL_PREVIEW` a preview scene is checked like any other.
+#[tokio::test]
+async fn the_scene_adapter_refuses_a_preview_scene_without_allow_local_preview() {
+    for (realm, scene_id) in [("main", "b64-cHJldmlldw"), ("LocalPreview", "bafkreilocal")] {
+        let error = genesis_adapter_error(
+            DeployedGenesis::only(&[]),
+            Settings::for_tests(),
+            &[],
+            realm,
+            scene_id,
+        )
+        .await;
+        assert_eq!(error.code, 404, "{realm} {scene_id}");
+    }
+}
+
+/// With `ALLOW_LOCAL_PREVIEW` a preview scene (a `b64-` id or a preview realm) passes the
+/// deployment check; a regular scene in a regular realm is still checked.
+#[tokio::test]
+async fn allow_local_preview_accepts_a_preview_scene_without_a_deployment() {
+    let mut settings = Settings::for_tests();
+    settings.allow_local_preview = true;
+    let mut state = comms_state(lazy_pool(), settings);
+    state.scenes = Arc::new(DeployedGenesis::only(&[]));
+    for (realm, scene_id, accepted) in [
+        ("main", "b64-cHJldmlldw", true),
+        ("LocalPreview", "bafkreilocal", true),
+        ("preview", "bafkreilocal", true),
+        ("main", "bafkreiinvented", false),
+    ] {
+        let resolved = scene::resolve_adapter_room(&state, realm, scene_id)
+            .await
+            .unwrap();
+        let checked = scene::require_genesis_deployment(&state, &resolved).await;
+        match checked {
+            Ok(()) => assert!(accepted, "{realm} {scene_id} was accepted"),
+            Err(error) => {
+                assert!(!accepted, "{realm} {scene_id}: {}", error.message);
+                assert_eq!(error.code, 404);
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn the_scene_adapter_mints_for_a_clean_wallet_and_refuses_platform_and_scene_bans() {
     let Some(pool) = scratch().await else { return };
-    let state = state_with(pool.clone(), Settings::for_tests());
+    let state = genesis_state(pool.clone());
     let key = random_key();
     let me = Address::parse(&address_of(&key)).unwrap();
     let scene_id = format!("bafkrei{}", tag());
@@ -1228,6 +1397,110 @@ async fn the_scene_adapter_room_comes_from_signed_metadata_not_the_body() {
         .unwrap_err();
         assert_eq!(err.code, code, "{metadata}");
     }
+}
+
+/// A catalogue holding Genesis deployments: an adapter request in a shared realm resolves to an
+/// active deployment when `only` is `None` or lists the id, and fails as a database error when
+/// `unreadable`; every other request goes to `inner`.
+struct DeployedGenesis {
+    inner: StubScenes,
+    only: Option<Vec<String>>,
+    unreadable: bool,
+}
+
+impl DeployedGenesis {
+    fn every_scene() -> Self {
+        Self::over(StubScenes::default())
+    }
+
+    fn over(inner: StubScenes) -> Self {
+        Self {
+            inner,
+            only: None,
+            unreadable: false,
+        }
+    }
+
+    fn only(ids: &[&str]) -> Self {
+        Self {
+            only: Some(ids.iter().map(|id| id.to_string()).collect()),
+            ..Self::every_scene()
+        }
+    }
+
+    fn unreadable() -> Self {
+        Self {
+            unreadable: true,
+            ..Self::every_scene()
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::interfaces::SceneIdentity for DeployedGenesis {
+    async fn classify_room(
+        &self,
+        room: &str,
+    ) -> Result<crate::rooms::RoomClassification, crate::rooms::ResolveError> {
+        self.inner.classify_room(room).await
+    }
+
+    async fn resolve(
+        &self,
+        request: crate::rooms::RoomRequest<'_>,
+    ) -> Result<crate::rooms::ResolvedRoom, crate::rooms::ResolveError> {
+        use crate::rooms::{ActiveDeployment, ResolvedRoom, RoomRequest};
+        use crate::world_identity::{Parcel, RealmId};
+        let RoomRequest::Adapter {
+            realm: realm @ RealmId::Shared(name),
+            scene,
+        } = request
+        else {
+            return self.inner.resolve(request).await;
+        };
+        if self.unreadable {
+            return Err(sqlx::Error::PoolTimedOut.into());
+        }
+        let deployed = self
+            .only
+            .as_ref()
+            .is_none_or(|only| only.iter().any(|id| id == scene.as_str()));
+        let base = Parcel::parse("0,0").unwrap();
+        Ok(ResolvedRoom {
+            realm: realm.clone(),
+            scene_id: Some(scene.clone()),
+            deployment: deployed.then(|| ActiveDeployment {
+                scene_id: scene.clone(),
+                title: None,
+                parcels: [base].into_iter().collect(),
+                base,
+                namespace: None,
+                local: true,
+            }),
+            room: crate::rooms::gatekeeper_scene_room(name, scene.as_str()),
+        })
+    }
+
+    async fn world_scene(
+        &self,
+        world: &crate::world_identity::WorldName,
+        scene: &crate::world_identity::SceneId,
+    ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
+        self.inner.world_scene(world, scene).await
+    }
+
+    async fn world_active_scene(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
+        self.inner.world_active_scene(world).await
+    }
+}
+
+fn genesis_state(pool: PgPool) -> SharedState {
+    let mut state = comms_state(pool, Settings::for_tests());
+    state.scenes = Arc::new(DeployedGenesis::every_scene());
+    Arc::new(state)
 }
 
 /// A two-scene resolver that rejects any request other than a parcel of this world.
@@ -1819,10 +2092,92 @@ async fn the_moderator_routes_need_the_token_or_a_listed_wallet() {
     assert_eq!(body["error"], "Not Found");
 }
 
+/// The service route shows a privacy change in the private-messages room:
+/// a present participant gets its metadata merged, before and after the
+/// write when tightening; a tightening the room refuses stores nothing; a
+/// loosening the room refuses is stored. Each room failure is counted.
+#[tokio::test(flavor = "current_thread")]
+async fn the_private_messages_privacy_patch_reaches_the_room_or_is_refused() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let series = recorder.handle();
+    let _recording = metrics::set_default_local_recorder(&recorder);
+    let failures = || {
+        series
+            .render()
+            .lines()
+            .filter(|line| !line.starts_with('#'))
+            .find_map(|line| {
+                line.strip_prefix("comms_private_messages_privacy_room_failures_total ")?
+                    .parse::<f64>()
+                    .ok()
+            })
+    };
+    let room = Arc::new(PrivateRoomFixture::default());
+    let (settings, _room_task) = private_room_settings(room.clone()).await;
+    let state = lazy_state(settings);
+    let me = wallet();
+    let patch = |privacy: &str| {
+        voice::patch_private_messages_privacy(
+            State(state.clone()),
+            Path(me.as_str().into()),
+            Json(voice::PrivateMessagesPrivacyBody {
+                private_messages_privacy: Some(privacy.into()),
+            }),
+        )
+    };
+    let stored = || async { state.social.private_messages_privacy(&me).await.unwrap() };
+
+    *room.participant.lock() = Some(serde_json::json!({
+        "identity": me.as_str(),
+        "metadata": r#"{"name":"peer","private_messages_privacy":"all"}"#,
+    }));
+    let Json(tightened) = patch("only_friends").await.unwrap();
+    assert_eq!(tightened["private_messages_privacy"], "only_friends");
+    assert_eq!(stored().await, "only_friends");
+    let updates = std::mem::take(&mut *room.updates.lock());
+    assert_eq!(updates.len(), 2, "shown before and after the write");
+    for update in &updates {
+        assert_eq!(update["room"], "private-messages");
+        assert_eq!(update["identity"], me.as_str());
+        let metadata: serde_json::Value =
+            serde_json::from_str(update["metadata"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            metadata,
+            serde_json::json!({ "name": "peer", "private_messages_privacy": "only_friends" })
+        );
+    }
+
+    let Json(_) = patch("all").await.unwrap();
+    assert_eq!(failures(), None);
+    room.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+    room.updates.lock().clear();
+    let refused = patch("only_friends").await.unwrap_err();
+    assert_eq!(refused.code, 500);
+    assert_eq!(stored().await, "all", "a refused tightening stores nothing");
+    assert_eq!(failures(), Some(1.0));
+
+    state
+        .social
+        .set_private_messages_privacy(&me, "only_friends")
+        .await
+        .unwrap();
+    let Json(loosened) = patch("all").await.unwrap();
+    assert_eq!(loosened["private_messages_privacy"], "all");
+    assert_eq!(
+        stored().await,
+        "all",
+        "a loosening the room refuses is stored"
+    );
+    assert!(room.updates.lock().is_empty());
+    assert_eq!(failures(), Some(2.0));
+}
+
 #[tokio::test]
 async fn the_private_messages_token_carries_the_merged_privacy_default_and_the_patch_moves_it() {
     let Some(pool) = scratch().await else { return };
-    let state = state_with(pool.clone(), Settings::for_tests());
+    let room = Arc::new(PrivateRoomFixture::default());
+    let (settings, _room_task) = private_room_settings(room.clone()).await;
+    let state = state_with(pool.clone(), settings);
     let key = random_key();
     let me = Address::parse(&address_of(&key)).unwrap();
     let headers = signed(
@@ -1864,6 +2219,10 @@ async fn the_private_messages_token_carries_the_merged_privacy_default_and_the_p
     .await
     .unwrap();
     assert_eq!(patched["private_messages_privacy"], "only_friends");
+    assert!(
+        room.updates.lock().is_empty(),
+        "a wallet outside the room is stored without a room update"
+    );
     let Json(resp) = voice::private_messages_token(
         State(state.clone()),
         at("/private-messages/token"),
@@ -1986,7 +2345,7 @@ async fn the_private_messages_token_records_the_connection_only_while_social_wri
 #[tokio::test]
 async fn the_scene_adapter_records_the_connection_only_while_social_writes_go_through() {
     let Some(pool) = scratch().await else { return };
-    let state = state_with(pool.clone(), Settings::for_tests());
+    let state = genesis_state(pool.clone());
     let key = random_key();
     let me = Address::parse(&address_of(&key)).unwrap();
     let scene_id = format!("bafkrei{}", tag());
@@ -3423,7 +3782,7 @@ async fn deny_listed_wallet_is_refused_by_every_world_mint_and_private_messages(
             None,
             None,
             Arc::new(StubPolicy::default()),
-            Arc::new(scenes),
+            Arc::new(DeployedGenesis::over(scenes)),
             Arc::new(crate::presence::Presence::new()),
             Arc::new(crate::interfaces::test_support::StubDirectory::default()),
         )
@@ -3519,7 +3878,7 @@ async fn deny_listed_wallet_is_refused_by_every_world_mint_and_private_messages(
 #[tokio::test]
 async fn a_refused_scene_adapter_retry_keeps_the_recorded_banned_device() {
     let Some(pool) = scratch().await else { return };
-    let state = state_with(pool.clone(), Settings::for_tests());
+    let state = genesis_state(pool.clone());
     let key = random_key();
     let me = Address::parse(&address_of(&key)).unwrap();
     let device = format!("banned-device-{}", tag());

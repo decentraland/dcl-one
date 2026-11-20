@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 
-import AnimatedBackground from "@ui/shop/discovery/components/animated-background/AnimatedBackground";
+import { AnimatedBackground } from "@dcl/one-ui/apps/sites/shared/AnimatedBackground/AnimatedBackground";
 import SitesChrome from "@ui/web/frames/SitesChrome";
 
 import { GeneralDecentralandColor } from "@dcl/one-ui/foundations/icons";
@@ -30,7 +30,7 @@ export default function ReportSuccess() {
             <div className={styles.card}>
               <div className={styles.logoWrap}>
                 <GeneralDecentralandColor className={styles.logo} aria-hidden="true" />
-                <h3 className={styles.title}>Report Submitted</h3>
+                <h1 className={styles.title}>Report Submitted</h1>
               </div>
               <div className={styles.text}>
                 <p className={styles.body}>Your report has been received and will be reviewed shortly.</p>

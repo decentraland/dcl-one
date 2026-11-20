@@ -779,12 +779,19 @@ struct PendingDeploy {
 /// Announce `profile`'s version over Pulse, converted to a `ProfileVersionAnnouncement`.
 fn announce_version(transports: &Query<&Transport>, profile: &UserProfile) {
     debug!("announcing profile new version {:?}", profile.version);
+    let serialized_profile = match serde_json::to_string(&profile.content) {
+        Ok(serialized_profile) => serialized_profile,
+        Err(e) => {
+            error_once!("not announcing profile, serialization failed: {e}");
+            return;
+        }
+    };
     broadcast(
         transports.iter(),
         BroadcastTarget::PULSE,
         false,
         ProfileUpdate {
-            serialized_profile: serde_json::to_string(&profile.content).unwrap(),
+            serialized_profile,
             base_url: profile.base_url.clone(),
             version: profile.version,
         },
@@ -1410,14 +1417,20 @@ pub fn process_profile_events(
                             return;
                         };
 
+                        let serialized_profile =
+                            match serde_json::to_string(&current_profile.content) {
+                                Ok(serialized_profile) => serialized_profile,
+                                Err(e) => {
+                                    error_once!("not sending profile, serialization failed: {e}");
+                                    continue;
+                                }
+                            };
+
                         debug!("sending my profile");
                         let response = rfc4::Packet {
                             message: Some(rfc4::packet::Message::ProfileResponse(
                                 rfc4::ProfileResponse {
-                                    serialized_profile: serde_json::to_string(
-                                        &current_profile.content,
-                                    )
-                                    .unwrap(),
+                                    serialized_profile,
                                     base_url: current_profile.base_url.clone(),
                                 },
                             )),
@@ -1708,9 +1721,9 @@ fn lambdas_url() -> String {
 /// Where compact profiles are read (`POST {source}/profiles/metadata`): the catalyst's lambdas,
 /// except when that catalyst is one of Decentraland's own deployments
 /// ([`common::base_domain::decentraland_domain`]), whose catalysts have no compact route. There
-/// the same deployment's asset-bundle registry serves the tier, as for unity-explorer with
-/// `USE_CENTRALIZED_PROFILES`. The decision follows the resolved catalyst, not the base domain:
-/// a dcl-one page or a `--gateway` launch keeps the default base domain with its own catalyst.
+/// the same deployment's asset-bundle registry serves the tier. A dcl-one page or a `--gateway`
+/// launch keeps the default base domain with its own catalyst, so the resolved catalyst selects
+/// the source.
 ///
 /// Temporary: the registry branch is to be removed once Decentraland's catalysts answer
 /// `POST /lambdas/profiles/metadata` (docs/adr/2026-11-04-explorer-profiles-from-the-catalyst.md,

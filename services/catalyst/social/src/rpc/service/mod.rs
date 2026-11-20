@@ -46,7 +46,9 @@ pub(crate) mod ops {
         accept_private_voice_chat_with_id, end_private_voice_chat_with_id, incoming_not_found,
         reject_private_voice_chat_with_id, start_private_voice_chat,
     };
-    pub(crate) use super::settings::{MAX_USER_ADDRESSES, private_messages_settings};
+    pub(crate) use super::settings::{
+        MAX_USER_ADDRESSES, private_messages_settings, update_social_settings,
+    };
 }
 
 pub const MODULE_NAME: &str = "SocialService";
