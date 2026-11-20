@@ -450,6 +450,27 @@ module.exports.getPermissionUsedStream = async function() {
   return streamGenerator();
 }
 
+// stream of scene requests to open the item purchase confirmation:
+// { id, item: { contract, itemId } | null }
+module.exports.getItemPurchaseRequestStream = async function() {
+  const rid = await Deno.core.ops.op_get_item_purchase_request_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_item_purchase_request_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// state: 'accepted' | 'unavailable' | 'purchased' | 'dismissed' | 'failed'
+module.exports.setItemPurchaseState = function(body) {
+    Deno.core.ops.op_set_item_purchase_state(body.id, body.state);
+}
+
 module.exports.setSinglePermission = function(body) {
     Deno.core.ops.op_set_single_permission(body.id, body.allow);
 }

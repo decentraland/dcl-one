@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 const assign = vi.fn();
 
@@ -53,5 +53,47 @@ describe("asking the reader to sign in", () => {
     opened.push(store.takePendingRedirect() === "/create");
     expect(opened).toEqual([true]);
     expect(assign).not.toHaveBeenCalled();
+  });
+});
+
+describe("when listening for browser sign-in", () => {
+  let store: typeof import("./signin-store");
+  let listener: Mock<(returnTo: string) => void>;
+  let unsubscribe: () => void;
+
+  beforeEach(async () => {
+    store = await import("./signin-store");
+    listener = vi.fn<(returnTo: string) => void>();
+    unsubscribe = store.onBeforeBrowserSignIn(listener);
+  });
+
+  afterEach(() => {
+    unsubscribe();
+  });
+
+  it("should pass the return path until the listener unsubscribes", () => {
+    store.openSignIn({ redirectTo: "/report#evidence" });
+    expect(listener).toHaveBeenCalledExactlyOnceWith("/report#evidence");
+    unsubscribe();
+    store.openSignIn({ redirectTo: "/report" });
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("should skip notifications for host sign-in", () => {
+    const uninstall = store.installHostSignIn(vi.fn());
+    store.openSignIn();
+    uninstall();
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("should skip notifications for desktop-shell sign-in", () => {
+    (window as { __DCL_SHELL__?: unknown }).__DCL_SHELL__ = { shell: "tauri" };
+    store.openSignIn();
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("should skip notifications for in-place sign-in", () => {
+    store.openSignIn({ inPlace: true });
+    expect(listener).not.toHaveBeenCalled();
   });
 });
