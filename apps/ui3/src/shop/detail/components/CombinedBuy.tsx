@@ -52,6 +52,7 @@ import {
   writeSplitHold,
   type SplitHold,
   noteSplitHoldExpiry,
+  type SplitHoldClearing,
   type SplitSettlement,
 } from "../../checkout/purchase/splitHold";
 import { splitEnvelope, type SplitSale } from "../../checkout/purchase/splitEvidence";
@@ -133,6 +134,11 @@ type CombinedBuyRun = {
   /** Why the last Check again did nothing: another window holds the item, or this browser cannot take its lock. */
   notice: string | null;
   /**
+   * This run's own outcome when it sent nothing and its record would not clear: the item stays held, said for what it is
+   * (not "sent"), until Check again can clear the record. Only this dialog knows it; reopened, the node's record decides.
+   */
+  unsent: string | null;
+  /**
    * Reads the sent split's transaction (purchase/splitHold.ts, settleSplitHold): its terms confirmed complete it. Anything
    * else, its own bytes reverted included, leaves it to the node's record of its credit: spent by this split completes it,
    * by another purchase or expired unspent lets the item go, anything else keeps it held. No credit is retired here. Only
@@ -187,6 +193,8 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   }, [sent]);
   const [checking, setChecking] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // A run that proved it sent nothing, whose record the storage kept: its attempt, and the outcome shown once it clears.
+  const [unsent, setUnsent] = useState<{ attempt: string; message: string } | null>(null);
   const provider = wallet.session.kind === "web3" ? (wallet.host?.provider?.() ?? null) : null;
   const busy = phase.kind === "working";
   const blocked = !provider || !wallet.account ? "Connect your wallet to pay with Credits and MANA." : wallet.accountMismatch ? "Your wallet is on another account than the one you're signed in with." : null;
@@ -350,7 +358,8 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       const settled = await settleSplitHold(record, { account: ctx.buyer, reader: ctx.reader, client: ctx.client }).catch(() => null);
       if (settled?.kind !== "spent" && settled?.kind !== "elsewhere") return false;
       if (!clearSplitHold(ctx.buyer, lineId, attempt)) {
-        holdConfirming(record);
+        // Kept with the hash that settled it (a sibling the node attributed, say), so the next check reads that one at once.
+        holdConfirming(settled.kind === "spent" ? { ...record, txHash: settled.txHash } : record);
         setNotice(UNCLEARED);
         return true;
       }
@@ -459,8 +468,6 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
         return;
       }
       if (creditId && !guard.current.mayBeConsumed(creditId)) await cancelUsdIntents([creditId], ctx.client).catch(() => 0);
-      // Nothing of this run is left confirming: its own record goes.
-      if (dispatched) clearSplitHold(ctx.buyer, lineId, attempt);
       const message =
         e instanceof SplitNotRecorded
           ? NOT_RECORDED
@@ -473,6 +480,16 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
                 : isRevertedTxError(e)
                   ? REVERTED
                   : friendlyError(e, FALLBACK, { sale: true });
+      // Nothing of this run is left confirming: its own record goes, and its outcome shows once it has (read back). One the
+      // storage kept still holds the item, here and on the next open: so it is shown held, for what it is, and Check again
+      // lets it go once its record can go.
+      if (dispatched && !clearSplitHold(ctx.buyer, lineId, attempt)) {
+        setUnsent({ attempt, message });
+        setSent(readSplitHoldRecord(ctx.buyer, lineId));
+        setNotice(UNCLEARED);
+        setPhase({ kind: "pending" });
+        return;
+      }
       setPhase({ kind: "error", message });
     }
   }
@@ -514,9 +531,10 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       if (!busy) setPhase({ kind: "review" });
     },
     remembered: sent !== null,
-    checkable: !!sent && splitHoldCheckable(sent, Date.now()),
+    checkable: !!sent && (unsent?.attempt === sent.attempt || splitHoldCheckable(sent, Date.now())),
     checking,
     notice,
+    unsent: unsent && sent?.attempt === unsent.attempt ? unsent.message : null,
     checkAgain: async () => {
       setNotice(null);
       const account = wallet.account;
@@ -525,6 +543,29 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       if (!record) {
         setSent(null);
         if (phase.kind === "pending") setPhase({ kind: "review" });
+        return;
+      }
+      // This run proved it sent nothing: only its record is left to go, and then its outcome shows.
+      if (unsent && record.attempt === unsent.attempt && account) {
+        setChecking(true);
+        let clearing: SplitHoldClearing;
+        try {
+          clearing = await clearSettledSplitHold(services.locks, account, lineId, record);
+        } finally {
+          setChecking(false);
+        }
+        if (clearing.kind === "busy") {
+          setNotice(clearing.unremoved ? UNCLEARED : services.locks ? CHECKING_ELSEWHERE : UNCHECKABLE);
+          return;
+        }
+        setUnsent(null);
+        if (clearing.kind === "replaced") {
+          setSent(clearing.current);
+          if (!clearing.current) setPhase({ kind: "review" });
+          return;
+        }
+        setSent(null);
+        setPhase({ kind: "error", message: unsent.message });
         return;
       }
       setChecking(true);
@@ -569,7 +610,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
 }
 
 export default function CombinedBuy({ line, offer, mixed, onClose, onDone, portal }: CombinedBuyProps) {
-  const { phase, busy, agreed, blocked, start, grant, approved, declined, remembered, checkable, checking, notice, checkAgain } = useCombinedBuy({ line, offer, mixed, onDone });
+  const { phase, busy, agreed, blocked, start, grant, approved, declined, remembered, checkable, checking, notice, unsent, checkAgain } = useCombinedBuy({ line, offer, mixed, onDone });
   const title = `Buy ${line.display.name}`;
   const credits = `${mixed.credits} ${mixed.credits === 1 ? "Credit" : "Credits"}`;
   const mana = `${formatMana(mixed.manaWei, { group: true })} MANA`;
@@ -590,7 +631,7 @@ export default function CombinedBuy({ line, offer, mixed, onClose, onDone, porta
         ) : phase.kind === "pending" || (remembered && phase.kind === "review") ? (
           // Still confirming, from this run or one sent earlier: never a second one beside it.
           <>
-            <p role="status">The purchase was sent and is still confirming. It was not sent twice; check your purchases in a moment.</p>
+            <p role="status">{unsent ?? "The purchase was sent and is still confirming. It was not sent twice; check your purchases in a moment."}</p>
             {notice ? (
               <p className="shop-orderbuy__note" role="status" data-testid="combined-check-notice">
                 {notice}

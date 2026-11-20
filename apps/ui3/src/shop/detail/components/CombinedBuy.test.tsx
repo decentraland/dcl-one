@@ -297,6 +297,40 @@ describe("a split whose outcome is not known", () => {
     expect(screen.getByTestId("combined-confirm")).toBeEnabled();
   });
 
+  it.each([
+    ["refuses", true],
+    ["keeps without a word", false],
+  ] as const)("a sale that provably sent nothing, whose record the storage %s, says what happened and stays held: Check again shows that once the record can go", async (_, throws) => {
+    const { demo, line } = setup();
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    demo.relay.state.mode = "refuse";
+    demo.wallet.next = "reject";
+    const removeItem = Storage.prototype.removeItem;
+    const stuck = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(function (this: Storage, key: string) {
+      if (!key.startsWith("dcl-shop-buynow-split:")) return removeItem.call(this, key);
+      if (throws) throw new DOMException("The operation is insecure.", "SecurityError");
+    });
+    const declined = "You cancelled the request in your wallet. Nothing was charged.";
+    try {
+      await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+      expect(await screen.findByText(declined, {}, { timeout: 5000 })).toBeTruthy();
+      expect(screen.getByTestId("combined-check-notice")).toHaveTextContent("This browser couldn't update its record of this purchase. Check again in a moment.");
+      expect(screen.queryByText(/was sent and is still confirming/)).toBeNull();
+      // Still held, as it would be on the next open: no Pay beside it.
+      expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).not.toBeNull();
+      expect(screen.queryByTestId("combined-confirm")).toBeNull();
+    } finally {
+      stuck.mockRestore();
+    }
+    await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
+    await act(async () => fireEvent.click(screen.getByTestId("combined-check-again")));
+    expect(await screen.findByTestId("combined-confirm")).toBeEnabled();
+    expect(screen.getByText(declined)).toBeTruthy();
+    expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toBeNull();
+    // Its credit went back once, when the sale failed; nothing more on Check again.
+    expect(demo.shop.log.filter((r) => r.name === "cancelCreditAuthorizations")).toHaveLength(1);
+  });
+
   it("after a refusal the relay marked as not sent, a direct sale whose wallet lost its answer (4900) is held: its credit is kept", async () => {
     const { demo, line } = setup();
     demo.chain.allowances.set(managerKey(), 10n ** 21n);
@@ -651,6 +685,38 @@ describe("a split whose outcome is not known", () => {
     expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
     expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toBeNull();
     expect(demo.relay.posts).toHaveLength(1);
+  });
+
+  it("a sibling the node settled, whose record the storage keeps, is held with the sibling's hash: Check again reads it at once, not the history", async () => {
+    const credit = `0x${"a1".repeat(32)}`;
+    const replayed = `0x${"ab".repeat(32)}`;
+    const box: { demo: ReturnType<typeof setup>["demo"] | null } = { demo: null };
+    const { demo, line } = setup(undefined, "reverted", MANA, undefined, {
+      userPurchases: () => {
+        // The very execution the relay was given, run again in another transaction, which mined: the node settled it.
+        const [to, input] = (box.demo!.relay.posts.at(-1) as { transactionData: { params: [string, Hex] } }).transactionData.params;
+        box.demo!.chain.transactions.set(replayed, { from: null, to, input });
+        box.demo!.chain.receipts.set(replayed, "success");
+        return { purchases: [{ id: `${credit}:0`, status: "SETTLED", usdCents: 50, createdAt: 1, txHash: replayed }], total: 1 };
+      },
+    });
+    box.demo = demo;
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    const removeItem = Storage.prototype.removeItem;
+    const stuck = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(function (this: Storage, key: string) {
+      if (!key.startsWith("dcl-shop-buynow-split:")) return removeItem.call(this, key);
+    });
+    try {
+      await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+      expect(await screen.findByTestId("combined-check-notice", {}, { timeout: 5000 })).toHaveTextContent("couldn't update its record");
+      expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))?.txHash).toBe(replayed);
+    } finally {
+      stuck.mockRestore();
+    }
+    const reads = demo.shop.log.filter((r) => r.name === "userPurchases").length;
+    await act(async () => fireEvent.click(screen.getByTestId("combined-check-again")));
+    expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(demo.shop.log.filter((r) => r.name === "userPurchases")).toHaveLength(reads);
   });
 
   it("a successful receipt for a transaction that is not this sale's, with nothing in the history, is held confirming with that hash, never complete", async () => {
