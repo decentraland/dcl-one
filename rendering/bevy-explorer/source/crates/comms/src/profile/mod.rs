@@ -807,12 +807,19 @@ fn due_announcement(
 /// Announce `profile`'s version over Pulse, converted to a `ProfileVersionAnnouncement`.
 fn announce_version(transports: &Query<&Transport>, profile: &UserProfile) {
     debug!("announcing profile new version {:?}", profile.version);
+    let serialized_profile = match serde_json::to_string(&profile.content) {
+        Ok(serialized_profile) => serialized_profile,
+        Err(e) => {
+            error_once!("not announcing profile, serialization failed: {e}");
+            return;
+        }
+    };
     broadcast(
         transports.iter(),
         BroadcastTarget::PULSE,
         false,
         ProfileUpdate {
-            serialized_profile: serde_json::to_string(&profile.content).unwrap(),
+            serialized_profile,
             base_url: profile.base_url.clone(),
             version: profile.version,
         },
@@ -1294,14 +1301,20 @@ pub fn process_profile_events(
                             return;
                         };
 
+                        let serialized_profile =
+                            match serde_json::to_string(&current_profile.content) {
+                                Ok(serialized_profile) => serialized_profile,
+                                Err(e) => {
+                                    error_once!("not sending profile, serialization failed: {e}");
+                                    continue;
+                                }
+                            };
+
                         debug!("sending my profile");
                         let response = rfc4::Packet {
                             message: Some(rfc4::packet::Message::ProfileResponse(
                                 rfc4::ProfileResponse {
-                                    serialized_profile: serde_json::to_string(
-                                        &current_profile.content,
-                                    )
-                                    .unwrap(),
+                                    serialized_profile,
                                     base_url: current_profile.base_url.clone(),
                                 },
                             )),

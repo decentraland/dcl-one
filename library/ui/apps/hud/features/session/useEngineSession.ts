@@ -40,7 +40,7 @@ import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { isInputLocked, subscribeInputLock } from '@explorer-core/lib/inputLock'
 import { applyProfileEdit } from '@explorer-core/engine/profileEdit'
 import { COMMUNITY_REQUEST_NOTIFICATIONS } from '@explorer-core/features/communities/notifications'
-import { peekProfile, profileChanged, receiveProfile, seedProfiles, setOwnProfile, setProfileRequester, updateProfile } from './profileStore'
+import { peekProfile, profileChanged, profileReadFailed, receiveOwnProfile, receiveProfile, seedProfiles, setOwnProfile, setProfileRequester, updateProfile } from './profileStore'
 import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
 import { getCursor } from '@explorer-core/features/pointer/cursorStore'
 import { openProfileCard } from '../profileCard/ProfileCard'
@@ -1714,7 +1714,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     // a new engine numbers its item purchase requests from the start again
     lastItemPurchase.current = null
     // The profile store asks the engine itself for any address it's shown and doesn't hold.
-    setProfileRequester((address, extras) => driver.send({ kind: 'getUserProfile', address, extras }))
+    setProfileRequester((address, extras, requestId) => driver.send({ kind: 'getUserProfile', address, extras, requestId }))
     setMapTransport((msg) => driver.send(msg))
     setNativeQuit(() => driver.send({ kind: 'quit' }))
     nearbyPlayers.setTransport((on) => driver.send({ kind: 'watchMapPlayers', on }))
@@ -2096,10 +2096,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           setOwnProfile(msg.profile?.address ?? null)
           // The passport reads the store, so an authoritative own profile has to reach it too or a
           // just-saved name would keep its stale claimed-name seal until reopened.
-          if (msg.profile != null) receiveProfile(msg.profile.address, msg.profile)
+          if (msg.profile != null) receiveOwnProfile(msg.profile)
           break
         case 'userProfile':
-          receiveProfile(msg.address, msg.profile)
+          receiveProfile(msg.address, msg.profile, msg.requestId)
           break
         case 'profileChanged':
           profileChanged(msg.address, msg.version)
@@ -2166,6 +2166,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           fetchedRef.current.delete(msg.request)
           console.error(`[bridge] ${msg.request} failed:`, msg.error)
           if (msg.request === 'saveProfile' && profileInFlightRef.current) settleProfileSave(false)
+          if (msg.request === 'getUserProfile' && msg.profileRead != null) {
+            profileReadFailed(msg.profileRead.address, msg.profileRead.requestId)
+          }
           // the map showed the change before the engine took it: read back the home it holds
           if (msg.request === 'setHomeScene') driver.send({ kind: 'getHomeScene' })
           break

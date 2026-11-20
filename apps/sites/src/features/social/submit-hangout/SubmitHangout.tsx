@@ -8,8 +8,9 @@ import { Link, useSearchParams } from "react-router";
 
 
 import type { TrackContext } from "@/core/lib/telemetry/track";
-import { isStepValid, type HangoutDraft } from "@/data/lib/catalyst/landings/submit-hangout";
+import { isStepValid, toEventSchedule, type EventScheduleSource, type HangoutDraft } from "@/data/lib/catalyst/landings/submit-hangout";
 import type { HangoutOptions } from "@/data/lib/catalyst/landings/hangout-options";
+import { heroWhen, scheduleLine } from "../../components/event-schedule";
 import styles from "./SubmitHangout.module.css";
 import HangoutAssociations from "./HangoutAssociations";
 import {
@@ -34,6 +35,7 @@ type SubmitHangoutProps = {
   categoriesError?: boolean;
   mode?: "create" | "edit";
   draft?: HangoutDraft;
+  originalSchedule?: EventScheduleSource;
   initialStep?: string;
   submit?: SubmitFn;
   track?: TrackFn;
@@ -54,6 +56,7 @@ export default function SubmitHangout({
   categoriesError = false,
   mode = "create",
   draft,
+  originalSchedule,
   initialStep,
   submit,
   track,
@@ -83,6 +86,7 @@ export default function SubmitHangout({
       categoriesError={categoriesError}
       mode={mode}
       draft={draft}
+      originalSchedule={originalSchedule}
       submit={submit}
       track={track}
       signedIn={signedIn}
@@ -105,6 +109,7 @@ type InnerProps = {
   categoriesError: boolean;
   mode: "create" | "edit";
   draft?: HangoutDraft;
+  originalSchedule?: EventScheduleSource;
   submit?: SubmitFn;
   track?: TrackFn;
   signedIn: boolean;
@@ -131,6 +136,7 @@ function SubmitHangoutInner({
   categoriesError,
   mode,
   draft,
+  originalSchedule,
   submit,
   track,
   signedIn,
@@ -209,8 +215,9 @@ function SubmitHangoutInner({
   const canAdvanceForm = !uploading && (value === "cover" || (isStepValid(value, d) && (value !== "details" || communityAllowed)));
 
   const editingInline = inline && (value === "review" || value === "preview");
-  const previewStart = inline && value === "preview" && d.startDate ? `${d.startDate}T${d.startTime || "00:00"}:00Z` : null;
-  const previewTime = previewStart && { dateTime: previewStart, label: new Date(previewStart).toLocaleString(locale) };
+  const previewSchedule = inline && value === "preview"
+    ? { ...toEventSchedule(d, originalSchedule), finish_at: null, next_start_at: null, next_finish_at: null }
+    : null;
   const canSubmit = !uploading && communityAllowed &&
     FORM_ORDER.every((section) => isStepValid(section, d));
   const onEdit = (patch: Partial<HangoutDraft>) => send({ type: "EDIT", patch });
@@ -292,13 +299,13 @@ function SubmitHangoutInner({
                 </div>
               </div>
             ) : fields(value)}
-            {inline && value === "preview" && (
+            {previewSchedule && (
               <EventDetailModal
                 title={d.name}
                 image={d.imagePreviewUrl}
                 live={false}
-                when={previewTime || undefined}
-                schedule={previewTime || undefined}
+                when={heroWhen(previewSchedule, undefined, locale)}
+                schedule={scheduleLine(previewSchedule, undefined, locale)}
                 location={{ world: d.location === "world", label: d.location === "world" ? d.worldName : `${d.coordX},${d.coordY}` }}
                 description={d.description}
                 onClose={() => send({ type: "BACK" })}

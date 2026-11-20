@@ -1881,7 +1881,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     if (msg.kind === 'getUserProfile') {
       if (msg.address.toLowerCase() === o.userId.toLowerCase()) {
-        reply({ kind: 'userProfile', address: msg.address, profile: ownProfile(o) })
+        reply({ kind: 'userProfile', address: msg.address, requestId: msg.requestId, profile: ownProfile(o) })
         return
       }
       // Resolve a real name from the nearby roster (real engine gets it from the catalyst).
@@ -1890,10 +1890,10 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       if (msg.extras !== true) {
         // Like the engine, hold nothing for someone never seen: a friend's seeded name stays.
         const profile = member == null ? null : { address: msg.address, name, picture: member.picture, hasClaimedName: !name.includes('#'), isGuest: false }
-        reply({ kind: 'userProfile', address: msg.address, profile })
+        reply({ kind: 'userProfile', address: msg.address, requestId: msg.requestId, profile })
         return
       }
-      reply({ kind: 'userProfile', address: msg.address, profile: richProfile(msg.address, name, false) })
+      reply({ kind: 'userProfile', address: msg.address, requestId: msg.requestId, profile: richProfile(msg.address, name, false) })
       return
     }
     // Slash-command effects (no engine in mock): echo a system chat line so the flow is testable in ?mock=1.

@@ -87,7 +87,8 @@ struct Database {
     url: String,
 }
 impl Database {
-    async fn empty() -> Option<Self> {
+    /// An empty database, or a copy of `template` (no one may be connected to it).
+    async fn create(template: Option<&str>) -> Option<Self> {
         let url = std::env::var("CATALYST_TEST_DATABASE_URL").ok()?;
         let options: PgConnectOptions = url.parse().unwrap();
         let admin = PgPoolOptions::new()
@@ -100,7 +101,23 @@ impl Database {
             std::process::id(),
             &uuid::Uuid::new_v4().simple().to_string()[..12]
         );
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
+        let create = match template {
+            Some(template) => {
+                let version: i32 =
+                    sqlx::query_scalar("SELECT current_setting('server_version_num')::int")
+                        .fetch_one(&admin)
+                        .await
+                        .unwrap();
+                let strategy = if version >= 150_000 {
+                    " STRATEGY FILE_COPY"
+                } else {
+                    ""
+                };
+                format!("CREATE DATABASE \"{name}\" TEMPLATE \"{template}\"{strategy}")
+            }
+            None => format!("CREATE DATABASE \"{name}\""),
+        };
+        sqlx::query(sqlx::AssertSqlSafe(create))
             .execute(&admin)
             .await
             .unwrap();
@@ -122,7 +139,36 @@ impl Database {
             url: psql_url.to_string(),
         })
     }
+    async fn empty() -> Option<Self> {
+        Self::create(None).await
+    }
+    /// A copy of the imported capture: each import runs as one transaction
+    /// holding about 3,000 object locks for seconds, so the process imports
+    /// each source once and clones it per test. The imported databases stay
+    /// until a later test process's scratch sweep drops them, once this
+    /// process (the `<pid>` in their name) has exited.
     async fn new(source: Source) -> Option<Self> {
+        static MAIN: tokio::sync::OnceCell<Option<String>> = tokio::sync::OnceCell::const_new();
+        static PREPARED: tokio::sync::OnceCell<Option<String>> = tokio::sync::OnceCell::const_new();
+        let cell = match source {
+            Source::Main => &MAIN,
+            Source::Prepared => &PREPARED,
+        };
+        let template = cell.get_or_init(|| Self::import(source)).await.as_deref()?;
+        let db = Self::create(Some(template)).await?;
+        let receipts: Vec<Receipt> = sqlx::query_as(LEDGER).fetch_all(&db.pool).await.unwrap();
+        match source {
+            Source::Main => assert!(!receipts.iter().any(|row| row.0 == STEP)),
+            Source::Prepared => assert!(
+                receipts
+                    .iter()
+                    .any(|row| row.0 == STEP && row.1 == STEP_HASH && !row.2)
+            ),
+        }
+        Some(db)
+    }
+    /// Imports `source` into a database of its own and returns its name.
+    async fn import(source: Source) -> Option<String> {
         // Hashes are the untouched output digests in the adjacent provenance
         // manifests; import their real ledger, never invent historical receipts.
         assert_capture_hash(
@@ -141,38 +187,25 @@ impl Database {
             ORIGIN_ROWS,
             "869841157fcb18ddb32fd030f6920127c41142656f91046ae426be0dd1ab3925",
         );
+        // Overlapping imports exhaust a default cluster's shared lock table.
+        static IMPORTING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+        let _one_at_a_time = IMPORTING.lock().await;
         let db = Self::empty().await?;
-        // One capture import at a time per process, like `apply_schema`: each
-        // runs as one implicit transaction holding about 3,000 object locks
-        // until commit, so overlapping imports exhaust a default cluster's
-        // shared lock table ("out of shared memory"). The releases under test
-        // take about 70 and still run in parallel.
-        {
-            static IMPORTING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-            let _one_at_a_time = IMPORTING.lock().await;
-            sqlx::raw_sql(sqlx::AssertSqlSafe(source.schema().to_owned()))
-                .execute(&db.pool)
-                .await
-                .unwrap();
-            if matches!(source, Source::Prepared) {
-                for rows in [UPGRADE_ROWS, ORIGIN_ROWS] {
-                    sqlx::raw_sql(sqlx::AssertSqlSafe(rows.to_owned()))
-                        .execute(&db.pool)
-                        .await
-                        .unwrap();
-                }
+        sqlx::raw_sql(sqlx::AssertSqlSafe(source.schema().to_owned()))
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        if matches!(source, Source::Prepared) {
+            for rows in [UPGRADE_ROWS, ORIGIN_ROWS] {
+                sqlx::raw_sql(sqlx::AssertSqlSafe(rows.to_owned()))
+                    .execute(&db.pool)
+                    .await
+                    .unwrap();
             }
         }
-        let receipts: Vec<Receipt> = sqlx::query_as(LEDGER).fetch_all(&db.pool).await.unwrap();
-        match source {
-            Source::Main => assert!(!receipts.iter().any(|row| row.0 == STEP)),
-            Source::Prepared => assert!(
-                receipts
-                    .iter()
-                    .any(|row| row.0 == STEP && row.1 == STEP_HASH && !row.2)
-            ),
-        }
-        Some(db)
+        db.pool.close().await;
+        db.admin.close().await;
+        Some(db.name)
     }
     async fn close(self) {
         self.pool.close().await;

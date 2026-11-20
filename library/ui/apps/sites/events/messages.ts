@@ -945,6 +945,13 @@ const messages = {
     '매년 반복',
     '毎年繰り返し'
   ],
+  'Every {count} hours': [
+    'Cada {count} horas',
+    'Toutes les {count} heures',
+    '每 {count} 小时',
+    '{count}시간마다',
+    '{count}時間ごと'
+  ],
   'Every {count} days': [
     'Cada {count} días',
     'Tous les {count} jours',

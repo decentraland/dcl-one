@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -87,6 +87,25 @@ describe("when a signed-in creator opens the single-page Events editor", () => {
       expect(screen.getByRole("dialog", { name: "Open studio" })).toBeTruthy();
       await user.click(screen.getByRole("button", { name: "Close" }));
       expect(screen.getByRole("textbox", { name: "Event Name" })).toHaveProperty("value", "Open studio");
+      expect(submit).not.toHaveBeenCalled();
+    });
+
+    it("should update the preview end time and weekly cadence from the edited draft", async () => {
+      const endTime = new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit", hour12: true });
+      await user.click(screen.getByRole("button", { name: "Preview" }));
+      expect(within(screen.getByRole("dialog")).getByText(new RegExp(`– ${endTime.format(new Date("2099-07-01T20:30Z"))}$`))).toBeTruthy();
+      expect(within(screen.getByRole("dialog")).queryByText("Repeats weekly")).toBeNull();
+      await user.click(screen.getByRole("button", { name: "Close" }));
+
+      const duration = screen.getByRole("spinbutton", { name: "Duration (hours)" });
+      await user.clear(duration);
+      await user.type(duration, "3");
+      await user.click(screen.getByRole("checkbox", { name: "Repeat Hangout" }));
+      await user.type(screen.getByLabelText("Ends"), "2099-07-29");
+      await user.click(screen.getByRole("button", { name: "Preview" }));
+      const preview = within(screen.getByRole("dialog"));
+      expect(preview.getByText(new RegExp(`^Starting .*– ${endTime.format(new Date("2099-07-01T21:30Z"))}$`))).toBeTruthy();
+      expect(preview.getByText("Repeats weekly")).toBeTruthy();
       expect(submit).not.toHaveBeenCalled();
     });
 

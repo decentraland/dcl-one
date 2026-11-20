@@ -280,6 +280,21 @@ async fn preview_and_local_scenes_ask_for_no_manifest() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+#[tokio::test]
+async fn a_near_lod_descriptor_comes_from_the_variants_base() {
+    let (io, dir) = io_with_cache("lod-descriptor");
+    assert_eq!(io.bevy_lod_descriptor(SCENE), None);
+    io.set_bevy_variants_base("https://abgen.example/");
+    assert_eq!(
+        io.bevy_lod_descriptor(SCENE),
+        Some(format!(
+            "https://abgen.example/LOD/lods-unity/manifests/{}_InitialSceneState.json",
+            SCENE.to_lowercase()
+        ))
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 fn content_path(file: &str) -> PathBuf {
     PathBuf::from(&IpfsPath::new(IpfsType::new_content_file(
         SCENE.to_owned(),

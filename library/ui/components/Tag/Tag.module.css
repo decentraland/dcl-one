@@ -1,0 +1,23 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+@layer dcl.components {
+  .root {
+    display: inline-flex;
+    align-items: center;
+    box-sizing: border-box;
+    min-height: 18px;
+    padding-inline: var(--dcl-space-8);
+    border-radius: var(--dcl-radius-sm);
+    background: var(--dcl-transparencies-white-10);
+    color: var(--dcl-text-primary);
+    font-size: var(--dcl-font-size-label-tag);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .root[data-appearance='emphasized'] {
+    background: var(--dcl-primary-primary-dark-2);
+    color: var(--dcl-neutrals-white);
+    text-transform: uppercase;
+  }
+}

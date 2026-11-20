@@ -180,6 +180,7 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
         categoriesError={d.categoriesError}
         mode={d.mode}
         draft={original ? eventToDraft(original) : { ...emptyDraft(), communityId: d.communityId }}
+        originalSchedule={original}
         submit={async (input) => {
           const result = await submit(input);
           void invalidateEventsAfterWrite(queryClient);

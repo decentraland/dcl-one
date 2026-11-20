@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -125,6 +125,11 @@ describe("when editing a hangout through its route", () => {
       expect(screen.getByRole("img", { name: "Hangout cover" }).getAttribute("src")).toBe(event.image);
       expect(screen.getByLabelText("World")).toHaveProperty("value", "music.dcl.eth");
       expect(screen.getByLabelText("Date")).toHaveProperty("value", "2099-06-01");
+    });
+
+    it("should retain the saved recurrence interval in edit preview", async () => {
+      await user.click(screen.getByRole("button", { name: "Preview" }));
+      expect(within(screen.getByRole("dialog")).getByText("Every 2 months")).toBeTruthy();
     });
 
     it("should allow the owner to clear a community absent from the management list", async () => {

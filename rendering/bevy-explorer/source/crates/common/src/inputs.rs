@@ -242,9 +242,10 @@ impl serde::Serialize for InputIdentifier {
     where
         S: serde::Serializer,
     {
+        use serde::ser::Error;
         match *self {
             InputIdentifier::Key(ref key) => {
-                let string = serde_json::to_string(key).unwrap();
+                let string = serde_json::to_string(key).map_err(S::Error::custom)?;
                 string
                     .strip_prefix("\"")
                     .unwrap()
@@ -253,7 +254,7 @@ impl serde::Serialize for InputIdentifier {
                     .serialize(serializer)
             }
             InputIdentifier::Mouse(ref button) => {
-                let string = serde_json::to_string(button).unwrap();
+                let string = serde_json::to_string(button).map_err(S::Error::custom)?;
                 format!(
                     "Mouse {}",
                     string
@@ -265,7 +266,7 @@ impl serde::Serialize for InputIdentifier {
                 .serialize(serializer)
             }
             InputIdentifier::Gamepad(ref button) => {
-                let string = serde_json::to_string(button).unwrap();
+                let string = serde_json::to_string(button).map_err(S::Error::custom)?;
                 format!(
                     "Gamepad {}",
                     string
@@ -277,13 +278,13 @@ impl serde::Serialize for InputIdentifier {
                 .serialize(serializer)
             }
             InputIdentifier::Analog(ident, dir) => {
-                let ident = serde_json::to_string(&ident).unwrap();
+                let ident = serde_json::to_string(&ident).map_err(S::Error::custom)?;
                 let ident = ident
                     .strip_prefix("\"")
                     .unwrap()
                     .strip_suffix("\"")
                     .unwrap();
-                let dir = serde_json::to_string(&dir).unwrap();
+                let dir = serde_json::to_string(&dir).map_err(S::Error::custom)?;
                 let dir = dir.strip_prefix("\"").unwrap().strip_suffix("\"").unwrap();
                 format!("{ident} {dir}").serialize(serializer)
             }
