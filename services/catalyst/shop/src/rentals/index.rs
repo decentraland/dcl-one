@@ -294,25 +294,32 @@ pub async fn insert_events(
 /// a reorg's rewind restores what the remaining log says). An incremental
 /// fold also revisits a cancelled listing whose own rent is past `$1`: a
 /// rent indexed after an expiry or transfer cancellation still executes it.
-/// The fold reads the signatures of the venue's rents past `$1` once and
-/// matches the cancelled listings against that list, so the leg makes no
-/// event lookup per cancelled listing; the one-listing read probes
+/// The fold reads the distinct signatures of the venue's rents past `$1`
+/// once (`new_rent`) and joins the venue's listings to them, a hash join
+/// under custom and generic plans alike, so the leg costs one read of the
+/// range's rents and one probe per listing, with no event lookup per
+/// cancelled listing. `new_rent` is empty and never read for a rebuild or
+/// a one-listing read; the one-listing read probes
 /// `rental_event_signature_idx` for its own signature instead. `$2` is the
 /// Rentals address, lowercase; the nonces are `[contract, signer, asset]`.
 /// `$3`, when set, narrows it to one listing (the refresh route).
 const VERDICT_SQL: &str = "
-WITH listing AS (
+WITH new_rent AS (
+    SELECT DISTINCT e.signature FROM shop.rental_event e
+    WHERE $3::uuid IS NULL AND $1 >= 0 AND e.kind = 'rented'
+      AND e.network = 'ethereum' AND e.rentals_address = $2 AND e.block_number > $1
+),
+listing AS (
     SELECT r.id, r.contract_address, r.token_id, lower(r.signature) AS signature, r.status::text AS status,
            r.cancel_reason,
            r.nonces[1]::numeric AS contract_nonce, r.nonces[2]::numeric AS signer_nonce, r.nonces[3]::numeric AS asset_nonce,
            l.lessor, l.tenant
     FROM signatures.rentals r JOIN signatures.rental_listings l ON l.id = r.id
+    LEFT JOIN new_rent nr ON nr.signature = lower(r.signature)
     WHERE upper(r.network) = 'ETHEREUM' AND r.rental_contract_address = $2
       AND ($1 < 0 OR r.status IN ('open', 'executed')
            OR (r.status = 'cancelled' AND CASE WHEN $3::uuid IS NULL
-               THEN lower(r.signature) = ANY (ARRAY(
-                   SELECT e.signature FROM shop.rental_event e WHERE e.kind = 'rented'
-                     AND e.network = 'ethereum' AND e.rentals_address = $2 AND e.block_number > $1))
+               THEN nr.signature IS NOT NULL
                ELSE EXISTS (
                    SELECT 1 FROM shop.rental_event e WHERE e.signature = lower(r.signature) AND e.kind = 'rented'
                      AND e.network = 'ethereum' AND e.rentals_address = $2 AND e.block_number > $1) END))
