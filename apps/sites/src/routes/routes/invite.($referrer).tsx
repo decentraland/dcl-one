@@ -4,10 +4,12 @@ import { useSearchParams } from "react-router";
 import LdInviteReferralView from "@ui/landings/pages/LdInviteReferralView";
 
 import { loadInviteReferral } from "@/data/lib/catalyst/landings/referral.server";
+import { ETH_ADDRESS_RE } from "@/data/lib/catalyst/format/address";
 import type { ReferrerVM, ReferralState } from "@/data/lib/catalyst/landings/referral";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
 
+import { DEFAULT_SOCIAL_DESCRIPTION, DEFAULT_SOCIAL_TITLE, absoluteUrl, publicBase, socialMeta } from "../lib/social-meta";
 import type { Route } from "./+types/invite.($referrer)";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 
@@ -17,17 +19,18 @@ type Step = "view" | "download" | "rewards" | "faqs";
 
 const parseStep = (raw: string | null): Step => (raw === "download" || raw === "rewards" || raw === "faqs" ? raw : "view");
 
-// The title names the referrer when the node knows the name.
-export function meta({ loaderData }: Route.MetaArgs) {
-  const name = loaderData?.referrer?.name;
-  return [
-    { title: name ? `${name} invited you to join Decentraland` : "Join Decentraland - A Virtual World Built by Its Community" },
-    {
-      name: "description",
-      content:
-        "Decentraland is where you hang out online. Join movie screenings, live music, trivia, and other community events. Show up anytime and see who's around.",
-    },
-  ];
+// The card names the referrer when the node knows the name, with their face as a small image.
+export function meta({ loaderData, matches, location }: Route.MetaArgs) {
+  const referrer = loaderData?.referrer;
+  const param = loaderData?.referrerParam ?? "";
+  const path = ETH_ADDRESS_RE.test(param) ? `/invite/${param.toLowerCase()}` : location.pathname;
+  return socialMeta({
+    title: referrer?.name ? `${referrer.name} invited you to join Decentraland` : DEFAULT_SOCIAL_TITLE,
+    description: DEFAULT_SOCIAL_DESCRIPTION,
+    image: referrer?.face256 ?? undefined,
+    smallImage: true,
+    url: absoluteUrl(publicBase(matches), path),
+  });
 }
 
 export async function loader({ request, context, params }: Route.LoaderArgs) {

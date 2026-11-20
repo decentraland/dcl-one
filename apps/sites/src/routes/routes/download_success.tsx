@@ -18,6 +18,8 @@ import {
   saveSitesLocale,
   sitesLanguage,
 } from "@ui/web/frames/sites-locale";
+import { publicBase } from "../lib/social-meta";
+import { staticPageMeta } from "../lib/static-page-meta";
 import type { Route } from "./+types/download_success";
 
 function linkText(message: string, link: ReactNode) {
@@ -31,14 +33,9 @@ function linkText(message: string, link: ReactNode) {
   );
 }
 
-export function meta() {
-  return [
-    {
-      title:
-        "You're almost done — finish installing Decentraland | Decentraland",
-    },
-    { name: "robots", content: "noindex" },
-  ];
+// The card follows decentraland.org; the page itself stays out of the index.
+export function meta({ matches }: Route.MetaArgs) {
+  return staticPageMeta("/download_success", publicBase(matches), { noindex: true });
 }
 
 export function loader({ request }: Route.LoaderArgs) {

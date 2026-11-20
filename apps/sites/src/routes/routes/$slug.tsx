@@ -11,6 +11,8 @@ import {
 } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
+import { absoluteUrl, publicBase, socialMeta } from "../lib/social-meta";
+import { isStaticPagePath, staticPageMeta } from "../lib/static-page-meta";
 import type { Route } from "./+types/$slug";
 
 const STORY: StoryId = "misc/legal";
@@ -37,21 +39,20 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
   return wrap(payload);
 }
 
-export function meta({ loaderData }: Route.MetaArgs) {
-  const legal = loaderData?.legal;
-  return [
-    { title: legal?.pageTitle ?? "Legal | Decentraland" },
-    {
-      name: "description",
-      content: legal
-        ? `Read Decentraland’s ${legal.title}, including the policies and conditions that apply to the community.`
-        : "Decentraland policies and legal documents.",
-    },
-    // An alias (/rewards, /content-policy, ...) serves the same document as its slug.
-    ...(loaderData?.doc
-      ? [{ tagName: "link", rel: "canonical", href: legalPath(loaderData.doc) }]
-      : []),
-  ];
+export function meta({ loaderData, matches }: Route.MetaArgs) {
+  if (!loaderData) {
+    return socialMeta({ title: "Legal | Decentraland", description: "Decentraland policies and legal documents." });
+  }
+  const { doc, legal } = loaderData;
+  // An alias (/rewards, /content-policy, ...) serves the same document as its slug.
+  const path = legalPath(doc);
+  const base = publicBase(matches);
+  if (isStaticPagePath(path)) return staticPageMeta(path, base);
+  return socialMeta({
+    title: legal.pageTitle,
+    description: `Read Decentraland’s ${legal.title}, including the policies and conditions that apply to the community.`,
+    url: absoluteUrl(base, path),
+  });
 }
 
 export default function LegalSlugRoute({ loaderData }: Route.ComponentProps) {

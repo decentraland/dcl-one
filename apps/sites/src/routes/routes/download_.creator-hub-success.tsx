@@ -9,10 +9,16 @@ import { loadLatestRelease, resolveDownload } from "@/data/lib/download/creator-
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
 
+import { publicBase } from "../lib/social-meta";
+import { staticPageMeta } from "../lib/static-page-meta";
 import type { Route } from "./+types/download_.creator-hub-success";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 
 const STORY: StoryId = "landings/creator-hub-download";
+
+export function meta({ matches }: Route.MetaArgs) {
+  return staticPageMeta("/download/creator-hub-success", publicBase(matches));
+}
 
 // The steps follow `?os=` (macOS unless it
 // says Windows), and the retry link is that system's installer.
