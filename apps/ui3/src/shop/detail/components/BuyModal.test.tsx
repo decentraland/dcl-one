@@ -18,7 +18,7 @@ import type { PurchaseOffer } from "@shop/model/purchase";
 import { BOOK, storeMint } from "@shop/payment/fixtures";
 import type { OfferFetcher } from "../../cart/revalidate";
 import BuyModal, { resetBuyNowCarts, splitReason } from "./BuyModal";
-import { readSplitHold, SPLIT_HOLD_MS } from "../../checkout/purchase/splitHold";
+import { readSplitHold, SPLIT_HOLD_MS, splitHoldLine } from "../../checkout/purchase/splitHold";
 
 const PATH = "/shop/item/0x00000000000000000000000000000000000000c0/7";
 
@@ -60,7 +60,7 @@ function renderBuy(s: Omit<DemoScenario, "lines">, opts: Opts = {}) {
     </DemoShell>
   );
   const view = render(opts.strict ? <StrictMode>{dialog}</StrictMode> : dialog);
-  return { demo, opened, closed: () => closed, lineId: first.id, unmount: view.unmount, line };
+  return { demo, opened, closed: () => closed, lineId: first.id, holdLine: splitHoldLine(first.asset), unmount: view.unmount, line };
 }
 
 const holdMana = (wei: bigint) => (d: ReturnType<typeof createDemo>) => void d.chain.manaBalances.set(`137:${BOOK.buyer.toLowerCase()}`, wei);
@@ -577,12 +577,12 @@ describe("Buy now's dialog", () => {
     await act(async () => fireEvent.click(confirm));
     await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action", undefined, { timeout: 5000 })));
     await within(screen.getByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 8000 });
-    const sent = readSplitHold(BOOK.buyer, first.lineId);
+    const sent = readSplitHold(BOOK.buyer, first.holdLine);
     expect(sent?.txHash).toBeTruthy();
     expect(sent?.creditId).toBeTruthy();
     first.unmount();
     resetBuyNowCarts();
-    return { ...sent!, lineId: first.lineId };
+    return { ...sent!, lineId: first.holdLine };
   }
 
   it("a split still confirming is remembered: opened again, the dialog shows it confirming and offers no second one", async () => {
@@ -600,7 +600,7 @@ describe("Buy now's dialog", () => {
 
   it("Check again on a remembered split reads its receipt: confirmed completes it and releases the item", async () => {
     const sent = await sendSplitThatStaysPending();
-    const { demo, lineId } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const { demo, holdLine: lineId } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
     const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
     demo.chain.receipts.set(sent.txHash!.toLowerCase(), "success");
     await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
@@ -610,7 +610,7 @@ describe("Buy now's dialog", () => {
 
   it("Check again on a remembered split that reverted says so and releases the item", async () => {
     const sent = await sendSplitThatStaysPending();
-    const { demo, lineId } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const { demo, holdLine: lineId } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
     const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
     demo.chain.receipts.set(sent.txHash!.toLowerCase(), "reverted");
     await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
@@ -646,7 +646,7 @@ describe("Buy now's dialog", () => {
       purchases: listed.status ? [{ id: `${sent.creditId}:0`, status: listed.status, usdCents: 30, createdAt: 1, txHash: null }] : [],
       total: listed.status ? 1 : 0,
     });
-    const { demo, lineId } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit, userPurchases } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const { demo, holdLine: lineId } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit, userPurchases } }, { tweak: holdMana(2n * 10n ** 18n) });
     const modal = await screen.findByTestId("buy-modal");
     await within(modal).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
     const checkAgain = async () => {
@@ -676,7 +676,7 @@ describe("Buy now's dialog", () => {
   it("a split held without a transaction to read shows it confirming with Check again off, until the hold runs out", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      const { lineId } = renderBuy({ session: "web2" });
+      const { holdLine: lineId } = renderBuy({ session: "web2" });
       cleanup();
       resetBuyNowCarts();
       // The first format's record: a bare timestamp, no hash.

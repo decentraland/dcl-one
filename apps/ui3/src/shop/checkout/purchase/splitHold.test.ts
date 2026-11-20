@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CHAIN } from "@shop/model/chain";
 import { itemAsset } from "@shop/model/asset";
 import { BOOK } from "@shop/payment/fixtures";
-import { cartLineId } from "../../cart/store";
 import { createFakeChain, createFakeLocks, createFakeShop } from "../fakes";
 import {
   claimSplitHold,
@@ -35,12 +34,18 @@ const CREDIT = `0x${"c1".repeat(32)}`;
 const seconds = () => Math.floor(Date.now() / 1000);
 const hold = (over: Partial<SplitHold> = {}): SplitHold => ({ at: Date.now(), attempt: "a", txHash: null, chainId: CHAIN.POLYGON, creditId: CREDIT, creditExpiresAt: seconds() + 300, ...over });
 
-describe("the line a hold is kept under", () => {
-  it("is the cart's line id: the item and its listing, as both the web cart and the in-world Shop's key a line", () => {
-    // The web's asset card and item page, and the in-world Shop's cart input, all send `{ tradeId?, acquisition? }`.
-    expect(splitHoldLine(ASSET, { tradeId: "t-1", acquisition: "trade" })).toBe(cartLineId(ASSET, { tradeId: "t-1", acquisition: "trade" }));
-    expect(splitHoldLine(ASSET, { tradeId: "t-1", acquisition: "trade" })).toBe(`${CHAIN.POLYGON}:${BOOK.collection}:item:7|t-1`);
-    expect(splitHoldLine(ASSET, { acquisition: "store" })).toBe(`${CHAIN.POLYGON}:${BOOK.collection}:item:7|store`);
+describe("what a hold is kept under", () => {
+  it("the item, whatever listing a surface buys it through: the same item is one hold, another item another", () => {
+    const byTrade = splitHoldLine(ASSET, { tradeId: "t-1", acquisition: "trade" });
+    // The web's item page may sell it through a creator's trade while the in-world Shop picks the store's mint.
+    expect(splitHoldLine(ASSET, { acquisition: "store" })).toBe(byTrade);
+    expect(splitHoldLine(ASSET, { tradeId: "t-2" })).toBe(byTrade);
+    expect(splitHoldLine(ASSET)).toBe(byTrade);
+    expect(byTrade).toBe(`${CHAIN.POLYGON}:${BOOK.collection}:item:7`);
+    expect(splitHoldLine(itemAsset(CHAIN.POLYGON, BOOK.collection, "8"))).not.toBe(byTrade);
+    // A hold written through one listing blocks a claim through another.
+    writeSplitHold(ACCOUNT, splitHoldLine(ASSET, { tradeId: "t-1" }), hold());
+    expect(readSplitHold(ACCOUNT, splitHoldLine(ASSET, { acquisition: "store" }))).not.toBeNull();
     // The key and the lock name lowercase the account, so a checksummed address finds the same hold.
     expect(splitHoldKey(ACCOUNT.toUpperCase().replace("0X", "0x"), LINE)).toBe(splitHoldKey(ACCOUNT, LINE));
     expect(splitHoldLockName(ACCOUNT.toUpperCase().replace("0X", "0x"), LINE)).toBe(splitHoldLockName(ACCOUNT, LINE));

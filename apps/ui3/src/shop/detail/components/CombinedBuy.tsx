@@ -35,6 +35,7 @@ import {
   readSplitHoldRecord,
   settleSplitHold,
   splitHoldCheckable,
+  splitHoldLine,
   splitHoldReleasableAt,
   writeSplitHold,
   type SplitHold,
@@ -43,7 +44,7 @@ import {
 import { createSpendGuard } from "@shop/checkout/purchase/spend-guard";
 import { isMetaTxPending } from "../../checkout/purchase/tx-confirm";
 import { useShopServices } from "../../checkout/services";
-import { cartLineId, type CartAddInput } from "../../cart/store";
+import type { CartAddInput } from "../../cart/store";
 import { formatMana } from "@shop/model/money";
 import type { CartLine, PurchaseOffer } from "@shop/model/purchase";
 import type { MixedPayment } from "@shop/payment/present";
@@ -151,7 +152,8 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       mounted.current = false;
     };
   }, []);
-  const lineId = cartLineId(line.asset, line.listing);
+  // The hold's key: the item, whatever listing this dialog buys it through (another surface may use another).
+  const lineId = splitHoldLine(line.asset, line.listing);
   const [sent, setSent] = useState(() => readSplitHold(wallet.account, lineId));
   useEffect(() => setSent(readSplitHold(wallet.account, lineId)), [wallet.account, lineId]);
   // Drawn again the moment the hold runs out, so a record with nothing to read can then be let go by Check again.

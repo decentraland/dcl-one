@@ -1,7 +1,8 @@
 // The hold on a split sale whose outcome is unknown (Credits and MANA paying one item together), shared by every surface
 // that sends one: the web Shop's dialog (detail/components/CombinedBuy.tsx) and the in-world Shop. It is kept per account
-// and cart line in the storage every tab of this browser shares, so it outlives a tab and a restart, and a second sale of
-// the same item waits on it whichever surface sent the first.
+// and item, whatever listing the sale went through, in the storage every tab of this browser shares, so it outlives a tab
+// and a restart, and a second sale of the same item waits on it whichever surface sent the first and whichever listing
+// the second would go through.
 //
 // One run at a time per account and line: `claimSplitHold` takes the line's Web Lock (only if free) and reads the record
 // inside it. The run holding the claim writes the record before the sale may leave (`writeSplitHold`: a browser that
@@ -12,9 +13,8 @@
 
 import type { ShopClient } from "@shop/api/shop";
 import { fetchUserPurchases, type PurchaseRecord } from "@shop/credits/credits";
-import type { AssetId } from "@shop/model/asset";
+import { assetKey, type AssetId } from "@shop/model/asset";
 import type { CartListingRef } from "@shop/model/purchase";
-import { cartLineId } from "../../cart/store";
 import type { ChainReader } from "../chain/rpc";
 import { newAttemptId, webLock } from "../lib/web-lock";
 
@@ -39,12 +39,12 @@ export type SplitHold = {
 };
 
 /**
- * The cart line a hold is kept under: the item and its listing, as both the web cart and the in-world Shop's cart key a
- * line (`cartLineId`: the asset key, then the trade id, else the acquisition). The same listing of an item is the same
- * line on both; another listing of it is another line.
+ * What a hold is kept under for one account: the item (`assetKey`), never its listing. The web Shop and the in-world Shop
+ * may buy the same item through different listings (a creator's trade, the store's mint); either way it is the same item,
+ * and one unsettled split of it holds every other. `_listing` is accepted so a caller passes what it has.
  */
-export function splitHoldLine(asset: AssetId, listing?: CartListingRef): string {
-  return cartLineId(asset, listing);
+export function splitHoldLine(asset: AssetId, _listing?: CartListingRef): string {
+  return assetKey(asset);
 }
 
 /** The storage key of the hold of `account` (lowercased) on `lineId`. */
