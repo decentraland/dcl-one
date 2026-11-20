@@ -1325,7 +1325,11 @@ mod tests {
             .unwrap();
 
         let result = deploy_stored(storage, &id, &[], Arc::new(Semaphore::new(1))).await;
-        assert!(result.is_err(), "an empty auth chain is rejected");
+        assert!(
+            matches!(&result, Err(SyncError::DeploymentRejected(reason))
+                if reason.contains("auth chain verification failed")),
+            "the signature check rejects it: {result:?}"
+        );
         assert_eq!(std::fs::metadata(&held).unwrap().modified().unwrap(), aged);
     }
 
