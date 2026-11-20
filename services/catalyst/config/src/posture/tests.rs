@@ -381,6 +381,7 @@ fn island_sets_every_upstream_empty_and_every_follower_switch_off() {
         "TRADES_SYNC_UPSTREAM_URL",
         "RPC_UPSTREAM_MAINNET",
         "ABGEN_UPSTREAM_AB_CDN",
+        "BVIMPOSTERS_UPSTREAM_URL",
         "EXPLORER_REGISTRY_SOURCE_URL",
         "OPENSEA_FALLBACK_URL",
         "COINGECKO_URL",

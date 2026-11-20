@@ -567,6 +567,7 @@ def runtime_env(config, refuse_exposed_relayer=True):
             'EXPLORER_FEATURE_FLAGS_SOURCE_URL': 'https://feature-flags.decentraland.org/explorer.json',
             'EXPLORER_REGISTRY_SOURCE_URL': 'https://asset-bundle-registry.decentraland.org',
             'ABGEN_UPSTREAM_AB_CDN': 'https://ab-cdn.decentraland.org',
+            'BVIMPOSTERS_UPSTREAM_URL': 'https://bevy-imposters.dclregenesislabs.xyz',
             # Mirrored place and event images come from the upstream peers' content URLs.
             'MEDIA_CONVERT_REMOTE_SOURCES': 'true',
             # Avatar faces of profiles this node holds no snapshot files of come from the upstream

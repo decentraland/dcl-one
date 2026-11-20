@@ -8,7 +8,8 @@
 //! tile + crc, not a content hash); the crc is the ETag, so a matching
 //! `If-None-Match` costs no store work; `GET /status` reports the store.
 //! A miss in the store is read through to the upstream imposter CDN
-//! (`BVIMPOSTERS_UPSTREAM_URL`), under the realm key its tiles are stored
+//! (`BVIMPOSTERS_UPSTREAM_URL`: the community CDN under `NODE_POSTURE=mirror`,
+//! none on an island), under the realm key its tiles are stored
 //! under (`BVIMPOSTERS_UPSTREAM_REALM`; the crc derives only from scene entity
 //! ids, so it is realm-independent and the realm of the request is ignored):
 //! a fetched zip is verified against its crc before it lands in the store,
@@ -55,7 +56,6 @@ pub const DEFAULT_STORE_ROOT: &str = "/var/lib/catalyst/bvimposters";
 pub const DEFAULT_STORE_MAX_BYTES: u64 = 21_474_836_480;
 pub const DEFAULT_MEM_CACHE_BYTES: u64 = 268_435_456;
 const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(600);
-pub const DEFAULT_UPSTREAM_URL: &str = "https://bevy-imposters.dclregenesislabs.xyz";
 pub const DEFAULT_UPSTREAM_REALM: &str = "https://realm-provider-ea.decentraland.org/main/about";
 const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(30);
 /// A tile zip is a few MiB at most; anything past this is not one.

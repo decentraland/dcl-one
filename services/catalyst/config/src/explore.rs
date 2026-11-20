@@ -284,21 +284,15 @@ pub struct ImpostersConfig {
     pub bvimposters_mem_cache_bytes: u64,
 
     /// The imposter CDN a missed tile is read through from (verified, then kept
-    /// in the store); empty, no upstream.
-    #[arg(
-        long,
-        env = "BVIMPOSTERS_UPSTREAM_URL",
-        default_value = "https://bevy-imposters.dclregenesislabs.xyz"
-    )]
+    /// in the store); empty, no upstream. A mirror posture names the community
+    /// imposter CDN.
+    #[arg(long, env = "BVIMPOSTERS_UPSTREAM_URL", default_value = "")]
     pub bvimposters_upstream_url: String,
 
     /// The realm key the upstream's tiles are stored under (a tile's crc is
-    /// realm-independent, so this node asks under it whatever realm the client sent).
-    #[arg(
-        long,
-        env = "BVIMPOSTERS_UPSTREAM_REALM",
-        default_value = "https://realm-provider-ea.decentraland.org/main/about"
-    )]
+    /// realm-independent, so this node asks under it whatever realm the client
+    /// sent); empty, the Decentraland main realm's about URL. A key, never dialed.
+    #[arg(long, env = "BVIMPOSTERS_UPSTREAM_REALM", default_value = "")]
     pub bvimposters_upstream_realm: String,
 
     /// Bake a missed tile with the engine's `impost` renderer (off: the store serves only
