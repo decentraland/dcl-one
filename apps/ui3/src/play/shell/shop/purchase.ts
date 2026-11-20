@@ -176,6 +176,34 @@ export function createDialogSlot(ui: ShellShopUi): DialogSlot {
   }
 }
 
+/** What a wallet asks its owner to approve: a signature, a transaction, a network to move to. */
+const WALLET_PROMPTS = new Set(['eth_signTypedData_v4', 'eth_signTypedData_v3', 'eth_signTypedData', 'eth_sendTransaction', 'personal_sign', 'eth_sign', 'wallet_switchEthereumChain', 'wallet_addEthereumChain'])
+
+/**
+ * `wallet` as `owner`'s purchase uses it: while a self-custody wallet asks the buyer to sign or send, the dialog
+ * says to confirm in the wallet, then shows the step it showed before, unless a newer step replaced the prompt
+ * meanwhile. The request, its answer and its refusal pass through untouched. An in-app wallet signs without asking,
+ * so it is returned as it is; so is a request while `owner` isn't the one shown.
+ */
+export function promptingWallet(slot: DialogSlot, owner: DialogOwner, wallet: Eip1193Provider, kind: ShopWalletKind): Eip1193Provider {
+  if (kind !== 'web3') return wallet
+  return {
+    request: async (args) => {
+      const before = WALLET_PROMPTS.has(args.method) ? slot.shown() : null
+      if (!before || before.owner !== owner) return wallet.request(args)
+      const asking: ShellPurchaseView = { step: 'wallet' }
+      slot.show(owner, asking, { onClose: () => {} }, before.opening)
+      try {
+        return await wallet.request(args)
+      } finally {
+        if (slot.shown()?.view === asking) slot.show(owner, before.view, before.handlers, before.opening)
+      }
+    },
+    ...(wallet.on ? { on: wallet.on.bind(wallet) } : {}),
+    ...(wallet.removeListener ? { removeListener: wallet.removeListener.bind(wallet) } : {})
+  }
+}
+
 type Resolved = Parameters<typeof runGroup>[2]
 
 /** What the purchase reads and runs, injectable for tests. */
@@ -362,8 +390,6 @@ const LIVE: ShellShopServices = {
   manaTimeouts: () => ({ sendMs: SEND_MS, readMs: EVIDENCE_READ_MS })
 }
 
-/** What a wallet asks its owner to approve: a signature, a transaction, a network to move to. */
-const WALLET_PROMPTS = new Set(['eth_signTypedData_v4', 'eth_signTypedData_v3', 'eth_signTypedData', 'eth_sendTransaction', 'personal_sign', 'eth_sign', 'wallet_switchEthereumChain', 'wallet_addEthereumChain'])
 
 /** A watcher signs nothing: the wallet is never asked while a purchase is only followed. */
 const NO_WALLET: Eip1193Provider = {
@@ -611,24 +637,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
    * for `op` says so (Confirm in your wallet), and once it answers, the step it showed before comes back, unless another
    * step was shown meanwhile. A managed wallet signs without asking anyone: it is used as it is.
    */
-  const prompting = (op: Operation, wallet: Eip1193Provider, kind: ShopWalletKind): Eip1193Provider => {
-    if (kind !== 'web3') return wallet
-    return {
-      request: async (args) => {
-        const before = WALLET_PROMPTS.has(args.method) ? slot.shown() : null
-        if (!before || before.owner !== op) return wallet.request(args)
-        const asking: ShellPurchaseView = { step: 'wallet' }
-        slot.show(op, asking, { onClose: () => {} }, before.opening)
-        try {
-          return await wallet.request(args)
-        } finally {
-          if (slot.shown()?.view === asking) slot.show(op, before.view, before.handlers, before.opening)
-        }
-      },
-      ...(wallet.on ? { on: wallet.on.bind(wallet) } : {}),
-      ...(wallet.removeListener ? { removeListener: wallet.removeListener.bind(wallet) } : {})
-    }
-  }
+  const prompting = (op: Operation, wallet: Eip1193Provider, kind: ShopWalletKind): Eip1193Provider => promptingWallet(slot, op, wallet, kind)
   const hide = (op: Operation): void => {
     op.unwatchWallet?.()
     op.unwatchWallet = undefined
@@ -1212,7 +1221,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           thumbnail: listing.thumbnail || undefined,
           ...(listing.isSmart ? { smart: true } : {}),
           category: listing.category === 'emote' ? 'emote' : (listing.wearableCategory ?? listing.category),
-          credits: unitCredits.get(line.id) ?? 0
+          credits: unitCredits.get(line.id) ?? 0,
+          key: line.id
         }
       })
     )

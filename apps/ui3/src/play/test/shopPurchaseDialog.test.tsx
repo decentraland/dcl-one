@@ -143,11 +143,18 @@ describe('the purchase dialog', () => {
   })
 
   it('Purchase successful: units of one item as one card with their amount, a smart wearable with its badge', () => {
-    show({ step: 'success', items: [{ ...item, smart: true }, { ...item, smart: true }, { ...item, name: 'Silver Boots' }] })
+    show({ step: 'success', items: [{ ...item, smart: true, key: 'a' }, { ...item, smart: true, key: 'a' }, { ...item, name: 'Silver Boots', key: 'b' }] })
     const dialog = screen.getByRole('dialog', { name: 'Purchase successful!' })
     expect(dialog.querySelectorAll('[data-rarity]')).toHaveLength(2)
     expect(dialog.textContent).toContain('x2')
     expect(within(dialog).getAllByText('SMART')).toHaveLength(1)
+  })
+
+  it('Purchase successful: two items drawn alike stay two cards, and so do items with no identity', () => {
+    show({ step: 'success', items: [{ ...item, key: 'a' }, { ...item, key: 'b' }, item, item] })
+    const dialog = screen.getByRole('dialog', { name: 'Purchase successful!' })
+    expect(dialog.querySelectorAll('[data-rarity]')).toHaveLength(4)
+    expect(dialog.textContent).not.toContain('x2')
   })
 
   it('shows the creator’s picture beside their name when it is known', () => {
@@ -371,6 +378,14 @@ describe('the purchase dialog', () => {
       show({ step: 'method', items: [{ ...item, credits: 0 }], credits: { price: null, balance: 700, pays: false }, mana })
       expect(screen.queryByTitle('0 Credits')).toBeNull()
       expect(screen.getByText('Golden Armor')).toBeTruthy()
+    })
+
+    it('shows no Credits price on any row of a cart only MANA buys, nor a Credits total', () => {
+      show({ step: 'method', items: [{ ...item, credits: 0, key: 'a' }, { ...item, name: 'Silver Boots', credits: 0, key: 'b' }], credits: { price: null, balance: 700, pays: false }, mana: { ...mana, price: 10000n * MANA, balance: 20000n * MANA } })
+      expect(screen.queryByTitle('0 Credits')).toBeNull()
+      // Only the balance speaks of Credits: no row price, no total.
+      expect(screen.queryAllByTitle(/ Credits$/).map((el) => el.title)).toEqual(screen.queryAllByTitle('700 Credits').map((el) => el.title))
+      expect(screen.getByText('Silver Boots')).toBeTruthy()
     })
 
     it('shows MANA that can’t pay off, with what it would cost', () => {

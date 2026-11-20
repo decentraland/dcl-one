@@ -57,6 +57,8 @@ export interface ShopPurchaseItem {
   smart?: boolean
   /** The whole credits it costs. */
   credits: number
+  /** The item's identity (its cart line): the units of one item share it, and only they count as one card. */
+  key?: string
 }
 
 /** A simulated NAME purchase's step: nothing is bought (see the header). */
@@ -533,8 +535,8 @@ function Illustration({ kind }: { kind: 'success' | 'credits' | 'sign' | 'error'
 
 /** Units of the same item, next to each other, as one card with their amount: the steps list every unit. */
 function amounts(items: ShopPurchaseItem[]): { item: ShopPurchaseItem; amount: number }[] {
-  const same = (a: ShopPurchaseItem, b: ShopPurchaseItem): boolean =>
-    a.kind === b.kind && a.name === b.name && a.thumbnail === b.thumbnail && a.rarity === b.rarity && a.creator === b.creator && a.credits === b.credits
+  // By identity, never by looks: two items drawn alike are still two. An item without one stands alone.
+  const same = (a: ShopPurchaseItem, b: ShopPurchaseItem): boolean => a.key != null && a.key === b.key
   const out: { item: ShopPurchaseItem; amount: number }[] = []
   for (const item of items) {
     const last = out.at(-1)
