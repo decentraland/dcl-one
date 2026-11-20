@@ -1,5 +1,6 @@
 use bevy::ecs::system::RunSystemOnce;
 use common::structs::ServerConfiguration;
+use comms::SetCurrentScene;
 
 use super::*;
 

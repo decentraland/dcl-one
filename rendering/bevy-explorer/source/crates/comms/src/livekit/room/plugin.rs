@@ -910,6 +910,7 @@ mod disconnect_tests {
             None,
             DisconnectReason::ParticipantRemoved,
             true,
+            false,
             0.0,
         );
         assert_eq!(recovery.failure, Some(FailureKind::IdentityConflict));
