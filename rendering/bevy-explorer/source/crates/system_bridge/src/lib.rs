@@ -11,21 +11,17 @@ use bevy::{
     ecs::event::EventReader,
     log::debug,
     math::Vec4,
-    prelude::{DetectChangesMut, Event, EventWriter, Res, ResMut, Resource},
+    prelude::{Event, EventWriter, Res, ResMut, Resource},
 };
 use bevy_console::{ConsoleCommandEntered, ConsoleConfiguration, ConsoleResponder};
 use common::{
     inputs::{BindingsData, HudPanel, InputIdentifier, SystemActionEvent},
     rpc::{RpcResultSender, RpcStreamSender},
-    structs::{
-        default_home_realm, home_account, AppConfig, CurrentRealm, MicState, PermissionUsed,
-        PinnedHome,
-    },
+    structs::{CurrentRealm, MicState, PermissionUsed},
 };
 use serde::{Deserialize, Serialize};
 use settings::SettingBridgePlugin;
 pub use system_api_types::*;
-use wallet::Wallet;
 
 pub struct SystemBridgePlugin {
     pub bare: bool,
@@ -40,7 +36,6 @@ impl Plugin for SystemBridgePlugin {
             Update,
             (
                 post_events,
-                handle_home_scene,
                 handle_service_urls,
                 handle_satellite_view,
                 handle_exit,
@@ -325,68 +320,6 @@ fn handle_satellite_view(mut ev: EventReader<SystemApi>, realm: Res<CurrentRealm
                     .and_then(|map| map.satellite_view.clone()),
             );
         }
-    }
-}
-
-/// The home belongs to the signed-in account: read, pinned and cleared for it alone. Before
-/// sign-in it is the startup account's, and nothing is written.
-fn handle_home_scene(
-    mut ev: EventReader<SystemApi>,
-    mut config: ResMut<AppConfig>,
-    wallet: Option<Res<Wallet>>,
-) {
-    for ev in ev.read() {
-        if !matches!(
-            ev,
-            SystemApi::GetHomeScene(_) | SystemApi::SetHomeScene(_) | SystemApi::ClearHomeScene
-        ) {
-            continue;
-        }
-        let account = wallet
-            .as_ref()
-            .and_then(|wallet| wallet.address())
-            .map(|address| home_account(&address));
-        let mut changed = account
-            .as_deref()
-            .is_some_and(|account| config.bypass_change_detection().adopt_home(account));
-        match (ev, account.as_deref()) {
-            (SystemApi::GetHomeScene(sender), Some(account)) => {
-                sender.send(home_scene(config.pinned_home(Some(account))));
-            }
-            (SystemApi::GetHomeScene(sender), None) => {
-                sender.send(home_scene(config.startup_home()));
-            }
-            (SystemApi::SetHomeScene(home), Some(account)) => {
-                config.homes.insert(
-                    account.to_owned(),
-                    PinnedHome {
-                        realm: home.realm.clone(),
-                        location: bevy::math::Vec2::from(&home.parcel).as_ivec2(),
-                    },
-                );
-                changed = true;
-            }
-            (SystemApi::ClearHomeScene, Some(account)) => {
-                changed |= config.homes.remove(account).is_some();
-            }
-            _ => (),
-        }
-        if changed {
-            platform::write_config_file(&*config);
-        }
-    }
-}
-
-fn home_scene(home: Option<PinnedHome>) -> HomeScene {
-    let pinned = home.is_some();
-    let home = home.unwrap_or_else(|| PinnedHome {
-        realm: default_home_realm(),
-        location: bevy::math::IVec2::ZERO,
-    });
-    HomeScene {
-        realm: home.realm,
-        parcel: home.location.as_vec2().into(),
-        pinned,
     }
 }
 

@@ -2,6 +2,7 @@
 
 pub mod agent_commands;
 pub mod explorer_ui;
+mod home;
 mod item_purchase;
 mod map_pins;
 pub mod portables;
@@ -127,6 +128,7 @@ impl Plugin for RestrictedActionsPlugin {
             )
                 .in_set(SceneSets::RestrictedActions),
         );
+        app.add_systems(Update, home::handle_home_scene);
         app.init_resource::<PendingPortableCommands>();
         app.init_resource::<ExplorerUiState>();
         // headless has no InputManagerPlugin; open_explorer_ui still needs the (empty) streams

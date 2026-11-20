@@ -3547,6 +3547,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           if (boot.current.autoLogin == null) setSignedInAs(lastLoginType.current)
           screenViewed('AUTH_SUCCESS', { login_type: lastLoginType.current })
         }
+        // the lobby asked for the home before the engine knew the account: ask again for its own
+        if (login != null) driver.send({ kind: 'getHomeScene' })
         welcomeLink.current = urlDestination.current
         urlDestination.current = null
         // only a sign-in that ran lands it: a run with nothing pending answers no /hud_login, and

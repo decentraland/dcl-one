@@ -34,6 +34,31 @@ describe('home in the session', () => {
     expect(h.session().map.home).toEqual({ realm: null, parcel: '0,0', pinned: false })
   })
 
+  it("asks for the home again once the sign-in lands, so Skip goes to the signed-in account's", async () => {
+    const driver = new FakeDriver()
+    let signedIn = (): void => {}
+    driver.loginGuest = () => {
+      driver.calls.push('loginGuest')
+      return new Promise<void>((resolve) => (signedIn = resolve))
+    }
+    const h = renderSession(undefined, driver)
+    await waitFor(() => expect(h.session().login.status).not.toBe('loading'))
+    act(() => h.session().login.exploreAsGuest())
+    await waitFor(() => expect(driver.calls).toContain('loginGuest'))
+    expect(driver.sentOf('getHomeScene')).toHaveLength(1)
+    act(() => driver.emit({ kind: 'homeScene', realm: 'theirs.dcl.eth', parcel: { x: 5, y: 6 }, pinned: true }))
+    expect(h.session().homeScene()).toEqual({ realm: 'theirs.dcl.eth', parcel: '5,6', pinned: true })
+
+    await act(async () => signedIn())
+    await waitFor(() => expect(h.session().login.busy).toBe(false))
+    expect(driver.sentOf('getHomeScene')).toHaveLength(2)
+    act(() => driver.emit({ kind: 'homeScene', realm: DEFAULT_REALM, parcel: { x: 0, y: 0 }, pinned: false }))
+    expect(h.session().homeScene()).toEqual({ realm: null, parcel: '0,0', pinned: false })
+
+    act(() => h.session().pickDestination(null))
+    expect(driver.last('teleport')).toMatchObject({ kind: 'teleport', realm: DEFAULT_REALM, x: 0, y: 0 })
+  })
+
   it('reads a boot snapshot saved on the default realm as Genesis City, on the map too, before the engine answers', async () => {
     const driver = new FakeDriver()
     Object.assign(driver, { homeScene: () => ({ realm: DEFAULT_REALM, parcel: '3,4', pinned: true }) })

@@ -783,9 +783,7 @@ impl AppConfig {
         }
     }
 
-    /// The account whose home applies before sign-in: the stored sign-in's, else the last
-    /// account a home was read for.
-    pub fn startup_home_account(&self) -> Option<String> {
+    fn startup_home_account(&self) -> Option<String> {
         self.previous_login
             .as_ref()
             .map(|login| home_account(&login.root_address))

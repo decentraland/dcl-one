@@ -10783,6 +10783,7 @@ dependencies = [
  "ipfs",
  "nft",
  "opener",
+ "platform",
  "rand 0.8.8",
  "reqwest",
  "scene_runner",
@@ -12446,7 +12447,6 @@ dependencies = [
  "serde_repr",
  "system_api_types",
  "tokio",
- "wallet",
  "wasm-bindgen",
  "web-sys",
 ]
