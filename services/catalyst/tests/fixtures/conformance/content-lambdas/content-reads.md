@@ -15,7 +15,8 @@ All verdicts below are from reading code (static), except where a row cites a ca
 "verified". Library behaviour that is not in the pinned upstream tree (`@dcl/http-server`,
 `@dcl/schema-validator-component`, `@dcl/rate-limiter-component`, `@dcl/catalyst-storage`,
 `@dcl/schemas`, `@dcl/urn-resolver`, `file-type`) is stated only as far as the upstream code and
-its tests pin it; the rest is marked "needs a capture".
+its tests pin it; the rest is marked "needs a capture". The `file-type` answers in CR-7 were captured
+from the pinned package itself (`content-sniff.tsv`, `capture-sniff.cjs`).
 
 ## Files read
 
@@ -248,7 +249,7 @@ pointer of the same entity answered from the DB can return that entity twice
 | plain GET | 200 | the bytes | `Content-Type: application/octet-stream` (or sniffed), `ETag: "<hash>"`, `Access-Control-Expose-Headers: ETag, Content-Range, Accept-Ranges, Content-Length`, `Accept-Ranges: bytes`, `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`, `Content-Length` | `utils.ts:115-135` | `formatters.rs:85-102`, `get_content.rs:193-198` | DIVERGENT: upstream serves a gzip-stored file as stored, with `Content-Encoding: gzip` and the compressed `Content-Length`, regardless of `Accept-Encoding` (`utils.ts:128-133`); dcl-one never sets `Content-Encoding` (`storage/src/content.rs:333-338`). Upstream omits `Content-Length` for a 0-byte file (`if (content.size)`); dcl-one sends `0` |
 | plain GET with `STORAGE_X_ACCEL_BASE` set | 200 | empty; nginx serves the file | `X-Accel-Redirect` | n/a | `get_content.rs:367-380`, `infra/gateway/gateway.py:265-272` | behind the gateway, the client gets the plain GET headers (one `Cache-Control`, the sniffed `Content-Type`, the expose list) and a range the app does not support gets the whole file (worlds WR-25). A passing request carries no `RateLimit-*`, and a 429 is answered by the app with them |
 | plain HEAD | 200 | none | as plain GET | `get-content-handler.ts:62` | `get_content.rs:163-167` | MATCH, except sniffing (next row) |
-| `?includeMimeType` | 200/206 | | `Content-Type` from `file-type` on the stream head, else `application/octet-stream` | `utils.ts:137-153` | `get_content.rs` `detect_content_type`, sniffed on GET, HEAD and the head of a range | DIVERGENT on rarer formats only: dcl-one detects png, glb, mp4 (any `ftyp`), jpeg, gif, mp3 (ID3 or a Layer III frame), wav, webp, zip, ogg, webm, and answers `application/octet-stream` for anything else (JSON and text included, as `file-type`); `file-type`'s other formats (ktx2, `ftyp` brands such as `qt`/`M4A`/`heic`, Ogg codec subtypes, zip-based documents) need its table, which is not vendored (CR-7) |
+| `?includeMimeType` | 200/206 | | `Content-Type` from `file-type` 21.1.1 on the stream served (the whole file, or the range), else `application/octet-stream` | `utils.ts:137-153` | `get_content.rs` `content_type` (`file_type/catalyst.rs`), sniffed on GET, HEAD and the range | MATCH, replayed by `content-sniff.tsv` (`capture-sniff.cjs`, 245 samples, whole and as bytes 0-4099). Where `file-type` throws (a stream that ends inside a check, a ZIP entry it cannot inflate) upstream answers a 500; dcl-one answers `application/octet-stream`. The walks that follow a file's structure (ID3 tags, PNG chunks, EBML and ASF elements, ZIP entries) stop after a bound where `file-type` reads on to the end of the file |
 | storage fault | 500 | `{"error":"Internal Server Error"}` | | `middlewares.ts:72-81` | `get_content.rs:107`, `errors.rs:95-99` | MATCH |
 
 **Data dependency**: the blob store (`storage/src/content.rs:202-224`), filled by sync for every
@@ -455,16 +456,19 @@ Verdict: MATCH under `/content/` (CR-11).
      `content/src/audit.rs`); pinned in `content/src/tests.rs` (a scene id under `/audit/wearable/` is 404).
    - Severity: none (closed).
 
-7. **CR-7** GET /contents/:hashId?includeMimeType: sniff like `file-type`.
-   - Gap: GET, HEAD and ranges sniff png, glb, jpeg, gif, mp3, wav, webp, zip, ogg, webm and any `ftyp` as
-     `video/mp4`, and answer `application/octet-stream` otherwise (JSON and text included). `file-type`'s
-     other formats and its `ftyp` brand and Ogg codec subtypes differ; its signature table is not in the
-     pinned tree, so match it from the `file-type` 21.1.1 source or a capture.
-   - Expected: the `file-type` result on the stream head (gif, mp3, wav, zip, png, jpeg, webp, glb, mp4,
-     ogg, webm, ...), `application/octet-stream` when it finds none (JSON and text included), on GET and
-     HEAD (`decentraland/catalyst:src/controllers/utils.ts:137-153`, `get-content-handler.ts:54`).
-   - Place: `services/catalyst/content/src/get_content.rs` (`detect_content_type`).
-   - Severity: P2.
+7. **CR-7** GET /contents/:hashId?includeMimeType, entity image and thumbnail: sniff like `file-type`. Status: MATCH.
+   - Upstream: `new FileTypeParser().fromStream(stream)` of `file-type` 21.1.1 over the `fs.ReadStream` it
+     serves (the whole file, or the range), `application/octet-stream` when it finds none, JSON and text
+     included; `strtok3` stats the stream's path, so the file's whole size bounds the walks
+     (`decentraland/catalyst:src/controllers/utils.ts:137-153`, `get-content-handler.ts:54`,
+     `get-entity-image-handler.ts:45`, `get-entity-thumbnail-handler.ts:45`).
+   - dcl-one: one port of its checks, in its order, shared by the three routes
+     (`services/catalyst/content/src/file_type/catalyst.rs`, `get_content.rs` `content_type`). The table test
+     `the_content_sniff_answers_as_file_type` replays `content-sniff.tsv`, captured from `file-type` itself.
+   - Kept differences: where `file-type` throws, upstream answers a 500 and dcl-one `application/octet-stream`;
+     the walks over ID3 tags, PNG chunks, EBML and ASF elements and ZIP entries stop after a bound (a stopped ZIP
+     walk answers `application/zip`, the others no type).
+   - Severity: none (closed).
 
 8. **CR-8** POST /entities/active: no `Cache-Control`, no `fields`. Status: Kept by decision (the `fields` mask).
    - Decision: `?fields=` keeps masking, as a dcl-one superset. A client that sends it to upstream gets

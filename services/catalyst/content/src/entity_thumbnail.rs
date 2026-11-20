@@ -28,10 +28,11 @@ use serde_json::Value;
 use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 
 use super::errors::{AppError, AppResult};
+use super::file_type::Window;
 use super::formatters::{
     ParsedRange, check_not_modified, content_file_headers, parse_range_header,
 };
-use super::get_content::{detect_content_type, set_content_type, x_accel_redirect_path};
+use super::get_content::{content_type, set_content_type, x_accel_redirect_path};
 use super::queries::active_entity_docs_by_pointers;
 use super::query_params::{parse_query_string, qs_get_string};
 use super::{ContentState, SharedState};
@@ -171,13 +172,10 @@ async fn serve_content_blob(
     let mut opened = open_blob(state, hash)
         .await?
         .ok_or_else(|| AppError::not_found(missing))?;
-    let head = opened.read_range(0, 31).await?;
-    let detected = detect_content_type(&head);
     let range_header = headers.get("range").and_then(|v| v.to_str().ok());
     let total = opened.size;
     let range = parse_range_header(range_header, Some(total));
     let mut base_headers = content_file_headers(hash, Some(total));
-    set_content_type(&mut base_headers, detected);
     match range {
         Some(ParsedRange::Unsatisfiable) => {
             let mut response = StatusCode::RANGE_NOT_SATISFIABLE.into_response();
@@ -191,6 +189,9 @@ async fn serve_content_blob(
             Ok(response)
         }
         Some(ParsedRange::Range { start, end }) => {
+            // Upstream sniffs the ranged stream it serves.
+            let mime = content_type(&mut Window::range(&mut opened, start, end + 1)).await?;
+            set_content_type(&mut base_headers, mime);
             let body = if *method == Method::HEAD {
                 Body::empty()
             } else {
@@ -208,6 +209,9 @@ async fn serve_content_blob(
             Ok(response)
         }
         None => {
+            let mut window = Window::new(&mut opened, total);
+            set_content_type(&mut base_headers, content_type(&mut window).await?);
+            let head = window.into_head().await?;
             if let Some(accel) =
                 x_accel_redirect_path(state.settings.storage_x_accel_base.as_deref(), hash)
             {
@@ -668,13 +672,33 @@ mod tests {
     async fn a_blob_range_streams_only_the_window() {
         use crate::tests::support::{TEST_CID, TestNode};
         let node = TestNode::without_db("blob-range").await;
+        // A HEIC file, with an AVIF `ftyp` box where the range starts: upstream sniffs the
+        // stream it serves, the whole file or the range.
         let mut blob = vec![0u8; 4096];
-        blob[..8].copy_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
-        for (i, b) in blob.iter_mut().enumerate().skip(8) {
+        for (i, b) in blob.iter_mut().enumerate() {
             *b = (i % 251) as u8;
         }
+        blob[..12].copy_from_slice(b"\0\0\0\x18ftypheic");
+        blob[100..112].copy_from_slice(b"\0\0\0\x18ftypavif");
         let blob = Bytes::from(blob);
         node.store(TEST_CID, blob.clone()).await;
+        for method in [Method::GET, Method::HEAD] {
+            let resp =
+                serve_content_blob(&node.state, TEST_CID, &method, &HeaderMap::new(), "missing")
+                    .await
+                    .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            assert_eq!(resp.headers()[header::CONTENT_TYPE], "image/heic");
+            let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let expected = if method == Method::HEAD {
+                Bytes::new()
+            } else {
+                blob.clone()
+            };
+            assert_eq!(body, expected, "{method}");
+        }
         let mut headers = HeaderMap::new();
         headers.insert(header::RANGE, "bytes=100-4999".parse().unwrap());
 
@@ -684,7 +708,7 @@ mod tests {
                 .unwrap();
             let get = |name| resp.headers()[name].to_str().unwrap().to_string();
             assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
-            assert_eq!(get(header::CONTENT_TYPE), "image/png");
+            assert_eq!(get(header::CONTENT_TYPE), "image/avif");
             assert_eq!(get(header::CONTENT_RANGE), "bytes 100-4095/4096");
             assert_eq!(get(header::CONTENT_LENGTH), "3996");
             let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
