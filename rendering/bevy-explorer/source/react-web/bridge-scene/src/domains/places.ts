@@ -49,20 +49,21 @@ async function placesAt(positions: string[], world?: string): Promise<DiscoverPl
 
 const queryValue = (value: string): string => encodeURIComponent(value).replace(/%20/g, '+')
 
-async function search(msg: SearchPlacesRequest): Promise<{ places: DiscoverPlace[]; total: number }> {
-  const params = [
-    `search=${queryValue(msg.search)}`,
-    `offset=${msg.offset}`,
-    `limit=${msg.limit}`,
-    `order_by=${msg.orderBy}`,
-    'order=desc',
-    `categories=${msg.favorites ? '' : encodeURIComponent(msg.category)}`,
-    'with_realms_detail=true',
-    'only_sdk7=true'
-  ]
+/** The destinations search's query. The service answers an empty `categories` with no places, so
+ *  a search without text or without a category leaves that parameter out. */
+function searchQuery(msg: SearchPlacesRequest): string {
+  const params: string[] = []
+  if (msg.search !== '') params.push(`search=${queryValue(msg.search)}`)
+  params.push(`offset=${msg.offset}`, `limit=${msg.limit}`, `order_by=${msg.orderBy}`, 'order=desc')
+  if (!msg.favorites && msg.category !== '') params.push(`categories=${encodeURIComponent(msg.category)}`)
+  params.push('with_realms_detail=true', 'only_sdk7=true')
   if (msg.favorites) params.push('only_favorites=true')
+  return params.join('&')
+}
+
+async function search(msg: SearchPlacesRequest): Promise<{ places: DiscoverPlace[]; total: number }> {
   // the whole body: the page needs `total` beside the places
-  const body = await signedBody<{ data?: PlaceRaw[]; total?: number }>(`${await serviceBase('places')}/api/destinations?${params.join('&')}`)
+  const body = await signedBody<{ data?: PlaceRaw[]; total?: number }>(`${await serviceBase('places')}/api/destinations?${searchQuery(msg)}`)
   const found = places(body?.data)
   return { places: found, total: body?.total ?? found.length }
 }

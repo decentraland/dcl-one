@@ -275,6 +275,7 @@ export type PageToScene =
   | GetMapRequest
   | GetHomeSceneRequest
   | SetHomeSceneRequest
+  | ClearHomeSceneRequest
   | GetWelcomeRequest
   | ShowLookRequest
   | AcceptWelcomeRequest
@@ -903,11 +904,16 @@ export interface HomeSceneMessage extends HomeScene {
   kind: 'homeScene'
 }
 
-/** Pin the home scene: a parcel of `realm` (answered with `homeScene`). */
+/** Pin the signed-in account's home scene: a parcel of `realm` (answered with `homeScene`). */
 export interface SetHomeSceneRequest {
   kind: 'setHomeScene'
   realm: string
   parcel: { x: number; y: number }
+}
+
+/** Leave the signed-in account with no home (answered with `homeScene`, `pinned` false). */
+export interface ClearHomeSceneRequest {
+  kind: 'clearHomeScene'
 }
 
 /** What the welcome page must show for the signed-in account (answered with `welcome`). */

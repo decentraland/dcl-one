@@ -175,13 +175,12 @@ export function MapPage({
     if (view == null) return
     go(() => map.teleportToPlace(view.event.x, view.event.y), () => nav.clearInput())
   }
-  // Home can be set, not cleared: the engine keeps one home, the default until one is set.
-  const setHome = (place: DiscoverPlace, origin: Vec2 | null): void => {
+  const placeIsHome = (place: DiscoverPlace, origin: Vec2 | null): boolean => isPlacePanelHome(home, place, origin)
+  const toggleHome = (place: DiscoverPlace, origin: Vec2 | null): void => {
+    if (placeIsHome(place, origin)) return map.clearHome()
     const target = placeHomeTarget(place, origin)
     if (target != null) map.setHome(target.realm ?? DEFAULT_REALM, target.parcel)
   }
-
-  const placeIsHome = (place: DiscoverPlace, origin: Vec2 | null): boolean => isPlacePanelHome(home, place, origin)
 
   const p = profile.data
   const openPhoto = photo != null ? photo.photos[photo.index] : undefined
@@ -268,7 +267,7 @@ export function MapPage({
               isHome={placeIsHome(snap.place.place, snap.place.origin)}
               navigating={isRouteTo(destination, snap.place.place)}
               onPlaceChange={(place) => nav.updatePlace(place)}
-              onHome={() => snap.place != null && setHome(snap.place.place, snap.place.origin)}
+              onHome={() => snap.place != null && toggleHome(snap.place.place, snap.place.origin)}
               onStartNavigation={() => navigation.start(snap.place?.place ?? null)}
               onStopNavigation={navigation.stop}
               onJumpIn={jumpInPlace}

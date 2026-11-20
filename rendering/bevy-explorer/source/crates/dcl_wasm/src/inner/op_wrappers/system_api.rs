@@ -222,6 +222,11 @@ pub fn op_set_home_scene(state: &WorkerContext, realm: String, parcel: JsValue) 
 }
 
 #[wasm_bindgen]
+pub fn op_clear_home_scene(state: &WorkerContext) {
+    dcl_js::system_api::op_clear_home_scene(state.rc());
+}
+
+#[wasm_bindgen]
 pub async fn op_get_system_action_stream(state: &WorkerContext) -> u32 {
     dcl_js::system_api::op_get_system_action_stream(state.rc()).await
 }

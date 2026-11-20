@@ -289,7 +289,7 @@ export const Minimap = memo(function Minimap({
     if (navigator.clipboard == null) return failed()
     navigator.clipboard.writeText(jumpInLink(map.x, map.y, referrer, linkRealm)).then(() => showToast('Link copied'), failed)
   }, [linkRealm, map.x, map.y, referrer])
-  const { changeRealm, setHome } = map
+  const { changeRealm, setHome, clearHome } = map
   const { reloadScene } = minimap
 
   // The place under the player, read again on every parcel and realm: Set as Home counts any parcel
@@ -418,7 +418,7 @@ export const Minimap = memo(function Minimap({
                 style={style}
                 onStyle={pickStyle}
                 hideStyle={!inGenesis}
-                home={linkRealm != null ? { on: homeHere, onSet: setHomeHere } : undefined}
+                home={linkRealm != null ? { on: homeHere, onSet: setHomeHere, onClear: clearHome } : undefined}
                 onCopyLink={linkRealm != null ? copyLink : undefined}
                 onReloadScene={reload}
               />

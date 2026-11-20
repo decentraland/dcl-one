@@ -12446,6 +12446,7 @@ dependencies = [
  "serde_repr",
  "system_api_types",
  "tokio",
+ "wallet",
  "wasm-bindgen",
  "web-sys",
 ]

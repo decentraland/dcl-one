@@ -85,7 +85,7 @@ function serve(services: Services = {}): MapRequest[] {
 
 function renderMap(over: Partial<MapState> = {}, genesis = true, compact?: { onTravel: () => void }): MapState {
   const session = fakeSession()
-  const map: MapState = { ...session.map, open: true, teleportToPlace: vi.fn(() => 'sent' as const), changeRealm: vi.fn(() => 'sent' as const), toggle: vi.fn(), setHome: vi.fn(), ...over }
+  const map: MapState = { ...session.map, open: true, teleportToPlace: vi.fn(() => 'sent' as const), changeRealm: vi.fn(() => 'sent' as const), toggle: vi.fn(), setHome: vi.fn(), clearHome: vi.fn(), ...over }
   const minimap = genesis ? session.minimap : { ...session.minimap, satelliteView: null }
   render(<MapPage map={map} minimap={minimap} profile={fakeProfileState()} gallery={session.gallery} compact={compact} onNavigate={vi.fn()} />)
   return map
@@ -424,9 +424,9 @@ describe('map place panel', () => {
     expect(vi.mocked(map.setHome)).toHaveBeenCalledWith(DEFAULT_REALM, { x: -20, y: 60 })
   })
 
-  it('marks the home on the map, and keeps it home when pressed again', async () => {
+  it('marks the home on the map, and takes the home back when pressed again', async () => {
     serve({ search: [CLUB], places: [CLUB] })
-    const map = renderMap({ home: { realm: null, parcel: '-20,60' } })
+    const map = renderMap({ home: { realm: null, parcel: '-20,60', pinned: true } })
     expect(marker('Home')).toBeInTheDocument()
     await search('club')
     await userEvent.click(await within(panel()).findByRole('button', { name: /Sugar Club/ }))
@@ -434,6 +434,16 @@ describe('map place panel', () => {
     expect(home).toHaveAttribute('aria-pressed', 'true')
     await userEvent.click(home)
     expect(vi.mocked(map.setHome)).not.toHaveBeenCalled()
+    expect(vi.mocked(map.clearHome)).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows no home for an account that pinned none', async () => {
+    serve({ search: [PLAZA], places: [PLAZA] })
+    renderMap({ home: { realm: null, parcel: '0,0', pinned: false } })
+    expect(document.querySelector('[data-marker="home"]')).toBeNull()
+    await search('plaza')
+    await userEvent.click(await within(panel()).findByRole('button', { name: /Genesis Plaza/ }))
+    expect(await within(panel()).findByRole('button', { name: 'Set as Home' })).toHaveAttribute('aria-pressed', 'false')
   })
 
   it('makes a world home by its name, and jumps in to it by its realm', async () => {
@@ -453,7 +463,7 @@ describe('map place panel', () => {
 
   it('opens the home place from the home control', async () => {
     serve({ places: [CLUB] })
-    renderMap({ home: { realm: null, parcel: '-20,60' } })
+    renderMap({ home: { realm: null, parcel: '-20,60', pinned: true } })
     await userEvent.click(screen.getByRole('button', { name: 'Center on home' }))
     expect(await within(panel()).findByRole('heading', { name: 'Sugar Club' })).toBeInTheDocument()
     expect(within(panel()).getByRole('button', { name: 'Set as Home' })).toHaveAttribute('aria-pressed', 'true')

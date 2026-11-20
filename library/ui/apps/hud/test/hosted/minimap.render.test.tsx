@@ -72,7 +72,7 @@ describe('minimap menu', () => {
   // the place has no scene (no `donatePlace`) in each case: the realm alone tells
   async function openMenu(
     linkRealm: string | null,
-    { at = { x: 10, y: 20 }, home = null, referrer }: { at?: { x: number; y: number }; home?: { realm: string | null; parcel: string } | null; referrer?: string } = {}
+    { at = { x: 10, y: 20 }, home = null, referrer }: { at?: { x: number; y: number }; home?: { realm: string | null; parcel: string; pinned: boolean } | null; referrer?: string } = {}
   ): Promise<ReturnType<typeof fakeSession>> {
     const session = fakeSession()
     session.map = { ...session.map, ...at, home }
@@ -123,12 +123,12 @@ describe('minimap menu', () => {
     expect(session.map.setHome).toHaveBeenCalledWith('boedo.dcl.eth', { x: 0, y: 0 })
   })
 
-  it('reads on, and cannot be turned off, where the player stands in the home place', async () => {
+  it('reads on where the player stands in the home place, and turning it off takes the home back', async () => {
     placeAt.place = { id: 'p', title: 'Plaza', positions: ['10,20', '11,20'], base_position: '10,20' }
-    const session = await openMenu(DEFAULT_REALM, { at: { x: 11, y: 20 }, home: { realm: null, parcel: '10,20' } })
+    const session = await openMenu(DEFAULT_REALM, { at: { x: 11, y: 20 }, home: { realm: null, parcel: '10,20', pinned: true } })
     const toggle = await screen.findByRole('switch', { name: 'Set as Home', checked: true })
     fireEvent.click(toggle)
-    expect(toggle).toHaveAttribute('aria-checked', 'true')
+    expect(session.map.clearHome).toHaveBeenCalledTimes(1)
     expect(session.map.setHome).not.toHaveBeenCalled()
   })
 
@@ -178,14 +178,14 @@ describe('minimap menu, closing', () => {
 describe('minimap home pin', () => {
   it('marks a Genesis City home on the map', async () => {
     const session = fakeSession()
-    session.map = { ...session.map, home: { realm: null, parcel: '1,2' } }
+    session.map = { ...session.map, home: { realm: null, parcel: '1,2', pinned: true } }
     const { container } = await renderSettled(<Minimap minimap={session.minimap} map={session.map} sceneTitle="" setEngineViewport={vi.fn()} />)
     expect(container.querySelector('[data-marker="home"]')).not.toBeNull()
   })
 
   it('draws none in a World, for a Genesis City home', async () => {
     const session = fakeSession()
-    session.map = { ...session.map, home: { realm: null, parcel: '1,2' } }
+    session.map = { ...session.map, home: { realm: null, parcel: '1,2', pinned: true } }
     const { container } = await renderSettled(
       <Minimap minimap={{ ...session.minimap, satelliteView: null, linkRealm: 'boedo.dcl.eth' }} map={session.map} sceneTitle="" setEngineViewport={vi.fn()} />
     )
@@ -194,7 +194,7 @@ describe('minimap home pin', () => {
 
   it('draws none for a World home', async () => {
     const session = fakeSession()
-    session.map = { ...session.map, home: { realm: 'boedo.dcl.eth', parcel: '0,0' } }
+    session.map = { ...session.map, home: { realm: 'boedo.dcl.eth', parcel: '0,0', pinned: true } }
     const { container } = await renderSettled(<Minimap minimap={session.minimap} map={session.map} sceneTitle="" setEngineViewport={vi.fn()} />)
     expect(container.querySelector('[data-marker="home"]')).toBeNull()
   })
