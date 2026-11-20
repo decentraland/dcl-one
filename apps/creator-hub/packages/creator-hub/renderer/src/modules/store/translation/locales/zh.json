@@ -1896,13 +1896,20 @@
         },
         "erc20": "请确保此钱包可以在以太坊（ERC-20）上接收 USDC。发送到不支持的钱包的资金无法找回。",
         "verify": {
-          "title": "验证你的邮箱",
+          "confirm_title": "1. 确认你的邮箱",
+          "confirm_body": "请确认你的邮箱无误。我们会向此地址发送验证码。",
+          "edit_email": "编辑邮箱",
+          "daily_limit": "你今天请求的验证码过多。请明天再试。",
+          "send_soon": "稍后即可向此地址发送验证码。",
+          "continue": "继续",
+          "title": "2. 输入验证码",
           "body_sent": "6 位验证码已发送至 <b>{email}</b>。",
           "body_instruction": "请在下方输入验证码以完成验证。",
           "digit": "第 {n} 位，共 6 位",
           "resend": "重新发送验证码",
           "incorrect": "验证码错误。请检查邮件后重试。",
           "expired": "此验证码已过期。请重新发送。",
+          "back": "返回",
           "submit": "验证"
         },
         "snackbar": {

@@ -9,6 +9,7 @@ export { CloseIcon } from './CloseIcon';
 export { CollapseIcon } from './CollapseIcon';
 export { CopyIcon } from './CopyIcon';
 export { DiscordIcon } from './DiscordIcon';
+export { EditIcon } from './EditIcon';
 export { ExpandIcon } from './ExpandIcon';
 export { InProgramIcon } from './InProgramIcon';
 export { InfoIcon } from './InfoIcon';
