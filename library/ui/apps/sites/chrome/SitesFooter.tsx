@@ -154,7 +154,10 @@ function footerLinkProps(href: string, go: ChromeNavigate | undefined) {
 }
 
 type NewsletterState =
-  { phase: 'idle' } | { phase: 'sending' } | { phase: 'ok' } | { phase: 'error'; reason: 'invalidEmail' | 'failed' }
+  | { phase: 'idle' }
+  | { phase: 'sending' }
+  | { phase: 'ok' }
+  | { phase: 'error'; reason: 'invalidEmail' | 'failed' }
 
 export default function SitesFooter({
   footerCopy = sitesFooterCopy.en,
@@ -247,9 +250,7 @@ export default function SitesFooter({
             height={48}
           />
           <div className={styles.news}>
-            <p className={styles.newstitle}>
-              {copy.newsletter.title}
-            </p>
+            <p className={styles.newstitle}>{copy.newsletter.title}</p>
             <form className={styles.newsform} onSubmit={submitNewsletter} noValidate>
               <input
                 className={styles.newsinput}
@@ -264,9 +265,7 @@ export default function SitesFooter({
                 disabled={news.phase === 'sending'}
               />
               <button type="submit" className={styles.newsbtn} disabled={news.phase === 'sending'}>
-                {news.phase === 'sending'
-                  ? copy.newsletter.sending
-                  : copy.newsletter.cta}
+                {news.phase === 'sending' ? copy.newsletter.sending : copy.newsletter.cta}
               </button>
             </form>
             {news.phase === 'ok' && (
@@ -280,10 +279,7 @@ export default function SitesFooter({
               </p>
             )}
           </div>
-          <Connect
-            className={`${styles.connect} ${styles.connectDesktop}`}
-            label={copy.connect}
-          />
+          <Connect className={`${styles.connect} ${styles.connectDesktop}`} label={copy.connect} />
         </div>
 
         <div className={styles.footcols}>
@@ -326,10 +322,7 @@ export default function SitesFooter({
             </div>
           ))}
         </div>
-        <Connect
-          className={`${styles.connect} ${styles.connectMobile}`}
-          label={copy.connect}
-        />
+        <Connect className={`${styles.connect} ${styles.connectMobile}`} label={copy.connect} />
       </div>
 
       <div className={styles.footbar}>
