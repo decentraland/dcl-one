@@ -71,6 +71,70 @@ describe('when the gallery compiles the Explorer HUD for its HUD canvas', () => 
   })
 })
 
+describe('when the HUD code the gallery builds reaches a package only the HUD hosts install', () => {
+  type File = { fileName: string; type?: 'asset'; imports?: string[]; dynamicImports?: string[] }
+  const generate = async (files: File[]) => {
+    const { noHostPackages } = await import('../vite.config')
+    const hook = noHostPackages().generateBundle as unknown as (
+      options: object,
+      bundle: object
+    ) => void
+    const bundle = Object.fromEntries(
+      files.map(({ fileName, type = 'chunk', imports = [], dynamicImports = [] }) => [
+        fileName,
+        { fileName, type, imports, dynamicImports }
+      ])
+    )
+    return () => hook.call({}, {}, bundle)
+  }
+
+  it("should leave the signer's packages out of the combined build and the hosted preview", async () => {
+    const { HOST_PACKAGES } = await import('../vite.config')
+    for (const mode of [undefined, 'hosted']) {
+      const built = await resolveConfig(
+        { configFile: path.join(library, 'gallery/vite.config.ts'), logLevel: 'silent', mode },
+        'build'
+      )
+      expect(built.build.rolldownOptions.external).toEqual([HOST_PACKAGES])
+      expect(built.plugins.map((plugin) => plugin.name)).toContain('gallery:no-host-packages')
+    }
+    for (const id of [
+      '@noble/curves/secp256k1.js',
+      '@noble/hashes/sha3.js',
+      '@noble/hashes/utils.js'
+    ])
+      expect(HOST_PACKAGES.test(id)).toBe(true)
+  })
+
+  it('should fail the build when a page imports one, naming the chunk and the package', async () => {
+    const run = await generate([
+      { fileName: 'assets/hud.js', imports: ['assets/react.js', '@noble/curves/secp256k1.js'] }
+    ])
+    expect(run).toThrow(
+      'assets/hud.js loads @noble/curves/secp256k1.js: only the HUD hosts install it, and the gallery signs nothing'
+    )
+  })
+
+  it('should fail the build when a page would load one on demand', async () => {
+    const run = await generate([
+      { fileName: 'assets/places.js', dynamicImports: ['@noble/hashes/sha3.js'] }
+    ])
+    expect(run).toThrow('assets/places.js loads @noble/hashes/sha3.js')
+  })
+
+  it('should pass a build whose pages load none of them', async () => {
+    const run = await generate([
+      {
+        fileName: 'assets/hud.js',
+        imports: ['assets/react.js'],
+        dynamicImports: ['assets/Showcase.js']
+      },
+      { fileName: 'assets/hud.css', type: 'asset' }
+    ])
+    expect(run).not.toThrow()
+  })
+})
+
 describe('when the HUD names are declared for the bundler, the tests and the type check', () => {
   it('should map in tsconfig.hud.json exactly the names the Vite config and the hud tests resolve', async () => {
     const { hudAliases } = await import('../vite.config')
