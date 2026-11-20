@@ -1,3 +1,4 @@
+import { CREDITS_BALANCE_QUERY_KEY } from "@shop/credits/balance-query";
 // @vitest-environment jsdom
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import {
@@ -6,7 +7,6 @@ import {
   useQuery,
 } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { CREDITS_BALANCE_QUERY_KEY } from "@shop/credits/balance-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
@@ -26,10 +26,12 @@ describe("when the Sites host changes authenticated identity", () => {
   let release: (value: string) => void;
   let signal: AbortSignal | undefined;
   let wrapper: ({ children }: { children: ReactNode }) => ReactNode;
+  let aborted: boolean | undefined;
   beforeEach(() => {
     client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     release = () => undefined;
     signal = undefined;
+    aborted = undefined;
     client.setQueryData(["blog", "categories"], ["Announcements"]);
     client.setQueryData(["private", "0xa", "cached"], "old private value");
     client.setQueryData([CREDITS_BALANCE_QUERY_KEY, "0xa"], "old balance");
@@ -39,68 +41,124 @@ describe("when the Sites host changes authenticated identity", () => {
       <QueryClientProvider client={client}>{children}</QueryClientProvider>
     );
   });
-  it("should abort and remove the previous account while retaining public and current-account data", async () => {
-    const { rerender, result } = renderHook(
-      ({ account }: { account: string }) => {
-        usePrivateQueryLifecycle(account);
-        return useQuery({
-          queryKey: ["private", account.toLowerCase(), "request"],
-          queryFn: ({ signal: requestSignal }) => {
-            if (account === "0xb") return Promise.resolve("new account");
-            signal = requestSignal;
-            return new Promise<string>((resolve) => {
-              release = resolve;
-            });
-          },
-        });
-      },
-      { initialProps: { account: "0xA" }, wrapper },
+  function renderLifecycle(account: string | null) {
+    return renderHook(
+      ({ account }: { account: string | null }) =>
+        usePrivateQueryLifecycle(account),
+      { initialProps: { account }, wrapper },
     );
-    await waitFor(() => expect(signal).toBeDefined());
-    rerender({ account: "0xb" });
-    expect(signal?.aborted).toBe(true);
-    await waitFor(() => expect(result.current.data).toBe("new account"));
-    await act(async () => {
-      release("late old account");
-      await Promise.resolve();
+  }
+
+  describe("and another account replaces one with a request in flight", () => {
+    beforeEach(async () => {
+      const { rerender, result } = renderHook(
+        ({ account }: { account: string }) => {
+          usePrivateQueryLifecycle(account);
+          return useQuery({
+            queryKey: ["private", account.toLowerCase(), "request"],
+            queryFn: ({ signal: requestSignal }) => {
+              if (account === "0xb") return Promise.resolve("new account");
+              signal = requestSignal;
+              return new Promise<string>((resolve) => {
+                release = resolve;
+              });
+            },
+          });
+        },
+        { initialProps: { account: "0xA" }, wrapper },
+      );
+      await waitFor(() => expect(signal).toBeDefined());
+      rerender({ account: "0xb" });
+      aborted = signal?.aborted;
+      await waitFor(() => expect(result.current.data).toBe("new account"));
+      await act(async () => {
+        release("late old account");
+        await Promise.resolve();
+      });
     });
-    expect(client.getQueriesData({ queryKey: ["private", "0xa"] })).toEqual([]);
-    expect(client.getQueryData([CREDITS_BALANCE_QUERY_KEY, "0xa"])).toBeUndefined();
-    expect(client.getQueryData([CREDITS_BALANCE_QUERY_KEY, "0xb"])).toBe("new balance");
-    expect(client.getQueryData(["blog", "categories"])).toEqual([
-      "Announcements",
-    ]);
-    expect(client.getQueryData(["private", "0xb", "request"])).toBe(
-      "new account",
-    );
-    expect(client.getQueryData(["legacy", "0xa"])).toBe(
-      "legacy owner retains this entry",
-    );
+
+    it("should abort the previous account's request", () => {
+      expect(aborted).toBe(true);
+    });
+
+    it("should remove the previous account's private entries", () => {
+      expect(client.getQueriesData({ queryKey: ["private", "0xa"] })).toEqual([]);
+    });
+
+    it("should retain public data", () => {
+      expect(client.getQueryData(["blog", "categories"])).toEqual([
+        "Announcements",
+      ]);
+    });
+
+    it("should retain the current account's data", () => {
+      expect(client.getQueryData(["private", "0xb", "request"])).toBe(
+        "new account",
+      );
+    });
+
+    it("should leave non-private entries to their owner", () => {
+      expect(client.getQueryData(["legacy", "0xa"])).toBe(
+        "legacy owner retains this entry",
+      );
+    });
   });
-  it("should keep every entry when only the address's letter case changes", () => {
-    const { rerender } = renderHook(
-      ({ account }: { account: string | null }) =>
-        usePrivateQueryLifecycle(account),
-      { initialProps: { account: "0xa" as string | null }, wrapper },
-    );
-    rerender({ account: "0xA" });
-    expect(client.getQueryData(["private", "0xa", "cached"])).toBe(
-      "old private value",
-    );
+
+  describe("and only the address's letter case changes", () => {
+    beforeEach(() => {
+      renderLifecycle("0xa").rerender({ account: "0xA" });
+    });
+
+    it("should keep every entry", () => {
+      expect(client.getQueryData(["private", "0xa", "cached"])).toBe(
+        "old private value",
+      );
+    });
   });
-  it("should keep every entry when a visitor signs in", () => {
-    const { rerender } = renderHook(
-      ({ account }: { account: string | null }) =>
-        usePrivateQueryLifecycle(account),
-      { initialProps: { account: null as string | null }, wrapper },
-    );
-    rerender({ account: "0xa" });
-    expect(client.getQueryData(["private", "0xa", "cached"])).toBe(
-      "old private value",
-    );
-    expect(client.getQueryData(["blog", "categories"])).toEqual([
-      "Announcements",
-    ]);
+
+  describe("and a visitor signs in", () => {
+    beforeEach(() => {
+      renderLifecycle(null).rerender({ account: "0xa" });
+    });
+
+    it("should keep the private entries", () => {
+      expect(client.getQueryData(["private", "0xa", "cached"])).toBe(
+        "old private value",
+      );
+    });
+
+    it("should keep public data", () => {
+      expect(client.getQueryData(["blog", "categories"])).toEqual([
+        "Announcements",
+      ]);
+    });
+  });
+
+  describe("and the address becomes empty", () => {
+    beforeEach(() => {
+      renderLifecycle("0xa").rerender({ account: "" });
+    });
+
+    it("should treat it as signed out and remove every private entry", () => {
+      expect(client.getQueriesData({ queryKey: ["private"] })).toEqual([]);
+    });
+  });
+
+  describe("and the account signs out", () => {
+    beforeEach(() => {
+      client.setQueryData(["private", "0xb", "cached"], "another private value");
+      renderLifecycle("0xa").rerender({ account: null });
+    });
+
+    it("should remove every declared private account", () => {
+      expect(client.getQueriesData({ queryKey: ["private"] })).toEqual([]);
+    });
+
+    it("should leave public data intact", () => {
+      expect(client.getQueryData(["blog", "categories"])).toEqual([
+        "Announcements",
+      ]);
+    });
   });
   it("should treat an empty address as signed out", () => {
     const { rerender } = renderHook(

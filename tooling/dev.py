@@ -116,13 +116,13 @@ def bindable(endpoints):
             sock.close()
 
 
-def ports_free(base, webtransport=None):
+def ports_free(base, public_udp=()):
     # TCP (the API's metrics on base+1, NATS on base+8 and +9), then the UDP ports: Pulse's WebTransport
-    # (the Sites port, or the public origin's port on every interface) and ENet ports, LiveKit's media.
+    # (the Sites port) and ENet ports, LiveKit's media; behind a public origin Pulse's two, on every interface.
     return bindable([*((socket.SOCK_STREAM, port, '127.0.0.1') for port in (
                          base, base + 1, base + 2, base + 3, base + 4, base + 5, base + 7, base + 8, base + 9)),
                      *((socket.SOCK_DGRAM, port, '127.0.0.1') for port in (base + 2, base + 6, base + 7)),
-                     *([(socket.SOCK_DGRAM, webtransport, '0.0.0.0')] if webtransport else [])])
+                     *((socket.SOCK_DGRAM, port, '0.0.0.0') for port in public_udp)])
 
 
 def livekit_credentials():
@@ -247,6 +247,20 @@ def scene_proxy_hosts(config):
         raise SystemExit('settings.json: scene_proxy_hosts is a list of host names')
     return tuple(hosts)
 
+
+# Cast on this stack, from settings.json. `"cast_bot_bin"`: the built `cast-bot` (`nix build .#cast-bot`) the API
+# starts per presentation; unset, or a path that is not executable (a warning, never a stop: every command
+# reads this), presentations answer 503. `"personal_worlds": N`: the realm hosts N personal test worlds
+# (`<address>.dcl.eth`); unset, none.
+def cast_settings(config):
+    keys = {'cast_bot_bin': 'CAST_BOT_BIN', 'personal_worlds': 'WORLDS_PERSONAL_WORLDS_MAX'}
+    env = {env: str(config[key]) for key, env in keys.items() if config.get(key)}
+    if 'CAST_BOT_BIN' in env and not os.access(env['CAST_BOT_BIN'], os.X_OK):
+        print(f"settings.json: cast_bot_bin {env.pop('CAST_BOT_BIN')} is not executable; Cast presentations answer 503",
+              file=sys.stderr)
+    return env
+
+
 # The engine's headless avatar renderer, as `make bevy-avatar-render` leaves it (apps/bevy-explorer/build-avatar-render.py
 # writes the wrapper that carries its library path). Profile face and body images render here once it is built;
 # FOUNDATION_DEV_AVATAR_RENDER_BIN names one built elsewhere.
@@ -369,10 +383,12 @@ def pulse_ports(config):
     # WebTransport (UDP) on the Sites port, the host:port the /play HUD hands the engine as its Pulse
     # server (apps/ui3/src/play/lib/baseDomain.ts); ENet (UDP) and /metrics (TCP) share base+7.
     # Behind a public origin the page's port is the origin's (the TLS front holds it over TCP only, so
-    # UDP is free there), or the engine's default when the origin names none.
+    # UDP is free there), or the engine's default when the origin names none. ENet is then where native clients
+    # dial pulse-server.<base domain>: UDP 7777 (`pulse_enet_port`, for a second stack on the machine).
     origin = public(config)
     webtransport = config['port'] + 2 if origin is None else origin[3] or WEB_PULSE_PORT
-    return webtransport, config['port'] + 7, config['port'] + 7
+    enet = config['port'] + 7 if origin is None else config.get('pulse_enet_port', 7777)
+    return webtransport, enet, config['port'] + 7
 
 
 def nats_ports(config):
@@ -436,10 +452,10 @@ def pulse_about_env(config):
 def pulse_env(config, certificate, key):
     webtransport, enet, metrics = pulse_ports(config)
     env = {name: os.environ[name] for name in ('PATH', 'HOME', 'TMPDIR') if name in os.environ}
-    # WebTransport is UDP, which the TLS front cannot carry: behind a public origin the browser dials this
+    # Both transports are UDP, which the TLS front cannot carry: behind a public origin clients dial this
     # machine directly, on every interface.
     bind = '127.0.0.1' if public(config) is None else '0.0.0.0'
-    return {**env, 'PULSE_BIND': f'127.0.0.1:{enet}', 'PULSE_METRICS_BIND': f'127.0.0.1:{metrics}',
+    return {**env, 'PULSE_BIND': f'{bind}:{enet}', 'PULSE_METRICS_BIND': f'127.0.0.1:{metrics}',
             'PULSE_WT_ENABLED': 'true', 'PULSE_WT_BIND': f'{bind}:{webtransport}',
             'PULSE_WT_CERT_PATH': str(certificate), 'PULSE_WT_KEY_PATH': str(key),
             'PULSE_REPLAY_STATE_PATH': str(STATE / 'pulse/replay.tsv'), 'NO_COLOR': '1',
@@ -541,6 +557,13 @@ def runtime_env(config, refuse_exposed_relayer=True):
             # `/contents` rate limit and the deploy and referral quotas each client's own address again.
             'HTTP_TRUSTED_PROXY_CIDRS': '127.0.0.1/32,::1/128',
         })
+        # Cast client composition: clients fetch the slide pictures at the presenter's host label, which the
+        # front sends to the API's /cast-presenter-service. The API takes only an https URL of a named host.
+        if scheme == 'https' and not ip_literal(host):
+            env['CAST_PRESENTER_PUBLIC_URL'] = f'https://cast-presenter-service.{netloc}'
+    # The stream links of /cast/generate-stream-link name this stack's Cast pages, not decentraland.org's.
+    env['CAST2_URL'] = env['PUBLIC_URL'] + '/cast'
+    env.update(cast_settings(config))
     # Explicit development settings, without a production posture/restore gate.
     # Authentication and mirrored-row ownership checks still apply.
     if config['profile'] == 'offline':
@@ -567,6 +590,9 @@ def runtime_env(config, refuse_exposed_relayer=True):
             'EXPLORER_FEATURE_FLAGS_SOURCE_URL': 'https://feature-flags.decentraland.org/explorer.json',
             'EXPLORER_REGISTRY_SOURCE_URL': 'https://asset-bundle-registry.decentraland.org',
             'ABGEN_UPSTREAM_AB_CDN': 'https://ab-cdn.decentraland.org',
+            # Temporary: imposter tiles read through from the community CDN until the node bakes
+            # its own (decentraland/dcl-one#1711).
+            'BVIMPOSTERS_UPSTREAM_URL': 'https://bevy-imposters.dclregenesislabs.xyz',
             # Mirrored place and event images come from the upstream peers' content URLs.
             'MEDIA_CONVERT_REMOTE_SOURCES': 'true',
             # Avatar faces of profiles this node holds no snapshot files of come from the upstream
@@ -1120,9 +1146,11 @@ def task(name):
         if not valkey_ready(config):
             sys.exit(1)
     elif name == 'ingress':
-        # The ingress starts a handler per stream by running `ingress` again from PATH.
+        # The ingress starts a handler per stream by running `ingress` again from PATH. A hardware decoder
+        # changes caps once linked, and the handler fails adding the video track again: software ranks first.
         env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR') if key in os.environ}
-        os.execvpe('ingress', ['ingress'], {**env, 'INGRESS_CONFIG_BODY': ingress_yaml(config)})
+        os.execvpe('ingress', ['ingress'], {**env, 'INGRESS_CONFIG_BODY': ingress_yaml(config),
+                                            'GST_PLUGIN_FEATURE_RANK': 'avdec_h264:MAX'})
     elif name == 'nats':
         env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR') if key in os.environ}
         os.execvpe('nats-server', nats_argv(config), env)
@@ -1161,7 +1189,7 @@ def status():
           f"NATS: {nats_url(config)}   RTMP ingress: {rtmp_base_url(config)}")
     if origin := public(config):
         tls = tls_files(config)
-        print(f"Public: {config['public_origin']}   /ws and /rtc through the front; Pulse UDP {origin[1]}:{pulse_ports(config)[0]}"
+        print(f"Public: {config['public_origin']}   /ws and /rtc through the front; Pulse UDP {origin[1]}:{pulse_ports(config)[0]}, ENet {pulse_ports(config)[1]}"
               + (f'   TLS: {tls[0]}' if tls else ''))
     if (STATE / 'pulse/key.pem').exists() and not tls_files(config):
         # The generated certificate is self-signed: Chrome honours an SPKI exception for WebTransport only with
@@ -1194,9 +1222,8 @@ def prepare_supervisor(postgres_only=False):
             raise RuntimeError(f"The running stack predates {', '.join(sorted(missing))}. "
                                'Run foundation-dev down, then foundation-dev up.')
         return None
-    # Behind a public origin without a port Pulse's WebTransport sits outside the block; it must be free too.
-    webtransport = pulse_ports(config)[0]
-    if not ports_free(config['port'], webtransport if webtransport != config['port'] + 2 else None) \
+    # Behind a public origin Pulse's UDP ports sit outside the block; they must be free too.
+    if not ports_free(config['port'], pulse_ports(config)[:2] if public(config) else ()) \
             or not ingress_ports_free(config['ingress_port']):
         raise RuntimeError('Configured ports are occupied. Stop the conflicting service or edit .cache/dev/settings.json.')
     temporary = STATE / 'tmp'

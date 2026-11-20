@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { PREF, getPref, setPref } from '@explorer-core/lib/prefs'
-import { clearPingMode, pingModeFor, resetPingPrefs, setPingDefault, setPingMode, shouldPing } from './ping'
+import { clearPingMode, pingModeFor, resetPingPrefs, sendSoundEnabled, setPingDefault, setPingMode, shouldPing } from './ping'
 
 // DOMAIN: the chat notification ping — per-conversation All / Mentions Only / None, a default for
 // the rest, and what it decides for a line that landed.
@@ -8,6 +8,15 @@ describe('chat ping prefs', () => {
   beforeEach(() => {
     localStorage.clear()
     resetPingPrefs()
+  })
+
+  it('a sent line sounds only while the default is all messages', () => {
+    expect(sendSoundEnabled()).toBe(true)
+    setPingMode('Nearby', 'all')
+    setPingDefault('mentions')
+    expect(sendSoundEnabled()).toBe(false)
+    setPingDefault('none')
+    expect(sendSoundEnabled()).toBe(false)
   })
 
   it('defaults to all messages, per conversation on top', () => {

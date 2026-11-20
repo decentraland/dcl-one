@@ -60,6 +60,11 @@ export type OfferFetcher = (lines: CartLine[], signal: AbortSignal) => Promise<R
 
 export type RevalidationResult = { offers: Record<string, PurchaseOffer | null>; changes: LineChange[] };
 
+/** Each line's changes from the offer it holds as seen to `offers` (a line with no offer there is unavailable). */
+export function diffOffers(lines: readonly CartLine[], offers: Record<string, PurchaseOffer | null>, session: Session): LineChange[] {
+  return lines.flatMap((line) => diffLine(line, offers[line.id] ?? null, session));
+}
+
 export async function revalidateCart(
   lines: CartLine[],
   session: Session,
@@ -68,16 +73,21 @@ export async function revalidateCart(
 ): Promise<RevalidationResult> {
   const answered = await fetchOffers(lines, signal);
   const offers: Record<string, PurchaseOffer | null> = {};
-  const changes: LineChange[] = [];
   for (const line of lines) {
-    const offer = Object.prototype.hasOwnProperty.call(answered, line.id) ? (answered[line.id] ?? null) : null;
-    offers[line.id] = offer;
-    changes.push(...diffLine(line, offer, session));
+    offers[line.id] = Object.prototype.hasOwnProperty.call(answered, line.id) ? (answered[line.id] ?? null) : null;
   }
-  return { offers, changes };
+  return { offers, changes: diffOffers(lines, offers, session) };
 }
 
 export type RevalidationStatus = "idle" | "checking" | "current" | "changed" | "failed";
+
+/** How old an offer the buyer was shown can be and still stand on screen while the server prices the line again. */
+export const SEEN_RECENT_MS = 20_000;
+
+/** The line holds an offer the buyer was shown moments ago (the page's), so its payment options can show before the check ends. */
+export function seenRecently(line: CartLine, now: number = Date.now()): boolean {
+  return !!line.seen && Math.abs(now - line.seen.quotedAt) <= SEEN_RECENT_MS;
+}
 
 /** What a price check is for: each line, its quantity and its method. A check answers only the lines it was asked. */
 export function revalidationIdentity(lines: readonly CartLine[]): string {
@@ -86,6 +96,11 @@ export function revalidationIdentity(lines: readonly CartLine[]): string {
 
 export type CartRevalidation = {
   status: RevalidationStatus;
+  /**
+   * While `checking`: every line shows an offer the buyer saw moments ago, under the session and revision the hook
+   * started with. It can stand on screen until the check ends; confirmation still waits for the check.
+   */
+  seenRecently: boolean;
   offers: Record<string, PurchaseOffer | null>;
   changes: LineChange[];
   error: unknown;
@@ -109,8 +124,11 @@ export function useCartRevalidation(
   opts: { enabled?: boolean; revision?: string | number; onSeen?: (lineId: string, offer: PurchaseOffer | null) => void } = {},
 ): CartRevalidation {
   const enabled = opts.enabled ?? true;
-  const [state, setState] = useState<{ status: RevalidationStatus; result: RevalidationResult; error: unknown; pricedFor: string | null }>({
+  // `firstCheck`: the running check is the first under the session and revision the seen offers were quoted under, so
+  // the offers the lines hold may stand on screen until it ends (`seenRecently` below).
+  const [state, setState] = useState<{ status: RevalidationStatus; firstCheck: boolean; result: RevalidationResult; error: unknown; pricedFor: string | null }>({
     status: "idle",
+    firstCheck: false,
     result: { offers: {}, changes: [] },
     error: null,
     pricedFor: null,
@@ -121,24 +139,32 @@ export function useCartRevalidation(
 
   const identity = useMemo(() => revalidationIdentity(lines), [lines]);
   const sessionKey = session.kind === "signedOut" ? "out" : `${session.kind}:${session.kind === "web2" ? session.account : session.wallet}`;
+  // The session and revision the seen offers were quoted under: a switch, or a re-check the buyer asked for, waits for the server.
+  const firstAsked = useRef(`${sessionKey}|${opts.revision ?? ""}`);
 
   useEffect(() => {
     if (!enabled || latest.current.lines.length === 0) {
-      setState({ status: "idle", result: { offers: {}, changes: [] }, error: null, pricedFor: null });
+      setState({ status: "idle", firstCheck: false, result: { offers: {}, changes: [] }, error: null, pricedFor: null });
       return;
     }
     const controller = new AbortController();
-    setState((s) => ({ ...s, status: "checking", error: null }));
     const { lines: current, session: who, fetchOffers: fetcher } = latest.current;
+    const firstCheck = tick === 0 && firstAsked.current === `${sessionKey}|${opts.revision ?? ""}`;
+    setState((s) => ({ ...s, status: "checking", firstCheck, error: null }));
     const asked = revalidationIdentity(current);
     revalidateCart(current, who, fetcher, controller.signal).then(
-      (result) => {
+      (answer) => {
         if (controller.signal.aborted) return;
-        setState({ status: result.changes.length === 0 ? "current" : "changed", result, error: null, pricedFor: asked });
+        // The new offers are compared with the ones on screen now, not with those the check started from: a line handed
+        // a fresher offer meanwhile (Buy now holds its line in an effect that runs after this one) showed that offer.
+        // The lines, quantities and methods are the same, or this check would have been aborted for a new one.
+        const shown = new Map(latest.current.lines.map((l) => [l.id, l]));
+        const result = { offers: answer.offers, changes: diffOffers(current.map((l) => shown.get(l.id) ?? l), answer.offers, who) };
+        setState({ status: result.changes.length === 0 ? "current" : "changed", firstCheck: false, result, error: null, pricedFor: asked });
       },
       (error: unknown) => {
         if (controller.signal.aborted) return;
-        setState((s) => ({ ...s, status: "failed", error }));
+        setState((s) => ({ ...s, status: "failed", firstCheck: false, error }));
       },
     );
     return () => controller.abort();
@@ -155,8 +181,12 @@ export function useCartRevalidation(
     setState({ ...s, status: blocking.length === 0 ? "current" : "changed", result: { ...s.result, changes: blocking } });
   }, []);
 
+  // Read from the lines as they are now, not as the check found them: a line the page hands its fresh offer after the
+  // check started (Buy now holds its line in its own effect, which runs after this hook's) still counts.
+  const recent = state.status === "checking" && state.firstCheck && lines.length > 0 && lines.every((l) => seenRecently(l));
   return {
     status: state.status,
+    seenRecently: recent,
     offers: state.result.offers,
     changes: state.result.changes,
     error: state.error,

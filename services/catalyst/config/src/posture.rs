@@ -440,6 +440,14 @@ const ROWS: &[Row] = &[
         "ABGEN_UPSTREAM_AB_CDN",
         "https://ab-cdn.decentraland.org",
     ),
+    // Temporary: imposter tiles the /bvimposters store lacks, read through
+    // from the community CDN the explorer's tiles were baked into, until this
+    // node bakes its own (decentraland/dcl-one#1711); then this row goes.
+    upstream(
+        "upstreams",
+        "BVIMPOSTERS_UPSTREAM_URL",
+        "https://bevy-imposters.dclregenesislabs.xyz",
+    ),
     // Avatar faces of profiles whose snapshot files this node does not hold
     // (current clients deploy none) when no renderer runs here.
     upstream(

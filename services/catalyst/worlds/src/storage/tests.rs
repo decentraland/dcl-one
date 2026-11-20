@@ -2568,8 +2568,8 @@ async fn seed_genesis_scene(pool: &PgPool) -> (String, String, String, i32) {
 }
 
 async fn remove_genesis_scene(pool: &PgPool, id: &str, dep_id: i32) {
-    sqlx::query("DELETE FROM social.scene_admins WHERE place_id = $1")
-        .bind(id)
+    sqlx::query("DELETE FROM social.scene_admins WHERE place_id = (SELECT entity_metadata #>> '{scene,base}' FROM content.deployments WHERE id = $1)")
+        .bind(dep_id)
         .execute(pool)
         .await
         .unwrap();
@@ -2598,7 +2598,7 @@ async fn genesis_scenes_scope_by_the_active_pointer_and_admit_the_land_authority
     sqlx::query(
         "INSERT INTO social.scene_admins (place_id, admin_address, added_by) VALUES ($1, $2, $3)",
     )
-    .bind(&id)
+    .bind(&p2)
     .bind(Address::parse(&address_of(&admin_key)).unwrap())
     .bind(address())
     .execute(&pool)
@@ -2940,7 +2940,7 @@ async fn genesis_land_ownership_counts_only_at_the_request_parcel() {
     sqlx::query(
         "INSERT INTO social.scene_admins (place_id, admin_address, added_by) VALUES ($1, $2, $3)",
     )
-    .bind(&id)
+    .bind(&p2)
     .bind(Address::parse(&address_of(&admin_key)).unwrap())
     .bind(address())
     .execute(&pool)

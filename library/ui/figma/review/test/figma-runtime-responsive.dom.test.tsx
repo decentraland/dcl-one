@@ -2,12 +2,15 @@ import { act, cleanup, render } from '@testing-library/react'
 import { createRef, type ComponentType, type ReactElement } from 'react'
 import { hydrateRoot } from 'react-dom/client'
 import { renderToString } from 'react-dom/server'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FigmaInteractions } from '../src/components/figma-interactions'
 import { FigmaView, type ViewNode } from '../src/components/figma-module-runtime'
 import { NavBar } from '../src/generated/components/nav-bar/NavBar'
 
-afterEach(() => cleanup())
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+})
 
 const view = (name: string): ViewNode => ({
   kind: 'box',
@@ -76,161 +79,198 @@ describe('FigmaView with a responsive axis', () => {
       ])
     })
 
-    it('should keep the caller attributes and class on every root', () => {
-      const { container } = render(
-        <FigmaView
-          views={views}
-          select={select(undefined)}
-          slots={{}}
-          responsive={responsive}
-          attributes={{ className: 'site-nav', 'data-testid': 'nav' } as never}
-        />
-      )
-
-      for (const root of container.children) {
-        expect(root.getAttribute('data-testid')).toBe('nav')
-        expect(root.className).toContain('site-nav')
-      }
-    })
-
-    it('should produce the same markup on the server and on hydration, with no warning', async () => {
-      const result = await hydrate(
-        <FigmaView views={views} select={select(undefined)} slots={{}} responsive={responsive} />
-      )
-
-      expect(result.errors).toEqual([])
-      expect(result.recoverable).toEqual([])
-      expect(result.clientMarkup).toBe(result.serverMarkup)
-    })
-
-    it('should throw when one option has no view for the other axes, instead of rendering the rest', () => {
-      expect(
-        String(
-          renderError(
-            <FigmaView
-              views={views}
-              select={select(undefined, 'light')}
-              slots={{}}
-              responsive={responsive}
-              component="Demo"
-            />
-          )
+    describe('and the caller passes attributes and a class', () => {
+      it('should keep the caller attributes and class on every root', () => {
+        const { container } = render(
+          <FigmaView
+            views={views}
+            select={select(undefined)}
+            slots={{}}
+            responsive={responsive}
+            attributes={{ className: 'site-nav', 'data-testid': 'nav' } as never}
+          />
         )
-      ).toContain('Demo has no captured view for size="large", tone="light"')
+
+        for (const root of container.children) {
+          expect(root.getAttribute('data-testid')).toBe('nav')
+          expect(root.className).toContain('site-nav')
+        }
+      })
     })
 
-    it('should reject an id, which would be repeated on every view', () => {
-      expect(
-        String(
-          renderError(
-            <FigmaView
-              views={views}
-              select={select(undefined)}
-              slots={{}}
-              responsive={responsive}
-              component="Demo"
-              attributes={{ id: 'nav' }}
-            />
-          )
+    describe('and the markup is server-rendered and hydrated', () => {
+      it('should produce the same markup on the server and on hydration, with no warning', async () => {
+        const result = await hydrate(
+          <FigmaView views={views} select={select(undefined)} slots={{}} responsive={responsive} />
         )
-      ).toContain('Demo: an id or a ref names one element, so pass size to render a single view')
+
+        expect(result.errors).toEqual([])
+        expect(result.recoverable).toEqual([])
+        expect(result.clientMarkup).toBe(result.serverMarkup)
+      })
     })
 
-    it('should reject a ref, which could attach to a hidden view', () => {
-      expect(
-        String(
-          renderError(
-            <FigmaView
-              views={views}
-              select={select(undefined)}
-              slots={{}}
-              responsive={responsive}
-              attributes={{ ref: createRef() } as never}
-            />
+    describe('and one option has no view for the other axes', () => {
+      it('should throw instead of rendering the rest', () => {
+        expect(
+          String(
+            renderError(
+              <FigmaView
+                views={views}
+                select={select(undefined, 'light')}
+                slots={{}}
+                responsive={responsive}
+                component="Demo"
+              />
+            )
           )
-        )
-      ).toContain('an id or a ref names one element')
+        ).toContain('Demo has no captured view for size="large", tone="light"')
+      })
     })
 
-    it('should accept a null id and ref, which name no element', () => {
-      const { container } = render(
-        <FigmaView
-          views={views}
-          select={select(undefined)}
-          slots={{}}
-          responsive={responsive}
-          attributes={{ id: null, ref: null } as never}
-        />
-      )
-
-      expect(container.children).toHaveLength(2)
-    })
-
-    it('should reject a disclosure, whose outside-pointer close would fire from the hidden views', () => {
-      const disclosure = { label: 'Menu', open: true, headerCount: 1, onToggle() {}, onClose() {} }
-      expect(
-        String(
-          renderError(
-            <FigmaInteractions.Provider value={{ disclosure }}>
+    describe('and the caller passes an id', () => {
+      it('should reject the id, which would be repeated on every view', () => {
+        expect(
+          String(
+            renderError(
               <FigmaView
                 views={views}
                 select={select(undefined)}
                 slots={{}}
                 responsive={responsive}
                 component="Demo"
+                attributes={{ id: 'nav' }}
               />
-            </FigmaInteractions.Provider>
+            )
           )
+        ).toContain('Demo: an id or a ref names one element, so pass size to render a single view')
+      })
+    })
+
+    describe('and the caller passes a ref', () => {
+      it('should reject the ref, which could attach to a hidden view', () => {
+        expect(
+          String(
+            renderError(
+              <FigmaView
+                views={views}
+                select={select(undefined)}
+                slots={{}}
+                responsive={responsive}
+                attributes={{ ref: createRef() } as never}
+              />
+            )
+          )
+        ).toContain('an id or a ref names one element')
+      })
+    })
+
+    describe('and the caller passes a null id and ref', () => {
+      it('should accept them, since they name no element', () => {
+        const { container } = render(
+          <FigmaView
+            views={views}
+            select={select(undefined)}
+            slots={{}}
+            responsive={responsive}
+            attributes={{ id: null, ref: null } as never}
+          />
         )
-      ).toContain('Demo: a disclosure controls one element, so pass size to render a single view')
+
+        expect(container.children).toHaveLength(2)
+      })
+    })
+
+    describe('and a disclosure is provided', () => {
+      let disclosure: {
+        label: string
+        open: boolean
+        headerCount: number
+        onToggle: () => void
+        onClose: () => void
+      }
+      beforeEach(() => {
+        disclosure = { label: 'Menu', open: true, headerCount: 1, onToggle() {}, onClose() {} }
+      })
+
+      it('should reject the disclosure, whose outside-pointer close would fire from the hidden views', () => {
+        expect(
+          String(
+            renderError(
+              <FigmaInteractions.Provider value={{ disclosure }}>
+                <FigmaView
+                  views={views}
+                  select={select(undefined)}
+                  slots={{}}
+                  responsive={responsive}
+                  component="Demo"
+                />
+              </FigmaInteractions.Provider>
+            )
+          )
+        ).toContain('Demo: a disclosure controls one element, so pass size to render a single view')
+      })
     })
   })
 
   describe('when the caller sets the responsive prop', () => {
-    it('should render exactly the markup of a component without the axis', () => {
-      const explicit = renderToString(
-        <FigmaView
-          views={views}
-          select={select('large')}
-          slots={{}}
-          responsive={responsive}
-          attributes={{ id: 'nav' }}
-        />
-      )
-      const plain = renderToString(
-        <FigmaView views={views} select={select('large')} slots={{}} attributes={{ id: 'nav' }} />
-      )
+    describe('and the value is on the axis', () => {
+      let explicit: string
+      let plain: string
+      beforeEach(() => {
+        explicit = renderToString(
+          <FigmaView
+            views={views}
+            select={select('large')}
+            slots={{}}
+            responsive={responsive}
+            attributes={{ id: 'nav' }}
+          />
+        )
+        plain = renderToString(
+          <FigmaView views={views} select={select('large')} slots={{}} attributes={{ id: 'nav' }} />
+        )
+      })
 
-      expect(explicit).toBe(plain)
-      expect(explicit).not.toContain('show-')
+      it('should render exactly the markup of a component without the axis', () => {
+        expect(explicit).toBe(plain)
+      })
+
+      it('should not add a responsive class', () => {
+        expect(explicit).not.toContain('show-')
+      })
     })
 
-    it('should still throw for a value the axis does not have', () => {
-      expect(
-        String(
-          renderError(
-            <FigmaView
-              views={views}
-              select={select('medium')}
-              slots={{}}
-              responsive={responsive}
-              component="Demo"
-            />
+    describe('and the value is not on the axis', () => {
+      it('should still throw for the missing view', () => {
+        expect(
+          String(
+            renderError(
+              <FigmaView
+                views={views}
+                select={select('medium')}
+                slots={{}}
+                responsive={responsive}
+                component="Demo"
+              />
+            )
           )
-        )
-      ).toContain('Demo has no captured view for size="medium"')
+        ).toContain('Demo has no captured view for size="medium"')
+      })
     })
   })
 
   describe('when the component has no responsive axis', () => {
-    it('should keep throwing for an unset axis instead of rendering every view', () => {
-      expect(
-        String(
-          renderError(
-            <FigmaView views={views} select={select(undefined)} slots={{}} component="Demo" />
+    describe('and the axis is unset', () => {
+      it('should keep throwing instead of rendering every view', () => {
+        expect(
+          String(
+            renderError(
+              <FigmaView views={views} select={select(undefined)} slots={{}} component="Demo" />
+            )
           )
-        )
-      ).toContain('Demo has no captured view for size=undefined')
+        ).toContain('Demo has no captured view for size=undefined')
+      })
     })
   })
 
@@ -246,26 +286,30 @@ describe('FigmaView with a responsive axis', () => {
   })
 })
 
-describe('the generated NavBar without a viewport', () => {
-  it('should server-render one navigation per viewport, narrowest first, and hydrate it with no warning', async () => {
-    const result = await hydrate(<NavBar signedIn />)
-    const container = document.createElement('div')
-    container.innerHTML = result.serverMarkup
+describe('the generated NavBar', () => {
+  describe('when no viewport is given', () => {
+    it('should server-render one navigation per viewport, narrowest first, and hydrate it with no warning', async () => {
+      const result = await hydrate(<NavBar signedIn />)
+      const container = document.createElement('div')
+      container.innerHTML = result.serverMarkup
 
-    expect(
-      [...container.querySelectorAll('nav')].map((nav) =>
-        [...nav.classList].filter((name) => name.startsWith('responsive'))
-      )
-    ).toEqual([['responsiveMobile'], ['responsiveDesktop'], ['responsiveLargeDesktop']])
-    expect(result.errors).toEqual([])
-    expect(result.recoverable).toEqual([])
-    expect(result.clientMarkup).toBe(result.serverMarkup)
+      expect(
+        [...container.querySelectorAll('nav')].map((nav) =>
+          [...nav.classList].filter((name) => name.startsWith('responsive'))
+        )
+      ).toEqual([['responsiveMobile'], ['responsiveDesktop'], ['responsiveLargeDesktop']])
+      expect(result.errors).toEqual([])
+      expect(result.recoverable).toEqual([])
+      expect(result.clientMarkup).toBe(result.serverMarkup)
+    })
   })
 
-  it('should render the single captured view when the viewport is given', () => {
-    const { container } = render(<NavBar viewport="desktop" signedIn />)
+  describe('when the viewport is given', () => {
+    it('should render the single captured view without responsive classes', () => {
+      const { container } = render(<NavBar viewport="desktop" signedIn />)
 
-    expect(container.querySelectorAll('nav')).toHaveLength(1)
-    expect(container.innerHTML).not.toContain('responsive')
+      expect(container.querySelectorAll('nav')).toHaveLength(1)
+      expect(container.innerHTML).not.toContain('responsive')
+    })
   })
 })

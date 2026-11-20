@@ -1,7 +1,8 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setSplitPayment } from "@shop/payment/present";
 
 import { manaFromWhole, usdCents, type ManaWei, type UsdCents } from "@shop/model/money";
 import type { PurchaseOffer } from "@shop/model/purchase";
@@ -52,6 +53,15 @@ function show(
   );
   return { onBuy, onAddToCart, onRetry };
 }
+
+
+// The split (Credits and MANA together) is off in this deployment (present's SPLIT_PAYMENT): these tests cover it as it
+// runs once it is offered.
+let undoSplit: () => void = () => {};
+beforeEach(() => {
+  undoSplit = setSplitPayment(true);
+});
+afterEach(() => undoSplit());
 
 describe("an eligible primary wearable (a store mint)", () => {
   it("web3: credits first and selected, MANA second in exact units, buy with credits", () => {

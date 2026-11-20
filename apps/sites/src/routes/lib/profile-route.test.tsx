@@ -70,7 +70,7 @@ const { stub } = vi.hoisted(() => ({
 vi.mock("@ui/web/pages/StProfileOverviewTab", () => stub("overview"));
 
 import { CatalystError } from "@/data/lib/catalyst/client";
-import { mapProfile } from "@/data/lib/catalyst/social/profile";
+import { mapProfile, type ProfileVM } from "@/data/lib/catalyst/social/profile";
 import { profileKeys, profileQuery } from "@/data/lib/profile/queries";
 
 import type { ProfileLoaderData } from "./profile-loader.server";
@@ -78,9 +78,13 @@ import { ProfileErrorBoundary, ProfileRoute, profileClientLoader } from "./profi
 
 const A = "0x4e9c4a2502fdf71e93ed8ed6ca9ddbd891d6f295";
 const avatar = (name: string) => ({ name, hasClaimedName: true, description: "", avatar: { snapshots: { face256: "" } } });
-const identity = { signer: A, ephemeral: { address: "0xeph", privateKey: "0xdeadbeef" }, expiration: "2999-01-01T00:00:00.000Z", authChain: [] };
+const B = "0x1111111111111111111111111111111111111111";
+const identityFixture = () => ({ signer: A, ephemeral: { address: "0xeph", privateKey: "0xdeadbeef" }, expiration: "2999-01-01T00:00:00.000Z", authChain: [] });
+const unreachable = () => new CatalystError("Catalyst unreachable", "/lambdas/profile", 0);
 
 let client: QueryClient;
+let identity: ReturnType<typeof identityFixture>;
+let router: ReturnType<typeof createMemoryRouter>;
 
 function Other() {
   const navigate = useNavigate();
@@ -161,6 +165,7 @@ async function unavailable() {
 
 beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } });
+  identity = identityFixture();
   auth.state = { isConnected: false, address: null, identity: null };
 });
 afterEach(() => {
@@ -170,359 +175,536 @@ afterEach(() => {
 });
 
 describe("profile route, first hydration", () => {
-  it("renders the server's profile without asking for it again", async () => {
+  beforeEach(() => {
     mountDocument(`/profile/${A}`, serverState("Alice"));
-
-    expect(await screen.findByRole("heading", { name: "Alice" })).toBeTruthy();
-    expect(net.fetchProfile).not.toHaveBeenCalled();
-    expect(client.getQueryData(profileKeys.profile(A))).toMatchObject({ name: "Alice" });
   });
 
-  it("keeps the profile on screen when a background re-read fails", async () => {
-    mountDocument(`/profile/${A}`, serverState("Alice"));
-    await screen.findByRole("heading", { name: "Alice" });
-    net.fetchProfile.mockRejectedValue(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0));
-
-    await act(async () => {
-      await client.refetchQueries({ queryKey: profileKeys.profile(A) });
+  describe("when the server hands over the profile", () => {
+    it("should render it", async () => {
+      expect(await screen.findByRole("heading", { name: "Alice" })).toBeTruthy();
     });
 
-    expect(screen.getByRole("heading", { name: "Alice" })).toBeTruthy();
-    expect(screen.queryByRole("alert")).toBeNull();
+    it("should not ask for it again", async () => {
+      await screen.findByRole("heading", { name: "Alice" });
+      expect(net.fetchProfile).not.toHaveBeenCalled();
+    });
+
+    it("should seed the browser cache with it", async () => {
+      await screen.findByRole("heading", { name: "Alice" });
+      expect(client.getQueryData(profileKeys.profile(A))).toMatchObject({ name: "Alice" });
+    });
+  });
+
+  describe("when a background re-read fails", () => {
+    beforeEach(async () => {
+      await screen.findByRole("heading", { name: "Alice" });
+      net.fetchProfile.mockRejectedValue(unreachable());
+
+      await act(async () => {
+        await client.refetchQueries({ queryKey: profileKeys.profile(A) });
+      });
+    });
+
+    it("should keep the profile on screen", () => {
+      expect(screen.getByRole("heading", { name: "Alice" })).toBeTruthy();
+    });
+
+    it("should show no error", () => {
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
   });
 });
 
 describe("profile route, client navigation", () => {
-  it("keeps a newer healthy public profile when the previous error boundary leaves", async () => {
-    net.fetchProfile.mockRejectedValueOnce(
-      new CatalystError("Catalyst unreachable", "/lambdas/profile", 0),
-    );
-    const router = mount(`/profile/${A}`);
-    await unavailable();
-    const fresh = mapProfile(avatar("Recovered") as never, A);
-    act(() => client.setQueryData(profileKeys.profile(A), fresh));
-    await act(async () => {
-      await router.navigate("/other");
-    });
-    expect(client.getQueryData(profileKeys.profile(A))).toEqual(fresh);
-    await act(async () => {
-      await router.navigate(`/profile/${A}`);
-    });
-    expect(await screen.findByRole("heading", { name: "Recovered" })).toBeTruthy();
-    expect(net.fetchProfile).toHaveBeenCalledTimes(1);
+  let fresh: ReturnType<typeof mapProfile>;
+
+  beforeEach(() => {
+    fresh = mapProfile(avatar("Recovered") as never, A);
   });
 
-  it("keeps usable cached data after a newer background read fails", async () => {
-    net.fetchProfile.mockRejectedValue(
-      new CatalystError("Catalyst unreachable", "/lambdas/profile", 0),
-    );
-    const router = mount(`/profile/${A}`);
-    await unavailable();
-    const fresh = mapProfile(avatar("Recovered") as never, A);
-    act(() => client.setQueryData(profileKeys.profile(A), fresh));
-    await expect(
-      client.fetchQuery({ ...profileQuery(A), staleTime: 0 }),
-    ).rejects.toBeInstanceOf(CatalystError);
-    await act(async () => {
-      await router.navigate("/other");
+  describe("when the previous error boundary leaves and a newer healthy public profile is cached", () => {
+    beforeEach(async () => {
+      net.fetchProfile.mockRejectedValueOnce(unreachable());
+      router = mount(`/profile/${A}`);
+      await unavailable();
+      act(() => client.setQueryData(profileKeys.profile(A), fresh));
     });
-    expect(client.getQueryData(profileKeys.profile(A))).toEqual(fresh);
+
+    it("should keep the newer profile and render it on return without reading again", async () => {
+      await act(async () => {
+        await router.navigate("/other");
+      });
+      expect(client.getQueryData(profileKeys.profile(A))).toEqual(fresh);
+      await act(async () => {
+        await router.navigate(`/profile/${A}`);
+      });
+      expect(await screen.findByRole("heading", { name: "Recovered" })).toBeTruthy();
+      expect(net.fetchProfile).toHaveBeenCalledTimes(1);
+    });
   });
 
-  it("does not cancel a newer in-flight public profile read when the old boundary leaves", async () => {
-    let finish!: (value: ReturnType<typeof avatar>) => void;
+  describe("when a newer background read fails after usable data was cached", () => {
+    beforeEach(async () => {
+      net.fetchProfile.mockRejectedValue(unreachable());
+      router = mount(`/profile/${A}`);
+      await unavailable();
+      act(() => client.setQueryData(profileKeys.profile(A), fresh));
+    });
+
+    it("should reject the read and keep the cached data after leaving", async () => {
+      await expect(
+        client.fetchQuery({ ...profileQuery(A), staleTime: 0 }),
+      ).rejects.toBeInstanceOf(CatalystError);
+      await act(async () => {
+        await router.navigate("/other");
+      });
+      expect(client.getQueryData(profileKeys.profile(A))).toEqual(fresh);
+    });
+  });
+
+  describe("when the old boundary leaves while a newer public profile read is in flight", () => {
+    let finish: (value: ReturnType<typeof avatar>) => void;
     let signal: AbortSignal | undefined;
-    const response = new Promise<ReturnType<typeof avatar>>((resolve) => {
-      finish = resolve;
-    });
-    net.fetchProfile
-      .mockRejectedValueOnce(
-        new CatalystError("Catalyst unreachable", "/lambdas/profile", 0),
-      )
-      .mockImplementationOnce((_address, options: { signal: AbortSignal }) => {
-        signal = options.signal;
-        return response;
+    let read: Promise<{ ok: boolean; value?: unknown; error?: unknown }>;
+
+    beforeEach(async () => {
+      signal = undefined;
+      const response = new Promise<ReturnType<typeof avatar>>((resolve) => {
+        finish = resolve;
       });
-    const router = mount(`/profile/${A}`);
-    await unavailable();
-    const read = client.fetchQuery(profileQuery(A)).then(
-      (value) => ({ ok: true, value }),
-      (error: unknown) => ({ ok: false, error }),
-    );
-    try {
-      await act(async () => {
-        await router.navigate("/other");
-      });
-      expect(signal?.aborted).toBe(false);
-    } finally {
-      finish(avatar("Recovered"));
-    }
-    expect(await read).toMatchObject({
-      ok: true,
-      value: { name: "Recovered" },
+      net.fetchProfile
+        .mockRejectedValueOnce(unreachable())
+        .mockImplementationOnce((_address, options: { signal: AbortSignal }) => {
+          signal = options.signal;
+          return response;
+        });
+      router = mount(`/profile/${A}`);
+      await unavailable();
+      read = client.fetchQuery(profileQuery(A)).then(
+        (value) => ({ ok: true, value }),
+        (error: unknown) => ({ ok: false, error }),
+      );
     });
-    expect(net.fetchProfile).toHaveBeenCalledTimes(2);
+
+    it("should not cancel the read, which then resolves", async () => {
+      try {
+        await act(async () => {
+          await router.navigate("/other");
+        });
+        expect(signal?.aborted).toBe(false);
+      } finally {
+        finish(avatar("Recovered"));
+      }
+      expect(await read).toMatchObject({
+        ok: true,
+        value: { name: "Recovered" },
+      });
+      expect(net.fetchProfile).toHaveBeenCalledTimes(2);
+    });
   });
 
-  it("leaves a failed public profile owned by another active observer intact", async () => {
-    const failure = new CatalystError(
-      "Catalyst unreachable",
-      "/lambdas/profile",
-      0,
-    );
-    net.fetchProfile.mockRejectedValue(failure);
-    const router = mount(`/profile/${A}`);
-    await unavailable();
-    const observer = new QueryObserver(client, {
-      ...profileQuery(A),
-      retryOnMount: false,
-    });
-    const unsubscribe = observer.subscribe(() => {});
-    try {
+  describe("when another active observer owns a failed public profile", () => {
+    let failure: CatalystError;
+    let observer: QueryObserver<ProfileVM | null, Error, ProfileVM | null, ProfileVM | null, ReturnType<typeof profileKeys.profile>>;
+    let unsubscribe: () => void;
+
+    beforeEach(async () => {
+      failure = unreachable();
+      net.fetchProfile.mockRejectedValue(failure);
+      router = mount(`/profile/${A}`);
+      await unavailable();
+      observer = new QueryObserver(client, {
+        ...profileQuery(A),
+        retryOnMount: false,
+      });
+      unsubscribe = observer.subscribe(() => {});
       await act(async () => {
         await router.navigate("/other");
       });
+    });
+
+    afterEach(() => {
+      unsubscribe();
+    });
+
+    it("should leave the observer's error intact", () => {
       expect(observer.getCurrentResult().isError).toBe(true);
       expect(client.getQueryState(profileKeys.profile(A))?.error).toBe(failure);
+    });
+
+    it("should not read again", () => {
       expect(net.fetchProfile).toHaveBeenCalledTimes(1);
-    } finally {
-      unsubscribe();
-    }
+    });
   });
 
-  it("uses a newer healthy profile when Retry leaves the old error boundary", async () => {
-    net.fetchProfile.mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0));
-    mount(`/profile/${A}`);
-    await unavailable();
-    const fresh = mapProfile(avatar("Recovered") as never, A);
-    act(() => client.setQueryData(profileKeys.profile(A), fresh));
+  describe("when Retry leaves the old error boundary and a newer healthy profile is cached", () => {
+    beforeEach(async () => {
+      net.fetchProfile.mockRejectedValueOnce(unreachable());
+      mount(`/profile/${A}`);
+      await unavailable();
+      act(() => client.setQueryData(profileKeys.profile(A), fresh));
 
-    await act(async () => {
-      screen.getByRole("button", { name: "Try again" }).click();
+      await act(async () => {
+        screen.getByRole("button", { name: "Try again" }).click();
+      });
     });
 
-    expect(await screen.findByRole("heading", { name: "Recovered" })).toBeTruthy();
-    expect(net.fetchProfile).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps repeated failed retries to one new read per attempt", async () => {
-    net.fetchProfile
-      .mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0))
-      .mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0))
-      .mockResolvedValueOnce(avatar("Recovered"));
-    const router = mount(`/profile/${A}`);
-    await unavailable();
-
-    await act(async () => {
-      screen.getByRole("button", { name: "Try again" }).click();
+    it("should use the newer profile", async () => {
+      expect(await screen.findByRole("heading", { name: "Recovered" })).toBeTruthy();
     });
-    await waitFor(() => expect(client.getQueryState(profileKeys.profile(A))?.status).toBe("error"));
-    expect(router.state.navigation.state).toBe("idle");
-    expect(net.fetchProfile).toHaveBeenCalledTimes(2);
-    expect(await unavailable()).toBeTruthy();
 
-    await act(async () => {
-      screen.getByRole("button", { name: "Try again" }).click();
+    it("should not read again", async () => {
+      await screen.findByRole("heading", { name: "Recovered" });
+      expect(net.fetchProfile).toHaveBeenCalledTimes(1);
     });
-    expect(await screen.findByRole("heading", { name: "Recovered" })).toBeTruthy();
-    expect(net.fetchProfile).toHaveBeenCalledTimes(3);
   });
 
-  it("receives no server data and reads the profile through the browser client", async () => {
-    net.fetchProfile.mockResolvedValue(avatar("Alice"));
-
-    mount(`/profile/${A}`);
-
-    expect(await screen.findByRole("heading", { name: "Alice" })).toBeTruthy();
-    expect(net.fetchProfile).toHaveBeenCalledTimes(1);
-  });
-
-  it("shows the unavailable screen when the profile cannot be read, and Retry reads it again", async () => {
-    net.fetchProfile.mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0)).mockResolvedValueOnce(avatar("Alice"));
-
-    mount(`/profile/${A}`);
-
-    expect(await unavailable()).toBeTruthy();
-    await act(async () => {
-      screen.getByRole("button", { name: "Try again" }).click();
+  describe("when Retry fails repeatedly", () => {
+    beforeEach(async () => {
+      net.fetchProfile
+        .mockRejectedValueOnce(unreachable())
+        .mockRejectedValueOnce(unreachable())
+        .mockResolvedValueOnce(avatar("Recovered"));
+      router = mount(`/profile/${A}`);
+      await unavailable();
     });
-    // The retry is a navigation plus a fresh read; allow for a loaded test machine.
-    expect(await screen.findByRole("heading", { name: "Alice" }, { timeout: 3000 })).toBeTruthy();
-    expect(net.fetchProfile).toHaveBeenCalledTimes(2);
-  });
 
-  it("reads the profile afresh after leaving a failed profile and coming back", async () => {
-    net.fetchProfile.mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0)).mockResolvedValueOnce(avatar("Alice"));
-    const router = mount(`/profile/${A}`);
-    await unavailable();
+    it("should make one new read per attempt", async () => {
+      await act(async () => {
+        screen.getByRole("button", { name: "Try again" }).click();
+      });
+      await waitFor(() => expect(client.getQueryState(profileKeys.profile(A))?.status).toBe("error"));
+      expect(router.state.navigation.state).toBe("idle");
+      expect(net.fetchProfile).toHaveBeenCalledTimes(2);
+      expect(await unavailable()).toBeTruthy();
 
-    await act(async () => {
-      await router.navigate("/other");
+      await act(async () => {
+        screen.getByRole("button", { name: "Try again" }).click();
+      });
+      expect(await screen.findByRole("heading", { name: "Recovered" })).toBeTruthy();
+      expect(net.fetchProfile).toHaveBeenCalledTimes(3);
     });
-    expect(client.getQueryState(profileKeys.profile(A))).toMatchObject({
-      status: "pending",
-      error: null,
-      fetchStatus: "idle",
+  });
+
+  describe("when the profile is read on a client navigation", () => {
+    beforeEach(() => {
+      net.fetchProfile.mockResolvedValue(avatar("Alice"));
+
+      mount(`/profile/${A}`);
     });
-    screen.getByRole("button", { name: "back to profile" }).click();
 
-    expect(await screen.findByRole("heading", { name: "Alice" })).toBeTruthy();
-    expect(net.fetchProfile).toHaveBeenCalledTimes(2);
+    it("should render it from the browser client's read, with no server data", async () => {
+      expect(await screen.findByRole("heading", { name: "Alice" })).toBeTruthy();
+    });
+
+    it("should read it once", async () => {
+      await screen.findByRole("heading", { name: "Alice" });
+      expect(net.fetchProfile).toHaveBeenCalledTimes(1);
+    });
   });
 
-  it("hands a bug in the profile read to the root boundary, not the profile screen", async () => {
-    net.fetchProfile.mockRejectedValue(new TypeError("Cannot read properties of undefined (reading 'name')"));
+  describe("when the profile cannot be read", () => {
+    beforeEach(() => {
+      net.fetchProfile.mockRejectedValueOnce(unreachable()).mockResolvedValueOnce(avatar("Alice"));
+    });
 
-    mount(`/profile/${A}`);
+    describe("and the visitor stays on the profile", () => {
+      beforeEach(() => {
+        mount(`/profile/${A}`);
+      });
 
-    expect(await screen.findByRole("heading", { name: "Something went wrong" })).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: "Profile unavailable" })).toBeNull();
+      it("should show the unavailable screen", async () => {
+        expect(await unavailable()).toBeTruthy();
+      });
+
+      describe("and the visitor clicks Retry", () => {
+        beforeEach(async () => {
+          await unavailable();
+          await act(async () => {
+            screen.getByRole("button", { name: "Try again" }).click();
+          });
+        });
+
+        it("should read it again and render it", async () => {
+          // The retry is a navigation plus a fresh read; allow for a loaded test machine.
+          expect(await screen.findByRole("heading", { name: "Alice" }, { timeout: 3000 })).toBeTruthy();
+          expect(net.fetchProfile).toHaveBeenCalledTimes(2);
+        });
+      });
+    });
+
+    describe("and the visitor leaves", () => {
+      beforeEach(async () => {
+        router = mount(`/profile/${A}`);
+        await unavailable();
+
+        await act(async () => {
+          await router.navigate("/other");
+        });
+      });
+
+      it("should reset the failed read", () => {
+        expect(client.getQueryState(profileKeys.profile(A))).toMatchObject({
+          status: "pending",
+          error: null,
+          fetchStatus: "idle",
+        });
+      });
+
+      describe("and comes back", () => {
+        beforeEach(() => {
+          screen.getByRole("button", { name: "back to profile" }).click();
+        });
+
+        it("should read the profile afresh", async () => {
+          expect(await screen.findByRole("heading", { name: "Alice" })).toBeTruthy();
+          expect(net.fetchProfile).toHaveBeenCalledTimes(2);
+        });
+      });
+    });
   });
 
-  it("shows unavailable, not \"invalid address\", when the node answers 404 for a wallet", async () => {
-    net.fetchProfile.mockRejectedValue(new CatalystError("Catalyst returned 404", "/lambdas/profile", 404));
+  describe("when the profile read has a bug", () => {
+    beforeEach(() => {
+      net.fetchProfile.mockRejectedValue(new TypeError("Cannot read properties of undefined (reading 'name')"));
 
-    mount(`/profile/${A}`);
+      mount(`/profile/${A}`);
+    });
 
-    expect(await unavailable()).toBeTruthy();
+    it("should hand it to the root boundary", async () => {
+      expect(await screen.findByRole("heading", { name: "Something went wrong" })).toBeTruthy();
+    });
+
+    it("should not show the profile screen", async () => {
+      await screen.findByRole("heading", { name: "Something went wrong" });
+      expect(screen.queryByRole("heading", { name: "Profile unavailable" })).toBeNull();
+    });
   });
 
-  it("shows not found for an address that cannot be a wallet, without reading anything", async () => {
-    mount("/profile/not-a-wallet");
+  describe("when the node answers 404 for a wallet", () => {
+    beforeEach(() => {
+      net.fetchProfile.mockRejectedValue(new CatalystError("Catalyst returned 404", "/lambdas/profile", 404));
 
-    expect(await screen.findByRole("heading", { name: "Profile not found" })).toBeTruthy();
-    expect(net.fetchProfile).not.toHaveBeenCalled();
+      mount(`/profile/${A}`);
+    });
+
+    it("should show unavailable, not \"invalid address\"", async () => {
+      expect(await unavailable()).toBeTruthy();
+    });
   });
 
-  it("sends a member's hidden tab back to the profile root", async () => {
-    net.fetchProfile.mockResolvedValue(avatar("Alice"));
+  describe("when the address cannot be a wallet", () => {
+    beforeEach(() => {
+      mount("/profile/not-a-wallet");
+    });
 
-    const router = mount(`/profile/${A}/assets`);
+    it("should show not found", async () => {
+      expect(await screen.findByRole("heading", { name: "Profile not found" })).toBeTruthy();
+    });
 
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/profile/${A}`));
+    it("should not read anything", async () => {
+      await screen.findByRole("heading", { name: "Profile not found" });
+      expect(net.fetchProfile).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("when a member's hidden tab is opened", () => {
+    beforeEach(() => {
+      net.fetchProfile.mockResolvedValue(avatar("Alice"));
+
+      router = mount(`/profile/${A}/assets`);
+    });
+
+    it("should send it back to the profile root", async () => {
+      await waitFor(() => expect(router.state.location.pathname).toBe(`/profile/${A}`));
+    });
   });
 });
 
 describe("profile route, places", () => {
-  it("keeps the owner's empty state when a background profile re-read fails", async () => {
-    auth.state = { isConnected: true, address: A, identity };
-    net.fetchProfile.mockResolvedValueOnce(avatar("Alice")).mockRejectedValueOnce(new CatalystError("down", "/lambdas", 503));
-    net.fetchProfilePlaces.mockResolvedValue({ places: [], total: 0 });
-    mount(`/profile/${A}/places`);
-    expect(await screen.findByText("Nothing here yet, but that's easy to change", { selector: "p" })).toBeTruthy();
+  describe("when the owner's places are empty and a background profile re-read fails", () => {
+    beforeEach(async () => {
+      auth.state = { isConnected: true, address: A, identity };
+      net.fetchProfile.mockResolvedValueOnce(avatar("Alice")).mockRejectedValueOnce(new CatalystError("down", "/lambdas", 503));
+      net.fetchProfilePlaces.mockResolvedValue({ places: [], total: 0 });
+      mount(`/profile/${A}/places`);
+      expect(await screen.findByText("Nothing here yet, but that's easy to change", { selector: "p" })).toBeTruthy();
 
-    await act(async () => {
-      await client.refetchQueries({ queryKey: profileKeys.profile(A) });
-      // Query observers notify on the next tick; let the page render the failed re-read.
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await act(async () => {
+        await client.refetchQueries({ queryKey: profileKeys.profile(A) });
+        // Query observers notify on the next tick; let the page render the failed re-read.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
     });
 
-    expect(client.getQueryState(profileKeys.profile(A))?.status).toBe("error");
-    expect(screen.getByText("Nothing here yet, but that's easy to change", { selector: "p" })).toBeTruthy();
-    expect(screen.queryByText("Loading places")).toBeNull();
+    it("should record the failed re-read", () => {
+      expect(client.getQueryState(profileKeys.profile(A))?.status).toBe("error");
+    });
+
+    it("should keep the owner's empty state", () => {
+      expect(screen.getByText("Nothing here yet, but that's easy to change", { selector: "p" })).toBeTruthy();
+      expect(screen.queryByText("Loading places")).toBeNull();
+    });
   });
 });
 
 describe("profile route, creations and assets", () => {
-  const hat = { id: "c-0", contractAddress: "0xabc", itemId: "0", name: "Billyjuice", network: "polygon", payment: { kind: "none" }, traits: { bodyShapes: [], isSmart: false } };
+  let hat: { id: string; contractAddress: string; itemId: string; name: string; network: string; payment: { kind: string }; traits: { bodyShapes: never[]; isSmart: boolean } };
 
-  it("shows a member's creations under their own tab", async () => {
-    net.fetchProfile.mockResolvedValue(avatar("Alice"));
-    net.fetchProfileCreations.mockResolvedValue({ items: [hat], received: 1, total: 1 });
-
-    mount(`/profile/${A}/creations`);
-
-    expect((await screen.findByRole("link", { name: "Billyjuice" })).getAttribute("href")).toBe("/shop/item/0xabc/0");
-    expect(screen.getByText("Alice", { selector: "article *" })).toBeTruthy();
+  beforeEach(() => {
+    hat = { id: "c-0", contractAddress: "0xabc", itemId: "0", name: "Billyjuice", network: "polygon", payment: { kind: "none" }, traits: { bodyShapes: [], isSmart: false } };
   });
 
-  it("opens another profile's creations on the default category", async () => {
-    const B = "0x1111111111111111111111111111111111111111";
-    net.fetchProfile.mockResolvedValue(avatar("Alice"));
-    net.fetchProfileCreations.mockResolvedValue({ items: [hat], received: 1, total: 1 });
-    const router = mount(`/profile/${A}/creations`);
-    await screen.findByRole("link", { name: "Billyjuice" });
-    await act(async () => screen.getByRole("tab", { name: "Emotes" }).click());
-    expect(screen.getByRole("tab", { name: "Emotes" }).getAttribute("aria-selected")).toBe("true");
+  describe("when a member's creations are opened", () => {
+    beforeEach(() => {
+      net.fetchProfile.mockResolvedValue(avatar("Alice"));
+      net.fetchProfileCreations.mockResolvedValue({ items: [hat], received: 1, total: 1 });
 
-    await act(async () => router.navigate(`/profile/${B}/creations`));
+      router = mount(`/profile/${A}/creations`);
+    });
 
-    await waitFor(() => expect(screen.getByRole("tab", { name: "Wearables" }).getAttribute("aria-selected")).toBe("true"));
-    expect(net.fetchProfileCreations).toHaveBeenLastCalledWith(B, expect.objectContaining({ category: "wearable" }), expect.anything());
+    it("should link each creation to its shop item", async () => {
+      expect((await screen.findByRole("link", { name: "Billyjuice" })).getAttribute("href")).toBe("/shop/item/0xabc/0");
+    });
+
+    it("should show them under the member's own tab", async () => {
+      await screen.findByRole("link", { name: "Billyjuice" });
+      expect(screen.getByText("Alice", { selector: "article *" })).toBeTruthy();
+    });
+
+    describe("and the visitor picks a category and then opens another profile's creations", () => {
+      beforeEach(async () => {
+        await screen.findByRole("link", { name: "Billyjuice" });
+        await act(async () => screen.getByRole("tab", { name: "Emotes" }).click());
+      });
+
+      it("should open the other profile on the default category", async () => {
+        expect(screen.getByRole("tab", { name: "Emotes" }).getAttribute("aria-selected")).toBe("true");
+
+        await act(async () => router.navigate(`/profile/${B}/creations`));
+
+        await waitFor(() => expect(screen.getByRole("tab", { name: "Wearables" }).getAttribute("aria-selected")).toBe("true"));
+        expect(net.fetchProfileCreations).toHaveBeenLastCalledWith(B, expect.objectContaining({ category: "wearable" }), expect.anything());
+      });
+    });
   });
 
-  it("shows the owner's assets on their own profile", async () => {
-    auth.state = { isConnected: true, address: A, identity };
-    net.fetchProfile.mockResolvedValue(avatar("Alice"));
-    net.fetchProfileAssets.mockResolvedValue({ items: [{ ...hat, id: "t-1", tokenId: "7", category: "wearable" }], received: 1, total: 1 });
+  describe("when the owner opens their own assets", () => {
+    beforeEach(() => {
+      auth.state = { isConnected: true, address: A, identity };
+      net.fetchProfile.mockResolvedValue(avatar("Alice"));
+      net.fetchProfileAssets.mockResolvedValue({ items: [{ ...hat, id: "t-1", tokenId: "7", category: "wearable" }], received: 1, total: 1 });
 
-    mount(`/profile/${A}/assets`);
+      mount(`/profile/${A}/assets`);
+    });
 
-    expect((await screen.findByRole("link", { name: "Billyjuice" })).getAttribute("href")).toBe("/shop/token/0xabc/7");
-    expect(screen.getByText("1 asset")).toBeTruthy();
+    it("should link each asset to its shop token", async () => {
+      expect((await screen.findByRole("link", { name: "Billyjuice" })).getAttribute("href")).toBe("/shop/token/0xabc/7");
+    });
+
+    it("should count the assets", async () => {
+      await screen.findByRole("link", { name: "Billyjuice" });
+      expect(screen.getByText("1 asset")).toBeTruthy();
+    });
   });
 });
 
 describe("profile route, photos", () => {
-  const shot = {
-    id: "p-1",
-    url: "https://reel.example/p-1.jpg",
-    thumbnailUrl: "https://reel.example/p-1-thumbnail.jpg",
-    isPublic: true,
-    dateTime: "",
-    realm: "main",
-    scene: { name: "Genesis Plaza", x: "0", y: "1" },
-    author: { name: "Alice", address: A },
-    people: [],
-  };
+  describe("when a member's photos are opened with a link naming one", () => {
+    beforeEach(() => {
+      const shot = {
+        id: "p-1",
+        url: "https://reel.example/p-1.jpg",
+        thumbnailUrl: "https://reel.example/p-1-thumbnail.jpg",
+        isPublic: true,
+        dateTime: "",
+        realm: "main",
+        scene: { name: "Genesis Plaza", x: "0", y: "1" },
+        author: { name: "Alice", address: A },
+        people: [],
+      };
+      net.fetchProfile.mockResolvedValue(avatar("Alice"));
+      net.fetchUserPhotos.mockResolvedValue({ items: [shot], received: 1, total: 1 });
 
-  it("shows a member's photos and opens the one the link names", async () => {
-    net.fetchProfile.mockResolvedValue(avatar("Alice"));
-    net.fetchUserPhotos.mockResolvedValue({ items: [shot], received: 1, total: 1 });
+      mount(`/profile/${A}/photos?photo=p-1`);
+    });
 
-    mount(`/profile/${A}/photos?photo=p-1`);
+    it("should open the named photo", async () => {
+      expect(await screen.findByRole("dialog", { name: "Photo at Genesis Plaza, 1 of 1" })).toBeTruthy();
+    });
 
-    expect(await screen.findByRole("dialog", { name: "Photo at Genesis Plaza, 1 of 1" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Photo at Genesis Plaza" })).toBeTruthy();
-    expect(screen.getByText("1 photo")).toBeTruthy();
+    it("should show the member's photos", async () => {
+      await screen.findByRole("dialog", { name: "Photo at Genesis Plaza, 1 of 1" });
+      expect(screen.getByRole("button", { name: "Photo at Genesis Plaza" })).toBeTruthy();
+      expect(screen.getByText("1 photo")).toBeTruthy();
+    });
   });
 });
 
 describe("profile route, communities", () => {
-  it("reports a failed read of the member's own communities once", async () => {
-    auth.state = { isConnected: true, address: A, identity };
-    net.fetchProfile.mockResolvedValue(avatar("Alice"));
-    net.fetchMyCommunities.mockRejectedValue(new Error("500"));
+  describe("when the read of the member's own communities fails", () => {
+    beforeEach(async () => {
+      auth.state = { isConnected: true, address: A, identity };
+      net.fetchProfile.mockResolvedValue(avatar("Alice"));
+      net.fetchMyCommunities.mockRejectedValue(new Error("500"));
 
-    mount(`/profile/${A}/communities`);
+      mount(`/profile/${A}/communities`);
 
-    await waitFor(() =>
-      expect(net.track).toHaveBeenCalledWith("profile_communities_load_failed", { address: A }, expect.anything()),
-    );
-    act(() => {
-      focusManager.setFocused(false);
-      focusManager.setFocused(true);
+      await waitFor(() =>
+        expect(net.track).toHaveBeenCalledWith("profile_communities_load_failed", { address: A }, expect.anything()),
+      );
     });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    focusManager.setFocused(undefined);
-    expect(net.track.mock.calls.filter(([event]) => event === "profile_communities_load_failed")).toHaveLength(1);
-    expect(net.fetchMyCommunities).toHaveBeenCalledTimes(1);
+
+    describe("and the window regains focus", () => {
+      beforeEach(async () => {
+        act(() => {
+          focusManager.setFocused(false);
+          focusManager.setFocused(true);
+        });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        focusManager.setFocused(undefined);
+      });
+
+      it("should report the failure once", () => {
+        expect(net.track.mock.calls.filter(([event]) => event === "profile_communities_load_failed")).toHaveLength(1);
+      });
+
+      it("should not read again", () => {
+        expect(net.fetchMyCommunities).toHaveBeenCalledTimes(1);
+      });
+    });
   });
 
-  it("lists another member's public communities in the profile's frame, unsigned", async () => {
-    auth.state = { isConnected: true, address: "0x1111111111111111111111111111111111111111", identity };
-    net.fetchProfile.mockResolvedValue(avatar("Alice"));
-    net.fetchMemberCommunities.mockResolvedValue({
-      communities: [{ id: "c1", name: "Builders", role: "owner", membersCount: null, privacy: null, thumbnailUrl: null }],
-      total: 1,
+  describe("when another member's communities are opened", () => {
+    beforeEach(() => {
+      auth.state = { isConnected: true, address: B, identity };
+      net.fetchProfile.mockResolvedValue(avatar("Alice"));
+      net.fetchMemberCommunities.mockResolvedValue({
+        communities: [{ id: "c1", name: "Builders", role: "owner", membersCount: null, privacy: null, thumbnailUrl: null }],
+        total: 1,
+      });
+
+      mount(`/profile/${A}/communities`);
     });
 
-    mount(`/profile/${A}/communities`);
+    it("should list their public communities", async () => {
+      expect((await screen.findByRole("link", { name: /Builders/ })).getAttribute("href")).toBe("/social/communities/c1");
+    });
 
-    expect((await screen.findByRole("link", { name: /Builders/ })).getAttribute("href")).toBe("/social/communities/c1");
-    expect(screen.getByRole("tab", { name: "Communities" }).getAttribute("aria-selected")).toBe("true");
-    expect(net.fetchMemberCommunities).toHaveBeenCalledWith(A, expect.anything());
-    expect(net.fetchMyCommunities).not.toHaveBeenCalled();
-    expect(net.track.mock.calls.some(([event]) => event === "profile_communities_load_failed")).toBe(false);
+    it("should list them in the profile's frame", async () => {
+      await screen.findByRole("link", { name: /Builders/ });
+      expect(screen.getByRole("tab", { name: "Communities" }).getAttribute("aria-selected")).toBe("true");
+    });
+
+    it("should read them unsigned", async () => {
+      await screen.findByRole("link", { name: /Builders/ });
+      expect(net.fetchMemberCommunities).toHaveBeenCalledWith(A, expect.anything());
+      expect(net.fetchMyCommunities).not.toHaveBeenCalled();
+    });
+
+    it("should report no failure", async () => {
+      await screen.findByRole("link", { name: /Builders/ });
+      expect(net.track.mock.calls.some(([event]) => event === "profile_communities_load_failed")).toBe(false);
+    });
   });
 });

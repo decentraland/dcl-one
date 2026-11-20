@@ -392,6 +392,7 @@ async fn node_on_pool(settings: Settings, pool: PgPool) -> Node {
         onboarding: Arc::new(onboarding::OnboardingState::new(pool)),
         registry_denylist: Default::default(),
         eip1654: std::sync::OnceLock::new(),
+        contract_checks: Default::default(),
     });
     Node { state, _tmp: tmp }
 }

@@ -26,6 +26,12 @@
   height: 72%;
   object-fit: contain;
 }
+.shop-preview__thumb--cover {
+  position: absolute;
+  top: 14%;
+  left: 14%;
+  z-index: 1;
+}
 .shop-preview__loading,
 .shop-preview__note {
   position: absolute;

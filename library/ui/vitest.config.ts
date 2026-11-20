@@ -44,7 +44,8 @@ export default defineConfig({
             'apps/sites/**/*.test.{ts,tsx}',
             'foundations/**/*.test.ts',
             'test/**/*.test.{ts,tsx}',
-            'figma/review/test/**/*.dom.test.tsx'
+            'figma/review/test/**/*.dom.test.tsx',
+            'gallery/test/**/*.test.{ts,tsx}'
           ],
           // Build contracts run only in the consumer project, avoiding duplicate concurrent builds.
           exclude: ['test/**/*.build.test.ts', 'test/consumer/**'],

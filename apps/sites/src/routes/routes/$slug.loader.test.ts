@@ -1,5 +1,5 @@
 import { RouterContextProvider } from "react-router";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { requestSessionContext } from "@/core/lib/telemetry/session";
 import { LEGAL_DOCS, type LegalDocument, type LegalKey } from "@/data/legal";
@@ -29,23 +29,32 @@ const setCookies = (result: Wrapped) =>
   new Headers(result.init?.headers).getSetCookie();
 
 describe("when resolving canonical legal routes", () => {
-  it.each(Object.values(LEGAL_DOCS))(
-    "should load $slug and its pinned page title",
-    async (doc) => {
+  describe.each(Object.values(LEGAL_DOCS))("and the slug is $slug", (doc) => {
+    let result: Wrapped;
+
+    beforeEach(async () => {
       const context = new RouterContextProvider();
       context.set(requestSessionContext, {
         sid: "legal-test",
         created: true,
       });
 
-      const result = (await loader(args(doc.slug, context))) as unknown as Wrapped;
+      result = (await loader(args(doc.slug, context))) as unknown as Wrapped;
+    });
 
+    it("should load the document with the request's session", () => {
       expect(result.data).toEqual({
         doc: doc.key,
         legal: doc,
         sid: "legal-test",
       });
+    });
+
+    it("should set no cookie", () => {
       expect(setCookies(result)).toEqual([]);
+    });
+
+    it("should give the page its pinned title, description and canonical link", () => {
       expect(
         meta({ loaderData: result.data } as unknown as Route.MetaArgs),
       ).toEqual([
@@ -56,82 +65,121 @@ describe("when resolving canonical legal routes", () => {
         },
         { tagName: "link", rel: "canonical", href: `/${doc.slug}` },
       ]);
-    },
-  );
+    });
+  });
 
-  it.each([
+  describe.each([
     ["rewards", "/rewards-terms"],
     ["referral", "/referral-terms"],
     ["content-policy", "/content"],
-  ])("should point the alias %s at its canonical path", async (slug, href) => {
-    const result = (await loader(args(slug))) as unknown as Wrapped;
+  ])("and the slug is the alias %s", (slug, href) => {
+    let result: Wrapped;
 
-    expect(
-      meta({ loaderData: result.data } as unknown as Route.MetaArgs),
-    ).toContainEqual({ tagName: "link", rel: "canonical", href });
-  });
+    beforeEach(async () => {
+      result = (await loader(args(slug))) as unknown as Wrapped;
+    });
 
-  it("should describe the legal section when there is no document", () => {
-    expect(
-      meta({ loaderData: undefined } as unknown as Route.MetaArgs),
-    ).toEqual([
-      { title: "Legal | Decentraland" },
-      {
-        name: "description",
-        content: "Decentraland policies and legal documents.",
-      },
-    ]);
-  });
-
-  it("should not claim /creator-fund, the program's own landing page", async () => {
-    await expect(loader(args("creator-fund"))).rejects.toMatchObject({
-      status: 404,
+    it(`should point the canonical link at ${href}`, () => {
+      expect(
+        meta({ loaderData: result.data } as unknown as Route.MetaArgs),
+      ).toContainEqual({ tagName: "link", rel: "canonical", href });
     });
   });
 
-  it("should leave /credits to the Credits API", async () => {
-    await expect(loader(args("credits"))).rejects.toMatchObject({
-      status: 404,
+  describe("and there is no document", () => {
+    it("should describe the legal section", () => {
+      expect(
+        meta({ loaderData: undefined } as unknown as Route.MetaArgs),
+      ).toEqual([
+        { title: "Legal | Decentraland" },
+        {
+          name: "description",
+          content: "Decentraland policies and legal documents.",
+        },
+      ]);
     });
   });
 
-  it.each(["missing", "__proto__", "constructor"])(
-    "should return 404 for %s",
-    async (slug) => {
-      await expect(loader(args(slug))).rejects.toMatchObject({ status: 404 });
+  describe("and the slug is creator-fund", () => {
+    it("should not claim the program's own landing page and answer 404", async () => {
+      await expect(loader(args("creator-fund"))).rejects.toMatchObject({
+        status: 404,
+      });
+    });
+  });
+
+  describe("and the slug is credits", () => {
+    it("should leave it to the Credits API and answer 404", async () => {
+      await expect(loader(args("credits"))).rejects.toMatchObject({
+        status: 404,
+      });
+    });
+  });
+
+  describe.each(["missing", "__proto__", "constructor"])(
+    "and the slug is %s",
+    (slug) => {
+      it("should return 404", async () => {
+        await expect(loader(args(slug))).rejects.toMatchObject({ status: 404 });
+      });
     },
   );
 
-  it("should retain the seasons redirect", async () => {
-    try {
-      await loader(args("seasons"));
-      throw new Error("Expected the seasons route to redirect");
-    } catch (response) {
+  describe("and the slug is seasons", () => {
+    let response: unknown;
+
+    beforeEach(async () => {
+      response = await loader(args("seasons")).then(
+        () => new Error("Expected the seasons route to redirect"),
+        (thrown: unknown) => thrown,
+      );
+    });
+
+    it("should retain the redirect", () => {
       expect(response).toMatchObject({ status: 302 });
+    });
+
+    it("should redirect to the credits shop", () => {
       expect((response as Response).headers.get("location")).toBe(
         "/shop/credits",
       );
-    }
+    });
   });
 });
 
 describe("when loading a legal page session", () => {
-  it("should mint and return one sid cookie when the request has no sid", async () => {
-    const result = (await loader(args("terms"))) as unknown as Wrapped;
+  let result: Wrapped;
 
-    expect(result.data.sid).toMatch(/.+/);
-    expect(setCookies(result)).toHaveLength(1);
-    expect(setCookies(result)[0]).toContain(
-      `sid=${encodeURIComponent(result.data.sid)}`,
-    );
+  describe("and the request has no sid", () => {
+    beforeEach(async () => {
+      result = (await loader(args("terms"))) as unknown as Wrapped;
+    });
+
+    it("should mint a sid", () => {
+      expect(result.data.sid).toMatch(/.+/);
+    });
+
+    it("should return one sid cookie", () => {
+      expect(setCookies(result)).toHaveLength(1);
+      expect(setCookies(result)[0]).toContain(
+        `sid=${encodeURIComponent(result.data.sid)}`,
+      );
+    });
   });
 
-  it("should retain an existing sid cookie without setting another", async () => {
-    const result = (await loader(
-      args("terms", new RouterContextProvider(), "sid=existing"),
-    )) as unknown as Wrapped;
+  describe("and the request has a sid cookie", () => {
+    beforeEach(async () => {
+      result = (await loader(
+        args("terms", new RouterContextProvider(), "sid=existing"),
+      )) as unknown as Wrapped;
+    });
 
-    expect(result.data.sid).toBe("existing");
-    expect(setCookies(result)).toEqual([]);
+    it("should retain the existing sid", () => {
+      expect(result.data.sid).toBe("existing");
+    });
+
+    it("should not set another cookie", () => {
+      expect(setCookies(result)).toEqual([]);
+    });
   });
 });

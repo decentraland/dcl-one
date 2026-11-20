@@ -486,6 +486,7 @@ http {{
         "~^badges:/badges/({badges_mounts})(/|$)" "";
         "~^badges:(?<badges_own>/badges(/.*)?)$" /badges$badges_own;
         "~^([^:]+):/\\1(/|$)" "";
+        "~^(worlds-content-server|realm-provider(-ea)?):/(comms-gatekeeper|cast-presenter-service)/" "";
         "~^[^:]+:/$" $gateway_prefix/;
         "~^[^:]+:(?<gateway_path>/.*)$" $gateway_prefix$gateway_path;
     }}

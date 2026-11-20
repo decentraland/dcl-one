@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { useState } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ShopHost, ShopMount } from "@ui/shop/native-contract";
 import { mountShop } from "./native.client";
 
@@ -68,85 +68,138 @@ async function mountNative() {
   expect(await screen.findByText("Native Shop outlet")).toBeTruthy();
   return { mount, client: observed! };
 }
-afterEach(() => {
-  act(() =>
-    fixtures.splice(0).forEach(({ mount, container }) => {
-      mount.unmount();
-      container.remove();
-    }),
-  );
-  cleanup();
-  clients.forEach((client) => client.clear());
-  clients.clear();
-  vi.unstubAllGlobals();
-});
 describe("when Explorer mounts the real native Shop without a Sites document provider", () => {
-  it("should provide agreed defaults, reuse fresh data and recover after one failed attempt", async () => {
-    const { client } = await mountNative();
+  let mount: ShopMount;
+  let client: QueryClient;
+
+  beforeEach(async () => {
+    ({ mount, client } = await mountNative());
+  });
+
+  afterEach(() => {
+    act(() =>
+      fixtures.splice(0).forEach(({ mount, container }) => {
+        mount.unmount();
+        container.remove();
+      }),
+    );
+    cleanup();
+    clients.forEach((client) => client.clear());
+    clients.clear();
+    vi.resetAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("should render the Shop chrome with a query client", () => {
     expect(screen.queryByText(/No QueryClient set/)).toBeNull();
     expect(screen.getByTestId("subnav-tabs").closest("[data-site-layout]")?.querySelector("[data-site-layout-navigation]")).toBeNull();
-    expect(screen.getByTestId("subnav-tabs")).toBeTruthy();
+  });
+
+  it("should provide the agreed query defaults", () => {
     expect(client.getDefaultOptions().queries).toMatchObject({
       retry: false,
       staleTime: 30_000,
     });
-    const load = vi.fn(async () => "ready");
-    const options = { queryKey: ["native-host-fresh"], queryFn: load };
-    await client.fetchQuery(options);
-    await client.fetchQuery(options);
-    expect(load).toHaveBeenCalledOnce();
-    const fail = vi.fn(async () => {
-      throw new Error("offline");
-    });
-    await expect(
-      client.fetchQuery({ queryKey: ["native-host-error"], queryFn: fail }),
-    ).rejects.toThrow("offline");
-    expect(fail).toHaveBeenCalledOnce();
-    await expect(
-      client.fetchQuery({
-        queryKey: ["native-host-error"],
-        queryFn: async () => "recovered",
-      }),
-    ).resolves.toBe("recovered");
-    expect(client.getQueryData(["native-host-fresh"])).toBe("ready");
   });
-  it("should retain successful cache entries when a route error is recovered", async () => {
-    const { mount, client } = await mountNative();
-    client.setQueryData(["keep-through-route-error"], "cached");
-    fireEvent.click(screen.getByRole("button", { name: "Fail route" }));
-    expect(await screen.findByText("Couldn't open the Shop")).toBeTruthy();
-    await act(async () => {
-      mount.navigate("/shop/__chrome-contract?recover=1");
+
+  describe("and the same query is fetched twice", () => {
+    let load: () => Promise<string>;
+    let options: { queryKey: string[]; queryFn: () => Promise<string> };
+
+    beforeEach(async () => {
+      load = vi.fn(async () => "ready");
+      options = { queryKey: ["native-host-fresh"], queryFn: load };
+      await client.fetchQuery(options);
+      await client.fetchQuery(options);
     });
-    expect(await screen.findByText("Native Shop outlet")).toBeTruthy();
-    expect(observed).toBe(client);
-    expect(observed!.getQueryData(["keep-through-route-error"])).toBe("cached");
+
+    it("should reuse the fresh data", () => {
+      expect(load).toHaveBeenCalledOnce();
+    });
+
+    describe("and another query fails once", () => {
+      let fail: () => Promise<never>;
+
+      beforeEach(() => {
+        fail = vi.fn(async () => {
+          throw new Error("offline");
+        });
+      });
+
+      it("should reject with the error, attempt once and recover on the next fetch, keeping the fresh data", async () => {
+        await expect(
+          client.fetchQuery({ queryKey: ["native-host-error"], queryFn: fail }),
+        ).rejects.toThrow("offline");
+        expect(fail).toHaveBeenCalledOnce();
+        await expect(
+          client.fetchQuery({
+            queryKey: ["native-host-error"],
+            queryFn: async () => "recovered",
+          }),
+        ).resolves.toBe("recovered");
+        expect(client.getQueryData(["native-host-fresh"])).toBe("ready");
+      });
+    });
   });
-  it("should abort in-flight work and clear the host cache exactly once when unmounted", async () => {
-    const { mount, client } = await mountNative();
-    let signal!: AbortSignal;
-    const pending = client
-      .fetchQuery({
-        queryKey: ["pending-native-host"],
-        queryFn: ({ signal: next }) => {
-          signal = next;
-          return new Promise((_resolve, reject) =>
-            next.addEventListener("abort", () => reject(new Error("aborted")), {
-              once: true,
-            }),
-          );
-        },
-      })
-      .catch(() => undefined);
-    const abort = vi.fn();
-    signal.addEventListener("abort", abort);
-    act(() => {
-      mount.unmount();
-      mount.unmount();
+
+  describe("and a route error is recovered", () => {
+    beforeEach(async () => {
+      client.setQueryData(["keep-through-route-error"], "cached");
+      fireEvent.click(screen.getByRole("button", { name: "Fail route" }));
+      expect(await screen.findByText("Couldn't open the Shop")).toBeTruthy();
+      await act(async () => {
+        mount.navigate("/shop/__chrome-contract?recover=1");
+      });
     });
-    expect(signal.aborted).toBe(true);
-    expect(abort).toHaveBeenCalledOnce();
-    expect(client.getQueryCache().getAll()).toHaveLength(0);
-    await pending;
+
+    it("should render the route again with the same client and its successful cache entries", async () => {
+      expect(await screen.findByText("Native Shop outlet")).toBeTruthy();
+      expect(observed).toBe(client);
+      expect(observed!.getQueryData(["keep-through-route-error"])).toBe("cached");
+    });
+  });
+
+  describe("and it is unmounted twice with work in flight", () => {
+    let signal: AbortSignal;
+    let pending: Promise<unknown>;
+    let abort: () => void;
+
+    beforeEach(() => {
+      pending = client
+        .fetchQuery({
+          queryKey: ["pending-native-host"],
+          queryFn: ({ signal: next }) => {
+            signal = next;
+            return new Promise((_resolve, reject) =>
+              next.addEventListener("abort", () => reject(new Error("aborted")), {
+                once: true,
+              }),
+            );
+          },
+        })
+        .catch(() => undefined);
+      abort = vi.fn();
+      signal.addEventListener("abort", abort);
+      act(() => {
+        mount.unmount();
+        mount.unmount();
+      });
+    });
+
+    afterEach(async () => {
+      await pending;
+    });
+
+    it("should abort the in-flight work", () => {
+      expect(signal.aborted).toBe(true);
+    });
+
+    it("should abort exactly once", () => {
+      expect(abort).toHaveBeenCalledOnce();
+    });
+
+    it("should clear the host cache", () => {
+      expect(client.getQueryCache().getAll()).toHaveLength(0);
+    });
   });
 });

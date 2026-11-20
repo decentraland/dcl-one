@@ -2,7 +2,7 @@ import path from 'node:path'
 import { createElement } from 'react'
 import { render, screen } from '@testing-library/react'
 import ts from 'typescript'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { CheckboxLabel } from './CheckboxLabel'
 
 type Resolve = (
@@ -44,19 +44,27 @@ function renderUsage(usage: string, help: string) {
 }
 
 describe('when a design checkbox-label resolves through its mapping', () => {
-  it.each([
+  describe.each([
     ['End', ['box', 'text']],
     ['Start', ['text', 'box']]
-  ] as const)('keeps the help affordance at the %s position', async (position, order) => {
-    const usage = await usageFor(position)
-    expect(usage).toContain('help={help}')
-    const { container } = renderUsage(usage, 'Shows engine logs in a panel.')
-    const box = screen.getByRole('checkbox', { name: 'Open Debug Console' })
-    expect(box).toHaveAccessibleDescription('Shows engine logs in a panel.')
-    expect(screen.getByRole('button', { name: 'More information' })).toBeInTheDocument()
-    const parts = Array.from(container.firstElementChild!.children).map((child) =>
-      child.querySelector('input') ? 'box' : 'text'
-    )
-    expect(parts).toEqual(order)
+  ] as const)('and the box sits at the %s position', (position, order) => {
+    let usage: string
+    let container: HTMLElement
+
+    beforeEach(async () => {
+      usage = await usageFor(position)
+      container = renderUsage(usage, 'Shows engine logs in a panel.').container
+    })
+
+    it('should keep the help affordance in the resolved usage and in its rendered order', () => {
+      expect(usage).toContain('help={help}')
+      const box = screen.getByRole('checkbox', { name: 'Open Debug Console' })
+      expect(box).toHaveAccessibleDescription('Shows engine logs in a panel.')
+      expect(screen.getByRole('button', { name: 'More information' })).toBeInTheDocument()
+      const parts = Array.from(container.firstElementChild!.children).map((child) =>
+        child.querySelector('input') ? 'box' : 'text'
+      )
+      expect(parts).toEqual(order)
+    })
   })
 })

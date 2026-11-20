@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 // The read-only use_figma script of the consumer skill, run against hand-built Plugin API nodes.
 const skill = await readFile(
@@ -50,126 +50,183 @@ function run(
 }
 
 describe('the skill plugin script', () => {
-  it('should put VARIANT, BOOLEAN and TEXT properties in separate maps without their #id suffix', async () => {
-    const result = await run(
-      [text('Label', 'Buy', { componentPropertyReferences: { characters: 'Label#1:2' } })],
-      {
+  let children: Node[]
+  let properties: Record<string, Property>
+  let result: Record<string, unknown>
+  beforeEach(() => {
+    children = []
+    properties = {}
+  })
+
+  describe('when the instance has VARIANT, BOOLEAN, TEXT and INSTANCE_SWAP properties', () => {
+    beforeEach(async () => {
+      children = [
+        text('Label', 'Buy', { componentPropertyReferences: { characters: 'Label#1:2' } })
+      ]
+      properties = {
         Kind: { type: 'VARIANT', value: 'Primary' },
         'Show icon#3:4': { type: 'BOOLEAN', value: false },
         'Label#1:2': { type: 'TEXT', value: 'Buy' },
         'Icon#5:6': { type: 'INSTANCE_SWAP', value: '7:8' }
       }
-    )
+      result = await run(children, properties)
+    })
 
-    expect(result).toEqual({
-      name: 'Button',
-      variantProperties: { Kind: 'Primary' },
-      booleanProperties: { 'Show icon': 'false' },
-      texts: { Label: 'Buy' },
-      duplicateTexts: []
+    it('should put VARIANT, BOOLEAN and TEXT properties in separate maps without their #id suffix', () => {
+      expect(result).toEqual({
+        name: 'Button',
+        variantProperties: { Kind: 'Primary' },
+        booleanProperties: { 'Show icon': 'false' },
+        texts: { Label: 'Buy' },
+        duplicateTexts: []
+      })
     })
   })
 
-  it('should keep the visible text when a hidden layer shows a TEXT property of the same name', async () => {
-    const result = await run(
-      [
+  describe('when a hidden layer shows a TEXT property named like a visible layer', () => {
+    beforeEach(async () => {
+      children = [
         text('Label', 'Placeholder', {
           visible: false,
           componentPropertyReferences: { characters: 'Label#1:2' }
         }),
         text('Label', 'Buy')
-      ],
-      { 'Label#1:2': { type: 'TEXT', value: 'Placeholder' } }
-    )
+      ]
+      properties = { 'Label#1:2': { type: 'TEXT', value: 'Placeholder' } }
+      result = await run(children, properties)
+    })
 
-    expect(result).toMatchObject({ texts: { Label: 'Buy' }, duplicateTexts: [] })
+    it('should keep the visible text', () => {
+      expect(result).toMatchObject({ texts: { Label: 'Buy' }, duplicateTexts: [] })
+    })
   })
 
-  it('should leave out a TEXT property that only a hidden layer shows', async () => {
-    const result = await run(
-      [
+  describe('when only a hidden layer shows a TEXT property', () => {
+    beforeEach(async () => {
+      children = [
         text('Caption', 'Hidden', {
           visible: false,
           componentPropertyReferences: { characters: 'Tip#1:2' }
         })
-      ],
-      { 'Tip#1:2': { type: 'TEXT', value: 'Hidden' } }
-    )
+      ]
+      properties = { 'Tip#1:2': { type: 'TEXT', value: 'Hidden' } }
+      result = await run(children, properties)
+    })
 
-    expect(result).toMatchObject({ texts: {}, duplicateTexts: [] })
-  })
-
-  it('should name a TEXT property after a visible layer with another name that shows it', async () => {
-    const result = await run(
-      [text('Caption', 'Go', { componentPropertyReferences: { characters: 'Label#1:2' } })],
-      { 'Label#1:2': { type: 'TEXT', value: 'Go' } }
-    )
-
-    expect(result).toMatchObject({ texts: { Caption: 'Go', Label: 'Go' }, duplicateTexts: [] })
-  })
-
-  // The nearest false positive of the visibility rule: two visible texts still disagree.
-  it('should drop and report a name two visible layers show differently, however often it repeats', async () => {
-    const result = await run([text('Label', 'Buy'), text('Label', 'Sell'), text('Label', 'Buy')])
-
-    expect(result).toMatchObject({ texts: {}, duplicateTexts: ['Label'] })
-  })
-
-  it('should report a TEXT property name that a visible layer of that name contradicts', async () => {
-    const result = await run(
-      [
-        text('Caption', 'Go', { componentPropertyReferences: { characters: 'Label#1:2' } }),
-        text('Label', 'Stop')
-      ],
-      { 'Label#1:2': { type: 'TEXT', value: 'Go' } }
-    )
-
-    expect(result).toMatchObject({ texts: { Caption: 'Go' }, duplicateTexts: ['Label'] })
-  })
-
-  it('should accept two visible layers that share a name and a text', async () => {
-    const result = await run([text('Label', 'Buy'), text('Label', 'Buy')])
-
-    expect(result).toMatchObject({ texts: { Label: 'Buy' }, duplicateTexts: [] })
-  })
-
-  it('should skip text under a hidden frame and inside a nested instance', async () => {
-    const result = await run([
-      { type: 'FRAME', name: 'Tooltip', visible: false, children: [text('Tip', 'Hidden')] },
-      { type: 'INSTANCE', name: 'Badge', children: [text('Label', 'Nested')] },
-      { type: 'FRAME', name: 'Body', children: [text('Label', 'Own')] }
-    ])
-
-    expect(result).toMatchObject({ texts: { Label: 'Own' }, duplicateTexts: [] })
-  })
-
-  it('should keep a layer named like an Object method as plain data', async () => {
-    const result = (await run([text('constructor', 'A'), text('toString', 'B')])) as {
-      texts: Record<string, string>
-      duplicateTexts: string[]
-    }
-
-    expect({ ...result.texts }).toEqual({ constructor: 'A', toString: 'B' })
-    expect(result.duplicateTexts).toEqual([])
-  })
-
-  it('should take the main component name when it is not in a set', async () => {
-    expect(await run([], {}, { name: 'Logo', parent: { type: 'PAGE' } })).toMatchObject({
-      name: 'Logo'
+    it('should leave the TEXT property out', () => {
+      expect(result).toMatchObject({ texts: {}, duplicateTexts: [] })
     })
   })
 
-  it.each([
+  describe('when a visible layer with another name shows a TEXT property', () => {
+    beforeEach(async () => {
+      children = [
+        text('Caption', 'Go', { componentPropertyReferences: { characters: 'Label#1:2' } })
+      ]
+      properties = { 'Label#1:2': { type: 'TEXT', value: 'Go' } }
+      result = await run(children, properties)
+    })
+
+    it('should name the TEXT property after both the layer and the property', () => {
+      expect(result).toMatchObject({ texts: { Caption: 'Go', Label: 'Go' }, duplicateTexts: [] })
+    })
+  })
+
+  // The nearest false positive of the visibility rule: two visible texts still disagree.
+  describe('when two visible layers show a name differently, however often it repeats', () => {
+    beforeEach(async () => {
+      children = [text('Label', 'Buy'), text('Label', 'Sell'), text('Label', 'Buy')]
+      result = await run(children)
+    })
+
+    it('should drop and report the name', () => {
+      expect(result).toMatchObject({ texts: {}, duplicateTexts: ['Label'] })
+    })
+  })
+
+  describe('when a visible layer contradicts a TEXT property of its name', () => {
+    beforeEach(async () => {
+      children = [
+        text('Caption', 'Go', { componentPropertyReferences: { characters: 'Label#1:2' } }),
+        text('Label', 'Stop')
+      ]
+      properties = { 'Label#1:2': { type: 'TEXT', value: 'Go' } }
+      result = await run(children, properties)
+    })
+
+    it('should report the TEXT property name', () => {
+      expect(result).toMatchObject({ texts: { Caption: 'Go' }, duplicateTexts: ['Label'] })
+    })
+  })
+
+  describe('when two visible layers share a name and a text', () => {
+    beforeEach(async () => {
+      children = [text('Label', 'Buy'), text('Label', 'Buy')]
+      result = await run(children)
+    })
+
+    it('should accept the shared name', () => {
+      expect(result).toMatchObject({ texts: { Label: 'Buy' }, duplicateTexts: [] })
+    })
+  })
+
+  describe('when text sits under a hidden frame and inside a nested instance', () => {
+    beforeEach(async () => {
+      children = [
+        { type: 'FRAME', name: 'Tooltip', visible: false, children: [text('Tip', 'Hidden')] },
+        { type: 'INSTANCE', name: 'Badge', children: [text('Label', 'Nested')] },
+        { type: 'FRAME', name: 'Body', children: [text('Label', 'Own')] }
+      ]
+      result = await run(children)
+    })
+
+    it('should skip that text', () => {
+      expect(result).toMatchObject({ texts: { Label: 'Own' }, duplicateTexts: [] })
+    })
+  })
+
+  describe('when a layer is named like an Object method', () => {
+    let texts: { texts: Record<string, string>; duplicateTexts: string[] }
+    beforeEach(async () => {
+      children = [text('constructor', 'A'), text('toString', 'B')]
+      texts = (await run(children)) as typeof texts
+    })
+
+    it('should keep the layer as plain data', () => {
+      expect({ ...texts.texts }).toEqual({ constructor: 'A', toString: 'B' })
+    })
+
+    it('should report no duplicate text', () => {
+      expect(texts.duplicateTexts).toEqual([])
+    })
+  })
+
+  describe('when the main component is not in a set', () => {
+    beforeEach(async () => {
+      result = await run(children, properties, { name: 'Logo', parent: { type: 'PAGE' } })
+    })
+
+    it('should take the main component name', () => {
+      expect(result).toMatchObject({ name: 'Logo' })
+    })
+  })
+
+  describe.each([
     ['a node that is not an instance', { type: 'FRAME' }, 'not-an-instance'],
     ['an instance without a main component', undefined, 'no-main-component']
-  ])('should refuse %s', async (_label, node, refused) => {
-    const instance = node ?? {
-      type: 'INSTANCE',
-      children: [],
-      componentProperties: {},
-      getMainComponentAsync: async () => null
-    }
+  ])('when the selection is %s', (_label, node, refused) => {
+    let instance: unknown
+    beforeEach(() => {
+      instance = node ?? {
+        type: 'INSTANCE',
+        children: [],
+        componentProperties: {},
+        getMainComponentAsync: async () => null
+      }
+    })
 
-    expect(await script({ getNodeByIdAsync: async () => instance })).toEqual({ refused })
+    it(`should refuse it as ${refused}`, async () => {
+      expect(await script({ getNodeByIdAsync: async () => instance })).toEqual({ refused })
+    })
   })
 })

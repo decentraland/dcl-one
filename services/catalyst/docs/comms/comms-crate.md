@@ -31,7 +31,7 @@ separate from the current runtime described here.
 | `gatekeeper::admission` | `serve` | scene, server-scene, world (`world_mint`) and island tokens; the Pulse room authority (`relay_authority`) |
 | `gatekeeper::message_router` | `serve` | the message router's join token, `POST /internal/message-router/token/v1` |
 | `gatekeeper::moderation`, `removal`, `removed_places` | `serve` | bans, warnings, scene admins, durable ban kicks, disabled-place cleanup (reading Explore's removal feed by shared SQL, `DATABASE.md` "Place removal feed"), room metadata repair |
-| `gatekeeper::voice`, `streaming`, `streaming_jobs`, `streaming::cast` | `serve` | private and community voice; stream access, LiveKit Ingress, streaming expiry; Cast 2.0 (`/cast/*`): stream links, streamer, watcher and presentation-bot tokens over the same stream credential, presenters in the scene room's metadata |
+| `gatekeeper::voice`, `streaming`, `streaming_jobs`, `streaming::cast` | `serve` | private and community voice; stream access, LiveKit Ingress, streaming expiry; Cast 2.0 (`/cast/*`): stream links, streamer, watcher and presentation-bot tokens over the same stream credential, presenters in the scene room's metadata. Unlike the pinned comms-gatekeeper, a stream key is revoked once the wallet that generated it would no longer be given it (scene admin removed, platform ban, world permission or ownership lost): publisher tokens check it, and the key job checks every active key. The same checks, and `GET /scene-stream-access`, revoke a key once the scene of its room is redeployed or gone, where the pinned comms-gatekeeper answers that key and publishes into the old room until the next stream link. The `streaming` flag follows LiveKit's ingress state where the pinned comms-gatekeeper applies `ingress_started` and `ingress_ended` in arrival order: the streaming job raises and lowers it, an `ingress_ended` is ignored while the ingress is live, and a stream link asks before it replaces an idle credential |
 | `cast_presenter` | `serve`, one `cast-bot` process per session | Cast presentations at `/cast-presenter-service/presentations`: PDF slides rendered in `serve` and published into the scene room by a `cast-bot` process (`services/catalyst/cast-bot`, the only LiveKit participant code outside the Explorer), commands from the room's presenters over the data channel, sessions in memory |
 | `gatekeeper::reports` | `serve` | the player report intake at `/report-user` (`/api/reports/players/presign`, the evidence `PUT`s, `/api/reports/players`); the moderator token reads `/api/reports` |
 | `gatekeeper::webhook`, `events` | `serve` | the one LiveKit webhook; a typed nine-field `RoomEvent` to `RoomEventSink` and `RoomEventStore` |
@@ -78,6 +78,15 @@ current deployment; storage resolution and scene discovery read that binding.
 World aggregate discovery, upstream catalogue IDs, Genesis storage scopes and
 comms room-name contracts remain unchanged. The periodic catalogue job refreshes
 metadata; it does not own identity lifecycle.
+
+Scene admin grants (`social.scene_admins`) use the same place: the world scene's
+UUID, or the base parcel of a Genesis scene (`ActiveDeployment::place_key`). A
+redeploy of the same place keeps the admins, their stream key access and their
+presenter control. A scene on a different place starts without them.
+
+A stream key is checked again at once when PostgreSQL announces a deployment
+or a change of a world's scenes, owner or grants (`streaming::cast::listen`;
+`DATABASE.md`, "Stream key notifications"). The key job stays for lost messages.
 
 `comms = 8` in `docs/module-layers.toml` (above explore, below worlds, social and shop), enforced by
 the repository structure checks. Comms links no Explore code: it reads Explore's tables by shared SQL and the root adapts its participants to Explore. Higher crates implement comms' traits, keeping V8 and worlds out of comms builds.
@@ -497,7 +506,9 @@ cache or SQL expiry do not prove absence. The complete view retains every curren
 and unfinished record. Gatekeeper settles exact SQL attempts and their credits
 before retiring the unchanged local slot; desired generation, selected identity
 and outstanding lease guards preserve concurrent successors. Retirement neither
-writes a foreign row nor releases a settled owner.
+writes a foreign row nor releases a settled owner. Either retirement keeps the slot's
+exact owned fact inside the selected bound; the wallet's next selection then replaces
+its own fresh row without waiting for the lease.
 
 A registered older epoch can instead retire after a complete newer-generation
 discovery pass, a final current-binding check and the original operation-grant

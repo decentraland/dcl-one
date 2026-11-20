@@ -16,6 +16,7 @@ common = { workspace = true }
 console = { workspace = true }
 platform = { workspace = true }
 ipfs = { workspace = true }
+system_bridge = { workspace = true }
 
 bevy = { workspace = true }
 anyhow = { workspace = true }
@@ -36,6 +37,7 @@ web-time = { workspace = true }
 
 url = "2.4.0"
 futures-io = "0.3"
+futures-lite = { workspace = true }
 block_compression = { version = "0.7", default-features = false, features = [
   "bc7",
 ] }
@@ -50,7 +52,6 @@ draco-oxide-core = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-fs = { workspace = true }
-futures-lite = { workspace = true }
 web-sys = { workspace = true }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }

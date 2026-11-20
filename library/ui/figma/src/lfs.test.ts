@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { LfsPointerError, readMaterialized } from './lfs.js'
-import { createRuntime } from './runtime.js'
+import { createRuntime, type Runtime } from './runtime.js'
 import { pinTestCapture } from '../test/snapshot.js'
 
 const POINTER = 'version https://git-lfs.github.com/spec/v1\noid sha256:00\nsize 1\n'
@@ -19,20 +19,34 @@ afterEach(async () => {
 })
 
 describe('readMaterialized', () => {
-  describe('when the file holds content', () => {
-    it('should return it', async () => {
-      await writeFile(path.join(directory, 'a.json'), '{}')
+  let file: string
 
-      expect((await readMaterialized(path.join(directory, 'a.json'))).toString()).toBe('{}')
+  beforeEach(() => {
+    file = path.join(directory, 'a.json')
+  })
+
+  describe('when the file holds content', () => {
+    beforeEach(async () => {
+      await writeFile(file, '{}')
+    })
+
+    it('should return it', async () => {
+      expect((await readMaterialized(file)).toString()).toBe('{}')
     })
   })
 
   describe('when the file is a Git LFS pointer', () => {
-    it('should throw an LfsPointerError naming the file', async () => {
-      await writeFile(path.join(directory, 'a.json'), POINTER)
+    beforeEach(async () => {
+      await writeFile(file, POINTER)
+    })
 
-      await expect(readMaterialized(path.join(directory, 'a.json'))).rejects.toBeInstanceOf(
-        LfsPointerError
+    it('should throw an LfsPointerError', async () => {
+      await expect(readMaterialized(file)).rejects.toBeInstanceOf(LfsPointerError)
+    })
+
+    it('should name the file in the error message', async () => {
+      await expect(readMaterialized(file)).rejects.toThrow(
+        `${file} is a Git LFS pointer. Check out with LFS content (git lfs pull).`
       )
     })
   })
@@ -40,7 +54,9 @@ describe('readMaterialized', () => {
 
 describe('the MCP runtime', () => {
   describe('when the saved capture is an unmaterialized LFS pointer', () => {
-    it('should fail instead of silently falling back to resolve-only mode', async () => {
+    let runtime: Runtime
+
+    beforeEach(async () => {
       await mkdir(path.join(directory, 'snapshot/components'), { recursive: true })
       await writeFile(
         path.join(directory, 'figma.config.json'),
@@ -55,9 +71,15 @@ describe('the MCP runtime', () => {
       // A pointer that fetch-source would have pinned: the cache verifies, and reading it must still fail.
       await pinTestCapture(directory)
 
-      const runtime = await createRuntime({ cwd: directory, env: {} })
+      runtime = await createRuntime({ cwd: directory, env: {} })
+    })
 
+    it('should fail instead of silently falling back to resolve-only mode', async () => {
       await expect(runtime.resolveContext()).rejects.toBeInstanceOf(LfsPointerError)
+    })
+
+    it('should name the pointer file in the error message', async () => {
+      await expect(runtime.resolveContext()).rejects.toThrow(/Nav bar\.json is a Git LFS pointer/)
     })
   })
 })

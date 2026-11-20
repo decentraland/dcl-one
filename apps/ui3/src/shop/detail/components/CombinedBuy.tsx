@@ -9,11 +9,13 @@
 // relayed (or sent by the wallet when the relay cannot run). A credit is released only when nothing may
 // have consumed it; a broadcast that has not confirmed is pending, never re-sent.
 
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 import Button from "../../../atoms/Button";
 import Modal from "../../../components/Modal";
 import { authorizeUsdCredit, cancelUsdIntents } from "@shop/credits/credits";
+import { invalidateAfterPurchase } from "../../checkout/lib/after-purchase";
 import { requireContracts } from "../../checkout/chain/contracts";
 import { isSignatureDeclined } from "../../checkout/chain/metatx";
 import { isPendingTxError, isRevertedTxError } from "../../checkout/chain/wallet";
@@ -153,6 +155,13 @@ type Terms = { offer: PurchaseOffer; mixed: MixedPayment };
 export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddInput; offer: PurchaseOffer | null; mixed: MixedPayment | null; onDone?(txHash: string | null): void }): CombinedBuyRun {
   const wallet = useShopWallet();
   const services = useShopServices();
+  const qc = useQueryClient();
+  // A finished purchase spent MANA and Credits: the balances, the item and the buyer's lists are read again, as the
+  // checkout does after its own purchases.
+  const finished = (txHash: string | null) => {
+    invalidateAfterPurchase(qc);
+    onDone?.(txHash);
+  };
   const [phase, setPhase] = useState<CombinedPhase>({ kind: "review" });
   const guard = useRef(createSpendGuard());
   // The terms `start` agreed: kept in a ref for the purchase that runs on, and in state for the screen that shows them.
@@ -279,7 +288,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       clearSentSplit(ctx.buyer, lineId);
       setSent(null);
       setPhase({ kind: "success", txHash: hash });
-      onDone?.(hash);
+      finished(hash);
     } catch (e) {
       if (creditId) guard.current.submitFinished(creditId);
       if (isSettlementPending(e) || isPendingTxError(e) || isMetaTxPending(e)) {
@@ -350,7 +359,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
               setPhase({ kind: "error", message: REVERTED });
             } else {
               setPhase({ kind: "success", txHash: record.txHash });
-              onDone?.(record.txHash);
+              finished(record.txHash);
             }
             return;
           }
