@@ -157,6 +157,8 @@ export function createAvatarScene(
     opts.onStatus?.(next);
   };
   let disposed = false;
+  /** Aborted on dispose: every part file still downloading stops with the preview. */
+  const downloads = new AbortController();
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -388,23 +390,38 @@ export function createAvatarScene(
 
   // The parts' files by content hash, each download started once when the entities arrive, so a GLB's textures
   // download beside it instead of after its parse.
-  type HeldFiles = Map<string, Promise<Blob | null>>;
+  // `signal` ends the wave: the preview's disposal or the parts' timeout.
+  type HeldFiles = Map<string, Promise<Blob | null>> & { signal: AbortSignal };
 
+  /**
+   * Starts the downloads of an entity's files under the wave's signal. A failed answer's body is cancelled. A file
+   * that did not download (a failed answer, a network error) is null and left to the loader.
+   */
   function holdFiles(files: HeldFiles, entity: Entity, bodyShape: string): void {
     for (const hash of representationHashes(entity, bodyShape)) {
       if (files.has(hash)) continue;
-      const download = fetch(`${base}/content/contents/${hash}`).then((r) => (r.ok ? r.blob() : null));
+      const download = fetch(`${base}/content/contents/${hash}`, { signal: files.signal }).then(async (r) => {
+        if (r.ok) return r.blob();
+        await r.body?.cancel().catch(() => {});
+        return null;
+      });
       files.set(hash, download.catch(() => null));
     }
   }
 
-  /** Object URLs of the held files among `hashes`; a file that did not download is left to the loader. */
-  async function heldUrls(files: HeldFiles, hashes: string[]): Promise<Map<string, string>> {
+  /**
+   * Object URLs of the held files among `hashes`; a file that did not download is left to the loader. Null once the
+   * wave has ended: the part is not loaded at all, so its loader does not download its files again.
+   */
+  async function heldUrls(files: HeldFiles, hashes: string[]): Promise<Map<string, string> | null> {
+    const blobs: (Blob | null | undefined)[] = [];
+    for (const hash of hashes) blobs.push(await files.get(hash));
+    if (files.signal.aborted) return null;
     const urls = new Map<string, string>();
-    for (const hash of hashes) {
-      const blob = await files.get(hash);
+    hashes.forEach((hash, i) => {
+      const blob = blobs[i];
       if (blob) urls.set(hash, URL.createObjectURL(blob));
-    }
+    });
     return urls;
   }
 
@@ -419,6 +436,7 @@ export function createAvatarScene(
     if (!mainHash) return null;
     const mainUrl = `${base}/content/contents/${mainHash}`;
     const held = await heldUrls(files, representationHashes(entity, bodyShape));
+    if (!held) return null;
     const manager = new THREE.LoadingManager();
     manager.setURLModifier((url) => {
       if (/^(blob:|data:)/.test(url)) return url;
@@ -449,6 +467,7 @@ export function createAvatarScene(
     if (!texHash) return null;
     const maskHash = hashOf(names.find((n) => n.endsWith("_mask.png")));
     const held = await heldUrls(files, maskHash ? [texHash, maskHash] : [texHash]);
+    if (!held) return null;
     const loadTex = async (hash: string, srgb: boolean): Promise<THREE.Texture> => {
       const t = await new THREE.TextureLoader().loadAsync(held.get(hash) ?? `${base}/content/contents/${hash}`);
       t.flipY = false;
@@ -808,7 +827,11 @@ export function createAvatarScene(
       else wantParts.push({ key: partKey(urn, bodyLc), urn, isBody: false, entity: e });
     }
 
-    const files: HeldFiles = new Map();
+    // The wave ends with the preview or with the parts' own timeout. An outfit change does not end it: the parts it
+    // feeds stay in the part cache, where the next outfit picks them up.
+    const files: HeldFiles = Object.assign(new Map<string, Promise<Blob | null>>(), {
+      signal: AbortSignal.any([downloads.signal, AbortSignal.timeout(GLB_TIMEOUT_MS)]),
+    });
     for (const p of wantParts) if (!partCache.has(p.key)) holdFiles(files, p.entity, bodyShape);
     for (const f of wantFeatures) if (!featureCache.has(f.key)) holdFiles(files, f.entity, bodyShape);
     const [objs, feats] = await Promise.all([
@@ -959,6 +982,7 @@ export function createAvatarScene(
 
   function dispose() {
     disposed = true;
+    downloads.abort();
     cycleGen++;
     loadGen++;
     settleSwap();
