@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { componentSpecs } from '../../test/snapshot.js'
 import { externalizeSvgs, generateComponents } from './components.js'
 import type { ViewNode } from '../ir/components.js'
@@ -93,20 +93,30 @@ describe('generateComponents', () => {
   describe('when a stylesheet embeds a large SVG', () => {
     const svgUrl = (svg: string) => `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
     const large = `<svg xmlns="http://www.w3.org/2000/svg"><image href="data:image/png;base64,${'A'.repeat(5000)}"/></svg>`
+    let assets: Map<string, string>
 
-    it('should move it to a content-addressed asset referenced once per use', () => {
-      const assets = new Map<string, string>()
-      const css = externalizeSvgs(
-        `.a { background: ${svgUrl(large)}; }\n.b { background: ${svgUrl(large)}; }\n`,
-        assets
-      )
+    beforeEach(() => {
+      assets = new Map<string, string>()
+    })
 
-      expect(assets.size).toBe(1)
-      const [name, content] = [...assets][0]!
-      expect(content).toBe(large)
-      expect(css).toBe(
-        `.a { background: url("../assets/${name}"); }\n.b { background: url("../assets/${name}"); }\n`
-      )
+    describe('and the same SVG is used twice', () => {
+      let css: string
+
+      beforeEach(() => {
+        css = externalizeSvgs(
+          `.a { background: ${svgUrl(large)}; }\n.b { background: ${svgUrl(large)}; }\n`,
+          assets
+        )
+      })
+
+      it('should move it to a content-addressed asset referenced once per use', () => {
+        expect(assets.size).toBe(1)
+        const [name, content] = [...assets][0]!
+        expect(content).toBe(large)
+        expect(css).toBe(
+          `.a { background: url("../assets/${name}"); }\n.b { background: url("../assets/${name}"); }\n`
+        )
+      })
     })
 
     it.each([
@@ -139,42 +149,62 @@ describe('generateComponents', () => {
     ])('should refuse to publish one containing %s', (_, active) => {
       const svg = large.replace('</svg>', `${active}</svg>`)
 
-      expect(() => externalizeSvgs(`.a { background: ${svgUrl(svg)}; }`, new Map())).toThrow(
+      expect(() => externalizeSvgs(`.a { background: ${svgUrl(svg)}; }`, assets)).toThrow(
         'Refusing to publish an SVG asset:'
       )
     })
 
-    it('should publish the shadows, blend modes and masks Figma exports', () => {
-      const figma = large.replace(
-        '</svg>',
-        '<g style="mix-blend-mode:overlay" filter="url(#filter0_i_1_2)"><rect shape-rendering="crispEdges"/></g>' +
-          '<mask id="m" style="mask-type:alpha"/><defs><filter id="filter0_i_1_2" filterUnits="userSpaceOnUse">' +
-          '<feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1"/></filter></defs></svg>'
-      )
-      const assets = new Map<string, string>()
+    describe('and it holds the shadows, blend modes and masks Figma exports', () => {
+      let figma: string
 
-      externalizeSvgs(`.a { background: ${svgUrl(figma)}; }`, assets)
+      beforeEach(() => {
+        figma = large.replace(
+          '</svg>',
+          '<g style="mix-blend-mode:overlay" filter="url(#filter0_i_1_2)"><rect shape-rendering="crispEdges"/></g>' +
+            '<mask id="m" style="mask-type:alpha"/><defs><filter id="filter0_i_1_2" filterUnits="userSpaceOnUse">' +
+            '<feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1"/></filter></defs></svg>'
+        )
 
-      expect([...assets.values()]).toEqual([figma])
+        externalizeSvgs(`.a { background: ${svgUrl(figma)}; }`, assets)
+      })
+
+      it('should publish it', () => {
+        expect([...assets.values()]).toEqual([figma])
+      })
+    })
+  })
+
+  describe('when a stylesheet embeds a small SVG', () => {
+    let assets: Map<string, string>
+    let css: string
+    let result: string
+
+    beforeEach(() => {
+      assets = new Map<string, string>()
+      css = `.a { background: url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg"/>')}"); }`
+
+      result = externalizeSvgs(css, assets)
     })
 
-    it('should keep a small SVG inline', () => {
-      const assets = new Map<string, string>()
-      const css = `.a { background: ${svgUrl('<svg xmlns="http://www.w3.org/2000/svg"/>')}; }`
+    it('should keep it inline', () => {
+      expect(result).toBe(css)
+    })
 
-      expect(externalizeSvgs(css, assets)).toBe(css)
+    it('should publish no asset', () => {
       expect(assets.size).toBe(0)
     })
   })
 })
 
-describe('generateComponents with a Figma name that holds a line terminator', () => {
-  it.each([
-    ['a line feed', '\n'],
-    ['a carriage return', '\r'],
-    ['a line separator', '\u2028'],
-    ['a paragraph separator', '\u2029']
-  ])('should keep %s inside the header comment instead of emitting code', async (_, terminator) => {
+describe.each([
+  ['a line feed', '\n'],
+  ['a carriage return', '\r'],
+  ['a line separator', '\u2028'],
+  ['a paragraph separator', '\u2029']
+])('when a Figma name holds %s', (_, terminator) => {
+  let lines: string[]
+
+  beforeEach(async () => {
     // A copy: the shared specs must not keep this case's edits.
     const specs = structuredClone(await componentSpecs())
     const target = specs[0]!
@@ -184,38 +214,45 @@ describe('generateComponents with a Figma name that holds a line terminator', ()
       file.path.endsWith(`/${target.name}.tsx`)
     )!.content
 
-    const lines = source.split(/\r\n|[\n\r\u2028\u2029]/)
+    lines = source.split(/\r\n|[\n\r\u2028\u2029]/)
+  })
+
+  it('should not emit the injected text as code', () => {
     expect(lines.some((line) => /^\s*(export const injected|globalThis\.pwned)/.test(line))).toBe(
       false
     )
+  })
+
+  it('should keep it inside the header comment', () => {
     expect(lines.filter((line) => line.startsWith('// Figma: '))).toEqual([
       expect.stringContaining('Page globalThis.pwned = true / Button export const injected = 1')
     ])
   })
 })
 
-describe('generateComponents with opt-in semantics', () => {
+describe('when a component opts in to semantics', () => {
   const boxes = (node: ViewNode): ViewNode[] => [
     ...(node.kind === 'box' && node.path.length > 0 ? [node] : []),
     ...(node.children ?? []).flatMap(boxes)
   ]
+  let specs: Awaited<ReturnType<typeof componentSpecs>>
+  let target: (typeof specs)[number]
+
   // The first component with a nested box gets a navigation root and one action.
-  const withSemantics = async () => {
+  beforeEach(async () => {
     // A copy: the shared specs must not keep this case's edits.
-    const specs = structuredClone(await componentSpecs())
-    const target = specs.find((spec) => spec.views.some((view) => boxes(view.root).length > 0))!
+    specs = structuredClone(await componentSpecs())
+    target = specs.find((spec) => spec.views.some((view) => boxes(view.root).length > 0))!
     const box = target.views.flatMap((view) => boxes(view.root))[0]!
     target.semantics = {
       '@root': { role: 'navigation', label: 'Main' },
       [box.name]: { role: 'action', href: 'baseHref', onActivate: 'onBase' }
     }
-    return { specs, target }
-  }
+  })
 
-  describe('when only one component declares semantics', () => {
+  describe('and only that component declares semantics', () => {
     it('should leave every other generated file byte-identical', async () => {
       const plain = await generated()
-      const { specs, target } = await withSemantics()
       const semantic = generateComponents(specs, context)
 
       const changed = semantic.files
@@ -227,13 +264,16 @@ describe('generateComponents with opt-in semantics', () => {
     })
   })
 
-  describe('when a component declares semantics', () => {
-    it('should emit the semantic nodes and the props they name, passed to FigmaView', async () => {
-      const { specs, target } = await withSemantics()
-      const source = generateComponents(specs, context).files.find((file) =>
+  describe('and the component is generated', () => {
+    let source: string
+
+    beforeEach(() => {
+      source = generateComponents(specs, context).files.find((file) =>
         file.path.endsWith(`/${target.name}.tsx`)
       )!.content
+    })
 
+    it('should emit the semantic nodes and the props they name, passed to FigmaView', () => {
       expect(source).toContain('semantic: {"role":"navigation","label":"Main"}')
       expect(source).toContain('  baseHref?: string')
       expect(source).toContain('  onBase?: () => void')
@@ -243,26 +283,28 @@ describe('generateComponents with opt-in semantics', () => {
 })
 
 describe('generateComponents with a responsive axis', () => {
-  const responsive = {
-    prop: 'viewport',
-    breakpoints: [
-      { value: 'mobile', min: 0 },
-      { value: 'desktop', min: 1024 },
-      { value: 'largeDesktop', min: 1536 }
-    ]
-  }
-  // A copy: the shared specs must not keep this case's edits.
-  const withResponsive = async () => {
-    const specs = structuredClone(await componentSpecs())
-    specs.find((spec) => spec.name === 'DemoNav')!.responsive = responsive
-    return generateComponents(specs, context)
-  }
   const file = (output: ReturnType<typeof generateComponents>, path: string) =>
     output.files.find((item) => item.path === path)!.content
 
   describe('when a component declares it', () => {
-    it('should give the prop no default and pass each option with its class to FigmaView', async () => {
-      const source = file(await withResponsive(), 'components/demo-nav/DemoNav.tsx')
+    let output: ReturnType<typeof generateComponents>
+
+    beforeEach(async () => {
+      // A copy: the shared specs must not keep this case's edits.
+      const specs = structuredClone(await componentSpecs())
+      specs.find((spec) => spec.name === 'DemoNav')!.responsive = {
+        prop: 'viewport',
+        breakpoints: [
+          { value: 'mobile', min: 0 },
+          { value: 'desktop', min: 1024 },
+          { value: 'largeDesktop', min: 1536 }
+        ]
+      }
+      output = generateComponents(specs, context)
+    })
+
+    it('should give the prop no default and pass each option with its class to FigmaView', () => {
+      const source = file(output, 'components/demo-nav/DemoNav.tsx')
 
       expect(source).toMatch(/\n {2}viewport,\n/)
       expect(source).not.toContain("viewport = '")
@@ -271,15 +313,15 @@ describe('generateComponents with a responsive axis', () => {
       )
     })
 
-    it('should make the prop optional on every drawn combination of the variant contract', async () => {
-      const source = file(await withResponsive(), 'components/demo-nav/DemoNav.tsx')
+    it('should make the prop optional on every drawn combination of the variant contract', () => {
+      const source = file(output, 'components/demo-nav/DemoNav.tsx')
 
       expect(source).not.toMatch(/\{ viewport: /)
       expect(source).toContain('{ viewport?: "mobile"; ')
     })
 
-    it('should hide each view outside its breakpoint, the widest from its minimum up and the narrowest below the next', async () => {
-      const css = file(await withResponsive(), 'components/demo-nav/DemoNav.module.css')
+    it('should hide each view outside its breakpoint, the widest from its minimum up and the narrowest below the next', () => {
+      const css = file(output, 'components/demo-nav/DemoNav.module.css')
 
       expect(css).toContain(
         '@media (min-width: 1024px) {\n  .responsiveMobile {\n    display: none !important;\n  }\n}'
@@ -294,7 +336,7 @@ describe('generateComponents with a responsive axis', () => {
 
     it('should leave every other generated file byte-identical', async () => {
       const plain = await generated()
-      const changed = (await withResponsive()).files
+      const changed = output.files
         .filter(
           (item) => plain.files.find((other) => other.path === item.path)?.content !== item.content
         )
@@ -317,13 +359,17 @@ describe('generateComponents with a responsive axis', () => {
   })
 
   describe('when an option is not a usable class name', () => {
-    it('should fail generation instead of emitting an invalid identifier', async () => {
-      const specs = structuredClone(await componentSpecs())
+    let specs: Awaited<ReturnType<typeof componentSpecs>>
+
+    beforeEach(async () => {
+      specs = structuredClone(await componentSpecs())
       specs.find((spec) => spec.name === 'DemoNav')!.responsive = {
         prop: 'viewport',
         breakpoints: [{ value: 'mobile-wide', min: 0 }]
       }
+    })
 
+    it('should fail generation instead of emitting an invalid identifier', () => {
       expect(() => generateComponents(specs, context)).toThrow(
         'Invalid generated TypeScript identifier: "responsiveMobile-wide"'
       )
@@ -332,89 +378,114 @@ describe('generateComponents with a responsive axis', () => {
 })
 
 describe('generateComponents with Figma motion', () => {
-  it('should transition what the hover changes and fade a layer the hover reveals', async () => {
-    const spec = structuredClone(
-      (await componentSpecs()).find((entry) => entry.name === 'SquaredButton')!
-    )
-    const view = spec.views[0]!
-    view.motion = { hover: { duration: 250, easing: 'ease-in-out' } }
-    const revealed = view.hover!.find((rule) =>
-      rule.decls.some(([property, value]) => property === 'display' && value !== 'none')
-    )!
-    const key = revealed.path.join('.')
-    const css = generateComponents([spec], context).files.find((file) =>
+  const squaredButton = async () =>
+    structuredClone((await componentSpecs()).find((entry) => entry.name === 'SquaredButton')!)
+  const squaredButtonCss = (spec: Awaited<ReturnType<typeof squaredButton>>) =>
+    generateComponents([spec], context).files.find((file) =>
       file.path.endsWith('SquaredButton.module.css')
     )!.content
 
-    expect(css).toContain(
-      `& [data-n='${key}'] {\n  opacity: 0;\n  transition-property: display, opacity;`
-    )
-    expect(css).toContain(
-      '  transition-duration: 250ms;\n  transition-timing-function: ease-in-out;\n  transition-behavior: allow-discrete;'
-    )
-    expect(css).toMatch(
-      new RegExp(
-        `\\[data-force-state='hover'\\] \\[data-n='${key.replace('.', '\\.')}'\\] \\{\\n  display: [a-z]+;\\n  opacity: 1;\\n  @starting-style \\{\\n    opacity: 0;\\n  \\}`
+  describe('when the hover changes properties and reveals a layer', () => {
+    let key: string
+    let css: string
+
+    beforeEach(async () => {
+      const spec = await squaredButton()
+      const view = spec.views[0]!
+      view.motion = { hover: { duration: 250, easing: 'ease-in-out' } }
+      const revealed = view.hover!.find((rule) =>
+        rule.decls.some(([property, value]) => property === 'display' && value !== 'none')
+      )!
+      key = revealed.path.join('.')
+      css = squaredButtonCss(spec)
+    })
+
+    it('should transition what the hover changes and fade a layer the hover reveals', () => {
+      expect(css).toContain(
+        `& [data-n='${key}'] {\n  opacity: 0;\n  transition-property: display, opacity;`
       )
-    )
-    expect(css).toContain('@media (prefers-reduced-motion: reduce) {')
+      expect(css).toContain(
+        '  transition-duration: 250ms;\n  transition-timing-function: ease-in-out;\n  transition-behavior: allow-discrete;'
+      )
+      expect(css).toMatch(
+        new RegExp(
+          `\\[data-force-state='hover'\\] \\[data-n='${key.replace('.', '\\.')}'\\] \\{\\n  display: [a-z]+;\\n  opacity: 1;\\n  @starting-style \\{\\n    opacity: 0;\\n  \\}`
+        )
+      )
+      expect(css).toContain('@media (prefers-reduced-motion: reduce) {')
+    })
   })
 
-  it('should transition a gradient ring on the pseudo-element itself, with reduced motion', async () => {
-    const spec = structuredClone(
-      (await componentSpecs()).find((entry) => entry.name === 'SquaredButton')!
-    )
-    const view = spec.views[0]!
-    // A ring present at rest, hidden, and faded in by the hover, as the view mapper persists it.
-    view.root.css.after = [
-      ['content', "''"],
-      ['opacity', '0']
-    ]
-    view.hover = [...(view.hover ?? []), { path: [], decls: [], after: [['opacity', '1']] }]
-    view.motion = { hover: { duration: 300, easing: 'ease-out' } }
-    const css = generateComponents([spec], context).files.find((file) =>
-      file.path.endsWith('SquaredButton.module.css')
-    )!.content
+  describe('when the hover fades in a gradient ring present at rest', () => {
+    let css: string
 
-    expect(css).toContain("&::after {\n  content: '';\n  opacity: 0;\n}")
-    expect(css).toContain(
-      '&::after {\n  transition-property: opacity;\n  transition-duration: 300ms;\n  transition-timing-function: ease-out;\n}'
-    )
-    expect(css).toContain(
-      "&:hover:not(:disabled):not([data-interaction-mode='controlled'])::after, &[data-force-state='hover']::after {\n  opacity: 1;\n}"
-    )
-    expect(css).toContain(
-      '@media (prefers-reduced-motion: reduce) {\n  &, & [data-n], &::after, & [data-n]::after {\n    transition: none;'
-    )
+    beforeEach(async () => {
+      const spec = await squaredButton()
+      const view = spec.views[0]!
+      // A ring present at rest, hidden, and faded in by the hover, as the view mapper persists it.
+      view.root.css.after = [
+        ['content', "''"],
+        ['opacity', '0']
+      ]
+      view.hover = [...(view.hover ?? []), { path: [], decls: [], after: [['opacity', '1']] }]
+      view.motion = { hover: { duration: 300, easing: 'ease-out' } }
+      css = squaredButtonCss(spec)
+    })
+
+    it('should transition the ring on the pseudo-element itself, with reduced motion', () => {
+      expect(css).toContain("&::after {\n  content: '';\n  opacity: 0;\n}")
+      expect(css).toContain(
+        '&::after {\n  transition-property: opacity;\n  transition-duration: 300ms;\n  transition-timing-function: ease-out;\n}'
+      )
+      expect(css).toContain(
+        "&:hover:not(:disabled):not([data-interaction-mode='controlled'])::after, &[data-force-state='hover']::after {\n  opacity: 1;\n}"
+      )
+      expect(css).toContain(
+        '@media (prefers-reduced-motion: reduce) {\n  &, & [data-n], &::after, & [data-n]::after {\n    transition: none;'
+      )
+    })
   })
 
-  it('should not give the element an empty transition when a state only changes its ring', async () => {
-    const spec = structuredClone(
-      (await componentSpecs()).find((entry) => entry.name === 'SquaredButton')!
-    )
-    const view = spec.views[0]!
-    view.root.css.after = [['opacity', '0']]
-    view.hover = [{ path: [], decls: [], after: [['opacity', '1']] }]
-    view.motion = { hover: { duration: 300, easing: 'ease-out' } }
-    const css = generateComponents([spec], context).files.find((file) =>
-      file.path.endsWith('SquaredButton.module.css')
-    )!.content
+  describe('when a state only changes its ring', () => {
+    let css: string
 
-    expect(css).not.toContain('transition-property: ;')
-    expect(css).toContain('&::after {\n  transition-property: opacity;')
+    beforeEach(async () => {
+      const spec = await squaredButton()
+      const view = spec.views[0]!
+      view.root.css.after = [['opacity', '0']]
+      view.hover = [{ path: [], decls: [], after: [['opacity', '1']] }]
+      view.motion = { hover: { duration: 300, easing: 'ease-out' } }
+      css = squaredButtonCss(spec)
+    })
+
+    it('should not give the element an empty transition', () => {
+      expect(css).not.toContain('transition-property: ;')
+    })
+
+    it('should transition the ring', () => {
+      expect(css).toContain('&::after {\n  transition-property: opacity;')
+    })
   })
 
-  it('should emit no transition for a view without motion', async () => {
-    const css = await fileContent('components/demo-controls/Button.module.css')
+  describe('when a view has no motion', () => {
+    it('should emit no transition', async () => {
+      const css = await fileContent('components/demo-controls/Button.module.css')
 
-    expect(css).not.toContain('transition')
+      expect(css).not.toContain('transition')
+    })
   })
 
   describe('when the default selection of a component is not a captured view', () => {
-    it('should fail generation instead of emitting a component that throws when rendered with no props', async () => {
-      const spec = structuredClone((await componentSpecs()).find((item) => item.name === 'Button')!)
-      const variant = spec.props.find((prop) => prop.name === 'variant')!
+    let spec: Awaited<ReturnType<typeof componentSpecs>>[number]
+    let variant: (typeof spec.props)[number]
+
+    beforeEach(async () => {
+      spec = structuredClone((await componentSpecs()).find((item) => item.name === 'Button')!)
+      variant = spec.props.find((prop) => prop.name === 'variant')!
       spec.views = spec.views.filter((view) => view.values.variant !== variant.default)
+    })
+
+    it('should fail generation instead of emitting a component that throws on a render with no props', () => {
       expect(() => generateComponents([spec], context)).toThrow(
         `Button: its default selection (variant="${String(variant.default)}"`
       )

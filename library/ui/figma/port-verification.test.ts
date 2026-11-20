@@ -133,26 +133,34 @@ afterEach(async () => {
 })
 
 describe('when the pull request leaves the port inputs alone', () => {
-  it('should pass with no record for a change outside library/ui/figma', async () => {
-    await put('library/ui/README.md', 'unrelated\n')
-    commit('docs')
+  describe('and the change is outside library/ui/figma', () => {
+    beforeEach(async () => {
+      await put('library/ui/README.md', 'unrelated\n')
+      commit('docs')
+    })
 
-    expect(run(base)).toBe(0)
-    expect(out).toContain('unchanged')
+    it('should pass with no record', () => {
+      expect(run(base)).toBe(0)
+      expect(out).toContain('unchanged')
+    })
   })
 
-  it('should pass with no record when only tests, fixtures and Markdown change', async () => {
-    await put('library/ui/figma/test/a.test.ts', 'it("a", () => { /* edited */ })\n')
-    await put('library/ui/figma/test/fixtures/data.json', '{}\n')
-    await put('library/ui/figma/MAINTENANCE.md', 'v2\n')
-    await put('library/ui/figma/agent-kit/skills/x/SKILL.md', 'skill\n')
-    commit('tests and docs')
+  describe('and only tests, fixtures and Markdown change', () => {
+    beforeEach(async () => {
+      await put('library/ui/figma/test/a.test.ts', 'it("a", () => { /* edited */ })\n')
+      await put('library/ui/figma/test/fixtures/data.json', '{}\n')
+      await put('library/ui/figma/MAINTENANCE.md', 'v2\n')
+      await put('library/ui/figma/agent-kit/skills/x/SKILL.md', 'skill\n')
+      commit('tests and docs')
+    })
 
-    expect(run(base)).toBe(0)
-    expect(out).toContain('unchanged')
+    it('should pass with no record', () => {
+      expect(run(base)).toBe(0)
+      expect(out).toContain('unchanged')
+    })
   })
 
-  it.each([
+  describe.each([
     ['license', (lock: LockValue) => void (lock.sources[0]!.license = { spdx: 'MIT' })],
     ['imported paths', (lock: LockValue) => void (lock.sources[0]!.imported = { a: 'b' })],
     ['narrative changes', (lock: LockValue) => void (lock.sources[0]!.changes = ['Edited.'])],
@@ -174,35 +182,53 @@ describe('when the pull request leaves the port inputs alone', () => {
       (lock: LockValue) =>
         void (lock.sources[0]!.files['library/ui/figma/test/a.test.ts']!.deviation = ['added'])
     ]
-  ])('should pass with no record when only %s changes', async (_, edit) => {
-    await put(LOCK, JSON.stringify(lockValue({ edit })))
-    commit('provenance')
+  ])('and only %s changes', (_, edit) => {
+    beforeEach(async () => {
+      await put(LOCK, JSON.stringify(lockValue({ edit })))
+      commit('provenance')
+    })
 
-    expect(run(base)).toBe(0)
-    expect(out).toContain('unchanged')
+    it('should pass with no record', () => {
+      expect(run(base)).toBe(0)
+      expect(out).toContain('unchanged')
+    })
   })
 })
 
 describe('when the head has no lock', () => {
-  it('should pass for a head branched before the library existed', () => {
-    const emptyTree = execFileSync('git', ['-C', repo, 'mktree'], { input: '' }).toString().trim()
-    const head = git('commit-tree', emptyTree, '-m', 'old branch')
+  describe('and the head branched before the library existed', () => {
+    let head: string
 
-    expect(main(['--base', base, '--head', head], repo)).toBe(0)
-    expect(out).toContain('no upstream.lock.json at this head')
+    beforeEach(() => {
+      const emptyTree = execFileSync('git', ['-C', repo, 'mktree'], { input: '' }).toString().trim()
+      head = git('commit-tree', emptyTree, '-m', 'old branch')
+    })
+
+    it('should pass and say the head has no lock', () => {
+      expect(main(['--base', base, '--head', head], repo)).toBe(0)
+      expect(out).toContain('no upstream.lock.json at this head')
+    })
   })
 
-  it('should pass for a head that keeps library/ui but has no lock', async () => {
-    await rm(path.join(repo, LOCK))
-    const head = commit('no lock')
+  describe('and the head keeps library/ui', () => {
+    let head: string
 
-    expect(main(['--base', base, '--head', head], repo)).toBe(0)
+    beforeEach(async () => {
+      await rm(path.join(repo, LOCK))
+      head = commit('no lock')
+    })
+
+    it('should pass', () => {
+      expect(main(['--base', base, '--head', head], repo)).toBe(0)
+    })
   })
 
-  it('should fail on a head that is not a commit', () => {
-    expect(main(['--base', base, '--head', 'f'.repeat(40)], repo)).toBe(1)
-    expect(out).toContain('the head')
-    expect(out).toContain('not a commit')
+  describe('and the head is not a commit', () => {
+    it('should fail, naming the head', () => {
+      expect(main(['--base', base, '--head', 'f'.repeat(40)], repo)).toBe(1)
+      expect(out).toContain('the head')
+      expect(out).toContain('not a commit')
+    })
   })
 })
 
@@ -211,61 +237,85 @@ describe('when the pull request changes a port input', () => {
     await put('library/ui/figma/a.ts', 'export const a = 2\n')
   })
 
-  it('should fail when no record is committed', () => {
-    commit('port without record')
+  describe('and no record is committed', () => {
+    beforeEach(() => {
+      commit('port without record')
+    })
 
-    expect(run(base)).toBe(1)
-    expect(out).toContain('not committed')
+    it('should fail, saying the record is not committed', () => {
+      expect(run(base)).toBe(1)
+      expect(out).toContain('not committed')
+    })
   })
 
-  it('should pass with a record for exactly these port inputs', async () => {
-    await put(RECORD, JSON.stringify(recordFor()))
-    commit('port')
+  describe('and a record for exactly these port inputs is committed', () => {
+    beforeEach(async () => {
+      await put(RECORD, JSON.stringify(recordFor()))
+      commit('port')
+    })
 
-    expect(run(base)).toBe(0)
-    expect(out).toContain('reports passing checks')
+    it('should pass, reporting the passing checks', () => {
+      expect(run(base)).toBe(0)
+      expect(out).toContain('reports passing checks')
+    })
   })
 
-  it('should keep a record valid when only exempt files change after it', async () => {
-    await put(RECORD, JSON.stringify(recordFor()))
-    await put('library/ui/figma/test/a.test.ts', 'it("b", () => {})\n')
-    await put('library/ui/figma/MAINTENANCE.md', 'v3\n')
-    commit('port, then a test and a doc edit')
+  describe('and only exempt files change after the record', () => {
+    beforeEach(async () => {
+      await put(RECORD, JSON.stringify(recordFor()))
+      await put('library/ui/figma/test/a.test.ts', 'it("b", () => {})\n')
+      await put('library/ui/figma/MAINTENANCE.md', 'v3\n')
+      commit('port, then a test and a doc edit')
+    })
 
-    expect(run(base)).toBe(0)
+    it('should keep the record valid', () => {
+      expect(run(base)).toBe(0)
+    })
   })
 
-  it('should fail when a non-exempt file changed after the record was written', async () => {
-    await put(RECORD, JSON.stringify(recordFor()))
-    await put('library/ui/figma/a.ts', 'export const a = 3\n')
-    commit('edited after verification')
+  describe('and a non-exempt file changed after the record was written', () => {
+    beforeEach(async () => {
+      await put(RECORD, JSON.stringify(recordFor()))
+      await put('library/ui/figma/a.ts', 'export const a = 3\n')
+      commit('edited after verification')
+    })
 
-    expect(run(base)).toBe(1)
-    expect(out).toContain('the record is for other port inputs')
+    it('should fail, saying the record is for other port inputs', () => {
+      expect(run(base)).toBe(1)
+      expect(out).toContain('the record is for other port inputs')
+    })
   })
 
-  it('should fail when a new untracked-by-the-lock file appears after the record', async () => {
-    await put(RECORD, JSON.stringify(recordFor()))
-    await put('library/ui/figma/src/new.ts', 'export {}\n')
-    commit('new module')
+  describe('and a new untracked-by-the-lock file appears after the record', () => {
+    beforeEach(async () => {
+      await put(RECORD, JSON.stringify(recordFor()))
+      await put('library/ui/figma/src/new.ts', 'export {}\n')
+      commit('new module')
+    })
 
-    expect(run(base)).toBe(1)
-    expect(out).toContain('other port inputs')
+    it('should fail, saying the record is for other port inputs', () => {
+      expect(run(base)).toBe(1)
+      expect(out).toContain('other port inputs')
+    })
   })
 
-  it.each([
+  describe.each([
     ['the capture digest table', { digest: 'f' }],
     ['the public component table', { components: 'f' }]
-  ])('should fail when %s changed after the record was written', async (_, options) => {
-    await put(RECORD, JSON.stringify(recordFor()))
-    await put(LOCK, JSON.stringify(lockValue(options)))
-    commit('pin changed after verification')
+  ])('and %s changed after the record was written', (_, options) => {
+    beforeEach(async () => {
+      await put(RECORD, JSON.stringify(recordFor()))
+      await put(LOCK, JSON.stringify(lockValue(options)))
+      commit('pin changed after verification')
+    })
 
-    expect(run(base)).toBe(1)
-    expect(out).toContain('other port inputs')
+    it('should fail, saying the record is for other port inputs', () => {
+      expect(run(base)).toBe(1)
+      expect(out).toContain('other port inputs')
+    })
   })
 
-  it.each([
+  describe.each([
     [
       'a port input counterpart',
       (lock: LockValue) =>
@@ -303,145 +353,229 @@ describe('when the pull request changes a port input', () => {
       (lock: LockValue) => void (lock.publicFoundations = { files: {} })
     ],
     ['a lock field added later', (lock: LockValue) => void (lock.sources[0]!.policy = 'strict')]
-  ])('should require a new record when only %s changes', async (_, edit) => {
-    await put('library/ui/figma/a.ts', 'export const a = 1\n')
-    await put(LOCK, JSON.stringify(lockValue({ edit })))
-    commit('lock-only change')
+  ])('and only %s changes in the lock', (_, edit) => {
+    beforeEach(async () => {
+      await put('library/ui/figma/a.ts', 'export const a = 1\n')
+      await put(LOCK, JSON.stringify(lockValue({ edit })))
+      commit('lock-only change')
+    })
 
-    expect(run(base)).toBe(1)
-    expect(out).toContain('not committed')
+    it('should require a new record', () => {
+      expect(run(base)).toBe(1)
+      expect(out).toContain('not committed')
+    })
   })
 
-  it('should fail with a schema 1 record', async () => {
-    const rest: Record<string, unknown> = recordFor()
-    delete rest.portInputHash
-    await put(RECORD, JSON.stringify({ ...rest, schema: 1, lockHash: 'x', figmaTree: 'y' }))
-    commit('old record')
+  describe('and the committed record uses schema 1', () => {
+    beforeEach(async () => {
+      const rest: Record<string, unknown> = recordFor()
+      delete rest.portInputHash
+      await put(RECORD, JSON.stringify({ ...rest, schema: 1, lockHash: 'x', figmaTree: 'y' }))
+      commit('old record')
+    })
 
-    expect(run(base)).toBe(1)
-    expect(out).toContain('unsupported record schema')
+    it('should fail on the unsupported schema', () => {
+      expect(run(base)).toBe(1)
+      expect(out).toContain('unsupported record schema')
+    })
   })
 
-  it('should fail with a malformed record', async () => {
-    await put(RECORD, '{ not json')
-    commit('broken record')
+  describe('and the committed record is malformed', () => {
+    beforeEach(async () => {
+      await put(RECORD, '{ not json')
+      commit('broken record')
+    })
 
-    expect(run(base)).toBe(1)
-    expect(out).toContain('not committed valid JSON')
+    it('should fail, saying the record is not valid JSON', () => {
+      expect(run(base)).toBe(1)
+      expect(out).toContain('not committed valid JSON')
+    })
   })
 
-  it('should fail when a required check did not pass', async () => {
-    const checks = { ...passing(), diff: { result: 'fail', detail: '3 changed' } }
-    await put(RECORD, JSON.stringify(recordFor({ checks })))
-    commit('failing check')
+  describe('and a required check did not pass', () => {
+    beforeEach(async () => {
+      const checks = { ...passing(), diff: { result: 'fail', detail: '3 changed' } }
+      await put(RECORD, JSON.stringify(recordFor({ checks })))
+      commit('failing check')
+    })
 
-    expect(run(base)).toBe(1)
-    expect(out).toContain('check diff did not pass')
+    it('should fail, naming the check', () => {
+      expect(run(base)).toBe(1)
+      expect(out).toContain('check diff did not pass')
+    })
   })
 
-  it('should treat a base without the library as a change', () => {
-    const emptyTree = execFileSync('git', ['-C', repo, 'mktree'], { input: '' }).toString().trim()
-    const empty = git('commit-tree', emptyTree, '-m', 'empty')
-    commit('port')
+  describe('and the base has no library', () => {
+    let empty: string
 
-    expect(run(empty)).toBe(1)
+    beforeEach(() => {
+      const emptyTree = execFileSync('git', ['-C', repo, 'mktree'], { input: '' }).toString().trim()
+      empty = git('commit-tree', emptyTree, '-m', 'empty')
+      commit('port')
+    })
+
+    it('should treat the base as a change', () => {
+      expect(run(empty)).toBe(1)
+    })
   })
 
-  it('should treat a base whose lock cannot be hashed as a change', async () => {
-    await put(LOCK, JSON.stringify({ sources: [] }))
-    const broken = commit('broken base')
-    await put(LOCK, JSON.stringify(lockValue()))
-    commit('port')
+  describe('and the base lock cannot be hashed', () => {
+    let broken: string
 
-    expect(run(broken)).toBe(1)
-    expect(out).toContain('not committed')
+    beforeEach(async () => {
+      await put(LOCK, JSON.stringify({ sources: [] }))
+      broken = commit('broken base')
+      await put(LOCK, JSON.stringify(lockValue()))
+      commit('port')
+    })
+
+    it('should treat the base as a change', () => {
+      expect(run(broken)).toBe(1)
+      expect(out).toContain('not committed')
+    })
   })
 
-  it('should fail on a head lock that is not valid JSON', async () => {
-    await put(LOCK, '{ not json')
-    commit('broken lock')
+  describe('and the head lock is not valid JSON', () => {
+    beforeEach(async () => {
+      await put(LOCK, '{ not json')
+      commit('broken lock')
+    })
 
-    expect(run(base)).toBe(1)
-    expect(out).toContain('is not valid JSON')
+    it('should fail, saying the lock is not valid JSON', () => {
+      expect(run(base)).toBe(1)
+      expect(out).toContain('is not valid JSON')
+    })
   })
 
-  it('should judge the given head rather than the checkout', async () => {
-    await put(RECORD, JSON.stringify(recordFor()))
-    const head = commit('port')
-    await put('library/ui/figma/a.ts', 'export const a = 4\n')
-    commit('later change without a record')
+  describe('and the checkout moved past the given head', () => {
+    let head: string
 
-    expect(main(['--base', base, '--head', head], repo)).toBe(0)
-    expect(main(['--base', base], repo)).toBe(1)
+    beforeEach(async () => {
+      await put(RECORD, JSON.stringify(recordFor()))
+      head = commit('port')
+      await put('library/ui/figma/a.ts', 'export const a = 4\n')
+      commit('later change without a record')
+    })
+
+    it('should judge the given head rather than the checkout', () => {
+      expect(main(['--base', base, '--head', head], repo)).toBe(0)
+      expect(main(['--base', base], repo)).toBe(1)
+    })
   })
 
-  it('should fail on a base that is not a commit', () => {
-    commit('port')
+  describe('and the base is not a commit', () => {
+    beforeEach(() => {
+      commit('port')
+    })
 
-    expect(run('f'.repeat(40))).toBe(1)
-    expect(out).toContain('not a commit')
+    it('should fail, saying it is not a commit', () => {
+      expect(run('f'.repeat(40))).toBe(1)
+      expect(out).toContain('not a commit')
+    })
   })
 
-  it('should leave the record and the lock untouched', async () => {
-    const record = JSON.stringify(recordFor({ checks: { ...passing(), diff: { result: 'fail' } } }))
-    await put(RECORD, record)
-    commit('failing record')
-    const lock = await readFile(path.join(repo, LOCK), 'utf8')
+  describe('and the committed record reports a failing check', () => {
+    let record: string
+    let lock: string
 
-    expect(run(base)).toBe(1)
-    expect(await readFile(path.join(repo, RECORD), 'utf8')).toBe(record)
-    expect(await readFile(path.join(repo, LOCK), 'utf8')).toBe(lock)
+    beforeEach(async () => {
+      record = JSON.stringify(recordFor({ checks: { ...passing(), diff: { result: 'fail' } } }))
+      await put(RECORD, record)
+      commit('failing record')
+      lock = await readFile(path.join(repo, LOCK), 'utf8')
+    })
+
+    it('should leave the record and the lock untouched', async () => {
+      expect(run(base)).toBe(1)
+      expect(await readFile(path.join(repo, RECORD), 'utf8')).toBe(record)
+      expect(await readFile(path.join(repo, LOCK), 'utf8')).toBe(lock)
+    })
   })
 })
 
 describe('when reading the files of a commit', () => {
-  it('should refuse a Git LFS pointer', async () => {
-    await put(
-      'library/ui/figma/font.woff2',
-      'version https://git-lfs.github.com/spec/v1\noid sha256:x\n'
-    )
-    const head = commit('pointer')
+  describe('and the commit holds a Git LFS pointer', () => {
+    let head: string
 
-    expect(() => trackedFilesAt(repo, head)).toThrow('Git LFS pointer')
+    beforeEach(async () => {
+      await put(
+        'library/ui/figma/font.woff2',
+        'version https://git-lfs.github.com/spec/v1\noid sha256:x\n'
+      )
+      head = commit('pointer')
+    })
+
+    it('should refuse the pointer', () => {
+      expect(() => trackedFilesAt(repo, head)).toThrow('Git LFS pointer')
+    })
   })
 
-  it('should refuse a submodule', () => {
-    git('update-index', '--add', '--cacheinfo', `160000,${'e'.repeat(40)},library/ui/figma/vendor`)
-    git('commit', '--quiet', '--no-gpg-sign', '-m', 'submodule')
+  describe('and the commit holds a submodule', () => {
+    beforeEach(() => {
+      git(
+        'update-index',
+        '--add',
+        '--cacheinfo',
+        `160000,${'e'.repeat(40)},library/ui/figma/vendor`
+      )
+      git('commit', '--quiet', '--no-gpg-sign', '-m', 'submodule')
+    })
 
-    expect(() => trackedFilesAt(repo, git('rev-parse', 'HEAD'))).toThrow('has mode 160000')
+    it('should refuse the submodule', () => {
+      expect(() => trackedFilesAt(repo, git('rev-parse', 'HEAD'))).toThrow('has mode 160000')
+    })
   })
 
-  it('should refuse a symlink, whose target could change without the link changing', async () => {
-    const target = git('hash-object', '-w', '--stdin')
-    git('update-index', '--add', '--cacheinfo', `120000,${target},library/ui/figma/link.mjs`)
-    git('commit', '--quiet', '--no-gpg-sign', '-m', 'symlink')
+  describe('and the commit holds a symlink', () => {
+    beforeEach(() => {
+      const target = git('hash-object', '-w', '--stdin')
+      git('update-index', '--add', '--cacheinfo', `120000,${target},library/ui/figma/link.mjs`)
+      git('commit', '--quiet', '--no-gpg-sign', '-m', 'symlink')
+    })
 
-    expect(() => trackedFilesAt(repo, git('rev-parse', 'HEAD'))).toThrow('has mode 120000')
+    it('should refuse the symlink, whose target could change without the link changing', () => {
+      expect(() => trackedFilesAt(repo, git('rev-parse', 'HEAD'))).toThrow('has mode 120000')
+    })
   })
 
   // A path cut at its first tab used to be filed under the shorter name and overwrite the real file's digest.
-  it('should refuse a tab in a path, so a sibling cannot shadow an edited port input', async () => {
-    await put('library/ui/figma/a.ts\t.orig', 'export const a = 1\n')
-    await put('library/ui/figma/a.ts', 'export const a = 2\n')
-    const head = commit('shadowed edit')
+  describe('and a path holds a tab next to an edited port input', () => {
+    let head: string
 
-    expect(() => trackedFilesAt(repo, head)).toThrow('control character')
-    expect(run(base)).toBe(1)
-    expect(out).toContain('control character')
+    beforeEach(async () => {
+      await put('library/ui/figma/a.ts\t.orig', 'export const a = 1\n')
+      await put('library/ui/figma/a.ts', 'export const a = 2\n')
+      head = commit('shadowed edit')
+    })
+
+    it('should refuse the path, so a sibling cannot shadow the port input', () => {
+      expect(() => trackedFilesAt(repo, head)).toThrow('control character')
+    })
+
+    it('should fail the check on the control character', () => {
+      expect(run(base)).toBe(1)
+      expect(out).toContain('control character')
+    })
   })
 })
 
 describe('when hashing a listing of blobs', () => {
-  it('should refuse a path listed twice', async () => {
-    await put('library/ui/figma/b.ts', 'export {}\n')
-    const oid = git('hash-object', 'library/ui/figma/b.ts')
-    expect(() =>
-      blobDigests(repo, [
-        { file: 'library/ui/figma/b.ts', oid },
-        { file: 'library/ui/figma/b.ts', oid }
-      ])
-    ).toThrow('names a path twice')
+  describe('and a path is listed twice', () => {
+    let oid: string
+
+    beforeEach(async () => {
+      await put('library/ui/figma/b.ts', 'export {}\n')
+      oid = git('hash-object', 'library/ui/figma/b.ts')
+    })
+
+    it('should refuse the listing', () => {
+      expect(() =>
+        blobDigests(repo, [
+          { file: 'library/ui/figma/b.ts', oid },
+          { file: 'library/ui/figma/b.ts', oid }
+        ])
+      ).toThrow('names a path twice')
+    })
   })
 })
 
@@ -590,7 +724,7 @@ describe('when deciding which files are port inputs', () => {
     expect(problems("  import './rule.mjs'\n")).toContain(`${self} imports ./rule.mjs`)
   })
 
-  it('should count an exempt Markdown basename only when it stands alone', () => {
+  it('should not count an exempt Markdown basename inside a sentence', () => {
     const blobs = {
       'library/ui/figma/agent-kit/skills/x/SKILL.md': Buffer.from('# x\n'),
       'library/ui/figma/tool.mjs': Buffer.from("log('see SKILL.md for details')\n")
@@ -607,11 +741,18 @@ describe('when deciding which files are port inputs', () => {
     )
   })
 
-  it('should strip comments in linear time when a glob leaves a comment opener unclosed', () => {
-    const text = "const g = 'src/*'\n".repeat(60000)
-    const started = Date.now()
-    exemptReferences('library/ui/figma/tool.mjs', text)
-    expect(Date.now() - started).toBeLessThan(2000)
+  describe('and a glob leaves a comment opener unclosed', () => {
+    let text: string
+
+    beforeEach(() => {
+      text = "const g = 'src/*'\n".repeat(60000)
+    })
+
+    it('should strip comments in linear time', () => {
+      const started = Date.now()
+      exemptReferences('library/ui/figma/tool.mjs', text)
+      expect(Date.now() - started).toBeLessThan(2000)
+    })
   })
 
   it('should look for require in the raw validator text, so comment-like strings cannot hide it', () => {
@@ -705,73 +846,83 @@ describe('when deciding which files are port inputs', () => {
     )
   })
 
-  it('should fail the check when a port input names an exempt file', async () => {
-    await put(
-      'library/ui/figma/a.ts',
-      "export const notes = new URL('helpers.spec.mjs', import.meta.url)\n"
-    )
-    commit('reads an exempt file')
+  describe('and a port input names an exempt file', () => {
+    beforeEach(async () => {
+      await put(
+        'library/ui/figma/a.ts',
+        "export const notes = new URL('helpers.spec.mjs', import.meta.url)\n"
+      )
+      commit('reads an exempt file')
+    })
 
-    expect(run(base)).toBe(1)
-    expect(out).toContain('names the exempt path "helpers.spec.mjs"')
+    it('should fail the check, naming the exempt path', () => {
+      expect(run(base)).toBe(1)
+      expect(out).toContain('names the exempt path "helpers.spec.mjs"')
+    })
   })
 })
 
 describe('when printing the port input hash', () => {
-  it('should print the hash a record must name, without needing a base', async () => {
-    await put('library/ui/figma/a.ts', 'export const a = 5\n')
-    const expected = recordFor().portInputHash
-    commit('head')
+  describe('and the head changes a port input', () => {
+    let expected: string
 
-    expect(main(['--print-hash'], repo)).toBe(0)
-    expect(out.trim()).toBe(expected)
+    beforeEach(async () => {
+      await put('library/ui/figma/a.ts', 'export const a = 5\n')
+      expected = recordFor().portInputHash
+      commit('head')
+    })
+
+    it('should print the hash a record must name, without needing a base', () => {
+      expect(main(['--print-hash'], repo)).toBe(0)
+      expect(out.trim()).toBe(expected)
+    })
   })
 
-  it('should keep stdout for the hash and send scan problems to stderr', async () => {
-    await put(
-      'library/ui/figma/a.ts',
-      "export const notes = new URL('helpers.spec.mjs', import.meta.url)\n"
-    )
-    commit('reads an exempt file')
-    vi.restoreAllMocks()
-    let stdout = ''
-    let stderr = ''
-    vi.spyOn(process.stdout, 'write').mockImplementation(
-      (chunk) => ((stdout += String(chunk)), true)
-    )
-    vi.spyOn(process.stderr, 'write').mockImplementation(
-      (chunk) => ((stderr += String(chunk)), true)
-    )
+  describe('and a port input names an exempt file', () => {
+    let stdout: string
+    let stderr: string
 
-    expect(main(['--print-hash'], repo)).toBe(1)
-    expect(stdout).toBe('')
-    expect(stderr).toContain('names the exempt path "helpers.spec.mjs"')
+    beforeEach(async () => {
+      await put(
+        'library/ui/figma/a.ts',
+        "export const notes = new URL('helpers.spec.mjs', import.meta.url)\n"
+      )
+      commit('reads an exempt file')
+      // Replace the shared capture with one that keeps the two streams apart.
+      vi.restoreAllMocks()
+      stdout = ''
+      stderr = ''
+      vi.spyOn(process.stdout, 'write').mockImplementation(
+        (chunk) => ((stdout += String(chunk)), true)
+      )
+      vi.spyOn(process.stderr, 'write').mockImplementation(
+        (chunk) => ((stderr += String(chunk)), true)
+      )
+    })
+
+    it('should keep stdout for the hash and send scan problems to stderr', () => {
+      expect(main(['--print-hash'], repo)).toBe(1)
+      expect(stdout).toBe('')
+      expect(stderr).toContain('names the exempt path "helpers.spec.mjs"')
+    })
+
+    // The nearest false positive: without --print-hash the check still reports on stdout, as CI reads it.
+    it('should still report scan problems on stdout for the check itself', () => {
+      expect(run(base)).toBe(1)
+      expect(stdout).toContain('names the exempt path "helpers.spec.mjs"')
+    })
   })
 
-  // The nearest false positive: without --print-hash the check still reports on stdout, as CI reads it.
-  it('should still report scan problems on stdout for the check itself', async () => {
-    await put(
-      'library/ui/figma/a.ts',
-      "export const notes = new URL('helpers.spec.mjs', import.meta.url)\n"
-    )
-    commit('reads an exempt file')
-    vi.restoreAllMocks()
-    let stdout = ''
-    vi.spyOn(process.stdout, 'write').mockImplementation(
-      (chunk) => ((stdout += String(chunk)), true)
-    )
-    vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+  describe('and the head has no lock', () => {
+    beforeEach(async () => {
+      await rm(path.join(repo, LOCK))
+      commit('no lock')
+    })
 
-    expect(run(base)).toBe(1)
-    expect(stdout).toContain('names the exempt path "helpers.spec.mjs"')
-  })
-
-  it('should exit non-zero instead of printing text for a head with no lock', async () => {
-    await rm(path.join(repo, LOCK))
-    commit('no lock')
-
-    expect(main(['--print-hash'], repo)).toBe(1)
-    expect(out).toContain('there is no hash to print')
+    it('should exit non-zero instead of printing text', () => {
+      expect(main(['--print-hash'], repo)).toBe(1)
+      expect(out).toContain('there is no hash to print')
+    })
   })
 
   it.each([
@@ -799,8 +950,14 @@ describe('when printing the port input hash', () => {
 })
 
 describe('when validating a record', () => {
-  const lock = lockValue()
-  const inputHash = portInputHash(lock, { 'library/ui/figma/a.ts': 'b'.repeat(64) })
+  let lock: LockValue
+  let inputHash: string
+
+  beforeEach(() => {
+    lock = lockValue()
+    inputHash = portInputHash(lock, { 'library/ui/figma/a.ts': 'b'.repeat(64) })
+  })
+
   const valid = () => ({
     schema: 2,
     portInputHash: inputHash,
@@ -848,20 +1005,45 @@ describe('when validating a record', () => {
 })
 
 describe('when hashing the port inputs', () => {
-  const files = { 'library/ui/figma/a.ts': 'b'.repeat(64) }
+  let files: Record<string, string>
 
-  it('should not depend on key order', () => {
-    const reordered = JSON.parse(JSON.stringify(lockValue()))
-    reordered.sources[0] = Object.fromEntries(Object.entries(reordered.sources[0]).reverse())
-    expect(portInputHash(reordered, files)).toBe(portInputHash(lockValue(), files))
+  beforeEach(() => {
+    files = { 'library/ui/figma/a.ts': 'b'.repeat(64) }
   })
 
-  it('should fail closed without a capture digest table or any bound file', () => {
-    const value = lockValue() as { sources: { snapshot: Record<string, unknown> }[] }
-    delete value.sources[0]!.snapshot.digests
-    expect(() => portInputHash(value, files)).toThrow('no capture digest table')
-    expect(() =>
-      portInputHash(lockValue(), { 'library/ui/figma/MAINTENANCE.md': 'b'.repeat(64) })
-    ).toThrow('no port input')
+  describe('and the lock keys are reordered', () => {
+    let reordered: LockValue
+
+    beforeEach(() => {
+      reordered = JSON.parse(JSON.stringify(lockValue()))
+      reordered.sources[0] = Object.fromEntries(
+        Object.entries(reordered.sources[0]!).reverse()
+      ) as LockValue['sources'][number]
+    })
+
+    it('should not depend on key order', () => {
+      expect(portInputHash(reordered, files)).toBe(portInputHash(lockValue(), files))
+    })
+  })
+
+  describe('and the lock has no capture digest table', () => {
+    let value: { sources: { snapshot: Record<string, unknown> }[] }
+
+    beforeEach(() => {
+      value = lockValue() as { sources: { snapshot: Record<string, unknown> }[] }
+      delete value.sources[0]!.snapshot.digests
+    })
+
+    it('should fail closed', () => {
+      expect(() => portInputHash(value, files)).toThrow('no capture digest table')
+    })
+  })
+
+  describe('and no bound file is listed', () => {
+    it('should fail closed', () => {
+      expect(() =>
+        portInputHash(lockValue(), { 'library/ui/figma/MAINTENANCE.md': 'b'.repeat(64) })
+      ).toThrow('no port input')
+    })
   })
 })

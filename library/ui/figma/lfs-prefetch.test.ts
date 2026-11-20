@@ -4,7 +4,7 @@ import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { allowedUrl, main, parseObjects, prefetch } from './lfs-prefetch.mjs'
 
 const AUTHORIZATION = 'Basic ZmFrZS10b2tlbg=='
@@ -69,152 +69,223 @@ beforeEach(async () => {
   endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}/lfs`
 })
 afterEach(async () => {
+  vi.restoreAllMocks()
   await new Promise((done) => server.close(done))
   await rm(store, { recursive: true, force: true })
 })
 const run = (objects: { oid: string; size: number }[]) =>
   prefetch({ store, endpoint, authorization: AUTHORIZATION, objects })
 
+// An error response whose body is never read keeps its connection busy; each one must be released.
+const errorResponse = (status: number, cancel: () => Promise<void>) => {
+  const body = new ReadableStream({ cancel })
+  return new Response(body, { status })
+}
+
 describe('when prefetching listed LFS objects', () => {
-  it('should download each missing object into the store, verified, through one batch request', async () => {
-    const a = object('alpha')
-    const b = object('beta')
-    payloads.set(a.oid, 'alpha').set(b.oid, 'beta')
+  let a: { oid: string; size: number }
 
-    expect(await run([a, b])).toEqual({ local: 0, downloaded: 2, bytes: 9, failures: [] })
-    expect(await readFile(stored(store, a.oid), 'utf8')).toBe('alpha')
-    expect(await readFile(stored(store, b.oid), 'utf8')).toBe('beta')
-    const batch = requests.filter((item) => item.url === '/lfs/objects/batch')
-    expect(batch).toHaveLength(1)
-    expect(batch[0]!.authorization).toBe(AUTHORIZATION)
-    expect(JSON.parse(batch[0]!.body!)).toMatchObject({ operation: 'download', objects: [a, b] })
+  beforeEach(() => {
+    a = object('alpha')
   })
 
-  it('should not request an object the store already holds intact', async () => {
-    const a = object('alpha')
-    await mkdir(path.dirname(stored(store, a.oid)), { recursive: true })
-    await writeFile(stored(store, a.oid), 'alpha')
+  describe('and every object is missing from the store', () => {
+    let b: { oid: string; size: number }
 
-    expect(await run([a])).toEqual({ local: 1, downloaded: 0, bytes: 0, failures: [] })
-    expect(requests).toEqual([])
-  })
-
-  it('should replace a stored object whose bytes do not match', async () => {
-    const a = object('alpha')
-    payloads.set(a.oid, 'alpha')
-    await mkdir(path.dirname(stored(store, a.oid)), { recursive: true })
-    await writeFile(stored(store, a.oid), 'stale')
-
-    expect((await run([a])).downloaded).toBe(1)
-    expect(await readFile(stored(store, a.oid), 'utf8')).toBe('alpha')
-  })
-
-  it('should report an object the server does not have, and download the rest', async () => {
-    const a = object('alpha')
-    const gone = object('gone')
-    payloads.set(a.oid, 'alpha')
-
-    const result = await run([a, gone])
-    expect(result.downloaded).toBe(1)
-    expect(result.failures).toEqual([{ oid: gone.oid, reason: 'the server refused it (404)' }])
-    await expect(readFile(stored(store, gone.oid))).rejects.toThrow()
-  })
-
-  it('should reject a payload whose hash does not match, writing nothing', async () => {
-    const a = object('alpha')
-    payloads.set(a.oid, 'alpha')
-    override.payload = 'omega'
-
-    expect((await run([a])).failures).toEqual([
-      { oid: a.oid, reason: 'the payload hash does not match the pointer' }
-    ])
-    await expect(readFile(stored(store, a.oid))).rejects.toThrow()
-  })
-
-  // An error response whose body is never read keeps its connection busy; each one must be released.
-  const errorResponse = (status: number, cancel: () => Promise<void>) => {
-    const body = new ReadableStream({ cancel })
-    return new Response(body, { status })
-  }
-
-  it('should release the body of a failed batch response and report its status', async () => {
-    const cancel = vi.fn(() => Promise.resolve())
-    const fetchFn = vi.fn(async () => errorResponse(503, cancel))
-
-    await expect(
-      prefetch({ store, endpoint, authorization: AUTHORIZATION, objects: [object('a')], fetchFn })
-    ).rejects.toThrow('the LFS batch request answered 503')
-    expect(cancel).toHaveBeenCalledTimes(1)
-  })
-
-  it('should release the body of every failed download and still try the remaining objects', async () => {
-    const listed = ['a', 'b', 'c', 'd', 'e'].map(object)
-    const cancel = vi.fn(() => Promise.resolve())
-    const fetchFn = vi.fn(async (url: string) =>
-      url.endsWith('/objects/batch')
-        ? Response.json({
-            objects: listed.map(({ oid, size }) => ({
-              oid,
-              size,
-              actions: { download: { href: `${endpoint}/download/${oid}` } }
-            }))
-          })
-        : errorResponse(500, cancel)
-    )
-
-    const result = await prefetch({
-      store,
-      endpoint,
-      authorization: AUTHORIZATION,
-      objects: listed,
-      fetchFn
+    beforeEach(() => {
+      b = object('beta')
+      payloads.set(a.oid, 'alpha').set(b.oid, 'beta')
     })
-    expect(result.failures).toEqual(
-      listed.map(({ oid }) => ({ oid, reason: 'the download answered 500' }))
-    )
-    expect(cancel).toHaveBeenCalledTimes(listed.length)
+
+    it('should download each missing object into the store, verified, through one batch request', async () => {
+      expect(await run([a, b])).toEqual({ local: 0, downloaded: 2, bytes: 9, failures: [] })
+      expect(await readFile(stored(store, a.oid), 'utf8')).toBe('alpha')
+      expect(await readFile(stored(store, b.oid), 'utf8')).toBe('beta')
+      const batch = requests.filter((item) => item.url === '/lfs/objects/batch')
+      expect(batch).toHaveLength(1)
+      expect(batch[0]!.authorization).toBe(AUTHORIZATION)
+      expect(JSON.parse(batch[0]!.body!)).toMatchObject({ operation: 'download', objects: [a, b] })
+    })
   })
 
-  it('should keep the status as the failure when releasing the body itself fails', async () => {
-    const a = object('a')
-    const cancel = vi.fn(() => Promise.reject(new Error('stream already closed')))
-    const fetchFn = vi.fn(async (url: string) =>
-      url.endsWith('/objects/batch')
-        ? Response.json({
-            objects: [{ ...a, actions: { download: { href: `${endpoint}/download/${a.oid}` } } }]
-          })
-        : errorResponse(502, cancel)
-    )
+  describe('and the store already holds the object intact', () => {
+    beforeEach(async () => {
+      await mkdir(path.dirname(stored(store, a.oid)), { recursive: true })
+      await writeFile(stored(store, a.oid), 'alpha')
+    })
 
-    expect(
-      (await prefetch({ store, endpoint, authorization: AUTHORIZATION, objects: [a], fetchFn }))
-        .failures
-    ).toEqual([{ oid: a.oid, reason: 'the download answered 502' }])
-    expect(cancel).toHaveBeenCalledTimes(1)
+    it('should not request the object', async () => {
+      expect(await run([a])).toEqual({ local: 1, downloaded: 0, bytes: 0, failures: [] })
+      expect(requests).toEqual([])
+    })
   })
 
-  it('should reject a payload whose size does not match', async () => {
-    const a = object('alpha')
-    payloads.set(a.oid, 'alpha')
-    override.payload = 'alphabet'
+  describe('and a stored object has bytes that do not match', () => {
+    beforeEach(async () => {
+      payloads.set(a.oid, 'alpha')
+      await mkdir(path.dirname(stored(store, a.oid)), { recursive: true })
+      await writeFile(stored(store, a.oid), 'stale')
+    })
 
-    expect((await run([a])).failures[0]!.reason).toBe('the payload size does not match the pointer')
+    it('should replace the stored object', async () => {
+      expect((await run([a])).downloaded).toBe(1)
+      expect(await readFile(stored(store, a.oid), 'utf8')).toBe('alpha')
+    })
   })
 
-  it('should refuse a download action pointing at a plain http host', async () => {
-    const a = object('alpha')
-    payloads.set(a.oid, 'alpha')
-    override.href = 'http://example.com/objects/alpha'
+  describe('and the server does not have one of the objects', () => {
+    let gone: { oid: string; size: number }
 
-    expect((await run([a])).failures[0]!.reason).toBe('no usable download action')
-    expect(requests.some((item) => item.url.startsWith('/objects/'))).toBe(false)
+    beforeEach(() => {
+      gone = object('gone')
+      payloads.set(a.oid, 'alpha')
+    })
+
+    it('should report the missing object, and download the rest', async () => {
+      const result = await run([a, gone])
+      expect(result.downloaded).toBe(1)
+      expect(result.failures).toEqual([{ oid: gone.oid, reason: 'the server refused it (404)' }])
+      await expect(readFile(stored(store, gone.oid))).rejects.toThrow('ENOENT')
+    })
   })
 
-  it('should fail as a whole when the batch request is refused, without echoing the response', async () => {
-    const a = object('alpha')
-    override.batchStatus = 403
+  describe('and the payload hash does not match', () => {
+    beforeEach(() => {
+      payloads.set(a.oid, 'alpha')
+      override.payload = 'omega'
+    })
 
-    await expect(run([a])).rejects.toThrow('the LFS batch request answered 403')
+    it('should reject the payload, writing nothing', async () => {
+      expect((await run([a])).failures).toEqual([
+        { oid: a.oid, reason: 'the payload hash does not match the pointer' }
+      ])
+      await expect(readFile(stored(store, a.oid))).rejects.toThrow('ENOENT')
+    })
+  })
+
+  describe('and the batch response fails', () => {
+    let cancel: Mock<() => Promise<void>>
+    let fetchFn: Mock<(url: string) => Promise<Response>>
+
+    beforeEach(() => {
+      cancel = vi.fn(() => Promise.resolve())
+      fetchFn = vi.fn(async () => errorResponse(503, cancel))
+    })
+
+    afterEach(() => {
+      vi.resetAllMocks()
+    })
+
+    it('should release its body and report its status', async () => {
+      await expect(
+        prefetch({ store, endpoint, authorization: AUTHORIZATION, objects: [object('a')], fetchFn })
+      ).rejects.toThrow('the LFS batch request answered 503')
+      expect(cancel).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('and every download fails', () => {
+    let listed: { oid: string; size: number }[]
+    let cancel: Mock<() => Promise<void>>
+    let fetchFn: Mock<(url: string) => Promise<Response>>
+
+    beforeEach(() => {
+      listed = ['a', 'b', 'c', 'd', 'e'].map(object)
+      cancel = vi.fn(() => Promise.resolve())
+      fetchFn = vi.fn(async (url: string) =>
+        url.endsWith('/objects/batch')
+          ? Response.json({
+              objects: listed.map(({ oid, size }) => ({
+                oid,
+                size,
+                actions: { download: { href: `${endpoint}/download/${oid}` } }
+              }))
+            })
+          : errorResponse(500, cancel)
+      )
+    })
+
+    afterEach(() => {
+      vi.resetAllMocks()
+    })
+
+    it('should release the body of every failed download and still try the remaining objects', async () => {
+      const result = await prefetch({
+        store,
+        endpoint,
+        authorization: AUTHORIZATION,
+        objects: listed,
+        fetchFn
+      })
+      expect(result.failures).toEqual(
+        listed.map(({ oid }) => ({ oid, reason: 'the download answered 500' }))
+      )
+      expect(cancel).toHaveBeenCalledTimes(listed.length)
+    })
+  })
+
+  describe('and releasing the body of a failed download itself fails', () => {
+    let cancel: Mock<() => Promise<void>>
+    let fetchFn: Mock<(url: string) => Promise<Response>>
+
+    beforeEach(() => {
+      a = object('a')
+      cancel = vi.fn(() => Promise.reject(new Error('stream already closed')))
+      fetchFn = vi.fn(async (url: string) =>
+        url.endsWith('/objects/batch')
+          ? Response.json({
+              objects: [{ ...a, actions: { download: { href: `${endpoint}/download/${a.oid}` } } }]
+            })
+          : errorResponse(502, cancel)
+      )
+    })
+
+    afterEach(() => {
+      vi.resetAllMocks()
+    })
+
+    it('should keep the status as the failure', async () => {
+      expect(
+        (await prefetch({ store, endpoint, authorization: AUTHORIZATION, objects: [a], fetchFn }))
+          .failures
+      ).toEqual([{ oid: a.oid, reason: 'the download answered 502' }])
+      expect(cancel).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('and the payload size does not match', () => {
+    beforeEach(() => {
+      payloads.set(a.oid, 'alpha')
+      override.payload = 'alphabet'
+    })
+
+    it('should reject the payload', async () => {
+      expect((await run([a])).failures[0]!.reason).toBe(
+        'the payload size does not match the pointer'
+      )
+    })
+  })
+
+  describe('and the download action points at a plain http host', () => {
+    beforeEach(() => {
+      payloads.set(a.oid, 'alpha')
+      override.href = 'http://example.com/objects/alpha'
+    })
+
+    it('should refuse the download action', async () => {
+      expect((await run([a])).failures[0]!.reason).toBe('no usable download action')
+      expect(requests.some((item) => item.url.startsWith('/objects/'))).toBe(false)
+    })
+  })
+
+  describe('and the batch request is refused', () => {
+    beforeEach(() => {
+      override.batchStatus = 403
+    })
+
+    it('should fail as a whole without echoing the response', async () => {
+      await expect(run([a])).rejects.toThrow('the LFS batch request answered 403')
+    })
   })
 
   it.each([
@@ -228,25 +299,42 @@ describe('when prefetching listed LFS objects', () => {
     expect(requests).toEqual([])
   })
 
-  it('should succeed with nothing to do on an empty list', async () => {
-    expect(await run([])).toEqual({ local: 0, downloaded: 0, bytes: 0, failures: [] })
-    expect(requests).toEqual([])
+  describe('and the list is empty', () => {
+    it('should succeed with nothing to do', async () => {
+      expect(await run([])).toEqual({ local: 0, downloaded: 0, bytes: 0, failures: [] })
+      expect(requests).toEqual([])
+    })
   })
 })
 
 describe('when reading the object list', () => {
-  it('should keep distinct, well-formed objects and skip blank lines', () => {
-    const a = object('alpha')
-    expect(parseObjects(`${JSON.stringify(a)}\n\n${JSON.stringify(a)}\n`)).toEqual([a])
+  describe('and it repeats an object between blank lines', () => {
+    let a: { oid: string; size: number }
+
+    beforeEach(() => {
+      a = object('alpha')
+    })
+
+    it('should keep distinct, well-formed objects and skip blank lines', () => {
+      expect(parseObjects(`${JSON.stringify(a)}\n\n${JSON.stringify(a)}\n`)).toEqual([a])
+    })
   })
 
   it.each([
-    ['a short oid', JSON.stringify({ oid: 'abc', size: 1 })],
-    ['a negative size', JSON.stringify({ oid: 'a'.repeat(64), size: -1 })],
-    ['a fractional size', JSON.stringify({ oid: 'a'.repeat(64), size: 1.5 })],
-    ['a line that is not JSON', 'oid sha256:abc']
-  ])('should reject %s', (_, line) => {
-    expect(() => parseObjects(line)).toThrow()
+    ['a short oid', JSON.stringify({ oid: 'abc', size: 1 }), 'malformed LFS object line'],
+    [
+      'a negative size',
+      JSON.stringify({ oid: 'a'.repeat(64), size: -1 }),
+      'malformed LFS object line'
+    ],
+    [
+      'a fractional size',
+      JSON.stringify({ oid: 'a'.repeat(64), size: 1.5 }),
+      'malformed LFS object line'
+    ],
+    ['a line that is not JSON', 'oid sha256:abc', 'is not valid JSON']
+  ])('should reject %s', (_, line, message) => {
+    expect(() => parseObjects(line)).toThrow(message)
   })
 })
 
@@ -263,38 +351,49 @@ describe('when checking a URL', () => {
 })
 
 describe('when run from the command line', () => {
-  it('should refuse to start without LFS_AUTHORIZATION', async () => {
-    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
-    try {
+  describe('and LFS_AUTHORIZATION is missing', () => {
+    beforeEach(() => {
+      vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    })
+
+    it('should refuse to start', async () => {
       expect(await main(['--endpoint', endpoint, '--objects', '/dev/null'], {})).toBe(2)
-    } finally {
-      stderr.mockRestore()
-    }
+    })
   })
 
-  it('should exit 1 and name each missing object, never the authorization', async () => {
-    const repo = await mkdtemp(path.join(tmpdir(), 'lfs-repo-'))
-    const list = path.join(repo, 'objects.jsonl')
-    const gone = object('gone')
-    await writeFile(list, JSON.stringify(gone))
-    const { execFileSync } = await import('node:child_process')
-    execFileSync('git', ['init', '-q'], { cwd: repo })
-    const written: string[] = []
-    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
-      written.push(String(chunk))
-      return true
+  describe('and an object is missing from the server', () => {
+    let repo: string
+    let list: string
+    let gone: { oid: string; size: number }
+    let written: string[]
+
+    beforeEach(async () => {
+      repo = await mkdtemp(path.join(tmpdir(), 'lfs-repo-'))
+      list = path.join(repo, 'objects.jsonl')
+      gone = object('gone')
+      await writeFile(list, JSON.stringify(gone))
+      const { execFileSync } = await import('node:child_process')
+      execFileSync('git', ['init', '-q'], { cwd: repo })
+      written = []
+      vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+        written.push(String(chunk))
+        return true
+      })
     })
-    try {
+
+    afterEach(async () => {
+      vi.restoreAllMocks()
+      await rm(repo, { recursive: true, force: true })
+    })
+
+    it('should exit 1 and name each missing object, never the authorization', async () => {
       expect(
         await main(['--root', repo, '--endpoint', endpoint, '--objects', list], {
           LFS_AUTHORIZATION: AUTHORIZATION
         })
       ).toBe(1)
-    } finally {
-      stdout.mockRestore()
-      await rm(repo, { recursive: true, force: true })
-    }
-    expect(written.join('')).toContain(`MISSING ${gone.oid}`)
-    expect(written.join('')).not.toContain(AUTHORIZATION)
+      expect(written.join('')).toContain(`MISSING ${gone.oid}`)
+      expect(written.join('')).not.toContain(AUTHORIZATION)
+    })
   })
 })
