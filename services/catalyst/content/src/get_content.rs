@@ -24,11 +24,16 @@ pub struct ContentQuery {
 /// routes: `file-type@21.1.1`'s type, else `application/octet-stream`, which is also the answer
 /// where upstream's sniff throws (a 500 there). `file-type` detects no text format, JSON
 /// included. A storage fault is an error.
+///
+/// One deliberate difference from the catalyst (`content-reads.md` CR-7): XML is
+/// `application/octet-stream` (upstream: `application/xml`), since these routes share the node's
+/// origin, where a browser would run an XHTML or SVG document's scripts.
 pub(crate) async fn content_type(window: &mut Window<'_>) -> AppResult<&'static str> {
     let size = window.file_size();
-    Ok(catalyst::file_type(window, size)
-        .await?
-        .unwrap_or("application/octet-stream"))
+    Ok(match catalyst::file_type(window, size).await? {
+        Some("application/xml") | None => "application/octet-stream",
+        Some(mime) => mime,
+    })
 }
 
 /// nginx serves `<STORAGE_X_ACCEL_BASE>/<shard>/<hash>` with an alias onto the
@@ -913,5 +918,93 @@ mod tests {
             .await
             .unwrap();
         assert!(body.is_empty());
+    }
+
+    /// XML, after a BOM or in UTF-16 too, is `application/octet-stream` on GET, HEAD and a range
+    /// that holds the declaration: these routes share the node's origin.
+    #[tokio::test]
+    async fn include_mime_type_serves_xml_as_octet_stream() {
+        let utf16 = |bom: [u8; 2], big_endian: bool| {
+            let mut bytes = bom.to_vec();
+            for c in "<?xml version=\"1.0\"?><svg/>".bytes() {
+                bytes.extend_from_slice(&if big_endian { [0, c] } else { [c, 0] });
+            }
+            bytes
+        };
+        let cases = [
+            b"<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\"/>".to_vec(),
+            b"\xEF\xBB\xBF<?xml version=\"1.0\"?><svg/>".to_vec(),
+            utf16([0xFE, 0xFF], true),
+            utf16([0xFF, 0xFE], false),
+        ];
+        let node = TestNode::without_db("content-mime-xml").await;
+        for mut bytes in cases {
+            bytes.resize(1000, b' ');
+            let bytes = Bytes::from(bytes);
+            let cid = crate::auth::hash_bytes_v1(&bytes);
+            node.store(&cid, bytes.clone()).await;
+            for (method, range) in [
+                (Method::GET, None),
+                (Method::HEAD, None),
+                (Method::GET, Some("bytes=0-599")),
+            ] {
+                let resp = get_hash(&node, &cid, method.clone(), Some(""), range)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    header(&resp, "content-type").unwrap(),
+                    "application/octet-stream",
+                    "{method} {range:?} {:?}",
+                    &bytes[..8]
+                );
+            }
+        }
+    }
+
+    /// A ZIP of tiny entries whose sizes follow in data descriptors: the walk fetches each byte
+    /// of the file once, not a fresh scan window per entry, and stops at its entry bound.
+    #[tokio::test]
+    async fn a_zip_of_tiny_descriptor_entries_reads_the_file_once() {
+        let mut blob = Vec::new();
+        for _ in 0..2000 {
+            blob.extend_from_slice(b"PK\x03\x04\x14\0\x08\0");
+            blob.extend_from_slice(&[0; 18]);
+            blob.extend_from_slice(b"\x01\0\0\0ax");
+            blob.extend_from_slice(b"PK\x07\x08");
+            blob.extend_from_slice(&[0; 12]);
+        }
+        // Room for a full scan window after every entry.
+        blob.resize(blob.len() + 512 * 1024, 0);
+        let blob = Bytes::from(blob);
+        let node = TestNode::without_db("content-zip-descriptors").await;
+        node.store(TEST_CID, blob.clone()).await;
+
+        let mut opened = node.state.storage.open(TEST_CID).await.unwrap().unwrap();
+        let mut window = Window::new(&mut opened, blob.len() as u64);
+        assert_eq!(content_type(&mut window).await.unwrap(), "application/zip");
+        let fetched = crate::file_type::Source::fetched(&window);
+        assert!(fetched < 1 << 20, "fetched {fetched} bytes");
+
+        let resp = get(&node, Method::GET, Some(""), None).await.unwrap();
+        assert_eq!(header(&resp, "content-type").unwrap(), "application/zip");
+        assert_eq!(body_of(resp).await, blob);
+    }
+
+    /// A ZIP walk stops once it has fetched 16 MiB of the file and answers `application/zip`.
+    #[tokio::test]
+    async fn a_zip_walk_fetches_at_most_16_mib() {
+        let mut blob = b"PK\x03\x04\x14\0\x08\0".to_vec();
+        blob.extend_from_slice(&[0; 18]);
+        blob.extend_from_slice(b"\x01\0\0\0a");
+        blob.resize(20 << 20, 0);
+        let blob = Bytes::from(blob);
+        let node = TestNode::without_db("content-zip-budget").await;
+        node.store(TEST_CID, blob.clone()).await;
+
+        let mut opened = node.state.storage.open(TEST_CID).await.unwrap().unwrap();
+        let mut window = Window::new(&mut opened, blob.len() as u64);
+        assert_eq!(content_type(&mut window).await.unwrap(), "application/zip");
+        let fetched = crate::file_type::Source::fetched(&window);
+        assert!(fetched <= (16 << 20) + (1 << 20), "fetched {fetched} bytes");
     }
 }

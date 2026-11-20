@@ -10,11 +10,14 @@
 //!
 //! The loops that walk a file (ID3 tags and BOMs, PNG chunks, EBML and ASF elements, ZIP entries)
 //! stop after more turns than a real file takes, where `file-type` walks on to the end; a stopped
-//! walk answers nothing, except a ZIP one, which answers `application/zip`.
+//! walk answers nothing, except a ZIP one, which answers `application/zip`. A ZIP walk also stops
+//! once it has fetched 16 MiB of the file, and at a `mimetype` entry over 1 KiB or a
+//! `[Content_Types].xml` entry over 1 MiB, stored or inflated.
 //!
 //! `tests/fixtures/conformance/content-lambdas/content-sniff.tsv` holds upstream's answers for a
 //! sample of each format; `the_content_sniff_answers_as_file_type` replays it.
 
+use std::borrow::Cow;
 use std::io;
 
 use super::{SAMPLE, Source, Tokenizer};
@@ -28,8 +31,12 @@ const MAX_EBML_ELEMENTS: u64 = 64;
 const MAX_DOC_TYPE: u64 = 64 * 1024;
 const MAX_ASF_OBJECTS: usize = 64;
 const MAX_ZIP_ENTRIES: usize = 1024;
-/// The most bytes a ZIP walk scans for a data descriptor, or reads and inflates for one entry.
-const MAX_ZIP_DATA: u64 = 16 * 1024 * 1024;
+/// The most bytes a ZIP walk fetches from storage in all.
+const MAX_ZIP_READ: u64 = 16 * 1024 * 1024;
+/// The largest `mimetype` entry read, stored and inflated.
+const MAX_MIMETYPE: u64 = 1024;
+/// The largest `[Content_Types].xml` entry read, stored and inflated.
+const MAX_CONTENT_TYPES: u64 = 1024 * 1024;
 /// `@tokenizer/inflate`'s `syncBufferSize`: the window a data-descriptor scan peeks at once.
 const ZIP_SYNC: u64 = 256 * 1024;
 
@@ -681,9 +688,8 @@ fn js_trim(s: &str) -> &str {
 }
 
 /// `TextDecoder('utf-8').decode`: lossy, with a leading BOM dropped.
-fn utf8(bytes: &[u8]) -> String {
-    let text = String::from_utf8_lossy(bytes);
-    text.strip_prefix('\u{FEFF}').unwrap_or(&text).to_string()
+fn utf8(bytes: &[u8]) -> Cow<'_, str> {
+    String::from_utf8_lossy(bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes))
 }
 
 /// `s.replace(/\0.*$/, '')`: the first NUL with no line terminator after it, and the rest, cut.
@@ -875,8 +881,8 @@ async fn asf<S: Source>(tok: &mut Tokenizer<'_, S>, size: u64) -> Result<Pass, S
             }));
         }
         let object = u64::from_le_bytes(header[16..24].try_into().unwrap());
-        // `ignore` of a negative payload skips nothing.
-        if !tok.ignore(object.saturating_sub(24)).await? {
+        // `ignore` of a negative payload throws.
+        if object < 24 || !tok.ignore(object - 24).await? {
             return Ok(Pass::Stop);
         }
     }
@@ -1074,6 +1080,9 @@ async fn zip_walk<S: Source>(
     const DESCRIPTOR: [u8; 4] = [0x50, 0x4B, 0x07, 0x08];
     let eos = Err(ZipEnd::EndOfStream);
     for _ in 0..MAX_ZIP_ENTRIES {
+        if tok.src.fetched() > MAX_ZIP_READ {
+            return Ok(Err(ZipEnd::Bounded));
+        }
         let signature = tok.src.read_at(tok.pos, 4).await?;
         if signature.len() < 4 {
             return Ok(eos);
@@ -1096,44 +1105,50 @@ async fn zip_walk<S: Source>(
         let Some(name) = tok.read(u16_at(26)).await? else {
             return Ok(eos);
         };
-        let entry = zip_entry(&String::from_utf8_lossy(&name));
+        let entry = zip_entry(&utf8(&name));
         let stop = !matches!(entry, Entry::Skip);
         if let Entry::Is(mime) = entry {
             *decided = Some(mime);
         }
-        let handled = matches!(entry, Entry::MimeType | Entry::ContentTypes);
+        let limit = match entry {
+            Entry::MimeType => MAX_MIMETYPE,
+            Entry::ContentTypes => MAX_CONTENT_TYPES,
+            _ => 0,
+        };
+        let handled = limit > 0;
         if !tok.ignore(u16_at(28)).await? {
             return Ok(eos);
         }
         let data = if descriptor && compressed == 0 {
             // The size is unknown: the data runs to the next data-descriptor signature.
             let mut data = Vec::new();
-            let mut scanned = 0;
             loop {
+                if tok.src.fetched() > MAX_ZIP_READ {
+                    return Ok(Err(ZipEnd::Bounded));
+                }
                 let window = tok.src.read_at(tok.pos, ZIP_SYNC).await?;
                 let next = window.windows(4).position(|w| w == DESCRIPTOR);
                 let len = next.unwrap_or(window.len());
                 if handled {
+                    if (data.len() + len) as u64 > limit {
+                        return Ok(Err(ZipEnd::Bounded));
+                    }
                     data.extend_from_slice(&window[..len]);
                 }
                 tok.pos += len as u64;
-                scanned += len as u64;
                 if next.is_some() || (window.len() as u64) < ZIP_SYNC {
                     break;
                 }
-                if scanned > MAX_ZIP_DATA {
-                    return Ok(Err(ZipEnd::Bounded));
-                }
             }
-            handled.then_some(data)
+            handled.then(|| data.into())
         } else if handled {
-            if compressed > MAX_ZIP_DATA {
+            if compressed > limit {
                 return Ok(Err(ZipEnd::Bounded));
             }
             let Some(data) = tok.read(compressed).await? else {
                 return Ok(eos);
             };
-            Some(data.to_vec())
+            Some(data)
         } else {
             if !tok.ignore(compressed).await? {
                 return Ok(eos);
@@ -1141,16 +1156,20 @@ async fn zip_walk<S: Source>(
             None
         };
         if let Some(data) = data {
-            let text = match method {
-                0 => data,
-                8 => match inflate_raw(&data) {
-                    Ok(Some(text)) => text,
+            let inflated;
+            let raw = match method {
+                0 => &data[..],
+                8 => match inflate_raw(&data, limit) {
+                    Ok(Some(text)) => {
+                        inflated = text;
+                        &inflated[..]
+                    }
                     Ok(None) => return Ok(Err(ZipEnd::Bounded)),
                     Err(_) => return Ok(Err(ZipEnd::Error)),
                 },
                 _ => return Ok(Err(ZipEnd::Error)),
             };
-            let text = utf8(&text);
+            let text = utf8(raw);
             *decided = match entry {
                 Entry::MimeType => zip_document(js_trim(&text)),
                 _ => content_types(&text),
@@ -1172,21 +1191,21 @@ async fn zip_walk<S: Source>(
 }
 
 /// `DecompressionStream('deflate-raw')` over a whole entry: a truncated stream or bytes after its
-/// end are errors. `Ok(None)` when the output passes [`MAX_ZIP_DATA`].
-fn inflate_raw(data: &[u8]) -> io::Result<Option<Vec<u8>>> {
+/// end are errors. `Ok(None)` when the output passes `limit`.
+fn inflate_raw(data: &[u8], limit: u64) -> io::Result<Option<Vec<u8>>> {
     use flate2::{Decompress, FlushDecompress, Status};
     let mut inflater = Decompress::new(false);
     let mut out = Vec::new();
     loop {
-        if out.len() as u64 > MAX_ZIP_DATA {
-            return Ok(None);
-        }
-        out.reserve(64 * 1024);
+        out.reserve(4 * 1024);
         let before = (inflater.total_in(), inflater.total_out());
         let consumed = inflater.total_in() as usize;
         let status = inflater
-            .decompress_vec(&data[consumed..], &mut out, FlushDecompress::Finish)
+            .decompress_vec(&data[consumed..], &mut out, FlushDecompress::None)
             .map_err(io::Error::other)?;
+        if out.len() as u64 > limit {
+            return Ok(None);
+        }
         if status == Status::StreamEnd {
             return if inflater.total_in() as usize == data.len() {
                 Ok(Some(out))
@@ -1364,5 +1383,99 @@ mod tests {
         let mut bytes = b"PK\x03\x04\x14\0\0\0\0\0\0\0\0\0\0\0\0\0\xFF\xFF\xFF\x7F\xFF\xFF\xFF\x7F\x08\0\0\0mimetype".to_vec();
         bytes.resize(1 << 16, 0);
         assert_eq!(sniffed(&bytes, 1 << 16).await, "application/zip");
+    }
+
+    /// A ZIP local file header and its data: `flags` 0x0008 is a data descriptor, after which a
+    /// `compressed` of 0 means the size is unknown.
+    fn zip_local(name: &[u8], flags: u16, method: u16, compressed: u32, data: &[u8]) -> Vec<u8> {
+        let mut entry = b"PK\x03\x04\x14\0".to_vec();
+        entry.extend_from_slice(&flags.to_le_bytes());
+        entry.extend_from_slice(&method.to_le_bytes());
+        entry.extend_from_slice(&[0; 8]);
+        entry.extend_from_slice(&compressed.to_le_bytes());
+        entry.extend_from_slice(&[0; 4]);
+        entry.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        entry.extend_from_slice(&[0; 2]);
+        entry.extend_from_slice(name);
+        entry.extend_from_slice(data);
+        entry
+    }
+
+    async fn sniffed_zip(entry: Vec<u8>) -> &'static str {
+        let mut bytes = entry;
+        bytes.extend_from_slice(b"PK\x01\x02");
+        bytes.resize(bytes.len().max(5000), 0);
+        let size = bytes.len() as u64;
+        sniffed(&bytes, size).await
+    }
+
+    /// `TextDecoder` drops a leading BOM from an entry's name.
+    #[tokio::test]
+    async fn a_bom_prefixed_mimetype_entry_decides() {
+        let epub = b"application/epub+zip";
+        let entry = zip_local(b"\xEF\xBB\xBFmimetype", 0, 0, epub.len() as u32, epub);
+        assert_eq!(sniffed_zip(entry).await, "application/epub+zip");
+    }
+
+    /// A `mimetype` entry is read up to 1 KiB and a `[Content_Types].xml` up to 1 MiB, by its
+    /// stored size, by a data-descriptor scan, or inflated; past that the walk answers
+    /// `application/zip`.
+    #[tokio::test]
+    async fn handled_zip_entries_are_read_up_to_their_cap() {
+        let epub = |len: usize| {
+            let mut text = b"application/epub+zip".to_vec();
+            text.resize(len, b' ');
+            text
+        };
+        for (len, mime) in [(1024, "application/epub+zip"), (1025, ZIP)] {
+            let stored = zip_local(b"mimetype", 0, 0, len as u32, &epub(len));
+            assert_eq!(sniffed_zip(stored).await, mime, "stored {len}");
+            let mut scanned = zip_local(b"mimetype", 0x0008, 0, 0, &epub(len));
+            scanned.extend_from_slice(b"PK\x07\x08");
+            scanned.extend_from_slice(&[0; 12]);
+            assert_eq!(sniffed_zip(scanned).await, mime, "scanned {len}");
+        }
+
+        let docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        let deflated = |len: usize| {
+            use std::io::Write;
+            let mut xml = format!("<Override ContentType=\"{docx}.main+xml\"/>").into_bytes();
+            xml.resize(len, b' ');
+            let mut encoder =
+                flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+            encoder.write_all(&xml).unwrap();
+            encoder.finish().unwrap()
+        };
+        for (len, mime) in [
+            (MAX_CONTENT_TYPES as usize, docx),
+            (MAX_CONTENT_TYPES as usize + 1, ZIP),
+        ] {
+            let data = deflated(len);
+            let entry = zip_local(b"[Content_Types].xml", 0, 8, data.len() as u32, &data);
+            assert_eq!(sniffed_zip(entry).await, mime, "inflated {len}");
+        }
+    }
+
+    /// An ASF object smaller than its own header stops the walk, where upstream's `ignore` of a
+    /// negative length throws.
+    #[tokio::test]
+    async fn an_asf_object_under_24_bytes_stops_the_walk() {
+        let audio = hex::decode(
+            "3026b2758e66cf11a6d900aa0062ce6c00000000000000000000000000009107dcb7b7a9cf118ee600c00c2053655000000000000000409e69f84d5bcf11a8fd00805f5c442b",
+        )
+        .unwrap();
+        let object = |size: u64| {
+            let mut bytes = audio[..30].to_vec();
+            bytes.extend_from_slice(&[1; 16]);
+            bytes.extend_from_slice(&size.to_le_bytes());
+            bytes.extend_from_slice(&[0; 24][..(size as usize).saturating_sub(24)]);
+            bytes.extend_from_slice(&audio[30..]);
+            bytes.resize(5000, 0);
+            bytes
+        };
+        assert_eq!(sniffed(&object(24), 5000).await, "audio/x-ms-asf");
+        assert_eq!(sniffed(&object(30), 5000).await, "audio/x-ms-asf");
+        assert_eq!(sniffed(&object(0), 5000).await, "application/octet-stream");
+        assert_eq!(sniffed(&object(23), 5000).await, "application/octet-stream");
     }
 }

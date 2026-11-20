@@ -723,6 +723,26 @@ mod tests {
         }
     }
 
+    /// An XML image is served as `application/octet-stream`, as on `?includeMimeType`.
+    #[tokio::test]
+    async fn an_xml_blob_is_served_as_octet_stream() {
+        use crate::tests::support::{TEST_CID, TestNode};
+        let node = TestNode::without_db("blob-xml").await;
+        let svg = b"<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\"/>";
+        node.store(TEST_CID, Bytes::from_static(svg)).await;
+        for method in [Method::GET, Method::HEAD] {
+            let resp =
+                serve_content_blob(&node.state, TEST_CID, &method, &HeaderMap::new(), "missing")
+                    .await
+                    .unwrap();
+            assert_eq!(
+                resp.headers()[header::CONTENT_TYPE],
+                "application/octet-stream",
+                "{method}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn an_items_thumbnail_and_image_are_served_by_pointer() {
         use crate::tests::support::TestNode;

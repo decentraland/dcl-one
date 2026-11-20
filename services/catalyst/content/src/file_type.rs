@@ -36,6 +36,11 @@ const MAX_DOC_TYPE: u64 = 8;
 /// The bytes `file-type` reads: up to `len` bytes from `start`, fewer only at the end.
 pub(crate) trait Source {
     async fn read_at(&mut self, start: u64, len: u64) -> Result<Bytes, StorageError>;
+
+    /// The bytes fetched from storage so far; an in-memory source fetches none.
+    fn fetched(&self) -> u64 {
+        0
+    }
 }
 
 impl Source for &[u8] {
@@ -46,7 +51,9 @@ impl Source for &[u8] {
     }
 }
 
-/// A stored file's bytes `base..end`, read from `base` through a cache of the last block read.
+/// A stored file's bytes `base..end`, read from `base` through a cache of the last block read. A
+/// read that starts inside the cache and runs past it keeps the cached tail and fetches only from
+/// the cache's end, so a walk that moves forward fetches each byte once.
 pub(crate) struct Window<'a> {
     opened: &'a mut OpenedContent,
     base: u64,
@@ -54,6 +61,8 @@ pub(crate) struct Window<'a> {
     cached: (u64, Bytes),
     /// Whether the file was read anywhere but its first block.
     moved: bool,
+    /// The bytes fetched from storage by `read_at`.
+    fetched: u64,
 }
 
 impl<'a> Window<'a> {
@@ -70,6 +79,7 @@ impl<'a> Window<'a> {
             end,
             cached: (0, Bytes::new()),
             moved: false,
+            fetched: 0,
         }
     }
 
@@ -101,21 +111,38 @@ impl Source for Window<'_> {
             return Ok(Bytes::new());
         }
         let (at, cached) = &self.cached;
-        if *at <= start && end <= at + cached.len() as u64 {
+        let cache_end = at + cached.len() as u64;
+        if *at <= start && end <= cache_end {
             return Ok(cached.slice((start - at) as usize..(end - at) as usize));
         }
-        // The first read is the sample at the base; later ones fetch a block from where they start.
-        let size = if start == self.base && self.cached.1.is_empty() {
+        // The first read is the sample at the base; later ones fetch a block from where they
+        // start, or from the cache's end when they start inside it.
+        let (from, kept) = if *at <= start && start < cache_end {
+            (cache_end, cached.slice((start - at) as usize..))
+        } else {
+            (start, Bytes::new())
+        };
+        let size = if start == self.base && cached.is_empty() {
             SAMPLE.max(len)
         } else {
             self.moved = true;
-            BLOCK.max(len)
+            BLOCK.max(end - from)
         };
-        let last = start.saturating_add(size).min(self.end) - 1;
-        let block = self.opened.read_range(start, last).await?;
+        let last = from.saturating_add(size).min(self.end) - 1;
+        let block = self.opened.read_range(from, last).await?;
+        self.fetched += block.len() as u64;
+        let block = if kept.is_empty() {
+            block
+        } else {
+            [kept, block].concat().into()
+        };
         self.cached = (start, block);
         let got = (end - start).min(self.cached.1.len() as u64) as usize;
         Ok(self.cached.1.slice(..got))
+    }
+
+    fn fetched(&self) -> u64 {
+        self.fetched
     }
 }
 
