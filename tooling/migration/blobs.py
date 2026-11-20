@@ -1,5 +1,6 @@
 """Copies the blobs a source's imported rows name into the node's blob store (`migrate.py blobs`),
-and the badge art the imported catalog names into the node's `BADGES_ASSETS_DIR`.
+the badge art the imported catalog names into the node's `BADGES_ASSETS_DIR`, and the imported
+communities' thumbnails into the store (`blobs social-service-ea`).
 
 The store layout is `services/catalyst/storage`'s: `<STORAGE_ROOT_FOLDER>/contents/<shard>/<cid>`,
 shard = the first four hex digits of sha1(cid), written through a `<name>.<pid>.<seq>.tmp` staging
@@ -630,6 +631,79 @@ def copy_art(source, art_dir, path):
         staged.unlink(missing_ok=True)
         raise
     return Outcome(path, 'copied', path, len(data))
+
+
+# ── community thumbnails (social-service-ea) ────────────────────────────────
+
+# Upstream keeps a community's picture outside its database, at this path on its CDN bucket (unity-explorer
+# reads `https://assets-cdn.<domain>/social/communities/<id>/raw-thumbnail.png`).
+COMMUNITY_THUMBNAIL_BASE = 'https://assets-cdn.decentraland.org/'
+COMMUNITY_ID = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
+# Upstream accepts at most 500 KiB; anything far over that is not one of its thumbnails.
+MAX_THUMBNAIL_BYTES = 4 << 20
+
+
+def community_thumbnail_path(community_id):
+    return f'social/communities/{community_id}/raw-thumbnail.png'
+
+
+def image_type(data):
+    """The image type the leading bytes announce, as the node's `detect_image_mime_type`; else None."""
+    if data.startswith(PNG_MAGIC):
+        return 'png'
+    if data.startswith(b'\xff\xd8\xff'):
+        return 'jpeg'
+    if data.startswith((b'GIF87a', b'GIF89a')):
+        return 'gif'
+    if len(data) >= 12 and data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+        return 'webp'
+    return None
+
+
+def hash_bytes_v0(data):
+    """`hash.rs::hash_bytes`: the CIDv0 of the bytes' SHA-256, the key the node stores thumbnails under."""
+    return _base58(_multihash(hashlib.sha256(data).digest()))
+
+
+def copy_community_thumbnail(source, store, community_id):
+    """Copies one community's upstream thumbnail into the store. `cid` is its key there; `missing` when
+    upstream has none (most communities), which is not an error."""
+    if not COMMUNITY_ID.fullmatch(community_id):
+        return Outcome(community_id, 'invalid', reason='not a community id')
+    path = community_thumbnail_path(community_id)
+    for attempt in range(READ_ATTEMPTS):
+        try:
+            stream = source.open(path)
+            with contextlib.closing(stream):
+                data = stream.read(MAX_THUMBNAIL_BYTES + 1)
+            break
+        except Missing as e:
+            return Outcome(community_id, 'missing', reason=str(e))
+        except (ReadError, OSError) as e:
+            if attempt + 1 == READ_ATTEMPTS:
+                return Outcome(community_id, 'failed', reason=f'read failed {READ_ATTEMPTS} times: {e}')
+            time.sleep(RETRY_DELAY * 2 ** attempt)
+    if len(data) > MAX_THUMBNAIL_BYTES or image_type(data) is None:
+        return Outcome(community_id, 'corrupt', reason='not a PNG, JPEG, GIF or WebP image')
+    cid = hash_bytes_v0(data)
+    final = store.path(cid)
+    try:
+        if final.read_bytes() == data:
+            return Outcome(community_id, 'present', cid, len(data))
+        replace = True  # a truncated or foreign file under this name
+    except FileNotFoundError:
+        replace = False
+    staged, out = store.staging(cid)
+    try:
+        with out:
+            out.write(data)
+            out.flush()
+            os.fsync(out.fileno())
+        store.commit(staged, cid, replace=replace)
+    except BaseException:
+        staged.unlink(missing_ok=True)
+        raise
+    return Outcome(community_id, 'copied', cid, len(data))
 
 
 # Camera object keys are immutable UUID filenames, not content hashes. Only
