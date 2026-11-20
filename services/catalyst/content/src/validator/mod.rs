@@ -90,7 +90,7 @@ pub struct Settings {
     /// legacy content, v1 collection items).
     pub additional_dcl_address: Option<String>,
     /// `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED`: an active escrow lease
-    /// (`shop.usage_grants`) counts as ownership of the leased item worn by a
+    /// (`shop.usage_grants`) counts, until its `unlock_at`, as ownership of the leased item worn by a
     /// profile or outfits. `parse` leaves it off, the default: a peer that
     /// checks ownership on chain only rejects such an entity. `serve` sets it.
     pub escrow_lease_ownership: bool,

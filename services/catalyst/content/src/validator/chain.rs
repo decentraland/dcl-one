@@ -89,7 +89,8 @@ fn lease_covers(urn: &str, grants: &[(String, Option<String>)]) -> bool {
 }
 
 impl Sources {
-    /// The owner's active escrow leases (`shop.usage_grants`) on the
+    /// The owner's active, still-locked escrow leases (`shop.usage_grants`:
+    /// `active` with `unlock_at` ahead, as the backpack reads them) on the
     /// requested URNs (`exact`, compared as stored) or under the requested
     /// `LIKE` patterns: `(urn key, token id)`. Bounded by the request; the
     /// grantee's partial index serves it (the urn clause is a filter).
@@ -105,6 +106,7 @@ impl Sources {
         let rows: Vec<(String, Option<String>)> = sqlx::query_as(
             "SELECT urn, token_id FROM shop.usage_grants \
              WHERE grantee_address = lower($1) AND status = 'active' \
+               AND unlock_at > timezone('UTC', now()) \
                AND (urn = ANY($2) OR urn LIKE ANY($3))",
         )
         .bind(owner)

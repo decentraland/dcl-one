@@ -46,8 +46,8 @@ remembers the blocks it read.
   profile or outfits entity. Peers that check ownership on chain only reject a profile or outfit
   that is valid only through a lease, so accepting it locally makes the network diverge.
   This stands while such peers remain on the network. `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED`
-  (off by default and under every posture) lets an operator count a node's active leases for
-  the items its own profile and outfits deploys wear; entities from peers are checked on chain
+  (off by default and under every posture) lets an operator count a node's active leases, until their
+  `unlock_at`, for the items its own profile and outfits deploys wear; entities from peers are checked on chain
   only either way.
 
 ## Consequences

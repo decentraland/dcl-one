@@ -469,11 +469,12 @@ pub struct ValidatorConfig {
     #[arg(long, env = "ADDITIONAL_DECENTRALAND_ADDRESS")]
     pub additional_decentraland_address: Option<String>,
 
-    /// Count this node's active escrow leases (`shop.usage_grants`) as
-    /// ownership of the leased item when a local profile or outfits deploy
-    /// wears it. Off under every posture: a peer that checks ownership on
-    /// chain only rejects such an entity when it syncs it. Set it together
-    /// with `EXPLORER_ESCROW_GRANTS_ENABLED`, which lists the same leases in
+    /// Count this node's active escrow leases (`shop.usage_grants`), until
+    /// their `unlock_at`, as ownership of the leased item when a local
+    /// profile or outfits deploy wears it. Off by default and under every
+    /// posture: a peer that checks ownership on chain only rejects such an
+    /// entity when it syncs it. Set it to `true`, together with
+    /// `EXPLORER_ESCROW_GRANTS_ENABLED`, which lists the same leases in
     /// the explorer backpack; startup warns when the two differ. Where it
     /// reads the collections subgraphs, this node's `/lambdas/profiles` still
     /// serves the deployed profile without the leased item, since it keeps

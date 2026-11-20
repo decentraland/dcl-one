@@ -615,8 +615,8 @@ fn outfits(owner: &str, wearables: &[&str]) -> OwnedDeployment {
 }
 
 /// Items with a token are asked by `ownerOf`, assets and off-chain items are
-/// not asked, and an active escrow lease stands in for a token the wearer does
-/// not hold only with `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED` (the overlay's
+/// not asked, and an active escrow lease stands in, until its unlock, for a
+/// token the wearer does not hold only with `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED` (the overlay's
 /// SQL runs on the scratch database, so the whole check skips without it).
 #[tokio::test]
 async fn owned_items_come_from_the_chain_and_the_opt_in_escrow_overlay() {
@@ -741,6 +741,39 @@ async fn owned_items_come_from_the_chain_and_the_opt_in_escrow_overlay() {
             .into_result(),
         both_unowned,
         "a revoked lease grants nothing"
+    );
+    // The release worker leaves a lease `active` past its unlock when it
+    // cannot release it (no token id, no collection, no broker).
+    sqlx::query(
+        "INSERT INTO shop.usage_grants (grantee_address, urn, token_id, category, unlock_at) VALUES \
+         ($1, $2, '9', 'wearable', timezone('UTC', now()) - interval '1 second')",
+    )
+    .bind(&owner)
+    .bind(format!("urn:decentraland:matic:collections-v2:{escrowed}:0"))
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        validate_profile_access(&d.view(), &leasing, &owner)
+            .await
+            .into_result(),
+        both_unowned,
+        "an active lease past its unlock grants nothing"
+    );
+    sqlx::query(
+        "UPDATE shop.usage_grants SET status = 'released', \
+         unlock_at = timezone('UTC', now()) + interval '2 days' WHERE grantee_address = $1",
+    )
+    .bind(&owner)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        validate_profile_access(&d.view(), &leasing, &owner)
+            .await
+            .into_result(),
+        both_unowned,
+        "a released lease grants nothing"
     );
 
     let l2_unset = sources(
