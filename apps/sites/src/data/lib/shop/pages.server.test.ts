@@ -6,7 +6,7 @@ import { REMOTE_FLAG, remoteFlagVariant } from "@ui/shop/discovery/lib/remoteFla
 import { resetDappsFlags } from "../feature-flags.server";
 import { serverShopApiMode } from "./mode";
 import { defaultShopSeo, shopMetaDescriptors } from "./pages";
-import { loadShopPage, serverShopClient, SHOP_SSR_SHARE_MS, SHOP_SSR_STALE_MS } from "./pages.server";
+import { loadShopPage, readBodyThenWait, serverShopClient, SHOP_SSR_SHARE_MS, SHOP_SSR_STALE_MS } from "./pages.server";
 import { LAND_NETWORKS } from "@shop/land/contracts";
 
 const C = "0xabc0000000000000000000000000000000000001";
@@ -129,6 +129,18 @@ describe("the page's flags, read by the server", () => {
     const { data } = await load;
     expect(data.featureFlags).toEqual({ "dapps-shop-creator-sales": true });
     expect(data.queries.find(([key]) => key[0] === "shop-item")?.[1]).toMatchObject({ priceCredits: 5, compareAtCredits: 7 });
+  });
+
+  it("hands on an answer with no body (204, 304) as it came, and any other with its body", async () => {
+    for (const status of [204, 304]) {
+      const answer = await readBodyThenWait(async () => new Response(null, { status }), Promise.resolve())("http://node.test/x");
+      expect(answer.status).toBe(status);
+      expect(await answer.text()).toBe("");
+    }
+    const ok = await readBodyThenWait(async () => new Response('{"a":1}', { status: 200, headers: { "content-type": "application/json" } }), Promise.resolve())("http://node.test/x");
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get("content-type")).toBe("application/json");
+    expect(await ok.json()).toEqual({ a: 1 });
   });
 
   it("reads each answer's body under its own deadline before it waits for the flags", async () => {

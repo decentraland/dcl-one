@@ -239,6 +239,19 @@ async function itemsPage(ctx: ReadCtx, client: ShopClient, env: BaseEnv): Promis
 /** Statuses whose response has no body (a Response built with one throws). */
 const NULL_BODY: ReadonlySet<number> = new Set([101, 204, 205, 304]);
 
+/**
+ * A fetch whose answers wait for `ready` (the page's flags) before they are handed on, with each body already read: the
+ * body is read under the request's own deadline, which waiting first would leave running against a slow `ready`.
+ */
+export function readBodyThenWait(fetchImpl: typeof fetch, ready: Promise<unknown>): typeof fetch {
+  return async (...args) => {
+    const res = await fetchImpl(...args);
+    const body = NULL_BODY.has(res.status) ? null : await res.arrayBuffer();
+    await ready;
+    return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
+  };
+}
+
 /** The SSR data for one /shop page: its head, its primed public reads and the HTTP status. */
 export async function loadShopPage(page: ShopPageId, input: ShopLoadInput): Promise<ShopPageLoad> {
   const env = input.env ?? processEnv();
@@ -255,16 +268,7 @@ export async function loadShopPage(page: ShopPageId, input: ShopLoadInput): Prom
     primeRemoteFlags(answer.flags, answer.variants);
     return answer;
   });
-  // The body is read under the request's own deadline before the answer waits for the flags: waiting first would leave
-  // that deadline running against a slow flags read and abort the body.
-  const client =
-    input.client ??
-    serverShopClient(env, async (...args) => {
-      const res = await fetch(...args);
-      const body = NULL_BODY.has(res.status) ? null : await res.arrayBuffer();
-      await primed;
-      return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
-    });
+  const client = input.client ?? serverShopClient(env, readBodyThenWait((...args) => fetch(...args), primed));
   const now = input.now ?? Date.now;
   const { request, params } = input;
   const pathname = new URL(request.url).pathname;
