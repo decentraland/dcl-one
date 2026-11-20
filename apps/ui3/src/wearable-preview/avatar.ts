@@ -93,6 +93,12 @@ const EMOTES: Record<string, string> = {
 
 const PART_CACHE_MAX = 32;
 const GLB_TIMEOUT_MS = 20000;
+/**
+ * How long a part waits for its held files. Past it, the files still downloading are given up and the loader reads
+ * the ones the model references itself, inside what is left of GLB_TIMEOUT_MS: a stalled file the model never uses
+ * does not cost the part.
+ */
+const HELD_FILES_MS = GLB_TIMEOUT_MS / 2;
 export const OUTFIT_SWAP_DEBOUNCE_MS = 120;
 
 function defaultBase(): string {
@@ -410,14 +416,13 @@ export function createAvatarScene(
   }
 
   /**
-   * Object URLs of the held files among `hashes`; a file that did not download is left to the loader. Once the wave
-   * has ended it throws instead: the part is not loaded, so its loader does not download its files again, and the
-   * failure drops the part from its cache, so wearing it again loads it anew.
+   * Object URLs of the held files among `hashes`. A file that did not download (failed, or still on its way when the
+   * wave ended) is left to the loader, which reads it if the model references it. A disposed preview loads nothing.
    */
   async function heldUrls(files: HeldFiles, hashes: string[]): Promise<Map<string, string>> {
     const blobs: (Blob | null | undefined)[] = [];
     for (const hash of hashes) blobs.push(await files.get(hash));
-    if (files.signal.aborted) throw new DOMException("the part's downloads ended", "AbortError");
+    if (disposed) throw new DOMException("the preview was disposed", "AbortError");
     const urls = new Map<string, string>();
     hashes.forEach((hash, i) => {
       const blob = blobs[i];
@@ -826,10 +831,10 @@ export function createAvatarScene(
       else wantParts.push({ key: partKey(urn, bodyLc), urn, isBody: false, entity: e });
     }
 
-    // The wave ends with the preview or with the parts' own timeout. An outfit change does not end it: the parts it
-    // feeds stay in the part cache, where the next outfit picks them up.
+    // The wave ends with the preview or after HELD_FILES_MS. An outfit change does not end it: the parts it feeds stay
+    // in the part cache, where the next outfit picks them up.
     const files: HeldFiles = Object.assign(new Map<string, Promise<Blob | null>>(), {
-      signal: AbortSignal.any([downloads.signal, AbortSignal.timeout(GLB_TIMEOUT_MS)]),
+      signal: AbortSignal.any([downloads.signal, AbortSignal.timeout(HELD_FILES_MS)]),
     });
     for (const p of wantParts) if (!partCache.has(p.key)) holdFiles(files, p.entity, bodyShape);
     for (const f of wantFeatures) if (!featureCache.has(f.key)) holdFiles(files, f.entity, bodyShape);

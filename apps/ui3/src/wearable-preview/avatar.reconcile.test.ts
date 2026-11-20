@@ -311,46 +311,56 @@ test("an initial-load failure is recovered by the next outfit swap on the same s
   container.remove();
 });
 
-test("a part whose downloads ended (the parts' timeout) is not kept, and loads when it is worn again", async () => {
-  vi.spyOn(console, "warn").mockImplementation(() => {});
-  // A pointer no other test resolved: resolved entities are cached for the module's life.
-  const SLOW = "urn:decentraland:matic:collections-v2:0xhat:9";
-  // The wave's timeout, fired by the test.
-  const timeouts: AbortController[] = [];
-  vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
-    const ctl = new AbortController();
-    timeouts.push(ctl);
-    return ctl.signal;
-  });
-  let serve = false;
-  const slowDownloads: string[] = [];
+/** Pointers whose part files stall until their request aborts; a pointer only these tests resolve. */
+function stallFiles(pointers: string[]) {
+  const stalled: string[] = [];
   const entities = globalThis.fetch;
   globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const path = String(url);
-    if (path.endsWith(`/content/contents/h_${SLOW}`)) {
-      slowDownloads.push(path);
-      if (serve) return { ok: true, blob: async () => new Blob([path]) } as unknown as Response;
+    if (pointers.some((p) => path.endsWith(`/content/contents/h_${p}`))) {
+      stalled.push(path);
       return new Promise<Response>((_resolve, reject) =>
         init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))),
       );
     }
     return entities(url, init);
   }) as unknown as typeof fetch;
+  return stalled;
+}
+
+test("a part whose held file stalls past the wait is still drawn: its loader reads the file itself", async () => {
+  const SLOW = "urn:decentraland:matic:collections-v2:0xhat:9";
+  // The wave's wait, run out by the test.
+  const waits: AbortController[] = [];
+  vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+    const ctl = new AbortController();
+    waits.push(ctl);
+    return ctl.signal;
+  });
+  const stalled = stallFiles([SLOW]);
 
   const { container, scene, onStatus, mountedParts } = mount([SLOW]);
-  await vi.waitFor(() => expect(slowDownloads).toHaveLength(1));
-  timeouts.at(-1)!.abort();
-  await vi.waitFor(() => expect(onStatus).toHaveBeenLastCalledWith("ready"));
-  expect(mountedParts()).toEqual([partName(BODY)]);
-  // Its loader never ran: nothing downloaded the part's file a second time.
+  await vi.waitFor(() => expect(stalled).toHaveLength(1));
   expect(loads).not.toContain(contentUrl(SLOW));
-
-  serve = true;
-  await scene.setOutfit({ body: BODY, urns: [SLOW] });
-  expect(slowDownloads).toHaveLength(2);
+  waits.at(-1)!.abort();
+  await vi.waitFor(() => expect(onStatus).toHaveBeenLastCalledWith("ready"));
   expect(mountedParts()).toEqual([partName(BODY), partName(SLOW)]);
+  // No held copy: the loader read the model from its own URL.
+  expect(loadManagers.get(contentUrl(SLOW))?.resolveURL(contentUrl(SLOW))).toBe(contentUrl(SLOW));
 
   scene.dispose();
+  container.remove();
+});
+
+test("a preview disposed while its files download loads none of those parts", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const SLOW = "urn:decentraland:matic:collections-v2:0xhat:10";
+  const stalled = stallFiles([SLOW]);
+  const { container, scene } = mount([SLOW]);
+  await vi.waitFor(() => expect(stalled).toHaveLength(1));
+  scene.dispose();
+  await new Promise((settled) => setTimeout(settled, 20));
+  expect(loads).not.toContain(contentUrl(SLOW));
   container.remove();
 });
 
