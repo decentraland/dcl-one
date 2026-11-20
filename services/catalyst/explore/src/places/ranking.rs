@@ -282,6 +282,8 @@ pub async fn set_ranking_from_score(
     actor: &str,
 ) -> Result<ScoreRankingOutcome, ApiError> {
     let mut tx = pool.begin().await?;
+    // Scene before catalogue row, the order every other curation write takes.
+    lock_world_scenes(&mut tx, &[id.to_string()]).await?;
     let mut curated = None;
     for table in ["explore.place", "explore.place_world_local"] {
         if let Some(row) = sqlx::query(sqlx::AssertSqlSafe(curation_sql(table)))
@@ -346,6 +348,22 @@ fn place_curation_sql() -> String {
 const LOCALLY_SERVED_WORLD_IDS: &str =
     "SELECT id FROM explore.place_world_local WHERE world IS TRUE AND id = ANY($1)";
 
+const WORLD_SCENE_IDS: &str =
+    "SELECT identity FROM explore.world_scene_place WHERE identity = ANY($1)";
+
+/// The ranked, uncurated world-scene places the places leg clears, as their projection reads curation.
+/// `$2`, when set, narrows them to the identities already locked.
+const SCENE_CLEAR_CANDIDATES: &str = "SELECT p.identity::text FROM explore.world_scene_place p \
+     JOIN explore.place_ranking r ON r.place_id = p.identity::text \
+     LEFT JOIN explore.place_moderation m ON m.place_id = p.identity::text \
+     LEFT JOIN explore.place_moderation wm ON wm.place_id = p.world_name \
+     WHERE jsonb_typeof(r.overlay->'ranking') = 'number' AND r.overlay->'ranking' <> '0'::jsonb \
+     AND NOT COALESCE(m.highlighted, wm.highlighted, false) \
+     AND NOT COALESCE(r.overlay->'exclude_from_ranking' = 'true'::jsonb, false) \
+     AND p.identity::text <> ALL($1::text[]) \
+     AND ($2::text[] IS NULL OR p.identity::text = ANY($2::text[])) \
+     ORDER BY p.identity";
+
 fn world_resolution_sql() -> String {
     format!(
         "SELECT s.submitted AS submitted, p.id AS id, p.highlighted AS highlighted, {EXCLUDE_FROM_RANKING_SQL} AS exclude_from_ranking
@@ -366,8 +384,9 @@ fn clear_candidates_sql(world: bool) -> String {
 
 /// Replaces the automated ranking set of each leg in `scope` in one
 /// transaction: every ranking named is written, every automated ranking of
-/// that leg not named is cleared to 0, curated rows are never touched, and a
-/// leg out of scope is neither written nor cleared. A clear then a separate
+/// that leg not named is cleared to 0 (world-scene places with the places
+/// leg, which reports them world-backed), curated rows are never touched, and
+/// a leg out of scope is neither written nor cleared. A clear then a separate
 /// write would leave a window where the population reads as unranked.
 pub async fn replace_ranking(
     pool: &PgPool,
@@ -397,6 +416,25 @@ pub async fn replace_ranking(
             .bind(&place_ids)
             .fetch_all(&mut *tx)
             .await?;
+        // A world-scene place is world-backed, as upstream's per-scene world place rows are.
+        let parsed: Vec<uuid::Uuid> = place_ids
+            .iter()
+            .filter_map(|id| uuid::Uuid::parse_str(id).ok())
+            .collect();
+        let scenes: HashSet<uuid::Uuid> = sqlx::query_scalar(WORLD_SCENE_IDS)
+            .bind(&parsed)
+            .fetch_all(&mut *tx)
+            .await?
+            .into_iter()
+            .collect();
+        locally_served.extend(
+            place_ids
+                .iter()
+                .filter(|id| {
+                    uuid::Uuid::parse_str(id).is_ok_and(|identity| scenes.contains(&identity))
+                })
+                .cloned(),
+        );
     }
     let place_buckets = classify_places(places, &curation, &locally_served);
 
@@ -442,6 +480,8 @@ pub async fn replace_ranking(
             ..Default::default()
         },
     };
+    // Every clear is chosen before any write, so all scene locks come first and in one order.
+    let mut legs = Vec::new();
     for (world, in_scope, writable) in [
         (false, scope.places, &place_buckets.writable),
         (true, scope.worlds, &world_buckets.writable),
@@ -454,17 +494,55 @@ pub async fn replace_ranking(
             .iter()
             .map(|e| (e.id.clone(), json!({ "ranking": e.ranking })))
             .collect();
-        let applied_count = write_overlays(&mut tx, &applied, actor).await? as i64;
         let cleared_ids: Vec<String> =
             sqlx::query_scalar(sqlx::AssertSqlSafe(clear_candidates_sql(world)))
                 .bind(&keep)
                 .fetch_all(&mut *tx)
                 .await?;
+        let scene_ids: Vec<String> = if world {
+            Vec::new()
+        } else {
+            sqlx::query_scalar(SCENE_CLEAR_CANDIDATES)
+                .bind(&keep)
+                .bind(None::<Vec<String>>)
+                .fetch_all(&mut *tx)
+                .await?
+        };
+        legs.push((world, keep, applied, cleared_ids, scene_ids));
+    }
+    let touched: Vec<String> = legs
+        .iter()
+        .flat_map(|(_, _, applied, cleared, scenes)| {
+            applied
+                .iter()
+                .map(|(id, _)| id)
+                .chain(cleared)
+                .chain(scenes)
+        })
+        .cloned()
+        .collect();
+    lock_world_scenes(&mut tx, &touched).await?;
+    for (world, keep, applied, cleared_ids, scene_ids) in legs {
+        let applied_count = write_overlays(&mut tx, &applied, actor).await? as i64;
         let cleared: Vec<(String, Value)> = cleared_ids
             .into_iter()
             .map(|id| (id, json!({ "ranking": 0 })))
             .collect();
-        let cleared_count = write_overlays(&mut tx, &cleared, actor).await? as i64;
+        let mut cleared_count = write_overlays(&mut tx, &cleared, actor).await? as i64;
+        if !scene_ids.is_empty() {
+            // Re-read under the lock: a scene curated meanwhile keeps its ranking.
+            let scenes: Vec<(String, Value)> =
+                sqlx::query_scalar::<_, String>(SCENE_CLEAR_CANDIDATES)
+                    .bind(&keep)
+                    .bind(&scene_ids)
+                    .fetch_all(&mut *tx)
+                    .await?
+                    .into_iter()
+                    .map(|id| (id, json!({ "ranking": 0 })))
+                    .collect();
+            write_overlays(&mut tx, &scenes, actor).await?;
+            cleared_count += scenes.len() as i64;
+        }
         if world {
             result.worlds.applied = applied_count;
             result.worlds.cleared = cleared_count;
