@@ -1450,6 +1450,28 @@ jobs:
             corepack pnpm@12.21.0 dist-tag rm "$pkg" "$TAG"
           fi
     timeout-minutes: 5
+  # One result for this workflow, so auto-merge and branch rules can wait on it. It always reports:
+  # green when the guards, format checks, native and web builds and tests passed or were skipped
+  # because nothing they test changed, red when one failed, was cancelled or is missing. A closed
+  # pull request runs only the preview cleanup, so it skips the gate. The pull_request trigger is
+  # path-filtered: a pull request outside those paths gets no run and so no gate.
+  gate:
+    name: Explorer CI gate
+    needs: [source, changes, fmt, toml, clippy, test, headless-smoke, build-deploy-web, images-compile]
+    if: ${{ always() && github.event.action != 'closed' }}
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    timeout-minutes: 5
+    steps:
+      - name: Require the checks, builds and tests to pass or be skipped
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key)=\(.value.result)"'
+          failed=$(echo "$RESULTS" | jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | .key')
+          if [ -n "$failed" ]; then
+            echo "::error::Required jobs did not pass: $(echo $failed)"
+            exit 1
+          fi
 permissions:
   contents: read
   pull-requests: read

@@ -404,6 +404,17 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual(workflow.count('actions: write'), 1)
         self.assertEqual(workflow.count('gh run cancel'), 1)
 
+    def test_the_gate_requires_every_check_build_and_test(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
+        jobs = dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)', workflow.split('\njobs:\n', 1)[1]))
+        gate = jobs['gate']
+        self.assertIn('    name: Explorer CI gate\n', gate)
+        self.assertIn("    if: ${{ always() && github.event.action != 'closed' }}\n", gate)
+        needs = set(re.search(r'(?m)^    needs: \[([^\]]*)\]', gate).group(1).replace(' ', '').split(','))
+        self.assertEqual(needs, {'source', 'changes', 'fmt', 'toml', 'clippy', 'test', 'headless-smoke',
+                                 'build-deploy-web', 'images-compile'})
+        self.assertIn('RESULTS: ${{ toJSON(needs) }}', gate)
+
     def test_the_headless_smoke_runs_for_thirty_seconds(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
         job = workflow.split('\n  headless-smoke:\n', 1)[1].split('\n  fmt:\n', 1)[0]
