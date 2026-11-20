@@ -531,11 +531,13 @@ impl Drop for ReplayJournal {
 }
 
 /// Admits each `(wallet, signed timestamp)` at most once. The freshness window, `skew_ms`, applies
-/// on both sides of the wall clock, as the signature check's does: a pair signed up to `skew_ms`
-/// ahead, by a client whose clock runs ahead of this server's, is admitted, and one signed further
-/// ahead is refused. The production constructor journals a valid pair before it is answered,
-/// including one refused for being signed too far ahead, so restart cannot turn observed signed
-/// bytes into a first use. Journal writes run on a dedicated thread and are group-committed: an
+/// on both sides of the wall clock: a pair signed up to `skew_ms` ahead, by a client whose clock
+/// runs ahead of this server's, is admitted. One signed further ahead is refused as
+/// [`ReplayRejection::FutureDated`] and still recorded, so its bytes stay used. The server builds
+/// the policy with the signature check's own window, which refuses such a handshake before it gets
+/// here, so that refusal happens only with a narrower `skew_ms`. The production constructor
+/// journals a valid pair before it is answered, so restart cannot turn observed signed bytes into
+/// a first use. Journal writes run on a dedicated thread and are group-committed: an
 /// admission issues its record and returns, and the caller holds the answer until
 /// [`Self::journal_progress`] covers [`Self::journal_issued`] as it was after the admission. A
 /// crash before that sync loses only pairs that were never answered. An entry is dropped only
@@ -549,9 +551,9 @@ impl Drop for ReplayJournal {
 /// whitelisted sources together by `max_entries_whitelisted`, and per wallet by
 /// `max_entries_per_wallet`: a source, the whitelisted bucket or a wallet at its quota is refused a
 /// new pair, which is then neither recorded nor answered, and no existing entry is dropped early. A
-/// pair refused for being signed too far ahead stays recorded, and counted, because it was
-/// answered. Pairs read back from the journal count per wallet but not per source, so the source
-/// and whitelisted counts restart empty.
+/// `FutureDated` pair stays recorded, and counted, because it was answered. Pairs read back from
+/// the journal count per wallet but not per source, so the source and whitelisted counts restart
+/// empty.
 pub struct HandshakeReplayPolicy {
     enabled: bool,
     skew_ms: i64,
