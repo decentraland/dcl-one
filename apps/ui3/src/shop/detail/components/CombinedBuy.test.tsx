@@ -7,7 +7,7 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { decodeFunctionData, type Hex } from "viem";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { setSplitPayment } from "@shop/payment/present";
+import { setSplitPaymentForTests } from "@shop/payment/present";
 
 import { CREDITS_MANAGER_ABI, OFFCHAIN_META_TX_ABI } from "@shop/checkout/chain/abi";
 
@@ -75,11 +75,11 @@ function setup(signedFor?: string, confirm?: "none", value = MANA) {
 }
 
 
-// The split (Credits and MANA together) is off in this deployment (present's SPLIT_PAYMENT): these tests cover it as it
-// runs once it is offered.
+// The split (Credits and MANA together) follows its rollout (`dapps-shop-credits-mana-split`), off unless a render says
+// on: these tests cover it as it runs once it is offered.
 let undoSplit: () => void = () => {};
 beforeEach(() => {
-  undoSplit = setSplitPayment(true);
+  undoSplit = setSplitPaymentForTests(true);
 });
 afterEach(() => undoSplit());
 

@@ -31,6 +31,13 @@ export const REMOTE_FLAG = {
    * (play/shell/shop/purchase.ts); a host may declare it (`manaInWorld`).
    */
   manaInWorld: "shop-mana-in-world",
+  /**
+   * Credits and MANA paying one item together (the MANA option's split, payment/present.ts): offered only with this on
+   * AND an offer the node marks `splittable`, read per page render (never a module switch), with no host declaration.
+   * The lock is the node's credits service reading the same key: off, it refuses a Credits part on both authorize
+   * routes and marks no offer `splittable`, so the flag is turned on only where the node does.
+   */
+  creditsManaSplit: "shop-credits-mana-split",
 } as const;
 
 export type RemoteFlag = (typeof REMOTE_FLAG)[keyof typeof REMOTE_FLAG];

@@ -3,12 +3,13 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { setSplitPayment } from "@shop/payment/present";
+import { setSplitPaymentForTests } from "@shop/payment/present";
 
 import type { CartAddInput } from "../../cart/store";
 import { createDemo, DemoShell, type DemoScenario } from "../../checkout/demo";
 import { RESUME_CART_KEY } from "../../checkout/purchase/cart";
 import { takeBuyNowReturn, takeTopUpReturn } from "../../credits/returns";
+import { primeRemoteFlags } from "../../discovery/lib/remoteFlags";
 import { requireContracts } from "../../checkout/chain/contracts";
 import { batchAuthorization, relayedApproval, type FakeHandlers } from "../../checkout/fakes";
 import { CHAIN } from "@shop/model/chain";
@@ -100,11 +101,11 @@ function heldOffers() {
 
 const phaseOf = (dialog: HTMLElement) => dialog.querySelector("[data-phase]")?.getAttribute("data-phase");
 
-// The split (Credits and MANA together) is off in this deployment (present's SPLIT_PAYMENT): these tests cover it as it
-// runs once it is offered.
+// The split (Credits and MANA together) follows its rollout (`dapps-shop-credits-mana-split`), off unless a render says
+// on: these tests cover it as it runs once it is offered.
 let undoSplit: () => void = () => {};
 beforeEach(() => {
-  undoSplit = setSplitPayment(true);
+  undoSplit = setSplitPaymentForTests(true);
 });
 afterEach(() => undoSplit());
 
@@ -431,6 +432,30 @@ describe("Buy now's dialog", () => {
     // The manager is approved exactly the 1.7 MANA shown, never an unlimited allowance.
     const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
     expect(demo.relay.posts.map(relayedApproval).filter((a) => a !== null)).toEqual([{ owner: BOOK.buyer.toLowerCase(), spender: manager, amount: 17n * 10n ** 17n }]);
+  });
+
+  it("Buy now offers the split only while the page's rollout says so; off, short Credits are a top-up", async () => {
+    // Without the tests' switch: only the page's rollout (`dapps-shop-credits-mana-split`) can offer it.
+    undoSplit();
+    const offered = async (flags: Record<string, boolean>) => {
+      primeRemoteFlags(flags);
+      renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
+      const dialog = await settledDialog();
+      const phase = dialog.querySelector("[data-phase]")?.getAttribute("data-phase");
+      const step = within(dialog).queryByTestId("payment-method-step");
+      const ticked = (name: RegExp) => (step ? within(step).queryByRole("checkbox", { name })?.getAttribute("aria-checked") === "true" : false);
+      const both = ticked(/^Credits/) && ticked(/^Polygon MANA/);
+      cleanup();
+      resetBuyNowCarts();
+      return { phase, both };
+    };
+    try {
+      expect(await offered({})).toEqual({ phase: "nofunds", both: false });
+      expect(await offered({ "dapps-shop-credits-mana-split": false })).toEqual({ phase: "nofunds", both: false });
+      expect(await offered({ "dapps-shop-credits-mana-split": true })).toEqual({ phase: "ready", both: true });
+    } finally {
+      primeRemoteFlags(null);
+    }
   });
 
   it("the split with the wallet on another account: Buy waits, and the step says why with the cart's way back", async () => {

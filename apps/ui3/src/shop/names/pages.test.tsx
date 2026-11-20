@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import type { Hex } from "viem";
 import { useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import { setSplitPayment } from "@shop/payment/present";
+import { setSplitPaymentForTests } from "@shop/payment/present";
 
 import { LAND_NETWORKS } from "@shop/land/contracts";
 import { erc20Abi } from "../land/evm";
@@ -84,11 +84,11 @@ beforeEach(() => sessionStorage.clear());
 afterEach(() => vi.restoreAllMocks());
 
 
-// The split (Credits and MANA together) is off in this deployment (present's SPLIT_PAYMENT): these tests cover it as it
-// runs once it is offered.
+// The split (Credits and MANA together) follows its rollout (`dapps-shop-credits-mana-split`), off unless a render says
+// on: these tests cover it as it runs once it is offered.
 let undoSplit: () => void = () => {};
 beforeEach(() => {
-  undoSplit = setSplitPayment(true);
+  undoSplit = setSplitPaymentForTests(true);
 });
 afterEach(() => undoSplit());
 

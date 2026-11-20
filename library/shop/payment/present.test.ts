@@ -27,7 +27,7 @@ import {
   web3,
   wearableResale,
 } from "./fixtures";
-import { presentPayment, setSplitPayment, type Inconsistency } from "./present";
+import { presentPayment, setSplitPaymentForTests, type Inconsistency } from "./present";
 import { present, restrictions } from "./rule";
 
 function quiet() {
@@ -44,11 +44,11 @@ function show(offer: PurchaseOffer, session: Session, ctx: Parameters<typeof pre
 const methods = (offer: PurchaseOffer, session: Session) => show(offer, session).view.options.map((o) => o.method);
 
 
-// The split (Credits and MANA together) is off in this deployment (present's SPLIT_PAYMENT): these tests cover it as it
-// runs once it is offered.
+// The split (Credits and MANA together) follows its rollout (`dapps-shop-credits-mana-split`), off unless a render says
+// on: these tests cover it as it runs once it is offered.
 let undoSplit: () => void = () => {};
 beforeEach(() => {
-  undoSplit = setSplitPayment(true);
+  undoSplit = setSplitPaymentForTests(true);
 });
 afterEach(() => undoSplit());
 
@@ -279,7 +279,7 @@ describe("balances decide an option's state, never its method", () => {
     expect(show(priced, web3(), { creditsBalance: usdCents(327), manaBalance: manaFromWhole(8) }).view.options[1]!.mixed).toBeNull();
   });
 
-  it("offers no credits+MANA split while its switch is off, even on an offer the node marks splittable", () => {
+  it("offers the credits+MANA split only when the render's rollout is on AND the node marks the offer splittable", () => {
     const offer = storeMint(web3());
     const priced: PurchaseOffer = {
       ...offer,
@@ -287,13 +287,19 @@ describe("balances decide an option's state, never its method", () => {
     };
     expect(priced.splittable).toBe(true);
     const balances = { creditsBalance: usdCents(327), manaBalance: manaFromWhole(10) };
-    // On (as this file runs): the node's mark is enough.
-    expect(show(priced, web3(), balances).view.options.find((o) => o.method === "mana")!.mixed).not.toBeNull();
-    // Off (the deployed default): the mark alone offers nothing.
+    const mixed = (o: PurchaseOffer, ctx: Parameters<typeof presentPayment>[2]) => show(o, web3(), ctx).view.options.find((v) => v.method === "mana")!.mixed;
+    // As this file runs (its tests turn it on), the node's mark is enough.
+    expect(mixed(priced, balances)).not.toBeNull();
     undoSplit();
-    const { view } = show(priced, web3(), balances);
-    expect(view.options.find((o) => o.method === "mana")!.mixed).toBeNull();
-    expect(view.options[0]!.state.kind).toBe("topUpRequired");
+    // The rollout not said, or off for this render: the mark alone offers nothing, and credits stay a top-up.
+    expect(mixed(priced, balances)).toBeNull();
+    expect(mixed(priced, { ...balances, split: false })).toBeNull();
+    expect(show(priced, web3(), balances).view.options[0]!.state.kind).toBe("topUpRequired");
+    // On for this render: offered, and only for this render.
+    expect(mixed(priced, { ...balances, split: true })).not.toBeNull();
+    expect(mixed(priced, balances)).toBeNull();
+    // On, for an offer the node does not mark (an older node, or its rollout off): nothing.
+    expect(mixed({ ...priced, splittable: false }, { ...balances, split: true })).toBeNull();
   });
 
   it("a USD-pegged listing offers no credits+MANA split: its MANA is only fixed at settlement", () => {

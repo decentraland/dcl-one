@@ -89,26 +89,26 @@ export type PaymentPresentation = {
   inconsistencies: Inconsistency[];
 };
 
-/**
- * Whether Credits and MANA may pay one line together (upstream's 'combined' rail: the MANA option's `mixed`), on the offers
- * the node marks `splittable`. Off: it is switched on in its own change once the credits node this deployment talks to
- * authorizes a partial credit (`creditsCents`); a node without it refuses one ("Price changed", or Insufficient when the
- * balance is short) and the split could never settle. While it is off, an offer's `splittable` alone offers nothing.
- */
-export const SPLIT_PAYMENT = false;
+// Tests of the split turn it on file-wide; nothing else may. Every render passes its own rollout (`PaymentContext.split`),
+// so no request or page can turn it on for another.
+let splitForTests = false;
 
-let splitOffered = SPLIT_PAYMENT;
-
-/** Turns the split on or off (tests of the split turn it on); returns the undo. */
-export function setSplitPayment(on: boolean): () => void {
-  const previous = splitOffered;
-  splitOffered = on;
+/** Tests only: offers the split as if every render's rollout were on. Returns the undo. */
+export function setSplitPaymentForTests(on: boolean): () => void {
+  const previous = splitForTests;
+  splitForTests = on;
   return () => {
-    splitOffered = previous;
+    splitForTests = previous;
   };
 }
 
 export type PaymentContext = {
+  /**
+   * Whether Credits and MANA may pay one line together here (upstream's 'combined' rail: the MANA option's `mixed`): the
+   * `dapps-shop-credits-mana-split` rollout as the render reading it holds the flags (discovery/lib/rolloutFlags.ts).
+   * Offered only with it on AND an offer the node marks `splittable`; absent, it is off.
+   */
+  split?: boolean;
   /** The buyer's spendable credit balance, when known. */
   creditsBalance?: UsdCents | null;
   /** The connected wallet's MANA on the settlement chain, when known. */
@@ -209,6 +209,7 @@ export function presentPayment(offer: PurchaseOffer, session: Session, ctx: Paym
 
   const manaOption = options.find((o) => o.method === "mana");
   const creditsQuote = options.find((o) => o.method === "credits")?.quote;
+  const splitOffered = ctx.split === true || splitForTests;
   if (!manaOnly && splitOffered && offer.splittable === true && manaOption?.quote?.method === "mana" && creditsQuote?.method === "credits") {
     manaOption.mixed = mixedPayment(creditsQuote.quoted, manaOption.quote.amount, ctx);
   }
