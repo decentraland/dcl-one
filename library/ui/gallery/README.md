@@ -16,15 +16,19 @@ node gallery/scripts/check-build.mjs figma/review/review-dist [--prefix /nested/
 pnpm exec vite build --config gallery/vite.config.ts --mode hosted && node gallery/scripts/check-build.mjs gallery/dist --hosted
 ```
 
-To review a pull request without building it, download the `ui-review-<sha>` artifact of its Shared UI library run, unzip it into a folder such as `ui-review`, run `python3 -m http.server 8080 --directory ui-review` and open http://localhost:8080/gallery/. `--mode hosted` builds the gallery alone into `gallery/dist`, without the Figma reference, for a hosted preview.
-
-The build writes `figma/review/review-dist/gallery/`, beside the generated Review, and uses relative URLs, so the combined output works at the root or under any prefix. Build the generated Review with `--base ./` (as CI does for the uploaded artifact) to serve the same output anywhere, or with the absolute prefix it is served from.
+The build writes `figma/review/review-dist/gallery/`, beside the generated Review, and uses relative URLs, so the combined output works at the root or under any prefix. Build the generated Review with `--base ./` (as CI does for the uploaded artifact) to serve the same output anywhere, or with the absolute prefix it is served from. `--mode hosted` builds the gallery alone into `gallery/dist`, without the Figma reference: the build that pull request previews publish, which CI writes to `hosted/` in the same artifact.
 
 | URL                                       | Opens                                                      |
 | ----------------------------------------- | ---------------------------------------------------------- |
 | `gallery/?component=Button&width=375`     | a runtime page at a canvas width (`fill` when omitted)     |
 | `gallery/?foundations=icons`              | a runtime foundations page                                 |
 | `gallery/?source=generated&component=...` | the generated Review, with every other parameter forwarded |
+
+## Review a pull request
+
+Once publication is configured ([ADR](../../../docs/adr/2026-11-20-ui-gallery-previews.md), which also lists what is checked before a preview is published), a pull request from this repository that changes `library/ui` gets one comment from `github-actions[bot]` whose first line, **Open the UI gallery**, opens the hosted gallery built from that pull request. The second line names the commit it was built from and the date the preview may be removed, five days after its upload. The link follows the latest head: it updates a few minutes after the head's Shared UI library run and its key scan pass. Pull requests from forks get no link.
+
+Without a link, download the `ui-review-<sha>` artifact of the pull request's Shared UI library run, unzip it into a folder such as `ui-gallery`, run `python3 -m http.server 8080 --directory ui-gallery` and open http://localhost:8080/gallery/ (the gallery beside the Figma reference) or http://localhost:8080/hosted/ (the hosted gallery the link opens).
 
 ## Coverage
 
