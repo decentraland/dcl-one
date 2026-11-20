@@ -1551,17 +1551,31 @@ mod stream_access {
         path: &str,
         metadata: &str,
     ) -> (StatusCode, Value) {
+        call_with(app, key, method, path, metadata, None).await
+    }
+
+    async fn call_with(
+        app: &axum::Router,
+        key: &str,
+        method: &str,
+        path: &str,
+        metadata: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
         let full = format!("/comms-gatekeeper{path}");
         let headers = signed(key, &method.to_ascii_lowercase(), &full, metadata).await;
         let mut req = Request::builder().method(method).uri(&full);
         for (k, v) in headers.iter() {
             req = req.header(k, v);
         }
-        let resp = app
-            .clone()
-            .oneshot(req.body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+        let body = match body {
+            Some(body) => {
+                req = req.header("content-type", "application/json");
+                Body::from(body.to_string())
+            }
+            None => Body::empty(),
+        };
+        let resp = app.clone().oneshot(req.body(body).unwrap()).await.unwrap();
         let status = resp.status();
         let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
             .await
@@ -1746,44 +1760,51 @@ mod stream_access {
             "the credential is for the world scene's room"
         );
 
-        // The world has ONE credential. A second scene's own authorities (a
-        // grantee of its parcels only, an admin granted on it) never reach
-        // it; a grantee without a parcel restriction does.
+        // The world has ONE credential. A grantee of a second scene's parcels
+        // only never reaches it, nor does an admin that grantee adds on that
+        // scene; a grantee without a parcel restriction and an admin the
+        // world's owner granted on that scene (`/scene-admin` keys it on the
+        // scene's entity id) do.
         let side_id = format!("SideScene{tag}");
-        let side_entity = serde_json::json!({
-            "type": "scene",
-            "timestamp": 2000,
-            "pointers": ["5,5"],
-            "metadata": {
-                "display": { "title": "Side" },
-                "scene": { "base": "5,5", "parcels": ["5,5"] },
-                "worldConfiguration": { "name": world.display() },
-            },
-        });
         let side_parcels: ParcelSet = [Parcel::parse("5,5").unwrap()].into_iter().collect();
-        store::deploy_scene(
-            &pool,
-            &storage,
-            SceneDeployment {
-                world: &world,
-                name_owner: Some(&admin),
-                entity_id: &side_id,
-                deployer: &admin,
-                deployment_auth_chain: &serde_json::json!([{ "type": "SIGNER", "payload": admin.as_str() }]),
-                entity: &side_entity,
-                parcels: &side_parcels,
-                size: 1,
-                replacement: &Deploy::Owner,
-                forward_to: None,
-                quota: None,
-            },
-        )
-        .await
-        .unwrap();
+        // An earlier scene at the side parcel, replaced by the side scene.
+        for (entity_id, timestamp) in [(format!("StaleSide{tag}"), 1500), (side_id.clone(), 2000)] {
+            let side_entity = serde_json::json!({
+                "type": "scene",
+                "timestamp": timestamp,
+                "pointers": ["5,5"],
+                "metadata": {
+                    "display": { "title": "Side" },
+                    "scene": { "base": "5,5", "parcels": ["5,5"] },
+                    "worldConfiguration": { "name": world.display() },
+                },
+            });
+            store::deploy_scene(
+                &pool,
+                &storage,
+                SceneDeployment {
+                    world: &world,
+                    name_owner: Some(&admin),
+                    entity_id: &entity_id,
+                    deployer: &admin,
+                    deployment_auth_chain: &serde_json::json!([{ "type": "SIGNER", "payload": admin.as_str() }]),
+                    entity: &side_entity,
+                    parcels: &side_parcels,
+                    size: 1,
+                    replacement: &Deploy::Owner,
+                    forward_to: None,
+                    quota: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
         let _ = std::fs::remove_dir_all(&dir);
         let scoped_key = random_key();
         let side_admin_key = random_key();
         let wide_key = random_key();
+        let scoped_admin_key = random_key();
+        let stale_admin_key = random_key();
         for (key, permission, parcel) in [
             (&scoped_key, "deployment", Some("5,5")),
             (&wide_key, "streaming", None),
@@ -1819,6 +1840,14 @@ mod stream_access {
             "signer": SCENE_SIGNER, "sceneId": side_id, "parcel": "5,5", "realm": realm,
         })
         .to_string();
+        let stale_meta = serde_json::json!({
+            "signer": SCENE_SIGNER, "sceneId": format!("StaleSide{tag}"), "parcel": "5,5", "realm": realm,
+        })
+        .to_string();
+        let foreign_meta = serde_json::json!({
+            "signer": SCENE_SIGNER, "sceneId": format!("ForeignScene{tag}"), "parcel": "5,5", "realm": realm,
+        })
+        .to_string();
         let credential = || async {
             sqlx::query_scalar::<_, Uuid>(
                 "SELECT id FROM social.scene_stream_access WHERE place_id = $1 AND active",
@@ -1828,26 +1857,71 @@ mod stream_access {
             .await
             .unwrap()
         };
+        // The parcel-scoped grantee may moderate its scene, so it can add a
+        // second wallet it holds as that scene's admin.
+        let (status, body) = call_with(
+            &app,
+            &scoped_key,
+            "POST",
+            "/scene-admin",
+            &side_meta,
+            Some(serde_json::json!({ "admin": address_of(&scoped_admin_key) })),
+        )
+        .await;
+        assert!(
+            status.is_success(),
+            "the scoped grantee adds an admin: {status} {body}"
+        );
+        // Admins of a scene that is not this world's current deployment: a
+        // replaced one at the side parcel, and one this world never had.
+        let stale_id = format!("StaleSide{tag}");
+        let foreign_id = format!("ForeignScene{tag}");
+        for scene in [&stale_id, &foreign_id] {
+            state
+                .moderation
+                .add_admin(
+                    scene,
+                    &Address::parse(&address_of(&stale_admin_key)).unwrap(),
+                    &admin,
+                )
+                .await
+                .unwrap();
+        }
         let before = credential().await;
-        for (who, key) in [
-            ("parcel-scoped grantee", &scoped_key),
-            ("side scene admin", &side_admin_key),
+        let verbs = [
+            ("GET", PATH),
+            ("POST", PATH),
+            ("PUT", PATH),
+            ("DELETE", PATH),
+            ("GET", "/cast/generate-stream-link"),
+        ];
+        let mut refused = Vec::new();
+        for (who, key, meta) in [
+            ("parcel-scoped grantee", &scoped_key, &side_meta),
+            (
+                "admin added by the scoped grantee",
+                &scoped_admin_key,
+                &side_meta,
+            ),
+            (
+                "admin of a replaced deployment",
+                &stale_admin_key,
+                &stale_meta,
+            ),
+            (
+                "admin of a scene outside the world",
+                &stale_admin_key,
+                &foreign_meta,
+            ),
         ] {
-            for (method, path) in [
-                ("GET", PATH),
-                ("POST", PATH),
-                ("PUT", PATH),
-                ("DELETE", PATH),
-                ("GET", "/cast/generate-stream-link"),
-            ] {
-                let (status, body) = call_at(&app, key, method, path, &side_meta).await;
-                assert_eq!(
-                    status,
-                    StatusCode::FORBIDDEN,
-                    "{who} {method} {path}: {body}"
-                );
+            for (method, path) in verbs {
+                let (status, body) = call_at(&app, key, method, path, meta).await;
+                if status.is_success() {
+                    refused.push(format!("{who} {method} {path}: {status} {body}"));
+                }
             }
         }
+        assert!(refused.is_empty(), "admitted: {refused:#?}");
         assert_eq!(credential().await, before, "the world's key is untouched");
         let (status, body) = call_at(&app, &wide_key, "GET", PATH, &side_meta).await;
         assert_eq!(
@@ -1856,6 +1930,25 @@ mod stream_access {
             "a grantee of the whole world reads the key: {body}"
         );
         assert!(body["streaming_key"].is_string(), "{body}");
+        for (method, path, expected) in [
+            ("GET", PATH, StatusCode::OK),
+            ("PUT", PATH, StatusCode::OK),
+            ("DELETE", PATH, StatusCode::NO_CONTENT),
+            ("POST", PATH, StatusCode::OK),
+            ("GET", "/cast/generate-stream-link", StatusCode::OK),
+        ] {
+            let mut answer = call_at(&app, &side_admin_key, method, path, &side_meta).await;
+            // A revocation racing the reset's cleanup intent answers 409 "try again".
+            for _ in 0..40 {
+                if method != "DELETE" || answer.0 != StatusCode::CONFLICT {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                answer = call_at(&app, &side_admin_key, method, path, &side_meta).await;
+            }
+            let (status, body) = answer;
+            assert_eq!(status, expected, "side scene admin {method} {path}: {body}");
+        }
     }
 }
 

@@ -212,7 +212,6 @@ fn av_thread(
 pub fn noop_sinks<T: AVPlayer>(source: String, image: Option<Handle<Image>>) -> AVSinks<T> {
     let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
     let (video_sender, video_receiver) = tokio::sync::mpsc::channel(10);
-    #[cfg_attr(not(feature = "html"), expect(unused))]
     let (state_sender, state_receiver) = tokio::sync::watch::channel(VideoState::VsLoading);
 
     #[cfg(feature = "ffmpeg")]
@@ -232,6 +231,8 @@ pub fn noop_sinks<T: AVPlayer>(source: String, image: Option<Handle<Image>>) -> 
         T::HAS_VIDEO,
         image.as_ref(),
     );
+    #[cfg(not(feature = "html"))]
+    drop(state_sender);
 
     AVSinks {
         #[cfg(feature = "ffmpeg")]

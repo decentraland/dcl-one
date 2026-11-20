@@ -80,7 +80,7 @@ pub(crate) async fn process_events(
                 match process_gltf(&raw_bytes, expect_repair) {
                     Ok(gltf) => gltf,
                     Err(e) => {
-                        error!("failed to process gltf {:?}: {:?}", req.base_path, e);
+                        error!("failed to process gltf {:?}: {e}", req.base_path);
                         let _ = resp_sx.send(Err(()));
                         continue;
                     }
@@ -288,13 +288,17 @@ fn bc7_dds(
     Ok(output)
 }
 
-#[derive(Debug)]
-#[allow(dead_code)] // we use the ignored debug impl
+#[derive(Debug, thiserror::Error)]
 enum GltfProcessError {
+    #[error("embedded image: {0:?}")]
     ImageError(ImageProcessError),
+    #[error("invalid header")]
     InvalidHeader,
+    #[error("parse failed")]
     ParseFailed,
+    #[error("draco: {0}")]
     Draco(draco::DracoError),
+    #[error("nothing to repair")]
     NothingToRepair,
 }
 

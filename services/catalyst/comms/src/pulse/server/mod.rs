@@ -577,7 +577,7 @@ impl PulseServer {
                 return Admission::Deny(Box::new(Action::Reply(handshake_response(
                     false,
                     Some(
-                        "timestamp is ahead of this server; synchronize the clock and sign a new handshake"
+                        "timestamp is too far ahead of this server; synchronize the clock and sign a new handshake"
                             .into(),
                     ),
                 ))))

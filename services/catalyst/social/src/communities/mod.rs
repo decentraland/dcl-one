@@ -460,7 +460,7 @@ impl State {
         target: &Address,
     ) {
         match queries::is_private(&self.pool, community_id).await {
-            Ok(true) => match self.voice.get() {
+            Ok(Some(true)) => match self.voice.get() {
                 Some(voice) => match voice.evict(community_id, target.as_str()).await {
                     Ok(()) => {
                         tracing::info!(%community_id, %target, "kicked user from private community voice chat")
@@ -473,7 +473,7 @@ impl State {
                     tracing::warn!(%community_id, %target, room = %crate::comms::rooms::community_voice_chat_room_name(&community_id), "no voice transport attached; the private community voice seat stays")
                 }
             },
-            Ok(false) => {}
+            Ok(_) => {}
             Err(e) => {
                 tracing::warn!(error = %e, %community_id, %target, "privacy lookup for voice eviction failed; skipping kick")
             }

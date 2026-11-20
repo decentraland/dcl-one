@@ -104,12 +104,6 @@ export function hubLocationKeeper(host: CreatorHubHost): (location: HubLocation,
   };
 }
 
-/** A link the hub opens in a new tab; framed by the Explorer, the Explorer takes it (its /play links jump in). */
-export function openHubLink(url: string): void {
-  if (adopted) adopted.openLink(new URL(url, window.location.href).href);
-  else window.open(url, "_blank", "noopener,noreferrer");
-}
-
 /**
  * The account menu's actions. Framed by the Explorer the account is the Explorer's: switching
  * opens its sign-in, and signing out is left to the Explorer's own menu.

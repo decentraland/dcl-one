@@ -1,34 +1,33 @@
-import { useId, type MouseEvent, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Link } from "react-router";
 
 import SitesChrome from "@ui/web/frames/SitesChrome";
 
-import { Button, Tabs, TabsBar, type TabsLinkProps } from "@dcl/one-ui";
+import { Button, type TabsLinkProps } from "@dcl/one-ui";
+
+import { ProfileFrame, type ProfileShellTab } from "@dcl/one-ui/apps/sites/profile/ProfileFrame";
+import { ProfileHeader } from "@dcl/one-ui/apps/sites/profile/ProfileHeader";
 
 import { SHOP_BASE } from "@/core/lib/shop/redirects";
+import { useAuth } from "@/data/lib/auth/index";
 import { shortAddress } from "@/data/lib/catalyst/format/address";
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
 
-import { ProfileHeader } from "./ProfileHeader";
-import styles from "./ProfileShell.module.css";
+import { ProfileMemberActions } from "./ProfileMemberActions";
+import { ProfileFriendsCount, ProfileInviteFriends } from "./ProfileOwnerActions";
 
 /**
- * A NAME is bought in the Shop's NAMEs page; worlds are managed under Create. Both are the
- * canonical paths, not the redirects (`/shop/items?category=names`, the legacy `/builder/worlds`).
+ * A NAME is bought in the Shop's NAMEs page (the canonical path, not `/shop/items?category=names`);
+ * worlds are managed in the Creator Hub desktop app.
  */
 export const GET_A_NAME_HREF = `${SHOP_BASE}/names`;
-export const MANAGE_WORLD_HREF = "/create/worlds";
+export const MANAGE_WORLD_HREF = "/download/creator-hub";
 
-export type ProfileShellTab = { id: string; label: string; href: string };
+export type { ProfileShellTab };
 
 /** Loads the next tab's code on hover or focus, as the app's other in-app links do. */
 function TabLink({ href, ...props }: TabsLinkProps) {
   return <Link to={href} prefetch="intent" {...props} />;
-}
-
-/** A modifier or middle click opens a new browser tab; this page's tab does not change. */
-function isPlainClick(event: MouseEvent<HTMLAnchorElement>): boolean {
-  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
 }
 
 type ProfileShellProps = {
@@ -42,29 +41,45 @@ type ProfileShellProps = {
   children: ReactNode;
 };
 
-/** The profile site's frame every ported tab shares: Sites chrome, header with the owner's call to action, tab bar. */
+/**
+ * The profile site's frame every ported tab shares: Sites chrome, header with the owner's call to
+ * action or another member's friendship, block and share actions, tab bar.
+ */
 export function ProfileShell({ profile, own, tabs, active, onTab, aside, children }: ProfileShellProps) {
-  const ids = useId();
-  const tabId = (id: string) => `${ids}-tab-${id}`;
-  const panelId = `${ids}-panel`;
-
+  const { identity } = useAuth();
   const actions = own ? (
-    profile.hasClaimedName ? (
-      <Button href={MANAGE_WORLD_HREF} size="md">
-        Manage World
-      </Button>
-    ) : (
-      <Button href={GET_A_NAME_HREF} size="md">
-        Get a Unique Name
-      </Button>
-    )
-  ) : null;
+    <>
+      {profile.hasClaimedName ? (
+        <Button href={MANAGE_WORLD_HREF} size="md">
+          Manage World
+        </Button>
+      ) : (
+        <Button href={GET_A_NAME_HREF} size="md">
+          Get a Unique Name
+        </Button>
+      )}
+      <ProfileFriendsCount address={profile.address} />
+      <ProfileInviteFriends profile={profile} />
+    </>
+  ) : (
+    // Keyed by address: another profile starts with no result of the last one's actions.
+    <ProfileMemberActions
+      key={`${identity?.signer ?? ""}:${profile.address}`}
+      address={profile.address}
+      name={profile.name}
+    />
+  );
 
   // No top-bar entry is highlighted on a profile ("play" maps to none), as on the profile site.
   return (
-    <SitesChrome active="play" overlayNav>
-      <div className={styles.root}>
-        <div className={styles.content}>
+    <SitesChrome active="play">
+      <ProfileFrame
+        tabs={tabs}
+        active={active}
+        onTab={onTab}
+        linkComponent={TabLink}
+        aside={aside}
+        header={
           <ProfileHeader
             address={profile.address}
             addressLabel={shortAddress(profile.address)}
@@ -74,33 +89,10 @@ export function ProfileShell({ profile, own, tabs, active, onTab, aside, childre
             avatarUrl={profile.avatarUrl || undefined}
             actions={actions}
           />
-          <TabsBar label="Profile sections" inset="content" scrollable>
-            {tabs.map((tab) => (
-              <Tabs
-                key={tab.id}
-                id={tabId(tab.id)}
-                label={tab.label}
-                href={tab.href}
-                linkComponent={TabLink}
-                selected={tab.id === active}
-                aria-controls={tab.id === active ? panelId : undefined}
-                onClick={(event) => {
-                  if (isPlainClick(event)) onTab(tab.id);
-                }}
-              />
-            ))}
-          </TabsBar>
-          <div
-            role="tabpanel"
-            id={panelId}
-            aria-labelledby={tabId(active)}
-            className={aside ? `${styles.body} ${styles.withAside}` : styles.body}
-          >
-            {aside ? <aside className={styles.aside}>{aside}</aside> : null}
-            <div className={styles.main}>{children}</div>
-          </div>
-        </div>
-      </div>
+        }
+      >
+        {children}
+      </ProfileFrame>
     </SitesChrome>
   );
 }

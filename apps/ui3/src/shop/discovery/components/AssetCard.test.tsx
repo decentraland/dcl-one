@@ -118,6 +118,15 @@ describe("the card's creator line", () => {
     expect(screen.getByTestId("creator-ava-letter")).toHaveTextContent("N");
   });
 
+  it("paints a profile the feed carries at once and asks for none", async () => {
+    profiles = () => profileAnswer(true);
+    card(item({ creatorProfile: { name: "nacho", face: FACE, claimed: true } }));
+    expect(screen.getByTestId("creator-display")).toHaveTextContent("Nacho");
+    expect(screen.getByTestId("creator-ava").getAttribute("src")).toBe(FACE);
+    await settle();
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("/lambdas/profiles"))).toBe(false);
+  });
+
   it("shows a name it is given at once, without waiting for the profile", () => {
     render(
       <ShopHarness>
