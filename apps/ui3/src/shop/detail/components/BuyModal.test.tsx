@@ -121,6 +121,50 @@ describe("Buy now's dialog", () => {
     await waitFor(() => expect(within(dialog).getByTestId("buy-modal-buy")).toBeEnabled());
   });
 
+  describe("opened again with a different price than the earlier open", () => {
+    /** The fixture's offer with its Credits quote at `cents`. */
+    const pricedAt = (offer: NonNullable<CartAddInput["seen"]>, cents: number) => ({
+      ...offer,
+      quotes: offer.quotes.map((q) => (q.method === "credits" ? { ...q, quoted: usdCents(cents) } : q)),
+    });
+    /** A first open at 12 Credits long ago, then a second with the page's fresh 6-Credit offer and the check held. */
+    async function reopenAtSix() {
+      const first = renderBuy({ session: "web2" }, { seenAt: Date.now() - 60_000 });
+      await settledDialog();
+      const twelve = first.line.seen!;
+      first.unmount();
+      const check = heldOffers();
+      const { lineId } = renderBuy(
+        { session: "web2" },
+        {
+          seenAt: Date.now(),
+          tweak: (d) => {
+            d.services.fetchOffers = check.fetchOffers;
+            Object.assign(d.lines[0]!, { seen: pricedAt(d.lines[0]!.seen!, 60) });
+          },
+        },
+      );
+      const dialog = await screen.findByTestId("buy-modal");
+      await waitFor(() => expect(phaseOf(dialog)).toBe("ready"));
+      expect(within(dialog).getByTestId("buy-modal-asset")).toHaveTextContent("6");
+      return { dialog, check, lineId, twelve };
+    }
+
+    it("the server pricing it at the earlier open's 12 Credits is a change from the 6 on screen: the notice shows", async () => {
+      const { dialog, check, lineId, twelve } = await reopenAtSix();
+      await check.answer({ [lineId]: twelve });
+      expect(await within(dialog).findByTestId("price-changed")).toBeTruthy();
+      expect(within(dialog).getByTestId("buy-modal-asset")).toHaveTextContent("12");
+    });
+
+    it("the server confirming the 6 on screen is no change: Buy, no notice", async () => {
+      const { dialog, check, lineId, twelve } = await reopenAtSix();
+      await check.answer({ [lineId]: pricedAt(twelve, 60) });
+      await waitFor(() => expect(within(dialog).getByTestId("buy-modal-buy")).toBeEnabled());
+      expect(within(dialog).queryByTestId("price-changed")).toBeNull();
+    });
+  });
+
   it("a check still running after a moment says why Buy waits, and the notice goes with the answer", async () => {
     const check = heldOffers();
     const { line, lineId } = renderBuy({ session: "web2" }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });

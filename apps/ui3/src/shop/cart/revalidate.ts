@@ -60,6 +60,11 @@ export type OfferFetcher = (lines: CartLine[], signal: AbortSignal) => Promise<R
 
 export type RevalidationResult = { offers: Record<string, PurchaseOffer | null>; changes: LineChange[] };
 
+/** Each line's changes from the offer it holds as seen to `offers` (a line with no offer there is unavailable). */
+export function diffOffers(lines: readonly CartLine[], offers: Record<string, PurchaseOffer | null>, session: Session): LineChange[] {
+  return lines.flatMap((line) => diffLine(line, offers[line.id] ?? null, session));
+}
+
 export async function revalidateCart(
   lines: CartLine[],
   session: Session,
@@ -68,13 +73,10 @@ export async function revalidateCart(
 ): Promise<RevalidationResult> {
   const answered = await fetchOffers(lines, signal);
   const offers: Record<string, PurchaseOffer | null> = {};
-  const changes: LineChange[] = [];
   for (const line of lines) {
-    const offer = Object.prototype.hasOwnProperty.call(answered, line.id) ? (answered[line.id] ?? null) : null;
-    offers[line.id] = offer;
-    changes.push(...diffLine(line, offer, session));
+    offers[line.id] = Object.prototype.hasOwnProperty.call(answered, line.id) ? (answered[line.id] ?? null) : null;
   }
-  return { offers, changes };
+  return { offers, changes: diffOffers(lines, offers, session) };
 }
 
 export type RevalidationStatus = "idle" | "checking" | "current" | "changed" | "failed";
@@ -151,8 +153,13 @@ export function useCartRevalidation(
     setState((s) => ({ ...s, status: "checking", firstCheck, error: null }));
     const asked = revalidationIdentity(current);
     revalidateCart(current, who, fetcher, controller.signal).then(
-      (result) => {
+      (answer) => {
         if (controller.signal.aborted) return;
+        // The new offers are compared with the ones on screen now, not with those the check started from: a line handed
+        // a fresher offer meanwhile (Buy now holds its line in an effect that runs after this one) showed that offer.
+        // The lines, quantities and methods are the same, or this check would have been aborted for a new one.
+        const shown = new Map(latest.current.lines.map((l) => [l.id, l]));
+        const result = { offers: answer.offers, changes: diffOffers(current.map((l) => shown.get(l.id) ?? l), answer.offers, who) };
         setState({ status: result.changes.length === 0 ? "current" : "changed", firstCheck: false, result, error: null, pricedFor: asked });
       },
       (error: unknown) => {
