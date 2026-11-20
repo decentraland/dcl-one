@@ -76,7 +76,11 @@ const TEXT = {
   gone: "This item is no longer available.",
   itemFallback: "Item",
   priceChanged: "The price for this item changed while you were here. Check the new amount and confirm to continue.",
+  quoting: "Checking prices and availability…",
 } as const;
+
+/** How long the page's offer stands on screen with Buy waiting before the dialog says it is still checking. */
+const SLOW_QUOTE_MS = 1_500;
 
 /**
  * The checkout's reasons Buy waits that the dialog shows: the wallet's, with the way back the cart offers, and the
@@ -250,6 +254,17 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
   useEffect(() => {
     if (shown) setPriced(true);
   }, [shown]);
+  // The page's offer is on screen while the new quote runs: past a moment, the dialog says why Buy waits.
+  const quoting = shown && !checked;
+  const [slowQuote, setSlowQuote] = useState(false);
+  useEffect(() => {
+    if (!quoting) {
+      setSlowQuote(false);
+      return;
+    }
+    const timer = setTimeout(() => setSlowQuote(true), SLOW_QUOTE_MS);
+    return () => clearTimeout(timer);
+  }, [quoting]);
 
   // The split's approval counts as its purchase running, as the checkout's own does: nothing closes the dialog under it.
   const phase: Phase =
@@ -468,6 +483,11 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
             {held ? (
               <DialogWarning status testId="buy-modal-held">
                 <HeldText block={held} wallet={co.wallet} web3={co.session.kind === "web3"} />
+              </DialogWarning>
+            ) : null}
+            {slowQuote ? (
+              <DialogWarning status testId="buy-modal-quoting">
+                {TEXT.quoting}
               </DialogWarning>
             ) : null}
             <DialogCtas>

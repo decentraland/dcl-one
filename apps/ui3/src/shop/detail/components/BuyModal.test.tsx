@@ -106,6 +106,18 @@ describe("Buy now's dialog", () => {
     expect(within(dialog).queryByTestId("price-changed")).toBeNull();
   });
 
+  it("a check still running after a moment says why Buy waits, and the notice goes with the answer", async () => {
+    const check = heldOffers();
+    const { line, lineId } = renderBuy({ session: "web2" }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });
+    const dialog = await settledDialog();
+    expect(within(dialog).queryByTestId("buy-modal-quoting")).toBeNull();
+    expect(await within(dialog).findByTestId("buy-modal-quoting")).toHaveTextContent("Checking prices and availability…");
+    expect(within(dialog).getByTestId("buy-modal-buy")).toBeDisabled();
+    await check.answer({ [lineId]: line.seen! });
+    await waitFor(() => expect(within(dialog).getByTestId("buy-modal-buy")).toBeEnabled());
+    expect(within(dialog).queryByTestId("buy-modal-quoting")).toBeNull();
+  });
+
   it("a check that finds the price changed turns the shown price to the change notice", async () => {
     const check = heldOffers();
     const { line, lineId } = renderBuy({ session: "web2" }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });
