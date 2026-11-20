@@ -106,6 +106,32 @@ fn check_tile_header(bytes: &[u8]) -> bool {
     valid() == Some(true)
 }
 
+/// Whether the KTX2's `KTXorientation` value says its rows run bottom to top (`ru`, as the tile
+/// source writes them). Without the key, rows run top to bottom (`rd`).
+fn rows_bottom_up(bytes: &[u8]) -> bool {
+    let u32_at = |at: usize| -> Option<usize> {
+        let v = u32::from_le_bytes(bytes.get(at..at.checked_add(4)?)?.try_into().ok()?);
+        usize::try_from(v).ok()
+    };
+    let orientation = || -> Option<bool> {
+        let (start, len) = (u32_at(56)?, u32_at(60)?);
+        let kvd = bytes.get(start..start.checked_add(len)?)?;
+        let mut at = 0usize;
+        while at + 4 <= kvd.len() {
+            let entry_len =
+                usize::try_from(u32::from_le_bytes(kvd[at..at + 4].try_into().ok()?)).ok()?;
+            let entry = kvd.get(at + 4..(at + 4).checked_add(entry_len)?)?;
+            if let Some(value) = entry.strip_prefix(b"KTXorientation\0") {
+                return Some(value.get(1) == Some(&b'u'));
+            }
+            // entries are padded to 4 bytes
+            at = (at + 4 + entry_len).checked_next_multiple_of(4)?;
+        }
+        None
+    };
+    orientation().unwrap_or(false)
+}
+
 /// A satellite tile (single-level Basis KTX2) as a JPEG: transcoded to RGBA, alpha
 /// dropped, encoded at quality 85. Takes tens of milliseconds for a 1024x1024 tile.
 pub fn satellite_tile_jpeg(ktx2: &[u8]) -> Result<Vec<u8>, &'static str> {
@@ -121,8 +147,12 @@ pub fn satellite_tile_jpeg(ktx2: &[u8]) -> Result<Vec<u8>, &'static str> {
     let rgba = texture
         .transcode(0, TargetFormat::Rgba32, DecodeFlags::NONE)
         .map_err(|_| "tile transcode failed")?;
-    let rgba = image::RgbaImage::from_raw(info.width, info.height, rgba)
+    let mut rgba = image::RgbaImage::from_raw(info.width, info.height, rgba)
         .ok_or("tile transcode returned the wrong size")?;
+    // the decoded rows are in stored order; a JPEG's first row is its top
+    if rows_bottom_up(ktx2) {
+        image::imageops::flip_vertical_in_place(&mut rgba);
+    }
     let rgb = image::DynamicImage::ImageRgba8(rgba).to_rgb8();
 
     let mut jpeg = Vec::new();
@@ -240,5 +270,38 @@ mod tests {
         assert!(satellite_tile_jpeg(&other).is_err());
         // a header alone has no image data to transcode
         assert!(satellite_tile_jpeg(&uastc(SUPERCOMPRESSION_ZSTD)).is_err());
+    }
+
+    #[test]
+    fn orientation_is_read_from_the_key_value_data() {
+        // a key/value block at offset 80: one padded entry before the orientation, as toktx writes
+        fn with_kvd(entries: &[&[u8]]) -> Vec<u8> {
+            let mut kvd = Vec::new();
+            for entry in entries {
+                kvd.extend_from_slice(&(entry.len() as u32).to_le_bytes());
+                kvd.extend_from_slice(entry);
+                kvd.resize(kvd.len().next_multiple_of(4), 0);
+            }
+            let mut bytes = vec![0u8; 80];
+            bytes[56..60].copy_from_slice(&80u32.to_le_bytes());
+            bytes[60..64].copy_from_slice(&(kvd.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&kvd);
+            bytes
+        }
+        let writer: &[u8] = b"KTXwriter\0toktx\0";
+        assert!(rows_bottom_up(&with_kvd(&[
+            writer,
+            b"KTXorientation\0ru\0"
+        ])));
+        assert!(!rows_bottom_up(&with_kvd(&[
+            writer,
+            b"KTXorientation\0rd\0"
+        ])));
+        assert!(!rows_bottom_up(&with_kvd(&[writer])));
+        // a declared length past the end of the block reads as no key
+        let mut truncated = with_kvd(&[b"KTXorientation\0ru\0"]);
+        truncated[80..84].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(!rows_bottom_up(&truncated));
+        assert!(!rows_bottom_up(&[]));
     }
 }
