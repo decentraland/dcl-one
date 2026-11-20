@@ -36,10 +36,12 @@ LAND/Estate rentals listings.
   cancels a listing (`expired`, `transferred`, `dissolved`). The load's
   `updated_at` guard then skips every upstream version of that listing that
   is not newer, including an upstream `executed` whose rent predates the
-  cancellation. A node that runs the `rentals` index recovers it, because the
-  fold moves a cancelled listing to `executed` when it indexes the listing's
-  own rent. A node without that index keeps the cancellation until upstream
-  writes a newer version of the row.
+  cancellation. A node that runs the `rentals` index recovers it: the fold
+  moves a cancelled listing to `executed` when it indexes the listing's own
+  rent after the cancellation, on a rebuild, and on the listing's refresh
+  route. A rent the index folded before the cancellation is not revisited by
+  the incremental fold. A node without that index keeps the cancellation
+  until upstream writes a newer version of the row.
 - Skipped: a signature that the node holds under another id, and a second
   `open` listing for an asset (the node allows one open listing per asset;
   of two in one batch, the latest `updated_at` lands).
