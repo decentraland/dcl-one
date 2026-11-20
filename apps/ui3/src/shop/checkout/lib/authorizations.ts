@@ -137,6 +137,14 @@ export function isAuthorizationPending(e: unknown): e is AuthorizationPendingErr
   return e instanceof AuthorizationPendingError;
 }
 
+/** Pending for another window: it holds the exact grant's lock, and this one asked the wallet nothing. */
+export class GrantInProgressElsewhereError extends AuthorizationPendingError {
+  constructor() {
+    super("A MANA approval is already in progress in another window. Try again in a moment.");
+    this.name = "GrantInProgressElsewhereError";
+  }
+}
+
 /**
  * How long a retry after a lost answer waits before sending the same signed approve again. It only ever allows that
  * check-and-resend: no time lets a recorded grant go.
@@ -259,7 +267,7 @@ async function underGrantLock<T>(opts: AuthorizationContext & { auth: ShopAuthor
   const locks = opts.locks === undefined ? pageLocks() : opts.locks;
   if (!locks) throw new ExactGrantUnavailableError(NO_LOCKS);
   const release = await webLock(locks, exactGrantLock(opts.auth, opts.account));
-  if (!release) throw new AuthorizationPendingError("A MANA approval is already in progress in another window.");
+  if (!release) throw new GrantInProgressElsewhereError();
   try {
     return await run();
   } finally {

@@ -13,7 +13,7 @@ import type { ChainId } from "@shop/model/chain";
 import { gaslessEnabled } from "../chain/config";
 import { requireContracts } from "../chain/contracts";
 import { GaslessUnavailableError, isGaslessUnavailable, isSignatureDeclined, provedNotSent, relayMetaTransaction, type MetaTxTarget } from "../chain/metatx";
-import { isRevertedTxError, isWalletRefusal, sendAndConfirm, TxPendingError } from "../chain/wallet";
+import { isRevertedTxError, isWalletRefusal, revertedTxHash, sendAndConfirm, TxPendingError } from "../chain/wallet";
 import { AuthorizationKind, ensureAuthorization } from "../lib/authorizations";
 import { getMarketplaceForTrade } from "../lib/marketplace";
 import { canPayGasItself } from "../lib/wallet-kind";
@@ -264,11 +264,14 @@ async function payGapWithMana(ctx: RailContext, target: PurchaseTarget, opts: Ga
       await waitForSettlement(ctx.reader, chainId, relayed, ctx.wait);
       return relayed;
     } catch (e) {
-      if (isSignatureDeclined(e) || isSettlementPending(e) || e instanceof TxPendingError) throw e;
-      if (!isGaslessUnavailable(e)) {
-        if (relayed) opts.onReverted?.({ txHash: relayed });
+      // The relay answered its hash: only that hash's receipt, mined and reverted, says the credit went unspent. Any other
+      // failure (a receipt read aborted or failed, no receipt in time) leaves the sale pending, never sent again.
+      if (relayed) {
+        if (isRevertedTxError(e) && revertedTxHash(e)?.toLowerCase() === relayed.toLowerCase()) opts.onReverted?.({ txHash: relayed });
         throw e;
       }
+      if (isSignatureDeclined(e) || isSettlementPending(e) || e instanceof TxPendingError) throw e;
+      if (!isGaslessUnavailable(e)) throw e;
       // Only a relay that proved nothing was sent lets the wallet send the sale instead: any other failure (a lost
       // answer, an unknown one) may have sent it, so its credit may be consumed and it is not sent twice.
       if (!provedNotSent(e)) {

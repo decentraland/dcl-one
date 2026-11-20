@@ -48,7 +48,7 @@ function relayedUseCredits(body: unknown): { maxCreditedValue: bigint; maxUncred
 }
 
 /** The node answers a credit for the Credits part (`creditsCents`), worth `value` (1 MANA by default), spendable `expiresIn` s. */
-function setup(signedFor?: string, confirm?: "none", value = MANA, expiresIn?: number) {
+function setup(signedFor?: string, confirm?: "none" | "reverted", value = MANA, expiresIn?: number) {
   const demo = createDemo({
     session: "web3",
     ...(confirm ? { confirm } : {}),
@@ -446,6 +446,55 @@ describe("a split whose outcome is not known", () => {
     expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(true);
     expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))).toBeNull();
     expect(screen.getByTestId("combined-confirm")).toBeEnabled();
+  });
+
+  it("a receipt read aborted after the relay answered the sale's hash keeps the sale pending: its credit kept, held on reopen, completed by its receipt", async () => {
+    const { demo, line, unmount, again } = setup();
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    const read = demo.chain.receipt;
+    demo.chain.receipt = async () => {
+      throw new DOMException("Aborted", "AbortError");
+    };
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText(/still confirming/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(demo.relay.posts).toHaveLength(1);
+    expect(demo.shop.log.filter((r) => r.name === "cancelCreditAuthorizations")).toHaveLength(0);
+    const held = readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing));
+    expect(held).toMatchObject({ txHash: expect.any(String), creditId: expect.any(String) });
+    unmount();
+    again();
+    expect(await screen.findByText(/still confirming/)).toBeTruthy();
+    expect(screen.queryByTestId("combined-confirm")).toBeNull();
+    // Its receipt can be read again, and it mined: Check again completes it, nothing sent twice.
+    demo.chain.receipt = read;
+    await act(async () => fireEvent.click(screen.getByTestId("combined-check-again")));
+    expect(await screen.findByText(/Purchase complete/)).toBeTruthy();
+    expect(demo.relay.posts).toHaveLength(1);
+    expect(demo.shop.log.filter((r) => r.name === "cancelCreditAuthorizations")).toHaveLength(0);
+    expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))).toBeNull();
+  });
+
+  it("control: a sale whose own receipt shows it mined and reverted releases its credit and lets the item go", async () => {
+    const { demo, line } = setup(undefined, "reverted");
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText("The purchase failed on-chain, so nothing was bought. The Credits it held come back on their own.", {}, { timeout: 5000 })).toBeTruthy();
+    expect(demo.relay.posts).toHaveLength(1);
+    expect(demo.shop.log.filter((r) => r.name === "cancelCreditAuthorizations")).toHaveLength(1);
+    expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))).toBeNull();
+  });
+
+  it("an approval another window is running says so: this one asked the wallet nothing, so it was not sent", async () => {
+    const { demo } = setup();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    const approve = await screen.findByTestId("authorize-step-action");
+    const auth = getManaSpendingAuthorization(CHAIN.POLYGON, requireContracts(CHAIN.POLYGON).creditsManager!.address);
+    (demo.services.locks as ReturnType<typeof createFakeLocks>).held.add(exactGrantLock(auth, BOOK.buyer));
+    await act(async () => fireEvent.click(approve));
+    expect(await screen.findByText("A MANA approval is already in progress in another window. Try again in a moment.")).toBeTruthy();
+    expect(screen.queryByText(/Your approval was sent/)).toBeNull();
+    expect(demo.wallet.requests.filter((r) => r.method === "eth_signTypedData_v4" || r.method === "eth_sendTransaction")).toEqual([]);
+    expect(demo.relay.posts).toHaveLength(0);
   });
 
   it("without Web Locks no approval is asked for: nothing is signed, authorized or sent", async () => {
