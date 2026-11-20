@@ -26,7 +26,7 @@ import type { Hex } from 'viem'
 import { releaseAuthorizing, runGroup, splitPriceOf, watchGroup, type CheckoutDeps, type GroupResult, type SplitPlan } from '../../../shop/checkout/purchase/executor'
 import { buildAcceptCalldata, buildAcceptWithCouponCalldata, buildStoreBuyCalldata } from '../../../shop/checkout/purchase/encoding'
 import { purchaseTargetFor } from '../../../shop/checkout/purchase/cart'
-import { claimSplitHold, clearSettledSplitHold, clearSplitHold, findCreditRecord, readSplitHold, readSplitHoldRecord, splitHoldLine, splitsInFlight, writeSplitHold, type SplitHold, type SplitHoldClearing } from '../../../shop/checkout/purchase/splitHold'
+import { claimSplitHold, clearSettledSplitHold, clearSplitHold, findCreditRecord, readSplitHold, readSplitHoldRecord, splitHoldCreditOver, splitHoldLine, splitsInFlight, writeSplitHold, type SplitHold, type SplitHoldClearing } from '../../../shop/checkout/purchase/splitHold'
 import { ensureAuthorization, exactAllowanceReady, exactGrantLock, getManaSpendingAuthorization } from '../../../shop/checkout/lib/authorizations'
 import { pageLocks, webLock as lockIfFree } from '../../../shop/checkout/lib/web-lock'
 import type { RailContext } from '../../../shop/checkout/purchase/rail'
@@ -1067,6 +1067,16 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   }
 
   /**
+   * Whether a split's credit can still be spent here, by its own expiry as the shared hold of this attempt keeps it. Until
+   * then an EXPIRED from the node isn't believed (as the web Shop holds it): the split stays held, and the grace past the
+   * index's lag doesn't start. With no hold of this attempt to say, nothing is held back on this.
+   */
+  const creditSpendable = (sale: SplitSale): boolean => {
+    const hold = sale.hold ? readSplitHoldRecord(sale.buyer, sale.hold.line) : null
+    return hold !== null && hold.attempt === sale.hold!.attempt && !splitHoldCreditOver(hold, svc.now())
+  }
+
+  /**
    * After a split's own bytes reverted. The revert proves only that invocation failed, not that no other one carrying the
    * sale succeeded, so it stays held until the credit's consumption is resolved: an attributable success the node
    * indexed bought it (its hash returned); a credit the node says another call spent is that; an authoritative unused
@@ -1078,6 +1088,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     // A history it couldn't read says nothing, the expiry's clock included: held, as findOutSplit holds it.
     if (record === undefined) return { kind: 'held' }
     if (record?.status === 'EXPIRED') {
+      if (creditSpendable(sale)) return { kind: 'held' }
       op.expiredSince ??= svc.now()
       return svc.now() - op.expiredSince >= EXPIRY_CONFIRM_MS ? { kind: 'expired' } : { kind: 'held' }
     }
@@ -1128,6 +1139,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       return false
     }
     if (record?.status === 'EXPIRED') {
+      if (creditSpendable(sale)) return false
       op.expiredSince ??= svc.now()
       if (svc.now() - op.expiredSince >= EXPIRY_CONFIRM_MS) {
         settled(op, 'failed', {}, 'This purchase expired before its Credits were spent on chain: nothing was bought.', 'one of its transactions expired before its Credits were spent on chain.')

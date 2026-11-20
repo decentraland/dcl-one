@@ -485,14 +485,20 @@ describe('the in-world purchase with MANA', () => {
     const MANAGER = '0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5'
     const managed = { manager: (chainId: number) => ({ chainId, address: MANAGER, name: 'Decentraland Credits', version: '1.0.0' }) } as Partial<ShellShopServices>
     /** The node signs exactly the share the split asks for: floor(P * part / quote), P the store's price. */
-    const splitShop = (w: World, credit: (share: bigint) => bigint = (x) => x) =>
+    /** A watch's wait that moves the page's clock 16 minutes, six times at most; then it waits for good (no endless loop). */
+    const boundedSleep = (w: World) => {
+      let left = 6
+      return () => (left-- > 0 ? Promise.resolve(void (w.clock.now += 16 * 60_000)) : new Promise<void>(() => {}))
+    }
+    /** `expiresAt` (unix seconds): when the issued credit stops being spendable; by default 15 minutes from now (real time). */
+    const splitShop = (w: World, credit: (share: bigint) => bigint = (x) => x, expiresAt?: number) =>
       (w.shop = createFakeShop({
         authorizeCreditBatch: ({ body }) => {
           const [line] = (body as { items: { usdPriceCents: number; creditsCents?: number }[] }).items
           const share = (BigInt(PRICE) * BigInt(line.creditsCents ?? 0)) / BigInt(line.usdPriceCents)
           const value = credit(share).toString()
           const answer = batchAuthorization([line])
-          return { ...answer, credit: { ...answer.credit, amount: value, availableAmount: value }, maxCreditedValue: value }
+          return { ...answer, credit: { ...answer.credit, amount: value, availableAmount: value, ...(expiresAt != null ? { expiresAt } : {}) }, maxCreditedValue: value }
         },
         cancelCreditAuthorizations: ({ body }) => ({ released: (body as { salts: string[] }).salts.length, retired: 0, spendableAtSeconds: null }),
         reportCreditSubmission: () => ({ recorded: 1 })
@@ -1014,7 +1020,8 @@ describe('the in-world purchase with MANA', () => {
     it('keeps an own revert\'s expiry clock through a history it couldn\'t read: it ends once that expiry has held long enough', async () => {
       on()
       const w = world()
-      splitShop(w)
+      // The credit's own expiry (500 s) is already past by the page's clock (1,000 s).
+      splitShop(w, undefined, 500)
       w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
       w.relay.state.confirm = 'reverted'
       // EXPIRED, then a read that fails, then EXPIRED again: the clock from the first read still counts.
@@ -1023,7 +1030,7 @@ describe('the in-world purchase with MANA', () => {
         if (calls++ === 1) throw new Error('upstream unavailable')
         return record('EXPIRED', null)
       }
-      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, creditRecordOf: creditRecordOf as never, sleep: async () => void (w.clock.now += 16 * 60_000) } })
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, creditRecordOf: creditRecordOf as never, sleep: boundedSleep(w) } })
       await p.open()
       ;(await p.until('method')).handlers.onPay?.('split')
       await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'failed' }), { timeout: 5000 })
@@ -1034,19 +1041,51 @@ describe('the in-world purchase with MANA', () => {
     it('ends an own-reverted split unbought once its credit reads expired unspent past the index\'s lag', async () => {
       on()
       const w = world()
-      splitShop(w)
+      // The credit's own expiry, by the page's clock (it starts at 1,000 s), passes with the first wait.
+      splitShop(w, undefined, 1_500)
       w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
       w.relay.state.confirm = 'reverted'
       const p = page(w, {
         split: splitOn,
         creditsCents: 50,
-        services: { ...managed, creditRecordOf: async () => record('EXPIRED', null), sleep: async () => void (w.clock.now += 16 * 60_000) }
+        services: { ...managed, creditRecordOf: async () => record('EXPIRED', null), sleep: boundedSleep(w) }
       })
       await p.open()
       ;(await p.until('method')).handlers.onPay?.('split')
       await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'failed' }), { timeout: 5000 })
       expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
       expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toBeNull()
+    })
+
+    it.each([
+      ['after its own revert', 'reverted'],
+      ['with its own hash gone', 'none']
+    ] as const)('doesn\'t believe EXPIRED before its credit\'s own expiry, %s: held, and the grace doesn\'t start', async (_, confirm) => {
+      on()
+      const w = world()
+      // The credit stays spendable for the whole test by the page's clock.
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = confirm
+      let reads = 0
+      const p = page(w, {
+        split: splitOn,
+        creditsCents: 50,
+        // Each wait moves the clock 16 minutes, well past the grace, four times; then the watch waits for good. A lost hash
+        // reads as nothing (losingA), so the node's record decides.
+        services: {
+          ...managed,
+          ...(confirm === 'none' ? { manaEvidence: () => losingA(w) as never } : {}),
+          creditRecordOf: async () => (reads++, record('EXPIRED', null)),
+          sleep: () => (reads > 4 ? new Promise<void>(() => {}) : Promise.resolve(void (w.clock.now += 16 * 60_000)))
+        }
+      })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await vi.waitFor(() => expect(reads).toBeGreaterThan(4), { timeout: 5000 })
+      expect(p.events.some((e) => e.state === 'failed')).toBe(false)
+      expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toMatchObject({ creditId: `0x${'a1'.repeat(32)}` })
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
     })
 
     it('can buy again on the same page after a purchase stopped while it was prepared', async () => {
@@ -1094,13 +1133,13 @@ describe('the in-world purchase with MANA', () => {
     it('ends unbought when its own hash is gone and the node says its credit expired unspent, past the index\'s lag', async () => {
       on()
       const w = world()
-      splitShop(w)
+      splitShop(w, undefined, 1_500)
       w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
       w.relay.state.confirm = 'none'
       const p = page(w, {
         split: splitOn,
         creditsCents: 50,
-        services: { ...managed, manaEvidence: () => losingA(w) as never, creditRecordOf: async () => record('EXPIRED', null), sleep: async () => void (w.clock.now += 16 * 60_000) }
+        services: { ...managed, manaEvidence: () => losingA(w) as never, creditRecordOf: async () => record('EXPIRED', null), sleep: boundedSleep(w) }
       })
       await p.open()
       ;(await p.until('method')).handlers.onPay?.('split')
