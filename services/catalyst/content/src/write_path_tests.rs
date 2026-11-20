@@ -796,28 +796,24 @@ async fn signed_scene_roundtrip(positional: bool) {
         "creationTimestamp is the stored localTimestamp"
     );
 
-    // A replay answers the stored timestamp before any check: inside the
-    // pointer's rate-limit window, with no files and a chain that would not
-    // verify.
+    // A replay is answered before the pointer's rate-limit window
+    // (`a_replay_proves_what_a_fresh_deploy_proves_first`).
     let deployer = state.deployer().unwrap().clone();
     assert!(deployer.is_rate_limited("scene", &parcel));
-    for (replay_chain, files) in [
-        (chain.clone(), vec![(entity_id.as_str(), &entity_bytes)]),
-        (
-            json!([{"type": "SIGNER", "payload": "0xabc", "signature": ""}]),
-            vec![],
+    let (status, _, body) = call(
+        &router,
+        deploy_request(
+            "/entities",
+            &entity_id,
+            &chain,
+            &[(&entity_id, &entity_bytes)],
         ),
-    ] {
-        let (status, _, body) = call(
-            &router,
-            deploy_request("/entities", &entity_id, &replay_chain, &files),
-        )
-        .await;
-        assert_eq!(
-            (status, json_of(&body)),
-            (StatusCode::OK, json!({"creationTimestamp": created}))
-        );
-    }
+    )
+    .await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (StatusCode::OK, json!({"creationTimestamp": created}))
+    );
     // An otherwise valid ordinary scene string reaches the database expression index.
     // Failure leaves immutable bytes available but commits no deployment state.
     state.deployer().unwrap().clear_rate_limits();
@@ -2499,4 +2495,143 @@ async fn a_deploy_stalled_before_validation_holds_no_pointer_and_releases_its_bu
         "the source's upload is released"
     );
     server.abort();
+}
+
+/// A re-post of a deployed entity proves what a fresh deploy proves first:
+/// its entity file, which parses, and a chain that signs the id at the
+/// entity's timestamp. Signed, it answers the stored timestamp past the
+/// pointer's rate-limit window and the request TTL, and writes nothing;
+/// without its entity file or a signing chain it gets a fresh deploy's error.
+#[tokio::test]
+async fn a_replay_proves_what_a_fresh_deploy_proves_first() {
+    require_test_db!(Some(db) = OwnDb::create().await);
+    let (owner, stranger) = (key(OWNER_KEY), key(STRANGER_KEY));
+    let (x, y) = (41, -13);
+    let parcel = format!("{x},{y}");
+    index_land(&db.pool, &address(&owner), &[(x, y)]).await;
+    let tmp = std::env::temp_dir().join(format!(
+        "catalyst-write-replay-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = Arc::new(Storage::from_config(&tmp).await.unwrap());
+    let state = Arc::new(ContentState::new(
+        db.pool.clone(),
+        Settings::for_tests(),
+        storage,
+    ));
+    state.sync.set_state(SyncState::Syncing);
+    let land = Arc::new(LandAuthzState::new(
+        db.pool.clone(),
+        Outbound::for_tests(),
+        crate::land_authz::Settings::for_tests(),
+        None,
+    ));
+    let chain_rpc = fake_chain::serve(fake_chain::land_owners(vec![(
+        address(&owner),
+        x.into(),
+        y.into(),
+    )]))
+    .await;
+    attach(&state, true, Some(land), Some(&chain_rpc));
+    let router = build_router(state.clone());
+    let deployer = state.deployer().unwrap().clone();
+
+    // An entity signed an hour ago, older than `REQUEST_TTL_BACKWARDS`,
+    // published as a partial upload begun then publishes it.
+    let signed_at = chrono::Utc::now().timestamp_millis() - 3_600_000;
+    let mut old = scene(&[&parcel], &[]);
+    old["timestamp"] = json!(signed_at);
+    let (entity_bytes, entity_id, chain) = signed_entity(&owner, old).await;
+    let created = deployer
+        .deploy_entity_anchored(
+            vec![entity_bytes.clone()],
+            &entity_id,
+            chain.clone(),
+            "LOCAL",
+            Some(signed_at),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{:?}", e.errors()));
+    assert!(deployer.is_rate_limited("scene", &parcel));
+    let written = || async {
+        sqlx::query_as::<_, (i64, i64, String)>(
+            "SELECT (SELECT count(*) FROM content.deployments WHERE entity_id=$1),
+                    (SELECT count(*) FROM content.local_entities WHERE entity_id=$1),
+                    (SELECT local_timestamp::text FROM content.deployments WHERE entity_id=$1)",
+        )
+        .bind(&entity_id)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap()
+    };
+    let before = written().await;
+    assert_eq!((before.0, before.1), (1, 1));
+
+    let other_bytes = Bytes::from_static(b"{\"not\":\"the entity\"}");
+    let signer_only = json!([{"type": "SIGNER", "payload": address(&stranger), "signature": ""}]);
+    let other_id_signed = signed_entity_bytes(&stranger, other_bytes.clone()).await.2;
+    let missing = json!({"errors": ["Failed to find the entity file."]});
+    let signature = Value::Null;
+    let ok = json!({"creationTimestamp": created});
+    for (case, replay_chain, files, expected) in [
+        (
+            "signed",
+            chain.clone(),
+            vec![(entity_id.as_str(), &entity_bytes)],
+            (StatusCode::OK, ok),
+        ),
+        (
+            "no entity file",
+            chain.clone(),
+            vec![],
+            (StatusCode::BAD_REQUEST, missing.clone()),
+        ),
+        (
+            "a file that is not the entity",
+            chain.clone(),
+            vec![(entity_id.as_str(), &other_bytes)],
+            (StatusCode::BAD_REQUEST, missing),
+        ),
+        (
+            "a signer without a signed link",
+            signer_only,
+            vec![(entity_id.as_str(), &entity_bytes)],
+            (StatusCode::BAD_REQUEST, signature.clone()),
+        ),
+        (
+            "a signature that does not recover",
+            unsigned_chain(&entity_id),
+            vec![(entity_id.as_str(), &entity_bytes)],
+            (StatusCode::BAD_REQUEST, signature.clone()),
+        ),
+        (
+            "a chain signing another id",
+            other_id_signed,
+            vec![(entity_id.as_str(), &entity_bytes)],
+            (StatusCode::BAD_REQUEST, signature),
+        ),
+    ] {
+        let (status, headers, body) = call(
+            &router,
+            deploy_request("/entities", &entity_id, &replay_chain, &files),
+        )
+        .await;
+        let body = json_of(&body);
+        if expected.1.is_null() {
+            assert_eq!(status, expected.0, "{case}: {body}");
+            let error = body["errors"][0].as_str().unwrap_or_default();
+            assert!(
+                error.starts_with("The signature is invalid."),
+                "{case}: {body}"
+            );
+        } else {
+            assert_eq!((status, body), expected, "{case}");
+        }
+        assert!(headers.get(header::RETRY_AFTER).is_none(), "{case}");
+        assert_eq!(written().await, before, "{case}: a replay writes nothing");
+    }
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    db.drop_now().await;
 }

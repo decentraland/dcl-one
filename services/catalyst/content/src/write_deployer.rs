@@ -135,6 +135,33 @@ async fn hash_uploads(files: Vec<Bytes>) -> Result<Vec<HashedUpload>, String> {
     .await
 }
 
+/// The entity file among `uploads` (the one hashing to `entity_id`),
+/// parsed, with its pointers lowercased and the request's id.
+fn entity_of(uploads: &[HashedUpload], entity_id: &str) -> Result<(Entity, Bytes), DeployFailure> {
+    let entity_bytes = uploads
+        .iter()
+        .find(|upload| upload.v1 == entity_id || upload.v0 == entity_id)
+        .map(|upload| upload.bytes.clone())
+        .ok_or_else(|| vec!["Failed to find the entity file.".to_string()])?;
+
+    // Upstream answers the bare sentence; the parser's text is logged.
+    let mut entity: Entity = serde_json::from_slice(&entity_bytes).map_err(|e| {
+        info!(entity_id, error = %e, "deployment refused: unparsable entity file");
+        vec!["There was a problem parsing the entity".to_string()]
+    })?;
+    for pointer in &mut entity.pointers {
+        *pointer = pointer.to_lowercase();
+    }
+    // The id is the request's, as upstream's parser takes it: the file
+    // hashes to it, whatever `id` field it carries.
+    entity.id = entity_id.to_string();
+    Ok((entity, entity_bytes))
+}
+
+fn auth_chain_of(auth_chain: Value) -> Result<AuthChain, DeployFailure> {
+    serde_json::from_value(auth_chain).map_err(|e| vec![format!("invalid auth chain: {e}")].into())
+}
+
 fn deployment_files(
     entity: &Entity,
     entity_bytes: &Bytes,
@@ -693,6 +720,20 @@ impl WriteDeployer {
         .await
     }
 
+    /// The entity timestamp (ms) of a deployed entity, which its chain signed.
+    pub(crate) async fn deployed_entity_timestamp(
+        &self,
+        entity_id: &str,
+    ) -> sqlx::Result<Option<i64>> {
+        sqlx::query_scalar(
+            "SELECT round(date_part('epoch', entity_timestamp) * 1000)::bigint
+               FROM content.deployments WHERE entity_id = $1",
+        )
+        .bind(entity_id)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
     /// The deploy statement's newer-entity test, ahead of it: a deployment
     /// of the same type on any of the pointers that happened after `entity`.
     pub(crate) async fn has_newer_deployment(&self, entity: &Entity) -> sqlx::Result<bool> {
@@ -1065,6 +1106,7 @@ impl WriteDeployer {
     ) -> Result<i64, DeployFailure> {
         let mut deployed = self.deploying.lock(entity_id).await;
         if let Some(creation_ts) = *deployed {
+            self.verify_replay(&files, entity_id, &auth_chain).await?;
             return Ok(creation_ts);
         }
         let result = self
@@ -1074,6 +1116,29 @@ impl WriteDeployer {
             *deployed = Some(creation_ts);
         }
         result
+    }
+
+    /// What a re-post of a deployed entity must prove before it is answered
+    /// the stored timestamp, checked in the order a fresh deploy checks it:
+    /// the uploads carry the entity file, the file parses, and the chain
+    /// signs the id at the entity's timestamp (so an ephemeral key that
+    /// expired since still signed it). The checks after the signature (the
+    /// denylist aside, the pointers, TTLs, rate limits and the validator) are
+    /// not run again: the entity was accepted, and its timestamp may be past
+    /// the request TTL.
+    pub(crate) async fn verify_replay(
+        &self,
+        files: &[Bytes],
+        entity_id: &str,
+        auth_chain: &Value,
+    ) -> Result<(), DeployFailure> {
+        let uploads = hash_uploads(files.to_vec())
+            .await
+            .map_err(|e| deploy_error(entity_id, &e))?;
+        let (entity, _) = entity_of(&uploads, entity_id)?;
+        let auth_chain = auth_chain_of(auth_chain.clone())?;
+        self.check_signature(entity_id, &auth_chain, entity.timestamp)
+            .await
     }
 
     async fn deploy_entity_unlocked(
@@ -1089,23 +1154,7 @@ impl WriteDeployer {
             .await
             .map_err(|e| deploy_error(entity_id, &e))?;
         let hash_us = started.elapsed().as_micros() as u64;
-        let entity_bytes = uploads
-            .iter()
-            .find(|upload| upload.v1 == entity_id || upload.v0 == entity_id)
-            .map(|upload| upload.bytes.clone())
-            .ok_or_else(|| vec!["Failed to find the entity file.".to_string()])?;
-
-        // Upstream answers the bare sentence; the parser's text is logged.
-        let mut entity: Entity = serde_json::from_slice(&entity_bytes).map_err(|e| {
-            info!(entity_id, error = %e, "deployment refused: unparsable entity file");
-            vec!["There was a problem parsing the entity".to_string()]
-        })?;
-        for pointer in &mut entity.pointers {
-            *pointer = pointer.to_lowercase();
-        }
-        // The id is the request's, as upstream's parser takes it: the file
-        // hashes to it, whatever `id` field it carries.
-        entity.id = entity_id.to_string();
+        let (entity, entity_bytes) = entity_of(&uploads, entity_id)?;
 
         // A dcl-one refusal upstream does not make: the operator denylist
         // keeps a listed id, hash or pointer off this node.
@@ -1118,8 +1167,7 @@ impl WriteDeployer {
             return Err(DeployFailure::Rejected(RejectionKind::Validation, errors));
         }
 
-        let auth_chain: AuthChain = serde_json::from_value(auth_chain)
-            .map_err(|e| vec![format!("invalid auth chain: {e}")])?;
+        let auth_chain = auth_chain_of(auth_chain)?;
         // The signature at the entity's timestamp, the pointers and the
         // server checks (newer entity, rate limit, request TTLs), then the
         // validator; the in-flight claim follows validation.

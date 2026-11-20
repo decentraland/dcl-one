@@ -11,8 +11,11 @@
 //! for a local scene.
 //!
 //! Answers: 200 `{creationTimestamp}`, the stored `local_timestamp`; an
-//! entity already deployed answers its stored one before any signature,
-//! TTL or rate-limit check, as upstream's idempotent deploy does. 400
+//! entity already deployed answers its stored one once the form carries its
+//! entity file and a chain that signs the id at the entity's timestamp, and
+//! otherwise the error a fresh deploy of it gets, before any TTL, rate-limit
+//! or access check. Upstream answers a replay right after the chain's shape
+//! check, unsigned and without the entity file; this node does not. 400
 //! `{errors}` for a refused deployment and `{error}` for a malformed form,
 //! 413 `{error}` for one past a form limit (upstream's multipart limits and
 //! texts, the total capped at [`MAX_DEPLOYMENT_BYTES`]), 408 `{error}` for a
@@ -848,12 +851,31 @@ async fn deploy_regular(
         .ok_or_else(|| invalid(MISSING_ENTITY_ID_MESSAGE))?
         .clone();
     let auth_chain = auth_chain_of(&fields)?;
-    // Deploys are idempotent: a replay answers the stored timestamp with no
-    // signature, TTL or rate-limit check (its chain may have expired since).
-    // A failed lookup goes on to the deploy, whose write answers a deployed
-    // entity the same way.
+    let files: Vec<Bytes> = files.into_iter().map(|(_, bytes)| bytes).collect();
+    let refundable = is_refundable(&files, &entity_id);
+    let failed = |failure: DeployFailure| {
+        tracing::warn!(entity_id = %entity_id, errors = ?failure.errors(), "POST /entities - Deployment failed");
+        let undecided = refundable && matches!(failure, DeployFailure::Unavailable(_));
+        let response = deployment_failure_response(failure);
+        if undecided {
+            Answer::Undecided(response)
+        } else {
+            Answer::Decided(response)
+        }
+    };
+    // Deploys are idempotent: a replay answers the stored timestamp once it
+    // carries the entity file and a chain that signs the id at the entity's
+    // timestamp, with the errors a fresh deploy gets; the TTL, rate-limit and
+    // access checks are not run again. A failed lookup goes on to the
+    // deploy, whose write answers a deployed entity the same way.
     match deployer.deployed_timestamp(&entity_id).await {
         Ok(Some(creation_timestamp)) => {
+            if let Err(failure) = deployer
+                .verify_replay(&files, &entity_id, &auth_chain)
+                .await
+            {
+                return Ok(failed(failure));
+            }
             tracing::info!(entity_id = %entity_id, "POST /entities - Entity already deployed");
             return Ok(Answer::Decided(created_response(creation_timestamp)));
         }
@@ -862,7 +884,6 @@ async fn deploy_regular(
             tracing::warn!(entity_id = %entity_id, error = %e, "POST /entities - replay lookup failed");
         }
     }
-    let files: Vec<Bytes> = files.into_iter().map(|(_, bytes)| bytes).collect();
     if !state.sync.takes_deploys() {
         let Some(entity_type) = entity_type_of(&files, &entity_id) else {
             return Ok(Answer::Decided(deployment_failure_response(
@@ -891,7 +912,6 @@ async fn deploy_regular(
         "POST /entities - Deploying entity (multipart)"
     );
 
-    let refundable = is_refundable(&files, &entity_id);
     let multipart_us = request_started.elapsed().as_micros() as u64;
     let deploy_started = std::time::Instant::now();
     match deployer
@@ -911,16 +931,7 @@ async fn deploy_regular(
             );
             Ok(Answer::Decided(created_response(creation_timestamp)))
         }
-        Err(failure) => {
-            tracing::warn!(entity_id = %entity_id, errors = ?failure.errors(), "POST /entities - Deployment failed");
-            let undecided = refundable && matches!(failure, DeployFailure::Unavailable(_));
-            let response = deployment_failure_response(failure);
-            Ok(if undecided {
-                Answer::Undecided(response)
-            } else {
-                Answer::Decided(response)
-            })
-        }
+        Err(failure) => Ok(failed(failure)),
     }
 }
 

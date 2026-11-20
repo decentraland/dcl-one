@@ -80,7 +80,7 @@ READ_ONLY mode is a mode of the first row (upstream does not register the route)
   9. The query-flag 400, then the daily quota consume; a partial batch is counted as section 3 says (`create_entity.rs:620-631`).
   10. `entityId`.
   11. Auth chain.
-  12. Replay: an entity already deployed answers its stored timestamp (`create_entity.rs:661-674`).
+  12. Replay: an entity already deployed answers its stored timestamp once the form carries its entity file and a chain that signs the id at the entity's timestamp; otherwise the error a fresh deploy gets (`create_entity.rs`, `WriteDeployer::verify_replay`).
   13. Unsynced-copy type gate.
   14. `WriteDeployer::deploy_entity`.
 - **Gateway in front of dcl-one:** `limit_req zone=deploy` 5 r/s, burst 200, `limit_req_status 429`, `limit_conn deploy_uploads 10` per address (`limit_conn_status 429`), `client_max_body_size 248m` (`CONTENT_DEPLOY_CAP`, just above the app's route limit with framing), `client_body_timeout 300s` (`infra/gateway/gateway.py`). It is a coarse abuse guard set above the app's burst limit and upstream's 4 concurrent uploads per source, so a client within upstream's limits never meets nginx's HTML 429 or 413.
@@ -254,7 +254,7 @@ Bodies are `{"errors":[...]}` unless the row says otherwise. Every row is read; 
 |---|---|---|---|---|---|---|
 | batch stored, content still missing | 202 | `{"missing": ["<hash>", ...]}` | | `create-entity-handler.ts:233-240` | same (`partial_deployments.rs:590`) | MATCH |
 | batch completes the upload | 200 | `{"creationTimestamp": number}` | | `create-entity-handler.ts:223-231` | same, the stored `local_timestamp` (`partial_deployments.rs:580-587,1534-1541`) | MATCH |
-| replay of a published entity | 200 | `{"creationTimestamp": number}`, before authentication | | `create-entity-handler.ts:100-109` | same (`partial_deployments.rs:610-612`) | MATCH |
+| replay of a published entity | 200 | `{"creationTimestamp": number}`, before authentication | | `create-entity-handler.ts:100-109` | 200 once the chain signs the id at the stored entity's timestamp, else the signature 400 (`partial_deployments.rs`, `stage`) | DIFFERENT (deliberate, CW-2) |
 | source quota spent, not the signer's own live upload | 429 | `The daily deployment quota for this client is exhausted. Only uploads in progress can continue.` | `Retry-After` | `create-entity-handler.ts:111-126` | same text and header, before the files are buffered or after the replay check (`partial_deployments.rs:186-213,618-628`) | MATCH |
 | signature invalid | 400 | `The signature is invalid. <msg>` | | `:159-170,174-197` | same prefix (`partial_deployments.rs:634-649`, `write_deployer.rs:494-516`); the tail is `dcl-auth`'s text. An EIP-1654 link this node cannot check answers 503 (CW-17). | DIVERGENT: tail wording, as on the regular path |
 | entity id not IPFS v2 | 400 | `The entity id '<id>' is not a valid IPFS v2 hash. Partial deployments require IPFS v2 entities.` | | `partial-deployments/component.ts:694-697` | same (`partial_deployments.rs:700-704`) | MATCH |
@@ -304,7 +304,7 @@ Bodies are `{"errors":[...]}` unless the row says otherwise. Every row is read; 
    - Place: `create_entity.rs:449-457` (skip the memory admission for a declared batch once batches can stream).
    - Severity: P2. Deploys that split their files succeed against dcl-one.
 
-2. **CW-2: replay idempotency.** Status: MATCH, no work. An entity already deployed answers 200 with its stored timestamp right after the auth-chain parse, before the signature, TTL and rate-limit checks (`create_entity.rs:565-579`); a deploy racing it answers the stored timestamp from the write (`write_deployer.rs:1203-1213`).
+2. **CW-2: replay idempotency.** Status: DIFFERENT, deliberate. Upstream answers a replay 200 right after the auth-chain shape check, without the entity file or a signature check (`create-entity-handler.ts:100-109` at `6c56f8a3`; `deployment-service/component.ts:455-466` likewise in `deployEntity`). dcl-one answers 200 only once the request proves what a fresh deploy proves first: a regular deploy carries the entity file, which parses, and a chain that signs the id at the entity's timestamp (`WriteDeployer::verify_replay`); a partial batch, which may carry no entity file, a chain that signs the id at the stored entity's timestamp. Anything else gets the error a fresh deploy gets (400 `Failed to find the entity file.`, `The signature is invalid. ...`). The TTL, rate-limit and access checks are not run again, so an entity older than `REQUEST_TTL_BACKWARDS` still replays. A contract-wallet (EIP-1654) chain is asked of its contract again, so a replay of one answers 503 while that check cannot be made. A deploy racing it answers the stored timestamp from the write, after its own checks.
 
 3. **CW-3: `creationTimestamp` value.** Status: MATCH, no work. `creationTimestamp` is the deploy call's `now()`, which is the stored `local_timestamp`, truncated to ms as `/deployments` and `/audit` report it (`write_deployer.rs:63-69,937-952,1094`).
 

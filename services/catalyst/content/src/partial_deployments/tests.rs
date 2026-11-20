@@ -355,6 +355,42 @@ async fn a_scene_uploaded_in_batches_is_published_by_its_last_batch() {
     );
 }
 
+/// A replay batch, which may carry no entity file, is answered the stored
+/// timestamp only once its chain signs the id; otherwise it gets the
+/// signature error a fresh batch gets.
+#[tokio::test]
+async fn a_replay_batch_needs_a_chain_that_signs_the_id() {
+    require_test_db!(Some(node) = Node::new("replay", Limits::default()).await);
+    let router = node.router();
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"partial-replay"], "scene").await;
+    let mut files = vec![entity_file(&scene)];
+    files.extend(scene.files.iter().cloned());
+    let (status, _, body) = send(&router, &scene, &scene.chain, files).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let created = body["creationTimestamp"].clone();
+
+    let (status, _, body) = send(&router, &scene, &scene.chain, vec![]).await;
+    assert_eq!(
+        (status, &body["creationTimestamp"]),
+        (StatusCode::OK, &created)
+    );
+    let stranger = PrivateKeySigner::random();
+    for chain in [
+        chain_for(&stranger, "bafkreiotherentity").await,
+        json!([{"type": "SIGNER", "payload": format!("{:#x}", stranger.address()), "signature": ""}]),
+    ] {
+        let (status, _, body) = send(&router, &scene, &chain, vec![]).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(
+            body["errors"][0]
+                .as_str()
+                .is_some_and(|e| e.starts_with("The signature is invalid.")),
+            "{body}"
+        );
+    }
+}
+
 /// Content already in the store is never listed as missing: a scene whose
 /// files are all stored is published by its first batch.
 #[tokio::test]

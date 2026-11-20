@@ -617,13 +617,23 @@ async fn stage(
 ) -> Result<Outcome, Refusal> {
     let pool = deployer.pool();
     let entity_id = batch.entity_id.as_str();
-    // Deployments are idempotent: a replay gets the original timestamp
-    // without re-authentication (its chain may have expired since).
-    if let Some(ts) = deployer.deployed_timestamp(entity_id).await? {
-        return Ok(Outcome::Published(ts));
-    }
     let auth_chain: AuthChain = serde_json::from_value(batch.auth_chain.clone())
         .map_err(|e| Refusal::invalid(format!("invalid auth chain: {e}")))?;
+    // Deployments are idempotent: a replay whose chain signs the id gets the
+    // original timestamp. The chain is checked at the stored entity's
+    // timestamp (a resume may carry no entity file, and an ephemeral key that
+    // expired since still signed it); nothing after the signature is.
+    if let Some(ts) = deployer.deployed_timestamp(entity_id).await? {
+        let signed_at = deployer
+            .deployed_entity_timestamp(entity_id)
+            .await?
+            .unwrap_or_else(now_ms);
+        deployer
+            .check_signature(entity_id, &auth_chain, signed_at)
+            .await
+            .map_err(Refusal::from_deploy)?;
+        return Ok(Outcome::Published(ts));
+    }
     let deployer_address = auth_chain
         .first()
         .map(|link| link.payload.to_lowercase())
