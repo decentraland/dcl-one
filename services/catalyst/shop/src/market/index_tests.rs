@@ -4503,8 +4503,16 @@ async fn a_job_pass_refuses_another_chain_and_claims_again_after_a_fence() {
     assert_eq!(claimed.chain_id, Some(137));
 
     chain.chain_id.store(80_002, Ordering::SeqCst);
-    let err = run().await.unwrap_err().to_string();
-    assert!(err.contains("serves chain 80002, not 137"), "{err}");
+    let err = run().await.unwrap_err();
+    assert!(
+        err.chain()
+            .any(|c| c.downcast_ref::<chain_walk::WrongChain>().is_some()),
+        "a typed error, so a two-network job skips only this network: {err:#}"
+    );
+    assert!(
+        err.to_string().contains("serves chain 80002, not 137"),
+        "{err}"
+    );
     let after = chain_walk::cursor(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
         .await
         .unwrap()
@@ -4540,6 +4548,60 @@ async fn a_job_pass_refuses_another_chain_and_claims_again_after_a_fence() {
         .unwrap()
         .unwrap();
     assert_eq!(c.owner_generation, claimed.owner_generation + 2);
+    db.drop().await;
+}
+
+/// An index job over two networks keeps its cadence while one walks and the
+/// other's endpoint serves another chain, and backs off when no network
+/// walks (committee-index walks Polygon only).
+#[tokio::test]
+async fn an_index_job_backs_off_only_when_no_network_walked() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let polygon = FakeChain::new(100, vec![], 1000, 1000);
+    polygon.finalized_lag.store(2, Ordering::SeqCst);
+    let amoy = FakeChain::new(100, vec![], 1000, 1000);
+    amoy.chain_id.store(80_002, Ordering::SeqCst);
+    let (polygon_url, amoy_url) = (serve(polygon).await, serve(amoy).await);
+    let st = state_over(
+        db.pool.clone(),
+        &polygon_url,
+        index_settings(100, 1000),
+        false,
+    );
+    let settings = st.settings.market.indexes.clone();
+    let holdings = chain_walk::Holdings::default();
+    async fn pass(
+        pool: &PgPool,
+        source: &chain_walk::RpcSource<'_>,
+        settings: &IndexSettings,
+        holdings: &chain_walk::Holdings,
+    ) -> super::NetPass {
+        let ix = super::mana_transfers::ManaTransfersIndex {
+            net: ChainNet::Matic,
+        };
+        let outcome =
+            chain_walk::job_pass(pool, source, &ix, settings, holdings, None, None, &|_| {}).await;
+        super::net_pass(ChainNet::Matic, outcome)
+    }
+    let polygon = chain_walk::RpcSource::new(Rpc::at(&st.http, &polygon_url));
+    let amoy = chain_walk::RpcSource::new(Rpc::at(&st.http, &amoy_url));
+    let wrong = pass(&db.pool, &amoy, &settings, &holdings).await;
+    assert!(matches!(wrong, super::NetPass::WrongChain(_)), "{wrong:?}");
+    let walked = pass(&db.pool, &polygon, &settings, &holdings).await;
+    assert!(matches!(walked, super::NetPass::Walked(_)), "{walked:?}");
+    super::index_job_result(vec![walked, wrong])
+        .expect("the network that walked keeps the job's cadence");
+
+    let wrong = pass(&db.pool, &amoy, &settings, &holdings).await;
+    let err = super::index_job_result(vec![wrong, super::NetPass::Waiting])
+        .expect_err("no network walked: the job backs off");
+    assert!(err.to_string().contains("serves chain 80002"), "{err}");
+    let wrong = pass(&db.pool, &amoy, &settings, &holdings).await;
+    let err = super::index_job_result(vec![wrong])
+        .expect_err("a one-network job whose endpoint serves another chain backs off");
+    assert!(err.to_string().contains("matic"), "{err}");
     db.drop().await;
 }
 

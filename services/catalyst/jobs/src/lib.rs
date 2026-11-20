@@ -774,6 +774,19 @@ struct Holding {
     acquisition: u64,
 }
 
+/// Whether `err` ended the session. A statement the database refused with
+/// severity ERROR (a lock or statement timeout, a deadlock, a constraint)
+/// leaves it working. FATAL or PANIC ends the backend, and its advisory
+/// locks with it, as does every error that is not the database's answer.
+fn session_ended(err: &sqlx::Error) -> bool {
+    match err {
+        sqlx::Error::Database(db) => db
+            .try_downcast_ref::<sqlx::postgres::PgDatabaseError>()
+            .is_none_or(|pg| pg.severity() != sqlx::postgres::PgSeverity::Error),
+        _ => true,
+    }
+}
+
 /// A held lease: dropped without [`LeaseGuard::release`] (a panicking job),
 /// the keeper unlocks it on its next pass.
 pub struct LeaseGuard {
@@ -831,8 +844,10 @@ impl Drop for LeaseGuard {
 
 impl Leases {
     /// Runs `operation` on the session that holds the lease `name`, unless
-    /// the lease was released, lost or is no longer held. A failed operation
-    /// drops the session (every lease on it is lost).
+    /// that acquisition was released, lost or no longer holds it. A statement
+    /// the database refused is returned with the session kept; any failure
+    /// that ends the session ([`session_ended`]), the keepalive bound
+    /// included, drops it, and every lease on it is lost at once.
     async fn with_held_connection<T, F>(
         &self,
         name: &str,
@@ -861,8 +876,10 @@ impl Leases {
         let Some(connection) = slot.as_mut() else {
             return Err(sqlx::Error::PoolClosed);
         };
-        let result = operation(connection).await;
-        if result.is_err() {
+        // Bounded like every statement on the session, so a partitioned
+        // socket never holds the session mutex past the keepalive.
+        let result = self.bounded(operation(connection)).await;
+        if result.as_ref().is_err_and(session_ended) {
             *slot = None;
             self.lose_all("a lease-held control operation failed");
         }
@@ -1714,6 +1731,89 @@ mod lease_tests {
         let aborted = jobs.shutdown(Duration::from_secs(5)).await;
         assert!(aborted.is_empty(), "{aborted:?}");
         assert_eq!(cancelled.load(Ordering::SeqCst), 2);
+    }
+
+    /// An error the database answers to a control operation (here a lock
+    /// timeout) fails only that operation: the session and every lease on it
+    /// stay.
+    #[tokio::test]
+    async fn a_database_error_in_a_control_operation_keeps_the_leases() {
+        let Some(pool) = catalyst_db::scratch::pool(6).await else {
+            return;
+        };
+        let leases = Arc::new(Leases::new(pool.clone(), settings("dberror")));
+        let guard = leases
+            .try_acquire("name")
+            .await
+            .unwrap()
+            .expect("a free name");
+        let other = leases
+            .try_acquire("other")
+            .await
+            .unwrap()
+            .expect("a second lease");
+        let pid = leases.backend_pid().await;
+        let failed = LeaseControl::of(&guard)
+            .with_connection(|conn| {
+                Box::pin(async move { sqlx::query("SELECT 1/0").execute(conn).await.map(|_| ()) })
+            })
+            .await;
+        assert!(
+            matches!(failed, Err(sqlx::Error::Database(_))),
+            "{failed:?}"
+        );
+        assert_eq!(leases.held(), vec!["name".to_string(), "other".to_string()]);
+        assert_eq!(leases.backend_pid().await, pid, "the same session");
+        guard.release().await;
+        other.release().await;
+    }
+
+    /// FATAL ends the backend and its advisory locks with it: the control
+    /// operation that met it cancels every lease of the session before it
+    /// returns, with no keeper pass.
+    #[tokio::test]
+    async fn a_fatal_error_in_a_control_operation_loses_every_lease_at_once() {
+        let Some(pool) = catalyst_db::scratch::pool(6).await else {
+            return;
+        };
+        let leases = Arc::new(Leases::new(pool.clone(), settings("fatal")));
+        let guard = leases
+            .try_acquire("name")
+            .await
+            .unwrap()
+            .expect("a free name");
+        let other = leases
+            .try_acquire("other")
+            .await
+            .unwrap()
+            .expect("a second lease");
+        let failed = LeaseControl::of(&guard)
+            .with_connection(|conn| {
+                Box::pin(async move {
+                    sqlx::query("SELECT pg_terminate_backend(pg_backend_pid())")
+                        .execute(conn)
+                        .await
+                        .map(|_| ())
+                })
+            })
+            .await;
+        let severity = match &failed {
+            Err(sqlx::Error::Database(db)) => db
+                .try_downcast_ref::<sqlx::postgres::PgDatabaseError>()
+                .map(|pg| pg.severity()),
+            _ => None,
+        };
+        assert_eq!(
+            severity,
+            Some(sqlx::postgres::PgSeverity::Fatal),
+            "{failed:?}"
+        );
+        assert!(guard.lost().is_cancelled(), "the lease that ran it");
+        assert!(
+            other.lost().is_cancelled(),
+            "the other lease of the session"
+        );
+        assert!(leases.held().is_empty());
     }
 
     /// A leased body gets its lease: control operations run on the session

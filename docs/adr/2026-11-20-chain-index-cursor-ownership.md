@@ -28,8 +28,9 @@ A row also did not record which chain its history came from. The network name `m
 
 ## Consequences
 
-- Every index checks the source's chain each pass (one `eth_chainId`); before, only trade events, committee and rentals did.
-- The cursor row lock is held only for the commit that takes it, not for a fold's duration.
+- Every index checks the source's chain each pass (one `eth_chainId`); before, only trade events, committee and rentals did. In a job that walks both networks, a source of another chain skips that network only; the job fails, and backs off, only when no network walked.
+- A control operation whose statement the database refuses (a lock or statement timeout) fails alone. An error that ends the session (FATAL or PANIC, a broken connection, the keepalive bound) drops every lease of the process at once.
+- The cursor row lock is held only for the commit that takes it, not for a fold's duration. Writers that also move the notification producers' cursors move them first.
 
 ## Validation
 

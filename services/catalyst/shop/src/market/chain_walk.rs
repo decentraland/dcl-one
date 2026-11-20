@@ -330,6 +330,15 @@ pub struct Owner {
     pub generation: i64,
 }
 
+/// A source that serves another chain than the index reads: the pass stops
+/// before any decision about the data.
+#[derive(Debug, thiserror::Error)]
+#[error("the endpoint serves chain {served}, not {expected}: refusing to index it")]
+pub struct WrongChain {
+    pub served: i64,
+    pub expected: i64,
+}
+
 /// A write refused because its job no longer owns the projection, or the
 /// projection is in quarantine: the transaction is rolled back.
 #[derive(Debug, thiserror::Error)]
@@ -984,9 +993,11 @@ async fn quarantine(pool: &PgPool, owner: &Owner, cur: &Cursor, why: &str) -> an
 /// (`rebuild_requested_at`), in one transaction:
 /// 1. the notification producers' replay is planned from the state before
 ///    the cleanup;
-/// 2. the projection's own cleanup runs down to `start_block - 1`;
+/// 2. the projection's own cleanup runs down to `start_block - 1`, and the
+///    producers' cursors move back;
 /// 3. the cursor restarts there, bound to the owner's chain, unpublished and
-///    out of quarantine, with the request cleared.
+///    out of quarantine, with the request cleared; its row is locked only
+///    for this last step and the commit.
 ///
 /// A rebuild keeps the projection's chain and start block. It is refused,
 /// with the history kept and the cursor in quarantine, when the cursor is
@@ -1045,45 +1056,61 @@ async fn rebuild(
             }
         };
     }
-    let mut tx = pool.begin().await?;
-    let held: Option<(i64, bool, i64, Option<String>)> = sqlx::query_as(
-        "SELECT owner_generation, rebuild_requested_at IS NOT NULL, last_block, last_block_hash \
-         FROM shop.chain_cursor WHERE indexer = $1 AND network = $2 FOR UPDATE",
-    )
-    .bind(owner.indexer)
-    .bind(owner.net.db_name())
-    .fetch_optional(&mut *tx)
-    .await?;
-    if held
-        != Some((
-            owner.generation,
-            true,
-            cur.last_block,
-            cur.last_block_hash.clone(),
+    // The request, the owner and the checkpoint the pass read, as they stand.
+    let expected = Some((
+        owner.generation,
+        true,
+        cur.last_block,
+        cur.last_block_hash.clone(),
+    ));
+    let read = |lock: &'static str| {
+        sqlx::AssertSqlSafe(format!(
+            "SELECT owner_generation, rebuild_requested_at IS NOT NULL, last_block, last_block_hash \
+             FROM shop.chain_cursor WHERE indexer = $1 AND network = $2{lock}"
         ))
-    {
-        return Err(owner
-            .fenced("its rebuild, or the checkpoint it read, changed".into())
-            .into());
-    }
+    };
     if let Some(why) = refusal {
         let why = format!(
             "rebuild refused: {why}; a rebuild keeps the projection's chain and start block, \
              and a database for another chain or start begins empty"
         );
-        sqlx::query(
+        let set = sqlx::query(
             "UPDATE shop.chain_cursor SET quarantined_at = COALESCE(quarantined_at, timezone('UTC', now())), \
-                 quarantine_reason = $3, rebuild_requested_at = NULL, folded_block = NULL, folded_at = NULL \
-             WHERE indexer = $1 AND network = $2",
+                 quarantine_reason = $6, rebuild_requested_at = NULL, folded_block = NULL, folded_at = NULL \
+             WHERE indexer = $1 AND network = $2 AND owner_generation = $3 AND rebuild_requested_at IS NOT NULL \
+               AND last_block = $4 AND last_block_hash IS NOT DISTINCT FROM $5",
         )
         .bind(owner.indexer)
         .bind(owner.net.db_name())
+        .bind(owner.generation)
+        .bind(cur.last_block)
+        .bind(cur.last_block_hash.as_deref())
         .bind(&why)
-        .execute(&mut *tx)
-        .await?;
-        tx.commit().await?;
+        .execute(pool)
+        .await?
+        .rows_affected();
+        if set != 1 {
+            return Err(owner
+                .fenced("its rebuild, or the checkpoint it read, changed".into())
+                .into());
+        }
         tracing::error!(indexer = owner.indexer, network = owner.net.db_name(), reason = %why, "marketplace index: refused a rebuild; the cursor is in quarantine");
         return Ok(Some(why));
+    }
+    let mut tx = pool.begin().await?;
+    // Checked without a lock first, so a stale owner does no cleanup. The
+    // cursor row is locked last, after the cleanup and the producers' cursor
+    // moves, so it is held only for the commit; every writer takes the
+    // notification cursor rows before the chain cursor row.
+    let held: Option<(i64, bool, i64, Option<String>)> = sqlx::query_as(read(""))
+        .bind(owner.indexer)
+        .bind(owner.net.db_name())
+        .fetch_optional(&mut *tx)
+        .await?;
+    if held != expected {
+        return Err(owner
+            .fenced("its rebuild, or the checkpoint it read, changed".into())
+            .into());
     }
     let to = start - 1;
     let replay =
@@ -1092,6 +1119,19 @@ async fn rebuild(
     ix.clear(&mut tx, to)
         .await
         .context("the projection's cleanup for its rebuild")?;
+    if let Some(replay) = replay {
+        replay.apply(&mut tx).await?;
+    }
+    let held: Option<(i64, bool, i64, Option<String>)> = sqlx::query_as(read(" FOR UPDATE"))
+        .bind(owner.indexer)
+        .bind(owner.net.db_name())
+        .fetch_optional(&mut *tx)
+        .await?;
+    if held != expected {
+        return Err(owner
+            .fenced("its rebuild, or the checkpoint it read, changed".into())
+            .into());
+    }
     sqlx::query(
         "UPDATE shop.chain_cursor SET last_block = $3, last_block_hash = NULL, last_block_time = NULL, \
              fold_through = NULL, folded_block = NULL, folded_at = NULL, full_history = $4, chain_id = $5, \
@@ -1106,9 +1146,6 @@ async fn rebuild(
     .bind(owner.chain_id)
     .execute(&mut *tx)
     .await?;
-    if let Some(replay) = replay {
-        replay.apply(&mut tx).await?;
-    }
     tx.commit().await?;
     tracing::warn!(
         indexer = owner.indexer,
@@ -1255,6 +1292,11 @@ async fn walk(
             ix.rewind(&mut tx, to)
                 .await
                 .context("undoing the reorged range")?;
+            // Cursor rows are locked after the deletes, the producers' before
+            // the chain cursor's (as in a rebuild): each waits only for the commit.
+            if let Some(replay) = replay {
+                replay.apply(&mut tx).await?;
+            }
             rewind(
                 &mut tx,
                 name,
@@ -1264,10 +1306,6 @@ async fn walk(
             )
             .await
             .context("rewinding the cursor from the checkpoint it was read at")?;
-            // Cursor rows are locked after the deletes: producers wait only for the commit.
-            if let Some(replay) = replay {
-                replay.apply(&mut tx).await?;
-            }
             owner.check(&mut tx).await?;
             tx.commit().await?;
             tracing::warn!(indexer = name, network = net.db_name(), block = cur.last_block, stored, chain = %header.hash, rewound_to = to, "marketplace index: the cursor block's hash changed (a reorg past the confirmation depth); rewound");

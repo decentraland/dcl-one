@@ -2103,14 +2103,19 @@ projection commits nothing. This covers:
 - each fold, including each trade-events digest batch;
 - the fold record, the publish and its withdrawal.
 
-The lock is taken last, so it lasts only as long as the commit. A fenced
+The lock is taken last, so it lasts only as long as the commit. A writer
+that also moves the notification producers' cursors (a rewind, a rebuild,
+the nft lane) moves them before it locks this row. A fenced
 job drops its generation, and its next pass claims again, which only works
 while it still holds the lease.
 
 **Binding.** `chain_id` is the chain the history was read from, as the
-source proved it at the claim; the walk checks the source's chain every
-pass. A row from before the binding (`chain_id` NULL) is adopted at the
-start of a pass, before any lane, rewind, fold or publish, in two cases:
+source proved it at the claim. The walk checks the source's chain every
+pass. In a job that walks both networks, a source of another chain skips
+that network for the pass and the other one walks on; the job fails, and
+backs off, only when no network walked. A row from before the binding
+(`chain_id` NULL) is adopted at the start of a pass, before any lane,
+rewind, fold or publish, in two cases:
 - it has no history yet;
 - its stored last-block hash equals the source's hash at that height.
 

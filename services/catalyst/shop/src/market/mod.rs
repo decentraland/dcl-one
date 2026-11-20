@@ -778,11 +778,59 @@ pub(crate) async fn ensure_chain(
     expected: i64,
 ) -> anyhow::Result<()> {
     let served = source.chain_id().await?.value as i64;
-    anyhow::ensure!(
-        served == expected,
-        "the endpoint serves chain {served}, not {expected}: refusing to index it"
-    );
+    if served != expected {
+        return Err(chain_walk::WrongChain { served, expected }.into());
+    }
     Ok(())
+}
+
+/// What one network's pass of an index job came to.
+#[derive(Debug)]
+enum NetPass {
+    /// The pass ran.
+    Walked(chain_walk::PassOutcome),
+    /// Nothing to walk yet (no endpoint, or the nft walk waiting for the
+    /// collections mirror).
+    Waiting,
+    /// The endpoint serves another chain ([`chain_walk::WrongChain`]).
+    WrongChain(String),
+    Failed(String),
+}
+
+fn net_pass(
+    net: chain_walk::ChainNet,
+    outcome: anyhow::Result<chain_walk::PassOutcome>,
+) -> NetPass {
+    match outcome {
+        Ok(o) => NetPass::Walked(o),
+        Err(e)
+            if e.chain()
+                .any(|c| c.downcast_ref::<chain_walk::WrongChain>().is_some()) =>
+        {
+            NetPass::WrongChain(format!("{}: {e:#}", net.db_name()))
+        }
+        Err(e) => NetPass::Failed(format!("{}: {e:#}", net.db_name())),
+    }
+}
+
+/// The index job's result over its networks. Any failure fails it. An
+/// endpoint of another chain fails it only when no network walked: a network
+/// that walked keeps its cadence, while a job with none to walk backs off.
+fn index_job_result(passes: Vec<NetPass>) -> anyhow::Result<()> {
+    let walked = passes.iter().any(|p| matches!(p, NetPass::Walked(_)));
+    let errors: Vec<String> = passes
+        .into_iter()
+        .filter_map(|p| match p {
+            NetPass::Failed(e) => Some(e),
+            NetPass::WrongChain(e) if !walked => Some(e),
+            _ => None,
+        })
+        .collect();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(errors.join("; ")))
+    }
 }
 
 /// Attaches `nft-index`, `trade-events-index`, `mana-transfers-index` and
@@ -868,7 +916,7 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
                     let outcomes = futures::future::join_all(nets.iter().enumerate().map(|(i, net)| {
                         let (state, nft_indexes, holdings, ctx) = (&state, &nft_indexes, &holdings, &ctx);
                         async move {
-                            let Some(url) = rpc_url(state, *net) else { return Ok(()) };
+                            let Some(url) = rpc_url(state, *net) else { return NetPass::Waiting };
                             let source = chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(&state.http, &url));
                             let progress = |m: String| ctx.progress(m);
                             let settings = &state.settings.market.indexes;
@@ -877,7 +925,7 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
                             let ix: &dyn chain_walk::ChainIndex = if name == chain_walk::INDEXER_NFT {
                                 if !nft_index::mirror_complete(&state.pool, *net).await {
                                     ctx.progress(format!("nft {}: waiting for the collections mirror's first complete pass", net.db_name()));
-                                    return Ok(());
+                                    return NetPass::Waiting;
                                 }
                                 &nft_indexes[i]
                             } else if name == chain_walk::INDEXER_COMMITTEE {
@@ -891,18 +939,25 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
                                 &trade_events_index
                             };
                             let outcome = chain_walk::job_pass(&state.pool, &source, ix, settings, holdings, ctx.lease(), Some(&ctx.cancel), &progress).await;
-                            match outcome {
-                                Ok(o) => {
+                            let pass = net_pass(*net, outcome);
+                            match &pass {
+                                NetPass::Walked(o) => {
                                     tracing::info!(indexer = name, summary = %o.summary(), "marketplace chain index pass");
                                     ctx.progress(o.summary());
-                                    Ok(())
                                 }
-                                Err(e) => Err(format!("{}: {e:#}", net.db_name())),
+                                // An endpoint of another chain skips this network;
+                                // the job fails only when no network walked
+                                // (index_job_result).
+                                NetPass::WrongChain(e) => {
+                                    tracing::warn!(indexer = name, error = %e, "marketplace chain index: skipping a network whose endpoint serves another chain");
+                                    ctx.error(format!("{name} {e}"));
+                                }
+                                NetPass::Waiting | NetPass::Failed(_) => {}
                             }
+                            pass
                         }
                     })).await;
-                    let errors: Vec<String> = outcomes.into_iter().filter_map(Result::err).collect();
-                    if errors.is_empty() { Ok(()) } else { Err(anyhow::anyhow!(errors.join("; "))) }
+                    index_job_result(outcomes)
                 }
             },
         );
