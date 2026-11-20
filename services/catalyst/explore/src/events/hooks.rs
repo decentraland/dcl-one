@@ -30,7 +30,8 @@ pub struct Links {
 }
 
 impl Links {
-    /// A stored image as the URL the node serves it on, absolute when `PUBLIC_URL` is set.
+    /// A stored image for a notice: posters on the node's poster mount (absolute when
+    /// `PUBLIC_URL` is set), the default on the asset mount, anything else as stored.
     fn image(&self, image: &str) -> String {
         crate::node_assets::notice_image_url(image, self.public_base.as_deref(), &self.asset_base)
     }
@@ -623,7 +624,7 @@ mod tests {
                 "{stored}"
             );
         }
-        // A root-relative image that is not a poster stays relative, as on read: no image.
+        // A root-relative image that is not a poster is dropped, as on read: no image.
         let notice = message(
             "ev-5",
             "submitted",

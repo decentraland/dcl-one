@@ -25,7 +25,7 @@ pub(crate) fn event_image_url(
     configured_public_base: Option<&str>,
     events_asset_base: &str,
 ) -> String {
-    let url = notice_image_url(image, configured_public_base, events_asset_base);
+    let url = image_url(image, configured_public_base, events_asset_base);
     if poster_path(image).is_some() {
         url
     } else {
@@ -42,18 +42,25 @@ fn absolute_default_image(image: &str, events_asset_base: &str) -> String {
     }
 }
 
-/// A notice's image: posters on their mount and the default on the asset
-/// mount, as on read; anything else as stored, without the read side's
-/// `asset_rewrite_base` mapping of upstream asset URLs to this node.
+/// Posters on their mount and the default on the asset mount; anything else as stored.
+fn image_url(image: &str, configured_public_base: Option<&str>, events_asset_base: &str) -> String {
+    if poster_path(image).is_some() {
+        return mounted_poster_url(image, configured_public_base);
+    }
+    absolute_default_image(image, events_asset_base)
+}
+
+/// A notice's image, sanitized as on read (empty when the read side drops
+/// it), without the read side's `asset_rewrite_base` mapping of upstream
+/// asset URLs to this node.
 pub fn notice_image_url(
     image: &str,
     configured_public_base: Option<&str>,
     events_asset_base: &str,
 ) -> String {
-    if poster_path(image).is_some() {
-        return mounted_poster_url(image, configured_public_base);
-    }
-    absolute_default_image(image, events_asset_base)
+    crate::sanitize::sanitize_asset_url(image)
+        .map(|image| image_url(&image, configured_public_base, events_asset_base))
+        .unwrap_or_default()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -396,21 +403,16 @@ mod tests {
             super::notice_image_url(super::DEFAULT_EVENT_IMAGE, public.as_deref(), &assets),
             "https://node.example.org/prefix/events/assets/event-default.webp"
         );
+        // Sanitized as on read: padding is trimmed, and what read drops is left out.
+        assert_eq!(
+            super::notice_image_url(" /poster/a.webp ", public.as_deref(), &assets),
+            super::notice_image_url("/poster/a.webp", public.as_deref(), &assets)
+        );
         assert_eq!(
             super::notice_image_url("/other/a.webp", public.as_deref(), &assets),
-            "/other/a.webp",
-            "other paths stay as stored"
+            ""
         );
-        assert_eq!(
-            super::event_image_url(
-                "/other/a.webp",
-                rewrite.as_deref(),
-                public.as_deref(),
-                &assets
-            ),
-            "/other/a.webp",
-            "as on read"
-        );
+        assert!(crate::sanitize::sanitize_asset_url("/other/a.webp").is_err());
     }
 
     #[test]
