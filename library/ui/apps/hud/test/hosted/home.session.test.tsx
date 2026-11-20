@@ -59,6 +59,16 @@ describe('home in the session', () => {
     expect(driver.last('teleport')).toMatchObject({ kind: 'teleport', realm: DEFAULT_REALM, x: 0, y: 0 })
   })
 
+  it('the lobby stage is ready once the engine says so, and again only after the lobby is closed and reopened', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    act(() => h.session().setEngineViewport('lobby', { x: 0, y: 0, width: 10, height: 10 }, 1))
+    act(() => h.driver.emit({ kind: 'lobbyStageReady' }))
+    await waitFor(() => expect(h.session().lobbyStageReady).toBe(true))
+    act(() => h.session().setEngineViewport('lobby', null))
+    expect(h.session().lobbyStageReady).toBe(false)
+  })
+
   it('reads a boot snapshot saved on the default realm as Genesis City, on the map too, before the engine answers', async () => {
     const driver = new FakeDriver()
     Object.assign(driver, { homeScene: () => ({ realm: DEFAULT_REALM, parcel: '3,4', pinned: true }) })

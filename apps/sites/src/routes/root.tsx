@@ -74,7 +74,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     commitHash,
     pulseServer,
     catalystBase,
-    thumbnailBase: catalystBase || requestUrl.origin,
+    publicPageBase: catalystBase || requestUrl.origin,
     shopApiMode,
     wallet,
     locale: context.get(publicResponseContext)
@@ -127,7 +127,7 @@ export function meta(_args: Route.MetaArgs) {
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const data = useRouteLoaderData("root") as
-    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; commitHash?: string; pulseServer?: string; catalystBase?: string; thumbnailBase?: string; shopApiMode?: string; locale?: SitesLocale }
+    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; commitHash?: string; pulseServer?: string; catalystBase?: string; publicPageBase?: string; shopApiMode?: string; locale?: SitesLocale }
     | undefined;
   const [selectedLocale, setLocale] = useState<SitesLocale>();
   const homeData = useRouteLoaderData("routes/_index") as { locale?: SitesLocale } | undefined;
@@ -177,7 +177,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </head>
       <body>
         <SitesLocaleContext.Provider value={{ locale, onSelect: setLocale }}>
-          <ThumbnailPublicBase.Provider value={data?.thumbnailBase ?? ""}>
+          <ThumbnailPublicBase.Provider value={data?.publicPageBase ?? ""}>
             {children}
           </ThumbnailPublicBase.Provider>
         </SitesLocaleContext.Provider>
