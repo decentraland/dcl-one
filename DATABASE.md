@@ -1839,6 +1839,10 @@ Invariants:
   reason gives way to a rent of the listing: an incremental fold also
   revisits a cancelled listing whose own `rented` log is past its block, one
   `rental_event_signature_idx` probe per cancelled listing of the venue.
+- The fold's `cancelled` verdict never rewrites a listing that is already
+  cancelled. The fold reads its verdicts before it writes them, so a listing
+  the job cancelled in between keeps the job's reason and stays closed on a
+  rebuild. An `executed` or `claimed` verdict still applies.
 - A cancellation that is not a nonce move is never undone, so an unknown never
   cancels. No published index, no indexed token, or an indexed transfer older
   than the listing all leave the listing open.

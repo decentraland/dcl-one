@@ -953,4 +953,71 @@ mod tests {
         assert_eq!(state_of(pool, held).await, open(), "held for the lessor");
         db.drop().await;
     }
+    /// The fold reads its verdicts before it writes them. A listing the job
+    /// cancels in between keeps the job's reason against the fold's nonce
+    /// cancellation, which a rebuild could reopen; a rent of it still
+    /// executes it.
+    #[tokio::test]
+    async fn the_fold_keeps_the_reason_of_a_listing_the_job_cancelled() {
+        let Some(db) = OwnedDatabase::new("rental_fold_guard", Schema::Full, 2).await else {
+            return;
+        };
+        let pool = &db.pool;
+        let id = listing(pool, LAND_REGISTRY_MAINNET, "1", 1).await;
+        let decoded = |log| index::decode_log(&log, 1_700_000_000).unwrap().unwrap();
+        let token = alloy_primitives::U256::from(1u8);
+        let mut conn = pool.acquire().await.unwrap();
+        let net = crate::market::chain_walk::ChainNet::Ethereum;
+        let bump = decoded(index::tests::asset_index_log(
+            LESSOR,
+            LAND_REGISTRY_MAINNET,
+            token,
+            1,
+            50,
+            0,
+        ));
+        index::insert_events(&mut conn, net, &[bump]).await.unwrap();
+        let verdicts = index::changed_verdicts(&mut conn, RENTALS, -1, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            verdicts
+                .iter()
+                .map(|v| (v.id, v.status))
+                .collect::<Vec<_>>(),
+            [(id, "cancelled")]
+        );
+
+        expire(pool, id).await;
+        run_pass(pool, None, Utc::now()).await.unwrap();
+        assert_eq!(state_of(pool, id).await, cancelled(REASON_EXPIRED));
+        let written = index::apply_verdicts(&mut conn, &verdicts, Utc::now().naive_utc())
+            .await
+            .unwrap();
+        assert_eq!(written, 0);
+        assert_eq!(state_of(pool, id).await, cancelled(REASON_EXPIRED));
+
+        let rent = decoded(index::tests::rented_log(
+            LAND_REGISTRY_MAINNET,
+            token,
+            LESSOR,
+            OTHER,
+            7,
+            alloy_primitives::U256::from(5u8),
+            &[1u8; 65],
+            51,
+            0,
+        ));
+        index::insert_events(&mut conn, net, &[rent]).await.unwrap();
+        let verdicts = index::changed_verdicts(&mut conn, RENTALS, -1, None)
+            .await
+            .unwrap();
+        let written = index::apply_verdicts(&mut conn, &verdicts, Utc::now().naive_utc())
+            .await
+            .unwrap();
+        assert_eq!(written, 1);
+        assert_eq!(state_of(pool, id).await, ("executed".into(), None));
+        drop(conn);
+        db.drop().await;
+    }
 }

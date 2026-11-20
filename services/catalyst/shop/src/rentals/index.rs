@@ -421,6 +421,12 @@ pub async fn changed_verdicts(
 /// its stored status and reason: a nonce cancellation stays `cancelled`
 /// with `nonce`, still the true cause, so a later rebuild reopens it if the
 /// asset's open listing has closed by then.
+///
+/// A `cancelled` verdict leaves a listing that is already cancelled: the
+/// verdicts were read before this write, and a cancellation the
+/// `rental-listing-status` job committed in between keeps its own reason
+/// (the nonce one would make it reopenable). A rent or a claim still moves
+/// it.
 pub async fn apply_verdicts(
     conn: &mut PgConnection,
     verdicts: &[Verdict],
@@ -444,7 +450,7 @@ pub async fn apply_verdicts(
              started_at = COALESCE(to_timestamp(u.started_at) AT TIME ZONE 'UTC', r.started_at), \
              rented_days = COALESCE(u.days, r.rented_days), updated_at = $6 \
          FROM UNNEST($1::uuid[], $2::text[], $3::bigint[], $4::int[], $5::text[], $7::text[]) AS u(id, status, started_at, days, tenant, reason) \
-         WHERE r.id = u.id",
+         WHERE r.id = u.id AND NOT (r.status = 'cancelled' AND u.status = 'cancelled')",
     )
     .bind(&ids)
     .bind(&statuses)
