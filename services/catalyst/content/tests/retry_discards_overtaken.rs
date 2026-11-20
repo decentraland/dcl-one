@@ -2,8 +2,9 @@
 //! its type overtook on any of its pointers: its record goes and no deployment row is written,
 //! where it would only have landed as a superseded row the prune removes. With pruning off, or
 //! when the newer entity is this node's own scene (whose superseded rows the prune keeps), the
-//! entity is deployed as a superseded row. A retry cycle walks every due record in its database,
-//! so each test runs over a fresh database of its own.
+//! entity is deployed as a superseded row. A discard that fails backs off like a failed attempt.
+//! A retry cycle walks every due record in its database, so each test runs over a fresh database
+//! of its own.
 
 use std::sync::Arc;
 
@@ -371,4 +372,39 @@ async fn a_failure_this_nodes_own_scene_overtook_is_kept_as_history() {
     assert!(node.deployed(&older_id).await);
     assert!(node.superseded(&older_id).await);
     assert_eq!(node.active_on("10,10").await, Some(local.1));
+}
+
+#[tokio::test]
+async fn a_failed_discard_backs_off_like_a_failed_attempt() {
+    let Some(node) = Node::new().await else {
+        return;
+    };
+    let now = chrono::Utc::now().timestamp_millis();
+    node.deploy(&scene(&["10,10"], now)).await;
+    sqlx::raw_sql(
+        "CREATE FUNCTION refuse_delete() RETURNS trigger LANGUAGE plpgsql AS
+             $$ BEGIN RAISE EXCEPTION 'refused'; END $$;
+         CREATE TRIGGER refuse_delete BEFORE DELETE ON content.failed_deployments
+             FOR EACH ROW EXECUTE FUNCTION refuse_delete();",
+    )
+    .execute(&node.pool)
+    .await
+    .unwrap();
+    let (older, older_id) = scene(&["10,10"], now - 60_000);
+
+    let stats = node
+        .retry(&[(older, older_id.clone(), "scene")], true)
+        .await;
+    assert_eq!(counts(&stats), (0, 0, 1));
+    assert!(!node.deployed(&older_id).await);
+    let (retry_count, next_retry_at): (i32, f64) = sqlx::query_as(
+        "SELECT retry_count, date_part('epoch', next_retry_at) * 1000
+         FROM content.failed_deployments WHERE entity_id = $1",
+    )
+    .bind(&older_id)
+    .fetch_one(&node.pool)
+    .await
+    .unwrap();
+    assert_eq!(retry_count, 1, "the attempt is spent");
+    assert!(next_retry_at as i64 > now, "and backed off");
 }
