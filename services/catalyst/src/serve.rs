@@ -1512,7 +1512,7 @@ mod shop_cors_mount_tests {
             pool.clone(),
             Arc::new(storage),
             shop::outfits::Settings {
-                creators: Some(Vec::new()),
+                creators: Vec::new(),
                 writes_enabled: false,
             },
             None,
