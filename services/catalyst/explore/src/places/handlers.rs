@@ -52,12 +52,13 @@ const MAP_ORDER_BY: &[&str] = &["like_score", "updated_at", "created_at", "most_
 const WORLD_ORDER_BY: &[&str] = &["most_active", "like_score", "created_at"];
 
 /// The query of `GET /api/places` as the discovery server reads it
-/// (`get-places-handler.ts:12-34`, `query-params.ts:12-41`). A flag is true
-/// only as `true`, except places' own `only_excluded_from_ranking`
-/// (`getPlaceList.ts:49-51`, gatsby `bool()`). `limit` and `offset` are JavaScript non-negative integers;
-/// any other value is the default. `categories` and `names` split on commas.
-/// More than 1000 positions, categories or names is a 400. `names` turns
-/// `positions` off. An empty text parameter is absent.
+/// (`get-places-handler.ts:12-34`, `query-params.ts:12-41`), plus places'
+/// own `only_excluded_from_ranking` (`getPlaceList.ts:49-51`), which it does
+/// not read. A flag is true only as `true`, except that one, read as gatsby
+/// `bool()` reads it. `limit` and `offset` are JavaScript non-negative
+/// integers; any other value is the default. `categories` and `names` split
+/// on commas. More than 1000 positions, categories or names is a 400.
+/// `names` turns `positions` off. An empty text parameter is absent.
 fn list_filters(pairs: &[(String, String)]) -> Result<PlaceListFilters, ApiError> {
     let get = |k: &str| pairs.iter().find(|(p, _)| p == k).map(|(_, v)| v.as_str());
     let text = |k: &str| get(k).filter(|v| !v.is_empty()).map(str::to_string);
@@ -1022,12 +1023,19 @@ mod tests {
             return;
         };
         let token = uuid::Uuid::new_v4().simple().to_string();
-        let (kept, excluded) = (
-            uuid::Uuid::new_v4().to_string(),
-            uuid::Uuid::new_v4().to_string(),
-        );
+        let [absent, kept, unset, excluded] = [(); 4].map(|_| uuid::Uuid::new_v4().to_string());
         for (id, pointer, raw) in [
-            (&kept, "-150,-150", json!({"positions": ["-150,-150"]})),
+            (&absent, "-150,-150", json!({"positions": ["-150,-150"]})),
+            (
+                &kept,
+                "-150,-152",
+                json!({"positions": ["-150,-152"], "exclude_from_ranking": false}),
+            ),
+            (
+                &unset,
+                "-150,-153",
+                json!({"positions": ["-150,-153"], "exclude_from_ranking": null}),
+            ),
             (
                 &excluded,
                 "-150,-151",
@@ -1051,7 +1059,7 @@ mod tests {
             None,
         ));
         let all = response(state.clone(), &format!("/api/places?search={token}")).await;
-        assert_eq!(all["total"], 2, "{all}");
+        assert_eq!(all["total"], 4, "{all}");
         for order in ["like_score", "most_active"] {
             let uri = format!(
                 "/api/places?search={token}&order_by={order}&only_excluded_from_ranking=true"
