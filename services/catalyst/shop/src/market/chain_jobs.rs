@@ -17,7 +17,8 @@
 //! waits the projection's first-pass delay (its jitter); a projection standing
 //! by asks again after the lease poll plus its jitter. A lost lease ends its
 //! acquisition, backoff included, as soon as the supervisor sees it. The
-//! supervisor reports standby while it holds no lease.
+//! supervisor reports standby once a lease request was answered without its
+//! lease and it holds none.
 //!
 //! An attempt ends as soon as its lease is lost or the process stops, even
 //! inside a fold: the supervisor collects it before the slot lets its lease
@@ -208,6 +209,9 @@ struct Slot {
     /// acquisition, the next lease request.
     due: Instant,
     line: String,
+    /// Its last lease request was answered without the lease: another
+    /// process holds it, or the request failed.
+    stood_by: bool,
 }
 
 async fn run(
@@ -235,6 +239,7 @@ async fn run(
             phase: Phase::Idle,
             due: start,
             line: "asking for the lease".into(),
+            stood_by: false,
         })
         .collect();
     let mut tasks: JoinSet<Done> = JoinSet::new();
@@ -288,9 +293,12 @@ async fn run(
             dispatch_attempt(&ctx, &supervisor, i, slot, &mut tasks, &mut running);
         }
         ctx.progress(progress_line(&supervisor, &slots));
-        // Standing by while another process holds every lease.
+        // Standing by once a request was answered without its lease and no
+        // lease is held: not while the first requests are in flight, nor
+        // right after a lease was lost.
         let holding = slots.iter().any(|s| s.acquisition.is_some());
-        ctx.set_state((!holding).then_some(JobState::Standby));
+        let stood_by = slots.iter().any(|s| s.stood_by);
+        ctx.set_state((!holding && stood_by).then_some(JobState::Standby));
         let next = slots
             .iter()
             .filter(|s| s.phase == Phase::Idle)
@@ -371,6 +379,7 @@ fn lost_lease(projection: &Projection, slot: &mut Slot, now: Instant, standby: D
     }
     slot.due = now + standby;
     slot.line = "lease lost; standing by".into();
+    slot.stood_by = false;
 }
 
 /// Resolves when any of `tokens` fires: an idle projection's lease lost
@@ -441,6 +450,7 @@ async fn settle(
         tracing::error!(lease = %projection.lease, error = %msg, "marketplace chain index: a lease request failed");
         slot.due = now + standby;
         slot.line = "standby: the lease request failed".into();
+        slot.stood_by = true;
         return;
     }
     let outcome = match done {
@@ -454,17 +464,20 @@ async fn settle(
             slot.acquisition = Some(acquisition);
             slot.due = now + cfg.first_delay(&projection.lease);
             slot.line = "lease taken; waiting for the first pass".into();
+            slot.stood_by = false;
             return;
         }
         Done::Requested(Ok(None)) => {
             slot.due = now + standby;
             slot.line = "standby: another process holds the lease".into();
+            slot.stood_by = true;
             return;
         }
         Done::Requested(Err(err)) => {
             ctx.error(format!("{}: lease: {err}", projection.lease));
             slot.due = now + standby;
             slot.line = "standby: the lease connection is unavailable".into();
+            slot.stood_by = true;
             return;
         }
         Done::Attempted(outcome) => outcome,

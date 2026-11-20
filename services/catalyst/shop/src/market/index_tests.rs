@@ -5033,9 +5033,8 @@ mod supervisor {
             .iter()
             .find(|j| j.name == "chain-walk-matic")
             .unwrap();
-        assert_eq!(
-            job.state,
-            JobState::Running,
+        assert!(
+            !matches!(job.state, JobState::Finished | JobState::Failed),
             "a panicking attempt never ends the supervisor"
         );
         assert!(
@@ -5172,12 +5171,80 @@ mod supervisor {
             .iter()
             .find(|j| j.name == "chain-walk-matic")
             .unwrap();
-        assert_eq!(job.state, JobState::Running);
+        assert!(!matches!(job.state, JobState::Finished | JobState::Failed));
         assert!(
             cursor(&db.pool, chain_walk::INDEXER_COMMITTEE, ChainNet::Matic)
                 .await
                 .is_none()
         );
+        assert!(jobs.shutdown(Duration::from_secs(5)).await.is_empty());
+        db.drop().await;
+    }
+
+    /// A supervisor whose only lease request is still in flight has not
+    /// been told another process holds anything, so it does not report
+    /// standby; it does once a request comes back without the lease.
+    #[tokio::test]
+    async fn a_lease_request_in_flight_is_not_standby() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = FakeChain::new(100, vec![], 1000, 1000);
+        chain.finalized_lag.store(2, Ordering::SeqCst);
+        let url = serve(chain.clone()).await;
+        let st = state_over(db.pool.clone(), &url, walk_settings(), false);
+        let namespace = format!("supervisor-in-flight-{}", std::process::id());
+        let elsewhere = Arc::new(crate::jobs::Leases::new(
+            db.pool.clone(),
+            lease_settings(&namespace, Duration::from_millis(100)),
+        ));
+        let held = elsewhere
+            .try_acquire("mana-transfers-index-matic")
+            .await
+            .unwrap()
+            .expect("another process holds mana's lease");
+        let jobs = Jobs::with_leases(
+            db.pool.clone(),
+            lease_settings(&namespace, Duration::from_millis(100)),
+        )
+        .with_first_pass_now(true);
+        let (leases, gate, asked) = gated(&jobs, &["mana-transfers-index-matic"]);
+        chain_jobs::spawn_with(
+            &jobs,
+            supervisor(
+                &st,
+                ChainNet::Matic,
+                vec![projection(
+                    "mana-transfers-index",
+                    ChainNet::Matic,
+                    &url,
+                    mana(ChainNet::Matic),
+                )],
+            ),
+            Some(leases),
+        );
+        let state = || {
+            jobs.report()
+                .into_iter()
+                .find(|j| j.name == "chain-walk-matic")
+                .unwrap()
+                .state
+        };
+        eventually("the request in flight", || {
+            let asked = asked.clone();
+            async move { !asked.lock().is_empty() }
+        })
+        .await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_ne!(state(), JobState::Standby, "no answer yet");
+        gate.add_permits(1);
+        eventually(
+            "standby once the request comes back without the lease",
+            || async { state() == JobState::Standby },
+        )
+        .await;
+        gate.add_permits(100);
+        held.release().await;
         assert!(jobs.shutdown(Duration::from_secs(5)).await.is_empty());
         db.drop().await;
     }
