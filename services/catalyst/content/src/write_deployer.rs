@@ -137,6 +137,18 @@ pub(crate) async fn store_uploaded(
     }
 }
 
+/// A deployed entity as a partial replay checks it
+/// ([`WriteDeployer::deployed_entity`]).
+#[derive(sqlx::FromRow)]
+pub(crate) struct StoredEntity {
+    /// The stored `local_timestamp` (ms) a replay is answered.
+    pub local_ms: i64,
+    /// The entity timestamp (ms) its chain signed.
+    pub entity_ms: i64,
+    pub pointers: Vec<String>,
+    pub content_hashes: Vec<String>,
+}
+
 struct HashedUpload {
     v0: String,
     v1: String,
@@ -788,17 +800,21 @@ impl WriteDeployer {
         .await
     }
 
-    /// A deployed entity's stored `local_timestamp` and its entity timestamp
-    /// (ms), which its chain signed.
-    pub(crate) async fn deployed_timestamps(
+    /// What a partial replay is checked against: a deployed entity's stored
+    /// `local_timestamp` and entity timestamp (ms), which its chain signed,
+    /// with its pointers and content hashes.
+    pub(crate) async fn deployed_entity(
         &self,
         entity_id: &str,
-    ) -> sqlx::Result<Option<(i64, i64)>> {
+    ) -> sqlx::Result<Option<StoredEntity>> {
         sqlx::query_as(concat!(
             "SELECT ",
-            local_ms_sql!("local_timestamp"),
-            ", round(date_part('epoch', entity_timestamp) * 1000)::bigint",
-            " FROM content.deployments WHERE entity_id = $1"
+            local_ms_sql!("d.local_timestamp"),
+            " AS local_ms, round(date_part('epoch', d.entity_timestamp) * 1000)::bigint AS entity_ms",
+            ", d.entity_pointers AS pointers",
+            ", ARRAY(SELECT f.content_hash FROM content.content_files f WHERE f.deployment = d.id)",
+            " AS content_hashes",
+            " FROM content.deployments d WHERE d.entity_id = $1"
         ))
         .bind(entity_id)
         .fetch_optional(&self.pool)
@@ -1190,6 +1206,9 @@ impl WriteDeployer {
         let files: Vec<Upload> = files.into_iter().map(Into::into).collect();
         let mut deployed = self.deploying.lock(entity_id).await;
         if let Some(creation_ts) = *deployed {
+            // Verified unlocked: the check can hash the whole form and ask a
+            // contract wallet's RPC, and other copies of the id would queue.
+            drop(deployed);
             self.verify_replay(None, &files, entity_id, &auth_chain)
                 .await?;
             return Ok(creation_ts);
@@ -1211,7 +1230,7 @@ impl WriteDeployer {
     /// TTL, rate-limit and validator checks are not run again: the entity was
     /// accepted, and its timestamp may be past the request TTL. `named` is
     /// the upload the form named by the id; only when it is not the entity
-    /// file are all `files` hashed.
+    /// file are the other `files` hashed.
     pub(crate) async fn verify_replay(
         &self,
         named: Option<&Bytes>,
@@ -1226,7 +1245,10 @@ impl WriteDeployer {
             None => Vec::new(),
         };
         if !uploads.iter().any(|upload| upload.names(entity_id)) {
-            uploads = hash_uploads(files.to_vec())
+            let others = files
+                .iter()
+                .filter(|upload| !matches!(upload, Upload::Bytes(bytes) if Some(bytes) == named));
+            uploads = hash_uploads(others.cloned().collect())
                 .await
                 .map_err(|e| deploy_error(entity_id, &e))?;
         }
@@ -1253,19 +1275,27 @@ impl WriteDeployer {
         }
     }
 
-    /// [`Self::refuse_denylisted`] for an entity known only by its id: a
-    /// partial replay, which may carry no entity file.
-    pub(crate) fn refuse_denylisted_id(&self, entity_id: &str) -> Result<(), DeployFailure> {
-        if self
-            .denylist
-            .as_deref()
-            .is_some_and(|d| d.contains(entity_id))
-        {
-            let errors = vec![super::denylist::entity_refusal(entity_id)];
-            warn!(entity_id, ?errors, "deployment refused: denylisted");
-            return Err(DeployFailure::Rejected(RejectionKind::Validation, errors));
+    /// [`Self::refuse_denylisted`] for a stored entity: a partial replay,
+    /// which may carry no entity file.
+    pub(crate) fn refuse_denylisted_stored(
+        &self,
+        entity_id: &str,
+        stored: &StoredEntity,
+    ) -> Result<(), DeployFailure> {
+        match self.denylist.as_deref().and_then(|d| {
+            super::denylist::refusal_of(
+                entity_id,
+                stored.content_hashes.iter().map(String::as_str),
+                &stored.pointers,
+                d,
+            )
+        }) {
+            Some(errors) => {
+                warn!(entity_id, ?errors, "deployment refused: denylisted");
+                Err(DeployFailure::Rejected(RejectionKind::Validation, errors))
+            }
+            None => Ok(()),
         }
-        Ok(())
     }
 
     async fn deploy_entity_unlocked(

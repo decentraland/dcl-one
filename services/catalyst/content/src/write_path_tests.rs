@@ -2891,12 +2891,14 @@ async fn a_replay_proves_what_a_fresh_deploy_proves_first() {
     // An entity signed an hour ago, older than `REQUEST_TTL_BACKWARDS`,
     // published as a partial upload begun then publishes it.
     let signed_at = chrono::Utc::now().timestamp_millis() - 3_600_000;
-    let mut old = scene(&[&parcel], &[]);
+    let code = Bytes::from_static(b"replayed scene code");
+    let code_hash = hash_bytes_v1(&code);
+    let mut old = scene(&[&parcel], &[("bin/index.js", &code_hash)]);
     old["timestamp"] = json!(signed_at);
     let (entity_bytes, entity_id, chain) = signed_entity(&owner, old).await;
     let created = deployer
         .deploy_entity_anchored(
-            vec![entity_bytes.clone()],
+            vec![entity_bytes.clone(), code],
             &entity_id,
             chain.clone(),
             "LOCAL",
@@ -3000,31 +3002,45 @@ async fn a_replay_proves_what_a_fresh_deploy_proves_first() {
         assert_eq!(written().await, before, "{case}: a replay writes nothing");
     }
 
-    // An id denylisted since its deploy gets a fresh deploy's refusal.
-    state.denylist.operator_insert(&entity_id);
-    let (status, _, body) = call(
-        &router,
-        deploy_request(
-            "/entities",
-            &entity_id,
-            &chain,
-            &[(entity_id.as_str(), &entity_bytes)],
-        ),
-    )
-    .await;
-    state.denylist.operator_remove(&entity_id);
-    assert_eq!(
-        (status, json_of(&body)),
+    // An id, content hash or pointer denylisted since the deploy gets a
+    // fresh deploy's refusal.
+    for (listed, error) in [
         (
-            StatusCode::BAD_REQUEST,
-            json!({"errors": [format!("The entity {entity_id} is denylisted on this node.")]})
+            &entity_id,
+            format!("The entity {entity_id} is denylisted on this node."),
+        ),
+        (
+            &code_hash,
+            format!("These content files are denylisted on this node: {code_hash}"),
+        ),
+        (
+            &parcel,
+            format!("These pointers are denylisted on this node: {parcel}"),
+        ),
+    ] {
+        state.denylist.operator_insert(listed);
+        let (status, _, body) = call(
+            &router,
+            deploy_request(
+                "/entities",
+                &entity_id,
+                &chain,
+                &[(entity_id.as_str(), &entity_bytes)],
+            ),
         )
-    );
-    assert_eq!(
-        written().await,
-        before,
-        "a denylisted replay writes nothing"
-    );
+        .await;
+        state.denylist.operator_remove(listed);
+        assert_eq!(
+            (status, json_of(&body)),
+            (StatusCode::BAD_REQUEST, json!({"errors": [error]})),
+            "{listed}"
+        );
+        assert_eq!(
+            written().await,
+            before,
+            "{listed}: a denylisted replay writes nothing"
+        );
+    }
 
     // A deploy whose text the database cannot store is the request's fault:
     // 400 without `Retry-After`, nothing written.
@@ -3105,17 +3121,25 @@ async fn a_replay_whose_contract_wallet_cannot_be_checked_is_503_and_counted() {
     );
     assert!(headers.contains_key(header::RETRY_AFTER));
     assert_eq!(node.state.deploy_quota.counted_for("203.0.113.17"), 1);
-    // The same re-post with the owner's chain is a replay this node answers.
-    let (status, _, body) = call(
-        &router,
+    // The charge is kept: that source's next re-post, even with the owner's
+    // chain, gets the quota answer; from another source it is answered.
+    let owner_replay = || {
         deploy_request(
             "/content/entities",
             &entity_id,
             &owner_chain,
             &[(entity_id.as_str(), &entity_bytes)],
-        ),
-    )
-    .await;
+        )
+    };
+    let mut req = owner_replay();
+    req.headers_mut()
+        .insert("x-real-ip", HeaderValue::from_static("203.0.113.17"));
+    let (status, _, body) = call(&router, req).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body:?}");
+    let mut req = owner_replay();
+    req.headers_mut()
+        .insert("x-real-ip", HeaderValue::from_static("203.0.113.18"));
+    let (status, _, body) = call(&router, req).await;
     assert_eq!(status, StatusCode::OK, "{body:?}");
 
     drop(node);
