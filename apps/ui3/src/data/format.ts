@@ -17,12 +17,6 @@ export function hueFor(seed: unknown): number {
   return h;
 }
 
-const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
-
-export function isValidAddress(addr: string | null | undefined): boolean {
-  return ADDRESS_RE.test((addr ?? "").trim());
-}
-
 /** "3 days ago", "1 year ago": how long since `iso`, in the largest whole unit; null for
     nothing or an unreadable date. */
 export function timeAgo(iso: string | null | undefined, now: number = Date.now()): string | null {

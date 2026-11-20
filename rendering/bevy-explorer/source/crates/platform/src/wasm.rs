@@ -5,7 +5,7 @@ use std::{
 
 use crate::{default_color_grading, scatter_bloom};
 use anyhow::anyhow;
-use bevy::log::warn;
+use bevy::log::{error, warn};
 use bevy::{
     core_pipeline::tonemapping::{DebandDither, Tonemapping},
     ecs::bundle::Bundle,
@@ -152,9 +152,15 @@ pub fn compat<F>(f: F) -> F {
 pub fn project_directories() -> Option<directories::ProjectDirs> {
     None
 }
-pub fn write_config_file<T: Serialize + Clone + 'static>(config: &T) {
+pub fn write_config_file<T: Serialize>(config: &T) {
     use futures_lite::io::AsyncWriteExt;
-    let config = config.clone();
+    let json = match serde_json::to_string(config) {
+        Ok(json) => json,
+        Err(e) => {
+            error!("couldn't serialize config file: {e:?}");
+            return;
+        }
+    };
 
     // Systems may run on a compute worker; the io pool drives this on the engine worker's event loop.
     bevy::tasks::IoTaskPool::get()
@@ -167,10 +173,7 @@ pub fn write_config_file<T: Serialize + Clone + 'static>(config: &T) {
                 }
             };
 
-            if let Err(e) = f
-                .write_all(serde_json::to_string(&config).unwrap().as_bytes())
-                .await
-            {
+            if let Err(e) = f.write_all(json.as_bytes()).await {
                 warn!("couldn't write config file: {e:?}");
             }
         })

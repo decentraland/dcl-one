@@ -121,7 +121,7 @@
   }
 }
 
-/* Phones keep the page's natural height: the list keeps its fixed height and the banner sticks to the bottom. */
+/* On phones, the questions and chat banner scroll with the page. */
 @media (max-width: 767px) {
   .root {
     height: auto;

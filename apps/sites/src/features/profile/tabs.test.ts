@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { isOwnProfile, profileHref, profileTabs, readProfileTab } from "./tabs";
+import { isLegacyTabSegment, isOwnProfile, profileHref, profileTabs, readProfileTab } from "./tabs";
 
 const A = "0x4e9c4a2502fdf71e93ed8ed6ca9ddbd891d6f295";
 
 describe("profile tabs", () => {
   it("list another member's tabs and the member's own in the source order", () => {
     expect(profileTabs(false).map((tab) => tab.id)).toEqual(["overview", "creations", "communities", "places", "photos"]);
-    expect(profileTabs(true).map((tab) => tab.id)).toEqual([
+    expect(profileTabs(true, { referral: true }).map((tab) => tab.id)).toEqual([
       "overview",
       "assets",
       "communities",
@@ -15,6 +15,26 @@ describe("profile tabs", () => {
       "photos",
       "referral-rewards",
     ]);
+  });
+
+  it("show Referral Rewards only on the member's own profile, and only while its flag is on", () => {
+    const ids = (own: boolean, referral?: boolean) => profileTabs(own, { referral }).map((tab) => tab.id);
+    expect(ids(true)).not.toContain("referral-rewards");
+    expect(ids(true, false)).not.toContain("referral-rewards");
+    expect(ids(false, true)).not.toContain("referral-rewards");
+    expect(readProfileTab("referral-rewards", true)).toBeNull();
+    expect(readProfileTab("referral-rewards", true, { referral: true })).toBe("referral-rewards");
+    expect(readProfileTab("referral-rewards", false, { referral: true })).toBeNull();
+  });
+
+  it("read the profile site's old `referral` tab id as Referral Rewards", () => {
+    expect(readProfileTab("referral", true, { referral: true })).toBe("referral-rewards");
+    expect(readProfileTab("Referral", true, { referral: true })).toBe("referral-rewards");
+    expect(readProfileTab("referral", true, { referral: false })).toBeNull();
+    expect(readProfileTab("referral", false, { referral: true })).toBeNull();
+    expect(isLegacyTabSegment(" Referral ")).toBe(true);
+    expect(isLegacyTabSegment("referral-rewards")).toBe(false);
+    expect(isLegacyTabSegment(undefined)).toBe(false);
   });
 
   it("read a missing or empty segment as Overview", () => {

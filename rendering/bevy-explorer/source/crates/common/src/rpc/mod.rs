@@ -287,6 +287,10 @@ pub enum RpcCall {
     OpenExplorerUi {
         /// raw `decentraland.sdk.components.common.ExplorerUi` value
         ui: i32,
+        /// `OpenExplorerUiRequest.request_id`, echoed on the result events; 0: none
+        request_id: u32,
+        /// `OpenExplorerUiRequest.item_purchase.urn`
+        item_urn: Option<String>,
         response: RpcResultSender<OpenExplorerUiResult>,
     },
     SubscribePlayerConnected {

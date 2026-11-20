@@ -93,7 +93,7 @@ volume_setting!(
 volume_setting!(
     SystemVolumeSetting,
     "System",
-    "The volume of system interactions (menu buttons, etc).",
+    "The volume of interface sounds: menu buttons, chat pings and call alerts.",
     |cfg: &mut AudioSettings, val: i32| cfg.system = val,
     |cfg: &AudioSettings| cfg.system
 );

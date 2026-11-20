@@ -318,12 +318,21 @@ pub struct OutcomeError {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HttpOutcomeMessage {
     pub sender: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// `Some(Value::Null)` when the body carries `"result": null`; `None` when the key is absent.
+    #[serde(
+        default,
+        deserialize_with = "present_value",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub result: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<OutcomeError>,
     #[serde(rename = "authChain", default, skip_serializing_if = "Option::is_none")]
     pub auth_chain: Option<AuthChain>,
+}
+
+fn present_value<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(d).map(Some)
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -398,7 +407,7 @@ async fn cors_preflight(req: Request, next: Next) -> Response {
             .header(header::ACCESS_CONTROL_ALLOW_METHODS, "GET, POST, OPTIONS")
             .header(
                 header::ACCESS_CONTROL_ALLOW_HEADERS,
-                "content-type, x-dcl-client, x-correlation-id",
+                "content-type, x-dcl-client, x-correlation-id, x-identity-verifier",
             )
             .header(header::ACCESS_CONTROL_EXPOSE_HEADERS, CORRELATION_HEADER)
             .header(header::ACCESS_CONTROL_MAX_AGE, "3600")
@@ -1427,6 +1436,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_present_null_result_is_kept_apart_from_a_missing_one() {
+        let addr = "0x1234567890123456789012345678901234567890";
+        let body: HttpOutcomeMessage =
+            serde_json::from_value(json!({ "sender": addr, "result": null })).unwrap();
+        assert_eq!(body.result, Some(Value::Null));
+        assert!(validate_outcome_body(&body).is_ok());
+        let missing: HttpOutcomeMessage =
+            serde_json::from_value(json!({ "sender": addr })).unwrap();
+        assert!(missing.result.is_none());
+    }
+
+    #[tokio::test]
+    async fn an_outcome_without_result_or_error_is_rejected() {
+        let (status, body) = call(
+            &router().await,
+            json_post(
+                "/v2/requests/8c545b52-c08e-4c39-a854-46e2b5b03c48/outcome",
+                serde_json::to_vec(
+                    &json!({ "sender": "0x1234567890123456789012345678901234567890" }),
+                )
+                .unwrap(),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(
+            body["error"],
+            "Outcome must include either a result or an error"
+        );
+    }
+
     async fn router() -> Router {
         routes().with_state(crate::api::tests_support::state_without_db().await)
     }
@@ -1896,6 +1937,38 @@ mod tests {
             "another network still answers: {body}"
         );
         db.teardown().await;
+    }
+
+    #[tokio::test]
+    async fn a_null_result_is_delivered_as_null() {
+        let Some((_db, state)) = replica().await else {
+            return;
+        };
+        let app = app(&state);
+        let ephemeral = alloy_signer_local::PrivateKeySigner::random();
+        let chain = delegated(&format!("{:#x}", ephemeral.address()));
+        let body = serde_json::to_vec(
+            &json!({ "method": "eth_sendTransaction", "params": [{}], "authChain": chain }),
+        )
+        .unwrap();
+        let (status, created) = call(&app, json_post("/auth-api/requests", body)).await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        let id = created["requestId"].as_str().unwrap().to_string();
+
+        let outcome = serde_json::to_vec(
+            &json!({ "sender": "0x1234567890123456789012345678901234567890", "result": null }),
+        )
+        .unwrap();
+        let (status, body) = call(
+            &app,
+            json_post(&format!("/auth-api/v2/requests/{id}/outcome"), outcome),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, answered) = call(&app, get_req(&format!("/auth-api/requests/{id}"))).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(answered.get("result"), Some(&Value::Null), "{answered}");
+        assert!(answered.get("error").is_none());
     }
 
     #[tokio::test]
@@ -2462,6 +2535,7 @@ mod tests {
                     is_mobile: false,
                     created_at: now,
                     expiration: now + Duration::seconds(3600),
+                    auth_request_id: None,
                 },
             )
             .await
@@ -2510,6 +2584,11 @@ mod tests {
     }
 
     async fn identity_post() -> Request {
+        identity_post_with(json!({})).await
+    }
+
+    /// An identity create whose body also carries `extra`'s fields.
+    async fn identity_post_with(extra: Value) -> Request {
         let ephemeral = alloy_signer_local::PrivateKeySigner::random();
         let eph_address = format!("{:#x}", ephemeral.address());
         let identity = json!({
@@ -2517,7 +2596,11 @@ mod tests {
             "expiration": "2100-01-01T00:00:00.000Z",
             "authChain": delegated(&eph_address),
         });
-        let body = serde_json::to_vec(&json!({ "identity": identity })).unwrap();
+        let mut body = json!({ "identity": identity });
+        body.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let body = serde_json::to_vec(&body).unwrap();
         let headers = crate::shared::signed_fetch::test_support::signed_headers(
             "post",
             "/auth-api/identities",
@@ -2687,6 +2770,115 @@ mod tests {
         db.teardown().await;
     }
 
+    /// A cross-origin client may send its verifier on pickup.
+    #[tokio::test]
+    async fn the_preflight_allows_the_identity_verifier_header() {
+        use tower::ServiceExt;
+        let res = Router::new()
+            .nest(
+                "/auth-api",
+                routes().with_state(crate::api::tests_support::state_without_db().await),
+            )
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/auth-api/identities/0f007385-b6f9-44b7-aeb2-748605afe1a9")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NO_CONTENT);
+        let allowed = res.headers()[header::ACCESS_CONTROL_ALLOW_HEADERS]
+            .to_str()
+            .unwrap();
+        assert!(
+            allowed.split(", ").any(|h| h == "x-identity-verifier"),
+            "{allowed}"
+        );
+    }
+
+    /// An identity bound to a deep-link request is served to the verifier it
+    /// was derived from, from any network; a pickup with a wrong verifier or
+    /// none, from the same IP, another network or a mobile create, is refused
+    /// (401) and leaves it parked.
+    #[tokio::test]
+    async fn a_bound_identity_is_served_only_to_its_verifier() {
+        let Some(db) = scratch_database().await else {
+            return;
+        };
+        const VERIFIER: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        const OTHER: &str = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+        let pickup = |id: &str, ip: &str, verifier: Option<&str>| {
+            let mut req = Request::builder()
+                .uri(format!("/auth-api/identities/{id}"))
+                .header("x-real-ip", ip);
+            if let Some(verifier) = verifier {
+                req = req.header("x-identity-verifier", verifier);
+            }
+            req.body(Body::empty()).unwrap()
+        };
+        let bound = json!({ "authRequestId": "0F007385-B6F9-44B7-AEB2-748605AFE1A9" });
+
+        let state = state_on_pool(db.pool.clone()).await;
+        let main = app(&state);
+        let (status, body) = call(
+            &main,
+            identity_post_with(json!({ "authRequestId": "not-a-uuid" })).await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+        let (status, created) = call(&main, identity_post_with(bound.clone()).await).await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        let id = created["identityId"].as_str().unwrap().to_string();
+        let (status, body) = call(&main, pickup(&id, "203.0.113.9", Some(OTHER))).await;
+        assert_eq!(
+            (status, body["error"].as_str()),
+            (StatusCode::UNAUTHORIZED, Some("Invalid identity verifier"))
+        );
+        for ip in ["203.0.113.9", "198.51.100.7"] {
+            let (status, body) = call(&main, pickup(&id, ip, None)).await;
+            assert_eq!(
+                (status, body["error"].as_str()),
+                (StatusCode::UNAUTHORIZED, Some("Invalid identity verifier")),
+                "{ip}"
+            );
+        }
+        let (status, body) = call(&main, pickup(&id, "198.51.100.7", Some(VERIFIER))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = call(&main, pickup(&id, "203.0.113.9", Some(VERIFIER))).await;
+        assert_eq!(
+            (status, body["error"].as_str()),
+            (StatusCode::NOT_FOUND, Some("Identity was already consumed"))
+        );
+
+        // An identity with no binding keeps the IP check, verifier or not.
+        let (_, created) = call(&main, identity_post().await).await;
+        let id = created["identityId"].as_str().unwrap().to_string();
+        let (status, _) = call(&main, pickup(&id, "198.51.100.7", Some(VERIFIER))).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, body) = call(&main, pickup(&id, "203.0.113.9", None)).await;
+        assert_eq!(
+            (status, body["error"].as_str()),
+            (
+                StatusCode::NOT_FOUND,
+                Some("Identity was deleted due to IP mismatch")
+            )
+        );
+
+        // A mobile create skips the IP check but not the verifier.
+        let mut mobile = bound.clone();
+        mobile["isMobile"] = json!(true);
+        let (_, created) = call(&main, identity_post_with(mobile).await).await;
+        let id = created["identityId"].as_str().unwrap().to_string();
+        let (status, _) = call(&main, pickup(&id, "198.51.100.7", None)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let (status, body) = call(&main, pickup(&id, "198.51.100.7", Some(VERIFIER))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        db.teardown().await;
+    }
+
     #[tokio::test]
     async fn expired_identities_and_aged_tombstones_are_swept() {
         let Some((db, state)) = replica().await else {
@@ -2710,6 +2902,7 @@ mod tests {
                     is_mobile: false,
                     created_at: now - Duration::seconds(3601),
                     expiration: now - Duration::seconds(1),
+                    auth_request_id: None,
                 },
             )
             .await

@@ -235,14 +235,10 @@ pub(crate) fn emote_download_hashes<'a>(
     urns: impl IntoIterator<Item = &'a EmoteUrn>,
     resolve: impl FnMut(&'a EmoteUrn) -> Option<String>,
 ) -> Vec<String> {
-    let mut hashes: Vec<String> = urns
-        .into_iter()
-        .filter(|urn| urn.scene_emote().is_none())
-        .filter_map(resolve)
-        .collect();
-    hashes.sort();
-    hashes.dedup();
-    hashes
+    common::partition::resolved_hashes(
+        urns.into_iter().filter(|urn| urn.scene_emote().is_none()),
+        resolve,
+    )
 }
 
 #[derive(Component, Default)]

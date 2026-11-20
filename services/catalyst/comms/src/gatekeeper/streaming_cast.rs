@@ -39,7 +39,9 @@
 //! Errors answer upstream's `{"error": msg}` with its statuses; a signature
 //! refusal answers the crypto middleware's `{"ok": false, "message"}` and a
 //! body refusal `@dcl/schema-validator-component`'s. Local preview realms are
-//! not special-cased: upstream does so only with `ALLOW_LOCAL_PREVIEW=true`.
+//! not special-cased here, and `ALLOW_LOCAL_PREVIEW` does not apply to Cast
+//! (it only skips `/get-scene-adapter`'s deployment check); upstream's Cast
+//! skips the place permission check for them when that setting is on.
 
 use axum::Json;
 use axum::body::Bytes;
@@ -869,9 +871,10 @@ pub async fn generate_stream_link(
         .ok_or_else(|| ApiError::not_found(PLACE_NOT_FOUND_MSG))?;
     // Explicit admins are stored under the bound scene's entity id
     // (`/scene-admin`); the credential stays under the catalogue place, and
-    // a world's one credential takes authority over the whole world.
+    // a world's one credential takes authority over the whole world or an
+    // admin of the bound scene.
     let authority = super::key_authority(&state, &place_id, world, bound.place);
-    match scene::scene_manager_decision(&state, &authority, &sf.signer).await {
+    match super::key_decision(&state, &authority, bound.world_scene.as_ref(), &sf.signer).await {
         PermissionDecision::Allowed => {}
         PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
             tracing::warn!(signer = %sf.signer, place_id, "stream link refused: not a scene admin");

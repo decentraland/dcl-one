@@ -75,16 +75,20 @@ pub fn marketplaces(net: ChainNet) -> &'static [(&'static str, u64, bool)] {
     deployments(net.chain_id())
 }
 
+/// A marketplace contract, its deployment block and whether it cancels by digest (V3).
+type Deployment = (&'static str, u64, bool);
+
 /// The off-chain marketplace deployments of a chain, oldest first, with the
 /// block each was deployed in and whether it cancels by digest (V3).
 /// Mainnet blocks: `eth_getCode` bisection on rpc.decentraland.org,
 /// 2026-09-25; V1 is the squid's `OffChainMarketplace`, still holding the
 /// most mirrored trades. Testnet blocks (Amoy, Sepolia, the addresses of
 /// `listings::offchain_marketplaces` and the dApps' `OffChainMarketplace`):
-/// the same bisection, 2026-11-02. Sepolia has no V1. Empty for any other chain.
-pub fn deployments(chain_id: i64) -> &'static [(&'static str, u64, bool)] {
-    match chain_id {
-        137 => &[
+/// the same bisection, 2026-11-02. Sepolia has no V1.
+const DEPLOYMENTS: [(i64, &[Deployment]); 4] = [
+    (
+        listings::MATIC_MAINNET,
+        &[
             (
                 "0x540fb08edb56aae562864b390542c97f562825ba",
                 62_349_044,
@@ -101,7 +105,10 @@ pub fn deployments(chain_id: i64) -> &'static [(&'static str, u64, bool)] {
                 true,
             ),
         ],
-        1 => &[
+    ),
+    (
+        listings::ETHEREUM_MAINNET,
+        &[
             (
                 "0x2d6b3508f9aca32d2550f92b2addba932e73c1ff",
                 20_843_699,
@@ -118,7 +125,10 @@ pub fn deployments(chain_id: i64) -> &'static [(&'static str, u64, bool)] {
                 true,
             ),
         ],
-        80002 => &[
+    ),
+    (
+        listings::MATIC_AMOY,
+        &[
             (
                 "0x6ab20ae56673ed65f520b7be332aeb61b3ed727d",
                 12_490_079,
@@ -135,7 +145,10 @@ pub fn deployments(chain_id: i64) -> &'static [(&'static str, u64, bool)] {
                 true,
             ),
         ],
-        11155111 => &[
+    ),
+    (
+        listings::ETHEREUM_SEPOLIA,
+        &[
             (
                 "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7",
                 9_455_328,
@@ -147,8 +160,26 @@ pub fn deployments(chain_id: i64) -> &'static [(&'static str, u64, bool)] {
                 true,
             ),
         ],
-        _ => &[],
+    ),
+];
+
+/// Every chain [`deployments`] lists.
+pub const OFFCHAIN_MARKETPLACE_CHAINS: [i64; DEPLOYMENTS.len()] = {
+    let mut chains = [0; DEPLOYMENTS.len()];
+    let mut i = 0;
+    while i < chains.len() {
+        chains[i] = DEPLOYMENTS[i].0;
+        i += 1;
     }
+    chains
+};
+
+/// The [`DEPLOYMENTS`] of a chain; empty for any other chain.
+pub fn deployments(chain_id: i64) -> &'static [(&'static str, u64, bool)] {
+    DEPLOYMENTS
+        .iter()
+        .find(|(chain, _)| *chain == chain_id)
+        .map_or(&[], |(_, d)| *d)
 }
 
 /// The deployment `address` names on `net`, as the EIP-712 domain the
@@ -1244,7 +1275,7 @@ pub(crate) mod tests {
 
     #[test]
     fn every_marketplace_the_listings_verify_against_is_walked() {
-        for chain_id in [1, 137, 11_155_111, 80_002] {
+        for chain_id in OFFCHAIN_MARKETPLACE_CHAINS {
             let walked = deployments(chain_id);
             for m in listings::offchain_marketplaces(chain_id) {
                 assert!(

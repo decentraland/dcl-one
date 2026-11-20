@@ -28,6 +28,9 @@ const MAX_IDENTITY_TOMBSTONES: usize = 50_000;
 const IDENTITY_SIGNED_PATH: &str = "/identities";
 /// Serializes identity admission across replicas (see `admission_lock`).
 const IDENTITY_ADMISSION_LOCK: &str = "explore_api.auth_identities:admission";
+/// The secret a deep-link client presents on pickup; its `authRequestId` is
+/// derived from it.
+const IDENTITY_VERIFIER_HEADER: &str = "x-identity-verifier";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DeletionReason {
@@ -56,6 +59,8 @@ pub(super) struct IdentityRecord {
     pub is_mobile: bool,
     pub created_at: DateTime<Utc>,
     pub expiration: DateTime<Utc>,
+    /// The deep-link request UUID the identity is bound to, lowercase.
+    pub auth_request_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,6 +68,8 @@ pub struct IdentityRequestBody {
     pub identity: Value,
     #[serde(rename = "isMobile", default)]
     pub is_mobile: Option<bool>,
+    #[serde(rename = "authRequestId", default)]
+    pub auth_request_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -136,6 +143,13 @@ pub(super) async fn create_identity(
     if body.identity.is_null() {
         return bad_request("AuthIdentity is required in request body");
     }
+    if body
+        .auth_request_id
+        .as_deref()
+        .is_some_and(|id| !is_valid_uuid(id))
+    {
+        return bad_request("authRequestId must be a UUID v4");
+    }
     let parsed: StoredIdentity = match serde_json::from_value(body.identity.clone()) {
         Ok(parsed) => parsed,
         Err(err) => return bad_request(&format!("Invalid AuthIdentity: {err}")),
@@ -189,6 +203,7 @@ pub(super) async fn create_identity(
         is_mobile: body.is_mobile.unwrap_or(false),
         created_at: now,
         expiration,
+        auth_request_id: body.auth_request_id.map(|id| id.to_lowercase()),
     };
     match admit_identity(&state, &record, now).await {
         Ok(None) => {}
@@ -287,7 +302,8 @@ pub(super) async fn insert_identity(
 ) -> sqlx::Result<()> {
     sqlx::query(
         "INSERT INTO explore_api.auth_identities (identity_id, identity, ip_address, source, \
-         is_mobile, created_at, expiration) VALUES ($1, $2::json, $3, $4, $5, $6, $7)",
+         is_mobile, created_at, expiration, auth_request_id) \
+         VALUES ($1, $2::json, $3, $4, $5, $6, $7, $8)",
     )
     .bind(&record.identity_id)
     .bind(record.identity.to_string())
@@ -296,6 +312,7 @@ pub(super) async fn insert_identity(
     .bind(record.is_mobile)
     .bind(naive(record.created_at))
     .bind(naive(record.expiration))
+    .bind(&record.auth_request_id)
     .execute(conn)
     .await
     .map(drop)
@@ -379,9 +396,62 @@ pub(super) async fn get_identity(
     }
 }
 
-/// Consumes the identity once: the `DELETE ... RETURNING` and the tombstone
-/// that records why it went commit together, so a concurrent pickup on any
-/// replica waits on the row, finds it gone and reads the reason.
+/// The `authRequestId` a deep-link client derives from its verifier: the
+/// first 16 bytes of SHA-256 over the verifier (base64url of 32 bytes) with
+/// the UUID v4 version and variant bits set. `None` for a malformed verifier.
+fn derive_auth_request_id(verifier: &str) -> Option<String> {
+    if verifier.len() != 43
+        || !verifier
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return None;
+    }
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(verifier.as_bytes());
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Some(Uuid::from_bytes(bytes).hyphenated().to_string())
+}
+
+/// How a pickup's verifier relates to the identity's binding.
+#[derive(Debug, PartialEq, Eq)]
+enum Verification {
+    /// The verifier matches: the IP check is skipped.
+    Verified,
+    /// No binding: the IP check applies.
+    Unbound,
+    /// A bound identity with a wrong, malformed or missing verifier.
+    Refused,
+}
+
+fn verify_pickup(auth_request_id: Option<&str>, verifier: Option<&str>) -> Verification {
+    let Some(bound) = auth_request_id else {
+        return Verification::Unbound;
+    };
+    match verifier.and_then(derive_auth_request_id) {
+        Some(derived) if derived == bound => Verification::Verified,
+        _ => Verification::Refused,
+    }
+}
+
+fn error_response(status: StatusCode, error: &str) -> Response {
+    (
+        status,
+        Json(ErrorBody {
+            error: error.into(),
+        }),
+    )
+        .into_response()
+}
+
+/// Consumes the identity once. The row is locked while the pickup is
+/// decided, and deleted with its tombstone's reason in the same transaction
+/// when it is served, expired or refused for its IP, so a concurrent pickup
+/// on any replica waits on the row, finds it gone and reads the reason. A
+/// bound identity is served only to its verifier, from any network; a pickup
+/// without it (401) keeps the identity for its own client.
 async fn pick_up_identity(
     state: &AppState,
     headers: &HeaderMap,
@@ -389,14 +459,15 @@ async fn pick_up_identity(
 ) -> sqlx::Result<Response> {
     let now = now_micros();
     let mut tx = state.pool.begin().await?;
-    let taken: Option<(String, String, bool, NaiveDateTime)> = sqlx::query_as(
-        "DELETE FROM explore_api.auth_identities WHERE identity_id = $1 \
-         RETURNING identity::text, ip_address, is_mobile, expiration",
+    type Parked = (String, String, bool, NaiveDateTime, Option<String>);
+    let parked: Option<Parked> = sqlx::query_as(
+        "SELECT identity::text, ip_address, is_mobile, expiration, auth_request_id \
+         FROM explore_api.auth_identities WHERE identity_id = $1 FOR UPDATE",
     )
     .bind(id)
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((identity, ip_address, is_mobile, expiration)) = taken else {
+    let Some((identity, ip_address, is_mobile, expiration, auth_request_id)) = parked else {
         tx.commit().await?;
         return identity_status_response(state, id).await;
     };
@@ -404,54 +475,60 @@ async fn pick_up_identity(
     let signer = identity_owner(&identity).unwrap_or_default();
 
     let request_ip = client_ip(headers);
+    let ip_mismatch =
+        !ip_address.is_empty() && !request_ip.is_empty() && !ips_match(&ip_address, &request_ip);
+    let verifier = headers
+        .get(IDENTITY_VERIFIER_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| !v.is_empty());
     let (reason, answer) = if expiration.and_utc() < now {
         (
             DeletionReason::Expired,
-            (
-                StatusCode::GONE,
-                Json(ErrorBody {
-                    error: "Identity has expired".into(),
-                }),
-            )
-                .into_response(),
-        )
-    } else if !is_mobile
-        && !ip_address.is_empty()
-        && !request_ip.is_empty()
-        && !ips_match(&ip_address, &request_ip)
-    {
-        (
-            DeletionReason::IpMismatch,
-            (
-                StatusCode::FORBIDDEN,
-                Json(ErrorBody {
-                    error: "IP address mismatch".into(),
-                }),
-            )
-                .into_response(),
+            error_response(StatusCode::GONE, "Identity has expired"),
         )
     } else {
-        if !is_mobile
-            && !ip_address.is_empty()
-            && !request_ip.is_empty()
-            && normalize_ip(&ip_address) != normalize_ip(&request_ip)
-        {
-            tracing::warn!(
-                stored = %ip_address,
-                request = %request_ip,
-                %signer,
-                "identity IP matched only by /24 prefix"
-            );
+        let verification = verify_pickup(auth_request_id.as_deref(), verifier);
+        if verification == Verification::Refused {
+            tracing::warn!(%signer, "identity pickup with a missing or wrong verifier; identity kept");
+            tx.commit().await?;
+            return Ok(error_response(
+                StatusCode::UNAUTHORIZED,
+                "Invalid identity verifier",
+            ));
         }
-        (
-            DeletionReason::Consumed,
+        if verification == Verification::Unbound && !is_mobile && ip_mismatch {
             (
-                StatusCode::OK,
-                Json(IdentityIdValidationResponse { identity }),
+                DeletionReason::IpMismatch,
+                error_response(StatusCode::FORBIDDEN, "IP address mismatch"),
             )
-                .into_response(),
-        )
+        } else {
+            if !is_mobile
+                && !ip_mismatch
+                && !ip_address.is_empty()
+                && !request_ip.is_empty()
+                && normalize_ip(&ip_address) != normalize_ip(&request_ip)
+            {
+                tracing::warn!(
+                    stored = %ip_address,
+                    request = %request_ip,
+                    %signer,
+                    "identity IP matched only by /24 prefix"
+                );
+            }
+            (
+                DeletionReason::Consumed,
+                (
+                    StatusCode::OK,
+                    Json(IdentityIdValidationResponse { identity }),
+                )
+                    .into_response(),
+            )
+        }
     };
+    sqlx::query("DELETE FROM explore_api.auth_identities WHERE identity_id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
     // The create stored the tombstone while fewer than the cap were kept: the
     // pickup sets its reason. One that has none (the table was full at the
     // create) gets one only under the same cap, so pickups never grow the
@@ -541,4 +618,40 @@ fn forbidden(msg: &str) -> Response {
         }),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod verifier_tests {
+    use super::*;
+
+    const VERIFIER: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    const REQUEST_ID: &str = "0f007385-b6f9-44b7-aeb2-748605afe1a9";
+
+    #[test]
+    fn the_request_id_is_derived_from_the_verifier_as_clients_derive_it() {
+        assert_eq!(
+            derive_auth_request_id(VERIFIER).as_deref(),
+            Some(REQUEST_ID)
+        );
+        for malformed in [
+            "",
+            &VERIFIER[1..],
+            &format!("{VERIFIER}A"),
+            &VERIFIER.replace('A', "+"),
+        ] {
+            assert_eq!(derive_auth_request_id(malformed), None, "{malformed}");
+        }
+    }
+
+    #[test]
+    fn a_bound_pickup_needs_the_matching_verifier() {
+        use Verification::*;
+        let other = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+        assert_eq!(verify_pickup(None, None), Unbound);
+        assert_eq!(verify_pickup(None, Some(other)), Unbound);
+        assert_eq!(verify_pickup(Some(REQUEST_ID), Some(VERIFIER)), Verified);
+        assert_eq!(verify_pickup(Some(REQUEST_ID), Some(other)), Refused);
+        assert_eq!(verify_pickup(Some(REQUEST_ID), Some("short")), Refused);
+        assert_eq!(verify_pickup(Some(REQUEST_ID), None), Refused);
+    }
 }

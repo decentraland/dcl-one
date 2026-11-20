@@ -525,6 +525,31 @@ impl ChainIndex for RentalsIndex {
     }
 }
 
+/// Whether this index walks `venue`: only the mainnet Rentals contract.
+pub fn walks(venue: &str) -> bool {
+    venue.eq_ignore_ascii_case(RENTALS_MAINNET)
+}
+
+/// The asset's most recent rent at `venue`: its lessor and when it ends
+/// (unix seconds; the rentals subgraph's `endsAt`, block time plus days).
+pub async fn latest_rent(
+    pool: &PgPool,
+    venue: &str,
+    contract_address: &str,
+    token_id: &str,
+) -> sqlx::Result<Option<(String, i64)>> {
+    sqlx::query_as(
+        "SELECT signer, block_time + rental_days::bigint * 86400 FROM shop.rental_event \
+         WHERE rentals_address = $1 AND contract_address = $2 AND token_id = $3::numeric AND kind = 'rented' \
+         ORDER BY block_number DESC, log_index DESC LIMIT 1",
+    )
+    .bind(venue.to_ascii_lowercase())
+    .bind(contract_address.to_ascii_lowercase())
+    .bind(token_id)
+    .fetch_optional(pool)
+    .await
+}
+
 /// Whether the statuses may be trusted at `now` (the cursor is published).
 pub async fn ready(pool: &PgPool, now: DateTime<Utc>) -> bool {
     chain_walk::ready_cursor(pool, INDEXER_RENTALS, ChainNet::Ethereum, now)

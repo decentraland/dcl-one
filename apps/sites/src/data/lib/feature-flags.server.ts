@@ -32,7 +32,7 @@ function site(): string {
 
 const lastGood = new Map<string, DappsFlagsAnswer>();
 
-async function load(origin: string): Promise<DappsFlagsAnswer> {
+async function load(origin: string): Promise<DappsFlagsAnswer | null> {
   try {
     const answer: RemoteFlagsAnswer = await withDeadline(async (signal) => {
       const res = await fetch(`${service()}/dapps.json`, { headers: { Referer: `${origin}/` }, signal });
@@ -45,20 +45,25 @@ async function load(origin: string): Promise<DappsFlagsAnswer> {
     lastGood.set(origin, answer);
     return answer;
   } catch {
-    return lastGood.get(origin) ?? NONE;
+    return lastGood.get(origin) ?? null;
   }
 }
 
 const read = ttlMemo({ ttlMs: 60_000, keyOf: (origin: string) => origin, load });
 
 /** decentraland.org's `dapps` flags and their variants' payloads, as last read. */
-export function dappsFlagsAnswer(): Promise<DappsFlagsAnswer> {
-  return read(site());
+export async function dappsFlagsAnswer(): Promise<DappsFlagsAnswer> {
+  return (await read(site())) ?? NONE;
+}
+
+/** For routes that must distinguish an unread flag from an explicitly disabled one. */
+export async function knownDappsFlags(): Promise<DappsFlags | null> {
+  return (await read(site()))?.flags ?? null;
 }
 
 /** decentraland.org's `dapps` flags, each true only where the service says so. */
 export async function dappsFlags(): Promise<DappsFlags> {
-  return (await read(site())).flags;
+  return (await dappsFlagsAnswer()).flags;
 }
 
 export const resetDappsFlags = (): void => {

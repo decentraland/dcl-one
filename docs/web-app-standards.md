@@ -77,9 +77,12 @@ Current practice per app, verified on `origin/main` when this was written. It is
 | Fetchers and domain logic | `src/data/lib/<domain>/` |
 | Key and options factories | `src/data/lib/<domain>/` |
 | Query hooks | `src/features/<domain>/` |
-| Route loaders and head | `src/routes/` |
+| Page components that wire library views to Sites behavior | `src/pages/<domain>/` |
+| Route modules, loaders, actions, headers and metadata | `src/routes/` |
 
-Sites layers are `core`, `data`, `features` and `routes`, and a layer imports only the layers `apps/sites/src/boundaries.json` lists for it; `apps/sites/scripts/boundaries.test.ts` enforces this. No decision yet on enforcing layers in other apps.
+A route may render a library view directly. Use a [page component](adr/2026-11-20-sites-pages.md) when the screen needs its own app wiring. Domain hooks and providers stay in features.
+
+Sites layers are `core`, `data`, `features`, `pages` and `routes`, and a layer imports only the layers `apps/sites/src/boundaries.json` lists for it; `apps/sites/scripts/boundaries.test.ts` enforces this. No decision yet on enforcing layers in other apps.
 
 Current practice: Sites chrome uses `chromeKeys` and `chromeNotificationsQuery` in `apps/sites/src/data/lib/chrome/index.ts`, and `useChromeNotifications` in `apps/sites/src/features/components/chrome/`.
 

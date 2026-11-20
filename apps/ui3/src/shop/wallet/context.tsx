@@ -76,11 +76,21 @@ export function useWalletAccount(provider: Eip1193Provider | null): string | nul
       return;
     }
     let live = true;
+    let receivedAccountChange = false;
+    const off = subscribeWallet(provider, {
+      onAccountsChanged: (next) => {
+        receivedAccountChange = true;
+        setAccount(next);
+      },
+    });
     provider.request({ method: "eth_accounts" }).then(
-      (list) => live && setAccount((list as string[] | undefined)?.[0]?.toLowerCase() ?? null),
+      (list) => {
+        if (live && !receivedAccountChange) {
+          setAccount((list as string[] | undefined)?.[0]?.toLowerCase() ?? null);
+        }
+      },
       () => {},
     );
-    const off = subscribeWallet(provider, { onAccountsChanged: (next) => setAccount(next) });
     return () => {
       live = false;
       off();
