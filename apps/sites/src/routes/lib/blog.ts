@@ -6,7 +6,10 @@ import type { BlogOutcome } from "@/data/lib/blog/pages";
 import type { BlogListPayload, BlogPostPayload } from "@/data/lib/blog/types";
 import { pageLoader, type PageDefaults } from "@/core/lib/telemetry/page-loader";
 
-import { absoluteUrl, notFoundMeta, SITE_NAME, socialMeta } from "./social-meta";
+import { absoluteUrl, notFoundMeta, SITE_NAME, socialMeta, SCHEMA_ORG } from "./social-meta";
+
+/** The blog keeps only https pictures, as decentraland.org's blog card did; anything else shows the default. */
+const httpsImage = (url: string | null | undefined) => (url?.startsWith("https://") ? url : undefined);
 
 const FALLBACK: PageDefaults = { variant: "index_grid" };
 
@@ -63,7 +66,7 @@ function blogCard({ title, description, image, ...rest }: BlogCardInput): MetaDe
   return socialMeta({
     title: title ? `${title} | ${SITE_NAME}` : BLOG_DEFAULT_TITLE,
     description: description || BLOG_DEFAULT_DESCRIPTION,
-    image: image?.startsWith("https://") ? image : BLOG_DEFAULT_IMAGE,
+    image: httpsImage(image) ?? BLOG_DEFAULT_IMAGE,
     ...rest,
   });
 }
@@ -74,7 +77,7 @@ export function blogIndexMeta(data: BlogListPayload | undefined, base: string | 
   if (data?.state !== "ok") return blogCard({ url });
   const newest = data.posts[0];
   const blog = {
-    "@context": "https://schema.org",
+    "@context": SCHEMA_ORG,
     "@type": "Blog",
     name: BLOG_DEFAULT_TITLE,
     url: absoluteUrl(base, BLOG_HOME),
@@ -116,9 +119,9 @@ export function blogPostMeta(data: BlogPostPayload | undefined, base: string | u
   const author = post.author.slug ? post.author.name : undefined;
   const section = post.category.slug !== UNCATEGORIZED.slug ? post.category.title : undefined;
   const published = post.publishedAt || undefined;
-  const image = post.image?.url.startsWith("https://") ? post.image.url : undefined;
+  const image = httpsImage(post.image?.url);
   const article = {
-    "@context": "https://schema.org",
+    "@context": SCHEMA_ORG,
     "@type": "BlogPosting",
     headline: post.title,
     url,
