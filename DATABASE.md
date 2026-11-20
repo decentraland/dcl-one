@@ -129,7 +129,10 @@ take that lock's shared side in their write transaction and re-check every
 file they name, so an unlink batch never removes a file such a deployment
 references; a content deploy waits at most 5 s for it and answers 503 past
 that. Synced content writes do not take it and rely on the collector's age
-floor.
+floor. Content's partial-upload cleanup deletes an expired upload's
+`content.pending_deployments` row and unlinks the files it wrote
+(`pending_deployment_files.written`) that no reference names in one
+transaction under the exclusive lock, without the age floor.
 
 Genesis storage management requires LAND rights at the requested parcel, using
 the published LAND manager index or its configured document source. Without a

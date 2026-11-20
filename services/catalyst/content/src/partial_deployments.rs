@@ -24,12 +24,12 @@
 //! bytes per account and per server, batch bytes per account per minute, the
 //! scene size cap. An upload lives `PENDING_DEPLOYMENT_TTL` from its first
 //! batch; the leased `content-partial-uploads-cleanup` job deletes expired
-//! uploads and unlinks the staged blobs they wrote themselves (a receipt's
-//! `written`) that the collector would: past its age floor, outside its
-//! fixed references (asset packs, global scenes) and named by no domain
-//! ([`gc::unlink_orphans`], which knows the pending tables). A blob still
-//! younger than the floor is left to the collector: a regular deploy may be
-//! committing it (the SDK skips what `/available-content` reports).
+//! uploads and, as upstream, unlinks the staged blobs they wrote themselves
+//! (a receipt's `written`) that no domain names: no deployment, snapshot,
+//! other pending upload or fixed reference of the collector
+//! ([`gc::unlink_orphans_on`], under the exclusive store lock; the race
+//! reasoning is on `reclaim_upload`). Until then `/contents/{hash}` serves
+//! them, as upstream does; after it, a 404.
 //!
 //! The entity's lock is PostgreSQL's, so it holds across replicas: a
 //! session advisory lock on a connection of its own, held from a batch's
@@ -59,8 +59,8 @@
 //! keeps the in-memory upload budget; a declared batch from a source that
 //! spent its daily quota, or from an account over its byte rate, is turned
 //! away before its files are buffered ([`admit_before_files`]), on the
-//! claimed signer and entity (authentication follows). There is no shared
-//! content lock against the collector: the receipts are written before the
+//! claimed signer and entity (authentication follows). Batches take no
+//! store lock against the collector: the receipts are written before the
 //! blobs, and the collector reads them.
 
 use std::collections::{HashMap, HashSet};
@@ -124,9 +124,6 @@ pub struct Limits {
     pub global_bytes: i64,
     /// `MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE`.
     pub bytes_per_minute: i64,
-    /// The collector's age floor ([`gc::orphan_age_floor`]): cleanup
-    /// unlinks no younger blob.
-    pub orphan_min_age: Duration,
     /// The global scenes the collector keeps (`GLOBAL_SCENES_URN`).
     pub global_scenes_urn: Vec<String>,
 }
@@ -141,7 +138,6 @@ impl Default for Limits {
             account_bytes: 1024 * 1024 * 1024,
             global_bytes: 50 * 1024 * 1024 * 1024,
             bytes_per_minute: 512 * 1024 * 1024,
-            orphan_min_age: gc::MIN_ORPHAN_AGE,
             global_scenes_urn: Vec::new(),
         }
     }
@@ -159,10 +155,6 @@ impl Limits {
             account_bytes: int(c.max_pending_bytes_per_deployer),
             global_bytes: int(c.max_pending_bytes),
             bytes_per_minute: int(c.max_partial_upload_bytes_per_minute),
-            orphan_min_age: gc::orphan_age_floor(
-                config.worlds.multipart_upload_timeout_ms,
-                config.worlds.deployment_processing_timeout_ms,
-            ),
             global_scenes_urn: config
                 .worlds_content
                 .global_scenes_urn
@@ -1628,39 +1620,64 @@ async fn delete_pending(pool: &PgPool, entity_id: &str) {
 }
 
 /// Drops an upload that can never be published, with its accounting, and
-/// unlinks the staged blobs it wrote that the collector would. Runs under
-/// the entity's lock.
+/// unlinks the staged blobs it wrote that nothing else names. Runs under the
+/// entity's lock, after the deploy's transaction (and its shared store lock)
+/// ended; the request waits for the exclusive store lock (at most its timeout).
 async fn release_upload(pool: &PgPool, storage: &Storage, limits: &Limits, entity_id: &str) {
-    let released = async {
-        let Some(keys) = take_upload(pool, entity_id, None).await? else {
-            return anyhow::Ok(());
-        };
-        tracing::info!(
+    match reclaim_upload(pool, storage, limits, entity_id, None).await {
+        Ok(true) => tracing::info!(
             entity_id,
             "released a partial upload that can never be published"
-        );
-        unlink_orphans(pool, storage, limits, &keys).await?;
-        anyhow::Ok(())
-    };
-    if let Err(e) = released.await {
-        tracing::warn!(entity_id, error = %e, "failed to release a partial upload; cleanup or the collector will reclaim it");
+        ),
+        Ok(false) => {}
+        Err(e) => {
+            tracing::warn!(entity_id, error = %e, "failed to release a partial upload; cleanup will reclaim it")
+        }
     }
 }
 
 /// Deletes an upload (when `expired_before` is set, only if created before
-/// it) and returns the keys it wrote itself. The caller holds the entity's
-/// lock, so no batch is committing it.
-async fn take_upload(
+/// it) and unlinks the staged blobs it wrote itself (`written`) that no
+/// domain names; answers whether it was deleted. The caller holds the
+/// entity's lock, so no batch of the upload is committing.
+///
+/// Races: the row goes and the references are read and the blobs unlinked
+/// in one transaction holding the exclusive store lock, the collector's.
+/// Local content deploys (a partial publication included) and world scene
+/// deploys take its shared side before they check that the files they name
+/// are stored, so either such a deploy has committed its `content_files`
+/// row and the check keeps the blob, or it finds the blob gone and answers
+/// 503 for a retry that uploads it again. Another upload's receipts are
+/// written before its blobs, so a staged blob it claims is kept (an expired
+/// one's too, until its own cleanup); one it found stored may go between its
+/// existence check and its receipt, and its completing batch's re-check
+/// reports it missing again. A failure, or a store lock busy past its
+/// timeout, rolls the row back and the next run retries, as upstream
+/// releases the accounting only once every unlink succeeded. Writers that do
+/// not take the store lock (peer sync and read-through, other domains) are
+/// not ordered: an upload whose entity a sync or read-through download of
+/// this process holds is skipped (checked under the lock, so a download that
+/// began while it was awaited counts), but such a writer that found a shared blob stored, or
+/// stored it, and commits its row after the check loses it, the window the
+/// collector leaves them too once a blob is past its age floor.
+async fn reclaim_upload(
     pool: &PgPool,
+    storage: &Storage,
+    limits: &Limits,
     entity_id: &str,
     expired_before: Option<i64>,
-) -> sqlx::Result<Option<Vec<String>>> {
-    let mut tx = pool.begin().await?;
+) -> Result<bool, gc::GcError> {
+    gc::check_json_sources(&mut *pool.acquire().await?).await?;
+    let mut lock = gc::lock_store_exclusive(pool).await?;
+    // Checked once the lock is held: a download that began while it was awaited counts.
+    if crate::sync_deployer::is_buffered(entity_id) {
+        return Ok(false);
+    }
     let keys: Vec<String> = sqlx::query_scalar(
         "SELECT hash FROM content.pending_deployment_files WHERE entity_id = $1 AND written",
     )
     .bind(entity_id)
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut *lock)
     .await?;
     let deleted = sqlx::query(
         "DELETE FROM content.pending_deployments WHERE entity_id = $1
@@ -1668,30 +1685,17 @@ async fn take_upload(
     )
     .bind(entity_id)
     .bind(expired_before.map(|ms| ms as f64))
-    .execute(&mut *tx)
+    .execute(&mut *lock)
     .await?
     .rows_affected();
-    tx.commit().await?;
-    Ok((deleted > 0).then_some(keys))
-}
-
-/// Unlinks the keys the collector would: aged past its floor, outside its
-/// fixed references and named by no domain (checked right before the
-/// unlink). Answers how many went.
-async fn unlink_orphans(
-    pool: &PgPool,
-    storage: &Storage,
-    limits: &Limits,
-    keys: &[String],
-) -> anyhow::Result<usize> {
-    Ok(gc::unlink_orphans(
-        pool,
-        storage,
-        &limits.global_scenes_urn,
-        keys,
-        limits.orphan_min_age,
-    )
-    .await?)
+    if deleted == 0 {
+        return Ok(false);
+    }
+    // Its receipts went with the row (cascade), so only other references count.
+    let pins = gc::Pins::new(storage, &limits.global_scenes_urn);
+    gc::unlink_orphans_on(&mut lock, pins, &keys).await?;
+    lock.commit().await?;
+    Ok(true)
 }
 
 /// One cleanup run: every expired upload whose lock is free (keyset pages
@@ -1749,16 +1753,18 @@ async fn reclaim_expired(
             let Some(lock) = EntityLock::try_acquire(pool, entity_id).await? else {
                 continue;
             };
-            let reclaimed = async {
-                if let Some(keys) = take_upload(pool, entity_id, Some(cutoff)).await? {
-                    unlink_orphans(pool, storage, limits, &keys).await?;
-                }
-                anyhow::Ok(())
-            }
-            .await;
+            let reclaimed = reclaim_upload(pool, storage, limits, entity_id, Some(cutoff)).await;
             lock.release().await;
             match reclaimed {
-                Ok(()) => removed += 1,
+                Ok(true) => removed += 1,
+                Ok(false) => {}
+                // Deploys kept the store lock busy: the next run retries it.
+                Err(gc::GcError::LockTimeout) => {
+                    tracing::info!(
+                        entity_id,
+                        "expired partial upload deferred: the store lock is busy"
+                    );
+                }
                 Err(e) => {
                     failed += 1;
                     tracing::warn!(entity_id, error = %e, "failed to reclaim an expired partial upload");

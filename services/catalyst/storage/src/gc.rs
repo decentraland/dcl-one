@@ -18,7 +18,8 @@
 //! take shared (synced content writes and other domains rely on the age floor
 //! alone), an empty reference set with
 //! candidates is refused unless asked for, and the dry run reports without
-//! deleting.
+//! deleting. A writer reclaiming the blobs it staged ([`unlink_orphans_on`])
+//! runs the same reference check under the same lock, without the age floor.
 //!
 //! `catalog_is_complete` (the test below) walks the schema: every column
 //! whose name says hash, cid, entity id, thumbnail or image must be listed
@@ -510,7 +511,8 @@ fn split_source(source: &str) -> (&str, &str) {
 
 /// Refuses a run over world scenes or pending uploads whose content lists
 /// cannot be read exactly (a caller deletes what the references do not name).
-async fn check_json_sources(pool: &PgPool) -> Result<(), GcError> {
+/// It scans every scene: run it before taking the store lock.
+pub async fn check_json_sources(conn: &mut sqlx::PgConnection) -> Result<(), GcError> {
     let bad: Option<String> = sqlx::query_scalar(
         "SELECT entity_id FROM (SELECT entity_id, entity FROM worlds.world_scenes \
            UNION ALL SELECT entity_id, entity FROM worlds.retired_world_scenes \
@@ -522,7 +524,7 @@ async fn check_json_sources(pool: &PgPool) -> Result<(), GcError> {
                 WHERE jsonb_typeof(e -> 'hash') IS DISTINCT FROM 'string' OR e ->> 'hash' = '')) \
          LIMIT 1",
     )
-    .fetch_optional(pool)
+    .fetch_optional(conn)
     .await?;
     match bad {
         Some(entity_id) => Err(GcError::Unreadable(format!(
@@ -772,43 +774,26 @@ async fn aged(
     ))
 }
 
-/// Unlinks those of `keys` a collection pass with `min_age` would: aged
-/// files outside the fixed references (the asset-pack catalogue, the global
-/// scenes) that no domain names, re-checked right before the unlink. For a
-/// writer reclaiming the blobs it staged; younger ones are left to the
-/// collector, which covers the same store-then-row gap. Answers how many
-/// went.
-pub async fn unlink_orphans(
-    pool: &PgPool,
-    storage: &Storage,
-    global_scenes_urn: &[String],
+/// Unlinks those of `keys` no domain names, on `lock` (a [`lock_store_exclusive`]
+/// transaction): for a writer reclaiming the blobs it staged, with no age floor, after
+/// [`check_json_sources`] passed. As the history prune does, it reads every reference under the
+/// lock (the keys are few), where the collector scans unlocked and re-reads only since its fence. The exclusive
+/// lock orders it against the local content and world scene deploys, which take the shared side
+/// and re-check the files they name; writers that do not take it (synced content, other domains)
+/// are not ordered. Answers how many went.
+pub async fn unlink_orphans_on(
+    lock: &mut sqlx::PgConnection,
+    pins: Pins<'_>,
     keys: &[String],
-    min_age: Duration,
 ) -> Result<usize, GcError> {
     if keys.is_empty() {
         return Ok(0);
     }
-    check_json_sources(pool).await?;
-    let fixed = fixed_references(
-        &mut *pool.acquire().await?,
-        Pins::new(storage, global_scenes_urn),
-    )
-    .await?;
-    let now = SystemTime::now();
-    let mut candidates: Vec<String> = Vec::new();
-    for key in keys {
-        if !fixed.contains(key) && aged(storage, key, now, min_age).await? == Some(true) {
-            candidates.push(key.clone());
-        }
-    }
+    let referenced = referenced_among_on(&mut *lock, pins, keys).await?;
     let mut unlinked = 0;
-    for batch in candidates.chunks(CHUNK) {
-        // The fixed references were filtered out above.
-        let referenced = rows_among(&mut *pool.acquire().await?, batch, true, ALL_ROWS).await?;
-        for key in batch.iter().filter(|k| !referenced.contains(*k)) {
-            storage.delete_strict(key).await?;
-            unlinked += 1;
-        }
+    for key in keys.iter().filter(|k| !referenced.contains(*k)) {
+        pins.storage.delete_strict(key).await?;
+        unlinked += 1;
     }
     Ok(unlinked)
 }
@@ -822,7 +807,7 @@ pub async fn collect(
     global_scenes_urn: &[String],
     options: GcOptions,
 ) -> Result<GcReport, GcError> {
-    check_json_sources(pool).await?;
+    check_json_sources(&mut *pool.acquire().await?).await?;
     let pins = Pins::new(storage, global_scenes_urn);
     let fixed = fixed_references(&mut *pool.acquire().await?, pins).await?;
     let refuse_empty =

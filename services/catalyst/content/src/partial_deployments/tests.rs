@@ -513,8 +513,21 @@ async fn an_account_over_its_upload_cap_waits() {
     assert!(headers.contains_key(header::RETRY_AFTER));
 }
 
-/// An expired upload refuses its next batch; the cleanup job deletes it and
-/// unlinks its staged blobs.
+/// The status of a GET and a HEAD of `/contents/{hash}`.
+async fn served(router: &Router, hash: &str) -> (StatusCode, StatusCode) {
+    let get = Request::get(format!("/content/contents/{hash}"))
+        .body(Body::empty())
+        .unwrap();
+    let head = Request::head(format!("/content/contents/{hash}"))
+        .body(Body::empty())
+        .unwrap();
+    (call(router, get).await.0, call(router, head).await.0)
+}
+
+/// An expired upload refuses its next batch; the cleanup job deletes it and,
+/// as upstream, unlinks the staged blobs it wrote that nothing else names,
+/// however young: `/contents/{hash}` serves them while the upload is open
+/// (as upstream) and answers 404 once it is reclaimed.
 #[tokio::test]
 async fn an_expired_upload_is_refused_and_reclaimed() {
     require_test_db!(Some(node) = Node::new("expiry", Limits::default()).await);
@@ -529,6 +542,13 @@ async fn an_expired_upload_is_refused_and_reclaimed() {
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED);
+    for key in [&scene.files[0].0, &scene.id] {
+        assert_eq!(
+            served(&router, key).await,
+            (StatusCode::OK, StatusCode::OK),
+            "an open upload's staged blob is served"
+        );
+    }
     let _reclaim = RECLAIM.lock().await;
     expire(&node.state.pool, &scene.id).await;
     let (status, _, body) = send(
@@ -544,34 +564,232 @@ async fn an_expired_upload_is_refused_and_reclaimed() {
         "This upload expired. Create a new entity with a fresh timestamp."
     );
 
-    // Younger than the collector's floor, the staged blobs are left to it.
     let storage = &node.state.storage;
     cleanup_expired(&node.state.pool, storage, &Limits::default())
         .await
         .unwrap();
     assert_eq!(pending_rows(&node.state.pool, &scene.id).await, 0);
-    assert!(storage.exist(&scene.files[0].0).await.unwrap());
-    assert!(storage.exist(&scene.id).await.unwrap());
+    for key in [&scene.files[0].0, &scene.id] {
+        assert!(!storage.exist(key).await.unwrap(), "{key} is unlinked");
+        assert_eq!(
+            served(&router, key).await,
+            (StatusCode::NOT_FOUND, StatusCode::NOT_FOUND)
+        );
+    }
+}
 
-    // Past it, the next expired upload's blobs go.
-    let scene = make_scene(&signer, &[b"expiry-c", b"expiry-d"], "scene").await;
+/// A staged blob an expired upload wrote stays while a deployment or another
+/// open upload names it; the blobs only it named go.
+#[tokio::test]
+async fn cleanup_keeps_staged_blobs_a_deployment_or_another_upload_names() {
+    require_test_db!(Some(node) = Node::new("shared", Limits::default()).await);
+    let router = node.router();
+    let pool = &node.state.pool;
+    let storage = &node.state.storage;
+    let signer = PrivateKeySigner::random();
+    let tag = uuid::Uuid::new_v4().simple().to_string();
+    let (unique, deployed, open) = (
+        format!("shared-unique-{tag}"),
+        format!("shared-deployed-{tag}"),
+        format!("shared-open-{tag}"),
+    );
+    let expiring = make_scene(
+        &signer,
+        &[
+            unique.as_bytes(),
+            deployed.as_bytes(),
+            open.as_bytes(),
+            b"shared-never-sent",
+        ],
+        "scene",
+    )
+    .await;
+    let (status, _, body) = send(
+        &router,
+        &expiring,
+        &expiring.chain,
+        vec![
+            entity_file(&expiring),
+            expiring.files[0].clone(),
+            expiring.files[1].clone(),
+            expiring.files[2].clone(),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+
+    // A scene listing one staged blob is published; another upload listing
+    // a second one stays open.
+    let published = make_scene_listing(&signer, &[], &[&expiring.files[1].0]).await;
+    let (status, _, body) = send(
+        &router,
+        &published,
+        &published.chain,
+        vec![entity_file(&published)],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let still_open =
+        make_scene_listing(&signer, &[b"shared-open-missing"], &[&expiring.files[2].0]).await;
+    let (status, _, body) = send(
+        &router,
+        &still_open,
+        &still_open.chain,
+        vec![entity_file(&still_open)],
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+
+    let _reclaim = RECLAIM.lock().await;
+    expire(pool, &expiring.id).await;
+    cleanup_expired(pool, storage, &Limits::default())
+        .await
+        .unwrap();
+    assert_eq!(pending_rows(pool, &expiring.id).await, 0);
+    assert!(
+        !storage.exist(&expiring.files[0].0).await.unwrap(),
+        "its own blob goes"
+    );
+    assert!(
+        !storage.exist(&expiring.id).await.unwrap(),
+        "its entity file goes"
+    );
+    assert!(
+        storage.exist(&expiring.files[1].0).await.unwrap(),
+        "a deployment names it"
+    );
+    assert!(
+        storage.exist(&expiring.files[2].0).await.unwrap(),
+        "an open upload names it"
+    );
+    assert_eq!(pending_rows(pool, &still_open.id).await, 1);
+}
+
+/// An upload whose entity a sync or read-through download of this process
+/// holds stays until the hold ends; a staged blob already gone from the store
+/// does not keep the upload from being reclaimed.
+#[tokio::test]
+async fn cleanup_waits_for_a_sync_hold_and_tolerates_a_missing_blob() {
+    require_test_db!(Some(node) = Node::new("sync-hold", Limits::default()).await);
+    let router = node.router();
+    let pool = &node.state.pool;
+    let storage = &node.state.storage;
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"hold-a", b"hold-b", b"hold-missing"], "scene").await;
     let (status, _, _) = send(
         &router,
         &scene,
         &scene.chain,
-        vec![entity_file(&scene), scene.files[0].clone()],
+        vec![
+            entity_file(&scene),
+            scene.files[0].clone(),
+            scene.files[1].clone(),
+        ],
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED);
-    age_blob(storage, &scene.files[0].0).await;
-    age_blob(storage, &scene.id).await;
-    expire(&node.state.pool, &scene.id).await;
-    cleanup_expired(&node.state.pool, storage, &Limits::default())
+    storage.delete_strict(&scene.files[1].0).await.unwrap();
+    let _reclaim = RECLAIM.lock().await;
+    expire(pool, &scene.id).await;
+
+    let hold = crate::sync_deployer::hold_buffered(&scene.id);
+    cleanup_expired(pool, storage, &Limits::default())
         .await
         .unwrap();
-    assert_eq!(pending_rows(&node.state.pool, &scene.id).await, 0);
+    assert_eq!(
+        pending_rows(pool, &scene.id).await,
+        1,
+        "a held upload stays"
+    );
+    assert!(storage.exist(&scene.files[0].0).await.unwrap());
+
+    drop(hold);
+    cleanup_expired(pool, storage, &Limits::default())
+        .await
+        .unwrap();
+    assert_eq!(pending_rows(pool, &scene.id).await, 0);
     assert!(!storage.exist(&scene.files[0].0).await.unwrap());
     assert!(!storage.exist(&scene.id).await.unwrap());
+}
+
+/// Waits until a session queues for the exclusive side of the store lock.
+async fn wait_for_exclusive_store_lock(pool: &PgPool) {
+    for _ in 0..200 {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_locks \
+             WHERE locktype = 'advisory' AND mode = 'ExclusiveLock' AND NOT granted \
+               AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) \
+               AND (classid::bigint << 32 | objid::bigint) = $1",
+        )
+        .bind(gc::STORE_LOCK_KEY)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if waiting >= 1 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("cleanup never queued on the store lock");
+}
+
+/// Cleanup waits for a deploy holding the store lock's shared side and reads
+/// the references only once it has the exclusive one: an upload that names a
+/// staged blob while cleanup waits keeps it.
+#[tokio::test]
+async fn cleanup_reads_references_under_the_store_lock() {
+    require_test_db!(Some(node) = Node::new("store-lock", Limits::default()).await);
+    let router = node.router();
+    let pool = &node.state.pool;
+    let storage = &node.state.storage;
+    let signer = PrivateKeySigner::random();
+    let tag = uuid::Uuid::new_v4().simple().to_string();
+    let (shared, unique) = (format!("lock-shared-{tag}"), format!("lock-unique-{tag}"));
+    let expiring = make_scene(
+        &signer,
+        &[shared.as_bytes(), unique.as_bytes(), b"lock-never-sent"],
+        "scene",
+    )
+    .await;
+    let (status, _, _) = send(
+        &router,
+        &expiring,
+        &expiring.chain,
+        vec![
+            entity_file(&expiring),
+            expiring.files[0].clone(),
+            expiring.files[1].clone(),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let _reclaim = RECLAIM.lock().await;
+    expire(pool, &expiring.id).await;
+
+    // A deploy holds the shared side while another upload names a staged blob.
+    let mut deploy = pool.begin().await.unwrap();
+    gc::lock_store_shared(&mut deploy).await.unwrap();
+    let naming = make_scene_listing(&signer, &[b"lock-missing"], &[&expiring.files[0].0]).await;
+    let limits = Limits::default();
+    let (cleaned, ()) = tokio::join!(cleanup_expired(pool, storage, &limits), async {
+        wait_for_exclusive_store_lock(pool).await;
+        assert_eq!(
+            pending_rows(pool, &expiring.id).await,
+            1,
+            "nothing went yet"
+        );
+        let (status, _, body) =
+            send(&router, &naming, &naming.chain, vec![entity_file(&naming)]).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+        deploy.commit().await.unwrap();
+    });
+    cleaned.unwrap();
+    assert_eq!(pending_rows(pool, &expiring.id).await, 0);
+    assert!(
+        storage.exist(&expiring.files[0].0).await.unwrap(),
+        "the open upload names it"
+    );
+    assert!(!storage.exist(&expiring.files[1].0).await.unwrap());
 }
 
 /// Cleanup unlinks only what an upload wrote, and never what the collector

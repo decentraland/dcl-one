@@ -276,7 +276,7 @@ Bodies are `{"errors":[...]}` unless the row says otherwise. Every row is read; 
 
 **Data dependency.**
 - Upstream: a pending-deployments table (`pendingDeploymentsRepository`), staged blobs in the served content store, per-account accounting, and a cleanup job.
-- dcl-one: `content.pending_deployments`, `content.pending_deployment_files` and `content.partial_upload_rates` (`schemas/00_content.sql`); staged blobs in the one content store, so `/contents/{hash}` serves them before publication as upstream does; the leased `content-partial-uploads-cleanup` job, attached only where content writes are on (`partial_deployments.rs:1753`, `services/catalyst/src/serve.rs:587-596`). The budget and entity locks are PostgreSQL advisory locks, so they hold across replicas.
+- dcl-one: `content.pending_deployments`, `content.pending_deployment_files` and `content.partial_upload_rates` (`schemas/00_content.sql`); staged blobs in the one content store, so `/contents/{hash}` serves them before publication as upstream does; the leased `content-partial-uploads-cleanup` job, which as upstream unlinks an expired upload's staged blobs that nothing else names under the exclusive store lock (only those it wrote itself, where upstream also takes content it found stored), attached only where content writes are on (`partial_deployments.rs:1783`, `services/catalyst/src/serve.rs:587-596`). The budget and entity locks are PostgreSQL advisory locks, so they hold across replicas.
 
 ---
 
