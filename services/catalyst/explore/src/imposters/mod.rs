@@ -13,9 +13,12 @@
 //! decentraland/dcl-one#1711), under the realm key its tiles are stored
 //! under (`BVIMPOSTERS_UPSTREAM_REALM`; the crc derives only from scene entity
 //! ids, so it is realm-independent and the realm of the request is ignored):
-//! a fetched zip is verified against its crc before it lands in the store,
-//! an upstream miss is remembered for a minute and an upstream failure answers
-//! 502 without being cached. Past that, with `BVIMPOSTERS_BAKE_ENABLED` a miss
+//! a fetched zip is checked against the requested key (its own spec must name
+//! the requested crc; that is a consistency check, not authentication of the
+//! content) before it lands in the store, a tile outside the bake bounds is
+//! never fetched, at most [`UPSTREAM_CONCURRENCY`] fetches run at once, an
+//! upstream miss or a zip that fails the check is remembered for a minute and
+//! an upstream failure answers 502 without being cached. Past that, with `BVIMPOSTERS_BAKE_ENABLED` a miss
 //! queues the tile for the engine's `impost` renderer ([`bake`]), unless its
 //! bakes keep failing ([`quarantine`]), and the zips it writes land in the
 //! store; off, the store holds what the upstream and an operator's seed
@@ -61,6 +64,8 @@ pub const DEFAULT_UPSTREAM_REALM: &str = "https://realm-provider-ea.decentraland
 const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(30);
 /// A tile zip is a few MiB at most; anything past this is not one.
 const UPSTREAM_BODY_CAP: usize = 64 << 20;
+/// Upstream fetches in flight at once, across every tile.
+const UPSTREAM_CONCURRENCY: usize = 8;
 
 /// The old `BVIMPOSTERS_*` variables as `Config` carries them.
 #[derive(Clone, Debug, Default)]
@@ -195,15 +200,17 @@ pub struct State {
     /// The bake failure quarantine (`<store root>/quarantine.json`).
     pub quarantine: Arc<quarantine::Quarantine>,
     pub bake: Option<Arc<bake::BakeQueue>>,
-    /// Asks the upstream imposter CDN, built as every upstream client is.
-    http: reqwest::Client,
+    /// Asks the upstream imposter CDN: the node's shared guarded client.
+    http: crate::http::Outbound,
+    /// Bounds the upstream fetches in flight.
+    upstream_slots: tokio::sync::Semaphore,
 }
 
 pub type Shared = Arc<State>;
 
 impl State {
     /// Creates the store directories and runs the boot sweep.
-    pub async fn new(settings: Settings) -> anyhow::Result<Shared> {
+    pub async fn new(settings: Settings, http: crate::http::Outbound) -> anyhow::Result<Shared> {
         let store = Arc::new(FileCache::new(
             settings.store_root.clone(),
             settings.store_max_bytes,
@@ -243,10 +250,8 @@ impl State {
             store,
             quarantine,
             bake,
-            http: dcl_http::http_client(
-                "imposters-upstream",
-                &dcl_http::HttpClientCfg::default().following_redirects(5),
-            ),
+            http,
+            upstream_slots: tokio::sync::Semaphore::new(UPSTREAM_CONCURRENCY),
         }))
     }
 
@@ -331,28 +336,41 @@ pub fn upstream_zip_url(up: &Upstream, key: &ImposterKey) -> String {
     format!("{}/imposters/realms/{realm}/{}", up.base, key.rel())
 }
 
+/// `Ok(None)` for an upstream 404/403 and for a zip that fails the check
+/// against the key, both remembered as a miss; `Err` for a failing upstream.
+/// `Outbound::get` runs the SSRF guard on the host and on every redirect hop.
 async fn fetch_upstream(state: &State, key: &ImposterKey) -> anyhow::Result<Option<Vec<u8>>> {
     let Some(up) = &state.settings.upstream else {
         return Ok(None);
     };
     let url = upstream_zip_url(up, key);
+    let shown = crate::api::mirror::shown(&url);
+    let _slot = state
+        .upstream_slots
+        .acquire()
+        .await
+        .context("imposter upstream slots closed")?;
     let resp = state
         .http
         .get(&url)
         .timeout(UPSTREAM_TIMEOUT)
         .send()
         .await
-        .with_context(|| format!("imposter upstream {}: request failed", key.rel()))?;
+        .with_context(|| format!("{shown}: request failed"))?;
     let status = resp.status();
     if status == reqwest::StatusCode::NOT_FOUND || status == reqwest::StatusCode::FORBIDDEN {
         return Ok(None);
     }
     if !status.is_success() {
-        anyhow::bail!("imposter upstream {} answered {status}", key.rel());
+        anyhow::bail!("{shown} answered {status}");
     }
     let body = crate::http::read_body_capped(resp, UPSTREAM_BODY_CAP)
         .await
-        .with_context(|| format!("imposter upstream {}: reading the body", key.rel()))?;
+        .with_context(|| format!("{shown}: reading the body"))?;
+    if let Err(err) = zips::verify_zip(&body, key) {
+        tracing::warn!(error = %format!("{err:#}"), url = %shown, "imposter upstream zip rejected");
+        return Ok(None);
+    }
     Ok(Some(body))
 }
 
@@ -370,19 +388,20 @@ pub async fn imposter(
     if etag_matches(&headers, key.crc) {
         return not_modified(key.crc);
     }
-    let served = if state.settings.upstream.is_some() {
+    let served = if state.settings.upstream.is_some() && key::within_bake_bounds(&key.tile) {
         state
             .supply
             .get(
                 &key,
                 &key.rel(),
                 || fetch_upstream(&state, &key),
-                |bytes| zips::verify_zip(bytes, &key),
+                |_| Ok(()),
             )
             .await
     } else {
-        // No upstream: the store alone, so a tile baked meanwhile is never
-        // hidden behind a remembered miss.
+        // No upstream, or a tile outside the bake bounds (never fetched): the
+        // store alone, so a tile baked meanwhile is never hidden behind a
+        // remembered miss.
         Ok(state.supply.get_stored(&key.rel()).await)
     };
     match served {
@@ -393,6 +412,7 @@ pub async fn imposter(
         }
         Err(err) => {
             tracing::warn!(error = %format!("{err:#}"), key = %key.rel(), "imposter upstream failed");
+            state.maybe_enqueue_bake(key.tile);
             (StatusCode::BAD_GATEWAY, "imposter upstream failed").into_response()
         }
     }
@@ -488,7 +508,9 @@ mod tests {
     async fn state_with(dir: &TempDir) -> Shared {
         let settings = Settings::for_tests(dir.0.join("root"));
         std::fs::create_dir_all(&settings.store_root).unwrap();
-        State::new(settings).await.unwrap()
+        State::new(settings, crate::http::Outbound::for_tests())
+            .await
+            .unwrap()
     }
 
     fn put_zip(state: &Shared, key: &ImposterKey) {
@@ -542,7 +564,9 @@ mod tests {
         });
         settings.bake_max_failures = max_failures;
         std::fs::create_dir_all(&settings.store_root).unwrap();
-        let state = State::new(settings).await.unwrap();
+        let state = State::new(settings, crate::http::Outbound::for_tests())
+            .await
+            .unwrap();
         let jobs = Jobs::new();
         state.spawn_jobs(&jobs);
         (state, jobs)
@@ -584,7 +608,9 @@ mod tests {
             crate::shared::test_wait::until(async || landed.exists()).await,
             "the baked zip landed in the store"
         );
-        let fresh = State::new(state.settings.clone()).await.unwrap();
+        let fresh = State::new(state.settings.clone(), crate::http::Outbound::for_tests())
+            .await
+            .unwrap();
         let response = get_zip_with(&fresh, &key, HeaderMap::new()).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()["x-bvi-source"], "store");
@@ -630,7 +656,9 @@ mod tests {
             fixture.display()
         );
         let (baker, _jobs) = bake_state(&dir, fake_impost(&dir, &body), 3).await;
-        let replica = State::new(baker.settings.clone()).await.unwrap();
+        let replica = State::new(baker.settings.clone(), crate::http::Outbound::for_tests())
+            .await
+            .unwrap();
         let replica_jobs = Jobs::new().with_fleet_jobs(false);
         replica.spawn_jobs(&replica_jobs);
         assert_eq!(status_of(&replica).await["bake_enabled"], true);
@@ -735,14 +763,18 @@ mod tests {
     }
 
     /// A tile the store lacks is read through from the upstream under its
-    /// fixed realm key, verified, landed and then served from the store; an
-    /// upstream 404 stays a 404 and a bad upstream answers 502.
+    /// fixed realm key, checked, landed and then served from the store; an
+    /// upstream 404 stays a 404, a bad upstream answers 502, a tile outside
+    /// the bake bounds is never fetched and a zip that fails the check is
+    /// remembered as a miss.
     #[tokio::test]
     async fn a_miss_reads_through_the_upstream() {
         let dir = tempdir("imp-upstream");
         let key = ImposterKey::new(0, 2, 4, 777).unwrap();
         let absent = ImposterKey::new(0, 6, 8, 9).unwrap();
         let broken = ImposterKey::new(0, 10, 12, 5).unwrap();
+        let outside = ImposterKey::new(0, 500, 0, 11).unwrap();
+        let forged = ImposterKey::new(0, 14, 16, 13).unwrap();
         let zip = zips::test_zip_bytes(2, 4, 777);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
@@ -750,23 +782,27 @@ mod tests {
         let counted = hits.clone();
         let upstream = Router::new().route(
             "/imposters/realms/{realm}/{level}/{file}",
-            get(move |Path((realm, _, file)): Path<(String, String, String)>| {
-                let zip = zip.clone();
-                let counted = counted.clone();
-                async move {
-                    counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    // the realm arrives double-encoded: decoded once, still encoded
-                    assert_eq!(
-                        realm,
-                        "https%3A%2F%2Frealm-provider-ea.decentraland.org%2Fmain%2Fabout"
-                    );
-                    match file.as_str() {
-                        "2,4.777.zip" => (StatusCode::OK, zip),
-                        "10,12.5.zip" => (StatusCode::INTERNAL_SERVER_ERROR, Vec::new()),
-                        _ => (StatusCode::NOT_FOUND, Vec::new()),
+            get(
+                move |Path((realm, _, file)): Path<(String, String, String)>| {
+                    let zip = zip.clone();
+                    let counted = counted.clone();
+                    async move {
+                        counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        // the realm arrives double-encoded: decoded once, still encoded
+                        assert_eq!(
+                            realm,
+                            "https%3A%2F%2Frealm-provider-ea.decentraland.org%2Fmain%2Fabout"
+                        );
+                        match file.as_str() {
+                            "2,4.777.zip" => (StatusCode::OK, zip),
+                            "10,12.5.zip" => (StatusCode::INTERNAL_SERVER_ERROR, Vec::new()),
+                            // a zip whose spec names another crc than the key's
+                            "14,16.13.zip" => (StatusCode::OK, zips::test_zip_bytes(14, 16, 99)),
+                            _ => (StatusCode::NOT_FOUND, Vec::new()),
+                        }
                     }
-                }
-            }),
+                },
+            ),
         );
         tokio::spawn(async move { axum::serve(listener, upstream).await });
         let mut settings = Settings::for_tests(dir.0.join("root"));
@@ -775,7 +811,9 @@ mod tests {
             realm: DEFAULT_UPSTREAM_REALM.to_string(),
         });
         std::fs::create_dir_all(&settings.store_root).unwrap();
-        let state = State::new(settings).await.unwrap();
+        let state = State::new(settings, crate::http::Outbound::for_tests())
+            .await
+            .unwrap();
 
         let response = get_zip_with(&state, &key, HeaderMap::new()).await;
         assert_eq!(response.status(), StatusCode::OK);
@@ -787,13 +825,43 @@ mod tests {
         assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
 
         assert_eq!(
-            get_zip_with(&state, &absent, HeaderMap::new()).await.status(),
+            get_zip_with(&state, &absent, HeaderMap::new())
+                .await
+                .status(),
             StatusCode::NOT_FOUND
         );
         assert_eq!(
-            get_zip_with(&state, &broken, HeaderMap::new()).await.status(),
+            get_zip_with(&state, &broken, HeaderMap::new())
+                .await
+                .status(),
             StatusCode::BAD_GATEWAY
         );
+
+        let before = hits.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            get_zip_with(&state, &outside, HeaderMap::new())
+                .await
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), before);
+
+        assert_eq!(
+            get_zip_with(&state, &forged, HeaderMap::new())
+                .await
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        let after = hits.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(after, before + 1);
+        assert_eq!(
+            get_zip_with(&state, &forged, HeaderMap::new())
+                .await
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), after);
+        assert!(!state.store.path(&forged.rel()).unwrap().exists());
     }
 
     #[tokio::test]

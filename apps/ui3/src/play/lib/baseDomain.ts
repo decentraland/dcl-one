@@ -86,7 +86,7 @@ const GATEWAY_PREFIXES: Readonly<Record<string, string>> = {
 // the page's own host, as the engine does (`Gateway::segment` → its default base domain).
 const NOT_THROUGH_GATEWAY: ReadonlySet<string> = new Set(['abgen-cdn'])
 // The imposter store (distant-scene tiles) is a launch option, not a service table row; the
-// node serves it under this prefix (services/catalyst/src/serve.rs, explore::imposters).
+// node serves it under this prefix (services/catalyst/src/serve_routes.rs, explore::imposters).
 const IMPOSTER_PREFIX = '/bvimposters'
 
 /** The domain a url without ?baseDomain= means here: derived from the hosting origin, else this host. */
