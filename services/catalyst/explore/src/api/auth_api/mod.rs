@@ -750,13 +750,13 @@ async fn create_request(
         Ok(verified) => verified,
         Err(refusal) => return chain_refused(refusal),
     };
+    // Before the RPC and the admission lock.
+    match network_over_cap(&state, source.as_deref(), now).await {
+        Ok(false) => {}
+        Ok(true) => return too_many_from_network(),
+        Err(err) => return internal_error("auth-api: counting the network's requests", err),
+    }
     let sender = if needs_contract_check(chain) {
-        // Before the RPC: a network at its cap costs no contract call.
-        match network_over_cap(&state, source.as_deref(), now).await {
-            Ok(false) => {}
-            Ok(true) => return too_many_from_network(),
-            Err(err) => return internal_error("auth-api: counting the network's requests", err),
-        }
         match contract_checked(
             &state,
             source.as_deref(),
@@ -808,9 +808,10 @@ async fn create_request(
         .into_response()
 }
 
-/// Whether `source` is at its cap of pending requests, checked before a
-/// contract-wallet chain's RPC call: a flood from one network does not reach
-/// the RPC. Plain chains meet the cap under the admission lock.
+/// Whether `source` is at its cap of pending requests, checked once the chain
+/// passed its checks that need no RPC and before its contract-wallet check and
+/// the admission lock: a flood from one network neither reaches the RPC nor
+/// queues on the lock every create takes, holding pool connections.
 async fn network_over_cap(
     state: &AppState,
     source: Option<&str>,
@@ -837,8 +838,8 @@ async fn admit_request(
     record: &ChallengeRecord,
     now: DateTime<Utc>,
 ) -> sqlx::Result<Option<Response>> {
-    // A contract-wallet chain was refused over its cap already
-    // (`network_over_cap`); under the lock the count is taken exactly.
+    // The caller already refused a network over its cap (`network_over_cap`);
+    // under the lock the count is taken again, exactly.
     let mut tx = state.pool.begin().await?;
     admission_lock(&mut tx, REQUEST_ADMISSION_LOCK).await?;
     if let Some(refusal) = request_capacity_refusal(&mut tx, record.source.as_deref(), now).await? {

@@ -2067,9 +2067,12 @@ identities (100 per network). No production rate is measured.
   same cap. Pickups take no lock, so concurrent ones can pass the count
   together; the overshoot is at most the pickups in flight.
 
-Caps: a request create first counts its network's live requests without any
-lock and refuses one over the per-network cap (429) there, so a flood from one
-network does not queue on the lock. Then a create takes `pg_advisory_xact_lock` on one key per table
+Caps: once its chain passes the checks that need no RPC, a request create
+counts its network's live requests without any lock and refuses one over the
+per-network cap (429) there, so a flood from one network neither reaches the
+contract-wallet RPC nor queues on the lock. Refused contract-wallet checks are
+budgeted per network in process memory (no table): a forged chain stores no
+row for the caps to count. Then a create takes `pg_advisory_xact_lock` on one key per table
 (`hashtextextended('explore_api.auth_requests:admission', 0)` and the
 identities' twin), counts the live rows and those of its network in one pass
 and inserts in the same transaction, so concurrent creates on every replica
