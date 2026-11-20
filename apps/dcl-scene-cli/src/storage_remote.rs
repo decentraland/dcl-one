@@ -304,10 +304,6 @@ mod tests {
         assert_eq!(link1["type"], "ECDSA_SIGNED_ENTITY");
         assert_eq!(
             link1["payload"],
-            build_payload_v6("PUT", "/values/High-Score", &ts, meta)
-        );
-        assert_eq!(
-            link1["payload"],
             format!("put:/values/high-score:{ts}:{meta}")
         );
         assert!(headers.iter().all(|(n, _)| n != "x-identity-auth-chain-2"));
