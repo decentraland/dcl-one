@@ -654,25 +654,28 @@ describe('sending a tip', () => {
     await flush()
     expect(retried).toHaveBeenCalledTimes(2)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const noIndex = Object.assign(new CatalystError('no index', 'u', 503), { code: 'tip-index-unavailable' })
-    for (const [err, outcome] of [
-      [new CatalystError('no', 'u', 400), 'refused'],
-      [noIndex, 'unavailable']
-    ] as const) {
-      // A clock that advances with every wait: a regression that retried ends at the deadline, not in a hang.
-      let t = 0
-      const sleep = vi.fn(async (ms: number) => void (t += ms))
-      const stopped = vi.fn().mockRejectedValue(err)
-      const s = setup({ forward: stopped, sleep, now: () => t })
-      await open(s.donate)
-      s.handlers().onSend?.('166')
-      await flush()
-      await flush()
-      expect(stopped).toHaveBeenCalledOnce()
-      expect(sleep).not.toHaveBeenCalled()
-      expect(warn).toHaveBeenCalledWith('[donate] tip forward', outcome)
+    try {
+      const noIndex = Object.assign(new CatalystError('no index', 'u', 503), { code: 'tip-index-unavailable' })
+      for (const [err, outcome] of [
+        [new CatalystError('no', 'u', 400), 'refused'],
+        [noIndex, 'unavailable']
+      ] as const) {
+        // A clock that advances with every wait: a regression that retried ends at the deadline, not in a hang.
+        let t = 0
+        const sleep = vi.fn(async (ms: number) => void (t += ms))
+        const stopped = vi.fn().mockRejectedValue(err)
+        const shell = setup({ forward: stopped, sleep, now: () => t })
+        await open(shell.donate)
+        shell.handlers().onSend?.('166')
+        await flush()
+        await flush()
+        expect(stopped).toHaveBeenCalledOnce()
+        expect(sleep).not.toHaveBeenCalled()
+        expect(warn).toHaveBeenCalledWith('[donate] tip forward', outcome)
+      }
+    } finally {
+      warn.mockRestore()
     }
-    warn.mockRestore()
   })
 
   it('asks the places service on every donate.target: nothing is kept', async () => {

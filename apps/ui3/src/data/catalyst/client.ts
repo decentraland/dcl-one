@@ -336,6 +336,30 @@ export function signedFetch(url: string, opts: SignedFetchOpts = {}): Promise<Si
   });
 }
 
+/**
+ * The error for a failed answer: its status, the message of its JSON envelope (or its text), the `retryAfter` it
+ * repeats in the body (a bridge passes no headers) and its body `code`.
+ */
+export function forwardFailure(url: string, status: number, body: string): CatalystError {
+  let serverMsg = "";
+  let retryAfter: unknown;
+  let code: unknown;
+  if (body) {
+    try {
+      const parsed = JSON.parse(body) as { retryAfter?: unknown; code?: unknown } | null;
+      serverMsg = envelopeMessage(parsed);
+      retryAfter = parsed?.retryAfter;
+      code = parsed?.code;
+    } catch {
+      serverMsg = body;
+    }
+  }
+  const err = new CatalystError(serverMsg || `Catalyst returned ${status}`, url, status);
+  if (typeof retryAfter === "number" && Number.isFinite(retryAfter) && retryAfter > 0) err.retryAfterSecs = retryAfter;
+  if (typeof code === "string") err.code = code;
+  return err;
+}
+
 export async function sendSignedJSON<T = unknown>(
   path: string,
   opts: SendOpts = {},
@@ -350,26 +374,7 @@ export async function sendSignedJSON<T = unknown>(
     timeoutMs: opts.timeoutMs,
   });
 
-  if (status < 200 || status >= 300) {
-    let serverMsg = "";
-    let retryAfter: unknown;
-    let code: unknown;
-    if (body) {
-      try {
-        const parsed = JSON.parse(body) as { retryAfter?: unknown; code?: unknown } | null;
-        serverMsg = envelopeMessage(parsed);
-        retryAfter = parsed?.retryAfter;
-        code = parsed?.code;
-      } catch {
-        serverMsg = body;
-      }
-    }
-    const err = new CatalystError(serverMsg || `Catalyst returned ${status}`, url, status);
-    // The bridge passes no headers, so the server repeats Retry-After in the body.
-    if (typeof retryAfter === "number" && Number.isFinite(retryAfter) && retryAfter > 0) err.retryAfterSecs = retryAfter;
-    if (typeof code === "string") err.code = code;
-    throw err;
-  }
+  if (status < 200 || status >= 300) throw forwardFailure(url, status, body);
 
   if (status === 204 || !body) return null;
   try {

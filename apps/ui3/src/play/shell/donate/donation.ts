@@ -13,7 +13,7 @@
 // checked again here on every open, not only in the capabilities the HUD reads.
 
 import type { Eip1193Provider } from '../../../data/auth/wallet'
-import { CatalystError, catalystBase, getJSON } from '../../../data/catalyst/client'
+import { catalystBase, forwardFailure, getJSON } from '../../../data/catalyst/client'
 import { fetchProfile, mapProfile, profileFaceUrl } from '../../../data/catalyst/profile'
 import { encodeManaTransfer, fetchTipTarget, manaToWei, TIP_DELIVERY_WINDOW_MS, TIP_FORWARD_PATH, type TipTarget } from '../../../explorer/components/manaTip'
 import { settlementChainId } from '../../../shop/checkout/chain/config'
@@ -242,11 +242,7 @@ const LIVE: ShellDonateServices = {
     }
     // forwardUntil decides from the status and body code: it asks again after a 429 or a 5xx, and stops at another 4xx
     // or at a 503 coded as having no tip index. It never asks sooner than the Retry-After the body repeats.
-    const body = (await res.json().catch(() => null)) as { retryAfter?: unknown; code?: unknown } | null
-    const err = new CatalystError(`The tip forward answered ${res.status}`, url, res.status)
-    if (typeof body?.retryAfter === 'number' && Number.isFinite(body.retryAfter) && body.retryAfter > 0) err.retryAfterSecs = body.retryAfter
-    if (typeof body?.code === 'string') err.code = body.code
-    throw err
+    throw forwardFailure(url, res.status, await res.text().catch(() => ''))
   },
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now: () => Date.now(),
