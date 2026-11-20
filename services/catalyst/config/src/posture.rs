@@ -381,18 +381,14 @@ const ROWS: &[Row] = &[
     row(
         "upstreams",
         "ETH_RPC_URL",
-        Default(
-            "https://rpc.decentraland.org/<mainnet|sepolia>?project=catalyst-content by ETH_NETWORK",
-        ),
+        Default("https://rpc.decentraland.org/<mainnet|sepolia>?project=dcl-one by ETH_NETWORK"),
         Is(""),
         Is(""),
     ),
     row(
         "upstreams",
         "RPC_ENDPOINT_POLYGON",
-        Default(
-            "https://rpc.decentraland.org/<polygon|amoy>?project=catalyst-content by ETH_NETWORK",
-        ),
+        Default("https://rpc.decentraland.org/<polygon|amoy>?project=dcl-one by ETH_NETWORK"),
         Is(""),
         Is(""),
     ),

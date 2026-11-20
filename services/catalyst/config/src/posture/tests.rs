@@ -513,8 +513,8 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
     assert_eq!(
         c.marketplace.trade_rpc_urls.as_deref(),
         Some(
-            "1=https://rpc.decentraland.org/mainnet?project=catalyst-content,\
-             137=https://rpc.decentraland.org/polygon?project=catalyst-content"
+            "1=https://rpc.decentraland.org/mainnet?project=dcl-one,\
+             137=https://rpc.decentraland.org/polygon?project=dcl-one"
         )
     );
     assert!(c.content.content_history_prune_enabled);
@@ -745,7 +745,7 @@ fn a_polygon_endpoint_from_its_file_still_makes_the_trade_list() {
     assert_eq!(
         c.marketplace.trade_rpc_urls.as_deref(),
         Some(
-            "1=https://rpc.decentraland.org/mainnet?project=catalyst-content,\
+            "1=https://rpc.decentraland.org/mainnet?project=dcl-one,\
              137=https://polygon.example.org/key"
         )
     );
@@ -1092,13 +1092,25 @@ fn the_chain_rpcs_default_by_network_outside_island_and_journey() {
     let pair = |l1: &str, l2: &str| {
         let url = |chain: &str| {
             Some(format!(
-                "https://rpc.decentraland.org/{chain}?project=catalyst-content"
+                "https://rpc.decentraland.org/{chain}?project=dcl-one"
             ))
         };
         (url(l1), url(l2))
     };
     assert_eq!(rpcs(&[]), pair("mainnet", "polygon"));
     assert_eq!(rpcs(&[(ENV, "mirror")]), pair("mainnet", "polygon"));
+    // The tag never carries the node's address, public or internal.
+    for public_url in [
+        "https://node.example.org",
+        "http://192.0.2.7:5000",
+        "http://catalyst.test",
+    ] {
+        assert_eq!(
+            rpcs(&[(ENV, "mirror"), ("PUBLIC_URL", public_url)]),
+            pair("mainnet", "polygon"),
+            "{public_url}"
+        );
+    }
     assert_eq!(rpcs(&[("ETH_NETWORK", "sepolia")]), pair("sepolia", "amoy"));
     assert_eq!(
         rpcs(&[(ENV, "mirror"), ("ETH_NETWORK", "sepolia")]),
