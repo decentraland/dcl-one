@@ -622,12 +622,9 @@ async fn stage(
     // Deployments are idempotent: a replay whose chain signs the id gets the
     // original timestamp. The chain is checked at the stored entity's
     // timestamp (a resume may carry no entity file, and an ephemeral key that
-    // expired since still signed it); nothing after the signature is.
-    if let Some(ts) = deployer.deployed_timestamp(entity_id).await? {
-        let signed_at = deployer
-            .deployed_entity_timestamp(entity_id)
-            .await?
-            .unwrap_or_else(now_ms);
+    // expired since still signed it); nothing after the signature is, the
+    // denylist included.
+    if let Some((ts, signed_at)) = deployer.deployed_timestamps(entity_id).await? {
         deployer
             .check_signature(entity_id, &auth_chain, signed_at)
             .await

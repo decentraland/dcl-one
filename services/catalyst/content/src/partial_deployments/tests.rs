@@ -391,6 +391,57 @@ async fn a_replay_batch_needs_a_chain_that_signs_the_id() {
     }
 }
 
+/// A replay batch is checked at the stored entity's timestamp: a chain whose
+/// ephemeral key expired after the entity was signed still replays.
+#[tokio::test]
+async fn a_replay_batch_is_checked_at_the_stored_entity_timestamp() {
+    require_test_db!(Some(node) = Node::new("replay-expired", Limits::default()).await);
+    let router = node.router();
+    let signer = PrivateKeySigner::random();
+    let mut scene = make_scene(&signer, &[b"partial-replay-expired"], "scene").await;
+    let signed_at = now_ms() - 120_000;
+    let mut entity: Value = serde_json::from_slice(&scene.bytes).unwrap();
+    entity["timestamp"] = json!(signed_at);
+    scene.bytes = Bytes::from(serde_json::to_vec(&entity).unwrap());
+    scene.id = hash_bytes_v1(&scene.bytes);
+    scene.chain = chain_for(&signer, &scene.id).await;
+    let mut files = vec![entity_file(&scene)];
+    files.extend(scene.files.iter().cloned());
+    let (status, _, body) = send(&router, &scene, &scene.chain, files).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let created = body["creationTimestamp"].clone();
+
+    let ephemeral = PrivateKeySigner::random();
+    let expiration = chrono::DateTime::from_timestamp_millis(signed_at + 60_000)
+        .unwrap()
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let ephemeral_payload = format!(
+        "Decentraland Login\nEphemeral address: {:#x}\nExpiration: {expiration}",
+        ephemeral.address()
+    );
+    let expired = json!([
+        {"type": "SIGNER", "payload": format!("{:#x}", signer.address()), "signature": ""},
+        {"type": "ECDSA_EPHEMERAL", "payload": ephemeral_payload,
+         "signature": signer.sign_message(ephemeral_payload.as_bytes()).await.unwrap().to_string()},
+        {"type": "ECDSA_SIGNED_ENTITY", "payload": scene.id,
+         "signature": ephemeral.sign_message(scene.id.as_bytes()).await.unwrap().to_string()},
+    ]);
+    let deployer = node.state.deployer().unwrap();
+    let parsed: AuthChain = serde_json::from_value(expired.clone()).unwrap();
+    assert!(
+        deployer
+            .check_signature(&scene.id, &parsed, now_ms())
+            .await
+            .is_err(),
+        "the ephemeral key has expired by now"
+    );
+    let (status, _, body) = send(&router, &scene, &expired, vec![]).await;
+    assert_eq!(
+        (status, &body["creationTimestamp"]),
+        (StatusCode::OK, &created)
+    );
+}
+
 /// Content already in the store is never listed as missing: a scene whose
 /// files are all stored is published by its first batch.
 #[tokio::test]

@@ -99,6 +99,12 @@ struct HashedUpload {
     bytes: Bytes,
 }
 
+impl HashedUpload {
+    fn names(&self, hash: &str) -> bool {
+        self.v1 == hash || self.v0 == hash
+    }
+}
+
 pub(crate) static UPLOAD_HASH_JOBS: LazyLock<Arc<Semaphore>> =
     LazyLock::new(|| Arc::new(Semaphore::new(4)));
 
@@ -140,7 +146,7 @@ async fn hash_uploads(files: Vec<Bytes>) -> Result<Vec<HashedUpload>, String> {
 fn entity_of(uploads: &[HashedUpload], entity_id: &str) -> Result<(Entity, Bytes), DeployFailure> {
     let entity_bytes = uploads
         .iter()
-        .find(|upload| upload.v1 == entity_id || upload.v0 == entity_id)
+        .find(|upload| upload.names(entity_id))
         .map(|upload| upload.bytes.clone())
         .ok_or_else(|| vec!["Failed to find the entity file.".to_string()])?;
 
@@ -720,15 +726,18 @@ impl WriteDeployer {
         .await
     }
 
-    /// The entity timestamp (ms) of a deployed entity, which its chain signed.
-    pub(crate) async fn deployed_entity_timestamp(
+    /// A deployed entity's stored `local_timestamp` and its entity timestamp
+    /// (ms), which its chain signed.
+    pub(crate) async fn deployed_timestamps(
         &self,
         entity_id: &str,
-    ) -> sqlx::Result<Option<i64>> {
-        sqlx::query_scalar(
-            "SELECT round(date_part('epoch', entity_timestamp) * 1000)::bigint
-               FROM content.deployments WHERE entity_id = $1",
-        )
+    ) -> sqlx::Result<Option<(i64, i64)>> {
+        sqlx::query_as(concat!(
+            "SELECT ",
+            local_ms_sql!("local_timestamp"),
+            ", round(date_part('epoch', entity_timestamp) * 1000)::bigint",
+            " FROM content.deployments WHERE entity_id = $1"
+        ))
         .bind(entity_id)
         .fetch_optional(&self.pool)
         .await
@@ -1106,7 +1115,8 @@ impl WriteDeployer {
     ) -> Result<i64, DeployFailure> {
         let mut deployed = self.deploying.lock(entity_id).await;
         if let Some(creation_ts) = *deployed {
-            self.verify_replay(&files, entity_id, &auth_chain).await?;
+            self.verify_replay(None, &files, entity_id, &auth_chain)
+                .await?;
             return Ok(creation_ts);
         }
         let result = self
@@ -1120,25 +1130,52 @@ impl WriteDeployer {
 
     /// What a re-post of a deployed entity must prove before it is answered
     /// the stored timestamp, checked in the order a fresh deploy checks it:
-    /// the uploads carry the entity file, the file parses, and the chain
-    /// signs the id at the entity's timestamp (so an ephemeral key that
-    /// expired since still signed it). The checks after the signature (the
-    /// denylist aside, the pointers, TTLs, rate limits and the validator) are
-    /// not run again: the entity was accepted, and its timestamp may be past
-    /// the request TTL.
+    /// the uploads carry the entity file, the file parses, nothing it names
+    /// is denylisted, and the chain signs the id at the entity's timestamp
+    /// (so an ephemeral key that expired since still signed it). The pointer,
+    /// TTL, rate-limit and validator checks are not run again: the entity was
+    /// accepted, and its timestamp may be past the request TTL. `named` is
+    /// the upload the form named by the id; only when it is not the entity
+    /// file are all `files` hashed.
     pub(crate) async fn verify_replay(
         &self,
+        named: Option<&Bytes>,
         files: &[Bytes],
         entity_id: &str,
         auth_chain: &Value,
     ) -> Result<(), DeployFailure> {
-        let uploads = hash_uploads(files.to_vec())
-            .await
-            .map_err(|e| deploy_error(entity_id, &e))?;
+        let mut uploads = match named {
+            Some(bytes) => hash_uploads(vec![bytes.clone()])
+                .await
+                .map_err(|e| deploy_error(entity_id, &e))?,
+            None => Vec::new(),
+        };
+        if !uploads.iter().any(|upload| upload.names(entity_id)) {
+            uploads = hash_uploads(files.to_vec())
+                .await
+                .map_err(|e| deploy_error(entity_id, &e))?;
+        }
         let (entity, _) = entity_of(&uploads, entity_id)?;
+        self.refuse_denylisted(&entity)?;
         let auth_chain = auth_chain_of(auth_chain.clone())?;
         self.check_signature(entity_id, &auth_chain, entity.timestamp)
             .await
+    }
+
+    /// A dcl-one refusal upstream does not make: the operator denylist keeps
+    /// a listed id, hash or pointer off this node.
+    fn refuse_denylisted(&self, entity: &Entity) -> Result<(), DeployFailure> {
+        match self
+            .denylist
+            .as_deref()
+            .and_then(|d| super::denylist::refusal(entity, d))
+        {
+            Some(errors) => {
+                warn!(entity_id = %entity.id, ?errors, "deployment refused: denylisted");
+                Err(DeployFailure::Rejected(RejectionKind::Validation, errors))
+            }
+            None => Ok(()),
+        }
     }
 
     async fn deploy_entity_unlocked(
@@ -1156,16 +1193,7 @@ impl WriteDeployer {
         let hash_us = started.elapsed().as_micros() as u64;
         let (entity, entity_bytes) = entity_of(&uploads, entity_id)?;
 
-        // A dcl-one refusal upstream does not make: the operator denylist
-        // keeps a listed id, hash or pointer off this node.
-        if let Some(errors) = self
-            .denylist
-            .as_deref()
-            .and_then(|d| super::denylist::refusal(&entity, d))
-        {
-            warn!(entity_id, ?errors, "deployment refused: denylisted");
-            return Err(DeployFailure::Rejected(RejectionKind::Validation, errors));
-        }
+        self.refuse_denylisted(&entity)?;
 
         let auth_chain = auth_chain_of(auth_chain)?;
         // The signature at the entity's timestamp, the pointers and the

@@ -346,6 +346,63 @@ async fn signed_entity_of(entity: Value) -> (Bytes, String, Value) {
     (bytes, id, chain)
 }
 
+/// A copy of a deploy this process just made (the in-process memo) is
+/// answered the stored timestamp only once it proves what a replay proves:
+/// the entity file and a chain that signs the id. The lazy pool shows no
+/// copy reaches the database.
+#[tokio::test]
+async fn a_copy_answered_from_the_in_process_memo_proves_the_replay() {
+    let (deployer, tmp) = deployer_over_temp_storage("memo-replay").await;
+    let (files, id, chain, _) = signed_scene_at(chrono::Utc::now().timestamp_millis()).await;
+    // A deploy of `id` that stored 42, its lock kept alive as a waiting copy
+    // keeps it.
+    let mut first = deployer.deploying.lock(&id).await;
+    *first = Some(42);
+    let held = deployer
+        .deploying
+        .0
+        .lock()
+        .get(&id)
+        .and_then(std::sync::Weak::upgrade)
+        .unwrap();
+    drop(first);
+
+    let unsigned = serde_json::json!([
+        chain[0].clone(),
+        {"type": "ECDSA_SIGNED_ENTITY", "payload": id, "signature": "0x01"}
+    ]);
+    match deployer
+        .deploy_entity_anchored(files[1..].to_vec(), &id, chain.clone(), "LOCAL", None)
+        .await
+    {
+        Err(DeployFailure::Rejected(RejectionKind::Validation, errors)) => {
+            assert_eq!(errors, ["Failed to find the entity file."])
+        }
+        other => panic!("a copy without its entity file must be refused, got {other:?}"),
+    }
+    match deployer
+        .deploy_entity_anchored(files.clone(), &id, unsigned, "LOCAL", None)
+        .await
+    {
+        Err(DeployFailure::Rejected(RejectionKind::Validation, errors)) => {
+            assert!(
+                errors[0].starts_with("The signature is invalid."),
+                "{errors:?}"
+            )
+        }
+        other => panic!("a copy whose chain does not sign the id must be refused, got {other:?}"),
+    }
+    assert_eq!(
+        deployer
+            .deploy_entity_anchored(files, &id, chain, "LOCAL", None)
+            .await
+            .unwrap_or_else(|e| panic!("{:?}", e.errors())),
+        42
+    );
+    drop(held);
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 #[tokio::test]
 async fn a_deploy_with_a_bad_or_missing_signature_does_not_hold_its_pointers() {
     let (deployer, tmp) = deployer_over_temp_storage("bad-signature").await;
