@@ -10,7 +10,7 @@ import { recordVisit } from '@explorer-core/features/lobby/lobbyApi'
 import { answerItemPurchase, type PurchaseSceneItem } from '../itemPurchase/answer'
 import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
-import { PLATFORM_BANNED_REFUSAL, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus } from '@explorer-core/engine/protocol'
+import { PLATFORM_BANNED_REFUSAL, type UiSound, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
 import { useStoredProfile } from '../login/useStoredProfile'
 import { inShell, postToShell } from '@explorer-core/lib/shell'
@@ -46,7 +46,7 @@ import { getCursor } from '@explorer-core/features/pointer/cursorStore'
 import { openProfileCard } from '../profileCard/ProfileCard'
 import { formatConsoleReply, parseChatCommand } from '@explorer-core/features/chat/chatCommands'
 import { applyLanguageSetting, clearAutoTranslate } from '@explorer-core/features/chat/translation'
-import { clearPingMode, shouldPing } from '../chat/ping'
+import { clearPingMode, sendSoundEnabled, shouldPing } from '../chat/ping'
 import { useAskBeforeLeaving } from '../settings/askBeforeLeaving'
 import { risingIds, rowKeys } from '@explorer-core/features/chat/lineIds'
 import { communityChannel, communityIdOf } from '@explorer-core/engine/communityChannel'
@@ -894,6 +894,8 @@ export interface ChatState {
   messages: ChatLine[]
   /** Sends to the channel shown: Nearby, or the open DM. */
   send: (text: string) => void
+  /** Plays one of the chat's interface sounds (typing, emoji, buttons). */
+  playSound: (sound: UiSound) => void
   /** Adds or removes the local user's reaction to a message on the channel shown. */
   react: (messageId: string, emoji: string, remove: boolean) => void
   /** The Nearby lines, whichever channel is shown. */
@@ -950,9 +952,18 @@ export interface ChatState {
 const MAX_CHAT_LINES = 200
 /** The notifications list keeps at most this many, the size of the bridge's full fetch. */
 export const NOTIFICATIONS_KEPT = 50
-// The least time between two notification pings of one conversation and kind: a flood of lines
-// is one sound, not one per line.
-const PING_INTERVAL_MS = 400
+// The least time between two plays of one repeating sound, an incoming line's or the chat input's:
+// lines of a conversation and typed characters each sound, and a flood of lines or a held key does
+// not restart the clip faster than it can be heard.
+const SOUND_FLOOR_MS = 100
+
+/** Whether `sound` is past the floor since its last play in `playedAt`; a play that is due is noted. */
+function soundDue(playedAt: Map<UiSound, number>, sound: UiSound): boolean {
+  const now = Date.now()
+  if (now - (playedAt.get(sound) ?? -Infinity) < SOUND_FLOOR_MS) return false
+  playedAt.set(sound, now)
+  return true
+}
 
 // Render-settle: after a scene first reports loaded, hold the loader at least this long for the
 // engine to render the first frame (so the world isn't revealed as black models), and at most this
@@ -1206,7 +1217,8 @@ export interface EngineSession {
   setEngineViewport: (
     region: EngineViewportRegion,
     rect: { x: number; y: number; width: number; height: number } | null,
-    dpr?: number
+    dpr?: number,
+    focus?: { x: number; y: number; width: number; height: number }
   ) => void
   /** Report the screen area the persistent HUD occupies (see lib/hudInset.ts). */
   setInteractableArea: (area: InteractableArea) => void
@@ -1689,8 +1701,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // list's toast says what happened); a typed /stop_portable or /smart_wearable command still is.
   const ownConsoleCommands = useRef<string[]>([])
   const chatId = useRef(0)
-  // when each conversation last pinged, per kind of ping
-  const pingAtRef = useRef<Map<string, number>>(new Map())
+  // when each floored sound last played
+  const soundAtRef = useRef<Map<UiSound, number>>(new Map())
   // the lines appended to a shown tab since its history was last read, by conversation: a read
   // queued before such a line was stored answers without it
   const appendedRef = useRef<Map<string, Set<string>>>(new Map())
@@ -1864,11 +1876,11 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           const mentioned = !own && !system && me != null && mentionsName(msg.chat.message, mentionName(me.name, me.address, me.hasClaimedName))
           const ping = (channel: string): void => {
             if (own || system || !shouldPing(channel, mentioned)) return
-            const slot = `${channel}|${mentioned ? 'mention' : 'message'}`
-            const now = Date.now()
-            if (now - (pingAtRef.current.get(slot) ?? -Infinity) < PING_INTERVAL_MS) return
-            pingAtRef.current.set(slot, now)
-            driver.send({ kind: 'playUiSound', sound: mentioned ? 'chatMention' : 'chatMessage' })
+            // the conversation selected, whether or not the chat is open, has its own two clips;
+            // a line anywhere else sounds the same with or without a mention
+            const selected = channelRef.current === channel
+            const sound: UiSound = !selected ? 'chatUnfocused' : mentioned ? 'chatMention' : 'chatMessage'
+            if (soundDue(soundAtRef.current, sound)) driver.send({ kind: 'playUiSound', sound })
           }
           const communityId = communityIdOf(msg.chat.channel)
           if (communityId != null) {
@@ -2882,6 +2894,12 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     skipRefusal.current.clear()
   }, [])
 
+  const playUiSound = useCallback((sound: UiSound) => {
+    // a held key repeats faster than the input's clip can be heard
+    if (sound === 'chatInput' && !soundDue(soundAtRef.current, sound)) return
+    driverRef.current?.send({ kind: 'playUiSound', sound })
+  }, [])
+
   // Chat send doubles as the slash-command interceptor (parity with bevy-ui-scene's `sendChatMessage`):
   // a recognized `/command` never reaches other players — it teleports, reloads, runs an engine console
   // command, or echoes a system message. Anything else is sent as a normal Nearby message.
@@ -2890,7 +2908,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       const cmd = parseChatCommand(text)
       switch (cmd.kind) {
         case 'send':
-          if (cmd.text) driverRef.current?.send({ kind: 'sendChat', message: cmd.text, channel: channelRef.current })
+          if (cmd.text) {
+            driverRef.current?.send({ kind: 'sendChat', message: cmd.text, channel: channelRef.current })
+            if (sendSoundEnabled()) playUiSound('chatSend')
+          }
           break
         case 'goto':
           driverRef.current?.send({ kind: 'teleport', x: cmd.x, y: cmd.y })
@@ -2918,7 +2939,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           break
       }
     },
-    [pushSystemMessage, changeRealm, reloadScene]
+    [pushSystemMessage, changeRealm, reloadScene, playUiSound]
   )
 
   // Toggle one exclusive panel (closing chat + all others); optionally run onOpen.
@@ -4375,17 +4396,19 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const lobbyStageOptions = useRef({ preset: lobbyStagePreset(getPref(PREF.lobbyStagePreset)).id as string, idleEmotes: false })
   const lastLobbyReport = useRef<{ rect: { x: number; y: number; width: number; height: number } | null; dpr?: number } | null>(null)
   const setEngineViewport = useCallback(
-    (region: EngineViewportRegion, rect: { x: number; y: number; width: number; height: number } | null, dpr?: number) => {
+    (region: EngineViewportRegion, rect: { x: number; y: number; width: number; height: number } | null, dpr?: number, focus?: { x: number; y: number; width: number; height: number }) => {
       if (region === 'avatarPreview') setAvatarPreviewRect(rect)
       // a closed sign-in stage is drawn again from scratch: the page keeps its background until then
       if (region === 'signin' && rect == null) setSigninStageReady(false)
+      // likewise the lobby's, which the bridge announces again to the next report
+      if (region === 'lobby' && rect == null) setLobbyStageReady(false)
       if (region === 'lobby') {
         lastLobbyReport.current = { rect, dpr }
         const { preset, idleEmotes } = lobbyStageOptions.current
         driverRef.current?.send({ kind: 'engineViewport', region, rect, dpr, stagePreset: preset, idleEmotes })
         return
       }
-      driverRef.current?.send({ kind: 'engineViewport', region, rect, dpr })
+      driverRef.current?.send({ kind: 'engineViewport', region, rect, dpr, ...(focus != null && rect != null ? { focus } : {}) })
     },
     []
   )
@@ -5163,6 +5186,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     chat: {
       messages: channelMessages,
       send: sendChat,
+      playSound: playUiSound,
       react: reactInChat,
       nearby: messages,
       bubbleText,

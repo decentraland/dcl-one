@@ -5,10 +5,15 @@ import { downloadOptions } from "@/data/lib/download/installers";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import DownloadPage from "@/features/download/DownloadPage";
 
+import { canonicalLink } from "../lib/canonical";
 import type { Route } from "./+types/download";
 
-export function meta() {
-  return [{ title: "Download Decentraland" }];
+export function meta({ matches }: Route.MetaArgs) {
+  return [
+    { title: "Download | Decentraland" },
+    { name: "description", content: "Download Decentraland and start exploring the metaverse — events, communities, voice chat and more." },
+    ...canonicalLink(matches[0]?.loaderData?.publicPageBase, "/download"),
+  ];
 }
 
 // A deep link (`?position=` or `?realm=`) opens that place in the web Explorer at /play; without one, the page

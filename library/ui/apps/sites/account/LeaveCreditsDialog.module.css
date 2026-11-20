@@ -1,0 +1,5 @@
+.error {
+  composes: text626f64792f736d from '@dcl/one-ui/text-styles.module.css';
+  margin: 0;
+  color: var(--dcl-feedback-error);
+}
