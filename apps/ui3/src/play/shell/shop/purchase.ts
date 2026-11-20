@@ -22,7 +22,10 @@ import { partitionCart, type CartGroup } from '@shop/cart/partition'
 import type { CartAddInput, CartStore } from '../../../shop/cart/store'
 import { shopChainReader, type ChainReader } from '../../../shop/checkout/chain/rpc'
 import { liveResolvers, reviewCart, type SettlementResolvers } from '../../../shop/checkout/purchase/cart'
+import type { Hex } from 'viem'
 import { releaseAuthorizing, runGroup, splitPriceOf, watchGroup, type CheckoutDeps, type GroupResult, type SplitPlan } from '../../../shop/checkout/purchase/executor'
+import { buildAcceptCalldata, buildAcceptWithCouponCalldata, buildStoreBuyCalldata } from '../../../shop/checkout/purchase/encoding'
+import { purchaseTargetFor } from '../../../shop/checkout/purchase/cart'
 import { ensureAuthorization, exactAllowanceReady, exactGrantLock, getManaSpendingAuthorization } from '../../../shop/checkout/lib/authorizations'
 import { pageLocks, webLock as lockIfFree } from '../../../shop/checkout/lib/web-lock'
 import type { RailContext } from '../../../shop/checkout/purchase/rail'
@@ -482,6 +485,9 @@ interface SplitRun {
   resolved: Resolved
   plan: SplitPlan
   gapWei: bigint
+  /** The credit's exact value C, and the external call's data as reviewed: what the sale's signature is bound to. */
+  creditWei: bigint
+  callData: Hex
   /** Lets go of the exact approval's lock, held from the last allowance read through the sale's hand-off. */
   release: () => void
 }
@@ -1585,7 +1591,16 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       release()
       return { why: 'Your MANA approval is still confirming. Nothing was charged; try again in a minute.' }
     }
-    return { resolved: review.resolved, plan: { creditsCents: terms.creditsCents, confirmedWei: terms.manaWei, session: { walletKind: 'web3' } }, gapWei: gap, release }
+    // The sale's external call, from the line as reviewed (its price, coupon and buyer): the only one its signature may carry.
+    const target = purchaseTargetFor(unit)
+    const callData = (
+      target.kind === 'store'
+        ? buildStoreBuyCalldata([target.mint.item], quote.buyer)
+        : target.coupon
+          ? buildAcceptWithCouponCalldata([target.trade], [target.coupon], quote.buyer)
+          : buildAcceptCalldata([target.trade], quote.buyer)
+    ).data
+    return { resolved: review.resolved, plan: { creditsCents: terms.creditsCents, confirmedWei: terms.manaWei, session: { walletKind: 'web3' } }, gapWei: gap, creditWei: credit, callData, release }
   }
 
   /**
@@ -1612,7 +1627,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         units: part.items.flatMap((l) => Array.from({ length: l.quantity }, () => ({ contract: l.contract, itemId: l.itemId }))),
         sale: { venue: part.group.key.contract.toLowerCase(), call: part.group.key.call.kind as PurchaseIntent['sale']['call'] },
         current,
-        split: { gapWei: gap, mayApprove: () => approving && !answered }
+        // The approval alone: no sale may be signed under this permission.
+        split: { gapWei: gap, phase: 'approve', mayApprove: () => approving && !answered }
       }
       const draw = (): void => {
         if (answered) return
@@ -1702,6 +1718,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       publish(op)
       return { kind: 'failed', message, part, retry, ...(topUp != null ? { topUp } : {}), ...(switchTo != null ? { switchTo } : {}) }
     }
+    // The credit the node issued for a split's sale, once the executor has checked it: the only one its signature may spend.
+    let issued: { id: string } | null = null
     const intent: PurchaseIntent = {
       buyer: quote.buyer,
       chainId,
@@ -1710,8 +1728,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       sale: { venue: group.key.contract.toLowerCase(), call },
       current,
       durable: (stage) => durable(op, stage),
-      // The sale of a split takes exactly its gap from the wallet; no approve goes with it (that was AUTHORIZE's).
-      ...(split ? { split: { gapWei: split.gapWei, mayApprove: () => false } } : {})
+      // The sale of a split: exactly the credit issued, its share and its gap, for the call reviewed; no approve with it.
+      ...(split ? { split: { gapWei: split.gapWei, phase: 'sale' as const, mayApprove: () => false, sale: { creditWei: split.creditWei, callData: split.callData, credit: () => issued } } } : {})
     }
     op.chainId = chainId
     move(op, 'processing')
@@ -1758,7 +1776,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           ctx: { buyer: quote.buyer, provider: svc.guard(prompting(op, wallet, quote.kind), intent), reader: svc.reader(), client: quote.client, walletKind: quote.kind, ...rail, fetchImpl: relay },
           store,
           guard: createSpendGuard(),
-          ...(split ? { split: split.plan } : {})
+          ...(split ? { split: { ...split.plan, onCredit: (credit: { id: string }) => void (issued = credit) } } : {})
         },
         group,
         resolved

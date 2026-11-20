@@ -10,17 +10,21 @@
 //  - and in both, `useCredits` itself: one credit, no MANA from the wallet, no more spent than the credit
 //    holds, no custom call, and an external call to the sales' own venue that mints or accepts exactly the
 //    confirmed items for the buyer: each unit once, as many of each as confirmed, nothing else;
-//  - paying with Credits and MANA together (`split`): the same `useCredits`, taking from the wallet exactly the MANA
-//    gap the buyer confirmed (never more, never another figure), and MANA's approve of exactly that gap to the
-//    trusted CreditsManager, only as MANA's meta-transaction through the fee-free relay (never sent from the wallet:
-//    a direct approve beside a relayed one whose answer was lost could both land) and only while the buyer's own
-//    AUTHORIZE runs it. The approve is not the sale: it needs no record of the purchase kept, and never counts as
-//    handed off.
+//  - paying with Credits and MANA together (`split`), in two separate permissions, each only as a meta-transaction
+//    through the fee-free relay (never sent from the wallet: a direct send beside a relayed one whose answer was lost
+//    could both land):
+//    - `approve`: MANA's approve of exactly the gap the buyer confirmed to the trusted CreditsManager, only while the
+//      buyer's own AUTHORIZE runs it, and nothing else (no sale). It needs no record of the purchase kept, and never
+//      counts as handed off;
+//    - `sale`: the `useCredits` of exactly the credit the node issued (its salt), worth exactly C, crediting at most C,
+//      taking exactly the gap G from the wallet, with exactly the external call reviewed (its price and coupon
+//      included), and nothing else (no approve).
 //
 // Before each signature or transaction it reads the wallet's selected account and checks the login is
 // still the one confirmed. Anything else is refused before it reaches the wallet.
 
 import { decodeAbiParameters, decodeFunctionData, getAbiItem, toFunctionSelector, type Hex } from 'viem'
+import { idToSalt } from '../../../shop/checkout/purchase/encoding'
 import type { Eip1193Provider } from '../../../data/auth/wallet'
 import { COLLECTION_STORE_ABI, CREDITS_MANAGER_ABI, ERC20_ABI, MARKETPLACE_ABI } from '@shop/checkout/chain/abi'
 import { requireContracts, type ContractInfo } from '../../../shop/checkout/chain/contracts'
@@ -57,12 +61,19 @@ export interface PurchaseIntent {
   split?: SplitTerms
 }
 
-/** The MANA part of a purchase paid with Credits and MANA together. */
+/** A purchase paid with Credits and MANA together, as one permission: its approve, or its sale. */
 export interface SplitTerms {
   /** The MANA the buyer confirmed paying beyond the credit, in wei (more than zero). */
   gapWei: bigint
+  /** `approve`: only MANA's exact approve to the manager; `sale`: only the relayed useCredits bound to `sale`. */
+  phase: 'approve' | 'sale'
   /** Whether MANA's approve may go now: only while the buyer's own AUTHORIZE runs it, never on the rails' initiative. */
   mayApprove(): boolean
+  /**
+   * The sale it binds (phase `sale`): the credit's exact value C, the external call's data as reviewed, and the credit the
+   * node issued for it (null until it has, and then nothing may be signed).
+   */
+  sale?: { creditWei: bigint; callData: Hex; credit(): { id: string } | null }
 }
 
 const STORE_BUY = getAbiItem({ abi: COLLECTION_STORE_ABI, name: 'buy' })
@@ -119,8 +130,15 @@ export function checkUseCredits(data: unknown, intent: PurchaseIntent, nowSecond
   if (args.credits.length !== 1 || args.creditsSignatures.length !== 1) refuse('A purchase spends one credit.')
   const split = intent.split
   if (split) {
+    if (split.phase !== 'sale' || !split.sale) refuse('The Shop only approves MANA in this step.')
     // Exactly the gap confirmed: never more, and never another figure standing in for it (a zero gap is no split).
     if (split.gapWei <= 0n || args.maxUncreditedValue !== split.gapWei) refuse('The purchase would take other MANA from your wallet than you confirmed.')
+    // Exactly the credit the node issued for it, worth exactly its share, crediting no more, for exactly the call reviewed.
+    const issued = split.sale.credit()
+    const [credit] = args.credits
+    if (!issued || lower(credit.salt) !== lower(idToSalt(issued.id))) refuse('The purchase spends another credit than the one issued for it.')
+    if (credit.value !== split.sale.creditWei || args.maxCreditedValue !== split.sale.creditWei) refuse('The purchase would spend another share of Credits than you confirmed.')
+    if (lower(args.externalCall.data) !== lower(split.sale.callData)) refuse('The purchase is not the one you confirmed.')
   } else if (args.maxUncreditedValue !== 0n) refuse('A Credits purchase takes no MANA from your wallet.')
   if (args.maxCreditedValue > args.credits[0].value) refuse('The purchase would spend more than its credit holds.')
   if (args.customExternalCallSignature !== '0x') refuse('The Shop makes no custom calls.')
@@ -170,6 +188,7 @@ function manaOf(chainId: number): ContractInfo | null {
 export function checkSplitApprove(data: unknown, intent: PurchaseIntent): void {
   const split = intent.split
   if (!split) refuse('The Shop only signs its own purchases.')
+  if (split.phase !== 'approve') refuse('The Shop doesn’t approve MANA while it buys.')
   if (typeof data !== 'string' || !/^0x[0-9a-fA-F]*$/.test(data) || lower(data.slice(0, 10)) !== APPROVE_SELECTOR) refuse('The Shop only approves MANA for its own purchases.')
   let spender: string
   let amount: bigint
@@ -255,8 +274,8 @@ export function checkTransaction(tx: unknown, intent: PurchaseIntent): 'sale' {
   const t = tx as { from?: unknown; to?: unknown; data?: unknown; value?: unknown }
   const value = typeof t.value === 'string' || typeof t.value === 'number' || typeof t.value === 'bigint' ? BigInt(t.value) : 0n
   if (lower(t.from) !== intent.buyer || value !== 0n) refuse('The Shop only sends its own purchases.')
-  // A split's approve goes only through the relay, as MANA's meta-transaction: never sent from the wallet.
-  if (splitMana(intent, t.to)) refuse('The Shop approves MANA for this purchase only through its fee-free relay.')
+  // A split goes only through the relay, its approve and its sale alike: never sent from the wallet.
+  if (intent.split) refuse('The Shop sends a purchase with Credits and MANA only through its fee-free relay.')
   if (lower(t.to) !== intent.manager.address) refuse('The Shop only sends its own purchases.')
   checkUseCredits(t.data, intent)
   return 'sale'

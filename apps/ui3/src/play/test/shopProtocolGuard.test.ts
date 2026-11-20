@@ -236,35 +236,70 @@ describe('the purchase wallet', () => {
     const MANA_TOKEN = MANA_INFO.address.toLowerCase()
     const approve = (spender: string = MANAGER, amount: bigint = GAP) => encodeFunctionData({ abi: ERC20_ABI, functionName: 'approve', args: [spender as Hex, amount] })
     const manaTyped = (data: Hex = approve(), from = BUYER) => metaTxTypedData(MANA_INFO as never, from, 3n, data)
-    const split = (mayApprove: () => boolean = () => true) => ({ split: { gapWei: GAP, mayApprove } })
+    /** The approval's permission: MANA's exact approve, nothing else. */
+    const approving = (mayApprove: () => boolean = () => true) => ({ split: { gapWei: GAP, phase: 'approve' as const, mayApprove } })
+    /** The sale's permission, bound to the credit issued (`credit`), its value and the call as reviewed. */
+    const selling = (over: { credit?: { id: string } | null; creditWei?: bigint; callData?: Hex } = {}) => ({
+      split: {
+        gapWei: GAP,
+        phase: 'sale' as const,
+        mayApprove: () => false,
+        sale: { creditWei: over.creditWei ?? BigInt(credit.amount), callData: over.callData ?? storeArgs().externalCall.data, credit: () => (over.credit === undefined ? { id: credit.id } : over.credit) }
+      }
+    })
+    const splitSale = (over: Partial<UseCreditsArgs> = {}) => typed(encodeUseCredits(storeArgs({ maxUncreditedValue: GAP, ...over })))
 
-    it('signs the useCredits that takes exactly the confirmed gap from the wallet', async () => {
-      const g = setup(split())
-      await expect(sign(g, typed(encodeUseCredits(storeArgs({ maxUncreditedValue: GAP }))))).resolves.toMatch(/^0x/)
+    it('signs the sale bound to the issued credit, its exact share, the confirmed gap and the reviewed call', async () => {
+      const g = setup(selling())
+      await expect(sign(g, splitSale())).resolves.toMatch(/^0x/)
       expect(g.forwarded()).toBe(1)
     })
 
     it.each([
-      ['more than the gap', GAP + 1n],
-      ['less than the gap', GAP - 1n],
-      ['nothing from the wallet', 0n]
-    ])('refuses a useCredits taking %s', async (_, uncredited) => {
-      const g = setup(split())
-      await expect(sign(g, typed(encodeUseCredits(storeArgs({ maxUncreditedValue: uncredited }))))).rejects.toMatchObject({ code: 4100 })
+      ['more than the gap', { maxUncreditedValue: GAP + 1n }],
+      ['less than the gap', { maxUncreditedValue: GAP - 1n }],
+      ['nothing from the wallet', { maxUncreditedValue: 0n }],
+      ['crediting more than the share', { maxCreditedValue: BigInt(credit.amount) + 1n }],
+      ['crediting less than the share', { maxCreditedValue: BigInt(credit.amount) - 1n }]
+    ] as [string, Partial<UseCreditsArgs>][])('refuses a sale %s', async (_, over) => {
+      const g = setup(selling())
+      await expect(sign(g, splitSale(over))).rejects.toMatchObject({ code: 4100 })
       expect(g.forwarded()).toBe(0)
     })
 
+    it('refuses a sale before the credit is issued, or of another credit, or of a credit worth another share', async () => {
+      for (const terms of [{ credit: null }, { credit: { id: '0x' + 'b2'.repeat(32) } }, { creditWei: BigInt(credit.amount) - 1n }]) {
+        const g = setup(selling(terms))
+        await expect(sign(g, splitSale())).rejects.toMatchObject({ code: 4100 })
+        expect(g.forwarded()).toBe(0)
+      }
+    })
+
+    it('refuses a sale whose external call isn\'t the one reviewed (another price)', async () => {
+      const g = setup(selling({ callData: storeArgs({}, [{ ...item, priceWei: '1' }]).externalCall.data }))
+      await expect(sign(g, splitSale())).rejects.toMatchObject({ code: 4100 })
+    })
+
     it('refuses a zero gap as a split', async () => {
-      const g = setup({ split: { gapWei: 0n, mayApprove: () => true } })
-      await expect(sign(g, typed(encodeUseCredits(storeArgs({ maxUncreditedValue: 0n }))))).rejects.toMatchObject({ code: 4100 })
+      const g = setup({ split: { ...selling().split, gapWei: 0n } })
+      await expect(sign(g, splitSale({ maxUncreditedValue: 0n }))).rejects.toMatchObject({ code: 4100 })
     })
 
     it('signs MANA’s approve of exactly the gap to the manager while the buyer authorizes, with no record of the sale asked', async () => {
       let asked = 0
-      const g = setup({ ...split(), durable: () => (asked++, true) })
+      const g = setup({ ...approving(), durable: () => (asked++, true) })
       await expect(sign(g, manaTyped())).resolves.toMatch(/^0x/)
       expect(g.forwarded()).toBe(1)
       expect(asked).toBe(0)
+    })
+
+    it('keeps the two permissions apart: no sale while approving, no approve while selling', async () => {
+      const approvingOnly = setup(approving())
+      await expect(sign(approvingOnly, splitSale())).rejects.toMatchObject({ code: 4100 })
+      // Even were an approve otherwise allowed now, the sale's permission never carries one.
+      const sellingOnly = setup({ split: { ...selling().split, mayApprove: () => true } })
+      await expect(sign(sellingOnly, manaTyped())).rejects.toMatchObject({ code: 4100 })
+      expect(approvingOnly.forwarded() + sellingOnly.forwarded()).toBe(0)
     })
 
     it.each([
@@ -273,16 +308,16 @@ describe('the purchase wallet', () => {
       ['another spender (the sale’s venue)', approve(STORE)],
       ['a call other than approve', encodeFunctionData({ abi: parseAbi(['function transfer(address to, uint256 amount)']), functionName: 'transfer', args: [OTHER as Hex, GAP] })]
     ])('refuses %s', async (_, data) => {
-      const g = setup(split())
+      const g = setup(approving())
       await expect(sign(g, manaTyped(data))).rejects.toMatchObject({ code: 4100 })
       expect(g.forwarded()).toBe(0)
     })
 
     it('refuses the approve outside the buyer’s AUTHORIZE, including one that ends while the wallet is read', async () => {
-      const g = setup(split(() => false))
+      const g = setup(approving(() => false))
       await expect(sign(g, manaTyped())).rejects.toMatchObject({ code: 4100 })
       let reads = 0
-      const late = setup(split(() => ++reads === 1))
+      const late = setup(approving(() => ++reads === 1))
       await expect(sign(late, manaTyped())).rejects.toMatchObject({ code: 4100 })
       expect(late.forwarded()).toBe(0)
     })
@@ -292,10 +327,12 @@ describe('the purchase wallet', () => {
       await expect(sign(g, manaTyped())).rejects.toMatchObject({ code: 4100 })
     })
 
-    it('never sends the approve from the wallet: only through the relay, even the exact gap while authorizing', async () => {
-      const g = setup(split())
-      await expect(g.guarded.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: MANA_TOKEN, data: approve() }] })).rejects.toMatchObject({ code: 4100 })
-      expect(g.forwarded()).toBe(0)
+    it('never sends a split from the wallet: neither its approve nor its sale', async () => {
+      const a = setup(approving())
+      await expect(a.guarded.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: MANA_TOKEN, data: approve() }] })).rejects.toMatchObject({ code: 4100 })
+      const b = setup(selling())
+      await expect(b.guarded.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: MANAGER, data: encodeUseCredits(storeArgs({ maxUncreditedValue: GAP })) }] })).rejects.toMatchObject({ code: 4100 })
+      expect(a.forwarded() + b.forwarded()).toBe(0)
     })
   })
 

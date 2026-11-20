@@ -49,7 +49,13 @@ export type ApprovalRequest = { auth: ShopAuthorization; index: number; total: n
  * MANA (`splitTerms`), and both caps are encoded from it. It goes only through the fee-free relay, never from the wallet
  * instead. The MANA allowance for the gap is the caller's to have in place before the group runs.
  */
-export type SplitPlan = { creditsCents: number; confirmedWei: bigint; session: SignedSession };
+export type SplitPlan = {
+  creditsCents: number;
+  confirmedWei: bigint;
+  session: SignedSession;
+  /** The credit the node issued, once checked to be the share it must be: before anything is signed for it. */
+  onCredit?: (credit: { id: string }) => void;
+};
 
 export type CheckoutDeps = {
   ctx: RailContext;
@@ -164,6 +170,7 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
       dispatchSafe(store, keyId, { type: "failed", failure });
       return { status: "failed", failure, released: await release(deps, [creditId]) };
     }
+    split.onCredit?.({ id: credit.id });
     purchases = [{ ...purchaseFor(purchaseTargetFor(units[0]!), [credit], terms.creditWei.toString()), maxUncreditedValue: terms.gapWei.toString() }];
   } else {
     purchases = units.map((u) => purchaseFor(purchaseTargetFor(u), [credit], auth.maxCreditedValue));
