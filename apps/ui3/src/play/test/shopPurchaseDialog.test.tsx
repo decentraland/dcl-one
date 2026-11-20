@@ -367,6 +367,12 @@ describe('the purchase dialog', () => {
       expect(option(/^MANA/)).toBe('MANAMANA Balance:7,0005,000')
     })
 
+    it('shows no Credits price on an item only MANA buys, never "0"', () => {
+      show({ step: 'method', items: [{ ...item, credits: 0 }], credits: { price: null, balance: 700, pays: false }, mana })
+      expect(screen.queryByTitle('0 Credits')).toBeNull()
+      expect(screen.getByText('Golden Armor')).toBeTruthy()
+    })
+
     it('shows MANA that can’t pay off, with what it would cost', () => {
       vi.useFakeTimers()
       const h = show({ step: 'method', items: [item], credits, mana: { ...mana, balance: 3n * MANA, pays: false } })

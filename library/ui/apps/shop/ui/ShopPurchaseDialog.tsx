@@ -656,10 +656,13 @@ function ItemRow({ item }: { item: ShopPurchaseItem }): React.JSX.Element {
             )}
           </span>
         </div>
-        <span className={styles.price} title={`${formatCreditsFull(item.credits)} Credits`}>
-          <img src={creditsCoin} alt="" aria-hidden="true" width={20} height={20} />
-          {formatCreditsFull(item.credits)}
-        </span>
+        {/* An item the Credits can't price (only MANA buys it) shows no Credits price, never "0". */}
+        {item.credits > 0 && (
+          <span className={styles.price} title={`${formatCreditsFull(item.credits)} Credits`}>
+            <img src={creditsCoin} alt="" aria-hidden="true" width={20} height={20} />
+            {formatCreditsFull(item.credits)}
+          </span>
+        )}
       </div>
     </div>
   )
