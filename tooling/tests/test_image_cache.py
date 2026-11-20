@@ -215,8 +215,8 @@ class CompileWorkflowTest(unittest.TestCase):
 
     def test_only_bevy_ci_runs_the_image_workflows_on_a_main_push(self):
         root = Path(__file__).parents[2] / '.github/workflows'
-        callers = {path.name for path in root.glob('*.yml')
-                   if re.search(r'uses: \./\.github/workflows/apis-sites-(compile|images)\.yml', path.read_text())}
+        callers = {path.name for path in root.glob('*.y*ml')
+                   if re.search(r'uses:\s*\S*\.github/workflows/apis-sites-(compile|images)\.ya?ml', path.read_text())}
         self.assertEqual(callers, {'bevy-explorer-ci.yml'})
         def triggers(text):
             return text.split('\non:\n', 1)[1].split('\npermissions:', 1)[0]
@@ -460,11 +460,15 @@ class WorkflowSetupTest(unittest.TestCase):
                     ('1', 'newer', '0', False, True, 'head'),
                     ('1', 'head', '1', False, True, 'head'),
                     ('1', 'head', '0', False, False, '')]
-        for ref, variants in (('refs/heads/main', main_cases), ('refs/pull/93/merge', pr_cases),
-                              ('refs/tags/v1', other_cases), ('refs/heads/feature', other_cases)):
-            pr = ref.startswith('refs/pull/')
+        for ref, event, variants in (('refs/heads/main', 'push', main_cases),
+                                     ('refs/pull/93/merge', 'pull_request', pr_cases),
+                                     ('refs/tags/v1', 'push', other_cases),
+                                     ('refs/heads/feature', 'push', other_cases),
+                                     ('refs/heads/main', 'workflow_dispatch', other_cases),
+                                     ('refs/heads/main', 'workflow_run', other_cases)):
+            pr = event == 'pull_request'
             for attempt, current, failure, allowed, queried, event_head in variants:
-                with self.subTest(ref=ref, attempt=attempt, current=current, failure=failure), tempfile.TemporaryDirectory() as directory:
+                with self.subTest(ref=ref, event=event, attempt=attempt, current=current, failure=failure), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
                     gh = root / 'gh'
                     gh.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$*" > "$API_CALL"\n'
@@ -473,7 +477,7 @@ class WorkflowSetupTest(unittest.TestCase):
                     env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH'],
                                GITHUB_OUTPUT=str(root / 'output'), API_CALL=str(root / 'called'),
                                GITHUB_REF=ref, GITHUB_SHA='event-merge-before-main-advanced' if pr else 'head',
-                               GITHUB_EVENT_NAME='pull_request' if pr else 'push',
+                               GITHUB_EVENT_NAME=event,
                                PR_HEAD_SHA=event_head, GITHUB_RUN_ATTEMPT=attempt,
                                GITHUB_REPOSITORY='decentraland/dcl-one',
                                CURRENT_SHA=current, API_FAILURE=failure)
