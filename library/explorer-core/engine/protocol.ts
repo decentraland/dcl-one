@@ -1269,6 +1269,9 @@ export interface EngineViewportRequest {
    *  what turns it into the physical pixels the scene should actually render — without it a
    *  render target has to assume the worst display and oversample everywhere else. */
   dpr?: number
+  /** Avatar preview region only: the part of `rect` (same units) the avatar is framed in, as it
+   *  would be in a rect of that height centred there. The backdrop still fills `rect`. Absent: all of it. */
+  focus?: { x: number; y: number; width: number; height: number }
   /** A `LOBBY_STAGE_PRESETS` id; lobby region only. */
   stagePreset?: string
   /** Lobby region only: the pages that borrow the stage leave the avatar still. */

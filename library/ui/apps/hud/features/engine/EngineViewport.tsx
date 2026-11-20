@@ -12,12 +12,16 @@ type Rect = { x: number; y: number; width: number; height: number }
 
 export function EngineViewport({
   region,
-  report
+  report,
+  focus
 }: {
   region: EngineViewportRegion
   /** Stable callback (useCallback) — reports the rect (in CSS pixels) and the current
    *  `devicePixelRatio`, or null to clear. */
-  report: (region: EngineViewportRegion, rect: Rect | null, dpr?: number) => void
+  report: (region: EngineViewportRegion, rect: Rect | null, dpr?: number, focus?: Rect) => void
+  /** An element whose box, inside the region, is where the engine frames its subject (the avatar
+   *  preview's avatar): reported with the rect. */
+  focus?: React.RefObject<HTMLElement | null>
 }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
 
@@ -28,7 +32,8 @@ export function EngineViewport({
       const r = el.getBoundingClientRect()
       // Re-read the ratio on every push rather than once: dragging the window to a display with
       // a different density changes it.
-      report(region, { x: r.left, y: r.top, width: r.width, height: r.height }, window.devicePixelRatio)
+      const f = focus?.current?.getBoundingClientRect()
+      report(region, { x: r.left, y: r.top, width: r.width, height: r.height }, window.devicePixelRatio, f != null && f.height > 0 ? { x: f.left, y: f.top, width: f.width, height: f.height } : undefined)
     }
     push()
     // The rect moves for two independent reasons, and each needs its own signal:
@@ -53,7 +58,7 @@ export function EngineViewport({
       window.removeEventListener('scroll', onScroll, true)
       report(region, null)
     }
-  }, [region, report])
+  }, [region, report, focus])
 
   return <div ref={ref} className={styles.viewport} aria-hidden="true" />
 }

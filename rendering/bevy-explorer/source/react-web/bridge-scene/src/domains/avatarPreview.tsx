@@ -86,6 +86,9 @@ const LOBBY_TARGET_Y = 0.8
 const LOBBY_CAMERA_RISE = 1
 const LOBBY_CAMERA_DISTANCE = 6
 const LOBBY_FOV = (26.2 * Math.PI) / 180
+// How far down the frame the camera's target stands: the pitch puts it there.
+const LOBBY_TARGET_SCREEN_Y = 0.55
+const LOBBY_CAMERA_PITCH = Math.atan2(LOBBY_CAMERA_RISE, LOBBY_CAMERA_DISTANCE) - Math.atan((2 * LOBBY_TARGET_SCREEN_Y - 1) * Math.tan(LOBBY_FOV / 2))
 // The avatar's feet in this scene's coordinates, where the engine builds the stage around it.
 const LOBBY_FEET = { x: 8, y: 0, z: 8 }
 // The Shop's stage (library/ui/apps/shop/assets/stage.jpg, the same file): drawn behind the avatar where the page
@@ -187,6 +190,10 @@ function pollLoad(watch: LoadWatch): void {
   const ended = latest != null && latest.timestamp > watch.since && [LOADING_FINISHED, LOADING_FINISHED_WITH_ERROR, LOADING_NOT_FOUND].includes(latest.state)
   if (ended || ++watch.frames >= LOBBY_LOOK_FRAMES) watch.done = true
 }
+// The part of its rect the Backpack's camera frames the avatar in (the page's `focus`): how many times
+// the rect is taller than it, and how far down the rect its middle is.
+const WHOLE_RECT = { scale: 1, centre: 0.5 }
+let fit = WHOLE_RECT
 let framing = FRAMING.body
 let framingFrom = FRAMING.body
 let framingTo = FRAMING.body
@@ -310,7 +317,7 @@ function createPreview(): void {
     lobby
       ? {
           position: Vector3.create(8, LOBBY_TARGET_Y + LOBBY_CAMERA_RISE, 8 - LOBBY_CAMERA_DISTANCE),
-          rotation: Quaternion.fromEulerDegrees((Math.atan2(LOBBY_CAMERA_RISE, LOBBY_CAMERA_DISTANCE) * 180) / Math.PI, 0, 0)
+          rotation: Quaternion.fromEulerDegrees((LOBBY_CAMERA_PITCH * 180) / Math.PI, 0, 0)
         }
       : {
           position: Vector3.create(8, framing.centerY + PITCH_DROP, 8 - CAMERA_DISTANCE),
@@ -701,6 +708,14 @@ export function registerAvatarPreview(ctx: Ctx): void {
     dpr = msg.dpr ?? 1
     if (avatarEntity == null) createPreview()
     else if (!same) fitCamera()
+    if (stage === 'backpack') {
+      const focus = msg.region === 'avatarPreview' ? msg.focus : undefined
+      const next = focus != null && focus.height > 0 && msg.rect.height > 0 ? { scale: msg.rect.height / focus.height, centre: (focus.y + focus.height / 2 - msg.rect.y) / msg.rect.height } : WHOLE_RECT
+      if (next.scale !== fit.scale || next.centre !== fit.centre || !same) {
+        fit = next
+        applyFraming(framing)
+      }
+    }
     // told again for a stage carried over (the Backpack's back to the lobby): the page taking it
     // over may have put its stand-in back up
     if (stage === 'lobby') {
@@ -777,8 +792,8 @@ export function registerAvatarPreview(ctx: Ctx): void {
     if (stage !== 'backpack') return
     const next = Math.min(PREVIEW_MAX_ZOOM, Math.max(1, Number.isFinite(msg.zoom) ? msg.zoom : 1))
     const anchor = Number.isFinite(msg.anchor) ? Math.min(1, Math.max(0, msg.anchor)) : 0.5
-    // The height under the anchor stays where it is: the same share of the view above the centre, before and after.
-    const above = 0.5 - anchor
+    // The height under the anchor stays where it is: the same share of the view above the framing's centre, before and after.
+    const above = (fit.centre - anchor) * fit.scale
     const height = framing.centerY + shiftWithin(framing, zoom, zoomShift) + (framing.range / zoom) * above
     zoomShift = shiftWithin(framing, next, height - (framing.range / next) * above - framing.centerY)
     zoom = next
@@ -839,28 +854,33 @@ function shiftWithin(f: { range: number }, z: number, shift: number): number {
 
 // The framing on the camera, zoomed `z` times with its centre moved `shift` up (the page's zoom unless told
 // otherwise), the view kept inside the framing.
-function applyFraming(f: { range: number; centerY: number }, z: number = zoom, shift: number = zoomShift): void {
+function applyFraming(f: { range: number; centerY: number }, z: number = zoom, shift: number = zoomShift, within: { scale: number; centre: number } = fit): void {
   if (cameraEntity == null || stage !== 'backpack') return
   const cam = TextureCamera.getMutableOrNull(cameraEntity)
-  if (cam?.mode?.$case === 'orthographic') cam.mode.orthographic.verticalRange = f.range / z
-  Transform.getMutable(cameraEntity).position = Vector3.create(8, f.centerY + shiftWithin(f, z, shift) + PITCH_DROP, 8 - CAMERA_DISTANCE)
+  const range = (f.range / z) * within.scale
+  if (cam?.mode?.$case === 'orthographic') cam.mode.orthographic.verticalRange = range
+  const centre = f.centerY + shiftWithin(f, z, shift) - range * (0.5 - within.centre)
+  Transform.getMutable(cameraEntity).position = Vector3.create(8, centre + PITCH_DROP, 8 - CAMERA_DISTANCE)
 }
 
-/** The preview avatar, whole body, facing forward, without the podium, as a PNG data URL — or null
- *  when the preview isn't open or the engine can't capture. */
+/** The Backpack's preview avatar, whole body, facing forward, without the podium, as a PNG data URL — or
+ *  null when the Backpack's preview isn't open or the engine can't capture. The lobby's camera draws its
+ *  whole stage, so it is never captured. */
 export async function captureAvatarThumbnail(): Promise<string | null> {
-  if (avatarEntity == null || cameraEntity == null || BevyApi.consoleCommand == null) return null
+  if (stage !== 'backpack' || avatarEntity == null || cameraEntity == null || BevyApi.consoleCommand == null) return null
   const avatar = avatarEntity
   const rotation = Transform.get(avatar).rotation
   Transform.getMutable(avatar).rotation = FACING
   framingT = 1
-  // The whole body, whatever the page has zoomed to.
-  applyFraming(FRAMING.body, 1, 0)
+  // The whole body, whatever the page has zoomed to or frames it in.
+  applyFraming(FRAMING.body, 1, 0, WHOLE_RECT)
   const podium = podiumEntities
   podium.forEach((e) => { Transform.getMutable(e).scale = Vector3.Zero() })
   try {
     await waitFrames(3)
-    const png = await BevyApi.consoleCommand('texture_camera_screenshot', [String(stage === 'lobby' ? LAYER : BACKPACK_LAYER), String(THUMBNAIL_SIZE)])
+    // the Backpack closed meanwhile
+    if (stage !== 'backpack' || avatarEntity !== avatar) return null
+    const png = await BevyApi.consoleCommand('texture_camera_screenshot', [String(BACKPACK_LAYER), String(THUMBNAIL_SIZE)])
     return `data:image/png;base64,${png}`
   } catch (e) {
     console.error('[avatarPreview] thumbnail capture failed', e)
