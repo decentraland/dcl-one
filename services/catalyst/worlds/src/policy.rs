@@ -385,7 +385,8 @@ impl Policy {
             || (world.is_ens_world() && self.ens_enabled() && crate::ens::resolvable(world.key()))
     }
 
-    /// Whether `world`'s owner comes from a live authority (else `worlds.owner`).
+    /// Whether `world`'s owner comes from a live authority. Without one the
+    /// reads use `worlds.owner` and [`Self::is_owner`] refuses DCL NAME worlds.
     pub(crate) fn has_live_authority(&self, world: &WorldName) -> bool {
         world.is_ens_world() || self.names_reader().is_some()
     }

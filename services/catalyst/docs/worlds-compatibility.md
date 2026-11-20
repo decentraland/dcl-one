@@ -230,9 +230,10 @@ difference not listed here is a gap, not a decision.
   refused (upstream reads the stored owner first, which keeps naming a
   former holder until a publish replaces it). The reads still
   use the stored owner then: `GET /world/{name}/permissions`, `/limits`,
-  owner admission, the ban-protected set and the quota pass. A node with
-  `WORLDS_WRITES_ENABLED=true` refuses to start without the URL, before it
-  opens the database, unless `IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true` (a node
+  owner admission, the ban-protected set and the quota pass. `catalyst serve`
+  with `WORLDS_WRITES_ENABLED=true` refuses to start without the URL, before
+  it opens the database (`catalyst index` takes no world writes and skips
+  this rule), unless `IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true` (a node
   without chain access, such as the `journey` posture), where it logs a
   warning and serves personal worlds.
 - **Quota block on a reader fault.** Admission applies the quota block of

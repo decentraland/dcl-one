@@ -405,6 +405,7 @@ fn main() -> anyhow::Result<()> {
                 config.refuse_argv_secrets(arguments)?;
             }
             check_posture(config)?;
+            posture::worlds_names_reader(config)?;
             catalyst::worlds::scene_state::jsruntime::ensure_v8_initialized();
             // SAFETY: This startup thread performs the first common initialization.
             // All runtime/blocking workers descend from it afterwards. Prepared

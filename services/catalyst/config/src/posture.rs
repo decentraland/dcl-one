@@ -702,7 +702,6 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
         anyhow::bail!("SYNC_ENABLED=true with an empty SYNC_SOURCE: there is no peer to sync from");
     }
     config.content.denylist_urls()?;
-    worlds_names_reader(config)?;
     let Some(posture) = posture else {
         return Ok(());
     };
@@ -742,9 +741,10 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
 
 /// A DCL NAME world's owner is its NAME's holder, read from
 /// `MARKETPLACE_SUBGRAPH_URL`; without it no DCL NAME world has an owner. A
-/// node taking world writes is refused without the reader, unless it skips
-/// the chain checks (`IGNORE_BLOCKCHAIN_ACCESS_CHECKS`), which gets the
-/// warning returned here and serves personal worlds only.
+/// `serve` taking world writes is refused without the reader, unless it
+/// skips the chain checks (`IGNORE_BLOCKCHAIN_ACCESS_CHECKS`), which gets the
+/// warning returned here and serves personal worlds only. The indexer takes
+/// no world writes, so only `serve` runs this.
 pub fn worlds_names_reader(config: &Config) -> anyhow::Result<Option<&'static str>> {
     if !config.worlds.worlds_writes_enabled
         || Config::non_empty(&config.market_upstreams.marketplace_subgraph_url).is_some()

@@ -114,9 +114,11 @@ async fn reseeding_a_world_moves_its_name_to_the_new_owner() {
         policy.is_owner(&world, &current).await,
         crate::shared::identity::PermissionDecision::Allowed
     ));
-    assert!(!matches!(
+    assert!(matches!(
         policy.is_owner(&world, &previous).await,
-        crate::shared::identity::PermissionDecision::Allowed
+        crate::shared::identity::PermissionDecision::Refused(
+            crate::shared::identity::AuthorityNotEstablished::RefusedLacksAuthority { detail }
+        ) if detail == crate::policy::NOT_OWNER_MSG
     ));
 }
 

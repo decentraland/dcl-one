@@ -1160,24 +1160,21 @@ fn world_writes_need_the_names_reader_unless_chain_checks_are_skipped() {
         "https://reader.example/subgraph",
     );
     let skip = ("IGNORE_BLOCKCHAIN_ACCESS_CHECKS", "true");
-    let run = |pairs: &[(&str, &str)]| {
-        let c = parsed(pairs);
-        let map = env(pairs);
-        (check(&c, &lookup(&map)), worlds_names_reader(&c))
-    };
+    let run = |pairs: &[(&str, &str)]| worlds_names_reader(&parsed(pairs));
 
-    let (checked, _) = run(&[db, writes]);
-    let err = checked.unwrap_err().to_string();
+    let err = run(&[db, writes]).unwrap_err().to_string();
     assert!(err.contains("MARKETPLACE_SUBGRAPH_URL"), "{err}");
-    let (checked, _) = run(&[db, writes, ("MARKETPLACE_SUBGRAPH_URL", " ")]);
-    assert!(checked.is_err(), "a blank reader is no reader");
-    let (checked, _) = run(&[db, (ENV, "island"), writes]);
-    assert!(checked.is_err(), "refused under a posture too");
-
-    let (checked, warning) = run(&[db, writes, skip]);
-    checked.unwrap();
     assert!(
-        warning
+        run(&[db, writes, ("MARKETPLACE_SUBGRAPH_URL", " ")]).is_err(),
+        "a blank reader is no reader"
+    );
+    assert!(
+        run(&[db, (ENV, "island"), writes]).is_err(),
+        "refused under a posture too"
+    );
+
+    assert!(
+        run(&[db, writes, skip])
             .unwrap()
             .unwrap()
             .contains("MARKETPLACE_SUBGRAPH_URL"),
@@ -1185,8 +1182,18 @@ fn world_writes_need_the_names_reader_unless_chain_checks_are_skipped() {
     );
 
     for pairs in [&[db, writes, reader][..], &[db][..], &[db, skip][..]] {
-        let (checked, warning) = run(pairs);
-        checked.unwrap();
-        assert_eq!(warning.unwrap(), None, "{pairs:?}");
+        assert_eq!(run(pairs).unwrap(), None, "{pairs:?}");
     }
+}
+
+/// The indexer shares serve's environment but takes no world writes: the
+/// shared refusals leave the names reader to serve.
+#[test]
+fn the_shared_check_leaves_the_names_reader_to_serve() {
+    let pairs = [
+        ("DATABASE_URL", "postgres:///catalyst"),
+        ("WORLDS_WRITES_ENABLED", "true"),
+    ];
+    let map = env(&pairs);
+    check(&parsed(&pairs), &lookup(&map)).unwrap();
 }

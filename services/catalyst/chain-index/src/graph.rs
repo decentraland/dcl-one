@@ -1290,14 +1290,24 @@ pub mod test_support {
         }
         /// Makes `owner` the label's only holder.
         pub fn transfer(&self, owner: &Address, label: &str) {
-            let mut registry = self.0.lock().unwrap();
-            for labels in registry.values_mut() {
+            for labels in self.0.lock().unwrap().values_mut() {
                 labels.retain(|l| !l.eq_ignore_ascii_case(label));
             }
-            registry
-                .entry(owner.as_str().to_string())
-                .or_default()
-                .push(label.to_string());
+            self.set(owner, label);
+        }
+
+        #[cfg(test)]
+        fn holders(&self, label: &str) -> Vec<String> {
+            let mut holders: Vec<String> = self
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(_, labels)| labels.iter().any(|l| l.eq_ignore_ascii_case(label)))
+                .map(|(owner, _)| owner.clone())
+                .collect();
+            holders.sort();
+            holders
         }
         pub fn forget(&self, owner: &Address) {
             self.0.lock().unwrap().remove(owner.as_str());
@@ -1418,5 +1428,33 @@ pub mod test_support {
         let index = ChainIndex::new(Outbound::for_tests(), settings);
         index.allow_loopback_for_tests();
         Arc::new(index)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn address(byte: char) -> Address {
+            Address::parse(&format!("0x{}", byte.to_string().repeat(40))).unwrap()
+        }
+
+        #[test]
+        fn transfer_leaves_the_new_owner_as_the_only_holder() {
+            let names = Names::default();
+            let (previous, current) = (address('a'), address('b'));
+            names.set(&previous, "label");
+            names.set(&previous, "kept");
+            names.transfer(&current, "LABEL");
+            assert_eq!(names.holders("label"), vec![current.as_str().to_string()]);
+            assert_eq!(names.holders("kept"), vec![previous.as_str().to_string()]);
+        }
+
+        #[test]
+        fn set_adds_a_holder() {
+            let names = Names::default();
+            names.set(&address('a'), "label");
+            names.set(&address('b'), "label");
+            assert_eq!(names.holders("label").len(), 2);
+        }
     }
 }
