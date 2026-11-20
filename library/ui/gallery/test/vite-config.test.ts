@@ -37,3 +37,35 @@ describe('when the gallery is built for the hosted pull request preview', () => 
     expect(JSON.parse(String(combined.define?.__GENERATED_COMPONENTS__)).length).toBeGreaterThan(0)
   })
 })
+
+describe('when the gallery compiles the Explorer HUD for its HUD canvas', () => {
+  const config = (command: 'serve' | 'build', mode?: string) =>
+    resolveConfig(
+      { configFile: path.join(library, 'gallery/vite.config.ts'), logLevel: 'silent', mode },
+      command
+    )
+  const target = (resolved: Awaited<ReturnType<typeof config>>, find: string) =>
+    path.relative(
+      library,
+      String(resolved.resolve.alias.find((alias) => alias.find === find)?.replacement)
+    )
+
+  it('should give the HUD the names its hosts give it, with the library HUD test host', async () => {
+    const served = await config('serve')
+    expect(target(served, '@hud')).toBe('apps/hud')
+    expect(target(served, '@explorer-core')).toBe('../explorer-core')
+    expect(target(served, '@hud-host')).toBe('apps/hud/test/host.ts')
+    expect(served.server.fs.allow).toContain(path.resolve(library, '../explorer-core'))
+  })
+
+  it('should build the HUD canvas in the combined build and in the hosted preview', async () => {
+    for (const mode of [undefined, 'hosted']) {
+      const built = await config('build', mode)
+      expect(Object.keys(built.build.rolldownOptions.input ?? {})).toEqual([
+        'index',
+        'frame',
+        'hud'
+      ])
+    }
+  })
+})

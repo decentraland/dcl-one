@@ -160,3 +160,8 @@ jobs:
           name: ui-review-${{ github.event.pull_request.head.sha || github.sha }}
           path: library/ui/figma/review/review-dist
           retention-days: 14
+      # The gallery's HUD canvas compiles the Explorer HUD, checked under the profile and the TypeScript 7 its hosts
+      # use. Last, and run whatever failed before it, so a type error here hides no other check.
+      - name: Type-check the gallery's HUD canvas
+        if: success() || failure()
+        run: node node_modules/typescript-7/bin/tsc -p gallery/tsconfig.hud.json

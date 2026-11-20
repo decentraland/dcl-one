@@ -180,6 +180,14 @@
   margin-inline: auto;
 }
 
+/* A HUD canvas is a window: the HUD scales to its width and height, fixes dialogs to it and scrolls inside. Narrow
+   widths keep a usable height. */
+.window {
+  block-size: auto;
+  aspect-ratio: 16 / 9;
+  min-block-size: 480px;
+}
+
 .generated {
   inline-size: 100%;
   block-size: calc(100vh - 160px);

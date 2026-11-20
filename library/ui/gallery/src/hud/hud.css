@@ -1,0 +1,23 @@
+/* The HUD canvas page: the page styles a HUD host gives the HUD (react-web's src/styles/global.css, the same in
+   apps/ui3/src/play/styles/global.css). Their --hud-logo is left out: nothing in the HUD reads it. */
+@import '@hud/styles/tokens.css';
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  overscroll-behavior-x: none;
+}
+
+body {
+  font-family: var(--font-family);
+  color: var(--color-text);
+  background: var(--color-bg);
+}

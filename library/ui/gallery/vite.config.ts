@@ -5,6 +5,8 @@ import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
 const here = import.meta.dirname
+// The Explorer page's core, which the HUD imports.
+const explorerCore = path.resolve(here, '../../explorer-core')
 // Only the names of the generated Review's components reach the bundle; the catalog itself stays in figma/.
 const generatedComponents = () =>
   (
@@ -39,9 +41,19 @@ export default defineConfig(({ command, mode }) => {
     server: {
       host: '127.0.0.1',
       port: 6020,
-      fs: { strict: true, allow: [path.resolve(here, '..')] }
+      fs: { strict: true, allow: [path.resolve(here, '..'), explorerCore] }
     },
-    resolve: { dedupe: ['react', 'react-dom'] },
+    resolve: {
+      dedupe: ['react', 'react-dom'],
+      // The HUD canvas compiles the Explorer HUD (apps/hud) under the names its hosts give it (react-web's
+      // vite.shared.ts, Sites' vite.config.ts). `@hud-host` is the library's own HUD test host: a web host on
+      // decentraland.org that shows pictures as given and has no Shop of its own.
+      alias: {
+        '@hud-host': path.resolve(here, '../apps/hud/test/host.ts'),
+        '@hud': path.resolve(here, '../apps/hud'),
+        '@explorer-core': explorerCore
+      }
+    },
     build: {
       // The hosted preview alone, or beside the generated Review's build (figma/review/review-dist), which the CI
       // artifact uploads whole.
@@ -54,7 +66,8 @@ export default defineConfig(({ command, mode }) => {
       rolldownOptions: {
         input: {
           index: path.resolve(here, 'index.html'),
-          frame: path.resolve(here, 'frame.html')
+          frame: path.resolve(here, 'frame.html'),
+          hud: path.resolve(here, 'hud.html')
         }
       }
     }
