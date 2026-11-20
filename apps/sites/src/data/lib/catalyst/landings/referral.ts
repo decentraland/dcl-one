@@ -39,7 +39,7 @@ export type ReferrerVM = {
   address: string | null;
   hasClaimedName: boolean;
   resolved: boolean;
-  /** The avatar's 256px face snapshot, when the profile names an absolute https one (the invite's link-preview image). */
+  /** The avatar's 256px face snapshot as the profile names it; the invite's card resolves it through `faceUrl`. */
   face256: string | null;
 };
 
@@ -52,7 +52,7 @@ function toReferrerVM(profile: ProfileLambda, address: string): ReferrerVM {
     address,
     hasClaimedName: Boolean(a?.hasClaimedName && name),
     resolved: Boolean(a),
-    face256: face && /^https:\/\//i.test(face) ? face : null,
+    face256: face || null,
   };
 }
 

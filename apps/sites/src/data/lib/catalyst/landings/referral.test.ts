@@ -15,7 +15,7 @@ const profile = (face256: unknown) => ({
 describe("when fetching a referrer's profile", () => {
   beforeEach(() => vi.mocked(getJSON).mockReset());
 
-  describe("and the avatar has an https face snapshot", () => {
+  describe("and the avatar has a face snapshot", () => {
     it("should carry the face", async () => {
       vi.mocked(getJSON).mockResolvedValue(profile(FACE));
       expect(await fetchReferrerProfile(ADDRESS)).toEqual({
@@ -31,8 +31,7 @@ describe("when fetching a referrer's profile", () => {
   describe.each([
     ["missing", undefined],
     ["null", null],
-    ["a bare content hash", "bafkreiexample"],
-    ["plain http", "http://profile-images.decentraland.org/entities/x/face.png"],
+    ["blank", "  "],
   ])("and the face snapshot is %s", (_label, face) => {
     it("should carry no face", async () => {
       vi.mocked(getJSON).mockResolvedValue(profile(face));

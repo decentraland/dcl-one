@@ -9,7 +9,9 @@ import type { ReferrerVM, ReferralState } from "@/data/lib/catalyst/landings/ref
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
 
-import { DEFAULT_SOCIAL_DESCRIPTION, DEFAULT_SOCIAL_TITLE, absoluteUrl, publicBase, socialMeta } from "../lib/social-meta";
+import { faceUrl } from "@/features/social/community/view";
+
+import { DEFAULT_SOCIAL_DESCRIPTION, DEFAULT_SOCIAL_TITLE, absoluteImage, absoluteUrl, publicBase, socialMeta } from "../lib/social-meta";
 import type { Route } from "./+types/invite.($referrer)";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 
@@ -24,12 +26,14 @@ export function meta({ loaderData, matches, location }: Route.MetaArgs) {
   const referrer = loaderData?.referrer;
   const param = loaderData?.referrerParam ?? "";
   const path = ETH_ADDRESS_RE.test(param) ? `/invite/${param.toLowerCase()}` : location.pathname;
+  const base = publicBase(matches);
   return socialMeta({
     title: referrer?.name ? `${referrer.name} invited you to join Decentraland` : DEFAULT_SOCIAL_TITLE,
     description: DEFAULT_SOCIAL_DESCRIPTION,
-    image: referrer?.face256 ?? undefined,
+    // Profile data anyone can write: only this site's profile-image or content paths, under the public base.
+    image: absoluteImage(base, faceUrl(referrer?.face256)),
     smallImage: true,
-    url: absoluteUrl(publicBase(matches), path),
+    url: absoluteUrl(base, path),
   });
 }
 

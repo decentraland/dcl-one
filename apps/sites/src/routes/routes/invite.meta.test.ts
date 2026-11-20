@@ -46,8 +46,8 @@ describe("when rendering the /invite head", () => {
       expect(tagContent(tags, "description")).toEqual([DEFAULT_SOCIAL_DESCRIPTION]);
     });
 
-    it("should show the face as a small card", () => {
-      expect(tagContent(tags, "og:image")).toEqual([FACE]);
+    it("should show the face from this site's image cache as a small card", () => {
+      expect(tagContent(tags, "og:image")).toEqual(["https://public.test/profile-images/entities/bafkreiexample/face.png"]);
       expect(tagContent(tags, "twitter:card")).toEqual(["summary"]);
     });
 
@@ -70,6 +70,17 @@ describe("when rendering the /invite head", () => {
 
     it("should point the canonical at the requested path", () => {
       expect(canonicalHrefs(tags)).toEqual(["https://public.test/invite/Jane"]);
+    });
+  });
+
+  describe.each([
+    ["on another host", "https://evil.test/face.png"],
+    ["a data URL", "data:image/png;base64,AA"],
+  ])("and the face snapshot is %s", (_label, face256) => {
+    it("should fall back to the default image as a large card", () => {
+      tags = head(ADDRESS, referrer({ face256 }));
+      expect(tagContent(tags, "og:image")).toEqual([DEFAULT_SOCIAL_IMAGE]);
+      expect(tagContent(tags, "twitter:card")).toEqual(["summary_large_image"]);
     });
   });
 
