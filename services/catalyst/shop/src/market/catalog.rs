@@ -563,7 +563,9 @@ pub fn uint_or_null(expr: &str) -> String {
 /// `now_p` (a bound timestamp, never `now()`), not in `trade_cancellations`,
 /// and not closed on chain (`trade_events`: sold or cancelled there) while
 /// that network's trade-events index is published; and counted at
-/// `since_p` (a bound nullable timestamp, `trades::mirrored_since`).
+/// `since_p` (a bound nullable timestamp, `trades::mirrored_since`). An item
+/// order also needs its creator's signature and its marketplace among the
+/// collection's minters, as no other contract can mint the item.
 pub fn unified_trades_cte(now_p: &str, since_p: &str) -> String {
     format!(
         "unified_trades AS ( \
@@ -592,6 +594,10 @@ pub fn unified_trades_cte(now_p: &str, since_p: &str) -> String {
                    SELECT 1 FROM shop.items ci \
                    WHERE ci.network = lower(t.network) AND ci.contract_address = lower(sent.contract_address) \
                      AND ci.item_id = {item_num} AND lower(ci.creator) = lower(t.signer))) \
+             AND (t.type <> 'public_item_order' OR EXISTS ( \
+                   SELECT 1 FROM shop.collections mc \
+                   WHERE mc.network = lower(t.network) AND mc.contract_address = lower(sent.contract_address) \
+                     AND lower(t.contract) = ANY(mc.minters))) \
          )",
         served = served_chain_sql("t"),
         item_num = uint_or_null("sent_item.item_id"),
@@ -624,12 +630,7 @@ fn build_offchain_orders_cte(b: &mut Builder, f: &CatalogFilters) {
                   (array_agg(id::text ORDER BY amount_received, created_at DESC, id) FILTER (WHERE type = 'public_item_order'))[1] AS open_item_trade_id, \
                   MIN(amount_received) FILTER (WHERE type = 'public_item_order') AS open_item_trade_price, \
                   MIN(created_at) FILTER (WHERE type = 'public_item_order') AS item_first_listed_at \
-           FROM unified_trades WHERE item_id IS NOT NULL \
-             AND (type <> 'public_item_order' OR EXISTS ( \
-                   SELECT 1 FROM shop.collections mc \
-                   WHERE mc.network = lower(unified_trades.network) \
-                     AND mc.contract_address = lower(contract_address_sent) \
-                     AND lower(trade_contract) = ANY(mc.minters)))",
+           FROM unified_trades WHERE item_id IS NOT NULL",
     );
     if f.only_minting {
         b.push(" AND type = 'public_item_order'");
