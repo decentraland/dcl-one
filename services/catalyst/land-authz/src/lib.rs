@@ -319,6 +319,19 @@ pub struct EstateData {
     pub description: String,
 }
 
+/// What the index says of an Estate token
+/// ([`LandAuthzState::dissolved_estate`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DissolvedEstate {
+    /// Minted and holding no LAND: its latest data document.
+    Dissolved(EstateData),
+    /// Never minted, or still holding LAND.
+    NotDissolved,
+    /// The index could not answer: it is not published, or the database
+    /// failed. Not an answer about the estate, so never one to cache.
+    Unknown,
+}
+
 /// Why no decision could be made: the caller refuses the write (never
 /// grants), and a route answers the unavailable envelope.
 #[derive(Debug, thiserror::Error)]
@@ -428,12 +441,14 @@ impl LandAuthzState {
     /// registry minted it and it holds no LAND now: a dissolved estate, the
     /// atlas's `searchEstateSize: 0` lookup, with the name and description
     /// of its latest data document (`estate_data_event`; empty when it has
-    /// none). `Some(None)` when it is not dissolved (never minted, or still
-    /// holding LAND); `None` when the index may not answer (a database error
-    /// reads as not ready).
-    pub async fn dissolved_estate(&self, estate_id: &str) -> Option<Option<EstateData>> {
-        let mut snapshot = self.ready_snapshot().await?;
-        let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+    /// none). [`DissolvedEstate::NotDissolved`] when it was never minted or
+    /// still holds LAND; [`DissolvedEstate::Unknown`] when the index may not
+    /// answer (a database error reads as not ready).
+    pub async fn dissolved_estate(&self, estate_id: &str) -> DissolvedEstate {
+        let Some(mut snapshot) = self.ready_snapshot().await else {
+            return DissolvedEstate::Unknown;
+        };
+        let row: Result<Option<(Option<String>, Option<String>)>, _> = sqlx::query_as(
             "SELECT d.name, d.description FROM land_authz.token_right e \
              LEFT JOIN LATERAL (SELECT x.name, x.description FROM land_authz.estate_data_event x \
                                  WHERE x.token_address = e.token_address AND x.estate_id = e.token_id \
@@ -446,12 +461,15 @@ impl LandAuthzState {
         .bind(estate_id)
         .fetch_optional(&mut *snapshot.tx)
         .await
-        .inspect_err(|e| tracing::warn!(error = %e, "land-authz: dissolved-estate lookup failed"))
-        .ok()?;
-        Some(row.map(|(name, description)| EstateData {
-            name: name.unwrap_or_default(),
-            description: description.unwrap_or_default(),
-        }))
+        .inspect_err(|e| tracing::warn!(error = %e, "land-authz: dissolved-estate lookup failed"));
+        match row {
+            Ok(Some((name, description))) => DissolvedEstate::Dissolved(EstateData {
+                name: name.unwrap_or_default(),
+                description: description.unwrap_or_default(),
+            }),
+            Ok(None) => DissolvedEstate::NotDissolved,
+            Err(_) => DissolvedEstate::Unknown,
+        }
     }
 
     /// The marketplace reader, when one with a subgraph URL is attached.

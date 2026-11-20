@@ -25,13 +25,14 @@ use std::sync::OnceLock;
 use alloy_primitives::U256;
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::super::Shared;
 use super::{Grid, http_cache};
+use crate::land_authz::DissolvedEstate;
 
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "map/"))]
@@ -320,9 +321,11 @@ fn with_grid(state: &Shared, headers: &HeaderMap, f: impl FnOnce(&Grid) -> Respo
 
 /// The document of estate `id` (decimal). One the grid holds is a grid
 /// answer ([`validated`]). One it does not hold answers from the LAND index:
-/// 200 when dissolved, 404 otherwise (none attached, not ready, never
-/// minted, holding LAND). The grid stamp says nothing of the index, so that
-/// answer carries the cache policy without `Last-Modified` and is never 304.
+/// 200 when dissolved, 404 otherwise. The grid stamp says nothing of the
+/// index, so that answer carries the cache policy without `Last-Modified`
+/// and is never 304. A 404 the index could not decide (none attached, not
+/// ready, a database error) is `no-store`: only a definite one (never
+/// minted, holding LAND) may be cached downstream.
 async fn estate_response(
     state: &Shared,
     headers: &HeaderMap,
@@ -334,12 +337,18 @@ async fn estate_response(
         return validated(headers, last, || ok_nft(nft));
     }
     let dissolved = match state.land_authz.get() {
-        Some(land) => land.dissolved_estate(id).await.flatten(),
-        None => None,
+        Some(land) => land.dissolved_estate(id).await,
+        None => DissolvedEstate::Unknown,
     };
     let mut resp = match dissolved {
-        Some(data) => ok_nft(dissolved_estate_nft(state, id, data)),
-        None => not_found(),
+        DissolvedEstate::Dissolved(data) => ok_nft(dissolved_estate_nft(state, id, data)),
+        DissolvedEstate::NotDissolved => not_found(),
+        DissolvedEstate::Unknown => {
+            let mut resp = not_found();
+            resp.headers_mut()
+                .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            return resp;
+        }
     };
     http_cache::apply_policy(
         &mut resp,
@@ -689,7 +698,8 @@ mod tests {
 
     /// The grid stamp validates only what the grid answers: an estate it
     /// holds is revalidated as 304, one it does not hold gets its full
-    /// answer with the cache policy and no `Last-Modified`.
+    /// answer without `Last-Modified`; with no LAND index attached that 404
+    /// decides nothing of the estate and is `no-store`.
     #[tokio::test]
     async fn only_a_grid_estate_is_revalidated_on_the_grid_stamp() {
         let state = crate::api::tests_support::state_without_db().await;
@@ -706,10 +716,7 @@ mod tests {
             for resp in estate_and_token_responses(&state, "501", &headers).await {
                 assert_eq!(resp.status(), StatusCode::NOT_FOUND, "no LAND index");
                 assert!(!resp.headers().contains_key(header::LAST_MODIFIED));
-                assert_eq!(
-                    resp.headers()[header::CACHE_CONTROL],
-                    "max-age=120, s-maxage=120, stale-while-revalidate=180, public"
-                );
+                assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
             }
         }
     }
@@ -734,8 +741,9 @@ mod tests {
     /// atlas-server `handlers.ts` `estateRequestHandler`/`tokenRequestHandler`
     /// and `buildDissolvedEstate`: an estate the grid does not hold answers
     /// 200 when the LAND index proves it minted and empty, named by its
-    /// latest data document (empty strings without one); never minted,
-    /// still holding LAND, or an unready index answers 404.
+    /// latest data document (empty strings without one); never minted or
+    /// still holding LAND answers a cacheable 404, an unready index a
+    /// `no-store` one.
     #[tokio::test]
     async fn a_dissolved_estate_answers_from_the_land_index() {
         let Some(db) = crate::api::tests_support::scratch_database().await else {
@@ -789,6 +797,11 @@ mod tests {
                 "an unready index is never revalidated on the grid stamp"
             );
             assert!(!resp.headers().contains_key(header::LAST_MODIFIED));
+            assert_eq!(
+                resp.headers()[header::CACHE_CONTROL],
+                "no-store",
+                "a 404 the index could not decide is not cached"
+            );
         }
         sqlx::query("INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) VALUES ($1, $2, $3, 1, 1, timezone('UTC', now()), true)")
             .bind(&land_settings.network)
@@ -814,9 +827,17 @@ mod tests {
                 );
             }
         }
+        // Holding LAND, and never minted: a definite 404, cached as any
+        // other answer of the index.
         for id in ["502", "999"] {
-            for (status, _) in estate_and_token(&state, id).await {
-                assert_eq!(status, StatusCode::NOT_FOUND, "{id}");
+            for resp in estate_and_token_responses(&state, id, &revalidating()).await {
+                assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{id}");
+                assert!(!resp.headers().contains_key(header::LAST_MODIFIED));
+                assert_eq!(
+                    resp.headers()[header::CACHE_CONTROL],
+                    "max-age=120, s-maxage=120, stale-while-revalidate=180, public",
+                    "{id}"
+                );
             }
         }
         // The grid stamp says nothing of the index: a conditional request

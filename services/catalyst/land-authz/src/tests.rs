@@ -288,7 +288,11 @@ async fn a_dissolved_estate_answers_its_latest_data_document() {
         },
         None,
     );
-    assert_eq!(state.dissolved_estate("501").await, None, "unready");
+    assert_eq!(
+        state.dissolved_estate("501").await,
+        DissolvedEstate::Unknown,
+        "unready"
+    );
     let (_jobs, ctx) = job_ctx().await;
     let out = indexer::run_pass(&state, &ctx).await.unwrap();
     assert!(out.published, "{out:?}");
@@ -303,24 +307,24 @@ async fn a_dissolved_estate_answers_its_latest_data_document() {
     );
     assert_eq!(
         state.dissolved_estate("501").await,
-        Some(Some(EstateData {
+        DissolvedEstate::Dissolved(EstateData {
             name: "Dissolved".into(),
             description: "Once an estate".into(),
-        }))
+        })
     );
     assert_eq!(
         state.dissolved_estate("502").await,
-        Some(Some(EstateData::default())),
+        DissolvedEstate::Dissolved(EstateData::default()),
         "no document: empty strings"
     );
     assert_eq!(
         state.dissolved_estate("500").await,
-        Some(None),
+        DissolvedEstate::NotDissolved,
         "holds LAND"
     );
     assert_eq!(
         state.dissolved_estate("999").await,
-        Some(None),
+        DissolvedEstate::NotDissolved,
         "never minted"
     );
 
@@ -337,10 +341,10 @@ async fn a_dissolved_estate_answers_its_latest_data_document() {
     );
     assert_eq!(
         state.dissolved_estate("501").await,
-        Some(Some(EstateData {
+        DissolvedEstate::Dissolved(EstateData {
             name: "First".into(),
             description: "first words".into(),
-        }))
+        })
     );
     db.drop().await;
 }
@@ -415,15 +419,19 @@ async fn a_registry_switch_leaves_the_old_registrys_documents_unread() {
     let old_state = state_over(pool.clone(), old, None);
     assert_eq!(
         old_state.dissolved_estate("501").await,
-        Some(Some(EstateData {
+        DissolvedEstate::Dissolved(EstateData {
             name: "Old 501".into(),
             description: "old words".into(),
-        })),
+        }),
         "the old registries' reader answers its own document"
     );
 
     let state = state_over(pool.clone(), configured, None);
-    assert_eq!(state.dissolved_estate("501").await, None, "not its cursor");
+    assert_eq!(
+        state.dissolved_estate("501").await,
+        DissolvedEstate::Unknown,
+        "not its cursor"
+    );
     let (_jobs, ctx) = job_ctx().await;
     let out = indexer::run_pass(&state, &ctx).await.unwrap();
     assert!(out.published, "{out:?}");
@@ -445,18 +453,21 @@ async fn a_registry_switch_leaves_the_old_registrys_documents_unread() {
     );
     assert_eq!(
         state.dissolved_estate("501").await,
-        Some(Some(EstateData::default())),
+        DissolvedEstate::Dissolved(EstateData::default()),
         "the old registry's later document names no estate of this one"
     );
     assert_eq!(
         state.dissolved_estate("502").await,
-        Some(Some(EstateData {
+        DissolvedEstate::Dissolved(EstateData {
             name: "New".into(),
             description: "new words".into(),
-        })),
+        }),
         "its own document, though the old registry's is later"
     );
-    assert_eq!(old_state.dissolved_estate("501").await, None);
+    assert_eq!(
+        old_state.dissolved_estate("501").await,
+        DissolvedEstate::Unknown
+    );
     db.drop().await;
 }
 
