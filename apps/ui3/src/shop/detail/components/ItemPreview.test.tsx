@@ -2,7 +2,7 @@
 // loads nothing until the outfit comes; the thumbnail stays until the first drawn frame, and failures show over it.
 
 import { act, cleanup, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import type { AvatarStatus } from "../../../wearable-preview/avatar";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
@@ -28,8 +28,9 @@ vi.mock("../../../wearable-preview/WearablePreview", async () => {
 vi.mock("../../../data/catalyst/profile", () => ({
   fetchProfile: () => new Promise((resolve) => (reads.profile = resolve)),
 }));
-vi.mock("../lib/wearable-rules", () => ({
-  entityBase: () => "https://peer.test",
+vi.mock("../lib/wearable-rules", async (importOriginal) => ({
+  // The real choice of Catalyst, so the test sees what the two reads would actually use.
+  ...(await importOriginal<typeof import("../lib/wearable-rules")>()),
   fetchWearableRules: (_urns: string[], _also: string[], base?: string) => {
     reads.rulesBase = base;
     return new Promise((resolve) => (reads.rules = resolve));
@@ -101,13 +102,30 @@ test("a failed or empty scene leaves the thumbnail in place with the note over i
   }
 });
 
-test("the outfit's rules read and the scene use one Catalyst, so the scene reuses the entities that read cached", async () => {
-  render(<ItemPreview item={ITEM} renderer="full" />);
-  await act(async () => {
-    await vi.waitFor(() => expect(reads.profile).not.toBeNull());
-    reads.profile!({ avatar: { bodyShape: BODY, wearables: [] } });
+describe("the Catalyst the outfit's rules read and the scene use", () => {
+  const peered = window as typeof window & { __SHOP_PEERS__?: Record<string, string> };
+  afterEach(() => {
+    delete peered.__SHOP_PEERS__;
   });
-  await vi.waitFor(() => expect(reads.rules).not.toBeNull());
-  expect(reads.rulesBase).toBe("https://peer.test");
-  expect(last().base).toBe("https://peer.test");
+  async function readTheOutfit(wearables: string[]) {
+    render(<ItemPreview item={ITEM} renderer="full" />);
+    await act(async () => {
+      await vi.waitFor(() => expect(reads.profile).not.toBeNull());
+      reads.profile!({ avatar: { bodyShape: BODY, wearables } });
+    });
+    await vi.waitFor(() => expect(reads.rules).not.toBeNull());
+  }
+
+  test("one peer serves the whole outfit: both use it, so the scene reuses the entities the rules read cached", async () => {
+    await readTheOutfit(["urn:decentraland:matic:collections-v2:0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1"]);
+    expect(reads.rulesBase).toEqual(expect.any(String));
+    expect(last().base).toBe(reads.rulesBase);
+  });
+
+  test("an outfit whose networks have different peers: each read keeps its own, the scene its default", async () => {
+    peered.__SHOP_PEERS__ = { amoy: "https://peer.amoy.test" };
+    await readTheOutfit(["urn:decentraland:amoy:collections-v2:0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1"]);
+    expect(reads.rulesBase).toBeUndefined();
+    expect(last().base).toBeUndefined();
+  });
 });

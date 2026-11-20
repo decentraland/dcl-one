@@ -45,6 +45,15 @@ export function entityBase(urns: string[]): string {
 }
 
 /**
+ * The one Catalyst every URN's network reads from, or undefined when they span peers (a host that names a peer for one
+ * network, and an outfit with items on two): no single peer then serves the whole outfit.
+ */
+export function sharedEntityBase(urns: string[]): string | undefined {
+  const peers = new Set(urns.map((urn) => entityBase([urn])));
+  return peers.size === 1 ? [...peers][0] : undefined;
+}
+
+/**
  * Entities by lowercased pointer, through the preview's entity cache: what is read here under `base`, a preview given
  * the same base does not read again.
  */
@@ -66,7 +75,7 @@ export async function fetchVrmExportBlocked(urn: string): Promise<boolean | null
  * The rules for a list of equipped URNs, in the order asked; unknown URNs are absent. `alsoRead` (the body and the
  * item the preview mounts next) goes in the same request, so the preview finds those entities cached.
  */
-export async function fetchWearableRules(urns: string[], alsoRead: string[] = [], base?: string): Promise<WearableRule[]> {
+export async function fetchWearableRules(urns: string[], alsoRead: string[] = [], base?: string | undefined): Promise<WearableRule[]> {
   if (urns.length === 0 && alsoRead.length === 0) return [];
   try {
     const entities = await readEntities([...urns, ...alsoRead], base);
