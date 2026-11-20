@@ -313,6 +313,7 @@ pub async fn run_sync_job(
     let mut handle = match orchestrator.sync_with_servers(initial).await {
         Ok(handle) => handle,
         Err(e) => {
+            error!(error = %e, "Sync orchestrator failed to start; sync state is now Failed and every deploy is refused");
             orchestrator.status().set_state(SyncState::Failed);
             return Err(anyhow::anyhow!("sync orchestrator failed to start: {e}"));
         }
@@ -362,6 +363,7 @@ pub async fn run_sync_job(
                 bootstrap_running = false;
                 if let Err(e) = outcome
                     && !e.is_cancelled() {
+                        error!(error = %e, "Bootstrap task died; sync state is now Failed and every deploy is refused");
                         status.set_state(SyncState::Failed);
                         ctx.error(format!("bootstrap task died: {e}"));
                         orchestrator.stop().await;
@@ -1205,13 +1207,7 @@ pub struct SyncHandle {
 }
 
 impl SyncHandle {
-    /// Returns once the node left `Bootstrapping` (partially or fully synced), even when that
-    /// happened before this was called.
-    pub async fn wait_for_bootstrap(&self) {
-        self.bootstrap_signal().wait().await
-    }
-
-    /// [`Self::wait_for_bootstrap`] without borrowing the handle; shared by every handle the
+    /// Waits on the node's sync state without borrowing the handle; shared by every handle the
     /// orchestrator returns.
     pub fn bootstrap_signal(&self) -> BootstrapSignal {
         BootstrapSignal {
@@ -1227,7 +1223,7 @@ impl SyncHandle {
     }
 }
 
-/// Resolves once the node left `Bootstrapping`; see [`SyncHandle::bootstrap_signal`].
+/// Waits for the node's bootstrap; see [`SyncHandle::bootstrap_signal`].
 #[derive(Clone)]
 pub struct BootstrapSignal {
     bootstrap_done: Arc<Notify>,
@@ -1235,13 +1231,9 @@ pub struct BootstrapSignal {
 }
 
 impl BootstrapSignal {
-    pub async fn wait(&self) {
-        self.wait_for(|state| *state != SyncState::Bootstrapping)
-            .await
-    }
-
-    /// Resolves once every type bootstrapped (`Syncing`) or the sync failed: a
-    /// `PartiallySynced` node is still bootstrapping its profiles.
+    /// Resolves once every type bootstrapped (`Syncing`) or the sync failed, even when that
+    /// happened before this was called: a `PartiallySynced` node is still bootstrapping its
+    /// profiles.
     pub async fn wait_settled(&self) {
         self.wait_for(|state| matches!(state, SyncState::Syncing | SyncState::Failed))
             .await

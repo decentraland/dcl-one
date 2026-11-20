@@ -571,9 +571,15 @@ struct FailedDeploymentDeps {
 /// own deployments.
 const PRUNE_START: Duration = Duration::from_secs(300);
 
+/// How often a loop still held by [`wait_to_start`] says so. Longer than [`PRUNE_START`], so only
+/// a wait without a limit (the retry loop's) reports.
+const STILL_WAITING_EVERY: Duration = Duration::from_secs(600);
+
 /// Returns at bootstrap completion (the node `Syncing`, see
 /// [`run_sync_job`]), or after `delay` when one is given, whichever comes first; at once with no
-/// bootstrap to wait for, and on cancellation, which the loop then sees.
+/// bootstrap to wait for, and on cancellation, which the loop then sees. While it waits, every
+/// [`STILL_WAITING_EVERY`] it warns and sets the job's progress line: a node that never reaches
+/// `Syncing` never starts the loop, and this is what shows it.
 async fn wait_to_start(
     ctx: &JobContext,
     bootstrapped: Option<watch::Receiver<bool>>,
@@ -591,10 +597,24 @@ async fn wait_to_start(
             None => std::future::pending().await,
         }
     };
-    tokio::select! {
-        _ = ctx.cancel.cancelled() => {}
-        _ = done => {}
-        _ = limit => {}
+    tokio::pin!(done, limit);
+    let waiting_since = tokio::time::Instant::now();
+    let mut reminder =
+        tokio::time::interval_at(waiting_since + STILL_WAITING_EVERY, STILL_WAITING_EVERY);
+    loop {
+        tokio::select! {
+            _ = ctx.cancel.cancelled() => return,
+            _ = &mut done => return,
+            _ = &mut limit => return,
+            _ = reminder.tick() => {
+                let waited_min = waiting_since.elapsed().as_secs() / 60;
+                tracing::warn!(
+                    waited_min,
+                    "Still waiting for the sync bootstrap to reach Syncing; this loop has not started"
+                );
+                ctx.progress(format!("waiting for the sync bootstrap ({waited_min} min)"));
+            }
+        }
     }
 }
 
@@ -987,6 +1007,13 @@ mod tests {
         assert!(
             started.try_recv().is_err(),
             "a retry loop never starts while the bootstrap is held"
+        );
+        let waiting: Vec<String> = (jobs.report().into_iter())
+            .filter_map(|job| job.progress)
+            .collect();
+        assert!(
+            matches!(&waiting[..], [line] if line.starts_with("waiting for the sync bootstrap (")),
+            "the held loop reports its wait: {waiting:?}"
         );
         bootstrapped.send(true).unwrap();
         started.await.unwrap();

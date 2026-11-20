@@ -172,23 +172,24 @@ fn deployment_report_incomplete_until_all_acknowledged() {
 }
 
 #[tokio::test]
-async fn wait_for_bootstrap_returns_when_the_state_already_left_bootstrapping() {
+async fn the_bootstrap_signal_settles_on_a_transition_that_already_happened() {
     let status = Arc::new(SyncStatus::default());
-    let handle = SyncHandle {
+    let signal = BootstrapSignal {
         bootstrap_done: Arc::new(Notify::new()),
         status: status.clone(),
-        task: tokio::spawn(async {}),
     };
-    assert!(
-        futures::poll!(std::pin::pin!(handle.wait_for_bootstrap())).is_pending(),
-        "a Bootstrapping node keeps the waiter waiting"
-    );
-
     status.set_state(SyncState::PartiallySynced {
         ready_types: vec!["scene".into()],
     });
-    handle.bootstrap_done.notify_waiters();
-    futures::FutureExt::now_or_never(handle.wait_for_bootstrap())
+    signal.bootstrap_done.notify_waiters();
+    assert!(
+        futures::poll!(std::pin::pin!(signal.wait_settled())).is_pending(),
+        "a partially synced node keeps the waiter waiting"
+    );
+
+    status.set_state(SyncState::Syncing);
+    signal.bootstrap_done.notify_waiters();
+    futures::FutureExt::now_or_never(signal.wait_settled())
         .expect("a transition that already happened must not be missed");
 }
 
