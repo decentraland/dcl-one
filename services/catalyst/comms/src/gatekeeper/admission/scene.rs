@@ -60,7 +60,9 @@ pub use lookup::{
     PlaceInfo, PlaceLookup, place_from_metadata, realm_name_from_metadata,
     resolve_listing_place_id, resolve_world_scene_id, try_load_place_info,
 };
-pub(crate) use lookup::{meta_str, participant_room, resolve_adapter_room, signed_realm_url};
+pub(crate) use lookup::{
+    meta_str, participant_room, require_genesis_deployment, resolve_adapter_room, signed_realm_url,
+};
 #[path = "scene_policy.rs"]
 mod policy;
 pub(crate) use policy::try_get_lease_holders_for_parcels;

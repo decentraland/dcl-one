@@ -992,7 +992,72 @@ async fn duplicate_committed_handshake_replies_without_reapplying_admission() {
 }
 
 #[tokio::test]
-async fn future_dated_signature_is_consumed_before_reply_and_across_restart() {
+async fn handshake_signed_ahead_of_the_server_clock_is_admitted_once_inside_the_window() {
+    let (bytes, wallet, timestamp) = signed_handshake_request().await;
+    let skew = crate::pulse::handshake::MAX_TIMESTAMP_SKEW_MS;
+    let mut srv = PulseServer::with_config(4, 2, &[50], false);
+    for peer in 1..=4 {
+        srv.peers
+            .insert(peer, PeerState::new(PeerConnectionState::PendingAuth, 0));
+    }
+    // More than the window ahead: refused with a retryable reply, before any replay state.
+    match srv.dispatch(1, channel::RELIABLE, &bytes, timestamp - skew - 1, 0) {
+        Action::Reply(ServerMessage {
+            message: Some(server_message::Message::Handshake(h)),
+        }) => assert!(!h.success),
+        other => panic!("a handshake signed beyond the window should be refused, got {other:?}"),
+    }
+    assert_eq!(
+        srv.peers[&1].connection_state,
+        PeerConnectionState::PendingAuth
+    );
+    // A client clock 310 ms fast, as measured against a deployed Pulse.
+    match srv.dispatch(2, channel::RELIABLE, &bytes, timestamp - 310, 0) {
+        Action::Authenticated { wallet: w, .. } => assert_eq!(w, wallet),
+        other => panic!("a handshake signed 310 ms ahead should authenticate, got {other:?}"),
+    }
+    // The bytes stay used for the rest of their window.
+    for (peer, now_ms) in [(3, timestamp), (4, timestamp + skew)] {
+        assert!(matches!(
+            srv.dispatch(peer, channel::RELIABLE, &bytes, now_ms, 0),
+            Action::Reject {
+                reason: DisconnectReason::HandshakeReplayRejected,
+                ..
+            }
+        ));
+    }
+}
+
+#[tokio::test]
+async fn replay_refusal_of_a_far_ahead_signature_is_retryable_and_names_the_clock() {
+    let (bytes, _, timestamp) = signed_handshake_request().await;
+    let mut srv = PulseServer::with_config(4, 2, &[50], false);
+    // A replay window narrower than the signature's, so the replay policy is what refuses.
+    srv.replay_policy = HandshakeReplayPolicy::new(true, 1_000, 4);
+    srv.peers
+        .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
+    match srv.dispatch(1, channel::RELIABLE, &bytes, timestamp - 1_001, 0) {
+        Action::Reply(ServerMessage {
+            message: Some(server_message::Message::Handshake(h)),
+        }) => {
+            assert!(!h.success);
+            assert_eq!(
+                h.error.as_deref(),
+                Some(
+                    "timestamp is too far ahead of this server; synchronize the clock and sign a new handshake"
+                )
+            );
+        }
+        other => panic!("expected a failed handshake reply, got {other:?}"),
+    }
+    assert_eq!(
+        srv.peers[&1].connection_state,
+        PeerConnectionState::PendingAuth
+    );
+}
+
+#[tokio::test]
+async fn clock_ahead_signature_is_consumed_before_reply_and_across_restart() {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
@@ -1015,14 +1080,10 @@ async fn future_dated_signature_is_consumed_before_reply_and_across_restart() {
         server
             .peers
             .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
+        // Signed a whole window ahead of this server's clock: admitted, and journaled first.
         assert!(matches!(
             server.dispatch(1, channel::RELIABLE, &bytes, earliest, 0),
-            Action::Reply(ServerMessage {
-                message: Some(server_message::Message::Handshake(HandshakeResponse {
-                    success: false,
-                    ..
-                }))
-            })
+            Action::Authenticated { .. }
         ));
     }
 
@@ -2421,13 +2482,14 @@ async fn baseline_input_boundaries_preserve_inclusive_pulse6_freshness() {
         let mut srv = PulseServer::with_config(4, 2, &[50], false);
         srv.peers
             .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
-        // pulse-6 keeps inclusive signature freshness while consuming/refusing future signatures.
+        // pulse-6: one inclusive window of 60 s either side, the replay journal included.
         assert_eq!(
             matches!(
                 srv.dispatch(1, channel::RELIABLE, &bytes, timestamp + offset, 1000),
                 Action::Authenticated { .. }
             ),
-            accepted && offset >= 0
+            accepted,
+            "offset={offset}"
         );
     }
 }

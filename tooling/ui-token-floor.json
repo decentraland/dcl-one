@@ -23,10 +23,6 @@
     "primitives": 0,
     "tokens": 24
   },
-  "apps/sites/src/features/components/CopyAddress.module.css": {
-    "primitives": 0,
-    "tokens": 12
-  },
   "apps/sites/src/features/components/chrome/SitesTopBar.module.css": {
     "primitives": 0,
     "tokens": 12
@@ -71,42 +67,6 @@
     "primitives": 0,
     "tokens": 14
   },
-  "apps/sites/src/features/profile/EmptyMessage.module.css": {
-    "primitives": 0,
-    "tokens": 12
-  },
-  "apps/sites/src/features/profile/PhotoViewer.module.css": {
-    "primitives": 0,
-    "tokens": 58
-  },
-  "apps/sites/src/features/profile/ProfileBadges.module.css": {
-    "primitives": 0,
-    "tokens": 18
-  },
-  "apps/sites/src/features/profile/ProfileHeader.module.css": {
-    "primitives": 0,
-    "tokens": 19
-  },
-  "apps/sites/src/features/profile/ProfileOverviewScreen.module.css": {
-    "primitives": 0,
-    "tokens": 30
-  },
-  "apps/sites/src/features/profile/ProfilePhotosScreen.module.css": {
-    "primitives": 0,
-    "tokens": 10
-  },
-  "apps/sites/src/features/profile/ProfilePlacesScreen.module.css": {
-    "primitives": 0,
-    "tokens": 9
-  },
-  "apps/sites/src/features/profile/ProfileShell.module.css": {
-    "primitives": 0,
-    "tokens": 10
-  },
-  "apps/sites/src/features/profile/collectibles.module.css": {
-    "primitives": 0,
-    "tokens": 40
-  },
   "apps/sites/src/features/social/community/CommunityErrorView.module.css": {
     "primitives": 0,
     "tokens": 10
@@ -121,7 +81,7 @@
   },
   "apps/sites/src/features/social/report/ReportForm.module.css": {
     "primitives": 0,
-    "tokens": 69
+    "tokens": 59
   },
   "apps/sites/src/features/social/report/ReportSuccess.module.css": {
     "primitives": 0,
@@ -203,10 +163,6 @@
     "primitives": 0,
     "tokens": 37
   },
-  "apps/ui3/src/web/pages/stprofilecommunitiestab.css": {
-    "primitives": 15,
-    "tokens": 0
-  },
   "apps/ui3/src/web/pages/stprofileoverviewtab.css": {
     "primitives": 12,
     "tokens": 0
@@ -223,6 +179,66 @@
     "primitives": 13,
     "tokens": 0
   },
+  "library/ui/apps/sites/CopyAddress.module.css": {
+    "primitives": 0,
+    "tokens": 12
+  },
+  "library/ui/apps/sites/profile/EmptyMessage.module.css": {
+    "primitives": 0,
+    "tokens": 12
+  },
+  "library/ui/apps/sites/profile/PhotoTile.module.css": {
+    "primitives": 0,
+    "tokens": 10
+  },
+  "library/ui/apps/sites/profile/PhotoViewer.module.css": {
+    "primitives": 0,
+    "tokens": 48
+  },
+  "library/ui/apps/sites/profile/ProfileBadges.module.css": {
+    "primitives": 0,
+    "tokens": 18
+  },
+  "library/ui/apps/sites/profile/ProfileCommunities.module.css": {
+    "primitives": 0,
+    "tokens": 27
+  },
+  "library/ui/apps/sites/profile/ProfileFrame.module.css": {
+    "primitives": 0,
+    "tokens": 10
+  },
+  "library/ui/apps/sites/profile/ProfileHeader.module.css": {
+    "primitives": 0,
+    "tokens": 15
+  },
+  "library/ui/apps/sites/profile/ProfileMemberActionControls.module.css": {
+    "primitives": 0,
+    "tokens": 5
+  },
+  "library/ui/apps/sites/profile/ProfileMoreActions.module.css": {
+    "primitives": 0,
+    "tokens": 12
+  },
+  "library/ui/apps/sites/profile/ProfileOverview.module.css": {
+    "primitives": 0,
+    "tokens": 35
+  },
+  "library/ui/apps/sites/profile/ProfileOwnerActions.module.css": {
+    "primitives": 0,
+    "tokens": 5
+  },
+  "library/ui/apps/sites/profile/ProfilePlaces.module.css": {
+    "primitives": 0,
+    "tokens": 9
+  },
+  "library/ui/apps/sites/profile/ProfileReferrals.module.css": {
+    "primitives": 0,
+    "tokens": 78
+  },
+  "library/ui/apps/sites/profile/collectibles.module.css": {
+    "primitives": 0,
+    "tokens": 40
+  },
   "library/ui/components/BlogBanner/BlogBanner.module.css": {
     "primitives": 0,
     "tokens": 36
@@ -237,7 +253,7 @@
   },
   "library/ui/components/Button/Button.module.css": {
     "primitives": 0,
-    "tokens": 49
+    "tokens": 50
   },
   "library/ui/components/CardActionButton/CardActionButton.module.css": {
     "primitives": 0,
@@ -255,9 +271,17 @@
     "primitives": 0,
     "tokens": 16
   },
+  "library/ui/components/CloseButton/CloseButton.module.css": {
+    "primitives": 0,
+    "tokens": 11
+  },
   "library/ui/components/EventCard/EventCard.module.css": {
     "primitives": 0,
     "tokens": 71
+  },
+  "library/ui/components/FriendCTA/FriendCTA.module.css": {
+    "primitives": 0,
+    "tokens": 14
   },
   "library/ui/components/InputField/InputField.module.css": {
     "primitives": 0,
@@ -266,6 +290,10 @@
   "library/ui/components/JumpInCTA/JumpInCTA.module.css": {
     "primitives": 0,
     "tokens": 25
+  },
+  "library/ui/components/Modal/Modal.module.css": {
+    "primitives": 0,
+    "tokens": 27
   },
   "library/ui/components/NavBar/NavBar.module.css": {
     "primitives": 0,
@@ -295,6 +323,10 @@
     "primitives": 0,
     "tokens": 55
   },
+  "library/ui/components/ProfilePic/ProfilePic.module.css": {
+    "primitives": 0,
+    "tokens": 5
+  },
   "library/ui/components/SearchBar/SearchBar.module.css": {
     "primitives": 0,
     "tokens": 9
@@ -323,8 +355,16 @@
     "primitives": 0,
     "tokens": 31
   },
+  "library/ui/components/Tag/Tag.module.css": {
+    "primitives": 0,
+    "tokens": 7
+  },
   "library/ui/components/TitleBar/TitleBar.module.css": {
     "primitives": 0,
     "tokens": 13
+  },
+  "library/ui/components/Toast/Toast.module.css": {
+    "primitives": 0,
+    "tokens": 11
   }
 }

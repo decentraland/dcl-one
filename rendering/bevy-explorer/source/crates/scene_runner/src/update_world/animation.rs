@@ -1,8 +1,12 @@
 // TODO
 // - support blending animations
 // - suport morph targets
-use bevy::{animation::RepeatAnimation, platform::collections::HashSet};
-use bevy::{platform::collections::HashMap, prelude::*};
+use bevy::{
+    animation::{graph::AnimationNodeType, AnimationEntityMut, AnimationTarget, RepeatAnimation},
+    platform::collections::{HashMap, HashSet},
+    prelude::*,
+    scene::{InstanceId, SceneSpawner},
+};
 
 use common::sets::SceneSets;
 use dcl_component::{
@@ -13,9 +17,12 @@ use dcl_types::interface::ComponentPosition;
 
 use crate::SceneEntity;
 
-use super::{gltf_container::GltfProcessed, AddCrdtInterfaceExt};
+use super::{gltf_container::GltfReady, AddCrdtInterfaceExt};
 
 pub struct AnimatorPlugin;
+
+#[cfg(test)]
+mod tests;
 
 impl Plugin for AnimatorPlugin {
     fn build(&self, app: &mut App) {
@@ -41,19 +48,92 @@ impl From<PbAnimator> for Animator {
     }
 }
 
-fn update_animations(
-    mut animators: Query<
-        (
-            Entity,
-            &SceneEntity,
-            Option<&mut Animator>,
-            &mut AnimationPlayer,
-            &Clips,
-        ),
-        Or<(Changed<Animator>, Changed<GltfProcessed>)>,
-    >,
+// Sample only properties keyed by the default clip. Other bones keep their last pose.
+fn sample_default_pose(
+    In((player, instance, graph, node)): In<(
+        Entity,
+        InstanceId,
+        Handle<AnimationGraph>,
+        AnimationNodeIndex,
+    )>,
+    scenes: Res<SceneSpawner>,
+    graphs: Res<Assets<AnimationGraph>>,
+    clips: Res<Assets<AnimationClip>>,
+    mut targets: Query<(&AnimationTarget, AnimationEntityMut)>,
 ) {
-    for (ent, scene_ent, maybe_animator, mut player, clips) in animators.iter_mut() {
+    let Some(AnimationNodeType::Clip(handle)) = graphs
+        .get(&graph)
+        .and_then(|g| g.get(node))
+        .map(|n| &n.node_type)
+    else {
+        return;
+    };
+    let Some(clip) = clips.get(handle) else {
+        return;
+    };
+    for entity in scenes.iter_instance_entities(instance) {
+        let Ok((target, mut properties)) = targets.get_mut(entity) else {
+            continue;
+        };
+        if target.player != player {
+            continue;
+        }
+        let Some(curves) = clip.curves_for_target(target.id) else {
+            continue;
+        };
+        for curve in curves {
+            let mut evaluator = curve.0.create_evaluator();
+            if let Err(error) = curve
+                .0
+                .apply(evaluator.as_mut(), 0.0, 1.0, node)
+                .and_then(|()| evaluator.commit(properties.reborrow()))
+            {
+                warn!("Failed to sample default animation on {entity:?}: {error:?}");
+            }
+        }
+    }
+}
+
+fn update_animations(
+    mut commands: Commands,
+    // GltfReady follows the visible instance while a replacement source loads.
+    changed: Query<Entity, (With<Clips>, Or<(Changed<Animator>, Changed<GltfReady>)>)>,
+    mut removed: RemovedComponents<Animator>,
+    mut players: Query<(
+        &SceneEntity,
+        Option<Ref<Animator>>,
+        Ref<GltfReady>,
+        &mut AnimationPlayer,
+        &AnimationGraphHandle,
+        &Clips,
+    )>,
+) {
+    let removed: HashSet<_> = removed.read().collect();
+    for ent in changed
+        .iter()
+        .filter(|e| !removed.contains(e))
+        .chain(removed.iter().copied())
+    {
+        let Ok((scene_ent, maybe_animator, ready, mut player, graph, clips)) = players.get_mut(ent)
+        else {
+            continue;
+        };
+        if removed.contains(&ent)
+            || maybe_animator
+                .as_ref()
+                .is_some_and(|a| a.is_added() || ready.is_changed())
+        {
+            player.stop_all();
+            if let Some(default) = clips.default {
+                commands.run_system_cached_with(
+                    sample_default_pose,
+                    (ent, ready.0, graph.0.clone(), default),
+                );
+            }
+            if maybe_animator.is_none() {
+                continue;
+            }
+        }
         debug!(
             "[{ent:?} / {scene_ent:?}] {:?}",
             maybe_animator.as_ref().map(|a| &a.pb_animator)

@@ -83,7 +83,7 @@ async fn orchestrator(pool: &sqlx::PgPool, temp: &std::path::Path) -> Arc<SyncOr
     let storage = Arc::new(Storage::from_config(temp).await.unwrap());
     let status = Arc::new(SyncStatus::default());
     let repo = Arc::new(LiveDeploymentRepository::new(pool.clone(), status.clone()));
-    let client = reqwest::Client::new();
+    let client = catalyst::content::sync::test_sync_client(reqwest::Client::new());
     let mut bloom = BloomFilter::with_capacity(1_000);
     repo.seed_deployed_entity_ids(&mut bloom).await.unwrap();
     let deployer = Arc::new(BatchDeployer::new(
