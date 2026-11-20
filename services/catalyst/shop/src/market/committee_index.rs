@@ -140,7 +140,13 @@ impl ChainIndex for CommitteeIndex {
             .await?;
         Ok(())
     }
-    async fn fold(&self, _: &PgPool, _: Option<i64>, _: i64) -> anyhow::Result<bool> {
+    async fn fold(
+        &self,
+        _: &PgPool,
+        _: Option<i64>,
+        _: i64,
+        _: &super::chain_walk::Owner,
+    ) -> anyhow::Result<bool> {
         Ok(true)
     }
 }

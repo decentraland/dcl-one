@@ -448,7 +448,9 @@ fn unmatched() -> String {
 /// Deletes up to `limit` unmatched claims (of `sender`, or anyone's) at
 /// least `min_age_secs` old, oldest first; returns how many. Anyone's claim
 /// must also be `min_age_secs` older than the MANA index's newest block, so
-/// a stalled or catching-up index evicts no accepted tip it has not reached.
+/// a stalled or catching-up index evicts no accepted tip it has not reached;
+/// that block counts only while the index is bound to its mainnet chain and
+/// out of quarantine, so a history set apart evicts nobody's claim.
 async fn evict(
     conn: &mut PgConnection,
     sender: Option<&str>,
@@ -462,12 +464,14 @@ async fn evict(
                AND c.created_at <= timezone('UTC', now()) - make_interval(secs => $2) AND {} \
                AND ($1::text IS NOT NULL OR c.created_at <= ( \
                    SELECT to_timestamp(k.last_block_time) AT TIME ZONE 'UTC' - make_interval(secs => $2) \
-                   FROM shop.chain_cursor k WHERE k.indexer = '{}' AND k.network = '{}')) \
+                   FROM shop.chain_cursor k WHERE k.indexer = '{}' AND k.network = '{}' \
+                     AND k.chain_id = {} AND k.quarantined_at IS NULL)) \
              ORDER BY c.created_at LIMIT $3 FOR UPDATE SKIP LOCKED) e \
          WHERE d.transaction_hash = e.transaction_hash AND d.sender = e.sender",
         unmatched(),
         INDEXER_MANA,
-        NET.db_name()
+        NET.db_name(),
+        chain_walk::mainnet_chain(NET)
     )))
     .bind(sender)
     .bind(min_age_secs as f64)
@@ -812,8 +816,8 @@ mod tests {
 
     async fn publish_at(pool: &PgPool, block: i64, time: i64) {
         sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_time, folded_block, folded_at, full_history) \
-             VALUES ('mana_transfers', 'matic', 0, $1, $2, $1, timezone('UTC', now()), true) \
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_time, folded_block, folded_at, full_history, chain_id) \
+             VALUES ('mana_transfers', 'matic', 0, $1, $2, $1, timezone('UTC', now()), true, 137) \
              ON CONFLICT (indexer, network) DO UPDATE SET last_block = $1, last_block_time = $2, folded_block = $1",
         )
         .bind(block)
@@ -1279,6 +1283,20 @@ mod tests {
         age_claim(pool, 1, 30).await;
         age_claim(pool, 2, 10).await;
         transfer(pool, 500, 0, &hash(1), &other(1), RECEIVER, one, t).await;
+        // An index whose history is set apart evicts nobody's claim.
+        sqlx::query("UPDATE shop.chain_cursor SET quarantined_at = timezone('UTC', now()), quarantine_reason = 'test' WHERE indexer = 'mana_transfers'")
+            .execute(pool)
+            .await
+            .unwrap();
+        assert!(matches!(
+            claim(pool, &settings, &hash(9), &other(9)).await.unwrap(),
+            Outcome::Busy { .. }
+        ));
+        assert_eq!(stored(pool).await, vec![hash(1), hash(2), hash(3)]);
+        sqlx::query("UPDATE shop.chain_cursor SET quarantined_at = NULL, quarantine_reason = NULL WHERE indexer = 'mana_transfers'")
+            .execute(pool)
+            .await
+            .unwrap();
         assert_eq!(
             claim(pool, &settings, &hash(9), &other(9)).await.unwrap(),
             Outcome::Pending

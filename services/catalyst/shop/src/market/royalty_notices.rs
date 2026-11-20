@@ -413,8 +413,8 @@ mod tests {
 
     async fn publish(pool: &PgPool, block: i64) {
         sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, fold_through, folded_block, folded_at, full_history) \
-             VALUES ('nft', 'matic', 0, $1, $2, $1, $1, timezone('UTC', now()), true) \
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, fold_through, folded_block, folded_at, full_history, chain_id) \
+             VALUES ('nft', 'matic', 0, $1, $2, $1, $1, timezone('UTC', now()), true, 137) \
              ON CONFLICT (indexer, network) DO UPDATE SET last_block = $1, fold_through = $1, folded_block = $1, folded_at = timezone('UTC', now())",
         )
         .bind(block)
@@ -614,8 +614,8 @@ mod tests {
             Pass::NotReady
         );
         sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history) \
-             VALUES ('sales', 'matic', 0, 100, 100, 100, timezone('UTC', now()), true)",
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id) \
+             VALUES ('sales', 'matic', 0, 100, 100, 100, timezone('UTC', now()), true, 137)",
         )
         .execute(&pool)
         .await

@@ -397,10 +397,20 @@ WHERE (nft_bid.bid_id, nft_bid.seller, nft_bid.status, nft_bid.updated_block, nf
 
 /// The fold in one transaction: the keys a bid event past `since` touched
 /// (`None`: every key), each over its whole history; the rows written.
-pub async fn fold(pool: &PgPool, since: Option<i64>) -> anyhow::Result<u64> {
+pub async fn fold(
+    pool: &PgPool,
+    since: Option<i64>,
+    owner: &chain_walk::Owner,
+) -> anyhow::Result<u64> {
     let since = since.unwrap_or(-1);
+    // The nft walk's progress counts only while its history is bound to
+    // Polygon and not in quarantine: otherwise every seller stays pending.
     let nft_indexed = chain_walk::cursor(pool, chain_walk::INDEXER_NFT, ChainNet::Matic)
         .await?
+        .filter(|c| {
+            c.chain_id == Some(chain_walk::mainnet_chain(ChainNet::Matic))
+                && c.quarantined_at.is_none()
+        })
         .map_or(-1, |cursor| cursor.last_block);
     let mut tx = pool.begin().await?;
     sqlx::query("SET LOCAL statement_timeout = '3600s'")
@@ -414,6 +424,7 @@ pub async fn fold(pool: &PgPool, since: Option<i64>) -> anyhow::Result<u64> {
         .execute(&mut *tx)
         .await?
         .rows_affected();
+    owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(bids)
 }
@@ -530,8 +541,14 @@ impl ChainIndex for SalesIndex {
         Ok(())
     }
 
-    async fn fold(&self, pool: &PgPool, since: Option<i64>, _upto: i64) -> anyhow::Result<bool> {
-        let bids = fold(pool, since).await?;
+    async fn fold(
+        &self,
+        pool: &PgPool,
+        since: Option<i64>,
+        _upto: i64,
+        owner: &chain_walk::Owner,
+    ) -> anyhow::Result<bool> {
+        let bids = fold(pool, since, owner).await?;
         tracing::info!(bids, "sales index: folded");
         Ok(true)
     }
@@ -644,17 +661,19 @@ pub fn spawn_job(market: &Arc<MarketplaceState>, jobs: &Jobs) {
     };
     let market = market.clone();
     let venues_checked = Arc::new(AtomicBool::new(false));
+    let holdings = Arc::new(chain_walk::Holdings::default());
     jobs.spawn_periodic_leased(
         "sales-index",
         PeriodicCfg::every(settings.interval)
             .with_jitter(Duration::from_secs(1))
             .with_error_backoff(Duration::from_secs(30)),
         move |ctx| {
-            let (market, url, settings, venues_checked) = (
+            let (market, url, settings, venues_checked, holdings) = (
                 market.clone(),
                 url.clone(),
                 settings.clone(),
                 venues_checked.clone(),
+                holdings.clone(),
             );
             async move {
                 let rpc = Rpc::at(&market.http, &url);
@@ -663,6 +682,7 @@ pub fn spawn_job(market: &Arc<MarketplaceState>, jobs: &Jobs) {
                     venues_checked.store(true, Ordering::SeqCst);
                 }
                 let source = chain_walk::RpcSource::new(rpc);
+                let lease = ctx.lease();
                 if !nft_index::mirror_complete(&market.pool, ChainNet::Matic).await {
                     ctx.progress(
                         "sales matic: waiting for the collections mirror's first complete pass"
@@ -671,11 +691,13 @@ pub fn spawn_job(market: &Arc<MarketplaceState>, jobs: &Jobs) {
                     return Ok(());
                 }
                 let progress = |m: String| ctx.progress(m);
-                let outcome = chain_walk::run_pass(
+                let outcome = chain_walk::job_pass(
                     &market.pool,
                     &source,
                     &SalesIndex,
                     &settings,
+                    &holdings,
+                    lease,
                     Some(&ctx.cancel),
                     &progress,
                 )

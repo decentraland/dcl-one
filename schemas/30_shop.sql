@@ -376,12 +376,26 @@ CREATE TABLE shop.chain_cursor (
     full_history boolean NOT NULL,
     reorg_rewinds integer NOT NULL DEFAULT 0,
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    -- The chain the history was read from, as the source proved it; NULL on
+    -- a row written before the binding until a pass proves it (not ready).
+    chain_id bigint,
+    -- Raised by the job that takes the projection, on the session holding
+    -- its lease; every write to the projection checks it before commit.
+    owner_generation bigint NOT NULL DEFAULT 0,
+    -- A history not proven on the expected chain: not walked, rewound or
+    -- published until an operator revalidates or rebuilds it.
+    quarantined_at timestamp without time zone,
+    quarantine_reason text,
+    -- Set by an operator: the owner rebuilds the projection from its start
+    -- block with its own cleanup, in a fenced transaction.
+    rebuild_requested_at timestamp without time zone,
     PRIMARY KEY (indexer, network),
     CONSTRAINT chain_cursor_indexer_known CHECK (indexer IN ('nft', 'trade_events', 'rentals', 'mana_transfers', 'sales', 'committee')),
     CONSTRAINT chain_cursor_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT chain_cursor_fold_within_indexed CHECK (fold_through IS NULL OR fold_through <= last_block),
     CONSTRAINT chain_cursor_folded_within_indexed CHECK (folded_block IS NULL OR folded_block <= last_block),
-    CONSTRAINT chain_cursor_hash_shape CHECK (last_block_hash IS NULL OR last_block_hash ~ '^0x[0-9a-f]{64}$')
+    CONSTRAINT chain_cursor_hash_shape CHECK (last_block_hash IS NULL OR last_block_hash ~ '^0x[0-9a-f]{64}$'),
+    CONSTRAINT chain_cursor_quarantine_reason CHECK ((quarantined_at IS NULL) = (quarantine_reason IS NULL))
 );
 
 -- The collections the nft walk has taken in, and from which block. A

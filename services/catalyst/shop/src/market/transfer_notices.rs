@@ -100,11 +100,20 @@ async fn sale_hops(pool: &PgPool, chain_id: i64) -> sqlx::Result<Vec<String>> {
 /// One pass over the published transfers after the cursor, a page at a time.
 pub async fn run_once(pool: &PgPool, chain_id: i64) -> anyhow::Result<Pass> {
     let now = Utc::now();
+    // Gifts are told from sales by matching the two indexes at the same
+    // heights: both must read the same chain, and the nft walk reads
+    // Polygon mainnet only.
+    if chain_id != chain_walk::mainnet_chain(ChainNet::Matic) {
+        return Ok(Pass::Waiting(
+            "transfer notices need both indexes on Polygon mainnet; the nft index reads no other chain",
+        ));
+    }
     let Some(nft) = chain_walk::ready_cursor(pool, INDEXER_NFT, ChainNet::Matic, now).await else {
         return Ok(Pass::Waiting("the matic nft index is not published"));
     };
     let Some(trades) =
-        chain_walk::ready_cursor(pool, INDEXER_TRADE_EVENTS, ChainNet::Matic, now).await
+        chain_walk::ready_cursor_on(pool, INDEXER_TRADE_EVENTS, ChainNet::Matic, chain_id, now)
+            .await
     else {
         return Ok(Pass::Waiting(
             "the matic trade_events index is not published (sales cannot be told from gifts)",
@@ -286,8 +295,8 @@ pub(crate) mod tests {
         time: i64,
     ) {
         sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_time, fold_through, folded_block, folded_at, full_history) \
-             VALUES ($1, $2, 0, $3, $4, $3, $3, $5, true) \
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_time, fold_through, folded_block, folded_at, full_history, chain_id) \
+             VALUES ($1, $2, 0, $3, $4, $3, $3, $5, true, CASE $2 WHEN 'ethereum' THEN 1 ELSE 137 END) \
              ON CONFLICT (indexer, network) DO UPDATE SET last_block = $3, last_block_time = $4, fold_through = $3, folded_block = $3, folded_at = $5",
         )
         .bind(indexer)
@@ -344,6 +353,19 @@ pub(crate) mod tests {
             Pass::Waiting(_)
         ));
         publish(&pool, INDEXER_TRADE_EVENTS, "matic", 120, 1_700_000_120).await;
+        // A node whose collections are on Amoy: the nft index reads Polygon
+        // mainnet only, so no pair of indexes matches and nothing moves.
+        assert!(matches!(
+            run_once(&pool, 80_002).await.unwrap(),
+            Pass::Waiting(_)
+        ));
+        let seeded: Option<i64> = sqlx::query_scalar(
+            "SELECT block_number FROM shop.notification_cursor WHERE producer = 'transfer_received'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        assert_eq!(seeded, None, "no cursor seeded for an incompatible pair");
         assert_eq!(
             run_once(&pool, 137).await.unwrap(),
             Pass::Emitted(0),
@@ -538,9 +560,19 @@ pub(crate) mod tests {
             .execute(&mut *tx)
             .await
             .unwrap();
-        chain_walk::rewind(&mut tx, INDEXER_NFT, ChainNet::Matic, -1)
+        let at = chain_walk::cursor(&mut *tx, INDEXER_NFT, ChainNet::Matic)
             .await
+            .unwrap()
             .unwrap();
+        chain_walk::rewind(
+            &mut tx,
+            INDEXER_NFT,
+            ChainNet::Matic,
+            (at.last_block, at.last_block_hash.as_deref()),
+            -1,
+        )
+        .await
+        .unwrap();
         plan.apply(&mut tx).await.unwrap();
         tx.commit().await.unwrap();
         assert!(

@@ -857,38 +857,40 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
         let state = state.clone();
         let nft_indexes: Arc<Vec<nft_index::NftIndex>> =
             Arc::new(nets.iter().map(|n| nft_index::NftIndex::new(*n)).collect());
+        let holdings = Arc::new(chain_walk::Holdings::default());
         jobs.spawn_periodic_leased(
             job,
             PeriodicCfg::every(settings.interval).with_jitter(Duration::from_secs(1)).with_error_backoff(Duration::from_secs(30)),
             move |ctx| {
-                let (state, nets, nft_indexes) = (state.clone(), nets.clone(), nft_indexes.clone());
+                let (state, nets, nft_indexes, holdings) =
+                    (state.clone(), nets.clone(), nft_indexes.clone(), holdings.clone());
                 async move {
                     let outcomes = futures::future::join_all(nets.iter().enumerate().map(|(i, net)| {
-                        let (state, nft_indexes, ctx) = (&state, &nft_indexes, &ctx);
+                        let (state, nft_indexes, holdings, ctx) = (&state, &nft_indexes, &holdings, &ctx);
                         async move {
                             let Some(url) = rpc_url(state, *net) else { return Ok(()) };
                             let source = chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(&state.http, &url));
                             let progress = |m: String| ctx.progress(m);
-                            let outcome = if name == chain_walk::INDEXER_NFT {
+                            let settings = &state.settings.market.indexes;
+                            let trade_events_index;
+                            let mana_index;
+                            let ix: &dyn chain_walk::ChainIndex = if name == chain_walk::INDEXER_NFT {
                                 if !nft_index::mirror_complete(&state.pool, *net).await {
                                     ctx.progress(format!("nft {}: waiting for the collections mirror's first complete pass", net.db_name()));
                                     return Ok(());
                                 }
-                                chain_walk::run_pass(&state.pool, &source, &nft_indexes[i], &state.settings.market.indexes, Some(&ctx.cancel), &progress).await
+                                &nft_indexes[i]
                             } else if name == chain_walk::INDEXER_COMMITTEE {
-                                match ensure_chain(&source, 137).await {
-                                    Ok(()) => chain_walk::run_pass(&state.pool, &source, &committee_index::CommitteeIndex, &state.settings.market.indexes, Some(&ctx.cancel), &progress).await,
-                                    Err(e) => Err(e),
-                                }
+                                &committee_index::CommitteeIndex
                             } else if name == chain_walk::INDEXER_MANA {
-                                chain_walk::run_pass(&state.pool, &source, &mana_transfers::ManaTransfersIndex { net: *net }, &state.settings.market.indexes, Some(&ctx.cancel), &progress).await
+                                mana_index = mana_transfers::ManaTransfersIndex { net: *net };
+                                &mana_index
                             } else {
-                                let chain_id = state.settings.market.indexes.chain_id(*net);
-                                match ensure_chain(&source, chain_id).await {
-                                    Ok(()) => chain_walk::run_pass(&state.pool, &source, &trade_events::TradeEventsIndex { net: *net, chain_id }, &state.settings.market.indexes, Some(&ctx.cancel), &progress).await,
-                                    Err(e) => Err(e),
-                                }
+                                let chain_id = settings.chain_id(*net);
+                                trade_events_index = trade_events::TradeEventsIndex { net: *net, chain_id };
+                                &trade_events_index
                             };
+                            let outcome = chain_walk::job_pass(&state.pool, &source, ix, settings, holdings, ctx.lease(), Some(&ctx.cancel), &progress).await;
                             match outcome {
                                 Ok(o) => {
                                     tracing::info!(indexer = name, summary = %o.summary(), "marketplace chain index pass");
@@ -992,7 +994,7 @@ async fn get_index_status(
 ) -> Json<Value> {
     Json(json!({
         "nft": nft_index::status(&state.pool).await,
-        "tradeEvents": trade_events::status(&state.pool).await,
+        "tradeEvents": trade_events::status(&state.pool, &state.settings.market.indexes).await,
         "manaTransfers": mana_transfers::status(&state.pool).await,
         "sales": sales_index::status(&state.pool).await,
         "neighbours": neighbours::status(&state.pool).await,

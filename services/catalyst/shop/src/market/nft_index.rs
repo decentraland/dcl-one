@@ -527,7 +527,12 @@ pub struct FoldCounts {
 /// `since` touched (`None`: every key) and every token of a contract whose
 /// backfill completed since (`refold_owed`, cleared here), each over its
 /// whole history; `land_data` reads only the window.
-pub async fn fold(pool: &PgPool, net: ChainNet, since: Option<i64>) -> anyhow::Result<FoldCounts> {
+pub async fn fold(
+    pool: &PgPool,
+    net: ChainNet,
+    since: Option<i64>,
+    owner: &chain_walk::Owner,
+) -> anyhow::Result<FoldCounts> {
     let since = since.unwrap_or(-1);
     let mut tx = pool.begin().await?;
     // A job, not a request (the land_authz fold's reasons): the rebuild
@@ -586,6 +591,7 @@ pub async fn fold(pool: &PgPool, net: ChainNet, since: Option<i64>) -> anyhow::R
             .execute(&mut *tx)
             .await?;
     }
+    owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(FoldCounts {
         nfts,
@@ -771,6 +777,10 @@ impl ChainIndex for NftIndex {
         INDEXER_NFT
     }
 
+    fn abandon(&self) {
+        self.reset();
+    }
+
     fn net(&self) -> ChainNet {
         self.net
     }
@@ -941,8 +951,14 @@ impl ChainIndex for NftIndex {
         Ok(())
     }
 
-    async fn fold(&self, pool: &PgPool, since: Option<i64>, _upto: i64) -> anyhow::Result<bool> {
-        let counts = fold(pool, self.net, since).await?;
+    async fn fold(
+        &self,
+        pool: &PgPool,
+        since: Option<i64>,
+        _upto: i64,
+        owner: &chain_walk::Owner,
+    ) -> anyhow::Result<bool> {
+        let counts = fold(pool, self.net, since, owner).await?;
         tracing::info!(
             network = self.net.db_name(),
             nfts = counts.nfts,
@@ -967,6 +983,7 @@ impl ChainIndex for NftIndex {
         _anchor: (u64, i64),
         budget: usize,
         chunk: &mut usize,
+        owner: &chain_walk::Owner,
     ) -> anyhow::Result<usize> {
         self.reset();
         let owed: Vec<WalkedContract> = sqlx::query_as(
@@ -1031,6 +1048,7 @@ impl ChainIndex for NftIndex {
                 .bind(w.reached as i64)
                 .execute(&mut *tx)
                 .await?;
+                owner.check(&mut tx).await?;
                 tx.commit().await?;
                 next = w.reached as i64 + 1;
             }

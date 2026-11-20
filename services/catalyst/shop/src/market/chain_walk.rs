@@ -253,9 +253,17 @@ pub struct Cursor {
     pub full_history: bool,
     pub reorg_rewinds: i32,
     pub updated_at: NaiveDateTime,
+    /// The chain the history was read from, as the source proved it; `None`
+    /// on a row written before the binding, until a pass proves it.
+    pub chain_id: Option<i64>,
+    /// Raised by every job that takes the projection ([`claim`]).
+    pub owner_generation: i64,
+    pub quarantined_at: Option<NaiveDateTime>,
+    pub quarantine_reason: Option<String>,
+    pub rebuild_requested_at: Option<NaiveDateTime>,
 }
 
-const CURSOR_COLUMNS: &str = "indexer, network, start_block, last_block, last_block_hash, last_block_time, fold_through, folded_block, folded_at, full_history, reorg_rewinds, updated_at";
+const CURSOR_COLUMNS: &str = "indexer, network, start_block, last_block, last_block_hash, last_block_time, fold_through, folded_block, folded_at, full_history, reorg_rewinds, updated_at, chain_id, owner_generation, quarantined_at, quarantine_reason, rebuild_requested_at";
 
 /// Runs `ANALYZE <table>` in the fold's transaction only when the fold needs
 /// statistics the table does not have yet: a rebuild (`since` -1), a table
@@ -310,58 +318,192 @@ where
     .await
 }
 
-/// The row a fresh database starts from (`last_block = start - 1`); an
-/// existing row is left alone, whatever start this process was given.
-pub async fn ensure_cursor(
-    pool: &PgPool,
+/// One projection as the job that walks it holds it: the cursor row
+/// (`indexer`, `net`), the chain its history is bound to and the generation
+/// [`claim`] granted. Every transaction that writes the projection ends with
+/// [`Owner::check`], so a job that lost the projection commits nothing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Owner {
+    pub indexer: &'static str,
+    pub net: ChainNet,
+    pub chain_id: i64,
+    pub generation: i64,
+}
+
+/// A write refused because its job no longer owns the projection, or the
+/// projection is in quarantine: the transaction is rolled back.
+#[derive(Debug, thiserror::Error)]
+#[error("{indexer} {network}: {reason}; the write is rolled back")]
+pub struct Fenced {
+    pub indexer: &'static str,
+    pub network: &'static str,
+    pub reason: String,
+}
+
+impl Owner {
+    /// Locks the cursor row until the caller's commit and refuses unless the
+    /// row still carries this generation, is bound to this chain and is not
+    /// in quarantine. Call it last, right before the commit, so the row lock
+    /// lasts only as long as the commit.
+    pub async fn check(&self, conn: &mut PgConnection) -> anyhow::Result<()> {
+        let row: Option<(i64, Option<i64>, Option<String>)> = sqlx::query_as(
+            "SELECT owner_generation, chain_id, quarantine_reason FROM shop.chain_cursor \
+             WHERE indexer = $1 AND network = $2 FOR UPDATE",
+        )
+        .bind(self.indexer)
+        .bind(self.net.db_name())
+        .fetch_optional(conn)
+        .await?;
+        let reason = match row {
+            None => "its cursor row is gone".to_string(),
+            Some((generation, _, _)) if generation != self.generation => format!(
+                "another job took it (generation {generation}; this job holds {})",
+                self.generation
+            ),
+            Some((_, _, Some(why))) => format!("it is in quarantine ({why})"),
+            Some((_, chain, None)) if chain != Some(self.chain_id) => {
+                format!("it is bound to chain {chain:?}, not {}", self.chain_id)
+            }
+            Some(_) => return Ok(()),
+        };
+        Err(self.fenced(reason).into())
+    }
+
+    fn fenced(&self, reason: String) -> Fenced {
+        Fenced {
+            indexer: self.indexer,
+            network: self.net.db_name(),
+            reason,
+        }
+    }
+}
+
+/// Grants the calling job a new generation of the projection (`indexer`,
+/// `net`) and returns it, creating the row when there is none: at
+/// `start_block - 1` and bound to `chain_id`, the chain the source proved.
+/// Run it on the session that holds the job's lease ([`Holdings::owner`]),
+/// so the grant belongs to the lease the job holds.
+pub async fn claim(
+    conn: &mut PgConnection,
     indexer: &str,
     net: ChainNet,
     start_block: u64,
     full_history: bool,
-) -> anyhow::Result<Cursor> {
-    sqlx::query(
-        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, full_history) \
-         VALUES ($1, $2, $3, $3 - 1, $4) ON CONFLICT (indexer, network) DO NOTHING",
+    chain_id: i64,
+) -> sqlx::Result<i64> {
+    use sqlx::Connection;
+    let mut tx = conn.begin().await?;
+    sqlx::query("SET LOCAL statement_timeout = '2000ms'")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("SET LOCAL lock_timeout = '1500ms'")
+        .execute(&mut *tx)
+        .await?;
+    let generation: i64 = sqlx::query_scalar(
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, full_history, chain_id, owner_generation) \
+         VALUES ($1, $2, $3, $3 - 1, $4, $5, 1) \
+         ON CONFLICT (indexer, network) DO UPDATE SET owner_generation = shop.chain_cursor.owner_generation + 1 \
+         RETURNING owner_generation",
     )
     .bind(indexer)
     .bind(net.db_name())
     .bind(start_block as i64)
     .bind(full_history)
-    .execute(pool)
+    .bind(chain_id)
+    .fetch_one(&mut *tx)
     .await?;
-    let row = cursor(pool, indexer, net)
-        .await?
-        .context("the chain cursor row vanished after its insert")?;
-    if row.start_block != start_block as i64 {
-        tracing::info!(
-            indexer,
-            network = net.db_name(),
-            stored = row.start_block,
-            configured = start_block,
-            "chain cursor keeps its stored start block"
-        );
-    }
-    Ok(row)
+    tx.commit().await?;
+    Ok(generation)
 }
 
-/// Moves `last_block` from `expected` to `to` in the caller's transaction
-/// (the one that wrote the window's rows); a cursor someone else moved
-/// fails the transaction instead of skipping or repeating a range.
+/// The projections one job holds: each is claimed once per acquisition of
+/// the job's lease (once per process without leases) and its generation kept
+/// until a write is fenced, when the next pass claims it again.
+#[derive(Default)]
+pub struct Holdings {
+    held: parking_lot::Mutex<HashMap<Projection, Held>>,
+}
+
+/// A projection's key: (`indexer`, network).
+type Projection = (&'static str, ChainNet);
+
+/// A held projection: (lease acquisition, generation).
+type Held = (u64, i64);
+
+impl Holdings {
+    /// The owner of `ix`'s projection for this pass, bound to `ix`'s chain
+    /// (which the caller proved the source serves): the generation granted
+    /// for the current lease acquisition, claimed now if there is none.
+    pub async fn owner(
+        &self,
+        pool: &PgPool,
+        lease: Option<&crate::jobs::LeaseControl>,
+        ix: &dyn ChainIndex,
+        settings: &IndexSettings,
+    ) -> anyhow::Result<Owner> {
+        let (indexer, net, chain_id) = (ix.indexer(), ix.net(), ix.chain_id());
+        let acquisition = lease.map_or(0, |l| l.acquisition());
+        let held = self.held.lock().get(&(indexer, net)).copied();
+        let generation = match held {
+            Some((at, generation)) if at == acquisition => generation,
+            _ => {
+                let start = settings.start_override(net).unwrap_or(ix.start_block());
+                let full_history = start <= ix.start_block();
+                let generation = match lease {
+                    Some(lease) => lease
+                        .with_connection(move |conn| {
+                            Box::pin(claim(conn, indexer, net, start, full_history, chain_id))
+                        })
+                        .await
+                        .context("claiming the projection on the lease's session")?,
+                    None => {
+                        let mut conn = pool.acquire().await?;
+                        claim(&mut conn, indexer, net, start, full_history, chain_id).await?
+                    }
+                };
+                self.held
+                    .lock()
+                    .insert((indexer, net), (acquisition, generation));
+                generation
+            }
+        };
+        Ok(Owner {
+            indexer,
+            net,
+            chain_id,
+            generation,
+        })
+    }
+
+    /// Drops a projection whose write was fenced: the next pass claims it
+    /// again, which only succeeds while the job still holds its lease.
+    pub fn forget(&self, indexer: &'static str, net: ChainNet) {
+        self.held.lock().remove(&(indexer, net));
+    }
+}
+
+/// Moves `last_block` from the checkpoint (`expected`, `expected_hash`) to
+/// `header` in the caller's transaction (the one that wrote the window's
+/// rows); a cursor someone else moved fails the transaction instead of
+/// skipping or repeating a range. The caller ends the transaction with
+/// [`Owner::check`].
 pub async fn advance(
     conn: &mut PgConnection,
     indexer: &str,
     net: ChainNet,
-    expected: i64,
+    expected: (i64, Option<&str>),
     header: &BlockHeader,
 ) -> Result<(), sqlx::Error> {
     let updated = sqlx::query(
-        "UPDATE shop.chain_cursor SET last_block = $4, last_block_hash = $5, last_block_time = $6, \
+        "UPDATE shop.chain_cursor SET last_block = $5, last_block_hash = $6, last_block_time = $7, \
              updated_at = timezone('UTC', now()) \
-         WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block < $4",
+         WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block_hash IS NOT DISTINCT FROM $4 \
+           AND last_block < $5",
     )
     .bind(indexer)
     .bind(net.db_name())
-    .bind(expected)
+    .bind(expected.0)
+    .bind(expected.1)
     .bind(header.number as i64)
     .bind(&header.hash)
     .bind(header.timestamp)
@@ -373,104 +515,169 @@ pub async fn advance(
     Ok(())
 }
 
-/// Rewinds after a reorg deeper than the confirmation depth, in the
-/// caller's transaction (which also deletes the log past `to`): the publish
-/// marker goes with it, so readers fall back until the refold publishes.
+/// Rewinds the checkpoint (`from`, `from_hash`) to `to` in the caller's
+/// transaction (which also deletes the log past `to`): the publish marker
+/// goes with it, so readers fall back until the refold publishes. A cursor
+/// no longer at that checkpoint fails the transaction. The caller ends the
+/// transaction with [`Owner::check`].
 pub async fn rewind(
     conn: &mut PgConnection,
     indexer: &str,
     net: ChainNet,
+    from: (i64, Option<&str>),
     to: i64,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "UPDATE shop.chain_cursor SET last_block = LEAST(last_block, $3), last_block_hash = NULL, last_block_time = NULL, \
+    let updated = sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = LEAST(last_block, $5), last_block_hash = NULL, last_block_time = NULL, \
              fold_through = NULL, folded_block = NULL, folded_at = NULL, reorg_rewinds = reorg_rewinds + 1, updated_at = timezone('UTC', now()) \
-         WHERE indexer = $1 AND network = $2",
+         WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block_hash IS NOT DISTINCT FROM $4",
     )
     .bind(indexer)
     .bind(net.db_name())
+    .bind(from.0)
+    .bind(from.1)
     .bind(to)
     .execute(conn)
     .await?;
+    if updated.rows_affected() != 1 {
+        return Err(sqlx::Error::RowNotFound);
+    }
     Ok(())
 }
 
 /// Records the block a completed fold covered (the next fold's `since`),
 /// on the row still at that block; a publish is [`mark_folded`]'s.
-pub async fn record_fold(
-    pool: &PgPool,
-    indexer: &str,
-    net: ChainNet,
-    block: i64,
-) -> Result<(), sqlx::Error> {
+pub async fn record_fold(pool: &PgPool, owner: &Owner, block: i64) -> anyhow::Result<()> {
+    let mut tx = pool.begin().await?;
     sqlx::query("UPDATE shop.chain_cursor SET fold_through = $3 WHERE indexer = $1 AND network = $2 AND last_block = $3")
-        .bind(indexer)
-        .bind(net.db_name())
+        .bind(owner.indexer)
+        .bind(owner.net.db_name())
         .bind(block)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    owner.check(&mut tx).await?;
+    tx.commit().await?;
     Ok(())
 }
 
 /// Sets `folded_block` to the block a completed fold covered, only on the
-/// row still at that block and with its whole history walked.
+/// row still at that block, with its whole history walked and not in
+/// quarantine.
 pub async fn mark_folded(
     pool: &PgPool,
-    indexer: &str,
-    net: ChainNet,
+    owner: &Owner,
     block: i64,
     now: DateTime<Utc>,
-) -> Result<bool, sqlx::Error> {
+) -> anyhow::Result<bool> {
+    let mut tx = pool.begin().await?;
     let updated = sqlx::query(
         "UPDATE shop.chain_cursor SET folded_block = last_block, folded_at = $4 \
-         WHERE indexer = $1 AND network = $2 AND last_block = $3 AND full_history AND last_block_hash IS NOT NULL AND fold_through = $3",
+         WHERE indexer = $1 AND network = $2 AND last_block = $3 AND full_history AND last_block_hash IS NOT NULL \
+           AND fold_through = $3 AND quarantine_reason IS NULL",
     )
-    .bind(indexer)
-    .bind(net.db_name())
+    .bind(owner.indexer)
+    .bind(owner.net.db_name())
     .bind(block)
     .bind(now.naive_utc())
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    owner.check(&mut tx).await?;
+    tx.commit().await?;
     Ok(updated.rows_affected() == 1)
 }
 
-/// The readiness rule, at the caller's clock.
-pub fn is_ready(c: &Cursor, now: DateTime<Utc>) -> bool {
+/// Withdraws the publish of the row still at `block`: a fold that may not
+/// publish, or one held short of the head.
+pub async fn unpublish(pool: &PgPool, owner: &Owner, block: i64) -> anyhow::Result<()> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL WHERE indexer = $1 AND network = $2 AND last_block = $3")
+        .bind(owner.indexer)
+        .bind(owner.net.db_name())
+        .bind(block)
+        .execute(&mut *tx)
+        .await?;
+    owner.check(&mut tx).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// The chain every index but `trade_events` reads on `net` (mainnet only).
+pub fn mainnet_chain(net: ChainNet) -> i64 {
+    net.chain_id()
+}
+
+/// The readiness rule, at the caller's clock, for a projection read on
+/// chain `chain_id`: a whole history folded through its last block within
+/// [`READY_WINDOW`], bound to that chain and not in quarantine.
+pub fn is_ready_on(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> bool {
     let Some(folded_at) = c.folded_at else {
         return false;
     };
     let age = now.naive_utc().signed_duration_since(folded_at);
     c.full_history
         && c.folded_block == Some(c.last_block)
+        && c.chain_id == Some(chain_id)
+        && c.quarantined_at.is_none()
         && age >= ChronoDuration::zero()
         && age <= READY_WINDOW
 }
 
-/// The same rule as SQL over a `shop.chain_cursor` alias, for
-/// statements that decide per row with a bound `now` (`now_p`).
+/// [`is_ready_on`] for the indexes that read mainnet only: every index but
+/// `trade_events`, whose readers pass the chain they configured.
+pub fn is_ready(c: &Cursor, now: DateTime<Utc>) -> bool {
+    ChainNet::parse(&c.network).is_some_and(|net| is_ready_on(c, mainnet_chain(net), now))
+}
+
+/// [`is_ready`] as SQL over a `shop.chain_cursor` alias, for statements
+/// that decide per row with a bound `now` (`now_p`).
 pub fn ready_sql(alias: &str, now_p: &str) -> String {
+    ready_sql_on(
+        alias,
+        now_p,
+        mainnet_chain(ChainNet::Ethereum),
+        mainnet_chain(ChainNet::Matic),
+    )
+}
+
+/// [`is_ready_on`] as SQL, the expected chain per network given as integers
+/// (`trade_events`, which may read a testnet).
+pub fn ready_sql_on(alias: &str, now_p: &str, ethereum_chain: i64, matic_chain: i64) -> String {
     format!(
         "({alias}.full_history AND {alias}.folded_block = {alias}.last_block \
+          AND {alias}.chain_id = CASE {alias}.network WHEN 'ethereum' THEN {ethereum_chain}::bigint WHEN 'matic' THEN {matic_chain}::bigint END \
+          AND {alias}.quarantined_at IS NULL \
           AND {alias}.folded_at <= {now_p} AND {alias}.folded_at >= {now_p} - interval '30 minutes')"
     )
 }
 
-/// `Some(cursor)` when `indexer` may answer for `net` at `now`; a database
-/// error reads as not ready (the envelope, never a guess).
-pub async fn ready_cursor(
+/// `Some(cursor)` when `indexer`, read on chain `chain_id`, may answer for
+/// `net` at `now`; a database error reads as not ready (the envelope, never
+/// a guess).
+pub async fn ready_cursor_on(
     pool: &PgPool,
     indexer: &str,
     net: ChainNet,
+    chain_id: i64,
     now: DateTime<Utc>,
 ) -> Option<Cursor> {
     match cursor(pool, indexer, net).await {
-        Ok(Some(c)) if is_ready(&c, now) => Some(c),
+        Ok(Some(c)) if is_ready_on(&c, chain_id, now) => Some(c),
         Ok(_) => None,
         Err(e) => {
             tracing::warn!(error = %e, indexer, network = net.db_name(), "cannot read shop.chain_cursor; treating the index as not ready");
             None
         }
     }
+}
+
+/// [`ready_cursor_on`] for the indexes that read mainnet only.
+pub async fn ready_cursor(
+    pool: &PgPool,
+    indexer: &str,
+    net: ChainNet,
+    now: DateTime<Utc>,
+) -> Option<Cursor> {
+    ready_cursor_on(pool, indexer, net, mainnet_chain(net), now).await
 }
 
 pub use crate::chain_index::logs::{
@@ -512,6 +719,10 @@ pub struct PassOutcome {
     pub folded: bool,
     pub published: bool,
     pub elapsed_ms: u64,
+    /// The cursor is in quarantine, with its reason: the pass left it alone.
+    pub quarantined: Option<String>,
+    /// The pass rebuilt the projection from its start block, as asked.
+    pub rebuilt: bool,
 }
 
 impl PassOutcome {
@@ -528,7 +739,7 @@ impl PassOutcome {
     pub fn summary(&self) -> String {
         let (bps, rps) = self.rates();
         format!(
-            "{}: blocks {}..{} of head {} ({} requests, {} logs, {} rows, {:.0} blocks/s, {:.0} rows/s){}{}{}",
+            "{}: blocks {}..{} of head {} ({} requests, {} logs, {} rows, {:.0} blocks/s, {:.0} rows/s){}{}{}{}{}",
             self.network,
             self.from_block,
             self.indexed_to,
@@ -545,6 +756,15 @@ impl PassOutcome {
             },
             if self.folded { "; folded" } else { "" },
             if self.published { "; published" } else { "" },
+            if self.rebuilt {
+                "; rebuilt from its start"
+            } else {
+                ""
+            },
+            self.quarantined
+                .as_ref()
+                .map(|why| format!("; in quarantine: {why}"))
+                .unwrap_or_default(),
         )
     }
 }
@@ -565,6 +785,11 @@ pub fn within_publish_lag(net: ChainNet, head: u64, indexed: u64) -> bool {
 pub trait ChainIndex: Send + Sync {
     fn indexer(&self) -> &'static str;
     fn net(&self) -> ChainNet;
+    /// The chain the index reads on `net`: mainnet for every index but
+    /// `trade_events`, which may read a testnet.
+    fn chain_id(&self) -> i64 {
+        mainnet_chain(self.net())
+    }
     /// The first block a full history reads (the contracts' deployment).
     fn start_block(&self) -> u64;
     /// The filter groups of window `[from, to]`; `anchor` is an exact
@@ -587,11 +812,26 @@ pub trait ChainIndex: Send + Sync {
     /// Deletes the log past `to` and refolds what it touched, in the
     /// transaction that rewinds the cursor.
     async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()>;
+    /// Undoes everything the projection derived down to `to`, for an
+    /// operator's rebuild from its start: by default its reorg rewind. An
+    /// index that keeps derived state its rewind does not recompute drops it
+    /// here.
+    async fn clear(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {
+        self.rewind(conn, to).await
+    }
     /// Folds the keys touched past `since` (`None`: rebuild) up to `upto`;
-    /// whether the result may be published (nothing still owed).
-    async fn fold(&self, pool: &PgPool, since: Option<i64>, upto: i64) -> anyhow::Result<bool>;
+    /// whether the result may be published (nothing still owed). Every
+    /// transaction it commits ends with `owner.check`.
+    async fn fold(
+        &self,
+        pool: &PgPool,
+        since: Option<i64>,
+        upto: i64,
+        owner: &Owner,
+    ) -> anyhow::Result<bool>;
     /// Work walked before the main range under the same budget (the nft
     /// backfill lane), read from the pass's source; the requests it spent.
+    /// Every transaction it commits ends with `owner.check`.
     async fn lanes(
         &self,
         _pool: &PgPool,
@@ -599,35 +839,406 @@ pub trait ChainIndex: Send + Sync {
         _anchor: (u64, i64),
         _budget: usize,
         _chunk: &mut usize,
+        _owner: &Owner,
     ) -> anyhow::Result<usize> {
         Ok(0)
     }
+    /// Forgets what the index keeps in memory between its calls (the nft
+    /// walk's collection set and pending contracts) after a pass failed past
+    /// it: the next pass reloads it from the database.
+    fn abandon(&self) {}
 }
 
-/// One pass of `ix` over `net`, read from `source`: the reorg check, the
-/// backfill lanes, the windows from the cursor to the confirmed head under
-/// the request budget (each committed with its cursor advance), the cursor
-/// block's header, then, once caught up, the fold and the publish.
+/// Whether the pass may walk the cursor, after [`bind`].
+enum Bound {
+    Walk,
+    Quarantined(String),
+}
+
+/// Proves the cursor's history on the owner's chain before the pass touches
+/// it.
+/// - A cursor in quarantine is left alone.
+/// - A cursor bound to another chain goes to quarantine.
+/// - A cursor written before the binding (`chain_id` NULL) is adopted when
+///   it has no history yet, or when its stored last-block hash equals the
+///   source's at that height; otherwise it goes to quarantine.
+///
+/// A source that does not answer fails the pass, with no decision about the
+/// data. Adoption and quarantine are compare-and-sets on the owner's
+/// generation and the cursor's checkpoint.
+async fn bind(
+    pool: &PgPool,
+    source: &dyn LogSource,
+    owner: &Owner,
+    cur: &Cursor,
+    out: &mut PassOutcome,
+) -> anyhow::Result<Bound> {
+    if let Some(why) = &cur.quarantine_reason {
+        return Ok(Bound::Quarantined(why.clone()));
+    }
+    match cur.chain_id {
+        Some(chain) if chain == owner.chain_id => return Ok(Bound::Walk),
+        Some(chain) => {
+            let why = format!(
+                "its history is bound to chain {chain}; this node indexes chain {}",
+                owner.chain_id
+            );
+            quarantine(pool, owner, cur, &why).await?;
+            return Ok(Bound::Quarantined(why));
+        }
+        None => {}
+    }
+    let checkpoint = cur.last_block_hash.as_deref();
+    let proof = if cur.last_block < cur.start_block {
+        Ok(())
+    } else if let Some(stored) = checkpoint {
+        let header = source
+            .header(cur.last_block as u64)
+            .await
+            .context("the cursor block's header, to prove its history")?;
+        out.requests += header.requests;
+        if header.value.hash == stored {
+            Ok(())
+        } else {
+            Err(format!(
+                "block {} is {} on chain {}, but its history stored {stored}",
+                cur.last_block, header.value.hash, owner.chain_id
+            ))
+        }
+    } else {
+        Err(format!(
+            "block {} has no stored hash to prove its history on chain {}",
+            cur.last_block, owner.chain_id
+        ))
+    };
+    match proof {
+        Ok(()) => {
+            let adopted = sqlx::query(
+                "UPDATE shop.chain_cursor SET chain_id = $6 \
+                 WHERE indexer = $1 AND network = $2 AND owner_generation = $3 AND chain_id IS NULL \
+                   AND quarantine_reason IS NULL AND last_block = $4 AND last_block_hash IS NOT DISTINCT FROM $5",
+            )
+            .bind(owner.indexer)
+            .bind(owner.net.db_name())
+            .bind(owner.generation)
+            .bind(cur.last_block)
+            .bind(checkpoint)
+            .bind(owner.chain_id)
+            .execute(pool)
+            .await?
+            .rows_affected();
+            if adopted != 1 {
+                return Err(owner
+                    .fenced("its cursor moved or was taken before the binding".into())
+                    .into());
+            }
+            tracing::info!(
+                indexer = owner.indexer,
+                network = owner.net.db_name(),
+                chain_id = owner.chain_id,
+                block = cur.last_block,
+                "marketplace index: bound the cursor's history to its chain"
+            );
+            Ok(Bound::Walk)
+        }
+        Err(why) => {
+            quarantine(pool, owner, cur, &why).await?;
+            Ok(Bound::Quarantined(why))
+        }
+    }
+}
+
+/// Sets the cursor apart (not walked, rewound or published) when it is
+/// still at the checkpoint the pass read and the owner still holds it.
+async fn quarantine(pool: &PgPool, owner: &Owner, cur: &Cursor, why: &str) -> anyhow::Result<()> {
+    let updated = sqlx::query(
+        "UPDATE shop.chain_cursor SET quarantined_at = timezone('UTC', now()), quarantine_reason = $6, \
+             folded_block = NULL, folded_at = NULL \
+         WHERE indexer = $1 AND network = $2 AND owner_generation = $3 AND quarantine_reason IS NULL \
+           AND last_block = $4 AND last_block_hash IS NOT DISTINCT FROM $5",
+    )
+    .bind(owner.indexer)
+    .bind(owner.net.db_name())
+    .bind(owner.generation)
+    .bind(cur.last_block)
+    .bind(cur.last_block_hash.as_deref())
+    .bind(why)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    if updated != 1 {
+        return Err(owner
+            .fenced("its cursor moved or was taken before the quarantine".into())
+            .into());
+    }
+    tracing::error!(
+        indexer = owner.indexer,
+        network = owner.net.db_name(),
+        reason = why,
+        "marketplace index: the cursor is in quarantine; an operator revalidates or rebuilds it"
+    );
+    Ok(())
+}
+
+/// Rebuilds the projection from its start block, as an operator asked
+/// (`rebuild_requested_at`), in one transaction:
+/// 1. the notification producers' replay is planned from the state before
+///    the cleanup;
+/// 2. the projection's own cleanup runs down to `start_block - 1`;
+/// 3. the cursor restarts there, bound to the owner's chain, unpublished and
+///    out of quarantine, with the request cleared.
+///
+/// A rebuild keeps the projection's chain and start block. It is refused,
+/// with the history kept and the cursor in quarantine, when the cursor is
+/// bound to another chain, starts at another block, or has a history with no
+/// binding that its checkpoint cannot prove on the owner's chain.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the pass's source, index, settings, owner, cursor and outcome"
+)]
+async fn rebuild(
+    pool: &PgPool,
+    source: &dyn LogSource,
+    ix: &dyn ChainIndex,
+    settings: &IndexSettings,
+    owner: &Owner,
+    cur: &Cursor,
+    out: &mut PassOutcome,
+) -> anyhow::Result<Option<String>> {
+    let start = settings
+        .start_override(owner.net)
+        .unwrap_or(ix.start_block()) as i64;
+    let full_history = start <= ix.start_block() as i64;
+    let mut refusal = match cur.chain_id {
+        Some(chain) if chain != owner.chain_id => Some(format!(
+            "its history is from chain {chain}, and this node indexes chain {}",
+            owner.chain_id
+        )),
+        _ if cur.start_block != start => Some(format!(
+            "its history starts at block {}, and this node's walk starts at {start}",
+            cur.start_block
+        )),
+        _ => None,
+    };
+    // A history with no binding is cleared only once its checkpoint is
+    // proven on the owner's chain: it may be another chain's, whose
+    // notification cursors a rebuild here would replay. A source that does
+    // not answer fails the pass and decides nothing.
+    if refusal.is_none() && cur.chain_id.is_none() && cur.last_block >= cur.start_block {
+        refusal = match cur.last_block_hash.as_deref() {
+            None => Some(format!(
+                "block {} has no stored hash to prove its history on chain {}",
+                cur.last_block, owner.chain_id
+            )),
+            Some(stored) => {
+                let header = source
+                    .header(cur.last_block as u64)
+                    .await
+                    .context("the cursor block's header, to prove the history a rebuild clears")?;
+                out.requests += header.requests;
+                (header.value.hash != stored).then(|| {
+                    format!(
+                        "block {} is {} on chain {}, but its history stored {stored}",
+                        cur.last_block, header.value.hash, owner.chain_id
+                    )
+                })
+            }
+        };
+    }
+    let mut tx = pool.begin().await?;
+    let held: Option<(i64, bool, i64, Option<String>)> = sqlx::query_as(
+        "SELECT owner_generation, rebuild_requested_at IS NOT NULL, last_block, last_block_hash \
+         FROM shop.chain_cursor WHERE indexer = $1 AND network = $2 FOR UPDATE",
+    )
+    .bind(owner.indexer)
+    .bind(owner.net.db_name())
+    .fetch_optional(&mut *tx)
+    .await?;
+    if held
+        != Some((
+            owner.generation,
+            true,
+            cur.last_block,
+            cur.last_block_hash.clone(),
+        ))
+    {
+        return Err(owner
+            .fenced("its rebuild, or the checkpoint it read, changed".into())
+            .into());
+    }
+    if let Some(why) = refusal {
+        let why = format!(
+            "rebuild refused: {why}; a rebuild keeps the projection's chain and start block, \
+             and a database for another chain or start begins empty"
+        );
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET quarantined_at = COALESCE(quarantined_at, timezone('UTC', now())), \
+                 quarantine_reason = $3, rebuild_requested_at = NULL, folded_block = NULL, folded_at = NULL \
+             WHERE indexer = $1 AND network = $2",
+        )
+        .bind(owner.indexer)
+        .bind(owner.net.db_name())
+        .bind(&why)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        tracing::error!(indexer = owner.indexer, network = owner.net.db_name(), reason = %why, "marketplace index: refused a rebuild; the cursor is in quarantine");
+        return Ok(Some(why));
+    }
+    let to = start - 1;
+    let replay =
+        super::notice_cursor::plan_replay(&mut tx, owner.indexer, owner.net, to, cur.last_block)
+            .await?;
+    ix.clear(&mut tx, to)
+        .await
+        .context("the projection's cleanup for its rebuild")?;
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = $3, last_block_hash = NULL, last_block_time = NULL, \
+             fold_through = NULL, folded_block = NULL, folded_at = NULL, full_history = $4, chain_id = $5, \
+             quarantined_at = NULL, quarantine_reason = NULL, rebuild_requested_at = NULL, \
+             updated_at = timezone('UTC', now()) \
+         WHERE indexer = $1 AND network = $2",
+    )
+    .bind(owner.indexer)
+    .bind(owner.net.db_name())
+    .bind(to)
+    .bind(full_history)
+    .bind(owner.chain_id)
+    .execute(&mut *tx)
+    .await?;
+    if let Some(replay) = replay {
+        replay.apply(&mut tx).await?;
+    }
+    tx.commit().await?;
+    tracing::warn!(
+        indexer = owner.indexer,
+        network = owner.net.db_name(),
+        from = cur.last_block,
+        to,
+        "marketplace index: rebuilt the projection from its start block, as an operator asked"
+    );
+    Ok(None)
+}
+
+/// One pass as a job runs it:
+/// 1. the source's chain checked against `ix`'s (an endpoint serving another
+///    chain fails the pass, with no decision about the data);
+/// 2. the projection's owner for the job's current lease acquisition;
+/// 3. [`run_pass`].
+///
+/// A fenced write drops the holding, so the next pass claims the projection
+/// again, which only succeeds while the job still holds its lease.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the pass's inputs, as run_pass takes them, plus the job's lease and holdings"
+)]
+pub async fn job_pass(
+    pool: &PgPool,
+    source: &dyn LogSource,
+    ix: &dyn ChainIndex,
+    settings: &IndexSettings,
+    holdings: &Holdings,
+    lease: Option<&crate::jobs::LeaseControl>,
+    cancel: Option<&tokio_util::sync::CancellationToken>,
+    progress: &(dyn Fn(String) + Send + Sync),
+) -> anyhow::Result<PassOutcome> {
+    super::ensure_chain(source, ix.chain_id()).await?;
+    let owner = holdings.owner(pool, lease, ix, settings).await?;
+    let outcome = run_pass(pool, source, ix, settings, &owner, cancel, progress).await;
+    match outcome {
+        Ok(mut o) => {
+            o.requests += 1;
+            Ok(o)
+        }
+        Err(e) => {
+            if e.chain().any(|c| c.downcast_ref::<Fenced>().is_some()) {
+                holdings.forget(ix.indexer(), ix.net());
+            }
+            Err(e)
+        }
+    }
+}
+
+/// One pass of `ix` over `net`, read from `source`, as `owner` (the
+/// projection's generation, which every transaction checks before its
+/// commit):
+/// 1. an operator's rebuild request;
+/// 2. the history's binding to the owner's chain ([`bind`]);
+/// 3. the reorg check;
+/// 4. the backfill lanes;
+/// 5. the windows from the cursor to the confirmed head under the request
+///    budget, each committed with its cursor advance;
+/// 6. once caught up, the fold and the publish.
 pub async fn run_pass(
     pool: &PgPool,
     source: &dyn LogSource,
     ix: &dyn ChainIndex,
     settings: &IndexSettings,
+    owner: &Owner,
+    cancel: Option<&tokio_util::sync::CancellationToken>,
+    progress: &(dyn Fn(String) + Send + Sync),
+) -> anyhow::Result<PassOutcome> {
+    let outcome = walk(pool, source, ix, settings, owner, cancel, progress).await;
+    if outcome.is_err() {
+        ix.abandon();
+    }
+    outcome
+}
+
+async fn walk(
+    pool: &PgPool,
+    source: &dyn LogSource,
+    ix: &dyn ChainIndex,
+    settings: &IndexSettings,
+    owner: &Owner,
     cancel: Option<&tokio_util::sync::CancellationToken>,
     progress: &(dyn Fn(String) + Send + Sync),
 ) -> anyhow::Result<PassOutcome> {
     let started = std::time::Instant::now();
     let net = ix.net();
     let name = ix.indexer();
-    let start = settings.start_override(net).unwrap_or(ix.start_block());
-    let full_history = start <= ix.start_block();
-    let cur = ensure_cursor(pool, name, net, start, full_history).await?;
+    anyhow::ensure!(
+        owner.indexer == name && owner.net == net,
+        "the owner holds {} {}, not {name} {}",
+        owner.indexer,
+        owner.net.db_name(),
+        net.db_name()
+    );
+    let cur = cursor(pool, name, net)
+        .await?
+        .context("the chain cursor row is missing (claiming the projection creates it)")?;
+    let configured = settings.start_override(net).unwrap_or(ix.start_block());
+    if cur.start_block != configured as i64 {
+        tracing::info!(
+            indexer = name,
+            network = net.db_name(),
+            stored = cur.start_block,
+            configured,
+            "chain cursor keeps its stored start block"
+        );
+    }
     let mut out = PassOutcome {
         network: net.db_name(),
         from_block: cur.last_block + 1,
         indexed_to: cur.last_block,
         ..Default::default()
     };
+    if cur.rebuild_requested_at.is_some() {
+        match rebuild(pool, source, ix, settings, owner, &cur, &mut out).await? {
+            None => {
+                out.rebuilt = true;
+                out.indexed_to = cur.start_block - 1;
+            }
+            Some(why) => out.quarantined = Some(why),
+        }
+        out.elapsed_ms = started.elapsed().as_millis() as u64;
+        return Ok(out);
+    }
+    if let Bound::Quarantined(why) = bind(pool, source, owner, &cur, &mut out).await? {
+        out.quarantined = Some(why);
+        out.elapsed_ms = started.elapsed().as_millis() as u64;
+        return Ok(out);
+    }
     if cur.last_block >= cur.start_block {
         let stored = cur.last_block_hash.as_deref().unwrap_or("");
         let header = source
@@ -644,11 +1255,20 @@ pub async fn run_pass(
             ix.rewind(&mut tx, to)
                 .await
                 .context("undoing the reorged range")?;
-            rewind(&mut tx, name, net, to).await?;
+            rewind(
+                &mut tx,
+                name,
+                net,
+                (cur.last_block, cur.last_block_hash.as_deref()),
+                to,
+            )
+            .await
+            .context("rewinding the cursor from the checkpoint it was read at")?;
             // Cursor rows are locked after the deletes: producers wait only for the commit.
             if let Some(replay) = replay {
                 replay.apply(&mut tx).await?;
             }
+            owner.check(&mut tx).await?;
             tx.commit().await?;
             tracing::warn!(indexer = name, network = net.db_name(), block = cur.last_block, stored, chain = %header.hash, rewound_to = to, "marketplace index: the cursor block's hash changed (a reorg past the confirmation depth); rewound");
             out.reorg_rewound_to = Some(to);
@@ -684,10 +1304,12 @@ pub async fn run_pass(
     };
     let budget = settings.requests_per_pass.max(1);
     let mut chunk = settings.address_chunk.max(1);
-    let mut log_requests = ix.lanes(pool, source, anchor, budget, &mut chunk).await?;
+    let mut log_requests = ix
+        .lanes(pool, source, anchor, budget, &mut chunk, owner)
+        .await?;
     out.requests += log_requests;
     let mut next = (cur.last_block + 1) as u64;
-    let mut expected = cur.last_block;
+    let mut expected = (cur.last_block, cur.last_block_hash.clone());
     while next <= target {
         if cancel.is_some_and(|c| c.is_cancelled()) {
             out.paused = true;
@@ -729,14 +1351,21 @@ pub async fn run_pass(
         };
         let mut tx = pool.begin().await?;
         let written = ix.write(&mut tx, &window.logs, &times).await?;
-        advance(&mut tx, name, net, expected, &header)
-            .await
-            .context("advancing the cursor")?;
+        advance(
+            &mut tx,
+            name,
+            net,
+            (expected.0, expected.1.as_deref()),
+            &header,
+        )
+        .await
+        .context("advancing the cursor")?;
+        owner.check(&mut tx).await?;
         tx.commit().await?;
         out.logs += window.logs.len();
         out.rows_written += written;
         out.indexed_to = window.reached as i64;
-        expected = window.reached as i64;
+        expected = (window.reached as i64, Some(header.hash.clone()));
         next = window.reached + 1;
         progress(format!(
             "{} {}: indexed to {} of {} ({} requests this pass)",
@@ -752,10 +1381,10 @@ pub async fn run_pass(
         return Ok(out);
     }
     let may_publish = ix
-        .fold(pool, cur.fold_through, out.indexed_to)
+        .fold(pool, cur.fold_through, out.indexed_to, owner)
         .await
         .context("folding")?;
-    record_fold(pool, name, net, out.indexed_to).await?;
+    record_fold(pool, owner, out.indexed_to).await?;
     out.folded = true;
     let latest = source
         .head()
@@ -781,13 +1410,26 @@ pub async fn run_pass(
         && out.indexed_to as u64 <= latest_safe
         && within_publish_lag(net, latest, out.indexed_to as u64)
     {
-        out.published = mark_folded(pool, name, net, out.indexed_to, Utc::now()).await?;
+        out.published = mark_folded(pool, owner, out.indexed_to, Utc::now()).await?;
     } else {
-        sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL WHERE indexer = $1 AND network = $2 AND last_block = $3")
-            .bind(name).bind(net.db_name()).bind(out.indexed_to).execute(pool).await?;
+        unpublish(pool, owner, out.indexed_to).await?;
     }
     out.elapsed_ms = started.elapsed().as_millis() as u64;
     Ok(out)
+}
+
+/// The owner of `ix`'s projection for a test that walks or folds it outside
+/// a job: claimed on the pool, as a process without leases claims it.
+#[cfg(test)]
+pub(crate) async fn test_owner(
+    pool: &PgPool,
+    ix: &dyn ChainIndex,
+    settings: &IndexSettings,
+) -> Owner {
+    Holdings::default()
+        .owner(pool, None, ix, settings)
+        .await
+        .expect("claiming the projection")
 }
 
 #[cfg(test)]
@@ -857,6 +1499,11 @@ mod tests {
             full_history: full,
             reorg_rewinds: 0,
             updated_at: Utc::now().naive_utc(),
+            chain_id: Some(137),
+            owner_generation: 1,
+            quarantined_at: None,
+            quarantine_reason: None,
+            rebuild_requested_at: None,
         }
     }
 
