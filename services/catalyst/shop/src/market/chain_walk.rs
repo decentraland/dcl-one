@@ -338,6 +338,8 @@ pub async fn touch_started(pool: &PgPool, indexer: &str, net: ChainNet) -> sqlx:
 }
 
 /// The walks this process has started, touched once each.
+/// Process-wide and keyed without the database: tests over several databases
+/// must not rely on the touch through `run_pass`.
 static STARTED_WALKS: std::sync::LazyLock<parking_lot::Mutex<BTreeSet<(String, &'static str)>>> =
     std::sync::LazyLock::new(Default::default);
 
@@ -740,6 +742,11 @@ impl PassOutcome {
 }
 
 /// Clamp the chain's safe head to an optional operator stop block.
+/// Whether a cursor at `last_block` is held at its stop block, with nothing left to walk.
+fn held_at_stop(last_block: i64, stop: Option<u64>) -> bool {
+    stop.is_some_and(|s| last_block >= s as i64)
+}
+
 pub fn target_block(safe: u64, stop: Option<u64>) -> u64 {
     stop.map_or(safe, |s| s.min(safe))
 }
@@ -812,12 +819,6 @@ pub async fn run_pass(
     let start = settings.start_override(net).unwrap_or(ix.start_block());
     let full_history = start <= ix.start_block();
     let cur = ensure_cursor(pool, name, net, start, full_history).await?;
-    if STARTED_WALKS
-        .lock()
-        .insert((name.to_string(), net.db_name()))
-    {
-        touch_started(pool, name, net).await?;
-    }
     let mut out = PassOutcome {
         network: net.db_name(),
         from_block: cur.last_block + 1,
@@ -867,6 +868,13 @@ pub async fn run_pass(
     };
     anyhow::ensure!(safe_head <= head, "safe head exceeds latest head");
     let target = target_block(safe_head, stop);
+    // Only once the head reads answered, and not at the stop block: a walk with
+    // its RPC down or held there keeps its age.
+    let key = (name.to_string(), net.db_name());
+    if !held_at_stop(cur.last_block, stop) && !STARTED_WALKS.lock().contains(&key) {
+        touch_started(pool, name, net).await?;
+        STARTED_WALKS.lock().insert(key);
+    }
     let anchor = match cur.last_block_time {
         Some(t) => (cur.last_block.max(0) as u64, t),
         None => {
@@ -1045,6 +1053,13 @@ mod tests {
             reorg_rewinds: 0,
             updated_at: Utc::now().naive_utc(),
         }
+    }
+
+    #[test]
+    fn a_walk_is_held_only_once_it_reaches_its_stop_block() {
+        assert!(!held_at_stop(35, Some(36)));
+        assert!(held_at_stop(36, Some(36)));
+        assert!(!held_at_stop(1_000, None));
     }
 
     #[test]

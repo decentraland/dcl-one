@@ -121,12 +121,13 @@ pub struct MarketplaceConfig {
 
     /// Walk Polygon MANA transfers, which confirm tip forwards. Forwards answer
     /// 503 coded `tip-index-unavailable` when no walk can confirm them: no
-    /// cursor (off, or on but none five minutes after start), a cursor without
-    /// its whole history (an overridden start block), or one not advanced for
-    /// three hours (nothing walks it, or it is held at a stop block). They
-    /// answer 503 with `Retry-After` while a whole-history walk lags or pauses,
-    /// here or in another process, and while on for the first five minutes
-    /// before the walk's first pass creates its cursor.
+    /// cursor (off, or on but none five minutes after this API process
+    /// starts), a cursor without its whole history (an overridden start
+    /// block), or one not advanced for three hours (nothing walks it, or it is
+    /// held at a stop block). They answer 503 with `Retry-After` while a
+    /// whole-history walk lags or pauses, here or in another process, and while
+    /// on for the first five minutes after this API process starts, before the
+    /// walk's first pass creates its cursor.
     #[arg(long, env = "MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_mana_transfers_index_enabled: bool,
 

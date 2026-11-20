@@ -28,9 +28,10 @@
 //! ([`chain_walk::is_walked`] false), or the local walk's first pass still to
 //! come, it is a 503 with `Retry-After`; when the cursor cannot be read, a
 //! 500. The age check reads `updated_at`, which a walk sets just outside the
-//! live window when its process starts ([`chain_walk::touch_started`]): an
-//! index back after hours down reads as behind, neither abandoned nor live,
-//! until its first window really lands.
+//! live window once its first head read in a process answers, unless it is
+//! held at its stop block ([`chain_walk::touch_started`]): an index back after
+//! hours down reads as behind, neither abandoned nor live, until its first
+//! window really lands.
 //! The auth dApp posts cross-origin with signed-fetch headers, so the route
 //! answers the browser's preflight with the events-notifier's CORS ([`CORS`]).
 //! A transfer below the minimum amount, or mined longer than the maximum age
