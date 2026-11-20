@@ -207,9 +207,14 @@ async fn run(
             (derive_idempotency_key(signer, &lines, auth_ts), None)
         }
     };
+    let metadata = crate::shared::signed_fetch::header_str(
+        headers,
+        crate::shared::signed_fetch::AUTH_METADATA_HEADER,
+    );
     match batch::authorize_group(
         state,
         signer,
+        metadata,
         &lines,
         source,
         &key,

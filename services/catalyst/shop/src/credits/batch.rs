@@ -782,10 +782,13 @@ pub(super) async fn derive_line(
 }
 
 /// The whole flow for `lines` on behalf of `signer` (lowercase, from the
-/// verified auth chain); `single` shapes the messages.
+/// verified auth chain); `single` shapes the messages. `metadata` is the
+/// signed auth-chain metadata, read only for a Credits part (below).
+#[allow(clippy::too_many_arguments)]
 pub async fn authorize_group(
     state: &State,
     signer: &str,
+    metadata: Option<&str>,
     lines: &[ValidatedLine],
     source: Option<&str>,
     idempotency_key: &str,
@@ -895,7 +898,15 @@ pub async fn authorize_group(
             "oracle rate {mana_usd:?} is not a positive decimal"
         ))
     })?;
-    let session = Session::Web3 { wallet: buyer };
+    // A Credits part is judged on the session the quote that offered it was:
+    // the signed metadata's (`mana::quote::session_of`), so only a signed web3
+    // wallet may pay the rest in MANA and a web2 or unstated session is refused
+    // by the rule. A whole-price credit keeps the signed address as its
+    // session, as before, so clients that send no metadata keep working.
+    let session = match leg {
+        Some(_) => crate::mana::quote::session_of(Some(signer), metadata),
+        None => Session::Web3 { wallet: buyer },
+    };
 
     let mut derived = Vec::with_capacity(lines.len());
     for (index, v) in lines.iter().enumerate() {

@@ -385,8 +385,18 @@ pub(super) fn scratch_wallet() -> Wallet {
 }
 
 pub(super) async fn signed_headers(w: &Wallet, method: &str, path: &str) -> HeaderMap {
+    signed_headers_with(w, method, path, "{}").await
+}
+
+/// [`signed_headers`] with `metadata` signed into the payload.
+pub(super) async fn signed_headers_with(
+    w: &Wallet,
+    method: &str,
+    path: &str,
+    metadata: &'static str,
+) -> HeaderMap {
     let timestamp = chrono::Utc::now().timestamp_millis().to_string();
-    let payload = build_payload_v6(method, path, &timestamp, "{}");
+    let payload = build_payload_v6(method, path, &timestamp, metadata);
     let signature = w
         .signer
         .sign_message(payload.as_bytes())
@@ -410,7 +420,7 @@ pub(super) async fn signed_headers(w: &Wallet, method: &str, path: &str) -> Head
         AUTH_TIMESTAMP_HEADER,
         HeaderValue::from_str(&timestamp).unwrap(),
     );
-    headers.insert(AUTH_METADATA_HEADER, HeaderValue::from_static("{}"));
+    headers.insert(AUTH_METADATA_HEADER, HeaderValue::from_static(metadata));
     for (i, link) in chain.iter().enumerate() {
         headers.insert(
             axum::http::HeaderName::from_bytes(format!("{AUTH_CHAIN_HEADER_PREFIX}{i}").as_bytes())
@@ -450,6 +460,22 @@ pub(super) async fn send(
     let body = serde_json::from_slice(&bytes)
         .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()));
     (status, headers, body)
+}
+
+/// A signed web3 session's metadata, as the web Shop signs it (`walletKind`).
+const WEB3: &str = r#"{"walletKind":"web3"}"#;
+
+/// [`call`] with `metadata` signed into the request.
+async fn call_signed(
+    app: &Router,
+    w: &Wallet,
+    path: &str,
+    metadata: &'static str,
+    body: Value,
+) -> (StatusCode, Value) {
+    let headers = signed_headers_with(w, "post", path, metadata).await;
+    let (status, _, body) = send(app, "POST", path, headers, Some(body)).await;
+    (status, body)
 }
 
 /// A signed call over the PUBLIC path (`/credits/...`), the way the explorer signs it.
@@ -8579,7 +8605,7 @@ async fn a_credits_part_of_one_line_reserves_the_part_and_signs_its_share() {
     let post = |w: &'static str, body: Value| {
         let lane = &lane;
         let wallet = &wallet;
-        async move { call(lane, wallet, "post", w, &[], Some(body)).await }
+        async move { call_signed(lane, wallet, w, WEB3, body).await }
     };
     const SINGLE: &str = "/credits/credits/authorize";
     const BATCH: &str = "/credits/credits/authorize/batch";
@@ -8645,30 +8671,14 @@ async fn a_credits_part_of_one_line_reserves_the_part_and_signs_its_share() {
     );
     let poor = scratch_wallet();
     seed_paid_credits(&pool, &poor.address, "5").await;
-    let (status, v) = call(
-        &lane,
-        &poor,
-        "post",
-        SINGLE,
-        &[],
-        Some(part(200, "200", json!(120))),
-    )
-    .await;
+    let (status, v) = call_signed(&lane, &poor, SINGLE, WEB3, part(200, "200", json!(120))).await;
     assert_eq!(status, StatusCode::PAYMENT_REQUIRED, "{v}");
     assert_eq!(
         (v["balanceCents"].as_i64(), v["requiredCents"].as_i64()),
         (Some(50), Some(120)),
         "the balance is checked against the part"
     );
-    let (status, _) = call(
-        &lane,
-        &poor,
-        "post",
-        SINGLE,
-        &[],
-        Some(part(200, "200", json!(50))),
-    )
-    .await;
+    let (status, _) = call_signed(&lane, &poor, SINGLE, WEB3, part(200, "200", json!(50))).await;
     assert_eq!(status, StatusCode::OK, "a part the balance covers");
     assert_eq!(
         authorized_count(&pool, &wallet.address).await,
@@ -8756,6 +8766,69 @@ async fn a_credits_part_of_one_line_reserves_the_part_and_signs_its_share() {
     db.drop().await;
 }
 
+/// A Credits part is judged on the session the signed metadata states, as
+/// the quote that offered it was: a signed web2 session, or none stated, is
+/// refused on both routes with nothing reserved; a signed web3 wallet is
+/// authorized. A whole-price credit needs no metadata, as before.
+#[tokio::test]
+async fn a_credits_part_needs_a_signed_web3_session_on_both_routes() {
+    let Some((db, lane, wallet)) = opid_setup("part-session").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    const SINGLE: &str = "/credits/credits/authorize";
+    const BATCH: &str = "/credits/credits/authorize/batch";
+    let part = json!({ "usdPriceCents": 200, "contractAddress": COLLECTION, "itemId": "200", "creditsCents": 120 });
+    let bodies = [
+        (SINGLE, part.clone()),
+        (BATCH, json!({ "items": [part.clone()] })),
+    ];
+    for (metadata, why) in [
+        (r#"{"walletKind":"web2"}"#, "a signed web2 session"),
+        ("{}", "no stated session"),
+    ] {
+        for (route, body) in bodies.clone() {
+            let (status, v) = call_signed(&lane, &wallet, route, metadata, body).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{why} on {route}: {v}");
+            assert_eq!(
+                v["refusal"], "mana_remainder_not_allowed",
+                "{why} on {route}: {v}"
+            );
+        }
+    }
+    assert_eq!(
+        authorized_count(&pool, &wallet.address).await,
+        0,
+        "no refused session reserved anything"
+    );
+    for (route, body) in bodies {
+        let (status, v) = call_signed(&lane, &wallet, route, WEB3, body).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a signed web3 wallet on {route}: {v}"
+        );
+        assert_eq!(v["usdCents"], 120);
+    }
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 2);
+    let (status, v) = call(
+        &lane,
+        &wallet,
+        "post",
+        SINGLE,
+        &[],
+        Some(opid_item(200, "200", None)),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a whole price needs no metadata: {v}"
+    );
+
+    db.drop().await;
+}
+
 /// A USD-pegged trade has no Credits part: its MANA is only fixed when the
 /// marketplace reads its feed at settlement. Refused with the rule's reason,
 /// before the feed is read and before anything is reserved; its whole price
@@ -8822,17 +8895,7 @@ async fn a_credits_part_of_a_usd_pegged_trade_is_refused_before_the_feed_or_a_re
     let authorize = |body: Value| {
         let lane = &lane;
         let wallet = &wallet;
-        async move {
-            call(
-                lane,
-                wallet,
-                "post",
-                "/credits/credits/authorize",
-                &[],
-                Some(body),
-            )
-            .await
-        }
+        async move { call_signed(lane, wallet, "/credits/credits/authorize", WEB3, body).await }
     };
 
     let (status, v) =
@@ -8925,13 +8988,12 @@ async fn the_split_vector_reserves_its_part_and_signs_the_same_credit_at_any_siz
         let lane = lane(buffer, headroom);
         let wallet = scratch_wallet();
         seed_paid_credits(&pool, &wallet.address, "50").await;
-        let (status, v) = call(
+        let (status, v) = call_signed(
             &lane,
             &wallet,
-            "post",
             "/credits/credits/authorize",
-            &[],
-            Some(json!({ "usdPriceCents": 30, "tradeId": "0e20", "creditsCents": 10 })),
+            WEB3,
+            json!({ "usdPriceCents": 30, "tradeId": "0e20", "creditsCents": 10 }),
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
@@ -8942,13 +9004,12 @@ async fn the_split_vector_reserves_its_part_and_signs_the_same_credit_at_any_siz
             "nothing reserved for another ERC-20"
         );
 
-        let (status, v) = call(
+        let (status, v) = call_signed(
             &lane,
             &wallet,
-            "post",
             "/credits/credits/authorize",
-            &[],
-            Some(part.clone()),
+            WEB3,
+            part.clone(),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{buffer} bps, {headroom}%: {v}");
