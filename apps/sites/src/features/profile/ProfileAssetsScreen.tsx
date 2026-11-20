@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { Button, ShopCard, ShopCardPrice } from "@dcl/one-ui";
+import { Button } from "@dcl/one-ui";
 import {
   BackpackUpperBody,
   GeneralGrid,
@@ -9,29 +9,24 @@ import {
   GeneralSecondaryBarEmotes,
 } from "@dcl/one-ui/foundations/icons";
 
+import {
+  CollectiblesItem,
+  CollectiblesPanel,
+  NameRow,
+  useCategoryTabs,
+  useFocusNewRows,
+  type CategoryOption,
+  type CollectiblesState,
+} from "@dcl/one-ui/apps/sites/profile/collectibles";
+import { AssetCard, NameActions } from "@dcl/one-ui/apps/sites/profile/ProfileAssetCard";
+import { EmptyMessage } from "@dcl/one-ui/apps/sites/profile/EmptyMessage";
+
 import { assetPage, SHOP_BASE } from "@/core/lib/shop/redirects";
 import type { AssetCategory, ProfileAsset } from "@/data/lib/catalyst/marketplace/profile-collectibles";
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
 
-import {
-  catalogueTotal,
-  categoryGlyph,
-  collectibleBadges,
-  CollectiblesItem,
-  CollectiblesPanel,
-  loadedRows,
-  loadMore,
-  NameRow,
-  useCategoryTabs,
-  unreadyState,
-  useFocusNewRows,
-  useRouterClick,
-  ShopCardRouterLink,
-  type CategoryOption,
-  type CollectiblesState,
-} from "./collectibles";
+import { catalogueTotal, loadedRows, loadMore, unreadyState, useRouterClick, ShopCardRouterLink } from "./collectibles";
 import { useProfileAssets } from "./hooks";
-import { EmptyMessage } from "./EmptyMessage";
 import { ProfileShell, type ProfileShellTab } from "./ProfileShell";
 
 /** Where the owner's empty Assets sends them: the Shop. */
@@ -69,53 +64,6 @@ function countLabel(total: number): string {
 
 function tokenHref(asset: ProfileAsset): string {
   return assetPage(asset.contractAddress, asset.tokenId, "token");
-}
-
-/** A NAME's View (its token page) and Transfer (its token's transfer page). */
-function NameActions({ asset }: { asset: ProfileAsset }) {
-  const routerClick = useRouterClick();
-  const view = tokenHref(asset);
-  const transfer = `${view}/transfer`;
-  return (
-    <>
-      <Button href={view} onClick={routerClick(view)} variant="secondary" size="md" aria-label={`View ${asset.name}`}>
-        View
-      </Button>
-      <Button href={transfer} onClick={routerClick(transfer)} size="md" aria-label={`Transfer ${asset.name}`}>
-        Transfer
-      </Button>
-    </>
-  );
-}
-
-function AssetCard({ asset }: { asset: ProfileAsset }) {
-  const routerClick = useRouterClick();
-  const href = tokenHref(asset);
-  return (
-    <ShopCard
-      name={asset.name}
-      image={asset.image}
-      // The catalogue has no image for a NAME.
-      placeholder={asset.category === "ens" ? <GeneralName size={64} /> : undefined}
-      rarity={asset.rarity}
-      price={asset.price ? <ShopCardPrice kind="mana" amount={asset.price} network={asset.network} /> : undefined}
-      categoryIcon={categoryGlyph(asset.traits.category)}
-      badges={collectibleBadges(asset.traits)}
-      href={href}
-      linkComponent={ShopCardRouterLink}
-      variant="catalogue"
-      headingLevel={3}
-      actions={
-        asset.category === "ens" ? (
-          <NameActions asset={asset} />
-        ) : (
-          <Button href={href} onClick={routerClick(href)} size="md" aria-label={`View ${asset.name}`}>
-            View
-          </Button>
-        )
-      }
-    />
-  );
 }
 
 /** The owner's Assets tab: every token they hold, or one category, a page at a time. */
@@ -167,9 +115,17 @@ export function ProfileAssetsScreen({ profile, own, tabs, onTab }: ProfileAssets
           children: rows.map((asset) => (
             <CollectiblesItem key={asset.id}>
               {names ? (
-                <NameRow name={asset.name} actions={<NameActions asset={asset} />} />
+                <NameRow
+                  name={asset.name}
+                  actions={<NameActions name={asset.name} view={tokenHref(asset)} navigate={routerClick} />}
+                />
               ) : (
-                <AssetCard asset={asset} />
+                <AssetCard
+                  asset={asset}
+                  href={tokenHref(asset)}
+                  navigate={routerClick}
+                  linkComponent={ShopCardRouterLink}
+                />
               )}
             </CollectiblesItem>
           )),

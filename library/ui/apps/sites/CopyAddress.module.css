@@ -1,9 +1,4 @@
 /* The copy button beside a wallet address and the note it shows for two seconds. */
-.copyWrap {
-  position: relative;
-  display: inline-flex;
-}
-
 .copy {
   display: inline-flex;
   align-items: center;
@@ -27,15 +22,6 @@
 .copy:focus-visible {
   outline: 2px solid var(--dcl-text-primary);
   outline-offset: 2px;
-}
-
-.copiedHidden {
-  position: absolute;
-  overflow: hidden;
-  width: 1px;
-  height: 1px;
-  clip-path: inset(50%);
-  white-space: nowrap;
 }
 
 .copied {

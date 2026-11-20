@@ -12,12 +12,13 @@ export type ModalProps = Omit<
   | 'open'
   | 'onClose'
   | 'onCancel'
-  | 'onKeyDown'
   | 'onPointerDown'
   | 'onClick'
   | 'aria-labelledby'
 > & {
   title: ReactNode
+  /** Gallery provides a full viewport on mobile and a centered media surface on desktop. */
+  layout?: 'message' | 'gallery'
   /** Keeps the title out of view. It still names the dialog. */
   titleHidden?: boolean
   /** The body text. It is the dialog's description. */
@@ -71,6 +72,7 @@ function hide(dialog: HTMLDialogElement) {
  */
 export function Modal({
   title,
+  layout = 'message',
   titleHidden = false,
   description,
   children,
@@ -85,6 +87,7 @@ export function Modal({
   returnFocusRef,
   initialFocusRef,
   className,
+  onKeyDown,
   'aria-describedby': describedBy,
   ...rest
 }: ModalProps) {
@@ -126,13 +129,29 @@ export function Modal({
       {...rest}
       ref={ref}
       className={[styles.root, className].filter(Boolean).join(' ')}
+      data-layout={layout === 'gallery' ? 'gallery' : undefined}
       aria-labelledby={titleId}
       aria-describedby={describedByIds || undefined}
       onKeyDown={(event) => {
-        // A control inside that already used the key (an open help text) keeps the dialog open.
-        if (event.key !== 'Escape' || event.defaultPrevented) return
-        event.preventDefault()
-        dismiss()
+        onKeyDown?.(event)
+        if (event.defaultPrevented) return
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          dismiss()
+        } else if (event.key === 'Tab' && typeof event.currentTarget.showModal !== 'function') {
+          // A browser without showModal still needs to wrap focus between the visible controls.
+          const controls = event.currentTarget.querySelectorAll<HTMLElement>(
+            'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          )
+          const first = controls[0]
+          const last = controls[controls.length - 1]
+          const edge = event.shiftKey ? first : last
+          const wrapTo = event.shiftKey ? last : first
+          if (edge && document.activeElement === edge && wrapTo) {
+            event.preventDefault()
+            wrapTo.focus()
+          }
+        }
       }}
       onCancel={(event) => {
         event.preventDefault()
@@ -172,7 +191,11 @@ export function Modal({
       {image != null ? <div className={styles.image}>{image}</div> : null}
       <div className={styles.body}>
         <div className={styles.text}>
-          <h2 id={titleId} className={styles.title} data-hidden={titleHidden || undefined}>
+          <h2
+            id={titleId}
+            className={styles.title}
+            data-hidden={titleHidden || layout === 'gallery' || undefined}
+          >
             {title}
           </h2>
           {description != null ? (

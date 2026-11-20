@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
 
-import { revealTab } from "./reveal-tab";
+import { revealTab } from "@dcl/one-ui/apps/sites/profile/reveal-tab";
 
 type Box = { left: number; right: number };
 

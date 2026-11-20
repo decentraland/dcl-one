@@ -11,7 +11,7 @@ vi.hoisted(() => {
   });
 });
 
-import { ProfileMoreActions } from "./ProfileMoreActions";
+import { ProfileMoreActions } from "@dcl/one-ui/apps/sites/profile/ProfileMoreActions";
 
 afterEach(cleanup);
 

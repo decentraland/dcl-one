@@ -1,24 +1,24 @@
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, ReactNode } from 'react'
 
-import { ProfilePic } from "@dcl/one-ui";
-import { GeneralVerified, GeneralWallet } from "@dcl/one-ui/foundations/icons";
+import { ProfilePic } from '../../../index'
+import { GeneralVerified, GeneralWallet } from '../../../foundations/icons'
 
-import { CopyAddress } from "../components/CopyAddress";
+import { CopyAddress } from '../CopyAddress'
 
-import styles from "./ProfileHeader.module.css";
+import styles from './ProfileHeader.module.css'
 
 type ProfileHeaderProps = {
-  address: string;
+  address: string
   /** The address as the app shortens it for display (`0x1234…abcd`); the copy button copies `address`. */
-  addressLabel: string;
-  name: string;
-  nameColor: string;
+  addressLabel: string
+  name: string
+  nameColor: string
   /** A claimed NAME shows the verified mark; an unclaimed one the `#1234` suffix. */
-  hasClaimedName: boolean;
-  avatarUrl?: string;
+  hasClaimedName: boolean
+  avatarUrl?: string
   /** Buttons on the right: the owner's calls to action, or a member's. */
-  actions?: ReactNode;
-};
+  actions?: ReactNode
+}
 
 /** Avatar, name and address on the left, actions on the right; stacked on narrow screens. */
 export function ProfileHeader({
@@ -28,10 +28,10 @@ export function ProfileHeader({
   nameColor,
   hasClaimedName,
   avatarUrl,
-  actions,
+  actions
 }: ProfileHeaderProps) {
   return (
-    <header className={styles.root} style={{ "--name-color": nameColor } as CSSProperties}>
+    <header className={styles.root} style={{ '--name-color': nameColor } as CSSProperties}>
       <div className={styles.identity}>
         <ProfilePic name={name} src={avatarUrl} size={76} compactOnMobile nameColor={nameColor} />
         <div className={styles.nameBlock}>
@@ -54,5 +54,5 @@ export function ProfileHeader({
       </div>
       {actions ? <div className={styles.actions}>{actions}</div> : null}
     </header>
-  );
+  )
 }

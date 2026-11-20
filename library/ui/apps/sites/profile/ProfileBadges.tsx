@@ -1,31 +1,31 @@
-import { useId } from "react";
+import { useId } from 'react'
 
-import styles from "./ProfileBadges.module.css";
+import styles from './ProfileBadges.module.css'
 
 export type ProfileBadgeItem = {
-  id: string;
-  name: string;
-  imageUrl?: string;
-  tierName?: string;
-  description?: string;
+  id: string
+  name: string
+  imageUrl?: string
+  tierName?: string
+  description?: string
   /** Already formatted by the caller, e.g. "Unlocked on Mar 3, 2026". */
-  unlocked?: string;
-};
+  unlocked?: string
+}
 
 type ProfileBadgesProps = {
-  badges: readonly ProfileBadgeItem[];
-  loading: boolean;
+  badges: readonly ProfileBadgeItem[]
+  loading: boolean
   /** Shown when the member has no badge yet. */
-  emptyText: string;
+  emptyText: string
   /**
    * Shown instead when the badges could not be read and none are on screen, so a failure does not
    * read as "no badges". The caller passes it only when there is no data to show.
    */
-  errorText?: string;
-};
+  errorText?: string
+}
 
 function Badge({ badge }: { badge: ProfileBadgeItem }) {
-  const tipId = useId();
+  const tipId = useId()
   return (
     <li className={styles.badge}>
       <span className={styles.slot} tabIndex={0} aria-describedby={tipId}>
@@ -44,23 +44,23 @@ function Badge({ badge }: { badge: ProfileBadgeItem }) {
         {badge.unlocked ? <span className={styles.tipDate}>{badge.unlocked}</span> : null}
       </span>
     </li>
-  );
+  )
 }
 
 /** The member's badges, each with its name, tier, blurb and unlock date on hover or focus. */
 export function ProfileBadges({ badges, loading, emptyText, errorText }: ProfileBadgesProps) {
-  const listed = !loading && !errorText && badges.length > 0;
+  const listed = !loading && !errorText && badges.length > 0
   return (
     <div className={styles.root}>
       <h2 className={styles.title}>Badges</h2>
       {/* One live region, always mounted, so a screen reader hears how the loading ended. */}
       <p className={listed ? styles.loaded : loading ? styles.status : styles.empty} role="status">
         {loading
-          ? "Loading badges…"
+          ? 'Loading badges…'
           : errorText
             ? errorText
             : badges.length > 0
-              ? `${badges.length} ${badges.length === 1 ? "badge" : "badges"}`
+              ? `${badges.length} ${badges.length === 1 ? 'badge' : 'badges'}`
               : emptyText}
       </p>
       {listed ? (
@@ -71,5 +71,5 @@ export function ProfileBadges({ badges, loading, emptyText, errorText }: Profile
         </ul>
       ) : null}
     </div>
-  );
+  )
 }

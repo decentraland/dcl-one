@@ -20,12 +20,12 @@
 }
 
 .status {
-  composes: text626f64792f736d from '@dcl/one-ui/text-styles.module.css';
+  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
   color: var(--dcl-text-primary);
 }
 
 .count {
-  composes: text626f64792f736d from '@dcl/one-ui/text-styles.module.css';
+  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
   color: var(--dcl-text-secondary);
 }
 

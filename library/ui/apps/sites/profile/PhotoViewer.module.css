@@ -1,53 +1,4 @@
-/* The profile photo viewer, drawn here until the design system has a dialog. The source is the
- * profile site's PhotoModal: a 1500px paper (min(820px, 92vh) tall) with a 571px information rail,
- * full screen below the 900px MUI `md` breakpoint with the rail stacked under the photo. Values
- * without tokens: its 85% black backdrop (the 80% overlay token stands in), its #0E0518 paper
- * (black), its rail's radial gradient (the profile layout's brand stand-ins), its 55% white section
- * titles (60% white) and its #57C2FF link (the link token). */
-.backdrop {
-  position: fixed;
-  z-index: 1000;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--dcl-transparencies-overlay-80);
-}
-
-.dialog {
-  position: relative;
-  display: flex;
-  overflow: hidden;
-  flex-direction: column;
-  box-sizing: border-box;
-  width: 100%;
-  height: 100%;
-  background: var(--dcl-neutrals-black);
-  color: var(--dcl-text-primary);
-  font-family: 'Inter', sans-serif;
-}
-
-.dialog:focus {
-  outline: none;
-}
-
-/* Bridge until Button's icon-only look keeps a fill (it forces a transparent background for every
- * variant): over a photo each control sits on a dark frame of the small Button's radius. */
-.control {
-  display: inline-flex;
-  border-radius: var(--dcl-radius-sm);
-  background: var(--dcl-transparencies-black-40);
-}
-
-/* Button fades an unavailable Previous or Next; the frame fades with it. */
-.control:has([aria-disabled='true']) {
-  background: var(--dcl-transparencies-black-20);
-}
-
-.controlOn {
-  background: var(--dcl-transparencies-white-20);
-}
-
+/* Profile gallery layout inside the shared modal. */
 /* Close sits on the photo's top-left corner, as on decentraland.org: fixed to the dialog shell, so
  * it never covers the information panel or moves when the panel scrolls. */
 .close {
@@ -291,18 +242,7 @@
   text-transform: uppercase;
 }
 
-@media (min-width: 900px) {
-  .backdrop {
-    padding: var(--dcl-space-24);
-  }
-
-  .dialog {
-    max-width: 1500px;
-    height: min(820px, 92vh);
-    border-radius: var(--dcl-radius-lg);
-    box-shadow: 0 4px 25px var(--dcl-transparencies-white-20);
-  }
-
+@media (min-width: 1024px) {
   .withDetails {
     grid-template-rows: minmax(0, 1fr);
     /* The source's 571px rail, narrowed on smaller desktops so the photo keeps most of the width. */

@@ -8,6 +8,8 @@ export type CopyFeedbackProps = {
   as?: 'span' | 'div'
   /** Turn off the tooltip when the control renders feedback through its label. */
   showTooltip?: boolean
+  /** Overrides the default feedback duration for the chosen presentation. */
+  durationMs?: number
   /** A value beside the control that the success message replaces. Omit for a tooltip. */
   inlineValue?: ReactNode
   copiedLabel?: string
@@ -24,6 +26,7 @@ export function CopyFeedback({
   children,
   as: Wrapper = 'span',
   showTooltip = true,
+  durationMs,
   inlineValue,
   copiedLabel = 'Copied',
   successAnnouncement = copiedLabel,
@@ -35,9 +38,12 @@ export function CopyFeedback({
 
   useEffect(() => {
     if (!feedback) return
-    const timeout = setTimeout(() => setFeedback(null), inline ? INLINE_MS : TOOLTIP_MS)
+    const timeout = setTimeout(
+      () => setFeedback(null),
+      durationMs ?? (inline ? INLINE_MS : TOOLTIP_MS)
+    )
     return () => clearTimeout(timeout)
-  }, [feedback, inline])
+  }, [feedback, inline, durationMs])
 
   const copy = async () => {
     const attempt = ++latest.current
@@ -54,11 +60,14 @@ export function CopyFeedback({
 
   return (
     <Wrapper className={inline ? `${styles.root} ${styles.inline}` : styles.root}>
-      {inline && (feedback?.succeeded ? (
-        <span key={feedback.attempt} className={styles.inlineSuccess} aria-hidden="true">
-          {copiedLabel}
-        </span>
-      ) : inlineValue)}
+      {inline &&
+        (feedback?.succeeded ? (
+          <span key={feedback.attempt} className={styles.inlineSuccess} aria-hidden="true">
+            {copiedLabel}
+          </span>
+        ) : (
+          inlineValue
+        ))}
       {children(() => void copy(), feedback ? (feedback.succeeded ? 'copied' : 'failed') : 'idle')}
       {!inline && showTooltip && feedback?.succeeded ? (
         <span key={feedback.attempt} className={styles.tooltip} aria-hidden="true">
@@ -67,7 +76,9 @@ export function CopyFeedback({
       ) : null}
       <span className={styles.status} role="status">
         {feedback ? (
-          <span key={feedback.attempt}>{feedback.succeeded ? successAnnouncement : errorAnnouncement}</span>
+          <span key={feedback.attempt}>
+            {feedback.succeeded ? successAnnouncement : errorAnnouncement}
+          </span>
         ) : null}
       </span>
     </Wrapper>

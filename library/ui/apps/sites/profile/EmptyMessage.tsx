@@ -1,18 +1,18 @@
-import type { ReactNode } from "react";
+import type { ReactNode } from 'react'
 
-import styles from "./EmptyMessage.module.css";
+import styles from './EmptyMessage.module.css'
 
 /** The icon frame, title, text and next step shown when a list has nothing in it. */
 export function EmptyMessage({
   icon,
   title,
   subtitle,
-  action,
+  action
 }: {
-  icon: ReactNode;
-  title: string;
-  subtitle: string;
-  action: ReactNode;
+  icon: ReactNode
+  title: string
+  subtitle: string
+  action: ReactNode
 }) {
   return (
     <div className={styles.empty}>
@@ -25,5 +25,5 @@ export function EmptyMessage({
         <div className={styles.emptyAction}>{action}</div>
       </div>
     </div>
-  );
+  )
 }

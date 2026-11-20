@@ -11,12 +11,12 @@
 }
 
 .status {
-  composes: text626f64792f736d from "@dcl/one-ui/text-styles.module.css";
+  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
   color: var(--dcl-text-primary);
 }
 
 .count {
-  composes: text626f64792f736d from "@dcl/one-ui/text-styles.module.css";
+  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
   color: var(--dcl-text-secondary);
 }
 
@@ -98,7 +98,7 @@
 }
 
 .name {
-  composes: text626f64792f6d64 from "@dcl/one-ui/text-styles.module.css";
+  composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;

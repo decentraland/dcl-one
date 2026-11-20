@@ -63,7 +63,7 @@
 }
 
 .heroTitle {
-  composes: text68656164696e672f6c67 from "@dcl/one-ui/text-styles.module.css";
+  composes: text68656164696e672f6c67 from '../../../foundations/typography/text-styles.module.css';
   margin: 0;
   color: var(--dcl-text-primary);
 }
@@ -80,8 +80,6 @@
   color: var(--dcl-text-primary);
   font-size: var(--dcl-font-size-body-lg);
 }
-
-
 
 .invite {
   display: flex;
@@ -106,10 +104,6 @@
   flex: 1 1 auto;
   min-width: 0;
 }
-
-
-
-
 
 .terms {
   position: absolute;
@@ -159,7 +153,7 @@
 }
 
 .stepNumber {
-  composes: text68656164696e672f35 from "@dcl/one-ui/text-styles.module.css";
+  composes: text68656164696e672f35 from '../../../foundations/typography/text-styles.module.css';
   flex-shrink: 0;
   color: var(--dcl-text-primary);
 }
@@ -267,7 +261,7 @@
 }
 
 .tierInvites {
-  composes: text68656164696e672f35 from "@dcl/one-ui/text-styles.module.css";
+  composes: text68656164696e672f35 from '../../../foundations/typography/text-styles.module.css';
   margin: 0;
   color: var(--dcl-text-secondary);
 }
@@ -293,23 +287,23 @@
   border-color: var(--tier-color, var(--dcl-border-strong));
 }
 
-.card[data-rarity="epic"] {
+.card[data-rarity='epic'] {
   --tier-color: var(--dcl-rarities-epic);
 }
 
-.card[data-rarity="legendary"] {
+.card[data-rarity='legendary'] {
   --tier-color: var(--dcl-rarities-legendary);
 }
 
-.card[data-rarity="exotic"] {
+.card[data-rarity='exotic'] {
   --tier-color: var(--dcl-rarities-exotic);
 }
 
-.card[data-rarity="mythic"] {
+.card[data-rarity='mythic'] {
   --tier-color: var(--dcl-rarities-mythic);
 }
 
-.card[data-rarity="swag"] {
+.card[data-rarity='swag'] {
   --tier-color: var(--dcl-rarities-unique);
 }
 
@@ -321,7 +315,7 @@
 }
 
 .rarity {
-  composes: text6c6162656c2f78732d63617073 from "@dcl/one-ui/text-styles.module.css";
+  composes: text6c6162656c2f78732d63617073 from '../../../foundations/typography/text-styles.module.css';
   color: var(--tier-color, var(--dcl-text-primary));
   text-transform: uppercase;
 }
@@ -348,7 +342,7 @@
 }
 
 .newMark {
-  composes: text6c6162656c2f746167 from "@dcl/one-ui/text-styles.module.css";
+  composes: text6c6162656c2f746167 from '../../../foundations/typography/text-styles.module.css';
   position: absolute;
   right: var(--dcl-space-8);
   bottom: var(--dcl-space-8);
