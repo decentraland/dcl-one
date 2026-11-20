@@ -1226,6 +1226,121 @@ async fn content_files_list_in_upstream_collation_order() {
     unseed(&pool, tag).await;
 }
 
+/// The collection listing accepts what `parseUrn` resolves to a v1 or v2
+/// collection, a third party by name or the base avatars or emotes, spelled as
+/// the client sent it; the prefix matches pointers in any letter case.
+#[tokio::test]
+async fn collection_listing_parses_the_urn_like_upstream() {
+    require_test_db!(Some(node) = TestNode::with_db("collections").await);
+    let pool = node.state.pool.clone();
+    let tag = "collections";
+    unseed(&pool, tag).await;
+    let v2 = "0x5e1c00000000000000000000000000000000beef";
+    let v1 = "0x5e1c00000000000000000000000000000000f00d";
+    let seeded = [
+        format!("urn:decentraland:matic:collections-v2:{v2}:0"),
+        format!("urn:decentraland:ethereum:collections-v1:{v1}:hat"),
+        "urn:decentraland:ethereum:collections-v1:halloween_2019:collectionstest_hat".to_string(),
+        "urn:decentraland:amoy:collections-thirdparty:collectionstest:winter:hat".to_string(),
+        "urn:decentraland:off-chain:base-avatars:collectionstest_eyes".to_string(),
+        "urn:decentraland:off-chain:base-emotes:collectionstest_wave".to_string(),
+    ];
+    let mut ids = Vec::new();
+    for (n, pointer) in seeded.iter().enumerate() {
+        let entity =
+            seed_deployment(&pool, tag, n as u32, "wearable", pointer, 1_700_000_000_000).await;
+        ids.push(entity.id);
+    }
+    let listed = |body: &Value| -> Vec<String> {
+        body["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    for (urn, id) in [
+        (
+            format!("urn:decentraland:matic:collections-v2:{v2}"),
+            &ids[0],
+        ),
+        (
+            "urn:decentraland:matic:collections-v2:0x5E1C00000000000000000000000000000000BeEf"
+                .to_string(),
+            &ids[0],
+        ),
+        (
+            format!("URN:decentraland:MATIC:collections-v2:{v2}"),
+            &ids[0],
+        ),
+        (
+            format!("urn:decentraland:ethereum:collections-v1:{v1}"),
+            &ids[1],
+        ),
+        (
+            "urn:decentraland:ethereum:collections-v1:0x5E1C00000000000000000000000000000000F00D"
+                .to_string(),
+            &ids[1],
+        ),
+        (
+            "urn:decentraland:amoy:collections-thirdparty:collectionstest".to_string(),
+            &ids[3],
+        ),
+        (
+            "urn:decentraland:off-chain:base-avatars:collectionstest_eyes".to_string(),
+            &ids[4],
+        ),
+        (
+            "urn:decentraland:off-chain:base-emotes:collectionstest_wave".to_string(),
+            &ids[5],
+        ),
+    ] {
+        let (status, body) = get_json(
+            node.router(),
+            &format!("/content/entities/active/collections/{urn}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{urn}: {body}");
+        assert_eq!(body["total"], 1, "{urn}: {body}");
+        assert_eq!(listed(&body), std::slice::from_ref(id), "{urn}");
+    }
+    let (status, body) = get_json(
+        node.router(),
+        "/content/entities/active/collections/urn:decentraland:ethereum:collections-v1:halloween_2019",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(listed(&body).contains(&ids[2]), "{body}");
+
+    for urn in [
+        format!("URN:Decentraland:matic:Collections-V2:{v2}"),
+        format!("urn:decentraland:matic:collections-v2:{v2}:0"),
+        "urn:decentraland:ethereum:collections-v1:not_a_v1_collection".to_string(),
+        "urn:decentraland:ethereum:collections-thirdparty:collectionstest".to_string(),
+        "urn:decentraland:amoy:collections-thirdparty:collectionstest:winter".to_string(),
+        "urn:decentraland:off-chain:base-scene-emotes:collectionstest_wave".to_string(),
+    ] {
+        let (status, body) = get_json(
+            node.router(),
+            &format!("/content/entities/active/collections/{urn}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{urn}");
+        assert_eq!(
+            body,
+            json!({"error": format!("Invalid collection urn param, it must be a valid urn prefix of a collection or a third party id, instead: '{urn}'")})
+        );
+    }
+    let (status, body) = get_json(
+        node.router(),
+        "/content/entities/active/collections/not-a-real-urn",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, json!({"error": "Invalid URN format: not-a-real-urn"}));
+    unseed(&pool, tag).await;
+}
+
 async fn unseed(pool: &sqlx::PgPool, tag: &str) {
     let like = format!("test-{tag}-%");
     sqlx::query("DELETE FROM content.content_files WHERE content_hash LIKE $1")
@@ -1342,7 +1457,7 @@ async fn entity_reads_over_seeded_rows() {
 
     let (status, body) = get_json(
         node.router(),
-        "/content/entities/active/collections/URN:Decentraland:matic:Collections-V2:0x000000000000000000000000000000000000CAFE",
+        "/content/entities/active/collections/URN:decentraland:MATIC:collections-v2:0x000000000000000000000000000000000000CAFE",
     )
     .await;
     assert_eq!(status, StatusCode::OK);
