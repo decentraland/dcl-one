@@ -34,6 +34,18 @@ describe("verifyAuthChainRequest", () => {
     expect(anon.status).toBe(401);
   });
 
+  it("verifies a request whose metadata keeps its case, signed over the 6.x payload", async () => {
+    const identity = await createIdentityFromPrivateKey(generatePrivateKey());
+    const metadata = { realmName: "Boedo.dcl.eth", sceneId: "Bafk" };
+    const s = await signRequest(identity, "PUT", "/v1/Items/One", metadata);
+    expect(s.payload).toBe(`put:/v1/items/one:${s.timestamp}:${JSON.stringify(metadata)}`);
+
+    const res = await verifyAuthChainRequest(
+      new Request("http://localhost/v1/Items/One", { method: "PUT", headers: new Headers(s.headers) }),
+    );
+    expect(res.ok).toBe(true);
+  });
+
   it("rejects an expired ephemeral identity, a stale timestamp, and a signature replayed across paths with 401", async () => {
     const expired = await signed(generatePrivateKey(), "/v1/collections", { expirationMs: 1_000 });
     const expiredTs = Number(expired.request.headers.get("x-identity-timestamp"));
