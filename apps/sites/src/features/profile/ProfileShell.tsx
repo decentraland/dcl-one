@@ -4,6 +4,7 @@ import { Link } from "react-router";
 import SitesChrome from "@ui/web/frames/SitesChrome";
 
 import { Button, Tabs, TabsBar, type TabsLinkProps } from "@dcl/one-ui";
+import "@dcl/one-ui/apps/sites/profile-tokens.css";
 
 import { SHOP_BASE } from "@/core/lib/shop/redirects";
 import { useAuth } from "@/data/lib/auth/index";
