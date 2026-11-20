@@ -164,7 +164,15 @@ struct Scratch {
 }
 
 async fn scratch(settings: Settings) -> Option<Scratch> {
-    let pool = catalyst_db::scratch::pool(4).await?;
+    Some(scratch_on(catalyst_db::scratch::pool(4).await?, settings).await)
+}
+
+/// [`scratch`] over a database of its own.
+async fn isolated_scratch(settings: Settings) -> Option<Scratch> {
+    Some(scratch_on(catalyst_db::scratch::isolated_pool(4).await?, settings).await)
+}
+
+async fn scratch_on(pool: sqlx::PgPool, settings: Settings) -> Scratch {
     let dir =
         std::env::temp_dir().join(format!("catalyst-camera-reel-{}", Uuid::new_v4().simple()));
     let storage = Arc::new(
@@ -173,12 +181,12 @@ async fn scratch(settings: Settings) -> Option<Scratch> {
             .expect("a scratch blob store"),
     );
     let state = Arc::new(State::new(pool, storage, settings, None));
-    Some(Scratch {
+    Scratch {
         state,
         owners: Vec::new(),
         hashes: Vec::new(),
         dir,
-    })
+    }
 }
 
 impl Scratch {
