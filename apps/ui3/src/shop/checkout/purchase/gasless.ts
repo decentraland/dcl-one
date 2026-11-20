@@ -12,7 +12,7 @@ import type { Hex } from "viem";
 import type { ChainId } from "@shop/model/chain";
 import { gaslessEnabled } from "../chain/config";
 import type { ContractInfo } from "../chain/contracts";
-import { GaslessUnavailableError, readMetaTxNonce, relayMetaTransaction, type MetaTxTarget } from "../chain/metatx";
+import { GaslessUnavailableError, readMetaTxNonce, relayMetaTransaction, type MetaTxTarget, type SignedCall } from "../chain/metatx";
 import { defaultSleep, waitForReceipt, type ChainReader } from "../chain/rpc";
 import { TxRevertedError } from "../chain/wallet";
 import { buildGroupUseCreditsArgs, groupPurchases, type AnyPurchase } from "./credits";
@@ -92,7 +92,7 @@ export async function waitForSettlement(
 /** Relay an already-built useCredits (a NAME registration's server-signed external call too). */
 export async function sendUseCreditsGasless(
   ctx: RailContext,
-  opts: { chainId: ChainId; manager: ContractInfo; args: UseCreditsArgs; onSigned?: () => void },
+  opts: { chainId: ChainId; manager: ContractInfo; args: UseCreditsArgs; onSigned?: () => void; onSignedCall?: (call: SignedCall) => void },
 ): Promise<Hex> {
   if (!enabled(ctx)) throw new GaslessUnavailableError("gasless checkout disabled", "disabled");
   const { txHash } = await relayMetaTransaction({
@@ -104,16 +104,20 @@ export async function sendUseCreditsGasless(
     relayerUrl: ctx.relayerUrl,
     fetchImpl: ctx.fetchImpl,
     onSigned: opts.onSigned,
+    onSignedCall: opts.onSignedCall,
   });
   return txHash;
 }
 
-/** One purchase (trade or mint), relayed. */
-export async function buyOneGasless(ctx: RailContext, opts: { purchase: AnyPurchase; onSigned?: () => void }): Promise<Hex> {
+/**
+ * One purchase (trade or mint), relayed. `onSignedCall`: the execution as signed, right before it goes to the relay (a
+ * throw there stops it unsent).
+ */
+export async function buyOneGasless(ctx: RailContext, opts: { purchase: AnyPurchase; onSigned?: () => void; onSignedCall?: (call: SignedCall) => void }): Promise<Hex> {
   if (!enabled(ctx)) throw new GaslessUnavailableError("gasless checkout disabled", "disabled");
   if (opts.purchase.credits.length === 0) throw new Error("No credits to spend");
   const built = buildGroupUseCreditsArgs(groupPurchases([opts.purchase])[0]!, ctx.buyer);
-  const txHash = await sendUseCreditsGasless(ctx, { chainId: built.chainId, manager: built.manager, args: built.args, onSigned: opts.onSigned });
+  const txHash = await sendUseCreditsGasless(ctx, { chainId: built.chainId, manager: built.manager, args: built.args, onSigned: opts.onSigned, onSignedCall: opts.onSignedCall });
   void reportSubmittedTx({ txHash, salts: built.salts, client: ctx.client });
   return txHash;
 }

@@ -263,9 +263,10 @@ export function createFakeWallet(opts: { chainId?: number; account?: string; onS
 
 /**
  * The relayed meta-transaction a split's sale lands as, carrying exactly `sale`'s terms (purchase/splitEvidence.ts reads it
- * back as that sale), signed by `user` (the buyer unless said): what a test puts on the fake chain for a hash.
+ * back as that sale), signed by `user` (the buyer unless said) with `signature` (one fixed one unless said): what a test
+ * puts on the fake chain for a hash. Another signature is the same terms in another envelope.
  */
-export function splitSaleTransaction(sale: SplitSale, over: { user?: string } = {}): { from: null; to: string; input: Hex } {
+export function splitSaleTransaction(sale: SplitSale, over: { user?: string; signature?: Hex } = {}): { from: null; to: string; input: Hex } {
   const never = 4_102_444_800n;
   const call = encodeUseCredits({
     credits: [{ value: BigInt(sale.creditWei), expiresAt: never, salt: idToSalt(sale.creditId) }],
@@ -275,7 +276,7 @@ export function splitSaleTransaction(sale: SplitSale, over: { user?: string } = 
     maxUncreditedValue: BigInt(sale.gapWei),
     maxCreditedValue: BigInt(sale.creditWei),
   });
-  return { from: null, to: sale.manager, input: encodeExecuteMetaTransaction("functionData", over.user ?? sale.buyer, call, `0x${"11".repeat(65)}`) };
+  return { from: null, to: sale.manager, input: encodeExecuteMetaTransaction("functionData", over.user ?? sale.buyer, call, over.signature ?? `0x${"11".repeat(65)}`) };
 }
 
 /**

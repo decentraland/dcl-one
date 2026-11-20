@@ -219,9 +219,13 @@ async function findCreditRecord(account: string, creditId: string, client: ShopC
 
 /**
  * What became of a held split, decided only by its terms (the same rules the in-world Shop follows):
- * - its own transaction, read and matched (`splitExecution`): bought completes it, reverted releases its credit;
+ * - its own transaction, read and matched (`splitExecution`): bought completes it;
  * - else the node's record of its credit: SETTLED by an execution of exactly its terms completes it, by one provably not
- *   it is `elsewhere`; EXPIRED releases it once that has been seen for `SPLIT_EXPIRY_CONFIRM_MS` (`expiring` before);
+ *   it is `elsewhere`;
+ * - its own dispatched bytes mined and reverted (`reverted`): that invocation failed, though the same execution may have
+ *   run since in another transaction, which is why the node's record is read first. With it read and no SETTLED, the
+ *   credit is unspent and released (`reverted`); with it unread (the read failed), still held;
+ * - EXPIRED releases it once that has been seen for `SPLIT_EXPIRY_CONFIRM_MS` (`expiring` before);
  * - anything else (no transaction, one this page can't read, a failed read, a credit still reserved or not listed): null,
  *   still held, however long ago it was sent.
  * A record with a credit and no terms is never settled. One from before credits were kept with it is let go once its hold
@@ -236,20 +240,28 @@ export async function settleSplitHold(
   const sale = hold.sale;
   if (!sale) return null;
   const evidence = evidenceOf(deps.reader);
+  let ownReverted = false;
   if (hold.txHash) {
     const own = await splitExecution(evidence, sale, hold.txHash);
     if (own === "bought") return { kind: "spent", txHash: hold.txHash };
-    if (own === "reverted") return { kind: "reverted" };
-    // Another execution, none yet, or one this page can't read: the node's record of the credit is read next.
+    // Reverted, another execution, none yet, or one this page can't read: the node's record of the credit is read next.
+    ownReverted = own === "reverted";
   }
   if (!deps.account) return null;
-  const credit = await findCreditRecord(deps.account, hold.creditId, deps.client).catch(() => null);
-  if (credit?.status === "SETTLED" && credit.txHash) {
+  let credit: PurchaseRecord | null;
+  try {
+    credit = await findCreditRecord(deps.account, hold.creditId, deps.client);
+  } catch {
+    return null;
+  }
+  if (credit?.status === "SETTLED") {
+    if (!credit.txHash) return null;
     const spent = await splitExecution(evidence, sale, credit.txHash);
     if (spent === "bought") return { kind: "spent", txHash: credit.txHash };
     if (spent === "other") return { kind: "elsewhere" };
     return null;
   }
+  if (ownReverted) return { kind: "reverted" };
   if (credit?.status === "EXPIRED") {
     const seen = hold.expiredSeenAt ?? null;
     return seen !== null && now >= seen && now - seen >= SPLIT_EXPIRY_CONFIRM_MS ? { kind: "released" } : { kind: "expiring" };

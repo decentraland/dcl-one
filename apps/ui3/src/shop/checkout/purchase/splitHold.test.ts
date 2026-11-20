@@ -23,7 +23,7 @@ import {
   writeSplitHold,
   type SplitHold,
 } from "./splitHold";
-import type { SplitSale } from "./splitEvidence";
+import { splitEnvelope, type SplitSale } from "./splitEvidence";
 
 afterEach(() => {
   localStorage.clear();
@@ -178,13 +178,61 @@ describe("what settles a hold", () => {
     chain.receipts.set(hash.toLowerCase(), status);
   };
 
-  it("its own transaction, carrying exactly its terms: mined completes it, reverted says its credit went unspent", async () => {
+  /** The sale as dispatched in `tx`: its terms and the identity of those bytes. */
+  const dispatchedAs = (tx: ReturnType<typeof splitSaleTransaction>): SplitSale => ({ ...SALE, envelope: splitEnvelope(tx.input) });
+  const ANOTHER_SIGNATURE = `0x${"22".repeat(65)}` as const;
+
+  it("its own transaction, carrying exactly its terms: mined completes it; its own bytes reverted, with no SETTLED since, release its credit", async () => {
     const ok = deps(null);
     mined(ok.chain, HASH, splitSaleTransaction(SALE));
     expect(await settleSplitHold(hold({ txHash: HASH }), ok.deps)).toEqual({ kind: "spent", txHash: HASH });
-    const reverted = deps(null);
-    mined(reverted.chain, HASH, splitSaleTransaction(SALE), "reverted");
-    expect(await settleSplitHold(hold({ txHash: HASH }), reverted.deps)).toEqual({ kind: "reverted" });
+    for (const listed of [null, { status: "PENDING" as const }, { status: "EXPIRED" as const }]) {
+      const reverted = deps(listed);
+      const tx = splitSaleTransaction(SALE);
+      mined(reverted.chain, HASH, tx, "reverted");
+      expect(await settleSplitHold(hold({ txHash: HASH, sale: dispatchedAs(tx) }), reverted.deps), JSON.stringify(listed)).toEqual({ kind: "reverted" });
+    }
+  });
+
+  it("a revert of its terms in another envelope (signed again) is not its own: the node's record decides, and nothing is released on it", async () => {
+    const mine = splitSaleTransaction(SALE);
+    for (const listed of [null, { status: "PENDING" as const }]) {
+      const other = deps(listed);
+      mined(other.chain, HASH, splitSaleTransaction(SALE, { signature: ANOTHER_SIGNATURE }), "reverted");
+      expect(await settleSplitHold(hold({ txHash: HASH, sale: dispatchedAs(mine) }), other.deps)).toBeNull();
+    }
+    // Nor with no envelope kept at all.
+    const none = deps(null);
+    mined(none.chain, HASH, mine, "reverted");
+    expect(await settleSplitHold(hold({ txHash: HASH }), none.deps)).toBeNull();
+  });
+
+  it("its own bytes reverted, then the same execution ran in another transaction the node settled: completed, not released", async () => {
+    const tx = splitSaleTransaction(SALE);
+    const replay = deps({ status: "SETTLED", txHash: SETTLED_BY });
+    mined(replay.chain, HASH, tx, "reverted");
+    mined(replay.chain, SETTLED_BY, tx);
+    expect(await settleSplitHold(hold({ txHash: HASH, sale: dispatchedAs(tx) }), replay.deps)).toEqual({ kind: "spent", txHash: SETTLED_BY });
+    // Its credit SETTLED by another purchase: spent elsewhere. SETTLED by nothing it can read: held.
+    const elsewhere = deps({ status: "SETTLED", txHash: SETTLED_BY });
+    mined(elsewhere.chain, HASH, tx, "reverted");
+    mined(elsewhere.chain, SETTLED_BY, splitSaleTransaction({ ...SALE, callData: "0x0bad" }));
+    expect(await settleSplitHold(hold({ txHash: HASH, sale: dispatchedAs(tx) }), elsewhere.deps)).toEqual({ kind: "elsewhere" });
+    const unread = deps({ status: "SETTLED", txHash: SETTLED_BY });
+    mined(unread.chain, HASH, tx, "reverted");
+    expect(await settleSplitHold(hold({ txHash: HASH, sale: dispatchedAs(tx) }), unread.deps)).toBeNull();
+  });
+
+  it("its own bytes reverted and the node's record can't be read: held, never released on the revert alone", async () => {
+    const chain = createFakeChain();
+    const shop = createFakeShop({
+      userPurchases: () => {
+        throw new Error("upstream unavailable");
+      },
+    });
+    const tx = splitSaleTransaction(SALE);
+    mined(chain, HASH, tx, "reverted");
+    expect(await settleSplitHold(hold({ txHash: HASH, sale: dispatchedAs(tx) }), { account: ACCOUNT, reader: chain, client: shop.client })).toBeNull();
   });
 
   it("a successful receipt for a transaction that is not this split's (another buyer's, or none to read) completes nothing", async () => {

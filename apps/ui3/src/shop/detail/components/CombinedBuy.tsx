@@ -42,7 +42,7 @@ import {
   noteSplitHoldExpiry,
   type SplitSettlement,
 } from "../../checkout/purchase/splitHold";
-import type { SplitSale } from "../../checkout/purchase/splitEvidence";
+import { splitEnvelope, type SplitSale } from "../../checkout/purchase/splitEvidence";
 import { createSpendGuard } from "@shop/checkout/purchase/spend-guard";
 import { isMetaTxPending } from "../../checkout/purchase/tx-confirm";
 import { useShopServices } from "../../checkout/services";
@@ -120,9 +120,11 @@ type CombinedBuyRun = {
   /** Why the last Check again did nothing: another window holds the item, or this browser cannot take its lock. */
   notice: string | null;
   /**
-   * Reads the sent split's receipt: confirmed completes it, reverted fails it (retiring its credit). With no receipt yet, or
-   * none to read, the node's record of its credit decides once that credit can no longer be spent: spent completes it,
-   * released lets the item go, anything else keeps it held. Only the attempt it read is cleared, under the item's lock.
+   * Reads the sent split's transaction (purchase/splitHold.ts, settleSplitHold): its terms confirmed complete it; the very
+   * bytes it dispatched, reverted, fail it (retiring its credit) unless the node's record of that credit shows it SETTLED
+   * since. With no receipt yet, or none to read, the node's record decides once that credit can no longer be spent: spent
+   * completes it, released lets the item go, anything else keeps it held. Only the attempt it read is cleared, under the
+   * item's lock.
    */
   checkAgain(): Promise<void>;
 };
@@ -312,7 +314,8 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     let sentHash: string | null = null;
     let sentChain: number | null = null;
     // The sale's terms, kept with the hold before it may leave: what tells its execution apart (purchase/splitEvidence.ts).
-    let sale: SplitSale | null = null;
+    // A holder, since the callbacks below set it: read after them, it is whatever they last wrote.
+    const kept: { sale: SplitSale | null; reverted: string | null } = { sale: null, reverted: null };
     // Set once the sale itself goes to the relay or the wallet: before it, a failure is the MANA approval's, and no sale left.
     let dispatched = false;
     try {
@@ -354,13 +357,14 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
           sentHash = txHash;
           guard.current.broadcast(id, txHash);
         },
+        // A revert of its hash: whether that releases the credit is the resolver's to say, below.
         onReverted: ({ txHash }: { txHash: string | null }) => {
-          if (txHash) guard.current.reverted(txHash);
+          if (txHash) kept.reverted = txHash;
         },
         onUnobservable: () => guard.current.unobservable(id),
         // Recorded before it may leave, for every tab and a restart: a split the browser cannot record is not sent.
         onDispatch: (call: { manager: string; target: string; selector: `0x${string}`; callData: `0x${string}` }) => {
-          sale = {
+          kept.sale = {
             buyer: ctx.buyer.toLowerCase(),
             chainId: sentChain!,
             manager: call.manager.toLowerCase(),
@@ -372,10 +376,17 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
             callData: call.callData,
             hold: { line: lineId, attempt },
           };
-          if (!writeSplitHold(ctx.buyer, lineId, { at: Date.now(), attempt, txHash: null, chainId: sentChain, creditId: id, creditExpiresAt, sale })) {
+          if (!writeSplitHold(ctx.buyer, lineId, { at: Date.now(), attempt, txHash: null, chainId: sentChain, creditId: id, creditExpiresAt, sale: kept.sale })) {
             throw new SplitNotRecorded(NOT_RECORDED);
           }
           dispatched = true;
+        },
+        // And the identity of the exact bytes it leaves as, recorded before they leave: only a revert of those is this sale's.
+        onEnvelope: (dispatchedAs: `0x${string}`) => {
+          kept.sale = { ...kept.sale!, envelope: splitEnvelope(dispatchedAs) };
+          if (!writeSplitHold(ctx.buyer, lineId, { at: Date.now(), attempt, txHash: null, chainId: sentChain, creditId: id, creditExpiresAt, sale: kept.sale })) {
+            throw new SplitNotRecorded(NOT_RECORDED);
+          }
         },
       };
       const hash =
@@ -390,12 +401,29 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     } catch (e) {
       if (creditId) guard.current.submitFinished(creditId);
       const stillPending = isSettlementPending(e) || isPendingTxError(e) || isMetaTxPending(e);
+      // A revert of its hash releases the credit only on the evidence a recovery reads (settleSplitHold): the bytes this run
+      // dispatched, mined and reverted, and the node's record of the credit not SETTLED since. On anything less it is held.
+      if (dispatched && kept.reverted && creditId && kept.sale) {
+        const revertedAs: SplitHold = { at: Date.now(), attempt, txHash: kept.reverted, chainId: sentChain, creditId, creditExpiresAt, sale: kept.sale };
+        const settled = await settleSplitHold(revertedAs, { account: ctx.buyer, reader: ctx.reader, client: ctx.client }).catch(() => null);
+        if (settled?.kind === "reverted") guard.current.reverted(kept.reverted);
+        else if (settled?.kind === "spent" || settled?.kind === "elsewhere") {
+          // The same execution ran since in another transaction (or the credit went into another one): settled, not held.
+          clearSplitHold(ctx.buyer, lineId, attempt);
+          setSent(null);
+          if (settled.kind === "spent") {
+            setPhase({ kind: "success", txHash: settled.txHash });
+            finished(settled.txHash);
+          } else setPhase({ kind: "error", message: SPENT_ELSEWHERE });
+          return;
+        }
+      }
       // A sale handed off that may have consumed its credit (a broadcast not seen reverting, an answer the relay or the
       // wallet lost) is still confirming: held for this account and item, never offered again until it is found out.
       if (dispatched && (stillPending || (creditId !== null && guard.current.mayBeConsumed(creditId)))) {
         // Recorded for the account that sent it, whatever the wallet shows by now, with its hash when there is one. Should
         // this write fail, the record made before it left stays: held, with no hash, until the node settles its credit.
-        const record: SplitHold = { at: Date.now(), attempt, txHash: sentHash, chainId: sentChain, creditId, creditExpiresAt, sale };
+        const record: SplitHold = { at: Date.now(), attempt, txHash: sentHash, chainId: sentChain, creditId, creditExpiresAt, sale: kept.sale };
         writeSplitHold(ctx.buyer, lineId, record);
         setSent(record);
         setPhase({ kind: "pending" });

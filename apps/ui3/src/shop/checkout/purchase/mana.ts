@@ -239,6 +239,13 @@ type GapOptions = {
    * (splitEvidence.ts). A throw here stops the sale before anything is sent (the caller could not record it).
    */
   onDispatch?: (call: SplitDispatch) => void;
+  /**
+   * The exact bytes the sale leaves as, right before they leave: the relayed execution as signed (the call data the relay
+   * sends to the manager), or the useCredits call the wallet is handed (after a relay that proved it sent nothing, these
+   * are the ones that may leave). The caller keeps their identity with the sale (`splitEnvelope`): only a revert of these
+   * very bytes says this sale failed. A throw here stops them unsent.
+   */
+  onEnvelope?: (dispatched: Hex) => void;
   onBroadcast?: (info: { txHash: Hex }) => void;
   onReverted?: (info: { txHash: string | null }) => void;
   onUnobservable?: () => void;
@@ -265,13 +272,14 @@ async function payGapWithMana(ctx: RailContext, target: PurchaseTarget, opts: Ga
   if (ctx.gasless ?? gaslessEnabled()) {
     let relayed: Hex | undefined;
     try {
-      relayed = await buyOneGasless(ctx, { purchase });
+      relayed = await buyOneGasless(ctx, { purchase, onSignedCall: ({ data }) => opts.onEnvelope?.(data) });
       opts.onBroadcast?.({ txHash: relayed });
       await waitForSettlement(ctx.reader, chainId, relayed, ctx.wait);
       return relayed;
     } catch (e) {
-      // The relay answered its hash: only that hash's receipt, mined and reverted, says the credit went unspent. Any other
-      // failure (a receipt read aborted or failed, no receipt in time) leaves the sale pending, never sent again.
+      // The relay answered its hash: only that hash's receipt, mined and reverted, may say the credit went unspent (the caller
+      // checks it carries the bytes this sale left as, `onEnvelope`). Any other failure (a receipt read aborted or failed, no
+      // receipt in time) leaves the sale pending, never sent again.
       if (relayed) {
         if (isRevertedTxError(e) && revertedTxHash(e)?.toLowerCase() === relayed.toLowerCase()) opts.onReverted?.({ txHash: relayed });
         throw e;
@@ -291,7 +299,8 @@ async function payGapWithMana(ctx: RailContext, target: PurchaseTarget, opts: Ga
   try {
     return await buyOneWithCredits(ctx, {
       purchase,
-      onHandoff: () => {
+      onHandoff: (data) => {
+        opts.onEnvelope?.(data);
         handedOff = true;
       },
       onBroadcast: opts.onBroadcast,

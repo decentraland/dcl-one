@@ -4,9 +4,11 @@
 // carries exactly those terms: the buyer's meta-transaction to that manager, spending that credit, crediting C, taking G
 // from the wallet, for that call. Exact sizing proves the amount, not which item a credit bought, so neither a successful
 // receipt for a hash the relay answered nor the credit's SETTLED record is enough on its own: the transaction itself is
-// read and matched.
+// read and matched. A revert is narrower still: it proves only that THAT invocation failed, so it counts as this purchase's
+// only for the exact bytes this surface dispatched (`envelope`); the same terms signed again, or sent with another
+// external-call salt, are another invocation, which a revert of one says nothing about.
 
-import { decodeFunctionData, type Hex } from 'viem'
+import { decodeFunctionData, keccak256, type Hex } from 'viem'
 import { CREDITS_MANAGER_ABI, OFFCHAIN_META_TX_ABI } from '@shop/checkout/chain/abi'
 import type { TxReceipt } from '../chain/rpc'
 import { idToSalt } from './encoding'
@@ -40,21 +42,34 @@ export interface SplitSale {
   target: string
   selector: Hex
   callData: Hex
+  /**
+   * The identity of what was dispatched (`splitEnvelope` of its exact bytes), kept before they left: the relayed execution
+   * as signed (the `data` the relay sends to the manager, `transactionData.params[1]`), or the useCredits call the
+   * buyer's wallet was handed. Only a revert of these very bytes is this sale's; none kept, no revert is.
+   */
+  envelope?: Hex
   /** Its line in the hold the web Shop and /play share (shop/checkout/purchase/splitHold), and the attempt it wrote there. */
   hold?: { line: string; attempt: string }
 }
 
 /**
  * - `bought`: a mined, successful execution of exactly this purchase;
- * - `reverted`: this purchase's own execution, mined and reverted (its credit unspent);
+ * - `reverted`: the very bytes this purchase dispatched (`SplitSale.envelope`), mined and reverted: that invocation failed
+ *   (the same execution may still run in another transaction: what the node's record of the credit says comes first);
  * - `other`: a useCredits this page can read that is provably not this purchase: another sender, another credit, or this
  *   credit with other terms (another venue, function, call, share or gap);
- * - `unknown`: nothing that says either way: no transaction or receipt yet, a read that failed, or a transaction whose
- *   wrapper or target this page can't read (its destination alone says nothing about where the credit went).
+ * - `unknown`: nothing that says either way: no transaction or receipt yet, a read that failed, a transaction whose
+ *   wrapper or target this page can't read (its destination alone says nothing about where the credit went), or a revert
+ *   of these terms in bytes other than the ones dispatched (or with none kept to compare).
  */
 export type SplitOutcome = 'bought' | 'reverted' | 'other' | 'unknown'
 
 const lower = (v: unknown): string => (typeof v === 'string' ? v.toLowerCase() : '')
+
+/** The identity of dispatched bytes (`SplitSale.envelope`): their keccak256, the same on every surface. */
+export function splitEnvelope(dispatched: Hex): Hex {
+  return keccak256(dispatched)
+}
 
 /** Whether a structurally valid shape for a split sale (a ledger record read back, say). */
 export function isSplitSale(v: unknown): v is SplitSale {
@@ -74,6 +89,7 @@ export function isSplitSale(v: unknown): v is SplitSale {
     hex(s.target) &&
     hex(s.selector) &&
     hex(s.callData) &&
+    (s.envelope === undefined || (typeof s.envelope === 'string' && /^0x[0-9a-fA-F]{64}$/.test(s.envelope))) &&
     (s.hold === undefined ||
       (typeof s.hold === 'object' && s.hold !== null && typeof (s.hold as Record<string, unknown>).line === 'string' && typeof (s.hold as Record<string, unknown>).attempt === 'string'))
   )
@@ -144,5 +160,7 @@ export async function splitExecution(evidence: SplitEvidenceReader, sale: SplitS
   if (read === 'unreadable') return 'unknown'
   if (read === 'other') return 'other'
   if (!receipt) return 'unknown'
-  return receipt.status === 'success' ? 'bought' : 'reverted'
+  // A success carrying the terms is the purchase, whatever bytes carried it; a revert is only that invocation's.
+  if (receipt.status === 'success') return 'bought'
+  return sale.envelope !== undefined && lower(splitEnvelope(tx.input)) === lower(sale.envelope) ? 'reverted' : 'unknown'
 }

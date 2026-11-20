@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { Hex } from 'viem'
+import { decodeFunctionData, type Hex } from 'viem'
+import { OFFCHAIN_META_TX_ABI } from '@shop/checkout/chain/abi'
 import { BOOK, ITEM } from '@shop/payment/fixtures'
 import { encodeExecuteMetaTransaction } from '../chain/metatx'
 import { buildStoreBuyCalldata, buildStoreUseCreditsArgs, encodeUseCredits, type SpendableCredit, type StoreItemToBuy } from './encoding'
-import { carriesSale, isSplitSale, splitExecution, type SplitSale } from './splitEvidence'
+import { carriesSale, isSplitSale, splitEnvelope, splitExecution, type SplitSale } from './splitEvidence'
 
 const BUYER = BOOK.buyer.toLowerCase()
 const MANAGER = '0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5'
@@ -16,11 +17,16 @@ const call = buildStoreBuyCalldata([item], BUYER)
 const sale: SplitSale = { buyer: BUYER, chainId: 137, manager: MANAGER, creditId: credit.id, creditWei: C.toString(), gapWei: G.toString(), target: STORE, selector: call.selector, callData: call.data }
 
 /** The relayed meta-transaction a split's sale lands as, with `over` changing what it carries. */
-function relayed(over: { credit?: SpendableCredit; items?: StoreItemToBuy[]; gap?: bigint; credited?: bigint; user?: string; venue?: string; selector?: Hex } = {}): Hex {
+function relayed(over: { credit?: SpendableCredit; items?: StoreItemToBuy[]; gap?: bigint; credited?: bigint; user?: string; venue?: string; selector?: Hex; signature?: Hex } = {}): Hex {
   const c = over.credit ?? credit
   const built = buildStoreUseCreditsArgs(STORE, over.items ?? [item], BUYER, [c], (over.credited ?? C).toString(), { maxUncreditedValue: over.gap ?? G })
   const args = { ...built, externalCall: { ...built.externalCall, ...(over.venue ? { target: over.venue as Hex } : {}), ...(over.selector ? { selector: over.selector } : {}) } }
-  return encodeExecuteMetaTransaction('functionData', over.user ?? BUYER, encodeUseCredits(args), ('0x' + '11'.repeat(65)) as Hex)
+  return encodeExecuteMetaTransaction('functionData', over.user ?? BUYER, encodeUseCredits(args), over.signature ?? (('0x' + '11'.repeat(65)) as Hex))
+}
+/** The same relayed execution signed again: the same terms, the same call, another envelope. */
+function resigned(input: Hex): Hex {
+  const meta = decodeFunctionData({ abi: OFFCHAIN_META_TX_ABI, data: input })
+  return encodeExecuteMetaTransaction('functionData', meta.args[0] as string, meta.args[1] as Hex, ('0x' + '22'.repeat(65)) as Hex)
 }
 const evidenceOf = (tx: { to: string | null; input: Hex } | null, status: 'success' | 'reverted' | null) => ({
   transaction: async () => tx,
@@ -28,9 +34,29 @@ const evidenceOf = (tx: { to: string | null; input: Hex } | null, status: 'succe
 })
 
 describe('which transaction is an in-world split purchase', () => {
-  it('is bought only by a mined, successful execution of exactly its terms', async () => {
+  it('is bought only by a mined, successful execution of exactly its terms; reverted only in the very bytes it dispatched', async () => {
+    const mine = relayed()
+    const dispatched = { ...sale, envelope: splitEnvelope(mine) }
+    expect(await splitExecution(evidenceOf({ to: MANAGER, input: mine }, 'success') as never, dispatched, '0xabc')).toBe('bought')
+    expect(await splitExecution(evidenceOf({ to: MANAGER, input: mine }, 'reverted') as never, dispatched, '0xabc')).toBe('reverted')
+  })
+
+  it.each([
+    ['the same call signed again (another outer signature)', resigned],
+    ['the same terms built again (another external-call salt)', () => relayed()],
+    ['the same terms with another signature and salt', () => relayed({ signature: ('0x' + '33'.repeat(65)) as Hex })]
+  ])('a revert of %s is not its own: unknown, never reverted; a success of it still buys', async (_, other) => {
+    const mine = relayed()
+    const dispatched = { ...sale, envelope: splitEnvelope(mine) }
+    const input = other(mine)
+    expect(input).not.toBe(mine)
+    expect(await splitExecution(evidenceOf({ to: MANAGER, input }, 'reverted') as never, dispatched, '0xabc')).toBe('unknown')
+    expect(await splitExecution(evidenceOf({ to: MANAGER, input }, 'success') as never, dispatched, '0xabc')).toBe('bought')
+  })
+
+  it('with no envelope kept, no revert is its own', async () => {
+    expect(await splitExecution(evidenceOf({ to: MANAGER, input: relayed() }, 'reverted') as never, sale, '0xabc')).toBe('unknown')
     expect(await splitExecution(evidenceOf({ to: MANAGER, input: relayed() }, 'success') as never, sale, '0xabc')).toBe('bought')
-    expect(await splitExecution(evidenceOf({ to: MANAGER, input: relayed() }, 'reverted') as never, sale, '0xabc')).toBe('reverted')
   })
 
   it.each([
@@ -59,7 +85,9 @@ describe('which transaction is an in-world split purchase', () => {
       receipt: async () => ({ transactionHash: '0x' + 'e'.repeat(64), status, blockNumber: 1n })
     })
     expect(await splitExecution(evidence(BUYER.toUpperCase().replace('0X', '0x'), 'success') as never, sale, '0xabc')).toBe('bought')
-    expect(await splitExecution(evidence(BUYER, 'reverted') as never, sale, '0xabc')).toBe('reverted')
+    // Its revert, in the call the wallet was handed: the envelope is that call's own.
+    expect(await splitExecution(evidence(BUYER, 'reverted') as never, { ...sale, envelope: splitEnvelope(direct) }, '0xabc')).toBe('reverted')
+    expect(await splitExecution(evidence(BUYER, 'reverted') as never, { ...sale, envelope: splitEnvelope(relayed()) }, '0xabc')).toBe('unknown')
     expect(await splitExecution(evidence('0x' + 'cc'.repeat(20), 'success') as never, sale, '0xabc')).toBe('other')
     // A reader that doesn't give the sender can't tell whose it is.
     expect(await splitExecution(evidence(undefined, 'success') as never, sale, '0xabc')).toBe('unknown')
@@ -76,6 +104,9 @@ describe('which transaction is an in-world split purchase', () => {
     expect(isSplitSale(sale)).toBe(true)
     expect(isSplitSale({ ...sale, gapWei: '-1' })).toBe(false)
     expect(isSplitSale({ ...sale, creditId: '' })).toBe(false)
+    expect(isSplitSale({ ...sale, envelope: splitEnvelope(relayed()) })).toBe(true)
+    expect(isSplitSale({ ...sale, envelope: '0x1234' })).toBe(false)
+    expect(isSplitSale({ ...sale, envelope: null })).toBe(false)
     expect(carriesSale({ to: MANAGER, input: relayed() }, sale)).toBe(true)
   })
 })

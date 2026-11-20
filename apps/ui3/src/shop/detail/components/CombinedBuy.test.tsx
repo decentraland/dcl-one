@@ -24,8 +24,8 @@ import type { ManaWei } from "@shop/model/money";
 import type { PurchaseOffer } from "@shop/model/purchase";
 import { ASSET_TYPE } from "../../checkout/purchase/encoding";
 import { SHOP_QUERY_KEYS } from "../../checkout/lib/after-purchase";
-import { readSplitHold, SPLIT_EXPIRY_CONFIRM_MS, SPLIT_HOLD_MS, splitHoldLine } from "../../checkout/purchase/splitHold";
-import type { SplitSale } from "../../checkout/purchase/splitEvidence";
+import { readSplitHold, readSplitHoldRecord, SPLIT_EXPIRY_CONFIRM_MS, SPLIT_HOLD_MS, splitHoldLine, type SplitHold } from "../../checkout/purchase/splitHold";
+import { splitEnvelope, type SplitSale } from "../../checkout/purchase/splitEvidence";
 import CombinedBuy from "./CombinedBuy";
 
 afterEach(() => {
@@ -302,11 +302,21 @@ describe("a split whose outcome is not known", () => {
     demo.chain.allowances.set(managerKey(), 10n ** 21n);
     demo.relay.state.mode = "refuse";
     demo.wallet.next = "lost";
+    // What the record holds the moment the wallet is handed the sale.
+    const seen: { record: SplitHold | null } = { record: null };
+    const request = demo.wallet.request.bind(demo.wallet);
+    demo.wallet.request = (async (args: Parameters<typeof request>[0]) => {
+      if (args.method === "eth_sendTransaction") seen.record = readSplitHoldRecord(BOOK.buyer, splitHoldLine(line.asset));
+      return request(args);
+    }) as typeof demo.wallet.request;
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
     expect(await screen.findByText(/still confirming/, {}, { timeout: 5000 })).toBeTruthy();
     expect(demo.wallet.sent).toHaveLength(1);
     expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
     expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toMatchObject({ txHash: null, creditId: expect.any(String) });
+    // The identity of the very call the wallet was handed, kept before it was: not the relay's refused one.
+    expect(seen.record?.sale?.envelope).toBe(splitEnvelope(demo.wallet.sent[0]!.data));
+    expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))?.sale?.envelope).toBe(splitEnvelope(demo.wallet.sent[0]!.data));
     expect(screen.queryByTestId("combined-confirm")).toBeNull();
   });
 
@@ -351,7 +361,13 @@ describe("a split whose outcome is not known", () => {
     let answer!: () => void;
     const slow = new Promise<void>((resolve) => (answer = resolve));
     const relayed = demo.services.fetchImpl!;
+    // The signed execution the relay is asked to send, and what the record holds the moment it is asked.
+    const seen: { posted: Hex | null; record: SplitHold | null } = { posted: null, record: null };
     demo.services.fetchImpl = (async (...args: Parameters<typeof fetch>) => {
+      if (!seen.posted) {
+        seen.posted = (JSON.parse(String(args[1]?.body)) as { transactionData: { params: [string, Hex] } }).transactionData.params[1];
+        seen.record = readSplitHoldRecord(BOOK.buyer, splitHoldLine(line.asset));
+      }
       await slow;
       return relayed(...args);
     }) as typeof fetch;
@@ -369,6 +385,8 @@ describe("a split whose outcome is not known", () => {
         hold: { line: splitHoldLine(line.asset) },
       },
     });
+    // Its envelope, the identity of those very bytes, was kept before they went to the relay.
+    expect(seen.record?.sale?.envelope).toBe(splitEnvelope(seen.posted!));
     answer();
     expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
   });
@@ -579,6 +597,46 @@ describe("a split whose outcome is not known", () => {
     expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toBeNull();
   });
 
+  it("a revert of its terms in bytes it did not dispatch (the relay's hash is the same call signed again) is not its own: held, its credit kept", async () => {
+    const { demo, line } = setup(undefined, "reverted");
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    // What the chain shows at the relay's hash: the same useCredits, from the same buyer, under another signature.
+    const read = demo.chain.transaction!;
+    demo.chain.transaction = async (chainId, hash) => {
+      const tx = await read(chainId, hash);
+      if (!tx) return tx;
+      const meta = decodeFunctionData({ abi: OFFCHAIN_META_TX_ABI, data: tx.input });
+      return { ...tx, input: encodeExecuteMetaTransaction("functionData", meta.args[0] as string, meta.args[1] as Hex, `0x${"22".repeat(65)}`) };
+    };
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText(/still confirming/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(demo.relay.posts).toHaveLength(1);
+    expect(demo.shop.log.filter((r) => r.name === "cancelCreditAuthorizations")).toHaveLength(0);
+    expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toMatchObject({ txHash: expect.any(String), creditId: expect.any(String) });
+  });
+
+  it("its own bytes reverted, then the same execution ran in another transaction the node settled: the purchase completes, its credit kept", async () => {
+    const credit = `0x${"a1".repeat(32)}`;
+    const replayed = `0x${"ab".repeat(32)}`;
+    const box: { demo: ReturnType<typeof setup>["demo"] | null } = { demo: null };
+    const { demo, line } = setup(undefined, "reverted", MANA, undefined, {
+      userPurchases: () => {
+        // The very execution the relay was given, run again in another transaction, which mined: the node settled it.
+        const [to, input] = (box.demo!.relay.posts.at(-1) as { transactionData: { params: [string, Hex] } }).transactionData.params;
+        box.demo!.chain.transactions.set(replayed, { from: null, to, input });
+        box.demo!.chain.receipts.set(replayed, "success");
+        return { purchases: [{ id: `${credit}:0`, status: "SETTLED", usdCents: 50, createdAt: 1, txHash: replayed }], total: 1 };
+      },
+    });
+    box.demo = demo;
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(demo.relay.posts).toHaveLength(1);
+    expect(demo.shop.log.filter((r) => r.name === "cancelCreditAuthorizations")).toHaveLength(0);
+    expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toBeNull();
+  });
+
   it("an approval another window is running says so: this one asked the wallet nothing, so it was not sent", async () => {
     const { demo } = setup();
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
@@ -729,7 +787,7 @@ describe("a held split with no transaction to read", () => {
   function heldSplit(
     status: { value: "PENDING" | "SETTLED" | "EXPIRED" | null },
     creditExpiresAt: number,
-    opts: { userPurchases?: Listing; attempt?: string; txHash?: string; settledBy?: "this" | "other" | "none"; expiredSeenAt?: number } = {},
+    opts: { userPurchases?: Listing; attempt?: string; txHash?: string; settledBy?: "this" | "other" | "none"; expiredSeenAt?: number; envelope?: Hex } = {},
   ) {
     const demo = createDemo({
       session: "web3",
@@ -759,7 +817,7 @@ describe("a held split with no transaction to read", () => {
         chainId: CHAIN.POLYGON,
         creditId: CREDIT,
         creditExpiresAt,
-        sale: SALE,
+        sale: opts.envelope ? { ...SALE, envelope: opts.envelope } : SALE,
         ...(opts.expiredSeenAt !== undefined ? { expiredSeenAt: opts.expiredSeenAt } : {}),
       }),
     );
@@ -826,6 +884,29 @@ describe("a held split with no transaction to read", () => {
     await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
     expect(screen.getByText(/still confirming/)).toBeTruthy();
     expect(readSplitHold(BOOK.buyer, demo.lineId)).not.toBeNull();
+  });
+
+  it.each([
+    ["its terms signed again (another envelope)", false],
+    ["the very bytes it dispatched", true],
+  ] as const)("Check again on its hash mined and reverted as %s: released only for its own bytes", async (_, own) => {
+    const HASH = `0x${"5a".repeat(32)}`;
+    const mine = splitSaleTransaction(SALE);
+    const demo = heldSplit({ value: "PENDING" }, nowSeconds() + 300, { attempt: "a", txHash: HASH, envelope: splitEnvelope(mine.input), settledBy: "none" });
+    demo.chain.transactions.set(HASH, own ? mine : splitSaleTransaction(SALE, { signature: `0x${"22".repeat(65)}` }));
+    demo.chain.receipts.set(HASH, "reverted");
+    await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
+    await waitFor(() => expect(demo.shop.log.some((r) => r.name === "userPurchases")).toBe(true));
+    if (own) {
+      expect(await screen.findByText(/failed on-chain/)).toBeTruthy();
+      expect(demo.shop.log.filter((r) => r.name === "cancelCreditAuthorizations")).toHaveLength(1);
+      expect(readSplitHold(BOOK.buyer, demo.lineId)).toBeNull();
+    } else {
+      await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
+      expect(screen.getByText(/still confirming/)).toBeTruthy();
+      expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
+      expect(readSplitHold(BOOK.buyer, demo.lineId)).toMatchObject({ attempt: "a", txHash: HASH });
+    }
   });
 
   it("after another surface's dispatch, a FOREIGN hash leaves its unresolved attempt held on the web", async () => {

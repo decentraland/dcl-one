@@ -152,8 +152,11 @@ export async function buyOneWithCredits(
   ctx: RailContext,
   opts: {
     purchase: AnyPurchase;
-    /** Right before the transaction is handed to the wallet: from here it may be broadcast. */
-    onHandoff?: () => void;
+    /**
+     * Right before the transaction is handed to the wallet, with the exact call data it is handed: from here it may be
+     * broadcast. A throw here stops it before the wallet is asked.
+     */
+    onHandoff?: (data: Hex) => void;
     onBroadcast?: (info: { txHash: Hex }) => void;
     onReverted?: (info: { txHash: string | null }) => void;
   },
@@ -163,7 +166,7 @@ export async function buyOneWithCredits(
   try {
     return await sendUseCredits(ctx, {
       ...built,
-      onHandoff: opts.onHandoff,
+      onHandoff: () => opts.onHandoff?.(built.data),
       onBroadcast: (txHash) => {
         opts.onBroadcast?.({ txHash });
         void reportSubmittedTx({ txHash, salts: built.salts, client: ctx.client });
