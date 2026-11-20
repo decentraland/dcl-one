@@ -292,9 +292,13 @@ pub async fn insert_events(
 /// asset, lessor or contract index saw an event past `$1` (every listing of
 /// the venue when `$1 < 0`, the rebuild, which also revisits closed rows so
 /// a reorg's rewind restores what the remaining log says). An incremental
-/// fold also revisits a cancelled listing whose own rent is past `$1`
-/// (`rental_event_signature_idx`): a rent indexed after an expiry or
-/// transfer cancellation still executes it. `$2` is the
+/// fold also revisits a cancelled listing whose own rent is past `$1`: a
+/// rent indexed after an expiry or transfer cancellation still executes it.
+/// The fold reads the signatures of the venue's rents past `$1` once (the
+/// primary key's block range) and matches the cancelled listings against
+/// that list, so the leg costs what the block range holds, not one event
+/// lookup per cancelled listing; the one-listing read probes
+/// `rental_event_signature_idx` for its own signature instead. `$2` is the
 /// Rentals address, lowercase; the nonces are `[contract, signer, asset]`.
 /// `$3`, when set, narrows it to one listing (the refresh route).
 const VERDICT_SQL: &str = "
@@ -306,9 +310,13 @@ WITH listing AS (
     FROM signatures.rentals r JOIN signatures.rental_listings l ON l.id = r.id
     WHERE upper(r.network) = 'ETHEREUM' AND r.rental_contract_address = $2
       AND ($1 < 0 OR r.status IN ('open', 'executed')
-           OR (r.status = 'cancelled' AND EXISTS (
-               SELECT 1 FROM shop.rental_event e WHERE e.signature = lower(r.signature) AND e.kind = 'rented'
-                 AND e.network = 'ethereum' AND e.rentals_address = $2 AND e.block_number > $1)))
+           OR (r.status = 'cancelled' AND CASE WHEN $3::uuid IS NULL
+               THEN lower(r.signature) = ANY (ARRAY(
+                   SELECT e.signature FROM shop.rental_event e WHERE e.kind = 'rented'
+                     AND e.network = 'ethereum' AND e.rentals_address = $2 AND e.block_number > $1))
+               ELSE EXISTS (
+                   SELECT 1 FROM shop.rental_event e WHERE e.signature = lower(r.signature) AND e.kind = 'rented'
+                     AND e.network = 'ethereum' AND e.rentals_address = $2 AND e.block_number > $1) END))
       AND ($3::uuid IS NULL OR r.id = $3)
 ),
 touched AS (
@@ -1450,6 +1458,120 @@ pub(crate) mod tests {
         assert_eq!(state_of(newer).await, nonce);
         assert_eq!(state_of(older).await, ("open".into(), None));
 
+        sqlx::query("DELETE FROM signatures.rental_assets WHERE contract_address = $1")
+            .bind(&land)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// An incremental fold executes a cancelled listing whose rent is in its
+    /// block range, and leaves the cancelled listings with no rent or with a
+    /// rent before the range as they are.
+    #[tokio::test]
+    async fn an_incremental_fold_revisits_only_the_cancellations_rented_in_its_range() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let tag = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        let land = format!("0x{}{}", &tag[..24], "0000000000000000");
+        let lessor = format!("0x{}a1", &tag[..38]);
+        let venue = format!("0x{}", &tag[24..64]);
+        let sig = |n: u8| format!("0x{tag}{tag}{n:02x}");
+        let stamp = chrono::DateTime::from_timestamp(1_700_000_000, 0)
+            .unwrap()
+            .naive_utc();
+        let mut ids = Vec::new();
+        for (n, reason) in [(1u8, Some("expired")), (2, Some("transferred")), (3, None)] {
+            let id = seed_listing(
+                &pool,
+                &land,
+                &n.to_string(),
+                ["0", "0", "0"],
+                &sig(n),
+                &lessor,
+                &venue,
+            )
+            .await;
+            sqlx::query(
+                "UPDATE signatures.rentals SET status = 'cancelled', cancel_reason = $2, updated_at = $3 WHERE id = $1",
+            )
+            .bind(id)
+            .bind(reason)
+            .bind(stamp)
+            .execute(&pool)
+            .await
+            .unwrap();
+            ids.push(id);
+        }
+        let [rented_in_range, never_rented, rented_before] = ids[..] else {
+            unreachable!()
+        };
+        let rent = |n: u8, block: u64| {
+            let log = rented_log(
+                &land,
+                U256::from(n),
+                &lessor,
+                TENANT,
+                7,
+                U256::from(5u8),
+                &hex::decode(&sig(n)[2..]).unwrap(),
+                block,
+                0,
+            );
+            let mut e = decode_log(&log, 1_700_000_000).unwrap().unwrap();
+            e.rentals_address = venue.clone();
+            e
+        };
+        let mut conn = pool.acquire().await.unwrap();
+        insert_events(
+            &mut conn,
+            ChainNet::Ethereum,
+            &[rent(3, 9_300), rent(1, 9_320)],
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        let state_of = |id: uuid::Uuid| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_as::<_, (String, Option<String>, NaiveDateTime)>(
+                    "SELECT status::text, cancel_reason, updated_at FROM signatures.rentals WHERE id = $1",
+                )
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+
+        assert_eq!(
+            fold(&pool, &venue, Some(9_310), Utc::now()).await.unwrap(),
+            1
+        );
+        let (status, reason, updated_at) = state_of(rented_in_range).await;
+        assert_eq!((status.as_str(), reason), ("executed", None));
+        assert!(updated_at > stamp);
+        assert_eq!(
+            state_of(never_rented).await,
+            ("cancelled".into(), Some("transferred".into()), stamp)
+        );
+        assert_eq!(
+            state_of(rented_before).await,
+            ("cancelled".into(), None, stamp)
+        );
+
+        sqlx::query(
+            "DELETE FROM shop.rental_event WHERE network = 'ethereum' AND rentals_address = $1",
+        )
+        .bind(&venue)
+        .execute(&pool)
+        .await
+        .unwrap();
         sqlx::query("DELETE FROM signatures.rental_assets WHERE contract_address = $1")
             .bind(&land)
             .execute(&pool)

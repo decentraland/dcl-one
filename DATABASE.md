@@ -1847,8 +1847,14 @@ Invariants:
   expired one keeps `cancelled` with `nonce`, and the asset's newest
   unexpired nonce cancellation reopens in its place. Any
   reason gives way to a rent of the listing: an incremental fold also
-  revisits a cancelled listing whose own `rented` log is past its block, one
-  `rental_event_signature_idx` probe per cancelled listing of the venue.
+  revisits a cancelled listing whose own `rented` log is past its block. The
+  fold reads the signatures of the venue's `rented` rows past that block once,
+  a range of `shop.rental_event`'s primary key, and matches the cancelled
+  listings against that list in the scan of the venue's listings it already
+  makes. The leg therefore costs what the block range holds and no event
+  lookup per cancelled listing. The refresh route, which folds one listing
+  over every block, makes one `rental_event_signature_idx` probe for that
+  listing's signature instead.
 - The fold's `cancelled` verdict never rewrites a listing that is already
   cancelled. The fold reads its verdicts before it writes them, so a listing
   the job cancelled in between keeps the job's reason and stays closed on a
