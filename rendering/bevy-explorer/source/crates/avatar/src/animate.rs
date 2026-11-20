@@ -235,14 +235,10 @@ pub(crate) fn emote_download_hashes<'a>(
     urns: impl IntoIterator<Item = &'a EmoteUrn>,
     resolve: impl FnMut(&'a EmoteUrn) -> Option<String>,
 ) -> Vec<String> {
-    let mut hashes: Vec<String> = urns
-        .into_iter()
-        .filter(|urn| urn.scene_emote().is_none())
-        .filter_map(resolve)
-        .collect();
-    hashes.sort();
-    hashes.dedup();
-    hashes
+    common::partition::resolved_hashes(
+        urns.into_iter().filter(|urn| urn.scene_emote().is_none()),
+        resolve,
+    )
 }
 
 #[derive(Component, Default)]
@@ -375,8 +371,9 @@ fn broadcast_emote(
             });
         }
         // A looping emote ended: send an explicit stop. One-shots end on the receiver's own timer
-        // (and the Pulse server's), so they need no stop and fall through to the `_` arm.
-        (Some(emote), None) if emote.repeat => {
+        // (and the Pulse server's), so they need no stop and fall through to the `_` arm, except
+        // one too long for Pulse, which goes out durationless like a loop.
+        (Some(emote), None) if ends_with_stop(emote) => {
             *count += 1;
             let urn = emotes.source_urn(&emote.urn);
             debug!("sending emote stop: {urn}");
@@ -401,6 +398,13 @@ fn broadcast_emote(
     // playing. Set in one place so the unchanged `_` case can't drop the state and re-fire the
     // start.
     *last = current;
+}
+
+/// Whether an emote that stops playing needs an explicit stop on the wire: a loop, or a one-shot
+/// sent without its duration because Pulse refuses one that long.
+#[cfg(feature = "explorer")]
+fn ends_with_stop(emote: &EmotePlayback) -> bool {
+    emote.repeat || comms::pulse_emote_duration(emote.duration_ms).is_none()
 }
 
 /// Outside control of an avatar's full-body emote, for previews that pause and scrub it: `paused`
@@ -2264,4 +2268,35 @@ fn play_scene_driven_sounds(
     }
     // Drop tracked state for avatars that no longer have the component.
     last_sounds.retain(|e, _| seen.contains(e));
+}
+
+#[cfg(all(test, feature = "explorer"))]
+mod stop_tests {
+    use super::*;
+
+    fn one_shot(duration_ms: u32) -> EmotePlayback {
+        EmotePlayback {
+            duration_ms: Some(duration_ms),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_one_shot_pulse_can_time_ends_without_a_stop() {
+        assert!(!ends_with_stop(&one_shot(2_000)));
+        assert!(!ends_with_stop(&one_shot(
+            comms::PULSE_MAX_EMOTE_DURATION_MS
+        )));
+    }
+
+    #[test]
+    fn a_loop_or_a_one_shot_too_long_for_pulse_ends_with_a_stop() {
+        assert!(ends_with_stop(&EmotePlayback {
+            repeat: true,
+            ..one_shot(2_000)
+        }));
+        assert!(ends_with_stop(&one_shot(
+            comms::PULSE_MAX_EMOTE_DURATION_MS + 1
+        )));
+    }
 }

@@ -2,7 +2,7 @@ import { landTokenId } from "../../data/catalyst/landListing";
 import { landChainId } from "./chain";
 import { landNetwork } from "@shop/land/contracts";
 
-export type LandRedirect = "lands" | "rent" | "transfer" | "operator" | "assign-ens";
+export type LandRedirect = "lands" | "rent" | "transfer" | "manage" | "operator" | "assign-ens";
 
 type Identity = { contract: string; tokenId: string };
 
@@ -56,7 +56,7 @@ export function landRedirectTarget(kind: LandRedirect, search: string, chainId?:
     out.set("onlyOnRent", "true");
     return withQuery("/shop/lands", out);
   }
-  if (!identity) return withQuery("/create/land", carried);
+  if (!identity) return withQuery("/profile/me/assets", carried);
   const page = kind === "transfer" ? "transfer" : "manage";
   return withQuery(`/shop/token/${identity.contract}/${identity.tokenId}/${page}`, carried);
 }

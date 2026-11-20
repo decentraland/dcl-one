@@ -903,7 +903,9 @@ fn locate_foreign_streams(
             let panning = voice_pan.update(panning, &panning_settings, time.delta_secs());
             for (livekit_track, multiplier) in tracks.iter_many(publishing) {
                 if let Some(track) = livekit_track.track() {
-                    track.pan_and_volume(panning, volume * multiplier.map_or(1.0, |value| **value));
+                    let multiplier =
+                        crate::livekit::track::transmitter_volume(multiplier.map(|value| **value));
+                    track.pan_and_volume(panning, volume * multiplier);
                 }
             }
         }

@@ -289,6 +289,13 @@ debug = "line-tables-only"
 debug = false
 opt-level = 1
 
+# These crates run in build scripts and procedural macros during a node build.
+[profile.dev.package.cc]
+opt-level = 0
+
+[profile.dev.package.syn]
+opt-level = 0
+
 # The scene CLI is one binary people download: its symbol table is 13 MB of a
 # 106 MB file and nothing reads it at run time. The node keeps its symbols.
 [profile.release.package.dcl-scene-cli]

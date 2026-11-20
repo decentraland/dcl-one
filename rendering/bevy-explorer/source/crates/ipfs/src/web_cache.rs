@@ -13,6 +13,13 @@
 
 use bevy::diagnostic::DiagnosticPath;
 use serde::Deserialize;
+use std::{
+    collections::HashSet,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Mutex, PoisonError,
+    },
+};
 
 // stand-in origin for shared entries: `.invalid` is reserved, so no server's own entries land here
 const SHARED_ORIGIN: &str = "https://shared.invalid";
@@ -336,30 +343,44 @@ const USED_KEYS_FLUSH_AT: usize = 1024;
 
 /// Cache keys read or written since the last flush, each once.
 #[derive(Default)]
-struct UsedKeys(std::collections::HashSet<String>);
+struct UsedKeys {
+    keys: Mutex<HashSet<String>>,
+    // Publish each length under the key lock so another mutation cannot overtake the update.
+    pending: AtomicUsize,
+}
 
 impl UsedKeys {
     /// Notes `key`, unless the worker would drop it; true when the set is full and should be
     /// flushed.
-    fn note(&mut self, key: &str) -> bool {
-        if key.len() <= USED_KEY_MAX && !self.0.contains(key) {
-            self.0.insert(key.to_owned());
+    fn note(&self, key: &str) -> bool {
+        let mut keys = self.keys.lock().unwrap_or_else(PoisonError::into_inner);
+        if key.len() <= USED_KEY_MAX && !keys.contains(key) {
+            keys.insert(key.to_owned());
+            self.pending.store(keys.len(), Ordering::Relaxed);
         }
-        self.0.len() >= USED_KEYS_FLUSH_AT
+        keys.len() >= USED_KEYS_FLUSH_AT
     }
 
-    fn take(&mut self) -> Vec<String> {
-        self.0.drain().collect()
+    fn take(&self) -> Vec<String> {
+        let mut keys = self.keys.lock().unwrap_or_else(PoisonError::into_inner);
+        let taken = keys.drain().collect();
+        self.pending.store(0, Ordering::Relaxed);
+        taken
     }
 
     /// The keys waiting, which stay waiting.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     fn waiting(&self) -> Vec<String> {
-        self.0.iter().cloned().collect()
+        self.keys
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .cloned()
+            .collect()
     }
 
     fn len(&self) -> usize {
-        self.0.len()
+        self.pending.load(Ordering::Relaxed)
     }
 }
 
@@ -507,16 +528,10 @@ mod io {
         Ok(deleted.as_bool().unwrap_or(false))
     }
 
-    /// Stores `data`, the bytes `url` answered with, under the shared key for `hash`, if
-    /// `matches_hash`: whether they are what `hash` names. The url's own entry, if an older
-    /// worker left one, goes: it is dead weight beside the shared one.
-    pub async fn share(
-        url: &str,
-        hash: &str,
-        data: &[u8],
-        matches_hash: impl FnOnce() -> bool,
-    ) -> Result<(), JsValue> {
-        if !names(url, hash) || !matches_hash() {
+    /// Stores verified `data` under the shared key when `url` names `hash`, then removes
+    /// a redundant URL entry left by an older worker. The caller checks the bytes against `hash`.
+    pub(crate) async fn share(url: &str, hash: &str, data: &[u8]) -> Result<(), JsValue> {
+        if !names(url, hash) {
             return Ok(());
         }
         let [shared, own] = keys(url).ok_or("not a url")?;
@@ -539,7 +554,7 @@ mod io {
     static EVICTED_ENTRIES: AtomicU64 = AtomicU64::new(0);
     static EVICTED_BYTES: AtomicU64 = AtomicU64::new(0);
     static LAST_REPORT: Mutex<Option<TrimReport>> = Mutex::new(None);
-    static USED: std::sync::LazyLock<Mutex<UsedKeys>> = std::sync::LazyLock::new(Default::default);
+    static USED: std::sync::LazyLock<UsedKeys> = std::sync::LazyLock::new(Default::default);
 
     /// Replaces the body of the entry under `key`.
     pub async fn put(cache: &Cache, key: &str, old: &Response, data: &[u8]) -> Result<(), JsValue> {
@@ -567,11 +582,7 @@ mod io {
                 wasm_bindgen_futures::spawn_local(log_unrecorded(touch));
             }
         } else {
-            let waiting = USED
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .waiting();
-            for key in waiting {
+            for key in USED.waiting() {
                 used_now.push(&JsValue::from_str(&key));
             }
         }
@@ -624,7 +635,7 @@ mod io {
             evicted_entries_total: EVICTED_ENTRIES.load(Ordering::Relaxed),
             evicted_bytes_total: EVICTED_BYTES.load(Ordering::Relaxed),
             last: *LAST_REPORT.lock().unwrap_or_else(PoisonError::into_inner),
-            pending_uses: USED.lock().unwrap_or_else(PoisonError::into_inner).len(),
+            pending_uses: USED.len(),
         }
     }
 
@@ -680,11 +691,7 @@ mod io {
     }
 
     fn note_used(key: &str) {
-        let full = USED
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .note(key);
-        if full {
+        if USED.note(key) {
             wasm_bindgen_futures::spawn_local(flush_used());
         }
     }
@@ -692,7 +699,7 @@ mod io {
     /// Posts the keys used since the last post to the service worker's last-use index, without
     /// waiting for its reply.
     fn post_used() -> Option<js_sys::Promise> {
-        let keys = USED.lock().unwrap_or_else(PoisonError::into_inner).take();
+        let keys = USED.take();
         if keys.is_empty() {
             return None;
         }
@@ -1027,10 +1034,11 @@ mod tests {
 
     #[test]
     fn a_key_used_twice_is_sent_once() {
-        let mut used = UsedKeys::default();
+        let used = UsedKeys::default();
         used.note("a");
         used.note("a");
         used.note("b");
+        assert_eq!(used.len(), 2);
         let mut keys = used.take();
         keys.sort();
         assert_eq!(keys, ["a", "b"]);
@@ -1039,7 +1047,7 @@ mod tests {
 
     #[test]
     fn the_set_asks_for_a_flush_when_full() {
-        let mut used = UsedKeys::default();
+        let used = UsedKeys::default();
         for n in 0..USED_KEYS_FLUSH_AT - 1 {
             assert!(!used.note(&n.to_string()));
         }
@@ -1079,7 +1087,7 @@ mod tests {
 
     #[test]
     fn the_keys_waiting_stay_waiting_when_read() {
-        let mut used = UsedKeys::default();
+        let used = UsedKeys::default();
         used.note("a");
         assert_eq!(used.waiting(), ["a"]);
         assert_eq!(used.len(), 1);
@@ -1169,7 +1177,7 @@ mod tests {
 
     #[test]
     fn a_key_too_long_to_record_is_not_noted() {
-        let mut used = UsedKeys::default();
+        let used = UsedKeys::default();
         used.note(&"k".repeat(USED_KEY_MAX + 1));
         assert_eq!(used.len(), 0);
         used.note(&"k".repeat(USED_KEY_MAX));

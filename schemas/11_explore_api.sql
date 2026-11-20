@@ -117,7 +117,10 @@ CREATE TABLE explore_api.auth_identities (
     source text,
     is_mobile boolean NOT NULL,
     created_at timestamp without time zone NOT NULL,
-    expiration timestamp without time zone NOT NULL
+    expiration timestamp without time zone NOT NULL,
+    -- The deep-link client's request UUID (lowercase), derived from the
+    -- verifier it presents on pickup; NULL when the create named none.
+    auth_request_id text
 );
 
 CREATE INDEX auth_identities_expiration_idx ON explore_api.auth_identities (expiration);

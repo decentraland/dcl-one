@@ -64,7 +64,7 @@ describe('initializeWorkspace', () => {
 
       expect(getScenesPath).toHaveBeenCalled();
       expect(services.fs.stat).toHaveBeenCalledWith(mockAppHome);
-      expect(services.fs.mkdir).toHaveBeenCalledWith(mockAppHome);
+      expect(services.fs.mkdir).toHaveBeenCalledWith(mockAppHome, { recursive: true });
       expect(result).toBe(mockAppHome);
     });
   });

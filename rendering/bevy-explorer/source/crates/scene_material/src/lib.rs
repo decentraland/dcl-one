@@ -216,21 +216,14 @@ impl SceneBounds {
     /// no regions = unbounded. without `buffers` (or for huge extents) an irregular scene falls
     /// back to its bounding box.
     pub fn new(regions: &[BoundRegion], buffers: Option<&mut Assets<ShaderStorageBuffer>>) -> Self {
-        let [first, rest @ ..] = regions else {
+        let Some(((min, max), max_height)) = BoundRegion::enclosing(regions) else {
             return Self::unbounded();
         };
-        if rest.is_empty() {
-            return Self::rect(first);
+        if let [region] = regions {
+            return Self::rect(region);
         }
 
-        let (min, max) = regions
-            .iter()
-            .map(BoundRegion::cells)
-            .fold((IVec2::MAX, IVec2::MIN), |(min, max), (rmin, rmax)| {
-                (min.min(rmin), max.max(rmax))
-            });
         let size = (max - min + IVec2::ONE).as_uvec2();
-        let max_height = regions.iter().fold(0.0f32, |h, r| h.max(r.height));
         let cell_count = size.x as u64 * size.y as u64;
         let Some(buffers) = buffers.filter(|_| cell_count <= MAX_SCENE_CELLS) else {
             if cell_count > MAX_SCENE_CELLS {
@@ -333,9 +326,30 @@ impl BoundRegion {
         Self {
             min: ((min.x as i16 as u16 as u32) << 16) | (-(max.y + 1) as i16 as u16 as u32),
             max: (((max.x + 1) as i16 as u16 as u32) << 16) | (-min.y as i16 as u16 as u32),
-            height: f32::log2(parcel_count as f32 + 1.0) * 20.0,
+            height: Self::height_for_parcels(parcel_count),
             parcel_count,
         }
+    }
+
+    /// The height limit, in metres, over `parcel_count` parcels.
+    pub fn height_for_parcels(parcel_count: u32) -> f32 {
+        f32::log2(parcel_count as f32 + 1.0) * 20.0
+    }
+
+    /// The rectangle of cells around `regions` (inclusive, as [`Self::cells`] gives them) and
+    /// the highest of their height limits. None without regions.
+    pub fn enclosing(regions: &[BoundRegion]) -> Option<((IVec2, IVec2), f32)> {
+        let (first, rest) = regions.split_first()?;
+        Some(rest.iter().fold(
+            (first.cells(), first.height),
+            |((min, max), height), region| {
+                let (region_min, region_max) = region.cells();
+                (
+                    (min.min(region_min), max.max(region_max)),
+                    height.max(region.height),
+                )
+            },
+        ))
     }
 }
 
@@ -855,6 +869,21 @@ mod test {
             outside = outside.min(distance);
         }
         outside.max((pos.y - nearest_height).max(0.0))
+    }
+
+    #[test]
+    fn enclosing_is_the_rectangle_around_the_regions_and_their_highest_limit() {
+        assert!(BoundRegion::enclosing(&[]).is_none());
+
+        // parcels (0, 0) and (2, 3), each a region of its own, the second with the higher limit
+        let regions = [
+            BoundRegion::new(IVec2::ZERO, IVec2::ZERO, 1),
+            BoundRegion::new(IVec2::new(2, 3), IVec2::new(2, 3), 3),
+        ];
+        let ((min, max), height) = BoundRegion::enclosing(&regions).unwrap();
+        // cells are world xz / 16, so parcel (x, y) is cell (x, -y - 1)
+        assert_eq!((min, max), (IVec2::new(0, -4), IVec2::new(2, -1)));
+        assert_eq!(height, BoundRegion::height_for_parcels(3));
     }
 
     #[test]

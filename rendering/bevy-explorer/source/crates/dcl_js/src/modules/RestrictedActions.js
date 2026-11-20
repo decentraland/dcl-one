@@ -90,7 +90,11 @@ module.exports.openNftDialog = async function (body) {
     return { success: true }
 }
 module.exports.openExplorerUi = async function (body) {
-    const openResult = await Deno.core.ops.op_open_explorer_ui(Number(body.ui ?? 0))
+    const openResult = await Deno.core.ops.op_open_explorer_ui(
+        Number(body.ui ?? 0),
+        Number(body.requestId ?? 0),
+        body.itemPurchase?.urn ?? null,
+    )
     return { openResult }
 }
 module.exports.setCommunicationsAdapter = async function (body) { 

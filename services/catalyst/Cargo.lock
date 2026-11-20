@@ -1727,6 +1727,8 @@ dependencies = [
  "dcl-auth",
  "dcl-http",
  "hex",
+ "metrics",
+ "metrics-exporter-prometheus",
  "reqwest 0.13.5",
  "serde",
  "serde_json",

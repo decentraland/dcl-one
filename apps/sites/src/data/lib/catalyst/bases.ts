@@ -8,8 +8,6 @@ export const WORLDS_PREFIX = "/worlds-content-server";
 export const SOCIAL_PREFIX = "/social-api";
 export const NOTIFICATIONS_PREFIX = "/notifications";
 export const MARKET_PREFIX = "/marketplace-api";
-export const BUILDER_PREFIX = "/builder-api";
-export const DEFAULT_CREATORS_DATA_URL = "/api/creator-hub";
 export const DEFAULT_PLAY_PATH = "/play";
 
 export type BaseEnv = Record<string, string | undefined>;
@@ -64,10 +62,6 @@ export function worldsUrl(override?: string, env: BaseEnv = processEnv()): strin
   );
 }
 
-export function publicWorldsUrl(env: BaseEnv = processEnv()): string {
-  return `${publicCatalystUrl(env)}${WORLDS_PREFIX}`;
-}
-
 export function worldsContentServerUrl(override?: string, env: BaseEnv = processEnv()): string {
   return trimSlash(
     override ?? envValue(env, "WORLDS_CONTENT_SERVER_URL") ?? worldsUrl(undefined, env),
@@ -107,10 +101,6 @@ export function blogCmsUrl(env: BaseEnv = processEnv()): string | undefined {
   // TODO(cms-migration): point BLOG_CMS_URL at the in-tree catalyst CMS area once cms-server is migrated into dcl-one; today it is the external cms-server.
   const value = envValue(env, "BLOG_CMS_URL");
   return value ? trimSlash(value) : undefined;
-}
-
-export function creatorsDataUrl(override?: string, env: BaseEnv = processEnv()): string {
-  return trimSlash(override ?? envValue(env, "CREATORS_DATA_URL") ?? DEFAULT_CREATORS_DATA_URL);
 }
 
 /**

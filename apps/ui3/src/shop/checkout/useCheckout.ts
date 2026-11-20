@@ -22,7 +22,7 @@ import { stashResumeIntent, takeResumeIntent } from "./lib/auth-return";
 import { invalidateAfterPurchase } from "./lib/after-purchase";
 import { setAuthorization, type ShopAuthorization } from "./lib/authorizations";
 import { RESUME_CART_KEY, reviewCart, type CartReview, type ResolvedLine } from "./purchase/cart";
-import { releaseAuthorizing, resumeCheckout, runGroup, watchGroup, type ApprovalRequest, type CheckoutDeps, type GroupResult } from "./purchase/executor";
+import { releaseAuthorizing, resumeCheckout, runGroups, watchGroup, type ApprovalRequest, type CheckoutDeps, type GroupResult } from "./purchase/executor";
 import type { RailContext } from "./purchase/rail";
 import { createSpendGuard } from "@shop/checkout/purchase/spend-guard";
 import { useShopServices } from "./services";
@@ -105,6 +105,8 @@ export type CheckoutView = {
   /** A payment the buyer started by hand: a resume armed by sign-in must not start a second one. */
   holdAutoConfirm(): void;
   resume(): Promise<void>;
+  /** CHECK AGAIN: follows the groups in flight and starts nothing. */
+  checkAgain(): Promise<void>;
   discardCheckout(): Promise<void>;
   dismissTopUp(): void;
   stashForTopUp(): void;
@@ -412,22 +414,47 @@ export function useCheckout(
         const started = services.cart.startCheckout(fresh);
         services.cart.replaceCheckout({ ...started, groups: [...keep, ...started.groups] });
       }
-      const next: Record<string, GroupResult> = {};
-      for (const group of runnable) {
-        const result = await runGroup(d, group, resolved);
-        next[group.keyId] = result;
+      // One group at a time, none while another is in flight (runGroups).
+      const next = await runGroups(d, runnable, resolved, (group, result) => {
         setResults((prev) => ({ ...prev, [group.keyId]: result }));
         if (result.status === "failed" && result.topUp) {
           const short = Math.max(0, result.topUp.requiredCents - result.topUp.balanceCents);
           setTopUp({ shortCents: short as UsdCents });
         }
-      }
+      });
       finish(runnable, next, resolved);
     } finally {
       confirming.current = false;
       setRunning(false);
     }
   }, [account, canConfirm, partition, deps, settle, payableGroups, services.cart, finish, wallet.host]);
+
+  /** Follows the groups in flight, and starts nothing. */
+  const watchInFlight = useCallback(
+    async (state: PurchaseState, d: CheckoutDeps) => {
+      const out: Record<string, GroupResult> = {};
+      for (const g of state.groups) if (g.status === "submitted" || g.status === "pending") out[g.keyId] = await watchGroup(d, g);
+      setResults((prev) => ({ ...prev, ...out }));
+      finish(partition?.groups ?? [], out, new Map());
+    },
+    [partition, finish],
+  );
+
+  /**
+   * CHECK AGAIN, while a group is in flight: a status check, never a purchase. A group that waited on the one in
+   * flight starts only from the buyer's own Resume or Confirm, even when this check sees the one in flight settle.
+   */
+  const checkAgain = useCallback(async () => {
+    const state = services.cart.getSnapshot().checkout;
+    const d = deps();
+    if (!state || !d) return;
+    setRunning(true);
+    try {
+      await watchInFlight(state, d);
+    } finally {
+      setRunning(false);
+    }
+  }, [services.cart, deps, watchInFlight]);
 
   const resume = useCallback(async () => {
     const state = services.cart.getSnapshot().checkout;
@@ -436,10 +463,7 @@ export function useCheckout(
     setRunning(true);
     try {
       if (!canResume) {
-        const out: Record<string, GroupResult> = {};
-        for (const g of state.groups) if (g.status === "submitted" || g.status === "pending") out[g.keyId] = await watchGroup(d, g);
-        setResults((prev) => ({ ...prev, ...out }));
-        finish(partition?.groups ?? [], out, new Map());
+        await watchInFlight(state, d);
         return;
       }
       const unfinished = state.groups.filter((g) => g.status !== "confirmed" && g.status !== "submitted" && g.status !== "pending");
@@ -451,7 +475,7 @@ export function useCheckout(
     } finally {
       setRunning(false);
     }
-  }, [services.cart, deps, partition, settle, finish, canResume]);
+  }, [services.cart, deps, partition, settle, finish, canResume, watchInFlight]);
 
   const discardCheckout = useCallback(async () => {
     const state = services.cart.getSnapshot().checkout;
@@ -544,6 +568,7 @@ export function useCheckout(
     confirm,
     holdAutoConfirm: () => setAutoConfirm(false),
     resume,
+    checkAgain,
     discardCheckout,
     dismissTopUp: () => setTopUp(null),
     bindTopUp: bindTopUpReturn,
