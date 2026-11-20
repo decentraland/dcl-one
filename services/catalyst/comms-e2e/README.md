@@ -169,12 +169,20 @@ Races repeat by default and take their order and gaps from the seed, so a failur
 
 The `uplink` scenarios walk the explorer back and forth and read its movement from the Pulse
 link's history, not from the explorer: datagrams of 20 bytes or more are messages (movement while
-it walks), smaller ones the transport's own. A gap between two of them longer than one and a half
-beats of the walk (and 180 ms) is a silence. Each scenario walks on the plain link first, as its
-own control, and samples `/pulse_state` while it walks, so a report puts each silence beside what
-the explorer said its uplink gate did. The measure cannot tell movement from another message of
-the same size, nor a silence a long frame made from one the gate made: the readout says which.
-`explorer-uplink-cadence` checks the measure itself, walking and then standing still.
+it walks), smaller ones the transport's own. A gap longer than one and a half beats of the
+measured walk (and 180 ms) is a silence, counted between two of them and from the start of a walk
+leg to its first and from its last to the leg's end, so movement that stops shows. A regular
+slower beat is no silence: on a long round trip the explorer spaces its movement out on purpose,
+at most 8 inputs in a round trip and 600 ms. So a walk must also keep half the rate that spacing
+allows (or half the plain-link rate, where that is lower): 2.9 a second at 800 ms, 2.2 at 1.2 s,
+4 on the lossy path, where one movement a round trip is 1.25, 0.83 and about 3.3. A queued stall
+walks on when the observer sees new movement after the released burst has landed, and the uplink
+after the landing keeps that rate. Each scenario walks on the plain link first, as its own
+control, and samples `/pulse_state` while it walks, so a report puts each silence beside what the
+explorer said its uplink gate did. The measure cannot tell movement from another message of the
+same size, nor a silence a long frame made from one the gate made: the readout says which.
+`explorer-uplink-cadence` checks the measure itself, walking and then standing still once the last
+leg has ended.
 
 ### What the explorer answers
 

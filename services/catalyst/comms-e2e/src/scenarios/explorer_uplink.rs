@@ -52,7 +52,8 @@ static WALK_AT_800_MS: Scenario = Scenario {
     tags: &["explorer", "uplink", "faults"],
     guards: &["dcl-one #1208"],
     summary: "The explorer walks over a healthy link with an 800 ms round trip: its movement keeps \
-              going out at its beat, with no recurring silence.",
+              going out at its beat, with no recurring silence, at no less than half the rate its \
+              spacing allows.",
     needs: NEEDS,
     hostile: false,
     default_repeat: 1,
@@ -64,7 +65,8 @@ static WALK_AT_1200_MS: Scenario = Scenario {
     tags: &["explorer", "uplink", "faults"],
     guards: &["dcl-one #1208"],
     summary: "The explorer walks over a healthy link with a 1.2 s round trip: its movement keeps \
-              going out at its beat, with no recurring silence.",
+              going out at its beat, with no recurring silence, at no less than half the rate its \
+              spacing allows.",
     needs: NEEDS,
     hostile: false,
     default_repeat: 1,
@@ -77,7 +79,8 @@ static WALK_ON_A_LOSSY_LINK: Scenario = Scenario {
     guards: &["dcl-one #1208"],
     summary: "The explorer walks for a minute over a link with a round trip of 300 ms give or \
               take 100 and 2 % loss each way: a single lost datagram does not stop its movement. \
-              At most one silence in the minute, none longer than 250 ms beyond its beat.",
+              At most one silence in the minute, none longer than 250 ms beyond its beat, and no \
+              less than half the rate its spacing allows.",
     needs: NEEDS,
     hostile: false,
     default_repeat: 1,
@@ -90,7 +93,8 @@ static QUEUED_STALL_AT_1200_MS: Scenario = Scenario {
     guards: &["dcl-one #1208"],
     summary: "Over a link with a 1.2 s round trip the uplink stalls for 4 s while the explorer \
               walks, and what it sent meanwhile reaches Pulse at once when the stall ends: the \
-              session survives the burst and the observer sees the explorer walk on.",
+              session survives the burst, and once the burst has landed the observer sees the \
+              explorer walk on and its movement keeps going out.",
     needs: NEEDS,
     hostile: false,
     default_repeat: 1,
@@ -103,7 +107,8 @@ static QUEUED_STALL_AT_2000_MS: Scenario = Scenario {
     guards: &["dcl-one #1208"],
     summary: "Over a link with a 2 s round trip the uplink stalls for 4 s while the explorer \
               walks, and what it sent meanwhile reaches Pulse at once when the stall ends: the \
-              session survives the burst and the observer sees the explorer walk on.",
+              session survives the burst, and once the burst has landed the observer sees the \
+              explorer walk on and its movement keeps going out.",
     needs: NEEDS,
     hostile: false,
     default_repeat: 1,
@@ -163,6 +168,29 @@ const STALL: Duration = Duration::from_secs(4);
 const STALL_QUEUE: usize = 4096;
 /// The input burst Pulse allows before it ends a session (`DEFAULT_INPUT_BURST`).
 const SERVER_INPUT_BURST: usize = 16;
+/// Inputs the explorer keeps in flight on a long round trip: at most this many in a round trip
+/// and [`GATE_WAIT`]. Its movement is spaced out to that, so a slower but regular beat over a
+/// slow path is what it is meant to do.
+const INPUTS_IN_FLIGHT: f64 = 8.0;
+/// What the explorer's uplink gate waits for an acknowledgement, on top of the round trip.
+const GATE_WAIT: Duration = Duration::from_millis(600);
+/// The share of the movement rate the explorer's spacing allows that a walk must keep. The
+/// spacing allows 5.7 a second at an 800 ms round trip (5.6 measured) and 4.4 at 1.2 s (4.4
+/// measured); one movement a round trip is 1.25 and 0.83, under half of either.
+const RATE_SHARE_REQUIRED: f64 = 0.5;
+/// The longest round trip of the lossy path: its rate floor is taken there, where it is lowest.
+const LOSSY_ROUND_TRIP_LONGEST: Duration = Duration::from_millis(400);
+/// How long the standing window of the cadence check waits after the walk is told to stop: the
+/// leg under way goes on to its end.
+const LEG_END_MARGIN: Duration = Duration::from_secs(1);
+/// How long after the burst of a queued stall reaches Pulse its last position is taken as where
+/// the observer sees the explorer: for Pulse to apply it and the observer to receive it.
+const LANDING: Duration = Duration::from_secs(1);
+/// How long the uplink is read after a queued stall's burst has landed, at the least.
+const AFTER_RELEASE: Duration = Duration::from_secs(8);
+/// The pause between two reads of `/pulse_state`, after an answer or an error alike, so the
+/// readout does not load the explorer's frames it measures.
+const SAMPLE_PAUSE: Duration = Duration::from_millis(100);
 
 fn ms(duration: Duration) -> u64 {
     duration.as_millis() as u64
@@ -232,7 +260,8 @@ async fn walk(
     }
 }
 
-/// Reads `/pulse_state` over and over until `stop` says so.
+/// Reads `/pulse_state` every [`SAMPLE_PAUSE`] until `stop` says so. A read that fails adds no
+/// sample.
 async fn sample(subject: &Subject, mut stop: watch::Receiver<bool>, watched: &Watched) {
     let link = &subject.fronts.pulse;
     while !*stop.borrow() {
@@ -242,19 +271,22 @@ async fn sample(subject: &Subject, mut stop: watch::Receiver<bool>, watched: &Wa
             _ = stop.changed() => return,
         };
         let answered = link.clock();
-        let Ok(state) = polled else {
-            continue;
-        };
-        let uplink = &state["uplink"];
-        watched.samples.lock().push(Sample {
-            at: (asked + answered) / 2,
-            state: state["state"].as_str().unwrap_or("unknown").to_owned(),
-            stalled: uplink["stalled"].as_bool(),
-            held_input: uplink["held"][2].as_bool(),
-            probes: uplink["probes"].as_u64(),
-        });
-        if uplink.is_object() {
-            *watched.uplink.lock() = uplink.clone();
+        if let Ok(state) = polled {
+            let uplink = &state["uplink"];
+            watched.samples.lock().push(Sample {
+                at: (asked + answered) / 2,
+                state: state["state"].as_str().unwrap_or("unknown").to_owned(),
+                stalled: uplink["stalled"].as_bool(),
+                held_input: uplink["held"][2].as_bool(),
+                probes: uplink["probes"].as_u64(),
+            });
+            if uplink.is_object() {
+                *watched.uplink.lock() = uplink.clone();
+            }
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(SAMPLE_PAUSE) => {}
+            _ = stop.changed() => return,
         }
     }
 }
@@ -440,6 +472,146 @@ fn expect_baseline(baseline: &Reading) -> Result<()> {
     Ok(())
 }
 
+/// The fewest data datagrams a second a walk over a path with `round_trip` must send: a share
+/// ([`RATE_SHARE_REQUIRED`]) of the rate the explorer's spacing allows there, which is the
+/// plain-link rate, or [`INPUTS_IN_FLIGHT`] in a round trip and [`GATE_WAIT`] where that is
+/// lower. A regular slower beat clears it; one movement a round trip, or none, does not.
+fn walking_floor(baseline_rate: f64, round_trip: Duration) -> f64 {
+    let spaced = INPUTS_IN_FLIGHT / (round_trip + GATE_WAIT).as_secs_f64();
+    (baseline_rate.min(spaced) * RATE_SHARE_REQUIRED * 100.0).round() / 100.0
+}
+
+/// Fails unless the walk read in `measured` sent at least `floor` data datagrams a second.
+fn expect_walking_rate(measured: &Reading, floor: f64, path: &str) -> Result<()> {
+    if measured.data_per_second < floor {
+        bail!(
+            "{path} the walking explorer sent {} data datagrams a second over {} s, fewer than the {floor} it must keep (half of what its spacing allows there): its movement slowed to a trickle or stopped; the longest gap {} ms",
+            measured.data_per_second,
+            measured.walked_s,
+            measured.longest_gap_ms
+        );
+    }
+    Ok(())
+}
+
+/// The verdict on a walk over a healthy path with `round_trip`: the plain-link walk shows the
+/// measure working, the measured walk has no recurring silence beyond its own beat, and it keeps
+/// at least [`walking_floor`].
+fn judge_slow_walk(
+    baseline: &Reading,
+    measured: &Reading,
+    silences: &Silences,
+    round_trip: Duration,
+) -> Result<()> {
+    expect_baseline(baseline)?;
+    let path = format!(
+        "over a healthy link with a {} ms round trip",
+        ms(round_trip)
+    );
+    if measured.silences > SILENCES_ALLOWED || silences.share > SILENT_SHARE_ALLOWED {
+        bail!(
+            "{path} the walking explorer's movement does not keep flowing: {} silences of over {} ms in {} s (at most {SILENCES_ALLOWED} allowed), together {:.1} % of the walk beyond the {} ms beat (at most {:.0} % allowed), the longest {} ms, one every {} ms; the explorer's readout showed an input held in {} of those silences",
+            measured.silences,
+            measured.silence_over_ms,
+            measured.walked_s,
+            silences.share * 100.0,
+            measured.median_gap_ms,
+            SILENT_SHARE_ALLOWED * 100.0,
+            measured.longest_silence_ms,
+            measured
+                .silence_period_ms
+                .map_or("-".to_owned(), |period| period.to_string()),
+            measured.silences_seen_held,
+        );
+    }
+    expect_walking_rate(
+        measured,
+        walking_floor(baseline.data_per_second, round_trip),
+        &path,
+    )
+}
+
+/// The verdict on the walk over the lossy path: no silence longer than
+/// [`LOSSY_SILENCE_ALLOWED`] beyond the beat, at most [`LOSSY_SILENCES_ALLOWED`] in all, and at
+/// least [`walking_floor`] at the path's longest round trip. `after_a_loss` (how many silences
+/// had a loss before them) only goes into the message.
+fn judge_lossy_walk(
+    baseline: &Reading,
+    measured: &Reading,
+    silences: &Silences,
+    after_a_loss: usize,
+) -> Result<()> {
+    expect_baseline(baseline)?;
+    let beat = Duration::from_millis(measured.median_gap_ms);
+    let long = silences
+        .gaps
+        .iter()
+        .filter(|gap| gap.length.saturating_sub(beat) > LOSSY_SILENCE_ALLOWED)
+        .count();
+    let path = "over a link with a round trip of 300 ms give or take 100 and 2 % loss each way,";
+    if long > 0 || measured.silences > LOSSY_SILENCES_ALLOWED {
+        bail!(
+            "{path} the walking explorer's movement stopped {long} times for more than {} ms beyond its {} ms beat (none allowed), and {} silences of over {} ms in all in {} s (at most {LOSSY_SILENCES_ALLOWED} allowed); {after_a_loss} of them after a loss in the 1.2 s before, the readout showed an input held in {}; the longest gap {} ms",
+            ms(LOSSY_SILENCE_ALLOWED),
+            ms(beat),
+            measured.silences,
+            measured.silence_over_ms,
+            measured.walked_s,
+            measured.silences_seen_held,
+            measured.longest_silence_ms,
+        );
+    }
+    expect_walking_rate(
+        measured,
+        walking_floor(baseline.data_per_second, LOSSY_ROUND_TRIP_LONGEST),
+        path,
+    )
+}
+
+/// The verdict on the uplink after a queued stall, read over a window that begins once the
+/// released burst has landed: the explorer walks on at least at [`walking_floor`]. The burst
+/// is noted in the history when it reached the link, inside the stall, so it never counts here.
+fn judge_after_release(baseline: &Reading, after: &Reading, round_trip: Duration) -> Result<()> {
+    expect_walking_rate(
+        after,
+        walking_floor(baseline.data_per_second, round_trip),
+        &format!(
+            "after the stall's burst landed, over a link with a {} ms round trip,",
+            ms(round_trip)
+        ),
+    )
+}
+
+/// The verdict on the session over a queued stall: it did not end, the observer did not see the
+/// explorer leave, and the readouts after the release, of which there must be some, all said
+/// authenticated. `not_authenticated` holds those that did not, as (s, state).
+fn judge_session_kept(
+    disconnects: usize,
+    leaves: u32,
+    readouts_after: usize,
+    not_authenticated: &[(f64, String)],
+) -> Result<()> {
+    if disconnects > 0
+        || not_authenticated
+            .iter()
+            .any(|(_, state)| state == "terminal disconnect")
+    {
+        bail!(
+            "the explorer's Pulse session ended after the burst the stall released ({disconnects} disconnects in its log)"
+        );
+    }
+    if leaves > 0 {
+        bail!("the observer saw the explorer leave {leaves} times over the stall");
+    }
+    if readouts_after == 0 {
+        bail!("no read of the explorer's /pulse_state answered after the release");
+    }
+    if let Some((at, state)) = not_authenticated.last() {
+        bail!("the explorer reported Pulse as {state} at {at} s, after the stall");
+    }
+    Ok(())
+}
+
 async fn uplink_cadence(ctx: Ctx) -> Result<()> {
     let subject = start(&ctx, true).await?;
     let link = &subject.fronts.pulse;
@@ -450,9 +622,9 @@ async fn uplink_cadence(ctx: Ctx) -> Result<()> {
             let from = link.clock();
             tokio::time::sleep(Duration::from_secs(15)).await;
             let to = link.clock();
-            // stop walking, and let the last leg end
+            // stop walking: the leg under way goes on to its end, and standing begins after it
             let _ = walking.send(true);
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            tokio::time::sleep(Duration::from_secs_f32(LEG_SECONDS) + LEG_END_MARGIN).await;
             let stood = link.clock();
             tokio::time::sleep(Duration::from_secs(10)).await;
             (from, to, stood, link.clock())
@@ -528,7 +700,7 @@ async fn walk_at_round_trip(ctx: Ctx, round_trip: Duration) -> Result<()> {
         tokio::time::sleep(MEASURE).await;
         (
             [plain, slowed, measured, link.clock()],
-            link.counters().delayed - before,
+            link.counters().delayed.saturating_sub(before),
         )
     })
     .await;
@@ -542,6 +714,10 @@ async fn walk_at_round_trip(ctx: Ctx, round_trip: Duration) -> Result<()> {
     ctx.note("plain link", &baseline);
     ctx.note("slow link", &measured);
     ctx.note(
+        "slow link: the fewest data datagrams a second allowed",
+        walking_floor(baseline.data_per_second, round_trip),
+    );
+    ctx.note(
         "the explorer's last uplink readout",
         watched.uplink.lock().clone(),
     );
@@ -551,24 +727,7 @@ async fn walk_at_round_trip(ctx: Ctx, round_trip: Duration) -> Result<()> {
     if delayed == 0 {
         bail!("the link delayed nothing while it was measured: the fault touched nothing");
     }
-    expect_baseline(&baseline)?;
-    if measured.silences > SILENCES_ALLOWED || silences.share > SILENT_SHARE_ALLOWED {
-        bail!(
-            "over a healthy link with a {} ms round trip the walking explorer's movement does not keep flowing: {} silences of over {} ms in {} s (at most {SILENCES_ALLOWED} allowed), together {:.1} % of the walk beyond the {} ms beat (at most {:.0} % allowed), the longest {} ms, one every {} ms; the explorer's readout showed an input held in {} of those silences",
-            ms(round_trip),
-            measured.silences,
-            measured.silence_over_ms,
-            measured.walked_s,
-            silences.share * 100.0,
-            measured.median_gap_ms,
-            SILENT_SHARE_ALLOWED * 100.0,
-            measured.longest_silence_ms,
-            measured
-                .silence_period_ms
-                .map_or("-".to_owned(), |period| period.to_string()),
-            measured.silences_seen_held,
-        );
-    }
+    judge_slow_walk(&baseline, &measured, &silences, round_trip)?;
     subject.explorer.stop().await;
     Ok(())
 }
@@ -580,7 +739,7 @@ fn lost_between(seen: &[Seen], from: Duration, to: Duration) -> (usize, usize) {
         .filter(|seen| seen.fate == Fate::Lost && seen.at >= from && seen.at < to)
         .collect();
     let data = lost.iter().filter(|seen| seen.bytes >= DATA_BYTES).count();
-    (lost.len() - data, data)
+    (lost.len().saturating_sub(data), data)
 }
 
 async fn walk_on_a_lossy_link(ctx: Ctx) -> Result<()> {
@@ -666,21 +825,14 @@ async fn walk_on_a_lossy_link(ctx: Ctx) -> Result<()> {
             .count() as f64
             / moments.len() as f64
     };
-    let lost = after.dropped - before.dropped;
-    let beat = Duration::from_millis(measured.median_gap_ms);
-    let long: Vec<&Value> = attributed
-        .iter()
-        .filter(|silence| {
-            silence["beyond_beat_ms"].as_u64().unwrap_or(0) > ms(LOSSY_SILENCE_ALLOWED)
-        })
-        .collect();
+    let lost = after.dropped.saturating_sub(before.dropped);
     ctx.note(
         "path",
         json!({ "delay_ms": 100, "jitter_ms": 100, "loss": 0.02, "each_way": true, "round_trip_ms": [200, 400] }),
     );
     ctx.note(
         "datagrams lost and delayed while measured, both ways",
-        (lost, after.delayed - before.delayed),
+        (lost, after.delayed.saturating_sub(before.delayed)),
     );
     let measured_up: Vec<&Seen> = up
         .iter()
@@ -703,6 +855,10 @@ async fn walk_on_a_lossy_link(ctx: Ctx) -> Result<()> {
     ctx.note("plain link", &baseline);
     ctx.note("lossy link", &measured);
     ctx.note(
+        "lossy link: the fewest data datagrams a second allowed",
+        walking_floor(baseline.data_per_second, LOSSY_ROUND_TRIP_LONGEST),
+    );
+    ctx.note(
         "silences and the losses in the 1.2 s before each",
         &attributed,
     );
@@ -724,21 +880,7 @@ async fn walk_on_a_lossy_link(ctx: Ctx) -> Result<()> {
     if lost == 0 {
         bail!("the link lost nothing while it was measured: the fault touched nothing");
     }
-    expect_baseline(&baseline)?;
-    if !long.is_empty() || measured.silences > LOSSY_SILENCES_ALLOWED {
-        bail!(
-            "over a link with a round trip of 300 ms give or take 100 and 2 % loss each way, the walking explorer's movement stopped {} times for more than {} ms beyond its {} ms beat (none allowed), and {} silences of over {} ms in all in {} s (at most {LOSSY_SILENCES_ALLOWED} allowed); {} of them after a loss in the 1.2 s before, the readout showed an input held in {}; the longest gap {} ms",
-            long.len(),
-            ms(LOSSY_SILENCE_ALLOWED),
-            ms(beat),
-            measured.silences,
-            measured.silence_over_ms,
-            measured.walked_s,
-            after_a_loss,
-            measured.silences_seen_held,
-            measured.longest_silence_ms,
-        );
-    }
+    judge_lossy_walk(&baseline, &measured, &silences, after_a_loss)?;
     subject.explorer.stop().await;
     Ok(())
 }
@@ -781,11 +923,15 @@ async fn queued_stall(ctx: Ctx, round_trip: Duration) -> Result<()> {
         link.set(Direction::Uplink, slow);
         let released = link.clock();
         let counters = link.counters();
-        // the observer saw the explorer here when the burst went: it must see it walk on
-        let seen_at_release = bot.view().of(&wallet).map(|seen| seen.world);
+        // The burst reaches Pulse half a round trip after the release, and the observer a moment
+        // later: where the observer sees the explorer then is where the burst left it. Walking on
+        // is movement past that.
+        tokio::time::sleep(round_trip / 2 + LANDING).await;
+        let landed = link.clock();
+        let seen_after_burst = bot.view().of(&wallet).map(|seen| seen.world);
         let walked_on = expect_or(
             &ctx,
-            "after the stall the observer sees the explorer walk on: 2 m from where it saw it when the queue let go",
+            "after the stall the observer sees the explorer walk on: 2 m from where the released burst left it",
             Duration::from_secs(20),
             || {
                 bot.alive()?;
@@ -794,7 +940,8 @@ async fn queued_stall(ctx: Ctx, round_trip: Duration) -> Result<()> {
                     .of(&wallet)
                     .map(|seen| seen.world)
                     .ok_or("the observer no longer holds the explorer")?;
-                let from = seen_at_release.ok_or("the observer did not hold the explorer when the queue let go")?;
+                let from = seen_after_burst
+                    .ok_or("the observer did not hold the explorer once the burst had landed")?;
                 let moved = ((now[0] - from[0]).powi(2) + (now[2] - from[2]).powi(2)).sqrt();
                 (moved >= 2.0)
                     .then_some(())
@@ -802,10 +949,10 @@ async fn queued_stall(ctx: Ctx, round_trip: Duration) -> Result<()> {
             },
         )
         .await;
-        // and the session stays up for a while after the burst
-        tokio::time::sleep(Duration::from_secs(8)).await;
+        // the session stays up, and the uplink is read, for a while after the burst
+        tokio::time::sleep(AFTER_RELEASE).await;
         (
-            [plain, slowed, stalled, released, link.clock()],
+            [plain, slowed, stalled, released, landed, link.clock()],
             before,
             counters,
             walked_on,
@@ -817,14 +964,15 @@ async fn queued_stall(ctx: Ctx, round_trip: Duration) -> Result<()> {
     let legs = watched.legs.lock().clone();
     let samples = watched.samples.lock().clone();
     let (baseline, _) = read(&up, &legs, marks[0], marks[1], &samples);
-    let queued = at_release.queued - before.queued;
-    let released = at_release.released - before.released;
+    let (after_release, _) = read(&up, &legs, marks[4], marks[5], &samples);
+    let queued = at_release.queued.saturating_sub(before.queued);
+    let released = at_release.released.saturating_sub(before.released);
     let data = queued_data(&up, marks[2], marks[3]);
-    let last_data_after = data.last().map(|at| ms(*at - marks[2]));
+    let last_data_after = data.last().map(|at| ms(at.saturating_sub(marks[2])));
     let first_stall_seen = samples
         .iter()
         .find(|sample| sample.at >= marks[2] && sample.stalled == Some(true))
-        .map(|sample| ms(sample.at - marks[2]));
+        .map(|sample| ms(sample.at.saturating_sub(marks[2])));
     let after: Vec<&Sample> = samples
         .iter()
         .filter(|sample| sample.at >= marks[3])
@@ -834,8 +982,11 @@ async fn queued_stall(ctx: Ctx, round_trip: Duration) -> Result<()> {
         .filter(|sample| sample.state != "authenticated")
         .map(|sample| (seconds(sample.at), sample.state.clone()))
         .collect();
-    let disconnects = subject.explorer.log_count("pulse: disconnected") - disconnects_before;
-    let leaves = bot.view().leaves_of(&wallet) - leaves_before;
+    let disconnects = subject
+        .explorer
+        .log_count("pulse: disconnected")
+        .saturating_sub(disconnects_before);
+    let leaves = bot.view().leaves_of(&wallet).saturating_sub(leaves_before);
     ctx.note("round trip set, ms", ms(round_trip));
     ctx.note("stall, ms", ms(STALL));
     ctx.note("plain link", &baseline);
@@ -847,6 +998,15 @@ async fn queued_stall(ctx: Ctx, round_trip: Duration) -> Result<()> {
         "data datagrams among them, released together (Pulse allows a burst of 16 inputs)",
         data.len(),
     );
+    if data.len() <= SERVER_INPUT_BURST {
+        ctx.note(
+            "burst",
+            format!(
+                "not exercised: the burst held {} data datagrams, not more than the {SERVER_INPUT_BURST} inputs Pulse allows, so this run does not show the session surviving a burst over the limit",
+                data.len()
+            ),
+        );
+    }
     ctx.note(
         "the last data datagram the stall queued came this long after it began, ms",
         last_data_after,
@@ -855,6 +1015,12 @@ async fn queued_stall(ctx: Ctx, round_trip: Duration) -> Result<()> {
         "the explorer first said its uplink stalled this long after the stall began, ms",
         first_stall_seen,
     );
+    ctx.note("after the burst landed", &after_release);
+    ctx.note(
+        "after the burst landed: the fewest data datagrams a second allowed",
+        walking_floor(baseline.data_per_second, round_trip),
+    );
+    ctx.note("readouts after the release", after.len());
     ctx.note(
         "readouts after the release that were not authenticated (s, state)",
         not_authenticated.iter().take(10).collect::<Vec<_>>(),
@@ -877,21 +1043,216 @@ async fn queued_stall(ctx: Ctx, round_trip: Duration) -> Result<()> {
         );
     }
     expect_baseline(&baseline)?;
-    if disconnects > 0
-        || after
-            .iter()
-            .any(|sample| sample.state == "terminal disconnect")
-    {
-        bail!(
-            "the explorer's Pulse session ended after the burst of {} data datagrams the stall released (Pulse allows {SERVER_INPUT_BURST}): {:?}",
-            data.len(),
-            last_log_lines(&subject.explorer, "pulse: disconnected", 2)
-        );
-    }
+    judge_session_kept(disconnects, leaves, after.len(), &not_authenticated)?;
     walked_on?;
-    if let Some(&(at, ref state)) = not_authenticated.last() {
-        bail!("the explorer reported Pulse as {state} at {at} s, after the stall");
-    }
+    judge_after_release(&baseline, &after_release, round_trip)?;
     subject.explorer.stop().await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(value: u64) -> Duration {
+        Duration::from_millis(value)
+    }
+
+    /// Walk legs of [`LEG_SECONDS`] back to back from 0 up to `until` ms.
+    fn legs(until: u64) -> Vec<(Duration, Duration)> {
+        let leg = (LEG_SECONDS * 1000.0) as u64;
+        (0..until / leg)
+            .map(|index| (at(index * leg), at((index + 1) * leg)))
+            .collect()
+    }
+
+    /// What a sender of movement put on the uplink: a data datagram at each of `times` (ms), with
+    /// `fate`, and a transport datagram of 12 bytes every 250 ms throughout.
+    fn uplink(times: &[u64], until: u64, fate: impl Fn(u64) -> Fate) -> Vec<Seen> {
+        let mut seen: Vec<Seen> = times
+            .iter()
+            .map(|&time| Seen {
+                at: at(time),
+                bytes: 30,
+                fate: fate(time),
+            })
+            .chain((0..until).step_by(250).map(|time| Seen {
+                at: at(time) + at(1),
+                bytes: 12,
+                fate: Fate::Passed,
+            }))
+            .collect();
+        seen.sort_by_key(|seen| seen.at);
+        seen
+    }
+
+    /// Movement every `beat` ms from `from` to `to`, except inside the `held` spans.
+    fn beat(from: u64, to: u64, beat: u64, held: &[(u64, u64)]) -> Vec<u64> {
+        (from..to)
+            .step_by(beat as usize)
+            .filter(|time| {
+                !held
+                    .iter()
+                    .any(|&(start, end)| *time >= start && *time < end)
+            })
+            .collect()
+    }
+
+    /// A hold of `length` ms every `every` ms from `from` to `to`.
+    fn holds(from: u64, to: u64, every: u64, length: u64) -> Vec<(u64, u64)> {
+        (from..to)
+            .step_by(every as usize)
+            .map(|start| (start, start + length))
+            .collect()
+    }
+
+    const PLAIN_BEAT: u64 = 132;
+    /// The walk scenarios' marks: the plain link from 0 to 10 s, the measure from 18 s.
+    const MEASURED_FROM: u64 = 18_000;
+
+    /// The verdict on a slow-path walk whose movement over the measured 30 s is `measured`.
+    fn slow_walk(round_trip: u64, measured: Vec<u64>) -> Result<()> {
+        let until = MEASURED_FROM + 30_000;
+        let mut times = beat(0, MEASURED_FROM, PLAIN_BEAT, &[]);
+        times.extend(measured);
+        let up = uplink(&times, until, |_| Fate::Passed);
+        let legs = legs(until);
+        let (baseline, _) = read(&up, &legs, at(0), at(10_000), &[]);
+        let (reading, silences) = read(&up, &legs, at(MEASURED_FROM), at(until), &[]);
+        judge_slow_walk(&baseline, &reading, &silences, at(round_trip))
+    }
+
+    #[test]
+    fn the_rate_floor_is_half_of_what_the_spacing_allows() {
+        assert_eq!(walking_floor(8.4, at(800)), 2.86);
+        assert_eq!(walking_floor(8.4, at(1200)), 2.22);
+        // a short round trip allows the plain-link rate
+        assert_eq!(walking_floor(8.4, at(300)), 4.2);
+        assert_eq!(walking_floor(8.4, LOSSY_ROUND_TRIP_LONGEST), 4.0);
+    }
+
+    #[test]
+    fn a_walk_at_the_designed_spacing_passes() {
+        let end = MEASURED_FROM + 30_000;
+        slow_walk(800, beat(MEASURED_FROM, end, 177, &[])).unwrap();
+        slow_walk(1200, beat(MEASURED_FROM, end, 227, &[])).unwrap();
+    }
+
+    #[test]
+    fn one_movement_a_round_trip_fails() {
+        let end = MEASURED_FROM + 30_000;
+        for round_trip in [800, 1200] {
+            let error = slow_walk(round_trip, beat(MEASURED_FROM, end, round_trip, &[]))
+                .expect_err("a trickle passed")
+                .to_string();
+            assert!(error.contains("data datagrams a second"), "{error}");
+        }
+    }
+
+    #[test]
+    fn movement_that_stops_fails() {
+        let end = MEASURED_FROM + 30_000;
+        // altogether, from the start of the measure
+        assert!(slow_walk(800, Vec::new()).is_err());
+        // half way through the measure
+        assert!(slow_walk(800, beat(MEASURED_FROM, MEASURED_FROM + 15_000, 177, &[])).is_err());
+        // for the rest of every leg, after its first second
+        let leg = (LEG_SECONDS * 1000.0) as u64;
+        let rest: Vec<(u64, u64)> = (MEASURED_FROM / leg..end / leg + 1)
+            .map(|index| (index * leg + 1000, (index + 1) * leg))
+            .collect();
+        let error = slow_walk(800, beat(MEASURED_FROM, end, 177, &rest))
+            .expect_err("movement that stops for the rest of each leg passed")
+            .to_string();
+        assert!(error.contains("silences"), "{error}");
+    }
+
+    #[test]
+    fn holds_that_come_and_go_fail() {
+        let end = MEASURED_FROM + 30_000;
+        // at 800 ms: holds of up to 400 ms, about every 1.4 s
+        let held = holds(MEASURED_FROM + 700, end, 1400, 400);
+        let error = slow_walk(800, beat(MEASURED_FROM, end, 177, &held))
+            .expect_err("holds at 800 ms passed")
+            .to_string();
+        assert!(error.contains("silences"), "{error}");
+        // at 1.2 s: holds of up to 830 ms, about every 2.1 s
+        let held = holds(MEASURED_FROM + 700, end, 2100, 830);
+        assert!(slow_walk(1200, beat(MEASURED_FROM, end, 227, &held)).is_err());
+    }
+
+    /// The verdict on the lossy walk whose movement over the measured minute is `measured`.
+    fn lossy_walk(measured: Vec<u64>) -> Result<()> {
+        let until = MEASURED_FROM + 60_000;
+        let mut times = beat(0, MEASURED_FROM, PLAIN_BEAT, &[]);
+        times.extend(measured);
+        let up = uplink(&times, until, |_| Fate::Passed);
+        let legs = legs(until);
+        let (baseline, _) = read(&up, &legs, at(0), at(10_000), &[]);
+        let (reading, silences) = read(&up, &legs, at(MEASURED_FROM), at(until), &[]);
+        judge_lossy_walk(&baseline, &reading, &silences, 0)
+    }
+
+    #[test]
+    fn the_lossy_walk_is_judged_by_the_same_rules() {
+        let end = MEASURED_FROM + 60_000;
+        // the plain beat with one movement missing after a loss passes
+        lossy_walk(beat(MEASURED_FROM, end, PLAIN_BEAT, &[(30_140, 30_150)])).unwrap();
+        // one movement a round trip of 300 ms fails
+        let error = lossy_walk(beat(MEASURED_FROM, end, 300, &[]))
+            .expect_err("a trickle passed")
+            .to_string();
+        assert!(error.contains("data datagrams a second"), "{error}");
+        // movement that stops fails
+        assert!(lossy_walk(beat(MEASURED_FROM, MEASURED_FROM + 20_000, PLAIN_BEAT, &[])).is_err());
+        // holds that come and go fail
+        let held = holds(MEASURED_FROM + 700, end, 3000, 500);
+        assert!(lossy_walk(beat(MEASURED_FROM, end, PLAIN_BEAT, &held)).is_err());
+    }
+
+    /// A queued stall at a 1.2 s round trip: the plain link to 10 s, the stall from 18 to 22 s,
+    /// what the queue kept noted as queued, and `after` (ms) once the queue let go. The uplink
+    /// is read from the landing to 32 s.
+    fn after_stall(after: Vec<u64>) -> Result<()> {
+        let (stalled, released, until) = (18_000, 22_000, 32_000);
+        let landed = released + 600 + ms(LANDING);
+        let mut times = beat(0, released, PLAIN_BEAT, &[]);
+        times.extend(after);
+        let up = uplink(&times, until, |time| {
+            if (stalled..released).contains(&time) {
+                Fate::Queued
+            } else {
+                Fate::Passed
+            }
+        });
+        let legs = legs(until);
+        let (baseline, _) = read(&up, &legs, at(0), at(10_000), &[]);
+        let (reading, _) = read(&up, &legs, at(landed), at(until), &[]);
+        judge_after_release(&baseline, &reading, at(1200))
+    }
+
+    #[test]
+    fn a_burst_alone_does_not_count_as_walking_on() {
+        // the uplink stays held after the queue let go: only the burst went
+        let error = after_stall(Vec::new())
+            .expect_err("the burst alone passed")
+            .to_string();
+        assert!(error.contains("data datagrams a second"), "{error}");
+        // one movement a round trip after it is no walk either
+        assert!(after_stall(beat(22_000, 32_000, 1200, &[])).is_err());
+        // movement at the designed spacing after it is
+        after_stall(beat(22_000, 32_000, 227, &[])).unwrap();
+    }
+
+    #[test]
+    fn the_session_over_a_stall_is_judged_on_everything_collected() {
+        judge_session_kept(0, 0, 40, &[]).unwrap();
+        assert!(judge_session_kept(1, 0, 40, &[]).is_err());
+        let error = judge_session_kept(0, 1, 40, &[]).unwrap_err().to_string();
+        assert!(error.contains("leave"), "{error}");
+        let error = judge_session_kept(0, 0, 0, &[]).unwrap_err().to_string();
+        assert!(error.contains("no read"), "{error}");
+        assert!(judge_session_kept(0, 0, 40, &[(30.0, "connecting".into())]).is_err());
+        assert!(judge_session_kept(0, 0, 40, &[(30.0, "terminal disconnect".into())]).is_err());
+    }
 }
