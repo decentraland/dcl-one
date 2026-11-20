@@ -42,7 +42,9 @@ use dcl_component::{
     },
     SceneComponentId, SceneEntityId,
 };
-use system_bridge::{ProfileChangedEvent, SystemApi};
+use system_bridge::{
+    ProfileChangedEvent, SetAvatarData, SetAvatarError, SetAvatarResult, SystemApi,
+};
 use wallet::Wallet;
 
 use bevy_console::ConsoleCommand;
@@ -65,22 +67,28 @@ impl Plugin for UserProfilePlugin {
             )
                 .before(process_transport_updates), // .in_set(TODO)
         );
-        app.add_systems(
-            Update,
-            (
-                pipe_profile_changes_to_scene,
-                process_profile,
-                outfits::process_outfits,
-            ),
-        );
-        app.init_resource::<outfits::OutfitsState>();
-
-        // a server has no real local player: never insert/announce/deploy the fake
-        // player's profile or write PLAYER identity into scene crdts
-        if !common::structs::server_mode() {
+        app.add_systems(Update, outfits::process_outfits)
+            .init_resource::<outfits::OutfitsState>();
+        if common::structs::server_mode() {
+            // A server never publishes or deploys a local player.
             app.add_systems(
                 Update,
-                setup_primary_profile.in_set(SceneSets::RestrictedActions), // in restricted actions so we get profile updates from login before a scene tick runs
+                (process_profile, pipe_profile_changes_to_scene)
+                    .chain()
+                    .in_set(SceneSets::RestrictedActions),
+            );
+        } else {
+            // Queue edits, settle the upload and refresh PLAYER before notifying scene readers.
+            app.add_systems(
+                Update,
+                (
+                    process_profile,
+                    drive_profile_deploys,
+                    setup_primary_profile,
+                    pipe_profile_changes_to_scene,
+                )
+                    .chain()
+                    .in_set(SceneSets::RestrictedActions),
             );
         }
 
@@ -109,8 +117,7 @@ impl Plugin for UserProfilePlugin {
                 inputs: &[],
             });
         app.insert_resource(CurrentUserProfile::default());
-        app.init_resource::<ProfileCache>()
-            .add_event::<ProfileDeployedEvent>();
+        app.init_resource::<ProfileCache>();
     }
 }
 
@@ -374,7 +381,7 @@ fn profile_requests(
             "unresolved": cache.entries.values().filter(|entry| entry.data.is_none() && entry.compact.is_none()).count(),
             "ownVersion": current.profile.as_ref().map(|profile| profile.version),
             "peerVersion": current.peer_profile().map(|profile| profile.version),
-            "deployPending": current.revert_to.is_some()}).to_string());
+            "deployPending": current.saves.active.is_some() || !current.saves.queued.is_empty()}).to_string());
     }
 }
 
@@ -421,6 +428,16 @@ impl ProfileCache {
     fn update(&mut self, profile: UserProfile) {
         if let Some(address) = profile.content.eth_address.as_h160() {
             let entry = self.touch(address, ProfileTier::Full);
+            // Preserve a pending server snapshot read-back (its ranking version is lowered).
+            if entry.announced == profile.version
+                && entry.profile().is_some_and(|held| {
+                    held.version < profile.version
+                        && held.content == profile.content
+                        && held.base_url == profile.base_url
+                })
+            {
+                return;
+            }
             entry.announced = profile.version;
             entry.data = Some((Box::new(profile), ProfileSource::Catalyst));
             entry.compact = None;
@@ -550,10 +567,8 @@ impl ProfileManager<'_, '_> {
             .or(entry.compact.as_ref().map(|compact| &compact.name)))
     }
 
-    /// Record an authoritative profile (our own, which we deploy ourselves).
-    /// Unconditional: even a same-version edit replaces what the cache holds, and its version
-    /// is the one awaited, so a profile put back after a failed deploy doesn't wait for the
-    /// version that failed.
+    /// Publish the local account's confirmed profile to cache readers. A pending read-back
+    /// for server-generated thumbnails stays due when the same content is published again.
     pub fn update(&mut self, profile: UserProfile) {
         self.cache.update(profile);
     }
@@ -591,20 +606,17 @@ fn is_senders_own(sender: Address, content: &SerializedProfile) -> bool {
             .is_none_or(|id| id.is_empty() || is_sender(id))
 }
 
-pub fn setup_primary_profile(
+fn setup_primary_profile(
     mut commands: Commands,
     player: Query<(Entity, Option<&UserProfile>), With<PrimaryUser>>,
     mut current_profile: ResMut<CurrentUserProfile>,
     transports: Query<&Transport>,
     mut senders: Local<Vec<RpcEventSender>>,
     mut subscribe_events: EventReader<RpcCallEvent>,
-    mut deploys: Local<Vec<PendingDeploy>>,
-    wallet: Res<Wallet>,
-    ipfas: IpfsAssetServer,
     mut contexts: Query<&mut GlobalCrdtState>,
     mut cache: ProfileManager,
     mut last_announce: Local<f64>,
-    mut announced: Local<Option<u32>>,
+    mut announced: Local<Option<PublishedProfile>>,
     time: Res<Time>,
 ) {
     // gather any event receivers
@@ -618,18 +630,16 @@ pub fn setup_primary_profile(
     // adopt the snapshots the server generated for our deployed profile: a change like any
     // other, so the component, scenes and the profile-changed stream all pick them up
     if let Some(snapshots) = current_profile
-        .profile
-        .as_ref()
+        .peer_profile()
         .and_then(|profile| cache.server_snapshots(profile))
     {
-        if let Some(profile) = current_profile.profile.as_mut() {
-            profile.content.avatar.snapshots = Some(snapshots);
-        }
+        current_profile.set_server_snapshots(snapshots);
     }
 
     if let Ok((player, maybe_profile)) = player.single() {
         if maybe_profile.is_none() || current_profile.is_changed() {
             let Some(profile) = current_profile.profile.as_ref() else {
+                *announced = None;
                 if maybe_profile.is_some() {
                     commands.entity(player).remove::<UserProfile>();
                     // logged out: scenes must stop seeing the previous account as `PLAYER`
@@ -649,9 +659,6 @@ pub fn setup_primary_profile(
             // update component
             commands.entity(player).try_insert(profile.clone());
 
-            // update cache
-            cache.update(profile.clone());
-
             // send to scenes (every context: the local player is `PLAYER` in all of them)
             for mut global_crdt in contexts.iter_mut() {
                 global_crdt.update_crdt(
@@ -664,144 +671,109 @@ pub fn setup_primary_profile(
                     },
                 );
             }
+        }
 
-            // Announce the new version over Pulse alone, as a `ProfileVersionAnnouncement` — peers
-            // refetch from catalyst, or ask us directly with an rfc4 `ProfileRequest`, which is still
-            // answered on the byte transports (that request/response pair is what resolves a guest,
-            // who has no catalyst presence). No byte transport carries the unsolicited announcement:
-            // a peer that sees one over LiveKit answers it with LiveKit movement, which is exactly
-            // the traffic Pulse replaces. While an edit deploys, peers hear the version from before
-            // it (`peer_profile`); the new one goes out below once the deploy lands.
-            // Reset the keepalive timer so the periodic re-announce below doesn't immediately fire
-            // again.
-            let peer = current_profile.peer_profile().unwrap_or(profile);
-            announce_version(&transports, peer);
-            *announced = Some(peer.version);
-            *last_announce = time.elapsed_secs_f64();
-
-            // send to event receivers
-            senders.retain(|sender| {
-                let _ = sender.send(format!(
-                    "{{ \"ethAddress\": \"{}\", \"version\": \"{}\" }}",
-                    profile.content.user_id.as_ref().unwrap(),
-                    profile.version
-                ));
-                !sender.is_closed()
-            });
-
-            // deploy to server
-            if !current_profile.is_deployed && !current_profile.deploy_held {
-                debug!("deploying {:#?}", profile);
-                let ipfs = ipfas.ipfs().clone();
-                let profile = profile.clone();
-                let wallet = wallet.clone();
-                // a deploy still running is not dropped: it may land, and its result decides
-                // what a failure of this one puts back
-                deploys.push(PendingDeploy {
-                    task: IoTaskPool::get().spawn_compat(deploy_profile(
-                        ipfs,
-                        wallet,
-                        profile.clone(),
-                    )),
-                    profile,
+        let Some(peer) = current_profile.peer_profile() else {
+            *announced = None;
+            return;
+        };
+        let now = time.elapsed_secs_f64();
+        if current_profile.is_changed() || announced.is_none() {
+            let next = PublishedProfile::of(peer);
+            if *announced != next {
+                cache.update(peer.clone());
+                announce_version(&transports, peer);
+                *announced = next;
+                *last_announce = now;
+                senders.retain(|sender| {
+                    let _ = sender.send(format!(
+                        "{{\"ethAddress\":\"{}\",\"version\":\"{}\"}}",
+                        peer.content.eth_address, peer.version
+                    ));
+                    !sender.is_closed()
                 });
-                current_profile.is_deployed = true;
-            }
-        } else if let Some(peer) = current_profile.peer_profile() {
-            let now = time.elapsed_secs_f64();
-            match due_announcement(*announced, peer.version, *last_announce, now) {
-                Some(Announcement::Version) => {
-                    // the deploy that held this version back has landed
-                    announce_version(&transports, peer);
-                    *announced = Some(peer.version);
-                    *last_announce = now;
-                }
-                Some(Announcement::Keepalive) => {
-                    debug!("announcing profile v {}", peer.version);
-                    // The keepalive re-announce goes the same way as the version bump above:
-                    // Pulse only, converted to a `ProfileVersionAnnouncement`.
-                    broadcast(
-                        transports.iter(),
-                        BroadcastTarget::PULSE,
-                        false,
-                        rfc4::AnnounceProfileVersion {
-                            profile_version: peer.version,
-                        },
-                    );
-                    *last_announce = now;
-                }
-                None => (),
             }
         }
+        if now > *last_announce + 5.0 {
+            broadcast(
+                transports.iter(),
+                BroadcastTarget::PULSE,
+                false,
+                rfc4::AnnounceProfileVersion {
+                    profile_version: peer.version,
+                },
+            );
+            *last_announce = now;
+        }
     }
+}
 
-    // settle every deploy that finished, oldest first
+fn drive_profile_deploys(
+    mut current: ResMut<CurrentUserProfile>,
+    mut deploys: Local<Vec<PendingDeploy>>,
+    wallet: Res<Wallet>,
+    ipfas: IpfsAssetServer,
+    mut cache: ProfileManager,
+) {
     let mut index = 0;
     while index < deploys.len() {
         let Some(result) = deploys[index].task.complete() else {
             index += 1;
             continue;
         };
-        let deployed = deploys.remove(index).profile;
-        let address = deployed.content.eth_address.as_h160();
-        let version = deployed.version;
-        let success = match result {
-            Ok(()) => {
-                info!("deployed profile v{version}");
-                if let Some(address) = address {
-                    cache.refetch_deployed(address, version);
-                }
-                true
+        let PendingDeploy {
+            address, submitted, ..
+        } = deploys.swap_remove(index);
+        let version = submitted.profile.version;
+        let outcome = result.map_err(|error| {
+            let message = profile_deploy_message(&error);
+            error!("failed to deploy profile v{version}: {message}");
+            message
+        });
+        let landed = outcome.is_ok();
+        current.finish_deploy(submitted, outcome);
+        if landed {
+            info!("deployed profile v{version}");
+            if let Some(known) = current.peer_profile().filter(|profile| {
+                profile.version == version && profile.content.eth_address.as_h160() == Some(address)
+            }) {
+                cache.update(known.clone());
+                cache.refetch_deployed(address, version);
             }
-            Err(e) => {
-                error!("failed to deploy profile v{version}: {e}");
-                false
-            }
-        };
-        // only a profile that changed is a change the avatar and scenes must see; otherwise
-        // just what peers may be told moves on
-        if current_profile
-            .bypass_change_detection()
-            .deploy_finished(&deployed, success)
-        {
-            current_profile.set_changed();
         }
-        commands.send_event(ProfileDeployedEvent {
+    }
+
+    let Some(address) = wallet.address() else {
+        return;
+    };
+    if wallet.is_guest()
+        || current
+            .profile
+            .as_ref()
+            .and_then(|profile| profile.content.eth_address.as_h160())
+            != Some(address)
+        || deploys.iter().any(|deploy| deploy.address == address)
+    {
+        return;
+    }
+    if let Some(submitted) = current.bypass_change_detection().begin_deploy() {
+        let task = IoTaskPool::get().spawn_compat(deploy_profile(
+            ipfas.ipfs().clone(),
+            wallet.snapshot(),
+            submitted.profile.clone(),
+        ));
+        deploys.push(PendingDeploy {
             address,
-            version,
-            success,
+            task,
+            submitted,
         });
     }
 }
 
-/// A deploy of the local player's profile still running, and the profile it carries.
-pub struct PendingDeploy {
-    profile: UserProfile,
+struct PendingDeploy {
+    address: Address,
+    submitted: SubmittedProfile,
     task: Task<Result<(), anyhow::Error>>,
-}
-
-/// What peers are owed about the profile they may know (`peer_version`, see `peer_profile`).
-#[derive(Debug, PartialEq)]
-enum Announcement {
-    /// Its version, which differs from the last one announced: a deploy that held it back landed.
-    Version,
-    /// The five-second keepalive of the version already announced.
-    Keepalive,
-}
-
-fn due_announcement(
-    announced: Option<u32>,
-    peer_version: u32,
-    last_announce: f64,
-    now: f64,
-) -> Option<Announcement> {
-    if announced != Some(peer_version) {
-        Some(Announcement::Version)
-    } else if now > last_announce + 5.0 {
-        Some(Announcement::Keepalive)
-    } else {
-        None
-    }
 }
 
 /// Announce `profile`'s version over Pulse, converted to a `ProfileVersionAnnouncement`.
@@ -829,121 +801,248 @@ fn announce_version(transports: &Query<&Transport>, profile: &UserProfile) {
 #[derive(Resource, Default)]
 pub struct CurrentUserProfile {
     pub profile: Option<UserProfile>,
+    /// False while a profile needs submission or an existing submission is in flight.
     pub is_deployed: bool,
     /// A new profile made while the world is held: the host's welcome page deploys it, with its
     /// save after the terms are accepted.
     pub deploy_held: bool,
-    /// While an edit deploys, the newest profile the server is known to hold: the one from
-    /// before the first edit still deploying, or a later edit whose deploy landed since. Other
-    /// players are told about it meanwhile, and a failed deploy puts it back.
-    pub revert_to: Option<UserProfile>,
+    pub(crate) saves: ProfileSaves,
     /// The highest version this session gave an edit of an account's profile. A deploy that
     /// failed here may still have reached the server (an error after the catalyst took it),
     /// and a peer that read it skips any other profile announced under the same number, so the
     /// next edit never reuses it.
-    pub last_version: Option<(Address, u32)>,
+    pub last_versions: HashMap<Address, u32>,
+}
+
+/// The base, active submission and edits waiting for the next payload, in arrival order.
+#[derive(Default)]
+pub(crate) struct ProfileSaves {
+    session: u64,
+    base: Option<UserProfile>,
+    base_published: bool,
+    active: Option<u32>,
+    queued: Vec<ProfileEdit>,
+}
+
+type AvatarReply = RpcResultSender<SetAvatarResult>;
+
+struct ProfileEdit {
+    version: u32,
+    patch: ProfilePatch,
+}
+
+enum ProfilePatch {
+    Avatar(Box<SetAvatarData>, AvatarReply),
+    MarkGuestAccount,
+}
+
+impl ProfilePatch {
+    fn into_sender(self) -> Option<AvatarReply> {
+        match self {
+            Self::Avatar(_, sender) => Some(sender),
+            Self::MarkGuestAccount => None,
+        }
+    }
+}
+
+struct SubmittedProfile {
+    session: u64,
+    profile: UserProfile,
+    senders: Vec<AvatarReply>,
 }
 
 impl CurrentUserProfile {
-    /// Give the edited profile its version: one above its own and above every version this
-    /// session already gave an edit of the same account.
-    pub fn bump_version(&mut self) {
+    /// Give the edited profile a fresh version even when an earlier write failed.
+    fn bump_version(&mut self) {
         let Some(profile) = self.profile.as_mut() else {
             return;
         };
         let address = profile.content.eth_address.as_h160();
-        let used = match self.last_version {
-            Some((last, version)) if Some(last) == address => version,
-            _ => 0,
+        let Some(address) = address else { return };
+        let used = self.last_versions.entry(address).or_default();
+        profile.version = profile.version.max(*used) + 1;
+        profile.content.version = i64::from(profile.version);
+        *used = profile.version;
+    }
+
+    /// Keep the published profile, or the initial draft for an account creating its first profile.
+    fn begin_edits(&mut self) {
+        if self.saves.base.is_none() {
+            self.saves.base = self.profile.clone();
+            self.saves.base_published = self.is_deployed;
+        }
+    }
+
+    /// Login marks authenticated guest profiles locally before persisting that classification.
+    pub fn queue_guest_resave(&mut self) {
+        self.begin_edits();
+        self.bump_version();
+        let Some(profile) = self.profile.as_ref() else {
+            return;
         };
-        profile.version = profile.version.max(used) + 1;
-        profile.content.version = profile.version as i64;
-        self.last_version = address.map(|address| (address, profile.version));
+        self.saves.queued.push(ProfileEdit {
+            version: profile.version,
+            patch: ProfilePatch::MarkGuestAccount,
+        });
+        self.is_deployed = false;
     }
 
-    /// Keep the profile as it is before an edit that will deploy; an older edit still deploying
-    /// keeps the snapshot it took.
-    pub fn snapshot_for_revert(&mut self) {
-        if self.revert_to.is_none() {
-            self.revert_to = self.profile.clone();
-        }
-    }
-
-    /// The deploy of `deployed` has finished; a result for another account changes nothing.
-    /// Every edit deploys, and a newer one does not cancel an older one still running.
-    /// - The newest edit landing keeps it; failing puts `revert_to` back without deploying it
-    ///   again.
-    /// - An older edit landing while a newer one still deploys becomes `revert_to`: the server
-    ///   holds it, so that is what peers hear and what a failure of the newer one puts back.
-    /// - An older edit landing after a newer one failed and put an older profile back is taken:
-    ///   the server holds it.
-    /// - Anything else (an older edit failing, or landing after a newer one landed) changes
-    ///   nothing.
-    ///
-    /// Returns whether the profile changed.
-    pub fn deploy_finished(&mut self, deployed: &UserProfile, success: bool) -> bool {
-        let Some(current) = self.profile.as_ref() else {
-            return false;
-        };
-        let address = deployed.content.eth_address.as_h160();
-        if address.is_none() || address != current.content.eth_address.as_h160() {
-            return false;
-        }
-        let (shown, landed) = (current.version, deployed.version);
-        if !success {
-            if landed != shown {
-                return false;
-            }
-            return match self.revert_to.take() {
-                Some(snapshot) => {
-                    self.profile = Some(snapshot);
-                    true
-                }
-                None => false,
-            };
-        }
-        match landed.cmp(&shown) {
-            std::cmp::Ordering::Equal => {
-                self.revert_to = None;
-                false
-            }
-            std::cmp::Ordering::Less => {
-                if let Some(snapshot) = self.revert_to.as_mut() {
-                    if snapshot.version < landed {
-                        *snapshot = deployed.clone();
-                    }
-                }
-                false
-            }
-            std::cmp::Ordering::Greater => {
-                self.profile = Some(deployed.clone());
-                self.revert_to = None;
-                true
-            }
+    /// Account transitions discard unsent patches. Submitted writes keep their original signer
+    /// and receive the result of the request that owns them.
+    pub fn reset_saves(&mut self) {
+        let previous = std::mem::take(&mut self.saves);
+        self.saves.session = previous.session.wrapping_add(1);
+        for sender in previous
+            .queued
+            .into_iter()
+            .filter_map(|edit| edit.patch.into_sender())
+        {
+            sender.send(Err(SetAvatarError {
+                message: "Account changed before the profile was submitted.".to_owned(),
+                account_changed: true,
+                profile: None,
+            }));
         }
     }
 
-    /// Take the profile the server holds (a realm change reads it again), unless an edit still
-    /// deploying is newer: that edit stays, with its snapshot, until its deploy settles.
+    fn begin_deploy(&mut self) -> Option<SubmittedProfile> {
+        if self.is_deployed || self.deploy_held || self.saves.active.is_some() {
+            return None;
+        }
+        self.begin_edits();
+        let profile = self.profile.clone()?;
+        self.saves.active = Some(profile.version);
+        Some(SubmittedProfile {
+            session: self.saves.session,
+            profile,
+            senders: self
+                .saves
+                .queued
+                .drain(..)
+                .filter_map(|edit| edit.patch.into_sender())
+                .collect(),
+        })
+    }
+
+    fn set_server_snapshots(&mut self, snapshots: AvatarSnapshots) {
+        if let Some(base) = self.saves.base.as_mut() {
+            base.content.avatar.snapshots = Some(snapshots.clone());
+        }
+        if let Some(profile) = self.profile.as_mut() {
+            profile.content.avatar.snapshots = Some(snapshots);
+        }
+    }
+
+    fn rebase_queued(&mut self) {
+        let mut shown = self.saves.base.as_ref().unwrap().clone();
+        for edit in &mut self.saves.queued {
+            match &edit.patch {
+                ProfilePatch::Avatar(patch, _) => apply_avatar_patch(&mut shown, patch),
+                ProfilePatch::MarkGuestAccount => shown.content.has_connected_web3 = Some(false),
+            }
+            edit.version = edit.version.max(shown.version + 1);
+            shown.version = edit.version;
+            shown.content.version = i64::from(edit.version);
+        }
+        if let Some(address) = shown.content.eth_address.as_h160() {
+            let used = self.last_versions.entry(address).or_default();
+            *used = (*used).max(shown.version);
+        }
+        self.profile = Some(shown);
+    }
+
+    /// Only unsent patches need replaying. The active payload is immutable and no later
+    /// payload for this account is signed until the active request finishes.
+    fn finish_deploy(&mut self, submitted: SubmittedProfile, result: Result<(), String>) {
+        let SubmittedProfile {
+            session,
+            profile,
+            senders,
+        } = submitted;
+        let version = profile.version;
+        let same_account = self.profile.as_ref().is_some_and(|current| {
+            current
+                .content
+                .eth_address
+                .eq_ignore_ascii_case(&profile.content.eth_address)
+        });
+        let active =
+            same_account && self.saves.session == session && self.saves.active == Some(version);
+        if active {
+            self.saves.active = None;
+            if result.is_ok()
+                && self
+                    .peer_profile()
+                    .is_none_or(|known| known.version <= version)
+            {
+                self.saves.base = Some(profile);
+                self.saves.base_published = true;
+            }
+            self.rebase_queued();
+            self.is_deployed = self.saves.queued.is_empty();
+            if self.is_deployed && self.saves.base_published {
+                self.saves.base = None;
+            }
+        } else if result.is_ok() && same_account {
+            // The prior login supplied the payload. The current login supplies its account kind.
+            let mut profile = profile;
+            profile.content.has_connected_web3 =
+                self.profile.as_ref().unwrap().content.has_connected_web3;
+            self.adopt_server_profile(profile);
+        }
+        for sender in senders {
+            sender.send(
+                result
+                    .as_ref()
+                    .map(|()| version)
+                    .map_err(|message| SetAvatarError {
+                        message: message.clone(),
+                        account_changed: !same_account || self.saves.session != session,
+                        profile: if same_account && self.saves.session == session {
+                            self.peer_profile()
+                                .map(|profile| Box::new(profile.content.clone()))
+                        } else {
+                            None
+                        },
+                    }),
+            );
+        }
+    }
+
+    /// A realm refresh or a completed write from a previous login can advance this account's
+    /// confirmed base. Older replies cannot replace a newer known profile.
     pub fn adopt_server_profile(&mut self, profile: UserProfile) {
-        let newer_edit_deploying = self.revert_to.is_some()
-            && self
-                .profile
-                .as_ref()
-                .is_some_and(|current| current.version > profile.version);
-        if newer_edit_deploying {
+        if self.peer_profile().is_some_and(|known| {
+            known
+                .content
+                .eth_address
+                .eq_ignore_ascii_case(&profile.content.eth_address)
+                && known.version > profile.version
+        }) {
             return;
         }
+        if self.saves.active.is_some() || !self.saves.queued.is_empty() {
+            self.saves.base = Some(profile);
+            self.saves.base_published = true;
+            if self.saves.active.is_none() {
+                self.rebase_queued();
+            }
+            return;
+        }
+        self.reset_saves();
         self.profile = Some(profile);
         self.is_deployed = true;
         self.deploy_held = false;
-        self.revert_to = None;
     }
 
-    /// The profile other players may know about: the one from before an edit still deploying,
-    /// as they only hear versions the server holds.
+    /// Peers and profile readers see the latest published version. A throwaway guest's
+    /// local version is authoritative because that guest has no server profile.
     pub fn peer_profile(&self) -> Option<&UserProfile> {
-        self.revert_to.as_ref().or(self.profile.as_ref())
+        match &self.saves.base {
+            Some(base) => self.saves.base_published.then_some(base),
+            None if self.is_deployed => self.profile.as_ref(),
+            None => None,
+        }
     }
 }
 
@@ -1223,13 +1322,32 @@ fn send_profile_request(player: &ForeignPlayer, transports: &Query<&Transport>) 
     true
 }
 
-/// Pipes every profile insert/replace the engine sees — a foreign player's, or the local
-/// player's own — to system-scene stream subscribers as (address, version).
+/// The HUD also refetches when the server supplies thumbnails for a previously announced version.
+#[derive(PartialEq)]
+struct PublishedProfile {
+    address: Address,
+    version: u32,
+    snapshots: Option<AvatarSnapshots>,
+}
+
+impl PublishedProfile {
+    fn of(profile: &UserProfile) -> Option<Self> {
+        Some(Self {
+            address: profile.content.eth_address.as_h160()?,
+            version: profile.version,
+            snapshots: profile.content.avatar.snapshots.clone(),
+        })
+    }
+}
+
+/// Foreign profile components are authoritative. The local component includes optimistic edits,
+/// so the local stream follows the account's published profile instead.
 fn pipe_profile_changes_to_scene(
     mut requests: EventReader<SystemApi>,
     mut senders: Local<Vec<RpcStreamSender<ProfileChangedEvent>>>,
-    changed: Query<(Option<&ForeignPlayer>, &UserProfile), Changed<UserProfile>>,
-    wallet: Res<Wallet>,
+    changed: Query<(&ForeignPlayer, &UserProfile), Changed<UserProfile>>,
+    current: Res<CurrentUserProfile>,
+    mut published: Local<Option<PublishedProfile>>,
 ) {
     senders.extend(requests.read().filter_map(|ev| {
         if let SystemApi::GetProfileChangedStream(sender) = ev {
@@ -1239,26 +1357,26 @@ fn pipe_profile_changes_to_scene(
         }
     }));
     senders.retain(|s| !s.is_closed());
-
-    if senders.is_empty() {
-        return;
-    }
-
-    for (player, profile) in &changed {
-        let address = match player {
-            Some(player) => player.address,
-            None => match wallet.address() {
-                Some(address) => address,
-                None => continue,
-            },
-        };
+    let notify = |address: Address, version| {
         let event = ProfileChangedEvent {
-            address: format!("{:#x}", address),
-            version: profile.version,
+            address: format!("{address:#x}"),
+            version,
         };
         for sender in senders.iter() {
             let _ = sender.send(event.clone());
         }
+    };
+    if current.is_changed() {
+        let next = current.peer_profile().and_then(PublishedProfile::of);
+        if *published != next {
+            if let Some(next) = &next {
+                notify(next.address, next.version);
+            }
+            *published = next;
+        }
+    }
+    for (player, profile) in &changed {
+        notify(player.address, profile.version);
     }
 }
 
@@ -1453,12 +1571,20 @@ pub struct Deployment<'a> {
     metadata: serde_json::Value,
 }
 
-/// A deploy of the local player's profile settled: which account and version it carried.
-#[derive(Event)]
-pub struct ProfileDeployedEvent {
-    pub address: Option<Address>,
-    pub version: u32,
-    pub success: bool,
+/// Server bodies and failing request URLs may contain account data. Expose only the status or
+/// the kind of failure in the save reply.
+fn profile_deploy_message(error: &anyhow::Error) -> String {
+    if let Some(status) = error.downcast_ref::<StatusCode>() {
+        format!("The server rejected the profile deployment ({status}).")
+    } else if let Some(http) = error.downcast_ref::<reqwest::Error>() {
+        if http.is_timeout() {
+            "The profile deployment timed out.".to_owned()
+        } else {
+            "Could not reach the profile deployment server.".to_owned()
+        }
+    } else {
+        "Could not prepare or sign the profile deployment.".to_owned()
+    }
 }
 
 async fn deploy_profile(
@@ -1541,14 +1667,15 @@ pub(crate) async fn deploy_entity(
 
     let response = send_deployment(post).await?;
 
-    match response.status() {
-        StatusCode::OK => Ok(()),
-        _ => Err(anyhow!(
-            "bad response: {}: {}",
-            response.status(),
-            String::from_utf8_lossy(&response.bytes().await?)
-        )),
+    let status = response.status();
+    if status == StatusCode::OK {
+        return Ok(());
     }
+    let body = response.bytes().await?;
+    Err(anyhow::Error::msg(status).context(format!(
+        "bad response: {status}: {}",
+        String::from_utf8_lossy(&body)
+    )))
 }
 
 /// Send a deployment, and send it once more when the catalyst refuses it for now with its word on
@@ -1846,203 +1973,119 @@ pub async fn get_remote_profile(
         .map_or(Ok(None), |(_, result)| result)
 }
 
-enum ProcessProfileState {
-    /// An edit's deploy: the account and version it carries, and who waits for its result.
-    Deploying {
-        address: Option<Address>,
-        version: u32,
-        sender: RpcResultSender<Result<u32, String>>,
-    },
-}
+fn apply_avatar_patch(profile: &mut UserProfile, set_avatar: &SetAvatarData) {
+    if let Some(base) = &set_avatar.base {
+        // As with the colors below, a base that doesn't carry a body shape must not strip the
+        // profile's — a caller editing only the name has no reason to restate it.
+        if !base.body_shape_urn.is_empty() {
+            profile.content.avatar.body_shape = Some(base.body_shape_urn.clone());
+        }
 
-/// What the edit waiting on the deploy of `version` of `address` hears from a deploy that
-/// settled: that deploy's result, "cancelled" when another deploy replaced it, and nothing from an
-/// older deploy of the same account, which settled before the edit was made (versions only climb:
-/// `CurrentUserProfile::bump_version`).
-fn deploy_answer(
-    address: Option<Address>,
-    version: u32,
-    settled: &ProfileDeployedEvent,
-) -> Option<Result<u32, String>> {
-    if settled.address != address || settled.version > version {
-        Some(Err("cancelled".to_owned()))
-    } else if settled.version < version {
-        None
-    } else if settled.success {
-        Some(Ok(version))
-    } else {
-        Some(Err("failed to deploy to server.".to_owned()))
+        // a base without colors must not strip them from the profile
+        if let Some(hair) = base.hair_color {
+            profile.content.avatar.hair = Some(AvatarColor::new(hair));
+        }
+        if let Some(eyes) = base.eyes_color {
+            profile.content.avatar.eyes = Some(AvatarColor::new(eyes));
+        }
+        if let Some(skin) = base.skin_color {
+            profile.content.avatar.skin = Some(AvatarColor::new(skin));
+        }
+
+        if !base.name.is_empty() {
+            profile.content.name = base.name.clone();
+            profile.content.avatar.name = Some(base.name.clone());
+            if let Some(claimed) = set_avatar.has_claimed_name {
+                profile.content.has_claimed_name = claimed;
+            }
+        }
+    }
+
+    if let Some(equip) = &set_avatar.equip {
+        profile.content.avatar.wearables = equip.wearable_urns.to_vec();
+        profile.content.avatar.emotes = Some(
+            equip
+                .emote_urns
+                .iter()
+                .enumerate()
+                .flat_map(|(ix, e)| {
+                    (!e.is_empty()).then_some(AvatarEmote {
+                        slot: ix as u32,
+                        urn: if e.starts_with("urn:decentraland:off-chain:base-emotes") {
+                            e.rsplit_once(':').unwrap().1.to_string()
+                        } else {
+                            e.clone()
+                        },
+                    })
+                })
+                .collect(),
+        );
+        profile.content.avatar.force_render = Some(equip.force_render.to_vec());
+    }
+
+    if let Some(extras) = &set_avatar.profile_extras {
+        // Merged per key, not assigned: `extra_fields` is a catch-all for every profile key we
+        // don't model (and for keys written by other explorers), so a caller that edits one
+        // field must not have to restate the rest to avoid deleting them. An explicit `null`
+        // removes a key — the only way back out, now that omission means "leave alone".
+        for (key, value) in extras {
+            if value.is_null() {
+                profile.content.extra_fields.remove(key);
+            } else {
+                profile
+                    .content
+                    .extra_fields
+                    .insert(key.clone(), value.clone());
+            }
+        }
+    }
+
+    if let Some(name_color) = set_avatar.name_color {
+        profile.content.name_color = name_color.to_color3();
     }
 }
 
 fn process_profile(
-    mut e: EventReader<SystemApi>,
-    mut current_profile: ResMut<CurrentUserProfile>,
-    mut processing: Local<Option<ProcessProfileState>>,
-    mut deployed: EventReader<ProfileDeployedEvent>,
+    mut requests: EventReader<SystemApi>,
+    mut current: ResMut<CurrentUserProfile>,
     config: Res<AppConfig>,
     wallet: Res<Wallet>,
 ) {
-    if let Some(SystemApi::SetAvatar(set_avatar, sender)) = e
-        .read()
-        .filter(|ev| matches!(ev, SystemApi::SetAvatar(..)))
-        .last()
-    {
-        // the welcome page's save, after its accept: a held new profile deploys with it
-        if current_profile.deploy_held && config.terms_accepted() {
-            current_profile.deploy_held = false;
+    for request in requests.read() {
+        let SystemApi::SetAvatar(expected, patch, sender) = request else {
+            continue;
+        };
+        let address = current
+            .profile
+            .as_ref()
+            .and_then(|profile| profile.content.eth_address.as_h160());
+        if address.is_none() || address != wallet.address() || address != expected.as_h160() {
+            sender.send(Err(SetAvatarError {
+                message: "No profile for the active account.".to_owned(),
+                account_changed: true,
+                profile: None,
+            }));
+            continue;
         }
-
-        // A signed-in account deploys its edits, a guest account's included; a throwaway guest
-        // (no sign-in) keeps them local. An edit that will deploy keeps the profile from before
-        // it until the deploy settles.
+        if current.deploy_held && config.terms_accepted() {
+            current.deploy_held = false;
+        }
         let deploys = !wallet.is_guest();
-        if deploys && current_profile.profile.is_some() {
-            current_profile.snapshot_for_revert();
-        }
-
-        let Some(profile) = current_profile.profile.as_mut() else {
-            error!("can't amend missing profile");
-            return;
-        };
-
-        if let Some(base) = &set_avatar.base {
-            // As with the colors below, a base that doesn't carry a body shape must not strip the
-            // profile's — a caller editing only the name has no reason to restate it.
-            if !base.body_shape_urn.is_empty() {
-                profile.content.avatar.body_shape = Some(base.body_shape_urn.clone());
-            }
-
-            // a base without colors must not strip them from the profile
-            if let Some(hair) = base.hair_color {
-                profile.content.avatar.hair = Some(AvatarColor::new(hair));
-            }
-            if let Some(eyes) = base.eyes_color {
-                profile.content.avatar.eyes = Some(AvatarColor::new(eyes));
-            }
-            if let Some(skin) = base.skin_color {
-                profile.content.avatar.skin = Some(AvatarColor::new(skin));
-            }
-
-            profile.content.name = base.name.clone();
-            profile.content.avatar.name = Some(base.name.clone());
-        }
-
-        if let Some(has_claimed_name) = set_avatar.has_claimed_name {
-            profile.content.has_claimed_name = has_claimed_name;
-        }
-
-        if let Some(equip) = &set_avatar.equip {
-            profile.content.avatar.wearables = equip.wearable_urns.to_vec();
-            profile.content.avatar.emotes = Some(
-                equip
-                    .emote_urns
-                    .iter()
-                    .enumerate()
-                    .flat_map(|(ix, e)| {
-                        (!e.is_empty()).then_some(AvatarEmote {
-                            slot: ix as u32,
-                            urn: if e.starts_with("urn:decentraland:off-chain:base-emotes") {
-                                e.rsplit_once(':').unwrap().1.to_string()
-                            } else {
-                                e.clone()
-                            },
-                        })
-                    })
-                    .collect(),
-            );
-            profile.content.avatar.force_render = Some(equip.force_render.to_vec());
-        }
-
-        if let Some(extras) = &set_avatar.profile_extras {
-            // Merged per key, not assigned: `extra_fields` is a catch-all for every profile key we
-            // don't model (and for keys written by other explorers), so a caller that edits one
-            // field must not have to restate the rest to avoid deleting them. An explicit `null`
-            // removes a key — the only way back out, now that omission means "leave alone".
-            for (key, value) in extras {
-                if value.is_null() {
-                    profile.content.extra_fields.remove(key);
-                } else {
-                    profile
-                        .content
-                        .extra_fields
-                        .insert(key.clone(), value.clone());
-                }
-            }
-        }
-
-        if let Some(name_color) = set_avatar.name_color {
-            profile.content.name_color = name_color.to_color3();
-        }
-
-        current_profile.bump_version();
-        let Some(profile) = current_profile.profile.as_ref() else {
-            return;
-        };
-        debug!("{:#?}", profile.content);
-        let address = profile.content.eth_address.as_h160();
-        let version = profile.version;
-
-        // The deploy this edit replaces hears its own result if that has already come in, else
-        // "cancelled": the new deploy carries its change too. Every result queued now settled
-        // before this edit, so none of them is the new deploy's.
-        match processing.take() {
-            Some(ProcessProfileState::Deploying {
-                address: replaced,
-                version: replaced_version,
-                sender: waiting,
-            }) => {
-                let own = deployed
-                    .read()
-                    .filter(|settled| {
-                        settled.address == replaced && settled.version == replaced_version
-                    })
-                    .last()
-                    .map(|settled| settled.success);
-                waiting.send(match own {
-                    Some(true) => Ok(replaced_version),
-                    Some(false) => Err("failed to deploy to server.".to_owned()),
-                    None => Err("cancelled".to_owned()),
-                });
-            }
-            None => deployed.clear(),
-        }
-
         if deploys {
-            *processing = Some(ProcessProfileState::Deploying {
-                address,
+            current.begin_edits();
+        }
+        apply_avatar_patch(current.profile.as_mut().unwrap(), patch);
+        current.bump_version();
+        if deploys {
+            let version = current.profile.as_ref().unwrap().version;
+            current.saves.queued.push(ProfileEdit {
                 version,
-                sender: sender.clone(),
+                patch: ProfilePatch::Avatar(Box::new(patch.clone()), sender.clone()),
             });
-            current_profile.is_deployed = false;
+            current.is_deployed = false;
         } else {
-            sender.send(Ok(u32::MAX))
+            sender.send(Ok(u32::MAX));
         }
-
-        return;
-    }
-
-    if let Some(ProcessProfileState::Deploying {
-        address,
-        version,
-        sender,
-    }) = processing.take()
-    {
-        debug!("checking for response: {}", version);
-        for settled in deployed.read() {
-            debug!("got response: {} vs {}", version, settled.version);
-            if let Some(answer) = deploy_answer(address, version, settled) {
-                sender.send(answer);
-                return;
-            }
-        }
-        *processing = Some(ProcessProfileState::Deploying {
-            address,
-            version,
-            sender,
-        });
-    } else {
-        deployed.clear();
     }
 }
 
@@ -2202,10 +2245,11 @@ mod tests {
         let mut own = profile(5, "local");
         own.content.eth_address = format!("{address:#x}");
         let mut cache = ProfileCache::default();
+        cache.update(own.clone());
+        cache.entries.get_mut(&address).unwrap().refetch_deployed(5);
+        // Publishing the same local profile to scene readers must leave the fetch due.
         cache.update(own);
-
-        let entry = cache.entries.get_mut(&address).unwrap();
-        entry.refetch_deployed(5);
+        let entry = &cache.entries[&address];
         assert!(entry.wants_fetch(web_time::Instant::now()));
         assert_eq!(entry.fetch_tier(false), ProfileTier::Full);
     }
@@ -2487,18 +2531,6 @@ mod tests {
         profile
     }
 
-    fn own_address() -> Option<Address> {
-        Some(Address::repeat_byte(7))
-    }
-
-    /// as `process_profile` amends a profile that will deploy; returns what its deploy carries
-    fn edit(current: &mut CurrentUserProfile, name: &str) -> UserProfile {
-        current.snapshot_for_revert();
-        current.bump_version();
-        current.profile.as_mut().unwrap().content.name = name.to_owned();
-        current.profile.clone().unwrap()
-    }
-
     fn deployed(profile: UserProfile) -> CurrentUserProfile {
         CurrentUserProfile {
             profile: Some(profile),
@@ -2507,209 +2539,51 @@ mod tests {
         }
     }
 
-    fn version_and_name(profile: Option<&UserProfile>) -> (u32, &str) {
-        let profile = profile.unwrap();
-        (profile.version, profile.content.name.as_str())
-    }
-
-    #[test]
-    fn failed_deploy_restores_the_pre_edit_profile() {
-        let mut current = deployed(own(5, "before"));
-        let rejected = edit(&mut current, "rejected");
-        assert!(current.deploy_finished(&rejected, false));
-        assert_eq!(version_and_name(current.profile.as_ref()), (5, "before"));
-        assert!(current.revert_to.is_none());
-        assert!(
-            current.is_deployed,
-            "the restored profile is not deployed again"
-        );
-    }
-
-    #[test]
-    fn overlapping_edits_revert_to_the_oldest_snapshot() {
-        let mut current = deployed(own(5, "before"));
-        edit(&mut current, "first");
-        let second = edit(&mut current, "second");
-        assert_eq!(version_and_name(current.profile.as_ref()), (7, "second"));
-        current.deploy_finished(&second, false);
-        assert_eq!(version_and_name(current.profile.as_ref()), (5, "before"));
-    }
-
-    #[test]
-    fn a_replaced_deploy_that_lands_is_what_a_failure_puts_back() {
-        let mut current = deployed(own(5, "before"));
-        let first = edit(&mut current, "first");
-        let second = edit(&mut current, "second");
-
-        // the first edit lands while the second still deploys: peers may hear it now
-        assert!(!current.deploy_finished(&first, true));
-        assert_eq!(version_and_name(current.peer_profile()), (6, "first"));
-
-        // the second fails: back to the first, which the server holds, not to before both
-        assert!(current.deploy_finished(&second, false));
-        assert_eq!(version_and_name(current.profile.as_ref()), (6, "first"));
-        assert!(current.revert_to.is_none());
-    }
-
-    #[test]
-    fn a_replaced_deploy_landing_after_the_newer_one_failed_is_taken() {
-        let mut current = deployed(own(5, "before"));
-        let first = edit(&mut current, "first");
-        let second = edit(&mut current, "second");
-
-        assert!(current.deploy_finished(&second, false));
-        assert_eq!(version_and_name(current.profile.as_ref()), (5, "before"));
-        assert!(current.deploy_finished(&first, true));
-        assert_eq!(version_and_name(current.profile.as_ref()), (6, "first"));
-    }
-
-    #[test]
-    fn a_replaced_deploy_settling_after_the_newer_one_landed_changes_nothing() {
-        let mut current = deployed(own(5, "before"));
-        let first = edit(&mut current, "first");
-        let second = edit(&mut current, "second");
-
-        assert!(!current.deploy_finished(&second, true));
-        assert!(!current.deploy_finished(&first, true));
-        assert!(!current.deploy_finished(&first, false));
-        assert_eq!(version_and_name(current.profile.as_ref()), (7, "second"));
-        assert!(current.revert_to.is_none());
-    }
-
-    #[test]
-    fn successful_deploy_clears_the_snapshot() {
-        let mut current = deployed(own(5, "before"));
-        let after = edit(&mut current, "after");
-        assert!(!current.deploy_finished(&after, true));
-        assert_eq!(version_and_name(current.profile.as_ref()), (6, "after"));
-        assert!(current.revert_to.is_none());
-        assert_eq!(version_and_name(current.peer_profile()), (6, "after"));
-    }
-
-    #[test]
-    fn peers_see_the_snapshot_while_a_deploy_is_pending() {
-        let mut current = deployed(own(5, "before"));
-        assert_eq!(version_and_name(current.peer_profile()), (5, "before"));
-        edit(&mut current, "pending");
-        assert_eq!(version_and_name(current.profile.as_ref()), (6, "pending"));
-        assert_eq!(version_and_name(current.peer_profile()), (5, "before"));
-    }
-
-    #[test]
-    fn a_result_for_another_account_changes_nothing() {
-        let mut current = deployed(own(5, "before"));
-        let rejected = edit(&mut current, "rejected");
-        let mut other = profile(2, "other");
-        other.content.eth_address = format!("{:#x}", Address::repeat_byte(9));
-        current.profile = Some(other.clone());
-
-        assert!(!current.deploy_finished(&rejected, false));
-        assert_eq!(current.profile, Some(other));
-    }
-
-    #[test]
-    fn a_realm_refresh_keeps_an_edit_still_deploying() {
-        let mut current = deployed(own(5, "before"));
-        let pending = edit(&mut current, "pending");
-        current.adopt_server_profile(own(5, "server"));
-        assert_eq!(version_and_name(current.profile.as_ref()), (6, "pending"));
-        assert_eq!(version_and_name(current.peer_profile()), (5, "before"));
-
-        // once nothing is deploying, the server's profile is taken
-        current.deploy_finished(&pending, true);
-        current.adopt_server_profile(own(6, "server"));
-        assert_eq!(version_and_name(current.profile.as_ref()), (6, "server"));
-    }
-
-    #[test]
-    fn a_failed_version_is_not_reused() {
-        let mut current = deployed(own(5, "before"));
-        let rejected = edit(&mut current, "rejected");
-        current.deploy_finished(&rejected, false);
-        assert_eq!(version_and_name(current.profile.as_ref()), (5, "before"));
-
-        // the rejected v6 may still have reached the server: the next edit goes above it
-        edit(&mut current, "next");
-        assert_eq!(version_and_name(current.profile.as_ref()), (7, "next"));
-    }
-
-    #[test]
-    fn another_account_counts_from_its_own_version() {
-        let mut current = deployed(own(5, "before"));
-        edit(&mut current, "edited");
-        let mut other = profile(2, "other");
-        other.content.eth_address = format!("{:#x}", Address::repeat_byte(9));
-        current.profile = Some(other);
-        current.revert_to = None;
-
-        edit(&mut current, "other edited");
-        assert_eq!(
-            version_and_name(current.profile.as_ref()),
-            (3, "other edited")
-        );
-    }
-
-    #[test]
-    fn peers_hear_the_new_version_once_its_deploy_lands() {
-        let mut current = deployed(own(5, "before"));
-        let announced = Some(5);
-        let pending = edit(&mut current, "pending");
-
-        // pending: peers keep the version from before the edit, repeated by the keepalive
-        let peer = current.peer_profile().unwrap().version;
-        assert_eq!(peer, 5);
-        assert_eq!(due_announcement(announced, peer, 0.0, 1.0), None);
-        assert_eq!(
-            due_announcement(announced, peer, 0.0, 6.0),
-            Some(Announcement::Keepalive)
-        );
-
-        // landed: the edit's version goes out once
-        current.deploy_finished(&pending, true);
-        let peer = current.peer_profile().unwrap().version;
-        assert_eq!(peer, 6);
-        assert_eq!(
-            due_announcement(announced, peer, 0.0, 1.0),
-            Some(Announcement::Version)
-        );
-        assert_eq!(due_announcement(Some(6), peer, 1.0, 2.0), None);
-    }
-
-    fn web3(version: u32, name: &str) -> UserProfile {
-        let mut profile = own(version, name);
-        profile.content.has_connected_web3 = Some(true);
-        profile
-    }
-
-    /// `process_profile` alone: edits go in as `SetAvatar`s, deploys settle as events.
-    struct Saves(App);
-
-    /// A signed-in account (a sign-in chain), a guest account's when `guest_account`.
     fn signed_in(guest_account: bool) -> Wallet {
         let mut wallet = Wallet::default();
-        let link = common::structs::ChainLink {
-            ty: "SIGNER".to_owned(),
-            payload: format!("{:#x}", Address::repeat_byte(7)),
-            signature: String::new(),
-        };
+        let address = Address::repeat_byte(7);
         wallet.finalize(
-            Address::repeat_byte(7),
+            address,
             alloy_signer_local::PrivateKeySigner::random(),
-            vec![link],
+            vec![common::structs::ChainLink {
+                ty: "SIGNER".to_owned(),
+                payload: format!("{address:#x}"),
+                signature: String::new(),
+            }],
             guest_account,
         );
         wallet
     }
 
+    fn patch(name: &str, shape: &str) -> SetAvatarData {
+        SetAvatarData {
+            base: Some(
+                dcl_component::proto_components::sdk::components::PbAvatarBase {
+                    name: name.to_owned(),
+                    body_shape_urn: shape.to_owned(),
+                    ..default()
+                },
+            ),
+            equip: None,
+            has_claimed_name: Some(true),
+            profile_extras: None,
+            name_color: None,
+        }
+    }
+
+    /// Runs the engine's edit system and controls when its submitted profile finishes.
+    struct Saves(App);
+
     impl Saves {
-        fn new(profile: UserProfile) -> Self {
-            Self::with_wallet(profile, signed_in(false))
+        fn new() -> Self {
+            Self::with_wallet(signed_in(false))
         }
 
-        fn with_wallet(profile: UserProfile, wallet: Wallet) -> Self {
+        fn with_wallet(wallet: Wallet) -> Self {
+            let mut profile = own(5, "before");
+            profile.content.eth_address = format!("{:#x}", wallet.address().unwrap());
             let mut app = App::new();
             app.add_event::<SystemApi>()
-                .add_event::<ProfileDeployedEvent>()
                 .insert_resource(AppConfig::default())
                 .insert_resource(deployed(profile))
                 .insert_resource(wallet)
@@ -2717,101 +2591,426 @@ mod tests {
             Self(app)
         }
 
-        fn edit(&mut self) -> common::rpc::RpcResultReceiver<Result<u32, String>> {
+        fn edit(&mut self, data: SetAvatarData) -> common::rpc::RpcResultReceiver<SetAvatarResult> {
             let (sender, receiver) = RpcResultSender::channel();
-            let data = system_bridge::SetAvatarData {
-                base: None,
-                equip: None,
-                has_claimed_name: None,
-                profile_extras: None,
-                name_color: None,
-            };
-            self.0
-                .world_mut()
-                .send_event(SystemApi::SetAvatar(data, sender));
+            let address = self.0.world().resource::<Wallet>().address().unwrap();
+            self.0.world_mut().send_event(SystemApi::SetAvatar(
+                format!("{address:#x}"),
+                data,
+                sender,
+            ));
             receiver
-        }
-
-        fn settle(&mut self, version: u32, success: bool) {
-            self.0.world_mut().send_event(ProfileDeployedEvent {
-                address: own_address(),
-                version,
-                success,
-            });
         }
 
         fn current(&mut self) -> Mut<'_, CurrentUserProfile> {
             self.0.world_mut().resource_mut::<CurrentUserProfile>()
         }
+
+        fn submit(&mut self) -> SubmittedProfile {
+            self.0.update();
+            self.current()
+                .begin_deploy()
+                .expect("a profile ready to submit")
+        }
+
+        fn finish(&mut self, batch: SubmittedProfile, success: bool) {
+            self.current().finish_deploy(
+                batch,
+                if success {
+                    Ok(())
+                } else {
+                    Err("Server rejected the deployment.".into())
+                },
+            );
+        }
     }
 
     #[test]
-    fn a_guest_accounts_edit_deploys() {
-        let mut guest = own(5, "guest");
-        guest.content.has_connected_web3 = Some(false);
-        let mut saves = Saves::with_wallet(guest, signed_in(true));
-        let mut edit = saves.edit();
-        saves.0.update();
-        assert_eq!(edit.poll_once(), Ok(None));
-        saves.settle(6, true);
-        saves.0.update();
-        assert_eq!(edit.poll_once(), Ok(Some(Ok(6))));
+    fn same_frame_edits_share_the_payload_and_both_get_its_result() {
+        for success in [true, false] {
+            let mut saves = Saves::new();
+            let mut rename = saves.edit(patch("Alice", ""));
+            let mut look = saves.edit(patch("", "body:b"));
+            let batch = saves.submit();
+            assert_eq!(batch.profile.version, 7);
+            assert_eq!(batch.profile.content.name, "Alice");
+            assert_eq!(
+                batch.profile.content.avatar.body_shape.as_deref(),
+                Some("body:b")
+            );
+            assert!(batch.profile.content.has_claimed_name);
+            assert_eq!(saves.current().peer_profile().unwrap().version, 5);
+            saves.finish(batch, success);
+            for receiver in [&mut rename, &mut look] {
+                let answer = receiver.poll_once().unwrap().unwrap();
+                if success {
+                    assert_eq!(answer.unwrap(), 7);
+                } else {
+                    let profile = answer.unwrap_err().profile.unwrap();
+                    assert_eq!((profile.version, profile.name.as_str()), (5, "before"));
+                }
+            }
+        }
     }
 
     #[test]
-    fn a_throwaway_guests_edit_stays_local() {
+    fn failure_reports_the_status_and_confirmed_profile_without_echoing_the_response() {
+        let mut saves = Saves::new();
+        let mut edit = saves.edit(patch("Alice", ""));
+        let batch = saves.submit();
+        let rejection = anyhow::Error::msg(StatusCode::CONFLICT)
+            .context("response containing private account data");
+        saves
+            .current()
+            .finish_deploy(batch, Err(profile_deploy_message(&rejection)));
+        let reason = edit.poll_once().unwrap().unwrap().unwrap_err();
+        assert_eq!(
+            reason.message,
+            "The server rejected the profile deployment (409 Conflict)."
+        );
+        assert_eq!(reason.profile.unwrap().name, "before");
+    }
+
+    #[test]
+    fn edits_to_the_same_field_acknowledge_the_final_ordered_value() {
+        let mut saves = Saves::new();
+        let mut first = saves.edit(patch("Alice", ""));
+        let mut last = saves.edit(patch("Bob", ""));
+        let batch = saves.submit();
+        assert_eq!(batch.profile.content.name, "Bob");
+        saves.finish(batch, true);
+        assert_eq!(first.poll_once().unwrap().unwrap().unwrap(), 7);
+        assert_eq!(last.poll_once().unwrap().unwrap().unwrap(), 7);
+    }
+
+    #[test]
+    fn queued_edits_rebase_after_each_deploy_and_answer_in_order() {
+        for first_lands in [false, true] {
+            for next_lands in [false, true] {
+                let mut saves = Saves::new();
+                let mut rename = saves.edit(patch("Alice", ""));
+                let first = saves.submit();
+                let mut look = saves.edit(patch("", "body:b"));
+                saves.0.update();
+                assert!(saves.current().begin_deploy().is_none());
+                assert!(rename.poll_once().unwrap().is_none());
+                assert!(look.poll_once().unwrap().is_none());
+                assert_eq!(
+                    saves.current().profile.as_ref().unwrap().content.name,
+                    "Alice"
+                );
+                saves.finish(first, first_lands);
+                let reply = rename.poll_once().unwrap().unwrap();
+                let (name, known) = if first_lands {
+                    assert_eq!(reply.unwrap(), 6);
+                    ("Alice", 6)
+                } else {
+                    assert_eq!(reply.unwrap_err().profile.unwrap().version, 5);
+                    ("before", 5)
+                };
+                assert!(look.poll_once().unwrap().is_none());
+                assert_eq!(saves.current().peer_profile().unwrap().version, known);
+                let mut extras = patch("", "");
+                extras.profile_extras = Some([("description".into(), "bio".into())].into());
+                let mut bio = saves.edit(extras);
+                let next = saves.submit();
+                assert_eq!(next.profile.version, 8);
+                assert_eq!(next.profile.content.name, name);
+                assert_eq!(next.profile.content.has_claimed_name, first_lands);
+                assert_eq!(
+                    next.profile.content.avatar.body_shape.as_deref(),
+                    Some("body:b")
+                );
+                assert_eq!(next.profile.content.extra_fields["description"], "bio");
+                saves.finish(next, next_lands);
+                for receiver in [&mut look, &mut bio] {
+                    let reply = receiver.poll_once().unwrap().unwrap();
+                    if next_lands {
+                        assert_eq!(reply.unwrap(), 8);
+                    } else {
+                        let profile = reply.unwrap_err().profile.unwrap();
+                        assert_eq!(
+                            (profile.version, profile.name.as_str()),
+                            (known as i64, name)
+                        );
+                    }
+                }
+                let current = saves.current();
+                let final_profile = current.peer_profile().unwrap();
+                assert_eq!(current.profile.as_ref(), Some(final_profile));
+                assert_eq!(final_profile.version, if next_lands { 8 } else { known });
+            }
+        }
+    }
+
+    #[test]
+    fn signed_guest_deploys_and_throwaway_guest_commits_locally() {
+        let mut guest = Saves::with_wallet(signed_in(true));
+        let mut edit = guest.edit(patch("signed", ""));
+        let batch = guest.submit();
+        assert!(edit.poll_once().unwrap().is_none());
+        guest.finish(batch, true);
+        assert_eq!(edit.poll_once().unwrap().unwrap().unwrap(), 6);
+
         let mut wallet = Wallet::default();
         wallet.finalize_as_guest();
-        let mut saves = Saves::with_wallet(own(5, "guest"), wallet);
-        let mut edit = saves.edit();
-        saves.0.update();
-        assert_eq!(edit.poll_once(), Ok(Some(Ok(u32::MAX))));
-    }
-
-    #[test]
-    fn an_edit_replacing_a_pending_deploy_cancels_it() {
-        let mut saves = Saves::new(web3(5, "before"));
-        let mut first = saves.edit();
-        saves.0.update();
-        assert_eq!(first.poll_once(), Ok(None));
-
-        let mut second = saves.edit();
-        saves.0.update();
-        assert_eq!(first.poll_once(), Ok(Some(Err("cancelled".to_owned()))));
-        assert_eq!(second.poll_once(), Ok(None));
-
-        saves.settle(7, true);
-        saves.0.update();
-        assert_eq!(second.poll_once(), Ok(Some(Ok(7))));
-    }
-
-    #[test]
-    fn a_stale_result_does_not_answer_the_next_edit() {
-        let mut saves = Saves::new(web3(5, "before"));
-        let mut first = saves.edit();
-        saves.0.update();
-
-        // the first deploy fails (the engine puts v5 back) in the frame a second edit arrives:
-        // the first edit hears its own result, and the second edit becomes v7, not v6 again
-        let first_edit = saves.current().profile.clone().unwrap();
-        saves.current().deploy_finished(&first_edit, false);
-        saves.settle(6, false);
-        let mut second = saves.edit();
-        saves.0.update();
+        let mut guest = Saves::with_wallet(wallet);
+        let mut edit = guest.edit(patch("local", ""));
+        guest.0.update();
+        assert_eq!(edit.poll_once().unwrap().unwrap().unwrap(), u32::MAX);
+        assert!(guest.current().begin_deploy().is_none());
         assert_eq!(
-            first.poll_once(),
-            Ok(Some(Err("failed to deploy to server.".to_owned())))
+            guest.current().peer_profile().unwrap().content.name,
+            "local"
         );
-        assert_eq!(saves.current().profile.as_ref().unwrap().version, 7);
+    }
 
-        // a result of the first deploy that comes in late leaves the second edit waiting
-        saves.settle(6, false);
+    #[test]
+    fn initial_held_edits_wait_for_terms_and_failure_has_no_published_profile() {
+        let mut saves = Saves::new();
+        saves.current().is_deployed = false;
+        saves.current().deploy_held = true;
+        let mut first = saves.edit(patch("Alice", ""));
         saves.0.update();
-        assert_eq!(second.poll_once(), Ok(None));
+        assert!(saves.current().begin_deploy().is_none());
+        assert!(saves.current().peer_profile().is_none());
+        saves
+            .0
+            .world_mut()
+            .resource_mut::<AppConfig>()
+            .accepted_terms = Some(common::structs::TERMS_VERSION);
+        let mut second = saves.edit(patch("", "body:b"));
+        let batch = saves.submit();
+        assert_eq!(batch.profile.version, 7);
+        saves.finish(batch, false);
+        for receiver in [&mut first, &mut second] {
+            let rejected = receiver.poll_once().unwrap().unwrap().unwrap_err();
+            assert!(!rejected.account_changed);
+            assert!(rejected.profile.is_none());
+        }
+        assert!(saves.current().peer_profile().is_none());
+        assert!(saves.current().begin_deploy().is_none());
+        let mut retry = saves.edit(patch("new", ""));
+        let batch = saves.submit();
+        assert_eq!(batch.profile.version, 8);
+        saves.finish(batch, true);
+        assert_eq!(retry.poll_once().unwrap().unwrap().unwrap(), 8);
+        assert_eq!(saves.current().peer_profile().unwrap().content.name, "new");
+    }
 
-        saves.settle(7, true);
+    #[test]
+    fn account_switch_settles_unsubmitted_edits_and_isolates_in_flight_results() {
+        let mut saves = Saves::new();
+        let mut submitted = saves.edit(patch("Alice", ""));
+        let batch = saves.submit();
+        let mut queued = saves.edit(patch("", "body:b"));
         saves.0.update();
-        assert_eq!(second.poll_once(), Ok(Some(Ok(7))));
+        saves.current().reset_saves();
+        let mut other = own(2, "other");
+        other.content.eth_address = format!("{:#x}", Address::repeat_byte(9));
+        *saves.current() = deployed(other.clone());
+        let rejected = queued.poll_once().unwrap().unwrap().unwrap_err();
+        assert!(rejected.account_changed);
+        assert!(rejected.profile.is_none());
+        saves.finish(batch, false);
+        let rejected = submitted.poll_once().unwrap().unwrap().unwrap_err();
+        assert!(rejected.account_changed);
+        assert!(rejected.profile.is_none());
+        assert_eq!(saves.current().peer_profile(), Some(&other));
+    }
+
+    #[test]
+    fn late_same_wallet_success_keeps_a_newer_login_and_its_queued_edits() {
+        for login_version in [5, 10] {
+            let mut saves = Saves::new();
+            let mut old = saves.edit(patch("Alice", ""));
+            let previous = saves.submit();
+            saves.current().reset_saves();
+            saves.current().profile = Some(own(login_version, "server"));
+            saves.current().is_deployed = true;
+
+            let mut next = saves.edit(patch("", "body:b"));
+            saves.0.update();
+            saves.finish(previous, true);
+            assert_eq!(old.poll_once().unwrap().unwrap().unwrap(), 6);
+            assert!(next.poll_once().unwrap().is_none());
+            let batch = saves.submit();
+            let expected_name = if login_version == 5 {
+                "Alice"
+            } else {
+                "server"
+            };
+            assert_eq!(batch.profile.content.name, expected_name);
+            assert_eq!(
+                batch.profile.content.avatar.body_shape.as_deref(),
+                Some("body:b")
+            );
+            let expected_version = login_version.max(6) + 1;
+            assert_eq!(batch.profile.version, expected_version);
+            saves.finish(batch, true);
+            assert_eq!(
+                next.poll_once().unwrap().unwrap().unwrap(),
+                expected_version
+            );
+        }
+    }
+
+    #[test]
+    fn guest_login_resave_survives_an_old_upload_or_a_realm_read() {
+        for old_upload in [true, false] {
+            for edit_look in [false, true] {
+                let mut saves = Saves::new();
+                saves
+                    .current()
+                    .profile
+                    .as_mut()
+                    .unwrap()
+                    .content
+                    .has_connected_web3 = Some(true);
+                let old = old_upload.then(|| {
+                    let reply = saves.edit(patch("earlier", ""));
+                    (saves.submit(), reply)
+                });
+
+                saves.current().reset_saves();
+                let mut login = own(5, "login");
+                login.content.has_connected_web3 = Some(false);
+                saves.current().profile = Some(login);
+                saves.current().is_deployed = true;
+                saves.current().queue_guest_resave();
+                let mut look = edit_look.then(|| saves.edit(patch("", "body:b")));
+                saves.0.update();
+
+                let (base_version, name) = if let Some((batch, mut reply)) = old {
+                    saves.finish(batch, true);
+                    assert_eq!(reply.poll_once().unwrap().unwrap().unwrap(), 6);
+                    (6, "earlier")
+                } else {
+                    let mut read = own(10, "realm");
+                    read.content.has_connected_web3 = Some(false);
+                    saves.current().adopt_server_profile(read);
+                    (10, "realm")
+                };
+                let batch = saves.submit();
+                assert_eq!(batch.profile.content.name, name);
+                assert_eq!(batch.profile.content.has_connected_web3, Some(false));
+                assert_eq!(
+                    saves
+                        .current()
+                        .peer_profile()
+                        .unwrap()
+                        .content
+                        .has_connected_web3,
+                    Some(false)
+                );
+                let version = base_version + 1 + u32::from(edit_look);
+                assert_eq!(batch.profile.version, version);
+                assert_eq!(batch.profile.content.version, i64::from(version));
+                if edit_look {
+                    assert_eq!(
+                        batch.profile.content.avatar.body_shape.as_deref(),
+                        Some("body:b")
+                    );
+                }
+                saves.finish(batch, true);
+                if let Some(reply) = look.as_mut() {
+                    assert_eq!(reply.poll_once().unwrap().unwrap().unwrap(), version);
+                }
+                assert_eq!(saves.current().peer_profile().unwrap().version, version);
+            }
+        }
+    }
+
+    #[test]
+    fn newer_realm_read_is_preserved_when_an_older_submission_settles() {
+        for lands in [false, true] {
+            let mut saves = Saves::new();
+            let mut rename = saves.edit(patch("Alice", ""));
+            let first = saves.submit();
+            let mut look = saves.edit(patch("", "body:b"));
+            saves.0.update();
+            saves.current().adopt_server_profile(own(12, "remote"));
+            saves.finish(first, lands);
+            let result = rename.poll_once().unwrap().unwrap();
+            if lands {
+                assert_eq!(result.unwrap(), 6);
+            } else {
+                assert_eq!(result.unwrap_err().profile.unwrap().version, 12);
+            }
+            let batch = saves.submit();
+            assert_eq!(batch.profile.content.name, "remote");
+            assert_eq!(batch.profile.version, 13);
+            saves.finish(batch, true);
+            assert_eq!(look.poll_once().unwrap().unwrap().unwrap(), 13);
+        }
+    }
+
+    #[test]
+    fn a_patch_from_a_previous_wallet_is_answered_without_applying_it() {
+        let mut saves = Saves::new();
+        let (sender, mut receiver) = RpcResultSender::channel();
+        saves.0.world_mut().send_event(SystemApi::SetAvatar(
+            format!("{:#x}", Address::repeat_byte(9)),
+            patch("other", ""),
+            sender,
+        ));
+        saves.0.update();
+        let rejected = receiver.poll_once().unwrap().unwrap().unwrap_err();
+        assert!(rejected.account_changed);
+        assert!(rejected.profile.is_none());
+        assert_eq!(
+            saves.current().profile.as_ref().unwrap().content.name,
+            "before"
+        );
+        assert!(saves.current().begin_deploy().is_none());
+    }
+
+    #[test]
+    fn local_stream_reports_publication_and_same_version_server_thumbnails() {
+        let mut saves = Saves::new();
+        saves
+            .0
+            .add_systems(Update, pipe_profile_changes_to_scene.after(process_profile));
+        let (sender, mut published) = RpcStreamSender::channel();
+        saves
+            .0
+            .world_mut()
+            .send_event(SystemApi::GetProfileChangedStream(sender));
+        saves.0.update();
+        assert_eq!(published.try_recv().unwrap().version, 5);
+
+        let _rename = saves.edit(patch("Alice", ""));
+        let pending = saves.submit();
+        assert!(published.try_recv().is_err());
+        saves.current().set_server_snapshots(AvatarSnapshots {
+            face256: "face".into(),
+            body: "body".into(),
+        });
+        saves.0.update();
+        assert_eq!(published.try_recv().unwrap().version, 5);
+        assert_eq!(
+            saves
+                .current()
+                .peer_profile()
+                .unwrap()
+                .content
+                .avatar
+                .snapshots
+                .as_ref()
+                .unwrap()
+                .face256,
+            "face"
+        );
+        saves.finish(pending, false);
+        saves.0.update();
+        assert!(published.try_recv().is_err());
+
+        let _next = saves.edit(patch("", "body:b"));
+        let pending = saves.submit();
+        assert!(published.try_recv().is_err());
+        saves.finish(pending, true);
+        saves.0.update();
+        assert_eq!(published.try_recv().unwrap().version, 7);
     }
 
     #[test]
