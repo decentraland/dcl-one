@@ -504,8 +504,7 @@ pub async fn deploy_entity_streaming(
         entity_files(&entity_data).map_err(|e| entity_parse_error(entity_id, verification, e))?;
     let snapshot_hashes: HashSet<&str> = files.snapshots.iter().map(|(_, h)| h.as_str()).collect();
 
-    let mut tasks: tokio::task::JoinSet<(String, Result<(), SyncError>)> =
-        tokio::task::JoinSet::new();
+    let mut tasks: tokio::task::JoinSet<Result<(), SyncError>> = tokio::task::JoinSet::new();
 
     let refs: Vec<&str> = files
         .content
@@ -524,37 +523,25 @@ pub async fn deploy_entity_streaming(
         let servers = servers.to_vec();
         let sem = content_semaphore.clone();
         let budget = budget.clone();
+        let render = snapshot_hashes.contains(hash.as_str());
 
         tasks.spawn(async move {
-            let Ok(_permit) = sem.acquire().await else {
-                return (hash, Err(SyncError::Stopped));
-            };
-            let result = download_file_with_retries(
-                &client,
-                storage.as_ref(),
-                &hash,
-                &servers,
-                Some(&budget),
-            )
-            .await;
-            (hash, result)
+            let _permit = sem.acquire().await.map_err(|_| SyncError::Stopped)?;
+            if render {
+                download_render(&client, &storage, &hash, &servers, Some(&budget))
+                    .await
+                    .map(drop)
+            } else {
+                download_file_with_retries(&client, &storage, &hash, &servers, Some(&budget)).await
+            }
         });
     }
 
     let mut first_error: Option<SyncError> = None;
     while let Some(result) = tasks.join_next().await {
         match result {
-            Ok((_, Ok(()))) => {}
-            // A render named only in metadata is fetched when a peer has it; the entity deploys
-            // without it otherwise, as snapshots-fetcher deploys it. A stop or a store fault
-            // still fails the attempt.
-            Ok((hash, Err(e)))
-                if snapshot_hashes.contains(hash.as_str())
-                    && !matches!(e, SyncError::Stopped | SyncError::Storage(_)) =>
-            {
-                debug!(entity_id, hash, error = %e, "Avatar snapshot not available for download");
-            }
-            Ok((_, Err(e))) => {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
                 if first_error.is_none() {
                     first_error = Some(e);
                 }
@@ -571,13 +558,14 @@ pub async fn deploy_entity_streaming(
         return Err(e);
     }
 
-    let snapshot_refs: Vec<&str> = snapshot_hashes.into_iter().collect();
-    let stored = storage.exist_multiple(&snapshot_refs).await?;
-    let snapshots = files
-        .snapshots
-        .into_iter()
-        .filter(|(_, hash)| stored.get(hash).copied().unwrap_or(false))
-        .collect();
+    // A render already stored may be an aged orphan the collector is about to take: touching
+    // it restarts the age floor that covers the gap until the flush commits its row.
+    let mut snapshots = Vec::with_capacity(files.snapshots.len());
+    for (key, hash) in files.snapshots {
+        if storage.touch(&hash).await? {
+            snapshots.push((key, hash));
+        }
+    }
 
     deployer
         .deploy_entity_with_files(
@@ -643,7 +631,12 @@ fn entity_files(entity_data: &[u8]) -> Result<EntityFiles, serde_json::Error> {
         .filter(|(_, hash)| seen.insert(hash.as_str()))
         .map(|(_, hash)| hash.clone())
         .collect();
-    let snapshots = if entity.get("type").and_then(|t| t.as_str()) == Some("profile") {
+    let is_profile = entity
+        .get("type")
+        .and_then(|t| t.as_str())
+        .and_then(crate::validator::entity_parser::parse_entity_type)
+        == Some(crate::validator::EntityType::Profile);
+    let snapshots = if is_profile {
         crate::profile_snapshots::snapshot_files(entity.pointer("/metadata/avatars"), &declared)
     } else {
         Vec::new()
@@ -700,6 +693,42 @@ pub async fn download_file_with_retries(
         .unwrap_or_else(|| SyncError::Other(format!("Failed to download {} after retries", hash))))
 }
 
+/// A best-effort file, such as a render a profile names only in its metadata: one request to
+/// each of up to [`MAX_DOWNLOAD_RETRIES`] servers, without waiting between them, so a hash no
+/// peer has costs no backoff while the caller holds a download permit. `Ok(true)` once stored;
+/// `Ok(false)` when no server served it, logged at `warn` unless each answered 404. Only a store
+/// fault is an error.
+pub(crate) async fn download_render(
+    client: &CheckedRedirectClient,
+    storage: &Storage,
+    hash: &str,
+    servers: &[String],
+    budget: Option<&ByteBudget>,
+) -> Result<bool, SyncError> {
+    if storage.exist(hash).await? {
+        return Ok(true);
+    }
+    let start = (uuid::Uuid::new_v4().as_u128() % servers.len().max(1) as u128) as usize;
+    let mut failure = None;
+    for attempt in 0..servers.len().min(MAX_DOWNLOAD_RETRIES as usize) {
+        let server = &servers[(start + attempt) % servers.len()];
+        match fetch_verified(client, hash, server, attempt as u32, budget).await {
+            Ok((bytes, reservation)) => {
+                storage.store(hash, bytes.into()).await?;
+                drop(reservation);
+                return Ok(true);
+            }
+            Err(SyncError::NotFound(_)) => {}
+            Err(e) => failure = Some(e),
+        }
+    }
+    match failure {
+        Some(error) => warn!(hash, %error, "a best-effort file could not be downloaded"),
+        None => debug!(hash, "no peer has a best-effort file"),
+    }
+    Ok(false)
+}
+
 /// One `GET {server}/contents/{hash}`: the decoded body, only when it hashes to `hash`, and
 /// the budget hold that covers it until the caller has stored it.
 pub(crate) async fn fetch_verified(
@@ -717,7 +746,7 @@ pub(crate) async fn fetch_verified(
             SyncError::from(e)
         })?;
     if resp.status().as_u16() == 404 {
-        return Err(SyncError::Other(format!(
+        return Err(SyncError::NotFound(format!(
             "404 fetching {} from {}",
             hash, server
         )));
@@ -940,6 +969,8 @@ mod tests {
                 ("face.png".to_string(), face.clone()),
             ]
         );
+        // The type is read as the deployment stores it.
+        assert_eq!(files_of(entity("Profiles")).snapshots.len(), 2);
         assert!(files_of(entity("wearable")).snapshots.is_empty());
     }
 
@@ -1048,7 +1079,8 @@ mod tests {
     }
 
     /// A profile's renders named only in its metadata are fetched and recorded once stored; one
-    /// no peer has leaves the entity deployable, without a row.
+    /// no peer has leaves the entity deployable, without a row, one already held is touched, and
+    /// a second render under a key already taken never reaches the flush.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_synced_profile_stores_and_records_the_renders_its_content_omits() {
         let Some(pool) = crate::sync_test_support::test_pool(2).await else {
@@ -1056,9 +1088,10 @@ mod tests {
         };
         let tag = crate::sync_test_support::unique();
         let blob = |name: &str| format!("{name} {tag}").into_bytes();
-        let (face256, body, face) = (blob("face256"), blob("body"), blob("face"));
-        let [face256_hash, body_hash, face_hash] =
-            [&face256, &body, &face].map(|b| hash_bytes_v1(b));
+        let (face256, body, face, face128) =
+            (blob("face256"), blob("body"), blob("face"), blob("face128"));
+        let [face256_hash, body_hash, face_hash, face128_hash] =
+            [&face256, &body, &face, &face128].map(|b| hash_bytes_v1(b));
         let pointer = format!("0x{}", &tag[..32]);
         let entity = serde_json::to_vec(&serde_json::json!({
             "version": "v3",
@@ -1066,9 +1099,14 @@ mod tests {
             "pointers": [pointer],
             "timestamp": 1_700_000_000_000u64,
             "content": [{"file": "face256.png", "hash": face256_hash}],
-            "metadata": {"avatars": [{"avatar": {"snapshots": {
-                "face256": face256_hash, "body": body_hash, "face": face_hash,
-            }}}]},
+            "metadata": {"avatars": [
+                {"avatar": {"snapshots": {
+                    "face256": face256_hash, "body": body_hash, "face": face_hash,
+                    "face128": face128_hash,
+                }}},
+                // A second avatar's `body` would reuse `body.png`: the flush must not see it.
+                {"avatar": {"snapshots": {"body": hash_bytes_v1(b"second body")}}},
+            ]},
         }))
         .unwrap();
         let id = hash_bytes_v1(&entity);
@@ -1079,6 +1117,15 @@ mod tests {
         ]))
         .await;
         let (storage, tmp) = temp_storage("profile-renders").await;
+        // A render the store already holds, past the collector's age floor.
+        storage.store(&face128_hash, face128.into()).await.unwrap();
+        let held = storage.file_path(&face128_hash).await.unwrap().unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&held)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(7200))
+            .unwrap();
         let deployer = LiveSyncDeployer::new(
             pool.clone(),
             1,
@@ -1110,6 +1157,16 @@ mod tests {
         deployer.flush().await.unwrap();
 
         assert!(storage.exist(&body_hash).await.unwrap());
+        let held_age = std::fs::metadata(&held)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .elapsed()
+            .unwrap_or_default();
+        assert!(
+            held_age < std::time::Duration::from_secs(600),
+            "a held render is touched before its row is buffered: {held_age:?}"
+        );
         let mut rows: Vec<(String, String)> = sqlx::query_as(
             "SELECT cf.key, cf.content_hash FROM content.content_files cf \
              JOIN content.deployments d ON d.id = cf.deployment WHERE d.entity_id = $1",
@@ -1123,10 +1180,131 @@ mod tests {
             rows,
             vec![
                 ("body.png".to_string(), body_hash),
+                ("face128.png".to_string(), face128_hash),
                 ("face256.png".to_string(), face256_hash),
             ]
         );
         server.abort();
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    /// A stored profile whose only file is a render named in its metadata, and a deployer that is
+    /// never reached.
+    async fn stored_profile_with_a_render(
+        tag: &str,
+    ) -> (Arc<Storage>, std::path::PathBuf, String, String, Vec<u8>) {
+        let render = format!("render {tag} {}", uuid::Uuid::new_v4()).into_bytes();
+        let render_hash = hash_bytes_v1(&render);
+        let entity = serde_json::to_vec(&serde_json::json!({
+            "type": "profile",
+            "pointers": ["0x0000000000000000000000000000000000000001"],
+            "timestamp": 1_700_000_000_000u64,
+            "content": [],
+            "metadata": {"avatars": [{"avatar": {"snapshots": {"body": render_hash}}}]},
+        }))
+        .unwrap();
+        let id = hash_bytes_v1(&entity);
+        let (storage, tmp) = temp_storage(tag).await;
+        storage.store(&id, entity.into()).await.unwrap();
+        (storage, tmp, id, render_hash, render)
+    }
+
+    async fn deploy_stored(
+        storage: Arc<Storage>,
+        id: &str,
+        servers: &[String],
+        content_semaphore: Arc<Semaphore>,
+    ) -> Result<(), SyncError> {
+        let deployer = LiveSyncDeployer::new(
+            sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
+            1,
+            crate::sync_deployer::SyncValidation::AuthChainOnly,
+        );
+        let client = crate::sync::test_sync_client(reqwest::Client::new());
+        deploy_entity_streaming(
+            ContentSource {
+                client: &client,
+                storage,
+                servers,
+                content_semaphore,
+            },
+            &deployer,
+            RemoteDeployment {
+                entity_id: id,
+                auth_chain: &Vec::new(),
+                context: DeploymentContext::Synced,
+                report: None,
+                retry_state: None,
+            },
+        )
+        .await
+    }
+
+    /// A render is best-effort, but a stopped sync still fails the attempt.
+    #[tokio::test]
+    async fn a_stop_while_fetching_a_render_fails_the_deploy() {
+        let (storage, tmp, id, _, _) = stored_profile_with_a_render("render-stop").await;
+        let closed = Arc::new(Semaphore::new(1));
+        closed.close();
+        let servers = vec!["http://127.0.0.1:1".to_string()];
+        let result = deploy_stored(storage, &id, &servers, closed).await;
+        assert!(matches!(result, Err(SyncError::Stopped)), "{result:?}");
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    /// A render is best-effort, but a store that cannot keep the bytes a peer served fails the
+    /// attempt instead of deploying without them.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_store_fault_on_a_render_fails_the_deploy() {
+        let (storage, tmp, id, render_hash, render) =
+            stored_profile_with_a_render("render-store").await;
+        // A dangling link where the render's shard belongs: a read finds it absent, a write
+        // cannot create the shard (even as root).
+        let shard = storage.root().join(hex_prefix(&render_hash));
+        assert_ne!(hex_prefix(&render_hash), hex_prefix(&id));
+        std::os::unix::fs::symlink(tmp.join("nowhere"), &shard).unwrap();
+        assert!(!storage.exist(&render_hash).await.unwrap());
+        let (url, server) =
+            crate::sync_test_support::blob_peer(HashMap::from([(render_hash, render)])).await;
+        let result = deploy_stored(storage, &id, &[url], Arc::new(Semaphore::new(1))).await;
+        assert!(matches!(result, Err(SyncError::Storage(_))), "{result:?}");
+        server.abort();
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    /// A render no peer serves costs one request to each peer, with no backoff between them.
+    #[tokio::test]
+    async fn a_missing_render_is_asked_of_each_peer_once() {
+        let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut servers = Vec::new();
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            servers.push(format!("http://{}", listener.local_addr().unwrap()));
+            let hits = hits.clone();
+            let app = axum::Router::new().route(
+                "/contents/{hash}",
+                axum::routing::get(move || {
+                    hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    async { axum::http::StatusCode::NOT_FOUND }
+                }),
+            );
+            handles.push(tokio::spawn(async move {
+                axum::serve(listener, app).await.unwrap()
+            }));
+        }
+        let (storage, tmp) = temp_storage("render-404").await;
+        let client = crate::sync::test_sync_client(reqwest::Client::new());
+        let hash = hash_bytes_v1(b"a render no peer has");
+        let started = std::time::Instant::now();
+        let stored = download_render(&client, &storage, &hash, &servers, None)
+            .await
+            .unwrap();
+        assert!(!stored);
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert!(started.elapsed() < std::time::Duration::from_millis(RETRY_WAIT_MS));
+        handles.iter().for_each(tokio::task::JoinHandle::abort);
         let _ = std::fs::remove_dir_all(tmp);
     }
 

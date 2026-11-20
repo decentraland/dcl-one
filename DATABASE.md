@@ -1708,20 +1708,31 @@ existing database gains it from the object pass, so no step exists.
 A profile may name avatar renders in `metadata.avatars[].avatar.snapshots`
 that its `content[]` omits. Sync fetches them when a source has them and writes
 a `content.content_files` row for each stored one (`{name}.png`, the reference
-catalyst's key) in the flush that writes the deployment, so the blob collector
-and the history prune keep them; a render no source has leaves no row.
+catalyst's key, for the names `face`, `face128`, `face256` and `body` only) in
+the flush that writes the deployment, so the blob collector and the history
+prune keep them; a render no source has leaves no row. A render already in the
+store has its modified time set to now before the deployment is buffered, so
+the collector's age floor covers it until that flush commits.
+
 `catalyst content repair-profile-snapshots` (`content::profile_snapshots::repair`)
 adds those rows to profiles stored without them. Inputs: active profiles
-(`entity_type = 'profile' AND deleter_deployment IS NULL`) read by
-`id` keyset in pages of `--batch` (default 500), and
-their `content_files` rows by `deployment = ANY`. Per page, the renders the
-store lacks are fetched from `SYNC_SOURCE`, at most 8 at once. Writes: per
-page, one transaction that takes the store's shared lock, re-checks the blobs
-and inserts a row for each stored render, guarded on the deployment still being
-active, with `ON CONFLICT (deployment, key) DO NOTHING`. A pass can be
-repeated or interrupted; a render no source served is tried again on the next
-pass. The scan reads every active profile once; it is a one-off cost,
-unmeasured.
+(`entity_type = 'profile' AND deleter_deployment IS NULL`) read by `id` keyset
+in pages of `--batch` (default 500), and their `content_files` rows by
+`deployment = ANY` (served by the `(deployment, key)` unique index). No index
+covers `(entity_type, id)` and no partial index holds the active profiles, so a
+page either walks the primary key from the last `id`, reading every deployment
+of every type, superseded ones included, until it has `--batch` active
+profiles, or reads all profiles through `deployments_entity_type_index` and
+sorts them. With the first plan a whole pass reads every row of
+`content.deployments` once; the plan the server picks and the pass's duration
+on a production-sized table are unmeasured. Per page, the renders the store
+lacks are fetched from `SYNC_SOURCE`, at most 8 at once and within 64 MiB of
+decoded bodies (a larger body downloads alone). Writes: per page, one
+transaction that takes the store's shared lock, re-checks the blobs and
+inserts a row for each stored render, guarded on the deployment still being
+active, with `ON CONFLICT (deployment, key) DO NOTHING`. A pass can be repeated
+or interrupted; a render no source served is tried again on the next pass, and
+a store fault ends the pass with an error.
 
 ## Badges catalog and progress workload
 

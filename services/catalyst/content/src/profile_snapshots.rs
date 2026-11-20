@@ -7,29 +7,34 @@
 
 use std::collections::{HashMap, HashSet};
 
-use futures::StreamExt;
+use futures::{StreamExt, TryStreamExt};
 use serde::Serialize;
 use serde_json::Value;
 use sqlx::PgPool;
 
 use crate::auth::is_canonical_cid;
-use crate::deploy_remote_entity::download_file_with_retries;
+use crate::deploy_remote_entity::{ByteBudget, download_render};
 use crate::http::CheckedRedirectClient;
 use crate::storage::Storage;
 
-/// Snapshot values read from one profile; far above a real profile (four per avatar), so it
-/// only bounds hostile or corrupt metadata, as snapshots-fetcher's cap does.
-pub const MAX_SNAPSHOTS_PER_PROFILE: usize = 1000;
+/// The render names a profile's snapshots use: `face256` and `body` in the current profile
+/// schema, `face` and `face128` in older profiles. Any other name adds nothing, so a profile
+/// gets at most these four rows and a key stays short.
+const SNAPSHOT_NAMES: [&str; 4] = ["face", "face128", "face256", "body"];
 
 /// Blobs [`repair`] fetches at once.
 const REPAIR_FETCH_CONCURRENCY: usize = 8;
 
+/// Decoded bodies [`repair`] holds in memory at once. A render larger than this still
+/// downloads, alone, so the bound is this or one body, whichever is larger.
+const REPAIR_INFLIGHT_BYTES: u64 = 64 * 1024 * 1024;
+
 /// The `content_files` rows a profile's snapshots add to its `content` (`(key, hash)` pairs):
 /// one per snapshot whose hash `content` does not list, keyed `{name}.png` as the reference
-/// fixer keys them. A value is a hash or a `.../contents/{hash}` URL; one that is not a
-/// canonical CID, or whose key `content` or an earlier snapshot holds (a deployment's keys are
-/// unique), adds nothing.
-pub fn snapshot_files(
+/// fixer keys them. A value is a hash or a `.../contents/{hash}` URL; one whose name is not in
+/// [`SNAPSHOT_NAMES`], whose value is not a canonical CID, or whose key `content` or an earlier
+/// snapshot holds (a deployment's keys are unique), adds nothing.
+pub(crate) fn snapshot_files(
     avatars: Option<&Value>,
     content: &[(String, String)],
 ) -> Vec<(String, String)> {
@@ -43,7 +48,7 @@ pub fn snapshot_files(
         .iter()
         .filter_map(|a| a.pointer("/avatar/snapshots").and_then(Value::as_object))
         .flatten()
-        .take(MAX_SNAPSHOTS_PER_PROFILE);
+        .filter(|(name, _)| SNAPSHOT_NAMES.contains(&name.as_str()));
     for (name, value) in snapshots {
         let Some(hash) = value.as_str().map(hash_of_snapshot) else {
             continue;
@@ -61,7 +66,7 @@ pub fn snapshot_files(
 }
 
 /// The hash a snapshot value names: itself, or what follows `/contents/` in a URL.
-pub(crate) fn hash_of_snapshot(value: &str) -> &str {
+fn hash_of_snapshot(value: &str) -> &str {
     value
         .rfind("/contents/")
         .map_or(value, |i| &value[i + "/contents/".len()..])
@@ -76,7 +81,8 @@ pub struct RepairReport {
     pub rows: u64,
     /// Blobs fetched from the peers.
     pub fetched: u64,
-    /// Snapshots left without a row: no peer served the blob. A later pass retries them.
+    /// Snapshots left without a row: no peer served the blob (a failure other than a 404 is
+    /// logged at `warn`). A later pass retries them.
     pub unavailable: u64,
 }
 
@@ -85,7 +91,7 @@ pub struct RepairReport {
 /// `servers` when the store lacks it, and gets its row once the blob is stored. Rows are
 /// inserted under the store's shared lock after the blobs are re-checked, so a collector batch
 /// never unlinks a blob a row it did not see names; a row already present is kept, so a pass
-/// can be repeated or interrupted.
+/// can be repeated or interrupted. A store fault ends the pass with an error.
 pub async fn repair(
     pool: &PgPool,
     storage: &Storage,
@@ -94,6 +100,7 @@ pub async fn repair(
     batch: i64,
 ) -> anyhow::Result<RepairReport> {
     let mut report = RepairReport::default();
+    let budget = ByteBudget::new(REPAIR_INFLIGHT_BYTES);
     let mut after = 0i32;
     loop {
         let profiles: Vec<(i32, Option<Value>)> = sqlx::query_as(
@@ -140,18 +147,16 @@ pub async fn repair(
         let held = storage
             .exist_multiple(&hashes.into_iter().collect::<Vec<_>>())
             .await?;
-        let fetches = held.iter().filter(|(_, held)| !**held).map(|(hash, _)| async move {
-            let fetched = download_file_with_retries(client, storage, hash, servers, None).await;
-            if let Err(e) = &fetched {
-                tracing::warn!(hash, error = %e, "profile snapshot repair: no peer served the blob");
-            }
-            fetched.is_ok()
-        });
-        report.fetched += futures::stream::iter(fetches)
+        let budget = &budget;
+        let fetches = held
+            .iter()
+            .filter(|(_, held)| !**held)
+            .map(|(hash, _)| download_render(client, storage, hash, servers, Some(budget)));
+        let fetched: Vec<bool> = futures::stream::iter(fetches)
             .buffer_unordered(REPAIR_FETCH_CONCURRENCY)
-            .filter(|ok| std::future::ready(*ok))
-            .count()
-            .await as u64;
+            .try_collect()
+            .await?;
+        report.fetched += fetched.into_iter().filter(|stored| *stored).count() as u64;
 
         let mut tx = pool.begin().await?;
         crate::storage::gc::lock_store_shared(&mut tx).await?;

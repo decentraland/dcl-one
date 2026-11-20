@@ -185,6 +185,30 @@ impl Storage {
         Ok(stat_for_read(&self.known_shards, &path).await?.is_some())
     }
 
+    /// Sets a present blob's modified time to now, so the collector's age floor counts from this
+    /// call: a writer that names a blob it did not store in a row it commits later touches it
+    /// first. `Ok(false)` when the blob is absent, under the same miss-vs-fault rules as
+    /// [`exist`](Self::exist).
+    pub async fn touch(&self, hash: &str) -> Result<bool, StorageError> {
+        let path = resolve_file_path(&self.root, hash)?;
+        if stat_for_read(&self.known_shards, &path).await?.is_none() {
+            return Ok(false);
+        }
+        let touched = tokio::task::spawn_blocking(move || {
+            std::fs::File::options()
+                .write(true)
+                .open(&path)?
+                .set_modified(std::time::SystemTime::now())
+        })
+        .await
+        .map_err(std::io::Error::other)?;
+        match touched {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// Batch existence probe for `/available-content`: a provably-invalid id is a per-id miss that
     /// never poisons the batch; only real storage faults abort it.
     pub async fn exist_multiple<S: AsRef<str>>(

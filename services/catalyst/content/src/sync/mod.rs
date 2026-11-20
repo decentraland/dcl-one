@@ -154,11 +154,7 @@ pub fn sync_http_client(
 pub fn sources_http_client(
     sources: &[String],
 ) -> anyhow::Result<crate::http::CheckedRedirectClient> {
-    let hosts = sources
-        .iter()
-        .filter_map(|s| url::Url::parse(s).ok()?.host_str().map(str::to_string))
-        .collect();
-    checked_client(1, hosts)
+    checked_client(1, hosts_of(sources.iter().map(String::as_str)))
 }
 
 fn checked_client(
@@ -207,13 +203,20 @@ fn trusted_hosts(config: &crate::config::Config) -> anyhow::Result<Vec<String>> 
     } else {
         None
     };
-    Ok([content.sync_source.as_str(), mirror]
-        .into_iter()
-        .flat_map(|raw| raw.split(','))
-        .chain(rpc.as_deref())
+    Ok(hosts_of(
+        [content.sync_source.as_str(), mirror]
+            .into_iter()
+            .flat_map(|raw| raw.split(','))
+            .chain(rpc.as_deref()),
+    ))
+}
+
+/// The host each URL in `entries` names; an entry that is no URL names none.
+fn hosts_of<'a>(entries: impl Iterator<Item = &'a str>) -> Vec<String> {
+    entries
         .filter_map(|entry| url::Url::parse(normalize_source(entry).as_str()).ok())
         .filter_map(|url| url.host_str().map(str::to_string))
-        .collect())
+        .collect()
 }
 
 #[cfg(test)]

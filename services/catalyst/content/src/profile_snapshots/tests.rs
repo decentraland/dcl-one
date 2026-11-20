@@ -18,9 +18,12 @@ fn snapshot_files_keep_the_legacy_keys_and_skip_what_cannot_be_a_row() {
             "face256": listed,
             "face": format!("https://peer.example/content/contents/{face}"),
             "body": body,
-            "broken": "not-a-cid",
-            "number": 7,
+            "face128": "not-a-cid",
+            // Only the render names are read, so a key stays short.
+            ("x".repeat(3000)): cid("long name"),
+            "extra": cid("extra"),
         }}},
+        {"avatar": {"snapshots": {"face128": 7}}},
         // A second avatar's `face` would reuse `face.png`; the first one keeps the key.
         {"avatar": {"snapshots": {"face": other_face}}},
         {"avatar": {"snapshots": "a string is not snapshots"}},
@@ -62,18 +65,6 @@ fn snapshot_files_keep_the_legacy_keys_and_skip_what_cannot_be_a_row() {
             ("body.png".to_string(), v0_body),
             ("face.png".to_string(), v0_face)
         ]
-    );
-}
-
-#[test]
-fn snapshot_files_read_a_bounded_number_of_values() {
-    let snapshots: serde_json::Map<String, Value> = (0..MAX_SNAPSHOTS_PER_PROFILE + 10)
-        .map(|i| (format!("s{i}"), json!(cid(&format!("s{i}")))))
-        .collect();
-    let avatars = json!([{"avatar": {"snapshots": snapshots}}]);
-    assert_eq!(
-        snapshot_files(Some(&avatars), &[]).len(),
-        MAX_SNAPSHOTS_PER_PROFILE
     );
 }
 
@@ -161,6 +152,67 @@ async fn repair_records_the_stored_renders_and_is_idempotent() {
         .await
         .unwrap();
     assert_eq!(rows(&pool, active).await, expected);
+    server.abort();
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+/// A profile superseded while its renders are fetched gets no row: the insert re-checks that
+/// the deployment is still active.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn repair_adds_no_row_to_a_profile_superseded_during_the_pass() {
+    let Some(pool) = test_pool(2).await else {
+        return;
+    };
+    let tag = unique();
+    let render = format!("raced {tag}").into_bytes();
+    let render_hash = hash_bytes_v1(&render);
+    let profile = insert_profile(
+        &pool,
+        &format!("raced-{tag}"),
+        json!([{"avatar": {"snapshots": {"body": render_hash}}}]),
+    )
+    .await;
+    let newer = insert_profile(&pool, &format!("newer-{tag}"), json!([])).await;
+
+    // The peer supersedes the profile before it answers: after the scan, before the insert.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let (peer_pool, raced) = (pool.clone(), render_hash.clone());
+    let app = axum::Router::new().route(
+        "/contents/{hash}",
+        axum::routing::get(
+            move |axum::extract::Path(hash): axum::extract::Path<String>| {
+                let (pool, render, raced) = (peer_pool.clone(), render.clone(), raced.clone());
+                async move {
+                    use axum::response::IntoResponse;
+                    if hash != raced {
+                        return axum::http::StatusCode::NOT_FOUND.into_response();
+                    }
+                    sqlx::query(
+                        "UPDATE content.deployments SET deleter_deployment = $1 WHERE id = $2",
+                    )
+                    .bind(newer)
+                    .bind(profile)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                    render.into_response()
+                }
+            },
+        ),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (storage, tmp) = temp_storage("snapshot-repair-race").await;
+    let client = crate::sync::test_sync_client(reqwest::Client::new());
+
+    repair(&pool, &storage, &client, std::slice::from_ref(&url), 10_000)
+        .await
+        .unwrap();
+    assert!(
+        storage.exist(&render_hash).await.unwrap(),
+        "the render was fetched"
+    );
+    assert!(rows(&pool, profile).await.is_empty());
     server.abort();
     let _ = std::fs::remove_dir_all(tmp);
 }

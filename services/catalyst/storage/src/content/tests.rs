@@ -862,3 +862,30 @@ async fn store_file_links_a_spooled_file_and_leaves_the_source() {
 
     let _ = tokio::fs::remove_dir_all(&tmp).await;
 }
+
+#[tokio::test]
+async fn touch_restarts_a_present_blobs_age_and_reports_an_absent_one() {
+    let (tmp, storage) = fresh("touch").await;
+    storage.store(HASH, Bytes::from_static(b"x")).await.unwrap();
+    let path = storage.file_path(HASH).await.unwrap().unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+
+    assert!(storage.touch(HASH).await.unwrap());
+    let age = std::fs::metadata(&path)
+        .unwrap()
+        .modified()
+        .unwrap()
+        .elapsed()
+        .unwrap_or_default();
+    assert!(age < std::time::Duration::from_secs(60), "{age:?}");
+    assert_eq!(storage.retrieve(HASH).await.unwrap().unwrap(), "x");
+    assert!(!storage.touch(OTHER).await.unwrap());
+
+    let _ = tokio::fs::remove_dir_all(&tmp).await;
+}

@@ -897,10 +897,8 @@ async fn flush_batch(pool: &PgPool, entities: &[ParsedEntity]) -> Result<(), Syn
 }
 
 impl LiveSyncDeployer {
-    /// Validates the entity ([`Self::verify_entity`]), then buffers it; returns once it is buffered, so the
-    /// write itself is asynchronous (see [`LiveSyncDeployer::flush`]). `retry_state` is the
-    /// (attempts spent, backoff) of the retry worker's attempt, kept for the failure record a
-    /// failed flush writes.
+    /// [`Self::deploy_entity_with_files`] with no file beyond `content[]`.
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn deploy_entity(
         &self,
         entity_data: &[u8],
@@ -922,9 +920,12 @@ impl LiveSyncDeployer {
         .await
     }
 
-    /// [`Self::deploy_entity`], recording `extra_files` (`(key, hash)`, keys `content[]` does
-    /// not hold) in `content_files` beside `content[]`: the stored avatar renders a profile
-    /// names only in its metadata ([`crate::profile_snapshots::snapshot_files`]).
+    /// Validates the entity ([`Self::verify_entity`]), then buffers it; returns once it is buffered, so the
+    /// write itself is asynchronous (see [`LiveSyncDeployer::flush`]). `retry_state` is the
+    /// (attempts spent, backoff) of the retry worker's attempt, kept for the failure record a
+    /// failed flush writes. `extra_files` (`(key, hash)`, keys `content[]` does not hold) are
+    /// recorded in `content_files` beside `content[]`: the stored avatar renders a profile
+    /// names only in its metadata.
     #[allow(clippy::too_many_arguments)]
     pub async fn deploy_entity_with_files(
         &self,
