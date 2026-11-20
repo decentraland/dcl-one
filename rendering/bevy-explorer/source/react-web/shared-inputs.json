@@ -848,6 +848,10 @@
           "kind": "regular"
         },
         {
+          "name": "holeClip.test.ts",
+          "kind": "regular"
+        },
+        {
           "name": "hudAutomation.test.ts",
           "kind": "regular"
         },
@@ -5930,7 +5934,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarPreview.tsx",
-      "sha256": "e75c8f1f926a2b25d28072e09d53cdaa196058633aba7bc123ab27c90f6d65e2"
+      "sha256": "d089af63338ba76d3a6fcf76a4f29d0c6a632035428e8334cdc614763039d79e"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/chat.ts",
@@ -6915,7 +6919,7 @@
     },
     {
       "path": "library/explorer-core/lib/holeClip.ts",
-      "sha256": "fef63354a1ea28d390fcc14cf53fad51636122a3753a463fb0de313b87bef94e"
+      "sha256": "e5dba57481aba6e416b819da0b1b0a1f25405d47fcf2bc9952c21f7441e891f3"
     },
     {
       "path": "library/explorer-core/lib/hudAutomation.ts",
@@ -7088,6 +7092,10 @@
     {
       "path": "library/explorer-core/test/guestWalletEvent.test.ts",
       "sha256": "a2ceb8a45dde0094e91d218dbd03187739c988bdccbcc2d3493ecf97e832bd03"
+    },
+    {
+      "path": "library/explorer-core/test/holeClip.test.ts",
+      "sha256": "3dbe6a22ec977e35b1b61fbc03736b1b6d7ea6a4f5d69e79911a965f52e790ca"
     },
     {
       "path": "library/explorer-core/test/hudAutomation.test.ts",
@@ -9171,11 +9179,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackModal.tsx",
-      "sha256": "0f6b87a9d9b7b40378ad03a60807cd39db7d849c50d528e99868b21691d829b1"
+      "sha256": "8ddbf27111539d6509386517667423d79be61e8537c028311c19bbd1dff62670"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.module.css",
-      "sha256": "bf8a1ca0ad3ad9633db1ce076f1e17c4b9f8b49315f6c076d0ec53df46976b81"
+      "sha256": "4f07411301223b9f7b4ec9d121f84ec524f851c4547074762f2827d54b4ac23d"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
@@ -9723,7 +9731,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "sha256": "b8c6471072e2e1c615b4a226893e472908d79848bbcab62238131a0450946cf2"
+      "sha256": "efc57770e26561393043a4a50179f8247cd1c0fca597763d9e7797490a56b457"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.module.css",
@@ -13143,6 +13151,21 @@
     {
       "from": "library/explorer-core/test/guestWalletEvent.test.ts",
       "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/holeClip.test.ts",
+      "to": "library/explorer-core/lib/holeClip.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/holeClip.test.ts",
+      "to": "library/explorer-core/lib/holeClip.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/holeClip.test.ts",
+      "to": "library/explorer-core/lib/holeClip.ts",
       "kind": "test:runtime"
     },
     {
@@ -46523,6 +46546,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/guestWalletEvent.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/holeClip.test.ts",
       "kind": "type"
     },
     {

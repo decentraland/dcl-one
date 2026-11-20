@@ -50,6 +50,8 @@ const FRAMING: Record<PreviewFocus, { range: number; centerY: number }> = {
   bottom: { range: 3.96, centerY: 1.15 },
   shoes: { range: 3.03, centerY: 0.35 }
 }
+// An outfit's picture: the whole body, centred.
+const THUMBNAIL_FRAMING = { range: 6.25, centerY: 1.85 }
 // The Shop's whole body in its 573×942 window, as the design draws it: the avatar ~751px tall, its feet on
 // the stage's floor logo (~970px down the screen). The Shop frames nothing else.
 const SHOP_FRAMING = { range: 4.9, centerY: 1.84 }
@@ -872,8 +874,8 @@ export async function captureAvatarThumbnail(): Promise<string | null> {
   const rotation = Transform.get(avatar).rotation
   Transform.getMutable(avatar).rotation = FACING
   framingT = 1
-  // The whole body, whatever the page has zoomed to or frames it in.
-  applyFraming(FRAMING.body, 1, 0, WHOLE_RECT)
+  // Whatever the page has zoomed to or frames the avatar in.
+  applyFraming(THUMBNAIL_FRAMING, 1, 0, WHOLE_RECT)
   const podium = podiumEntities
   podium.forEach((e) => { Transform.getMutable(e).scale = Vector3.Zero() })
   try {
