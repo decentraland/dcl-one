@@ -3,6 +3,7 @@ export enum Filter {
   Recents = 'recents',
   Models = 'models',
   Emotes = 'emotes',
+  Wearables = 'wearables',
   Images = 'images',
   Video = 'video',
   Audio = 'audio',

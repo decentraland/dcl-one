@@ -11,6 +11,7 @@ import { isRoot, useEntityComponent } from '../../../hooks/sdk/useEntityComponen
 import { CAMERA, PLAYER, ROOT } from '../../../lib/sdk/tree';
 import { type SdkContextEvents, type SdkContextValue } from '../../../lib/sdk/context';
 import { getAssetByModel } from '../../../lib/logic/catalog';
+import { DEFAULT_BODY_SHAPE, getBaseOutfitUrns } from '../../../lib/logic/wearables';
 import { analytics, Event } from '../../../lib/logic/analytics';
 import { useAppSelector } from '../../../redux/hooks';
 import { selectCustomAssets } from '../../../redux/app';
@@ -119,6 +120,40 @@ export default React.memo(
           availableComponents,
         ),
       });
+
+      // The Player takes only the components a scene can write to every visitor's avatar.
+      if (entity === PLAYER) {
+        return [
+          { header: 'Player' },
+          createOption(
+            sdk.components.AvatarShape,
+            'Avatar Shape',
+            {
+              description:
+                "Changes how each visitor's avatar looks while they are in this scene: body, colours and wearables. Only they see it, and fields you leave unset keep their own look.",
+              link: 'https://docs.decentraland.org/creator/scenes-sdk7/interactivity/npc-avatars',
+            },
+            {},
+            { id: '', wearables: [], emotes: [] },
+          ),
+          createOption(sdk.components.AvatarLocomotionSettings, 'Locomotion Settings', {
+            description:
+              'Changes how fast the player walks, jogs and runs, how high they jump and how they glide while they are in this scene. Fields you leave empty keep the default.',
+            link: 'https://docs.decentraland.org/creator/sdk7/interactivity/avatars/locomotion/',
+          }),
+          createOption(
+            sdk.components.InputModifier,
+            'Input Modifier',
+            {
+              description:
+                'Freezes the player, or stops them from walking, running, jumping, gliding or emoting, while they are in this scene.',
+              link: 'https://docs.decentraland.org/creator/sdk7/interactivity/avatars/locomotion/#restrict-locomotion',
+            },
+            {},
+            { mode: { $case: 'standard', standard: {} } },
+          ),
+        ];
+      }
 
       const options: ComponentOption[] = [
         { header: '3D Content' },
@@ -256,6 +291,24 @@ export default React.memo(
             'Make an entity automatically reorient its rotation to always face the camera, as in retro 3D games that used 2D sprites.',
           link: 'https://docs.decentraland.org/creator/scenes-sdk7/3d-content-essentials/entity-positioning#face-the-player',
         }),
+        createOption(
+          sdk.components.AvatarShape,
+          'Avatar Shape (NPC)',
+          {
+            description:
+              'Draws an avatar on this entity, for example an NPC. Set its name, body, colours and wearables, from the scene, the base avatars or the catalog.',
+            link: 'https://docs.decentraland.org/creator/scenes-sdk7/interactivity/npc-avatars',
+          },
+          {},
+          // explorers leave most empty slots empty, so a new NPC starts in the base outfit
+          {
+            id: '',
+            name: 'NPC',
+            bodyShape: DEFAULT_BODY_SHAPE,
+            wearables: getBaseOutfitUrns(DEFAULT_BODY_SHAPE),
+            emotes: [],
+          },
+        ),
         createOption(sdk.components.AvatarAttach, 'Avatar Attach', {
           description:
             'Repositions an Entity to maintain the same position and rotation relative to an avatar anchor point. Entities with this component are not rendered in the canvas. Note: The Transform component is ignored - nest the item under a parent to offset from the anchor point.',
@@ -361,7 +414,7 @@ export default React.memo(
       }
 
       return options;
-    }, [sdk, availableComponents, handleClickAddComponent]);
+    }, [sdk, entity, availableComponents, handleClickAddComponent]);
 
     const quitEditMode = useCallback(() => setEditMode(false), []);
     const enterEditMode = useCallback(() => setEditMode(true), []);
@@ -401,7 +454,8 @@ export default React.memo(
             ) : null}
           </div>
           <div className="RightContent">
-            {componentOptions.some(option => !option.header) && !isRoot(entity) ? (
+            {componentOptions.some(option => !option.header) &&
+            (!isRoot(entity) || entity === PLAYER) ? (
               <Dropdown
                 className="AddComponent"
                 menuAlign="right"

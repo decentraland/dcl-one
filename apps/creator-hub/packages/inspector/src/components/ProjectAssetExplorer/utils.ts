@@ -1,6 +1,9 @@
 import type { Asset } from '../../lib/logic/catalog';
+import type { RiggedModel } from '../../lib/logic/wearable-models';
 import { getAnimatedPreviewUrl, getBuiltInEmote, getContentsUrl } from '../../lib/logic/catalog';
-import { isProtectedPath } from './file-ops';
+import { isSceneWearablePath } from '../../lib/logic/wearables';
+import { getThumbnailHashNameForAsset } from '../../lib/utils/hash';
+import { getBaseName, isProtectedPath } from './file-ops';
 import { Filter } from './Filters/types';
 import type { TreeNode } from './ProjectView';
 import type { AssetNode, AssetNodeFolder, AssetNodeItem, IAsset } from './types';
@@ -29,7 +32,10 @@ function determineAssetType(extension: string): IAsset['type'] {
             : 'unknown';
 }
 
-export function buildAssetTree(paths: string[]): AssetNodeFolder {
+export function buildAssetTree(
+  paths: string[],
+  riggedWearables: ReadonlyMap<string, RiggedModel> = new Map(),
+): AssetNodeFolder {
   const root: AssetNodeFolder = AssetNodeRootNull();
 
   for (const path of paths) {
@@ -54,6 +60,7 @@ export function buildAssetTree(paths: string[]): AssetNodeFolder {
             asset: {
               src: path,
               type: assetType,
+              ...(riggedWearables.has(path) ? { riggedWearable: riggedWearables.get(path) } : {}),
             },
           };
           currentNode.children.push(childNode);
@@ -87,6 +94,7 @@ export const DEFAULT_FILTERS: Filter[] = [Filter.All /* Filter.Recents */];
 export const FILTERS_IN_ORDER: Filter[] = [
   Filter.Models,
   Filter.Emotes,
+  Filter.Wearables,
   Filter.Images,
   Filter.Audio,
   Filter.Video,
@@ -101,10 +109,18 @@ export function isEmoteAsset(asset: IAsset): boolean {
   return asset.type === 'gltf' && /_emote\.(glb|gltf)$/i.test(asset.src);
 }
 
+// A GLB named `<name>_<category>.glb`, which an AvatarShape can list by its path, or a model
+// rigged to the avatar armature, which can be renamed to that form.
+export function isWearableAsset(asset: IAsset): boolean {
+  if (asset.type !== 'gltf' || asset.builtInEmote) return false;
+  return isSceneWearablePath(asset.src) || !!asset.riggedWearable;
+}
+
 export function mapAssetTypeToFilter(asset: IAsset): Filter | undefined {
   switch (asset.type) {
     case 'gltf':
-      return isEmoteAsset(asset) ? Filter.Emotes : Filter.Models;
+      if (isEmoteAsset(asset)) return Filter.Emotes;
+      return isWearableAsset(asset) ? Filter.Wearables : Filter.Models;
     case 'audio':
       return Filter.Audio;
     case 'image':
@@ -161,4 +177,24 @@ export function buildBuiltInAnimationsFolder(assets: Asset[]): AssetNodeFolder {
       },
     }));
   return folder;
+}
+
+/**
+ * The saved thumbnail of each model in `sources` (asset paths as the tree lists them), keyed by
+ * source. A thumbnail is named after its model's path hash; older scenes name it after the file.
+ */
+export async function findAssetThumbnails(
+  sources: readonly string[],
+  thumbnails: readonly { path: string; content: Uint8Array }[],
+): Promise<Map<string, Uint8Array>> {
+  const map = new Map<string, Uint8Array>();
+  const hashedNames = await Promise.all(sources.map(src => getThumbnailHashNameForAsset(src)));
+  sources.forEach((src, index) => {
+    const legacyName = getBaseName(src).split('.')[0] + '.png';
+    const thumbnail =
+      thumbnails.find($ => $.path.endsWith(hashedNames[index])) ??
+      thumbnails.find($ => $.path.endsWith(legacyName));
+    if (thumbnail) map.set(src, thumbnail.content);
+  });
+  return map;
 }

@@ -32,6 +32,8 @@ export class EcsEntity extends BABYLON.TransformNode {
   readonly isDCLEntity = true;
   usedComponents = new Map<number, ComponentDefinition<unknown>>();
   meshRenderer?: BABYLON.AbstractMesh;
+  /** The editor's mannequin for an AvatarShape (sdkComponents/avatar-shape.ts). */
+  avatarShape?: BABYLON.Mesh;
   gltfContainer?: BABYLON.AbstractMesh;
   placeholderContainer?: BABYLON.AbstractMesh;
   placeholderAssetContainer?: BABYLON.AssetContainer;
@@ -226,6 +228,7 @@ export class EcsEntity extends BABYLON.TransformNode {
     if (container) {
       container.setEnabled(enabled);
     }
+    this.avatarShape?.setEnabled(enabled);
     for (const child of this.childrenEntities()) {
       child.setVisibility(enabled);
     }

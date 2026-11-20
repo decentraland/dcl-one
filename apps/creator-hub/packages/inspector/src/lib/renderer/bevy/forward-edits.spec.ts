@@ -884,6 +884,21 @@ describe('createForwardEditBridge', () => {
         (v: any) => expect(v.anchorPointId).toBe(3),
       ],
       [
+        'AvatarShape',
+        () => components.AvatarShape(ctx.engine),
+        {
+          id: '',
+          name: 'Shopkeeper',
+          wearables: ['assets/wearables/apron_upper_body.glb'],
+          emotes: [],
+        },
+        (v: any) => {
+          expect(v.wearables).toEqual(['assets/wearables/apron_upper_body.glb']);
+          // the engine's AvatarShape requires the list, which @dcl/ecs does not send
+          expect(v.forceRender).toEqual([]);
+        },
+      ],
+      [
         'CameraModeArea',
         () => components.CameraModeArea(ctx.engine),
         { area: { x: 4, y: 2, z: 4 }, mode: 1 },

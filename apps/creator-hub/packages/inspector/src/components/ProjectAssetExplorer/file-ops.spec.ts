@@ -90,6 +90,20 @@ describe('ProjectAssetExplorer/file-ops', () => {
       const value = { src: 'assets/other.glb', visible: true };
       expect(replaceAssetReferences(value, map)).toBe(value);
     });
+    it("should replace an AvatarShape's wearable files and animation file", () => {
+      const avatar = {
+        wearables: ['urn:decentraland:off-chain:base-avatars:bun_shoes', 'assets/old.glb'],
+        expressionTriggerId: 'assets/old.glb',
+      };
+      expect(replaceAssetReferences(avatar, map)).toEqual({
+        wearables: ['urn:decentraland:off-chain:base-avatars:bun_shoes', 'assets/new.glb'],
+        expressionTriggerId: 'assets/new.glb',
+      });
+    });
+    it('should leave a built-in animation name alone', () => {
+      const avatar = { wearables: [], expressionTriggerId: 'wave' };
+      expect(replaceAssetReferences(avatar, map)).toBe(avatar);
+    });
   });
 
   describe('pruneNestedPaths', () => {

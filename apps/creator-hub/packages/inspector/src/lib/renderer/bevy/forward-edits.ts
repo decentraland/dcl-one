@@ -59,6 +59,9 @@ const ENGINE_COMPONENT_NAMES: Record<string, string> = {
   'core::NftShape': 'NftShape',
   'core::GltfNodeModifiers': 'GltfNodeModifiers',
   'core::AvatarAttach': 'AvatarAttach',
+  'core::AvatarShape': 'AvatarShape',
+  'core::AvatarLocomotionSettings': 'AvatarLocomotionSettings',
+  'core::InputModifier': 'InputModifier',
   'core::AvatarModifierArea': 'AvatarModifierArea',
   'core::CameraModeArea': 'CameraModeArea',
   'core::VirtualCamera': 'VirtualCamera',
@@ -681,6 +684,11 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
       // collision. Editor-only — the CRDT keeps the authored mask.
       const m = (current ?? {}) as { collisionMask?: number };
       payload = { ...m, collisionMask: (m.collisionMask ?? 0) | CL_POINTER };
+    } else if (engineName === 'AvatarShape') {
+      // The engine's PbAvatarShape has a `forceRender` list that the inspector's @dcl/ecs
+      // predates, and `set_component` rejects JSON that lacks a repeated field ("missing
+      // field"), so every live wearable edit was dropped until a reload.
+      payload = { id: '', wearables: [], emotes: [], forceRender: [], ...(current ?? {}) };
     }
     const setArgs = [String(entity), engineName, JSON.stringify(toEngineJson(payload))];
     try {

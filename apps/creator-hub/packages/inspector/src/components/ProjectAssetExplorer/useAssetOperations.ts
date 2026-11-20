@@ -136,6 +136,7 @@ export function useAssetOperations({ tree, thumbnails, virtualFolders }: Options
         components.Material,
         components.Script,
         components.Actions,
+        components.AvatarShape,
       ];
       let changed = false;
       let unreachable = false;

@@ -1,3 +1,4 @@
+import type { RiggedModel } from '../../lib/logic/wearable-models';
 import type { AssetData } from '../../lib/logic/catalog';
 
 export interface IAsset {
@@ -7,6 +8,8 @@ export interface IAsset {
   // Set on the read-only "Built-in animations" entries, which are listed from the catalog and
   // have no file in the scene.
   builtInEmote?: BuiltInEmoteAsset;
+  /** A model rigged to the avatar armature with no `name_category.glb` name (read from the file). */
+  riggedWearable?: RiggedModel;
 }
 
 export interface BuiltInEmoteAsset {

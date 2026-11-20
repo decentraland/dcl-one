@@ -39,6 +39,7 @@ import { createSelectionBridge } from './selection-bridge';
 import { createSpawnAreasBridge } from './spawn-areas-bridge';
 import { createSpawnGizmoBridge } from './spawn-gizmo-bridge';
 import { createBrokenAssetsBridge } from './broken-assets-bridge';
+import { createAvatarHitboxesBridge } from './avatar-hitboxes-bridge';
 
 /**
  * Bevy-specific escape hatch exposed on {@link MountedRenderer.internals} — the
@@ -208,6 +209,7 @@ export function registerBevyRenderer(): void {
       // held in mutable holders and rebuilt against the new window on reload (the
       // bus-based bridges below survive a reboot, and `modifiers` is retargeted).
       let forwardBridge: ReturnType<typeof createForwardEditBridge> | null = null;
+      let avatarHitboxes: ReturnType<typeof createAvatarHitboxesBridge> | null = null;
       // Editing = the scene is frozen and the user drives the free fly-camera.
       const isEditingWithFreeCamera = () =>
         !bevy.sceneRun.isRunning() && bevy.editorCamera.getMode() === 'free';
@@ -541,6 +543,7 @@ export function registerBevyRenderer(): void {
         // playback — so also pause/resume Animator clips with the run state, and
         // show editor Placeholders only while frozen.
         forwardBridge?.setSceneFrozen(!running);
+        avatarHitboxes?.refresh();
       });
 
       // Wire the engine-window bindings for the initial boot. Re-run on reboot.
@@ -606,6 +609,7 @@ export function registerBevyRenderer(): void {
         // reconcile at reset-complete does it once the scene is pinned again.)
         sceneRunBridge.setRunning(false);
         sceneRunBridge.reset();
+        avatarHitboxes?.refresh();
       });
 
       // Spawn-point handle: the controller shows/hides the move-handle via the
@@ -669,6 +673,13 @@ export function registerBevyRenderer(): void {
         },
       });
 
+      // NPCs (AvatarShape) have no collider in the engine; while editing, the agent puts a
+      // pointer box over each so a viewport click selects it.
+      avatarHitboxes = createAvatarHitboxesBridge({
+        context: bevy.context,
+        isRunning: () => sceneRunBridge.isRunning(),
+      });
+
       const internals: BevyInternals = {
         takeScreenshot: () => bevy.takeScreenshot(),
       };
@@ -688,6 +699,7 @@ export function registerBevyRenderer(): void {
           spawnGizmo.disconnect();
           disconnectSpawnAreas();
           disconnectBrokenAssets();
+          avatarHitboxes?.disconnect();
           sceneRunBridge.disconnect();
           cameraBridge.disconnect();
           dropPoint.disconnect();

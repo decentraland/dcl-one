@@ -4,6 +4,7 @@ import { IoIosImage as ImageIcon } from 'react-icons/io';
 import { IoCubeOutline as ModelIcon, IoVideocamOutline as VideoIcon } from 'react-icons/io5';
 import { FaFile as OtherIcon } from 'react-icons/fa';
 import { MdOutlineEmojiPeople as EmoteIcon } from 'react-icons/md';
+import { GiShirt as WearableIcon } from 'react-icons/gi';
 import { SiTypescript as ScriptIcon } from 'react-icons/si';
 import {
   MdContentCopy as CopyNameIcon,
@@ -59,10 +60,12 @@ import { determineAssetType, extractFileExtension } from '../ImportAsset/utils';
 import { getThumbnailHashNameForAsset } from '../../lib/utils/hash';
 import { useAssetSelection } from '../AssetBrowserPreview';
 import {
+  findAssetThumbnails,
   getFilterFromTree,
   getFullNodePath,
   isBuiltInPath,
   isEmoteAsset,
+  isWearableAsset,
   isReadOnlyPath,
 } from './utils';
 import type { AssetNodeFolder, AssetNodeItem } from './types';
@@ -326,6 +329,7 @@ function ProjectView({ folders, thumbnails }: Props) {
         components.VideoPlayer,
         components.Material,
         components.Actions,
+        components.AvatarShape,
       ];
       for (const component of referencing) {
         for (const [entity, value] of sdk.engine.getEntitiesWith(component)) {
@@ -855,17 +859,7 @@ function ProjectView({ folders, thumbnails }: Props) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const map = new Map<string, Uint8Array>();
-      const hashedNames = await Promise.all(
-        modelSources.map(src => getThumbnailHashNameForAsset(src)),
-      );
-      modelSources.forEach((src, index) => {
-        const legacyName = getBaseName(src).split('.')[0] + '.png';
-        const thumbnail =
-          thumbnails.find($ => $.path.endsWith(hashedNames[index])) ??
-          thumbnails.find($ => $.path.endsWith(legacyName));
-        if (thumbnail) map.set(src, thumbnail.content);
-      });
+      const map = await findAssetThumbnails(modelSources, thumbnails);
       if (!cancelled) setThumbnailLookup({ key: modelKey, loaded: thumbnailsLoaded, map });
     })();
     return () => {
@@ -1176,6 +1170,7 @@ function NodeIcon({ value }: { value?: TreeNode }) {
   } else {
     const Icon = useMemo(() => {
       if (isEmoteAsset((value as AssetNodeItem).asset)) return EmoteIcon;
+      if (isWearableAsset((value as AssetNodeItem).asset)) return WearableIcon;
       const classification = determineAssetType(extractFileExtension(value.name)[1]);
       switch (classification) {
         case 'Models':

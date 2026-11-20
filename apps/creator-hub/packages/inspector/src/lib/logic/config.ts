@@ -52,6 +52,9 @@ export const CONTENT_URL = version.includes('commit')
 
 export const CATALYST_BASE_URL = 'https://peer.decentraland.org';
 
+/** Serves `/v1/catalog`, which the avatar editor searches for wearables by name. */
+export const MARKETPLACE_API_URL = 'https://marketplace-api.decentraland.org';
+
 function readBoolParam(
   params: URLSearchParams,
   key: string,

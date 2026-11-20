@@ -28,6 +28,9 @@ import { VisibilityComponentInspector } from './VisibilityComponentInspector';
 import { VideoPlayerInspector } from './VideoPlayerInspector';
 import { AudioStreamInspector } from './AudioStreamInspector';
 import AvatarAttachInspector from './AvatarAttachInspector';
+import { AvatarShapeInspector } from './AvatarShapeInspector';
+import { AvatarLocomotionSettingsInspector } from './AvatarLocomotionSettingsInspector';
+import { InputModifierInspector } from './InputModifierInspector';
 import BillboardInspector from './BillboardInspector';
 import { NftShapeInspector } from './NftShapeInspector';
 import { AnimatorInspector } from './AnimatorInspector';
@@ -218,6 +221,10 @@ const SingleEntityInspector = withSdk<{ entity: Entity | null }>(({ sdk, entity 
         component: VirtualCameraInspector,
       },
       {
+        name: sdk.components.AvatarShape.componentName,
+        component: AvatarShapeInspector,
+      },
+      {
         name: sdk.components.AvatarModifierArea.componentName,
         component: AvatarModifierAreaInspector,
       },
@@ -244,7 +251,18 @@ const SingleEntityInspector = withSdk<{ entity: Entity | null }>(({ sdk, entity 
         <>
           <EntityHeader entity={entity} />
           {entity === PLAYER ? (
-            <PlayerInspector entity={entity} />
+            <>
+              <PlayerInspector entity={entity} />
+              {!hiddenComponents[sdk.components.AvatarShape.componentName] && (
+                <AvatarShapeInspector entity={entity} />
+              )}
+              {!hiddenComponents[sdk.components.AvatarLocomotionSettings.componentName] && (
+                <AvatarLocomotionSettingsInspector entity={entity} />
+              )}
+              {!hiddenComponents[sdk.components.InputModifier.componentName] && (
+                <InputModifierInspector entity={entity} />
+              )}
+            </>
           ) : (
             <>
               {inspectors.map(

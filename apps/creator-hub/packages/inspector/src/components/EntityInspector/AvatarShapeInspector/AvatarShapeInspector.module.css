@@ -1,0 +1,268 @@
+.preview {
+  height: 240px;
+  overflow: hidden;
+  border-radius: var(--shape-borderRadiusLarge);
+  background: var(--base-19);
+}
+
+.hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ui-muted);
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(var(--segments, 2), minmax(0, 1fr));
+  gap: 4px;
+  width: 100%;
+  padding: 3px;
+  border-radius: var(--shape-borderRadiusMedium);
+  background: var(--fill-3);
+}
+
+.segment {
+  height: 28px;
+  border: 0;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: var(--sub-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.segment:hover {
+  background: var(--hover-row);
+}
+
+.segment[aria-pressed="true"] {
+  background: var(--selected-item);
+  color: var(--title);
+  font-weight: 600;
+}
+
+.segment:focus-visible,
+.remove:focus-visible,
+.add:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: -1px;
+}
+
+.wearables {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wearablesHeader {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.sectionTitle {
+  font-weight: 600;
+  color: var(--title);
+}
+
+.count {
+  font-size: 12px;
+  color: var(--ui-muted);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 6px;
+  border-radius: var(--shape-borderRadiusMedium);
+  background: var(--base-19);
+}
+
+.row[data-replaced="true"] {
+  opacity: 0.6;
+}
+
+.row[data-invalid="true"] .rowMeta {
+  color: var(--palette-warning-light);
+}
+
+.thumb {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-control);
+  background: var(--fill-3);
+  color: var(--ui-muted);
+  font-size: 20px;
+  object-fit: contain;
+}
+
+.rowText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.rowName,
+.rowMeta {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.rowName {
+  color: var(--title);
+}
+
+.rowMeta {
+  font-size: 11px;
+  color: var(--ui-muted);
+}
+
+.warning {
+  color: var(--palette-warning-light);
+}
+
+.badge {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: var(--r-pill);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  background: var(--fill-4);
+  color: var(--title);
+}
+
+.badge[data-source="scene"] {
+  background: var(--palette-success-dark2);
+  color: var(--text-primary);
+}
+
+.badge[data-source="catalog"] {
+  background: var(--selected-item);
+}
+
+.remove {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: var(--ui-muted);
+  cursor: pointer;
+}
+
+.remove:hover {
+  background: var(--hover-row);
+  color: var(--title);
+}
+
+.add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  border: 1px dashed var(--ui-border-strong);
+  border-radius: var(--shape-borderRadiusMedium);
+  background: transparent;
+  color: var(--title);
+  font: inherit;
+  cursor: pointer;
+}
+
+.add:hover {
+  border-color: var(--ui-designer-control-accent);
+  background: var(--hover-row);
+}
+
+.callout {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--shape-borderRadiusMedium);
+  background: var(--fill-3);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--sub-text);
+}
+
+.suffix {
+  color: var(--ui-muted);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.colors {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.color {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.color > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.reset {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: var(--ui-muted);
+  cursor: pointer;
+}
+
+.reset:hover {
+  background: var(--hover-row);
+  color: var(--title);
+}
+
+.reset:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: -1px;
+}
+
+.wearables[data-drop] {
+  margin: -4px;
+  padding: 4px;
+  border: 1px dashed var(--ui-designer-control-accent);
+  border-radius: var(--shape-borderRadiusMedium);
+}
+
+.wearables[data-drop="over"] {
+  background: var(--selected-row);
+}

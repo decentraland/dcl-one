@@ -23,6 +23,7 @@ import {
 } from './gizmo';
 import { getDefaultSpawnWorld, setSpawnAreas } from './spawn-areas';
 import { setBrokenAssets } from './broken-assets';
+import { setAvatarHitboxes } from './avatar-hitboxes';
 
 /**
  * Super-user editor agent for the inspector's Bevy renderer.
@@ -122,6 +123,10 @@ export function main(): void {
     }
     if (msg.kind === 'set-broken-assets') {
       setBrokenAssets(msg.assets);
+      return;
+    }
+    if (msg.kind === 'set-avatar-hitboxes') {
+      setAvatarHitboxes(msg.hitboxes);
       return;
     }
     // Freeze (static) or run the inspected scene (the toolbar's run/freeze toggle).

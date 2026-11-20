@@ -97,6 +97,19 @@ export interface BrokenAsset {
  *    today; the inspector merges into the entity's real Transform).
  *  - `gizmoCommitEnd`: flush — commit the batch as one undo step.
  */
+/**
+ * An NPC (an entity with AvatarShape). The engine gives a scene's avatars no collider, so the
+ * agent puts an invisible pointer box over each one and reports a click on it as a pick of
+ * `entity`. Pose is the entity's, scene-local (the agent adds the scene offset); `scale` is the
+ * entity's own.
+ */
+export interface AvatarHitbox {
+  entity: number;
+  position: BusVec3;
+  rotation: BusQuat;
+  scale: BusVec3;
+}
+
 export type AgentToPage =
   | { kind: 'pick'; entity: number; shift: boolean; ctrl: boolean }
   // A committed gizmo drag. Only the field(s) the active mode changes are sent;
@@ -266,6 +279,10 @@ export type PageToScene =
   // GltfContainer, its transform, or the asset catalog changes; an empty array
   // clears the markers.
   | { kind: 'set-broken-assets'; assets: BrokenAsset[] }
+  // Make the scene's NPCs clickable in the viewport (see AvatarHitbox). The inspector resends
+  // the full set when an AvatarShape, a transform or a Hide toggle changes, and sends an empty
+  // one while the scene runs, so a running scene's NPCs are not picked.
+  | { kind: 'set-avatar-hitboxes'; hitboxes: AvatarHitbox[] }
   // Freeze (`frozen: true`) or run (`false`) the inspected scene. Frozen = the
   // scene stops ticking (no SDK7 systems / timers / onUpdate) so it's a static
   // subject to edit; the editor agent keeps running regardless. Editor default is

@@ -14,6 +14,8 @@ import CustomAssetIcon from '../Icons/CustomAsset';
 import { getBuiltInPreviewEmote } from './baseEmotes';
 import { EmoteViewer } from './EmoteViewer';
 import { ModelViewer, type ModelStats } from './ModelViewer';
+import { WearableViewer } from './WearableViewer';
+import { useWearableFile } from './useWearableFile';
 import { useAssetSelection } from './selection';
 import {
   formatBytes,
@@ -181,6 +183,7 @@ function Viewer({
   const [failedUrl, setFailedUrl] = useState<string>();
   const failed = failedUrl !== undefined && failedUrl === source.url;
   const previewEmote = getBuiltInPreviewEmote(source.builtInEmote);
+  const wearable = useWearableFile(source.kind === 'model' ? source.file : undefined);
 
   if (previewEmote) {
     return (
@@ -191,6 +194,18 @@ function Viewer({
     );
   }
 
+  if (source.kind === 'model' && wearable === 'checking') {
+    return <div className="PreviewPane-spinner" />;
+  }
+  if (source.kind === 'model' && source.file && wearable && wearable !== 'checking') {
+    return (
+      <WearableViewer
+        file={source.file}
+        category={wearable.category}
+        suggestedCategory={wearable.suggestedCategory}
+      />
+    );
+  }
   if (source.kind === 'model' && !failed) {
     return (
       <ModelViewer

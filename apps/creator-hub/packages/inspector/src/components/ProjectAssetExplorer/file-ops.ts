@@ -93,9 +93,23 @@ type PathMap = (path: string) => string | undefined;
 type OnUnreachable = (path: string) => void;
 
 // `scriptPath` is the CALL_SCRIPT_METHOD action's copy of a Script component `path`.
-const REFERENCE_KEYS = new Set(['src', 'audioClipUrl', 'path', 'scriptPath']);
+// `expressionTriggerId` (AvatarShape) holds a scene `_emote.glb` path or a built-in emote's name;
+// the mapper leaves a name alone, since it matches no path.
+const REFERENCE_KEYS = new Set([
+  'src',
+  'audioClipUrl',
+  'path',
+  'scriptPath',
+  'expressionTriggerId',
+]);
+// Lists of paths: AvatarShape `wearables` holds URNs and scene `name_category.glb` paths.
+const REFERENCE_LIST_KEYS = new Set(['wearables']);
 // asset-packs Actions keep their per-action payload as a JSON string; the paths are inside it.
 const JSON_PAYLOAD_KEY = 'jsonPayload';
+
+function isStringList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'string');
+}
 
 function parseJsonPayload(payload: string): unknown {
   try {
@@ -236,6 +250,9 @@ export function replaceAssetReferences<T>(
       let replaced: unknown = child;
       if (REFERENCE_KEYS.has(key) && typeof child === 'string') {
         replaced = map(child) ?? child;
+      } else if (REFERENCE_LIST_KEYS.has(key) && isStringList(child)) {
+        const items = child.map(item => map(item) ?? item);
+        if (items.some((item, index) => item !== child[index])) replaced = items;
       } else if (isScriptLayout(key, child, owner)) {
         replaced = replaceScriptParams(child, owner.path as string, map, onUnreachable);
       } else if (key === JSON_PAYLOAD_KEY && typeof child === 'string') {
@@ -263,6 +280,7 @@ export function collectAssetReferences(value: unknown, into: string[] = []): str
     const owner = value as Record<string, unknown>;
     for (const [key, child] of Object.entries(owner)) {
       if (REFERENCE_KEYS.has(key) && typeof child === 'string') into.push(child);
+      else if (REFERENCE_LIST_KEYS.has(key) && isStringList(child)) into.push(...child);
       else if (isScriptLayout(key, child, owner)) {
         for (const { file } of getFileParams(child, owner.path as string)) into.push(file);
       } else if (key === JSON_PAYLOAD_KEY && typeof child === 'string') {

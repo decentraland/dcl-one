@@ -5,6 +5,7 @@ import { IoCubeOutline as ModelIcon, IoVideocamOutline as VideoIcon } from 'reac
 import { FaFile as AssetIcon } from 'react-icons/fa';
 import { GoClock as RecentIcon } from 'react-icons/go';
 import { MdOutlineEmojiPeople as EmoteIcon } from 'react-icons/md';
+import { GiShirt as WearableIcon } from 'react-icons/gi';
 import { SiTypescript as ScriptIcon } from 'react-icons/si';
 import { cx } from '../../../lib/utils/cx';
 
@@ -23,6 +24,8 @@ export function Filters({ filters, active, onClick }: PropTypes) {
         return { title: 'Models', icon: ModelIcon };
       case Filter.Emotes:
         return { title: 'Avatar Animations', icon: EmoteIcon };
+      case Filter.Wearables:
+        return { title: 'Wearables', icon: WearableIcon };
       case Filter.Images:
         return { title: 'Images', icon: ImageIcon };
       case Filter.Audio:
