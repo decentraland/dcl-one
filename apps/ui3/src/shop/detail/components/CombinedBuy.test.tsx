@@ -1141,8 +1141,9 @@ describe("a held split with no transaction to read", () => {
     expect(screen.queryByTestId("combined-confirm")).toBeNull();
   });
 
-  it("pages the history by the rows the server sent: a server that sends fewer than asked does not skip the rest", async () => {
-    const lines = Array.from({ length: 400 }, (_, n) => ({ id: `0x${n.toString(16).padStart(64, "0")}:0`, status: "SETTLED", usdCents: 10, createdAt: 1, txHash: null }));
+  it("pages the history by the rows the server sent: a server that sends fewer than asked, some of them rows the decoder drops, does not skip the rest", async () => {
+    // Every 25th line has a status this page doesn't know: decoded, the first page holds 144 lines of the 150 sent.
+    const lines = Array.from({ length: 400 }, (_, n) => ({ id: `0x${n.toString(16).padStart(64, "0")}:0`, status: n % 25 === 0 ? "SOMETHING_NEW" : "SETTLED", usdCents: 10, createdAt: 1, txHash: null }));
     lines[170] = { id: `${CREDIT}:0`, status: "EXPIRED", usdCents: 50, createdAt: 1, txHash: null };
     const demo = heldSplit({ value: null }, nowSeconds() - 1, {
       expiredSeenAt: Date.now() - SPLIT_EXPIRY_CONFIRM_MS - 1_000,

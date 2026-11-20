@@ -25,6 +25,19 @@ const KEY = "dcl-shop-buynow-split:v1:";
 export const SPLIT_HOLD_MS = 15 * 60 * 1000;
 /** The node's purchase history, read this many lines at a time (its most) while looking for one credit. */
 const HISTORY_PAGE = 200;
+/** How many pages the lookup reads at most for one credit: well past any buyer's history (10 000 lines). */
+export const HISTORY_MAX_PAGES = 50;
+
+/**
+ * A purchase history that couldn't be read to the credit or to its end: too many pages, or a server that sends the same
+ * page again whatever offset it is asked for. Like a failed read, it says nothing: never "not listed", the hold stays.
+ */
+export class HistoryUnfinishedError extends Error {
+  constructor() {
+    super("The purchase history couldn't be read to its end.");
+    this.name = "HistoryUnfinishedError";
+  }
+}
 /**
  * How long a credit the node reports EXPIRED (unspent) must stay so, from when that was first seen, before its split is
  * taken as never gone through: past the index's lag, an expired credit can't be spent. As the in-world Shop waits.
@@ -205,13 +218,23 @@ function evidenceOf(reader: ChainReader): SplitEvidenceReader {
   };
 }
 
-/** The node's record of one credit (listed by its lines, `<salt>:<position>`), read page by page until found or the end. */
+/**
+ * The node's record of one credit (listed by its lines, `<salt>:<position>`), read page by page until found or the end:
+ * null once the whole history is read without it. One that can't be read to its end (`HISTORY_MAX_PAGES`, or a page that
+ * starts where the last one did) throws `HistoryUnfinishedError`, as a failed read does.
+ */
 export async function findCreditRecord(account: string, creditId: string, client: ShopClient): Promise<PurchaseRecord | null> {
   const salt = creditId.toLowerCase();
-  for (let skip = 0; ; ) {
+  let head: string | null = null;
+  for (let skip = 0, page = 0; ; page++) {
+    if (page >= HISTORY_MAX_PAGES) throw new HistoryUnfinishedError();
     const { items, total, returned } = await fetchUserPurchases(account, { all: true, first: HISTORY_PAGE, skip }, client);
     const found = items.find((p) => p.id.split(":")[0]!.toLowerCase() === salt);
     if (found) return found;
+    // The same first line again: the server ignored the offset, and reading on would read the same page forever.
+    const first = items[0]?.id ?? null;
+    if (first !== null && first === head) throw new HistoryUnfinishedError();
+    head = first;
     // By the rows the server sent: the ones the decoder drops (a status it does not know) still take their place, and a
     // server that sends fewer than asked starts its next page right after them.
     skip += returned;

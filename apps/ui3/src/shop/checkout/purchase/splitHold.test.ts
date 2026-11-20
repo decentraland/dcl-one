@@ -11,6 +11,9 @@ import {
   claimSplitHold,
   clearSettledSplitHold,
   clearSplitHold,
+  findCreditRecord,
+  HISTORY_MAX_PAGES,
+  HistoryUnfinishedError,
   readSplitHold,
   readSplitHoldRecord,
   noteSplitHoldExpiry,
@@ -174,6 +177,36 @@ describe("the record of an attempt", () => {
     locks.held.add(splitHoldLockName(ACCOUNT, LINE));
     expect(await clearSettledSplitHold(locks, ACCOUNT, LINE, hold())).toEqual({ kind: "busy" });
     expect(readSplitHoldRecord(ACCOUNT, LINE)).not.toBeNull();
+  });
+});
+
+describe("reading a credit's record from the history", () => {
+  /** A full page of other credits' lines, `page` apart from every other page. */
+  const otherLines = (page: number) =>
+    Array.from({ length: 200 }, (_, n) => ({ id: `0x${(page * 200 + n + 1).toString(16).padStart(64, "0")}:0`, status: "SETTLED", usdCents: 10, createdAt: 1, txHash: null }));
+
+  it("a history that never ends (full pages, no total) is read at most HISTORY_MAX_PAGES pages, then is no answer: held", async () => {
+    let calls = 0;
+    // A server that sends no total; it runs dry only well past the cap, so a lookup without one shows here as more calls.
+    const shop = createFakeShop({ userPurchases: () => ({ purchases: ++calls > HISTORY_MAX_PAGES + 10 ? [] : otherLines(calls) }) });
+    await expect(findCreditRecord(ACCOUNT, CREDIT, shop.client)).rejects.toBeInstanceOf(HistoryUnfinishedError);
+    expect(calls).toBe(HISTORY_MAX_PAGES);
+    expect(await settleSplitHold(hold({ creditExpiresAt: seconds() - 1 }), { account: ACCOUNT, reader: createFakeChain(), client: shop.client })).toBeNull();
+  });
+
+  it("a server that ignores the offset (the same page every time) is caught on the second page: no answer, held", async () => {
+    let calls = 0;
+    const shop = createFakeShop({ userPurchases: () => ((calls += 1), { purchases: otherLines(0) }) });
+    await expect(findCreditRecord(ACCOUNT, CREDIT, shop.client)).rejects.toBeInstanceOf(HistoryUnfinishedError);
+    expect(calls).toBe(2);
+  });
+
+  it("control: a history read to its end without the credit is null; with it, its record", async () => {
+    const lines = [...otherLines(0), { id: `${CREDIT}:0`, status: "EXPIRED", usdCents: 50, createdAt: 1, txHash: null }];
+    const listed = createFakeShop({ userPurchases: ({ query }: { query: URLSearchParams }) => ({ purchases: lines.slice(Number(query.get("offset") ?? 0)).slice(0, 200), total: lines.length }) });
+    expect(await findCreditRecord(ACCOUNT, CREDIT, listed.client)).toMatchObject({ status: "EXPIRED" });
+    const absent = createFakeShop({ userPurchases: () => ({ purchases: otherLines(0).slice(0, 10), total: 10 }) });
+    expect(await findCreditRecord(ACCOUNT, CREDIT, absent.client)).toBeNull();
   });
 });
 
