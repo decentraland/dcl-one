@@ -2004,12 +2004,10 @@ impl IpfsIo {
         about: &ServerAbout,
         new_realm: &str,
     ) -> Result<Option<IVec2>, anyhow::Error> {
-        let has_scene_urns = about.configurations.as_ref().is_some_and(|config| {
-            config
-                .scenes_urn
-                .as_ref()
-                .is_some_and(|urns| !urns.is_empty())
-        });
+        let has_scene_urns = about
+            .configurations
+            .as_ref()
+            .is_some_and(ServerConfiguration::lists_scenes);
         if !has_scene_urns {
             return Ok(None);
         }

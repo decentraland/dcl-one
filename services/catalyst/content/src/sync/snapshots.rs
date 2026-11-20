@@ -340,7 +340,7 @@ pub async fn fetch_snapshots(
 }
 
 pub async fn download_snapshot_files(
-    client: &Client,
+    client: &crate::http::CheckedRedirectClient,
     storage: Arc<Storage>,
     snapshots: &[(String, HashSet<String>)],
     max_retries: u32,
@@ -718,7 +718,7 @@ async fn schedule_records(
     reason = "source, filter and scheduling are already grouped; the rest are the caller's shared handles"
 )]
 pub async fn deploy_entities_from_snapshot(
-    client: &Client,
+    client: &crate::http::CheckedRedirectClient,
     storage: &Storage,
     deployer: &BatchDeployer,
     source: SnapshotSource<'_>,
@@ -932,7 +932,7 @@ async fn spool_snapshot(
 }
 
 async fn download_snapshot_file(
-    client: &Client,
+    client: &crate::http::CheckedRedirectClient,
     storage: &Storage,
     snapshot_hash: &str,
     servers: &HashSet<String>,
@@ -954,7 +954,13 @@ async fn download_snapshot_file(
         let server = server_list[retry as usize % server_list.len()];
         let url = format!("{}/contents/{}", server, snapshot_hash);
 
-        match client.get(&url).send().await {
+        match crate::http::get_following_checked_redirects(
+            client,
+            &url,
+            crate::deploy_remote_entity::MAX_FILE_REDIRECTS,
+        )
+        .await
+        {
             Ok(resp) => {
                 if resp.status().is_success() {
                     let expected_len = resp.content_length();
@@ -1019,7 +1025,7 @@ async fn download_snapshot_file(
             }
             Err(e) => {
                 warn!(snapshot_hash, %server, error = %e, retry, "Snapshot download request failed");
-                last_error = Some(SyncError::Http(e));
+                last_error = Some(SyncError::from(e));
             }
         }
 
@@ -1201,9 +1207,16 @@ mod tests {
         let (storage, tmp) = temp_storage("snap-gzip").await;
         let servers: HashSet<String> = [base].into_iter().collect();
 
-        download_snapshot_file(&Client::new(), &storage, &cid, &servers, 1, 0)
-            .await
-            .expect("a gzip-labeled snapshot whose decoded bytes match the CID must be accepted");
+        download_snapshot_file(
+            &crate::sync::test_sync_client(Client::new()),
+            &storage,
+            &cid,
+            &servers,
+            1,
+            0,
+        )
+        .await
+        .expect("a gzip-labeled snapshot whose decoded bytes match the CID must be accepted");
 
         let stored = storage.retrieve(&cid).await.unwrap().unwrap();
         assert_eq!(
@@ -1226,9 +1239,16 @@ mod tests {
         let (storage, tmp) = temp_storage("snap-corrupt").await;
         let servers: HashSet<String> = [base].into_iter().collect();
 
-        let err = download_snapshot_file(&Client::new(), &storage, &cid, &servers, 1, 0)
-            .await
-            .expect_err("decoded bytes that mismatch the CID must still be rejected");
+        let err = download_snapshot_file(
+            &crate::sync::test_sync_client(Client::new()),
+            &storage,
+            &cid,
+            &servers,
+            1,
+            0,
+        )
+        .await
+        .expect_err("decoded bytes that mismatch the CID must still be rejected");
         assert!(err.to_string().contains("snapshot hash mismatch"), "{err}");
         assert!(!storage.exist(&cid).await.unwrap());
 

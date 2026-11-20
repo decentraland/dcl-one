@@ -183,6 +183,22 @@ impl Moderation {
         Ok(res.rows_affected())
     }
 
+    /// Who granted `admin` on `place_id`, while that grant is active.
+    pub async fn active_admin_granter(
+        &self,
+        place_id: &str,
+        admin: &Address,
+    ) -> Result<Option<Address>, sqlx::Error> {
+        let granter: Option<String> = sqlx::query_scalar(
+            "SELECT added_by FROM social.scene_admins WHERE place_id = $1 AND admin_address = $2 AND active",
+        )
+        .bind(place_id)
+        .bind(admin)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(granter.and_then(|granter| Address::parse(&granter).ok()))
+    }
+
     /// A database fault is an undetermined authority, not "not an admin".
     pub async fn admin_decision(&self, place_id: &str, admin: &Address) -> PermissionDecision {
         let found: Result<bool, sqlx::Error> =

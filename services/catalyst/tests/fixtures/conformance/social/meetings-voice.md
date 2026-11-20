@@ -23,8 +23,8 @@ stream from OBS, and talk over voice (nearby, private calls, community voice).
 | Private 1:1 calls | Server routes and RPCs at parity; client flow in the Bevy engine and the shared HUD. |
 | Community voice (stage, raise hand, promote, kick, end) | Server at parity. Client lacks moderator mute (MV-6, MV-7). |
 | OBS/RTMP stream onto a scene screen | Served: `/scene-stream-access` and LiveKit Ingress into the scene room. The local stack runs the ingress (`tooling/dev.py`); an RTMP push to a key created with the request the API makes reaches the room as H264 and Opus. Not run end to end through the API and a client. |
-| Share a screen or camera from a browser (Decentraland Cast) | Served: every `/cast/*` route, and the `apps/sites` streamer and watcher pages. Run headless against a local LiveKit; no multi-client run in the explorer. |
-| Presentations (slides) and presenters | Presenters routes and the presentation-bot token served; `POST /cast-presenter-service/presentations` presents PDF slides through a `cast-bot` process (MV-5). No PPTX, embedded video or client composition. |
+| Share a screen or camera from a browser (Decentraland Cast) | Served: every `/cast/*` route, and the `apps/sites` streamer and watcher pages. `pnpm drive:cast` (`apps/sites/scripts/drive/cast.mts`) runs them headless against a real node: a world owner's scene-signed stream link, then stream-info, streamer, watcher and presenters answers from `catalyst serve` and a local LiveKit. No multi-client run in the explorer. |
+| Presentations (slides) and presenters | Presenters routes and the presentation-bot token served; `POST /cast-presenter-service/presentations` presents PDF slides through a `cast-bot` process (MV-5). `pnpm drive:cast` presents a PDF through the node, moves it with `navigate` from a presenter and stops it, and the watcher page shows each slide. No PPTX, embedded video or client composition. |
 
 ## How upstream Cast works
 
@@ -66,11 +66,15 @@ Cast publishes into the scene's own LiveKit room, the one `/get-scene-adapter` h
 
 Cast differences from upstream (each pinned by a test in `G/cast_tests.rs`):
 
-- A world has one stream credential for all its scenes, so `/scene-stream-access` and
-  `/cast/generate-stream-link` take authority over the whole world there: its owner, an admin of the
-  world place, or a deployment or streaming grantee without a parcel restriction. An admin granted on
-  one scene through `/scene-admin`, or a grantee of some parcels, is refused (403) in a world; on a
-  Genesis place both are admitted. Pinned by
+- A world has one stream credential for all its scenes. `/scene-stream-access` and
+  `/cast/generate-stream-link` admit there its owner, an admin of the world place, a deployment or
+  streaming grantee without a parcel restriction, and an admin granted through `/scene-admin` on the
+  scene the request is signed from, while the wallet that granted it still holds one of those
+  world-wide authorities (the grant is keyed on the scene's entity id, as upstream keys it on the
+  world's place). A grantee of some parcels, an admin it or another scene admin granted, and an
+  admin of a scene that is not the world's current deployment are refused (403); on a Genesis place
+  a parcel grantee is admitted. So in a multi-scene world an admin the owner adds on one scene can
+  read, reset and revoke the stream of every scene. Pinned by
   `a_world_published_here_answers_every_scene_route_under_its_stripped_realm_name`
   (`C/tests/gatekeeper_policy.rs`).
 - Publisher identities name the credential that minted them (`stream:<place>:<access id>:<uuid>`,
@@ -164,8 +168,8 @@ MV-1 to MV-4 (Cast routes, watcher token, the `apps/sites` streamer and watcher,
      `component.ts:62`, `208-211`).
    - Track and lifetime: one SCREENSHARE VP8 track `presentation`, the last frame repeated every
      500 ms; a session with no remote participant for 5 minutes stops.
-   - Tests: `comms::cast_presenter::tests`, and `C/cast-bot/tests/livekit.rs` against a local
-     `livekit-server`.
+   - Tests: `comms::cast_presenter::tests`, `C/cast-bot/tests/livekit.rs` against a local
+     `livekit-server`, and `pnpm drive:cast` in `apps/sites` through the node (above).
    Divergences:
    - Only the gatekeeper's presentation-bot tokens are taken: the node checks the signature with its
      LiveKit key, the expiry, a `presentation-bot:` identity of the granted room and a grant that can
@@ -190,8 +194,10 @@ MV-1 to MV-4 (Cast routes, watcher token, the `apps/sites` streamer and watcher,
 7. **MV-7: No moderator "mute speaker" action in the HUD and bridge.** P2, S. Add it to
    `VoiceChatAction` and the participant menu.
 8. **MV-8: End-to-end run.** P1, M. Two clients, a real LiveKit with Ingress and the webhook: private
-   call, community stage, nearby audio, an RTMP stream on a scene screen, and a Cast screen share once
-   MV-1 to MV-3 land.
+   call, community stage, nearby audio and an RTMP stream on a scene screen. The Cast part runs:
+   `pnpm drive:cast` drives the streamer and watcher pages and a PDF presentation against
+   `catalyst serve`, its LiveKit (with the webhook) and `cast-bot`. It pushes no RTMP into the
+   ingress its stream link creates, and no explorer watches.
 9. **MV-9: `/scene-stream-access` details.** P2, S. Compare PUT's answer to a concurrent change (500 here) with upstream's.
 10. **MV-10: Kick and end report success when LiveKit fails.** P2, S. Return an error or retry the
     removal; today the user may stay connected.

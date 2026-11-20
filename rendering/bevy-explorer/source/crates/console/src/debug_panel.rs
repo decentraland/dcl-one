@@ -112,8 +112,10 @@ pub(crate) fn debug_panel(
         if command.dev_build {
             input.reply_ok(cfg!(debug_assertions).to_string());
         } else {
-            input
-                .reply_ok(serde_json::to_string(&sections.0.values().collect::<Vec<_>>()).unwrap());
+            match serde_json::to_string(&sections.0.values().collect::<Vec<_>>()) {
+                Ok(json) => input.reply_ok(json),
+                Err(e) => input.reply_failed(format!("debug panel sections don't serialize: {e}")),
+            }
         }
     }
 }

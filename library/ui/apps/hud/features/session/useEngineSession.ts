@@ -7,6 +7,7 @@ import { hoverKey, proximityKey } from '@explorer-core/engine/pointerKeys'
 import type { LoginDriver, NewAccountPick } from '@explorer-core/engine/driver'
 import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
 import { recordVisit } from '@explorer-core/features/lobby/lobbyApi'
+import { answerItemPurchase, type PurchaseSceneItem } from '../itemPurchase/answer'
 import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import { PLATFORM_BANNED_REFUSAL, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus } from '@explorer-core/engine/protocol'
@@ -39,7 +40,7 @@ import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { isInputLocked, subscribeInputLock } from '@explorer-core/lib/inputLock'
 import { applyProfileEdit } from '@explorer-core/engine/profileEdit'
 import { COMMUNITY_REQUEST_NOTIFICATIONS } from '@explorer-core/features/communities/notifications'
-import { peekProfile, profileChanged, receiveProfile, seedProfiles, setOwnProfile, setProfileRequester, updateProfile } from './profileStore'
+import { peekProfile, profileChanged, profileReadFailed, receiveOwnProfile, receiveProfile, seedProfiles, setOwnProfile, setProfileRequester, updateProfile } from './profileStore'
 import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
 import { getCursor } from '@explorer-core/features/pointer/cursorStore'
 import { openProfileCard } from '../profileCard/ProfileCard'
@@ -776,6 +777,13 @@ export interface WorldPasswordState {
   resolve: (password: string | null) => void
 }
 
+/** What a host gives the session that its `@hud-host` module cannot (it would load HUD code with it). */
+export interface SessionHost {
+  /** Opens the host's purchase confirmation for an item a scene asked to sell. Absent where the
+   *  host cannot buy: such a request is answered `unavailable`. */
+  purchaseSceneItem?: PurchaseSceneItem
+}
+
 export interface PortablesState {
   /** The portables the engine lists, tagged by kind: never the HUD's own scene or a startup portable. */
   list: PortableInfo[]
@@ -1233,8 +1241,11 @@ function initialMessages(): ChatLine[] {
   return [{ sender: '', message: 'Type /help for available commands.', channel: 'Nearby', messageId: '', id: -1, ts: Date.now() }]
 }
 
-export function useEngineSession(createDriver: () => LoginDriver): EngineSession {
+export function useEngineSession(createDriver: () => LoginDriver, host: SessionHost = {}): EngineSession {
   const driverRef = useRef<LoginDriver | null>(null)
+  const hostRef = useRef(host)
+  hostRef.current = host
+  const lastItemPurchase = useRef<number | null>(null)
   const [status, setStatus] = useState<LoginStatus>('loading')
   // Same-domain SSO identity read from localStorage (null = no stored account).
   const [stored, setStored] = useState<StoredLogin | null>(null)
@@ -1700,8 +1711,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   useEffect(() => {
     const driver = createDriver()
     driverRef.current = driver
+    // a new engine numbers its item purchase requests from the start again
+    lastItemPurchase.current = null
     // The profile store asks the engine itself for any address it's shown and doesn't hold.
-    setProfileRequester((address, extras) => driver.send({ kind: 'getUserProfile', address, extras }))
+    setProfileRequester((address, extras, requestId) => driver.send({ kind: 'getUserProfile', address, extras, requestId }))
     setMapTransport((msg) => driver.send(msg))
     setNativeQuit(() => driver.send({ kind: 'quit' }))
     nearbyPlayers.setTransport((on) => driver.send({ kind: 'watchMapPlayers', on }))
@@ -2083,10 +2096,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setOwnProfile(msg.profile?.address ?? null)
           // The passport reads the store, so an authoritative own profile has to reach it too or a
           // just-saved name would keep its stale claimed-name seal until reopened.
-          if (msg.profile != null) receiveProfile(msg.profile.address, msg.profile)
+          if (msg.profile != null) receiveOwnProfile(msg.profile)
           break
         case 'userProfile':
-          receiveProfile(msg.address, msg.profile)
+          receiveProfile(msg.address, msg.profile, msg.requestId)
           break
         case 'profileChanged':
           profileChanged(msg.address, msg.version)
@@ -2153,6 +2166,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           fetchedRef.current.delete(msg.request)
           console.error(`[bridge] ${msg.request} failed:`, msg.error)
           if (msg.request === 'saveProfile' && profileInFlightRef.current) settleProfileSave(false)
+          if (msg.request === 'getUserProfile' && msg.profileRead != null) {
+            profileReadFailed(msg.profileRead.address, msg.profileRead.requestId)
+          }
           // the map showed the change before the engine took it: read back the home it holds
           if (msg.request === 'setHomeScene') driver.send({ kind: 'getHomeScene' })
           break
@@ -2657,6 +2673,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'worldPasswordWithdrawn':
           setWorldPassword(null)
+          break
+        case 'itemPurchaseRequest':
+          // answered here, on receipt: the engine holds the scene's call until it is. The bridge
+          // sends an unanswered request again to a page that says hello; each is answered once.
+          if (lastItemPurchase.current === msg.id) break
+          lastItemPurchase.current = msg.id
+          answerItemPurchase(msg, (id, state) => driverRef.current?.send({ kind: 'itemPurchaseState', id, state }), hostRef.current.purchaseSceneItem)
           break
         case 'platformBan':
           setPlatformBan(msg.ban.banned ? msg.ban : null)

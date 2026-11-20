@@ -42,7 +42,7 @@ use ipfs::{
     ipfs_path::IpfsPath, ActiveEntityTask, EntityDefinition, IpfsAssetServer, RealmInitialLocation,
     SceneIpfsLocation,
 };
-use scene_material::{BoundRegion, SceneBounds};
+use scene_material::{BoundRegion, SceneBounds, FIXED_SCENE_HEIGHT};
 use system_bridge::{LiveSceneInfo, SystemApi, SystemBridge};
 
 use super::{update_world::CrdtExtractors, LoadSceneEvent, PrimaryUser, SceneSets, SceneUpdates};
@@ -374,10 +374,7 @@ pub(crate) fn load_scene_javascript(
         let bounds = if portable.is_some() {
             Vec::default()
         } else {
-            scene_regions(parcels.clone().into_iter())
-                .into_iter()
-                .map(|region| BoundRegion::new(region.min, region.max, region.count))
-                .collect::<Vec<_>>()
+            scene_bound_regions(&parcels, &realm)
         };
 
         // get main.crdt
@@ -626,6 +623,24 @@ pub(crate) fn load_scene_javascript(
             },
         ));
     }
+}
+
+/// The regions a scene is clipped and collided to. A city scene has neighbours it must not build
+/// over, so its limit grows with each connected region's parcel count; every other realm (a
+/// World, a preview, an editor) gives its scenes one fixed height limit.
+fn scene_bound_regions(parcels: &HashSet<IVec2>, realm: &CurrentRealm) -> Vec<BoundRegion> {
+    let city = !realm.config.lists_scenes() && !realm.is_local();
+    scene_regions(parcels.iter().copied())
+        .into_iter()
+        .map(|region| {
+            let bound = BoundRegion::new(region.min, region.max, region.count);
+            if city {
+                bound
+            } else {
+                bound.with_height(FIXED_SCENE_HEIGHT)
+            }
+        })
+        .collect()
 }
 
 #[derive(Clone)]
@@ -1326,13 +1341,7 @@ fn load_active_entities(
             }
         }
         pointers.set_realm(bounds_min, bounds_max);
-        pointers.reset_terrain(
-            current_realm
-                .config
-                .scenes_urn
-                .as_ref()
-                .is_some_and(|urns| !urns.is_empty()),
-        );
+        pointers.reset_terrain(current_realm.config.lists_scenes());
         for mut context in global_crdt.iter_mut() {
             context.set_bounds(bounds_min, bounds_max);
         }
@@ -1352,11 +1361,7 @@ fn load_active_entities(
         }
 
         if !current_realm.about_url.is_empty() && *teleport_target == RealmInitialLocation::Base {
-            let has_scene_urns = !current_realm
-                .config
-                .scenes_urn
-                .as_ref()
-                .is_none_or(Vec::is_empty);
+            let has_scene_urns = current_realm.config.lists_scenes();
 
             if !has_scene_urns {
                 // we want to go to base but there are no specific parcels
@@ -1424,11 +1429,7 @@ fn load_active_entities(
         }
     };
 
-    let has_scene_urns = !current_realm
-        .config
-        .scenes_urn
-        .as_ref()
-        .is_none_or(Vec::is_empty);
+    let has_scene_urns = current_realm.config.lists_scenes();
 
     if pointer_request.is_none()
         && !current_realm.address.is_empty()

@@ -275,6 +275,7 @@ fn make_scene_oven(
                 (r.parcel_min().x..=r.parcel_max().x).map(move |x| {
                     (r.parcel_min().y..=r.parcel_max().y).map(move |y| {
                         BoundRegion::new(IVec2::new(x, y), IVec2::new(x, y), r.parcel_count)
+                            .with_height(r.height)
                     })
                 })
             })

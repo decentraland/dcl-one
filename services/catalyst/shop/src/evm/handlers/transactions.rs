@@ -293,7 +293,7 @@ mod tests {
     }
 
     #[test]
-    fn only_4xx_upstream_statuses_refund_the_quota_slot() {
+    fn a_4xx_upstream_status_refunds_the_quota_slot_except_a_timeout_or_a_dropped_request() {
         for status in [400u16, 404, 422, 429] {
             assert!(
                 refunds_quota_slot(status),

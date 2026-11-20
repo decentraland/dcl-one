@@ -31,8 +31,6 @@
     "check:flowmap": "tsx scripts/check-flowmap-routes.mts",
     "smoke": "node scripts/drive/smoke.mts",
     "drive:cast": "node scripts/drive/cast.mts",
-    "gen:seed-catalog": "node scripts/gen-seed-catalog.mjs",
-    "gen:seed-catalog:check": "node scripts/gen-seed-catalog.mjs --check",
     "gen:docs-content": "node scripts/gen-docs-content.mts",
     "gen:docs-content:capture": "node scripts/gen-docs-content.mts --capture",
     "gen:docs-content:check": "node scripts/gen-docs-content.mts --check"
@@ -54,7 +52,6 @@
     "livekit-client": "2.22.4",
     "magic-sdk": "27.0.0",
     "marked": "18.1.1",
-    "monaco-editor": "0.57.0",
     "pg": "8.23.1",
     "qrcode-generator": "2.0.4",
     "react": "19.3.1",

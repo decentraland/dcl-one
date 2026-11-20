@@ -38,7 +38,7 @@ use super::moderation::store::PLATFORM_BANNED_MSG;
 use super::{CommsState, SharedState};
 use crate::rooms::{ResolvedRoom, RoomRequest};
 use crate::shared::signed_fetch::SignedPath;
-use crate::world_identity::{Parcel, RealmId, WorldName};
+use crate::world_identity::{Parcel, RealmId, SceneId, WorldName};
 use crate::{Address, AuthorityNotEstablished, PermissionDecision};
 
 #[path = "streaming_notifications.rs"]
@@ -94,6 +94,7 @@ struct AccessRow {
     ingress_id: Option<String>,
     created_at: NaiveDateTime,
     expiration_time: Option<NaiveDateTime>,
+    streaming_state_version: i64,
 }
 
 impl AccessRow {
@@ -112,8 +113,7 @@ impl AccessRow {
     }
 }
 
-const ACCESS_COLUMNS: &str =
-    "id, room_id, streaming, streaming_url, streaming_key, ingress_id, created_at, expiration_time";
+const ACCESS_COLUMNS: &str = "id, room_id, streaming, streaming_url, streaming_key, ingress_id, created_at, expiration_time, streaming_state_version";
 
 pub async fn scene_stream_access(
     State(state): State<SharedState>,
@@ -144,7 +144,7 @@ pub async fn scene_stream_access(
             return Err(forbidden(NOT_AUTHORIZED_TO_STREAM_MSG));
         }
     }
-    let (place_id, place, room) = if method == Method::DELETE {
+    let (place_id, place, room, scene) = if method == Method::DELETE {
         // Revocation needs no current deployment: the place is found by the
         // signed realm and parcel alone, and the authority on that same realm.
         let realm = Context::signed_realm(&sf.metadata)?;
@@ -166,7 +166,14 @@ pub async fn scene_stream_access(
         let place =
             revocation_authority(&state, &sf.metadata, &realm, parcel.as_deref(), &place_id)
                 .await?;
-        (place_id, place, None)
+        // In a world, the signed scene is resolved only if the world-wide
+        // decision refuses (see below), so a revocation by the owner never
+        // waits on the resolver.
+        let scene = match realm.world() {
+            Some(_) => KeyScene::Signed,
+            None => KeyScene::None,
+        };
+        (place_id, place, None, scene)
     } else {
         // One resolution binds the signed scene to its parcel; the room and the
         // authorizing footprint both come from it.
@@ -180,9 +187,30 @@ pub async fn scene_stream_access(
         // explicit admins are stored under its entity id (`/scene-admin`),
         // which `bound.place` carries with the deployment's footprint.
         let place = key_authority(&state, &place_id, world, bound.place);
-        (place_id, place, Some(bound.room))
+        let scene = match bound.world_scene {
+            Some((_, scene)) => KeyScene::Bound(scene),
+            None => KeyScene::None,
+        };
+        (place_id, place, Some(bound.room), scene)
     };
-    match scene::scene_manager_decision(&state, &place, &sf.signer).await {
+    let mut decision = scene::scene_manager_decision(&state, &place, &sf.signer).await;
+    if lacks_authority(&decision) {
+        // A world's scene admin may revoke the key it may reset: the signed
+        // scene when it is the world's current deployment.
+        let world_scene = match scene {
+            KeyScene::None => None,
+            KeyScene::Bound(scene) => Some(scene),
+            KeyScene::Signed => match Context::resolve(&state, &sf.metadata).await {
+                Ok(bound) => bound.world_scene.map(|(_, scene)| scene),
+                Err(error) if error.code >= 500 => return Err(error),
+                Err(_) => None,
+            },
+        };
+        if let Some(world_scene) = world_scene {
+            decision = world_scene_admin(&state, &place, &world_scene, &sf.signer, decision).await;
+        }
+    }
+    match decision {
         PermissionDecision::Allowed => {}
         PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
             return Err(forbidden(NOT_AUTHORIZED_TO_STREAM_MSG));
@@ -255,10 +283,11 @@ pub(super) async fn scene_authority<'a>(
 }
 
 /// The lookup the stream-key verbs decide on. A world has ONE credential for
-/// all its scenes, so authority over one scene (its explicit admins, a
-/// grantee of some of its parcels) must not reach it: the world place with
-/// no footprint admits the owner, an admin of that place and a grantee whose
-/// grant has no parcel restriction. A Genesis place is its scene's.
+/// all its scenes, so authority over one scene (a grantee of some of its
+/// parcels) must not reach it: the world place with no footprint admits the
+/// owner, an admin of that place and a grantee whose grant has no parcel
+/// restriction. A Genesis place is its scene's. The one scene-level grant
+/// that reaches a world's key is decided apart, in [`world_scene_admin`].
 pub(super) fn key_authority<'a>(
     state: &'a CommsState,
     place_id: &str,
@@ -278,6 +307,70 @@ pub(super) fn key_authority<'a>(
         ),
         None => scene,
     }
+}
+
+/// The decision for a stream-key verb on `authority` ([`key_authority`]),
+/// with the world scene the request is bound to, if any.
+pub(super) async fn key_decision(
+    state: &CommsState,
+    authority: &PlaceLookup<'_>,
+    world_scene: Option<&(WorldName, SceneId)>,
+    signer: &Address,
+) -> PermissionDecision {
+    let decision = scene::scene_manager_decision(state, authority, signer).await;
+    match world_scene {
+        Some((_, scene)) if lacks_authority(&decision) => {
+            world_scene_admin(state, authority, scene, signer, decision).await
+        }
+        _ => decision,
+    }
+}
+
+pub(super) fn lacks_authority(decision: &PermissionDecision) -> bool {
+    matches!(
+        decision,
+        PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. })
+    )
+}
+
+/// After the world-wide decision `refused` the signer for lack of authority:
+/// an explicit admin of the world `scene` holds the world's one credential
+/// when whoever granted it still holds world-wide authority. `/scene-admin`
+/// keys that grant on the scene's entity id, so no admin of the world place
+/// can be granted, and upstream's admin of a world's place holds its stream
+/// key. A grantee restricted to some parcels may grant `/scene-admin` on its
+/// scene, so an admin it granted (or one granted by another scene admin)
+/// stays refused: the grant never widens its granter's authority.
+async fn world_scene_admin(
+    state: &CommsState,
+    authority: &PlaceLookup<'_>,
+    scene: &SceneId,
+    signer: &Address,
+    refused: PermissionDecision,
+) -> PermissionDecision {
+    let granter = match state
+        .moderation
+        .active_admin_granter(scene.as_str(), signer)
+        .await
+    {
+        Ok(Some(granter)) => granter,
+        Ok(None) => return refused,
+        Err(error) => return PermissionDecision::undetermined("social.scene_admins", &error),
+    };
+    match scene::scene_manager_decision(state, authority, &granter).await {
+        PermissionDecision::Allowed => PermissionDecision::Allowed,
+        decision if lacks_authority(&decision) => refused,
+        undetermined => undetermined,
+    }
+}
+
+/// The world scene a stream-key verb may fall back to ([`world_scene_admin`]).
+enum KeyScene {
+    None,
+    /// The scene the request is bound to.
+    Bound(SceneId),
+    /// A revocation: the signed scene, resolved only when needed.
+    Signed,
 }
 
 /// The lookup a revocation is authorized on. A world's credential takes
@@ -327,7 +420,9 @@ async fn revocation_authority<'a>(
 /// The place's active credential when it is still valid for `room`, else a
 /// new one: an idle credential for another room or past its expiry is
 /// replaced (its ingress cleanup is a durable intent), a streaming one is a
-/// 409. `POST /scene-stream-access` and `/cast/generate-stream-link` share it.
+/// 409 unless LiveKit reports its ingress is not publishing (a lost
+/// `ingress_ended` webhook). `POST /scene-stream-access` and
+/// `/cast/generate-stream-link` share it.
 async fn issue_access(
     state: &CommsState,
     ingress: &IngressClient<'_>,
@@ -338,23 +433,64 @@ async fn issue_access(
     if let Some(existing) = active_access(&state.pool, place_id).await? {
         match renewal(&existing, room, now_utc()) {
             Renewal::Reuse => return Ok(existing.response()),
-            Renewal::Conflict => return Err(renewal_conflict()),
-            Renewal::Replace => {
-                // The replacement's ingress first: a LiveKit failure keeps the old credential.
-                let info = mint_ingress(ingress, room).await?;
-                return replace_access(
-                    state,
-                    ingress,
-                    existing.id,
-                    jobs::CleanupCommand::IdleReplacement,
-                    (place_id, room, signer),
-                    info,
-                )
-                .await;
+            Renewal::Conflict => {
+                if !clear_stale_streaming(state, ingress, &existing, place_id).await? {
+                    return Err(renewal_conflict());
+                }
+            }
+            Renewal::Replace => {}
+        }
+        // The replacement's ingress first: a LiveKit failure keeps the old credential.
+        let info = mint_ingress(ingress, room).await?;
+        return replace_access(
+            state,
+            ingress,
+            existing.id,
+            jobs::CleanupCommand::IdleReplacement,
+            (place_id, room, signer),
+            info,
+        )
+        .await;
+    }
+    create_access(&state.pool, ingress, place_id, room, signer).await
+}
+
+/// Clears `row`'s `streaming` flag when LiveKit says its ingress is gone or
+/// not publishing, so a lost `ingress_ended` webhook cannot block the place's
+/// renewal. Only the RTMP ingress sets the flag (Cast WebRTC publishers never
+/// do). False keeps the 409: the ingress is live, its state is unknown,
+/// LiveKit is unreachable, or the row changed meanwhile.
+async fn clear_stale_streaming(
+    state: &CommsState,
+    ingress: &IngressClient<'_>,
+    row: &AccessRow,
+    place_id: &str,
+) -> Result<bool, ApiError> {
+    let ingress_id = row.ingress_id.as_deref().unwrap_or_default();
+    if !ingress_id.is_empty() {
+        match ingress.is_ingress_streaming(ingress_id).await {
+            Ok(Some(false)) => {}
+            Ok(_) => return Ok(false),
+            Err(error) => {
+                tracing::warn!(place_id, access_id = %row.id, %error, "ingress state unavailable; renewal refused");
+                return Ok(false);
             }
         }
     }
-    create_access(&state.pool, ingress, place_id, room, signer).await
+    let cleared = sqlx::query(
+        "UPDATE social.scene_stream_access SET streaming = false, streaming_start_time = NULL \
+         WHERE id = $1 AND active AND streaming AND streaming_state_version = $2",
+    )
+    .bind(row.id)
+    .bind(row.streaming_state_version)
+    .execute(&state.pool)
+    .await?
+    .rows_affected()
+        == 1;
+    if cleared {
+        tracing::info!(place_id, access_id = %row.id, ingress_id, "cleared a stale streaming flag: the ingress is not publishing");
+    }
+    Ok(cleared)
 }
 
 async fn refuse_if_platform_banned(
@@ -748,6 +884,7 @@ mod tests {
             ingress_id: None,
             created_at: now,
             expiration_time: None,
+            streaming_state_version: 0,
         };
         assert_eq!(renewal(&row, "room", now), Renewal::Reuse);
         assert_eq!(renewal(&row, "new-room", now), Renewal::Conflict);
