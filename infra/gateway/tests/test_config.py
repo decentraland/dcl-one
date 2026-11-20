@@ -407,6 +407,13 @@ class ConfigurationTest(unittest.TestCase):
                 self.assertIn("proxy_pass http://apis;", alias)
                 self.assertIn(cap, alias)
 
+    def test_table_without_the_camera_reel_alias_is_rejected(self):
+        table = self.production_table()
+        gateway.check_table(table)
+        table["aliases"] = [row for row in table["aliases"] if row["key"] != gateway.CAMERA_REEL_ALIAS]
+        with self.assertRaisesRegex(ValueError, "camera-reel"):
+            gateway.check_table(table)
+
     def worlds_locations(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test"})
         table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [],

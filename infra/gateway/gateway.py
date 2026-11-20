@@ -613,6 +613,12 @@ http {{
 """
 
 
+def check_table(table):
+    # Without this alias row, render() would emit no camera reel upload locations.
+    if not any(row["key"] == CAMERA_REEL_ALIAS for row in table["aliases"]):
+        raise ValueError(f"root-aliases.nix has no {CAMERA_REEL_ALIAS} alias")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--table", required=True, type=Path)
@@ -621,7 +627,9 @@ def main():
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     try:
-        text = render(json.loads(args.table.read_text()), settings(os.environ), args.mime)
+        table = json.loads(args.table.read_text())
+        check_table(table)
+        text = render(table, settings(os.environ), args.mime)
     except ValueError as error:
         parser.error(str(error))
     folder = Path("/tmp/gateway")
