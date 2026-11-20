@@ -9,9 +9,9 @@ import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { invalidateShopQueries } from "../../discovery/query";
 import ItemPreview from "./ItemPreview";
 
-type PreviewProps = { outfit?: { wearables?: string[] }; outfitPending?: boolean; onStatus?: (s: AvatarStatus) => void };
+type PreviewProps = { base?: string; outfit?: { wearables?: string[] }; outfitPending?: boolean; onStatus?: (s: AvatarStatus) => void };
 const previews = vi.hoisted(() => ({ props: [] as PreviewProps[], mounts: 0 }));
-const reads = vi.hoisted(() => ({ profile: null as null | ((profile: unknown) => void), rules: null as null | ((rules: unknown[]) => void) }));
+const reads = vi.hoisted(() => ({ profile: null as null | ((profile: unknown) => void), rules: null as null | ((rules: unknown[]) => void), rulesBase: undefined as string | undefined }));
 
 vi.mock("../../../wearable-preview/WearablePreview", async () => {
   const { useEffect } = await import("react");
@@ -29,7 +29,11 @@ vi.mock("../../../data/catalyst/profile", () => ({
   fetchProfile: () => new Promise((resolve) => (reads.profile = resolve)),
 }));
 vi.mock("../lib/wearable-rules", () => ({
-  fetchWearableRules: () => new Promise((resolve) => (reads.rules = resolve)),
+  entityBase: () => "https://peer.test",
+  fetchWearableRules: (_urns: string[], _also: string[], base?: string) => {
+    reads.rulesBase = base;
+    return new Promise((resolve) => (reads.rules = resolve));
+  },
   keepEquipped: () => [],
 }));
 
@@ -45,6 +49,7 @@ beforeEach(() => {
   previews.mounts = 0;
   reads.profile = null;
   reads.rules = null;
+  reads.rulesBase = undefined;
   invalidateShopQueries();
 });
 afterEach(cleanup);
@@ -94,4 +99,15 @@ test("a failed or empty scene leaves the thumbnail in place with the note over i
     invalidateShopQueries();
     reads.profile = null;
   }
+});
+
+test("the outfit's rules read and the scene use one Catalyst, so the scene reuses the entities that read cached", async () => {
+  render(<ItemPreview item={ITEM} renderer="full" />);
+  await act(async () => {
+    await vi.waitFor(() => expect(reads.profile).not.toBeNull());
+    reads.profile!({ avatar: { bodyShape: BODY, wearables: [] } });
+  });
+  await vi.waitFor(() => expect(reads.rules).not.toBeNull());
+  expect(reads.rulesBase).toBe("https://peer.test");
+  expect(last().base).toBe("https://peer.test");
 });

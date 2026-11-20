@@ -39,9 +39,17 @@ export function faceOnly(equipped: WearableRule[]): string[] {
   return equipped.filter((rule) => FACE_CATEGORIES.has(rule.category)).map((r) => r.urn);
 }
 
-/** Entities by lowercased pointer, through the preview's entity cache: what is read here, the preview does not read again. */
-function readEntities(urns: string[]): Promise<Map<string, Entity>> {
-  return fetchEntities(peerUrlFor(urns, shopPeers()), urns);
+/** The Catalyst the item's entities are read from: the item's network's peer, else the host's base. */
+export function entityBase(urns: string[]): string {
+  return peerUrlFor(urns, shopPeers());
+}
+
+/**
+ * Entities by lowercased pointer, through the preview's entity cache: what is read here under `base`, a preview given
+ * the same base does not read again.
+ */
+function readEntities(urns: string[], base: string = entityBase(urns)): Promise<Map<string, Entity>> {
+  return fetchEntities(base, urns);
 }
 
 /** Whether VRM export is blocked for the wearable; null when it could not be read (no badge on a guess). */
@@ -58,10 +66,10 @@ export async function fetchVrmExportBlocked(urn: string): Promise<boolean | null
  * The rules for a list of equipped URNs, in the order asked; unknown URNs are absent. `alsoRead` (the body and the
  * item the preview mounts next) goes in the same request, so the preview finds those entities cached.
  */
-export async function fetchWearableRules(urns: string[], alsoRead: string[] = []): Promise<WearableRule[]> {
+export async function fetchWearableRules(urns: string[], alsoRead: string[] = [], base?: string): Promise<WearableRule[]> {
   if (urns.length === 0 && alsoRead.length === 0) return [];
   try {
-    const entities = await readEntities([...urns, ...alsoRead]);
+    const entities = await readEntities([...urns, ...alsoRead], base);
     return urns.flatMap((urn) => {
       const data = entities.get(urn.toLowerCase())?.metadata?.data;
       return data?.category ? [{ urn, category: data.category, hides: data.hides ?? [], replaces: data.replaces ?? [] }] : [];
