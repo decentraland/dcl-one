@@ -6,10 +6,13 @@
 //   2. every runtime page draws every example in its iframe canvas with a nonzero box and no example error;
 //   3. the canvas is a real viewport: NavBar shows its menu button at 375px and hides it at 1280px;
 //   4. every runtime foundations page renders;
-//   5. the generated route opens the generated Review's page for a component inside the gallery;
+//   5. the HUD section lists the Explorer HUD's Showcase first, then its pages; the Showcase page draws every page
+//      in its canvas, which is a HUD window (the height its aspect ratio and minimum give it, at the --ui-scale
+//      hudScale.ts computes for that window), and a component opens the section that renders it;
+//   6. the generated route opens the generated Review's page for a component inside the gallery;
 // with every request answered 2xx from under the prefix, and no uncaught page error or console error along the way.
 // With --hosted, <dist> is the hosted pull request preview (`vite build --mode hosted`): the gallery alone at its root,
-// opened as <prefix>index.html the way the bucket serves it, listing no generated page; check 5 becomes a Figma
+// opened as <prefix>index.html the way the bucket serves it, listing no generated page; check 6 becomes a Figma
 // reference link that answers with a note and loads nothing from the generated Review.
 // It runs the built files it is given, so only run it on an unprivileged build.
 import { readFile, stat } from 'node:fs/promises'
@@ -23,6 +26,7 @@ import {
   findBrowser,
   openSession
 } from '../../figma/review/scripts/capture-browser.mjs'
+import { expectedHudScale, expectedWindowHeight, readHudScale } from './hud-window.mjs'
 
 const TYPES = {
   '.html': 'text/html',
@@ -227,6 +231,67 @@ async function checkGallery({ dist, prefix = '/', hosted = false, browser } = {}
       )
     }
 
+    const hudPages = await session.evaluate(
+      `[...document.querySelectorAll('nav a[data-source="hud"]')].map((a) => new URL(a.href).searchParams.get('hud')).filter(Boolean)`
+    )
+    const [showcase, ...pages] = hudPages
+    if (!showcase || !pages.length)
+      throw new Error(`the sidebar lists no HUD pages: ${hudPages.join(', ')}`)
+    // A HUD page at a width: the page it shows, its window (size and the CSS that shapes it), the HUD scale inside
+    // it, and what it draws.
+    const hudPage = async (name, width) => {
+      await open(`?hud=${encodeURIComponent(name)}&width=${width}`)
+      return waitFor(
+        session,
+        `(() => {
+          const doc = ${CANVAS}
+          const main = doc?.querySelector('main')
+          const frame = document.querySelector('iframe')
+          const examples = main && frame.clientWidth === ${width} ? ${EXAMPLES} : null
+          const style = getComputedStyle(frame)
+          return examples && {
+            hud: main.dataset.hud,
+            height: frame.clientHeight,
+            aspectRatio: style.aspectRatio,
+            minBlockSize: style.minBlockSize,
+            inner: [doc.defaultView.innerWidth, doc.defaultView.innerHeight],
+            scale: doc.documentElement.style.getPropertyValue('--ui-scale'),
+            examples
+          }
+        })()`,
+        `the HUD ${name} page at ${width}px`
+      )
+    }
+    // The window follows its own aspect ratio at 1280px and its minimum height at 375px; the scale inside is the one
+    // hudScale.ts computes for that window, there with the HUD's lowest bound.
+    const hudScale = readHudScale()
+    for (const width of [1280, 375]) {
+      const page = await hudPage(showcase, width)
+      const height = expectedWindowHeight(width, page.aspectRatio, page.minBlockSize)
+      if (page.height !== height)
+        throw new Error(
+          `the HUD canvas at ${width}px is ${page.height}px high; its aspect-ratio ${page.aspectRatio} and min-block-size ${page.minBlockSize} make ${height}px`
+        )
+      const scale = expectedHudScale(hudScale, ...page.inner)
+      if (page.scale !== scale)
+        throw new Error(
+          `the HUD canvas's --ui-scale is ${page.scale || 'unset'} in a ${page.inner.join('x')} window; hudScale.ts gives ${scale}`
+        )
+      if (page.examples.length !== pages.length)
+        throw new Error(
+          `the ${showcase} page draws ${page.examples.length} pages; the sidebar lists ${pages.length}`
+        )
+      for (const example of page.examples) {
+        if (example.error) throw new Error(`HUD ${example.id} failed: ${example.error}`)
+        if (!example.drawn) throw new Error(`HUD ${example.id} draws nothing`)
+      }
+    }
+    const alias = await hudPage('MenuRow', 1280)
+    if (alias.hud !== 'MenuPanel' || alias.examples.length !== 1)
+      throw new Error(
+        `?hud=MenuRow opens ${alias.hud} with ${alias.examples.length} pages, not MenuPanel`
+      )
+
     const generated = hosted ? 'Button' : listed.generated[0]
     await open(`?source=generated&component=${encodeURIComponent(generated)}`)
     if (hosted)
@@ -263,6 +328,7 @@ async function checkGallery({ dist, prefix = '/', hosted = false, browser } = {}
       runtimePages: listed.runtime.length,
       examples: examples.length,
       foundations: foundations.length,
+      hudPages: pages.length,
       generatedPages: listed.generated.length,
       generated,
       requests: server.requests.length

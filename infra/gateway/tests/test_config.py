@@ -106,7 +106,7 @@ class ConfigurationTest(unittest.TestCase):
         ]), ["/_x", "/a$b", "/api/marketplace-screen", "/api/screens", "/download", "/download_success",
              "/internal", "/places", "/play", "/profile", "/robots.txt"])
 
-    def test_sites_route_files_claim_no_landings_prefix(self):
+    def test_sites_route_files_cover_public_pages_without_claiming_landings(self):
         # The same file list package.nix hands the gateway.
         routes = Path(__file__).parents[3] / "apps" / "sites" / "src" / "routes" / "routes"
         files = [path.name for path in routes.iterdir() if path.is_file()
@@ -114,6 +114,13 @@ class ConfigurationTest(unittest.TestCase):
         prefixes = gateway.site_prefixes(files)
         self.assertNotIn("/landings", prefixes)
         self.assertIn("/communities", prefixes)
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {"sites": files, "internal": [], "node": [], "deploy": [], "aliases": []}
+        text = gateway.render(table, cfg, "/mime.types")
+        for location in ("= /press", "/press/"):
+            with self.subTest(location=location):
+                self.assertTrue(f"location {location} {{\nproxy_pass http://sites;" in text)
+        self.assertNotIn("location /press {", text)
 
     def test_sites_cannot_claim_internal_api_paths(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})

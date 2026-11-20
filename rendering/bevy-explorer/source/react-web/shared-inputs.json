@@ -3309,6 +3309,10 @@
           "kind": "regular"
         },
         {
+          "name": "ShowcaseIndex.ts",
+          "kind": "regular"
+        },
+        {
           "name": "Skeleton.module.css",
           "kind": "regular"
         },
@@ -5073,6 +5077,10 @@
       "path": "library/ui/apps/hud/styles",
       "entries": [
         {
+          "name": "page.css",
+          "kind": "regular"
+        },
+        {
           "name": "tokens.css",
           "kind": "regular"
         }
@@ -6194,7 +6202,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/styles/global.css",
-      "sha256": "d8530674de07191bf296d069dc4863518abe30e6024423698818d678eab0df42"
+      "sha256": "8e0cfad37b090e9cd69c3e84b7ae3be65daa8c2e7690c10b1f6cc32835ba5dae"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/autopilotDrivers.test.ts",
@@ -6413,6 +6421,10 @@
       "sha256": "679587a4d484c71c357e7775f847f7d51e3c9b53eb2dfb91b69f867684190c58"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/showcaseChunk.test.ts",
+      "sha256": "c5046f798d8b17d245f08db5351885b2b8d830a5ec26dae52452cf31d01264ee"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/sidebar.test.tsx",
       "sha256": "3dbe90a2a7601e93446485518e5723cc6e6b50dd04ae9ee3603a6a6b689c26ac"
     },
@@ -6442,7 +6454,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "sha256": "04e2ef38f58cc1f5b4b9c6d9bbc369b950f5e9ce952633aca11692371817cd4a"
+      "sha256": "9392d4f92a63690dff384f8c8f798ada70c7e7f1eb7f50f9f20e4ab57c6d4b02"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.shared.ts",
@@ -6529,6 +6541,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/sharedUi.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/shellLogin.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/shopQueries.test.tsx",
+    "rendering/bevy-explorer/source/react-web/src/test/showcaseChunk.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/sidebar.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/systemScene.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/untrustedExit.test.ts",
@@ -9083,7 +9096,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "9ddc6f3ff0bf293267e910d4d185a1459f9299465be5f613d14be92c8da275b0"
+      "sha256": "26a1460c5f6fd0080e6c2548b7167bddef278ece1ee9552fc3acdec0a2f404b0"
+    },
+    {
+      "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
+      "sha256": "89b6c71c990c4dadf95a0e4fe64a976a3ae50324c3f4739e1dfc066c49bea9f8"
     },
     {
       "path": "library/ui/apps/hud/design/Skeleton.module.css",
@@ -10464,6 +10481,10 @@
     {
       "path": "library/ui/apps/hud/lib/useWindowKeyDown.ts",
       "sha256": "7606cc4147d22a04c17c27b0792f393c217b1f8c87d883e62180acc9a4a26036"
+    },
+    {
+      "path": "library/ui/apps/hud/styles/page.css",
+      "sha256": "6523103501d22d23cb46c7a779d0266992d75159c1a98201dc7dba0933d19cf7"
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
@@ -16039,17 +16060,17 @@
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/explorer-core/lib/identity.ts",
+      "to": "library/ui/apps/hud/assets/backpack/silhouette-1.webp",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/explorer-core/lib/identity.ts",
+      "to": "library/ui/apps/hud/assets/backpack/silhouette-1.webp",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/explorer-core/lib/identity.ts",
+      "to": "library/ui/apps/hud/assets/backpack/silhouette-1.webp",
       "kind": "test:runtime"
     },
     {
@@ -16114,6 +16135,21 @@
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/lobby/default-profile-thumbnail.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/lobby/default-profile-thumbnail.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/lobby/default-profile-thumbnail.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
       "to": "library/ui/apps/hud/assets/voice/stream-badge.png",
       "kind": "native:runtime"
     },
@@ -16129,647 +16165,32 @@
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "to": "library/ui/apps/hud/design/ShowcaseIndex.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "to": "library/ui/apps/hud/design/ShowcaseIndex.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "to": "library/ui/apps/hud/design/ShowcaseIndex.ts",
       "kind": "test:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ArmedButton.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ArmedButton.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ArmedButton.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Avatar.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Avatar.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Avatar.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Button.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Button.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Button.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Checkbox.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Checkbox.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Checkbox.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Chip.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Chip.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Chip.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/CodeInput.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/CodeInput.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/CodeInput.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ColorPicker.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ColorPicker.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ColorPicker.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ControlButton.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ControlButton.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ControlButton.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/CountBadge.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/CountBadge.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/CountBadge.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/DateField.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/DateField.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/DateField.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/DclLogo.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/DclLogo.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/DclLogo.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Glyphs.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Glyphs.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Glyphs.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/HeaderButton.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/HeaderButton.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/HeaderButton.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/HintsButton.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/HintsButton.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/HintsButton.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/IconButton.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/IconButton.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/IconButton.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/KebabMenu.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/KebabMenu.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/KebabMenu.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/LogoPattern.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/LogoPattern.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/LogoPattern.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/MenuPanel.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/MenuPanel.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/MenuPanel.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/OptionMenu.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/OptionMenu.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/OptionMenu.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Pager.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Pager.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Pager.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Panel.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Panel.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Panel.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Rail.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Rail.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Rail.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ScrollThumb.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ScrollThumb.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ScrollThumb.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Select.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Select.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Select.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Skeleton.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Skeleton.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Skeleton.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Slider.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Slider.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Slider.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Spinner.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Spinner.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Spinner.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/SubmitField.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/SubmitField.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/SubmitField.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/SwapLabel.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/SwapLabel.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/SwapLabel.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Tabs.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Tabs.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Tabs.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/TextArea.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/TextArea.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/TextArea.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/TextInput.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/TextInput.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/TextInput.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Toast.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Toast.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Toast.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Toggle.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Toggle.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Toggle.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Tooltip.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Tooltip.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Tooltip.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/VoiceBars.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/VoiceBars.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/VoiceBars.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/WearableCard.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/WearableCard.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/WearableCard.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/icons.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/icons.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/icons.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/popups.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/popups.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/popups.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -45919,6 +45340,16 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/src/styles/global.css",
+      "to": "library/ui/apps/hud/styles/page.css",
+      "kind": "native:css"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/styles/global.css",
+      "to": "library/ui/apps/hud/styles/page.css",
+      "kind": "production:css"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/styles/global.css",
       "to": "library/ui/apps/hud/styles/tokens.css",
       "kind": "native:css"
     },
@@ -47265,6 +46696,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/Showcase.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/design/ShowcaseIndex.ts",
       "kind": "type"
     },
     {
