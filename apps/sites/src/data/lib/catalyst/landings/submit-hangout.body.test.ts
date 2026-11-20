@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { eventToDraft, toCreateEventBody, type EditableHangout } from "./submit-hangout";
 
 const OWNER = "0x1111111111111111111111111111111111111111";
+const EDITOR = "0x2222222222222222222222222222222222222222";
 
 function hangout(overrides: Partial<EditableHangout> = {}): EditableHangout {
   return {
@@ -21,9 +22,24 @@ function hangout(overrides: Partial<EditableHangout> = {}): EditableHangout {
 
 describe("when an edited event is saved", () => {
   describe("and it had been rejected", () => {
-    it("should send it back to review, as decentraland.org's editor does", () => {
-      const original = hangout({ rejected: true, rejection_reason: "Invalid image" });
-      expect(toCreateEventBody(eventToDraft(original), original, OWNER)).toMatchObject({ rejected: false });
+    const original = hangout({ rejected: true, rejection_reason: "Invalid image" });
+
+    describe("and its owner saves it", () => {
+      it("should ask to send it back to review, as decentraland.org's editor does", () => {
+        expect(toCreateEventBody(eventToDraft(original), original, OWNER)).toMatchObject({ rejected: false });
+      });
+    });
+
+    describe("and someone who may edit any event saves it", () => {
+      it("should leave its review state out of the change", () => {
+        expect(toCreateEventBody(eventToDraft(original), original, EDITOR, true)).not.toHaveProperty("rejected");
+      });
+    });
+
+    describe("and the signer is unknown", () => {
+      it("should leave its review state out of the change", () => {
+        expect(toCreateEventBody(eventToDraft(original), original)).not.toHaveProperty("rejected");
+      });
     });
   });
 

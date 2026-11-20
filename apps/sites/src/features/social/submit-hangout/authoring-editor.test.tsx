@@ -248,6 +248,42 @@ describe("when an event is saved from the single-page editor", () => {
     });
   });
 
+  describe("and the saved event went back to review", () => {
+    beforeEach(async () => {
+      submit.mockResolvedValueOnce({ id: "saved-event", approved: false, rejected: false });
+      render(page("edit"));
+      await user.click(screen.getByRole("button", { name: "Save changes" }));
+    });
+
+    it("should confirm the update", async () => {
+      expect(await screen.findByText("Your event was updated successfully.")).toBeTruthy();
+      expect(screen.queryByText(/still rejected/)).toBeNull();
+    });
+  });
+
+  describe("and the server kept the saved event rejected", () => {
+    beforeEach(async () => {
+      submit.mockResolvedValueOnce({ id: "saved-event", approved: false, rejected: true });
+      render(page("edit"));
+      await user.click(screen.getByRole("button", { name: "Save changes" }));
+      await screen.findByRole("button", { name: "My Events" });
+    });
+
+    it("should say the changes were saved but the event is not back in review", () => {
+      expect(screen.getByRole("status").textContent).toBe("Your changes were saved, but the event is still rejected, so it is not back in review.");
+      expect(screen.queryByText("Your event was updated successfully.")).toBeNull();
+    });
+
+    it("should move focus to the message", () => {
+      expect(document.activeElement?.contains(screen.getByRole("status"))).toBe(true);
+    });
+
+    it("should offer the way back to My Events", async () => {
+      await user.click(screen.getByRole("button", { name: "My Events" }));
+      expect(router.state.location.pathname + router.state.location.search).toBe("/events?tab=my");
+    });
+  });
+
   describe("and the save fails", () => {
     beforeEach(async () => {
       submit.mockRejectedValueOnce(new Error("Service unavailable"));

@@ -84,6 +84,43 @@ describe("when submitting a hangout", () => {
       expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("url");
     });
 
+    describe("and the owner saves it after a rejection", () => {
+      beforeEach(() => {
+        original.approved = false;
+        original.rejected = true;
+        original.rejection_reason = "Invalid image";
+        submit = buildHangoutSubmit(() => identity, original);
+      });
+
+      it("should ask to send it back to review", async () => {
+        await submit({ draft });
+        expect(vi.mocked(postJSON).mock.calls[0]?.[1]).toMatchObject({ rejected: false });
+      });
+
+      it("should report the event back in review when the server cleared the rejection", async () => {
+        vi.mocked(postJSON).mockResolvedValueOnce({ ok: true, data: { ...original, approved: false, rejected: false, rejection_reason: null } });
+        await expect(submit({ draft })).resolves.toEqual({ id: "existing-event", approved: false, rejected: false });
+      });
+
+      it("should report the event still rejected when another reviewer's rejection stands", async () => {
+        vi.mocked(postJSON).mockResolvedValueOnce({ ok: true, data: { ...original, approved: false, rejected: true, rejected_by: "0x4444444444444444444444444444444444444444" } });
+        await expect(submit({ draft })).resolves.toEqual({ id: "existing-event", approved: false, rejected: true });
+      });
+    });
+
+    describe("and an authorized editor saves another creator's rejected event", () => {
+      beforeEach(() => {
+        original.user = "0x3333333333333333333333333333333333333333";
+        original.rejected = true;
+        submit = buildHangoutSubmit(() => identity, original, () => true);
+      });
+
+      it("should leave the review state to the moderation tools", async () => {
+        await submit({ draft });
+        expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("rejected");
+      });
+    });
+
     describe("and an authorized editor manages another creator's event", () => {
       beforeEach(() => {
         original.user = "0x3333333333333333333333333333333333333333";

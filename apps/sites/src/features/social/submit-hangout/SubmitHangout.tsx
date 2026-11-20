@@ -377,7 +377,7 @@ function SubmitHangoutInner({
         {value === "submitting" && (
           <Busy>{text("Submitting your hangout for review…")}</Busy>
         )}
-        {value === "submitted" && !needsSignIn && <SubmitSuccess mode={mode} approved={state.context.result?.approved ?? false} />}
+        {value === "submitted" && !needsSignIn && <SubmitSuccess mode={mode} approved={state.context.result?.approved ?? false} stillRejected={state.context.result?.rejected ?? false} />}
 
         {state.context.error && value === "review" && (
           <Notice tone="error">

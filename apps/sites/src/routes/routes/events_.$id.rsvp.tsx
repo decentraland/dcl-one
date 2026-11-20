@@ -1,9 +1,13 @@
 import { redirect } from "react-router";
 
-import { EVENT_ID_PARAM, EVENTS_PATH } from "@/features/events/view";
+import { legacyEventsHref } from "@/features/events/view";
 
-/** Going to an event is the detail's "Remind me", as on decentraland.org: an old RSVP link opens that detail. */
-export function loader({ params }: { params: { id?: string } }) {
-  const id = params.id?.trim();
-  return redirect(id ? `${EVENTS_PATH}?${EVENT_ID_PARAM}=${encodeURIComponent(id)}` : EVENTS_PATH);
+/**
+ * Going to an event is the detail's "Remind me", as on decentraland.org: an old RSVP link opens that detail,
+ * keeping its query (campaign tags) but not the old page's `step`, which the Events page has no use for.
+ */
+export function loader({ request, params }: { request: Request; params: { id?: string } }) {
+  const url = new URL(request.url);
+  url.searchParams.delete("step");
+  return redirect(legacyEventsHref(url, params.id?.trim() || undefined));
 }

@@ -41,6 +41,8 @@
   text-align: center;
 }
 
+.notice { align-self: stretch; }
+
 .actions {
   display: flex;
   align-items: center;

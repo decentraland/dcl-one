@@ -802,6 +802,13 @@ const messages = {
     '이벤트가 업데이트되었습니다.',
     'イベントを更新しました。'
   ],
+  'Your changes were saved, but the event is still rejected, so it is not back in review.': [
+    'Tus cambios se guardaron, pero el evento sigue rechazado, así que no volvió a revisión.',
+    'Vos modifications ont été enregistrées, mais l’événement reste refusé : il n’est pas revenu en examen.',
+    '你的更改已保存，但活动仍处于被拒绝状态，因此没有重新进入审核。',
+    '변경 사항이 저장되었지만 이벤트가 여전히 거부된 상태여서 다시 검토 대기열로 돌아가지 않았습니다.',
+    '変更は保存されましたが、イベントは却下されたままのため、審査には戻っていません。'
+  ],
   'Back to Explore': [
     'Volver a explorar',
     'Retour à l’exploration',

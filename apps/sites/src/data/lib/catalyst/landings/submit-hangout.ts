@@ -131,8 +131,9 @@ export function toCreateEventBody(draft: HangoutDraft, original?: EditableHangou
     featured_item: draft.featuredItem?.trim() || null,
     ...(privileged && schedulesChanged ? { schedules: scheduleIds } : {}),
     ...(privileged && (!original || joinUrl !== originalJoinUrl) ? { url: joinUrl } : {}),
-    // As decentraland.org's editor (useCreateEventForm): saving a rejected event sends it back to review.
-    ...(original?.rejected ? { rejected: false } : {}),
+    // As decentraland.org's editor (useCreateEventForm): the owner saving a rejected event asks to send it
+    // back to review. The server keeps another reviewer's rejection standing, so the response says which.
+    ...(own && original?.rejected ? { rejected: false } : {}),
   };
 }
 
@@ -247,6 +248,8 @@ export function isStepValid(step: string, draft: HangoutDraft): boolean {
 const SubmitResultSchema = z.object({
   id: z.string(),
   approved: z.boolean(),
+  /** Still true after an edit when another reviewer's rejection stands: the event did not go back to review. */
+  rejected: z.boolean().optional(),
 });
 export type SubmitResult = z.infer<typeof SubmitResultSchema>;
 

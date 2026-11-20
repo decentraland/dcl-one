@@ -334,6 +334,29 @@ describe("when editing a hangout through its route", () => {
         await act(async () => finish());
       });
 
+      it("should keep focus inside the dialog while the delete is in flight", async () => {
+        let fail: (reason: Error) => void = () => {};
+        vi.mocked(authoring.deleteHangout).mockImplementationOnce(() => new Promise<void>((_, reject) => { fail = reject; }));
+        await user.click(screen.getByRole("button", { name: "Delete event" }));
+        const dialog = screen.getByRole("dialog");
+        expect(within(dialog).getByRole<HTMLButtonElement>("button", { name: "Deleting…" }).disabled).toBe(true);
+        expect(document.activeElement).toBe(dialog);
+        await user.tab();
+        expect(dialog.contains(document.activeElement)).toBe(true);
+        await act(async () => fail(new Error("Delete denied")));
+      });
+
+      it("should hand focus back to Delete when the delete fails", async () => {
+        let fail: (reason: Error) => void = () => {};
+        vi.mocked(authoring.deleteHangout).mockImplementationOnce(() => new Promise<void>((_, reject) => { fail = reject; }));
+        screen.getByRole("button", { name: "Delete event" }).focus();
+        await user.keyboard("{Enter}");
+        expect(document.activeElement).toBe(screen.getByRole("dialog"));
+        await act(async () => fail(new Error("Delete denied")));
+        expect(await within(screen.getByRole("dialog")).findByRole("alert")).toBeTruthy();
+        expect(document.activeElement).toBe(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete event" }));
+      });
+
       it("should keep the editor open and report a failed delete in the dialog", async () => {
         vi.mocked(authoring.deleteHangout).mockRejectedValueOnce(new Error("Delete denied"));
         await user.click(screen.getByRole("button", { name: "Delete event" }));
