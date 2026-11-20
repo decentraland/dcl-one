@@ -9,10 +9,11 @@ use bevy::{
 use bevy_console::ConsoleCommand;
 use common::{
     structs::DebugInfo,
-    util::{TaskExt, UrlLoopbackExt},
+    util::{TaskCompat, TaskExt, UrlLoopbackExt},
 };
 use console::DoAddConsoleCommand;
-use ipfs::{ipfs_path::IpfsPath, IpfsAssetServer};
+use ipfs::{ipfs_path::IpfsPath, IpfsAssetServer, IpfsResource};
+use system_bridge::SystemApi;
 
 #[cfg(target_arch = "wasm32")]
 use crate::CHANNELS;
@@ -21,7 +22,7 @@ use common::util::JoinRelativeExt;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::mpsc::unbounded_channel;
 
-use crate::{AssetForProcessing, ProcessingAssetType};
+use crate::{AssetForProcessing, ProcessingAssetType, ProcessorRequest};
 
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
@@ -30,7 +31,7 @@ pub struct ImageProcessingPlugin;
 impl Plugin for ImageProcessingPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<AssetForProcessing>();
-        app.add_systems(Update, (check_assets, pipe_events));
+        app.add_systems(Update, (check_assets, pipe_events, handle_satellite_tile));
         // every KTX2 bevy decodes (one loaded by path through its `ImageLoader`, or an image
         // embedded in a glTF) goes through `ktx2::transcode_ktx2_image`
         crate::ktx2::install_ktx2_transcoder();
@@ -82,7 +83,7 @@ fn toggle_debug_processing(
 
 #[derive(Resource)]
 struct Channels {
-    req_sx: UnboundedSender<AssetForProcessing>,
+    req_sx: UnboundedSender<ProcessorRequest>,
     resp_rx: UnboundedReceiver<Result<AssetForProcessing, ()>>,
 }
 
@@ -363,7 +364,7 @@ fn pipe_events(
 ) {
     for event in events.read() {
         stats.started += 1;
-        let _ = channels.req_sx.send(event.clone());
+        let _ = channels.req_sx.send(ProcessorRequest::Asset(event.clone()));
     }
 
     if stats.started == 0 {
@@ -477,4 +478,83 @@ fn pipe_events(
         debug!("replaced {} imgs", imgs_replaced);
         stats.swapped += imgs_replaced;
     }
+}
+
+/// The satellite tile fetch's wait for response headers, and for each body chunk after them.
+const TILE_HEADERS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const TILE_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Tiles are well under a megabyte; anything larger is not one.
+const TILE_MAX_BYTES: usize = 16 * 1024 * 1024;
+
+/// Answers `SystemApi::GetSatelliteTile`: fetches the tile from the abgen CDN's satellite maps
+/// and replies with its JPEG, base64-encoded. The path is validated before any request.
+fn handle_satellite_tile(
+    mut events: EventReader<SystemApi>,
+    ipfs: Res<IpfsResource>,
+    channels: Res<Channels>,
+) {
+    for event in events.read() {
+        let SystemApi::GetSatelliteTile(path, reply) = event else {
+            continue;
+        };
+        let reply = reply.clone();
+        let Some(path) = crate::validate_satellite_tile_path(path) else {
+            reply.send(Err("invalid satellite tile path".to_owned()));
+            continue;
+        };
+        let url = common::base_domain::url(
+            common::base_domain::Service::AbgenCdn,
+            &format!("/SatelliteMaps/{path}"),
+        );
+        let client = ipfs.client();
+        let req_sx = channels.req_sx.clone();
+
+        IoTaskPool::get()
+            .spawn_compat(async move {
+                let result = fetch_satellite_tile(client, url, req_sx).await;
+                reply.send(result);
+            })
+            .detach();
+    }
+}
+
+// `req_sx` reaches the processor worker, which only the web engine converts on
+#[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))]
+async fn fetch_satellite_tile(
+    client: reqwest::Client,
+    url: String,
+    req_sx: UnboundedSender<ProcessorRequest>,
+) -> Result<String, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    use platform::FetchError;
+
+    let fetched = platform::fetch(client.get(&url), TILE_HEADERS_TIMEOUT, TILE_IDLE_TIMEOUT)
+        .await
+        .map_err(|e| match e {
+            FetchError::Headers => "satellite tile request timed out".to_owned(),
+            FetchError::Send(e) => format!("satellite tile request failed: {e}"),
+            FetchError::Status(status, _) => format!("satellite tile request returned {status}"),
+            FetchError::Stalled => "satellite tile download stalled".to_owned(),
+            FetchError::Body(e) => format!("satellite tile download failed: {e}"),
+        })?;
+    if fetched.body.len() > TILE_MAX_BYTES {
+        return Err("satellite tile is too large".to_owned());
+    }
+
+    // the conversion is tens of milliseconds: off the frame loop and the scene's thread
+    #[cfg(not(target_arch = "wasm32"))]
+    let jpeg = bevy::tasks::AsyncComputeTaskPool::get()
+        .spawn(async move { crate::satellite_tile_jpeg(&fetched.body) })
+        .await;
+    #[cfg(target_arch = "wasm32")]
+    let jpeg = {
+        let (sx, rx) = tokio::sync::oneshot::channel();
+        req_sx
+            .send(ProcessorRequest::SatelliteTile(fetched.body, sx))
+            .map_err(|_| "image processor is not running".to_owned())?;
+        rx.await.map_err(|_| "image processor stopped".to_owned())?
+    };
+
+    jpeg.map(|jpeg| STANDARD.encode(jpeg))
+        .map_err(|e| format!("satellite tile conversion failed: {e}"))
 }

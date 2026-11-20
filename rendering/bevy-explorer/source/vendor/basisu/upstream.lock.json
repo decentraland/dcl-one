@@ -14,7 +14,7 @@
   "normalization": "Exact bytes of the published crates.io package (the .crate whose SHA256 is crate_sha256, as Cargo.lock recorded it), with the listed patches applied. Repository .gitattributes disables newline conversion for this subtree. SHA256 manifests are UTF-8 with LF lines and lexicographically sorted package-relative paths. No Cargo cache marker is imported.",
   "manifests": {
     "upstream-files.sha256": "b0cc1f6baf8c6a380ab0782354f23dd1f9c0600091b708ad7d8c33af561f352a",
-    "checksums.sha256": "0437ef9db0413d46bfdf1667390e1d0bfbd64d1530fe53b1abd3095121cec79a"
+    "checksums.sha256": "e0cb068e50b8e67887b382ef381946407b74386bc8e4acbdf79da9207165555a"
   },
   "patches": [
     {
@@ -44,6 +44,13 @@
       "changes": [
         "ETC1S (BasisLZ) images are no longer transcoded: transcode_etc1s returns None for every target, as for an unsupported one. KTX2 and .basis containers holding ETC1S are still parsed.",
         "Drop the module declarations of the removed ETC1S per-format transcoders and their precomputed tables, and the two helpers only they used (mathf::fabs, VideoState::slots)."
+      ]
+    },
+    {
+      "path": "patches/0004-transcode-etc1s-to-rgba32.patch",
+      "sha256": "2e9a7811e382dfb1bd13cca6692a1f30c724f19f602ac669213861b865905fd2",
+      "changes": [
+        "ETC1S (BasisLZ) images transcode to RGBA32, with or without an alpha slice, through the slice decoder patch 0003 kept. Every other ETC1S target, and ETC1S video, still returns None."
       ]
     }
   ],
