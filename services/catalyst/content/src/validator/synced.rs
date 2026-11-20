@@ -789,13 +789,11 @@ mod tests {
             files: &files,
             auth_chain: &chain,
         };
-        // The local check reads the escrow overlay.
-        let Some(pool) = crate::sync_test_support::test_pool(1).await else {
-            return;
-        };
+        // Neither check reads the database: without the escrow-lease opt-in
+        // the local check reads no lease either.
         let (storage, tmp) = crate::sync_test_support::temp_storage("malformed-urn").await;
         let sources = Sources::new(
-            pool,
+            sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
             storage,
             crate::http::Outbound::for_tests(),
             None,

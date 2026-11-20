@@ -469,6 +469,18 @@ pub struct ValidatorConfig {
     /// A second address with the Decentraland address's deploy rights.
     #[arg(long, env = "ADDITIONAL_DECENTRALAND_ADDRESS")]
     pub additional_decentraland_address: Option<String>,
+
+    /// Count this node's active escrow leases (`shop.usage_grants`) as
+    /// ownership of the leased item when a local profile or outfits deploy
+    /// wears it. Off under every posture: a peer that checks ownership on
+    /// chain only rejects such an entity when it syncs it. Set it together
+    /// with `EXPLORER_ESCROW_GRANTS_ENABLED`, which lists the same leases in
+    /// the explorer backpack; startup warns when the two differ. Where it
+    /// reads the collections subgraphs, this node's `/lambdas/profiles` still
+    /// serves the deployed profile without the leased item, since it keeps
+    /// the worn items the chain says are owned.
+    #[arg(long, env = "CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub content_escrow_lease_ownership_enabled: bool,
 }
 
 /// The /about comms block (`content::about_comms`) and the v4 discovery it advertises.
@@ -721,6 +733,10 @@ mod tests {
             !c.validator.ignore_blockchain_access_checks
                 && c.validator.additional_decentraland_address.is_none(),
             "local deploys run every access check"
+        );
+        assert!(
+            !c.validator.content_escrow_lease_ownership_enabled,
+            "escrow leases are no item ownership without an opt-in"
         );
     }
 
