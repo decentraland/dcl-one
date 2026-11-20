@@ -34,7 +34,8 @@ pub fn verify_auth_chain(
     expected_address: &str,
     now_ms: Option<i64>,
 ) -> Result<(), AuthError> {
-    walk_chain_sync(chain, expected_address, now_ms, DelegationPurpose::Any)
+    let rules = WalkRules::stored(ExpirationPolicy::Strict, ContractPolicy::Latest);
+    walk_chain_sync(chain, expected_address, now_ms, rules)
 }
 
 /// [`verify_auth_chain`] for a chain presented as a login: every ephemeral
@@ -44,14 +45,19 @@ pub fn verify_login_chain(
     expected_address: &str,
     now_ms: Option<i64>,
 ) -> Result<(), AuthError> {
-    walk_chain_sync(chain, expected_address, now_ms, DelegationPurpose::Login)
+    walk_chain_sync(
+        chain,
+        expected_address,
+        now_ms,
+        WalkRules::login(ContractPolicy::Latest),
+    )
 }
 
 fn walk_chain_sync(
     chain: &AuthChain,
     expected_address: &str,
     now_ms: Option<i64>,
-    purpose: DelegationPurpose,
+    rules: WalkRules<'_>,
 ) -> Result<(), AuthError> {
     check_structure(chain, None)?;
 
@@ -65,17 +71,7 @@ fn walk_chain_sync(
                 signed_entity_link(link, index, &current_authority, false)?
             }
             AuthLinkType::EcdsaEphemeral => {
-                ephemeral_link(
-                    link,
-                    index,
-                    &current_authority,
-                    now_ms,
-                    ExpirationPolicy::Strict,
-                    crate::auth_chain::parse_expiration,
-                    false,
-                    purpose,
-                )?
-                .0
+                ephemeral_link(link, index, &current_authority, now_ms, rules)?.0
             }
             AuthLinkType::EcdsaEip1654Ephemeral | AuthLinkType::EcdsaEip1654SignedEntity => {
                 return Err(AuthError::Eip1654NotImplemented);
@@ -327,16 +323,8 @@ pub(crate) async fn walk_chain(
                 signed_entity_link(link, index, &current_authority, strict_hex)?
             }
             AuthLinkType::EcdsaEphemeral => {
-                let (authority, trusted, expiration) = ephemeral_link(
-                    link,
-                    index,
-                    &current_authority,
-                    now_ms,
-                    rules.expiration,
-                    rules.date_parser(),
-                    strict_hex,
-                    rules.purpose,
-                )?;
+                let (authority, trusted, expiration) =
+                    ephemeral_link(link, index, &current_authority, now_ms, rules)?;
                 verdict.trusted_expirations.extend(trusted);
                 earliest = earliest.min(expiration.unwrap_or(i64::MAX));
                 authority
@@ -346,13 +334,7 @@ pub(crate) async fn walk_chain(
                 let validator = eip1654_validator.ok_or(AuthError::Eip1654NotImplemented)?;
                 let signature = require_signature(link, index)?;
                 let (message, ephemeral_address, expiration) =
-                    ephemeral_payload_within(
-                    link,
-                    now_ms,
-                    rules.expiration,
-                    rules.date_parser(),
-                    rules.purpose,
-                )?;
+                    ephemeral_payload_within(link, now_ms, rules)?;
 
                 let sig_bytes = decode_hex_signature(&signature)?;
 
@@ -594,16 +576,12 @@ fn ephemeral_link(
     index: usize,
     current_authority: &str,
     now_ms: i64,
-    policy: ExpirationPolicy,
-    parse: fn(&str) -> Option<i64>,
-    strict_hex: bool,
-    purpose: DelegationPurpose,
+    rules: WalkRules<'_>,
 ) -> Result<(String, Option<String>, Option<i64>), AuthError> {
     let signature = require_signature(link, index)?;
-    let (message, ephemeral_address, expiration) =
-        ephemeral_payload_within(link, now_ms, policy, parse, purpose)?;
+    let (message, ephemeral_address, expiration) = ephemeral_payload_within(link, now_ms, rules)?;
 
-    let recovered = recover_strict(message.as_bytes(), &signature, strict_hex)?;
+    let recovered = recover_strict(message.as_bytes(), &signature, rules.request.is_some())?;
 
     check_address_match(current_authority, &recovered, index)?;
 
@@ -624,13 +602,13 @@ fn ephemeral_link(
 fn ephemeral_payload_within(
     link: &AuthLink,
     now_ms: i64,
-    policy: ExpirationPolicy,
-    parse: fn(&str) -> Option<i64>,
-    purpose: DelegationPurpose,
+    rules: WalkRules<'_>,
 ) -> Result<(String, String, Result<i64, String>), AuthError> {
     let (message, ephemeral_address, expiration) =
-        split_ephemeral_payload_with(&link.payload, parse)?;
-    if purpose == DelegationPurpose::Login && message.split('\n').next() != Some(LOGIN_PURPOSE) {
+        split_ephemeral_payload_with(&link.payload, rules.date_parser())?;
+    if rules.purpose == DelegationPurpose::Login
+        && message.split('\n').next() != Some(LOGIN_PURPOSE)
+    {
         return Err(AuthError::InvalidEphemeralPayload(format!(
             "a login delegation's first line must be '{LOGIN_PURPOSE}'"
         )));
@@ -641,7 +619,7 @@ fn ephemeral_payload_within(
             now_ms,
         }),
         Ok(expiration_ms) => Ok((message, ephemeral_address, Ok(expiration_ms))),
-        Err(raw) => match policy {
+        Err(raw) => match rules.expiration {
             ExpirationPolicy::Strict => Err(AuthError::InvalidEphemeralPayload(format!(
                 "Invalid expiration date '{}'",
                 raw

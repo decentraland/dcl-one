@@ -285,6 +285,31 @@ async fn a_frame_verifies_like_headers() {
     assert!(verified.metadata.is_empty());
 }
 
+/// A delegation signed for another purpose never authenticates a request.
+#[tokio::test]
+async fn a_foreign_delegation_purpose_is_an_invalid_signature() {
+    let (root, ephemeral) = (wallet(1), wallet(2));
+    let mut parts = signed_parts("/a", None);
+    let message = format!(
+        "Decentraland Authoritative Storage Delegation\nEphemeral address: {}\nExpiration: {}",
+        ephemeral.address(),
+        crate::js_date::to_iso_string(NOW + 600_000).unwrap()
+    );
+    parts.chain[1] = Some(link(
+        "ECDSA_EPHEMERAL",
+        &message,
+        &root.sign_message(message.as_bytes()).unwrap(),
+    ));
+    let err = verify_request_at(&parts, &VerifyOptions::default(), NOW)
+        .await
+        .unwrap_err();
+    assert_eq!(err.status(), 401);
+    assert!(
+        err.to_string().contains(crate::verify::LOGIN_PURPOSE),
+        "{err}"
+    );
+}
+
 #[tokio::test]
 async fn stage_order_is_chain_timestamp_metadata_validator_signature() {
     let mut parts = signed_parts("/a", Some("[]"));

@@ -6,9 +6,10 @@ use super::parts::RequestParts;
 use crate::auth_chain::MAX_AUTH_CHAIN_LINKS;
 use crate::eip1654::Eip1654Validator;
 use crate::scoped_login::{DEFAULT_MAX_SCOPED_LOGIN_LIFETIME_MS, is_operation_format, is_service};
+use crate::signed_fetch::SIGNED_FETCH_WINDOW_SECS;
 
 /// How far a signed timestamp may be from now, either way.
-pub const DEFAULT_EXPIRATION: Duration = Duration::from_secs(60);
+pub const DEFAULT_EXPIRATION: Duration = Duration::from_secs(SIGNED_FETCH_WINDOW_SECS as u64);
 pub const DEFAULT_MAX_CHAIN_LENGTH: usize = MAX_AUTH_CHAIN_LINKS;
 
 /// A configuration the verifier refuses to start with.

@@ -28,8 +28,9 @@ available.
   Header bytes read as Latin-1 and repeated values join with `", "`, as Node
   reads them.
 - **Options.** `VerifyOptions` is built once and refuses a bad configuration:
-  the expiration window (60 s by default; it bounds the past, and the future up
-  to the 60 s cap of the [future-skew ADR](2026-11-13-signed-fetch-future-skew.md)),
+  the expiration window (`SIGNED_FETCH_WINDOW_SECS`, 60 s, by default; it
+  bounds the past, and the future up to the 60 s `MAX_FUTURE_SKEW_SECS` cap of
+  the [signed-fetch window ADR](2026-11-13-signed-fetch-window.md)),
   the maximum chain length (10), `canonical_metadata_keys`, a
   `metadata_validator` (`require_signer`, `reject_if_signer`,
   `require_canonical_field`, `canonical_field`), the service, the scoped-login
@@ -58,6 +59,12 @@ available.
   or -32015, or an execution-failure message. Every caller of the validator
   reads responses up to 1 MiB and gives it a client that follows no redirect,
   so a call never reaches another node.
+- **Login purpose.** A signed request is a login: every ephemeral
+  delegation, ECDSA or EIP-1654, must start with `Decentraland Login`
+  ([login delegation ADR](2026-11-19-login-delegation-purpose.md)); any other
+  first line is an invalid signature (401), with the same key guard and
+  pre-6.0.0 payload steps as any other 401. A scoped link carries its own
+  `Decentraland Scoped Login` line.
 - **Expirations** read as `Date.parse` reads them
   (`dcl_auth::js_date`, checked against Node over a fixture corpus). A scoped
   login's expiration must be the exact `toISOString` form.
@@ -70,6 +77,8 @@ available.
 - Chain rules: only delegations sit between the SIGNER and the last link
   (ADR-162's scoped structure aside), high-s signatures are refused, and
   addresses `0x00..00` to `0x00..ff` are never asked as contract wallets.
+- A delegation's first line must be `Decentraland Login`; the reference
+  reads only its address and expiration lines.
 - The timestamp is digits only; any other form is 400. The reference reads it
   with `Number()` until decentraland/core-libs#83 lands, after which it is
   digits only too.
@@ -84,7 +93,7 @@ available.
 
 - One stage order and one set of answers for every surface once it moves.
 - Stored entities keep their own rules: content deployments and sync accept
-  ECDSA signatures without `0x`. A local deployment reads an expiration with
+  ECDSA signatures without `0x` and delegations of any purpose. A local deployment reads an expiration with
   `Date.parse` first, then the shapes stored entities carry; an entity
   mirrored from a peer reads only those shapes and takes any other expiration
   on the peer's word, as before.
