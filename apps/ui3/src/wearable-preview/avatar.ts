@@ -415,8 +415,9 @@ export function createAvatarScene(
 
   // The parts' files by content hash, each download started once when the entities arrive, so a GLB's textures
   // download beside it instead of after its parse.
-  // `signal` ends the downloads: the preview's disposal or the parts' timeout. `late` settles HELD_FILES_MS after the
-  // wave starts.
+  // `signal` ends the downloads: the preview's disposal or the parts' timeout. `late` is the wave's wait for optional
+  // files (`heldFilesWait`): it settles HELD_FILES_MS after the wave starts, when `signal` aborts, or once every part of
+  // the wave has settled.
   type HeldFiles = Map<string, Promise<Blob | null>> & { signal: AbortSignal; late: Promise<void> };
 
   /**
