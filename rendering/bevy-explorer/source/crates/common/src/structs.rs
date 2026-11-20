@@ -637,6 +637,9 @@ pub struct AppConfig {
     /// behind the camera together: the nearest in view start first, and with none free one
     /// behind the camera makes way for one in view. A near LOD's colliders take no place.
     pub max_near_lods: usize,
+    /// How many scenes may load or show a far LOD (the asset pipeline's simplified mesh) at once,
+    /// in view and behind the camera together, as `max_near_lods` counts near LODs.
+    pub max_far_lods: usize,
     pub scene_imposter_distances: Vec<f32>,
     pub scene_imposter_multisample: bool,
     pub scene_imposter_multisample_amount: f32,
@@ -708,6 +711,7 @@ impl Default for AppConfig {
             scene_load_distance: 10.0,
             scene_unload_extra_distance: 10.0,
             max_near_lods: 12,
+            max_far_lods: 200,
             scene_imposter_distances: vec![100.0, 200.0, 400.0, 800.0, 1600.0, 99999.0],
             scene_imposter_multisample: false,
             scene_imposter_multisample_amount: 0.0,
@@ -827,6 +831,7 @@ impl AppConfig {
         self.scene_load_distance = default.scene_load_distance;
         self.scene_unload_extra_distance = default.scene_unload_extra_distance;
         self.max_near_lods = default.max_near_lods;
+        self.max_far_lods = default.max_far_lods;
         self.scene_imposter_distances = default.scene_imposter_distances.clone();
         self.scene_imposter_multisample = default.scene_imposter_multisample;
         self.scene_imposter_multisample_amount = default.scene_imposter_multisample_amount;

@@ -148,12 +148,129 @@ the GPU.
   stand-in.
 - **Walls.** While a stand-in's visuals show, its scene's loading walls are hidden; a scene
   without shown visuals keeps them.
-- **Debug view.** The Scene stand-ins debug section counts colliders parts and visuals by state
-  and can tint the
-  near LOD's models green (`/lod_tint`). The tint changes only the stand-in's own materials, never
-  the live scene's.
+- **Debug view.** The Scene stand-ins debug section counts near LODs' colliders parts and the
+  near and far LODs' visuals by state, and can tint the near LOD's models green and the far
+  LOD's mesh blue (`/lod_tint`). The tint changes only the stand-in's own materials, never the
+  live scene's.
 
-A far LOD and the removal of the loading walls are later decisions.
+### Far LOD
+
+Past the near LOD's keep ring a scene that is not on screen gets a far LOD instead: the asset
+pipeline's single mesh for the scene (`scene_lod.rs`, `LodLevel::Far`), a second stand-in of
+the same kind.
+
+- **Mesh.** `{base}/LOD/lods-bevy/lods/{sceneId}_1.glb` (the scene id lowercase): the asset
+  pipeline's Bevy copy of the scene mesh. The Bevy variants client names it
+  (`IpfsIo::bevy_far_lod`): `base` is the variants base, and it is offered on the terms of a
+  variants manifest (variants on and not turned off for the session, the scene not in preview,
+  not local, and not served from a loopback or file content server) and only on a GPU with BC
+  textures, since its atlases are BC1 or BC7 KTX2 with their
+  mip chain. Until the GPU reports its BC support the far LOD waits. The glTF loader hands
+  embedded KTX2 to the host, which unwraps BC to DDS, so they stay compressed in memory. Like a
+  `glb` variant it is asked for at its own path: its Brotli copy exists only when it is smaller,
+  and the server sends it to a browser that accepts `br`. None offered or published, or one the
+  loader refuses, leaves the scene's parcels to the imposters. The content server judged is the
+  realm's (`/about`, or the server a loaded urn registered for the scene); a far LOD loads no
+  urn, so on a realm whose scenes come from another server, such as a local city loader, that
+  server is not judged, and each scene in the band costs one request a session that can only
+  miss.
+- **From the scene's hash alone.** The far LOD loads no entity definition. The url comes from
+  the scene's hash, which the realm's pointers give, and the root goes at the scene's base
+  parcel (the mesh is relative to it) as the realm listed it: the active-entities response that
+  fills the pointers carries each scene's `scene.json`, and `ScenePointers::base` keeps its base
+  parcel by hash, cleared with the pointers on a realm change. The mesh is one glTF container
+  under the root, the url as its `src`, through the near LOD's container path. In place of a
+  definition the root names the scene's hash (`StandInContent`), and a url resolves as itself
+  under that hash with or without the scene's content map registered, so the download ranks in
+  `Tier::Lod` under the scene's hash with the near LOD's. A far LOD costs one request, its
+  mesh. It makes no colliders: its one container is a visuals part (`GltfPart::Visuals`), which
+  builds none. It requests no variants manifest, and does not wait on its scene's: a url never
+  has a variant.
+- **A missing mesh is asked for once.** A definitive status for a far LOD's url (404, or another
+  client error about the url itself: `failed_remotes::is_definitive`) is remembered for the
+  session by scene, and the client offers no far LOD for that scene again
+  (`FarLodSource::Unavailable`): leaving and re-entering the band sends no request. A scene with
+  no mesh costs one request per session.
+  The set is separate from `failed_remotes`: it is asked before the url is named, so a scene with
+  no mesh takes no container and no "Max Far LODs" place, while `failed_remotes` answers a read
+  only when it is made and keeps a session status only for content reads. Only urls the client
+  named count: a download of any other url that looks like a far LOD changes nothing. A name
+  stays until its download answers; answered names are kept up to the bound `failed_remotes`
+  keeps, the oldest forgotten past it, so naming never refuses and far LODs never stop for the
+  session. The missing set has the same bound on its own: past it, a further missing mesh is not
+  remembered and may be asked for again.
+- **A breaker for an outage.** After five far LOD requests in a row fail with an error, a
+  timeout or another status (`FAR_LOD_BREAKER_FAILURES`), far LODs pause for 60 s
+  (`FAR_LOD_COOL_DOWN`). While paused they are still named, but no download starts
+  (`IpfsIo::far_lod_may_request`, checked where the visuals start): those waiting keep their
+  imposters and those shown stay, none stopped to make way. After the cool-down one far LOD
+  may start, so at most one makes way for it: the probe, one per cool-down, and any answer, a mesh or a definitive status, resumes them. A
+  probe served from the cache or dropped with its scene costs only the next cool-down. The
+  client logs each trip and recovery once, and `/scene_lod_state` shows the missing count, the
+  failures in a row and the seconds to the next probe (`far.missing`, `far.failures`,
+  `far.paused_s`). A far LOD whose download failed with an error or a timeout shows its
+  imposters until its scene leaves the band (ring 20 or the tile edge) and comes back; it is
+  not retried in place.
+- **Range in parcel rings.** It draws where the near LOD's keep band ends: its scene's nearest
+  parcel past ring 4 (about 64 m) and within ring 20 (about 320 m), the scene not wholly behind
+  the camera. Nearer, it draws only to stand in for near visuals that find no place under "Max
+  Near LODs", were stopped, or have nothing to show; at ring 4, where near visuals cannot start,
+  that is whenever they are not already shown, so a scene there (after a teleport, or once the
+  count stopped its far LOD) is never left to its imposters. A far LOD stays, its visuals stopped,
+  while its scene's near LOD shows, so when the near visuals stop (the setting lowered, or the
+  player walks out) its mesh starts loading again at once, with no new far LOD to spawn and
+  name; the scene shows its imposters only while that mesh loads. Beyond ring 20 only the
+  imposters remain. It has visuals only: no colliders part.
+- **A count.** At most "Max Far LODs" far LODs (a Performance setting, 0 to 600, default 200)
+  load or show at once, in view and behind the camera together, by the near LODs' visuals rule:
+  nearest in view first while a place is free, then one behind the camera making way for each in
+  view; the rest show their imposter tiles. Lowering it stops the farthest over it, those behind
+  the camera first.
+- **Edge on imposter tiles.** Imposters are tiles of 2^level parcels a side, and any tile with a
+  stand-in's parcel in it is split down to single parcels. A far LOD is therefore shown only if
+  every parcel of its scene within ring 20 lies where the imposters would draw a tile of level 1 or
+  less (`FAR_LOD_MAX_TILE_LEVEL`, 2 parcels a side). The imposters choose each tile's level through
+  `Tiling::tile_distance` and `Tiling::level_allowed`, and the far LODs read the level through the
+  same functions (`Tiling::level`), on the layout the imposters publish with their tiles
+  (`ImposterTiling`, owned by the imposter plugin), so far LODs never draw over tiles laid out
+  for another focus. Until the first layout (at login or after a realm change) no far LOD fits;
+  that one is published as soon as the focus is known, without waiting for the player's scene to
+  load, since there are no tiles yet to overlap. No larger tile ever holds a far LOD, so the edge
+  between far LODs and imposters falls on a tile boundary and the splitting stays among the small
+  tiles. At the default imposter distances that edge lies between about 200 m and 290 m; ring 20
+  bounds it where the tiles reach further (a camera far from the player).
+- **Which parcels.** A far LOD's parcels are those the realm's pointers name within ring 20,
+  which the pointers are read over: they decide whether it fits the tiles, bound its materials
+  (`StandInBounds`) and are the parcels the imposters leave to it. A parcel past ring 20 is not
+  checked. For a scene whose parcels are connected that changes nothing at the default imposter
+  distances with the imposters focused on the player: to reach past ring 20 the scene has a
+  parcel in ring 20, at least 312 m away, whose 4-parcel tile starts at least 264 m away, past
+  the 200 m where level 2 begins, so it fails the check there. Only a scene with disjoint
+  parcels, a level-2 distance raised past about 264 m or a camera far from the player could
+  show a far LOD with parcels past ring 20; those lie outside its bounds, so the mesh is clipped
+  there and the imposters draw them. A far LOD's parcels are fixed when it is spawned (a near
+  LOD refreshes its own until its definition arrives). With the default distances they cannot go
+  stale; with a raised level-2 distance its clip bounds can lag until the far LOD is respawned.
+- **No hysteresis at the edge.** A far LOD goes as soon as the focus parcel moves one of its
+  parcels' tiles above level 1, and comes back when it moves back. Holding it any longer would
+  split a level-2 tile around it, the cost the edge exists to avoid, so a player stepping back
+  and forth across that parcel boundary sees the scene swap between mesh and imposter tile.
+- **Cost per frame.** The scenes within ring 20, with each one's nearest ring, parcels and
+  whether its far LOD fits the tiles, are read from the pointers again only when the player's
+  parcel, the realm's pointers (`ScenePointers::generation`), the preview state or the tile
+  layout change; each frame checks only the stand-ins against what is on screen.
+- **Memory.** The mesh keeps its CPU copy, like every mesh the container path loads: about
+  0.5 MB per far LOD on average (sampled over 99 scenes within ring 20 of 0,0; the largest mesh
+  holds 515k vertices), up to "Max Far LODs" of them. No collision shape is built for it: the
+  container path builds one only for a part that may make colliders.
+- **Quantized meshes.** The meshes require `KHR_mesh_quantization` (16-bit positions, 8-bit
+  normals, 16-bit texture coordinates). The vendored glTF loader reads them through a backport of
+  upstream bevy's support (`rendering/bevy-explorer/docs/guidelines/bevy-fork.md`).
+- **Hand-off.** Like the near LOD it shows in one frame once processed, and goes in the frame the
+  live scene's content is on screen. Imposters skip its parcels and its scene's loading walls
+  are hidden while it is shown.
+
+The removal of the loading walls is a later decision.
 
 ## Rejected
 
@@ -175,6 +292,11 @@ A far LOD and the removal of the loading walls are later decisions.
   facing: a scene behind the camera, never drawn or dropped to make way for one in view, would
   let the player walk into it. Keeping drawn stand-ins behind the camera alive for their
   colliders needed a second, hidden total beyond the setting.
+- **Far LODs out to ring 20 regardless of the tiles.** Every 4×4 tile between 200 m and 320 m
+  touching a far LOD would be split into single-parcel imposters, each its own load, and a tile
+  swap shows the old tile over the LOD until its children load.
+- **Far LODs cut off at the tiles' parcels.** Scene materials can clip to parcels, but a scene
+  on the edge would show part mesh and part imposter.
 - **A near-LOD range in metres.** Rings are what the partition, the download order and the
   waves already measure, and a keep ring one wider than the start ring stops a player on the
   edge from starting and dropping a stand-in every few steps.
@@ -208,3 +330,12 @@ A far LOD and the removal of the loading walls are later decisions.
 - A stand-in shows only content-file glTFs. Url models, primitives, text and code-set materials
   appear when the scene is live; the primitives, text and materials need the descriptor to
   describe them.
+- Out to the edge of the small imposter tiles (about 200 m to 290 m at the default imposter
+  distances), a scene the pipeline has meshed shows that mesh where it would have shown its
+  imposter tile.
+- Scenes the pipeline has not yet given a Bevy copy show their imposters, not the far LOD,
+  until it does.
+- A far LOD costs one request, its mesh. A scene the server has no mesh for costs that request
+  once a session, and a failing LOD service a few requests a minute.
+- A large scene with a parcel within ring 20 outside the small tiles has no far LOD while that
+  parcel is there.
