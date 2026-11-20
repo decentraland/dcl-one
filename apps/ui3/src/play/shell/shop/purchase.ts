@@ -956,13 +956,6 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
 
 
   /** One look at an unsettled operation: true once it settled. Anything it can't read is for the next look. */
-  /**
-   * A handed-off split, found out by its own execution: the hash it was sent as, else the transaction the node indexed its
-   * credit's consumption in, each read and matched against the terms kept before it was signed. Bought only by a match; a
-   * credit the node says was spent by another call is neither released nor this item bought; a reverted execution of its
-   * own, or a credit expired unused (past the index's lag), ends it unbought. Anything unread keeps it pending. Null: not
-   * handed off, for the Credits path to decide.
-   */
   /** A found-out split's record in the hold it shares with the web Shop goes, if it is still this attempt's. */
   const releaseSplitHold = async (sale: SplitSale): Promise<boolean> => {
     const hold = sale.hold
@@ -988,6 +981,14 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     return cleared.kind === 'cleared'
   }
 
+  /**
+   * A handed-off split, found out by its own execution: the hash it was sent as, else the transaction the node indexed its
+   * credit's consumption in, each read and matched against the terms kept before it was signed. Bought only by a match; a
+   * credit the node says another call spent is neither released nor this item bought; only an authoritative unused expiry
+   * (EXPIRED, read again past the index's lag) ends it unbought. A revert of its own bytes resolves nothing on its own: a
+   * sibling execution may still have bought it (afterOwnRevert). Anything unread keeps it pending. Null: not handed off,
+   * for the Credits path to decide.
+   */
   const checkSplit = async (op: Operation & { buyer: string }, sale: SplitSale, store: CartStore): Promise<boolean | null> => {
     const decided = await findOutSplit(op, sale, store)
     if (decided === true) await releaseSplitHold(sale)
@@ -1973,8 +1974,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
                     keep(op)
                     return true
                   },
-                  // The very bytes about to be sent, kept (ledger and shared hold) before they go: only their own revert
-                  // ends this purchase unbought. Unkept, nothing is sent.
+                  // The very bytes about to be sent, kept (ledger and shared hold) before they go: only a revert of these
+                  // bytes is this purchase's own, and even that waits on the node's record. Unkept, nothing is sent.
                   onEnvelope: (bytes: Hex) => {
                     if (!op.split) return false
                     const envelope = splitEnvelope(bytes)
@@ -2017,7 +2018,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         return { kind: 'confirmed' }
       }
       case 'pending': {
-        // A split's hash is read for what it is: only its own mined revert ends it unbought and gives its credit back.
+        // A split's hash is read for what it is: an attributable success bought it; its own revert waits on the node's
+        // record of its credit (afterOwnRevert), and nothing here gives the credit back.
         if (op.split && result.txHash) {
           const outcome = await splitExecution(svc.manaEvidence(), op.split, result.txHash)
           if (outcome === 'bought') {
