@@ -237,6 +237,53 @@ describe("an exact grant that may still land", () => {
     expect(readPendingGrant(allowance, BOOK.buyer)).toBeNull();
   });
 
+  it("a replacement is recorded before it leaves: the new amount at the same nonce, under its own attempt", async () => {
+    const { relay, ctx, signed } = rail("fail-after-send");
+    await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: 100n })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    const replaced = readPendingGrant(allowance, BOOK.buyer)!;
+    const clock = later(PENDING_GRANT_HOLD_MS + 1);
+    try {
+      // Its answer is lost too: the replacement is what stays recorded.
+      await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: 1n })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    } finally {
+      clock.mockRestore();
+    }
+    expect(signed()).toEqual(["0", "0"]);
+    expect(relay.posts.map((p) => relayedApproval(p)?.amount)).toEqual([100n, 1n]);
+    expect(readPendingGrant(allowance, BOOK.buyer)).toMatchObject({ amount: "1", nonce: "0" });
+    expect(readPendingGrant(allowance, BOOK.buyer)!.attempt).not.toBe(replaced.attempt);
+  });
+
+  it("if the replaced approve lands first, the replacement reverts, the replaced one is put back, and the next try settles it by nonce and allowance", async () => {
+    // The replacement's own receipt: reverted, its nonce taken by the approve of 100 that landed first.
+    const { chain, relay, ctx, signed } = rail("fail-after-send", (post) => (post === 2 ? "reverted" : "success"));
+    await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: 100n })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    const replaced = readPendingGrant(allowance, BOOK.buyer)!;
+    relay.state.mode = "ok";
+    const relayed = ctx.fetchImpl;
+    let posts = 0;
+    const fetchImpl = (async (...args: Parameters<typeof fetch>) => {
+      const answer = await relayed(...args);
+      // The approve of 100 lands as the replacement is sent: nonce 0 is spent, and the allowance is 100.
+      if (++posts === 1) {
+        chain.nonces.set(nonceKey, 1n);
+        chain.allowances.set(allowanceKey, 100n);
+      }
+      return answer;
+    }) as typeof fetch;
+    const clock = later(PENDING_GRANT_HOLD_MS + 1);
+    try {
+      await expect(setAuthorization({ ...ctx, fetchImpl, auth: allowance, active: true, amount: 1n })).rejects.toThrow();
+    } finally {
+      clock.mockRestore();
+    }
+    expect(readPendingGrant(allowance, BOOK.buyer)).toEqual(replaced);
+    // Next try: past its nonce the record goes, and the 100 it left covers the gap of 1. Nothing more is signed.
+    await setAuthorization({ ...ctx, auth: allowance, active: true, amount: 1n });
+    expect(readPendingGrant(allowance, BOOK.buyer)).toBeNull();
+    expect(signed()).toEqual(["0", "0"]);
+  });
+
   it("a replacement the relay refuses as not sent puts the replaced approve back: that one may still run", async () => {
     const { relay, ctx } = rail("fail-after-send");
     await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: 100n })).rejects.toBeInstanceOf(AuthorizationPendingError);

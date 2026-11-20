@@ -176,12 +176,13 @@ function clearSentSplit(account: string | null, lineId: string, attempt: string 
 async function findCreditRecord(account: string, creditId: string, client: ShopClient): Promise<PurchaseRecord | null> {
   const salt = creditId.toLowerCase();
   for (let skip = 0; ; ) {
-    const { items, total } = await fetchUserPurchases(account, { all: true, first: HISTORY_PAGE, skip }, client);
+    const { items, total, returned } = await fetchUserPurchases(account, { all: true, first: HISTORY_PAGE, skip }, client);
     const found = items.find((p) => p.id.split(":")[0]!.toLowerCase() === salt);
     if (found) return found;
-    // By the page asked for: rows the decoder drops (a status it does not know) still take their place on the server's page.
-    skip += HISTORY_PAGE;
-    if (skip >= total) return null;
+    // By the rows the server sent: the ones the decoder drops (a status it does not know) still take their place, and a
+    // server that sends fewer than asked starts its next page right after them.
+    skip += returned;
+    if (returned === 0 || skip >= total) return null;
   }
 }
 

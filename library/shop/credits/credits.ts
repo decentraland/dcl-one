@@ -221,12 +221,15 @@ function pageTotal(json: Json, skip: number, first: number | undefined, count: n
   return skip + count + (size > 0 && count >= size ? 1 : 0);
 }
 
-/** The buyer's purchase history, paginated; `all` includes pending and expired intents. */
+/**
+ * The buyer's purchase history, paginated; `all` includes pending and expired intents. `returned`: the rows the server
+ * sent, the ones the decoder drops (a status it does not know) included, which is where its next page starts.
+ */
 export async function fetchUserPurchases(
   address: string,
   opts: { all?: boolean; first?: number; skip?: number } = {},
   client: ShopClient,
-): Promise<{ items: PurchaseRecord[]; total: number }> {
+): Promise<{ items: PurchaseRecord[]; total: number; returned: number }> {
   const json =
     obj(
       await client.credits.purchases<unknown>(address, {
@@ -235,8 +238,9 @@ export async function fetchUserPurchases(
         ...(opts.skip != null ? { offset: opts.skip } : {}),
       }),
     ) ?? {};
-  const items = (Array.isArray(json.purchases) ? json.purchases : []).map(decodePurchaseRecord).filter((p): p is PurchaseRecord => p !== null);
-  return { items, total: pageTotal(json, opts.skip ?? 0, opts.first, items.length) };
+  const rows = Array.isArray(json.purchases) ? json.purchases : [];
+  const items = rows.map(decodePurchaseRecord).filter((p): p is PurchaseRecord => p !== null);
+  return { items, total: pageTotal(json, opts.skip ?? 0, opts.first, rows.length), returned: rows.length };
 }
 
 /**

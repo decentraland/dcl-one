@@ -731,7 +731,22 @@ describe("a held split with no transaction to read", () => {
     expect(screen.queryByTestId("combined-confirm")).toBeNull();
   });
 
-  it("pages the history by the page it asked for, so rows the decoder drops neither repeat a page nor end it early", async () => {
+  it("pages the history by the rows the server sent: a server that sends fewer than asked does not skip the rest", async () => {
+    const lines = Array.from({ length: 400 }, (_, n) => ({ id: `0x${n.toString(16).padStart(64, "0")}:0`, status: "SETTLED", usdCents: 10, createdAt: 1, txHash: null }));
+    lines[170] = { id: `${CREDIT}:0`, status: "EXPIRED", usdCents: 50, createdAt: 1, txHash: null };
+    const demo = heldSplit({ value: null }, nowSeconds() - 1, {
+      // It sends 150 rows a page whatever was asked.
+      userPurchases: ({ query }) => {
+        const offset = Number(query.get("offset") ?? 0);
+        return { purchases: lines.slice(offset, offset + 150), total: lines.length };
+      },
+    });
+    await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
+    expect(await screen.findByTestId("combined-confirm")).toBeEnabled();
+    expect(demo.shop.log.filter((r) => r.name === "userPurchases").map((r) => r.query.get("offset"))).toEqual(["0", "150"]);
+  });
+
+  it("pages the history by the rows the server sent, so rows the decoder drops neither repeat a page nor end it early", async () => {
     const lines = Array.from({ length: 450 }, (_, n) => ({ id: `0x${n.toString(16).padStart(64, "0")}:0`, status: n % 20 === 0 ? "SOMETHING_NEW" : "SETTLED", usdCents: 10, createdAt: 1, txHash: null }));
     lines[420] = { id: `${CREDIT}:0`, status: "EXPIRED", usdCents: 50, createdAt: 1, txHash: null };
     const demo = heldSplit({ value: null }, nowSeconds() - 1, {
