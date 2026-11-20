@@ -18,7 +18,7 @@ import type { PurchaseOffer } from "@shop/model/purchase";
 import { BOOK, storeMint } from "@shop/payment/fixtures";
 import type { OfferFetcher } from "../../cart/revalidate";
 import BuyModal, { resetBuyNowCarts, splitReason } from "./BuyModal";
-import { readSentSplit, SENT_HOLD_MS } from "./CombinedBuy";
+import { readSplitHold, SPLIT_HOLD_MS } from "../../checkout/purchase/splitHold";
 
 const PATH = "/shop/item/0x00000000000000000000000000000000000000c0/7";
 
@@ -577,7 +577,7 @@ describe("Buy now's dialog", () => {
     await act(async () => fireEvent.click(confirm));
     await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action", undefined, { timeout: 5000 })));
     await within(screen.getByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 8000 });
-    const sent = readSentSplit(BOOK.buyer, first.lineId);
+    const sent = readSplitHold(BOOK.buyer, first.lineId);
     expect(sent?.txHash).toBeTruthy();
     expect(sent?.creditId).toBeTruthy();
     first.unmount();
@@ -595,7 +595,7 @@ describe("Buy now's dialog", () => {
     // Not confirmed yet: Check again reads no receipt and leaves it confirming, still held.
     await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
     expect(within(again).getByTestId("buy-modal-pending")).toBeTruthy();
-    expect(readSentSplit(BOOK.buyer, sent.lineId)).not.toBeNull();
+    expect(readSplitHold(BOOK.buyer, sent.lineId)).not.toBeNull();
   });
 
   it("Check again on a remembered split reads its receipt: confirmed completes it and releases the item", async () => {
@@ -605,7 +605,7 @@ describe("Buy now's dialog", () => {
     demo.chain.receipts.set(sent.txHash!.toLowerCase(), "success");
     await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
     expect(await screen.findByTestId("buy-modal-complete", undefined, { timeout: 5000 })).toBeTruthy();
-    expect(readSentSplit(BOOK.buyer, lineId)).toBeNull();
+    expect(readSplitHold(BOOK.buyer, lineId)).toBeNull();
   });
 
   it("Check again on a remembered split that reverted says so and releases the item", async () => {
@@ -621,7 +621,7 @@ describe("Buy now's dialog", () => {
     );
     const cancels = demo.shop.log.filter((r) => r.name === "cancelCreditAuthorizations");
     expect(cancels.at(-1)?.body).toEqual({ salts: [sent.creditId] });
-    expect(readSentSplit(BOOK.buyer, lineId)).toBeNull();
+    expect(readSplitHold(BOOK.buyer, lineId)).toBeNull();
   });
 
   it("past the hold, Check again still reads the receipt: a split that mined meanwhile completes, never offered again", async () => {
@@ -629,7 +629,7 @@ describe("Buy now's dialog", () => {
     const { demo } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
     const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
     demo.chain.receipts.set(sent.txHash!.toLowerCase(), "success");
-    const later = Date.now() + SENT_HOLD_MS + 1;
+    const later = Date.now() + SPLIT_HOLD_MS + 1;
     const clock = vi.spyOn(Date, "now").mockReturnValue(later);
     try {
       await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
@@ -654,7 +654,7 @@ describe("Buy now's dialog", () => {
       // Done reading once the button is back on.
       await waitFor(() => expect(within(screen.getByTestId("buy-modal-pending")).getByRole("button", { name: "Check again" })).toBeEnabled());
     };
-    const clock = vi.spyOn(Date, "now").mockReturnValue(Math.max(Date.now() + SENT_HOLD_MS, sent.creditExpiresAt! * 1000) + 1);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Math.max(Date.now() + SPLIT_HOLD_MS, sent.creditExpiresAt! * 1000) + 1);
     try {
       // Not mined, and its credit not listed, then still reserved: nothing says what became of it, so it stays held.
       await checkAgain();
@@ -662,7 +662,7 @@ describe("Buy now's dialog", () => {
       listed.status = "PENDING";
       await checkAgain();
       expect(within(modal).getByTestId("buy-modal-pending")).toBeTruthy();
-      expect(readSentSplit(BOOK.buyer, lineId)).not.toBeNull();
+      expect(readSplitHold(BOOK.buyer, lineId)).not.toBeNull();
       // Released unspent: the item is offered again.
       listed.status = "EXPIRED";
       await act(async () => fireEvent.click(within(screen.getByTestId("buy-modal-pending")).getByRole("button", { name: "Check again" })));
@@ -686,7 +686,7 @@ describe("Buy now's dialog", () => {
       expect(within(pending).getByRole("button", { name: "Check again" })).toBeDisabled();
       // The hold runs out while the dialog is open: Check again comes on and lets the item go.
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(SENT_HOLD_MS + 10);
+        await vi.advanceTimersByTimeAsync(SPLIT_HOLD_MS + 10);
       });
       const check = within(screen.getByTestId("buy-modal-pending")).getByRole("button", { name: "Check again" });
       expect(check).toBeEnabled();
@@ -939,9 +939,9 @@ describe("the record of a split still confirming", () => {
   const key = (lineId: string) => `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${lineId}`;
   it("holds for fifteen minutes from when it was sent, and never for a time that has not come yet", () => {
     localStorage.setItem(key("line-7"), JSON.stringify({ at: 1_000, txHash: "0xabc", chainId: 137 }));
-    expect(readSentSplit(BOOK.buyer, "line-7", 1_000 + SENT_HOLD_MS - 1)).toMatchObject({ txHash: "0xabc", chainId: 137 });
-    expect(readSentSplit(BOOK.buyer, "line-7", 1_000 + SENT_HOLD_MS)).toBeNull();
+    expect(readSplitHold(BOOK.buyer, "line-7", 1_000 + SPLIT_HOLD_MS - 1)).toMatchObject({ txHash: "0xabc", chainId: 137 });
+    expect(readSplitHold(BOOK.buyer, "line-7", 1_000 + SPLIT_HOLD_MS)).toBeNull();
     // A clock set back after the split was sent does not stretch the hold.
-    expect(readSentSplit(BOOK.buyer, "line-7", 999)).toBeNull();
+    expect(readSplitHold(BOOK.buyer, "line-7", 999)).toBeNull();
   });
 });

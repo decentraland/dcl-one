@@ -25,7 +25,8 @@ import type { PurchaseOffer } from "@shop/model/purchase";
 import { ASSET_TYPE } from "../../checkout/purchase/encoding";
 import { cartLineId } from "../../cart/store";
 import { SHOP_QUERY_KEYS } from "../../checkout/lib/after-purchase";
-import CombinedBuy, { readSentSplit, SENT_HOLD_MS } from "./CombinedBuy";
+import { readSplitHold, SPLIT_HOLD_MS } from "../../checkout/purchase/splitHold";
+import CombinedBuy from "./CombinedBuy";
 
 afterEach(() => {
   sessionStorage.clear();
@@ -245,7 +246,7 @@ describe("buying with Credits and MANA", () => {
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
     await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
     expect(await screen.findByText(/still confirming/, {}, { timeout: 8000 })).toBeTruthy();
-    expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))).not.toBeNull();
+    expect(readSplitHold(BOOK.buyer, cartLineId(line.asset, line.listing))).not.toBeNull();
     unmount();
     again();
     expect(await screen.findByText(/still confirming/)).toBeTruthy();
@@ -269,7 +270,7 @@ describe("a split whose outcome is not known", () => {
     expect(demo.relay.posts).toHaveLength(1);
     expect(authorizations(demo)).toBe(1);
     expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
-    const held = readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing));
+    const held = readSplitHold(BOOK.buyer, cartLineId(line.asset, line.listing));
     expect(held).toMatchObject({ txHash: null, chainId: CHAIN.POLYGON, creditId: expect.any(String), creditExpiresAt: expect.any(Number) });
     unmount();
     again();
@@ -287,7 +288,7 @@ describe("a split whose outcome is not known", () => {
     demo.wallet.next = "reject";
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
     expect(await screen.findByText("You cancelled the request in your wallet. Nothing was charged.", {}, { timeout: 5000 })).toBeTruthy();
-    expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))).toBeNull();
+    expect(readSplitHold(BOOK.buyer, cartLineId(line.asset, line.listing))).toBeNull();
     expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(true);
     expect(screen.getByTestId("combined-confirm")).toBeEnabled();
   });
@@ -301,7 +302,7 @@ describe("a split whose outcome is not known", () => {
     expect(await screen.findByText(/still confirming/, {}, { timeout: 5000 })).toBeTruthy();
     expect(demo.wallet.sent).toHaveLength(1);
     expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
-    expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))).toMatchObject({ txHash: null, creditId: expect.any(String) });
+    expect(readSplitHold(BOOK.buyer, cartLineId(line.asset, line.listing))).toMatchObject({ txHash: null, creditId: expect.any(String) });
     expect(screen.queryByTestId("combined-confirm")).toBeNull();
   });
 
@@ -325,7 +326,7 @@ describe("a split whose outcome is not known", () => {
     await checkAgain();
     expect(screen.getByText(/still confirming/)).toBeTruthy();
     expect(screen.queryByTestId("combined-confirm")).toBeNull();
-    expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))).toMatchObject({ attempt: "a1", txHash: record.txHash });
+    expect(readSplitHold(BOOK.buyer, cartLineId(line.asset, line.listing))).toMatchObject({ attempt: "a1", txHash: record.txHash });
     // Its credit can still be spent, so the node is not even asked.
     expect(demo.shop.log.some((r) => r.name === "userPurchases")).toBe(false);
   });
@@ -335,14 +336,14 @@ describe("a split whose outcome is not known", () => {
     demo.chain.allowances.set(managerKey(), 10n ** 21n);
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
     expect(await screen.findByText(/still confirming/, {}, { timeout: 8000 })).toBeTruthy();
-    const record = readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing));
+    const record = readSplitHold(BOOK.buyer, cartLineId(line.asset, line.listing));
     expect(record?.txHash).toBeTruthy();
-    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + SENT_HOLD_MS + 60_000);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + SPLIT_HOLD_MS + 60_000);
     try {
       await checkAgain();
       expect(screen.getByText(/still confirming/)).toBeTruthy();
       expect(screen.queryByTestId("combined-confirm")).toBeNull();
-      expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))).toMatchObject({ txHash: record!.txHash, attempt: record!.attempt });
+      expect(readSplitHold(BOOK.buyer, cartLineId(line.asset, line.listing))).toMatchObject({ txHash: record!.txHash, attempt: record!.attempt });
     } finally {
       clock.mockRestore();
     }
@@ -398,7 +399,7 @@ describe("a split whose outcome is not known", () => {
     expect(screen.queryByTestId("combined-confirm")).toBeNull();
     expect(demo.relay.posts).toHaveLength(1);
     expect(authorizations(demo)).toBe(1);
-    expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))).toMatchObject({ txHash: null, creditId: expect.any(String) });
+    expect(readSplitHold(BOOK.buyer, cartLineId(line.asset, line.listing))).toMatchObject({ txHash: null, creditId: expect.any(String) });
   });
 
   it("a dialog already open when another tab's hold appears reads it again on Pay: shown confirming, nothing authorized or sent", async () => {
@@ -424,7 +425,7 @@ describe("a split whose outcome is not known", () => {
     expect(demo.relay.posts).toHaveLength(1);
     expect(relayedApproval(demo.relay.posts[0])).not.toBeNull();
     expect(authorizations(demo)).toBe(0);
-    expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))?.creditId).toBe(OTHER);
+    expect(readSplitHold(BOOK.buyer, cartLineId(line.asset, line.listing))?.creditId).toBe(OTHER);
   });
 
   it("a browser that cannot keep the record sends nothing: the credit is released and the buyer told why", async () => {
@@ -445,7 +446,7 @@ describe("a split whose outcome is not known", () => {
     expect(demo.relay.posts).toHaveLength(0);
     expect(authorizations(demo)).toBe(1);
     expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(true);
-    expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))).toBeNull();
+    expect(readSplitHold(BOOK.buyer, cartLineId(line.asset, line.listing))).toBeNull();
     expect(screen.getByTestId("combined-confirm")).toBeEnabled();
   });
 
@@ -460,7 +461,7 @@ describe("a split whose outcome is not known", () => {
     expect(await screen.findByText(/still confirming/, {}, { timeout: 5000 })).toBeTruthy();
     expect(demo.relay.posts).toHaveLength(1);
     expect(demo.shop.log.filter((r) => r.name === "cancelCreditAuthorizations")).toHaveLength(0);
-    const held = readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing));
+    const held = readSplitHold(BOOK.buyer, cartLineId(line.asset, line.listing));
     expect(held).toMatchObject({ txHash: expect.any(String), creditId: expect.any(String) });
     unmount();
     again();
@@ -472,7 +473,7 @@ describe("a split whose outcome is not known", () => {
     expect(await screen.findByText(/Purchase complete/)).toBeTruthy();
     expect(demo.relay.posts).toHaveLength(1);
     expect(demo.shop.log.filter((r) => r.name === "cancelCreditAuthorizations")).toHaveLength(0);
-    expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))).toBeNull();
+    expect(readSplitHold(BOOK.buyer, cartLineId(line.asset, line.listing))).toBeNull();
   });
 
   it("control: a sale whose own receipt shows it mined and reverted releases its credit and lets the item go", async () => {
@@ -482,7 +483,7 @@ describe("a split whose outcome is not known", () => {
     expect(await screen.findByText("The purchase failed on-chain, so nothing was bought. The Credits it held come back on their own.", {}, { timeout: 5000 })).toBeTruthy();
     expect(demo.relay.posts).toHaveLength(1);
     expect(demo.shop.log.filter((r) => r.name === "cancelCreditAuthorizations")).toHaveLength(1);
-    expect(readSentSplit(BOOK.buyer, cartLineId(line.asset, line.listing))).toBeNull();
+    expect(readSplitHold(BOOK.buyer, cartLineId(line.asset, line.listing))).toBeNull();
   });
 
   it("an approval another window is running says so: this one asked the wallet nothing, so it was not sent", async () => {
@@ -687,7 +688,7 @@ describe("a held split with no transaction to read", () => {
     await waitFor(() => expect(demo.shop.log.some((r) => r.name === "userPurchases")).toBe(true));
     // The older attempt's outcome (released) is not applied to the newer one: it stays, and is what the dialog shows.
     await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeDisabled());
-    expect(readSentSplit(BOOK.buyer, demo.lineId)).toMatchObject({ attempt: "newer" });
+    expect(readSplitHold(BOOK.buyer, demo.lineId)).toMatchObject({ attempt: "newer" });
     expect(screen.getByText(/still confirming/)).toBeTruthy();
     expect(screen.queryByTestId("combined-confirm")).toBeNull();
   });
@@ -705,7 +706,7 @@ describe("a held split with no transaction to read", () => {
       if (settled) expect(await screen.findByText(/Purchase complete/)).toBeTruthy();
       else expect(await screen.findByTestId("combined-confirm")).toBeEnabled();
       expect(demo.shop.log.some((r) => r.name === "userPurchases")).toBe(true);
-      expect(readSentSplit(BOOK.buyer, demo.lineId)).toBeNull();
+      expect(readSplitHold(BOOK.buyer, demo.lineId)).toBeNull();
       cleanup();
       localStorage.clear();
     }
@@ -720,7 +721,7 @@ describe("a held split with no transaction to read", () => {
     await waitFor(() => expect(demo.shop.log.some((r) => r.name === "userPurchases")).toBe(true));
     await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
     expect(screen.getByText(/still confirming/)).toBeTruthy();
-    expect(readSentSplit(BOOK.buyer, demo.lineId)).not.toBeNull();
+    expect(readSplitHold(BOOK.buyer, demo.lineId)).not.toBeNull();
   });
 
   it("Check again says so when another window holds the item, and keeps the hold", async () => {
@@ -728,7 +729,7 @@ describe("a held split with no transaction to read", () => {
     (demo.services.locks as ReturnType<typeof createFakeLocks>).held.add(`dcl-shop-buynow-split:${BOOK.buyer.toLowerCase()}:${demo.lineId}`);
     await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
     expect(await screen.findByTestId("combined-check-notice")).toHaveTextContent("This purchase is being paid or checked in another window. Check again in a moment.");
-    expect(readSentSplit(BOOK.buyer, demo.lineId)).not.toBeNull();
+    expect(readSplitHold(BOOK.buyer, demo.lineId)).not.toBeNull();
     expect(screen.queryByTestId("combined-confirm")).toBeNull();
   });
 
@@ -794,6 +795,6 @@ describe("a held split with no transaction to read", () => {
     await waitFor(() => expect(demo.shop.log.filter((r) => r.name === "userPurchases")).toHaveLength(2));
     await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
     expect(screen.getByText(/still confirming/)).toBeTruthy();
-    expect(readSentSplit(BOOK.buyer, demo.lineId)).not.toBeNull();
+    expect(readSplitHold(BOOK.buyer, demo.lineId)).not.toBeNull();
   });
 });
