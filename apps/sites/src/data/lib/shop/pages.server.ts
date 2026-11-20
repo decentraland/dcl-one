@@ -58,24 +58,55 @@ function deadline(request: Request): AbortSignal {
  * still runs from the read, not from the document; ~200ms of a grid's first byte is that read.
  */
 export const SHOP_SSR_SHARE_MS = 10_000;
+/**
+ * How long after SHOP_SSR_SHARE_MS an item or collection document still takes the last answer at once while one
+ * reload runs. The listing is still refetched on mount (staleMs 0), so an older price shows only until then.
+ */
+export const SHOP_SSR_STALE_MS = 60_000;
 const SHARED_MAX = 256;
-const sharedReads = new Map<string, { at: number; read: Promise<{ value: unknown; at: number }> }>();
+type Shared = { at: number; read: Promise<{ value: unknown; at: number }>; reloading?: boolean };
+const sharedReads = new Map<string, Shared>();
 
 type ReadCtx = { request: Request; now: () => number; share: boolean };
 
-/** A public read, shared across documents for SHOP_SSR_SHARE_MS on the server's own client. */
-function publicRead<T>(ctx: ReadCtx, key: string, read: (signal: AbortSignal) => Promise<T>): Promise<{ value: T; at: number }> {
+/** Newest last, so the oldest entry goes first when the map is full. */
+function remember(key: string, entry: Shared): void {
+  sharedReads.delete(key);
+  sharedReads.set(key, entry);
+  if (sharedReads.size > SHARED_MAX) sharedReads.delete(sharedReads.keys().next().value!);
+}
+
+/**
+ * A public read, shared across documents for SHOP_SSR_SHARE_MS on the server's own client. With `staleMs`, an
+ * answer past its share serves for that much longer at once, and the first document then starts one reload.
+ */
+function publicRead<T>(ctx: ReadCtx, key: string, read: (signal: AbortSignal) => Promise<T>, staleMs = 0): Promise<{ value: T; at: number }> {
   if (!ctx.share) return read(deadline(ctx.request)).then((value) => ({ value, at: ctx.now() }));
   const at = ctx.now();
   const hit = sharedReads.get(key);
   if (hit && at - hit.at < SHOP_SSR_SHARE_MS) return hit.read as Promise<{ value: T; at: number }>;
   // Not tied to this visitor's request: a later document may be waiting on the same read.
-  const pending = read(AbortSignal.timeout(SHOP_SSR_READ_MS)).then((value) => ({ value, at }));
-  sharedReads.set(key, { at, read: pending });
+  const load = () => read(AbortSignal.timeout(SHOP_SSR_READ_MS)).then((value) => ({ value, at }));
+  if (hit && at - hit.at < SHOP_SSR_SHARE_MS + staleMs) {
+    if (!hit.reloading) {
+      hit.reloading = true;
+      const next = load();
+      next.then(
+        () => {
+          if (sharedReads.get(key) === hit) remember(key, { at, read: next });
+        },
+        () => {
+          hit.reloading = false;
+        },
+      );
+    }
+    return hit.read as Promise<{ value: T; at: number }>;
+  }
+  const pending = load();
+  remember(key, { at, read: pending });
   pending.catch(() => {
     if (sharedReads.get(key)?.read === pending) sharedReads.delete(key);
   });
-  if (sharedReads.size > SHARED_MAX) sharedReads.delete(sharedReads.keys().next().value!);
   return pending;
 }
 
@@ -91,8 +122,8 @@ const ADDRESS = /^0x[0-9a-f]{40}$/;
 
 type Collected = { queries: PrimedQuery[]; seo: ShopSeo; status: number };
 
-async function itemPage(input: Required<Pick<ShopLoadInput, "request" | "params" | "client">> & { now: () => number; env: BaseEnv; token: boolean }): Promise<Collected> {
-  const { request, params, client, now, env, token } = input;
+async function itemPage(ctx: ReadCtx, client: ShopClient, params: ShopLoadInput["params"], env: BaseEnv, token: boolean): Promise<Collected> {
+  const { request, now } = ctx;
   const contract = (routeSegment(params.contractAddress) ?? "").toLowerCase();
   const tokenId = token ? (routeSegment(params.tokenId) ?? null) : null;
   const itemId = token ? itemIdFromTokenId(tokenId) : (routeSegment(params.itemId) ?? null);
@@ -100,23 +131,25 @@ async function itemPage(input: Required<Pick<ShopLoadInput, "request" | "params"
   const seo = defaultShopSeo(token ? "tokenDetail" : "itemDetail", publicPageUrl(request, path, env));
   if (!ADDRESS.test(contract) || (token ? !tokenId : !itemId)) return { queries: [], seo, status: 404 };
 
-  const signal = deadline(request);
-  const opts = { client, creatorSales, signal };
+  const opts = { client, creatorSales };
+  /** One of the item's public facts, shared across documents under its page key; it keeps the time it was read. */
+  const shared = async <T>(key: readonly unknown[], read: (signal: AbortSignal) => Promise<T>) => {
+    const answer = await settle(publicRead(ctx, JSON.stringify(key), read, SHOP_SSR_STALE_MS));
+    return answer.ok ? { ok: true as const, key, ...answer.value } : answer;
+  };
   const [listing, meta, collection, owned] = await Promise.all([
     // The creator's primary sale only: the page's first render reads it while the Marketplace (resales, for a web3
     // session with the rollout on) is still pending, so a resale is never server-rendered as the item's price.
-    token ? Promise.resolve(null) : settle(fetchPrimaryListingForItem(contract, itemId!, opts)),
-    itemId ? settle(fetchItemMeta(contract, itemId, opts)) : Promise.resolve(null),
-    settle(fetchCollection(contract, opts)),
-    token ? settle(fetchTokenById(contract, tokenId!, opts)) : Promise.resolve(null),
+    token ? Promise.resolve(null) : shared(itemListingKey(contract, itemId!, "primary"), (signal) => fetchPrimaryListingForItem(contract, itemId!, { ...opts, signal })),
+    itemId ? shared(["item-meta", contract, itemId], (signal) => fetchItemMeta(contract, itemId, { ...opts, signal })) : Promise.resolve(null),
+    shared(["collection-meta", contract], (signal) => fetchCollection(contract, { ...opts, signal })),
+    // The owner changes with every transfer: read for this document only.
+    token ? settle(fetchTokenById(contract, tokenId!, { ...opts, signal: deadline(request) })) : Promise.resolve(null),
   ]);
 
-  const at = now();
   const queries: PrimedQuery[] = [];
-  if (listing?.ok) queries.push([[...itemListingKey(contract, itemId!, "primary")], listing.value, at]);
-  if (meta?.ok) queries.push([["item-meta", contract, itemId], meta.value, at]);
-  if (collection.ok) queries.push([["collection-meta", contract], collection.value, at]);
-  if (owned?.ok) queries.push([["token", contract, tokenId], owned.value, at]);
+  for (const read of [listing, meta, collection]) if (read?.ok) queries.push([read.key, read.value, read.at]);
+  if (owned?.ok) queries.push([["token", contract, tokenId], owned.value, now()]);
 
   const name = (owned?.ok ? owned.value?.name : undefined) || (meta?.ok ? meta.value?.name : undefined) || (listing?.ok ? listing.value?.name : undefined);
   const image = (owned?.ok ? owned.value?.image : undefined) || (meta?.ok ? meta.value?.thumbnail : undefined) || (listing?.ok ? listing.value?.thumbnail : undefined);
@@ -138,17 +171,19 @@ async function itemPage(input: Required<Pick<ShopLoadInput, "request" | "params"
   };
 }
 
-async function collectionPage(request: Request, params: ShopLoadInput["params"], client: ShopClient, now: () => number, env: BaseEnv): Promise<Collected> {
+async function collectionPage(ctx: ReadCtx, client: ShopClient, params: ShopLoadInput["params"], env: BaseEnv): Promise<Collected> {
   const contract = routeSegment(params.contractAddress);
-  const seo = defaultShopSeo("collection", publicPageUrl(request, `/shop/collection/${contract ?? ""}`, env));
+  const seo = defaultShopSeo("collection", publicPageUrl(ctx.request, `/shop/collection/${contract ?? ""}`, env));
   if (!contract) return { queries: [], seo, status: 404 };
-  const found = await settle(fetchCollection(contract, { client, creatorSales, signal: deadline(request) }));
-  if (!found.ok) return { queries: [], seo, status: 200 };
-  const queries: PrimedQuery[] = [[["collection-meta", contract], found.value, now()]];
-  if (!found.value) return { queries, seo: { ...seo, noindex: true }, status: 404 };
+  const key = ["collection-meta", contract];
+  const read = await settle(publicRead(ctx, JSON.stringify(key), (signal) => fetchCollection(contract, { client, creatorSales, signal }), SHOP_SSR_STALE_MS));
+  if (!read.ok) return { queries: [], seo, status: 200 };
+  const found = read.value.value;
+  const queries: PrimedQuery[] = [[key, found, read.value.at]];
+  if (!found) return { queries, seo: { ...seo, noindex: true }, status: 404 };
   return {
     queries,
-    seo: { ...seo, title: found.value.name, description: `The ${found.value.name} collection in the Decentraland Shop.` },
+    seo: { ...seo, title: found.name, description: `The ${found.name} collection in the Decentraland Shop.` },
     status: 200,
   };
 }
@@ -214,10 +249,10 @@ export async function loadShopPage(page: ShopPageId, input: ShopLoadInput): Prom
   switch (page) {
     case "itemDetail":
     case "tokenDetail":
-      collected = await itemPage({ request, params, client, now, env, token: page === "tokenDetail" });
+      collected = await itemPage(ctx, client, params, env, page === "tokenDetail");
       break;
     case "collection":
-      collected = await collectionPage(request, params, client, now, env);
+      collected = await collectionPage(ctx, client, params, env);
       break;
     case "overview":
       await primed;

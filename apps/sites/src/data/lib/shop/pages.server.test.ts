@@ -6,7 +6,7 @@ import { REMOTE_FLAG, remoteFlagVariant } from "@ui/shop/discovery/lib/remoteFla
 import { resetDappsFlags } from "../feature-flags.server";
 import { serverShopApiMode } from "./mode";
 import { defaultShopSeo, shopMetaDescriptors } from "./pages";
-import { loadShopPage, serverShopClient } from "./pages.server";
+import { loadShopPage, serverShopClient, SHOP_SSR_SHARE_MS, SHOP_SSR_STALE_MS } from "./pages.server";
 import { LAND_NETWORKS } from "@shop/land/contracts";
 
 const C = "0xabc0000000000000000000000000000000000001";
@@ -23,7 +23,7 @@ function node(routes: Route[]) {
     if (!hit) return new Response(JSON.stringify({ error: "not found" }), { status: 404 });
     return new Response(JSON.stringify(hit.body), { status: hit.status ?? 200 });
   }) as typeof fetch;
-  return { asked, client: createShopClient({ base: "http://node.test", mode: "canonical", signer: null, transport: fetchTransport(fetchImpl) }) };
+  return { asked, fetchImpl, client: createShopClient({ base: "http://node.test", mode: "canonical", signer: null, transport: fetchTransport(fetchImpl) }) };
 }
 
 const request = (path: string) => new Request(`https://sites.test${path}`);
@@ -129,6 +129,79 @@ describe("the page's flags, read by the server", () => {
     const { data } = await load;
     expect(data.featureFlags).toEqual({ "dapps-shop-creator-sales": true });
     expect(data.queries.find(([key]) => key[0] === "shop-item")?.[1]).toMatchObject({ priceCredits: 5, compareAtCredits: 7 });
+  });
+});
+
+describe("the item and collection documents' shared reads", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** The server's own client (only it shares reads) against a node whose answers wait while `hold` is on. */
+  function sharedNode(routes: Route[]) {
+    const { asked, fetchImpl } = node(routes);
+    let gate = Promise.resolve();
+    let release = () => {};
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      await gate;
+      return fetchImpl(input);
+    });
+    return {
+      asked,
+      hold: () => (gate = new Promise((done) => (release = done))),
+      release: () => release(),
+    };
+  }
+  const env = { CATALYST_URL: "http://node.test" };
+
+  it("read each public fact of an item once, then serve the last answer at once while one reload runs", async () => {
+    const item = "0xabc0000000000000000000000000000000000002";
+    const remote = sharedNode(ITEM_ROUTES);
+    const t0 = 1_700_000_000_000;
+    let t = t0;
+    const load = () => loadShopPage("itemDetail", { request: request(`/shop/item/${item}/7`), params: { contractAddress: item, itemId: "7" }, now: () => t, env, flags: {} });
+    const readAt = (page: Awaited<ReturnType<typeof load>>) => [...new Set(page.data.queries.map(([, , at]) => at))];
+
+    const first = await load();
+    expect(first.data.queries.map(([key]) => key[0])).toEqual(["shop-item", "item-meta", "collection-meta"]);
+    expect(remote.asked).toHaveLength(3);
+    t = t0 + SHOP_SSR_SHARE_MS - 1;
+    expect((await load()).data.queries).toEqual(first.data.queries);
+    expect(remote.asked).toHaveLength(3);
+
+    // Past the share: both documents answer before the node does, with the first read's time, so the page's own
+    // staleness rule still refetches the listing on mount; one reload per fact runs behind them.
+    t = t0 + SHOP_SSR_SHARE_MS;
+    remote.hold();
+    const stale = await Promise.all([load(), load()]);
+    expect(stale.map(readAt)).toEqual([[t0], [t0]]);
+    remote.release();
+    await vi.waitFor(async () => expect(readAt(await load())).toEqual([t0 + SHOP_SSR_SHARE_MS]));
+    expect(remote.asked).toHaveLength(6);
+
+    // Past the stale window too: the document waits for a new read.
+    t = t0 + 2 * SHOP_SSR_SHARE_MS + SHOP_SSR_STALE_MS;
+    expect(readAt(await load())).toEqual([t]);
+    expect(remote.asked).toHaveLength(9);
+  });
+
+  it("a token's owner is read for every document; a collection page shares its read", async () => {
+    const item = "0xabc0000000000000000000000000000000000003";
+    const remote = sharedNode([
+      ...ITEM_ROUTES,
+      { path: "/shop-api/v1/nfts", body: { data: [{ nft: { id: `${item}-5`, contractAddress: item, tokenId: "5", name: "Pirate Hat #5", image: "https://img.test/5.png", category: "wearable", network: "MATIC", chainId: 137, owner: "0x2", data: {} }, order: null }], total: 1 } },
+    ]);
+    const token = () => loadShopPage("tokenDetail", { request: request(`/shop/token/${item}/5`), params: { contractAddress: item, tokenId: "5" }, now, env, flags: {} });
+    await token();
+    await token();
+    const paths = remote.asked.map((u) => u.split("?")[0]);
+    expect(paths.filter((u) => u === "/shop-api/v1/nfts")).toHaveLength(2);
+    expect(paths.filter((u) => u === "/shop-api/v1/collections")).toHaveLength(1);
+
+    const other = "0xabc0000000000000000000000000000000000004";
+    const collection = () => loadShopPage("collection", { request: request(`/shop/collection/${other}`), params: { contractAddress: other }, now, env, flags: {} });
+    const before = remote.asked.length;
+    expect((await collection()).data.seo.title).toBe("Sea Things");
+    expect((await collection()).data.queries).toEqual([[["collection-meta", other], expect.anything(), now()]]);
+    expect(remote.asked.length - before).toBe(1);
   });
 });
 
