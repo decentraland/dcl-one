@@ -267,13 +267,12 @@ impl LiveKitJoin {
         let stack = ctx.stack();
         let binary = match options.binary.clone() {
             Some(binary) => binary,
-            None => stack
-                .livekit
-                .as_ref()
-                .and_then(|target| target.client.clone())
-                .ok_or_else(|| {
-                    anyhow!("no LiveKit client: set `client` under `[livekit]` in the stack file")
-                })?,
+            None => stack.livekit_client().map(std::path::Path::to_path_buf).ok_or_else(|| {
+                anyhow!(
+                    "no LiveKit client: set `client` under `[livekit]`, or `livekit_client`, in \
+                     the stack file"
+                )
+            })?,
         };
         let connection = match (&stack.explorer, options.through_front) {
             (Some(explorer), false) => match &explorer.livekit_signal {
@@ -532,6 +531,8 @@ fn signal_url(base: &url::Url) -> String {
 /// The LiveKit server's own word on who is in a room.
 pub struct RoomService {
     http: reqwest::Client,
+    /// The stack file's `livekit.url`: where the room-service token goes.
+    url: url::Url,
     base: String,
     signal_url: String,
     key: String,
@@ -548,9 +549,12 @@ impl RoomService {
         let secret = stack.secret(&target.secret_env)?;
         let base = target.url.as_str().trim_end_matches('/').to_owned();
         Ok(RoomService {
+            // the token goes only to the address checked for it: no redirect is followed
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
+                .redirect(reqwest::redirect::Policy::none())
                 .build()?,
+            url: target.url.clone(),
             base,
             signal_url: signal_url(&target.url),
             key,
@@ -559,8 +563,13 @@ impl RoomService {
     }
 
     /// A connection string that joins `room` as `identity` at the real signalling address,
-    /// without going through the gatekeeper.
+    /// without going through the gatekeeper. None is made for plain `ws://` to a host that is
+    /// not loopback.
     pub fn mint_join(&self, room: &str, identity: &str) -> Result<String> {
+        let signal = url::Url::parse(&self.signal_url)
+            .map_err(|error| anyhow!("the signalling address is not a URL: {error}"))?;
+        crate::stack::token_may_travel_to(&signal, "LiveKit join token", "livekit.url")
+            .map_err(|reason| anyhow!(reason))?;
         let token = AccessToken::new(&self.key, &self.secret, identity, join_grants(room))
             .with_ttl(Duration::from_secs(600))
             .to_jwt()
@@ -569,6 +578,8 @@ impl RoomService {
     }
 
     async fn call(&self, method: &str, room: &str, body: Value) -> Result<Value> {
+        crate::stack::token_may_travel_to(&self.url, "LiveKit room-service token", "livekit.url")
+            .map_err(|reason| anyhow!(reason))?;
         let token = room_admin_token(&self.key, &self.secret, room)
             .map_err(|error| anyhow!("minting a room service token: {error}"))?;
         let response = self
@@ -737,6 +748,45 @@ mod tests {
             1,
             std::env::temp_dir().join("comms-e2e-unit"),
         )
+    }
+
+    fn room_service_at(url: &str) -> RoomService {
+        let mut stack = Stack::parse(&format!(
+            "pulse_enet = \"127.0.0.1:9\"\n[livekit]\nurl = \"{url}\"\n\
+             key_env = \"CE2E_LK_TEST_KEY\"\nsecret_env = \"CE2E_LK_TEST_SECRET\"\n"
+        ))
+        .unwrap();
+        stack.give_secret("CE2E_LK_TEST_KEY", "fake-key");
+        stack.give_secret("CE2E_LK_TEST_SECRET", "fake-secret-fake-secret-fake-secret");
+        RoomService::new(&stack).unwrap()
+    }
+
+    #[tokio::test]
+    async fn livekit_tokens_go_only_over_tls_or_to_loopback() {
+        // over plain http and ws to another host: nothing is sent, and no token is handed out
+        let plain = room_service_at("http://203.0.113.5:7880");
+        let refused = format!("{:#}", plain.rooms().await.unwrap_err());
+        assert!(
+            refused.contains("plain http") && refused.contains("not loopback"),
+            "{refused}"
+        );
+        let refused = format!("{:#}", plain.mint_join("room", "0xa").unwrap_err());
+        assert!(
+            refused.contains("plain ws") && refused.contains("not loopback"),
+            "{refused}"
+        );
+        // over TLS to any host, or to loopback over either
+        assert!(
+            room_service_at("https://livekit.example")
+                .mint_join("room", "0xa")
+                .unwrap()
+                .starts_with("livekit:wss://livekit.example:443?access_token=")
+        );
+        assert!(
+            room_service_at("http://127.0.0.1:7880")
+                .mint_join("room", "0xa")
+                .is_ok()
+        );
     }
 
     #[test]

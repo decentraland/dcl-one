@@ -50,6 +50,18 @@ pub struct Scenario {
     pub run: fn(Ctx) -> ScenarioFuture,
 }
 
+/// How large the crowd of the crowd scenarios is. `None` keeps each scenario's own default. The
+/// command line fills it from `CE2E_CROWD_PLAYERS` and `CE2E_CROWD_ROOM_PLAYERS`; a scenario
+/// never reads the environment.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CrowdSize {
+    /// Players in the crowd.
+    pub players: Option<usize>,
+    /// Of those, how many join the island's LiveKit room (`crowd-discovery`): all unless it says
+    /// fewer, 0 for none.
+    pub room_players: Option<usize>,
+}
+
 /// What a scenario needs from the stack beyond Pulse over ENet.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Needs {
@@ -118,6 +130,7 @@ struct CtxInner {
     seed: u64,
     transport: Transport,
     one_source_address: std::sync::atomic::AtomicBool,
+    crowd: Mutex<CrowdSize>,
     timeline: Timeline,
     seeded: Mutex<Seeded>,
     notes: Mutex<Vec<Note>>,
@@ -169,6 +182,7 @@ impl Ctx {
                 seed,
                 transport,
                 one_source_address: std::sync::atomic::AtomicBool::new(false),
+                crowd: Mutex::new(CrowdSize::default()),
                 timeline: Timeline::new(),
                 seeded: Mutex::new(Seeded::new(seed)),
                 notes: Mutex::new(Vec::new()),
@@ -235,6 +249,16 @@ impl Ctx {
         self.inner
             .one_source_address
             .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The crowd size this run asked for.
+    pub fn crowd(&self) -> CrowdSize {
+        *self.inner.crowd.lock()
+    }
+
+    /// Sets the crowd size the crowd scenarios of this context use.
+    pub fn set_crowd(&self, crowd: CrowdSize) {
+        *self.inner.crowd.lock() = crowd;
     }
 
     pub fn repeat(&self) -> u32 {
@@ -332,6 +356,8 @@ pub struct RunOptions {
     pub transport: Transport,
     /// Every bot dials from the ordinary loopback address instead of one address per scenario.
     pub one_source_address: bool,
+    /// How large the crowd scenarios' crowd is.
+    pub crowd: CrowdSize,
 }
 
 impl Default for RunOptions {
@@ -347,6 +373,7 @@ impl Default for RunOptions {
             scenario_deadline: Duration::from_secs(300),
             transport: Transport::Enet,
             one_source_address: false,
+            crowd: CrowdSize::default(),
         }
     }
 }
@@ -429,6 +456,7 @@ pub async fn run_scenarios(
                 if options.one_source_address {
                     ctx.use_one_source_address();
                 }
+                ctx.set_crowd(options.crowd);
                 ctx.record(
                     "runner",
                     "start",

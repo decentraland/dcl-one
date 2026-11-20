@@ -175,15 +175,15 @@ pub async fn examine(stack: Arc<Stack>) -> Vec<Check> {
                 "LiveKit secret",
                 variable(&stack, &target.secret_env),
             ));
-            match &target.client {
-                Some(path) => checks.push(Check::new("LiveKit client", file(path))),
-                None => checks.push(Check::absent("LiveKit client", "livekit.client")),
-            }
         }
         None => checks.push(Check::absent("LiveKit", "livekit")),
     }
-    if let Some(path) = &stack.livekit_client {
-        checks.push(Check::new("LiveKit client (no keys)", file(path)));
+    match stack.livekit_client() {
+        Some(path) => checks.push(Check::new("LiveKit client", file(path))),
+        None => checks.push(Check::absent(
+            "LiveKit client",
+            "livekit.client` or `livekit_client",
+        )),
     }
 
     match &stack.moderator_token_env {

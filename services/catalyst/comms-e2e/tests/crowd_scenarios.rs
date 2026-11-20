@@ -11,12 +11,14 @@ use catalyst_comms::pulse::hardening::DisconnectReason;
 use catalyst_comms::pulse::interest::{SpatialAreaOfInterest, SpatialAreaOfInterestOptions};
 use catalyst_comms::pulse::ip_limiter::IpLimiterOptions;
 use catalyst_comms_e2e::engine::{
-    Entry, Outcome, RunOptions, ScenarioResult, Transport, run_scenarios,
+    CrowdSize, Entry, Outcome, RunOptions, ScenarioResult, Transport, run_scenarios,
 };
 use catalyst_comms_e2e::pulse::messages;
 use catalyst_comms_e2e::scenarios::crowd::{
-    self, CROWD, DEFAULT_PLAYERS, join_evidence, join_verdict, players_from,
+    self, CROWD, DEFAULT_PLAYERS, Interrupted, join_evidence, join_verdict, players_from,
 };
+use catalyst_comms_e2e::scenarios::crowd_discovery::watch_alongside;
+use catalyst_comms_e2e::scenarios::support::{leave_all, settle};
 
 fn options(transport: Transport) -> RunOptions {
     RunOptions {
@@ -201,6 +203,65 @@ fn the_crowd_size_defaults_to_twenty_and_refuses_fewer_than_two() {
     }
 }
 
+/// The run says how large the crowd is; nothing is read from the environment.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn the_run_sets_the_crowd_size() {
+    let address = support::serve(PulseServer::new()).await;
+    let stack = Arc::new(catalyst_comms_e2e::stack::Stack::pulse_only(address));
+    let options = RunOptions {
+        crowd: CrowdSize {
+            players: Some(4),
+            room_players: None,
+        },
+        ..options(Transport::Enet)
+    };
+    let mut report = run_scenarios(stack, &[&CROWD], &options).await;
+    let result = report.results.remove(0);
+    assert_passed(&result);
+    assert_eq!(note(&result, "players").as_u64(), Some(4));
+    assert_eq!(note(&result, "players_seeing_everyone").as_u64(), Some(4));
+}
+
+/// Every player dials from one address at once, so a crowd larger than the handshakes Pulse
+/// admits from one address is refused before the first packet, naming the limit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn a_crowd_larger_than_one_address_may_bring_is_refused_naming_the_limit() {
+    let stack = Arc::new(
+        catalyst_comms_e2e::stack::Stack::parse(
+            "pulse_enet = \"127.0.0.1:9\"\n[limits]\nmax_concurrent_pre_auth_per_ip = 6\n",
+        )
+        .unwrap(),
+    );
+    let options = RunOptions {
+        crowd: CrowdSize {
+            players: Some(7),
+            room_players: None,
+        },
+        ..options(Transport::Enet)
+    };
+    let mut report = run_scenarios(stack, &[&CROWD], &options).await;
+    let result = report.results.remove(0);
+    let Outcome::Failed { expectation, .. } = &result.outcome else {
+        panic!("a crowd of 7 should be refused, got {:?}", result.outcome);
+    };
+    for expected in [
+        "limits.max_concurrent_pre_auth_per_ip",
+        "is 6",
+        "a crowd of 7",
+    ] {
+        assert!(expectation.contains(expected), "{expected}: {expectation}");
+    }
+    // nothing was dialled
+    assert!(
+        result
+            .notes
+            .iter()
+            .all(|note| note.key != "players_admitted"),
+        "{:?}",
+        result.notes
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn twenty_players_see_each_other_over_enet() {
     assert_everyone_saw_everyone(&run_on_enet(PulseServer::new()).await);
@@ -286,4 +347,91 @@ async fn the_crowd_fails_when_players_stand_outside_each_others_area_of_interest
         seen.iter().any(|count| count.as_u64().unwrap() >= 2),
         "{seen:?}"
     );
+}
+
+/// The Pulse deadline counts from when the players have entered, and each player's time is when
+/// it first held everyone, read while other work (the archipelago sockets) runs alongside.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn the_crowd_is_watched_on_pulse_while_other_work_runs() {
+    let address = support::serve(PulseServer::new()).await;
+    let ctx = support::ctx(address, "alongside");
+    let identities: Vec<_> = (0..3).map(|index| ctx.identity(index)).collect();
+    let wallets: Vec<String> = identities
+        .iter()
+        .map(|identity| identity.address())
+        .collect();
+    let spots: Vec<[f32; 3]> = (0..3)
+        .map(|index| crowd::spot([8.0, 0.0, 8.0], index))
+        .collect();
+    let realm = ctx.realm("crowd");
+    let started = std::time::Instant::now();
+    let bots = crowd::enter_crowd(&ctx, &identities, &realm, &spots)
+        .await
+        .unwrap();
+    let (watched, ()) = watch_alongside(
+        &bots,
+        &wallets,
+        &spots,
+        &realm,
+        started,
+        std::time::Duration::from_secs(2),
+        tokio::time::sleep(std::time::Duration::from_secs(3)),
+    )
+    .await;
+    let sightings = watched.unwrap();
+    for at in &sightings.complete_at {
+        let at = at.expect("every player held everyone");
+        assert!(
+            at < std::time::Duration::from_secs(2),
+            "first held everyone at {at:?}"
+        );
+    }
+    leave_all(&ctx, bots).await.unwrap();
+}
+
+/// A session the server ended and a view that breaks a rule of the protocol are told apart.
+#[test]
+fn an_interruption_names_its_own_cause() {
+    let ended = Interrupted::Ended {
+        player: "player-1".into(),
+        reason: "disconnected: duplicate session".into(),
+    }
+    .to_string();
+    assert!(
+        ended.contains("connection ended") && ended.contains("player-1"),
+        "{ended}"
+    );
+    let twice = Interrupted::Broken {
+        player: "player-2".into(),
+        reason: "holds 2 subjects for 0xaa".into(),
+    }
+    .to_string();
+    assert!(!twice.contains("connection ended"), "{twice}");
+    assert!(
+        twice.contains("player-2 holds 2 subjects for 0xaa"),
+        "{twice}"
+    );
+}
+
+/// When a scenario fails and leaving fails too, the scenario's error is returned and the leave
+/// error is kept in the timeline.
+#[test]
+fn a_failure_keeps_its_error_when_leaving_fails_too() {
+    let ctx = support::ctx("127.0.0.1:9".parse().unwrap(), "settle");
+    let error = settle::<()>(
+        &ctx,
+        Err(anyhow::anyhow!("the scenario's own failure")),
+        Err(anyhow::anyhow!("a bot could not leave")),
+    )
+    .unwrap_err();
+    assert_eq!(format!("{error:#}"), "the scenario's own failure");
+    let timeline = ctx.timeline().snapshot();
+    assert!(
+        timeline.iter().any(|entry| entry.kind == "leave failed"
+            && entry.detail.to_string().contains("a bot could not leave")),
+        "{timeline:?}"
+    );
+    // a scenario that passed fails on its leave error; otherwise the outcome stands
+    assert!(settle(&ctx, Ok(()), Err(anyhow::anyhow!("left badly"))).is_err());
+    assert_eq!(settle(&ctx, Ok(5), Ok(())).unwrap(), 5);
 }

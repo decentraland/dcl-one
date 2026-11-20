@@ -6,7 +6,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use catalyst_comms::archipelago::config::ClusterConfig;
+use catalyst_comms::archipelago::config::{ClusterConfig, DEFAULT_MAX_SOCKETS_PER_IP};
 use catalyst_comms::pulse::hardening;
 use catalyst_comms::pulse::interest::{ParcelEncoder, ParcelEncoderOptions};
 use serde::Deserialize;
@@ -45,9 +45,9 @@ pub struct Stack {
     pub restart_command: Option<Vec<String>>,
     /// The LiveKit client (`harness-util`) for a stack that gives no room-service keys, so no
     /// `[livekit]` section: clients join the rooms their island assignments name. `[livekit]
-    /// client` is used when both are set.
+    /// client` is used when both are set. Read through [`Stack::livekit_client`].
     #[serde(default)]
-    pub livekit_client: Option<PathBuf>,
+    livekit_client: Option<PathBuf>,
     #[serde(default)]
     pub grid: Grid,
     #[serde(default)]
@@ -86,9 +86,9 @@ pub struct LiveKitTarget {
     pub key_env: String,
     pub secret_env: String,
     /// The LiveKit client binary (the explorer workspace's `harness-util`), run as a child
-    /// process to join rooms.
+    /// process to join rooms. Read through [`Stack::livekit_client`].
     #[serde(default)]
-    pub client: Option<PathBuf>,
+    client: Option<PathBuf>,
 }
 
 /// The headless explorer and the addresses it is told to dial. Those are the fault link's fronts:
@@ -211,7 +211,11 @@ pub struct Limits {
     pub max_emote_duration_ms: u32,
     pub max_realm_length: usize,
     pub max_handshake_attempts: u8,
+    /// Pulse handshakes one address may have in flight at once; 0 or less is unlimited.
     pub max_concurrent_pre_auth_per_ip: i64,
+    /// Sockets one address may hold on the archipelago connector (`WS_MAX_SOCKETS_PER_IP`);
+    /// 0 is unlimited.
+    pub max_sockets_per_ip: u32,
     pub replay_entries_per_source: usize,
     pub replay_entries_per_wallet: usize,
     /// How often the archipelago connector sweeps its connected wallets for bans.
@@ -229,6 +233,7 @@ impl Default for Limits {
             max_realm_length: hardening::DEFAULT_MAX_REALM_LENGTH,
             max_handshake_attempts: hardening::DEFAULT_MAX_HANDSHAKE_ATTEMPTS,
             max_concurrent_pre_auth_per_ip: hardening::DEFAULT_MAX_CONCURRENT_PRE_AUTH_PER_IP,
+            max_sockets_per_ip: DEFAULT_MAX_SOCKETS_PER_IP,
             replay_entries_per_source: hardening::DEFAULT_REPLAY_ENTRIES_PER_SOURCE,
             replay_entries_per_wallet: hardening::DEFAULT_REPLAY_ENTRIES_PER_WALLET,
             ban_sweep_interval_ms: ClusterConfig::default().ban_sweep_interval_ms,
@@ -265,6 +270,15 @@ impl Stack {
             limits: Limits::default(),
             given: GivenSecrets::default(),
         }
+    }
+
+    /// The LiveKit client (`harness-util`): `[livekit] client`, else the top-level
+    /// `livekit_client`. Every reader of either key reads it here.
+    pub fn livekit_client(&self) -> Option<&Path> {
+        self.livekit
+            .as_ref()
+            .and_then(|target| target.client.as_deref())
+            .or(self.livekit_client.as_deref())
     }
 
     /// Every host the stack file names: the servers, and every address of the explorer section
@@ -307,8 +321,8 @@ impl Stack {
         hosts
     }
 
-    /// Whether a scenario may run against every host of the stack file. A loopback host
-    /// (`localhost` and `*.localhost` included) admits every scenario. Any other host admits a
+    /// Whether a scenario may run against every host of the stack file. A loopback host (a
+    /// loopback address or the name `localhost`) admits every scenario. Any other host admits a
     /// scenario only if `allowed_hosts` (`--allow-host`) names it, and a hostile one (floods,
     /// malformed frames, bans, restarts) only if `hostile_hosts` (`--allow-hostile-host`) names
     /// it as well. These lists keep a run from reaching a host by accident; they are not access
@@ -418,6 +432,22 @@ pub fn secret_from_environment(variable: &str) -> Result<String> {
         .with_context(|| format!("the environment variable {variable} is not set"))
 }
 
+/// Whether a token may be sent to `url`, or handed to a client that dials it: over TLS (`https`,
+/// `wss`) to any host, over a plain scheme only to loopback. The error is the reason, naming the
+/// `token` and the stack file's `key` that gives the address.
+pub fn token_may_travel_to(url: &Url, token: &str, key: &str) -> Result<(), String> {
+    let host = url.host_str().unwrap_or_default().trim_matches(['[', ']']);
+    if matches!(url.scheme(), "https" | "wss") || is_loopback_host(host) {
+        Ok(())
+    } else {
+        Err(format!(
+            "the {token} is not sent over plain {} to a host that is not loopback: give the \
+             stack file an https `{key}`",
+            url.scheme()
+        ))
+    }
+}
+
 fn host_of(url: &Url) -> String {
     url.host_str()
         .unwrap_or_default()
@@ -425,9 +455,10 @@ fn host_of(url: &Url) -> String {
         .to_owned()
 }
 
-/// Whether `host` is this machine: a loopback address, `localhost` or a name under `.localhost`.
+/// Whether `host` is this machine: a loopback address or the name `localhost`. Any other name,
+/// one under `.localhost` included, is whatever the resolver makes of it.
 pub fn is_loopback_host(host: &str) -> bool {
-    if host == "localhost" || host.ends_with(".localhost") {
+    if host == "localhost" {
         return true;
     }
     // a private or link-local address can be anything on a network this machine reaches
@@ -497,12 +528,27 @@ mod tests {
             "http://127.0.0.1:5210",
             "http://127.4.5.6:5210",
             "http://localhost:5210",
-            "http://stack.localhost:5210",
             "http://[::1]:80",
         ] {
             stack_at(local).ensure_safe_for(true, &[], &[]).unwrap();
             stack_at(local).ensure_safe_for(false, &[], &[]).unwrap();
         }
+    }
+
+    #[test]
+    fn a_name_under_localhost_needs_allow_host() {
+        for (url, host) in [
+            ("http://stack.localhost:5210", "stack.localhost"),
+            ("http://a.b.localhost", "a.b.localhost"),
+            ("http://localhost.example", "localhost.example"),
+        ] {
+            let stack = stack_at(url);
+            let refusal = stack.ensure_safe_for(false, &[], &[]).unwrap_err();
+            assert_eq!(refusal.host, host);
+            stack.ensure_safe_for(false, &named(host), &[]).unwrap();
+        }
+        assert!(is_loopback_host("localhost"));
+        assert!(!is_loopback_host("stack.localhost"));
     }
 
     #[test]
@@ -549,6 +595,24 @@ mod tests {
         let shown = format!("{stack:?}");
         assert!(shown.contains("CE2E_STACK_TEST_NEVER_SET"), "{shown}");
         assert!(!shown.contains("a-given-secret-value"), "{shown}");
+    }
+
+    #[test]
+    fn the_livekit_client_is_read_from_either_key_in_one_place() {
+        let top = Stack::parse(
+            "pulse_enet = \"127.0.0.1:9000\"\nlivekit_client = \"top/harness-util\"\n",
+        )
+        .unwrap();
+        assert_eq!(top.livekit_client(), Some(Path::new("top/harness-util")));
+        let both = Stack::parse(
+            "pulse_enet = \"127.0.0.1:9000\"\nlivekit_client = \"top\"\n[livekit]\n\
+             url = \"http://127.0.0.1:5214\"\nkey_env = \"K\"\nsecret_env = \"S\"\n\
+             client = \"section\"\n",
+        )
+        .unwrap();
+        assert_eq!(both.livekit_client(), Some(Path::new("section")));
+        let neither = Stack::pulse_only("127.0.0.1:9000".parse().unwrap());
+        assert_eq!(neither.livekit_client(), None);
     }
 
     #[test]

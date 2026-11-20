@@ -117,7 +117,8 @@ async fn connect_full_stack(ctx: Ctx) -> Result<()> {
         ),
         _ => ctx.note(
             "LiveKit join",
-            "not done: the stack file names no LiveKit client (`[livekit] client`)",
+            "not done: the stack file names no LiveKit client (`[livekit] client` or \
+             `livekit_client`)",
         ),
     }
     Ok(())
@@ -125,7 +126,7 @@ async fn connect_full_stack(ctx: Ctx) -> Result<()> {
 
 pub static SECOND_DEVICE_TAKEOVER: Scenario = Scenario {
     name: "second-device-takeover",
-    tags: &["connections", "session", "race"],
+    tags: &["connections", "session", "races"],
     guards: &["dcl-one #1205", "Pulse #34", "Pulse #54"],
     summary: "The same wallet on a second device, in three orders across archipelago and Pulse: Pulse ends the old device, the new one is welcomed and assigned, the wallet is one peer, and the old device's archipelago socket stays open and gets nothing more",
     needs: API,
@@ -273,7 +274,7 @@ const TAKEOVER_QUIET_WINDOW: Duration = Duration::from_secs(10);
 
 pub static STALE_SOCKET_RECONNECT: Scenario = Scenario {
     name: "stale-socket-reconnect",
-    tags: &["connections", "session", "fault"],
+    tags: &["connections", "session", "faults"],
     guards: &["dcl-one #1205"],
     summary: "The archipelago socket goes silent without closing; the same device connects again and is welcomed and assigned although the server still holds the stale socket",
     needs: API,
@@ -379,7 +380,7 @@ async fn stale_socket_reconnect(ctx: Ctx) -> Result<()> {
 
 pub static ASSIGNMENT_ORDER: Scenario = Scenario {
     name: "assignment-order",
-    tags: &["connections", "assignment", "race"],
+    tags: &["connections", "assignment", "races"],
     guards: &["dcl-one #837", "dcl-one #795", "dcl-one #782"],
     summary: "Bots hop between two distant spots; each bot's assignments carry its own token and the last one matches the island the statistics route lists",
     needs: API,
@@ -488,7 +489,7 @@ async fn assignment_order(ctx: Ctx) -> Result<()> {
 
 pub static MINTS_UNDER_CHURN: Scenario = Scenario {
     name: "mints-under-churn",
-    tags: &["connections", "gatekeeper", "race"],
+    tags: &["connections", "gatekeeper", "races"],
     guards: &["dcl-one #940", "dcl-one #383"],
     summary: "Scene-room mints in parallel while other bots change islands: every mint answers 200",
     needs: API,

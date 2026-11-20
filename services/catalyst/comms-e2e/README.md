@@ -32,7 +32,7 @@ comms-e2e run <scenario | --tag <tag> | --all> --stack-file <file>
               [--report <file.json>] [--report-hosts] [--work-dir <directory>]
               [--allow-host <host>] [--allow-hostile-host <host>]
               [--deadline <seconds>] [--timeline <n>] [--one-source-address]
-comms-e2e console --stack-file <file> "/world_state" "/pulse_state"
+comms-e2e console --stack-file <file> [--allow-host <host>] "/world_state" "/pulse_state"
 comms-e2e address --key-env <VARIABLE>
 ```
 
@@ -47,8 +47,9 @@ comms-e2e address --key-env <VARIABLE>
 - A scenario whose prerequisite the stack file lacks is **skipped** with the reason. It is never
   counted as passed.
 - `--repeat` takes 1 to 100.
-- Every scenario runs against loopback (`localhost` and `*.localhost` count as loopback). A
-  stack file that names any other host, a private or link-local address included, runs no
+- Every scenario runs against loopback (a loopback address or the name `localhost`; any other
+  name, one under `.localhost` included, is not loopback). A stack file that names any other
+  host, a private or link-local address included, runs no
   scenario unless `--allow-host <host>` names each such host; a refused scenario fails before
   its first packet. Hostile scenarios (floods, malformed frames, bans, a restart of a process of
   the stack) need the host named with `--allow-hostile-host <host>` as well: `--allow-host`
@@ -58,7 +59,11 @@ comms-e2e address --key-env <VARIABLE>
 - The report, printed or written with `--report`, names the loopback hosts of the stack file and
   counts the others; `--report-hosts` names them all.
 - `console` starts one explorer behind the fault links and runs console commands in it: the way
-  to see what a build answers before writing a scenario.
+  to see what a build answers before writing a scenario. It passes the same host guard as an
+  ordinary scenario, so a stack that is not on loopback needs `--allow-host`.
+- `run` and `console` keep their files (explorer logs) in a directory made new for each run,
+  readable by the user alone where the platform has such modes: in the system's temporary
+  directory, or in the `--work-dir` given.
 - One repeat may take `--deadline` seconds (300 unless given). A failure shows the last
   `--timeline` entries (40 unless given).
 - The explorer fronts are fixed ports, so one machine runs one explorer scenario or `console` at
@@ -106,6 +111,8 @@ url = "http://127.0.0.1:5214"
 key_env = "CE2E_LIVEKIT_KEY"
 secret_env = "CE2E_LIVEKIT_SECRET"
 client = "<path>/harness-util"             # the LiveKit client, see below
+# without room-service keys, no [livekit] section: livekit_client = "<path>/harness-util" at
+# the top of the file
 
 [explorer]
 binary = "<path>/headless"
@@ -130,17 +137,33 @@ the real addresses.
 
 **The LiveKit client** is the explorer workspace's `harness-util join`
 (`rendering/bevy-explorer/source/local-harness/presence/harness-util`), run as a child process.
-The LiveKit SDK brings libwebrtc, which stays out of this workspace.
+The LiveKit SDK brings libwebrtc, which stays out of this workspace. The stack file names it with
+`client` under `[livekit]` or, for a stack without room-service keys, with `livekit_client`;
+`[livekit] client` wins when both are there.
+
+**Tokens** go over TLS (`https`, `wss`) to any host and over a plain scheme only to loopback:
+the moderator token, the LiveKit room-service token and a join connection string the tool mints
+itself. Neither the gatekeeper client nor the room-service client follows a redirect.
 
 ## Scenarios
 
 `comms-e2e list` prints them with what each guards. The groups:
 
-| Tag | Scenarios | Need |
+| Group | Scenarios, each with its other tags | Need |
 |---|---|---|
-| `pulse` | Smoke, refusal codes, the authentication timeout, rate limits, the same-wallet race, the handshake swarm, churn, a realm round trip, the emote lifecycle, resync requests, stall and resume, the scene listener, bursts over WebTransport | Pulse. All but the last run on either transport (`--transport`). |
-| `connections` | The full stack for one wallet, a second device (Pulse ends the older one; the archipelago keeps one socket per session key and leaves the older socket open), a stale socket, assignment order, mints under churn, ban eviction, credentials across a restart, two LiveKit joins with one identity | The API, and LiveKit for the joins |
-| `explorer` | An uplink stall while teleporting, off the north edge of the grid, off the east edge, a stale archipelago socket, an unreachable Pulse port, two explorers with one wallet and one signing key, packets from Pulse out of order. Probes (`probe`): another device of the explorer's wallet signing in after it or before it, an uplink stall longer than the transport waits, a reconnect outside the grid. The uplink over a slow path (`uplink`): the check of the uplink measure on a plain link, a walk at an 800 ms and at a 1.2 s round trip, a walk for a minute on a lossy link, an uplink stall that queues at a 1.2 s and at a 2 s round trip | The API and a headless explorer build |
+| `pulse` | `pulse-smoke` (`smoke`), `pulse-refusal-codes` (`refusals`), `pulse-auth-timeout` (`refusals`, `slow`), `pulse-rate-limits` (`limits`), `pulse-same-wallet-race` (`races`), `pulse-handshake-swarm` (`limits`, `swarm`), `pulse-churn` (`churn`), `pulse-realm-round-trip` (`realms`), `pulse-emote-lifecycle` (`emotes`), `pulse-resync-requests` (`resync`), `pulse-stall-and-resume` (`faults`, `slow`), `pulse-scene-listener` (`listeners`), `pulse-crowd` (`crowd`), `pulse-webtransport-bursts` (`webtransport`, `slow`) | Pulse. All but the last run on either transport (`--transport`). |
+| `connections` | `connect-full-stack` (`connect`), `second-device-takeover` (`session`, `races`: Pulse ends the older device; the archipelago keeps one socket per session key and leaves the older socket open), `stale-socket-reconnect` (`session`, `faults`), `assignment-order` (`assignment`, `races`), `mints-under-churn` (`gatekeeper`, `races`), `ban-eviction` (`moderation`, `slow`), `stationary-credentials` (`restart`, `slow`), `livekit-same-identity` (`livekit`), `crowd-discovery` (`crowd`) | The API; LiveKit for the room joins, which are left out, with a note, without a LiveKit client |
+| `explorer` | `explorer-uplink-stall` (`battle`, `faults`), `explorer-out-of-grid` (`battle`), `explorer-past-the-east-edge` (`battle`), `explorer-sleep-wake` (`battle`, `faults`), `explorer-port-unreachable` (`battle`, `faults`), `explorer-two-devices` (`races`), `explorer-resync` (`faults`). Probes: `explorer-replaced-by-another-device`, `explorer-replaces-another-device` (`probe`, `races`), `explorer-long-uplink-stall`, `explorer-reconnect-outside-grid` (`probe`, `faults`). The uplink over a slow path: `explorer-uplink-cadence` (`uplink`), `explorer-walk-800ms-round-trip`, `explorer-walk-1200ms-round-trip`, `explorer-walk-lossy-link`, `explorer-queued-stall-1200ms-round-trip`, `explorer-queued-stall-2000ms-round-trip` (`uplink`, `faults`) | The API and a headless explorer build |
+
+**Crowds.** `pulse-crowd` and `crowd-discovery` put 20 players in one place at once. Their size
+comes from `CE2E_CROWD_PLAYERS` (2 to 100), and `CE2E_CROWD_ROOM_PLAYERS` says how many of
+`crowd-discovery`'s players join the island's LiveKit room (all unless it says fewer, `0` for
+none). Every player dials from one address at the same moment, so a crowd larger than a correct
+server admits from one address is refused before the first packet, naming the limit: Pulse's
+`limits.max_concurrent_pre_auth_per_ip` for both, and the archipelago's
+`limits.max_sockets_per_ip` for `crowd-discovery`. `crowd-discovery` checks an island's peer
+list only when the connector sends one, and its report says whether it did
+(`island_peers_sent`).
 
 Races repeat by default and take their order and gaps from the seed, so a failure replays.
 

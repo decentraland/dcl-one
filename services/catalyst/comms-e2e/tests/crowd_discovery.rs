@@ -12,11 +12,13 @@ use catalyst_comms::protocol::archipelago::archipelago::{
     LeftIslandMessage, ServerPacket, WelcomeMessage, client_packet, server_packet,
 };
 use catalyst_comms_e2e::archipelago::{ArchipelagoBot, ArchipelagoOptions};
-use catalyst_comms_e2e::engine::{Ctx, expect_or};
+use catalyst_comms_e2e::engine::{
+    CrowdSize, Ctx, Outcome, RunOptions, Transport, expect_or, run_scenarios,
+};
 use catalyst_comms_e2e::identity::Identity;
 use catalyst_comms_e2e::scenarios::crowd_discovery::{
-    CROWD_DISCOVERY, ClientView, adapter_socket, island_verdict, pulse_verdict, room_verdict,
-    strangers,
+    CROWD_DISCOVERY, ClientView, adapter_socket, island_peers_sent, island_verdict, pulse_verdict,
+    room_verdict, strangers,
 };
 use catalyst_comms_e2e::stack::Stack;
 use futures::{SinkExt, StreamExt};
@@ -317,4 +319,110 @@ fn the_scenario_is_registered_and_not_hostile() {
     assert_eq!(CROWD_DISCOVERY.name, "crowd-discovery");
     assert!(!CROWD_DISCOVERY.hostile);
     assert!(CROWD_DISCOVERY.needs.api);
+}
+
+/// Runs `crowd-discovery` once against `stack` with a crowd of `players`.
+async fn discovery_with(stack: &str, players: usize) -> catalyst_comms_e2e::engine::ScenarioResult {
+    let options = RunOptions {
+        repeat: Some(1),
+        seed: Some(7),
+        transport: Transport::Enet,
+        crowd: CrowdSize {
+            players: Some(players),
+            room_players: None,
+        },
+        ..Default::default()
+    };
+    let stack = Arc::new(Stack::parse(stack).unwrap());
+    run_scenarios(stack, &[&CROWD_DISCOVERY], &options)
+        .await
+        .results
+        .remove(0)
+}
+
+/// Each player holds an archipelago socket from the one address the crowd shares: a crowd larger
+/// than the sockets the connector admits from one address is refused, naming the limit. The
+/// Pulse handshakes per address count too. Nothing listens at these addresses: the refusal comes
+/// first.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_crowd_larger_than_the_sockets_one_address_may_hold_is_refused() {
+    let base = "api = \"http://127.0.0.1:9\"\npulse_enet = \"127.0.0.1:9\"\n[limits]\n";
+    for (limits, key) in [
+        ("max_sockets_per_ip = 5\n", "limits.max_sockets_per_ip"),
+        (
+            "max_concurrent_pre_auth_per_ip = 5\n",
+            "limits.max_concurrent_pre_auth_per_ip",
+        ),
+    ] {
+        let result = discovery_with(&format!("{base}{limits}"), 6).await;
+        let Outcome::Failed { expectation, .. } = &result.outcome else {
+            panic!(
+                "{key}: a crowd of 6 should be refused, got {:?}",
+                result.outcome
+            );
+        };
+        assert!(
+            expectation.contains(key) && expectation.contains("is 5"),
+            "{key}: {expectation}"
+        );
+    }
+}
+
+#[test]
+fn the_archipelago_sockets_per_address_default_to_the_servers() {
+    let stack = Stack::parse("pulse_enet = \"127.0.0.1:9\"\n").unwrap();
+    assert_eq!(
+        stack.limits.max_sockets_per_ip,
+        catalyst_comms::archipelago::config::DEFAULT_MAX_SOCKETS_PER_IP
+    );
+}
+
+/// A stack file with no LiveKit client leaves the room step out and says so in a note; the
+/// scenario goes on to discovery (which fails here: nothing answers at the API address).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn without_a_livekit_client_the_room_step_is_left_out_with_a_note() {
+    let result = discovery_with(
+        "api = \"http://127.0.0.1:9\"\npulse_enet = \"127.0.0.1:9\"\n",
+        2,
+    )
+    .await;
+    let Outcome::Failed { expectation, .. } = &result.outcome else {
+        panic!("nothing answers at the API, got {:?}", result.outcome);
+    };
+    assert!(expectation.contains("realm description"), "{expectation}");
+    let room = result
+        .notes
+        .iter()
+        .find(|note| note.key == "room")
+        .unwrap_or_else(|| panic!("no room note: {:?}", result.notes));
+    let text = room.value.as_str().unwrap();
+    assert!(
+        text.contains("not done") && text.contains("LiveKit client"),
+        "{text}"
+    );
+    assert!(
+        result
+            .notes
+            .iter()
+            .any(|note| note.key == "room_players" && note.value.as_u64() == Some(0)),
+        "{:?}",
+        result.notes
+    );
+}
+
+/// Whether any island message carried peers: the gatekeeper may send assignments with none, and
+/// then the peer list is not checked.
+#[test]
+fn the_report_says_whether_any_island_message_carried_peers() {
+    let view = |wallet: &str, peers: &[&str]| ClientView {
+        wallet: wallet.into(),
+        island: Some("I1".into()),
+        island_peers: peers.iter().map(|peer| (*peer).to_owned()).collect(),
+        ..Default::default()
+    };
+    let without = [view("0xaa", &[]), view("0xbb", &[])];
+    assert!(!island_peers_sent(&without));
+    assert_eq!(island_verdict(&without).unwrap(), "I1");
+    let with = [view("0xaa", &["0xbb"]), view("0xbb", &[])];
+    assert!(island_peers_sent(&with));
 }

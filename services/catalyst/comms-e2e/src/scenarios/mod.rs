@@ -13,6 +13,38 @@ pub mod webtransport;
 
 use crate::engine::Scenario;
 
+/// Every tag a scenario may carry, each with one spelling: `--tag` selects by exact name, so a
+/// second spelling of a group would split it.
+pub const TAGS: &[&str] = &[
+    "assignment",
+    "battle",
+    "churn",
+    "connect",
+    "connections",
+    "crowd",
+    "emotes",
+    "explorer",
+    "faults",
+    "gatekeeper",
+    "limits",
+    "listeners",
+    "livekit",
+    "moderation",
+    "probe",
+    "pulse",
+    "races",
+    "realms",
+    "refusals",
+    "restart",
+    "resync",
+    "session",
+    "slow",
+    "smoke",
+    "swarm",
+    "uplink",
+    "webtransport",
+];
+
 /// All scenarios, in the order a full run takes them.
 pub fn registry() -> Vec<&'static Scenario> {
     let mut all = pulse::all();
@@ -34,4 +66,43 @@ pub fn select(name: Option<&str>, tag: Option<&str>, all: bool) -> Vec<&'static 
                 || tag.is_some_and(|tag| scenario.tags.contains(&tag))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_tag_of_every_scenario_is_a_known_one() {
+        let unknown: Vec<String> = registry()
+            .iter()
+            .flat_map(|scenario| {
+                scenario
+                    .tags
+                    .iter()
+                    .filter(|tag| !TAGS.contains(tag))
+                    .map(move |tag| format!("{}: {tag}", scenario.name))
+            })
+            .collect();
+        assert!(unknown.is_empty(), "tags outside TAGS: {unknown:?}");
+    }
+
+    #[test]
+    fn the_readme_names_every_scenario_and_every_tag() {
+        let readme = include_str!("../../README.md");
+        let missing: Vec<&str> = registry()
+            .iter()
+            .map(|scenario| scenario.name)
+            .chain(TAGS.iter().copied())
+            .filter(|name| !readme.contains(&format!("`{name}`")))
+            .collect();
+        assert!(missing.is_empty(), "the README does not name {missing:?}");
+    }
+
+    #[test]
+    fn every_known_tag_selects_a_scenario() {
+        for tag in TAGS {
+            assert!(!select(None, Some(tag), false).is_empty(), "{tag}");
+        }
+    }
 }

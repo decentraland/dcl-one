@@ -1,12 +1,12 @@
 //! `comms-e2e`: list the scenarios, run them against a stack, or check that a stack is reachable.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Result, bail};
-use catalyst_comms_e2e::engine::{Ctx, RunOptions, Transport, run_scenarios};
+use anyhow::{Context as _, Result, bail};
+use catalyst_comms_e2e::engine::{CrowdSize, Ctx, RunOptions, Transport, run_scenarios};
 use catalyst_comms_e2e::explorer::{Explorer, ExplorerOptions, Fronts};
 use catalyst_comms_e2e::scenarios;
 use catalyst_comms_e2e::stack::Stack;
@@ -66,7 +66,8 @@ enum Command {
         /// Write the full report, timelines included, as JSON
         #[arg(long, value_name = "file")]
         report: Option<PathBuf>,
-        /// Where scenarios keep their files (explorer logs)
+        /// A directory in which the run makes a new directory of its own for its files
+        /// (explorer logs); the system's temporary directory unless given
         #[arg(long, value_name = "directory")]
         work_dir: Option<PathBuf>,
         /// The longest one repeat may take, in seconds
@@ -100,6 +101,10 @@ enum Command {
     Console {
         #[arg(long, value_name = "file")]
         stack_file: PathBuf,
+        /// A host that is not loopback which the explorer and the fault link may reach, as for
+        /// `run`
+        #[arg(long = "allow-host", value_name = "host")]
+        allowed_hosts: Vec<String>,
         /// The seed of the guest wallet
         #[arg(long, default_value_t = 1)]
         wallet_seed: u64,
@@ -181,11 +186,13 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
                 scenario_deadline: Duration::from_secs(deadline),
                 transport,
                 one_source_address,
+                crowd: crowd_from_environment()?,
                 ..RunOptions::default()
             };
-            if let Some(work_dir) = work_dir {
-                options.work_dir = work_dir;
-            }
+            options.work_dir = match work_dir {
+                Some(parent) => new_run_dir(&parent, "run")?,
+                None => new_run_dir(&std::env::temp_dir(), "comms-e2e-run")?,
+            };
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()?;
@@ -202,6 +209,7 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
         }
         Command::Console {
             stack_file,
+            allowed_hosts,
             wallet_seed,
             position,
             settle,
@@ -210,6 +218,7 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
             commands,
         } => {
             let stack = Arc::new(Stack::load(&stack_file)?);
+            console_guard(&stack, &allowed_hosts)?;
             let (x, y) = position
                 .split_once(',')
                 .and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?)))
@@ -217,8 +226,8 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()?;
+            let work_dir = new_run_dir(&std::env::temp_dir(), "comms-e2e-console")?;
             runtime.block_on(async move {
-                let work_dir = RunOptions::default().work_dir.join("console");
                 let ctx = Ctx::new(stack, "console", "console", 0, 1, work_dir);
                 let _fronts = Fronts::start(&ctx).await?;
                 let explorer = Explorer::start(
@@ -271,6 +280,69 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
     }
 }
 
+/// The console starts an explorer and the fault links against the stack: the same host guard as
+/// an ordinary scenario.
+fn console_guard(stack: &Stack, allowed_hosts: &[String]) -> Result<()> {
+    stack
+        .ensure_safe_for(false, allowed_hosts, &[])
+        .map_err(|refusal| anyhow::anyhow!("the console does not start: {refusal}"))
+}
+
+/// A directory made new for one run under `parent`, named `<prefix>-<random>`: never one that
+/// was there before, so nothing in it was put there by anyone else, and readable by this user
+/// alone where the platform has such modes.
+fn new_run_dir(parent: &Path, prefix: &str) -> Result<PathBuf> {
+    use std::hash::{BuildHasher, Hasher};
+    std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    #[cfg(unix)]
+    let builder = {
+        use std::os::unix::fs::DirBuilderExt;
+        let mut builder = std::fs::DirBuilder::new();
+        builder.mode(0o700);
+        builder
+    };
+    #[cfg(not(unix))]
+    let builder = std::fs::DirBuilder::new();
+    for _ in 0..16 {
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u128(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos(),
+        );
+        let path = parent.join(format!("{prefix}-{:016x}", hasher.finish()));
+        match builder.create(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error).with_context(|| format!("creating {}", path.display()));
+            }
+        }
+    }
+    bail!("no new directory could be made in {}", parent.display())
+}
+
+/// The crowd size the environment asks for: `CE2E_CROWD_PLAYERS` and `CE2E_CROWD_ROOM_PLAYERS`.
+fn crowd_from_environment() -> Result<CrowdSize> {
+    crowd_from(
+        std::env::var(scenarios::crowd::PLAYERS_VARIABLE).ok(),
+        std::env::var(scenarios::crowd_discovery::ROOM_PLAYERS_VARIABLE).ok(),
+    )
+}
+
+/// The crowd size the texts of the two variables name.
+fn crowd_from(players: Option<String>, room_players: Option<String>) -> Result<CrowdSize> {
+    Ok(CrowdSize {
+        players: players
+            .map(|text| scenarios::crowd::players_from(Some(&text)))
+            .transpose()?,
+        room_players: room_players
+            .map(|text| scenarios::crowd_discovery::room_players_from(&text))
+            .transpose()?,
+    })
+}
+
 /// The wallet address of a private key. A key that does not parse is an error that does not
 /// repeat it.
 fn address_of_key(key: &str) -> Result<String> {
@@ -291,6 +363,71 @@ mod tests {
         assert!(!error.contains("not-a-real-key-fake-0123"), "{error}");
         // an obviously made-up key that parses
         assert!(address_of_key(&"11".repeat(32)).unwrap().starts_with("0x"));
+    }
+
+    #[test]
+    fn the_crowd_size_comes_from_the_texts_of_its_variables() {
+        assert_eq!(crowd_from(None, None).unwrap(), CrowdSize::default());
+        assert_eq!(
+            crowd_from(Some(" 12 ".into()), Some("0".into())).unwrap(),
+            CrowdSize {
+                players: Some(12),
+                room_players: Some(0),
+            }
+        );
+        assert!(crowd_from(Some("1".into()), None).is_err());
+        assert!(crowd_from(None, Some("some".into())).is_err());
+    }
+
+    #[test]
+    fn the_console_passes_the_host_guard_and_takes_allow_host() {
+        let public =
+            Stack::parse("api = \"http://203.0.113.5:5210\"\npulse_enet = \"127.0.0.1:9\"\n")
+                .unwrap();
+        let refusal = format!("{:#}", console_guard(&public, &[]).unwrap_err());
+        assert!(refusal.contains("--allow-host"), "{refusal}");
+        console_guard(&public, &["203.0.113.5".to_owned()]).unwrap();
+        let local = Stack::pulse_only("127.0.0.1:9".parse().unwrap());
+        console_guard(&local, &[]).unwrap();
+
+        let Command::Console { allowed_hosts, .. } = Arguments::try_parse_from([
+            "comms-e2e",
+            "console",
+            "--stack-file",
+            "stack.toml",
+            "--allow-host",
+            "stack.example",
+            "/world_state",
+        ])
+        .unwrap()
+        .command
+        else {
+            panic!("a console");
+        };
+        assert_eq!(allowed_hosts, vec!["stack.example".to_owned()]);
+    }
+
+    #[test]
+    fn each_run_gets_a_directory_made_new_for_it() {
+        let parent = std::env::temp_dir().join(format!("comms-e2e-dirs-{}", std::process::id()));
+        let first = new_run_dir(&parent, "run").unwrap();
+        let second = new_run_dir(&parent, "run").unwrap();
+        assert_ne!(first, second);
+        for made in [&first, &second] {
+            assert!(
+                made.is_dir() && made.starts_with(&parent),
+                "{}",
+                made.display()
+            );
+            assert_eq!(std::fs::read_dir(made).unwrap().count(), 0);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(made).unwrap().permissions().mode();
+                assert_eq!(mode & 0o777, 0o700, "{mode:o}");
+            }
+        }
+        std::fs::remove_dir_all(&parent).unwrap();
     }
 
     fn run_with_repeat(repeat: &str) -> Result<Arguments, clap::Error> {

@@ -307,10 +307,28 @@ pub async fn leave(ctx: &Ctx, bot: PulseBot) -> Result<()> {
     Ok(())
 }
 
-/// [`leave`] for every bot of a group at once.
+/// [`leave`] for every bot of a group at once. Every bot leaves, whichever fails; the first
+/// failure is returned.
 pub async fn leave_all(ctx: &Ctx, bots: Vec<PulseBot>) -> Result<()> {
-    futures::future::try_join_all(bots.into_iter().map(|bot| leave(ctx, bot))).await?;
+    futures::future::join_all(bots.into_iter().map(|bot| leave(ctx, bot)))
+        .await
+        .into_iter()
+        .collect::<Result<Vec<()>>>()?;
     Ok(())
+}
+
+/// The result of a scenario whose actors have left (`left`): the scenario's own error when it
+/// failed, with a leave error that came too kept in the timeline; else the leave error, if any.
+pub fn settle<T>(ctx: &Ctx, outcome: Result<T>, left: Result<()>) -> Result<T> {
+    match (outcome, left) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Ok(_), Err(left)) => Err(left),
+        (Err(error), Ok(())) => Err(error),
+        (Err(error), Err(left)) => {
+            ctx.record("runner", "leave failed", format!("{left:#}"));
+            Err(error)
+        }
+    }
 }
 
 /// Runs `work`, and fails at once, naming the code, if the server ends the connection of any of

@@ -17,15 +17,17 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use futures::future::join_all;
 use serde::Serialize;
 
-use super::support::{distance, enter_at, leave_all, meeting_place, offset, refusal_code_in};
+use super::support::{
+    distance, enter_at, leave_all, meeting_place, offset, refusal_code_in, settle,
+};
 use crate::engine::{Ctx, Entry, Needs, Scenario, ScenarioFuture};
 use crate::identity::Identity;
 use crate::pulse::{PulseBot, PulseView, messages};
 
-/// The environment variable that sets how many players the crowd has.
+/// The environment variable from which the command line takes the crowd's size.
 pub const PLAYERS_VARIABLE: &str = "CE2E_CROWD_PLAYERS";
 
-/// How many players the crowd has unless [`PLAYERS_VARIABLE`] says otherwise.
+/// How many players the crowd has unless the run says otherwise.
 pub const DEFAULT_PLAYERS: usize = 20;
 
 /// The most players one crowd may have: a few hundred handshakes from one machine is a load
@@ -65,7 +67,8 @@ pub fn all() -> Vec<&'static Scenario> {
     vec![&CROWD]
 }
 
-/// The crowd size `value` names, or [`DEFAULT_PLAYERS`] when it names none.
+/// The crowd size `value` (the text of [`PLAYERS_VARIABLE`]) names, or [`DEFAULT_PLAYERS`] when
+/// it names none.
 pub fn players_from(value: Option<&str>) -> Result<usize> {
     let Some(text) = value else {
         return Ok(DEFAULT_PLAYERS);
@@ -80,14 +83,50 @@ pub fn players_from(value: Option<&str>) -> Result<usize> {
     Ok(players)
 }
 
-/// The crowd size of this run: [`PLAYERS_VARIABLE`], or [`DEFAULT_PLAYERS`].
-pub(crate) fn players_of_run() -> Result<usize> {
-    players_from(std::env::var(PLAYERS_VARIABLE).ok().as_deref())
+/// The crowd size of this run ([`crate::engine::CrowdSize::players`]), or [`DEFAULT_PLAYERS`].
+pub(crate) fn players_of_run(ctx: &Ctx) -> Result<usize> {
+    let players = ctx.crowd().players.unwrap_or(DEFAULT_PLAYERS);
+    if !(2..=MOST_PLAYERS).contains(&players) {
+        bail!(
+            "the crowd ({PLAYERS_VARIABLE}) must have 2 to {MOST_PLAYERS} players, got {players}"
+        );
+    }
+    Ok(players)
+}
+
+/// A limit of the servers on what one address may hold at once: its key under `[limits]` in
+/// the stack file and its value, `None` when it is unlimited.
+pub(crate) type PerAddress = (&'static str, Option<usize>);
+
+/// Pulse's limit on handshakes in flight from one address.
+pub(crate) fn pulse_handshakes_per_address(ctx: &Ctx) -> PerAddress {
+    let limit = ctx.stack().limits.max_concurrent_pre_auth_per_ip;
+    (
+        "max_concurrent_pre_auth_per_ip",
+        (limit > 0).then_some(limit as usize),
+    )
+}
+
+/// Every player of a crowd dials from one address at the same moment, so a crowd larger than
+/// any of `limits` is more than a correct server admits: refused before the first packet.
+pub(crate) fn fits_one_address(players: usize, limits: &[PerAddress]) -> Result<()> {
+    for (key, limit) in limits {
+        if let Some(limit) = limit
+            && players > *limit
+        {
+            bail!(
+                "a crowd of {players} is more than a correct server admits from one address: \
+                 the stack file's `limits.{key}` is {limit}, and every player dials from one \
+                 address at once; ask for {limit} players or fewer ({PLAYERS_VARIABLE})"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Where player `index` stands around `here`: row by row on a grid of [`COLUMNS`], [`SPACING`]
 /// apart.
-pub(crate) fn spot(here: [f32; 3], index: usize) -> [f32; 3] {
+pub fn spot(here: [f32; 3], index: usize) -> [f32; 3] {
     offset(
         here,
         (index % COLUMNS) as f32 * SPACING,
@@ -114,10 +153,11 @@ fn holds(view: &PulseView, wallet: &str, realm: &str, world: [f32; 3]) -> Result
 }
 
 /// What the crowd saw by the end of the wait.
-pub(crate) struct Sightings {
+pub struct Sightings {
     /// For each player, how many of the others it held at the end.
     pub seen: Vec<usize>,
-    /// For each player, when (from the first dial) it first held every other player.
+    /// For each player, when (from the `started` given to [`watch`]) it first held every other
+    /// player, as the poll that saw it found it.
     pub complete_at: Vec<Option<Duration>>,
 }
 
@@ -134,16 +174,39 @@ fn joined_all(view: &PulseView, others: &[&String]) -> bool {
         .all(|wallet| view.joins_of(&wallet.to_lowercase()) > 0)
 }
 
+/// Why the wait on the crowd ended before its deadline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Interrupted {
+    /// The server, or the transport, ended a player's session.
+    Ended { player: String, reason: String },
+    /// A player's view broke a rule of the protocol, such as one subject per wallet.
+    Broken { player: String, reason: String },
+}
+
+impl std::fmt::Display for Interrupted {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Interrupted::Ended { player, reason } => write!(
+                formatter,
+                "a player's connection ended while the crowd stood together: {player}: {reason}"
+            ),
+            Interrupted::Broken { player, reason } => write!(formatter, "{player} {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for Interrupted {}
+
 /// Reads every view until each player holds every other and has been told each one joined,
-/// `deadline` passes, or a connection ends.
-pub(crate) async fn watch(
+/// `deadline` passes, or a session ends or a view breaks a rule of the protocol.
+pub async fn watch(
     bots: &[PulseBot],
     wallets: &[String],
     spots: &[[f32; 3]],
     realm: &str,
     started: Instant,
     deadline: Instant,
-) -> Result<Sightings> {
+) -> Result<Sightings, Interrupted> {
     let players = bots.len();
     let mut sightings = Sightings {
         seen: vec![0; players],
@@ -152,8 +215,9 @@ pub(crate) async fn watch(
     let mut all_joined = vec![false; players];
     loop {
         for (observer, bot) in bots.iter().enumerate() {
-            bot.alive().map_err(|reason| {
-                anyhow!("{}: {}", bot.name(), reason.trim_start_matches("fatal: "))
+            bot.alive().map_err(|reason| Interrupted::Ended {
+                player: bot.name().to_owned(),
+                reason: reason.trim_start_matches("fatal: ").to_owned(),
             })?;
             let view = bot.view();
             let mut seen = 0;
@@ -161,9 +225,12 @@ pub(crate) async fn watch(
                 if other == observer {
                     continue;
                 }
-                if holds(&view, wallet, realm, spots[other])
-                    .map_err(|reason| anyhow!("{} {reason}", bot.name()))?
-                {
+                if holds(&view, wallet, realm, spots[other]).map_err(|reason| {
+                    Interrupted::Broken {
+                        player: bot.name().to_owned(),
+                        reason,
+                    }
+                })? {
                     seen += 1;
                 }
             }
@@ -375,7 +442,7 @@ pub(crate) fn note_sightings(ctx: &Ctx, sightings: &Sightings) -> Result<(), Str
 
 /// Every player of `identities` enters `realm` at its spot, all at once. A refusal leaves the
 /// admitted ones and fails, naming each refusal's code.
-pub(crate) async fn enter_crowd(
+pub async fn enter_crowd(
     ctx: &Ctx,
     identities: &[Identity],
     realm: &str,
@@ -407,17 +474,22 @@ pub(crate) async fn enter_crowd(
     if !refused.is_empty() {
         ctx.note("players_refused", &refused);
         let admitted = bots.len();
-        leave_all(ctx, bots).await?;
-        bail!(
-            "{} of {players} players could not enter: {refused:?} ({admitted} admitted, who left again)",
-            refused.len()
+        let left = leave_all(ctx, bots).await;
+        return settle(
+            ctx,
+            Err(anyhow!(
+                "{} of {players} players could not enter: {refused:?} ({admitted} admitted, who left again)",
+                refused.len()
+            )),
+            left,
         );
     }
     Ok(bots)
 }
 
 async fn crowd(ctx: Ctx) -> Result<()> {
-    let players = players_of_run()?;
+    let players = players_of_run(&ctx)?;
+    fits_one_address(players, &[pulse_handshakes_per_address(&ctx)])?;
     let realm = ctx.realm("crowd");
     let here = meeting_place(&ctx);
     let identities: Vec<_> = (0..players)
@@ -438,24 +510,21 @@ async fn crowd(ctx: Ctx) -> Result<()> {
 
     let deadline = started + SIGHTING_DEADLINE;
     let watched = watch(&bots, &wallets, &spots, &realm, started, deadline).await;
-    let outcome = match &watched {
+    let outcome = match watched {
         Ok(sightings) => {
             // the join events first: they are what each client itself was told
             let (_, joins) = note_joins(&ctx, &wallets, &realm);
-            let held = note_sightings(&ctx, sightings);
+            let held = note_sightings(&ctx, &sightings);
             match (joins, held) {
                 (Ok(()), Ok(())) => Ok(()),
                 (Err(joins), _) => Err(anyhow!("join events: {joins}")),
                 (Ok(()), Err(held)) => Err(anyhow!(held)),
             }
         }
-        Err(error) => Err(anyhow!(
-            "a player's connection ended while the crowd stood together: {error:#}"
-        )),
+        Err(interrupted) => Err(anyhow!(interrupted)),
     };
 
     // every player leaves the way a client does, whatever the outcome
     let left = leave_all(&ctx, bots).await;
-    outcome?;
-    left
+    settle(&ctx, outcome, left)
 }

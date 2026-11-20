@@ -84,16 +84,7 @@ pub fn signed_path(route: &str) -> String {
 /// Whether the moderator token may be sent to `url`: over https to any host, over plain http only
 /// to loopback. The error is the reason, for a ban or unban that is then not sent.
 pub fn token_may_travel_to(url: &Url) -> Result<(), String> {
-    let host = url.host_str().unwrap_or_default().trim_matches(['[', ']']);
-    if url.scheme() == "https" || crate::stack::is_loopback_host(host) {
-        Ok(())
-    } else {
-        Err(format!(
-            "the moderator token is not sent over plain {} to a host that is not loopback: \
-             give the stack file an https `api`",
-            url.scheme()
-        ))
-    }
+    crate::stack::token_may_travel_to(url, "moderator token", "api")
 }
 
 #[derive(Clone)]
@@ -113,8 +104,10 @@ impl Gatekeeper {
             .clone()
             .ok_or_else(|| anyhow!("the stack file has no API address (`api`)"))?;
         Ok(Gatekeeper {
+            // the moderator token goes only to the address checked for it: no redirect is followed
             http: reqwest::Client::builder()
                 .timeout(REQUEST_TIMEOUT)
+                .redirect(reqwest::redirect::Policy::none())
                 .build()?,
             base: api,
             moderator_token: match stack.moderator_token_env.as_deref() {
@@ -313,6 +306,63 @@ mod tests {
             assert!(error.to_string().contains("plain http"), "{error}");
             assert!(!error.to_string().contains("a-moderator-token"), "{error}");
         }
+    }
+
+    /// A server on loopback that answers every request with `answer`, and counts the requests.
+    async fn answering(
+        answer: String,
+    ) -> (
+        std::net::SocketAddr,
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = requests.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut buffer = [0u8; 4096];
+                let _ = socket.read(&mut buffer).await;
+                let _ = socket.write_all(answer.as_bytes()).await;
+            }
+        });
+        (address, requests)
+    }
+
+    #[tokio::test]
+    async fn the_gatekeeper_client_follows_no_redirect() {
+        let (elsewhere, reached) =
+            answering("HTTP/1.1 201 Created\r\ncontent-length: 0\r\n\r\n".to_owned()).await;
+        let (api, _) = answering(format!(
+            "HTTP/1.1 307 Temporary Redirect\r\nlocation: http://{elsewhere}/moved\r\n\
+             content-length: 0\r\n\r\n"
+        ))
+        .await;
+        let mut stack = crate::stack::Stack::pulse_only("127.0.0.1:9".parse().unwrap());
+        stack.api = Some(format!("http://{api}").parse().unwrap());
+        stack.moderator_token_env = Some("CE2E_GATEKEEPER_TEST_TOKEN".to_owned());
+        stack.give_secret("CE2E_GATEKEEPER_TEST_TOKEN", "a-moderator-token");
+        let ctx = Ctx::new(
+            std::sync::Arc::new(stack),
+            "unit",
+            "gatekeeper-redirect",
+            0,
+            1,
+            std::env::temp_dir().join("comms-e2e-unit"),
+        );
+        let error = Gatekeeper::new(&ctx)
+            .unwrap()
+            .ban("0xa", "test")
+            .await
+            .unwrap_err();
+        assert_eq!(error.status(), Some(307), "{error}");
+        assert_eq!(
+            reached.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the request followed the redirect"
+        );
     }
 
     #[test]

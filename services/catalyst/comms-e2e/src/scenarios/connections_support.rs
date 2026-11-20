@@ -184,11 +184,7 @@ pub async fn join_room(
         "room named",
         serde_json::json!({ "room": room, "island": assignment.island }),
     );
-    let has_client = ctx
-        .stack()
-        .livekit
-        .as_ref()
-        .is_some_and(|target| target.client.is_some());
+    let has_client = ctx.stack().livekit_client().is_some();
     let client = if has_client {
         let name = format!("{actor} in the room");
         Some(

@@ -17,7 +17,6 @@
 //! room. Anyone outside the crowd that a client hears of is reported, and fails the run.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow, bail};
@@ -25,18 +24,20 @@ use futures::future::join_all;
 use url::Url;
 
 use super::connections_support::{api, api_socket_address, check_credentials, realm_description};
+use super::crowd::{Interrupted, Sightings};
 use super::crowd::{
-    SIGHTING_DEADLINE, enter_crowd, note_joins, note_sightings, player_name, players_of_run, spot,
-    watch,
+    SIGHTING_DEADLINE, enter_crowd, fits_one_address, note_joins, note_sightings, player_name,
+    players_of_run, pulse_handshakes_per_address, spot, watch,
 };
-use super::support::leave_all;
+use super::support::{leave_all, settle};
 use crate::archipelago::{ArchipelagoBot, ArchipelagoOptions};
 use crate::engine::{Ctx, Needs, Scenario, ScenarioFuture};
 use crate::livekit::{JoinOptions, LiveKitJoin};
 use crate::pulse::PulseBot;
 
-/// The environment variable that sets how many of the crowd join the room: all of them unless
-/// it says fewer, `0` for none. Each joining client is a process with its own WebRTC stack.
+/// The environment variable from which the command line takes how many of the crowd join the
+/// room: all of them unless it says fewer, `0` for none. Each joining client is a process with
+/// its own WebRTC stack.
 pub const ROOM_PLAYERS_VARIABLE: &str = "CE2E_CROWD_ROOM_PLAYERS";
 
 /// The prefix of an archipelago adapter in a realm description.
@@ -62,7 +63,7 @@ pub static CROWD_DISCOVERY: Scenario = Scenario {
     name: "crowd-discovery",
     tags: &["connections", "crowd"],
     guards: &["claim: 20 players in one place see each other"],
-    summary: "A crowd (20, or CE2E_CROWD_PLAYERS) near a corner of the grid finds the comms adapter in the realm description, then each client must catch a Pulse join event for every other player and hold it at its place, be given the same island (whose peer list, when sent, holds the others) and be told each other player joined the island's room; notes give each layer per player",
+    summary: "A crowd (20, or CE2E_CROWD_PLAYERS) near a corner of the grid finds the comms adapter in the realm description, then each client must catch a Pulse join event for every other player and hold it at its place, be given the same island and be told each other player joined the island's room; the island's peer list is checked only when the connector sends one (note island_peers_sent), and the room only with a LiveKit client; notes give each layer per player",
     needs: Needs {
         api: true,
         ..Needs::NONE
@@ -157,6 +158,12 @@ pub fn island_verdict(views: &[ClientView]) -> Result<String, String> {
     Ok(islands.into_keys().next().unwrap_or_default().to_owned())
 }
 
+/// Whether any island message a client was given listed the island's peers. When none did, the
+/// peer list is not checked.
+pub fn island_peers_sent(views: &[ClientView]) -> bool {
+    views.iter().any(|view| !view.island_peers.is_empty())
+}
+
 /// Every client was told that each other client joined the room.
 pub fn room_verdict(views: &[ClientView]) -> Result<(), String> {
     let mut complete = 0;
@@ -214,29 +221,38 @@ pub fn strangers(views: &[ClientView]) -> Vec<String> {
     found.into_iter().collect()
 }
 
-/// The LiveKit client the stack file names: `[livekit] client`, else `livekit_client`.
-fn room_client(ctx: &Ctx) -> Option<PathBuf> {
-    let stack = ctx.stack();
-    stack
-        .livekit
-        .as_ref()
-        .and_then(|target| target.client.clone())
-        .or_else(|| stack.livekit_client.clone())
+/// Watches the crowd on Pulse while `work` runs, and returns both. The deadline, `within`,
+/// counts from this call, when the players have entered Pulse; each player's time is when it
+/// first held everyone, from `started`.
+pub async fn watch_alongside<T>(
+    bots: &[PulseBot],
+    wallets: &[String],
+    spots: &[[f32; 3]],
+    realm: &str,
+    started: Instant,
+    within: Duration,
+    work: impl std::future::Future<Output = T>,
+) -> (Result<Sightings, Interrupted>, T) {
+    let deadline = Instant::now() + within;
+    tokio::join!(watch(bots, wallets, spots, realm, started, deadline), work)
 }
 
-/// How many of `players` join the room: [`ROOM_PLAYERS_VARIABLE`], or all of them.
-fn room_players(players: usize) -> Result<usize> {
-    match std::env::var(ROOM_PLAYERS_VARIABLE) {
-        Err(_) => Ok(players),
-        Ok(text) => {
-            let count: usize = text.trim().parse().map_err(|_| {
-                anyhow!("{ROOM_PLAYERS_VARIABLE} must be a count of players, got {text:?}")
-            })?;
-            if count == 1 || count > players {
-                bail!("{ROOM_PLAYERS_VARIABLE} must be 0, or between 2 and {players}");
-            }
-            Ok(count)
+/// The count of room players `text` (the text of [`ROOM_PLAYERS_VARIABLE`]) names.
+pub fn room_players_from(text: &str) -> Result<usize> {
+    text.trim()
+        .parse()
+        .map_err(|_| anyhow!("{ROOM_PLAYERS_VARIABLE} must be a count of players, got {text:?}"))
+}
+
+/// How many of `players` join the room: the run's
+/// [`crate::engine::CrowdSize::room_players`], or all of them.
+fn room_players(ctx: &Ctx, players: usize) -> Result<usize> {
+    match ctx.crowd().room_players {
+        None => Ok(players),
+        Some(count) if count == 1 || count > players => {
+            bail!("{ROOM_PLAYERS_VARIABLE} must be 0, or between 2 and {players}, got {count}")
         }
+        Some(count) => Ok(count),
     }
 }
 
@@ -484,13 +500,31 @@ async fn leave_everything(
 }
 
 async fn crowd_discovery(ctx: Ctx) -> Result<()> {
-    let players = players_of_run()?;
-    let room_count = room_players(players)?;
-    let client = room_client(&ctx);
+    let players = players_of_run(&ctx)?;
+    let sockets_per_address = ctx.stack().limits.max_sockets_per_ip as usize;
+    fits_one_address(
+        players,
+        &[
+            pulse_handshakes_per_address(&ctx),
+            (
+                "max_sockets_per_ip",
+                (sockets_per_address > 0).then_some(sockets_per_address),
+            ),
+        ],
+    )?;
+    let mut room_count = room_players(&ctx, players)?;
+    let client = ctx
+        .stack()
+        .livekit_client()
+        .map(std::path::Path::to_path_buf);
     if room_count > 0 && client.is_none() {
-        bail!(
-            "the stack file names no LiveKit client (`[livekit] client` or `livekit_client`); set {ROOM_PLAYERS_VARIABLE}=0 to leave the room out"
+        // as the joins of the connection scenarios: the room is left out, and the report says so
+        ctx.note(
+            "room",
+            "not done: the stack file names no LiveKit client (`[livekit] client` or \
+             `livekit_client`)",
         );
+        room_count = 0;
     }
     let realm = ctx.realm("crowd");
     let here = corner(&ctx);
@@ -512,34 +546,43 @@ async fn crowd_discovery(ctx: Ctx) -> Result<()> {
     let adapter = discover(&ctx, players).await?;
     ctx.note("discovery_ms", started.elapsed().as_millis() as u64);
 
-    // 2. Pulse: everyone at once, then the archipelago sockets while Pulse tells of the joins
+    // 2. Pulse: everyone at once; then Pulse is watched, its deadline counting from here, while
+    // the archipelago sockets open
     let bots = enter_crowd(&ctx, &identities, &realm, &spots).await?;
-    for (bot, spot) in bots.iter().zip(&spots) {
-        bot.move_to(*spot)?;
+    let moved = bots
+        .iter()
+        .zip(&spots)
+        .try_for_each(|(bot, spot)| bot.move_to(*spot));
+    if let Err(error) = moved {
+        let left = leave_all(&ctx, bots).await;
+        return settle(&ctx, Err(error), left);
     }
     ctx.note("pulse_entered_ms", started.elapsed().as_millis() as u64);
-    let sockets = match open_sockets(&ctx, &adapter, &identities, &spots).await {
-        Ok(sockets) => sockets,
-        Err(error) => {
-            leave_all(&ctx, bots).await?;
-            return Err(error);
-        }
-    };
-    ctx.note("archipelago_open_ms", started.elapsed().as_millis() as u64);
-
-    let watched = watch(
+    let (watched, opened) = watch_alongside(
         &bots,
         &wallets,
         &spots,
         &realm,
         started,
-        started + SIGHTING_DEADLINE,
+        SIGHTING_DEADLINE,
+        async {
+            let opened = open_sockets(&ctx, &adapter, &identities, &spots).await;
+            ctx.note("archipelago_open_ms", started.elapsed().as_millis() as u64);
+            opened
+        },
     )
     .await;
+    let sockets = match opened {
+        Ok(sockets) => sockets,
+        Err(error) => {
+            let left = leave_all(&ctx, bots).await;
+            return settle(&ctx, Err(error), left);
+        }
+    };
     let (_, joins) = note_joins(&ctx, &wallets, &realm);
     let held = match &watched {
         Ok(sightings) => note_sightings(&ctx, sightings),
-        Err(error) => Err(format!("{error:#}")),
+        Err(interrupted) => Err(interrupted.to_string()),
     };
 
     // 3. the island each client was given
@@ -556,8 +599,8 @@ async fn crowd_discovery(ctx: Ctx) -> Result<()> {
             match join_rooms(&ctx, client, &sockets, &identities, count).await {
                 Ok(rooms) => rooms,
                 Err(error) => {
-                    leave_everything(&ctx, Vec::new(), sockets, bots).await?;
-                    return Err(error);
+                    let left = leave_everything(&ctx, Vec::new(), sockets, bots).await;
+                    return settle(&ctx, Err(error), left);
                 }
             }
         }
@@ -637,6 +680,8 @@ async fn crowd_discovery(ctx: Ctx) -> Result<()> {
     );
     let outsiders = strangers(&views);
     ctx.note("others_outside_the_crowd", outsiders.len());
+    // the gatekeeper may send island assignments without their peers: then nothing was checked
+    ctx.note("island_peers_sent", island_peers_sent(&views));
 
     let island = island_verdict(&views);
     if let Ok(island) = &island {
@@ -650,19 +695,21 @@ async fn crowd_discovery(ctx: Ctx) -> Result<()> {
     let left = leave_everything(&ctx, rooms, sockets, bots).await;
 
     // the join events first: they are the direct evidence; then the rest in layer order
-    if let Err(joins) = joins {
-        bail!("join events: {joins}");
-    }
-    if let Err(held) = held {
-        bail!("held state: {held}");
-    }
-    if !outsiders.is_empty() {
-        bail!(
-            "{} players outside the crowd were in the island or the room: the place was not the crowd's alone, so the run is not clean",
-            outsiders.len()
-        );
-    }
-    island.map_err(|error| anyhow!("island: {error}"))?;
-    room.map_err(|error| anyhow!("room: {error}"))?;
-    left
+    let verdict = (|| {
+        if let Err(joins) = joins {
+            bail!("join events: {joins}");
+        }
+        if let Err(held) = held {
+            bail!("held state: {held}");
+        }
+        if !outsiders.is_empty() {
+            bail!(
+                "{} players outside the crowd were in the island or the room: the place was not the crowd's alone, so the run is not clean",
+                outsiders.len()
+            );
+        }
+        island.map_err(|error| anyhow!("island: {error}"))?;
+        room.map_err(|error| anyhow!("room: {error}"))
+    })();
+    settle(&ctx, verdict, left)
 }

@@ -101,3 +101,21 @@ async fn what_the_file_names_and_is_not_there_is_a_failure_and_no_secret_is_show
         "the doctor printed a secret:\n{shown}"
     );
 }
+
+/// The LiveKit client is one check, whichever of the two keys names it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_livekit_client_is_checked_whichever_key_names_it() {
+    let pulse = support::in_process_pulse().await;
+    let stack = Stack::parse(&format!(
+        "pulse_enet = \"{pulse}\"\nlivekit_client = \"no/such/harness-util\"\n"
+    ))
+    .unwrap();
+    let checks = examine(Arc::new(stack)).await;
+    let client = check(&checks, "LiveKit client");
+    assert!(!client.ok && !client.optional, "{client:?}");
+    assert!(
+        checks
+            .iter()
+            .all(|check| check.what != "LiveKit client (no keys)")
+    );
+}
