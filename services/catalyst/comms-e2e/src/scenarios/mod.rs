@@ -8,6 +8,7 @@ pub mod explorer;
 pub mod explorer_uplink;
 pub mod livekit;
 pub mod pulse;
+pub mod pulse_clock;
 pub mod support;
 pub mod visit;
 pub mod webtransport;
@@ -50,6 +51,7 @@ pub const TAGS: &[&str] = &[
 /// All scenarios, in the order a full run takes them.
 pub fn registry() -> Vec<&'static Scenario> {
     let mut all = pulse::all();
+    all.extend(pulse_clock::all());
     all.extend(crowd::all());
     all.extend(webtransport::all());
     all.extend(connections::all());
