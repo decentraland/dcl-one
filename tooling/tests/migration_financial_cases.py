@@ -258,6 +258,29 @@ class FinancialMigrationCases:
         self.assertEqual(self.sql(db, "SELECT status, coalesce(cancel_reason, '-') FROM signatures.rentals;\n").strip(),
                          'executed\t-')
 
+    def test_when_a_node_rental_cancellation_is_newer_it_should_skip_an_older_upstream_execution(self):
+        db = self.fresh_db('financial_rental_newer_cancel')
+        self.sql(db, (ROOT / 'schemas/32_signatures.sql').read_text())
+        self.sql(db, '''INSERT INTO signatures.rental_assets(contract_address,token_id,nft_id,network,chain_id,
+                category,search_text,nft_created_at,nft_updated_at,fetched_at)
+            VALUES ('asset',1,'asset','ethereum',1,'parcel','','2026-01-01','2026-01-01','2026-01-01');''')
+        stage = self.financial_stage(self.financial_step('signatures-server', 'rentals'))
+        load = (migrate.SOURCES / 'signatures-server/rentals.load.sql').read_text()
+        rental_id = '11111111-1111-1111-1111-111111111111'
+
+        def row(status, updated):
+            return (f"INSERT INTO stage VALUES ('{rental_id}','asset',1,'ethereum',1,'2027-01-01',ARRAY['0','0','0'],"
+                    f"'sig','contract','{status}','target',NULL,NULL,'2026-01-01','{updated}',NULL,'lessor',NULL);")
+
+        def state():
+            return self.sql(db, 'SELECT status, cancel_reason FROM signatures.rentals;\n').strip()
+        self.sql(db, stage + row('open', '2026-01-01') + load)
+        self.sql(db, "UPDATE signatures.rentals SET status='cancelled', cancel_reason='expired', updated_at='2026-01-05';")
+        self.sql(db, stage + row('executed', '2026-01-04') + load)
+        self.assertEqual(state(), 'cancelled\texpired')
+        self.sql(db, stage + row('executed', '2026-01-06') + load)
+        self.assertEqual(state().split('\t')[0], 'executed')
+
     def test_when_a_batch_carries_two_open_listings_of_one_asset_it_should_land_the_latest(self):
         db = self.fresh_db('financial_rental_two_open')
         self.sql(db, (ROOT / 'schemas/32_signatures.sql').read_text())
