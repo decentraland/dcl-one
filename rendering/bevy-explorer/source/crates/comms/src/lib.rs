@@ -110,6 +110,19 @@ impl Plugin for CommsPlugin {
                 std::env::var("DCL_SCENE_ROOM_ADAPTER").ok(),
             ));
 
+        // The web page reports the inputs; the microphone routes and the Microphone setting read
+        // them. The saved choice is listed first, so a first report that lacks it counts as its
+        // absence.
+        let mut microphone_devices = common::structs::MicrophoneDevices::default();
+        if let Some(id) = app
+            .world()
+            .get_resource::<common::structs::AppConfig>()
+            .and_then(|config| config.microphone.as_deref())
+        {
+            microphone_devices.remember(id);
+        }
+        app.insert_resource(microphone_devices);
+
         app.add_plugins((
             room_connection::RoomConnectionPlugin,
             connectivity::ConnectivityPlugin,

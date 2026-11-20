@@ -151,8 +151,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     user. In a stream `MuteSpeakerFromCommunityVoiceChat` is still sent, so every client shows the
     same state (a focus pause is the exception, below).
   - Don't play calls at the nearby-voice volume. Calls and streams follow `Voice Chat Volume` and
-    nearby players `Voice Volume`, both scaled by `Master`. Capture uses the system's default
-    microphone; a device picker is next work.
+    nearby players `Voice Volume`, both scaled by `Master`. On the web, Settings › Sounds ›
+    Microphone picks the capture input by device id; an unplugged choice falls back to the system
+    default until it returns. Native capture uses the system's default microphone.
   - Don't loop the call tune in the audio layer, which has no loop: the one-shot clip is
     re-triggered every 3.056 s (its length) while ringing.
   - Don't auto-subscribe the voice room. Like every room it joins with `auto_subscribe: false`,

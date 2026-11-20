@@ -77,6 +77,9 @@ pub mod load_distance;
 pub mod max_avatars;
 pub mod max_downloads;
 pub mod max_lods;
+// only the web host reports microphones
+#[cfg(any(target_arch = "wasm32", test))]
+mod microphone_setting;
 pub mod oob_setting;
 pub mod parcel_grass_settings;
 pub mod player_settings;
@@ -244,6 +247,8 @@ impl Plugin for SettingBridgePlugin {
         add_int_setting::<VoiceChatVolumeSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<SystemVolumeSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<AvatarVolumeSetting>(app, &mut settings, &mut schedule, &config);
+        #[cfg(target_arch = "wasm32")]
+        microphone_setting::add(app, &mut settings, &config);
 
         add_enum_setting::<DmPrivacy>(app, &mut settings, &mut schedule, &config);
         app.init_resource::<PlayerLanguage>();
@@ -368,6 +373,8 @@ pub struct Setting {
     >,
     /// The displayed value for the current config, for settings changed outside `set_value`.
     load: Box<dyn Fn(&AppConfig) -> f32 + Send + Sync + 'static>,
+    /// The named choices change at runtime, so a list taken once goes stale.
+    runtime_choices: bool,
 }
 
 #[derive(Resource)]
@@ -394,15 +401,16 @@ impl Settings {
             .apply
             .take()
             .unwrap();
-        let res = (apply)(config, value)?;
+        let res = (apply)(config, value);
         let setting = self
             .settings
             .iter_mut()
             .find(|s| s.info.name == name)
             .unwrap();
 
+        // restored before a failure returns, so the next change can still apply
         setting.apply = Some(apply);
-        setting.info.value = res;
+        setting.info.value = res?;
         Ok(())
     }
 
@@ -435,6 +443,7 @@ impl Settings {
                 },
             )),
             load: Box::new(|config: &AppConfig| S::load(config).value() as f32 * S::scale()),
+            runtime_choices: false,
         });
     }
 
@@ -479,6 +488,7 @@ impl Settings {
                 },
             )),
             load: Box::new(|config: &AppConfig| displayed::<S>(config)),
+            runtime_choices: false,
         });
     }
 }

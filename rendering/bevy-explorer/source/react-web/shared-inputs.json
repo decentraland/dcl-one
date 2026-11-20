@@ -6575,7 +6575,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "c7de95ab0f1e688ee646a449ba3f27f98e397b07b17611293be447d4065bd812"
+      "sha256": "84c2cf00823b3ac441b6a8f0dd7a691fa5036c63ecb6bf7f9eac2df0b9f6eba1"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -10203,7 +10203,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
-      "sha256": "49f1b7a403f8ee3da95f0c04d934bc2fcd8ad0ff90591789050fd98489d309b6"
+      "sha256": "eeba39e7c76453d3771c51acd480767154d97e40a9105da9823edf1ca2e87be1"
     },
     {
       "path": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
@@ -10903,7 +10903,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.clicks.test.tsx",
-      "sha256": "aee6ec81ac2bf8da0ac22c012c1efd025d1eb0b7f484378c614bdff12ec8f9a3"
+      "sha256": "8396ef8b51cc40e6ed087cf4c542aba0e3211d35af1c68af5a27a099ec456c9b"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.test.tsx",

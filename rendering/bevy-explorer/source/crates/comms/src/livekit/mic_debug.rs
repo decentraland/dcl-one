@@ -32,10 +32,12 @@ impl Plugin for MicDebugPlugin {
                     ("Client window focus", "windowFocus"),
                     ("Local microphone track active", "transmitting"),
                     ("Active remote speakers (up to 32)", "speakers"),
-                    #[cfg(not(target_arch = "wasm32"))]
+                    ("Microphone routes", "routes"),
                     ("Available input devices", "devices"),
                     #[cfg(not(target_arch = "wasm32"))]
                     ("Current input device", "device"),
+                    #[cfg(target_arch = "wasm32")]
+                    ("Chosen input device", "device"),
                     #[cfg(not(target_arch = "wasm32"))]
                     ("Capture sample rate (Hz)", "rate"),
                     #[cfg(not(target_arch = "wasm32"))]
@@ -113,10 +115,12 @@ fn microphone_info(
     speakers: Query<&LivekitParticipant, (With<ActiveSpeaker>, Without<Local>)>,
     #[cfg(not(target_arch = "wasm32"))] device: Option<Res<MicrophoneDevice>>,
     #[cfg(not(target_arch = "wasm32"))] format: Option<Res<CaptureFormat>>,
+    devices: Res<MicrophoneDevices>,
+    routes: Query<&MicrophonePublication>,
+    #[cfg(target_arch = "wasm32")] config: Res<AppConfig>,
 ) {
     let Some(Ok(_)) = input.take() else { return };
     let speakers: BTreeSet<_> = speakers.iter().map(|p| p.identity().to_string()).collect();
-    #[allow(unused_mut)]
     let mut report = json!({"available": mic.available, "enabled": mic.enabled, "connected": !connected.is_empty(), "permission": format!("{:?}", permission.get()), "windowFocus": format!("{:?}", *focus),
         "transmitting": *transmission.get() == MicrophoneTransmissionState::Enabled, "speakers": speakers.into_iter().take(32).collect::<Vec<_>>()});
     #[cfg(not(target_arch = "wasm32"))]
@@ -133,6 +137,35 @@ fn microphone_info(
             "channels": "Microphone capture is inactive",
             "device": "No current input device",
             "devices": "Input device enumeration failed",
+        });
+    }
+    report["routes"] = json!(routes
+        .iter()
+        .map(|route| {
+            let input = route
+                .device
+                .as_deref()
+                .map_or("System Default".to_owned(), |id| {
+                    devices.label(id).unwrap_or_else(|| id.to_owned())
+                });
+            if route.fell_back {
+                format!("{input}: fell back to the system default")
+            } else {
+                input
+            }
+        })
+        .collect::<Vec<_>>());
+    #[cfg(target_arch = "wasm32")]
+    {
+        let chosen = config.microphone.as_ref().map(|id| {
+            devices
+                .label(id)
+                .unwrap_or_else(|| "Chosen device (unknown)".to_owned())
+        });
+        report["device"] = json!(chosen.as_deref().unwrap_or("System Default"));
+        report["devices"] = json!(devices.offered());
+        report["unavailable"] = json!({
+            "devices": "The page has not listed its inputs",
         });
     }
     input.reply_ok(report.to_string());

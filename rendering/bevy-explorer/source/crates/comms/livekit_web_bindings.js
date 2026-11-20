@@ -10,6 +10,11 @@ function error(...args) {
 
 var audioContext = null;
 var microphonePermission = "denied";
+var reportMicrophoneDevices = () => {};
+// numbers each listing, so one that resolves after a newer one is dropped
+var microphoneListing = 0;
+// a listing has shown the inputs' ids, which the browser hides without permission
+var microphoneIdsShown = false;
 const roomPlayback = new WeakMap();
 // Stream and transmitter audio elements whose play() the browser refused, with their room.
 const refusedStreams = new Map();
@@ -111,15 +116,23 @@ function update_gesture_listener() {
  * @param {function} on_change called with the permission state now and whenever it changes
  */
 export function setupMicrophonePermission(on_change) {
+    if (!(navigator.permissions && navigator.permissions.query)) {
+        warn("the microphone permission cannot be queried");
+        return;
+    }
     navigator.permissions.query({ name: "microphone" }).then((permissionState) => {
         microphonePermission = permissionState.state;
         on_change(microphonePermission);
+        // the watch may have skipped an empty list before the state was known
+        reportMicrophoneDevices();
 
         permissionState.onchange = () => {
             microphonePermission = permissionState.state;
             on_change(microphonePermission);
+            // a grant reveals the devices' ids and labels
+            reportMicrophoneDevices();
         };
-    });
+    }).catch((err) => warn("querying the microphone permission failed", err));
 }
 
 /**
@@ -147,10 +160,60 @@ export function promptMicrophonePermission() {
         Promise.resolve()
             .then(() => navigator.mediaDevices.getUserMedia({ audio: true }))
             .then(
-                (stream) => stream.getTracks().forEach((track) => track.stop()),
+                (stream) => {
+                    stream.getTracks().forEach((track) => track.stop());
+                    reportMicrophoneDevices();
+                },
                 (err) => warn("microphone permission prompt failed", err),
             );
     }
+}
+
+/**
+ * Reports the audio inputs now and whenever they change. The browser's "default" and
+ * "communications" entries are aliases of real inputs and are left out. Without microphone
+ * permission the browser hides the inputs' ids, and nothing is reported.
+ * @param {function} on_change called with an array of { id, label }
+ */
+export function watchMicrophoneDevices(on_change) {
+    if (!(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices)) {
+        return;
+    }
+    reportMicrophoneDevices = () => {
+        const listing = ++microphoneListing;
+        navigator.mediaDevices
+            .enumerateDevices()
+            .then((devices) => {
+                if (listing !== microphoneListing) {
+                    return;
+                }
+                const audio = devices.filter((device) => device.kind === "audioinput");
+                // hidden ids, or a list that may be empty only for want of permission
+                if (audio.some((device) => !device.deviceId)) {
+                    return;
+                }
+                if (audio.length > 0) {
+                    microphoneIdsShown = true;
+                } else if (microphonePermission !== "granted" && !microphoneIdsShown) {
+                    return;
+                }
+                const inputs = audio.filter(
+                    (device) =>
+                        device.deviceId !== "default" &&
+                        device.deviceId !== "communications"
+                );
+                on_change(
+                    inputs.map((device) => ({
+                        id: device.deviceId,
+                        // from the id, so another input plugged in leaves this name alone
+                        label: device.label || `Microphone ${device.deviceId.slice(0, 6)}`,
+                    }))
+                );
+            })
+            .catch((err) => warn("listing microphones failed", err));
+    };
+    navigator.mediaDevices.addEventListener("devicechange", reportMicrophoneDevices);
+    reportMicrophoneDevices();
 }
 
 /**

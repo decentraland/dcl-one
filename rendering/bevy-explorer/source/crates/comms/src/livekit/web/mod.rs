@@ -31,6 +31,7 @@ use std::{
 };
 
 use bevy::{platform::collections::HashMap, prelude::*};
+use common::structs::{MicrophoneDevices, MicrophoneInput};
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use media::MediaId;
 use once_cell::sync::OnceCell;
@@ -184,6 +185,8 @@ impl Default for TrackPublishOptions {
 
 #[derive(Debug, Default)]
 pub struct AudioCaptureOptions {
+    /// Preferred over other inputs while present.
+    pub device_id: Option<String>,
     pub auto_gain_control: Option<bool>,
     pub channel_count: Option<u64>,
     pub echo_cancellation: Option<bool>,
@@ -349,6 +352,8 @@ pub enum LivekitEvent {
         available: bool,
         permission: String,
     },
+    /// The browser's audio inputs changed.
+    MicrophoneDevices(Vec<MicrophoneInput>),
 }
 
 /// The page's answer to a request.
@@ -492,6 +497,7 @@ pub fn take_event_receiver() -> LivekitEventReceiver {
 pub fn dispatch_page_events(
     mut receiver: ResMut<LivekitEventReceiver>,
     mut microphone: ResMut<MicrophoneStatus>,
+    mut microphone_devices: ResMut<MicrophoneDevices>,
 ) {
     let Some(receiver) = receiver.0.as_mut() else {
         return;
@@ -532,6 +538,9 @@ pub fn dispatch_page_events(
             } => {
                 microphone.available = available;
                 microphone.permission = permission;
+            }
+            LivekitEvent::MicrophoneDevices(devices) => {
+                microphone_devices.replace(devices);
             }
         }
     }

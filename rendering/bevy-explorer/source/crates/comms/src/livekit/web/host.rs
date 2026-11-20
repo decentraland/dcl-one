@@ -8,6 +8,7 @@ use bevy::{
     platform::collections::HashMap,
     prelude::error,
 };
+use common::structs::MicrophoneInput;
 use futures_channel::mpsc::{unbounded, UnboundedSender};
 use futures_lite::StreamExt;
 use js_sys::{Object, Reflect};
@@ -29,6 +30,8 @@ extern "C" {
     fn is_microphone_available() -> bool;
     #[wasm_bindgen(js_name = "promptMicrophonePermission", catch)]
     fn prompt_microphone_permission() -> Result<(), JsValue>;
+    #[wasm_bindgen(js_name = "watchMicrophoneDevices")]
+    fn watch_microphone_devices(on_change: &Closure<dyn FnMut(JsValue)>);
 
     #[wasm_bindgen(catch)]
     async fn room_connect(
@@ -541,9 +544,27 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
             });
         }
         LivekitCommand::SetupMicrophonePermission => {
-            let events = events.clone();
+            let device_events = events.clone();
+            let on_devices = Closure::new(move |devices: JsValue| {
+                let devices = js_sys::Array::from(&devices)
+                    .iter()
+                    .filter_map(|device| {
+                        Some(MicrophoneInput {
+                            id: get_string(&device, "id")?,
+                            label: get_string(&device, "label")?,
+                        })
+                    })
+                    .collect();
+                let _ = device_events.unbounded_send(LivekitEvent::MicrophoneDevices(devices));
+            });
+            // installed first: it does not depend on the permission query
+            watch_microphone_devices(&on_devices);
+            // lives as long as the page
+            on_devices.forget();
+
+            let permission_events = events.clone();
             let on_change = Closure::new(move |permission: String| {
-                let _ = events.unbounded_send(LivekitEvent::Microphone {
+                let _ = permission_events.unbounded_send(LivekitEvent::Microphone {
                     available: is_microphone_available(),
                     permission,
                 });
@@ -672,6 +693,12 @@ fn track_publish_options(options: &TrackPublishOptions) -> JsValue {
 
 fn audio_capture_options(options: &AudioCaptureOptions) -> JsValue {
     let object = Object::new();
+    if let Some(id) = &options.device_id {
+        // `ideal`, unlike `exact`, falls back to another input when this one is gone
+        let device_id = Object::new();
+        set(&device_id, "ideal", id.as_str());
+        set(&object, "deviceId", device_id);
+    }
     if let Some(v) = options.auto_gain_control {
         set(&object, "autoGainControl", v);
     }

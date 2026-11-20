@@ -6,7 +6,8 @@ use std::sync::{
 };
 
 use bevy::{ecs::relationship::Relationship, prelude::*};
-use common::structs::{ClientWindowFocus, MicState, SystemAudio};
+use common::structs::MicrophoneDevices;
+use common::structs::{AppConfig, ClientWindowFocus, MicState, SystemAudio};
 use tokio::{sync::oneshot, task::JoinHandle};
 use web_time::Instant;
 #[cfg(target_arch = "wasm32")]
@@ -195,6 +196,12 @@ pub(crate) struct MicrophonePublication {
     cancel: tokio::sync::watch::Sender<bool>,
     drain: MicrophoneDrain,
     task: JoinHandle<()>,
+    /// The input chosen when the route started.
+    device: Option<String>,
+    /// The chosen input was missing when the route started, so the capture fell back.
+    fell_back: bool,
+    /// [`MicrophoneDevices::absences`] of the chosen input when the route started.
+    absences: u32,
 }
 
 impl MicrophonePublication {
@@ -210,6 +217,31 @@ impl MicrophonePublication {
                     let _ = start.send(());
                 }
             });
+    }
+
+    /// Records the input chosen as the route starts.
+    fn choose(&mut self, device: Option<String>, devices: &MicrophoneDevices) {
+        if let Some(id) = &device {
+            self.fell_back = devices.missing(id);
+            self.absences = devices.absences(id);
+        }
+        self.device = device;
+    }
+
+    /// A different choice needs a new route, and so does the chosen input going missing (the new
+    /// route falls back to the system default) or being offered again after a fallback.
+    fn captures_choice(&self, choice: Option<&str>, devices: &MicrophoneDevices) -> bool {
+        if self.device.as_deref() != choice {
+            return false;
+        }
+        let Some(id) = choice else {
+            return true;
+        };
+        if self.fell_back {
+            !devices.offers(id)
+        } else {
+            devices.absences(id) == self.absences
+        }
     }
 
     fn should_remove(&self, eligible: bool) -> bool {
@@ -682,6 +714,8 @@ fn reconcile_publications(
     livekit_runtime: LivekitRuntimeRes,
     #[cfg(not(target_arch = "wasm32"))] source: Res<LocalAudioSource>,
     #[cfg(not(target_arch = "wasm32"))] format: Option<Res<CaptureFormat>>,
+    config: Res<AppConfig>,
+    devices: Res<MicrophoneDevices>,
 ) {
     let enabled = microphone_routes_open(*focus, &mic, *permission.get(), *availability.get());
     let eligible = |room: Entity, participant: &LivekitParticipant| {
@@ -697,7 +731,8 @@ fn reconcile_publications(
     let mut revoking = false;
     for (entity, participant, room, publication) in &participants {
         if let Some(publication) = publication {
-            if publication.should_remove(eligible(room.get(), participant)) {
+            let current = publication.captures_choice(config.microphone.as_deref(), &devices);
+            if publication.should_remove(current && eligible(room.get(), participant)) {
                 commands
                     .entity(entity)
                     .try_remove::<MicrophonePublication>();
@@ -746,6 +781,9 @@ fn reconcile_publications(
         let receiver = source.subscribe();
         #[cfg(not(target_arch = "wasm32"))]
         let (sample_rate, channels) = (format.sample_rate, format.channels);
+        let device = config.microphone.clone();
+        #[cfg(target_arch = "wasm32")]
+        let task_device = device.clone();
 
         let task = livekit_runtime.spawn(async move {
             if installed.await.is_err() || task_revoked.load(Ordering::SeqCst) {
@@ -762,7 +800,7 @@ fn reconcile_publications(
             )
             .await;
             #[cfg(target_arch = "wasm32")]
-            let track = match build_audio_local_track().await {
+            let track = match build_audio_local_track(task_device).await {
                 Ok(Ok(track)) => track,
                 Ok(Err(err)) => {
                     warn!("microphone creation failed: {err}");
@@ -833,14 +871,18 @@ fn reconcile_publications(
             }
             complete_publication(&task_state, &task_drain, stopped);
         });
-        MicrophonePublication {
+        let mut publication = MicrophonePublication {
             state,
             revoked,
             cancel,
             drain: drain.clone(),
             task,
-        }
-        .queue_insert(&mut commands, entity, start);
+            device: None,
+            fell_back: false,
+            absences: 0,
+        };
+        publication.choose(device, &devices);
+        publication.queue_insert(&mut commands, entity, start);
     }
 }
 
@@ -973,8 +1015,11 @@ async fn build_audio_local_track(
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn build_audio_local_track() -> super::web::RoomResult<Result<LocalAudioTrack, String>> {
+async fn build_audio_local_track(
+    device_id: Option<String>,
+) -> super::web::RoomResult<Result<LocalAudioTrack, String>> {
     LocalAudioTrack::new(AudioCaptureOptions {
+        device_id,
         echo_cancellation: Some(true),
         noise_suppression: Some(true),
         auto_gain_control: Some(true),
@@ -1020,7 +1065,54 @@ mod routing_tests {
             cancel,
             drain: drain.clone(),
             task: runtime.spawn(std::future::pending()),
+            device: None,
+            fell_back: false,
+            absences: 0,
         }
+    }
+
+    #[test]
+    fn a_route_is_replaced_for_another_choice_or_when_its_choice_goes_missing_or_returns() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let drain = MicrophoneDrain::default();
+        let mut devices = MicrophoneDevices::default();
+        let headset = common::structs::MicrophoneInput {
+            id: "headset".to_owned(),
+            label: "Headset".to_owned(),
+        };
+
+        let default = pending(&runtime, &drain);
+        assert!(default.captures_choice(None, &devices));
+        assert!(!default.captures_choice(Some("headset"), &devices));
+
+        let headset_id = || Some("headset".to_owned());
+        let route = |devices: &MicrophoneDevices| {
+            let mut route = pending(&runtime, &drain);
+            route.choose(headset_id(), devices);
+            route
+        };
+
+        // built before any report, which then lists the headset
+        let early = route(&devices);
+        assert!(early.captures_choice(Some("headset"), &devices));
+        devices.replace(vec![headset.clone()]);
+        assert!(early.captures_choice(Some("headset"), &devices));
+
+        // on the headset: unplugging it rebuilds, as does replugging it before any check
+        let on_headset = route(&devices);
+        assert!(on_headset.captures_choice(Some("headset"), &devices));
+        assert!(!on_headset.captures_choice(None, &devices));
+        devices.replace(Vec::new());
+        assert!(!on_headset.captures_choice(Some("headset"), &devices));
+        let replugged = route(&devices);
+        devices.replace(vec![headset.clone()]);
+        assert!(!replugged.captures_choice(Some("headset"), &devices));
+        let quick = route(&devices);
+        devices.replace(Vec::new());
+        devices.replace(vec![headset]);
+        assert!(!quick.captures_choice(Some("headset"), &devices));
     }
 
     #[test]
