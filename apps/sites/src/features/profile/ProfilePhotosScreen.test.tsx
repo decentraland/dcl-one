@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { createMemoryRouter, RouterProvider } from "react-router";
@@ -107,7 +107,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.resetAllMocks();
-  document.body.style.overflow = "";
+  document.documentElement.style.overflow = "";
 });
 
 describe("profile photos, the grid", () => {
@@ -486,9 +486,10 @@ describe("profile photos, the viewer", () => {
     const opener = await tile(0);
     await user.click(opener);
     const dialog = screen.getByRole("dialog");
+    expect(dialog).toBeInstanceOf(HTMLDialogElement);
     const close = within(dialog).getByRole("button", { name: "Close" });
     expect(document.activeElement).toBe(close);
-    expect(document.body.style.overflow).toBe("hidden");
+    expect(document.documentElement.style.overflow).toBe("hidden");
 
     await user.keyboard("{Shift>}{Tab}{/Shift}");
     expect(dialog.contains(document.activeElement)).toBe(true);
@@ -501,7 +502,7 @@ describe("profile photos, the viewer", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(document.activeElement).toBe(opener);
     expect(router.state.location.search).toBe("");
-    expect(document.body.style.overflow).toBe("");
+    expect(document.documentElement.style.overflow).toBe("");
   });
 
   it("shows no Previous or Next for a single photo", async () => {
@@ -527,7 +528,9 @@ describe("profile photos, the viewer", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
 
     await user.click(screen.getByRole("button", { name: tileName(0) }));
-    await user.click(screen.getByRole("dialog").parentElement!);
+    const backdrop = screen.getByRole("dialog");
+    fireEvent.pointerDown(backdrop, { clientX: -10, clientY: -10 });
+    fireEvent.click(backdrop, { clientX: -10, clientY: -10 });
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
@@ -715,11 +718,23 @@ describe("profile photos, the viewer", () => {
     const dialog = screen.getByRole("dialog");
 
     await user.click(screen.getByRole("img", { name: "Plaza 0" }));
-    expect(document.activeElement).toBe(dialog);
+    expect(dialog.contains(document.activeElement)).toBe(true);
     await user.keyboard("{Shift>}{Tab}{/Shift}");
 
     expect(dialog.contains(document.activeElement)).toBe(true);
     expect(document.activeElement).not.toBe(dialog);
+  });
+
+  it("keeps arrow navigation working after clicking the media around a photo", async () => {
+    const user = userEvent.setup();
+    net.fetchUserPhotos.mockResolvedValue(page([photo(0), photo(1)]));
+    show();
+    await user.click(await tile(0));
+
+    await user.click(screen.getByRole("img", { name: "Plaza 0" }).parentElement!);
+    await user.keyboard("{ArrowRight}");
+
+    expect(screen.getByRole("dialog", { name: `${tileName(1)}, 2 of 2` })).toBeTruthy();
   });
 
   it("keeps focus in the dialog when a step removes the focused link", async () => {

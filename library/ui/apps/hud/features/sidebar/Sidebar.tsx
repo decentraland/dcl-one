@@ -6,7 +6,8 @@
 
 import { useCallback, useContext, useEffect, useState } from 'react'
 import { ControlButton, IconButton, MaskIcon, MenuList, MenuPanel, MenuRow, Panel, Slider, Toggle } from '../../design'
-import { toggleDebugPanel, useDebugPanelState, useDevelopmentBuild } from '../debug/useDebugPanel'
+import { toggleDebugPanel, useDebugPanelState } from '../debug/useDebugPanel'
+import { debugPanelLauncherEnabled } from '@explorer-core/lib/debugPanelLauncher'
 import { keyHintFor, useBindingsSnapshot } from '../../lib/bindingLabels'
 import { userColor } from '@explorer-core/lib/identity'
 import { getPref, PREF, setPref } from '@explorer-core/lib/prefs'
@@ -150,10 +151,7 @@ export function Sidebar({
   const liveEvents = useLiveEventCount()
   const create = useContext(EditorOffered)
   const [configOpen, setConfigOpen] = useState(false)
-  // The debug panel: the configuration menu's last entry opens it, and a development build shows
-  // its launcher at the screen's corner.
   const debugPanelOpen = useDebugPanelState() != null
-  const developmentBuild = useDevelopmentBuild(session.runDebugCommand)
   const [panel, setPanel] = useState<{ id: PanelId; anchor: HTMLElement } | null>(null)
   const [mapShown, setMapShown] = useState(() => getPref(PREF.sidebarMap) === '1')
   const [voiceAnchor, setVoiceAnchor] = useState<HTMLElement | null>(null)
@@ -213,7 +211,7 @@ export function Sidebar({
   const signOutOffered = session.login.signedInAs != null && !isNativeHud()
   const voiceState = nearby.blocked ? 'blocked' : !nearby.hearing ? 'off' : nearby.speaking ? 'speaking' : 'hearing'
   const voiceOn = voiceState === 'hearing' || voiceState === 'speaking'
-  const launcher = developmentBuild && (
+  const launcher = debugPanelLauncherEnabled() && (
     <ControlButton variant="dark" className={styles.debugLauncher} aria-label="Toggle debug panel"
       title="Toggle debug panel" active={debugPanelOpen} onClick={() => toggleDebugPanel()}>
       <img src={debugIcon} width={28} height={28} alt="" draggable={false} />

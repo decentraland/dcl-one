@@ -156,7 +156,9 @@ Other named sets: `RealmLifecycle` for systems that react to a realm change, `Te
 ## Render world
 
 The render app is bevy's. We add a few `RenderSet::Prepare*` systems for custom materials and
-uniforms, and three render-graph nodes in `Core3d`: the hover glow between `DepthOfField` and
+uniforms, and four render-graph nodes in `Core3d`: the lens flare between `EndMainPass` and
+`Bloom` (`crates/visuals/src/lens_flare.rs`, after `Wireframe` when that pass exists, since its
+MSAA resolve would overwrite the flare), the hover glow between `DepthOfField` and
 `Tonemapping` (`crates/scene_material/src/highlight`, whose mask phase also adds queue and sort
 systems in `RenderSet::QueueMeshes` and `RenderSet::PhaseSort`), and two stars passes
 (`crates/visuals/src/stars.rs`), of which a view draws one: the early pass between

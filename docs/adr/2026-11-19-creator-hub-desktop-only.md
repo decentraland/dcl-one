@@ -16,9 +16,9 @@ World and LAND work, and scenes are no longer created or edited on the web.
 The Creator Hub is the desktop app. Sites keeps, under `/create`:
 
 - the creators landing (`/create`) and its blog rail (`/create/latest-posts`);
-- the wearable and emote collection pages and curation (`/create/wearables/*`, `/create/curate`);
+- the wearable and emote collection pages and curation (`/create/collections/*`, `/create/curation`);
 - `/create/preview`, the multiplayer preview other teams test with;
-- the `/create/about`, `/create/claim-name` and `/create/collections` redirects.
+- the `/create/about` and `/create/claim-name` redirects.
 
 Every other web Creator Hub page is removed, with the code, data readers, telemetry events,
 public assets and APIs only it used (`/api/creator-hub/*`, `/api/screens/v1/create`).

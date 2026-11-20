@@ -844,7 +844,7 @@ class DevTest(unittest.TestCase):
             self.assertEqual(env[key], 'false', key)
         # The Shop's catalogue follows the public subgraphs and chain, as `posture show mirror` does.
         for key in ('MARKETPLACE_MIRRORS_ENABLED', 'MARKETPLACE_NFT_INDEX_ENABLED', 'LAND_AUTHZ_INDEX_ENABLED',
-                    'SHOP_RENTALS_INDEX_ENABLED'):
+                    'SHOP_RENTALS_INDEX_ENABLED', 'MARKETPLACE_COMMITTEE_INDEX_ENABLED'):
             self.assertEqual(env[key], 'true', key)
         self.assertTrue(env['MATIC_COLLECTIONS_SUBGRAPH_URL'].startswith('https://'))
         self.assertIn('index', dev.project({**self.config, 'profile': 'mirror'})['processes'])
@@ -887,6 +887,8 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['MARKETPLACE_NFT_INDEX_ENABLED'], 'false')
         self.assertEqual(mirror['MARKETPLACE_NFT_INDEX_ENABLED'], 'true')
         self.assertEqual((env['SHOP_RENTALS_INDEX_ENABLED'], mirror['SHOP_RENTALS_INDEX_ENABLED']), ('false', 'true'))
+        self.assertEqual((env['MARKETPLACE_COMMITTEE_INDEX_ENABLED'], mirror['MARKETPLACE_COMMITTEE_INDEX_ENABLED']),
+                         ('false', 'true'))
         self.assertIn('decentraland.zone', env['TRADES_SYNC_UPSTREAM_URL'])
         self.assertIn('decentraland.zone', env['TRANSACTIONS_UPSTREAM_URL'])
         self.assertTrue(env['RPC_ENDPOINT_POLYGON'].endswith('/amoy'))

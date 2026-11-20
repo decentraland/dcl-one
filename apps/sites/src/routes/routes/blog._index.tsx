@@ -1,4 +1,4 @@
-import { BlogIndexView } from "@/features/blog/BlogIndexView";
+import { BlogIndexView } from "@/pages/blog/BlogIndexView";
 import { loadBlogHome } from "@/data/lib/blog/pages";
 import "@dcl/one-ui/foundations/foundations.css";
 

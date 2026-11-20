@@ -570,6 +570,51 @@ fn avatar_build(world: &mut World, owner: Entity) -> Entity {
         .expect("the avatar must have a pending build")
 }
 
+#[cfg(feature = "explorer")]
+#[test]
+fn removing_a_scene_avatar_shape_despawns_the_render_child() {
+    use scene_runner::initialize_scene::{LiveScenes, PortableScenes, ScenePointers};
+
+    let mut app = app_with_avatar_scenes();
+    app.add_observer(add_attach_points_to_avatar_shape)
+        .add_observer(remove_attach_points_from_avatar_shape)
+        .init_resource::<LiveScenes>()
+        .init_resource::<PortableScenes>()
+        .init_resource::<ScenePointers>();
+    let world = app.world_mut();
+    let body = usable_body_gltf(world);
+    register_test_body(world, base_wearables::default_bodyshape_urn(), body);
+
+    let scene = world.spawn_empty().id();
+    let owner = world
+        .spawn((
+            AvatarShape(PbAvatarShape::default()),
+            SceneEntity {
+                root: scene,
+                scene_id: dcl_types::SceneId(scene),
+                id: SceneEntityId {
+                    id: 42,
+                    generation: 0,
+                },
+            },
+        ))
+        .id();
+    let other_child = world.spawn(ChildOf(owner)).id();
+    world.run_system_once(select_avatar).unwrap();
+    world.run_system_once(update_render_avatar).unwrap();
+    let render = avatar_build(world, owner);
+
+    world.entity_mut(owner).remove::<AvatarShape>();
+    world.run_system_once(select_avatar).unwrap();
+    assert!(world.get::<AttachPoints>(owner).is_none());
+    assert!(world.get::<AvatarSelection>(owner).is_none());
+
+    world.run_system_once(update_render_avatar).unwrap();
+
+    assert!(world.get_entity(render).is_err());
+    assert!(world.get_entity(other_child).is_ok());
+}
+
 fn take_load_reports(
     world: &World,
     cursor: &mut bevy::ecs::event::EventCursor<AvatarLoadReport>,

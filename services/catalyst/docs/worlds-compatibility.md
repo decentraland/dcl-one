@@ -221,6 +221,26 @@ difference not listed here is a gap, not a decision.
   and resolves other Unicode names; here those have no owner. A wrapped
   name has an owner only while the ENS Registry still gives its node to
   the NameWrapper (upstream trusts the NameWrapper alone).
+- **DCL NAME holder reader.** A DCL NAME world's owner is the NAME's
+  current holder, read from `MARKETPLACE_SUBGRAPH_URL` (upstream's
+  marketplace subgraph); it has no default and only the `mirror` posture
+  sets it. Without it a DCL NAME world has no owner for writes: publishes,
+  the owner-gated permission, settings, undeploy and storage routes, and
+  the owner's scene-admin rights (admins, bans, stream key, Cast) are
+  refused (upstream reads the stored owner first, which keeps naming a
+  former holder until a publish replaces it). The reads still
+  use the stored owner then: `GET /world/{name}/permissions`, `/limits`,
+  owner admission, the ban-protected set and the quota pass. `catalyst serve`
+  with `WORLDS_WRITES_ENABLED=true` refuses to start without the URL, before
+  it opens the database (`catalyst index` takes no world writes and skips
+  this rule), unless `IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true` (a node
+  without chain access, such as the `journey` posture), where it logs a
+  warning and serves personal worlds.
+- **Quota block on a reader fault.** Admission applies the quota block of
+  the NAME's live holder when it differs from the stored owner. When the
+  holder cannot be read (a reader fault or timeout), or without a reader,
+  the stored owner's block applies, so admission stays available during a
+  reader outage at the cost of a block that may trail a NAME transfer.
 - **Owner reconcile.** `worlds.owner` is rewritten from the name authority
   every `WORLDS_OWNER_RECONCILE_INTERVAL_SECS` (default 12 hours, as
   upstream) for worlds with a locally published scene, ENS worlds

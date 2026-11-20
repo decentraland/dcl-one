@@ -539,7 +539,7 @@ mod tests {
         );
     }
     use super::*;
-    use crate::signed_fetch::{FIVE_MINUTES, SCENE_SIGNER, build_payload_v6};
+    use crate::signed_fetch::{SCENE_SIGNER, SIGNED_FETCH_WINDOW_SECS, build_payload_v6};
     use axum::http::HeaderValue;
     use serde_json::json;
 
@@ -553,7 +553,15 @@ mod tests {
         paths: &[String],
         now_secs: i64,
     ) -> Result<Address, HandshakeError> {
-        verify_handshake(frame, method, paths, FIVE_MINUTES, now_secs, None).await
+        verify_handshake(
+            frame,
+            method,
+            paths,
+            SIGNED_FETCH_WINDOW_SECS,
+            now_secs,
+            None,
+        )
+        .await
     }
 
     #[tokio::test]

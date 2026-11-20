@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
   Object.assign(window, {
@@ -12,10 +12,11 @@ vi.hoisted(() => {
     $RefreshReg$: () => {},
   });
 });
-const net = vi.hoisted(() => ({ fetchProfileAssets: vi.fn() }));
+const net = vi.hoisted(() => ({ fetchProfileAssets: vi.fn(), fetchProfileAssetCount: vi.fn() }));
 vi.mock("@/data/lib/catalyst/marketplace/profile-collectibles", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/marketplace/profile-collectibles")>()),
   fetchProfileAssets: net.fetchProfileAssets,
+  fetchProfileAssetCount: net.fetchProfileAssetCount,
 }));
 vi.mock("@/data/lib/auth/index", () => ({ useAuth: () => ({ identity: null, isConnected: false, address: null }) }));
 
@@ -79,6 +80,9 @@ afterEach(() => {
 });
 
 describe("profile assets", () => {
+  beforeEach(() => {
+    net.fetchProfileAssetCount.mockResolvedValue(1);
+  });
   it("opens on every category, with the total and each token linking to its Shop page", async () => {
     net.fetchProfileAssets.mockResolvedValue(page([asset(1, { price: "12" })], 3431));
 
@@ -164,6 +168,42 @@ describe("profile assets", () => {
     expect(screen.queryByRole("article")).toBeNull();
     expect(screen.getByRole("link", { name: "Transfer brai" }).getAttribute("href")).toBe("/shop/token/0xens/5/transfer");
     expect(net.fetchProfileAssets.mock.calls.at(-1)?.[1]).toMatchObject({ category: "ens" });
+  });
+
+  describe("when the catalogue reports category totals", () => {
+    beforeEach(() => {
+      net.fetchProfileAssets.mockResolvedValue(page([asset(1)], 30));
+      net.fetchProfileAssetCount.mockImplementation(async (_owner: string, category: string) =>
+        category === "ens" ? 1 : 0,
+      );
+      show();
+    });
+
+    it("should show a category with inventory beyond the loaded page", async () => {
+      expect(await screen.findByRole("tab", { name: "Names" })).toBeTruthy();
+    });
+
+    it("should hide categories with no inventory", async () => {
+      await screen.findByRole("tab", { name: "Names" });
+      expect(screen.queryByRole("tab", { name: "Lands" })).toBeNull();
+      expect(screen.queryByRole("tab", { name: "Estates" })).toBeNull();
+    });
+  });
+
+  describe("when the catalogue cannot confirm a category total", () => {
+    beforeEach(() => {
+      net.fetchProfileAssets.mockResolvedValue(page([asset(1)]));
+      net.fetchProfileAssetCount.mockImplementation(async (_owner: string, category: string) => {
+        if (category === "parcel") throw new Error("Unavailable");
+        return 0;
+      });
+      show();
+    });
+
+    it("should leave the unverified category accessible", async () => {
+      expect(await screen.findByRole("tab", { name: "Lands" })).toBeTruthy();
+      expect(screen.queryByRole("tab", { name: "Estates" })).toBeNull();
+    });
   });
 
   it("says a filtered category holds nothing", async () => {

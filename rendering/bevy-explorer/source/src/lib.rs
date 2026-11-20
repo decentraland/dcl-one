@@ -255,6 +255,10 @@ pub struct DecentralandArguments {
     /// Skip the sign-in screen with an auto guest-login (default HUD only; `?guest=1` on web)
     #[arg(long)]
     pub guest: bool,
+    /// Show the lower-right debug panel button in the HUD
+    #[cfg(not(target_arch = "wasm32"))]
+    #[arg(long, help_heading = DEBUG)]
+    pub debug_panel: bool,
     /// Echo scene logs to the console
     #[arg(long = "scene_log_to_console", help_heading = DEBUG)]
     pub scene_log_to_console: bool,
@@ -470,6 +474,7 @@ impl DecentralandApp {
                 server,
                 position: launch.position.clone(),
                 guest: decentraland_app_config.arguments.guest,
+                debug_panel: decentraland_app_config.arguments.debug_panel,
                 autopilot,
             });
         }
@@ -486,9 +491,11 @@ impl DecentralandApp {
         };
         // Show out-of-bounds geometry in preview, on a loopback realm (local dev) and in
         // the editor, never on a public realm; the same runs are a local scene to analytics.
-        let show_out_of_bounds = decentraland_app_config.arguments.client.editor
-            || decentraland_app_config.arguments.launch.preview
-            || common::util::is_loopback_url(&boot_server);
+        let ShowOutOfBounds(show_out_of_bounds) = ShowOutOfBounds::for_run(
+            decentraland_app_config.arguments.client.editor,
+            decentraland_app_config.arguments.launch.preview,
+            Some(&boot_server),
+        );
 
         // Resources
         app.insert_resource(Version(version))

@@ -10,6 +10,7 @@ import { heroDownloads, loadLatestRelease } from "@/data/lib/download/creator-hu
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import CreateLanding from "@/features/create-landing/CreateLanding";
 import { CREATOR_HUB_DOWNLOAD } from "@/features/create-landing/HeroDownload";
+import { SubNav } from "@/features/creators/components/SubNav";
 
 import type { Route } from "./+types/create._index";
 
@@ -64,6 +65,7 @@ export default function CreateRoute({ loaderData }: Route.ComponentProps) {
   return (
     <HydrationBoundary state={loaderData?.dehydratedState}>
       <SitesChrome active="create" overlayNav>
+        <SubNav landing />
         <CreateLanding downloads={loaderData?.downloads} sid={loaderData?.sid} />
       </SitesChrome>
     </HydrationBoundary>

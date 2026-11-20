@@ -26,7 +26,6 @@ impl ToDclWriter for DclTranslation {
 }
 
 impl DclTranslation {
-    #[allow(dead_code)]
     pub fn from_bevy_translation(rh_vec: Vec3) -> Self {
         Self([rh_vec.x, rh_vec.y, -rh_vec.z])
     }
@@ -86,7 +85,6 @@ impl DclQuat {
     // to mirror a quaternion, we can either invert the mirror plane basis components or invert the mirrored component and the scalar component
     // here we invert mirrored plus scalar
 
-    #[allow(dead_code)]
     pub fn from_bevy_quat(rh_quat: Quat) -> Self {
         Self([rh_quat.x, rh_quat.y, -rh_quat.z, -rh_quat.w])
     }

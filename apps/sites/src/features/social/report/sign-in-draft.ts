@@ -26,10 +26,13 @@ export function takeSignInDraft(returnTo: string) {
   try {
     const value = sessionStorage.getItem(KEY);
     if (value === null) return null;
-    sessionStorage.removeItem(KEY);
     const result = storedDraft.safeParse(JSON.parse(value));
-    if (!result.success || result.data.expiresAt <= Date.now()) return null;
+    if (!result.success || result.data.expiresAt <= Date.now()) {
+      sessionStorage.removeItem(KEY);
+      return null;
+    }
     if (result.data.returnTo !== returnTo) return null;
+    sessionStorage.removeItem(KEY);
     return result.data;
   } catch {
     return null;
