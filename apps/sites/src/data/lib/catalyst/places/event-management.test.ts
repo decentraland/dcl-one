@@ -1,9 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../client", async (original) => ({ ...await original<typeof import("../client")>(), postJSON: vi.fn(), signedGetJSON: vi.fn() }));
 import { postJSON, signedGetJSON } from "../client";
-import { loadEventProfile, loadManagedEvents, moderateEvent, saveEventPermissions } from "./event-management";
+import { loadEventProfile, loadModerationEvents, loadOwnedEvents, moderateEvent, saveEventPermissions } from "./event-management";
 import type { AuthIdentity } from "../../auth/types";
 import type { ManagedEvent } from "./event-management";
+
+const makeEvent = (id: string): ManagedEvent => ({
+  id, name: "Fixture", image: null, image_vertical: null, description: null,
+  start_at: null, finish_at: null, next_start_at: null, next_finish_at: null, duration: null,
+  all_day: false, x: 0, y: 0, server: null, url: null, user: null, user_name: null,
+  estate_id: null, estate_name: null, scene_name: null, approved: false, rejected: false,
+  highlighted: false, trending: false, world: false, recurrent: false, recurrent_frequency: null,
+  recurrent_weekday_mask: 0, recurrent_month_mask: 0, recurrent_interval: 1, recurrent_setpos: null,
+  recurrent_monthday: null, recurrent_count: null, recurrent_until: null, recurrent_dates: [],
+  categories: [], schedules: [], total_attendees: 0, latest_attendees: [], coordinates: [0, 0],
+  position: [0, 0], live: false, attending: false, place_id: null, community_id: null,
+  featured_item: null, created_at: null, updated_at: null, approved_by: null, rejected_by: null,
+  rejection_reason: null, deleted_by_user: false, deleted_by_admin: false, deleted_by: null,
+  deleted_at: null, deleted_reason: null, previous_place_id: null,
+});
 
 describe("when managing authenticated hangouts", () => {
   let identity: AuthIdentity;
@@ -17,13 +32,49 @@ describe("when managing authenticated hangouts", () => {
   afterEach(() => vi.resetAllMocks());
 
   it("should scope a page of My Hangouts to the signed owner", async () => {
-    await loadManagedEvents(identity, { own: true, limit: 25, offset: 25, search: "music" });
+    await loadOwnedEvents(identity, { limit: 25, offset: 25, search: "music" });
     expect(signedGetJSON).toHaveBeenCalledWith("/events/api/events", expect.objectContaining({ identity, query: expect.objectContaining({ owner: true, list: "all", offset: 25, limit: 26, search: "music" }) }));
   });
 
-  it("should request only pending events for moderation", async () => {
-    await loadManagedEvents(identity, { own: false, limit: 25, offset: 0 });
-    expect(signedGetJSON).toHaveBeenCalledWith("/events/api/events", expect.objectContaining({ identity, query: expect.objectContaining({ list: "active", approved: false, rejected: false, deleted: false }) }));
+  describe("and the signed moderation catalogue contains mixed states", () => {
+    beforeEach(() => {
+      const now = Date.now();
+      const future = new Date(now + 60_000).toISOString();
+      const insideWindow = new Date(now - 23 * 3_600_000).toISOString();
+      const outsideWindow = new Date(now - 25 * 3_600_000).toISOString();
+      const firstPage = Array.from({ length: 100 }, (_, index) => makeEvent(String(index)));
+      const pending = { ...makeEvent("pending"), finish_at: future };
+      vi.mocked(signedGetJSON)
+        .mockResolvedValueOnce({ ok: true, data: [...firstPage, pending] })
+        .mockResolvedValueOnce({ ok: true, data: [
+          pending,
+          { ...makeEvent("recurring"), finish_at: insideWindow, next_finish_at: future },
+          { ...makeEvent("approved"), approved: true, updated_at: insideWindow },
+          { ...makeEvent("older"), approved: true, updated_at: outsideWindow },
+          { ...makeEvent("missing-date"), approved: true },
+          { ...makeEvent("rejected"), finish_at: future, rejected: true },
+          { ...makeEvent("deleted"), approved: true, updated_at: insideWindow, deleted_by_admin: true },
+        ] });
+    });
+
+    it("should request all active states and separate pending events from approvals in the last 24 hours", async () => {
+      const result = await loadModerationEvents(identity);
+      expect(result.events.map((row) => row.id)).toEqual(["pending", "recurring"]);
+      expect(result.recentlyApproved.map((row) => row.id)).toEqual(["approved"]);
+      expect(signedGetJSON).toHaveBeenNthCalledWith(1, "/events/api/events", expect.objectContaining({ identity, query: { list: "active", order: "asc", offset: 0, limit: 101 } }));
+      expect(signedGetJSON).toHaveBeenNthCalledWith(2, "/events/api/events", expect.objectContaining({ identity, query: { list: "active", order: "asc", offset: 100, limit: 101 } }));
+    });
+  });
+
+  describe("and the signed catalogue repeats a full page", () => {
+    beforeEach(() => {
+      vi.mocked(signedGetJSON).mockResolvedValue({ ok: true, data: Array.from({ length: 101 }, (_, index) => makeEvent(String(index))) });
+    });
+
+    it("should report the paging failure after two requests", async () => {
+      await expect(loadModerationEvents(identity)).rejects.toThrow("did not advance");
+      expect(signedGetJSON).toHaveBeenCalledTimes(2);
+    });
   });
 
   it("should send a signed approval to the selected event", async () => {
@@ -71,34 +122,21 @@ describe("when managing authenticated hangouts", () => {
   ])("and the list uses $shape", ({ data, total }) => {
     beforeEach(() => { vi.mocked(signedGetJSON).mockResolvedValue({ ok: true, data, total }); });
     it("should honor the total beyond this page", async () => {
-      await expect(loadManagedEvents(identity, { own: true, offset: 25, limit: 25 })).resolves.toEqual({ events: [], hasMore: true });
+      await expect(loadOwnedEvents(identity, { offset: 25, limit: 25 })).resolves.toEqual({ events: [], hasMore: true });
     });
     it("should stop at the total", async () => {
-      await expect(loadManagedEvents(identity, { own: true, offset: 50, limit: 25 })).resolves.toEqual({ events: [], hasMore: false });
+      await expect(loadOwnedEvents(identity, { offset: 50, limit: 25 })).resolves.toEqual({ events: [], hasMore: false });
     });
   });
 
   describe.each([25, 26])("and a bare page contains %i rows without a total", (count) => {
     let rows: ManagedEvent[];
     beforeEach(() => {
-      rows = Array.from({ length: count }, (_, index) => ({
-        id: String(index), name: "Fixture", image: null, image_vertical: null, description: null,
-        start_at: null, finish_at: null, next_start_at: null, next_finish_at: null, duration: null,
-        all_day: false, x: 0, y: 0, server: null, url: null, user: null, user_name: null,
-        estate_id: null, estate_name: null, scene_name: null, approved: false, rejected: false,
-        highlighted: false, trending: false, world: false, recurrent: false, recurrent_frequency: null,
-        recurrent_weekday_mask: 0, recurrent_month_mask: 0, recurrent_interval: 1, recurrent_setpos: null,
-        recurrent_monthday: null, recurrent_count: null, recurrent_until: null, recurrent_dates: [],
-        categories: [], schedules: [], total_attendees: 0, latest_attendees: [], coordinates: [0, 0],
-        position: [0, 0], live: false, attending: false, place_id: null, community_id: null,
-        featured_item: null, created_at: null, updated_at: null, approved_by: null, rejected_by: null,
-        rejection_reason: null, deleted_by_user: false, deleted_by_admin: false, deleted_by: null,
-        deleted_at: null, deleted_reason: null, previous_place_id: null,
-      }));
+      rows = Array.from({ length: count }, (_, index) => makeEvent(String(index)));
       vi.mocked(signedGetJSON).mockResolvedValue({ ok: true, data: rows });
     });
     it("should show exactly one page and only enable Next for a lookahead row", async () => {
-      await expect(loadManagedEvents(identity, { own: false, offset: 25, limit: 25 })).resolves.toEqual({ events: rows.slice(0, 25), hasMore: count > 25 });
+      await expect(loadOwnedEvents(identity, { offset: 25, limit: 25 })).resolves.toEqual({ events: rows.slice(0, 25), hasMore: count > 25 });
     });
   });
 

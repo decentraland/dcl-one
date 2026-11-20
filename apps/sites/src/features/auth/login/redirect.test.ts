@@ -37,11 +37,19 @@ describe("where sign-in returns the reader", () => {
     }
   });
 
-  it("allows plain http only on a local host, on the page's exact port", () => {
+  it("allows absolute HTTP URLs on loopback, on the page's exact port", () => {
     expect(safeRedirectTarget("http://127.0.0.1:5212/shop", LOCAL)).toBe("/shop");
     expect(safeRedirectTarget("http://127.0.0.1:9999/shop", LOCAL)).toBe("/");
     expect(safeRedirectTarget("http://127.0.0.1/shop", LOCAL)).toBe("/");
     expect(safeRedirectTarget("/shop", LOCAL)).toBe("/shop");
+  });
+
+  it("allows a relative return path on a LAN preview while keeping its origin", () => {
+    const lan = new URL("http://192.0.2.1:5212/auth/login");
+    expect(safeRedirectTarget("/report?reported_address=0x123#evidence", lan)).toBe("/report?reported_address=0x123#evidence");
+    expect(safeRedirectTarget("http://192.0.2.1:5212/report", lan)).toBe("/");
+    expect(safeRedirectTarget("/\\other.example/report", lan)).toBe("/");
+    expect(safeRedirectTarget("//192.0.2.1:9999/report", lan)).toBe("/");
   });
 
   it("builds the sign-in link with the return path encoded once", () => {

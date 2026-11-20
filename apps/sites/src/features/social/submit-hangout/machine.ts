@@ -34,7 +34,7 @@ type HangoutContext = {
 type DraftPatch = Partial<HangoutDraft>;
 
 type HangoutEvent =
-  | { type: "SIGN_IN" }
+  | { type: "SIGN_IN"; inline?: boolean }
   | { type: "EDIT"; patch: DraftPatch }
   | { type: "NEXT" }
   | { type: "BACK" }
@@ -148,7 +148,10 @@ export const hangoutMachine = setup({
     signinGate: {
       entry: "trackGateViewed",
       on: {
-        SIGN_IN: { target: "cover", actions: "trackStarted" },
+        SIGN_IN: [
+          { target: "review", guard: ({ event }) => event.inline === true, actions: "trackStarted" },
+          { target: "cover", actions: "trackStarted" },
+        ],
       },
     },
     cover: {

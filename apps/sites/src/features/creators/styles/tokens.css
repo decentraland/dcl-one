@@ -1,0 +1,91 @@
+/* Design tokens: every color, gradient, radius, stacking tier and font the stylesheets draw with. The creators theme module
+   holds only the values TypeScript reads at runtime (rarity palette, breakpoints). */
+:root {
+  /* Colors: the shop's palette (the two apps share one visual identity). */
+  --color-text2: #242129; /* Neutrals/Soft Black 2 */
+  /* Gray 3 @ 25%: the only way a hairline reads equally faint over both white and grey surfaces. */
+  --color-card-line: rgba(160, 155, 168, 0.25);
+  /* The Shop's discount tag: pink fill, red ink. Same values as the Shop, so a discount reads the same in both. */
+  --color-sale-tag: #ffc9d5;
+  --color-rarity-bg: rgba(161, 75, 243, 0.3);
+  --color-dcl-red-hover: #ff4269;
+  --color-ok: #1ea672;
+  --color-err: #d33;
+  --color-err-strong: #d64545;
+  --color-err-overlay: rgba(255, 0, 0, 0.05);
+  --color-green: #30cd00; /* DCL/Green — published status */
+  --color-amber: #ffbc5b; /* Brand/Amber — under-review status, warm gradient stop */
+  --color-red-bright: #ff0404; /* rejected pill border/text */
+  /* Inline validation warnings on dark surfaces (Figma System/Warning). */
+  --color-warning-overlay: rgba(255, 207, 137, 0.2);
+  --color-warning-text: #ffe1b7;
+  /* Inline validation errors on dark surfaces (Figma System/Error). */
+  --color-error-overlay: rgba(233, 113, 119, 0.2);
+  --color-error-surface: rgba(24, 0, 0, 0.4);
+  --color-success-overlay: rgba(48, 205, 0, 0.12);
+  /* Hairline on a translucent field over the purple (search box border). */
+  --color-field-border: #c6bcd7;
+  /* Translucent overlays for dark surfaces (panels, card footers, empty-state shells). */
+  /* Full-screen modal scrim. */
+  --color-scrim: rgba(0, 0, 0, 0.8);
+  --color-overlay-hover: rgba(0, 0, 0, 0.55);
+  --color-chip-dark: rgba(0, 0, 0, 0.3);
+  /* Modal surface: the solid deep purple dialogs sit on (Figma "Create Collection Modal"). */
+  /* System/info blues (Figma "Status Tab" draft variant). */
+  /* Sub-nav band: translucent deep purple, the same as sites' sub-tab bar. */
+  --color-subnav-overlay: rgba(39, 5, 55, 0.6);
+  /* Deeper fill for dropdowns over the page (Select). */
+  --color-subnav-overlay-scrolled: rgba(64, 20, 88, 0.8);
+  /* Translucent white fills for controls on dark surfaces (filter pills, search bars, buttons). */
+  --color-glass-hover: rgba(255, 255, 255, 0.3);
+  --color-glass-line: rgba(255, 255, 255, 0.5);
+  /* Legendary's light gradient stop (#A657ED) is too close to the purple surfaces; lift it for the pill text. */
+  /* Overview page (sites' creator landing values, kept exact for visual parity). */
+  --color-off-white: #f0f0f0; /* decentraland-ui2 dark scheme text.primary: FAQ frame, answers, CTA border */
+  --color-off-white-muted: rgba(240, 240, 240, 0.7); /* ui2 dark text.secondary: FAQ subtitle and questions */
+  --color-dcl-red-line: rgba(255, 45, 85, 0.5); /* MUI outlined-primary border (light button) */
+  --color-glass-hint: rgba(255, 255, 255, 0.08); /* MUI dark action.hover (ghost button) */
+  /* Status pill fills: the pill's own color at low opacity. */
+  --color-green-tint: rgba(48, 205, 0, 0.2);
+  --color-orange-tint: rgba(244, 130, 33, 0.2);
+  --color-info-tint: rgba(23, 100, 192, 0.4);
+  --color-red-tint: rgba(204, 29, 44, 0.2);
+  --color-muted-tint: rgba(160, 155, 168, 0.2);
+  --color-violet-tint: rgba(165, 36, 179, 0.3);
+
+  --gradient-cerise: linear-gradient(135deg, #ff2d55 0%, #c640cd 100%);
+  --gradient-flare: linear-gradient(157.44deg, #ffbc5b 0%, #ff2d55 50.52%, #c640cd 100%);
+  --gradient-ember: linear-gradient(69deg, #ffbc5b 0%, #ff2d55 100%);
+  --gradient-coral: linear-gradient(90deg, #ff7439 0%, #ff2d55 100%);
+  /* Overview page (sites' creator landing gradients, exact stops). */
+  /* "create" why card */
+  /* The rarity media wash in neutral Gray 3, for media with no artwork yet (an empty collection's cover). */
+  --gradient-media-empty: radial-gradient(
+    circle at 50% 38%,
+    rgba(160, 155, 168, 0.04) 0%,
+    rgba(160, 155, 168, 0.3) 50%,
+    rgba(160, 155, 168, 0.62) 100%
+  );
+
+  /* Item editor workspace (creator-hub inspector palette; no other colors belong in the editor). */
+  --editor-bg: var(--dcl-neutrals-shadow);
+  --editor-surface: #242129;
+  --editor-surface-hover: var(--dcl-neutrals-graffito);
+  --editor-label: var(--dcl-neutrals-silver);
+  --editor-accent: var(--dcl-brand-ruby);
+  --editor-line: var(--dcl-neutrals-pale-black);
+
+  --radius-chip: 4px;
+  --radius-pill: 50px;
+  --radius-dropzone: 20px;
+  /* Inter comes with Sites' shared foundations. */
+  --creators-font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* MUI Typography's body tracking; the overview page carries it on every text block sites set in Typography. */
+  --font-tracking: 0.00938em;
+
+  /* Stacking tiers. `overlay` sits above the global DCL navbar (position: fixed) and the sub-nav, so a full-screen
+     scrim dims the whole viewport; `tooltip` clears any overlay (tooltips portal to <body>). */
+  --creators-z-overlay: 10000;
+  --creators-z-prompt: 10005;
+  --creators-z-tooltip: 10010;
+}

@@ -61,16 +61,12 @@ type DayListCardProps = UpcomingEventCardProps & {
   jumpIn?: JumpIn
 }
 
-/**
- * All Events: one event in a day column; live ones show their badges instead of a time. The phone's
- * day list shows a live one's JUMP IN too.
- */
+/** All Events: an occurrence in either the day columns or the phone's day list. */
 type ExperienceCardProps = EventCardData & {
   live: boolean
   time: EventCardTime
   remind?: RemindControl
   calendarHref?: string
-  /** Read only by the phone's day list (a small card); a day column shows no JUMP IN. */
   jumpIn?: JumpIn
 }
 

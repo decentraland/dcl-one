@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod access_status;
 pub mod adapter;
 mod anim_announce;
@@ -285,7 +287,11 @@ impl Broadcast for rfc4::Movement {
     }
 
     fn to_pulse(&self, ctx: &mut PulseCtx) -> Option<PulseFrame> {
-        let state = from_movement(self, ctx.grid);
+        // Outside the grid the stale state is dropped too, so no emote or handshake carries it.
+        let Some(state) = from_movement(self, ctx.grid) else {
+            *ctx.last_state = None;
+            return None;
+        };
         // Cache the full state so a following emote can attach it — the Pulse server rejects an
         // `EmoteStart` with a null `player_state` — and the next handshake can carry it.
         *ctx.last_state = Some(state.clone());
@@ -300,6 +306,17 @@ impl Broadcast for rfc4::Movement {
             kind: FrameKind::Input,
         })
     }
+}
+
+/// The longest one-shot the Pulse servers accept on an `EmoteStart` or handshake initial state
+/// (dcl-one `hardening.rs` `DEFAULT_MAX_EMOTE_DURATION_MS`); a longer one ends the session for good.
+pub const PULSE_MAX_EMOTE_DURATION_MS: u32 = 60_000;
+
+/// The duration a one-shot goes out with over Pulse. One longer than the servers accept goes out
+/// as `None`, like a loop: the sender ends it with an explicit stop, so observers see it whole
+/// rather than cut at the cap.
+pub fn pulse_emote_duration(duration_ms: Option<u32>) -> Option<u32> {
+    duration_ms.filter(|&duration| duration <= PULSE_MAX_EMOTE_DURATION_MS)
 }
 
 /// A local emote start or stop. Dual-representation: an rfc4 `PlayerEmote` for byte transports and a
@@ -341,15 +358,16 @@ impl Broadcast for Emote {
             // movement yet there's nothing to attach, so skip the start rather than be disconnected;
             // an emote after the first movement goes out fine.
             let state = ctx.last_state.clone()?;
+            let duration_ms = pulse_emote_duration(self.duration_ms);
             *ctx.local_emote = Some(LocalEmote {
                 urn: self.urn.clone(),
-                duration_ms: self.duration_ms,
+                duration_ms,
                 mask: self.mask.to_wire(),
                 started_at: ctx.now,
             });
             pulse_proto::client_message::Message::EmoteStart(pulse_proto::EmoteStart {
                 emote_id: self.urn.clone(),
-                duration_ms: self.duration_ms,
+                duration_ms,
                 player_state: Some(state),
                 mask: self.mask.to_wire(),
             })
@@ -697,21 +715,14 @@ fn connect_scene_room(
         (None, false, true) => preview_gatekeeper_url(),
         (None, false, false) => gatekeeper_url(),
     };
-    let mut meta = serde_json::json!({
-        "realmName": ev.realm_name, "sceneId": ev.scene_id,
-    });
-    if adapter::allows_device_identifier(&url) {
-        meta["deviceIdentifier"] = serde_json::json!(config.user_id);
-    }
-    if common::structs::server_mode() || world.is_some() {
-        meta["intent"] = serde_json::json!("dcl:explorer:comms-handshake");
-        meta["signer"] = serde_json::json!("dcl:explorer");
-        meta["isGuest"] = serde_json::json!(wallet.is_guest());
-        meta["realm"] = serde_json::json!({ "serverName": ev.realm_name });
-        if let Some(secret) = world_secret.0.as_ref().filter(|_| world.is_some()) {
-            meta["secret"] = serde_json::json!(secret);
-        }
-    }
+    let meta = scene_room_metadata(
+        &ev.realm_name,
+        &ev.scene_id,
+        common::base_domain::device_identifier_domain(&url).map(|_| config.user_id.as_str()),
+        wallet.is_any_guest(),
+        common::structs::server_mode() || world.is_some(),
+        world_secret.0.as_deref().filter(|_| world.is_some()),
+    );
     commands.spawn((
         SceneRoom(ev.scene_id.clone()),
         SceneRoomTarget {
@@ -727,6 +738,36 @@ fn connect_scene_room(
         },
         NeedsAdapter,
     ));
+}
+
+/// Signed metadata of a scene-room credential request. Always the explorer's own handshake
+/// (`signer`, `intent`, `isGuest`), never a scene's; `realm.serverName` only where the server reads
+/// it (server mode, worlds), and a world's comms `secret` only for a world.
+fn scene_room_metadata(
+    realm_name: &str,
+    scene_id: &str,
+    device_identifier: Option<&str>,
+    is_guest: bool,
+    names_server: bool,
+    world_secret: Option<&str>,
+) -> serde_json::Value {
+    let mut meta = serde_json::json!({
+        "realmName": realm_name,
+        "sceneId": scene_id,
+        "intent": "dcl:explorer:comms-handshake",
+        "signer": "dcl:explorer",
+        "isGuest": is_guest,
+    });
+    if let Some(device_identifier) = device_identifier {
+        meta["deviceIdentifier"] = serde_json::json!(device_identifier);
+    }
+    if names_server {
+        meta["realm"] = serde_json::json!({ "serverName": realm_name });
+    }
+    if let Some(secret) = world_secret {
+        meta["secret"] = serde_json::json!(secret);
+    }
+    meta
 }
 
 fn update_scene_connection(
@@ -842,5 +883,49 @@ impl AdapterManager<'_, '_> {
                     .write(StartArchipelago { entity, address });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod scene_room_metadata_tests {
+    use super::scene_room_metadata;
+
+    #[test]
+    fn a_genesis_scene_room_is_signed_as_the_explorer() {
+        let meta = scene_room_metadata("main", "bafyscene", Some("device"), true, false, None);
+
+        assert_eq!(meta["signer"], "dcl:explorer");
+        assert_eq!(meta["intent"], "dcl:explorer:comms-handshake");
+        assert_eq!(meta["isGuest"], true);
+        assert_eq!(meta["realmName"], "main");
+        assert_eq!(meta["sceneId"], "bafyscene");
+        assert_eq!(meta["deviceIdentifier"], "device");
+        // Genesis keeps `realm.serverName` out, as before.
+        assert!(meta.get("realm").is_none());
+        assert!(meta.get("secret").is_none());
+    }
+
+    #[test]
+    fn a_server_scene_room_without_a_world_names_the_server_and_carries_no_secret() {
+        let meta = scene_room_metadata("main", "bafyscene", None, false, true, None);
+
+        assert_eq!(meta["signer"], "dcl:explorer");
+        assert_eq!(meta["intent"], "dcl:explorer:comms-handshake");
+        assert_eq!(meta["isGuest"], false);
+        assert_eq!(meta["realm"]["serverName"], "main");
+        assert!(meta.get("secret").is_none());
+        assert!(meta.get("deviceIdentifier").is_none());
+    }
+
+    #[test]
+    fn a_world_scene_room_also_names_the_server_and_carries_the_secret() {
+        let meta = scene_room_metadata("w.dcl.eth", "bafy", None, false, true, Some("s3cret"));
+
+        assert_eq!(meta["signer"], "dcl:explorer");
+        assert_eq!(meta["intent"], "dcl:explorer:comms-handshake");
+        assert_eq!(meta["isGuest"], false);
+        assert_eq!(meta["realm"]["serverName"], "w.dcl.eth");
+        assert_eq!(meta["secret"], "s3cret");
+        assert!(meta.get("deviceIdentifier").is_none());
     }
 }

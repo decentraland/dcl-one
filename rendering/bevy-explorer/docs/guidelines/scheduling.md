@@ -54,9 +54,9 @@ The capped tier runs the phases one request at a time, so its budget can stop be
 ## The scene loop
 
 `run_scene_loop` runs a separate `Schedule` (`SceneLoopSchedule`) repeatedly inside the frame
-budget. It is also the frame pacer on native: the budget is one frame at the monitor refresh
-rate under vsync, or at the configured fps target, and after the loop the thread spin-sleeps to
-the deadline.
+budget. It is also the frame pacer on native: the budget is one frame at the configured fps
+target, capped at the monitor refresh rate under vsync, and after the loop the thread spin-sleeps
+to the deadline.
 
 Each pass of the loop runs four chained sets (`SceneLoopSets`):
 
@@ -156,7 +156,9 @@ Other named sets: `RealmLifecycle` for systems that react to a realm change, `Te
 ## Render world
 
 The render app is bevy's. We add a few `RenderSet::Prepare*` systems for custom materials and
-uniforms, and three render-graph nodes in `Core3d`: the hover glow between `DepthOfField` and
+uniforms, and four render-graph nodes in `Core3d`: the lens flare between `EndMainPass` and
+`Bloom` (`crates/visuals/src/lens_flare.rs`, after `Wireframe` when that pass exists, since its
+MSAA resolve would overwrite the flare), the hover glow between `DepthOfField` and
 `Tonemapping` (`crates/scene_material/src/highlight`, whose mask phase also adds queue and sort
 systems in `RenderSet::QueueMeshes` and `RenderSet::PhaseSort`), and two stars passes
 (`crates/visuals/src/stars.rs`), of which a view draws one: the early pass between

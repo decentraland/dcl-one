@@ -51,6 +51,11 @@ fn approach(weight: f32, target: f32, step: f32) -> f32 {
     }
 }
 
+/// Whether the solve is skipped: out of range with the IK fully ramped out.
+fn skips_solve(in_range: bool, anim_w: f32) -> bool {
+    !in_range && anim_w <= 0.0
+}
+
 pub struct FootIkPlugin;
 
 impl Plugin for FootIkPlugin {
@@ -431,7 +436,7 @@ fn apply_foot_ik(
             camera_pos,
             config.max_distance,
         );
-        if !in_range && runtime.anim_w <= 0.0 {
+        if skips_solve(in_range, runtime.anim_w) {
             *runtime = FootIkRuntime::default();
             continue;
         }
@@ -846,8 +851,9 @@ mod tests {
         let step = 0.05 / 0.25;
         let mut weight = 1.0;
         let mut frames = 0;
-        // the frame loop's gate: solve until the weight is out, then skip
-        while weight > 0.0 {
+        // in range the solve always runs; out of range it runs until the weight is out
+        assert!(!skips_solve(true, 0.0));
+        while !skips_solve(false, weight) {
             let next = approach(weight, weight_target(false, true), step);
             assert!(next < weight && weight - next <= step + 1e-6);
             weight = next;

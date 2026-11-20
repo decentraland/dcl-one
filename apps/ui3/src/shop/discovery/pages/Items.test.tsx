@@ -315,6 +315,16 @@ describe("the creators and collection pickers", () => {
     expect(await screen.findByRole("button", { name: "Remove Nacho filter" })).toBeTruthy();
   });
 
+  it("takes the top creators' names from the ranking when it carries their profiles", async () => {
+    const profile = { name: "Nacho", face: null, claimed: true };
+    const client = catalogClient("ok", { "/v3/catalog/creators": { data: [{ id: CREATOR, sales: 9, totalSales: 9, collections: 1, items: 3, profile }] } });
+    items("/shop/items", { client });
+    await screen.findAllByTestId("card");
+    fireEvent.focus(screen.getByRole("combobox", { name: "Creators" }));
+    // /lambdas/profiles answers nothing here: the name can only come from the ranking.
+    expect(await screen.findByRole("option", { name: "Nacho" })).toBeTruthy();
+  });
+
   it("picks one collection by name, searching every collection while resales are in the grid", async () => {
     const client = catalogClient();
     items("/shop/items", { client, marketplace: true });

@@ -494,6 +494,11 @@ pub struct SocialConfig {
     )]
     pub private_messages_room_id: String,
 
+    /// Give a local preview scene (a `b64-` id or a `preview`/`localpreview`
+    /// realm) a Genesis scene token without a deployed scene behind it.
+    #[arg(long, env = "ALLOW_LOCAL_PREVIEW", default_value_t = false, action = clap::ArgAction::Set)]
+    pub allow_local_preview: bool,
+
     /// The one wallet that may mint the authoritative-server host token; unset refuses /get-server-scene-adapter.
     #[arg(long, env = "AUTHORITATIVE_SERVER_ADDRESS")]
     pub authoritative_server_address: Option<String>,
@@ -535,9 +540,11 @@ pub struct SocialConfig {
     #[arg(long, env = "COMMS_LAND_OPERATORS_URL")]
     pub comms_land_operators_url: Option<String>,
 
-    /// The linker-server lease document (`[{addresses, plots}]`) whose
-    /// holders administer the scenes on their plots (the mirror posture's:
-    /// Decentraland's published list); empty lists no lease holder.
+    /// The linker-server lease document (`[{addresses, plots, startDate?,
+    /// endDate?, onlyDev?}]`) whose holders administer the scenes on their
+    /// plots while an entry is within its dates (`onlyDev` entries only on a
+    /// Sepolia `ETH_NETWORK`; the mirror posture's: Decentraland's published
+    /// list); empty lists no lease holder.
     #[arg(long, env = "LEASE_AUTHORIZATIONS_URL", default_value = "")]
     pub lease_authorizations_url: String,
 
@@ -978,6 +985,39 @@ pub struct RoomAuthorityConfig {
     /// LiveKit secret; unset, the room authority route is not mounted.
     #[arg(long, env = "PULSE_ROOM_AUTHORITY_KEY", hide_env_values = true)]
     pub pulse_room_authority_key: Option<String>,
+}
+
+/// The community-chat message router's token route (`comms::gatekeeper::message_router`).
+#[derive(Args, Clone)]
+pub struct MessageRouterConfig {
+    /// 32 base64url bytes without padding (or _FILE), distinct from the
+    /// LiveKit secret; the message router process holds the same value. Unset,
+    /// POST /internal/message-router/token/v1 is not mounted and community
+    /// chat is not routed.
+    #[arg(long, env = "MESSAGE_ROUTER_KEY", hide_env_values = true)]
+    pub message_router_key: Option<String>,
+
+    /// The router's LiveKit identity is `<prefix>-<replica>`. The Explorer
+    /// addresses `message-router-dev-0`, or `message-router-prd-0` when its
+    /// base domain is decentraland.org. Required with MESSAGE_ROUTER_KEY, so
+    /// a node never mints an identity its Explorers do not trust.
+    #[arg(long, env = "MESSAGE_ROUTER_IDENTITY_PREFIX")]
+    pub message_router_identity_prefix: Option<String>,
+}
+
+impl std::fmt::Debug for MessageRouterConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MessageRouterConfig")
+            .field(
+                "message_router_key",
+                &self.message_router_key.as_ref().map(|_| "<set>"),
+            )
+            .field(
+                "message_router_identity_prefix",
+                &self.message_router_identity_prefix,
+            )
+            .finish()
+    }
 }
 
 /// A finite number above zero (upstream refuses to start otherwise).

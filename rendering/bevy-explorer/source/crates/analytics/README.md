@@ -4,8 +4,9 @@ The explorer's Segment events, one sender: the engine. Its own events (Performan
 Explorer Error, Explorer Scene Load Times, Explorer Move To Parcel, System Info Report, Chat
 Message Sent, First Move In World, time_spent_in_world; `data_definition.rs`) and, on the web, the page's screens and clicks, which reach it
 through the `/track` console command (`page_events.rs`: a base64 JSON array of
-`{event, properties, timestamp, messageId}`, queued as sent). The web build posts through the first-party
-proxy (`api.e.decentraland.org`), which ad blockers leave alone; native posts to Segment directly.
+`{event, properties, timestamp, messageId}`, queued as sent). The sender posts batches through
+Decentraland's Segment domain (`api.e.decentraland.org`) because browser ad blockers and DNS
+filters can block the default Segment host.
 
 Every event carries the common fields (`dcl_eth_address`, `dcl_is_guest`, `realm`, `position`,
 `dcl_renderer_type`, `session_id`, `renderer_version`, `environment`, `is_local_scene`) as they
@@ -58,6 +59,17 @@ what an Explorer Error batch needs (user id, write key, consent, the common fiel
 and boot.js's crash watchdog calls `engine_crash_event` on the page thread, which shares the
 wasm memory, to build the request and post it with `keepalive`. Nothing before the terms are
 accepted. Natively the next run reports the previous one's log (`crash_report.rs`).
+
+The engine reads the session's rollout flags (`common::feature_flags`: Unleash's `explorer.json`
+under the `--ff` / `?ff=` overrides) and reports them once the read settles as `Feature Flags
+Resolved`: `feature_flags`, the flags that are on as an `ff` value that runs a session with the same
+flags; `feature_flags_override`, the launch option's own; `feature_flags_source`, `service`,
+`unavailable` (the read failed) or `ignored` (`ff` has `-*`). The service resolves like every
+other backend (`--feature-flags`, `--gateway`, a node's mirror, else `feature-flags.<base domain>`);
+the anonymous machine id and, natively, the `Referer` go only to a Decentraland host. Other events
+join to it on `session_id`. The
+web crash report carries `feature_flags` and `feature_flags_override` itself (`crash.rs`).
+`/feature_flags` and the debug panel's "Feature flags" section show the session's flags.
 
 The loading screen is reported as mobile's funnel names it (`loading.rs`): `Screen Viewed`
 LOADING_START {position, realm, when: on_explorer_ready | on_changerealm | on_moveto} when it

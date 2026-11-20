@@ -63,10 +63,12 @@ gap. Every other entry has `source.kind: "source"`.
 - `forward.expired_chain`: the notifier's `validateAuthChain`
   (`forward-explorer-events.ts:24-31`) checks the chain's shape and owner
   only, so the fixture body's own chain, whose ephemeral delegation expired on
-  2025-05-26, is accepted and published. dcl-one verifies the signatures and
-  the expiry (`dcl_auth::verify_auth_chain`, `explorer.rs`
-  `auth_chain_is_valid`) and answers 401 `Invalid AuthChain`, no row: an
-  unverified chain proves no owner. Every other explorer entry signs a fresh
+  2025-05-26, is accepted and published. dcl-one verifies the chain as a
+  login, its signatures, its expiry and the `Decentraland Login` first line of
+  its delegation (`dcl_auth::verify_login_chain`, `explorer.rs`
+  `auth_chain_is_valid`), and answers 401 `Invalid AuthChain`, no row: an
+  unverified chain proves no owner. A delegation signed with another first
+  line is refused the same way; the notifier did not read that line. Every other explorer entry signs a fresh
   chain (`harness.identity: fresh`), but for `forward.otp.unverified` (no
   chain) below.
 - `forward.otp.reached`, `forward.otp.reached_bound` and

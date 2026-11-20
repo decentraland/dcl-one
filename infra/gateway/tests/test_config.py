@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import tempfile
 import unittest
+from unittest import mock
 
 import nginx_map
 
@@ -371,6 +372,59 @@ class ConfigurationTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertFalse(any(gateway.CAST_PRESENTATION_CAP in body
                                      for regex, body in regexes if regex.search(path)))
+
+    def test_camera_reel_upload_cap_admits_the_multipart_limit(self):
+        root = Path(__file__).parents[3] / "services/catalyst"
+        source = (root / "camera-reel/src/handlers/images.rs").read_text()
+        image = re.search(r"pub const MAX_MULTIPART_IMAGE_BYTES: usize = ([^;]+);", source)[1]
+        memory = re.search(r"const MAX_MULTIPART_MEMORY_BYTES: usize = ([^;]+);", source)[1]
+        expr = memory.replace("MAX_MULTIPART_IMAGE_BYTES", f"({image})")
+        self.assertRegex(expr, r"^[\d\s*+()]+$")
+        self.assertEqual(gateway.CAMERA_REEL_UPLOAD_CAP, f"{eval(expr) // (1024 * 1024) + 1}m")
+        cap = f"client_max_body_size {gateway.CAMERA_REEL_UPLOAD_CAP};"
+        _, regexes = self.worlds_locations()
+        for path in ["/camera-reel-service/api/images", "/camera-reel-service/api/images/"]:
+            with self.subTest(path=path):
+                body = next(body for regex, body in regexes if regex.search(path))
+                self.assertIn("proxy_pass http://apis;", body)
+                self.assertIn(cap, body)
+                self.assertIn("limit_conn deploy_uploads", body)
+        for path in ["/camera-reel-service/api/images-json", "/camera-reel-service/api/images/1",
+                     "/x/camera-reel-service/api/images"]:
+            with self.subTest(path=path):
+                self.assertFalse(any(cap in body for regex, body in regexes if regex.search(path)))
+        # The root alias keeps its prefix location; only the upload path is exact.
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = self.production_table()
+        row = next(row for row in table["aliases"] if row["key"] == gateway.CAMERA_REEL_ALIAS)
+        config = gateway.render(table, cfg, "/mime.types")
+        prefix = re.search(r"location \^~ /camera-reel/ \{\n(.*?)\n\}", config, re.S)[1]
+        self.assertIn(f"rewrite {row['rewrite']} break;", prefix)
+        self.assertNotIn(cap, prefix)
+        for path in ["/camera-reel/api/images", "/camera-reel/api/images/"]:
+            with self.subTest(path=path):
+                alias = re.search(rf"location = {re.escape(path)} \{{\n(.*?)\n\}}", config, re.S)[1]
+                self.assertIn(f"rewrite {row['rewrite']} break;", alias)
+                self.assertIn("proxy_pass http://apis;", alias)
+                self.assertIn(cap, alias)
+
+    def test_table_without_the_camera_reel_alias_is_rejected(self):
+        table = self.production_table()
+        gateway.check_table(table)
+        table["aliases"] = [row for row in table["aliases"] if row["key"] != gateway.CAMERA_REEL_ALIAS]
+        with self.assertRaisesRegex(ValueError, "camera-reel"):
+            gateway.check_table(table)
+        # The entrypoint refuses to start nginx on such a table.
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "routes.json"
+            path.write_text(json.dumps(table))
+            argv = ["gateway.py", "--table", str(path), "--nginx", "/bin/false", "--mime", "/mime.types", "--check"]
+            with (mock.patch("sys.argv", argv), mock.patch.dict("os.environ", {"GATEWAY_RESOLVERS": "127.0.0.1"}),
+                  mock.patch.object(gateway.subprocess, "run") as run, mock.patch("sys.stderr"),
+                  self.assertRaises(SystemExit) as exit):
+                gateway.main()
+        self.assertEqual(exit.exception.code, 2)
+        run.assert_not_called()
 
     def worlds_locations(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test"})

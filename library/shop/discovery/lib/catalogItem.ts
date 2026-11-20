@@ -1,5 +1,6 @@
 // from: shop@94584a5c:app/src/lib/catalogItem.ts, app/src/lib/api.ts (the CatalogItem type, toGender)
 
+import type { CreatorProfile } from "@catalyst-api/market/CreatorProfile";
 import type { ShopCoupon } from "@catalyst-api/market/ShopCoupon";
 
 export type Gender = "male" | "female" | "unisex" | null;
@@ -42,6 +43,8 @@ export type CatalogItem = {
   coupon?: ShopCoupon;
   saleUnitsLeft?: number;
   onSale?: boolean;
+  /** The creator's profile when the feed carries it: the card then asks for none. */
+  creatorProfile?: CreatorProfile;
 };
 
 export type RawCollectionItem = {

@@ -1,0 +1,119 @@
+/* The Creator Hub download page as decentraland.org draws it. Values come from the
+   @dcl/one-ui foundations tokens. The foundations have no font-weight, line-height or letter-spacing token outside
+   the text styles, and no text on this page matches a whole text style, so those stay as the reference writes them. */
+.root {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(150deg, #2a0c43 0%, #1a0a2e 50%, #3d1464 100%);
+  /* The room under the top bar and the Create tabs, so the card sits centred in the view when it fits. */
+  min-height: calc(100vh - var(--site-header-h, 92px) - 56px);
+  padding: var(--dcl-space-24) 0;
+  box-sizing: border-box;
+
+  @media (min-width: 1024px) {
+    min-height: calc(100vh - var(--site-header-h, 92px) - 64px);
+  }
+}
+
+.card {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  width: calc(100% - 144px);
+  max-width: 1100px;
+  min-height: 460px;
+  background: rgba(28, 7, 47, 0.7);
+  border-radius: 32px;
+  border: 1px solid rgba(160, 155, 168, 0.2);
+  padding: var(--dcl-space-64);
+  gap: var(--dcl-space-48);
+  box-sizing: border-box;
+}
+
+.info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-24);
+  flex: 1;
+  min-width: 0;
+}
+
+.logo {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.title {
+  margin: 0;
+  font-weight: 600;
+  font-size: 2.5rem; /* reference 40px, no token */
+  line-height: 1.2;
+  letter-spacing: normal;
+  /* The reference's Typography inherits the theme's text color. */
+  color: rgba(240, 240, 240, 1);
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-16);
+}
+
+/* The reference's BannerImage: half the row up to 480px wide, its 752x500 PNG setting the height. */
+.banner {
+  width: 50%;
+  max-width: 480px;
+  height: auto;
+  object-fit: contain;
+  flex-shrink: 0;
+  align-self: center;
+  display: block;
+}
+
+/* The decentraland-ui2 theme's breakpoints: down("md") is max-width 1023.95px, down("sm") 990.95px. */
+@media (max-width: 990.95px) {
+  .title {
+    font-size: 1.75rem; /* reference 28px, no token */
+  }
+}
+
+@media (max-width: 1023.95px) {
+  .card {
+    flex-direction: column;
+    width: calc(100% - 48px);
+    padding: 40px;
+    min-height: auto;
+  }
+  .info {
+    align-items: center;
+    width: 100%;
+    text-align: center;
+  }
+  .actions {
+    align-items: center;
+  }
+  .banner {
+    width: 100%;
+    max-width: 400px;
+  }
+}
+
+@media (max-width: 768px) {
+  .card {
+    width: calc(100% - 32px);
+    padding: var(--dcl-space-24);
+    border-radius: var(--dcl-radius-xl);
+  }
+}
+
+/* The Create section's field behind Sites' top bar and the tabs, as on the section's other pages. */
+:global(.site-layout):has(.root) {
+  background: radial-gradient(61.64% 109.58% at 50% 54.49%, #952dc6 0%, #7c27a8 25%, #642089 50%, #4b1a6b 75%, #32134c 100%)
+    fixed;
+  background-color: #32134c;
+}
