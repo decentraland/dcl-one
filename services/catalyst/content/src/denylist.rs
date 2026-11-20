@@ -1083,31 +1083,26 @@ mod tests {
     }
 
     /// An import that would take the table past the cap writes nothing,
-    /// checked before any row is inserted.
+    /// checked before any row is inserted: two new ids fit a cap of two,
+    /// but not beside the rows already listed.
     #[tokio::test]
     async fn an_import_past_max_entries_writes_nothing() {
         require_test_db!(Some(pool) = crate::db::scratch::pool(2).await);
         let tag = uuid::Uuid::new_v4().simple().to_string();
-        let ids = [cid(&tag, 'a'), cid(&tag, 'b'), cid(&tag, 'c')];
-        let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM content.denylist")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let ids = [cid(&tag, 'a'), cid(&tag, 'b')];
+        let listed = cid(&tag, 'c');
+        assert!(add(&pool, &listed, "0xconsole").await.unwrap());
         let file = checked_file(ids.join("\n").as_bytes()).unwrap();
-        let err = import(
-            &pool,
-            file,
-            "0x00000000000000000000000000000000000000aa",
-            rows + 1,
-        )
-        .await
-        .unwrap_err();
+        let err = import(&pool, file, "0x00000000000000000000000000000000000000aa", 2)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("nothing was imported"), "{err:#}");
-        let listed = load(&pool).await.unwrap();
+        let loaded = load(&pool).await.unwrap();
         assert!(
-            ids.iter().all(|id| !listed.contains(id)),
+            ids.iter().all(|id| !loaded.contains(id)),
             "nothing was written"
         );
+        remove(&pool, &listed).await.unwrap();
         pool.close().await;
     }
 
