@@ -68,6 +68,15 @@ const recordPrefix = (buyer: string): string => `${NS}:record:v1:${buyer}:`
 const recordKey = (buyer: string, id: string): string => recordPrefix(buyer) + id
 const manaPrefix = (buyer: string): string => `${NS}:record:mana-v1:${buyer}:`
 const manaKey = (buyer: string, id: string): string => manaPrefix(buyer) + id
+/** A purchase paid with Credits and MANA together lives apart too: a build that doesn't know splits never reads it. */
+const splitPrefix = (buyer: string): string => `${NS}:record:split-v1:${buyer}:`
+const splitKey = (buyer: string, id: string): string => splitPrefix(buyer) + id
+/** The key a record belongs under, by how it pays, and the keys it must not be left under. */
+const keysOf = (record: OperationRecord & { buyer: string }): { key: string; others: string[] } => {
+  const all = { mana: manaKey(record.buyer, record.id), split: splitKey(record.buyer, record.id), credits: recordKey(record.buyer, record.id) }
+  const kind = record.mana ? 'mana' : record.split ? 'split' : 'credits'
+  return { key: all[kind], others: Object.entries(all).filter(([k]) => k !== kind).map(([, v]) => v) }
+}
 const opPrefix = (id: string): string => `${NS}:operation:v1:${id}:`
 /** Each ledger probes its own key, so two tabs probing at once don't answer for each other. */
 const probeKey = (): string => `${NS}:probe:${Math.random().toString(36).slice(2)}`
@@ -179,7 +188,10 @@ export function createLedger(storage: () => Storage | null): Ledger {
     try {
       const raw = s.getItem(key)
       const v = raw ? upgrade(JSON.parse(raw) as unknown) : null
-      return isRecord(v, buyer) && v.id === id && (v.mana !== undefined) === key.startsWith(manaPrefix(buyer)) ? v : null
+      if (!isRecord(v, buyer) || v.id !== id) return null
+      // Under the prefix its payment belongs to only: MANA under MANA's, a split under the split's, else the Credits one.
+      const prefix = v.mana !== undefined ? manaPrefix(buyer) : v.split !== undefined ? splitPrefix(buyer) : recordPrefix(buyer)
+      return key.startsWith(prefix) ? v : null
     } catch {
       return null
     }
@@ -192,6 +204,9 @@ export function createLedger(storage: () => Storage | null): Ledger {
    */
   const pick = (s: Storage, buyer: string, id: string): OperationRecord | null => {
     const mana = parse(s, manaKey(buyer, id), buyer, id)
+    // A split's record holds its sale's terms from before it was signed: it is the purchase, whatever a Credits copy says.
+    const split = parse(s, splitKey(buyer, id), buyer, id)
+    if (split) return split
     const credits = parse(s, recordKey(buyer, id), buyer, id)
     if (!mana || !credits) return mana ?? credits
     if (mana.mana?.sends.some((x) => x.stage === 'dispatched')) return mana
@@ -205,7 +220,7 @@ export function createLedger(storage: () => Storage | null): Ledger {
       const ids = new Set<string>()
       for (let i = 0; i < s.length; i++) {
         const key = s.key(i)
-        for (const prefix of [recordPrefix(buyer), manaPrefix(buyer)]) if (key?.startsWith(prefix)) ids.add(key.slice(prefix.length))
+        for (const prefix of [recordPrefix(buyer), manaPrefix(buyer), splitPrefix(buyer)]) if (key?.startsWith(prefix)) ids.add(key.slice(prefix.length))
       }
       return [...ids]
         .map((id) => pick(s, buyer, id))
@@ -221,6 +236,7 @@ export function createLedger(storage: () => Storage | null): Ledger {
     if (record.buyer) {
       s.removeItem(recordKey(record.buyer, record.id))
       s.removeItem(manaKey(record.buyer, record.id))
+      s.removeItem(splitKey(record.buyer, record.id))
     }
   }
   /** The operation's prefix over storage, remembering a write that throws (the cart store hides it). */
@@ -255,7 +271,7 @@ export function createLedger(storage: () => Storage | null): Ledger {
         failures.add(record.id)
         return false
       }
-      const [key, left] = record.mana ? [manaKey(record.buyer, record.id), recordKey(record.buyer, record.id)] : [recordKey(record.buyer, record.id), manaKey(record.buyer, record.id)]
+      const { key, others } = keysOf(record as OperationRecord & { buyer: string })
       try {
         s.setItem(key, JSON.stringify(record))
       } catch (e) {
@@ -263,15 +279,17 @@ export function createLedger(storage: () => Storage | null): Ledger {
         console.warn('[shell/shop] could not keep the purchase record', e)
         return false
       }
-      // Under the other prefix it is gone, or this write didn't stick: a copy left there could be read as the purchase
-      // (by a build that doesn't know MANA, the Credits one), so the purchase goes no further until it is gone.
-      try {
-        s.removeItem(left)
-      } catch {
-        // Checked below.
+      // Under the other prefixes it is gone, or this write didn't stick: a copy left there could be read as the purchase
+      // (by a build that doesn't know MANA or splits, the Credits one), so the purchase goes no further until it is gone.
+      for (const left of others) {
+        try {
+          s.removeItem(left)
+        } catch {
+          // Checked below.
+        }
       }
       try {
-        if (s.getItem(left) !== null) throw new Error('A copy of the record under the other key is still there')
+        if (others.some((left) => s.getItem(left) !== null)) throw new Error('A copy of the record under another key is still there')
       } catch (e) {
         failures.add(record.id)
         console.warn('[shell/shop] could not keep the purchase record', e)

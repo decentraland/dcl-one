@@ -835,6 +835,36 @@ describe('the in-world purchase with MANA', () => {
       expect(readSplitHold(BUYER, HOLD_LINE)).not.toBeNull()
     })
 
+    const keysOf = (storage: Storage) => Array.from({ length: storage.length }, (_, i) => storage.key(i) ?? '')
+
+    it('keeps a pending split apart from what an older build reads: nothing under the Credits records', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      Object.assign(w.relay.state, { mode: 'fail-after-send', failStatus: 504 })
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, creditRecordOf: async () => null } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      const id = p.events.at(-1)!.operation
+      const keys = keysOf(w.storage)
+      expect(keys.some((k) => k.startsWith('dcl-inworld-shop:record:v1:') && k.endsWith(id))).toBe(false)
+      expect(keys.some((k) => k.startsWith('dcl-inworld-shop:record:split-v1:') && k.endsWith(id))).toBe(true)
+    })
+
+    it('reads a split as the purchase over a Credits copy of it left beside it, older or newer', () => {
+      const w = world()
+      const ledger = createLedger(() => w.storage)
+      const base = { id: 'abcdef01-0001', buyer: BUYER, items: [{ contract: CONTRACT, itemId: String(ITEM), quantity: 1 }], state: 'pending' as const, createdAt: 1, updatedAt: 2 }
+      const sale = { buyer: BUYER, chainId: 137, manager: MANAGER, creditId: `0x${'a1'.repeat(32)}`, creditWei: '1', gapWei: '2', target: STORE, selector: '0x12345678' as Hex, callData: '0x' as Hex }
+      expect(ledger.save({ ...base, split: sale })).toBe(true)
+      for (const updatedAt of [1, 99]) {
+        w.storage.setItem(`dcl-inworld-shop:record:v1:${BUYER}:abcdef01-0001`, JSON.stringify({ ...base, state: 'cancelled', updatedAt }))
+        expect(ledger.saved(BUYER, 'abcdef01-0001')).toMatchObject({ state: 'pending', split: { creditId: sale.creditId } })
+      }
+    })
+
     it('reserves nothing and asks nothing of the wallet without Web Locks', async () => {
       on()
       const w = world()
