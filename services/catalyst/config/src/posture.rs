@@ -439,8 +439,9 @@ const ROWS: &[Row] = &[
         "ABGEN_UPSTREAM_AB_CDN",
         "https://ab-cdn.decentraland.org",
     ),
-    // Imposter tiles the /bvimposters store lacks, read through from the
-    // community CDN the explorer's tiles were baked into.
+    // Temporary: imposter tiles the /bvimposters store lacks, read through
+    // from the community CDN the explorer's tiles were baked into, until this
+    // node bakes its own (decentraland/dcl-one#1711); then this row goes.
     upstream(
         "upstreams",
         "BVIMPOSTERS_UPSTREAM_URL",

@@ -9,7 +9,8 @@
 //! `If-None-Match` costs no store work; `GET /status` reports the store.
 //! A miss in the store is read through to the upstream imposter CDN
 //! (`BVIMPOSTERS_UPSTREAM_URL`: the community CDN under `NODE_POSTURE=mirror`,
-//! none on an island), under the realm key its tiles are stored
+//! none on an island; temporary, until this node bakes its own tiles,
+//! decentraland/dcl-one#1711), under the realm key its tiles are stored
 //! under (`BVIMPOSTERS_UPSTREAM_REALM`; the crc derives only from scene entity
 //! ids, so it is realm-independent and the realm of the request is ignored):
 //! a fetched zip is verified against its crc before it lands in the store,

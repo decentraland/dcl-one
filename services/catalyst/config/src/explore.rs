@@ -285,7 +285,8 @@ pub struct ImpostersConfig {
 
     /// The imposter CDN a missed tile is read through from (verified, then kept
     /// in the store); empty, no upstream. A mirror posture names the community
-    /// imposter CDN.
+    /// imposter CDN. Temporary, until this node bakes its own tiles
+    /// (decentraland/dcl-one#1711).
     #[arg(long, env = "BVIMPOSTERS_UPSTREAM_URL", default_value = "")]
     pub bvimposters_upstream_url: String,
 
