@@ -12,3 +12,6 @@ export const relay_b_pump = unbound;
 export const relay_b_next_len = unbound;
 export const relay_b_next_ptr = unbound;
 export const relay_b_pop = unbound;
+// MEASUREMENT ONLY (inner/tick_marks.rs): the shared clock and the scene worker's tick marks
+export const relay_now = unbound;
+export const relay_tick_mark = unbound;
