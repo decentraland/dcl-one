@@ -321,7 +321,9 @@ const ROWS: &[Row] = &[
         "https://subgraph.decentraland.org/tpr-matic-mainnet",
     ),
     // lamb2's explorer backpack lists chain-owned tokens only; listing this
-    // node's escrow grants too stays an operator's opt-in under every posture.
+    // node's escrow grants too stays an operator's opt-in under every posture,
+    // island and journey included: set `EXPLORER_ESCROW_GRANTS_ENABLED=true`
+    // with `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED=true`.
     same("lambdas", "EXPLORER_ESCROW_GRANTS_ENABLED", "false"),
     // lamb2's `/collections/wearables` takes `collectionId`, `wearableId`
     // and `textSearch` only: a mirror answers the same; island and journey
@@ -551,7 +553,8 @@ const ROWS: &[Row] = &[
     ),
     // Peers check item ownership on chain only and reject an entity that
     // wears an item held only by an escrow lease, so counting leases stays an
-    // operator's opt-in under every posture.
+    // operator's opt-in under every posture (set it with
+    // `EXPLORER_ESCROW_GRANTS_ENABLED`).
     same("writes", "CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED", "false"),
     // PRESENCE_COLLECTOR_ENABLED stays unset: the headcount archive writes
     // to the database, so it follows DATA_WRITES_ENABLED.
