@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import tempfile
 import unittest
+from unittest import mock
 
 import nginx_map
 
@@ -413,6 +414,17 @@ class ConfigurationTest(unittest.TestCase):
         table["aliases"] = [row for row in table["aliases"] if row["key"] != gateway.CAMERA_REEL_ALIAS]
         with self.assertRaisesRegex(ValueError, "camera-reel"):
             gateway.check_table(table)
+        # The entrypoint refuses to start nginx on such a table.
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "routes.json"
+            path.write_text(json.dumps(table))
+            argv = ["gateway.py", "--table", str(path), "--nginx", "/bin/false", "--mime", "/mime.types", "--check"]
+            with (mock.patch("sys.argv", argv), mock.patch.dict("os.environ", {"GATEWAY_RESOLVERS": "127.0.0.1"}),
+                  mock.patch.object(gateway.subprocess, "run") as run, mock.patch("sys.stderr"),
+                  self.assertRaises(SystemExit) as exit):
+                gateway.main()
+        self.assertEqual(exit.exception.code, 2)
+        run.assert_not_called()
 
     def worlds_locations(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test"})
