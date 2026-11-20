@@ -211,13 +211,12 @@ fn filter_avatars_by_ownership(avatars: &mut [Value], owned: Option<&OwnedTokens
     }
 }
 
-/// An emote's or outfit's integral `slot` in float form (`1.0`, `1e0`),
-/// served as the integer the reference's JSON round trip emits.
+/// An emote's or outfit's non-negative integral `slot` in float form (`1.0`,
+/// `1e0`, `1e10`), served as the integer the reference's JSON round trip emits.
 pub(super) fn normalize_slot(mut entry: Value) -> Value {
     if let Some(slot) = entry.get_mut("slot")
         && !slot.is_u64()
         && let Some(n) = catalyst_shared::json_number::as_integral_u64(slot)
-            .filter(|n| *n <= u64::from(u32::MAX))
     {
         *slot = Value::from(n);
     }
@@ -1296,7 +1295,8 @@ mod tests {
                     {"slot": 2e0, "urn": "clap"},
                     {"slot": -0.0, "urn": "kiss"},
                     {"slot": 3.5, "urn": "money"},
-                    {"slot": 4, "urn": "shrug"}
+                    {"slot": 4, "urn": "shrug"},
+                    {"slot": 1e10, "urn": "dance"}
                 ]}}"#,
             )
             .unwrap(),
@@ -1304,7 +1304,7 @@ mod tests {
         filter_avatars_by_ownership(&mut avatars, None);
         assert_eq!(
             serde_json::to_string(&avatars[0]["avatar"]["emotes"]).unwrap(),
-            r#"[{"slot":1,"urn":"wave"},{"slot":2,"urn":"clap"},{"slot":0,"urn":"kiss"},{"slot":3.5,"urn":"money"},{"slot":4,"urn":"shrug"}]"#
+            r#"[{"slot":1,"urn":"wave"},{"slot":2,"urn":"clap"},{"slot":0,"urn":"kiss"},{"slot":3.5,"urn":"money"},{"slot":4,"urn":"shrug"},{"slot":10000000000,"urn":"dance"}]"#
         );
     }
 

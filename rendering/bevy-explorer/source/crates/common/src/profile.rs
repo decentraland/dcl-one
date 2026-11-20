@@ -17,17 +17,20 @@ pub struct AvatarEmote {
     pub urn: String,
 }
 
+/// `value` as a `u32` when it is a whole number in range.
+fn integral_u32(value: f64) -> Option<u32> {
+    (value.fract() == 0.0 && (0.0..=u32::MAX as f64).contains(&value)).then_some(value as u32)
+}
+
 /// A slot in any integral JSON number form (`1`, `1.0`, `1e0`): the catalyst
 /// accepts and serves them all.
 fn integral_slot<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
     let slot = f64::deserialize(deserializer)?;
-    if slot.fract() == 0.0 && (0.0..=u32::MAX as f64).contains(&slot) {
-        Ok(slot as u32)
-    } else {
-        Err(serde::de::Error::custom(format!(
+    integral_u32(slot).ok_or_else(|| {
+        serde::de::Error::custom(format!(
             "invalid emote slot {slot}, expected a non-negative integer"
-        )))
-    }
+        ))
+    })
 }
 
 /// Emotes that do not parse (a non-integral slot, a missing `urn`) are dropped
@@ -66,11 +69,9 @@ fn valid_emotes<'de, D: serde::Deserializer<'de>>(
 /// the profile cache ranks by; any other value reads as 0, like a missing one.
 fn profile_version<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<i64, D::Error> {
     let value = serde_json::Value::deserialize(deserializer)?;
-    match value.as_f64() {
-        Some(version) if version.fract() == 0.0 && (0.0..=u32::MAX as f64).contains(&version) => {
-            Ok(version as i64)
-        }
-        _ => {
+    match value.as_f64().and_then(integral_u32) {
+        Some(version) => Ok(version.into()),
+        None => {
             match &value {
                 serde_json::Value::Number(n) => {
                     warn!("reading the invalid profile version {n} as 0")
@@ -275,10 +276,16 @@ mod tests {
             serde_json::from_str::<AvatarEmote>(&format!(r#"{{"slot": {slot}, "urn": "wave"}}"#))
                 .map(|emote| emote.slot)
         };
-        for (text, expected) in [("1", 1), ("1.0", 1), ("1e0", 1), ("-0.0", 0)] {
+        for (text, expected) in [
+            ("1", 1),
+            ("1.0", 1),
+            ("1e0", 1),
+            ("-0.0", 0),
+            ("4294967295", u32::MAX),
+        ] {
             assert_eq!(slot(text).unwrap(), expected, "{text}");
         }
-        for text in ["1.5", "-1", "\"1\""] {
+        for text in ["1.5", "-1", "\"1\"", "4294967296", "1e300"] {
             assert!(slot(text).is_err(), "{text}");
         }
 
@@ -315,6 +322,9 @@ mod tests {
 
         let no_emotes: AvatarWireFormat = serde_json::from_str(r#"{"wearables": []}"#).unwrap();
         assert_eq!(no_emotes.emotes, None);
+        let null_emotes: AvatarWireFormat =
+            serde_json::from_str(r#"{"wearables": [], "emotes": null}"#).unwrap();
+        assert_eq!(null_emotes.emotes, None);
     }
 
     #[test]

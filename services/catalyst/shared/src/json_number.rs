@@ -92,7 +92,18 @@ mod tests {
         for (text, expected) in [("1", 1), ("1.0", 1), ("1e0", 1), ("-0.0", 0), ("2e1", 20)] {
             assert_eq!(u(text), Some(expected), "{text}");
         }
-        for text in ["1.5", "-1", "-1.0", "1e20", "\"1\"", "null"] {
+        assert_eq!(u("18446744073709551615"), Some(u64::MAX));
+        // 2^64 itself, as an integer and as a float, is just past the range.
+        for text in [
+            "1.5",
+            "-1",
+            "-1.0",
+            "1e20",
+            "18446744073709551616",
+            "18446744073709551616.0",
+            "\"1\"",
+            "null",
+        ] {
             assert_eq!(u(text), None, "{text}");
         }
         let i =
@@ -101,5 +112,7 @@ mod tests {
         assert_eq!(i("137").unwrap(), 137);
         assert!(i("1.5").is_err());
         assert!(i("9223372036854775808").is_err());
+        assert_eq!(i("-9223372036854775808.0").unwrap(), i64::MIN);
+        assert!(i("-1e19").is_err());
     }
 }

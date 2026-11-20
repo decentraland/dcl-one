@@ -1496,95 +1496,110 @@ mod tests {
             assert_eq!(calls.1.load(std::sync::atomic::Ordering::SeqCst), 2);
         }
 
-        #[test]
-        fn slots_are_judged_by_their_numeric_value_in_every_json_form() {
+        /// A profile whose first avatar has emotes in the given slots.
+        fn profile_with_emote_slots(slots: &str) -> OwnedDeployment {
+            let mut d = profile();
+            let emotes: Vec<serde_json::Value> = slots
+                .split(',')
+                .enumerate()
+                .map(|(i, slot)| {
+                    serde_json::from_str(&format!(
+                        r#"{{"slot": {slot}, "urn": "urn:decentraland:off-chain:base-emotes:e{i}"}}"#
+                    ))
+                    .unwrap()
+                })
+                .collect();
+            d.entity.metadata.as_mut().unwrap()["avatars"][0]["avatar"]["emotes"] =
+                serde_json::Value::Array(emotes);
+            d
+        }
+
+        /// An outfits entity with outfits in the given slots.
+        fn outfits_with_slots(slots: &str, names: &str) -> OwnedDeployment {
+            let outfits: Vec<String> = slots
+                .split(',')
+                .map(|slot| format!(r#"{{"slot": {slot}, "outfit": {{"wearables": []}}}}"#))
+                .collect();
+            let metadata = format!(
+                r#"{{"outfits": [{}], "namesForExtraSlots": [{names}]}}"#,
+                outfits.join(",")
+            );
+            let mut d = profile();
+            d.entity.entity_type = EntityType::Outfits;
+            d.entity.pointers = vec![format!("{OWNER}:outfits")];
+            d.entity.metadata = Some(serde_json::from_str(&metadata).unwrap());
+            d
+        }
+
+        /// Whether the profile or outfits content rules pass for `d`.
+        fn slots_pass(d: &OwnedDeployment, synced: bool) -> bool {
             let calls = Calls::new(Duration::ZERO);
             let checker = SlowChecker(Duration::ZERO, false);
-            let validator = |synced| ContentValidator {
+            let validator = ContentValidator {
                 external_calls: &calls,
                 blockchain_checker: &checker,
                 ignore_blockchain_access: false,
                 synced,
                 access_passed: false,
             };
-            let emotes = |slots: &str| {
-                let mut d = profile();
-                let emotes: Vec<serde_json::Value> = slots
-                    .split(',')
-                    .enumerate()
-                    .map(|(i, slot)| {
-                        serde_json::from_str(&format!(
-                            r#"{{"slot": {slot}, "urn": "urn:decentraland:off-chain:base-emotes:e{i}"}}"#
-                        ))
-                        .unwrap()
-                    })
-                    .collect();
-                d.entity.metadata.as_mut().unwrap()["avatars"][0]["avatar"]["emotes"] =
-                    serde_json::Value::Array(emotes);
-                d
-            };
-            let outfits = |slots: &str, names: &str| {
-                let outfits: Vec<String> = slots
-                    .split(',')
-                    .map(|slot| format!(r#"{{"slot": {slot}, "outfit": {{"wearables": []}}}}"#))
-                    .collect();
-                let metadata = format!(
-                    r#"{{"outfits": [{}], "namesForExtraSlots": [{names}]}}"#,
-                    outfits.join(",")
-                );
-                let mut d = profile();
-                d.entity.entity_type = EntityType::Outfits;
-                d.entity.pointers = vec![format!("{OWNER}:outfits")];
-                d.entity.metadata = Some(serde_json::from_str(&metadata).unwrap());
-                d
-            };
-            let profile_ok = |d: &OwnedDeployment, synced| {
-                validator(synced)
-                    .validate_profile_content(&d.view())
-                    .is_ok()
-            };
-            let outfits_ok = |d: &OwnedDeployment, synced| {
-                validator(synced)
-                    .validate_outfits_content(&d.view())
-                    .is_ok()
-            };
+            match d.entity.entity_type {
+                EntityType::Outfits => validator.validate_outfits_content(&d.view()),
+                _ => validator.validate_profile_content(&d.view()),
+            }
+            .is_ok()
+        }
 
+        #[test]
+        fn emote_slots_are_judged_by_their_numeric_value_in_every_json_form() {
             for synced in [false, true] {
-                assert!(profile_ok(&emotes("0,1.0,9e0"), synced));
-                for slots in ["10.0", "1e1", "-1.0", "1,1.0", "2,2e0"] {
-                    assert!(!profile_ok(&emotes(slots), synced), "emote slots {slots}");
-                }
-                assert!(outfits_ok(&outfits("0,1.0,4e0", ""), synced));
-                assert!(outfits_ok(&outfits("5.0", r#""alice""#), synced));
-                for slots in ["10.0", "1e1", "-1.0", "1,1.0", "5.0", "5e0"] {
+                assert!(slots_pass(&profile_with_emote_slots("0,1.0,9e0"), synced));
+                for slots in ["1e1", "-1.0", "1,1.0"] {
                     assert!(
-                        !outfits_ok(&outfits(slots, ""), synced),
+                        !slots_pass(&profile_with_emote_slots(slots), synced),
+                        "emote slots {slots}"
+                    );
+                }
+            }
+            // Fractional slots are refused on a new deploy; a peer's entity keeps the old reading.
+            assert!(!slots_pass(&profile_with_emote_slots("1.5"), false));
+            assert!(slots_pass(&profile_with_emote_slots("1.5"), true));
+            // `-0.0` and `0` are one slot.
+            assert!(!slots_pass(&profile_with_emote_slots("0,-0.0"), false));
+            // Slots are unique across every avatar of the profile.
+            let two_avatars = |first: &str, second: &str| {
+                let mut d = profile_with_emote_slots(first);
+                let metadata = d.entity.metadata.as_mut().unwrap();
+                let mut avatar = metadata["avatars"][0].clone();
+                avatar["avatar"]["emotes"] = profile_with_emote_slots(second)
+                    .entity
+                    .metadata
+                    .unwrap()["avatars"][0]["avatar"]["emotes"]
+                    .clone();
+                metadata["avatars"].as_array_mut().unwrap().push(avatar);
+                d
+            };
+            assert!(slots_pass(&two_avatars("1", "2.0"), false));
+            assert!(!slots_pass(&two_avatars("1", "1.0"), false));
+        }
+
+        #[test]
+        fn outfit_slots_are_judged_by_their_numeric_value_in_every_json_form() {
+            for synced in [false, true] {
+                assert!(slots_pass(&outfits_with_slots("0,1.0,4e0", ""), synced));
+                assert!(slots_pass(&outfits_with_slots("5.0", r#""alice""#), synced));
+                for slots in ["10.0", "-1.0", "1,1e0", "5e0"] {
+                    assert!(
+                        !slots_pass(&outfits_with_slots(slots, ""), synced),
                         "outfit slots {slots}"
                     );
                 }
             }
             // Fractional slots are refused on a new deploy; a peer's entity keeps the old reading.
-            assert!(!profile_ok(&emotes("1.5"), false));
-            assert!(profile_ok(&emotes("1.5"), true));
-            assert!(!outfits_ok(&outfits("1.5", ""), false));
-            assert!(outfits_ok(&outfits("1.5", ""), true));
-            assert!(!outfits_ok(&outfits("4.5", ""), true));
+            assert!(!slots_pass(&outfits_with_slots("1.5", ""), false));
+            assert!(slots_pass(&outfits_with_slots("1.5", ""), true));
+            assert!(!slots_pass(&outfits_with_slots("4.5", ""), true));
             // `-0.0` and `0` are one slot.
-            assert!(!profile_ok(&emotes("0,-0.0"), false));
-            assert!(!outfits_ok(&outfits("0,-0.0", ""), false));
-            // Slots are unique across every avatar of the profile.
-            let two_avatars = |first: &str, second: &str| {
-                let mut d = emotes(first);
-                let metadata = d.entity.metadata.as_mut().unwrap();
-                let mut avatar = metadata["avatars"][0].clone();
-                avatar["avatar"]["emotes"] = emotes(second).entity.metadata.unwrap()["avatars"][0]
-                    ["avatar"]["emotes"]
-                    .clone();
-                metadata["avatars"].as_array_mut().unwrap().push(avatar);
-                d
-            };
-            assert!(profile_ok(&two_avatars("1", "2.0"), false));
-            assert!(!profile_ok(&two_avatars("1", "1.0"), false));
+            assert!(!slots_pass(&outfits_with_slots("0,-0.0", ""), false));
         }
 
         #[test]
