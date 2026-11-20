@@ -478,10 +478,12 @@ export interface MapState {
   teleportToPlace: (x: number, y: number) => TravelOutcome
   /** Travel to a world/realm by name (e.g. `boedo.dcl.eth`). */
   changeRealm: (realm: string) => TravelOutcome
-  /** The home: its realm (null for the default one) and parcel; the engine's answer, else the boot copy. */
-  home: { realm: string | null; parcel: string } | null
+  /** The account's home: its realm (null for the default one) and parcel, or with `pinned` false where an
+   *  account with no home starts; the engine's answer, else the boot copy. */
+  home: { realm: string | null; parcel: string; pinned: boolean } | null
   /** Make a parcel of `realm` home; shown at once, then confirmed by the engine. */
   setHome: (realm: string, parcel: { x: number; y: number }) => void
+  clearHome: () => void
 }
 
 /** Live player pose for the minimap: position in world metres, yaws in degrees. */
@@ -1138,7 +1140,7 @@ export interface EngineSession {
   /** The Backpack avatar preview's on-screen rect (CSS px), while it is open. */
   avatarPreviewRect: { x: number; y: number; width: number; height: number } | null
   /** The persisted home destination the lobby's landing card shows (null before the engine knows). */
-  homeScene: () => { realm: string | null; parcel: string } | null
+  homeScene: () => { realm: string | null; parcel: string; pinned: boolean } | null
   /** Post-jump-in Places picker: choose where to spawn (or null to skip → Genesis Plaza). False
    *  when nothing was done: no driver, or the lobby still signing in. */
   pickDestination: (dest: Destination) => boolean
@@ -1662,7 +1664,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const [placesOpen, setPlacesOpen] = useState(false)
   // The lobby reopened in-world: over the running world, under the panels it opens.
   const [lobbyOpen, setLobbyOpen] = useState(false)
-  const [home, setHome] = useState<{ realm: string | null; parcel: string } | null>(null)
+  const [home, setHome] = useState<{ realm: string | null; parcel: string; pinned: boolean } | null>(null)
   const [eventsOpen, setEventsOpen] = useState(false)
   const eventsOpenSource = useRef<EventsOpenSource | null>(null)
   const eventsData = useEventsData(driverRef, (event) => track('event_set_as_interested', eventAnalytics(event)))
@@ -2186,7 +2188,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
             profileReadFailed(msg.profileRead.address, msg.profileRead.requestId)
           }
           // the map showed the change before the engine took it: read back the home it holds
-          if (msg.request === 'setHomeScene') driver.send({ kind: 'getHomeScene' })
+          if (msg.request === 'setHomeScene' || msg.request === 'clearHomeScene') driver.send({ kind: 'getHomeScene' })
           break
         case 'avatarSaveFailed':
           setSaveError(SAVE_FAILED_MESSAGE)
@@ -2489,7 +2491,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           setSatelliteView(msg.satelliteView)
           break
         case 'homeScene':
-          setHome({ realm: msg.realm === DEFAULT_REALM ? null : msg.realm, parcel: `${msg.parcel.x},${msg.parcel.y}` })
+          setHome({ realm: msg.realm === DEFAULT_REALM ? null : msg.realm, parcel: `${msg.parcel.x},${msg.parcel.y}`, pinned: msg.pinned })
           break
         case 'travelResult':
           if (msg.ok) travelCount.traveled()
@@ -2922,7 +2924,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           driverRef.current?.send({ kind: 'teleport', x: cmd.x, y: cmd.y })
           break
         case 'genesis':
-          changeRealm(DEFAULT_REALM)
+          travel({ kind: 'teleport', realm: DEFAULT_REALM, x: 0, y: 0 })
           break
         case 'world':
           changeRealm(cmd.realm)
@@ -2944,7 +2946,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           break
       }
     },
-    [pushSystemMessage, changeRealm, reloadScene, playUiSound]
+    [pushSystemMessage, changeRealm, travel, reloadScene, playUiSound]
   )
 
   // Toggle one exclusive panel (closing chat + all others); optionally run onOpen.
@@ -3421,12 +3423,18 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [home, engineReady])
   const setHomeScene = useCallback((realm: string, parcel: { x: number; y: number }) => {
-    setHome({ realm: realm === DEFAULT_REALM ? null : realm, parcel: `${parcel.x},${parcel.y}` })
+    setHome({ realm: realm === DEFAULT_REALM ? null : realm, parcel: `${parcel.x},${parcel.y}`, pinned: true })
     driverRef.current?.send({ kind: 'setHomeScene', realm, parcel })
   }, [])
+  const clearHomeScene = useCallback(() => {
+    setHome({ realm: null, parcel: '0,0', pinned: false })
+    driverRef.current?.send({ kind: 'clearHomeScene' })
+  }, [])
+  // The home is the signed-in account's, which the boot snapshot, read before the sign-in, may not
+  // be: the lobby asks again, and shows the snapshot only until the answer.
   useEffect(() => {
-    if ((!lobby && !lobbyOpen) || driverRef.current?.homeScene != null) return
-    setHome(null)
+    if (!lobby && !lobbyOpen) return
+    if (driverRef.current?.homeScene == null) setHome(null)
     driverRef.current?.send({ kind: 'getHomeScene' })
   }, [lobby, lobbyOpen])
   const travelFromLobbyInWorld = useCallback(
@@ -3572,6 +3580,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           if (boot.current.autoLogin == null) setSignedInAs(lastLoginType.current)
           screenViewed('AUTH_SUCCESS', { login_type: lastLoginType.current })
         }
+        // the lobby asked for the home before the engine knew the account: ask again for its own
+        if (login != null) driver.send({ kind: 'getHomeScene' })
         welcomeLink.current = urlDestination.current
         urlDestination.current = null
         // only a sign-in that ran lands it: a run with nothing pending answers no /hud_login, and
@@ -4299,6 +4309,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     pendingLoginType.current = null
     lastLoginType.current = null
     setSignedInAs(null)
+    setHome(null)
     welcomeRef.current = null
     guestPick.current = null
     setQueuedGuest(false)
@@ -5137,9 +5148,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       changeRealm: (realm: string): TravelOutcome => pick({ kind: 'world', realm }) ?? (changeRealm(realm), 'sent'),
       teleportToPlace: (x: number, y: number): TravelOutcome => pick({ kind: 'parcel', x, y }) ?? (teleportToPlace(x, y), 'sent'),
       home: homeScene(),
-      setHome: setHomeScene
+      setHome: setHomeScene,
+      clearHome: clearHomeScene
     }
-  }, [mapParcel, mapOpen, toggleMap, teleport, changeRealm, teleportToPlace, homeScene, setHomeScene, pickDestination, closeAllPanels])
+  }, [mapParcel, mapOpen, toggleMap, teleport, changeRealm, teleportToPlace, homeScene, setHomeScene, clearHomeScene, pickDestination, closeAllPanels])
   const minimapSlice = useMemo(
     () => ({
       pose: poseRef,

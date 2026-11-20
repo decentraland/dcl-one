@@ -10785,6 +10785,7 @@ dependencies = [
  "ipfs",
  "nft",
  "opener",
+ "platform",
  "rand 0.8.8",
  "reqwest",
  "scene_runner",

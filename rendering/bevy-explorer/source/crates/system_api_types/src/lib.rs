@@ -138,8 +138,6 @@ pub struct MapPinInfo {
     pub y: i32,
     /// At most 100 characters.
     pub title: String,
-    /// A file of the scene's content; `None` draws the default pin.
-    pub icon: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, ts_rs::TS)]
@@ -179,6 +177,9 @@ pub enum SmartWearableSource {
 pub struct HomeScene {
     pub realm: String,
     pub parcel: Vector2,
+    /// False when the account has no home: `realm` and `parcel` are then where it starts, the
+    /// default realm on 0,0.
+    pub pinned: bool,
 }
 
 /// The lobby's 3D stage, drawn around the system scene's preview avatar for the camera that

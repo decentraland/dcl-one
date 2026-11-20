@@ -382,19 +382,24 @@ async fn read_config_file() -> Option<String> {
     None
 }
 
-/// The persisted home scene — the pinned realm (null = none pinned: the HUD substitutes its own
-/// default realm, since this runs before `engine_run` latches the base domain the engine would
-/// compose one from) + "x,y" parcel — as a JSON string. Valid after [`engine_init`] (it reads the
+/// The home that applies at startup (the stored sign-in's account's, else the last account's) —
+/// the pinned realm (null = none pinned: the HUD substitutes its own default realm, since this
+/// runs before `engine_run` latches the base domain the engine would compose one from), the
+/// "x,y" parcel and whether a home is pinned — as a JSON string. Valid after [`engine_init`] (it reads the
 /// loaded config); exposed so the HUD's places picker can target home from "Skip" BEFORE the
 /// engine is launched.
 #[wasm_bindgen]
 pub fn engine_home_scene() -> String {
-    let (realm, parcel) = INIT_DATA
-        .get()
-        .map(|config| (config.home_realm.clone(), config.home_location()))
-        .unwrap_or_else(|| (None, AppConfig::default().home_location()));
-    serde_json::json!({ "realm": realm, "parcel": format!("{},{}", parcel.x, parcel.y) })
-        .to_string()
+    let home = INIT_DATA.get().and_then(|config| config.startup_home());
+    let parcel = home
+        .as_ref()
+        .map_or(bevy::math::IVec2::ZERO, |home| home.location);
+    serde_json::json!({
+        "realm": home.as_ref().map(|home| &home.realm),
+        "parcel": format!("{},{}", parcel.x, parcel.y),
+        "pinned": home.is_some(),
+    })
+    .to_string()
 }
 
 /// Whether the terms are accepted on this install (the loaded config), so the HUD can launch a

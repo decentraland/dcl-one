@@ -127,18 +127,19 @@ describe('place detail', () => {
     expect(home).toHaveAttribute('aria-pressed', 'false')
     fireEvent.click(home)
     expect(session.map.setHome).toHaveBeenCalledWith(DEFAULT_REALM, { x: 0, y: 0 })
-    update({ ...session, homeScene: () => ({ realm: null, parcel: '0,0' }) })
+    update({ ...session, homeScene: () => ({ realm: null, parcel: '0,0', pinned: true }) })
     expect(screen.getByRole('button', { name: 'Set as Home' })).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('shows home pressed when any parcel of the place is home, known before the engine answers, and sets nothing then', () => {
+  it('shows home pressed when any parcel of the place is home, known before the engine answers, and takes the home back when pressed', () => {
     const session = fakeSession()
-    session.homeScene = () => ({ realm: null, parcel: '1,0' })
+    session.homeScene = () => ({ realm: null, parcel: '1,0', pinned: true })
     show(session, PLAZA)
     const home = screen.getByRole('button', { name: 'Set as Home' })
     expect(home).toHaveAttribute('aria-pressed', 'true')
     fireEvent.click(home)
     expect(session.map.setHome).not.toHaveBeenCalled()
+    expect(session.map.clearHome).toHaveBeenCalledTimes(1)
   })
 
   it('makes a world home by its name, and offers it no navigation', () => {

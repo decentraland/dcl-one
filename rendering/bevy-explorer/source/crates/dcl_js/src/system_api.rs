@@ -476,7 +476,19 @@ pub fn op_set_home_scene(state: Rc<RefCell<impl State>>, realm: String, parcel: 
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::SetHomeScene(HomeScene { realm, parcel }))
+        .send(SystemApi::SetHomeScene(HomeScene {
+            realm,
+            parcel,
+            pinned: true,
+        }))
+        .unwrap();
+}
+
+pub fn op_clear_home_scene(state: Rc<RefCell<impl State>>) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::ClearHomeScene)
         .unwrap();
 }
 
