@@ -17,7 +17,8 @@
 //! completes the upload publishes it through the write deployer, which
 //! validates it in full (content already in the store), and answers
 //! `200 {"creationTimestamp"}`. A batch for an entity already deployed answers
-//! 200 with the stored `local_timestamp`.
+//! 200 with the stored `local_timestamp` once the stored entity names nothing
+//! denylisted and the batch's chain signs the id at the entity's timestamp.
 //!
 //! Quotas, with upstream's messages and `Retry-After` on each 429: uploads
 //! per account, live uploads per parcel (and per account on a parcel), staged
@@ -259,13 +260,13 @@ pub struct Batch {
 /// What the daily quota needs to know about a settled batch (upstream
 /// `PartialQuotaState`): an upload counts once, when its first batch creates
 /// it, and a batch refused with a 400 before joining its upload counts too.
-/// So does a replay of a deployed entity that is not answered its timestamp,
-/// whose check may have asked a contract wallet's RPC.
+/// So does a replay of a deployed entity that is not answered its timestamp
+/// or that asked a contract wallet's RPC.
 #[derive(Default, Debug)]
 pub struct Admission {
     pub admitted: bool,
     pub created: bool,
-    pub replay_unanswered: bool,
+    pub counted_replay: bool,
 }
 
 /// A batch's refusal: 400 (`retry_after` unset) or 429 `{errors}`, 503
@@ -629,21 +630,23 @@ async fn stage(
     // the id, gets the original timestamp. The chain is checked at the stored
     // entity's timestamp (a resume may carry no entity file, and an ephemeral
     // key that expired since still signed it); nothing after the signature
-    // is. A replay refused or cut off by the processing timeout is counted
-    // (`replay_unanswered` is set until it passes), as a regular one is; a
-    // spent source's contract-wallet replay is refused before its RPC.
+    // is. A replay is counted, as a regular one is, when it is refused or cut
+    // off by the processing timeout (`counted_replay` is set until it passes)
+    // or asked a contract wallet's RPC; a spent source's contract-wallet
+    // replay is refused before that RPC.
     if let Some(stored) = deployer.deployed_entity(entity_id).await? {
-        admission.replay_unanswered = true;
+        admission.counted_replay = true;
         deployer
             .refuse_denylisted_stored(entity_id, &stored)
             .map_err(Refusal::from_deploy)?;
+        let contract_wallet = auth_chain.iter().any(|link| {
+            matches!(
+                link.link_type,
+                AuthLinkType::EcdsaEip1654Ephemeral | AuthLinkType::EcdsaEip1654SignedEntity
+            )
+        });
         if let Some(retry_after) = quota_exhausted
-            && auth_chain.iter().any(|link| {
-                matches!(
-                    link.link_type,
-                    AuthLinkType::EcdsaEip1654Ephemeral | AuthLinkType::EcdsaEip1654SignedEntity
-                )
-            })
+            && contract_wallet
         {
             return Err(Refusal::throttled(
                 "The daily deployment quota for this client is exhausted. A replay signed by a contract wallet is checked only within the quota.",
@@ -654,7 +657,7 @@ async fn stage(
             .check_signature(entity_id, &auth_chain, stored.entity_ms)
             .await
             .map_err(Refusal::from_deploy)?;
-        admission.replay_unanswered = false;
+        admission.counted_replay = contract_wallet;
         return Ok(Outcome::Published(stored.local_ms));
     }
     let deployer_address = auth_chain

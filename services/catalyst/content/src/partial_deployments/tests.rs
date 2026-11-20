@@ -38,6 +38,16 @@ impl Node {
     }
 
     async fn with_settings(tag: &str, settings: Settings) -> Option<Self> {
+        Self::with_contract_wallets(tag, settings, None).await
+    }
+
+    /// [`Self::with_settings`] whose deployer asks `eip1654` about contract
+    /// wallets.
+    async fn with_contract_wallets(
+        tag: &str,
+        settings: Settings,
+        eip1654: Option<Arc<dyn crate::auth::Eip1654Validator>>,
+    ) -> Option<Self> {
         let pool = crate::db::scratch::pool(6).await?;
         let tmp = std::env::temp_dir().join(format!(
             "catalyst-partial-{tag}-{}-{}",
@@ -47,7 +57,7 @@ impl Node {
         let storage = Arc::new(Storage::from_config(&tmp).await.unwrap());
         let state = Arc::new(ContentState::new(pool.clone(), settings, storage.clone()));
         state.sync.set_state(SyncState::Syncing);
-        let deployer = WriteDeployer::with_partial_validation_for_tests(pool, storage, None)
+        let deployer = WriteDeployer::with_partial_validation_for_tests(pool, storage, eip1654)
             .with_denylist(state.denylist.clone());
         assert!(state.attach_writes(true, Arc::new(deployer)));
         Some(Self { state, tmp })
@@ -992,17 +1002,49 @@ async fn the_daily_quota_counts_partial_batches_as_upstream() {
     );
 }
 
-/// A replay batch that is not answered its timestamp counts, as a regular
-/// replay does: its check may ask a contract wallet's RPC. A spent source's
-/// contract-wallet replay is refused before that check; its own chain still
+/// A contract wallet that accepts every signature while `up`, and cannot be
+/// asked otherwise; `calls` counts the questions.
+#[derive(Default)]
+struct Wallets {
+    up: std::sync::atomic::AtomicBool,
+    calls: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl crate::auth::Eip1654Validator for Wallets {
+    async fn validate_signature(
+        &self,
+        _contract_address: &str,
+        _hash: &[u8],
+        _signature: &[u8],
+    ) -> Result<bool, crate::auth::AuthError> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        if self.up.load(Ordering::Relaxed) {
+            Ok(true)
+        } else {
+            Err(crate::auth::AuthError::Eip1654ValidationFailed(
+                "rpc down".into(),
+            ))
+        }
+    }
+}
+
+/// A replay batch counts, as a regular replay does, when it asked a contract
+/// wallet or is not answered its timestamp. A spent source's contract-wallet
+/// replay is refused before the contract is asked; its own chain still
 /// replays.
 #[tokio::test]
-async fn a_refused_replay_batch_counts_and_a_spent_source_skips_the_contract_check() {
+async fn a_replay_batch_that_asks_a_contract_wallet_counts() {
     let settings = Settings {
-        post_entities_daily_quota_max: 2,
+        post_entities_daily_quota_max: 3,
         ..Settings::for_tests()
     };
-    require_test_db!(Some(node) = Node::with_settings("replay-quota", settings).await);
+    let wallets = Arc::new(Wallets::default());
+    wallets.up.store(true, Ordering::Relaxed);
+    require_test_db!(
+        Some(node) =
+            Node::with_contract_wallets("replay-quota", settings, Some(wallets.clone())).await
+    );
     let router = node.router();
     let ip = "203.0.113.7";
     let quota = &node.state.deploy_quota;
@@ -1015,7 +1057,6 @@ async fn a_refused_replay_batch_counts_and_a_spent_source_skips_the_contract_che
     let created = body["creationTimestamp"].clone();
     assert_eq!(quota.counted_for(ip), 1);
 
-    // This node has no contract-wallet validator: the check answers 503.
     let contract = serde_json::to_value(
         crate::sync_test_support::signed_chain_behind_contract(
             &scene.id,
@@ -1025,9 +1066,22 @@ async fn a_refused_replay_batch_counts_and_a_spent_source_skips_the_contract_che
     )
     .unwrap();
     let (status, _, body) = send(&router, &scene, &contract, vec![]).await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
-    assert_eq!(quota.counted_for(ip), 2, "a refused replay counts");
+    assert_eq!(
+        (status, &body["creationTimestamp"]),
+        (StatusCode::OK, &created)
+    );
+    assert_eq!(
+        quota.counted_for(ip),
+        2,
+        "an answered contract-wallet replay counts"
+    );
 
+    wallets.up.store(false, Ordering::Relaxed);
+    let (status, _, body) = send(&router, &scene, &contract, vec![]).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(quota.counted_for(ip), 3, "a refused replay counts");
+
+    let asked = wallets.calls.load(Ordering::Relaxed);
     let (status, headers, body) = send(&router, &scene, &contract, vec![]).await;
     assert_eq!(
         (status, &body["errors"][0]),
@@ -1039,6 +1093,11 @@ async fn a_refused_replay_batch_counts_and_a_spent_source_skips_the_contract_che
         )
     );
     assert!(headers.contains_key(header::RETRY_AFTER));
+    assert_eq!(
+        wallets.calls.load(Ordering::Relaxed),
+        asked,
+        "a spent source's contract-wallet replay asks no contract"
+    );
     let (status, _, body) = send(&router, &scene, &scene.chain, vec![]).await;
     assert_eq!(
         (status, &body["creationTimestamp"]),

@@ -49,8 +49,8 @@
 //! ([`super::partial_deployments`]): 202 `{missing}` until the upload is
 //! complete, then 200. `?partial=true` declares it before the body, so the
 //! quota is not checked on admission but once the form is read (the upload
-//! counted once, when created, and a batch refused with a 400 before joining
-//! it); the query flag on a form without the field is a 400. Once the fields
+//! counted once, when created, a 400 before joining it, and a replay refused
+//! or asking a contract wallet); the bare query flag is a 400. Once the fields
 //! before the first file are read, a batch from a source that spent its
 //! quota and not resuming its signer's own upload, or from an account over
 //! its byte rate, is turned away (429) before any file is buffered.
@@ -948,8 +948,8 @@ async fn deploy_regular(
 /// daily quota counts the upload once, when its first batch creates it, and
 /// a batch refused with a 400 before joining its upload (a missing
 /// `entityId` or a bad chain included), and a replay of a deployed entity
-/// that is not answered its timestamp; its other 429s and 503s, its resumes
-/// and its answered replays are not counted. A spent source may only resume
+/// that is not answered its timestamp or that asked a contract wallet; its
+/// other 429s and 503s, its resumes and its other replays are not counted. A spent source may only resume
 /// the signer's own upload or replay a deployed entity.
 async fn partial_batch(
     state: &SharedState,
@@ -1003,7 +1003,7 @@ async fn partial_batch(
     .await
     .unwrap_or_else(|_| processing_timed_out(timeout));
     if admission.created
-        || admission.replay_unanswered
+        || admission.counted_replay
         || (response.status() == StatusCode::BAD_REQUEST && !admission.admitted)
     {
         count();
