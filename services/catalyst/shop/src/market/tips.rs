@@ -19,9 +19,9 @@
 //! by /64) may send [`PREAUTH_PER_MINUTE`], an IPv6 /48
 //! [`PREAUTH_PER_MINUTE_PER_48`]; a private or loopback peer (an unlisted
 //! gateway) is not limited before it.
-//! Without a running index (`MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED` off here
-//! and no other process walking the `mana_transfers` cursor close enough to
-//! publish within the claim's hour, [`chain_walk::is_walked`]) a signed
+//! Without a running index (no process, this one included, walking the
+//! `mana_transfers` cursor close enough to publish within the claim's hour,
+//! [`chain_walk::is_walked`]) a signed
 //! forward is answered 503 and no claim is stored or settled, since it could
 //! only expire.
 //! The auth dApp posts cross-origin with signed-fetch headers, so the route
@@ -350,12 +350,10 @@ async fn forward(
     }
 }
 
-/// Whether a MANA transfer index serves this database: walked here, or by
-/// another process ([`chain_walk::is_walked`] within the claim's hour).
+/// Whether a MANA transfer index serves this database, walked here or by
+/// another process: [`chain_walk::is_walked`] within the claim's hour, even
+/// with the local setting on (a walk just started or stalled serves no claim).
 async fn index_runs(state: &SharedState) -> bool {
-    if state.settings.market.indexes.mana_transfers_enabled {
-        return true;
-    }
     match chain_walk::cursor(&state.pool, INDEXER_MANA, NET).await {
         Ok(cursor) => cursor.is_some_and(|c| {
             chain_walk::is_walked(
@@ -1485,8 +1483,8 @@ mod tests {
         send_signed_body(app, "10.77.0.1", None, Some(w), body).await
     }
 
-    /// Without an index walked here or elsewhere a forward is refused unstored;
-    /// with either it is kept as a claim as before.
+    /// Without an index walked here or elsewhere a forward is refused unstored,
+    /// the local setting on or off; with either it is kept as a claim as before.
     #[tokio::test]
     async fn a_forward_needs_a_running_index() {
         let Some(db) = crate::market::tests::support::OwnDb::create("tips_no_index").await else {
@@ -1558,16 +1556,24 @@ mod tests {
             );
         }
 
+        let on = app_with(true);
         assert_eq!(
-            forward_tip(&app_with(true), &w).await.status(),
+            forward_tip(&on, &w).await.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the local setting does not skip the check"
+        );
+        walk(true, 5, "0 seconds").await;
+        assert_eq!(
+            forward_tip(&on, &w).await.status(),
             StatusCode::ACCEPTED,
             "walked here"
         );
         assert_eq!(claim_count(&db.pool).await, 1);
+        walk(true, 5, "2 hours").await;
         assert_eq!(
-            forward_tip(&off, &w).await.status(),
+            forward_tip(&on, &w).await.status(),
             StatusCode::SERVICE_UNAVAILABLE,
-            "a retried claim while no index runs"
+            "a retried claim once the local walk stalled"
         );
 
         walk(true, 5, "0 seconds").await;
