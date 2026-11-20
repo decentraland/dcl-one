@@ -407,8 +407,8 @@ impl ReadThrough {
         fills: Fills,
         validation: SyncValidation,
     ) -> Self {
-        let deployer = LiveSyncDeployer::new(pool.clone(), FLUSH_CONCURRENCY, validation)
-            .with_store(storage.clone());
+        let deployer =
+            LiveSyncDeployer::new(pool.clone(), storage.clone(), FLUSH_CONCURRENCY, validation);
         let downloads = Downloads::new(MAX_CONCURRENT_DOWNLOADS, deployer.inflight_bytes().clone());
         Self {
             upstream: Arc::new(Upstream {

@@ -456,7 +456,10 @@ impl ItemsComponent {
     /// The multipart upload: 1..100 files, 20 MB together. Each file's bytes
     /// are stored under their CIDv1 in the ONE blob store before the row
     /// that records the acceptance (the store is immutable and idempotent, so
-    /// a rolled-back transaction leaves nothing wrong behind).
+    /// a rolled-back transaction leaves nothing wrong behind). The existence
+    /// check, the store and the rows run under the store lock's shared side
+    /// (`gc::lock_store_shared`): a blob found stored is not unlinked before
+    /// the rows naming it commit.
     pub async fn save_item_files(
         &self,
         signer: &str,
@@ -482,6 +485,7 @@ impl ItemsComponent {
                 "Item is publishing, published, or belongs to another wallet",
             ));
         }
+        crate::storage::gc::lock_store_shared(&mut tx).await?;
         let mut contents = BTreeMap::new();
         for (file, bytes) in files {
             if !valid_filename(&file) {

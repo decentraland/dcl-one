@@ -64,7 +64,7 @@ async fn flushed_batches_preserve_metadata_order_and_scalars() {
         return;
     };
     let prefix = unique();
-    let deployer = LiveSyncDeployer::new(pool.clone(), 1, SyncValidation::AuthChainOnly);
+    let deployer = LiveSyncDeployer::without_store(pool.clone(), 1, SyncValidation::AuthChainOnly);
     // Binder fixtures: scalar metadata is not a schema-valid scene.
     for (i, metadata) in [r#"{"z":9007199254740993,"a":{"z":18446744073709551615,"a":"é\\\""},"10":1,"2":2,"a":{"z":-9223372036854775808,"a":true}}"#, "null", "false", "0", r#""""#].iter().enumerate() {
         let id = format!("{prefix}-{i}");
@@ -305,7 +305,7 @@ async fn stalled_flush_backlog_retains_order_with_bounded_batches() {
         return;
     };
     let prefix = unique();
-    let deployer = LiveSyncDeployer::new(
+    let deployer = LiveSyncDeployer::without_store(
         pool.clone(),
         DEFAULT_FLUSH_CONCURRENCY,
         SyncValidation::AuthChainOnly,
@@ -807,7 +807,7 @@ async fn the_batch_ticker_is_a_job_of_the_shared_lifecycle() {
         return;
     };
     let jobs = std::sync::Arc::new(crate::jobs::Jobs::new());
-    let deployer = LiveSyncDeployer::new(pool, 1, SyncValidation::AuthChainOnly);
+    let deployer = LiveSyncDeployer::without_store(pool, 1, SyncValidation::AuthChainOnly);
     let parent = jobs.spawn("sync", {
         let jobs = jobs.clone();
         move |ctx| async move {
@@ -849,7 +849,7 @@ async fn flushed_batches_write_rows_and_resolve_pointer_succession() {
         return;
     };
     let prefix = unique();
-    let deployer = LiveSyncDeployer::new(pool.clone(), 2, SyncValidation::AuthChainOnly);
+    let deployer = LiveSyncDeployer::without_store(pool.clone(), 2, SyncValidation::AuthChainOnly);
     let p = |n: &str| format!("{prefix}:{n}");
     let (older, newer) = (format!("{prefix}-older"), format!("{prefix}-newer"));
 
@@ -1010,7 +1010,7 @@ async fn an_equal_timestamp_pair_settles_on_the_lowercase_winner_in_any_batching
     let Some(pool) = test_pool(3).await else {
         return;
     };
-    let deployer = LiveSyncDeployer::new(pool.clone(), 2, SyncValidation::AuthChainOnly);
+    let deployer = LiveSyncDeployer::without_store(pool.clone(), 2, SyncValidation::AuthChainOnly);
     let prefix = unique();
     let batchings: [&[&[&str]]; 4] = [
         &[&["Z", "a"]],
@@ -1050,7 +1050,7 @@ async fn the_deleter_is_the_nearest_successor_in_any_arrival_order() {
     let Some(pool) = test_pool(3).await else {
         return;
     };
-    let deployer = LiveSyncDeployer::new(pool.clone(), 2, SyncValidation::AuthChainOnly);
+    let deployer = LiveSyncDeployer::without_store(pool.clone(), 2, SyncValidation::AuthChainOnly);
     let prefix = unique();
     let orders = [
         ["A", "B", "C"],
@@ -1095,7 +1095,7 @@ async fn a_peer_scene_arriving_after_an_unpublish_is_superseded_by_the_tombstone
     let Some(pool) = test_pool(3).await else {
         return;
     };
-    let deployer = LiveSyncDeployer::new(pool.clone(), 2, SyncValidation::AuthChainOnly);
+    let deployer = LiveSyncDeployer::without_store(pool.clone(), 2, SyncValidation::AuthChainOnly);
     let prefix = unique();
     let pointer = format!("{prefix}:0,0");
     let (local, peer) = (format!("{prefix}-local"), format!("{prefix}-peer"));
@@ -1141,7 +1141,7 @@ async fn a_flush_waits_in_byte_order_for_an_open_unpublish_of_its_successor() {
     let Some(pool) = test_pool(4).await else {
         return;
     };
-    let deployer = LiveSyncDeployer::new(pool.clone(), 2, SyncValidation::AuthChainOnly);
+    let deployer = LiveSyncDeployer::without_store(pool.clone(), 2, SyncValidation::AuthChainOnly);
     let prefix = unique();
     let (first, second) = (format!("{prefix}:0,-2"), format!("{prefix}:0,10"));
     assert!(first < second, "byte order");
@@ -1352,8 +1352,12 @@ async fn a_flush_leaves_out_an_entity_whose_file_left_the_store() {
     let prefix = unique();
     let (lost_id, lost_hash, lost_raw) = stored_profile(&storage, &format!("{prefix}-lost")).await;
     let (kept_id, kept_hash, kept_raw) = stored_profile(&storage, &format!("{prefix}-kept")).await;
-    let deployer = LiveSyncDeployer::new(pool.clone(), 1, SyncValidation::AuthChainOnly)
-        .with_store(storage.clone());
+    let deployer = LiveSyncDeployer::new(
+        pool.clone(),
+        storage.clone(),
+        1,
+        SyncValidation::AuthChainOnly,
+    );
     for (id, raw) in [(&lost_id, &lost_raw), (&kept_id, &kept_raw)] {
         deployer
             .deploy_entity(

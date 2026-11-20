@@ -14,12 +14,13 @@
 //! never the corpus. A scene
 //! whose content list cannot be read exactly aborts the run, a candidate
 //! is re-checked (references and age) right before it is unlinked, under
-//! the exclusive store lock that content deploys (local and synced) and world
-//! scene deploys take shared (other domains rely on the age floor alone), an
-//! empty reference set with
+//! the exclusive store lock that content deploys (local and synced), world
+//! scene deploys and builder's item and project file uploads take shared
+//! (other writers rely on the age floor alone), an empty reference set with
 //! candidates is refused unless asked for, and the dry run reports without
-//! deleting. A writer reclaiming the blobs it staged ([`unlink_orphans_on`])
-//! runs the same reference check under the same lock, without the age floor.
+//! deleting. A writer reclaiming the blobs it staged ([`scan_scenes`], then
+//! [`unlink_orphans_on`]) runs the same reference check under the same lock,
+//! without the age floor.
 //!
 //! `catalog_is_complete` (the test below) walks the schema: every column
 //! whose name says hash, cid, entity id, thumbnail or image must be listed
@@ -44,12 +45,13 @@ pub const STORE_LOCK_KEY: i64 = 0x5354_4f52_455f_4743;
 pub const GC_RUN_LOCK_KEY: i64 = 0x5354_4f52_455f_5255;
 
 /// How long an unlink batch waits for in-flight publishes before deferring.
-pub const STORE_LOCK_TIMEOUT: &str = "30s";
+pub const STORE_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Taken by a local content deploy, the peer-sync flush and a world scene deploy before it checks
-/// that the keys it names exist: an unlink batch re-checks references and unlinks under the
-/// exclusive lock, so either the deploy sees the file gone or the batch sees the committed
-/// reference. Other domains do not take it and rely on the age floor.
+/// Taken by a local content deploy, the peer-sync flush, a world scene deploy and builder's item
+/// and project file uploads before they check that the keys they name exist: an unlink batch
+/// re-checks references and unlinks under the exclusive lock, so either the writer sees the file
+/// gone or the batch sees the committed reference. The store's other writers do not take it and
+/// rely on the age floor.
 pub async fn lock_store_shared(conn: &mut sqlx::PgConnection) -> Result<(), sqlx::Error> {
     sqlx::query("SELECT pg_advisory_xact_lock_shared($1)")
         .bind(STORE_LOCK_KEY)
@@ -62,11 +64,20 @@ pub async fn lock_store_shared(conn: &mut sqlx::PgConnection) -> Result<(), sqlx
 pub async fn lock_store_exclusive(
     pool: &PgPool,
 ) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, GcError> {
+    lock_store_exclusive_within(pool, STORE_LOCK_TIMEOUT).await
+}
+
+/// [`lock_store_exclusive`], waiting at most `timeout` ([`GcError::LockTimeout`] after it).
+pub async fn lock_store_exclusive_within(
+    pool: &PgPool,
+    timeout: Duration,
+) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, GcError> {
     let mut tx = pool.begin().await?;
     // The batch unlinks files with the transaction idle: exempt it from the pool's idle timeout.
     sqlx::query(sqlx::AssertSqlSafe(format!(
-        "SELECT set_config('lock_timeout', '{STORE_LOCK_TIMEOUT}', true), \
-         set_config('idle_in_transaction_session_timeout', '0', true)"
+        "SELECT set_config('lock_timeout', '{}ms', true), \
+         set_config('idle_in_transaction_session_timeout', '0', true)",
+        timeout.as_millis().max(1)
     )))
     .execute(&mut *tx)
     .await?;
@@ -511,8 +522,7 @@ fn split_source(source: &str) -> (&str, &str) {
 
 /// Refuses a run over world scenes or pending uploads whose content lists
 /// cannot be read exactly (a caller deletes what the references do not name).
-/// It scans every scene: run it before taking the store lock.
-pub async fn check_json_sources(conn: &mut sqlx::PgConnection) -> Result<(), GcError> {
+async fn check_json_sources(pool: &PgPool) -> Result<(), GcError> {
     let bad: Option<String> = sqlx::query_scalar(
         "SELECT entity_id FROM (SELECT entity_id, entity FROM worlds.world_scenes \
            UNION ALL SELECT entity_id, entity FROM worlds.retired_world_scenes \
@@ -524,7 +534,7 @@ pub async fn check_json_sources(conn: &mut sqlx::PgConnection) -> Result<(), GcE
                 WHERE jsonb_typeof(e -> 'hash') IS DISTINCT FROM 'string' OR e ->> 'hash' = '')) \
          LIMIT 1",
     )
-    .fetch_optional(conn)
+    .fetch_optional(pool)
     .await?;
     match bad {
         Some(entity_id) => Err(GcError::Unreadable(format!(
@@ -727,6 +737,18 @@ async fn rows_among(
         .await?;
         found.extend(rows);
     }
+    found.extend(scene_rows_among(conn, keys, pending, max_age).await?);
+    Ok(found)
+}
+
+/// The scene content lists' part of [`rows_among`]: a scan of every world scene (and pending
+/// upload) row at most `max_age` transactions old, served by no index.
+async fn scene_rows_among(
+    conn: &mut sqlx::PgConnection,
+    keys: &[String],
+    pending: bool,
+    max_age: i64,
+) -> Result<HashSet<String>, GcError> {
     let rows: Vec<String> = sqlx::query_scalar(
         "SELECT DISTINCT e ->> 'hash' FROM (SELECT entity FROM worlds.world_scenes WHERE age(xmin) <= $3 \
            UNION ALL SELECT entity FROM worlds.retired_world_scenes WHERE age(xmin) <= $3 \
@@ -739,8 +761,7 @@ async fn rows_among(
     .bind(max_age)
     .fetch_all(&mut *conn)
     .await?;
-    found.extend(rows);
-    Ok(found)
+    Ok(rows.into_iter().collect())
 }
 
 /// The partial-upload staging sources, content's and worlds' ([`published_among`] leaves them out).
@@ -774,28 +795,50 @@ async fn aged(
     ))
 }
 
+/// The scene content lists that name some of a reclaim's keys, read before the store lock
+/// ([`scan_scenes`]); under it [`unlink_orphans_on`] re-reads only rows written since `fence`.
+pub struct SceneScan {
+    fence: i64,
+    referenced: HashSet<String>,
+}
+
+/// The unlocked half of reclaiming staged blobs, as the collector's walk: refuses unreadable
+/// content lists, then reads every scene content list naming one of `keys`. Its cost grows with
+/// the world scenes, so it runs before [`lock_store_exclusive`].
+pub async fn scan_scenes(pool: &PgPool, keys: &[String]) -> Result<SceneScan, GcError> {
+    check_json_sources(pool).await?;
+    let fence = scene_fence(pool).await?;
+    let referenced = scene_rows_among(&mut *pool.acquire().await?, keys, true, ALL_ROWS).await?;
+    Ok(SceneScan { fence, referenced })
+}
+
 /// Unlinks those of `keys` no domain names, on `lock` (a [`lock_store_exclusive`]
-/// transaction): for a writer reclaiming the blobs it staged, with no age floor, after
-/// [`check_json_sources`] passed. As the history prune does, it reads every reference under the
-/// lock (the keys are few), where the collector scans unlocked and re-reads only since its fence. The exclusive
-/// lock orders it against the content deploys (local and synced) and world scene deploys, which
-/// take the shared side and re-check the files they name; other domains, which do not take it,
-/// are not ordered. Answers how many went.
+/// transaction): for a writer reclaiming the blobs it staged, with no age floor. `scan` is
+/// [`scan_scenes`] over the same keys; under the lock only the indexed sources, the fixed
+/// references and the scenes written since its fence are read, as the collector does. The
+/// exclusive lock orders it against the writers that take the shared side and re-check the files
+/// they name (see [`lock_store_shared`]); other writers are not ordered. Answers the keys that
+/// could not be unlinked.
 pub async fn unlink_orphans_on(
     lock: &mut sqlx::PgConnection,
     pins: Pins<'_>,
     keys: &[String],
-) -> Result<usize, GcError> {
-    if keys.is_empty() {
-        return Ok(0);
+    scan: &SceneScan,
+) -> Result<HashSet<String>, GcError> {
+    let rest: Vec<String> = keys
+        .iter()
+        .filter(|k| !scan.referenced.contains(*k))
+        .cloned()
+        .collect();
+    let referenced = referenced_since(&mut *lock, pins, &rest, scan.fence).await?;
+    let mut failed = HashSet::new();
+    for key in rest.iter().filter(|k| !referenced.contains(*k)) {
+        if let Err(error) = pins.storage.delete_strict(key).await {
+            tracing::warn!(key, %error, "could not unlink a reclaimed staged blob");
+            failed.insert(key.clone());
+        }
     }
-    let referenced = referenced_among_on(&mut *lock, pins, keys).await?;
-    let mut unlinked = 0;
-    for key in keys.iter().filter(|k| !referenced.contains(*k)) {
-        pins.storage.delete_strict(key).await?;
-        unlinked += 1;
-    }
-    Ok(unlinked)
+    Ok(failed)
 }
 
 /// One collection pass: the store is walked in chunks of aged files, each
@@ -807,7 +850,7 @@ pub async fn collect(
     global_scenes_urn: &[String],
     options: GcOptions,
 ) -> Result<GcReport, GcError> {
-    check_json_sources(&mut *pool.acquire().await?).await?;
+    check_json_sources(pool).await?;
     let pins = Pins::new(storage, global_scenes_urn);
     let fixed = fixed_references(&mut *pool.acquire().await?, pins).await?;
     let refuse_empty =

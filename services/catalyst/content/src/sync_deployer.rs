@@ -5,8 +5,10 @@
 //! function takes. A flush that fails re-reports every entity it carried to
 //! `content.failed_deployments`, where the retry worker owns it.
 //!
-//! A deployer built [`with_store`](LiveSyncDeployer::with_store) (every one
-//! `serve` runs) takes the store lock's shared side in the flush transaction
+//! The deployer takes the store it writes for (only a test fixture that
+//! stores no files is built without one,
+//! [`without_store`](LiveSyncDeployer::without_store)) and takes the store
+//! lock's shared side in the flush transaction
 //! ([`crate::storage::gc::lock_store_shared`]), as the local deploy does, and
 //! checks there that the files each entity's rows name (its entity file and
 //! content) are still stored, one existence probe per distinct hash of the
@@ -326,8 +328,8 @@ impl Default for SyncMemoryLimits {
 #[derive(Clone)]
 pub struct LiveSyncDeployer {
     pool: PgPool,
-    /// The store the flush checks under the shared store lock; `None` only in tests whose
-    /// fixtures store no files.
+    /// The store the flush checks under the shared store lock; `None` only in test fixtures
+    /// that store no files ([`LiveSyncDeployer::without_store`]).
     storage: Option<Arc<Storage>>,
     batch: Arc<Mutex<Vec<ParsedEntity>>>,
 
@@ -436,10 +438,17 @@ async fn record_flush_failures(
 
 impl LiveSyncDeployer {
     /// `flush_concurrency` bounds concurrent batch flushes ([`DEFAULT_FLUSH_CONCURRENCY`]);
-    /// the memory limits are the defaults.
-    pub fn new(pool: PgPool, flush_concurrency: usize, validation: SyncValidation) -> Self {
+    /// the memory limits are the defaults. `storage` is the store whose files the flush checks
+    /// under the shared store lock (see the module doc).
+    pub fn new(
+        pool: PgPool,
+        storage: Arc<Storage>,
+        flush_concurrency: usize,
+        validation: SyncValidation,
+    ) -> Self {
         Self::with_limits(
             pool,
+            storage,
             flush_concurrency,
             SyncMemoryLimits::default(),
             validation,
@@ -450,6 +459,34 @@ impl LiveSyncDeployer {
     /// content validator of the local write path, so its caches are shared).
     pub fn with_limits(
         pool: PgPool,
+        storage: Arc<Storage>,
+        flush_concurrency: usize,
+        limits: SyncMemoryLimits,
+        validation: SyncValidation,
+    ) -> Self {
+        Self::build(pool, Some(storage), flush_concurrency, limits, validation)
+    }
+
+    /// A deployer for test fixtures that store no files: its flush takes no store lock and
+    /// checks no file.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn without_store(
+        pool: PgPool,
+        flush_concurrency: usize,
+        validation: SyncValidation,
+    ) -> Self {
+        Self::build(
+            pool,
+            None,
+            flush_concurrency,
+            SyncMemoryLimits::default(),
+            validation,
+        )
+    }
+
+    fn build(
+        pool: PgPool,
+        storage: Option<Arc<Storage>>,
         flush_concurrency: usize,
         limits: SyncMemoryLimits,
         validation: SyncValidation,
@@ -457,7 +494,7 @@ impl LiveSyncDeployer {
         let flush_backlog_max = limits.flush_backlog_max.max(1);
         Self {
             pool,
-            storage: None,
+            storage,
             batch: Arc::new(Mutex::new(Vec::with_capacity(BATCH_SIZE))),
             flush_sem: Arc::new(Semaphore::new(flush_concurrency.max(1))),
             in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -471,12 +508,6 @@ impl LiveSyncDeployer {
             validations: Arc::new(Semaphore::new(VALIDATIONS_IN_FLIGHT)),
             access_passed: Arc::default(),
         }
-    }
-
-    /// The store whose files the flush checks under the shared store lock (see the module doc).
-    pub fn with_store(mut self, storage: Arc<Storage>) -> Self {
-        self.storage = Some(storage);
-        self
     }
 
     fn take_access_passed(&self, key: &str) -> bool {

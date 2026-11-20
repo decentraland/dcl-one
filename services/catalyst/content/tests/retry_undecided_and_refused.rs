@@ -158,7 +158,7 @@ async fn an_undecided_entity_outlives_the_cap_and_a_refused_one_is_never_retried
             },
             catalyst_content::sync::test_sync_client(reqwest::Client::new()),
             storage.clone(),
-            Arc::new(LiveSyncDeployer::new(
+            Arc::new(LiveSyncDeployer::without_store(
                 pool.clone(),
                 1,
                 SyncValidation::Content(sources.clone()),

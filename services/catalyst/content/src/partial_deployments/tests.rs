@@ -792,6 +792,235 @@ async fn cleanup_reads_references_under_the_store_lock() {
     assert!(!storage.exist(&expiring.files[1].0).await.unwrap());
 }
 
+/// A world scene's content list naming a staged blob keeps it, whether it
+/// was committed before the cleanup ran (read before the store lock) or while
+/// the cleanup waited for the lock (re-read under it, past the fence).
+#[tokio::test]
+async fn cleanup_keeps_staged_blobs_a_world_scene_names() {
+    require_test_db!(Some(node) = Node::new("world-scene", Limits::default()).await);
+    let router = node.router();
+    let pool = &node.state.pool;
+    let storage = &node.state.storage;
+    let signer = PrivateKeySigner::random();
+    let tag = uuid::Uuid::new_v4().simple().to_string();
+    let (before, during, unique) = (
+        format!("world-before-{tag}"),
+        format!("world-during-{tag}"),
+        format!("world-unique-{tag}"),
+    );
+    let expiring = make_scene(
+        &signer,
+        &[
+            before.as_bytes(),
+            during.as_bytes(),
+            unique.as_bytes(),
+            b"world-never-sent",
+        ],
+        "scene",
+    )
+    .await;
+    let mut parts = vec![entity_file(&expiring)];
+    parts.extend(expiring.files[..3].iter().cloned());
+    let (status, _, body) = send(&router, &expiring, &expiring.chain, parts).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let world = format!("cleanup{tag}.dcl.eth");
+    sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1)")
+        .bind(&world)
+        .execute(pool)
+        .await
+        .unwrap();
+    let name_in_scene = |entity_id: String, hash: String| {
+        let world = world.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size) \
+                 VALUES ($1, $2, '[]'::json, $3, '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '{\"0,0\"}', 1)",
+            )
+            .bind(&world)
+            .bind(entity_id)
+            .bind(json!({ "content": [{ "file": "a", "hash": hash }] }))
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    };
+    name_in_scene(format!("before-{tag}"), expiring.files[0].0.clone()).await;
+    let _reclaim = RECLAIM.lock().await;
+    expire(pool, &expiring.id).await;
+
+    let mut deploy = pool.begin().await.unwrap();
+    gc::lock_store_shared(&mut deploy).await.unwrap();
+    let limits = Limits::default();
+    let (cleaned, ()) = tokio::join!(cleanup_expired(pool, storage, &limits), async {
+        wait_for_exclusive_store_lock(pool).await;
+        name_in_scene(format!("during-{tag}"), expiring.files[1].0.clone()).await;
+        deploy.commit().await.unwrap();
+    });
+    cleaned.unwrap();
+    assert_eq!(pending_rows(pool, &expiring.id).await, 0);
+    assert!(
+        storage.exist(&expiring.files[0].0).await.unwrap(),
+        "named before the run"
+    );
+    assert!(
+        storage.exist(&expiring.files[1].0).await.unwrap(),
+        "named while it waited"
+    );
+    assert!(!storage.exist(&expiring.files[2].0).await.unwrap());
+    sqlx::query("DELETE FROM worlds.worlds WHERE name = $1")
+        .bind(&world)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// Inserts expired uploads (no files) straight into `pool`'s database.
+async fn insert_expired(pool: &PgPool, ids: &[String]) {
+    sqlx::query(
+        "INSERT INTO content.pending_deployments
+           (entity_id, entity_type, pointers, content_hashes, deployer_address, created_at)
+         SELECT id, 'scene', '{}', '{}', '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                timezone('UTC', now()) - interval '2 hours'
+         FROM unnest($1::text[]) AS id",
+    )
+    .bind(ids)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn pending_among(pool: &PgPool, ids: &[String]) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM content.pending_deployments WHERE entity_id = ANY($1)")
+        .bind(ids)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// While deploys keep the store lock's shared side past the cleanup's wait,
+/// the run stops after one exclusive attempt instead of queueing another for
+/// each batch of uploads (each would hold new deploys behind it); every
+/// upload stays, and the next run reclaims them.
+#[tokio::test]
+async fn a_busy_store_lock_ends_the_cleanup_run() {
+    // A database of its own: only this run's waits are on its store lock.
+    require_test_db!(Some(pool) = crate::db::scratch::isolated_pool(6).await);
+    let tmp = std::env::temp_dir().join(format!(
+        "catalyst-partial-deferred-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = Storage::from_config(&tmp).await.unwrap();
+    let tag = uuid::Uuid::new_v4().simple().to_string();
+    // More than one store lock hold's worth.
+    let ids: Vec<String> = (0..=RECLAIM_BATCH)
+        .map(|i| format!("deferred-{tag}-{i}"))
+        .collect();
+    insert_expired(&pool, &ids).await;
+    let limits = Limits {
+        store_lock_wait: Duration::from_millis(300),
+        ..Limits::default()
+    };
+
+    let mut deploy = pool.begin().await.unwrap();
+    gc::lock_store_shared(&mut deploy).await.unwrap();
+    let done = std::sync::atomic::AtomicBool::new(false);
+    let (cleaned, attempts) = tokio::join!(
+        async {
+            let cleaned = cleanup_expired(&pool, &storage, &limits).await;
+            done.store(true, Ordering::SeqCst);
+            cleaned
+        },
+        async {
+            // Each attempt is a transaction of its own queued on the exclusive side.
+            let mut seen = std::collections::HashSet::new();
+            while !done.load(Ordering::SeqCst) {
+                let waiting: Vec<String> = sqlx::query_scalar(
+                    "SELECT virtualtransaction FROM pg_locks \
+                     WHERE locktype = 'advisory' AND mode = 'ExclusiveLock' AND NOT granted \
+                       AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) \
+                       AND (classid::bigint << 32 | objid::bigint) = $1",
+                )
+                .bind(gc::STORE_LOCK_KEY)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+                seen.extend(waiting);
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            seen
+        }
+    );
+    assert_eq!(cleaned.unwrap(), 0);
+    assert_eq!(attempts.len(), 1, "one exclusive attempt: {attempts:?}");
+    assert_eq!(pending_among(&pool, &ids).await, ids.len() as i64);
+
+    deploy.commit().await.unwrap();
+    assert_eq!(
+        cleanup_expired(&pool, &storage, &limits).await.unwrap(),
+        ids.len()
+    );
+    assert_eq!(pending_among(&pool, &ids).await, 0);
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// An upload a blob of which cannot be unlinked keeps its row for the next
+/// run; the uploads reclaimed under the same lock go.
+#[tokio::test]
+async fn an_unlink_failure_keeps_only_its_upload() {
+    require_test_db!(Some(pool) = crate::db::scratch::isolated_pool(4).await);
+    let tmp = std::env::temp_dir().join(format!(
+        "catalyst-partial-unlink-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = Storage::from_config(&tmp).await.unwrap();
+    let tag = uuid::Uuid::new_v4().simple().to_string();
+    let ids = vec![format!("unlinks-{tag}"), format!("fails-{tag}")];
+    insert_expired(&pool, &ids).await;
+    let mut keys = Vec::new();
+    for (id, label) in ids.iter().zip(["unlinks", "fails"]) {
+        let bytes = Bytes::from(format!("{label}-{tag}"));
+        let key = hash_bytes_v1(&bytes);
+        storage.store(&key, bytes).await.unwrap();
+        sqlx::query(
+            "INSERT INTO content.pending_deployment_files (entity_id, hash, size, stored, written)
+             VALUES ($1, $2, 1, true, true)",
+        )
+        .bind(id)
+        .bind(&key)
+        .execute(&pool)
+        .await
+        .unwrap();
+        keys.push(key);
+    }
+    // A directory where the second blob was: removing it as a file fails.
+    let path = storage.file_path(&keys[1]).await.unwrap().expect("stored");
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+
+    assert!(
+        cleanup_expired(&pool, &storage, &Limits::default())
+            .await
+            .is_err()
+    );
+    assert!(!storage.exist(&keys[0]).await.unwrap());
+    assert_eq!(pending_among(&pool, &ids[..1]).await, 0);
+    assert_eq!(
+        pending_among(&pool, &ids[1..]).await,
+        1,
+        "kept for the next run"
+    );
+
+    std::fs::remove_dir(&path).unwrap();
+    assert_eq!(
+        cleanup_expired(&pool, &storage, &Limits::default())
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(pending_among(&pool, &ids).await, 0);
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 /// Cleanup unlinks only what an upload wrote, and never what the collector
 /// keeps: an upload listing a global scene's content (found stored, so not
 /// written by it) leaves it alone when it expires, as it leaves a blob some

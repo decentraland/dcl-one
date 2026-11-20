@@ -427,15 +427,13 @@ impl Leader {
         status_mirror::spawn_publisher(&self.jobs, &ctx, self.pool.clone(), self.status.clone());
         let settings = &self.settings;
         let limits = memory_limits();
-        let deployer = Arc::new(
-            LiveSyncDeployer::with_limits(
-                self.pool.clone(),
-                settings.flush_concurrency,
-                limits,
-                self.validation.clone(),
-            )
-            .with_store(self.storage.clone()),
-        );
+        let deployer = Arc::new(LiveSyncDeployer::with_limits(
+            self.pool.clone(),
+            self.storage.clone(),
+            settings.flush_concurrency,
+            limits,
+            self.validation.clone(),
+        ));
         deployer.spawn_flush_ticker(&self.jobs, &ctx);
         tracing::info!(
             inflight_bytes_max = limits.inflight_bytes_max,
@@ -662,15 +660,13 @@ pub fn start_failed_deployments(
     jobs.spawn_leased("failed-deployments", move |ctx| {
         let settings = settings.clone();
         let jobs = registry.clone();
-        let deployer = Arc::new(
-            LiveSyncDeployer::with_limits(
-                pool.clone(),
-                crate::sync_deployer::DEFAULT_FLUSH_CONCURRENCY,
-                memory_limits(),
-                validation.clone(),
-            )
-            .with_store(storage.clone()),
-        );
+        let deployer = Arc::new(LiveSyncDeployer::with_limits(
+            pool.clone(),
+            storage.clone(),
+            crate::sync_deployer::DEFAULT_FLUSH_CONCURRENCY,
+            memory_limits(),
+            validation.clone(),
+        ));
         let deps = FailedDeploymentDeps {
             pool: pool.clone(),
             storage: storage.clone(),

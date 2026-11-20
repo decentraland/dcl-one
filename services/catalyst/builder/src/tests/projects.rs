@@ -1109,3 +1109,42 @@ async fn an_existing_database_gains_the_project_tables_in_place() {
     .await
     .unwrap();
 }
+
+/// A blob found stored is not unlinked between `PUT .../blobs/{hash}`'s
+/// existence check and its row: the upload waits while an unlink batch holds
+/// the exclusive store lock, then stores again what the batch removed.
+#[tokio::test]
+async fn a_blob_upload_waits_for_an_unlink_batch_and_stores_what_it_removed() {
+    let Some(pool) = crate::db::scratch::pool(2).await else {
+        return;
+    };
+    let blobs = temp_storage().await;
+    let bytes = unique("staged project blob");
+    let hash = hash_bytes_v1(&bytes);
+    blobs.store(&hash, bytes.clone().into()).await.unwrap();
+
+    let batch = crate::storage::gc::lock_store_exclusive(&pool)
+        .await
+        .unwrap();
+    let owner = owner_address(OWNER_KEY);
+    let upload = crate::projects::accept_blob(&pool, &blobs, &owner, &hash, bytes.into());
+    tokio::pin!(upload);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(300), &mut upload)
+            .await
+            .is_err(),
+        "the upload waits for the unlink batch"
+    );
+    blobs.delete_strict(&hash).await.unwrap();
+    batch.commit().await.unwrap();
+    assert!(upload.await.is_ok());
+    assert!(
+        blobs.exist(&hash).await.unwrap(),
+        "the row names a stored file"
+    );
+    sqlx::query("DELETE FROM builder.uploaded_contents WHERE hash = $1")
+        .bind(&hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+}

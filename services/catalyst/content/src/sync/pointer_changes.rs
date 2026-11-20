@@ -759,7 +759,7 @@ mod tests {
             crate::sync::test_sync_client(reqwest::Client::new()),
             storage,
             pool.clone(),
-            Arc::new(LiveSyncDeployer::new(
+            Arc::new(LiveSyncDeployer::without_store(
                 pool.clone(),
                 2,
                 crate::sync_deployer::SyncValidation::AuthChainOnly,
