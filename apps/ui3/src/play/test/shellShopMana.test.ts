@@ -581,6 +581,21 @@ describe('the in-world purchase with MANA', () => {
       expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(true)
     })
 
+    it('keeps a sent split pending, its credit held, when its receipt can\'t be read', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      const aborted = { ...w.chain, receipt: async () => Promise.reject(new DOMException('The read was aborted.', 'AbortError')) }
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, reader: () => aborted as never } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      expect(w.relay.posts).toHaveLength(1)
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+      expect(p.events.at(-1)).toMatchObject({ state: 'pending' })
+    })
+
     it('reserves nothing and asks nothing of the wallet without Web Locks', async () => {
       on()
       const w = world()
