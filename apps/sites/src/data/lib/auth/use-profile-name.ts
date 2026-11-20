@@ -54,10 +54,3 @@ export function useProfileIdentity(
 
   return isConnected && address?.toLowerCase() === identity.address ? identity : EMPTY;
 }
-
-export function useProfileName(
-  address: string | null | undefined,
-  isConnected: boolean,
-): string {
-  return useProfileIdentity(address, isConnected).name;
-}

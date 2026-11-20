@@ -40,6 +40,8 @@ const en = {
     userId: "User ID",
     copyUserId: "Copy user ID",
     userIdCopied: "User ID copied",
+    addressCopied: "Address copied!",
+    walletNetwork: "Wallet network",
     copyUserIdError: "Could not copy user ID",
   },
   download: {
@@ -92,6 +94,8 @@ export const homeCopy = {
       userId: "ID de usuario",
       copyUserId: "Copiar ID de usuario",
       userIdCopied: "ID de usuario copiado",
+      addressCopied: "¡Dirección copiada!",
+      walletNetwork: "Red de la billetera",
       copyUserIdError: "No se pudo copiar el ID de usuario",
     },
     download: {
@@ -139,6 +143,8 @@ export const homeCopy = {
       userId: "Identifiant utilisateur",
       copyUserId: "Copier l’identifiant utilisateur",
       userIdCopied: "Identifiant utilisateur copié",
+      addressCopied: "Adresse copiée !",
+      walletNetwork: "Réseau du portefeuille",
       copyUserIdError: "Impossible de copier l’identifiant utilisateur",
     },
     download: {
@@ -186,6 +192,8 @@ export const homeCopy = {
       userId: "用户 ID",
       copyUserId: "复制用户 ID",
       userIdCopied: "已复制用户 ID",
+      addressCopied: "地址已复制！",
+      walletNetwork: "钱包网络",
       copyUserIdError: "无法复制用户 ID",
     },
     download: {
@@ -233,6 +241,8 @@ export const homeCopy = {
       userId: "사용자 ID",
       copyUserId: "사용자 ID 복사",
       userIdCopied: "사용자 ID를 복사했습니다",
+      addressCopied: "주소가 복사되었습니다!",
+      walletNetwork: "지갑 네트워크",
       copyUserIdError: "사용자 ID를 복사할 수 없습니다",
     },
     download: {
@@ -280,6 +290,8 @@ export const homeCopy = {
       userId: "ユーザーID",
       copyUserId: "ユーザーIDをコピー",
       userIdCopied: "ユーザーIDをコピーしました",
+      addressCopied: "アドレスをコピーしました！",
+      walletNetwork: "ウォレットネットワーク",
       copyUserIdError: "ユーザーIDをコピーできませんでした",
     },
     download: {

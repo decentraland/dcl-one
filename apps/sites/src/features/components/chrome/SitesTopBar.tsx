@@ -40,6 +40,7 @@ import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
 import wordmark from "@dcl/one-ui/apps/sites/assets/dcl_name.svg?url";
 import { SitesLocaleContext } from "@ui/web/frames/sites-locale";
 import { useMarketplaceHere } from "@/data/lib/shop/marketplace-access";
+import { ACCOUNT_COPY } from "../../account/copy";
 import { homeCopy } from "../../home/locale";
 import { useChromeNotifications } from "./useChromeNotifications";
 import styles from "./SitesTopBar.module.css";
@@ -92,14 +93,14 @@ const SITE_ICONS = {
   ),
 };
 
-function ProfileNetwork({ provider }: { provider: Eip1193Provider }) {
+function ProfileNetwork({ provider, label }: { provider: Eip1193Provider; label: string }) {
   const { chainId, pendingChainId, switchTo } = useWalletChain(provider);
   if (chainId === null) return null;
   const ethereum = ethereumChainId();
   const polygon = settlementChainId();
   return (
     <select
-      aria-label="Wallet network"
+      aria-label={label}
       className={styles.profileNetwork}
       value={pendingChainId ?? chainId}
       disabled={pendingChainId !== null}
@@ -142,6 +143,8 @@ export default function SitesTopBar({
   const marketplaceAvailable = useMarketplaceHere();
   const landing = pathname === "/";
   const locale = useContext(SitesLocaleContext)?.locale ?? "en";
+  const accountLabels = homeCopy[locale].account;
+  const [profileOpen, setProfileOpen] = useState(false);
   const isIn = signedIn ?? auth.signedIn;
   const address = account ?? auth.account;
   const signIn = onSignIn ?? auth.onSignIn;
@@ -173,7 +176,7 @@ export default function SitesTopBar({
     landing && auth.notificationsReady !== false,
   );
   const rows = notifications.data;
-  const manaAccount = profileWalletAvailable && matchingWallet ? identity : null;
+  const manaAccount = profileOpen && profileWalletAvailable && matchingWallet ? identity : null;
   const mana = useManaBalance(manaAccount, ethereumChainId()).data;
   const polygonMana = useManaBalance(manaAccount, settlementChainId()).data;
   const menuBalances = manaAccount && (mana !== undefined || polygonMana !== undefined)
@@ -207,7 +210,7 @@ export default function SitesTopBar({
       ...(signOut
         ? [
             {
-              label: "Logout",
+              label: ACCOUNT_COPY.logout,
               onSelect: signOut,
               icon: <MenusLeave size={20} aria-hidden="true" />,
               separated: true,
@@ -307,8 +310,11 @@ export default function SitesTopBar({
           accountActions={actions}
           accountMenuAppearance="profile"
           accountMenuBalances={menuBalances}
-          accountMenuNetwork={manaAccount && provider ? <ProfileNetwork provider={provider} /> : undefined}
-          labels={landing ? homeCopy[locale].account : undefined}
+          accountMenuNetwork={manaAccount && provider ? (
+            <ProfileNetwork provider={provider} label={accountLabels.walletNetwork} />
+          ) : undefined}
+          onAccountMenuOpenChange={setProfileOpen}
+          labels={accountLabels}
           mobileSecondaryNavigation={
             sections ? ({ closeDrawer }) => sections(closeDrawer) : undefined
           }

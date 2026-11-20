@@ -485,7 +485,7 @@ pub struct ShopConfig {
     pub credits_checkout_cancel_url: String,
 
     // The shop-server fold (src/shop/{outfits,subscriptions,treasury}).
-    /// The outfit authoring allowlist (comma or newline separated wallets, the signed-fetch signer compared lowercase); empty refuses every outfit write.
+    /// A local override of the outfit authoring allowlist (comma or newline separated wallets, the signed-fetch signer compared lowercase); blank reads the `dapps-shop-outfit-creators` flag variant per request, and a set value with no valid wallet lets no one author.
     #[arg(long, env = "SHOP_OUTFIT_CREATORS", default_value = "")]
     pub shop_outfit_creators: String,
 

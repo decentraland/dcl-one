@@ -538,20 +538,20 @@
     "notes": "`only_highlighted` also lifts `world IS false`, so highlighted world rows would appear too."
   },
   {
-    "id": "places.get_places.only_excluded_from_ranking_ignored", "area": "places",
+    "id": "places.get_places.only_excluded_from_ranking", "area": "places",
     "request": {"method": "GET", "path": "/api/places", "query": {"only_excluded_from_ranking": "true"}},
     "expected": {
       "status": 200, "content_type": "application/json", "body_match": "shape",
       "shape": {
         "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
-        "invariants": ["data.length <= 100", "every item.world == false", "every item.disabled == false", "total >= 3"]
+        "invariants": ["every item.exclude_from_ranking == true", "every item.world == false", "total == 1"]
       }
     },
     "source": {
-      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
-      "refs": ["src/controllers/handlers/get-places-handler.ts:12-34"]
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/routes/getPlaceList.ts:49-51,83", "src/entities/Place/model.ts:167-170"]
     },
-    "notes": "The discovery server has no `only_excluded_from_ranking` parameter; the list is the default list."
+    "notes": "The places service filters on the flag (gatsby `bool()`); the discovery server has no such parameter, and the places service is the reference for it."
   },
   {
     "id": "places.get_places.owner_filter", "area": "places",

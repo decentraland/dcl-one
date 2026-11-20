@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 
+import { Button } from "@dcl/one-ui";
 import {
+  GeneralEdit,
   GeneralLink,
   ProfileCountry,
   ProfileGender,
@@ -12,10 +14,12 @@ import {
   ProfileRelationship,
 } from "@dcl/one-ui/foundations/icons";
 
+import { playUrl } from "@/data/lib/catalyst/bases";
 import type { ProfileBadge } from "@/data/lib/catalyst/social/badges";
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
 
-import { useProfileBadges } from "./hooks";
+import { CollectiblesItem, CollectiblesPanel, CreationCard, type CollectiblesState } from "./collectibles";
+import { useProfileBadges, useWornCollectibles } from "./hooks";
 import { ProfileBadges } from "./ProfileBadges";
 import styles from "./ProfileOverviewScreen.module.css";
 import { ProfileShell, type ProfileShellTab } from "./ProfileShell";
@@ -73,7 +77,51 @@ function AvatarBody({ imageUrl, name }: { imageUrl?: string; name: string }) {
   );
 }
 
-/** Overview with the profile site's look: header, tab bar, avatar column, About and Links. */
+const NO_WORN_ITEMS = "No equipped items yet.";
+
+/**
+ * The collectibles the avatar wears, as the Shop's cards. A visitor gets each card's Buy or View in
+ * Shop; on the member's own profile the card only links to the item.
+ */
+function WornCollectibles({ urns, own }: { urns: readonly string[]; own: boolean }) {
+  const query = useWornCollectibles(urns);
+  const items = query.data;
+  const state: CollectiblesState =
+    urns.length === 0
+      ? { kind: "empty-note", message: NO_WORN_ITEMS }
+      : items === undefined
+        ? query.isError
+          ? {
+              kind: "error",
+              message: "Equipped items are unavailable right now.",
+              action: (
+                <Button variant="secondary" size="md" loading={query.isFetching} onClick={() => void query.refetch()}>
+                  Try again
+                </Button>
+              ),
+            }
+          : { kind: "loading", label: "Loading equipped items" }
+        : items.length === 0
+          ? { kind: "empty-note", message: NO_WORN_ITEMS }
+          : {
+              kind: "list",
+              count: items.length === 1 ? "1 equipped item" : `${items.length} equipped items`,
+              showCount: false,
+              children: items.map((item) => (
+                <CollectiblesItem key={item.id}>
+                  <CreationCard item={item} actions={!own} />
+                </CollectiblesItem>
+              )),
+            };
+  return (
+    <div className={styles.section}>
+      <h2 className={styles.title}>Equipped items</h2>
+      <CollectiblesPanel state={state} />
+    </div>
+  );
+}
+
+/** Overview with the profile site's look: header, tab bar, avatar column, About, Links and the items worn. */
 export function ProfileOverviewScreen({
   profile,
   hasProfile,
@@ -98,6 +146,18 @@ export function ProfileOverviewScreen({
     >
       <div className={styles.root}>
         <section className={styles.surface}>
+          {own ? (
+            <Button
+              className={styles.edit}
+              variant="dark"
+              size="md"
+              href={playUrl()}
+              aria-label="Edit profile in Decentraland"
+              trailingIcon={<GeneralEdit size={18} aria-hidden="true" />}
+            >
+              Edit
+            </Button>
+          ) : null}
           <div className={styles.section}>
             <ProfileBadges
               badges={badgeItems(badges.data ?? [])}
@@ -142,6 +202,9 @@ export function ProfileOverviewScreen({
               </ul>
             </div>
           ) : null}
+        </section>
+        <section className={styles.surface}>
+          <WornCollectibles urns={profile.wornCollectibles} own={own} />
         </section>
       </div>
     </ProfileShell>

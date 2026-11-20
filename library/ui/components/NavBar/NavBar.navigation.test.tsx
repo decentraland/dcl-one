@@ -131,7 +131,7 @@ describe('when building the public Sites navigation', () => {
     expect(desktop[2]?.items).toEqual([
       { label: 'Create in Decentraland', href: '/create', active: false },
       { label: 'Publish Wearables & Emotes', href: '/create/wearables', active: true },
-      { label: 'Publish LAND', href: '/create/land', active: false }
+      { label: 'Publish LAND', href: '/download/creator-hub', active: false }
     ])
   })
 })

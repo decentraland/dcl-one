@@ -16,8 +16,6 @@ const CREATOR_FUNNEL_EVENTS = [
 
 type CreatorFunnelEvent = (typeof CREATOR_FUNNEL_EVENTS)[number];
 
-export const CREATOR_DASHBOARD_VIEWED = "creator_dashboard_viewed";
-
 function funnelStep(event: CreatorFunnelEvent): number {
   return CREATOR_FUNNEL_EVENTS.indexOf(event);
 }

@@ -360,7 +360,7 @@ def render(table, cfg, mime):
         if prefix == "/cast":
             for page in ("/cast/s/", "/cast/w/"):
                 locations += location("^~ " + page, proxy("sites"))
-    for path in ("/", "/favicon.ico", "/dcl-sdk-types.json", "/docs/index.md", "/_root.data",
+    for path in ("/", "/favicon.ico", "/docs/index.md", "/_root.data",
                  "/terms", "/privacy", "/content-policy", "/ethics", "/rewards", "/rewards-terms",
                  "/creator-fund-terms", "/referral", "/referral-terms", "/credits-terms", "/security",
                  "/brand"):
@@ -368,7 +368,7 @@ def render(table, cfg, mime):
     # The Content Policy page on the apex host; on every other host (peer., worlds., content.)
     # /content stays the content server's.
     locations += location("= /content", proxy("$content_root"))
-    for path in ("/assets/", "/fonts/", "/errors/", "/template-bundles/"):
+    for path in ("/assets/", "/fonts/", "/errors/"):
         locations += location("^~ " + path, proxy("sites"))
     locations += location("/content/", proxy("apis", "limit_req zone=content burst=1000 nodelay;"))
     # Matched after host rewrites, so every storage host form shares this budget.
