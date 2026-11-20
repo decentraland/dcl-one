@@ -25,5 +25,8 @@ export default tseslint.config(
     languageOptions: { globals: { console: 'readonly', process: 'readonly', URL: 'readonly' } }
   },
   ...tseslint.configs.recommended,
-  { files: ['figma/review/src/**/*.{ts,tsx}'], ...reactHooks.configs.flat.recommended }
+  {
+    files: ['figma/review/src/**/*.{ts,tsx}', 'gallery/src/**/*.{ts,tsx}'],
+    ...reactHooks.configs.flat.recommended
+  }
 )

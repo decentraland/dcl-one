@@ -985,6 +985,10 @@
           "kind": "directory"
         },
         {
+          "name": "gallery",
+          "kind": "directory"
+        },
+        {
           "name": "index.ts",
           "kind": "regular"
         },
