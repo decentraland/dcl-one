@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hero } from "@dcl/one-ui/apps/sites/home/Hero";
@@ -7,6 +13,7 @@ import { ComeHangOut } from "@dcl/one-ui/apps/sites/home/ComeHangOut";
 import { WhatsOn } from "@dcl/one-ui/apps/sites/home/WhatsOn";
 import { Carousel } from "@dcl/one-ui/apps/sites/shared/Carousel";
 import { downloadActions } from "../download/actions";
+import { homeDownloadActions } from "./actions";
 
 vi.hoisted(() =>
   Object.assign(window, { __vite_plugin_react_preamble_installed__: true }),
@@ -55,6 +62,46 @@ describe("home sections", () => {
     expect(html).not.toContain("Decentraland_installer.exe");
     expect(html).toContain("Download on the App Store");
   });
+  it.each([
+    [
+      "a Linux desktop without an installer host",
+      { kind: "desktop", os: "other", arch: "unknown" },
+      false,
+    ],
+    [
+      "32-bit Windows with an installer host",
+      { kind: "desktop", os: "windows", arch: "ia32" },
+      true,
+    ],
+  ] as const)(
+    "names the fallback call's Windows icon for %s",
+    (_, platform, installers) => {
+      const { hero, hangOut, store } = homeDownloadActions(
+        platform,
+        "+438K",
+        installers,
+      );
+      render(
+        <>
+          <Hero
+            title="Come Hang Out"
+            imageAlt="Decentraland"
+            actions={hero}
+            mobile={{ title: "Anywhere", subtitle: "Mobile", store }}
+          />
+          <ComeHangOut title="Come Hang Out" actions={hangOut} store={store} />
+        </>,
+      );
+      const calls = screen.getAllByRole("link", {
+        name: "DOWNLOAD FOR Windows",
+      });
+      expect(calls).toHaveLength(2);
+      for (const call of calls) {
+        expect(call.getAttribute("href")).toBe("/download");
+        expect(within(call).getByRole("img", { name: "Windows" })).toBeTruthy();
+      }
+    },
+  );
   it("does not invent event cards when the backend has none", () => {
     expect(
       renderToString(
@@ -130,8 +177,17 @@ describe("the home hero's ambient video", () => {
   const at = (width: number, reduced = false) => {
     vi.stubGlobal("matchMedia", (query: string) => {
       const min = /min-width:\s*(\d+)px/.exec(query);
-      const matches = query.includes("reduce") ? reduced : min ? width >= Number(min[1]) : false;
-      return { matches, media: query, addEventListener: vi.fn(), removeEventListener: vi.fn() };
+      const matches = query.includes("reduce")
+        ? reduced
+        : min
+          ? width >= Number(min[1])
+          : false;
+      return {
+        matches,
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      };
     });
     vi.stubGlobal("requestIdleCallback", (start: () => void) => {
       start();
@@ -140,7 +196,9 @@ describe("the home hero's ambient video", () => {
     vi.stubGlobal("cancelIdleCallback", vi.fn());
   };
   const video = () => {
-    const { container } = render(<Hero title="Come Hang Out" imageAlt="Decentraland" />);
+    const { container } = render(
+      <Hero title="Come Hang Out" imageAlt="Decentraland" />,
+    );
     return container.querySelector("video");
   };
 

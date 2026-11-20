@@ -8,6 +8,9 @@ const MACOS = { kind: "desktop", os: "macos", arch: "unknown" } as const;
 const LINUX = { kind: "desktop", os: "other", arch: "unknown" } as const;
 const UNKNOWN = { kind: "unknown" } as const;
 const ANDROID = { kind: "mobile", os: "android" } as const;
+const IOS = { kind: "mobile", os: "ios" } as const;
+const WINDOWS_ARM = { ...WINDOWS, arch: "arm64" } as const;
+const WINDOWS_32 = { ...WINDOWS, arch: "ia32" } as const;
 
 const primaryOf = (platform: DetectedPlatform, installers: boolean) => {
   const { hero, hangOut } = homeDownloadActions(platform, "+438K", installers);
@@ -56,21 +59,52 @@ describe("home download actions", () => {
           osName: "Windows",
           href: "/download_success?os=windows&arch=amd64",
         });
-        expect(hero.alternativeGroups?.[0]?.map((link) => link.icon)).toEqual(
-          ["macos"],
-        );
+        expect(hero.alternativeGroups?.[0]?.map((link) => link.icon)).toEqual([
+          "macos",
+        ]);
       },
     );
 
-    it("should keep the Windows icon and the download page link for 32-bit Windows", () => {
-      const { hero } = homeDownloadActions(
-        { ...WINDOWS, arch: "ia32" },
-        "+438K",
-        true,
-      );
-      expect(hero.primary).toMatchObject({ os: "windows", href: "/download" });
-      expect(hero.alternativeGroups?.[0]).toEqual([]);
+    it("should start the 64-bit Windows installer for a Windows arm64 visitor", () => {
+      expect(primaryOf(WINDOWS_ARM, true)).toMatchObject({
+        os: "windows",
+        href: "/download_success?os=windows&arch=amd64",
+      });
     });
+
+    it("should keep the Windows icon, link 32-bit Windows to the download page and still offer macOS", () => {
+      const { hero, hangOut } = homeDownloadActions(WINDOWS_32, "+438K", true);
+      expect(primaryOf(WINDOWS_32, true)).toEqual({
+        label: "DOWNLOAD FOR",
+        os: "windows",
+        osName: "Windows",
+        href: "/download",
+      });
+      expect(hero.alternativeGroups?.[0]?.map((link) => link.href)).toEqual([
+        "/download_success?os=macos&arch=arm64",
+      ]);
+      expect(
+        hangOut.alternativeGroups?.flat().map((link) => link.icon),
+      ).toEqual(["macos", "ios", "android"]);
+    });
+
+    it.each([
+      ["a Mac visitor", MACOS],
+      ["a Windows visitor", WINDOWS],
+      ["a Linux desktop", LINUX],
+      ["an unknown platform", UNKNOWN],
+      ["32-bit Windows", WINDOWS_32],
+      ["an Android phone", ANDROID],
+    ] as const)(
+      "should give the hero and Come Hang Out the same call and links for %s",
+      (_, platform) => {
+        const { hero, hangOut } = homeDownloadActions(platform, "+438K", true);
+        expect(primaryOf(platform, true)?.os).toMatch(/^(windows|macos)$/);
+        expect(hangOut.alternativeGroups?.flat()).toEqual(
+          hero.alternativeGroups?.flat(),
+        );
+      },
+    );
   });
 
   describe("when the visitor uses Android", () => {
@@ -86,9 +120,29 @@ describe("home download actions", () => {
       ]);
     });
 
-    it("should keep the download page link, now with the Windows icon, and no installer", () => {
+    it("should link to the download page with the Windows icon and no installer", () => {
       const { hero } = homeDownloadActions(ANDROID, "+438K", true);
       expect(hero.primary).toMatchObject({ os: "windows", href: "/download" });
+      expect(hero.alternativeGroups?.[0]).toEqual([]);
+    });
+  });
+
+  describe("when the visitor uses iOS", () => {
+    it("should offer the App Store badge and link to the download page with the Windows icon", () => {
+      const { hero, store, alternateStore } = homeDownloadActions(
+        IOS,
+        "+438K",
+        true,
+      );
+      expect([store.badge, alternateStore.badge]).toEqual([
+        "app_store",
+        "google_play",
+      ]);
+      expect(primaryOf(IOS, true)).toMatchObject({
+        os: "windows",
+        osName: "Windows",
+        href: "/download",
+      });
       expect(hero.alternativeGroups?.[0]).toEqual([]);
     });
   });
@@ -99,9 +153,9 @@ describe("home download actions", () => {
       expect(hero.primary?.href).toBe("/download");
       expect(hangOut.primary?.href).toBe("/download");
       expect(hero.alternativeGroups?.[0]).toEqual([]);
-      expect(hangOut.alternativeGroups?.flat().map((link) => link.icon)).toEqual(
-        ["ios", "android"],
-      );
+      expect(
+        hangOut.alternativeGroups?.flat().map((link) => link.icon),
+      ).toEqual(["ios", "android"]);
     });
 
     it.each([
@@ -109,13 +163,18 @@ describe("home download actions", () => {
       ["a Windows visitor", WINDOWS, "windows", "Windows"],
       ["a Linux desktop", LINUX, "windows", "Windows"],
       ["an unknown platform", UNKNOWN, "windows", "Windows"],
-    ] as const)("should still show the OS icon for %s", (_, platform, os, name) => {
-      expect(primaryOf(platform, false)).toEqual({
-        label: "DOWNLOAD FOR",
-        os,
-        osName: name,
-        href: "/download",
-      });
-    });
+      ["32-bit Windows", WINDOWS_32, "windows", "Windows"],
+      ["an iPhone", IOS, "windows", "Windows"],
+    ] as const)(
+      "should still show the OS icon for %s",
+      (_, platform, os, name) => {
+        expect(primaryOf(platform, false)).toEqual({
+          label: "DOWNLOAD FOR",
+          os,
+          osName: name,
+          href: "/download",
+        });
+      },
+    );
   });
 });
