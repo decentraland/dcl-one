@@ -304,6 +304,16 @@ class WorkflowSetupTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertFalse(included(path), f'Sites archive includes tooling/private input: {path}')
 
+    def test_sites_source_archive_required_paths_exist(self):
+        repo = Path(__file__).parents[2]
+        source = (repo / 'infra/packages/sites.nix').read_text()
+        archive = source.split('  src = lib.fileset.toSource {', 1)[1].split('  # A build', 1)[0]
+        archive = re.sub(r'lib\.fileset\.maybeMissing \(.*?\)', '', archive)
+        aliases = {'sites': repo / 'apps/sites', 'ui': repo / 'apps/ui3', 'root': repo}
+        for alias, path in re.findall(r'\((sites|ui|root) \+ /([^\s)]+)\)', archive):
+            with self.subTest(alias=alias, path=path):
+                self.assertTrue((aliases[alias] / path).exists(), f'Sites archive input is missing: {alias}/{path}')
+
     def test_sites_media_guard_rejects_pointer_text_and_accepts_materialized_binary(self):
         source = (Path(__file__).parents[2] / 'infra/packages/sites.nix').read_text()
         build = source.split("  buildPhase = ''", 1)[1]

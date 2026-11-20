@@ -57,7 +57,7 @@ let
       (sites + /src) (sites + /scripts)
       (sites + /package.json) (sites + /pnpm-lock.yaml) (sites + /pnpm-workspace.yaml)
       (sites + /vite.config.ts) (sites + /react-router.config.ts) (sites + /tsconfig.json)
-      (ui + /src) (ui + /public) (ui + /scripts/gen-error-pages.mts)
+      (ui + /src) (ui + /public)
       (ui + /vite.validate.js) (ui + /package.json)
       (root + /library/catalyst-api) (root + /library/shop) (root + /library/hashing/src) (root + /library/web-core)
       (root + /library/ui/index.ts)
