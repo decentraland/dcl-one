@@ -67,7 +67,7 @@ import PaymentPanel from "./components/PaymentPanel";
 import ResaleOffers from "./components/ResaleOffers";
 import { ItemOwners, LatestSales } from "./components/TradeHistory";
 import { itemIdFromTokenId } from "./lib/token-id";
-import { preloadable } from "./lib/preloadable";
+import { DialogBoundary, preloadable } from "./lib/preloadable";
 import { itemUrn } from "@shop/detail/lib/urn";
 import { fetchVrmExportBlocked } from "./lib/wearable-rules";
 import { offerQueryKey, offersRevalidation, useOffers, type OfferQuery } from "./offers";
@@ -943,37 +943,45 @@ export default function ItemDetail() {
 
       {!isLand ? <PhotoReel contractAddress={contractAddress} itemId={pageItemId} /> : null}
 
-      <Suspense fallback={null}>
-        {buyNow && inPlace && cartInput ? (
-          <BuyModal
-            line={{ ...cartInput, seen: offer ?? null }}
-            returnPath={itemHref}
-            resume={buyNow.resume}
-            onResumeUsed={() => setBuyNow((b) => (b ? { resume: null } : b))}
-            onClose={() => setBuyNow(null)}
-          />
-        ) : null}
-        {buyingMixed ? (
-          <CombinedBuy
-            line={buyingMixed.line}
-            offer={buyingMixed.offer}
-            mixed={buyingMixed.mixed}
-            onClose={() => setBuyingMixed(null)}
-            onDone={() => invalidateShopQueries()}
-          />
-        ) : null}
-        {buyingOrder && routeTokenId ? (
-          <LegacyOrderBuy
-            name={current.name}
-            contractAddress={contractAddress}
-            tokenId={routeTokenId}
-            order={buyingOrder.order}
-            quoted={buyingOrder.quoted}
-            onClose={() => setBuyingOrder(null)}
-            onDone={() => invalidateShopQueries()}
-          />
-        ) : null}
-      </Suspense>
+      <DialogBoundary
+        onClose={() => {
+          setBuyNow(null);
+          setBuyingMixed(null);
+          setBuyingOrder(null);
+        }}
+      >
+        <Suspense fallback={null}>
+          {buyNow && inPlace && cartInput ? (
+            <BuyModal
+              line={{ ...cartInput, seen: offer ?? null }}
+              returnPath={itemHref}
+              resume={buyNow.resume}
+              onResumeUsed={() => setBuyNow((b) => (b ? { resume: null } : b))}
+              onClose={() => setBuyNow(null)}
+            />
+          ) : null}
+          {buyingMixed ? (
+            <CombinedBuy
+              line={buyingMixed.line}
+              offer={buyingMixed.offer}
+              mixed={buyingMixed.mixed}
+              onClose={() => setBuyingMixed(null)}
+              onDone={() => invalidateShopQueries()}
+            />
+          ) : null}
+          {buyingOrder && routeTokenId ? (
+            <LegacyOrderBuy
+              name={current.name}
+              contractAddress={contractAddress}
+              tokenId={routeTokenId}
+              order={buyingOrder.order}
+              quoted={buyingOrder.quoted}
+              onClose={() => setBuyingOrder(null)}
+              onDone={() => invalidateShopQueries()}
+            />
+          ) : null}
+        </Suspense>
+      </DialogBoundary>
     </div>
   );
 }
