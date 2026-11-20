@@ -31,8 +31,8 @@ import {
   type FakeHandlers,
 } from "../fakes";
 import { getCouponManagerForTrade } from "../lib/marketplace";
-import type { ListingCoupon } from "./encoding";
-import { reviewCart, resolveLine, partitionReservations, couponForTrade, classifyTrade, classifyStoreMint, isLineBuyable, type ResolvedLine, type SettlementResolvers } from "./cart";
+import { ASSET_TYPE, type ListingCoupon } from "./encoding";
+import { reviewCart, resolveLine, partitionReservations, couponForTrade, classifyTrade, classifyStoreMint, isLineBuyable, tradeManaPrice, type ResolvedLine, type SettlementResolvers } from "./cart";
 import { AFTER_PENDING, resumeCheckout, runGroup, runGroups, watchGroup, type CheckoutDeps } from "./executor";
 import { computePaymentOptions, distributeCreditsAcrossUnits, findOption, hasPayableOption } from "./payment-options";
 import type { RailContext } from "./rail";
@@ -107,13 +107,32 @@ describe("the settlement groups: a credits group never holds a restricted line",
 
 describe("payment options come from the rule, not from balances", () => {
   it("an eligible line stays credits-first with an explicit top-up when short; MANA second with credits+MANA inside it", () => {
-    const view = presentPayment(creatorOrder(web3()), web3(), { creditsBalance: 30 as never, manaBalance: 5n * 10n ** 18n as never, report: noop });
+    const view = presentPayment(storeMint(web3()), web3(), { creditsBalance: 30 as never, manaBalance: 5n * 10n ** 18n as never, report: noop });
     const o = computePaymentOptions(view);
     expect(o.preferred).toBe("credits");
     expect(o.options.map((x) => x.method)).toEqual(["credits", "combined", "mana"]);
-    expect(o.topUp).toEqual({ short: 70, required: 100, balance: 30 });
+    expect(o.topUp).toEqual({ short: 90, required: 120, balance: 30 });
     expect(findOption(o, "credits")!.state.kind).toBe("topUpRequired");
     expect(hasPayableOption(o)).toBe(true);
+  });
+
+  it("a listing's MANA price is its ERC-20 amount after the coupon, as the contract takes it; a USD-pegged one has none", () => {
+    const erc20 = (amount: bigint) =>
+      creatorTrade({ received: [{ assetType: ASSET_TYPE.ERC20, contractAddress: BOOK.mana, amount: amount.toString(), extra: "0x", beneficiary: BOOK.creator }] });
+    const coupon = { discount: 300_000 } as ListingCoupon;
+    expect(tradeManaPrice(erc20(25n * 10n ** 17n), undefined)).toBe(25n * 10n ** 17n);
+    // 2.5 MANA less floor(2.5 * 30%): 1.75 MANA.
+    expect(tradeManaPrice(erc20(25n * 10n ** 17n), coupon)).toBe(175n * 10n ** 16n);
+    // An odd wei: the kept part rounds up, as `amount - floor(amount * ppm / 1e6)` does.
+    expect(tradeManaPrice(erc20(7n), coupon)).toBe(7n - (7n * 300_000n) / 1_000_000n);
+    expect(tradeManaPrice(creatorTrade(), undefined)).toBeNull();
+  });
+
+  it("a USD-pegged line has no credits+MANA rail: its MANA is only fixed at settlement", () => {
+    const view = presentPayment(creatorOrder(web3()), web3(), { creditsBalance: 30 as never, manaBalance: 5n * 10n ** 18n as never, report: noop });
+    const o = computePaymentOptions(view);
+    expect(o.options.map((x) => x.method)).toEqual(["credits", "mana"]);
+    expect(o.topUp).toEqual({ short: 70, required: 100, balance: 30 });
   });
 
   it("a resale is MANA only: no credit price, no top-up, no combined rail; web2 gets guidance", () => {

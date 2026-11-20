@@ -63,11 +63,16 @@ function renderBuy(s: Omit<DemoScenario, "lines">, opts: Opts = {}) {
 const holdMana = (wei: bigint) => (d: ReturnType<typeof createDemo>) => void d.chain.manaBalances.set(`137:${BOOK.buyer.toLowerCase()}`, wei);
 
 /** The one credit the split's credits leg takes, signed for the Shop's own manager. */
+// The node's answer for a Credits part of the demo's 2.3 MANA mint: the part's share of its MANA,
+// floor(2.3 MANA * creditsCents / usdPriceCents), charged at the part's cents.
+const STORE_PRICE_WEI = 2_300n * 10n ** 15n;
 const singleCredit: NonNullable<FakeHandlers["authorizeCredit"]> = ({ body }) => {
-  const cents = (body as { usdPriceCents: number }).usdPriceCents;
+  const { usdPriceCents, creditsCents } = body as { usdPriceCents: number; creditsCents?: number };
+  const cents = creditsCents ?? usdPriceCents;
+  const value = ((STORE_PRICE_WEI * BigInt(cents)) / BigInt(usdPriceCents)).toString();
   const one = batchAuthorization([{ usdPriceCents: cents }]);
-  const credit = { ...one.credit, amount: "1000000000000000000", availableAmount: "1000000000000000000" };
-  return { ...one, credit, maxCreditedValue: "1000000000000000000", usdCents: cents };
+  const credit = { ...one.credit, amount: value, availableAmount: value };
+  return { ...one, credit, maxCreditedValue: value, usdCents: cents };
 };
 
 async function settledDialog(): Promise<HTMLElement> {

@@ -12,12 +12,15 @@ import { setSplitPayment } from "@shop/payment/present";
 import { CREDITS_MANAGER_ABI, OFFCHAIN_META_TX_ABI } from "@shop/checkout/chain/abi";
 
 import { requireContracts } from "../../checkout/chain/contracts";
-import { batchAuthorization, relayedApproval } from "../../checkout/fakes";
+import { batchAuthorization, creatorTrade, relayedApproval } from "../../checkout/fakes";
 import { CHAIN } from "@shop/model/chain";
 import { createDemo, DemoShell } from "../../checkout/demo";
 import { usdCents } from "@shop/model/money";
 import { presentPayment, type MixedPayment } from "@shop/payment/present";
-import { BOOK, storeMint } from "@shop/payment/fixtures";
+import { BOOK, creatorOrder, storeMint } from "@shop/payment/fixtures";
+import type { ManaWei } from "@shop/model/money";
+import type { PurchaseOffer } from "@shop/model/purchase";
+import { ASSET_TYPE } from "../../checkout/purchase/encoding";
 import { cartLineId } from "../../cart/store";
 import { SHOP_QUERY_KEYS } from "../../checkout/lib/after-purchase";
 import CombinedBuy, { readSentSplit } from "./CombinedBuy";
@@ -109,8 +112,8 @@ describe("buying with Credits and MANA", () => {
     expect(pageQueries!.getQueryState(balance)?.isInvalidated).toBe(true);
   });
 
-  it("a credit that leaves more MANA to pay than was shown is refused, nothing is relayed, and the credit is released", async () => {
-    // A 0.5 MANA credit on the 2.3 MANA mint: 1.8 MANA, above the 1.3 the buyer confirmed.
+  it("a credit below the node's share (which would leave more MANA than shown) is refused, nothing is relayed, and it is released", async () => {
+    // A 0.5 MANA credit on the 2.3 MANA mint, where the share is 1 MANA: 1.8 MANA left, above the 1.3 confirmed.
     const { demo } = setup(undefined, undefined, MANA / 2n);
     const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
     demo.chain.allowances.set(`${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${manager}`, 10n ** 21n);
@@ -120,8 +123,80 @@ describe("buying with Credits and MANA", () => {
     expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(true);
   });
 
-  it("a credit that leaves no MANA to pay is refused, never paid with the gap shown before, and released", async () => {
-    // A 2.3 MANA credit on the 2.3 MANA mint: the terms the buyer confirmed no longer hold.
+  it("a listing paid in MANA: the credit is the share of its MANA, the gap the rest, each its own cap (the split vector, 91 wei)", async () => {
+    // Quoted 30 cents and 91 MANA wei (the vector's 101 wei after its 10% coupon); 10 cents of Credits held.
+    const demo = createDemo({
+      session: "web3",
+      resolvers: {
+        trade: async () => creatorTrade({ received: [{ assetType: ASSET_TYPE.ERC20, contractAddress: BOOK.mana, amount: "91", extra: "0x", beneficiary: BOOK.creator }] }),
+      },
+      handlers: {
+        authorizeCredit: ({ body }) => {
+          const { usdPriceCents, creditsCents } = body as { usdPriceCents: number; creditsCents: number };
+          const value = ((91n * BigInt(creditsCents)) / BigInt(usdPriceCents)).toString();
+          const one = batchAuthorization([{ usdPriceCents: creditsCents }]);
+          return { ...one, credit: { ...one.credit, amount: value, availableAmount: value }, maxCreditedValue: value, usdCents: creditsCents };
+        },
+      },
+    });
+    const listed = creatorOrder(demo.session);
+    const offer: PurchaseOffer = {
+      ...listed,
+      quotes: [
+        { method: "credits", quoted: usdCents(30) },
+        { method: "mana", amount: 91n as ManaWei },
+      ],
+      splittable: true,
+    };
+    const mixed = presentPayment(offer, demo.session, { creditsBalance: usdCents(10), report: () => {} }).options.find((o) => o.method === "mana")!.mixed!;
+    expect(mixed).toEqual({ priceCents: 30, creditsCents: 10, credits: 1, manaWei: 61n });
+    const line = { asset: offer.asset, listing: { tradeId: "trade-creator-1" }, display: { name: "Rainbow Hat" } };
+    render(
+      <DemoShell demo={demo} path="/shop/item/x/7">
+        <CombinedBuy line={line} offer={offer} mixed={mixed} onClose={() => {}} portal={false} />
+      </DemoShell>,
+    );
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
+    const auth = demo.shop.log.filter((r) => r.name === "authorizeCredit");
+    expect(auth.map((r) => r.body)).toEqual([expect.objectContaining({ usdPriceCents: 30, creditsCents: 10, tradeId: "trade-creator-1" })]);
+    const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
+    expect(relayedApproval(demo.relay.posts[0])).toEqual({ owner: BOOK.buyer.toLowerCase(), spender: manager, amount: 61n });
+    expect(relayedUseCredits(demo.relay.posts[1])).toMatchObject({ maxCreditedValue: 30n, maxUncreditedValue: 61n });
+  });
+
+  it("a USD-pegged listing is refused before any credit is authorized: its MANA is only fixed at settlement", async () => {
+    let resolved = 0;
+    const demo = createDemo({
+      session: "web3",
+      resolvers: {
+        trade: async () => {
+          resolved++;
+          return creatorTrade();
+        },
+      },
+    });
+    const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
+    demo.chain.allowances.set(`${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${manager}`, 10n ** 21n);
+    const offer = creatorOrder(demo.session);
+    // Never offered for such a line (present.ts); the dialog refuses it all the same.
+    const mixed: MixedPayment = { priceCents: usdCents(100), creditsCents: usdCents(50), credits: 5, manaWei: (MANA / 2n) as MixedPayment["manaWei"] };
+    const line = { asset: offer.asset, listing: { tradeId: "trade-creator-1" }, display: { name: "Rainbow Hat" } };
+    render(
+      <DemoShell demo={demo} path="/shop/item/x/7">
+        <CombinedBuy line={line} offer={offer} mixed={mixed} onClose={() => {}} portal={false} />
+      </DemoShell>,
+    );
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByRole("alert", {}, { timeout: 5000 })).toHaveTextContent("Nothing was charged.");
+    expect(resolved).toBeGreaterThan(0);
+    expect(demo.shop.log.some((r) => r.name === "authorizeCredit")).toBe(false);
+    expect(demo.relay.posts).toHaveLength(0);
+  });
+
+  it("a credit above the node's share (here the whole price, no MANA left) is refused, never paid with the gap shown before, and released", async () => {
+    // A 2.3 MANA credit on the 2.3 MANA mint, where the share is 1 MANA: the terms the buyer confirmed no longer hold.
     const { demo } = setup(undefined, undefined, (23n * MANA) / 10n);
     const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
     demo.chain.allowances.set(`${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${manager}`, 10n ** 21n);

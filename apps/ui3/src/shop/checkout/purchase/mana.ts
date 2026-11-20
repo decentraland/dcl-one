@@ -195,6 +195,34 @@ export async function buyMintWithMana(ctx: RailContext, opts: { mint: MintToBuy;
   return hash!;
 }
 
+/**
+ * The terms a credits + MANA purchase settles on, checked against the credit the node returned. For a line quoted
+ * `quotedCents` whose sale moves `priceWei` MANA (a mint's price, or a MANA listing's after its coupon), the credit for
+ * the Credits part `partCents` must be exactly `C = floor(priceWei * partCents / quotedCents)`, the node's own sizing;
+ * the buyer's MANA is then `G = priceWei - C`. Anything else stops the purchase before it is sent: a credit that is not
+ * that share, no MANA left to pay, or more than the buyer confirmed (`confirmedWei`). Both caps are encoded from these.
+ */
+export function splitTerms(opts: {
+  priceWei: bigint;
+  quotedCents: number;
+  partCents: number;
+  credit: { amount: string; availableAmount: string };
+  confirmedWei: bigint;
+}): { creditWei: bigint; gapWei: bigint } {
+  const { priceWei, quotedCents, partCents } = opts;
+  if (!Number.isSafeInteger(quotedCents) || !Number.isSafeInteger(partCents) || partCents <= 0 || partCents >= quotedCents || priceWei <= 0n) {
+    throw new Error("The Credits part is not inside the price.");
+  }
+  const share = (priceWei * BigInt(partCents)) / BigInt(quotedCents);
+  if (BigInt(opts.credit.amount) !== share || BigInt(opts.credit.availableAmount) !== share) {
+    throw new Error("The credit is not the share of the price it should be.");
+  }
+  const gapWei = priceWei - share;
+  if (gapWei <= 0n) throw new Error("No MANA is left to pay: the terms changed.");
+  if (gapWei > opts.confirmedWei) throw new Error("The MANA this needs moved past the amount shown.");
+  return { creditWei: share, gapWei };
+}
+
 type GapOptions = {
   credits: SpendableCredit[];
   manaGapWei: bigint;

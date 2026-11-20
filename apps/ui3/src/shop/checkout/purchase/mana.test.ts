@@ -12,7 +12,8 @@ import { requireContracts } from "../chain/contracts";
 import { createFakeChain, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade, relayedApproval } from "../fakes";
 import { buildGroupUseCreditsArgs, groupPurchases } from "./credits";
 import type { SpendableCredit } from "./encoding";
-import { buyMintWithCreditsAndMana, buyMintWithMana, buyWithCreditsAndMana, type MintToBuy } from "./mana";
+import { tradeManaPrice } from "./cart";
+import { buyMintWithCreditsAndMana, buyMintWithMana, buyWithCreditsAndMana, splitTerms, type MintToBuy } from "./mana";
 import type { RailContext } from "./rail";
 
 const MANA = 10n ** 18n;
@@ -60,6 +61,32 @@ function relayedUseCredits(body: unknown): { maxCreditedValue: bigint; maxUncred
   const call = decodeFunctionData({ abi: CREDITS_MANAGER_ABI, data: meta.args[1] as Hex });
   return call.args[0] as { maxCreditedValue: bigint; maxUncreditedValue: bigint };
 }
+
+describe("the terms a split settles on", () => {
+  // The split vector: a listing of 101 MANA wei with a 10% coupon moves 91; quoted 30 cents, a 10-cent part.
+  const listing = creatorTrade({ received: [{ assetType: 1, contractAddress: BOOK.mana, amount: "101", extra: "0x", beneficiary: BOOK.creator }] });
+  const price = tradeManaPrice(listing, { discount: 100_000 } as Parameters<typeof tradeManaPrice>[1])!;
+  const terms = (credit: bigint, confirmedWei = 61n) =>
+    splitTerms({ priceWei: price, quotedCents: 30, partCents: 10, credit: { amount: credit.toString(), availableAmount: credit.toString() }, confirmedWei });
+
+  it("101 wei less its 10% coupon is 91; the credit for 10 of 30 cents is 30 and the buyer's MANA 61", () => {
+    expect(price).toBe(91n);
+    expect(terms(30n)).toEqual({ creditWei: 30n, gapWei: 61n });
+  });
+
+  it("a credit that is not the node's share is refused, one wei either way", () => {
+    expect(() => terms(29n)).toThrow(/not the share/);
+    expect(() => terms(31n)).toThrow(/not the share/);
+    expect(() => splitTerms({ priceWei: price, quotedCents: 30, partCents: 10, credit: { amount: "30", availableAmount: "29" }, confirmedWei: 61n })).toThrow(/not the share/);
+  });
+
+  it("a gap above what the buyer confirmed is refused, and a part outside the price never settles", () => {
+    expect(() => terms(30n, 60n)).toThrow(/moved past/);
+    for (const partCents of [0, 30, 31, -10]) {
+      expect(() => splitTerms({ priceWei: price, quotedCents: 30, partCents, credit: { amount: "0", availableAmount: "0" }, confirmedWei: 61n })).toThrow(/inside the price/);
+    }
+  });
+});
 
 describe("the MANA a rail lets a contract pull", () => {
   it("a MANA-only mint still approves the CollectionStore in full, as before", async () => {

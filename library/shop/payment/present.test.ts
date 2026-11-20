@@ -291,6 +291,13 @@ describe("balances decide an option's state, never its method", () => {
     expect(view.options[0]!.state.kind).toBe("topUpRequired");
   });
 
+  it("a USD-pegged listing offers no credits+MANA split: its MANA is only fixed at settlement", () => {
+    const { view } = show(creatorOrder(web3()), web3(), { creditsBalance: usdCents(30), manaBalance: manaFromWhole(10) });
+    expect(view.options.map((o) => o.method)).toEqual(["credits", "mana"]);
+    expect(view.options.find((o) => o.method === "mana")!.mixed).toBeNull();
+    expect(view.options[0]!.state.kind).toBe("topUpRequired");
+  });
+
   it("a NAME registration offers no credits+MANA split: the credits node authorizes no part of one", () => {
     const offer = nameRegistration(web3());
     const priced: PurchaseOffer = {

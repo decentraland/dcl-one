@@ -24,8 +24,8 @@ import AuthorizeStep from "../../checkout/components/AuthorizeStep";
 import { AuthorizationKind, getAuthorizationStatus, needsApprovalStep, setAuthorization, type ShopAuthorization } from "../../checkout/lib/authorizations";
 import { friendlyError, isRejection } from "../../checkout/lib/errors";
 import { isSettlementPending } from "../../checkout/purchase/gasless";
-import { purchaseTargetFor, resolveLine } from "../../checkout/purchase/cart";
-import { buyMintWithCreditsAndMana, buyWithCreditsAndMana, manaSpenderFor, type PurchaseTarget } from "../../checkout/purchase/mana";
+import { purchaseTargetFor, resolveLine, tradeManaPrice } from "../../checkout/purchase/cart";
+import { buyMintWithCreditsAndMana, buyWithCreditsAndMana, manaSpenderFor, splitTerms, type PurchaseTarget } from "../../checkout/purchase/mana";
 import type { RailContext } from "../../checkout/purchase/rail";
 import { createSpendGuard } from "@shop/checkout/purchase/spend-guard";
 import { isMetaTxPending } from "../../checkout/purchase/tx-confirm";
@@ -257,6 +257,10 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     try {
       const target = known ?? (await resolveTarget(ctx, offer));
       sentChain = manaSpenderFor("combined", target).chainId;
+      // The MANA the sale moves: the mint's price, or the listing's after its coupon. A USD-pegged listing's is only fixed
+      // at settlement, so it has no split, and nothing is authorized for one.
+      const price = target.kind === "trade" ? tradeManaPrice(target.trade, target.coupon) : BigInt(target.mint.item.priceWei);
+      if (price === null) throw new Error("This listing is priced in USD, so it can't be paid with Credits and MANA together.");
       const item = line.asset.token.kind === "item" ? { contractAddress: line.asset.contract, itemId: line.asset.token.itemId } : undefined;
       // The whole price is what the node checks against its quote; the credit it signs is for the Credits part alone.
       const authorized = await authorizeUsdCredit(
@@ -265,11 +269,15 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
         ctx.client,
       );
       creditId = authorized.credit.id;
-      const price = target.kind === "trade" ? null : BigInt(target.mint.item.priceWei);
-      const gap = price === null ? mixed.manaWei : price - BigInt(authorized.credit.availableAmount);
-      // The buyer confirmed `mixed.manaWei`: a gap above it is never paid, and no gap means the terms changed.
-      if (gap > mixed.manaWei) throw new Error("The MANA this needs moved past the amount shown. Nothing was charged; check the price again.");
-      if (gap <= 0n) throw new Error("The price changed since you confirmed it. Nothing was charged; check the price again.");
+      // The credit must be the node's share for these terms, and the MANA left is what the buyer confirmed at most: anything
+      // else stops here, before anything is sent, and the credit is released below.
+      const { gapWei: gap } = splitTerms({
+        priceWei: price,
+        quotedCents: mixed.priceCents,
+        partCents: mixed.creditsCents,
+        credit: authorized.credit,
+        confirmedWei: mixed.manaWei,
+      });
       const id = creditId;
       guard.current.submitStarted(id);
       const gapArgs = {

@@ -4,7 +4,8 @@
 // table), balances only decide each option's state, and nothing ever moves a buyer to another method:
 // short credits mean an explicit top-up, a credits outage keeps credits as the (unavailable) main
 // action, and a restricted line never shows a credit price, a top-up or a credits+MANA option. A NAME
-// registration never shows a credits+MANA option either: the credits node authorizes no part of one.
+// registration, a USD-pegged listing or any line the server does not mark `splittable` never shows a credits+MANA
+// option either: the credits node authorizes a Credits part only for terms that fix the MANA the sale moves.
 
 import { assetKey } from "../model/asset";
 import {
@@ -208,8 +209,7 @@ export function presentPayment(offer: PurchaseOffer, session: Session, ctx: Paym
 
   const manaOption = options.find((o) => o.method === "mana");
   const creditsQuote = options.find((o) => o.method === "credits")?.quote;
-  const nameRegistration = offer.sale === "primaryNameRegistration";
-  if (!manaOnly && splitOffered && !nameRegistration && manaOption?.quote?.method === "mana" && creditsQuote?.method === "credits") {
+  if (!manaOnly && splitOffered && offer.splittable === true && manaOption?.quote?.method === "mana" && creditsQuote?.method === "credits") {
     manaOption.mixed = mixedPayment(creditsQuote.quoted, manaOption.quote.amount, ctx);
   }
 
