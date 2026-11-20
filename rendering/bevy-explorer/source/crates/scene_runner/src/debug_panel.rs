@@ -641,6 +641,7 @@ mod tests {
     use super::*;
     use crate::initialize_scene::{LiveScenes, PortableScenes, ScenePointers};
     use bevy_console::{ConsoleCommandEntered, ConsoleResponder};
+    use common::sync::MutexExt;
     use dcl_component::{DclReader, SceneComponentId, SceneCrdtTimestamp, SceneEntityId};
     use dcl_types::interface::{CrdtStore, CrdtType};
     use std::sync::{Arc, Mutex};
@@ -665,7 +666,7 @@ mod tests {
         let result = Arc::new(Mutex::new(None));
         let responder: ConsoleResponder = {
             let result = result.clone();
-            Arc::new(move |reply| *result.lock().unwrap() = Some(reply))
+            Arc::new(move |reply| *result.lock_ignore_poison() = Some(reply))
         };
         app.world_mut().send_event(ConsoleCommandEntered {
             command_name: "/current_scene_state".into(),
@@ -673,7 +674,7 @@ mod tests {
             responder: Some(responder),
         });
         app.update();
-        let reply = result.lock().unwrap().take().unwrap().unwrap();
+        let reply = result.lock_ignore_poison().take().unwrap().unwrap();
         serde_json::from_str(&reply).unwrap()
     }
 

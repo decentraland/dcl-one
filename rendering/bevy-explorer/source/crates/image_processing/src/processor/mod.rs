@@ -3,6 +3,7 @@ mod draco;
 mod native_fs;
 #[cfg(target_arch = "wasm32")]
 mod wasm_fs;
+use common::sync::MutexExt;
 use std::{collections::VecDeque, io::Write};
 
 use base64::{engine::general_purpose, Engine};
@@ -109,8 +110,7 @@ pub(crate) async fn process_events(
 /// The dds `ktx2::transcode_ktx2_image` stashed for `req.base_path`, removed from the stash.
 fn take_ktx2_result(req: &AssetForProcessing) -> Option<Vec<u8>> {
     crate::ktx2::KTX2_RESULTS
-        .lock()
-        .ok()?
+        .lock_ignore_poison()
         .remove(&req.base_path.to_string())
         .map(|(_, dds)| dds)
 }

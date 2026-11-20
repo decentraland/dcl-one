@@ -19,6 +19,7 @@ pub mod rpc;
 pub mod sets;
 pub mod sky_preset;
 pub mod structs;
+pub mod sync;
 pub mod terrain;
 pub mod util;
 

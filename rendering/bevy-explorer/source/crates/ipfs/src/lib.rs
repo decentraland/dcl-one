@@ -7,6 +7,9 @@ pub mod content_hash;
 mod debug_panel;
 mod download;
 mod failed_remotes;
+use common::sync::MutexExt;
+#[cfg(not(target_arch = "wasm32"))]
+use common::sync::RwLockExt;
 use download::{InFlightDownloads, RequestMetrics};
 use failed_remotes::{FailedRemotes, Repeat};
 mod priority_gate;
@@ -1206,7 +1209,7 @@ impl IpfsIo {
     /// Allow `file://` reads under `root` (canonical). See `allowed_file_roots`.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn add_allowed_file_root(&self, root: PathBuf) {
-        let mut roots = self.allowed_file_roots.write().unwrap();
+        let mut roots = self.allowed_file_roots.write_ignore_poison();
         if !roots.contains(&root) {
             roots.push(root);
         }
@@ -2163,8 +2166,7 @@ impl IpfsIo {
                     .ok()
                     .filter(|canonical| {
                         self.allowed_file_roots
-                            .read()
-                            .unwrap()
+                            .read_ignore_poison()
                             .iter()
                             .any(|root| canonical.starts_with(root))
                     })
@@ -2224,8 +2226,7 @@ impl IpfsIo {
             let repeat = {
                 let mut failed = self
                     .failed_remotes
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    .lock_ignore_poison();
                 if self.is_preview {
                     failed.forget(&remote);
                     None

@@ -409,6 +409,7 @@ mod tests {
         room_connection::{FailureKind, RoomRecovery, RoomSuspended},
     };
     use bevy_console::ConsoleCommandEntered;
+    use common::sync::MutexExt;
     use std::sync::{Arc, Mutex};
 
     fn spawn_island(app: &mut App) -> Entity {
@@ -433,11 +434,11 @@ mod tests {
             command_name: name.into(),
             args: args.iter().map(|arg| arg.to_string()).collect(),
             responder: Some(Arc::new(move |result| {
-                *writer.lock().unwrap() = Some(result)
+                *writer.lock_ignore_poison() = Some(result)
             })),
         });
         app.update();
-        let result = reply.lock().unwrap().take().unwrap();
+        let result = reply.lock_ignore_poison().take().unwrap();
         result
     }
 

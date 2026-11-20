@@ -1,3 +1,4 @@
+use crate::sync::MutexExt;
 use std::sync::{Arc, Mutex};
 
 use bevy::log::warn;
@@ -110,7 +111,7 @@ impl<T: Serialize> RpcStreamSender<T> {
 
     pub fn send(&self, val: T) -> Result<(), tokio::sync::mpsc::error::SendError<T>> {
         match self {
-            RpcStreamSender::Local { channel, .. } => match &*channel.lock().unwrap() {
+            RpcStreamSender::Local { channel, .. } => match &*channel.lock_ignore_poison() {
                 LocalChannel::Channel(sender) => match sender.try_send(val) {
                     Ok(()) => Ok(()),
                     // full: drop the message, that's the bound
@@ -143,7 +144,7 @@ impl<T: Serialize> RpcStreamSender<T> {
 
     pub fn is_closed(&self) -> bool {
         match self {
-            RpcStreamSender::Local { channel, .. } => match &*channel.lock().unwrap() {
+            RpcStreamSender::Local { channel, .. } => match &*channel.lock_ignore_poison() {
                 LocalChannel::Channel(sender) => sender.is_closed(),
                 LocalChannel::Serialized(_) => panic!(),
             },
@@ -183,7 +184,7 @@ impl<T: 'static + Serialize + DeserializeOwned + Send> Serialize for RpcStreamSe
             panic!();
         };
 
-        let id = channel.lock().unwrap().serialize_with(|sender| {
+        let id = channel.lock_ignore_poison().serialize_with(|sender| {
             let endpoint = IpcStreamCallback {
                 sender,
                 _cancel_on_drop: cancel.clone().drop_guard(),

@@ -373,10 +373,11 @@ mod io {
         page_content_cache_trim, sends_uses_before_trim, trim_interval_for, TrimReply, TrimReport,
         UsedKeys, WebCacheState, WorkerTrimReply, WEB_CACHE_CAP_BYTES,
     };
+    use common::sync::MutexExt;
     use js_sys::Uint8Array;
     use std::sync::{
         atomic::{AtomicU64, Ordering},
-        Mutex, PoisonError,
+        Mutex,
     };
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
@@ -567,10 +568,7 @@ mod io {
                 wasm_bindgen_futures::spawn_local(log_unrecorded(touch));
             }
         } else {
-            let waiting = USED
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .waiting();
+            let waiting = USED.lock_ignore_poison().waiting();
             for key in waiting {
                 used_now.push(&JsValue::from_str(&key));
             }
@@ -608,7 +606,7 @@ mod io {
         WORKER_CAP_BYTES.store(report.cap_bytes as u64, Ordering::Relaxed);
         EVICTED_ENTRIES.fetch_add(report.evicted_entries as u64, Ordering::Relaxed);
         EVICTED_BYTES.fetch_add(report.evicted_bytes as u64, Ordering::Relaxed);
-        *LAST_REPORT.lock().unwrap_or_else(PoisonError::into_inner) = Some(report);
+        *LAST_REPORT.lock_ignore_poison() = Some(report);
         Some(report)
     }
 
@@ -623,8 +621,8 @@ mod io {
             unanswered: UNANSWERED.load(Ordering::Relaxed),
             evicted_entries_total: EVICTED_ENTRIES.load(Ordering::Relaxed),
             evicted_bytes_total: EVICTED_BYTES.load(Ordering::Relaxed),
-            last: *LAST_REPORT.lock().unwrap_or_else(PoisonError::into_inner),
-            pending_uses: USED.lock().unwrap_or_else(PoisonError::into_inner).len(),
+            last: *LAST_REPORT.lock_ignore_poison(),
+            pending_uses: USED.lock_ignore_poison().len(),
         }
     }
 
@@ -680,10 +678,7 @@ mod io {
     }
 
     fn note_used(key: &str) {
-        let full = USED
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .note(key);
+        let full = USED.lock_ignore_poison().note(key);
         if full {
             wasm_bindgen_futures::spawn_local(flush_used());
         }
@@ -692,7 +687,7 @@ mod io {
     /// Posts the keys used since the last post to the service worker's last-use index, without
     /// waiting for its reply.
     fn post_used() -> Option<js_sys::Promise> {
-        let keys = USED.lock().unwrap_or_else(PoisonError::into_inner).take();
+        let keys = USED.lock_ignore_poison().take();
         if keys.is_empty() {
             return None;
         }

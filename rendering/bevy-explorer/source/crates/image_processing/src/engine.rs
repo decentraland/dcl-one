@@ -7,6 +7,7 @@ use bevy::{
     tasks::{IoTaskPool, Task},
 };
 use bevy_console::ConsoleCommand;
+use common::sync::MutexExt;
 use common::{
     structs::DebugInfo,
     util::{TaskExt, UrlLoopbackExt},
@@ -47,7 +48,13 @@ impl Plugin for ImageProcessingPlugin {
 
         #[cfg(target_arch = "wasm32")]
         {
-            let (req_sx, resp_rx) = CHANNELS.get().unwrap().lock().unwrap().0.take().unwrap();
+            let (req_sx, resp_rx) = CHANNELS
+                .get()
+                .unwrap()
+                .lock_ignore_poison()
+                .0
+                .take()
+                .unwrap();
             app.insert_resource(Channels { req_sx, resp_rx });
         }
 
@@ -110,9 +117,9 @@ struct ImgReprocessStats {
 /// is evicted by `ktx2::evict_stale_results`.
 fn drop_ktx2_result(ty: ProcessingAssetType, path: &AssetPath) {
     if matches!(ty, ProcessingAssetType::Ktx2Cache) {
-        if let Ok(mut results) = crate::ktx2::KTX2_RESULTS.lock() {
-            results.remove(&path.to_string());
-        }
+        crate::ktx2::KTX2_RESULTS
+            .lock_ignore_poison()
+            .remove(&path.to_string());
     }
 }
 
