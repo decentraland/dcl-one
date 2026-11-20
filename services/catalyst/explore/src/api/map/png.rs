@@ -260,7 +260,9 @@ where
                             header::CACHE_CONTROL,
                             axum::http::HeaderValue::from_static("no-store"),
                         );
-                    } else {
+                    } else if !resp.headers().contains_key(header::CACHE_CONTROL) {
+                        // An answer with its own policy keeps it (the
+                        // dissolved-estate redirect).
                         http_cache::apply(&mut resp, last, max_age, swr);
                     }
                     return *resp;
@@ -348,24 +350,32 @@ pub async fn estate_map_png(
         key,
         http_cache::DEFAULT_MAX_AGE,
         http_cache::DEFAULT_SWR,
-        move |grid| {
-            let selected = select_estate_coords(grid, &estate_id);
-            if selected.is_empty() {
-                // the grid swapped since the check above
-                return Err(Box::new(dissolved_estate_redirect(&dissolved)));
-            }
-            let mut xs: Vec<i32> = selected.iter().map(|c| c.x).collect();
-            let mut ys: Vec<i32> = selected.iter().map(|c| c.y).collect();
-            xs.sort_unstable();
-            ys.sort_unstable();
-            let center = Coord {
-                x: xs[xs.len() / 2],
-                y: ys[ys.len() / 2],
-            };
-            render_png(grid, &p.view(center, &selected)).map_err(render_error)
-        },
+        move |grid| render_estate(grid, &estate_id, &p, &dissolved),
     )
     .await
+}
+
+/// The estate's parcels selected and centred; the dissolved-estate redirect
+/// when `grid` holds none (it swapped since the handler's check).
+fn render_estate(
+    grid: &Grid,
+    estate_id: &str,
+    p: &Params,
+    dissolved: &str,
+) -> Result<Vec<u8>, Box<Response>> {
+    let selected = select_estate_coords(grid, estate_id);
+    if selected.is_empty() {
+        return Err(Box::new(dissolved_estate_redirect(dissolved)));
+    }
+    let mut xs: Vec<i32> = selected.iter().map(|c| c.x).collect();
+    let mut ys: Vec<i32> = selected.iter().map(|c| c.y).collect();
+    xs.sort_unstable();
+    ys.sort_unstable();
+    let center = Coord {
+        x: xs[xs.len() / 2],
+        y: ys[ys.len() / 2],
+    };
+    render_png(grid, &p.view(center, &selected)).map_err(render_error)
 }
 
 /// The atlas's redirect cache policy (`image-http-cache.ts`).
@@ -699,5 +709,22 @@ mod tests {
             StatusCode::OK,
             "an estate with tiles renders"
         );
+
+        // The grid losing the estate between the handler's check and the
+        // render answers the same redirect, headers included.
+        let checked = call("501", HeaderMap::new()).await;
+        let location = state.settings.map_dissolved_estate_image_url.clone();
+        let raced = cached_png_render(
+            &state,
+            &HeaderMap::new(),
+            "estate:501:raced".into(),
+            http_cache::DEFAULT_MAX_AGE,
+            http_cache::DEFAULT_SWR,
+            move |grid| render_estate(grid, "501", &extract_params(&HashMap::new()), &location),
+        )
+        .await;
+        assert_eq!(raced.status(), StatusCode::FOUND);
+        assert_eq!(raced.headers(), checked.headers());
+        assert!(!raced.headers().contains_key(header::LAST_MODIFIED));
     }
 }
