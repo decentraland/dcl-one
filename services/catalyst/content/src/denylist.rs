@@ -129,15 +129,17 @@ pub async fn remove<'e, E: PgExecutor<'e>>(executor: E, id: &str) -> sqlx::Resul
         == 1)
 }
 
+/// The refusal of a listed entity id.
+pub fn entity_refusal(entity_id: &str) -> String {
+    format!("The entity {entity_id} is denylisted on this node.")
+}
+
 /// Why a local deploy of `entity` is refused, one message per kind of
 /// listed id; `None` when nothing it names is listed.
 pub fn refusal(entity: &Entity, denylist: &super::Denylist) -> Option<Vec<String>> {
     let mut errors = Vec::new();
     if denylist.contains(&entity.id) {
-        errors.push(format!(
-            "The entity {} is denylisted on this node.",
-            entity.id
-        ));
+        errors.push(entity_refusal(&entity.id));
     }
     let mut hashes: Vec<&str> = entity
         .content

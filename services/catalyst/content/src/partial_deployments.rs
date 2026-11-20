@@ -619,12 +619,15 @@ async fn stage(
     let entity_id = batch.entity_id.as_str();
     let auth_chain: AuthChain = serde_json::from_value(batch.auth_chain.clone())
         .map_err(|e| Refusal::invalid(format!("invalid auth chain: {e}")))?;
-    // Deployments are idempotent: a replay whose chain signs the id gets the
-    // original timestamp. The chain is checked at the stored entity's
-    // timestamp (a resume may carry no entity file, and an ephemeral key that
-    // expired since still signed it); nothing after the signature is, the
-    // denylist included.
+    // Deployments are idempotent: a replay of an id that is not denylisted,
+    // whose chain signs the id, gets the original timestamp. The chain is
+    // checked at the stored entity's timestamp (a resume may carry no entity
+    // file, and an ephemeral key that expired since still signed it); nothing
+    // after the signature is.
     if let Some((ts, signed_at)) = deployer.deployed_timestamps(entity_id).await? {
+        deployer
+            .refuse_denylisted_id(entity_id)
+            .map_err(Refusal::from_deploy)?;
         deployer
             .check_signature(entity_id, &auth_chain, signed_at)
             .await

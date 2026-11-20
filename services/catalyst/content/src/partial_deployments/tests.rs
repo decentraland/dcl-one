@@ -391,6 +391,37 @@ async fn a_replay_batch_needs_a_chain_that_signs_the_id() {
     }
 }
 
+/// An id denylisted after its deploy gets the regular path's denylist 400 on
+/// a replay batch, which may carry no entity file.
+#[tokio::test]
+async fn a_replay_batch_of_a_denylisted_id_is_refused() {
+    require_test_db!(Some(node) = Node::new("replay-denylisted", Limits::default()).await);
+    let router = node.router();
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"partial-replay-denylisted"], "scene").await;
+    let mut files = vec![entity_file(&scene)];
+    files.extend(scene.files.iter().cloned());
+    let (status, _, body) = send(&router, &scene, &scene.chain, files).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let created = body["creationTimestamp"].clone();
+
+    node.state.denylist.operator_insert(&scene.id);
+    let (status, _, body) = send(&router, &scene, &scene.chain, vec![]).await;
+    node.state.denylist.operator_remove(&scene.id);
+    assert_eq!(
+        (status, body),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"errors": [format!("The entity {} is denylisted on this node.", scene.id)]})
+        )
+    );
+    let (status, _, body) = send(&router, &scene, &scene.chain, vec![]).await;
+    assert_eq!(
+        (status, &body["creationTimestamp"]),
+        (StatusCode::OK, &created)
+    );
+}
+
 /// A replay batch is checked at the stored entity's timestamp: a chain whose
 /// ephemeral key expired after the entity was signed still replays.
 #[tokio::test]

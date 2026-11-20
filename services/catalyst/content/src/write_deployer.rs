@@ -1178,6 +1178,21 @@ impl WriteDeployer {
         }
     }
 
+    /// [`Self::refuse_denylisted`] for an entity known only by its id: a
+    /// partial replay, which may carry no entity file.
+    pub(crate) fn refuse_denylisted_id(&self, entity_id: &str) -> Result<(), DeployFailure> {
+        if self
+            .denylist
+            .as_deref()
+            .is_some_and(|d| d.contains(entity_id))
+        {
+            let errors = vec![super::denylist::entity_refusal(entity_id)];
+            warn!(entity_id, ?errors, "deployment refused: denylisted");
+            return Err(DeployFailure::Rejected(RejectionKind::Validation, errors));
+        }
+        Ok(())
+    }
+
     async fn deploy_entity_unlocked(
         &self,
         files: Vec<Bytes>,
