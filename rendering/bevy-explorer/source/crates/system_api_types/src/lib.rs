@@ -4,6 +4,8 @@
 //! `ts-rs` (scripts/gen-ts-bindings.sh) to generate the TypeScript the react-web
 //! page and bridge scene consume. `system_bridge` re-exports everything here.
 
+#![forbid(unsafe_code)]
+
 pub mod languages;
 pub mod launch_options;
 pub mod services;
@@ -122,6 +124,22 @@ pub struct PortableInfo {
     pub reason: Option<String>,
     /// Smart wearables only: why the engine holds it.
     pub source: Option<SmartWearableSource>,
+}
+
+/// A map pin (`MapPin`) of a portable experience whose scene.json declares
+/// `isPortableExperience: true`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MapPinInfo {
+    /// `<scene hash>:<scene entity>`.
+    pub id: String,
+    pub x: i32,
+    pub y: i32,
+    /// At most 100 characters.
+    pub title: String,
+    /// A file of the scene's content; `None` draws the default pin.
+    pub icon: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, ts_rs::TS)]
@@ -937,6 +955,48 @@ pub enum PermissionRequestEvent {
     Cancelled { id: usize },
 }
 
+/// A scene asked to open the purchase confirmation for one item. The engine has applied its
+/// gates and parsed the item from the scene's urn; `item` is None when the urn names no
+/// purchasable collection item. The HUD answers each request with [`SetItemPurchaseState`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ItemPurchaseRequest {
+    pub id: u32,
+    pub item: Option<ItemPurchaseItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ItemPurchaseItem {
+    /// collection contract, `0x` + 40 hex digits
+    pub contract: String,
+    /// the item's id within the collection, decimal digits
+    pub item_id: String,
+}
+
+/// The HUD's report on an [`ItemPurchaseRequest`]: first `accepted` (the confirmation is
+/// showing) or `unavailable` (this host cannot buy), then for an accepted request exactly one
+/// of the outcomes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ItemPurchaseState {
+    Accepted,
+    Unavailable,
+    Purchased,
+    Dismissed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export)]
+pub struct SetItemPurchaseState {
+    pub id: u32,
+    pub state: ItemPurchaseState,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub struct SetSinglePermission {
@@ -973,4 +1033,56 @@ pub struct SettingInfo {
     pub step_size: f32,
     pub value: f32,
     pub default: f32,
+}
+
+/// A color as the catalyst `outfits` entity stores it. Other explorers read a missing `a` as 0.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, ts_rs::TS)]
+#[ts(export)]
+pub struct OutfitColor {
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+    #[serde(default = "opaque")]
+    pub a: f32,
+}
+
+fn opaque() -> f32 {
+    1.0
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, ts_rs::TS)]
+#[ts(export)]
+pub struct OutfitColored {
+    pub color: OutfitColor,
+}
+
+/// One saved look, as the catalyst `outfits` entity stores it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct OutfitData {
+    pub body_shape: String,
+    pub eyes: OutfitColored,
+    pub hair: OutfitColored,
+    pub skin: OutfitColored,
+    pub wearables: Vec<String>,
+    #[serde(default)]
+    pub force_render: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ts_rs::TS)]
+#[ts(export)]
+pub struct OutfitSlotData {
+    pub slot: u32,
+    pub outfit: OutfitData,
+}
+
+/// The local player's saved outfits: the metadata of their catalyst `outfits` entity. Fields
+/// other explorers add are dropped on the next deploy.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct OutfitsData {
+    pub outfits: Vec<OutfitSlotData>,
+    pub names_for_extra_slots: Vec<String>,
 }

@@ -844,7 +844,7 @@ class DevTest(unittest.TestCase):
             self.assertEqual(env[key], 'false', key)
         # The Shop's catalogue follows the public subgraphs and chain, as `posture show mirror` does.
         for key in ('MARKETPLACE_MIRRORS_ENABLED', 'MARKETPLACE_NFT_INDEX_ENABLED', 'LAND_AUTHZ_INDEX_ENABLED',
-                    'SHOP_RENTALS_INDEX_ENABLED'):
+                    'SHOP_RENTALS_INDEX_ENABLED', 'MARKETPLACE_COMMITTEE_INDEX_ENABLED'):
             self.assertEqual(env[key], 'true', key)
         self.assertTrue(env['MATIC_COLLECTIONS_SUBGRAPH_URL'].startswith('https://'))
         self.assertIn('index', dev.project({**self.config, 'profile': 'mirror'})['processes'])
@@ -876,7 +876,8 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['VITE_SHOP_CHAIN_ID'], '80002')
         self.assertEqual(env['COLLECTIONS_CHAIN_ID'], '80002')
         self.assertEqual(env['CONTRACT_ADDRESSES_CHAIN_KEY'], 'amoy')
-        self.assertTrue(env['CONTRACT_ADDRESSES_URL'].startswith('https://'))
+        # Without a relayer key, the published list (see the relayer key test for the other case).
+        self.assertEqual(env['CONTRACT_ADDRESSES_URL'], 'https://contracts.decentraland.org/addresses.json')
         # On-chain cancels and executions close local trades: the trade-events index walks the testnets.
         self.assertEqual(env['MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'], 'true')
         self.assertEqual((env['MARKETPLACE_INDEX_CHAIN_ID_MATIC'], env['MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM']), ('80002', '11155111'))
@@ -886,6 +887,8 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['MARKETPLACE_NFT_INDEX_ENABLED'], 'false')
         self.assertEqual(mirror['MARKETPLACE_NFT_INDEX_ENABLED'], 'true')
         self.assertEqual((env['SHOP_RENTALS_INDEX_ENABLED'], mirror['SHOP_RENTALS_INDEX_ENABLED']), ('false', 'true'))
+        self.assertEqual((env['MARKETPLACE_COMMITTEE_INDEX_ENABLED'], mirror['MARKETPLACE_COMMITTEE_INDEX_ENABLED']),
+                         ('false', 'true'))
         self.assertIn('decentraland.zone', env['TRADES_SYNC_UPSTREAM_URL'])
         self.assertIn('decentraland.zone', env['TRANSACTIONS_UPSTREAM_URL'])
         self.assertTrue(env['RPC_ENDPOINT_POLYGON'].endswith('/amoy'))
@@ -949,6 +952,128 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['CREDITS_SIGNER_KEY_FILE'], str(key))
         # The file's path is passed, never its contents.
         self.assertNotIn('not a real key', '\n'.join(env.values()))
+
+    def test_the_testnet_relay_signs_its_own_transactions_only_with_a_relayer_key(self):
+        relayer = ('META_TX_BROADCAST_ENABLED', 'RELAYER_PRIVATE_KEY_FILE', 'RELAYER_MAX_FEE_PER_GAS_WEI',
+                   'MAX_RELAYED_TRANSACTIONS_PER_DAY', 'NAMES_SIGNER_ENABLED')
+        published = 'https://contracts.decentraland.org/addresses.json'
+        # Without a key the relay forwards to the .zone transactions API over the published list, which lacks
+        # dcl-one's manager, so the relay refuses that manager itself (marked not sent) instead of forwarding it.
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        for name in relayer:
+            self.assertNotIn(name, env, name)
+        self.assertIn('decentraland.zone', env['TRANSACTIONS_UPSTREAM_URL'])
+        self.assertEqual(env['CONTRACT_ADDRESSES_URL'], published)
+        key = self.state / 'relayer.key'
+        key.write_text('  \n')  # empty: the server would read no key, so the signer stays off
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        for name in relayer:
+            self.assertNotIn(name, env, name)
+        self.assertEqual(env['CONTRACT_ADDRESSES_URL'], published)
+        key.write_text('not a real key')
+        key.chmod(0o644)
+        warning = io.StringIO()
+        with contextlib.redirect_stderr(warning):
+            dev.runtime_env({**self.config, 'profile': 'testnet'})
+        self.assertIn('chmod 600', warning.getvalue())
+        key.chmod(0o600)
+        warning = io.StringIO()
+        with contextlib.redirect_stderr(warning):
+            env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        self.assertEqual(warning.getvalue(), '', 'a private key on a loopback stack warns of nothing')
+        self.assertEqual(env['META_TX_BROADCAST_ENABLED'], 'true')
+        self.assertEqual(env['RELAYER_PRIVATE_KEY_FILE'], str(key))
+        # Capped: 200 gwei at most per gas, and 100 free calls (approvals, cancels) a day across every address.
+        self.assertEqual(env['RELAYER_MAX_FEE_PER_GAS_WEI'], '200000000000')
+        self.assertEqual(env['MAX_RELAYED_TRANSACTIONS_PER_DAY'], '100')
+        # The bundled `amoy` entry, which carries dcl-one's manager, so the relay admits it.
+        self.assertNotIn('CONTRACT_ADDRESSES_URL', env)
+        # The key signs on Amoy alone: never on the NAMEs chain, whose ETH_RPC_URL is Sepolia's here.
+        self.assertEqual(env['NAMES_SIGNER_ENABLED'], 'false')
+        self.assertTrue(env['ETH_RPC_URL'].endswith('/sepolia'))
+        # The file's path is passed, never its contents.
+        self.assertNotIn('not a real key', '\n'.join(env.values()))
+        # The mirror profile, which relays on Polygon mainnet, never reads it.
+        mirror = dev.runtime_env({**self.config, 'profile': 'mirror'})
+        for name in relayer:
+            self.assertNotIn(name, mirror, name)
+
+    def test_a_testnet_stack_behind_a_public_origin_never_starts_with_a_relayer_key(self):
+        exposed = {**self.config, 'profile': 'testnet', 'public_origin': 'https://dev.example.test'}
+        published = 'https://contracts.decentraland.org/addresses.json'
+        # Without a key, or with an empty one, a public testnet stack starts: the .zone transactions API pays.
+        key = self.state / 'relayer.key'
+        self.assertEqual(dev.runtime_env(exposed)['CONTRACT_ADDRESSES_URL'], published)
+        key.write_text('  \n')
+        self.assertEqual(dev.runtime_env(exposed)['CONTRACT_ADDRESSES_URL'], published)
+        # With one, anyone who reaches the origin could spend its POL: the stack's environment is refused,
+        # naming both ways out, and `up` refuses before it starts any process.
+        key.write_text('not a real key')
+        key.chmod(0o600)
+        with self.assertRaises(SystemExit) as refused:
+            dev.runtime_env(exposed)
+        why = str(refused.exception)
+        for part in ('https://dev.example.test', 'foundation-dev origin local', 'remove the key', '.zone'):
+            self.assertIn(part, why)
+        self.assertNotIn('not a real key', why)
+        with patch.object(dev, 'settings', return_value=exposed), \
+                patch.object(dev, 'supervisor_running', return_value=False), \
+                patch.object(dev, 'save_json') as written:
+            with self.assertRaises(SystemExit):
+                dev.prepare_supervisor()
+        written.assert_not_called()
+        # With an installed service, `up` refuses before it starts the service, whose supervisor would only
+        # restart in a loop on the same refusal.
+        (self.state / 'settings.json').write_text(json.dumps(exposed))
+        with patch.object(dev, 'service_file', return_value=key), \
+                patch.object(dev, 'service_start') as started, \
+                patch.object(dev, 'supervisor_running', return_value=False):
+            with self.assertRaises(SystemExit):
+                dev.up()
+        started.assert_not_called()
+        # `service install` refuses before it touches the installed unit or stops the running stack.
+        with patch.object(dev, 'DARWIN', False):
+            unit = dev.service_file()
+        unit.parent.mkdir(parents=True, exist_ok=True)
+        unit.write_text('the unit installed before')
+        with patch.object(dev, 'DARWIN', False), \
+                patch.object(dev.shutil, 'which', return_value='/nix/bin/nix'), \
+                patch.object(dev, 'systemctl') as systemctl, patch.object(dev, 'down') as down, \
+                patch.object(dev, 'service_start') as started:
+            with self.assertRaises(SystemExit):
+                dev.service_install()
+        self.assertEqual(unit.read_text(), 'the unit installed before')
+        for untouched in (systemctl, down, started):
+            untouched.assert_not_called()
+        # The key file is read only for a testnet stack behind a public origin: an unreadable one never stops
+        # another profile, nor a testnet stack on loopback.
+        with patch.object(dev, 'relayer_key', side_effect=AssertionError('read the relayer key')):
+            for config in ({**exposed, 'profile': 'mirror'}, {**exposed, 'profile': 'offline'},
+                           {**exposed, 'public_origin': None}):
+                dev.refuse_an_exposed_relayer(config)
+            with patch.object(dev, 'settings', return_value={**exposed, 'profile': 'mirror'}), \
+                    patch.object(dev, 'supervisor_running', return_value=False), \
+                    patch.object(dev, 'ports_free', return_value=True), \
+                    patch.object(dev, 'ingress_ports_free', return_value=True), \
+                    patch.object(dev, 'save_json'):
+                self.assertIsNotNone(dev.prepare_supervisor())
+        # What only reads the environment, or runs PostgreSQL alone, signs nothing and still works.
+        self.assertEqual(dev.psql_env(exposed)['PGDATABASE'], 'catalyst')
+        with patch.object(dev, 'run', return_value=subprocess.CompletedProcess([], 0, stdout='1\n')):
+            self.assertEqual(dev.sql(exposed, 'SELECT 1'), '1')
+        printed = io.StringIO()
+        with patch.object(dev.sys, 'argv', ['foundation-dev', 'env']), contextlib.redirect_stdout(printed):
+            dev.main()
+        self.assertIn('FOUNDATION_DEV_PUBLIC_URL=', printed.getvalue())
+        with patch.object(dev, 'settings', return_value=exposed), \
+                patch.object(dev, 'supervisor_running', return_value=False), \
+                patch.object(dev, 'ports_free', return_value=True), \
+                patch.object(dev, 'ingress_ports_free', return_value=True), \
+                patch.object(dev, 'save_json'):
+            self.assertIsNotNone(dev.prepare_supervisor(postgres_only=True))
+        # The same key on loopback starts, capped; another profile never reads it.
+        self.assertEqual(dev.runtime_env({**exposed, 'public_origin': None})['MAX_RELAYED_TRANSACTIONS_PER_DAY'], '100')
+        self.assertNotIn('RELAYER_PRIVATE_KEY_FILE', dev.runtime_env({**exposed, 'profile': 'mirror'}))
 
     def test_testnet_data_never_shares_a_database_with_another_profile(self):
         (self.state / 'postgres').mkdir()

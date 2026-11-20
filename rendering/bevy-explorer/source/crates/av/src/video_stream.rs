@@ -74,7 +74,7 @@ pub fn av_sinks<T: AVPlayer>(
         Some(AudioSink::new(audio_receiver, handle_sender))
     };
     #[cfg(feature = "html")]
-    {
+    let retry = {
         let url = ipfs
             .content_url(&source, &hash)
             .unwrap_or_else(|| source.clone());
@@ -85,8 +85,8 @@ pub fn av_sinks<T: AVPlayer>(
             Some(url),
             T::HAS_VIDEO,
             image.as_ref(),
-        );
-    }
+        )
+    };
 
     if playing {
         command_sender.send(AVCommand::Play).report();
@@ -105,6 +105,8 @@ pub fn av_sinks<T: AVPlayer>(
         sent_event: 0.,
         sent_volume: None,
         sent_state: VideoState::VsNone,
+        #[cfg(feature = "html")]
+        retry,
         _phantom: Default::default(),
     }
 }
@@ -210,7 +212,6 @@ fn av_thread(
 pub fn noop_sinks<T: AVPlayer>(source: String, image: Option<Handle<Image>>) -> AVSinks<T> {
     let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
     let (video_sender, video_receiver) = tokio::sync::mpsc::channel(10);
-    #[cfg_attr(not(feature = "html"), expect(unused))]
     let (state_sender, state_receiver) = tokio::sync::watch::channel(VideoState::VsLoading);
 
     #[cfg(feature = "ffmpeg")]
@@ -222,7 +223,7 @@ pub fn noop_sinks<T: AVPlayer>(source: String, image: Option<Handle<Image>>) -> 
         Some(AudioSink::new(audio_receiver, handle_sender))
     };
     #[cfg(feature = "html")]
-    media::spawn_av(
+    let retry = media::spawn_av(
         command_receiver,
         video_sender,
         state_sender,
@@ -230,6 +231,8 @@ pub fn noop_sinks<T: AVPlayer>(source: String, image: Option<Handle<Image>>) -> 
         T::HAS_VIDEO,
         image.as_ref(),
     );
+    #[cfg(not(feature = "html"))]
+    drop(state_sender);
 
     AVSinks {
         #[cfg(feature = "ffmpeg")]
@@ -241,6 +244,8 @@ pub fn noop_sinks<T: AVPlayer>(source: String, image: Option<Handle<Image>>) -> 
         sent_event: 0.,
         sent_volume: None,
         sent_state: VideoState::VsNone,
+        #[cfg(feature = "html")]
+        retry,
         _phantom: Default::default(),
     }
 }

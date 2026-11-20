@@ -107,6 +107,9 @@ export interface HudHost {
   /** A page of the Decentraland site (`/terms/`, `/marketplace`, ...) for the deployment this HUD
    *  runs against. */
   siteUrl(path: string): string
+  /** A page that funds the in-world Shop's checkout (BUY CREDITS): the site whose node holds the balance the
+   *  checkout reads, which may not be the deployment `siteUrl` follows. */
+  checkoutSiteUrl(path: string): string
   /** Where the untrusted-link gate's Exit sends the player: an address no entry url can change, never
    *  one built from `?baseDomain=`. */
   exitUrl(): string

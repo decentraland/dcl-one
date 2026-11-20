@@ -130,7 +130,6 @@ pub fn teleport_player(
     }
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn handle_out_of_world(
     mut commands: Commands,
     mut scenes: Query<

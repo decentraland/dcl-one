@@ -172,7 +172,8 @@ not the shell page: pick the app frame in the DevTools context selector first.
 
 ## Runtime debug panel
 
-In a development engine build, click the bug button in the lower-right corner of the in-world HUD to toggle the panel.
+Launch the desktop client with `--debug-panel` or open the web page with `?debugPanel=1`
+to show the lower-right bug button. Click it to toggle the panel.
 In any build, open **Sidebar settings (•••) → Debug panel** or enter `/debug` in chat.
 Use `/debug help` to list the sections available in this client and `/debug <section>`
 to open one directly. Search matches both section titles and controls. Expand the
@@ -285,6 +286,15 @@ State, in every build:
   (the same per format: `ktx2-bc`, `glb`, and `glb-br` on web), `fallbacks` (files that loaded
   their original instead), `fallbacksByFormat` (those whose chosen variant failed, per format)
   and `recentFallbacks` (the last 20, with the file, its entity and the reason).
+- `/item_purchase_state`: the scene item purchase (`openExplorerUi` with `EU_ITEM_PURCHASE`) as
+  JSON, the Scene item purchase debug section's source: `hudListeners` (HUDs subscribed to
+  requests; with none, a request is answered `REJECTED_FEATURE_DISABLED`), `active` (the request
+  in flight: `state` waiting for the HUD or confirmation open, `scene`, `item` as the parsed
+  `contract:id` or "not a collection item", `requestId`), `last` (the same for the last request
+  that ended, with its `outcome`) and `closedOwed` (the scenes whose verdict is written and whose
+  `closed` event is still to come; such a scene's next request is `WAS_ALREADY_OPEN`). No price,
+  balance, wallet or scene-written text appears. `/item_purchase_cancel` drops the request in flight: an open one reports
+  `Dismissed` to its scene, and the HUD's confirmation stays up with its later reports ignored.
 - `/ban_block_state [address]`: the ban and block status as JSON: the local user's address, the
   social blocks (`state` live or unavailable with its `reason`, `blocked`, `blockedBy`), the
   platform ban (`state` unknown, checked or failed, `isBanned`, `source`, `reason`,
@@ -324,6 +334,18 @@ State, in every build:
 - `/tree_wind [true|false]`: whether the landscape's trees and bushes sway in the wind. Still,
   they stand in their rest pose, so two frames of them agree whenever they were taken; the visual
   scenarios hold them still for their frames.
+- `/media_state`: the loaded video players and audio streams as JSON, the Media player debug
+  section's reading. On the web each row also carries the source's reopen state:
+  `retryAttempt` (reopens since its last 5 s of playback), `retryFailures` (failures since the
+  source was created), `retryDelaySeconds` (the wait before the scheduled one, else null),
+  `retryGaveUp` and `lastError`.
+
+On the web only:
+
+- `/media_retry_delay [ms]`: the wait before a failed media source's first reopen
+  (2000 by default; later waits double from it, 5 reopens at most) as `firstDelayMs` and
+  `maxReopens`; with `ms`, sets it first for every source failing from then on. For tests that
+  would otherwise wait the full 62 s schedule.
 
 The HUD and input:
 
@@ -456,7 +478,11 @@ of the contract.
 
 - **Out-of-bounds culling can't be tested against localhost.** A loopback realm forces
   show-out-of-bounds on regardless of `--preview`. Point the client at the same preview server
-  by LAN address, `--realm http://$(ipconfig getifaddr en0):<port>`.
+  by LAN address, `--realm http://$(ipconfig getifaddr en0):<port>`. Colliders follow the same
+  switch: a run that shows out-of-bounds geometry keeps its colliders on, and any other run turns
+  off a collider that leaves the bounds and counts it in the debug panel's Scene Content section.
+  A local scene server is always a preview run, so it keeps those colliders on while a client
+  pointed at the LAN address does not.
 - **The bridge scene's build output is not what the engine loads.** After any bridge-scene
   source change run `pnpm run export-native` (native) or `pnpm run bundle` (web) from
   `react-web/bridge-scene/`, or the client runs the stale scene from the exported folder.

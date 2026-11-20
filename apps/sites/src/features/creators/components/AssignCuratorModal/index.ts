@@ -1,0 +1,1 @@
+export { AssignCuratorModal } from './AssignCuratorModal'

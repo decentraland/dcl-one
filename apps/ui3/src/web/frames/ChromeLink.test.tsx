@@ -20,10 +20,10 @@ it("preserves an explicit navigation override when a router link is provided", (
 it("routes creator navigation through the existing app navigator", () => {
   const navigate = vi.fn(() => true);
   render(<ChromeNavContext value={{ navigate }}>
-    <CreatorHubChrome active="home" />
+    <CreatorHubChrome active="collections" />
   </ChromeNavContext>);
-  expect(fireEvent.click(screen.getByRole("link", { name: "Scenes" }))).toBe(false);
-  expect(navigate).toHaveBeenLastCalledWith("/create/scenes");
+  expect(fireEvent.click(screen.getByRole("link", { name: "Collections" }))).toBe(false);
+  expect(navigate).toHaveBeenLastCalledWith("/create/collections");
 });
 
 it("preserves custom actions, modified clicks, downloads, fragments and external targets", () => {

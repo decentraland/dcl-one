@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::marker::PhantomData;
 
 use bevy::{
@@ -214,21 +216,14 @@ impl SceneBounds {
     /// no regions = unbounded. without `buffers` (or for huge extents) an irregular scene falls
     /// back to its bounding box.
     pub fn new(regions: &[BoundRegion], buffers: Option<&mut Assets<ShaderStorageBuffer>>) -> Self {
-        let [first, rest @ ..] = regions else {
+        let Some(((min, max), max_height)) = BoundRegion::enclosing(regions) else {
             return Self::unbounded();
         };
-        if rest.is_empty() {
-            return Self::rect(first);
+        if let [region] = regions {
+            return Self::rect(region);
         }
 
-        let (min, max) = regions
-            .iter()
-            .map(BoundRegion::cells)
-            .fold((IVec2::MAX, IVec2::MIN), |(min, max), (rmin, rmax)| {
-                (min.min(rmin), max.max(rmax))
-            });
         let size = (max - min + IVec2::ONE).as_uvec2();
-        let max_height = regions.iter().fold(0.0f32, |h, r| h.max(r.height));
         let cell_count = size.x as u64 * size.y as u64;
         let Some(buffers) = buffers.filter(|_| cell_count <= MAX_SCENE_CELLS) else {
             if cell_count > MAX_SCENE_CELLS {
@@ -297,8 +292,10 @@ impl SceneBounds {
 }
 
 mod decl {
-    // temporary for ShaderType macro, remove in future
-    #![allow(dead_code)]
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
 
     use bevy::{
         math::{IVec2, UVec2},
@@ -326,14 +323,44 @@ mod decl {
 }
 pub use decl::*;
 
+/// The height limit, in metres, of a scene in a World: the parcel-count limit of the largest
+/// scene a World allows, 300 × 300 parcels (log2(90001) × 20 = 329.15 m), rounded up.
+pub const FIXED_SCENE_HEIGHT: f32 = 330.0;
+
 impl BoundRegion {
     pub fn new(min: IVec2, max: IVec2, parcel_count: u32) -> Self {
         Self {
             min: ((min.x as i16 as u16 as u32) << 16) | (-(max.y + 1) as i16 as u16 as u32),
             max: (((max.x + 1) as i16 as u16 as u32) << 16) | (-min.y as i16 as u16 as u32),
-            height: f32::log2(parcel_count as f32 + 1.0) * 20.0,
+            height: Self::height_for_parcels(parcel_count),
             parcel_count,
         }
+    }
+
+    /// the region with this height limit, in metres, in place of its parcel count's
+    pub fn with_height(self, height: f32) -> Self {
+        Self { height, ..self }
+    }
+
+    /// The height limit, in metres, over `parcel_count` parcels.
+    pub fn height_for_parcels(parcel_count: u32) -> f32 {
+        f32::log2(parcel_count as f32 + 1.0) * 20.0
+    }
+
+    /// The rectangle of cells around `regions` (inclusive, as [`Self::cells`] gives them) and
+    /// the highest of their height limits. None without regions.
+    pub fn enclosing(regions: &[BoundRegion]) -> Option<((IVec2, IVec2), f32)> {
+        let (first, rest) = regions.split_first()?;
+        Some(rest.iter().fold(
+            (first.cells(), first.height),
+            |((min, max), height), region| {
+                let (region_min, region_max) = region.cells();
+                (
+                    (min.min(region_min), max.max(region_max)),
+                    height.max(region.height),
+                )
+            },
+        ))
     }
 }
 
@@ -668,8 +695,9 @@ mod test {
     use bevy::math::{IVec2, Vec2, Vec3, Vec3Swizzles};
 
     use crate::{
-        reveal_mesh_tag, unrevealed_mesh_tag, BoundRegion, SCENE_MATERIAL_REVEAL_FULL_HEIGHT,
-        SCENE_MATERIAL_REVEAL_HIDE_HEIGHT, SCENE_MATERIAL_REVEAL_MESH_TAG_MASK,
+        reveal_mesh_tag, unrevealed_mesh_tag, BoundRegion, FIXED_SCENE_HEIGHT,
+        SCENE_MATERIAL_REVEAL_FULL_HEIGHT, SCENE_MATERIAL_REVEAL_HIDE_HEIGHT,
+        SCENE_MATERIAL_REVEAL_MESH_TAG_MASK,
     };
 
     /// the reveal height a shader reads back from a tag (reveal_discard in
@@ -856,6 +884,21 @@ mod test {
     }
 
     #[test]
+    fn enclosing_is_the_rectangle_around_the_regions_and_their_highest_limit() {
+        assert!(BoundRegion::enclosing(&[]).is_none());
+
+        // parcels (0, 0) and (2, 3), each a region of its own, the second with the higher limit
+        let regions = [
+            BoundRegion::new(IVec2::ZERO, IVec2::ZERO, 1),
+            BoundRegion::new(IVec2::new(2, 3), IVec2::new(2, 3), 3),
+        ];
+        let ((min, max), height) = BoundRegion::enclosing(&regions).unwrap();
+        // cells are world xz / 16, so parcel (x, y) is cell (x, -y - 1)
+        assert_eq!((min, max), (IVec2::new(0, -4), IVec2::new(2, -1)));
+        assert_eq!(height, BoundRegion::height_for_parcels(3));
+    }
+
+    #[test]
     fn parcel_index_matches_rect_loop() {
         use common::bounds_calc::scene_regions;
 
@@ -906,6 +949,38 @@ mod test {
                         assert!(new >= reach, "{pos} old {old} new {new}");
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn bounds_clip_at_the_height_their_regions_carry() {
+        use common::bounds_calc::scene_regions;
+
+        // one parcel (a single rectangle), and an L with a parcel apart (the cell table)
+        let shapes = [
+            vec![IVec2::ZERO],
+            vec![IVec2::ZERO, IVec2::X, IVec2::Y, IVec2::splat(5)],
+        ];
+
+        for parcels in shapes {
+            let regions = scene_regions(parcels.iter().copied())
+                .into_iter()
+                .map(|r| BoundRegion::new(r.min, r.max, r.count).with_height(FIXED_SCENE_HEIGHT))
+                .collect::<Vec<_>>();
+            let mut buffers = bevy::asset::Assets::<super::ShaderStorageBuffer>::default();
+            let bounds = super::SceneBounds::new(&regions, Some(&mut buffers));
+
+            for parcel in parcels {
+                let centre = Vec3::new(
+                    parcel.x as f32 * 16.0 + 8.0,
+                    0.0,
+                    -parcel.y as f32 * 16.0 - 8.0,
+                );
+                let below = centre.with_y(FIXED_SCENE_HEIGHT - 1.0);
+                let above = centre.with_y(FIXED_SCENE_HEIGHT + 1.0);
+                assert_eq!(new_amount(&bounds, &buffers, 0.0, below), 0.0, "{parcel}");
+                assert_eq!(new_amount(&bounds, &buffers, 0.0, above), 1.0, "{parcel}");
             }
         }
     }

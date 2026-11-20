@@ -933,7 +933,7 @@ mod tests {
 
     #[tokio::test]
     async fn every_contract_link_uses_same_start_time_and_its_own_fresh_lookup() {
-        use crate::verify::verify_auth_chain_at_verification_time;
+        use crate::verify::verify_login_chain_at_verification_time;
         for links in 1..=9 {
             // Interior lookup, then raw historical refusal and prefixed historical success.
             let per_link = vec![
@@ -952,7 +952,7 @@ mod tests {
             let (rpc, calls, task) =
                 scripted_rpc((0..links).flat_map(|_| per_link.iter().cloned()).collect()).await;
             let started = std::time::Instant::now();
-            verify_auth_chain_at_verification_time(
+            verify_login_chain_at_verification_time(
                 &historical_chain(links, "challenge"),
                 "challenge",
                 55000,
@@ -990,7 +990,7 @@ mod tests {
 
     #[tokio::test]
     async fn fresh_fallback_bypasses_nested_success_cache_without_changing_ordinary_callers() {
-        use crate::verify::{verify_auth_chain_async, verify_auth_chain_at_verification_time};
+        use crate::verify::{verify_auth_chain_async, verify_login_chain_at_verification_time};
         use crate::{Eip1654Validator, ValidationCache};
         let answers = vec![
             magic(),
@@ -1010,7 +1010,7 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            verify_auth_chain_at_verification_time(
+            verify_login_chain_at_verification_time(
                 &chain,
                 "reused-delegation",
                 115000,
@@ -1033,7 +1033,7 @@ mod tests {
 
     #[tokio::test]
     async fn late_bad_link_wrong_payload_and_malformed_signature_never_accept_partial_history() {
-        use crate::verify::verify_auth_chain_at_verification_time;
+        use crate::verify::verify_login_chain_at_verification_time;
         let mut answers = vec![
             refusal(),
             refusal(),
@@ -1055,7 +1055,7 @@ mod tests {
         ]);
         let (rpc, calls, task) = scripted_rpc(answers).await;
         assert!(
-            verify_auth_chain_at_verification_time(
+            verify_login_chain_at_verification_time(
                 &historical_chain(2, "challenge"),
                 "challenge",
                 115000,
@@ -1070,14 +1070,14 @@ mod tests {
         let mut chain = historical_chain(1, "challenge");
         chain[1].signature = Some("0xZZ".into());
         assert!(
-            verify_auth_chain_at_verification_time(&chain, "challenge", 115000, Some(&rpc))
+            verify_login_chain_at_verification_time(&chain, "challenge", 115000, Some(&rpc))
                 .await
                 .is_err()
         );
         assert!(calls.lock().unwrap().is_empty());
         chain[1].signature = Some("0x1234".into());
         assert!(
-            verify_auth_chain_at_verification_time(&chain, "different", 115000, Some(&rpc))
+            verify_login_chain_at_verification_time(&chain, "different", 115000, Some(&rpc))
                 .await
                 .is_err()
         );
@@ -1257,7 +1257,7 @@ mod tests {
     }
 
     async fn controlled_rpc_workload(cases: impl IntoIterator<Item = (usize, usize)>) {
-        use crate::verify::verify_auth_chain_at_verification_time;
+        use crate::verify::verify_login_chain_at_verification_time;
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
         println!(
             "RPC_WORKLOAD_ENV {}",
@@ -1362,7 +1362,7 @@ mod tests {
                         let (calls, active, peak) = (&calls, &active, &peak);
                         async move {
                             let started = std::time::Instant::now();
-                            verify_auth_chain_at_verification_time(
+                            verify_login_chain_at_verification_time(
                                 chain,
                                 "challenge",
                                 115000,

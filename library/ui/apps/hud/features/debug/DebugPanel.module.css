@@ -14,7 +14,7 @@
   padding: 8px 0;
   border-top: 1px solid var(--line);
 }
-/* Leave room for the development build's lower-right toggle while the panel scrolls. */
+/* Leave room for the lower-right launcher while the panel scrolls. */
 .besideLauncher {
   max-height: calc((100dvh - 20px) / var(--ui-scale) - 44px);
 }

@@ -6,6 +6,7 @@ import { Minimap } from '../../features/minimap/Minimap'
 import { fakeSession, renderSettled } from '../harness'
 import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
 import { navigation } from '@explorer-core/features/map/navigation'
+import { mapPins } from '@explorer-core/features/map/mapPins'
 
 const placeAt = vi.hoisted(() => ({ place: null as unknown }))
 // The layer data is one store for the page, read the first time a map asks: the live event is there
@@ -32,6 +33,8 @@ beforeEach(() => {
   placeAt.place = null
   layerData.favourite.mockReset()
   mapLayers.set('liveEvents', true)
+  mapLayers.set('pins', true)
+  mapPins.clear()
   navigation.stop()
 })
 // jsdom has no clipboard: a test defines one, and it goes with the test
@@ -209,6 +212,21 @@ describe('minimap layers', () => {
     await waitFor(() => expect(container.querySelectorAll('img[src*="live"]').length).toBe(1))
     act(() => mapLayers.set('liveEvents', false))
     expect(container.querySelectorAll('img[src*="live"]').length).toBe(0)
+  })
+
+  it("draws the portable experiences' quest pins, and the Layers panel hides them here too", async () => {
+    const container = await renderAt()
+    act(() =>
+      mapPins.receive([
+        { id: 'bafypx:512', x: 1, y: 1, title: 'Memory Grid', icon: null },
+        { id: 'bafypx:513', x: 2, y: 1, title: 'Tile Tally', icon: 'https://content.test/tile_tally.png' }
+      ])
+    )
+    const pins = container.querySelectorAll('[data-marker="pins"]')
+    expect(pins.length).toBe(2)
+    expect(pins[1].querySelector('img')).toHaveAttribute('src', 'https://content.test/tile_tally.png')
+    act(() => mapLayers.set('pins', false))
+    expect(container.querySelectorAll('[data-marker="pins"]').length).toBe(0)
   })
 
   it('has no markers setting of its own any more', async () => {

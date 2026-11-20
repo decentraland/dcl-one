@@ -3,6 +3,9 @@ name = "image_processing"
 version = "0.1.0"
 edition = "2021"
 
+[lints]
+workspace = true
+
 [lib]
 
 [features]
@@ -16,6 +19,7 @@ ipfs = { workspace = true }
 
 bevy = { workspace = true }
 anyhow = { workspace = true }
+thiserror = { workspace = true }
 bevy_console = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

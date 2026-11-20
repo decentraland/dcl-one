@@ -104,10 +104,11 @@ export type LandingsEvents = {
   lp_community_submit_failed: {
     error?: string;
   };
+  lp_creatorhub_docs_clicked: Record<string, never>;
   lp_creatorhub_download_clicked: {
-    arch: string;
+    arch: "amd64" | "arm64";
     file_name: null | string;
-    kind: string;
+    kind: "primary" | "secondary";
     os: "macos" | "windows";
   };
   lp_creatorhub_download_success: {
@@ -118,6 +119,9 @@ export type LandingsEvents = {
     os: "macos" | "windows";
     overridden: boolean;
     version: string;
+  };
+  lp_creatorhub_link_shared: {
+    method: "copy" | "share";
   };
   lp_discover_viewed: Record<string, never>;
   lp_event_card_clicked: {
@@ -207,7 +211,7 @@ export type LandingsEvents = {
   lp_whatson_viewed: {
     filter: null | string;
     live_count: number;
-    search: null | string;
+    search: null;
     upcoming_count: number;
   };
   report_category_set: {
@@ -216,7 +220,7 @@ export type LandingsEvents = {
   report_completed: {
     evidence_count: number;
     reason: "" | "cheating" | "harassment" | "illegal_content" | "impersonation" | "scam_phishing";
-    report_id?: string;
+    report_id: string;
   };
   report_details_set: {
     description_len: number;
@@ -225,7 +229,7 @@ export type LandingsEvents = {
     file_count: number;
   };
   report_failed: {
-    reason?: string;
+    reason: string;
   };
   report_review_reached: Record<string, never>;
   report_started: Record<string, never>;

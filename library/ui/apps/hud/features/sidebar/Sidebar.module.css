@@ -55,7 +55,7 @@
   --rail-badge-right: 5.5px;
 }
 
-/* The development build's debug launcher, at the screen's bottom right. */
+/* The optional debug launcher at the screen's bottom right. */
 button.debugLauncher {
   position: fixed;
   right: calc(8px * var(--ui-scale));

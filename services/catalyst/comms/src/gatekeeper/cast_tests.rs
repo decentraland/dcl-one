@@ -32,6 +32,11 @@ struct LiveKitFixture {
     fail_participants: std::sync::atomic::AtomicBool,
     ingresses: AtomicUsize,
     deleted_ingresses: AtomicUsize,
+    /// ListIngress by id: the status reported for an ingress; an ingress not
+    /// listed here is unknown to LiveKit (empty `items`).
+    ingress_status: Mutex<HashMap<String, String>>,
+    /// ListIngress answers 500 while set.
+    fail_list_ingress: std::sync::atomic::AtomicBool,
 }
 
 impl LiveKitFixture {
@@ -69,7 +74,8 @@ impl LiveKitFixture {
     }
 
     async fn serve(self: &Arc<Self>) -> (String, tokio::task::JoinHandle<()>) {
-        let (a, b, c, d, e, f, g) = (
+        let (a, b, c, d, e, f, g, h) = (
+            self.clone(),
             self.clone(),
             self.clone(),
             self.clone(),
@@ -93,6 +99,27 @@ impl LiveKitFixture {
                             "url": "rtmp://ingress.example/live",
                             "streamKey": format!("cast-key-{}", Uuid::new_v4()),
                         })))
+                    }
+                }),
+            )
+            .route(
+                "/twirp/livekit.Ingress/ListIngress",
+                axum::routing::post(move |Json(body): Json<Value>| {
+                    let failing = h.fail_list_ingress.load(Ordering::SeqCst);
+                    let id = body["ingressId"].as_str().unwrap_or_default().to_owned();
+                    let items: Vec<Value> = h
+                        .ingress_status
+                        .lock()
+                        .unwrap()
+                        .get(&id)
+                        .map(|status| json!({"ingressId": id, "state": {"status": status}}))
+                        .into_iter()
+                        .collect();
+                    async move {
+                        if failing {
+                            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                        }
+                        Ok(Json(json!({ "items": items })))
                     }
                 }),
             )
@@ -835,11 +862,16 @@ async fn a_scene_admin_gets_a_stream_link_that_is_reused_until_it_expires() {
     assert_eq!(h.livekit.ingresses.load(Ordering::SeqCst), 2);
 
     // A live broadcast is not interrupted by a renewal.
-    sqlx::query("UPDATE social.scene_stream_access SET streaming = true, expiration_time = timezone('UTC', now()) - interval '1 minute' WHERE place_id = $1 AND active")
+    let ingress_id: String = sqlx::query_scalar("UPDATE social.scene_stream_access SET streaming = true, expiration_time = timezone('UTC', now()) - interval '1 minute' WHERE place_id = $1 AND active RETURNING ingress_id")
         .bind(&scene.place_id)
-        .execute(&pool)
+        .fetch_one(&pool)
         .await
         .unwrap();
+    h.livekit
+        .ingress_status
+        .lock()
+        .unwrap()
+        .insert(ingress_id, "ENDPOINT_PUBLISHING".into());
     let (status, body) = h
         .signed(KEY, "GET", path, &scene_metadata(&scene), None)
         .await;
@@ -848,6 +880,78 @@ async fn a_scene_admin_gets_a_stream_link_that_is_reused_until_it_expires() {
         body,
         json!({"error": crate::gatekeeper::streaming::RENEWAL_CONFLICT_MSG})
     );
+}
+
+#[tokio::test]
+async fn a_stale_streaming_flag_does_not_block_a_new_stream_link() {
+    let Some(pool) = scratch().await else { return };
+    let scene = genesis_scene();
+    seed_genesis_place(&pool, &scene, Some("Cast Plaza")).await;
+    let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness(pool.clone(), Some(room), PermissionDecision::Allowed, None).await;
+    let path = "/cast/generate-stream-link";
+    let (status, first) = h
+        .signed(KEY, "GET", path, &scene_metadata(&scene), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    // The credential belongs to a room the place no longer has (a redeploy
+    // changes it) and still says it streams: the ingress_ended webhook was lost.
+    let ingress_id: String = sqlx::query_scalar(
+        "UPDATE social.scene_stream_access SET streaming = true, streaming_start_time = timezone('UTC', now()), room_id = 'scene:main:redeployed' \
+         WHERE place_id = $1 AND active RETURNING ingress_id",
+    )
+    .bind(&scene.place_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let conflict = json!({"error": crate::gatekeeper::streaming::RENEWAL_CONFLICT_MSG});
+
+    // LiveKit unreachable: the flag is kept and the renewal refused.
+    h.livekit.fail_list_ingress.store(true, Ordering::SeqCst);
+    let (status, body) = h
+        .signed(KEY, "GET", path, &scene_metadata(&scene), None)
+        .await;
+    assert_eq!((status, &body), (StatusCode::CONFLICT, &conflict));
+    h.livekit.fail_list_ingress.store(false, Ordering::SeqCst);
+
+    // The ingress really publishes: still refused.
+    for live in ["ENDPOINT_PUBLISHING", "ENDPOINT_BUFFERING"] {
+        h.livekit
+            .ingress_status
+            .lock()
+            .unwrap()
+            .insert(ingress_id.clone(), live.into());
+        let (status, body) = h
+            .signed(KEY, "GET", path, &scene_metadata(&scene), None)
+            .await;
+        assert_eq!((status, &body), (StatusCode::CONFLICT, &conflict), "{live}");
+    }
+    assert_eq!(h.livekit.ingresses.load(Ordering::SeqCst), 1);
+
+    // LiveKit no longer knows the ingress: the flag is stale, the credential replaced.
+    h.livekit.ingress_status.lock().unwrap().remove(&ingress_id);
+    let (status, renewed) = h
+        .signed(KEY, "GET", path, &scene_metadata(&scene), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{renewed}");
+    assert_ne!(renewed["streamingKey"], first["streamingKey"]);
+    assert_eq!(h.livekit.ingresses.load(Ordering::SeqCst), 2);
+    let old: (bool, bool) = sqlx::query_as(
+        "SELECT active, streaming FROM social.scene_stream_access WHERE ingress_id = $1",
+    )
+    .bind(&ingress_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(old, (false, false));
+    let current: String = sqlx::query_scalar(
+        "SELECT room_id FROM social.scene_stream_access WHERE place_id = $1 AND active",
+    )
+    .bind(&scene.place_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(current, scene.room);
 }
 
 #[tokio::test]
@@ -1813,7 +1917,14 @@ async fn an_expired_credential_does_not_promote_admins_on_join() {
 /// force, no cleanup is recorded for it, and the new ingress is deleted.
 #[tokio::test]
 async fn a_reset_that_cannot_store_its_credential_keeps_the_old_key() {
-    let Some(pool) = scratch().await else { return };
+    // Its trigger on a shared table would block or deadlock other tests.
+    let Some(database) =
+        crate::db::scratch::OwnedDatabase::new("castrefuse", crate::db::scratch::Schema::Full, 8)
+            .await
+    else {
+        return;
+    };
+    let pool = database.pool.clone();
     let scene = genesis_scene();
     seed_genesis_place(&pool, &scene, None).await;
     let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
@@ -1874,6 +1985,8 @@ async fn a_reset_that_cannot_store_its_credential_keeps_the_old_key() {
         )
         .await;
     assert_eq!(status, StatusCode::OK);
+    drop(h);
+    database.drop().await;
 }
 
 /// Upstream mints the replacement's ingress before revoking the old one: a
@@ -2308,7 +2421,14 @@ async fn streamer_presenters_stay_bounded_and_follow_the_streamers_session() {
 /// old key stays, no cleanup is recorded, and the new ingress is deleted.
 #[tokio::test]
 async fn a_reset_that_loses_to_a_concurrent_change_keeps_the_old_key() {
-    let Some(pool) = scratch().await else { return };
+    // Its trigger on a shared table would block or deadlock other tests.
+    let Some(database) =
+        crate::db::scratch::OwnedDatabase::new("castskip", crate::db::scratch::Schema::Full, 8)
+            .await
+    else {
+        return;
+    };
+    let pool = database.pool.clone();
     let scene = genesis_scene();
     seed_genesis_place(&pool, &scene, None).await;
     let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
@@ -2355,6 +2475,8 @@ async fn a_reset_that_loses_to_a_concurrent_change_keeps_the_old_key() {
     assert!(!pending);
     assert_eq!(h.livekit.ingresses.load(Ordering::SeqCst), 2);
     assert_eq!(h.livekit.deleted_ingresses.load(Ordering::SeqCst), 1);
+    drop(h);
+    database.drop().await;
 }
 
 /// A reset intent whose replacement never arrived (left by a crash before

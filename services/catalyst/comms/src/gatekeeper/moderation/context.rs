@@ -49,7 +49,9 @@ pub(in crate::gatekeeper) struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
-    pub async fn resolve(state: &'a CommsState, metadata: &Value) -> Result<Self, ApiError> {
+    /// The realm the signed metadata names: a world by its realm name or
+    /// by the realm URL signed beside it, else a shared realm.
+    pub fn signed_realm(metadata: &Value) -> Result<RealmId, ApiError> {
         let nested = match metadata.get("realm") {
             Some(realm) if realm.is_object() => Some(required(realm, "serverName")?),
             Some(_) => return Err(invalid()),
@@ -102,11 +104,15 @@ impl<'a> Context<'a> {
         // `.dcl.eth` (`WORLDS_REALM_NAME_STRIP_ENS`) or as its owner's
         // override, so the explorer signs that name; the realm URL it also
         // signs (`<host>/world/<name>`) still names the world.
-        let realm = match path_world {
+        Ok(match path_world {
             Some(world) if !is_world_realm_name(realm_name) => RealmId::World(world),
             _ if hostname_world || is_world_realm_name(realm_name) => RealmId::World(parsed_name),
             _ => RealmId::Shared(realm_name.to_owned()),
-        };
+        })
+    }
+
+    pub async fn resolve(state: &'a CommsState, metadata: &Value) -> Result<Self, ApiError> {
+        let realm = Self::signed_realm(metadata)?;
         let raw_scene = required(metadata, "sceneId")?;
         let scene = SceneId::parse(raw_scene).map_err(|_| invalid())?;
         if scene.as_str() != raw_scene || (!realm.is_world() && raw_scene.contains(':')) {

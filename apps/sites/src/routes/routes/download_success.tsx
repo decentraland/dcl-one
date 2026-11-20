@@ -11,6 +11,7 @@ import {
   type DownloadBrowser,
 } from "@/features/download/steps";
 import { successCopy } from "@/features/download/success-copy";
+import { sitesFooterCopy } from "@dcl/one-ui/apps/sites/chrome/footer-copy";
 import {
   SITES_LANGUAGES,
   SitesLocaleContext,
@@ -66,7 +67,7 @@ export default function DownloadSuccessRoute({
   }, [locale]);
   const copy = successCopy[locale];
   const success = copy.success;
-  const footer = copy.footer;
+  const footer = sitesFooterCopy[locale];
   const navigate = useNavigate();
   const preference = useContext(SitesLocaleContext);
   const started = useRef<string | null>(null);

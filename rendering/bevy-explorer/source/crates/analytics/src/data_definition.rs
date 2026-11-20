@@ -151,6 +151,19 @@ pub struct SegmentEventPerformanceMetrics {
     pub hiccups_in_thousand_frames: u32,
     // Total time length of hiccups measured in seconds.
     pub hiccups_time: f32,
+    // CPU frames whose duration strictly exceeds the threshold.
+    pub hiccup_count: u32,
+    // CPU frames measured in this snapshot, including frames below the threshold.
+    pub hiccup_sample_count: u32,
+    // CPU frame duration threshold in milliseconds.
+    pub hiccup_threshold_ms: f32,
+    // Sum of the full durations of CPU hiccups in milliseconds.
+    pub hiccup_time_ms: f32,
+    // Sum of the milliseconds CPU hiccups spent above the threshold.
+    pub hiccup_excess_time_ms: f32,
+    // GPU timing metrics are present only when the renderer supplied readings.
+    #[serde(flatten)]
+    pub gpu: Option<SegmentGpuFrameTimes>,
     // Minimum delta (difference) between frames in milliseconds
     pub min_frame_time: f32,
     // Maximum delta (difference) between frames in milliseconds
@@ -185,6 +198,28 @@ pub struct SegmentEventPerformanceMetrics {
     pub used_jsheap_size: i32,
     // Memory used only by the explorer in kilo bytes
     pub memory_usage: i32,
+}
+
+#[derive(Serialize)]
+pub struct SegmentGpuFrameTimes {
+    pub gpu_hiccup_count: u32,
+    pub gpu_hiccup_sample_count: u32,
+    pub gpu_hiccup_threshold_ms: f32,
+    pub gpu_hiccup_time_ms: f32,
+    pub gpu_hiccup_excess_time_ms: f32,
+    pub gpu_min_frame_time: f32,
+    pub gpu_max_frame_time: f32,
+    pub gpu_mean_frame_time: f32,
+    pub gpu_p1_frame_time: f32,
+    pub gpu_p5_frame_time: f32,
+    pub gpu_p10_frame_time: f32,
+    pub gpu_p20_frame_time: f32,
+    pub gpu_p50_frame_time: f32,
+    pub gpu_p75_frame_time: f32,
+    pub gpu_p80_frame_time: f32,
+    pub gpu_p90_frame_time: f32,
+    pub gpu_p95_frame_time: f32,
+    pub gpu_p99_frame_time: f32,
 }
 
 #[derive(Serialize)]
@@ -300,7 +335,7 @@ pub fn build_segment_event_batch_item(
     event_data: &SegmentEvent,
     queued_at: DateTime<Utc>,
     message_id: String,
-) -> SegmentMetricEventBody {
+) -> Result<SegmentMetricEventBody, serde_json::Error> {
     let mut timestamp = queued_at.to_rfc3339_opts(SecondsFormat::Millis, true);
     let override_position = match event_data {
         SegmentEvent::ExplorerMoveToParcel(current_position, _) => Some(current_position.clone()),
@@ -320,7 +355,7 @@ pub fn build_segment_event_batch_item(
             .expect("the engine's events are named above"),
     };
 
-    let mut properties = serde_json::to_value(common).unwrap();
+    let mut properties = serde_json::to_value(common)?;
     // merge specific event properties with common properties
     for (k, v) in event_properties.as_object().unwrap().iter() {
         properties[k] = v.clone();
@@ -330,14 +365,14 @@ pub fn build_segment_event_batch_item(
         properties["position"] = serde_json::Value::String(position);
     }
 
-    SegmentMetricEventBody {
+    Ok(SegmentMetricEventBody {
         r#type: "track".to_string(),
         event: event_name,
         user_id,
         timestamp,
         message_id,
         properties,
-    }
+    })
 }
 
 /// Photo mode opened, from the key or a button.

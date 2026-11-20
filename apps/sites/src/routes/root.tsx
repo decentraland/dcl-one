@@ -8,13 +8,14 @@ import {
   Scripts,
   ScrollRestoration,
   useRouteLoaderData,
-  useLocation,
+  useMatches,
 } from "react-router";
 
 // The shared tokens, not foundations.css: the Inter faces are the app's own (@ui/atoms/inter.css, through primitives.css).
 import "@dcl/one-ui/foundations/colors/colors.css";
 import "@dcl/one-ui/foundations/spacing/spacing.css";
 import "@dcl/one-ui/foundations/layout/layout.css";
+import "@dcl/one-ui/apps/sites/profile-tokens.css";
 import "@ui/atoms/primitives.css";
 import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
 
@@ -25,13 +26,13 @@ import ChromeNavBridge from "@/features/components/chrome/ChromeNavBridge";
 import RoutePending, { NAV_PENDING_SCRIPT } from "@/features/components/chrome/RoutePending";
 import EmbedBridge from "@/features/components/chrome/EmbedBridge";
 import { reloadingForAccount } from "@/features/components/chrome/explorer-host";
-import SyncEngineBridge from "@/features/components/creator-hub/SyncEngineBridge";
 import NotFoundPage from "@/features/not-found/NotFoundPage";
 import StatusPage from "@ui/components/StatusPage";
 import { EMBED_BOOT_SCRIPT } from "@ui/web/frames/embed";
+import { ThumbnailPublicBase } from "@ui/data/thumbnail";
 import type { ShouldRevalidateFunctionArgs } from "react-router";
 import { pageSid, parseCookies, publicResponseContext, sessionMiddleware } from "@/core/lib/telemetry/session";
-import { SitesLocaleContext, sitesLanguage, type SitesLocale } from "@ui/web/frames/sites-locale";
+import { SitesLocaleContext, sitesLanguage, type SitesLocale, type SitesLocaleHandle } from "@ui/web/frames/sites-locale";
 import { readWallet } from "@/data/lib/auth/wallet-cookie";
 import { browserCatalystBase } from "@/data/lib/catalyst/bases";
 import { isCommitteeMember } from "@/data/lib/catalyst/creator-hub/committee-membership.server";
@@ -54,10 +55,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const commitHash = (typeof process !== "undefined" && process.env.COMMIT_HASH) || "";
   const pulseServer = (typeof process !== "undefined" && process.env.PUBLIC_PULSE_SERVER) || "";
   const catalystBase = browserCatalystBase();
+  const requestUrl = new URL(request.url);
+  const forwardedScheme = request.headers.get("x-forwarded-proto");
+  if (forwardedScheme === "http" || forwardedScheme === "https") requestUrl.protocol = forwardedScheme + ":";
   const shopApiMode = serverShopApiMode();
   const wallet = readWallet(request);
   // Only the Creator Hub reads the committee seat: other pages do not ask the node for the curation committee.
-  const committee = wallet && isCreatorPath(new URL(request.url).pathname)
+  const committee = wallet && isCreatorPath(requestUrl.pathname)
     ? await isCommitteeMember(wallet, request.signal).catch(() => false)
     : false;
   return {
@@ -70,6 +74,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     commitHash,
     pulseServer,
     catalystBase,
+    thumbnailBase: catalystBase || requestUrl.origin,
     shopApiMode,
     wallet,
     locale: context.get(publicResponseContext)
@@ -122,12 +127,12 @@ export function meta(_args: Route.MetaArgs) {
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const data = useRouteLoaderData("root") as
-    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; commitHash?: string; pulseServer?: string; catalystBase?: string; shopApiMode?: string; locale?: SitesLocale }
+    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; commitHash?: string; pulseServer?: string; catalystBase?: string; thumbnailBase?: string; shopApiMode?: string; locale?: SitesLocale }
     | undefined;
   const [selectedLocale, setLocale] = useState<SitesLocale>();
   const homeData = useRouteLoaderData("routes/_index") as { locale?: SitesLocale } | undefined;
   const locale = selectedLocale ?? homeData?.locale ?? data?.locale ?? "en";
-  const { pathname } = useLocation();
+  const localized = useMatches().some(({ handle }) => (handle as SitesLocaleHandle | undefined)?.sitesLocalized === true);
   const publicEnv = JSON.stringify({
     thirdwebClientId: data?.thirdwebClientId ?? "",
     walletConnectProjectId: data?.walletConnectProjectId ?? "",
@@ -146,7 +151,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     // The docs theme boot script sets data-docs-theme* on <html> before hydration.
-    <html lang={pathname === "/" ? locale : "en"} suppressHydrationWarning>
+    <html lang={localized ? locale : "en"} suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -172,7 +177,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </head>
       <body>
         <SitesLocaleContext.Provider value={{ locale, onSelect: setLocale }}>
-          {children}
+          <ThumbnailPublicBase.Provider value={data?.thumbnailBase ?? ""}>
+            {children}
+          </ThumbnailPublicBase.Provider>
         </SitesLocaleContext.Provider>
         <ScrollRestoration />
         <Scripts />
@@ -316,7 +323,6 @@ export default function App() {
           <Outlet />
           <EmbedBridge />
           <SignInModalHost />
-          <SyncEngineBridge />
         </ChromeNavBridge>
       </ChromeAuthBridge>
     </QueryClientProvider>
@@ -382,13 +388,11 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
     }
   }, [isRouteError, routeStatus, name, message, stack]);
 
-  if (isRouteError) {
-    return <RouteErrorView error={error} />;
-  }
-
-  // Every visitor gets the branded 500 screen, the dev server's too (dev and prod serve
-  // alike); the trace goes to the client-error report above.
-  return <StatusPage status={500} />;
+  return (
+    <div lang="en">
+      {isRouteError ? <RouteErrorView error={error} /> : <StatusPage status={500} />}
+    </div>
+  );
 }
 
 function RouteErrorView({

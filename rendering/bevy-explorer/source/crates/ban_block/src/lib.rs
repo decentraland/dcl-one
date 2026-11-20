@@ -6,6 +6,8 @@
 //! system parameter. There are no events of its own: every fact it answers from is a resource
 //! or a component.
 
+#![forbid(unsafe_code)]
+
 mod ban_stream;
 mod debug;
 mod platform_ban;

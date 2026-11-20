@@ -5,6 +5,7 @@
   width: 100%;
   height: 100%;
   overflow: hidden;
+  container: assets / inline-size;
 }
 
 /* The three browser tabs, per the Figma "3D Editor Bottom Panel" header: a 54px bar, tabs
@@ -12,13 +13,38 @@
    2px Snow underline on the bar's edge and the rest in Silver. */
 .Assets .Assets-buttons {
   display: flex;
+  flex-wrap: wrap;
   background: var(--tree-bg-color);
-  position: relative;
   align-items: center;
   justify-content: center;
-  gap: 20px;
+  column-gap: 12px;
   min-height: 54px;
   border-bottom: 1px solid var(--base-17);
+}
+
+/* The tool groups share the space beside the tabs equally, which keeps the tabs centred; in a
+   narrow panel a group that no longer fits moves to its own row instead of covering the tabs. */
+.Assets .Assets-buttons > .Assets-buttons-left,
+.Assets .Assets-buttons > .Assets-buttons-right {
+  flex: 1 0 0;
+  min-width: max-content;
+}
+
+.Assets .Assets-buttons > .Assets-tabs {
+  cursor: default;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-self: stretch;
+  column-gap: 20px;
+}
+
+/* Below the width every tool and tab need in one row (Creator Hub's full set), the tools share
+   the top row and the tabs take their own row under them. */
+@container assets (width < 1100px) {
+  .Assets .Assets-buttons > .Assets-tabs {
+    order: 1;
+    flex-basis: 100%;
+  }
 }
 
 .Assets .Assets-buttons > div {
@@ -28,11 +54,13 @@
   user-select: none;
 }
 
-.Assets .Assets-buttons > .tab {
+.Assets .Assets-tabs > .tab {
   align-self: stretch;
+  cursor: pointer;
+  user-select: none;
 }
 
-.Assets .Assets-buttons > .tab > div {
+.Assets .Assets-tabs > .tab > div {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -43,22 +71,22 @@
   color: var(--neutral-grey-3);
 }
 
-.Assets .Assets-buttons > .tab:hover > div {
+.Assets .Assets-tabs > .tab:hover > div {
   color: var(--white);
 }
 
-.Assets .Assets-buttons > .tab > div.underlined {
+.Assets .Assets-tabs > .tab > div.underlined {
   border-bottom-color: var(--white);
   color: var(--white);
 }
 
-.Assets .Assets-buttons > .tab svg {
+.Assets .Assets-tabs > .tab svg {
   width: 24px;
   height: 24px;
   flex: none;
 }
 
-.Assets .Assets-buttons > .tab span {
+.Assets .Assets-tabs > .tab span {
   font-size: 14px;
   font-weight: 600;
   line-height: normal;
@@ -69,8 +97,7 @@
 .Assets .Assets-buttons .Assets-buttons-left {
   align-items: center;
   padding: 8px 9px;
-  position: absolute;
-  left: 0;
+  justify-content: flex-start;
   gap: 12px;
 }
 
@@ -115,9 +142,8 @@
 }
 
 .Assets .Assets-buttons .Assets-buttons-right {
-  position: absolute;
-  right: 0;
   display: flex;
+  justify-content: flex-end;
   align-items: center;
   gap: 4px;
   padding: 8px 12px;

@@ -313,6 +313,17 @@ describe("when uploading event covers", () => {
     });
   });
 
+  describe("and the server returns a mounted poster URL", () => {
+    it.each([
+      "/events-assets-099ac00/poster-vertical/cover.png",
+      "https://events.decentraland.org:8443/prefix/events-assets-099ac00/poster-vertical/cover.png",
+    ])("should preserve %s for the next write", async (url) => {
+      vi.mocked(signedFetch).mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, data: { url } })));
+
+      await expect(uploadHangoutPoster(identity, file, true)).resolves.toBe(url);
+    });
+  });
+
   describe("and the browser uses a relative catalyst base", () => {
     beforeEach(() => vi.stubGlobal("window", { __CATALYST_BASE__: "", location: { origin: "https://discovery.example" } }));
     afterEach(() => vi.unstubAllGlobals());

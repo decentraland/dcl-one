@@ -956,13 +956,15 @@ mod tests {
         .await
         .unwrap();
         assert!(finished);
-        catch_up_pages_live_audiences_and_retention(&pool).await;
-        bounded_work_preserves_fairness_cleanup_and_polling(&pool).await;
-        drain_waits_for_an_intent_claimed_by_another_transaction(&pool).await;
-        blocked_metrics_preserve_notification_delivery(&pool).await;
     }
 
-    async fn blocked_metrics_preserve_notification_delivery(pool: &PgPool) {
+    #[tokio::test]
+    async fn blocked_metrics_preserve_notification_delivery() {
+        let _guard = super::super::event_ended::TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        let pool = &pool;
         let id = Uuid::new_v4();
         let event_id = format!("metric-lock-{id}");
         let now = Utc::now().naive_utc();
@@ -985,7 +987,13 @@ mod tests {
         assert_eq!(count(pool, &event_id, "event_approved", &address).await, 1);
     }
 
-    async fn drain_waits_for_an_intent_claimed_by_another_transaction(pool: &PgPool) {
+    #[tokio::test]
+    async fn drain_waits_for_an_intent_claimed_by_another_transaction() {
+        let _guard = super::super::event_ended::TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        let pool = &pool;
         let id = Uuid::new_v4();
         let event_id = format!("claimed-{id}");
         let now = Utc::now().naive_utc();
@@ -1107,7 +1115,13 @@ mod tests {
         );
     }
 
-    async fn catch_up_pages_live_audiences_and_retention(pool: &PgPool) {
+    #[tokio::test]
+    async fn catch_up_pages_live_audiences_and_retention() {
+        let _guard = super::super::event_ended::TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        let pool = &pool;
         let now = chrono::DateTime::parse_from_rfc3339("2101-06-01T18:00:00Z")
             .unwrap()
             .naive_utc();
@@ -1381,7 +1395,13 @@ mod tests {
         );
     }
 
-    async fn bounded_work_preserves_fairness_cleanup_and_polling(pool: &PgPool) {
+    #[tokio::test]
+    async fn bounded_work_preserves_fairness_cleanup_and_polling() {
+        use crate::db::scratch::{OwnedDatabase, Schema};
+        let Some(db) = OwnedDatabase::new("event_fairness", Schema::Full, 6).await else {
+            return;
+        };
+        let pool = &db.pool;
         let now = chrono::DateTime::from_timestamp_micros(Utc::now().timestamp_micros())
             .unwrap()
             .naive_utc();
@@ -1742,13 +1762,7 @@ mod tests {
             count(pool, &lock_event, "events_starts_soon", &address).await,
             1
         );
-        // This fixture's wall-clock events (a local community one among them)
-        // would otherwise count as endings in the metric tests of this process.
-        sqlx::query("DELETE FROM explore.event WHERE id LIKE $1")
-            .bind(format!("{prefix}-%"))
-            .execute(pool)
-            .await
-            .unwrap();
+        db.drop().await;
     }
 
     fn intent(kind: &str, event: Value) -> Intent {

@@ -14,6 +14,8 @@ export interface FrameAbove {
 export interface ShellWindow extends FrameAbove {
   self: unknown
   top: unknown
+  /** The document's own origin (window.origin): "null" when it is opaque, whatever the URL says. */
+  origin: string
   location: { origin: string; ancestorOrigins?: ArrayLike<string> }
 }
 
@@ -22,7 +24,11 @@ const MAX_FRAMES = 32
 
 export function framedByAnotherOrigin(win: ShellWindow = window as unknown as ShellWindow): boolean {
   if (win.top === win.self) return false
-  const origin = win.location.origin
+  // The document's origin, not its URL's: in a sandbox frame without allow-same-origin an https /play still has an
+  // https location.origin, but its window.origin is "null" (opaque). An opaque document matches nothing, not even
+  // an ancestor listed as "null" or as its URL's origin.
+  const origin = win.origin
+  if (origin === 'null') return true
   // The browser's own list of every frame up the chain, where it keeps one (not Firefox). An empty list in a
   // framed window says nothing, so it falls to the walk below.
   const listed = win.location.ancestorOrigins

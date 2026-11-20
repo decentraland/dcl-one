@@ -17,6 +17,7 @@ import type {
 } from "@dcl/one-ui/apps/sites/events/types";
 
 import { useAuth } from "@/data/lib/auth/context";
+import { siteUrl } from "@/data/lib/catalyst/bases";
 import type { JumpPlaceRecord } from "@/data/lib/catalyst/jump/jump";
 import type { Event } from "@/data/lib/catalyst/places/events";
 import {
@@ -35,9 +36,11 @@ import type { StoryId } from "@/core/lib/telemetry/story-id";
 import { openSignIn } from "../components/auth/signin-store";
 import type { DetectedPlatform } from "../download/options";
 import { jumpInFor, mobileLaunch } from "../jump/mobileLaunch";
+import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
 import { useCreatorProfiles } from "./useCreatorProfiles";
 import { REMIND_FAILED, useEventReminders, type Reminder } from "./useEventReminders";
 import type { CreatorProfiles } from "@/data/lib/catalyst/social/creator-profiles";
+import { formatTime, heroWhen, scheduleLine, type Zone } from "../components/event-schedule";
 import {
   bucketByDay,
   creatorWallets,
@@ -53,8 +56,6 @@ import {
   eventPageShareUrl,
   eventTarget,
   eventUsers,
-  formatTime,
-  heroWhen,
   liveNowItems,
   upcomingCardProps,
   locationLabel,
@@ -65,17 +66,15 @@ import {
   playHref,
   readDayOffset,
   relativeStart,
-  scheduleLine,
   TAB_PARAM,
   usersLabel,
   visibleDays,
   type Target,
-  type Zone,
 } from "./view";
 
 const STORY: StoryId = "admin/whats-on";
 const DETAIL_STORY: StoryId = "admin/whats-on-detail";
-const LEARN_MORE_URL = "https://decentraland.org/blog/about-decentraland/how-to-make-and-run-an-event-in-decentraland";
+const LEARN_MORE_PATH = "/blog/about-decentraland/how-to-make-and-run-an-event-in-decentraland";
 const CREATE_HREF = "/events/new-event";
 
 export type EventsViewProps = {
@@ -132,6 +131,7 @@ function remindControl(reminder: Reminder): RemindControl {
 }
 
 export function EventsView({ sid, platform, origin, initial }: EventsViewProps) {
+  const { locale, text } = useEventsCopy();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const search = params.toString();
@@ -198,10 +198,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
   const upcomingEvents = useMemo(() => upcoming.data ?? [], [upcoming.data]);
   const reminders = useEventReminders(identity, () => openSignIn({ inPlace: true }));
 
-  const [notice, setNotice] = useState<string>();
-  useEffect(() => {
-    setNotice(reminders.failed ? REMIND_FAILED : undefined);
-  }, [reminders.failed]);
+  const notice = reminders.failed ? text(REMIND_FAILED) : undefined;
 
   const minUsers = Number(params.get("minUsers"));
   const liveItems = useMemo(
@@ -229,13 +226,13 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
       const href = eventHref(item.event.id, search);
       return {
         id: item.event.id,
-        title: item.event.name ?? "Untitled event",
+        title: item.event.name ?? text("Untitled event"),
         image: item.event.image,
         href,
         onOpen: open(href, item.event.id),
         users: item.users,
-        usersLabel: item.users === undefined ? undefined : usersLabel(item.users),
-        creator: eventCreator(item.event, profiles),
+        usersLabel: item.users === undefined ? undefined : usersLabel(item.users, locale),
+        creator: eventCreator(item.event, profiles, locale),
         live: true,
         jumpIn: jumpIn(eventTarget(item.event)),
       };
@@ -244,13 +241,13 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
     const href = placeHref(target, search);
     return {
       id: item.place.id,
-      title: item.place.title ?? "Untitled place",
+      title: item.place.title ?? text("Untitled place"),
       image: item.place.image,
       href,
       onOpen: open(href),
       users: item.users,
-      usersLabel: usersLabel(item.users),
-      creator: placeCreator(item.place, profiles),
+      usersLabel: usersLabel(item.users, locale),
+      creator: placeCreator(item.place, profiles, locale),
       live: false,
       jumpIn: jumpIn(target),
     };
@@ -259,7 +256,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
   const upcomingCards: UpcomingEventCardProps[] = upcomingEvents.map((event) => {
     const href = eventHref(event.id, search);
     return {
-      ...upcomingCardProps(event, { href, now, zone, origin, profiles }),
+      ...upcomingCardProps(event, { href, now, zone, origin, profiles, locale }),
       onOpen: open(href, event.id),
       remind: remindControl(reminders.get(event.id)),
     };
@@ -267,8 +264,8 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
 
   const allDays: AllEventsDay[] = days.map((day, i) => ({
     key: day.key,
-    label: dayLabel(day.date, offset + i),
-    fullLabel: dayFullLabel(day.date),
+    label: dayLabel(day.date, offset + i, locale),
+    fullLabel: dayFullLabel(day.date, locale),
     isToday: offset + i === 0,
     cards: (buckets[i] ?? []).map((occurrence): ExperienceCardProps => {
       const { event } = occurrence;
@@ -276,22 +273,21 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
       const users = occurrence.live ? eventUsers(event) : undefined;
       return {
         id: `${event.id}@${occurrence.start}`,
-        title: event.name ?? "Untitled event",
+        title: event.name ?? text("Untitled event"),
         image: event.image,
         href,
         onOpen: open(href, event.id),
         users,
-        usersLabel: users === undefined ? undefined : usersLabel(users),
-        creator: eventCreator(event, profiles),
+        usersLabel: users === undefined ? undefined : usersLabel(users, locale),
+        creator: eventCreator(event, profiles, locale),
         live: occurrence.live,
         time: {
-          label: columns === 1 ? relativeStart(occurrence.start, now, zone) : formatTime(occurrence.start, zone),
+          label: columns === 1 ? relativeStart(occurrence.start, now, zone, locale) : formatTime(occurrence.start, zone, locale),
           dateTime: occurrence.start,
         },
         remind: occurrence.live ? undefined : remindControl(reminders.get(event.id)),
-        calendarHref: calendarHref(event, eventPageShareUrl(origin, event), occurrence),
-        // Only the phone's day list shows JUMP IN on a card; a day column does not.
-        jumpIn: occurrence.live && columns === 1 ? jumpIn(eventTarget(event)) : undefined,
+        calendarHref: calendarHref(event, eventPageShareUrl(origin, event), occurrence, locale),
+        jumpIn: occurrence.live ? jumpIn(eventTarget(event)) : undefined,
       };
     }),
   }));
@@ -311,7 +307,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
 
   return (
     <EventsPage
-      title="Events"
+      title={text("Events")}
       notice={notice}
       dialog={
         <>
@@ -365,7 +361,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
         status={calendarStatus}
         onRetry={() => void calendar.refetch()}
       />
-      <HostBanner createHref={CREATE_HREF} learnMoreHref={LEARN_MORE_URL} />
+      <HostBanner createHref={CREATE_HREF} learnMoreHref={siteUrl(LEARN_MORE_PATH)} />
     </EventsPage>
   );
 }
@@ -389,6 +385,7 @@ function EventDetail({
   reminder?: Reminder;
   onClose: () => void;
 }) {
+  const { locale, text } = useEventsCopy();
   const target = eventTarget(event);
   const share = eventPageShareUrl(origin, event);
   const viewed = useRef<string | null>(null);
@@ -413,21 +410,21 @@ function EventDetail({
   };
   return (
     <EventDetailModal
-      title={event.name ?? "Untitled event"}
+      title={event.name ?? text("Untitled event")}
       image={event.image}
       live={event.live}
-      when={event.live ? undefined : heroWhen(event, zone)}
-      creator={eventCreator(event, profiles)}
+      when={event.live ? undefined : heroWhen(event, zone, locale)}
+      creator={eventCreator(event, profiles, locale)}
       location={{
         label: locationLabel(target, event.scene_name ?? event.estate_name),
         world: Boolean(target.realm),
         jumpIn: tracked,
       }}
       description={event.description ?? undefined}
-      schedule={scheduleLine(event, zone)}
+      schedule={scheduleLine(event, zone, locale)}
       jumpIn={tracked}
       remind={reminder ? remindControl(reminder) : undefined}
-      calendarHref={calendarHref(event, share)}
+      calendarHref={calendarHref(event, share, undefined, locale)}
       shareUrl={share}
       onClose={onClose}
     />
@@ -450,13 +447,14 @@ function PlaceDetail({
   jumpIn: (target: Target) => JumpIn;
   onClose: () => void;
 }) {
+  const { locale, text } = useEventsCopy();
   const base = placeTarget({ base_position: place.base_position, world: place.world, world_name: place.world_name });
   const target = parcel && !base.realm ? { coordinates: parcel } : base;
   return (
     <PlaceDetailModal
-      title={place.title || target.realm || "Untitled place"}
+      title={place.title || target.realm || text("Untitled place")}
       image={place.image}
-      creator={placeCreator(place, profiles)}
+      creator={placeCreator(place, profiles, locale)}
       location={{ label: locationLabel(target), world: Boolean(target.realm) }}
       description={place.description ?? undefined}
       users={place.user_count ?? undefined}

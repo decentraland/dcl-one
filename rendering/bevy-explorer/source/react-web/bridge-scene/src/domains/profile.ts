@@ -308,18 +308,28 @@ async function fetchBadges(address: string, includeLocked: boolean): Promise<Bad
 // picker offers exactly these; anything else is an unclaimed name.
 type NamesResponse = { elements?: Array<{ name?: string }> }
 
-let ownedNames: string[] | undefined
+// Keyed by account: a lookup that settles after a sign-in change must not answer for the new one.
+let ownedNames: { address: string; names: string[] } | undefined
 identity.onChange(() => {
   ownedNames = undefined
 })
-async function fetchOwnedNames(address: string): Promise<string[]> {
-  if (ownedNames != null) return ownedNames
+/** The names `address` owns now, or undefined when the lookup failed. */
+export async function readOwnedNames(address: string): Promise<string[] | undefined> {
   const base = await catalystBase()
   const r = await getJson<NamesResponse>(`${base}/lambdas/users/${address}/names`).catch(() => undefined)
-  // Cached only on success: a failed lookup must not pin an empty picker for the whole session.
-  if (r == null) return []
-  ownedNames = (r.elements ?? []).map((e) => e.name).filter((n): n is string => typeof n === 'string' && n !== '')
-  return ownedNames
+  if (r == null) return undefined
+  const names = (r.elements ?? []).map((e) => e.name).filter((n): n is string => typeof n === 'string' && n !== '')
+  ownedNames = { address: address.toLowerCase(), names }
+  return names
+}
+/** This session's list for `address`, else a fresh one, or undefined when the lookup failed. */
+async function knownOwnedNames(address: string): Promise<string[] | undefined> {
+  if (ownedNames?.address === address.toLowerCase()) return ownedNames.names
+  return await readOwnedNames(address)
+}
+/** As `knownOwnedNames`, with a failed lookup as [] (not kept). */
+export async function fetchOwnedNames(address: string): Promise<string[]> {
+  return (await knownOwnedNames(address)) ?? []
 }
 
 /**
@@ -358,7 +368,8 @@ function toProfileExtras(msg: SaveProfileRequest): Record<string, JsonValue> {
 export function registerProfile(ctx: Ctx): void {
   ctx.on('getOwnedNames', async () => {
     const player = getPlayer()
-    ctx.send({ kind: 'ownedNames', names: player == null ? [] : await fetchOwnedNames(player.userId).catch(() => []) })
+    const names = player == null ? [] : await knownOwnedNames(player.userId).catch(() => undefined)
+    ctx.send(names != null ? { kind: 'ownedNames', names } : { kind: 'ownedNames', names: [], failed: true })
   })
 
   ctx.on('saveProfile', async (msg) => {
@@ -446,13 +457,12 @@ export function registerProfile(ctx: Ctx): void {
   // A user's profile by address: the engine's copy alone for a name and a face (chat lines, the
   // profile card), plus badges + equipped items when the passport asks (`extras`).
   ctx.on('getUserProfile', async (msg) => {
+    const reply = (profile: Profile | null): void => {
+      ctx.send({ kind: 'userProfile', address: msg.address, requestId: msg.requestId, profile })
+    }
     if (msg.extras !== true) {
       const av = await fetchProfile(msg.address)
-      ctx.send({
-        kind: 'userProfile',
-        address: msg.address,
-        profile: av == null ? null : toProfile(av, msg.address, false, av.name ?? msg.address)
-      })
+      reply(av == null ? null : toProfile(av, msg.address, false, av.name ?? msg.address))
       return
     }
     const me = getPlayer()
@@ -462,7 +472,7 @@ export function registerProfile(ctx: Ctx): void {
       fetchBadges(msg.address, isSelf).catch(() => undefined)
     ])
     if (av == null && badges == null) {
-      ctx.send({ kind: 'userProfile', address: msg.address, profile: null })
+      reply(null)
       return
     }
     // Your OWN passport: read the live avatar (getPlayer()) so it matches the Backpack exactly.
@@ -487,11 +497,11 @@ export function registerProfile(ctx: Ctx): void {
       equippedWearables,
       equippedEmotes
     }
-    ctx.send({ kind: 'userProfile', address: msg.address, profile })
+    reply(profile)
     // The tiers arrive in a second copy of the same profile, so the passport shows its badges at
     // once and the tier rows (and NEXT TIER names) fill in when they land.
     if (badges?.tiered === true) {
-      ctx.send({ kind: 'userProfile', address: msg.address, profile: { ...profile, badges: await badges.withTiers() } })
+      reply({ ...profile, badges: await badges.withTiers() })
     }
   })
 }

@@ -160,7 +160,7 @@ abgen can publish, per scene, wearable and emote entity, GPU-ready variants of i
 
 With a base url:
 
-- For each scene, wearable and emote entity it loads, the explorer fetches `{base}/bevy/manifest/{entityId}.json` once per session; a scene's is requested with its entity file. Manifests and variants are fetched in one attempt with short timeouts, since the original is the retry. A 404 means no variants for that entity. The entity's files wait for the manifest for at most two seconds from the request; after that they load their originals, and a manifest that arrives later serves only the files read after it. The manifest (schema `v: 3`) maps each original content CID to the paths of its variants, `bevy/{prefix}/{name}`; a prefix's first letter is the variant's class (`t` a BC KTX2 texture, `m` a `glb-br` model, `g` a GLB). It names no hash for a variant: abgen keeps a path's bytes fixed for the life of its generation, so the explorer trusts a variant by its path from the configured service and rejects only what fails to decode.
+- For each scene, wearable and emote entity it loads, the explorer fetches `{base}/bevy/manifest/{entityId}.json` once per session; a scene's is requested with its entity file. Manifests and variants are fetched in one attempt with short timeouts, since the original is the retry. A 404 means no variants for that entity. The entity's files wait for the manifest for at most two seconds from the request; after that they load their originals, and a manifest that arrives later serves only the files read after it. The manifest maps each original content CID to the list of paths of its variants, `bevy/{prefix}/{name}`, and a prefix's first letter is the variant's class (`t` a BC KTX2 texture, `m` a `glb-br` model, `g` a GLB). The `files` map is required; the manifest's `v` is abgen's and does not decide whether the manifest is accepted, and fields the explorer does not know are ignored. It names no hash for a variant: abgen keeps a path's bytes fixed for the life of its generation, so the explorer trusts a variant by its path from the configured service and rejects only what fails to decode.
 - Nothing in preview mode asks for a manifest, including wearables and emotes, nor do `b64-` entity ids or entities served from a loopback or `file://` content server.
 - When a content file `.png`, `.jpg`, `.jpeg`, `.webp` or `.ktx2`, or one without an extension, has a texture variant and the GPU supports BC textures, the file is read from `{base}/{path}` instead. The bytes are cached under a digest of that url, never under the original's hash.
 - The reader hands the KTX2 to the image loaders as it is, after checking that its header names a BC format (BC1, BC5 or BC7). The loaders for `.png`, `.jpg`, `.jpeg`, `.webp`, `.ktx2` and paths without an extension unwrap it into a DDS with a DX10 header, inside the asset load: each level is zstd-decoded, and its size must be exactly the block bytes its dimensions need. Dimensions above 8192, a level 0 that is not whole 4×4 blocks, more levels than the mip chain, sRGB or other formats, and any other supercompression are rejected. The asset keeps its original path, and the texture is sRGB or linear as it is requested.
@@ -219,6 +219,14 @@ Console commands:
   portables included: a debug listing, where `/portables` and the scenes' own
   `getPortableExperiencesLoaded` hide them.
 
+A scene loaded as a portable experience whose scene.json also declares
+`isPortableExperience: true` can place map pins (`MapPin`); no other scene's pins are read. The
+HUD follows them through `getMapPinsStream` (`MapPinInfo`: the parcel, the title cut to 100
+characters, and an icon url resolved from a file of the scene's content) and draws them
+on the full map and the minimap under the Layers panel's Quest Mini-Games switch.
+`/map_pins_state` (the debug panel's Map pins section) reports the scenes read, the pins read and
+ignored, and the list last sent to the HUD.
+
 ## Testing
 
 ```bash
@@ -273,7 +281,8 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   scene moderation lists; Nearby chat and reactions from an address the scene room bans are
   dropped, and nearby voice is not subscribed from an address blocked either way or banned by the
   connected scene room, while calls still carry it; `/ban_block_refresh` re-checks the platform
-  ban), `/entity_screen_position <entity>
+  ban), `/item_purchase_state` (the scene item purchase request in flight and how the last one
+  ended; `/item_purchase_cancel` drops the one in flight), `/entity_screen_position <entity>
   [--bounds]`, `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or open or
   close it) and `/take_photo` (a photo, captured and uploaded; the reply is the state, a refusal
   names why), plus the older `/player_position`, `/get_user_data`, `/connected_players`, `/time`
@@ -294,12 +303,12 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
 - Saved mutes for nearby voice: `/nearby_mute on|off <address>` mutes or unmutes a wallet, as the
   profile menu's Hush and Hear do, and `/nearby_mutes` reports the account's list. The debug
   panel's "Nearby voice mutes" section shows it and binds both.
-- In development builds the lower-right bug button toggles the debug panel. In all builds,
-  open **Sidebar settings (•••) → Debug panel** or type `/debug` in chat. Search by
+- Start the desktop client with `--debug-panel` or add `debugPanel=1` to the web page query
+  to show the lower-right bug button. In all builds, open **Sidebar settings (•••) → Debug panel**
+  or type `/debug` in chat. Search by
   section or control, or enter `/debug Performance` directly. Expanded sections refresh
   about once per second. `/debug help` lists the available sections. Engine plugins
-  advertise their queries, fields and controls through `/debug_panel`. The HUD offers session actions
-  and checks `/debug_panel --dev-build` for the engine's compile-time development flag.
+  advertise their queries, fields and controls through `/debug_panel`. The HUD also offers session actions.
   Use the panel to inspect a scene, compare frame and memory measurements, diagnose
   room and media connections, and exercise supported controls. Availability depends
   on the build, platform and preview mode. `/performance_state` reports the effective
@@ -326,7 +335,8 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   them real (below); without one they fall back to DOM events and say `"input": "synthetic"`.
 - Portables and smart wearables: `/portables`, `/stop_portable <hash>`, `/smart_wearables`,
   `/smart_wearable run|kill|restart <urn>` and the `, smart wearable` mark in `/live_scenes`
-  ([Smart wearables and portables](#smart-wearables-and-portables)).
+  ([Smart wearables and portables](#smart-wearables-and-portables)); a portable experience's map
+  pins: `/map_pins_state`.
 - Scene pointer: `/hover_entity <entity>` and `/click_entity <entity>` hover and click a scene
   entity by id through the pointer pipeline, on native and web alike, and answer with the hit, the
   hover entries, the scene's pointer events and a diagnosis (`docs/guidelines/running.md`). A hover

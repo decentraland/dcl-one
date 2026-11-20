@@ -461,7 +461,9 @@ def pulse_env(config, certificate, key):
 PUBLIC_SIGN_IN_IDS = ('THIRDWEB_CLIENT_ID', 'MAGIC_API_KEY', 'WALLETCONNECT_PROJECT_ID')
 
 
-def runtime_env(config):
+def runtime_env(config, refuse_exposed_relayer=True):
+    """The stack's environment. `refuse_exposed_relayer=False` is for callers that only read it and start nothing
+    that signs (sql, psql, `foundation-dev env`, PostgreSQL): they work on a stack refuse_an_exposed_relayer stops."""
     # Do not inherit a shell's production database, upstreams or credentials.
     env = {key: os.environ[key] for key in (
         'PATH', 'HOME', 'USER', 'TMPDIR', 'LANG', 'LC_ALL', 'LOCALE_ARCHIVE',
@@ -499,7 +501,7 @@ def runtime_env(config):
         'CONTENT_HISTORY_PRUNE_ENABLED': 'false', 'WORLDS_CONTENT_MIRROR_ENABLED': 'false',
         'MARKETPLACE_MIRRORS_ENABLED': 'false', 'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
         'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED': 'false', 'MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED': 'false',
-        'MARKETPLACE_SALES_INDEX_ENABLED': 'false',
+        'MARKETPLACE_SALES_INDEX_ENABLED': 'false', 'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'false',
         'LAND_AUTHZ_INDEX_ENABLED': 'false', 'CREDITS_USAGE_INDEX_ENABLED': 'false',
         'SHOP_RENTALS_INDEX_ENABLED': 'false', 'PRICE_POLL_ENABLED': 'false',
         'COMMUNITIES_MIRROR_UPSTREAM': 'false', 'SCENE_HOST_ENABLED': 'false',
@@ -586,6 +588,8 @@ def runtime_env(config):
             'LAND_SUBGRAPH_URL': 'https://subgraph.decentraland.org/land-manager',
             'MARKETPLACE_NFT_INDEX_ENABLED': 'true', 'LAND_AUTHZ_INDEX_ENABLED': 'true',
             'SHOP_RENTALS_INDEX_ENABLED': 'true',
+            # Builder's curation committee: the Polygon Committee contracts over RPC_ENDPOINT_POLYGON.
+            'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'true',
             'ETH_RPC_URL': 'https://rpc.decentraland.org/mainnet',
             'BUILDER_CONTENT_BUCKET_URL': 'https://builder-items.decentraland.org',
             # Scene-template models (Qm... CIDs) live in the asset-packs bucket, which this
@@ -599,11 +603,11 @@ def runtime_env(config):
             'RPC_ENDPOINT_POLYGON': 'https://rpc.decentraland.org/polygon',
         })
     if config['profile'] == 'testnet':
-        env.update(testnet_env())
+        env.update(testnet_env(config, refuse_exposed_relayer))
     return env
 
 
-def testnet_env():
+def testnet_env(config, refuse_exposed_relayer=True):
     """The mirror profile's upstreams on Decentraland's testnet: .zone services, Amoy and Sepolia.
 
     The Shop settles on Amoy (VITE_SHOP_CHAIN_ID, read by the Sites dev server), its order book is the
@@ -625,14 +629,12 @@ def testnet_env():
         'ETH_RPC_URL': 'https://rpc.decentraland.org/sepolia',
         'RPC_ENDPOINT_POLYGON': 'https://rpc.decentraland.org/amoy',
         'TRADE_RPC_URLS': '80002=https://rpc.decentraland.org/amoy,11155111=https://rpc.decentraland.org/sepolia',
-        # Gasless approvals and cancels: the local relay admits Amoy's Decentraland contracts (the bundled
-        # contract-addresses list under `amoy`) and forwards to the .zone transactions API, which pays testnet
-        # gas. COLLECTIONS_CHAIN_ID also keys the chain the relay verifies signatures and collections on.
+        # Gasless approvals, cancels and Credits purchases: the local relay admits Amoy's Decentraland contracts
+        # (the contract-addresses list under `amoy`) and pays testnet gas through the .zone transactions API, or
+        # through a relayer key of the stack's own; relayer_env picks which, and the list with it.
+        # COLLECTIONS_CHAIN_ID also keys the chain the relay verifies signatures and collections on.
         'COLLECTIONS_CHAIN_ID': '80002',
         'CONTRACT_ADDRESSES_CHAIN_KEY': 'amoy',
-        # The published list: the bundled copy predates MarketplaceV5, the off-chain V3 marketplace whose
-        # cancelSignature the Shop relays.
-        'CONTRACT_ADDRESSES_URL': 'https://contracts.decentraland.org/addresses.json',
         'TRANSACTIONS_UPSTREAM_URL': 'https://transactions-api.decentraland.zone',
         # Cancels and executions on chain close local trades: the trade-events index on the testnets,
         # through TRADE_RPC_URLS' 80002 and 11155111 entries (it checks each endpoint's eth_chainId).
@@ -644,6 +646,8 @@ def testnet_env():
         'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
         # The Rentals contract is mainnet's; there is no chain-1 endpoint here.
         'SHOP_RENTALS_INDEX_ENABLED': 'false',
+        # The Committee contracts are Polygon mainnet's; RPC_ENDPOINT_POLYGON is Amoy here.
+        'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'false',
         'VITE_SHOP_CHAIN_ID': '80002',
         # The catalogue's chainId for MATIC items, and the chain the Shop's coupons pair with: the pages ask the
         # node to settle on it, and the node refuses a catalogue chain that differs from COLLECTIONS_CHAIN_ID.
@@ -660,10 +664,10 @@ def testnet_env():
         # it is refused at authorization). The usage index reads its CreditUsed events over RPC_ENDPOINT_POLYGON
         # on COLLECTIONS_CHAIN_ID; POST /credits/authorize signs only while that index is ready. Mock card
         # top-ups grant test credits with no charge.
-        # The relay doesn't admit this manager yet: it takes the contracts CONTRACT_ADDRESSES_URL lists (Amoy's
-        # entry is the shared one) and verified collections. So a self-custody wallet buys with Credits through
-        # its own transaction (the checkout falls back to it, paying its own gas); an in-app (managed) wallet,
-        # which can only relay, can't buy with Credits on this profile until the relay admits the manager.
+        # Without a relayer key the relay refuses this manager itself (the published list doesn't carry it, and the
+        # .zone transactions API wouldn't relay it either), marked as not sent: a self-custody wallet then buys
+        # with Credits through its own transaction, paying its own gas, and an in-app (managed) wallet, which can
+        # only relay, can't. With one (relayer_env) the relay admits it and the stack signs and pays the purchase.
         'CREDITS_MANAGER_CONTRACT': '0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c',
         # The same manager, for the Sites build: the in-world Shop's shell refuses a credit signed for any other.
         'VITE_SHOP_CREDITS_MANAGER': '0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c',
@@ -675,8 +679,88 @@ def testnet_env():
         # MANA only. This profile sets the mock card on Amoy alone, and the stack listens on 127.0.0.1.
         'CREDITS_MOCK_CARD': 'true',
         **credits_signer_env(),
+        **relayer_env(config, refuse_exposed_relayer),
         **name_simulation_env(),
     }
+
+
+# The highest fee per gas the stack's own relayer signs on Amoy: 200 gwei (Amoy's gas price read 30 gwei on
+# 2026-11-18). With the relay's 1.5M gas cap (MAX_GAS_LIMIT) one transaction costs it at most 0.3 test POL.
+TESTNET_RELAYER_MAX_FEE_PER_GAS_WEI = '200000000000'
+
+
+# The free calls (approvals, cancels: no sale, no credits spend) the stack's own relayer pays for per day, across
+# every address (MAX_RELAYED_TRANSACTIONS_PER_DAY; the server's default is 20,000). Sales and credits purchases never
+# count against it: the per-address quota (MAX_TRANSACTIONS_PER_DAY, 10) is their only daily bound.
+TESTNET_RELAYER_FREE_CALLS_PER_DAY = '100'
+
+
+# The dApps' published contract map, whose `amoy` entry never carries dcl-one's own CreditsManager.
+PUBLISHED_CONTRACT_ADDRESSES_URL = 'https://contracts.decentraland.org/addresses.json'
+
+
+def relayer_env(config, refuse_exposed_relayer=True):
+    """Who pays the testnet relay's gas, and the contract list that goes with it (testnet only).
+
+    Without a relayer key the relay forwards to the .zone transactions API and admits the published list, which
+    lacks dcl-one's Amoy CreditsManager: the relay refuses that manager itself, marked as not sent, so a
+    self-custody wallet falls back to its own transaction instead of a forward .zone would reject unmarked.
+
+    With one (relayer.key in the gitignored stack state: a testnet-only key, funded with Amoy POL) the relay's
+    direct signer takes every meta-transaction it admits (purchases, approvals, cancels) instead of the forward,
+    capped at TESTNET_RELAYER_MAX_FEE_PER_GAS_WEI, and admits the bundled `amoy` entry, which carries the manager
+    (CONTRACT_ADDRESSES_URL unset). The key signs on Amoy alone: NAMES_SIGNER_ENABLED=false keeps it off the NAMEs
+    chain, whose ETH_RPC_URL is Sepolia's here while NAMES_CHAIN_ID stays mainnet's.
+
+    The key is then the stack's direct signer elsewhere too, though little of it acts on Amoy, where the node knows
+    no Decentraland MANA or store contracts (DclContracts::for_chain is Polygon's alone): /v1/payments/config names
+    its address as `payTo` but answers disabled, with no MANA token; the broker buy refuses the chain before it
+    signs; the escrow release and reclaim also need the admin token and LANDILER_ESCROW_ADDRESS, which this profile
+    doesn't set. The broker reconciler starts, with no broker buys to reconcile.
+
+    Its spend is bounded per transaction by the fee cap, and per day by TESTNET_RELAYER_FREE_CALLS_PER_DAY for free
+    calls but only by the per-address quota for sales and credits purchases, and addresses cost nothing to make.
+    So the key belongs on a loopback stack: behind FOUNDATION_DEV_PUBLIC_ORIGIN the stack refuses to start with
+    it (refuse_an_exposed_relayer), unless the caller only reads the environment."""
+    key = relayer_key()
+    if key is None:
+        return {'CONTRACT_ADDRESSES_URL': PUBLISHED_CONTRACT_ADDRESSES_URL}
+    if refuse_exposed_relayer:
+        refuse_an_exposed_relayer(config, lambda: key)
+    if key.stat().st_mode & 0o077:
+        print(f'Warning: {key} is readable by other users; chmod 600 it.', file=sys.stderr)
+    return {
+        'META_TX_BROADCAST_ENABLED': 'true',
+        'RELAYER_PRIVATE_KEY_FILE': str(key),
+        'RELAYER_MAX_FEE_PER_GAS_WEI': TESTNET_RELAYER_MAX_FEE_PER_GAS_WEI,
+        'MAX_RELAYED_TRANSACTIONS_PER_DAY': TESTNET_RELAYER_FREE_CALLS_PER_DAY,
+        'NAMES_SIGNER_ENABLED': 'false',
+    }
+
+
+def relayer_key():
+    """The testnet relay's own key file, or None. An empty file reads as no key on the server, so it is none here."""
+    key = STATE / 'relayer.key'
+    return key if key.is_file() and key.read_text().strip() else None
+
+
+def refuse_an_exposed_relayer(config, read_key=None):
+    """A testnet stack behind a public origin never starts with a relayer key.
+
+    The key would pay the gas of whatever its relay admits, and only free calls have a daily cap: anyone who reaches
+    the origin could spend its POL through sales and credits purchases from fresh addresses. `up` checks it before
+    starting anything (a PostgreSQL-only run signs nothing), `service install` before it touches the unit, the
+    supervisor again, and relayer_env wherever a process's environment is built (passing the key it already read).
+    The key file is read only for a testnet stack behind a public origin, so it never stops another profile."""
+    if config.get('profile') != 'testnet' or not config.get('public_origin'):
+        return
+    key = (read_key or relayer_key)()
+    if key is not None:
+        raise SystemExit(
+            f"{key} would pay the gas of every transaction this stack relays, and the stack is "
+            f"served at {config['public_origin']}, where anyone who reaches it could spend the key's POL. Either "
+            'return the stack to loopback (foundation-dev origin local) or remove the key, and the relay forwards '
+            'to the .zone transactions API.')
 
 
 def name_simulation_env():
@@ -810,7 +894,7 @@ def project(config, postgres_only=False):
 
 
 def sql(config, query, database='catalyst'):
-    env = runtime_env(config)
+    env = runtime_env(config, refuse_exposed_relayer=False)
     env.update(PGHOST='127.0.0.1', PGPORT=str(config['port'] + 3), PGUSER='foundation',
                PGPASSWORD=config['password'], PGDATABASE=database)
     return run(['psql', '-X', '-v', 'ON_ERROR_STOP=1', '-Atq'], input=query, text=True,
@@ -828,7 +912,7 @@ DISPOSABLE_MARKER = 'foundation-dev-disposable'
 
 
 def postgres(config):
-    env = runtime_env(config)
+    env = runtime_env(config, refuse_exposed_relayer=False)
     data = STATE / 'postgres'
     disposable = os.environ.get('FOUNDATION_DEV_DISPOSABLE_POSTGRES') == '1'
     if not (data / 'PG_VERSION').exists():
@@ -893,7 +977,7 @@ TRADES_TABLES = ('shop.trades', 'shop.trade_assets', 'shop.trade_assets_erc20',
 
 
 def psql_env(config):
-    env = runtime_env(config)
+    env = runtime_env(config, refuse_exposed_relayer=False)
     env.update(PGHOST='127.0.0.1', PGPORT=str(config['port'] + 3), PGUSER='foundation',
                PGPASSWORD=config['password'], PGDATABASE='catalyst')
     return env
@@ -1099,6 +1183,9 @@ def stale_graph(config):
 def prepare_supervisor(postgres_only=False):
     """Write the process graph; returns the supervisor's `up` arguments and environment, or None if it runs."""
     config = settings(create=True)
+    # Also here, for the installed service's supervisor, whose `up` already refused (see up).
+    if not postgres_only:
+        refuse_an_exposed_relayer(config)
     if supervisor_running():
         running = json.loads((STATE / 'process-compose.json').read_text())['processes']
         if not postgres_only and set(running) == {'postgres'}:
@@ -1176,7 +1263,8 @@ def service_stop():
 def service_install():
     # The service environment has no FOUNDATION_DEV_PORT or _PROFILE; apply them now.
     STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
-    settings(create=True)
+    # Before the unit is written and the running stack stopped: the service would only restart on the refusal.
+    refuse_an_exposed_relayer(settings(create=True))
     path = service_file()
     path.parent.mkdir(parents=True, exist_ok=True)
     nix = shutil.which('nix')
@@ -1249,6 +1337,11 @@ def desktop():
 
 def up(postgres_only=False):
     STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # Before either way of starting, so `up` fails with the reason: an installed service would otherwise
+    # restart its supervisor in a loop, and the API would fail only in its log. A first start has no settings
+    # yet; prepare_supervisor creates them and checks before it starts anything.
+    if not postgres_only and SETTINGS.exists():
+        refuse_an_exposed_relayer(settings())
     if service_file().exists():
         if postgres_only:
             raise RuntimeError('PostgreSQL-only runs require a checkout without an installed development service.')
@@ -1539,7 +1632,7 @@ def main():
                            ('FOUNDATION_DEV_DATABASE_URL', database_url(config)),
                            ('FOUNDATION_DEV_TEST_DATABASE_URL', database_url(config, 'postgres')),
                            ('FOUNDATION_DEV_STACK_PROFILE', config['profile']),
-                           ('FOUNDATION_DEV_PUBLIC_URL', runtime_env(config)['PUBLIC_URL'])):
+                           ('FOUNDATION_DEV_PUBLIC_URL', runtime_env(config, refuse_exposed_relayer=False)['PUBLIC_URL'])):
             print(f'{key}={shlex.quote(value)}')
     elif args.command == 'psql':
         os.execvpe('psql', ['psql', '-X'], psql_env(settings()))

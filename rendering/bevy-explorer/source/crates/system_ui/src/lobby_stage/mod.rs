@@ -192,7 +192,6 @@ type CameraItem = (
     Option<&'static Exposure>,
 );
 
-#[allow(clippy::too_many_arguments)]
 fn sync_stage(
     mut commands: Commands,
     mut stages: Query<(Entity, &mut Stage)>,
@@ -359,7 +358,6 @@ pub fn key_light_illuminance(intensity: f32, exposure: f32) -> f32 {
 }
 
 impl StageAssets<'_> {
-    #[allow(clippy::too_many_arguments)]
     fn build(
         &mut self,
         commands: &mut Commands,
@@ -725,7 +723,6 @@ pub fn fit(
     })
 }
 
-#[allow(clippy::type_complexity)]
 fn fit_stage(
     stages: Query<(&Stage, &GlobalTransform, &Children)>,
     cameras: Query<(&GlobalTransform, &Projection)>,

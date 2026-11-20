@@ -2,7 +2,7 @@
 // and its modals sheet draw it: Buy Item, Buy N Items or Buy Name (the balance, what is bought and its
 // price), Insufficient Funds (what is missing, BUY CREDITS), Processing, Purchase successful, and the Error
 // modal ("Oops! Something went wrong": what happened, CANCEL and TRY AGAIN when it may be tried again, else
-// CLOSE). A NAME is one row whose tile is the NAME's art. Only its simulation is bought here, so a NAME's
+// CLOSE; or CANCEL and SWITCH TO <network> AND RETRY when the buyer's wallet has to send it from that network). A NAME is one row whose tile is the NAME's art. Only its simulation is bought here, so a NAME's
 // Purchase successful has no next step past CONTINUE SHOPPING.
 // A simulated NAME purchase (`simulation`, a testnet rehearsal that buys nothing) says so on every step it
 // shows, its failures included: a note that no Credits are spent and the NAME isn't registered or reserved,
@@ -11,13 +11,26 @@
 // Loading, a purchase still being confirmed and the sign-in request aren't drawn; they use the same dialog. Presentational: whoever
 // shows it (the web Explorer's shell, which signs the purchase) decides the step and acts on the choice.
 //
+// Paying with MANA has no design yet, so its two steps follow the web Shop's (PaymentMethodStep, AuthorizeStep) in
+// the dialog's own parts:
+//  - Choose your payment method: a row for the Credits and one for Polygon MANA, each with the buyer's balance and
+//    what it pays, and one picked at a time. A row that can't pay stays on screen, unpickable, with its reason ("Not
+//    enough MANA"), so the option doesn't read as missing. BUY waits for a row that pays, and arms as BUY ITEM does.
+//  - Authorize MANA: the allowance a self-custody wallet grants the sale's venue before its first MANA purchase there.
+//    It says that it is unlimited and stays after this purchase. CANCEL stays live while it confirms: whoever shows
+//    the step decides what a late confirmation may still do.
+// A purchase still being confirmed may offer CHECK AGAIN, or RETRY (armed, as BUY), and say in its own words what is
+// known about it.
+//
 // Every unit is one row (two of an item are two rows), and the title counts them. Past two rows the list
 // scrolls, with the Shop's scroll thumb beside it, as the Cart flow draws it. Purchase successful shows
 // three of what was bought (the design draws three); more scroll sideways, with the same thumb below.
 
-import { useEffect, useRef, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { formatCredits, formatCreditsFull } from '@shop/checkout/lib/currency'
-import { Button, ScrollThumb, Spinner } from '@hud/design'
+import { formatMana, formatManaPrice, type ManaWei } from '@shop/model/money'
+import { GeneralPolygonMana } from '@dcl/one-ui'
+import { ArmedButton, Button, ScrollThumb, Spinner } from '@hud/design'
 import balanceIcon from '../assets/modal/balance-credit.svg'
 import badge0 from '../assets/modal/credits-badge-0.svg'
 import badge1 from '../assets/modal/credits-badge-1.svg'
@@ -58,6 +71,27 @@ export interface ShopPurchaseItem {
 /** A simulated NAME purchase's step: nothing is bought (see the header). */
 type Simulated = { simulation?: true }
 
+/** How the buyer pays a purchase: from the Credits balance, or in Polygon MANA. */
+export type ShopPaymentMethod = 'credits' | 'mana'
+
+/** The Credits row of Choose your payment method. */
+export interface ShopCreditsChoice {
+  /** Whole credits for everything; null when the Credits can't price it. */
+  price: number | null
+  /** Whole credits; null when it couldn't be read. */
+  balance: number | null
+  /** Whether the Credits pay it now. */
+  pays: boolean
+}
+
+/** The Polygon MANA row of Choose your payment method, in wei. */
+export interface ShopManaChoice {
+  price: bigint
+  balance: bigint
+  /** Whether the buyer's MANA pays it now. */
+  pays: boolean
+}
+
 export type ShopPurchaseStep =
   /** `count`: the units being bought (one unless said); `subject: 'name'`: a NAME is. */
   | ({ step: 'loading'; count?: number; subject?: 'name' } & Simulated)
@@ -65,8 +99,25 @@ export type ShopPurchaseStep =
   | ({ step: 'insufficient'; items: ShopPurchaseItem[]; balance: number; /** Credits short of the price. */ need: number } & Simulated)
   | ({ step: 'processing'; balance: number | null; count?: number; subject?: 'name' } & Simulated)
   | ({ step: 'success'; items: ShopPurchaseItem[] } & Simulated)
-  | { step: 'pending' }
-  | ({ step: 'failed'; message: string; retry: boolean } & Simulated)
+  /**
+   * Choose your payment method. `initial`: the buyer's earlier pick (the step shown again after a failure), picked
+   * again while it still pays.
+   */
+  | { step: 'method'; items: ShopPurchaseItem[]; credits: ShopCreditsChoice; mana: ShopManaChoice; initial?: ShopPaymentMethod }
+  /**
+   * Authorize MANA. `venue`: what the allowance is for, named ("the Marketplace"); `network`: its chain, named;
+   * `required`: the MANA this purchase needs, in wei. `waiting`: the wallet or the chain is confirming it; `failed`:
+   * it didn't go through (`message` says why), and AUTHORIZE tries again.
+   */
+  | { step: 'authorize'; venue: string; network: string; required: bigint; state: 'ready' | 'waiting' | 'failed'; message?: string }
+  /**
+   * Still being confirmed. `message`: what is known about it, in place of the step's own words. `check`: CHECK AGAIN
+   * is offered (`checking` while it looks). `retry`: RETRY is offered in its place (the same purchase sent again, which
+   * whoever shows the step makes safe).
+   */
+  | { step: 'pending'; message?: string; check?: 'ready' | 'checking'; retry?: boolean }
+  /** `switchTo`: the network the wallet must move to, named, for SWITCH TO … AND RETRY in place of TRY AGAIN. */
+  | ({ step: 'failed'; message: string; retry: boolean; switchTo?: string } & Simulated)
   | { step: 'signIn' }
 
 export interface ShopPurchaseDialogProps {
@@ -79,11 +130,17 @@ export interface ShopPurchaseDialogProps {
   /** A simulated NAME's PREVIEW ON AVATAR. */
   onPreview?: () => void
   onRetry?: () => void
+  /** SWITCH TO … AND RETRY: the wallet moved to the failed step's network, then the purchase tried again. */
+  onSwitchNetwork?: () => void
   onSignIn?: () => void
+  /** BUY on Choose your payment method, with the row picked. */
+  onPay?: (method: ShopPaymentMethod) => void
+  /** AUTHORIZE (or TRY AGAIN) on Authorize MANA. */
+  onAuthorize?: () => void
+  /** CHECK AGAIN on a purchase still being confirmed. */
+  onCheckAgain?: () => void
 }
 
-/** How long BUY ITEM is up before it answers. */
-export const ARM_MS = 500
 /** Rows the list shows before it scrolls, and tiles Purchase successful shows, as drawn. */
 const ROWS_SHOWN = 2
 const TILES_SHOWN = 3
@@ -101,24 +158,20 @@ const simulationDone = (items: readonly ShopPurchaseItem[]): string =>
 /** Whether a step's rows are a NAME. */
 const isName = (items: readonly ShopPurchaseItem[]): boolean => items.length === 1 && items[0].kind === 'name'
 
-/**
- * BUY ITEM, answering only once it has been up a moment: it appears where the loading step's disabled
- * button was, and a click meant for that, or for the card behind, must not spend a credit.
- */
-function ArmedButton({ onClick, children }: { onClick?: () => void; children: React.ReactNode }): React.JSX.Element {
-  const [armed, setArmed] = useState(false)
-  useEffect(() => {
-    const timer = setTimeout(() => setArmed(true), ARM_MS)
-    return () => clearTimeout(timer)
-  }, [])
-  return (
-    <Button size="modal" onClick={armed ? onClick : undefined} aria-disabled={armed ? undefined : true}>
-      {children}
-    </Button>
-  )
-}
-
-export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onBackpack, onPreview, onRetry, onSignIn }: ShopPurchaseDialogProps): React.JSX.Element {
+export function ShopPurchaseDialog({
+  view,
+  onClose,
+  onConfirm,
+  onBuyCredits,
+  onBackpack,
+  onPreview,
+  onRetry,
+  onSwitchNetwork,
+  onSignIn,
+  onPay,
+  onAuthorize,
+  onCheckAgain
+}: ShopPurchaseDialogProps): React.JSX.Element {
   const cancel = (
     <Button variant="dark" size="modal" onClick={onClose}>
       Cancel
@@ -141,8 +194,20 @@ export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onB
     case 'confirm': {
       const count = view.items.length
       const name = isName(view.items)
+      // BUY ITEM answers only once it has been up a moment (ArmedButton): it appears where the loading step's
+      // disabled button was, and a click meant for that, or for the card behind, must not spend a credit.
       return (
-        <ShopModal label={buyTitle(count, name)} actions={<>{cancel}<ArmedButton onClick={onConfirm}>{buyLabel(count, name, view.simulation)}</ArmedButton></>}>
+        <ShopModal
+          label={buyTitle(count, name)}
+          actions={
+            <>
+              {cancel}
+              <ArmedButton size="modal" onClick={onConfirm}>
+                {buyLabel(count, name, view.simulation)}
+              </ArmedButton>
+            </>
+          }
+        >
           <h2 className={styles.title}>{buyTitle(count, name)}</h2>
           <Balance credits={view.balance} />
           <ShopModalGap count={2} />
@@ -225,18 +290,81 @@ export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onB
         </ShopModal>
       )
     }
+    case 'method':
+      return <MethodStep view={view} cancel={cancel} onPay={onPay} />
+    case 'authorize': {
+      const waiting = view.state === 'waiting'
+      return (
+        <ShopModal
+          label="Authorize MANA"
+          busy={waiting}
+          actions={
+            <>
+              {cancel}
+              {/* It appears where BUY was: a click meant for that one doesn't authorize. */}
+              <ArmedButton size="modal" disabled={waiting} onClick={onAuthorize}>
+                {waiting ? 'Authorizing...' : view.state === 'failed' ? 'Try again' : 'Authorize'}
+              </ArmedButton>
+            </>
+          }
+        >
+          <h2 className={styles.title}>Authorize MANA</h2>
+          <ShopModalGap />
+          <p className={styles.note}>
+            To buy with MANA, allow <strong>{view.venue}</strong> on {view.network} to spend MANA from your wallet. This purchase needs{' '}
+            <strong>{formatMana(view.required as ManaWei, { group: true })} MANA</strong>.
+          </p>
+          <ShopModalGap />
+          <p className={styles.note}>
+            The allowance is unlimited and stays after this purchase, so buying there again won’t ask for it. You can revoke it at any time in the Shop’s
+            Settings on the website.
+          </p>
+          <ShopModalGap />
+          {waiting && (
+            <>
+              <Working label="Waiting for the authorization to confirm" size="small" />
+              <ShopModalGap />
+            </>
+          )}
+          {view.state === 'failed' && view.message && (
+            <>
+              <p className={styles.message} role="alert">
+                {view.message}
+              </p>
+              <ShopModalGap />
+            </>
+          )}
+        </ShopModal>
+      )
+    }
     case 'pending':
       return (
         <ShopModal
           label="Purchase in progress"
           actions={
-            <Button variant="tint" size="modal" onClick={onClose}>
-              Continue shopping
-            </Button>
+            <>
+              <Button variant="tint" size="modal" onClick={onClose}>
+                Continue shopping
+              </Button>
+              {view.retry ? (
+                <ArmedButton size="modal" onClick={onRetry}>
+                  Retry
+                </ArmedButton>
+              ) : (
+                view.check && (
+                  <Button size="modal" disabled={view.check === 'checking'} onClick={onCheckAgain}>
+                    {view.check === 'checking' ? 'Checking...' : 'Check again'}
+                  </Button>
+                )
+              )}
+            </>
           }
         >
           <h2 className={styles.title}>Purchase in progress</h2>
-          <p className={styles.note}>Your purchase was sent and is still being confirmed. It will be in your Backpack once it is.</p>
+          {/* A status: what it says changes while the dialog stays up (RETRY opening, minutes later), and is announced. */}
+          <p className={styles.note} role="status">
+            {view.message ?? 'Your purchase was sent and is still being confirmed. It will be in your Backpack once it is.'}
+          </p>
           <ShopModalGap />
         </ShopModal>
       )
@@ -247,12 +375,18 @@ export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onB
           actions={
             <>
               <Button variant="dark" size="modal" onClick={onClose}>
-                {view.retry ? 'Cancel' : 'Close'}
+                {view.retry || view.switchTo != null ? 'Cancel' : 'Close'}
               </Button>
-              {view.retry && (
-                <Button size="modal" onClick={onRetry}>
-                  Try again
+              {view.switchTo != null ? (
+                <Button size="modal" onClick={onSwitchNetwork}>
+                  Switch to {view.switchTo} and retry
                 </Button>
+              ) : (
+                view.retry && (
+                  <Button size="modal" onClick={onRetry}>
+                    Try again
+                  </Button>
+                )
               )}
             </>
           }
@@ -345,14 +479,14 @@ function BoughtTiles({ items, isNew = true }: { items: ShopPurchaseItem[]; isNew
   )
 }
 
-/** The rows, scrolling past ROWS_SHOWN with the design's thumb beside them. */
-function ItemList({ items }: { items: ShopPurchaseItem[] }): React.JSX.Element {
+/** The rows, scrolling past ROWS_SHOWN with the design's thumb beside them. `priced={false}`: without their Credits price. */
+function ItemList({ items, priced = true }: { items: ShopPurchaseItem[]; priced?: boolean }): React.JSX.Element {
   const scroller = useRef<HTMLDivElement>(null)
   if (items.length <= ROWS_SHOWN) {
     return (
       <>
         {items.map((item, i) => (
-          <ItemRow key={i} item={item} />
+          <ItemRow key={i} item={item} priced={priced} />
         ))}
       </>
     )
@@ -362,7 +496,7 @@ function ItemList({ items }: { items: ShopPurchaseItem[] }): React.JSX.Element {
       <div ref={scroller} className={styles.list} role="list" aria-label={`${items.length} items`}>
         {items.map((item, i) => (
           <div key={i} role="listitem">
-            <ItemRow item={item} />
+            <ItemRow item={item} priced={priced} />
           </div>
         ))}
       </div>
@@ -387,7 +521,7 @@ function Tile({ item, isNew = false, labelled = false }: { item: ShopPurchaseIte
  * The design's CreditsItem: the tile, then the name, creator and rarity over the price. A NAME's has the
  * NAME and "Decentraland Name", centred 32px above its price.
  */
-function ItemRow({ item }: { item: ShopPurchaseItem }): React.JSX.Element {
+function ItemRow({ item, priced = true }: { item: ShopPurchaseItem; priced?: boolean }): React.JSX.Element {
   const name = item.kind === 'name'
   return (
     <div className={styles.item}>
@@ -404,23 +538,141 @@ function ItemRow({ item }: { item: ShopPurchaseItem }): React.JSX.Element {
             </span>
           )}
         </div>
-        <span className={styles.price} title={`${formatCreditsFull(item.credits)} Credits`}>
-          <span className={styles.mark}>
-            <CreditsIcon size={28.8} className={styles.markIcon} />
+        {priced && (
+          <span className={styles.price} title={`${formatCreditsFull(item.credits)} Credits`}>
+            <span className={styles.mark}>
+              <CreditsIcon size={28.8} className={styles.markIcon} />
+            </span>
+            {formatCredits(item.credits)}
           </span>
-          {formatCredits(item.credits)}
-        </span>
+        )}
       </div>
     </div>
   )
 }
 
-/** Where the item would be: the spinner, while the price is read or the purchase confirms. */
-function Working({ label }: { label: string }): React.JSX.Element {
+/** Where the item would be: the spinner, while the price is read or the purchase confirms. `size="small"`: under text. */
+function Working({ label, size }: { label: string; size?: 'small' }): React.JSX.Element {
   return (
-    <div className={styles.working} role="status" aria-label={label}>
+    <div className={`${styles.working} ${size === 'small' ? styles.workingSmall : ''}`.trim()} role="status" aria-label={label}>
       <Spinner variant="shop" size={30} />
     </div>
+  )
+}
+
+/**
+ * Choose your payment method: the item, a row per way to pay (one picked at a time, native radios, so the arrow
+ * keys move the pick), then CANCEL or BUY. The step opens with a pick: the buyer's earlier one while it pays, else
+ * the Credits when they pay, else MANA. After that only the buyer picks. A pick that stops paying (a balance read
+ * again) is dropped, and BUY waits for the buyer to pick a row that pays: the same BUY never spends another way than
+ * the one picked, and a later read where the dropped row pays again doesn't pick it back.
+ */
+function MethodStep({
+  view,
+  cancel,
+  onPay
+}: {
+  view: Extract<ShopPurchaseStep, { step: 'method' }>
+  cancel: React.ReactNode
+  onPay?: (method: ShopPaymentMethod) => void
+}): React.JSX.Element {
+  const group = useId()
+  const { credits, mana } = view
+  const pays = (method: ShopPaymentMethod): boolean => (method === 'credits' ? credits.pays : mana.pays)
+  const first = (): ShopPaymentMethod | null => (view.initial && pays(view.initial) ? view.initial : credits.pays ? 'credits' : mana.pays ? 'mana' : null)
+  const [picked, setPicked] = useState<ShopPaymentMethod | null>(first)
+  // Dropped as this render reads it (React renders again at once), so no later view sees the old pick come back.
+  if (picked && !pays(picked)) setPicked(null)
+  const method = picked && pays(picked) ? picked : null
+  const count = view.items.length
+  const creditsShort = !credits.pays && credits.price != null && credits.balance != null && credits.balance < credits.price
+  return (
+    <ShopModal
+      label="Choose your payment method"
+      actions={
+        <>
+          {cancel}
+          {/* Armed as BUY ITEM is: it appears where the loading step's disabled button was. */}
+          <ArmedButton size="modal" disabled={method == null} onClick={() => method && onPay?.(method)}>
+            {buyLabel(count)}
+          </ArmedButton>
+        </>
+      }
+    >
+      <h2 className={styles.title}>Choose your payment method</h2>
+      <ShopModalGap />
+      <ItemList items={view.items} priced={false} />
+      <ShopModalGap />
+      <div className={styles.methods} role="radiogroup" aria-label="Payment method">
+        <label className={styles.method} data-disabled={!credits.pays || undefined}>
+          <input
+            type="radio"
+            name={group}
+            className={styles.methodInput}
+            checked={method === 'credits'}
+            disabled={!credits.pays}
+            onChange={() => setPicked('credits')}
+          />
+          <MethodBox />
+          <span className={styles.methodMark}>
+            <CreditsIcon size={28.8} />
+          </span>
+          <span className={styles.methodText}>
+            <span className={styles.methodLabel}>Credits</span>
+            <span className={styles.methodBalance}>
+              Credits Balance:
+              <img src={balanceIcon} alt="" aria-hidden="true" />
+              <span title={credits.balance == null ? undefined : `${formatCreditsFull(credits.balance)} Credits`}>
+                {credits.balance == null ? '—' : formatCredits(credits.balance)}
+              </span>
+            </span>
+            {!credits.pays && <span className={styles.methodReason}>{creditsShort ? 'Not enough Credits' : 'Not available with Credits'}</span>}
+          </span>
+          {credits.price != null && (
+            <span className={styles.methodPrice} title={`${formatCreditsFull(credits.price)} Credits`}>
+              <img src={balanceIcon} alt="" aria-hidden="true" />
+              {formatCredits(credits.price)}
+            </span>
+          )}
+        </label>
+        <label className={styles.method} data-disabled={!mana.pays || undefined}>
+          <input type="radio" name={group} className={styles.methodInput} checked={method === 'mana'} disabled={!mana.pays} onChange={() => setPicked('mana')} />
+          <MethodBox />
+          <span className={styles.methodMark}>
+            <GeneralPolygonMana size={28} aria-hidden="true" />
+          </span>
+          <span className={styles.methodText}>
+            <span className={styles.methodLabel}>Polygon MANA</span>
+            <span className={styles.methodBalance}>
+              MANA Balance:
+              <GeneralPolygonMana size={13} aria-hidden="true" />
+              <span title={`${formatMana(mana.balance as ManaWei, { group: true })} MANA`}>{formatMana(mana.balance as ManaWei, { group: true, decimals: 2 })}</span>
+            </span>
+          </span>
+          {mana.pays ? (
+            <span className={styles.methodPrice} title={`${formatMana(mana.price as ManaWei, { group: true })} MANA`}>
+              <GeneralPolygonMana size={20} aria-hidden="true" />
+              {formatManaPrice(mana.price as ManaWei)}
+            </span>
+          ) : (
+            // Said as the fact it is: the Shop quotes no MANA-to-Credits rate anywhere.
+            <span className={styles.methodReason}>Not enough MANA</span>
+          )}
+        </label>
+      </div>
+      <ShopModalGap />
+    </ShopModal>
+  )
+}
+
+/** A row's pick, drawn as the HUD's checkbox draws its box. */
+function MethodBox(): React.JSX.Element {
+  return (
+    <span className={styles.methodBox} aria-hidden="true">
+      <svg viewBox="0 0 16 16" width="12" height="12">
+        <path d="M3 8.5l3 3 7-7" fill="none" stroke="var(--accent)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </span>
   )
 }
 
