@@ -456,8 +456,10 @@ const KIND_PARTIAL_RING: u32 = 3;
 pub(crate) use gpu::{FlareQuad, LensFlareUniform};
 
 mod gpu {
-    // the ShaderType derive's layout check function is never called
-    #![allow(dead_code)]
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
 
     use super::*;
 
