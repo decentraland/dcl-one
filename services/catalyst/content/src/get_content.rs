@@ -940,6 +940,8 @@ mod tests {
         let node = TestNode::without_db("content-mime-xml").await;
         for mut bytes in cases {
             bytes.resize(1000, b' ');
+            let detected = catalyst::file_type(&mut &bytes[..], 1000).await.unwrap();
+            assert_eq!(detected, Some("application/xml"), "{:?}", &bytes[..8]);
             let bytes = Bytes::from(bytes);
             let cid = crate::auth::hash_bytes_v1(&bytes);
             node.store(&cid, bytes.clone()).await;
@@ -990,9 +992,37 @@ mod tests {
         assert_eq!(body_of(resp).await, blob);
     }
 
-    /// A ZIP walk stops once it has fetched 16 MiB of the file and answers `application/zip`.
+    /// A ZIP walk stops once it has fetched 16 MiB of the file and answers `application/zip`:
+    /// within one data-descriptor scan, or across skipped entries before one that decides.
     #[tokio::test]
     async fn a_zip_walk_fetches_at_most_16_mib() {
+        // `skipped` stored entries of 64 KiB, then a `mimetype` entry that decides.
+        let file = |skipped: usize| {
+            let entry = |name: &[u8], data: &[u8]| {
+                let mut entry = b"PK\x03\x04\x14\0\0\0\0\0".to_vec();
+                entry.extend_from_slice(&[0; 8]);
+                entry.extend_from_slice(&(data.len() as u32).to_le_bytes());
+                entry.extend_from_slice(&[0; 4]);
+                entry.extend_from_slice(&(name.len() as u16).to_le_bytes());
+                entry.extend_from_slice(&[0; 2]);
+                entry.extend_from_slice(name);
+                entry.extend_from_slice(data);
+                entry
+            };
+            let mut bytes = entry(b"a", &[0; 64 << 10]).repeat(skipped);
+            bytes.extend_from_slice(&entry(b"mimetype", b"application/epub+zip"));
+            Bytes::from(bytes)
+        };
+        let node = TestNode::without_db("content-zip-budget-entries").await;
+        for (skipped, mime) in [(100, "application/epub+zip"), (300, "application/zip")] {
+            let blob = file(skipped);
+            let cid = crate::auth::hash_bytes_v1(&blob);
+            node.store(&cid, blob.clone()).await;
+            let mut opened = node.state.storage.open(&cid).await.unwrap().unwrap();
+            let mut window = Window::new(&mut opened, blob.len() as u64);
+            assert_eq!(content_type(&mut window).await.unwrap(), mime, "{skipped}");
+        }
+
         let mut blob = b"PK\x03\x04\x14\0\x08\0".to_vec();
         blob.extend_from_slice(&[0; 18]);
         blob.extend_from_slice(b"\x01\0\0\0a");
