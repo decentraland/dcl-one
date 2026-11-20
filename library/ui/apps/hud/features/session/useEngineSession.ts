@@ -952,6 +952,9 @@ export interface ChatState {
 const MAX_CHAT_LINES = 200
 /** The notifications list keeps at most this many, the size of the bridge's full fetch. */
 export const NOTIFICATIONS_KEPT = 50
+// The least time between two plays of one incoming-line sound: lines of a conversation each sound,
+// and a flood of them does not restart the clip faster than it can be heard.
+const PING_FLOOR_MS = 100
 
 // Render-settle: after a scene first reports loaded, hold the loader at least this long for the
 // engine to render the first frame (so the world isn't revealed as black models), and at most this
@@ -1688,6 +1691,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // list's toast says what happened); a typed /stop_portable or /smart_wearable command still is.
   const ownConsoleCommands = useRef<string[]>([])
   const chatId = useRef(0)
+  // when each incoming-line sound last played
+  const pingAtRef = useRef<Map<UiSound, number>>(new Map())
   // the lines appended to a shown tab since its history was last read, by conversation: a read
   // queued before such a line was stored answers without it
   const appendedRef = useRef<Map<string, Set<string>>>(new Map())
@@ -1864,7 +1869,11 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
             // the conversation selected, whether or not the chat is open, has its own two clips;
             // a line anywhere else sounds the same with or without a mention
             const selected = channelRef.current === channel
-            driver.send({ kind: 'playUiSound', sound: !selected ? 'chatUnfocused' : mentioned ? 'chatMention' : 'chatMessage' })
+            const sound: UiSound = !selected ? 'chatUnfocused' : mentioned ? 'chatMention' : 'chatMessage'
+            const now = Date.now()
+            if (now - (pingAtRef.current.get(sound) ?? -Infinity) < PING_FLOOR_MS) return
+            pingAtRef.current.set(sound, now)
+            driver.send({ kind: 'playUiSound', sound })
           }
           const communityId = communityIdOf(msg.chat.channel)
           if (communityId != null) {

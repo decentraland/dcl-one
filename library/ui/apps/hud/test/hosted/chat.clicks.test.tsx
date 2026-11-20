@@ -43,8 +43,9 @@ describe('chat chrome clicks', () => {
     vi.mocked(chat.playSound).mockClear()
     const group = EMOJI_GROUPS[0]
     await userEvent.click(screen.getByTitle(group.emojis[0].expression))
-    // the emoji's own button, the swish, and the input's text changing
-    expect(played()).toEqual(['buttonHover', 'buttonPress', 'chatEmoji', 'chatInput'])
+    // the emoji's own press and the swish: a cell of the grid has no highlight, and the text the
+    // chat drops in is not the user's typing
+    expect(played()).toEqual(['buttonPress', 'chatEmoji'])
   }, 20_000)
 
   it('the members button reveals the nearby overlay', async () => {

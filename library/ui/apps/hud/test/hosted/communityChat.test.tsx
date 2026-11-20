@@ -1,4 +1,4 @@
-import { beforeEach, describe, it, expect } from 'vitest'
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { act } from '@testing-library/react'
 import { renderSession, enterAsGuest, type Harness } from '../harness'
 import { PREF, getPref, setPref } from '@explorer-core/lib/prefs'
@@ -32,9 +32,21 @@ function me(h: Harness): string {
 }
 
 describe('community chat domain', () => {
+  // the clock the incoming-line sounds are spaced by: it moves only when a test moves it
+  const clock = {
+    now: 0,
+    advance(ms: number): void {
+      this.now += ms
+    }
+  }
   beforeEach(() => {
     localStorage.clear()
     resetPingPrefs()
+    clock.now = Date.now()
+    vi.spyOn(Date, 'now').mockImplementation(() => clock.now)
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   it('asks for the channels at world entry, lists them, and tells the engine to listen', async () => {
@@ -68,6 +80,7 @@ describe('community chat domain', () => {
     expect(chat().messages.some((m) => m.channel === 'community:c8')).toBe(false)
     expect(chat().conversations).toEqual([])
     // a mention of the local user (an unclaimed name carries the wallet's tail) marks the tab
+    clock.advance(200)
     act(() => h.driver.emit({ kind: 'chat', chat: { sender: MOJITO, message: `@${MY_NAME}#${ME.slice(-4)} are you there?`, channel: 'community:c1', messageId: `${MOJITO}:2` } }))
     expect(chat().communities.map((c) => [c.id, c.unread, c.mention])).toEqual([
       ['c1', 1, true],
@@ -81,10 +94,25 @@ describe('community chat domain', () => {
     await enterWithCommunities(h)
     const sounds = (): string[] => h.driver.sent.filter((m) => m.kind === 'playUiSound').map((m) => m.sound)
     act(() => h.session().chat.select('community:c1'))
-    for (let i = 0; i < 3; i++) act(() => h.driver.emit({ kind: 'chat', chat: { sender: MOJITO, message: `line ${i}`, channel: 'community:c1', messageId: `${MOJITO}:3${i}` } }))
+    for (let i = 0; i < 3; i++) {
+      clock.advance(200)
+      act(() => h.driver.emit({ kind: 'chat', chat: { sender: MOJITO, message: `line ${i}`, channel: 'community:c1', messageId: `${MOJITO}:3${i}` } }))
+    }
     act(() => h.driver.emit({ kind: 'chat', chat: { sender: MOJITO, message: `@${MY_NAME}#${ME.slice(-4)} hey`, channel: 'community:c1', messageId: `${MOJITO}:40` } }))
     act(() => h.driver.emit({ kind: 'chat', chat: { sender: MOJITO, message: 'elsewhere', channel: 'community:c8', messageId: `${MOJITO}:41` } }))
     expect(sounds()).toEqual(['chatMessage', 'chatMessage', 'chatMessage', 'chatMention', 'chatUnfocused'])
+    // a flood of lines does not restart a clip faster than it can be heard; past the floor the
+    // next line sounds again
+    clock.advance(200)
+    const before = sounds().length
+    for (let i = 0; i < 5; i++) {
+      clock.advance(10)
+      act(() => h.driver.emit({ kind: 'chat', chat: { sender: MOJITO, message: `flood ${i}`, channel: 'community:c1', messageId: `${MOJITO}:5${i}` } }))
+    }
+    expect(sounds().slice(before)).toEqual(['chatMessage'])
+    clock.advance(100)
+    act(() => h.driver.emit({ kind: 'chat', chat: { sender: MOJITO, message: 'after the flood', channel: 'community:c1', messageId: `${MOJITO}:60` } }))
+    expect(sounds().slice(before)).toEqual(['chatMessage', 'chatMessage'])
     // sending: any conversation, gated by the default alone
     act(() => h.session().chat.send('hello'))
     expect(sounds().at(-1)).toBe('chatSend')

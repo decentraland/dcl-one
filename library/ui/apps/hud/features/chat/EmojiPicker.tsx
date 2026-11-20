@@ -3,7 +3,6 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { MaskIcon, SearchField } from '../../design'
-import { SOUND_ATTR } from './buttonSounds'
 import { EMOJI_BY_CODE, EMOJI_GROUPS, loadRecents, pushRecent, searchByShortcode, type Emoji } from './emojiData'
 import smileysIcon from '../../assets/chat/emoji-categories/smileyspeople.png'
 import animalsIcon from '../../assets/chat/emoji-categories/animals.png'
@@ -32,7 +31,7 @@ function Grid({ emojis, onPick }: { emojis: Emoji[]; onPick: (e: Emoji) => void 
   return (
     <div className={styles.grid}>
       {emojis.map((e) => (
-        <button key={e.code} type="button" className={styles.emoji} title={e.expression} onClick={() => onPick(e)}>
+        <button key={e.code} type="button" className={styles.emoji} title={e.expression} data-ui-sound="press" onClick={() => onPick(e)}>
           {e.emoji}
         </button>
       ))}
@@ -169,7 +168,7 @@ export function EmojiPicker({ onPick, onClose }: { onPick: (glyph: string) => vo
             className={`${styles.tab} ${t.section === section && !q ? styles.tabActive : ''}`.trim()}
             aria-label={t.label}
             aria-pressed={t.section === section && !q}
-            {...{ [SOUND_ATTR]: 'press' }}
+            data-ui-sound="press"
             onClick={() => jump(t.section)}
           >
             <MaskIcon src={t.icon} size={25} />

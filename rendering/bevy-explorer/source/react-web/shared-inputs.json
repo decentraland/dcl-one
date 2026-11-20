@@ -3672,6 +3672,10 @@
           "kind": "regular"
         },
         {
+          "name": "buttonSounds.test.ts",
+          "kind": "regular"
+        },
+        {
           "name": "buttonSounds.ts",
           "kind": "regular"
         },
@@ -9195,7 +9199,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.tsx",
-      "sha256": "524e868481e3a110cf1a26ffe260c8541410a50b1266a967b5c98627a24cd2af"
+      "sha256": "9e2a5ba39b5dacc6341bd320342c2a2d01c9589e86c821db44466748e673052a"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ChatIcons.tsx",
@@ -9215,7 +9219,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
-      "sha256": "cd5c60e32d1b7471877f3b3b82d247d5349a824a2a65f8b1747ad2acac96cb17"
+      "sha256": "0232980fdbd8ddf4f4d6df59f0ca1586c2b56eeb54427cbd63791cdcf422e641"
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiButton.module.css",
@@ -9223,7 +9227,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
-      "sha256": "bff97334720f3c524c8f4efe1354d6e0d4754cb26bd6ec025e774638d42e9294"
+      "sha256": "2b16fd9e2de0b8d079ee05a8458270ded4ae25a39f2b3f0dc95cdef5a2cec3e8"
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiPicker.module.css",
@@ -9231,7 +9235,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
-      "sha256": "923e85fd343ef4f5926cf69eaac706c7033af1e11e514b11934c44ff2e21e879"
+      "sha256": "e97f7ec6c5bd6824da56d6a4d2a207d93eebc5a614f2aa34ba930e439df24def"
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiSuggestList.module.css",
@@ -9250,8 +9254,12 @@
       "sha256": "c7b4d3040609c20a8eaa01d7249d8a095f985233b70732adbee183afdd56f5c7"
     },
     {
+      "path": "library/ui/apps/hud/features/chat/buttonSounds.test.ts",
+      "sha256": "d2892cbb724df0103e7889200acb59d4295b70ae65d3cc92cad51f994a665f5c"
+    },
+    {
       "path": "library/ui/apps/hud/features/chat/buttonSounds.ts",
-      "sha256": "3a9bffb4a55b91cf85a7722800f3f5c7043961813e030a96b7543f22beded124"
+      "sha256": "bc54d1cf14353eee328eb9199088a55d215625e249dcb04d804475ce1d69f3a4"
     },
     {
       "path": "library/ui/apps/hud/features/chat/chatIdentity.ts",
@@ -10135,7 +10143,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "74ae48d75b98951c4d403a225d387f8283fbf82be34cd7f77d4082bc91d92231"
+      "sha256": "2bb1f8a5919740d901767b762b40caeed1cc5990861821d47356abfe2d772efe"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10543,7 +10551,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chat.clicks.test.tsx",
-      "sha256": "f307ff383ddf0cf7c16ab4cb385370fbc1ff149b749248ca0f447e5d0616eb3e"
+      "sha256": "a4ff55ed7735be86df8416902b141dbbdcc1efa498cf080a649e70b97680f61d"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chat.render.test.tsx",
@@ -10591,7 +10599,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communityChat.test.tsx",
-      "sha256": "2ba7b875d6cb479acfb50c73c2d9d16d58fa086790590d2c549e691901a6c1ca"
+      "sha256": "e55b3342440b972028d6097920565fc787e4f75fc9080e0c3d665a39d32eabef"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/connectivity.test.tsx",
@@ -20430,21 +20438,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
-      "to": "library/ui/apps/hud/features/chat/buttonSounds.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
-      "to": "library/ui/apps/hud/features/chat/buttonSounds.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
-      "to": "library/ui/apps/hud/features/chat/buttonSounds.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
       "to": "library/ui/apps/hud/features/chat/chatIdentity.ts",
       "kind": "native:runtime"
     },
@@ -20501,21 +20494,6 @@
     {
       "from": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
       "to": "library/ui/apps/hud/features/chat/EmojiButton.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
-      "to": "library/ui/apps/hud/features/chat/buttonSounds.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
-      "to": "library/ui/apps/hud/features/chat/buttonSounds.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
-      "to": "library/ui/apps/hud/features/chat/buttonSounds.ts",
       "kind": "test:runtime"
     },
     {
@@ -20666,21 +20644,6 @@
     {
       "from": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
       "to": "library/ui/apps/hud/features/chat/EmojiPicker.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
-      "to": "library/ui/apps/hud/features/chat/buttonSounds.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
-      "to": "library/ui/apps/hud/features/chat/buttonSounds.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
-      "to": "library/ui/apps/hud/features/chat/buttonSounds.ts",
       "kind": "test:runtime"
     },
     {
@@ -20906,6 +20869,21 @@
     {
       "from": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
       "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/buttonSounds.test.ts",
+      "to": "library/ui/apps/hud/features/chat/buttonSounds.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/buttonSounds.test.ts",
+      "to": "library/ui/apps/hud/features/chat/buttonSounds.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/buttonSounds.test.ts",
+      "to": "library/ui/apps/hud/features/chat/buttonSounds.ts",
       "kind": "test:runtime"
     },
     {
@@ -47041,6 +47019,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/chat/buttonSounds.test.ts",
       "kind": "type"
     },
     {
