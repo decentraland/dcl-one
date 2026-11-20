@@ -6637,7 +6637,7 @@
     },
     {
       "path": "library/explorer-core/features/donate/tip.ts",
-      "sha256": "8d83e3410f013de8165e9d97a1d48b6745cb442a07a1da22026d2430004be463"
+      "sha256": "777626bf14683a1b81dfd7319b73407c1b3b9886d65fd6377c90ef0c99f4a528"
     },
     {
       "path": "library/explorer-core/features/editorHost/config.ts",
@@ -7017,7 +7017,7 @@
     },
     {
       "path": "library/explorer-core/test/donateTip.test.ts",
-      "sha256": "920446a0dcf3b0ef15f1422b584a37ddc43df345eb2595210b9ab87934107e1e"
+      "sha256": "c1dc573e0baa305a4dd04e1cc9cc6e9b44a35791f56d9632170f176905d04cec"
     },
     {
       "path": "library/explorer-core/test/emailLogin.test.ts",
