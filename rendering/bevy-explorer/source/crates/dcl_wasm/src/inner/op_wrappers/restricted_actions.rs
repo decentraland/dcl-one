@@ -53,7 +53,7 @@ pub async fn op_teleport_to(
         spawn_point,
     )
     .await
-        .map_err(WasmError::from)
+    .map_err(WasmError::from)
 }
 
 #[wasm_bindgen]

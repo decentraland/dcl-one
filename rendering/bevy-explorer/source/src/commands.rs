@@ -3,7 +3,8 @@ use bevy_console::ConsoleCommand;
 use common::{
     rpc::{RpcCall, RpcCallEvent, RpcResultSender},
     structs::{
-        AppConfig, LandingSpawnPoint, ParcelGrassSetting, PreviewMode, PrimaryUser, SceneLoadDistance, SessionGraphics,
+        AppConfig, LandingSpawnPoint, ParcelGrassSetting, PreviewMode, PrimaryUser,
+        SceneLoadDistance, SessionGraphics,
     },
 };
 use console::PendingConsoleResponses;

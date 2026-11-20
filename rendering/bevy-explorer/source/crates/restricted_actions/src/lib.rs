@@ -31,10 +31,10 @@ use common::{
         RpcCallEvent, RpcEventSender, RpcOrigin, RpcResultSender, SpawnResponse,
     },
     sets::SceneSets,
-    structs::{LandingSpawnPoint, 
-        server_mode, AvatarDynamicState, CurrentRealm, EngineMovementControl, PermissionType,
-        PlayerTeleported, PreviewCommand, PreviewMode, PrimaryCamera, PrimaryUser, ReturnedToWorld,
-        SceneMeta, StartupScenes, ZOrder,
+    structs::{
+        server_mode, AvatarDynamicState, CurrentRealm, EngineMovementControl, LandingSpawnPoint,
+        PermissionType, PlayerTeleported, PreviewCommand, PreviewMode, PrimaryCamera, PrimaryUser,
+        ReturnedToWorld, SceneMeta, StartupScenes, ZOrder,
     },
     util::{AsH160, TaskCompat, TaskExt, UrlLoopbackExt},
 };

@@ -10427,7 +10427,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/chatMessageText.test.tsx",
-      "sha256": "209a63d1cda412b4466eef736638a4e7a1c8a400457d81461f11a8344cd611cb"
+      "sha256": "f15e90895b57f159453cfbb27f1257a19ae3ff51df66078d688ddbaed01fcab8"
     },
     {
       "path": "library/ui/apps/hud/test/chatText.test.ts",

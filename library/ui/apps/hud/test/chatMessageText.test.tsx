@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { render } from '@testing-library/react'
-import { MessageText } from '@hud/features/chat/chatText'
+import { MessageText } from '../features/chat/chatText'
 
 const STYLES = { url: 'url', mention: 'mention', location: 'location', world: 'world', bold: 'bold', italic: 'italic' }
 

@@ -273,7 +273,17 @@ mod tests {
         );
         assert_eq!(without_style_tags("<b x=1>open</b >"), "open");
         assert_eq!(without_style_tags("<i><b>both"), "both");
-        for kept in ["<B>caps</B>", "<br>", "<bold>", "< b>", "a < b", "<b", "<b x", "<>", "名<前"] {
+        for kept in [
+            "<B>caps</B>",
+            "<br>",
+            "<bold>",
+            "< b>",
+            "a < b",
+            "<b",
+            "<b x",
+            "<>",
+            "名<前",
+        ] {
             assert_eq!(without_style_tags(kept), kept, "{kept}");
         }
     }
