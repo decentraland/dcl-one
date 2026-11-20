@@ -54,7 +54,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   material the engine writes to a scene for a glTF has to draw the same once the scene sends it
   back with one field changed, and the SDK fields cannot say either thing. So a Material with a
   `gltf` reference reads `alpha_test`, the diffuse alpha and the emissive by the glTF's rules;
-  one without it, which includes `GltfNodeModifiers`, reads them by the SDK's.
+  one without it, which includes `GltfNodeModifiers`, reads them by the SDK's. The imposter
+  bake applies the same alpha-texture and emissive rules, so a scene keeps its look when its
+  imposter takes over.
   A normal map follows the texture, not the reference: an SDK `bumpTexture` has its green
   channel pointing down the image and a glTF's normal map up, so the glTF's own normal map
   keeps its orientation when it comes back, and a bump texture the scene puts in its place is
