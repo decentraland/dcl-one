@@ -27,9 +27,10 @@
 //! clients stop. With a whole-history walk lagging or paused
 //! ([`chain_walk::is_walked`] false), or the local walk's first pass still to
 //! come, it is a 503 with `Retry-After`; when the cursor cannot be read, a
-//! 500. The age check reads `updated_at`, which a walk refreshes when its
-//! process starts ([`chain_walk::touch_started`]): an index back after hours
-//! down reads as behind, not abandoned, while its first window lands.
+//! 500. The age check reads `updated_at`, which a walk sets just outside the
+//! live window when its process starts ([`chain_walk::touch_started`]): an
+//! index back after hours down reads as behind, neither abandoned nor live,
+//! until its first window really lands.
 //! The auth dApp posts cross-origin with signed-fetch headers, so the route
 //! answers the browser's preflight with the events-notifier's CORS ([`CORS`]).
 //! A transfer below the minimum amount, or mined longer than the maximum age
@@ -1737,16 +1738,53 @@ mod tests {
             crate::market::Settings::for_tests(),
         ));
         let minute = std::time::Duration::from_secs(60);
+        let touch = || chain_walk::touch_started(&db.pool, INDEXER_MANA, NET);
+        let updated_at = || async {
+            chain_walk::cursor(&db.pool, INDEXER_MANA, NET)
+                .await
+                .unwrap()
+                .unwrap()
+                .updated_at
+        };
+
         put_cursor(&db.pool, 10, now_secs() - 5 * 3600, true, "4 hours", false).await;
         assert_eq!(index_state(&state, minute).await, IndexState::Off);
-        chain_walk::touch_started(&db.pool, INDEXER_MANA, NET)
-            .await
-            .unwrap();
+        touch().await.unwrap();
         assert_eq!(
             index_state(&state, minute).await,
             IndexState::Behind,
-            "live again, but still hours behind"
+            "back, but still hours behind"
         );
+
+        put_cursor(&db.pool, 10, now_secs() - 5 * 60, true, "4 hours", false).await;
+        touch().await.unwrap();
+        assert_eq!(
+            index_state(&state, minute).await,
+            IndexState::Behind,
+            "near the head, but not live until it advances"
+        );
+        let db_now: chrono::NaiveDateTime = sqlx::query_scalar("SELECT timezone('UTC', now())")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        let skewed = db_now.and_utc() - chain_walk::MAX_CLOCK_SKEW;
+        assert!(
+            !chain_walk::is_walked(
+                &chain_walk::cursor(&db.pool, INDEXER_MANA, NET)
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                skewed,
+                chrono::Duration::seconds(CLAIM_TTL_SECS),
+            ),
+            "not live even from a clock behind the database's"
+        );
+
+        put_cursor(&db.pool, 10, now_secs() - 5 * 60, true, "5 minutes", false).await;
+        let before = updated_at().await;
+        touch().await.unwrap();
+        assert_eq!(updated_at().await, before, "a newer advance is kept");
+        assert_eq!(index_state(&state, minute).await, IndexState::Serves);
         db.drop().await;
     }
 

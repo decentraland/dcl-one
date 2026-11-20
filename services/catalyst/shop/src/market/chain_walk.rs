@@ -310,17 +310,28 @@ where
     .await
 }
 
-/// Marks the cursor of a walk this process just started as advanced now, so
-/// a reader of [`is_walked`] sees it live, not abandoned, until its first
-/// window lands. The block, its time and the history flag are unchanged, so a
-/// cursor far behind still reads as behind, and nothing publishes earlier.
+/// How long ago [`touch_started`] marks a cursor advanced: just outside the
+/// live window, even read from a clock [`MAX_CLOCK_SKEW`] behind the database's.
+const STARTED_AGE: ChronoDuration = READY_WINDOW
+    .checked_add(&MAX_CLOCK_SKEW)
+    .expect("a small sum")
+    .checked_add(&ChronoDuration::seconds(1))
+    .expect("a small sum");
+
+/// Marks the cursor of a walk this process just started as advanced
+/// [`STARTED_AGE`] ago, unless it advanced later: [`is_walked`] reads it as
+/// behind, not abandoned and not live, until its first window really lands.
+/// The block, its time and the history flag are unchanged, and nothing
+/// publishes earlier.
 pub async fn touch_started(pool: &PgPool, indexer: &str, net: ChainNet) -> sqlx::Result<()> {
     sqlx::query(
-        "UPDATE shop.chain_cursor SET updated_at = timezone('UTC', now()) \
+        "UPDATE shop.chain_cursor \
+         SET updated_at = GREATEST(updated_at, timezone('UTC', now()) - make_interval(secs => $3)) \
          WHERE indexer = $1 AND network = $2",
     )
     .bind(indexer)
     .bind(net.db_name())
+    .bind(STARTED_AGE.num_seconds() as f64)
     .execute(pool)
     .await?;
     Ok(())
@@ -477,7 +488,7 @@ pub fn ready_sql(alias: &str, now_p: &str) -> String {
 
 /// How far ahead of the caller's clock the database's `updated_at` may be and
 /// still count as advanced.
-const MAX_CLOCK_SKEW: ChronoDuration = ChronoDuration::minutes(10);
+pub(crate) const MAX_CLOCK_SKEW: ChronoDuration = ChronoDuration::minutes(10);
 
 /// A liveness heuristic for whether cursor `c` serves its index at `now`:
 /// ready, or with its whole history walked, advanced within [`READY_WINDOW`]
