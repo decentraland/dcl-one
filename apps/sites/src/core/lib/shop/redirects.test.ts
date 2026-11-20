@@ -127,6 +127,15 @@ describe("the classic Marketplace's paths (decentraland.org/marketplace)", () =>
     expect(mk(`/marketplace/accounts/${ME}?section=on_sale&vendor=decentraland`)).toEqual({ path: `/shop/accounts/${ME}`, query: { section: "on_sale" } });
   });
 
+  it("should resolve parcels and estates on the network the LAND redirects use", () => {
+    vi.stubEnv("VITE_SHOP_ETHEREUM_CHAIN_ID", String(CHAIN.SEPOLIA));
+    const sepolia = LAND_NETWORKS[CHAIN.SEPOLIA]!;
+
+    expect(mk("/marketplace/parcels/1/2/detail").path).toBe(`/shop/token/${sepolia.land.toLowerCase()}/${landTokenId(1, 2)}`);
+    expect(mk("/marketplace/estates/7/detail").path).toBe(`/shop/token/${sepolia.estate.toLowerCase()}/7`);
+    expect(mk("/marketplace/rent-land?x=1&y=2").path).toContain(sepolia.land.toLowerCase());
+  });
+
   it("parcels and estates resolve to their registry token", () => {
     expect(mk("/marketplace/parcels/-10/20/detail").path).toBe(`/shop/token/${LAND}/${landTokenId(-10, 20)}`);
     expect(mk("/marketplace/estates/7/detail").path).toBe(`/shop/token/${ESTATE}/7`);

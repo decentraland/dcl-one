@@ -51,6 +51,53 @@ describe("when desktop sign-in polls the relay", () => {
     expect(setIdentity).toHaveBeenCalledOnce();
   });
 
+  it("should let go of the body of every answer that is not the approval", async () => {
+    const waiting = new Response("not approved yet", { status: 404 });
+    const cancel = vi.spyOn(waiting.body!, "cancel");
+    const request = beginShellBrowserSignIn();
+    await vi.dynamicImportSettled();
+    fetchRelay.mockResolvedValueOnce(waiting);
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    request.cancel();
+
+    await expect(request.identity).resolves.toBeNull();
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(setIdentity).not.toHaveBeenCalled();
+  });
+
+  it("should keep polling when letting go of a body fails", async () => {
+    const waiting = new Response("not approved yet", { status: 503 });
+    vi.spyOn(waiting.body!, "cancel").mockRejectedValue(new Error("stream locked"));
+    const request = beginShellBrowserSignIn();
+    await vi.dynamicImportSettled();
+    fetchRelay.mockResolvedValueOnce(waiting).mockResolvedValue(new Response(null, { status: 404 }));
+
+    await vi.advanceTimersByTimeAsync(4_000);
+    request.cancel();
+
+    await expect(request.identity).resolves.toBeNull();
+    expect(fetchRelay).toHaveBeenCalledTimes(2);
+  });
+
+  it("should abort its request signal once the identity is installed", async () => {
+    const account = privateKeyToAccount(`0x${"11".repeat(32)}`);
+    const request = beginShellBrowserSignIn();
+    await vi.dynamicImportSettled();
+    const approval = new URL(shell.__DCL_SHELL_LAST_AUTH_URL!);
+    const expiration = new Date(approval.searchParams.get("expiration")!);
+    const signature = await account.signMessage({
+      message: buildEphemeralMessage(approval.searchParams.get("ephemeral")!, expiration),
+    });
+    fetchRelay.mockResolvedValueOnce(Response.json({ signer: account.address, signature }));
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    await request.identity;
+
+    const signal = fetchRelay.mock.calls[0]?.[1]?.signal as AbortSignal;
+    expect(signal.aborted).toBe(true);
+  });
+
   it("should settle cancellation while waiting to poll", async () => {
     const request = beginShellBrowserSignIn();
     await vi.dynamicImportSettled();

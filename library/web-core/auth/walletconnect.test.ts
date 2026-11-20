@@ -121,6 +121,16 @@ it("loads public configuration for the static explorer", async () => {
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
 
+it("rejects a failed configuration read and lets go of its body", async () => {
+  delete window.__DCL_PUBLIC__;
+  const failed = new Response("unavailable", { status: 503 });
+  const cancel = vi.spyOn(failed.body!, "cancel");
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(failed));
+  const { loadWalletConnectConfig } = await import("./walletconnect");
+  await expect(loadWalletConnectConfig()).rejects.toThrow("Couldn't load wallet sign-in configuration");
+  expect(cancel).toHaveBeenCalledOnce();
+});
+
 it("rejects malformed public configuration", async () => {
   delete window.__DCL_PUBLIC__;
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ walletConnectProjectId: 123 })));

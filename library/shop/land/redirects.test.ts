@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { CHAIN } from "../model/chain";
-import { LAND_NETWORKS, landTokenId } from "./contracts";
+import { LAND_NETWORKS, landNetwork, landTokenId } from "./contracts";
 import { landIdentity, landRedirectTarget } from "./redirects";
 
 const NET = LAND_NETWORKS[1]!;
@@ -34,6 +34,26 @@ describe("old LAND URLs land on the pages that do the job", () => {
     expect(landIdentity(new URLSearchParams("estateId=9"), CHAIN.ETHEREUM)).toEqual({ contract: NET.estate, tokenId: "9" });
     expect(landIdentity(new URLSearchParams("id=nope"), CHAIN.ETHEREUM)).toBeNull();
     expect(landIdentity(new URLSearchParams("contractAddress=0x12&tokenId=1"), CHAIN.ETHEREUM)).toBeNull();
+  });
+
+  it.each([
+    ["x and y", `x=${"9".repeat(400)}&y=0`],
+    ["a negative x", `x=-${"9".repeat(400)}&y=0`],
+    ["y", `x=0&y=${"9".repeat(400)}`],
+    ["an id pair", `id=${"9".repeat(400)},0`],
+  ])("should name no LAND when %s is too large to be a coordinate", (_label, query) => {
+    expect(landIdentity(new URLSearchParams(query), CHAIN.ETHEREUM)).toBeNull();
+  });
+
+  it("should send a rent URL with an oversized coordinate to the LAND for rent instead of failing", () => {
+    expect(() => landRedirectTarget("rent", `?x=${"9".repeat(400)}&y=0`, CHAIN.ETHEREUM)).not.toThrow();
+  });
+
+  it("should still read the largest coordinate a parcel can have", () => {
+    expect(landIdentity(new URLSearchParams("x=150&y=-150"), CHAIN.ETHEREUM)).toEqual({
+      contract: landNetwork(CHAIN.ETHEREUM).land,
+      tokenId: landTokenId(150, -150),
+    });
   });
 
   it("should resolve an implicit estate on the selected Ethereum network", () => {

@@ -9,7 +9,10 @@ export function hasWalletConnect(): boolean {
 export async function loadWalletConnectConfig(): Promise<boolean> {
   if (hasWalletConnect()) return true;
   const response = await fetch("/internal/auth-config");
-  if (!response.ok) throw new Error("Couldn't load wallet sign-in configuration.");
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error("Couldn't load wallet sign-in configuration.");
+  }
   const config: unknown = await response.json();
   if (!config || typeof config !== "object" || !("walletConnectProjectId" in config)
     || typeof config.walletConnectProjectId !== "string") {

@@ -9,8 +9,19 @@ The browser logic the web apps share, with no UI ([ADR](../../docs/adr/2026-11-1
 | `auth/signerCore.ts` | Signs a request with the ephemeral key and returns its auth-chain headers |
 | `auth/thirdwebSchema.ts` | zod schemas of the thirdweb replies, and the auth result type |
 | `auth/walletconnect.ts`, `auth/walletconnect-config.ts` | WalletConnect sign-in and its project id (page globals, Vite env or the host's `/internal/auth-config`) |
+| `auth/eip1193.ts` | The EIP-1193 wallet provider type |
+| `auth/wallet-events.ts` | Subscribes to a wallet's account and chain events and returns the unsubscribe |
+| `auth/shopRequest.ts` | The Shop API mode, a transport over `fetch` and the request signer built from an identity |
 | `profile/avatarColor.ts` | Display names, avatar colours and the synthetic avatar |
 | `notifications/notificationsView.ts` | The notification row model, its view helpers and a loose parser |
+| `site.ts` | The site's base URL, absolute URLs and host, for the browser and for a server render |
+| `docs.ts` | The base and URLs of the documentation site |
+| `newsletter.ts` | The site newsletter subscription request |
+| `shop-chain-env.ts` | The Shop's chain selection from the build environment, with page overrides in development builds only |
+| `place-view.ts` | Whether a place has a thumbnail of its own, and the viewer's relation to a place |
+| `freshness/` | How old a cached copy is: its stamp, the older of two copies, a coarse duration and the per-section freshness model |
+| `flow-map.ts` | The node, edge and section model of the flow map and its statistics |
+| `creator-hub-host.ts` | The Creator Hub host contract: its paths, scope and the installed host |
 
 ## Rules
 

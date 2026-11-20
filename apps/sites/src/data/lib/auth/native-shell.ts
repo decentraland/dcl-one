@@ -79,7 +79,11 @@ export function beginShellBrowserSignIn(): ShellSignIn {
           cache: "no-store",
           signal,
         });
-        if (res.status !== 200) continue;
+        if (res.status !== 200) {
+          // Every poll before the approval answers without the signature: its body is let go, not left open.
+          await res.body?.cancel().catch(() => {});
+          continue;
+        }
         body = await res.json();
       } catch {
         continue;
@@ -116,7 +120,11 @@ export function beginShellBrowserSignIn(): ShellSignIn {
       return next;
     }
     return null;
-  })().finally(() => clearTimeout(timeout));
+  })().finally(() => {
+    clearTimeout(timeout);
+    // Settled either way: nothing else may start or stay pending on this request.
+    controller.abort();
+  });
 
   return {
     identity,

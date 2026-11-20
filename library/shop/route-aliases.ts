@@ -61,8 +61,14 @@ function matchPath(pattern: string, path: string): Record<string, string> | null
     }
     const value = got[i];
     if (value === undefined) return null;
-    if (seg.startsWith(":")) params[seg.slice(1)] = decodeURIComponent(value);
-    else if (seg !== value) return null;
+    if (seg.startsWith(":")) {
+      // A malformed escape (`%E0`) names no page: it is no match, never a thrown URIError.
+      try {
+        params[seg.slice(1)] = decodeURIComponent(value);
+      } catch {
+        return null;
+      }
+    } else if (seg !== value) return null;
   }
   return got.length === want.length ? params : null;
 }

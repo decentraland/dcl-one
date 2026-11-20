@@ -7,6 +7,13 @@ type Query = InstanceType<typeof URLSearchParams>;
 
 const IDENTITY_KEYS = ["id", "landId", "contractAddress", "contract", "tokenId", "x", "y", "estateId", "category"];
 
+/** A parcel by its coordinates; none when a coordinate is too large to be one (it would not convert to a token id). */
+function parcel(contract: string, x: string, y: string): Identity | null {
+  const px = Number(x);
+  const py = Number(y);
+  return Number.isSafeInteger(px) && Number.isSafeInteger(py) ? { contract, tokenId: landTokenId(px, py) } : null;
+}
+
 export function landIdentity(q: Query, chainId: number): Identity | null {
   const net = landNetwork(chainId);
   const contract = (q.get("contractAddress") ?? q.get("contract"))?.toLowerCase();
@@ -17,12 +24,12 @@ export function landIdentity(q: Query, chainId: number): Identity | null {
     const pair = /^(0x[0-9a-fA-F]{40})[-:]([0-9]+)$/.exec(id);
     if (pair) return { contract: pair[1]!.toLowerCase(), tokenId: pair[2]! };
     const coords = /^(-?\d+)\s*,\s*(-?\d+)$/.exec(id);
-    if (coords) return { contract: net.land, tokenId: landTokenId(Number(coords[1]), Number(coords[2])) };
+    if (coords) return parcel(net.land, coords[1]!, coords[2]!);
     if (/^[0-9]+$/.test(id)) return { contract: net.estate, tokenId: id };
   }
   const x = q.get("x");
   const y = q.get("y");
-  if (x && y && /^-?\d+$/.test(x) && /^-?\d+$/.test(y)) return { contract: net.land, tokenId: landTokenId(Number(x), Number(y)) };
+  if (x && y && /^-?\d+$/.test(x) && /^-?\d+$/.test(y)) return parcel(net.land, x, y);
   const estateId = q.get("estateId");
   if (estateId && /^[0-9]+$/.test(estateId)) return { contract: net.estate, tokenId: estateId };
   return null;
