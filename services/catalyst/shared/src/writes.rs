@@ -354,7 +354,7 @@ mod tests {
         ("social/src/profile_images/cache.rs", "mirror"),
         ("worlds/src/core/deploy.rs", "worlds"),
         ("worlds/src/core/partial.rs", "worlds"),
-        ("worlds/src/core/settings.rs", "worlds"),
+        ("worlds/src/core/store_settings.rs", "worlds"),
         ("worlds/src/mirror_reconcile.rs", "worlds"),
         ("worlds/src/mirror_upstream.rs", "worlds"),
     ];

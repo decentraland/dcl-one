@@ -429,6 +429,8 @@ pub(super) async fn mirror_world(
     let access = upstream_access(client, source, name).await?;
 
     let mut new_blobs = 0usize;
+    // Every blob the rows written below name, re-checked under the store lock.
+    let mut named: Vec<String> = Vec::new();
     let mut scene_base_spawn: Option<String> = None;
     let mut records: Vec<SceneRecord> = Vec::new();
     let blob_sem = Arc::new(Semaphore::new(settings.blob_concurrency));
@@ -463,6 +465,8 @@ pub(super) async fn mirror_world(
                     .collect()
             })
             .unwrap_or_default();
+        named.push(cid.clone());
+        named.extend(hashes.iter().cloned());
         let mut set = tokio::task::JoinSet::new();
         for hash in hashes {
             let permit = blob_sem.clone().acquire_owned().await?;
@@ -523,6 +527,19 @@ pub(super) async fn mirror_world(
     let world = WorldName::parse(name)?;
     let holder = name_holder(pool, owners, &world).await;
     let mut tx = pool.begin().await.context("begin tx")?;
+    // The pass fetched without the store lock, so an unlink batch may have removed a blob it
+    // found stored. Under the lock's shared side, held until the rows commit, every named blob
+    // is checked; a missing one fails the pass, and the next one fetches it again.
+    catalyst_storage::gc::lock_store_shared_within(&mut tx, catalyst_storage::gc::SHARED_LOCK_WAIT)
+        .await
+        .context("the content store is being collected")?;
+    let present = storage.exist_multiple(&named).await?;
+    if let Some(gone) = named
+        .iter()
+        .find(|h| !present.get(h.as_str()).copied().unwrap_or(false))
+    {
+        bail!("{gone} of {name} left the store during the pass; the next pass fetches it again");
+    }
     // A new row takes the source's settings (the `/about` fallback without them); a held one
     // keeps its settings here and takes the answer through `apply_settings` below.
     let copied = world_settings.unwrap_or_default();
