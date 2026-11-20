@@ -315,7 +315,8 @@
 /* A card with the places service's row: as unity-explorer's, hovering or focusing it shows its
    actions, and the cover gives up the room they take so the card keeps its height. */
 .placeActionable {
-  --place-actions-h: 88px;
+  /* the actions' height: 10px above, two 36px rows 8px apart */
+  --place-actions-h: 90px;
   position: relative;
   container-type: inline-size;
   cursor: pointer;
@@ -332,10 +333,6 @@
 .placeOpen {
   position: absolute;
   inset: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
 }
 .placeActions {
   display: none;

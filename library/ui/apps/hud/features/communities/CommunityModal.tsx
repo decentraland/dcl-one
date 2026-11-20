@@ -235,7 +235,7 @@ function PlaceCardFace({ place, onDelete, deleting, actions, onOpen, likeRate = 
       <div className={styles.placeCover} style={{ background: place.thumbnail ? undefined : nameColor(place.id) }}>
         {place.thumbnail && <img src={place.thumbnail} alt="" />}
         {onOpen != null && (
-          <button type="button" className={styles.placeOpen} aria-label={`Open ${place.title}`} onClick={(e) => { e.stopPropagation(); onOpen() }} />
+          <Button size="bare" variant="clear" radius="md" className={styles.placeOpen} aria-label={`Open ${place.title}`} onClick={(e) => { e.stopPropagation(); onOpen() }} />
         )}
         {onDelete != null && (
           <button type="button" className={styles.placeDelete} aria-label={`Delete ${place.title}`} disabled={deleting} onClick={(e) => { e.stopPropagation(); onDelete() }}>

@@ -324,7 +324,7 @@ export function PlaceJumpIn({ actions, className, iconSize = 24, onJumpIn }: { a
   }
   if (access === 'password') {
     return (
-      <Button size="bare" radius="md" variant="primary" className={className} disabled={signingIn} onClick={onJumpIn}>
+      <Button size="bare" radius="md" variant="primary" className={className} aria-label={`Enter password for ${place.title}`} disabled={signingIn} onClick={onJumpIn}>
         ENTER PASSWORD
       </Button>
     )

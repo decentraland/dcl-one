@@ -16,6 +16,7 @@ import dataclasses
 import errno
 import gzip
 import hashlib
+import http.client
 import itertools
 import os
 import re
@@ -676,10 +677,15 @@ def copy_community_thumbnail(source, store, community_id):
             stream = source.open(path)
             with contextlib.closing(stream):
                 data = stream.read(MAX_THUMBNAIL_BYTES + 1)
+                # a bounded read returns short, without raising, when the connection drops mid-body;
+                # the response still counts the bytes it was promised (a capped read leaves some too)
+                left = getattr(stream, 'length', None)
+                if isinstance(left, int) and left > 0 and len(data) <= MAX_THUMBNAIL_BYTES:
+                    raise ReadError(f'body cut short: {left} of its Content-Length bytes missing')
             break
         except Missing as e:
             return Outcome(community_id, 'missing', reason=str(e))
-        except (ReadError, OSError) as e:
+        except (ReadError, OSError, http.client.HTTPException) as e:
             if attempt + 1 == READ_ATTEMPTS:
                 return Outcome(community_id, 'failed', reason=f'read failed {READ_ATTEMPTS} times: {e}')
             time.sleep(RETRY_DELAY * 2 ** attempt)

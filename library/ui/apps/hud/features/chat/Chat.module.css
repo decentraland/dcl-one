@@ -208,7 +208,6 @@
   cursor: pointer;
   text-align: left;
 }
-/* The community's thumbnail and name open its menu: the button's look, tinted on hover and while open. */
 /* the community's thumbnail and name: a bare clear Button laid out as the title */
 .communityTitle {
   flex: 0 1 auto;

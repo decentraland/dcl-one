@@ -301,7 +301,9 @@ async function detail(id: string): Promise<{ members: CommunityMember[]; places:
   const cid = encodeURIComponent(id)
   const [membersRes, placesRes, eventsRes] = await Promise.all([
     signed<{ results?: MemberRaw[] }>(`${b}/${cid}/members?limit=100`).catch(() => undefined),
-    signed<{ results?: PlaceRaw[] }>(`${placesBase}/${cid}/places?limit=20`).catch(() => undefined),
+    // as unity-explorer's card: no limit, so the service's full page (100); the photos query and
+    // the PLACES tab both take every id it lists
+    signed<{ results?: PlaceRaw[] }>(`${placesBase}/${cid}/places`).catch(() => undefined),
     getJson<{ data?: { events?: EventRaw[] } }>(`${eventsBase}?community_id=${cid}&list=upcoming`).catch(() => undefined)
   ])
   const memberRows = membersRes?.results ?? []

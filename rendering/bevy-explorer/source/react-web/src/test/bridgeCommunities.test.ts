@@ -153,7 +153,7 @@ describe('bridge community place options', () => {
 })
 
 describe('bridge community card places', () => {
-  const cardPlaces = 'https://socialApi.example/v1/communities/c1/places?limit=20'
+  const cardPlaces = 'https://socialApi.example/v1/communities/c1/places'
 
   it("reads each place from the places service, marks the user's own and names a World", async () => {
     serve({ [`GET ${cardPlaces}`]: { results: [{ id: 'land-1' }, { id: 'world-1' }] }, [`POST ${DESTINATIONS}`]: [world, land] })

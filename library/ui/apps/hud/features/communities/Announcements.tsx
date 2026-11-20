@@ -126,7 +126,8 @@ function Composer({
   const field = useRef<HTMLTextAreaElement | null>(null)
   // As unity-explorer's: the panel closes on a press outside it (the field and POST included).
   const pickerRef = useRef<HTMLDivElement>(null)
-  useCloseEmojiPanelOnOutsidePress(picker, pickerRef, () => setPicker(false))
+  const emojiRef = useRef<HTMLButtonElement>(null)
+  useCloseEmojiPanelOnOutsidePress(picker, pickerRef, emojiRef, () => setPicker(false))
   // the text clears once a post went through, not when it is sent
   const [seen, setSeen] = useState(posted)
   if (seen !== posted) {
@@ -208,7 +209,7 @@ function Composer({
           </div>
         )}
         <div className={styles.composeFoot}>
-          <EmojiButton open={picker} onToggle={() => setPicker((p) => !p)} />
+          <EmojiButton ref={emojiRef} open={picker} onToggle={() => setPicker((p) => !p)} />
           {draft.length > 0 && (
             <span className={styles.count}>
               {draft.length}/{ANNOUNCEMENT_MAX}

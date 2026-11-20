@@ -5974,7 +5974,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/communities.ts",
-      "sha256": "7cd9ee1c473b93603ae8e20e909c16ffcd42bec06b6f9bf29dc791b2438a1780"
+      "sha256": "b263f9a37a98c043565aa8a738d0c8cad09c592398764f76d073cc7217cdd539"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/connectivity.ts",
@@ -6214,7 +6214,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
-      "sha256": "fb7da633b05174be73a6ce6bf0c9a830650bb75ae0bd4221f03b3802ccba06e9"
+      "sha256": "95734252864cd8cb6320a7e60c8b37d2b74bf4008fc9f615c299b27a40071148"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
@@ -6294,7 +6294,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
-      "sha256": "270e74903e7e7f0065f3fdd774486c5a861a1715d8a92c6f7c1ce43dcf66bee7"
+      "sha256": "d23e0dcdd485a6d30a20e41e71f99470d7ba1444df70be189b4f19800633b336"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
@@ -9231,11 +9231,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.module.css",
-      "sha256": "2fb04291d5b19b643da3974413ec0d83b645a18827183140a63bc8a6d5125c05"
+      "sha256": "369daae42ab3bd746baa8465d919db92f1aa7d78a5b594e62454846b434361a2"
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.tsx",
-      "sha256": "2f9172f841b3147f328522abf213ae9a5fc90570989f9e170fc3fe133b37ab5c"
+      "sha256": "976a5b141846355ad51ed4545bb02cb406c80f43acfaeb5d77b98a7d24d8ac25"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ChatIcons.tsx",
@@ -9263,7 +9263,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
-      "sha256": "2b16fd9e2de0b8d079ee05a8458270ded4ae25a39f2b3f0dc95cdef5a2cec3e8"
+      "sha256": "65a756b83d9cae6bc5262810dee648fea096060c7dc8fcd89465b99eedcd49c3"
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiPicker.module.css",
@@ -9271,7 +9271,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
-      "sha256": "587efc34dfcccd1ca4309ce9f3f463fcb2d3368f75a05179d55423936460f719"
+      "sha256": "3bc7d29786e7a9a4534d3cda8e1af72e45b75bc60b67a3f7559c1285265a2b68"
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiSuggestList.module.css",
@@ -9335,7 +9335,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/Announcements.tsx",
-      "sha256": "52142f02d6a8cfefd62b58757c4358f96c31e60417ee5148b008796c76d7a7bc"
+      "sha256": "3251d394e5300b149c4108080f069f3a97730d814345b4d2ac1f82801c9b07c7"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.module.css",
@@ -9355,11 +9355,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityModal.module.css",
-      "sha256": "920b6803c8dfb685a4220273673dd744817f7d25c52c5a1854718de5a5609e0c"
+      "sha256": "7a47c01f6759392520ef603f9465605f5af279cc7199d601a21119c5b8ffa409"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
-      "sha256": "2479af2808ac93abda3c7d81391d1213e0cd48ec70924b9b601afa25a3e396ad"
+      "sha256": "0840c9f8109736de1af3855293fe08ea5a0fc6d3879501924dcd564fbcf4a504"
     },
     {
       "path": "library/ui/apps/hud/features/communities/InviteToCommunity.tsx",
@@ -10031,7 +10031,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/places/PlaceActions.tsx",
-      "sha256": "ba278332a5b6c911a929b6532a9d534c57835a77dcb5dc934463830c250ae81f"
+      "sha256": "a5b8119cf9aa3489d0bbf731809310359b805acd50c62486ddc3f4d9577217a2"
     },
     {
       "path": "library/ui/apps/hud/features/places/PlaceCard.module.css",
@@ -10627,7 +10627,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.clicks.test.tsx",
-      "sha256": "b78d68576c853c53cba4bf14e6c203a45b493e41ce6c330217f666fec4683e61"
+      "sha256": "e96ac43ff6d4756a921ee6353289bcc402f4480a7dfca948e2f4d5e0ad0aecf6"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.invites.test.tsx",
@@ -10871,7 +10871,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/placeDetail.test.tsx",
-      "sha256": "435fe901f017daf79fd8b7cf993540c6bda870d82cf498084e07bbb94de3f902"
+      "sha256": "f13c9a8c3496ce575830e6d14ebe89ccb7eba479187278ba119f2895f684f6cf"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/placesDiscovery.test.tsx",

@@ -427,7 +427,7 @@ describe('community card place actions', () => {
     vi.mocked(session.places.worldAccess).mockResolvedValue('password')
     renderCard(world, 'member', session)
     await openPlaces()
-    expect(await screen.findByRole('button', { name: 'ENTER PASSWORD' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Enter password for Mansion' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Jump in to Mansion' })).toBeNull()
     cleanup()
     const closed = fakeSession()
@@ -435,7 +435,7 @@ describe('community card place actions', () => {
     renderCard(world, 'member', closed)
     await openPlaces()
     await waitFor(() => expect(closed.places.worldAccess).toHaveBeenCalled())
-    expect(screen.queryByRole('button', { name: /ENTER PASSWORD|Jump in/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Enter password|Jump in/ })).toBeNull()
   })
 
   it("shows on the card a vote changed in the Place Detail it opened, so it doesn't send it again", async () => {
@@ -468,10 +468,10 @@ describe('community card place actions', () => {
     vi.mocked(session.places.worldAccess).mockResolvedValue('password')
     renderCard({ id: 'w-1', title: 'Mansion', positions: 'me.dcl.eth', detail: detailOf({ id: 'w-1', title: 'Mansion', world: true, world_name: 'me.dcl.eth' }) }, 'member', session)
     await openPlaces()
-    expect(await screen.findByRole('button', { name: 'ENTER PASSWORD' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Enter password for Mansion' })).toBeInTheDocument()
     await userEvent.click(screen.getByRole('tab', { name: 'MEMBERS' }))
     await openPlaces()
-    expect(await screen.findByRole('button', { name: 'ENTER PASSWORD' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Enter password for Mansion' })).toBeInTheDocument()
     expect(session.places.worldAccess).toHaveBeenCalledTimes(1)
   })
 

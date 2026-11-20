@@ -147,7 +147,7 @@ describe('bridge service URLs', () => {
       'https://example.org/mounted/events/api/events?community_id=some%2Fid&list=upcoming',
       'https://custom.example/social/v2/communities/some%2Fid/members?limit=100',
       // the photos are read for the community's places only, so this card (none) reads none
-      'https://custom.example/social/v1/communities/some%2Fid/places?limit=20'
+      'https://custom.example/social/v1/communities/some%2Fid/places'
     ]) {
       expect(BevyApi.kernelFetch).toHaveBeenCalledWith(expect.objectContaining({
         url, init: expect.objectContaining({ method: 'GET' })

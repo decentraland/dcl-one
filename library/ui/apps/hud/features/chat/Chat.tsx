@@ -1084,7 +1084,8 @@ export function Chat({
     }
   }
 
-  useCloseEmojiPanelOnOutsidePress(picker, pickerRef, () => setPicker(false))
+  const emojiRef = useRef<HTMLButtonElement>(null)
+  useCloseEmojiPanelOnOutsidePress(picker, pickerRef, emojiRef, () => setPicker(false))
 
   // A click anywhere in the panel that isn't a control focuses the input — unless it selected text to copy.
   const focusFromPanel = (e: React.MouseEvent): void => {
@@ -1302,7 +1303,7 @@ export function Chat({
         )}
         {focused && draft.length > 0 && <CharRing len={draft.length} />}
         {!bare && blockedState == null && (
-          <EmojiButton className={styles.emojiBtn} open={picker} onToggle={toggleEmoji} />
+          <EmojiButton ref={emojiRef} className={styles.emojiBtn} open={picker} onToggle={toggleEmoji} />
         )}
       </form>
 

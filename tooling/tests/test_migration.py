@@ -815,6 +815,18 @@ class FakeResponse(io.BytesIO):
     pass
 
 
+class ShortResponse(io.BytesIO):
+    """An HTTP body whose connection dropped: `length` still counts what its Content-Length promised."""
+
+    def __init__(self, sent, promised):
+        super().__init__(sent)
+        self.promised = promised
+
+    @property
+    def length(self):
+        return self.promised - self.tell()
+
+
 class BadgeArt(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -887,7 +899,7 @@ class CommunityThumbnails(unittest.TestCase):
         answer = self.answers[request.full_url].pop(0)
         if isinstance(answer, int):
             raise urllib.error.HTTPError(request.full_url, answer, 'x', {}, None)
-        return FakeResponse(answer)
+        return answer if isinstance(answer, ShortResponse) else FakeResponse(answer)
 
     def copy(self):
         return blobs.copy_community_thumbnail(self.source, self.store, self.ID)
@@ -919,6 +931,19 @@ class CommunityThumbnails(unittest.TestCase):
 
     def test_when_upstream_fails_once_it_should_retry(self):
         self.answers[self.URL] = [503, b'\xff\xd8\xff' + b'j' * 10]
+        with unittest.mock.patch.object(blobs, 'RETRY_DELAY', 0):
+            self.assertEqual(self.copy().status, 'copied')
+
+    def test_when_the_body_is_cut_short_it_should_retry_and_never_store_the_part(self):
+        image = blobs.PNG_MAGIC + b'x' * 2000
+        self.answers[self.URL] = [ShortResponse(image[:100], len(image)), ShortResponse(image[:100], len(image)),
+                                  ShortResponse(image[:100], len(image))]
+        with unittest.mock.patch.object(blobs, 'RETRY_DELAY', 0):
+            outcome = self.copy()
+        self.assertEqual(outcome.status, 'failed', outcome.reason)
+        self.assertIn('cut short', outcome.reason)
+        self.assertFalse(self.store.contents.exists())
+        self.answers[self.URL] = [ShortResponse(image[:100], len(image)), ShortResponse(image, len(image))]
         with unittest.mock.patch.object(blobs, 'RETRY_DELAY', 0):
             self.assertEqual(self.copy().status, 'copied')
 
