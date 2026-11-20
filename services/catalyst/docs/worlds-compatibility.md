@@ -138,7 +138,9 @@ difference not listed here is a gap, not a decision.
 - **Realm name.** `WORLDS_REALM_NAME_STRIP_ENS` (default `true`) strips
   `.dcl.eth` from `/about`'s `realmName` for worlds published here, so a
   stock client does not resolve them against Decentraland's registry.
-  Mirrored worlds keep the suffix.
+  Mirrored worlds keep the suffix. The comms mints (`/worlds/<name>/comms`,
+  `/get-comms-adapter/world-<name>`) take the stripped name for the
+  `.dcl.eth` world when no world is stored under the bare label.
 - **Owner admission.** The owner is the name authority's current holder,
   memoized for 30 seconds per DCL NAME (60 seconds per ENS name; upstream
   one minute). It is asked only when the world's access setting refuses,

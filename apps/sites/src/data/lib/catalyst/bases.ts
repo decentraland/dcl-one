@@ -8,8 +8,6 @@ export const WORLDS_PREFIX = "/worlds-content-server";
 export const SOCIAL_PREFIX = "/social-api";
 export const NOTIFICATIONS_PREFIX = "/notifications";
 export const MARKET_PREFIX = "/marketplace-api";
-export const BUILDER_PREFIX = "/builder-api";
-export const DEFAULT_CREATORS_DATA_URL = "/api/creator-hub";
 export const DEFAULT_PLAY_PATH = "/play";
 
 export type BaseEnv = Record<string, string | undefined>;
@@ -64,10 +62,6 @@ export function worldsUrl(override?: string, env: BaseEnv = processEnv()): strin
   );
 }
 
-export function publicWorldsUrl(env: BaseEnv = processEnv()): string {
-  return `${publicCatalystUrl(env)}${WORLDS_PREFIX}`;
-}
-
 export function worldsContentServerUrl(override?: string, env: BaseEnv = processEnv()): string {
   return trimSlash(
     override ?? envValue(env, "WORLDS_CONTENT_SERVER_URL") ?? worldsUrl(undefined, env),
@@ -109,10 +103,6 @@ export function blogCmsUrl(env: BaseEnv = processEnv()): string | undefined {
   return value ? trimSlash(value) : undefined;
 }
 
-export function creatorsDataUrl(override?: string, env: BaseEnv = processEnv()): string {
-  return trimSlash(override ?? envValue(env, "CREATORS_DATA_URL") ?? DEFAULT_CREATORS_DATA_URL);
-}
-
 /**
  * A path of this site as a link: under PUBLIC_CATALYST_URL (server) or
  * window.__CATALYST_BASE__ (browser) when the public origin is configured,
@@ -130,6 +120,10 @@ export function siteUrl(path: string, env: BaseEnv = processEnv()): string {
  * The explorer entry every jump-in link targets: BEVY_PLAY_URL (default /play;
  * a path on this origin, or an absolute URL) with the launch parameters.
  * `playUrl({ position: "-3,-2" })` -> `/play/?position=-3%2C-2`.
+ * An absolute URL on another origin still works as a link, but a dcl-one /play
+ * may be framed only by its own origin (routes/lib/play-framing.ts), so the
+ * pages that frame BEVY_PLAY_URL (Place detail's watcher, the scene editor)
+ * show an empty frame for one.
  */
 export function playUrl(
   params?: Record<string, string | undefined> | URLSearchParams,

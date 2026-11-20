@@ -336,14 +336,18 @@ fn voice_state_cmd(
     #[cfg(feature = "livekit")] speakers: ActiveSpeakers,
     #[cfg(feature = "livekit")] call: Option<Res<crate::voice_chat::VoiceChat>>,
     #[cfg(feature = "livekit")] call_mic: Option<Res<crate::voice_chat::CallMic>>,
+    #[cfg(feature = "livekit")] focus: Option<Res<common::structs::ClientWindowFocus>>,
     #[cfg(feature = "livekit")] call_participants: crate::voice_chat::CallParticipants,
 ) {
     if let Some(Ok(_)) = input.take() {
         #[cfg(feature = "livekit")]
-        let call = call.zip(call_mic).map(|(call, call_mic)| {
-            serde_json::to_value(call.snapshot(&call_mic, &call_participants))
-                .unwrap_or(Value::Null)
-        });
+        let call = call
+            .zip(call_mic)
+            .zip(focus)
+            .map(|((call, call_mic), focus)| {
+                serde_json::to_value(call.snapshot(&call_mic, *focus, &call_participants))
+                    .unwrap_or(Value::Null)
+            });
         #[cfg(not(feature = "livekit"))]
         let call = None;
         #[cfg(feature = "livekit")]

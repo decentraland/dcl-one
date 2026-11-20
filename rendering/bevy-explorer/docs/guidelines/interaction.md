@@ -31,9 +31,9 @@ Scene raycast requests run in two tiers each frame (`update_scene/raycast_budget
   The rest wait for a later frame. When the player walks into a capped scene it becomes uncapped,
   so its requests run then.
 - **Budget.** A tenth of the target frame: `SceneUpdates::frame_target`, which `run_scene_loop`
-  sets from the vsync refresh rate or the fps target (with the session override). That is 1.67 ms
-  at 60 fps, 0.69 ms at 144 and 0.42 ms at 240. It follows the target, not the measured frame, so a
-  slow frame does not raise the next one's budget. Raycasts run before the scene loop, so they use
+  sets from the fps target (with the session override), capped at the refresh rate under vsync.
+  That is 1.67 ms at 60 fps, 0.69 ms at 144 and 0.42 ms at 240. It follows the target, not the
+  measured frame, so a slow frame does not raise the next one's budget. Raycasts run before the scene loop, so they use
   the previous frame's target. With an uncapped frame rate (fps 0) it is a tenth of a 60 fps frame.
 - **`/raycast_budget [ms|auto]`.** Without an argument it answers
   `raycast budget: <ms> ms (auto|override)`. A value from 0 to 10 overrides the capped budget for

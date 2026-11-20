@@ -7,8 +7,8 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::sync::{Arc, OnceLock};
 
+use crate::http::CheckedRedirectClient;
 use futures::StreamExt;
-use reqwest::Client;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::{debug, warn};
 
@@ -436,7 +436,7 @@ async fn evict_corrupt_entity_file_locked(storage: &Storage, entity_id: &str) ->
 }
 
 pub struct ContentSource<'a> {
-    pub client: &'a Client,
+    pub client: &'a CheckedRedirectClient,
     pub storage: Arc<Storage>,
     pub servers: &'a [String],
     pub content_semaphore: Arc<Semaphore>,
@@ -632,11 +632,14 @@ fn extract_hash_from_snapshot_value(s: &str) -> &str {
     }
 }
 
+/// Redirects a content file download follows (a peer may serve its files elsewhere).
+pub(crate) const MAX_FILE_REDIRECTS: usize = 2;
+
 /// Tries up to [`MAX_DOWNLOAD_RETRIES`] peers, starting at a random one, and stores the file
 /// only once its decoded bytes hash to `hash`. With a `budget`, the decoded body is held
 /// against it from its first chunk until the file is stored.
 pub async fn download_file_with_retries(
-    client: &Client,
+    client: &CheckedRedirectClient,
     storage: &Storage,
     hash: &str,
     servers: &[String],
@@ -681,17 +684,19 @@ pub async fn download_file_with_retries(
 /// One `GET {server}/contents/{hash}`: the decoded body, only when it hashes to `hash`, and
 /// the budget hold that covers it until the caller has stored it.
 pub(crate) async fn fetch_verified(
-    client: &Client,
+    client: &CheckedRedirectClient,
     hash: &str,
     server: &str,
     attempt: u32,
     budget: Option<&ByteBudget>,
 ) -> Result<(Vec<u8>, Option<ByteReservation>), SyncError> {
     let url = format!("{}/contents/{}", server, hash);
-    let resp = client.get(&url).send().await.map_err(|e| {
-        warn!(hash, %server, error = %e, attempt, "Download request failed");
-        SyncError::Http(e)
-    })?;
+    let resp = crate::http::get_following_checked_redirects(client, &url, MAX_FILE_REDIRECTS)
+        .await
+        .map_err(|e| {
+            warn!(hash, %server, error = %e, attempt, "Download request failed");
+            SyncError::from(e)
+        })?;
     if resp.status().as_u16() == 404 {
         return Err(SyncError::Other(format!(
             "404 fetching {} from {}",
@@ -755,6 +760,114 @@ pub(crate) async fn fetch_verified(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn the_sync_client_dials_private_addresses_only_for_configured_sources() {
+        let hash = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenosa7776";
+        // `peer.localhost` answers the loopback without DNS and is no configured source.
+        let (port, hits) = crate::sync_test_support::redirecting_peer("/contents/{hash}", |port| {
+            format!("http://peer.localhost:{port}/target")
+        })
+        .await;
+        let source = format!("http://localhost:{port}");
+        let config = crate::config::Config::parse_for_tests(&[
+            "x",
+            "--database-url",
+            "postgres:///catalyst",
+            "--sync-source",
+            &source,
+        ])
+        .unwrap();
+        let client = crate::sync::sync_http_client(&config).unwrap();
+        assert!(
+            fetch_verified(&client, hash, &source, 0, None)
+                .await
+                .is_err()
+        );
+        assert!(
+            client
+                .get(format!("http://peer.localhost:{port}/target"))
+                .send()
+                .await
+                .is_err()
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let direct = client.get(format!("{source}/target")).send().await.unwrap();
+        assert_eq!(direct.status(), 200);
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_snapshot_list_is_never_followed_through_a_redirect() {
+        // A same-origin target on a configured source: only the redirect policy refuses it.
+        let (port, hits) = crate::sync_test_support::redirecting_peer("/snapshots", |port| {
+            format!("http://localhost:{port}/target")
+        })
+        .await;
+        let server = format!("http://localhost:{port}");
+        let config = crate::config::Config::parse_for_tests(&[
+            "x",
+            "--database-url",
+            "postgres:///catalyst",
+            "--sync-source",
+            &server,
+        ])
+        .unwrap();
+        let client = crate::sync::sync_http_client(&config).unwrap();
+        assert!(
+            crate::sync::snapshots::fetch_snapshots(&client, &server, 1)
+                .await
+                .is_err()
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_file_download_redirect_to_a_private_address_is_refused() {
+        use crate::http::{CheckedRedirectClient, PublicAddressResolver, ReservedNamesResolver};
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        // Every name answers the loopback, as a public-looking name can;
+        // `lookups` counts those of public.example. The other-origin client is
+        // the one passed in, so its lookup goes through this resolver.
+        let lookups = Arc::new(AtomicUsize::new(0));
+        let counted = lookups.clone();
+        let loopback = ReservedNamesResolver::over(move |host| {
+            if host == "public.example" {
+                counted.fetch_add(1, SeqCst);
+            }
+            Box::pin(async {
+                let addrs = [std::net::SocketAddr::from(([127, 0, 0, 1], 0))];
+                Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+            })
+        });
+        let client = crate::http::HttpClientCfg::default()
+            .builder()
+            .dns_resolver(PublicAddressResolver::over(
+                loopback.clone(),
+                ["peer.example".to_string()],
+            ))
+            .build()
+            .unwrap();
+        let client =
+            CheckedRedirectClient::new(client, PublicAddressResolver::over(loopback, []), 1)
+                .unwrap();
+        let hash = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenosa7776";
+        for target in [
+            |port: u16| format!("http://public.example:{port}/target"),
+            |port: u16| format!("http://127.0.0.1:{port}/target"),
+        ] {
+            let (port, hits) =
+                crate::sync_test_support::redirecting_peer("/contents/{hash}", target).await;
+            let server = format!("http://peer.example:{port}");
+            assert!(
+                fetch_verified(&client, hash, &server, 0, None)
+                    .await
+                    .is_err()
+            );
+            assert_eq!(hits.load(SeqCst), 0);
+        }
+        assert_eq!(lookups.load(SeqCst), 1);
+    }
     use crate::auth::{hash_bytes, hash_bytes_v1};
     #[cfg(unix)]
     use crate::storage::hex_prefix;
@@ -938,7 +1051,10 @@ mod tests {
         );
         let id = hash_bytes_v1(format!("in-flight-{}", uuid::Uuid::new_v4()).as_bytes());
         let servers = vec![url];
-        let (client, chain) = (reqwest::Client::new(), Vec::new());
+        let (client, chain) = (
+            crate::sync::test_sync_client(reqwest::Client::new()),
+            Vec::new(),
+        );
         let attempt = deploy_entity_streaming(
             ContentSource {
                 client: &client,
@@ -1153,9 +1269,15 @@ mod tests {
         let (base, server) = spawn_content_server(wire, Some("gzip")).await;
         let (storage, tmp) = temp_storage("gzip-wire").await;
 
-        download_file_with_retries(&reqwest::Client::new(), &storage, &cid, &[base], None)
-            .await
-            .expect("a gzip-labeled body whose decoded bytes match the CID must be accepted");
+        download_file_with_retries(
+            &crate::sync::test_sync_client(reqwest::Client::new()),
+            &storage,
+            &cid,
+            &[base],
+            None,
+        )
+        .await
+        .expect("a gzip-labeled body whose decoded bytes match the CID must be accepted");
 
         let stored = storage.retrieve(&cid).await.unwrap().unwrap();
         assert_eq!(
@@ -1176,10 +1298,15 @@ mod tests {
         let (base, server) = spawn_content_server(PAYLOAD.to_vec(), Some("gzip")).await;
         let (storage, tmp) = temp_storage("raw-labeled").await;
 
-        let err =
-            download_file_with_retries(&reqwest::Client::new(), &storage, &cid, &[base], None)
-                .await
-                .expect_err("a non-gzip body labeled gzip must fail transfer decoding");
+        let err = download_file_with_retries(
+            &crate::sync::test_sync_client(reqwest::Client::new()),
+            &storage,
+            &cid,
+            &[base],
+            None,
+        )
+        .await
+        .expect_err("a non-gzip body labeled gzip must fail transfer decoding");
         assert!(
             err.to_string().contains("gzip transfer decoding failed"),
             "{err}"
@@ -1199,10 +1326,15 @@ mod tests {
         let (base, server) = spawn_content_server(wire, Some("gzip")).await;
         let (storage, tmp) = temp_storage("gzip-corrupt").await;
 
-        let err =
-            download_file_with_retries(&reqwest::Client::new(), &storage, &cid, &[base], None)
-                .await
-                .expect_err("decoded bytes that mismatch the CID must still be rejected");
+        let err = download_file_with_retries(
+            &crate::sync::test_sync_client(reqwest::Client::new()),
+            &storage,
+            &cid,
+            &[base],
+            None,
+        )
+        .await
+        .expect_err("decoded bytes that mismatch the CID must still be rejected");
         assert!(err.to_string().contains("content hash mismatch"), "{err}");
         assert!(!storage.exist(&cid).await.unwrap());
 

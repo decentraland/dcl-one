@@ -20,6 +20,7 @@ vi.hoisted(() => {
 const net = vi.hoisted(() => ({
   fetchProfile: vi.fn(),
   fetchMyCommunities: vi.fn(),
+  fetchMemberCommunities: vi.fn(),
   fetchProfilePlaces: vi.fn(),
   fetchProfileCreations: vi.fn(),
   fetchProfileAssets: vi.fn(),
@@ -33,7 +34,10 @@ vi.mock("@/data/lib/catalyst/social/profile", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/social/profile")>()),
   fetchProfile: net.fetchProfile,
 }));
-vi.mock("@/data/lib/catalyst/social/profile-communities", () => ({ fetchMyCommunities: net.fetchMyCommunities }));
+vi.mock("@/data/lib/catalyst/social/profile-communities", () => ({
+  fetchMyCommunities: net.fetchMyCommunities,
+  fetchMemberCommunities: net.fetchMemberCommunities,
+}));
 vi.mock("@/data/lib/catalyst/places/profile-places", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/places/profile-places")>()),
   fetchProfilePlaces: net.fetchProfilePlaces,
@@ -42,6 +46,7 @@ vi.mock("@/data/lib/catalyst/marketplace/profile-collectibles", async (original)
   ...(await original<typeof import("@/data/lib/catalyst/marketplace/profile-collectibles")>()),
   fetchProfileCreations: net.fetchProfileCreations,
   fetchProfileAssets: net.fetchProfileAssets,
+  fetchProfileAssetCount: async () => 0,
 }));
 vi.mock("@/data/lib/catalyst/social/photos", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/social/photos")>()),
@@ -63,7 +68,6 @@ const { stub } = vi.hoisted(() => ({
   }),
 }));
 vi.mock("@ui/web/pages/StProfileOverviewTab", () => stub("overview"));
-vi.mock("@ui/web/pages/StProfileCommunitiesTab", () => stub("communities"));
 
 import { CatalystError } from "@/data/lib/catalyst/client";
 import { mapProfile } from "@/data/lib/catalyst/social/profile";
@@ -432,6 +436,21 @@ describe("profile route, creations and assets", () => {
     expect(screen.getByText("Alice", { selector: "article *" })).toBeTruthy();
   });
 
+  it("opens another profile's creations on the default category", async () => {
+    const B = "0x1111111111111111111111111111111111111111";
+    net.fetchProfile.mockResolvedValue(avatar("Alice"));
+    net.fetchProfileCreations.mockResolvedValue({ items: [hat], received: 1, total: 1 });
+    const router = mount(`/profile/${A}/creations`);
+    await screen.findByRole("link", { name: "Billyjuice" });
+    await act(async () => screen.getByRole("tab", { name: "Emotes" }).click());
+    expect(screen.getByRole("tab", { name: "Emotes" }).getAttribute("aria-selected")).toBe("true");
+
+    await act(async () => router.navigate(`/profile/${B}/creations`));
+
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Wearables" }).getAttribute("aria-selected")).toBe("true"));
+    expect(net.fetchProfileCreations).toHaveBeenLastCalledWith(B, expect.objectContaining({ category: "wearable" }), expect.anything());
+  });
+
   it("shows the owner's assets on their own profile", async () => {
     auth.state = { isConnected: true, address: A, identity };
     net.fetchProfile.mockResolvedValue(avatar("Alice"));
@@ -490,13 +509,19 @@ describe("profile route, communities", () => {
     expect(net.fetchMyCommunities).toHaveBeenCalledTimes(1);
   });
 
-  it("neither reads nor reports communities on another member's profile", async () => {
+  it("lists another member's public communities in the profile's frame, unsigned", async () => {
     auth.state = { isConnected: true, address: "0x1111111111111111111111111111111111111111", identity };
     net.fetchProfile.mockResolvedValue(avatar("Alice"));
+    net.fetchMemberCommunities.mockResolvedValue({
+      communities: [{ id: "c1", name: "Builders", role: "owner", membersCount: null, privacy: null, thumbnailUrl: null }],
+      total: 1,
+    });
 
     mount(`/profile/${A}/communities`);
 
-    expect(await screen.findByRole("heading", { name: "Alice" })).toBeTruthy();
+    expect((await screen.findByRole("link", { name: /Builders/ })).getAttribute("href")).toBe("/social/communities/c1");
+    expect(screen.getByRole("tab", { name: "Communities" }).getAttribute("aria-selected")).toBe("true");
+    expect(net.fetchMemberCommunities).toHaveBeenCalledWith(A, expect.anything());
     expect(net.fetchMyCommunities).not.toHaveBeenCalled();
     expect(net.track.mock.calls.some(([event]) => event === "profile_communities_load_failed")).toBe(false);
   });

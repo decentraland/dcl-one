@@ -250,6 +250,16 @@ pub enum ReservationDisposition {
 /// that created no transaction), `RelayerFailed` (a lookup before signing), `HighCongestion`,
 /// `RelayerUnavailable`, and validation. Anything that can follow a send attempt is
 /// `RelayerTimeout`, answered without it.
+///
+/// The evidence is about this request, not about the signed meta-transaction. If the same signed
+/// body reached the relay twice and the first copy landed, the second fails before any send (the
+/// meta-transaction nonce is spent, so validation or gas estimation reverts) and is answered as not
+/// sent. The client then reads the purchase as refused while the first copy bought it. A credit is
+/// consumed once, so nothing can spend the same credit again, a web3 wallet's fallback included.
+/// But a retry that takes a new credit (the group failed, then tried again) can buy a second
+/// time, and so can a relayed MANA purchase that falls back to a web3 wallet. The shop client
+/// never resends a POST whose answer it lost (it reads that as in flight), so this takes something
+/// between the buyer and the relay resending it. That risk is accepted here, not handled.
 pub fn reservation_disposition(err: &ApiError) -> ReservationDisposition {
     if is_post_broadcast(err) {
         return ReservationDisposition::Keep;
@@ -484,10 +494,14 @@ impl TransactionComponent {
             .await?;
             if used >= budget {
                 tracing::warn!(budget, "relay budget for free calls is spent for the day");
-                return Err(ApiError::RelayBudgetSpent(
-                    "The relayer's daily budget for non-sale transactions is spent; try again later"
+                // Read on the reservation's own connection: the global lock is held, and another
+                // connection from the pool may be waiting for it.
+                let retry_at = retry_at(&mut *tx, None, window_start, budget).await;
+                return Err(ApiError::RelayBudgetSpent {
+                    message: "The relayer's daily budget for non-sale transactions is spent; try again later"
                         .into(),
-                ));
+                    retry_at,
+                });
             }
         }
         sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
@@ -520,9 +534,18 @@ impl TransactionComponent {
         let count: i64 = row.try_get("n")?;
         let reserved: bool = row.try_get("reserved")?;
         if !reserved {
-            return Err(ApiError::QuotaReached(format!(
-                "Max amount of transactions reached for address. Quota: {count}"
-            )));
+            let retry_at = retry_at(
+                &self.pool,
+                Some(user_address),
+                window_start,
+                max_transactions_per_day,
+            )
+            .await;
+            return Err(ApiError::QuotaReached {
+                message: format!("Max amount of transactions reached for address. Quota: {count}"),
+                quota: max_transactions_per_day,
+                retry_at,
+            });
         }
         Ok(())
     }
@@ -573,10 +596,11 @@ impl TransactionComponent {
         self.check_function_selector(tx)?;
         check_nested_meta_tx(tx)?;
         let sender = MetaTxSender::from_meta_tx_calldata(&tx.from, &tx.params[1])?;
-        // A trial's relayer pays gas for the trial's buyers only, judged on the userAddress the
-        // meta-transaction is signed for (its signature is checked below): any other wallet is
-        // refused before the daily quota or a broadcast.
-        if let Some(buyers) = &settings.trial_buyers
+        // A trial's relayer pays gas for the trial's buyers only (unless it relays for every
+        // wallet, CREDITS_TRIAL_RELAY_ALL_WALLETS), judged on the userAddress the meta-transaction
+        // is signed for (its signature is checked below): any other wallet is refused before the
+        // daily quota or a broadcast.
+        if let Some(buyers) = settings.relay_only_for()
             && !buyers.admits(sender.as_str())
         {
             return Err(ApiError::Forbidden(
@@ -584,6 +608,7 @@ impl TransactionComponent {
             ));
         }
         self.check_self_relay(&sender)?;
+        check_refused_method(settings, tx)?;
         self.check_contract_address(contracts, tx).await?;
         check_sale_price(settings, tx)?;
         if self.chain.is_some() {
@@ -837,16 +862,35 @@ fn check_nested_meta_tx(tx: &TransactionData) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// The registered sale target a meta-transaction is aimed at and its calldata
+/// (empty when not hex); `None` for any other target.
+fn sale_target_call(settings: &Settings, tx: &TransactionData) -> Option<(abi::SaleKind, Vec<u8>)> {
+    let contract = tx.params[0].trim().parse::<Address>().ok()?;
+    let kind = abi::sale_target(settings.collections_chain_id, contract)?;
+    Some((kind, hex_to_bytes(&tx.params[1]).unwrap_or_default()))
+}
+
+/// Refuses a method a registered sale target never relays
+/// (`abi::refused_method`), before any simulation or quota.
+fn check_refused_method(settings: &Settings, tx: &TransactionData) -> Result<(), ApiError> {
+    let Some((kind, full_data)) = sale_target_call(settings, tx) else {
+        return Ok(());
+    };
+    match abi::refused_method(&full_data, kind) {
+        Some(method) => Err(ApiError::InvalidTransaction(format!(
+            "The meta-transaction method {method} is not allowed for contract {}.",
+            tx.params[0]
+        ))),
+        None => Ok(()),
+    }
+}
+
 /// The minimum sale price, on every registered sale target of the relay's
 /// chain (`abi::sale_target`); a target outside them has nothing to price.
 fn check_sale_price(settings: &Settings, tx: &TransactionData) -> Result<(), ApiError> {
-    let Ok(contract_address) = tx.params[0].trim().parse::<Address>() else {
+    let Some((kind, full_data)) = sale_target_call(settings, tx) else {
         return Ok(());
     };
-    let Some(kind) = abi::sale_target(settings.collections_chain_id, contract_address) else {
-        return Ok(());
-    };
-    let full_data = hex_to_bytes(&tx.params[1]).unwrap_or_default();
     let Some(sale_price) = abi::get_sale_price(&full_data, settings.collections_chain_id, kind)
     else {
         return Ok(());
@@ -899,6 +943,73 @@ fn is_session_id(s: &str) -> bool {
 
 fn hex_to_bytes(s: &str) -> Option<Vec<u8>> {
     crate::auth::decode_hex_0x(s).ok()
+}
+
+/// [`next_slot_at`] for a refusal already decided: a failed read is logged and leaves the 429
+/// without `retryAt` rather than turning it into a 500.
+pub(super) async fn retry_at<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    user_address: Option<&str>,
+    window_start: NaiveDateTime,
+    cap: i64,
+) -> Option<i64> {
+    next_slot_at(executor, user_address, window_start, cap)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "economy: could not read when a refused relay is next admitted");
+            None
+        })
+}
+
+/// When the set that refused a relay admits the next one: the address's relays
+/// (`Some(address)`) or every free call (`None`), whose `cap`-th newest counted row has to leave
+/// the window for the count to drop under `cap` (the oldest at the cap, a later one when the cap
+/// is under the count), plus the window, as the first whole unix second past it (a row exactly a
+/// window old still counts). `None` with no cap above 0, or when fewer than `cap` rows are left
+/// by the time it is read (a released reservation). Run on the caller's connection, so a caller
+/// holding a lock reads without waiting for another. Only `created_at` is read, so rows tied on it
+/// give the same answer in any order, and the order needs no tiebreak (an index-only scan over
+/// `transactions_user_created_idx` or `transactions_free_created_idx`).
+pub(super) async fn next_slot_at<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    user_address: Option<&str>,
+    window_start: NaiveDateTime,
+    cap: i64,
+) -> Result<Option<i64>, ApiError> {
+    if cap <= 0 {
+        return Ok(None);
+    }
+    let leaving: Option<NaiveDateTime> = match user_address {
+        Some(address) => {
+            sqlx::query_scalar(
+                "SELECT created_at FROM economy.transactions \
+                 WHERE user_address = $1 AND created_at >= $2 \
+                 ORDER BY created_at DESC OFFSET $3 LIMIT 1",
+            )
+            .bind(address)
+            .bind(window_start)
+            .bind(cap - 1)
+            .fetch_optional(executor)
+            .await?
+        }
+        None => {
+            sqlx::query_scalar(
+                "SELECT created_at FROM economy.transactions \
+                 WHERE free_call AND created_at >= $1 \
+                 ORDER BY created_at DESC OFFSET $2 LIMIT 1",
+            )
+            .bind(window_start)
+            .bind(cap - 1)
+            .fetch_optional(executor)
+            .await?
+        }
+    };
+    Ok(leaving.map(|at| {
+        (at + chrono::Duration::seconds(QUOTA_WINDOW_SECS))
+            .and_utc()
+            .timestamp()
+            + 1
+    }))
 }
 
 #[cfg(test)]

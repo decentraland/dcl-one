@@ -96,13 +96,25 @@ impl Snapshot {
 }
 
 /// `doc` with every `feature_flags_local` override of `app` applied to its `flags`.
-pub async fn with_local_overrides(pool: &PgPool, app: &str, mut doc: Value) -> sqlx::Result<Value> {
-    let overrides: Vec<(String, bool)> = sqlx::query_as(
+pub async fn with_local_overrides(pool: &PgPool, app: &str, doc: Value) -> sqlx::Result<Value> {
+    Ok(apply_local_overrides(
+        doc,
+        &local_overrides(pool, app).await?,
+    ))
+}
+
+/// The `feature_flags_local` overrides of `app`, by name.
+pub async fn local_overrides(pool: &PgPool, app: &str) -> sqlx::Result<Vec<(String, bool)>> {
+    sqlx::query_as(
         "SELECT name, value FROM explore_api.feature_flags_local WHERE app = $1 ORDER BY name",
     )
     .bind(app)
     .fetch_all(pool)
-    .await?;
+    .await
+}
+
+/// `doc` with `overrides` applied to its `flags`.
+pub fn apply_local_overrides(mut doc: Value, overrides: &[(String, bool)]) -> Value {
     if !overrides.is_empty() {
         let flags = doc
             .as_object_mut()
@@ -110,11 +122,11 @@ pub async fn with_local_overrides(pool: &PgPool, app: &str, mut doc: Value) -> s
             .and_then(Value::as_object_mut);
         if let Some(flags) = flags {
             for (name, value) in overrides {
-                flags.insert(name, Value::Bool(value));
+                flags.insert(name.clone(), Value::Bool(*value));
             }
         }
     }
-    Ok(doc)
+    doc
 }
 
 pub async fn set_local_flag(pool: &PgPool, app: &str, name: &str, value: bool) -> sqlx::Result<()> {

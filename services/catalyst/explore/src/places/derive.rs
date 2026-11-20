@@ -1149,16 +1149,12 @@ mod tests {
             .unwrap();
         let token = uuid::Uuid::new_v4().simple().to_string();
         let name = format!("catalyst_z_scene_cache_{token}");
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(2)
             .connect_with(opts.database(&name))
             .await
             .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         let root = std::env::temp_dir().join(format!("scene-cache-{token}"));
         let storage = crate::storage::Storage::from_config(&root).await.unwrap();
         let first = scene(&pool, "first", "1,1", &["1,1"], None).await;
@@ -1261,16 +1257,12 @@ mod tests {
             "catalyst_z_derive_{}",
             &uuid::Uuid::new_v4().simple().to_string()[..12]
         );
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(2)
             .connect_with(opts.database(&name))
             .await
             .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         let t = uuid::Uuid::new_v4().simple().to_string();
         let (x, y) = (
             i64::from_str_radix(&t[..4], 16).unwrap() % 150,
@@ -1483,16 +1475,12 @@ mod tests {
             "catalyst_z_derive_worlds_{}",
             &uuid::Uuid::new_v4().simple().to_string()[..12]
         );
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(2)
             .connect_with(opts.database(&name))
             .await
             .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
 
         let upstream = |id: &str| json!({ "id": id, "world_name": id, "title": "upstream" });
         for id in ["local.dcl.eth", "mirrored.dcl.eth"] {

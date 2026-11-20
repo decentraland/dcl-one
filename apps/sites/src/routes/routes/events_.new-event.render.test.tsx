@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,7 +21,7 @@ describe("when the actual hangout route renders the details step", () => {
         initialEntries: ["/events/new-event?step=details"],
         hydrationData: { loaderData: { hangout: { sid: "test-session", mode: "create", eventId: null, communityId: "", categories: [], categoriesError: false, assignment: { variant: "wizard" } } } },
       });
-      return renderToString(<RouterProvider router={router} />);
+      return renderToString(<QueryClientProvider client={new QueryClient()}><RouterProvider router={router} /></QueryClientProvider>);
     };
   });
 

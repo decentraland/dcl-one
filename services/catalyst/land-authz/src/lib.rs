@@ -198,6 +198,8 @@ pub struct Settings {
     /// `LAND_AUTHZ_CONFIRMATIONS` (12): blocks the index stays behind the
     /// head, so a reorg shallower than this never reaches the log.
     pub confirmations: u64,
+    /// [`indexer::REBIND_LOCK_TIMEOUT`]; no environment variable sets it.
+    pub rebind_lock_timeout: Duration,
 }
 
 impl Settings {
@@ -217,6 +219,7 @@ impl Settings {
             replay_from_block: None,
             stop_block: None,
             confirmations: 12,
+            rebind_lock_timeout: indexer::REBIND_LOCK_TIMEOUT,
         })
     }
 

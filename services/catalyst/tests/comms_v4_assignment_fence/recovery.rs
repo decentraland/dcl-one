@@ -504,14 +504,18 @@ async fn same_room_recovery_renews_expired_credentials_without_periodic_churn() 
 }
 
 #[tokio::test]
-async fn started_native_periodic_replay_retries_borrowed_and_foreign_rows_after_lapse() {
-    for row in [
-        "same-session-null",
-        "same-session-assignment",
-        "foreign-session",
-    ] {
-        periodic_native_retry_case(row).await;
-    }
+async fn started_native_periodic_replay_retries_a_borrowed_null_row_after_lapse() {
+    periodic_native_retry_case("same-session-null").await;
+}
+
+#[tokio::test]
+async fn started_native_periodic_replay_retries_a_borrowed_assignment_row_after_lapse() {
+    periodic_native_retry_case("same-session-assignment").await;
+}
+
+#[tokio::test]
+async fn started_native_periodic_replay_retries_a_foreign_row_after_lapse() {
+    periodic_native_retry_case("foreign-session").await;
 }
 
 #[tokio::test]

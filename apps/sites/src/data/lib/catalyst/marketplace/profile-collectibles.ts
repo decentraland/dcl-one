@@ -14,7 +14,9 @@ import { warnInvalid } from "../warn";
 export type CreationsCategory = "wearable" | "emote";
 
 /** What a profile's Assets tab filters by; no category is every asset. */
-export type AssetCategory = "wearable" | "emote" | "ens" | "parcel" | "estate";
+export const OPTIONAL_ASSET_CATEGORIES = ["ens", "parcel", "estate"] as const;
+export type OptionalAssetCategory = (typeof OPTIONAL_ASSET_CATEGORIES)[number];
+export type AssetCategory = "wearable" | "emote" | OptionalAssetCategory;
 
 export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary" | "exotic" | "mythic" | "unique";
 
@@ -92,6 +94,8 @@ const CreationRowSchema = CatalogItemSchema.pick({
   data: z.record(z.string(), z.unknown()).nullish(),
   // Optional, like every field the card does not show: an unknown supply is not sold out.
   available: z.number().nullish().transform((v) => v ?? null),
+  // Only the worn items' order reads it.
+  urn: z.string().nullish(),
 });
 
 const AssetRowSchema = z.object({
@@ -164,7 +168,7 @@ function traitsOf(block: Record<string, unknown> | undefined): CollectibleTraits
   };
 }
 
-type ParsedCreation = { card: Omit<ProfileCreation, "payment">; sale: CardSaleFacts };
+type ParsedCreation = { card: Omit<ProfileCreation, "payment">; sale: CardSaleFacts; urn?: string };
 
 function toCreation(raw: unknown): ParsedCreation | null {
   const row = CreationRowSchema.safeParse(raw);
@@ -184,7 +188,7 @@ function toCreation(raw: unknown): ParsedCreation | null {
     network: networkOf(item.network),
     traits: traitsOf(traitsBlock(item.data)),
   };
-  return { card, sale: item };
+  return { card, sale: item, urn: item.urn ?? undefined };
 }
 
 /** Each row's credit price, quoted as the Shop's cards are; a failed or slow quote reads as unavailable. */
@@ -205,17 +209,27 @@ async function creditPrices(rows: ParsedCreation[], signal?: AbortSignal): Promi
  * else "Untitled". The catalogue names an unnamed parcel or estate by its capitalized category
  * ("Parcel", "Estate"), so for those two that name counts as none.
  */
+function coordinate(value: unknown): string | null {
+  const text = typeof value === "number" || typeof value === "string" ? String(value).trim() : "";
+  return text ? text : null;
+}
+
 function assetName(category: string, name: string | null | undefined, data: Record<string, unknown> | null | undefined): string {
   if (category === "ens") {
     const subdomain = (data?.ens as { subdomain?: unknown } | undefined)?.subdomain;
-    const label = (name ?? "").replace(/\.dcl\.eth$/i, "").trim() || (typeof subdomain === "string" ? subdomain.trim() : "");
+    // The catalyst names an unnamed token by its capitalized category ("Ens"); a NAME's own name ends in .dcl.eth.
+    const given = name === "Ens" ? "" : (name ?? "");
+    const label = given.replace(/\.dcl\.eth$/i, "").trim() || (typeof subdomain === "string" ? subdomain.trim() : "");
     return label || "Untitled";
   }
   const given = (name ?? "").trim();
   const placeholder = (category === "parcel" || category === "estate") && given.toLowerCase() === category;
   if (given && !placeholder) return given;
   const parcel = data?.parcel as { x?: unknown; y?: unknown } | undefined;
-  if (category === "parcel" && parcel && parcel.x != null && parcel.y != null) return `Parcel ${String(parcel.x)},${String(parcel.y)}`;
+  // The catalyst sends a missing coordinate as "", not null.
+  const x = coordinate(parcel?.x);
+  const y = coordinate(parcel?.y);
+  if (category === "parcel" && x !== null && y !== null) return `Parcel ${x},${y}`;
   if (category === "estate") return "Estate";
   return "Untitled";
 }
@@ -243,6 +257,54 @@ function toAsset(raw: unknown): ProfileAsset | null {
   };
 }
 
+/** The parsed rows as cards, each with the payment the Shop's card rule gives it. */
+async function pricedCreations(rows: ParsedCreation[], signal?: AbortSignal): Promise<ProfileCreation[]> {
+  const credits = rows.length > 0 ? await creditPrices(rows, signal) : [];
+  return rows.map(({ card, sale }, index) => ({ ...card, payment: cardPayment(sale, credits[index] ?? null) }));
+}
+
+/**
+ * An item URN in one spelling: lowercase, with Ethereum named `ethereum` (the catalogue also takes
+ * `mainnet` and answers `ethereum`). The URN is the one key a worn item and its catalogue row share:
+ * a `collections-v1` URN names its collection and item by name, where the row has a contract
+ * address and a number.
+ */
+function urnKey(urn: string): string {
+  return urn.toLowerCase().replace(":mainnet:", ":ethereum:");
+}
+
+/**
+ * The catalogue's cards for the collectibles an avatar wears, in the order worn. One read per
+ * network, each naming its item URNs; an item the catalogue does not know is left out. When one
+ * network's read fails, the other network's cards are still returned; the read fails only when no
+ * network it asked answered.
+ */
+export async function fetchWornCollectibles(urns: readonly string[], opts: GetOptions = {}): Promise<ProfileCreation[]> {
+  const path = "/marketplace-api/v2/catalog";
+  const byNetwork = (network: "matic" | "ethereum") => urns.filter((urn) => urnKey(urn).split(":")[2] === network);
+  const read = async (network: "MATIC" | "ETHEREUM", wanted: string[]): Promise<ParsedCreation[]> => {
+    const query = new URLSearchParams({ network, first: String(wanted.length) });
+    for (const urn of wanted) query.append("urn", urn);
+    return collect(requirePage(await getJSON<unknown>(`${path}?${query}`, opts), path).data, toCreation);
+  };
+  const reads: Promise<ParsedCreation[]>[] = [];
+  const matic = byNetwork("matic");
+  const ethereum = byNetwork("ethereum");
+  if (matic.length > 0) reads.push(read("MATIC", matic));
+  if (ethereum.length > 0) reads.push(read("ETHEREUM", ethereum));
+  const results = await Promise.allSettled(reads);
+  // A visitor who left aborts every read; that is no partial answer.
+  opts.signal?.throwIfAborted();
+  const failed = results.find((result) => result.status === "rejected");
+  if (failed && results.every((result) => result.status === "rejected")) throw failed.reason;
+  const order = new Map(urns.map((urn, index) => [urnKey(urn), index]));
+  const position = (row: ParsedCreation) => (row.urn ? order.get(urnKey(row.urn)) : undefined) ?? urns.length;
+  const rows = results
+    .flatMap((result) => (result.status === "fulfilled" ? result.value : []))
+    .sort((a, b) => position(a) - position(b));
+  return pricedCreations(rows, opts.signal);
+}
+
 /** A creator's published items of one category, newest first, from the catalogue. */
 export async function fetchProfileCreations(
   creator: string,
@@ -263,23 +325,18 @@ export async function fetchProfileCreations(
     }),
     path,
   );
-  const rows = collect(page.data, toCreation);
-  const credits = rows.length > 0 ? await creditPrices(rows, opts.signal) : [];
   return {
-    items: rows.map(({ card, sale }, index) => ({ ...card, payment: cardPayment(sale, credits[index] ?? null) })),
+    items: await pricedCreations(collect(page.data, toCreation), opts.signal),
     received: page.data.length,
     total: page.total,
   };
 }
 
-/** The tokens a wallet owns, newest first, optionally of one category. */
-export async function fetchProfileAssets(
-  owner: string,
-  params: { category?: AssetCategory; first: number; skip?: number },
-  opts: GetOptions = {},
-): Promise<CollectiblePage<ProfileAsset>> {
+type OwnedAssetsParams = { category?: AssetCategory; first: number; skip?: number };
+
+async function readOwnedAssets(owner: string, params: OwnedAssetsParams, opts: GetOptions) {
   const path = "/marketplace-api/v1/nfts";
-  const page = requirePage(
+  return requirePage(
     await getJSON<unknown>(path, {
       ...opts,
       query: {
@@ -292,5 +349,20 @@ export async function fetchProfileAssets(
     }),
     path,
   );
+}
+
+/** The tokens a wallet owns, newest first, optionally of one category. */
+export async function fetchProfileAssets(
+  owner: string,
+  params: OwnedAssetsParams,
+  opts: GetOptions = {},
+): Promise<CollectiblePage<ProfileAsset>> {
+  const page = await readOwnedAssets(owner, params, opts);
   return { items: collect(page.data, toAsset), received: page.data.length, total: page.total };
+}
+
+/** The owned count covers the entire category, including tokens past the first page. */
+export async function fetchProfileAssetCount(owner: string, category: OptionalAssetCategory, opts: GetOptions = {}) {
+  const page = await readOwnedAssets(owner, { category, first: 1 }, opts);
+  return page.total;
 }

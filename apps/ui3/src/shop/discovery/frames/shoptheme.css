@@ -105,7 +105,6 @@
   background-color: #32134c;
   color: var(--shop-soft-white);
   font-family: var(--shop-sans);
-  -webkit-font-smoothing: antialiased;
 }
 @keyframes shop-symbol-drift {
   from { background-position: 0 0; }
@@ -179,6 +178,7 @@ body[data-shop-scrolled] .site-layout:has(.shop-chrome) .site-layout__navigation
 .shop-chrome {
   color: var(--shop-soft-white);
   font-family: var(--shop-sans);
+  -webkit-font-smoothing: antialiased;
   background: transparent;
 }
 .shop-chrome > .cs__tools {

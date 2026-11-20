@@ -47,8 +47,9 @@ numbers.
   carries the windows of its sampled time summed (`snapshot.hudMainThreadCost`, `null` when none
   arrived).
 - **Hiccup threshold.** The larger of 50 ms and two target frame times: 50 ms at 60 FPS and
-  above, 66.7 ms at a 30 FPS cap, 50 ms with vsync or uncapped. The target is the session
-  override (`/session_graphics fps`), else the configured one.
+  above, 66.7 ms at a 30 FPS cap, 50 ms uncapped. The target is the session override
+  (`/session_graphics fps`), else the configured one, capped at the monitor's refresh rate under
+  vsync.
 - **Frame time breakdown.** Where the previous frame's wall time went, smoothed: the main world's
   schedules (`First` through `Last`), the scene loop until its deadline, the frame limiter's sleep
   (native), the render world's CPU time from `ExtractCommands` on (extraction and the swapchain wait

@@ -3,6 +3,9 @@ name = "dcl_deno"
 version = "0.1.0"
 edition = "2021"
 
+[lints]
+workspace = true
+
 [lib]
 
 [features]

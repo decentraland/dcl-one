@@ -165,6 +165,18 @@ pub trait VoiceRooms: Send + Sync {
         address: &str,
         muted: bool,
     ) -> Result<(), VoiceUnavailable>;
+
+    /// Shows a DM privacy change to the peers of the private-messages
+    /// room while `address` is in it (upstream social-service calls the
+    /// gatekeeper's `PATCH /users/{address}/private-messages-privacy` for
+    /// this). A runtime without LiveKit has nobody to show it to.
+    async fn publish_private_messages_privacy(
+        &self,
+        _address: &str,
+        _privacy: &str,
+    ) -> Result<(), VoiceUnavailable> {
+        Ok(())
+    }
 }
 
 /// A test double with no attached LiveKit adapter.
@@ -331,6 +343,15 @@ fn address(raw: &str) -> Result<Address, VoiceUnavailable> {
 impl VoiceRooms for CommsState {
     fn presence_config(&self) -> super::db::VoiceDbConfig {
         self.voice_db.config()
+    }
+    async fn publish_private_messages_privacy(
+        &self,
+        address: &str,
+        privacy: &str,
+    ) -> Result<(), VoiceUnavailable> {
+        super::private::publish_private_messages_privacy(self, address, privacy)
+            .await
+            .map_err(|e| VoiceUnavailable::Failed(e.to_string()))
     }
     async fn create_pending_private_call(
         &self,

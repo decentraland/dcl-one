@@ -5,10 +5,12 @@
 // here, with the /play tests, because /play is the UI's host.
 
 import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-const UI = join(__dirname, '../../../../../library/ui/apps/shop/ui')
+const LIBRARY = resolve(__dirname, '../../../../../library')
+const SHOP = join(LIBRARY, 'ui/apps/shop')
+const UI = join(SHOP, 'ui')
 const ALLOWED = [
   /^react$/,
   // The public components (the item card and its skeleton are the design system's ShopCard).
@@ -52,3 +54,45 @@ describe('the in-world Shop UI', () => {
     expect(outside).toEqual([])
   })
 })
+
+// Every module of the in-world Shop, its data and React state included: `library/` depends only on library
+// code (AGENTS.md), so nothing reaches into an app, by a relative path or by the apps' `@ui` alias.
+const sources = (dir: string): string[] =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name)
+    if (entry.isDirectory()) return entry.name === 'assets' ? [] : sources(path)
+    return /\.tsx?$/.test(entry.name) ? [path] : []
+  })
+// Static imports and re-exports (as above) and dynamic `import('…')`.
+const allSpecifiers = (source: string): string[] => [
+  ...specifiers(source),
+  ...[...source.matchAll(/\bimport\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1])
+]
+
+/** Whether a specifier, written in `fromDir`, leaves library/: a relative path out of it, or the `@ui` alias. */
+const leavesLibrary = (fromDir: string) => (specifier: string): boolean =>
+  specifier.startsWith('.') ? relative(LIBRARY, resolve(fromDir, specifier)).startsWith('..') : /^@ui\//.test(specifier)
+
+describe('the in-world Shop, every module', () => {
+  const files = sources(SHOP).map((path) => relative(SHOP, path))
+
+  it('walks its data modules and its UI', () => {
+    expect(files).toEqual(expect.arrayContaining(['InWorldShop.tsx', 'catalogueQuery.ts', 'shopProtocol.ts', join('ui', 'ShopHome.tsx')]))
+  })
+
+  it.each(files)('%s imports nothing outside library/', (file) => {
+    const outside = allSpecifiers(readFileSync(join(SHOP, file), 'utf8')).filter(leavesLibrary(dirname(join(SHOP, file))))
+    expect(outside).toEqual([])
+  })
+
+  it('catches a relative import into an app and the apps\' alias, static or dynamic', () => {
+    const offending = [
+      "import { shopClient } from '../../../../apps/ui3/src/shop/api/host'",
+      "import { x } from '@ui/shop/api/host'",
+      "const m = import('../../../../apps/ui3/src/shop/api/host')"
+    ].join('\n')
+    const found = allSpecifiers(offending).filter(leavesLibrary(SHOP))
+    expect(found).toHaveLength(3)
+  })
+})
+

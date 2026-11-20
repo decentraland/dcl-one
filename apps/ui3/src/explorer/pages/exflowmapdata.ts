@@ -878,8 +878,6 @@ export const SECTIONS: FlowSection[] = [
         items: [
           route("/explorer-map", { sub: "this page" }),
           sep(),
-          route("/create/map", { sub: "sibling \u{2014} the Creator Hub, mapped the same way" }),
-          sep(),
           PLAY({ sub: "the product" }),
         ],
       },
@@ -974,7 +972,6 @@ engine crates.
 \u{2502}
 \u{2514}\u{2500}\u{2500} exits: no lobby door from a healthy world \u{2014} sign-out stays in-world;
      reload/close \u{25B6} cold boot (auto-jump inside 24h) \u{B7} /explorer-map \u{2014} this map
-     \u{B7} sibling /create/map
 \`\`\`
 
 Legend: \`[x]\` = click edge \u{B7} \`\u{23F3}\` = >100ms invoked load \u{B7} \`\u{21C4}\` = reversible

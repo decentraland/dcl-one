@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use bevy::{
     asset::RenderAssetTransferPriority,
     diagnostic::FrameCount,
@@ -158,7 +160,6 @@ pub fn set_camera_target_size(camera: &mut Camera, projection: &mut Projection, 
 #[derive(Component)]
 pub struct WorldUiMaterialRef(AssetId<TextShapeMaterial>, AssetId<Image>);
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn add_worldui_materials(
     mut commands: Commands,
     q: Query<(Entity, &WorldUi, Option<&Children>), Changed<WorldUi>>,
@@ -233,7 +234,6 @@ pub fn add_worldui_materials(
     }
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn update_worldui_materials(
     changed: Query<
         &WorldUiMaterialRef,

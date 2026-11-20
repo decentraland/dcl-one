@@ -24,7 +24,7 @@
 //! (`mirrors::require_priced`).
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use axum::Json;
@@ -70,17 +70,19 @@ pub const MAX_NUMERIC_NUMBER: &str =
 /// that gives an nft-order leg its item without an nft table.
 pub use crate::shared::collections::ITEM_SHIFT as ITEM_ID_SHIFT;
 
-/// The off-chain marketplace contracts (v2 and v3, both mainnets and
-/// testnets): a collection listing one of them as a minter is what the squid
+/// The off-chain marketplace contracts of every version, mainnets and
+/// testnets: a collection listing one of them as a minter is what the squid
 /// flagged `search_is_marketplace_v3_minter`.
-pub const OFFCHAIN_MARKETPLACE_MINTERS: [&str; 6] = [
-    "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7",
-    "0xa40b1d129b8906888720686f3a01921ddf37716f",
-    "0x0f11d0d1671519683bd48abf3dbe779e300941cd",
-    "0xe38ef22abe871513555cba89adfe45ab4f548ada",
-    "0x257db44ac97789c16ab277eae87dcde0c246cc9f",
-    "0x36fd1434a6c4b8ade80c9847c1d15033ce34488c",
-];
+pub static OFFCHAIN_MARKETPLACE_MINTERS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    let mut minters: Vec<&str> = super::trade_events::OFFCHAIN_MARKETPLACE_CHAINS
+        .iter()
+        .flat_map(|&chain| super::trade_events::deployments(chain))
+        .map(|&(address, _, _)| address)
+        .collect();
+    minters.sort_unstable();
+    minters.dedup();
+    minters
+});
 
 pub const HEAD_CATEGORIES: [&str; 5] = ["eyebrows", "eyes", "facial_hair", "hair", "mouth"];
 pub const ACCESSORY_CATEGORIES: [&str; 7] = [
@@ -561,8 +563,20 @@ pub fn uint_or_null(expr: &str) -> String {
 /// `now_p` (a bound timestamp, never `now()`), not in `trade_cancellations`,
 /// and not closed on chain (`trade_events`: sold or cancelled there) while
 /// that network's trade-events index is published; and counted at
-/// `since_p` (a bound nullable timestamp, `trades::mirrored_since`).
+/// `since_p` (a bound nullable timestamp, `trades::mirrored_since`). An item
+/// order also needs its creator's signature and its marketplace among the
+/// collection's minters, as no other contract can mint the item.
 pub fn unified_trades_cte(now_p: &str, since_p: &str) -> String {
+    unified_trades_cte_of(now_p, since_p, None)
+}
+
+/// [`unified_trades_cte`]; with `contracts_p` (a bound `text[]`), only the
+/// trades that sell from those contracts, as a semi-join that stays hashed
+/// whatever the array's length.
+pub fn unified_trades_cte_of(now_p: &str, since_p: &str, contracts_p: Option<&str>) -> String {
+    let of = contracts_p
+        .map(|p| format!(" AND sent.contract_address IN (SELECT unnest({p}::text[]))"))
+        .unwrap_or_default();
     format!(
         "unified_trades AS ( \
            SELECT t.id, t.type::text AS type, t.signer, t.created_at, t.expires_at, t.network, t.chain_id, t.contract AS trade_contract, \
@@ -573,7 +587,7 @@ pub fn unified_trades_cte(now_p: &str, since_p: &str) -> String {
                   recv_erc20.amount AS amount_received, \
                   recv.beneficiary AS beneficiary \
            FROM shop.trades t \
-           JOIN shop.trade_assets sent ON sent.trade_id = t.id AND sent.direction = 'sent' \
+           JOIN shop.trade_assets sent ON sent.trade_id = t.id AND sent.direction = 'sent'{of} \
            LEFT JOIN shop.trade_assets_item sent_item ON sent_item.asset_id = sent.id \
            LEFT JOIN shop.trade_assets_erc721 sent_erc721 ON sent_erc721.asset_id = sent.id \
            JOIN shop.trade_assets recv ON recv.trade_id = t.id AND recv.direction = 'received' AND recv.asset_type IN (1, 2) \
@@ -590,6 +604,10 @@ pub fn unified_trades_cte(now_p: &str, since_p: &str) -> String {
                    SELECT 1 FROM shop.items ci \
                    WHERE ci.network = lower(t.network) AND ci.contract_address = lower(sent.contract_address) \
                      AND ci.item_id = {item_num} AND lower(ci.creator) = lower(t.signer))) \
+             AND (t.type <> 'public_item_order' OR EXISTS ( \
+                   SELECT 1 FROM shop.collections mc \
+                   WHERE mc.network = lower(t.network) AND mc.contract_address = lower(sent.contract_address) \
+                     AND lower(t.contract) = ANY(mc.minters))) \
          )",
         served = served_chain_sql("t"),
         item_num = uint_or_null("sent_item.item_id"),
@@ -1364,6 +1382,26 @@ mod tests {
         }
     }
 
+    /// The squid's Polygon minter check takes OffChainMarketplace v1, v2 and v3, which
+    /// the contract map names MarketplaceV3, V4 and V5.
+    #[test]
+    fn every_polygon_offchain_marketplace_version_is_a_minter() {
+        let map: serde_json::Value =
+            serde_json::from_slice(crate::evm::contracts::ADDRESSES_JSON).unwrap();
+        for network in ["matic", "amoy"] {
+            for key in ["MarketplaceV3", "MarketplaceV4", "MarketplaceV5"] {
+                let address = map[network][key]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{network} {key} missing"))
+                    .to_lowercase();
+                assert!(
+                    OFFCHAIN_MARKETPLACE_MINTERS.contains(&address.as_str()),
+                    "{network} {key}"
+                );
+            }
+        }
+    }
+
     /// The pinned upstream `/v1/catalog?first=1` answer (tests/fixtures/upstream/catalog-first1.json
     /// of the old crate): every key, in kind.
     #[test]
@@ -1576,6 +1614,18 @@ mod tests {
         .await
         .unwrap();
         let marketplace = listings::offchain_marketplace_v3(137).unwrap();
+        sqlx::query(
+            "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, \
+                 is_approved, is_editable, minters, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ('matic', $1, 137, 'Minter fixture', lower($2), lower($2), $3, true, true, false, ARRAY[$4], 0, 0, 0, now())",
+        )
+        .bind(&contract)
+        .bind(&signer)
+        .bind(format!("urn:decentraland:matic:collections-v2:{contract}"))
+        .bind(marketplace.address.to_lowercase())
+        .execute(pool)
+        .await
+        .unwrap();
         let mut ids = Vec::new();
         for salt in ["0x21", "0x22"] {
             let mut order = test_support::parse(
@@ -1610,22 +1660,35 @@ mod tests {
             .await
             .unwrap();
         }
-        let mut b = Builder::new();
-        let now_p = b.bind_time(chrono::Utc::now().naive_utc());
-        let since_p = b.bind_opt_time(None);
-        b.push("WITH ");
-        b.push(&unified_trades_cte(&now_p, &since_p));
-        build_offchain_orders_cte(&mut b, &CatalogFilters::default());
-        let contract_p = b.bind_string(contract.clone());
-        b.push(&format!(
-            " SELECT open_item_trade_id, open_item_trade_price::text FROM offchain_orders \
-              WHERE contract_address_sent = {contract_p}"
-        ));
-        let row: (String, String) = sqlx::query_as_with(sqlx::AssertSqlSafe(b.sql), b.args)
-            .fetch_one(pool)
-            .await
-            .unwrap();
-        assert_eq!(row, (cheap, "5".to_string()));
+        let open_item_orders = || async {
+            let mut b = Builder::new();
+            let now_p = b.bind_time(chrono::Utc::now().naive_utc());
+            let since_p = b.bind_opt_time(None);
+            b.push("WITH ");
+            b.push(&unified_trades_cte(&now_p, &since_p));
+            build_offchain_orders_cte(&mut b, &CatalogFilters::default());
+            let contract_p = b.bind_string(contract.clone());
+            b.push(&format!(
+                " SELECT open_item_trade_id, open_item_trade_price::text FROM offchain_orders \
+                  WHERE contract_address_sent = {contract_p}"
+            ));
+            sqlx::query_as_with::<_, (String, String), _>(sqlx::AssertSqlSafe(b.sql), b.args)
+                .fetch_optional(pool)
+                .await
+                .unwrap()
+        };
+        assert_eq!(open_item_orders().await, Some((cheap, "5".to_string())));
+
+        // A marketplace the collection does not list as a minter cannot sell its items.
+        sqlx::query(
+            "UPDATE shop.collections SET minters = ARRAY['0x0000000000000000000000000000000000000001'] \
+             WHERE network = 'matic' AND contract_address = $1",
+        )
+        .bind(&contract)
+        .execute(pool)
+        .await
+        .unwrap();
+        assert_eq!(open_item_orders().await, None);
 
         for id in &ids {
             sqlx::query("DELETE FROM shop.trades WHERE id = $1::uuid")
@@ -1634,10 +1697,15 @@ mod tests {
                 .await
                 .unwrap();
         }
-        sqlx::query("DELETE FROM shop.items WHERE contract_address = $1")
-            .bind(&contract)
-            .execute(pool)
-            .await
-            .unwrap();
+        for delete in [
+            "DELETE FROM shop.items WHERE contract_address = $1",
+            "DELETE FROM shop.collections WHERE contract_address = $1",
+        ] {
+            sqlx::query(delete)
+                .bind(&contract)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
     }
 }

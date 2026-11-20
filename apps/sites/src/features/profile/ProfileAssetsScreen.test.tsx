@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
   Object.assign(window, {
@@ -12,10 +12,11 @@ vi.hoisted(() => {
     $RefreshReg$: () => {},
   });
 });
-const net = vi.hoisted(() => ({ fetchProfileAssets: vi.fn() }));
+const net = vi.hoisted(() => ({ fetchProfileAssets: vi.fn(), fetchProfileAssetCount: vi.fn() }));
 vi.mock("@/data/lib/catalyst/marketplace/profile-collectibles", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/marketplace/profile-collectibles")>()),
   fetchProfileAssets: net.fetchProfileAssets,
+  fetchProfileAssetCount: net.fetchProfileAssetCount,
 }));
 vi.mock("@/data/lib/auth/index", () => ({ useAuth: () => ({ identity: null, isConnected: false, address: null }) }));
 
@@ -79,6 +80,9 @@ afterEach(() => {
 });
 
 describe("profile assets", () => {
+  beforeEach(() => {
+    net.fetchProfileAssetCount.mockResolvedValue(1);
+  });
   it("opens on every category, with the total and each token linking to its Shop page", async () => {
     net.fetchProfileAssets.mockResolvedValue(page([asset(1, { price: "12" })], 3431));
 
@@ -96,16 +100,15 @@ describe("profile assets", () => {
     expect(within(token).getByRole("link", { name: "View Power Up 1" }).getAttribute("href")).toBe("/shop/token/0xabc/1");
   });
 
-  it("gives a NAME in the full list its Edit and Transfer instead of View", async () => {
+  it("gives a NAME in the full list its View and Transfer", async () => {
     net.fetchProfileAssets.mockResolvedValue(page([name(5, "brai")]));
 
     show();
 
     const ens = await screen.findByRole("link", { name: "brai" }).then(() => card("brai"));
     expect(within(ens).queryByText("common")).toBeNull();
-    expect(within(ens).getByRole("link", { name: "Edit brai" }).getAttribute("href")).toBe("/create/names");
+    expect(within(ens).getByRole("link", { name: "View brai" }).getAttribute("href")).toBe("/shop/token/0xens/5");
     expect(within(ens).getByRole("link", { name: "Transfer brai" }).getAttribute("href")).toBe("/shop/token/0xens/5/transfer");
-    expect(within(ens).queryByRole("link", { name: /^View/ })).toBeNull();
     expect(screen.getByText("1 asset")).toBeTruthy();
   });
 
@@ -167,6 +170,42 @@ describe("profile assets", () => {
     expect(net.fetchProfileAssets.mock.calls.at(-1)?.[1]).toMatchObject({ category: "ens" });
   });
 
+  describe("when the catalogue reports category totals", () => {
+    beforeEach(() => {
+      net.fetchProfileAssets.mockResolvedValue(page([asset(1)], 30));
+      net.fetchProfileAssetCount.mockImplementation(async (_owner: string, category: string) =>
+        category === "ens" ? 1 : 0,
+      );
+      show();
+    });
+
+    it("should show a category with inventory beyond the loaded page", async () => {
+      expect(await screen.findByRole("tab", { name: "Names" })).toBeTruthy();
+    });
+
+    it("should hide categories with no inventory", async () => {
+      await screen.findByRole("tab", { name: "Names" });
+      expect(screen.queryByRole("tab", { name: "Lands" })).toBeNull();
+      expect(screen.queryByRole("tab", { name: "Estates" })).toBeNull();
+    });
+  });
+
+  describe("when the catalogue cannot confirm a category total", () => {
+    beforeEach(() => {
+      net.fetchProfileAssets.mockResolvedValue(page([asset(1)]));
+      net.fetchProfileAssetCount.mockImplementation(async (_owner: string, category: string) => {
+        if (category === "parcel") throw new Error("Unavailable");
+        return 0;
+      });
+      show();
+    });
+
+    it("should leave the unverified category accessible", async () => {
+      expect(await screen.findByRole("tab", { name: "Lands" })).toBeTruthy();
+      expect(screen.queryByRole("tab", { name: "Estates" })).toBeNull();
+    });
+  });
+
   it("says a filtered category holds nothing", async () => {
     const user = userEvent.setup();
     net.fetchProfileAssets.mockImplementation(async (_a: string, params: { category?: string }) =>
@@ -219,6 +258,26 @@ describe("profile assets", () => {
     await act(async () => fail(new Error("503")));
     expect(await screen.findByText("These assets could not be read right now. Trying again failed.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Try again" }).getAttribute("aria-busy")).not.toBe("true");
+  });
+
+  it("keeps the first result's copy for a re-read the reader did not ask for", async () => {
+    let fail: (reason: Error) => void = () => {};
+    net.fetchProfileAssets
+      .mockResolvedValueOnce({ items: [], received: 3, total: 3 })
+      .mockReturnValueOnce(new Promise((_, reject) => (fail = reject)));
+    const { client } = show();
+    await screen.findByText("These assets could not be read right now.");
+
+    // A background re-read, e.g. on window focus.
+    act(() => void client.refetchQueries());
+    await waitFor(() => expect(net.fetchProfileAssets).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("Reading the assets again.")).toBeNull();
+    expect(screen.getByText("These assets could not be read right now.")).toBeTruthy();
+
+    await act(async () => fail(new Error("503")));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(screen.queryByText(/Trying again failed/)).toBeNull();
+    expect(screen.getByText("These assets could not be read right now.")).toBeTruthy();
   });
 
   it("opens a card's action and a NAME's Transfer in place, through the router", async () => {

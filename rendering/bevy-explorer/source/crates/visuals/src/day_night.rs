@@ -166,7 +166,6 @@ impl<C: Component> RootComponentSource<'_, '_, C> {
     }
 }
 
-#[expect(clippy::type_complexity, reason = "Queries are complex")]
 fn fetch_time_from_scene(
     mut commands: Commands,
     mut source: RootComponentSource<SceneTime>,
@@ -202,7 +201,6 @@ fn fetch_time_from_scene(
     }
 }
 
-#[expect(clippy::type_complexity, reason = "Queries are complex")]
 fn fetch_time_from_skybox(
     mut commands: Commands,
     mut source: RootComponentSource<SkyboxTime>,
@@ -295,7 +293,6 @@ fn push_time_of_day_from_time_skip(
     }
 }
 
-#[expect(clippy::type_complexity, reason = "Queries are complex")]
 fn push_time_of_day_from_running_clock(
     mut commands: Commands,
     time_keeper: Single<(&RunningClock, Has<SceneTime>, Has<SkyboxTime>), With<TimeKeeper>>,
@@ -320,7 +317,6 @@ fn push_time_of_day_from_running_clock(
     }
 }
 
-#[expect(clippy::type_complexity, reason = "Queries are complex")]
 fn check_new_scene_time(
     trigger: Trigger<OnInsert, SceneTime>,
     mut commands: Commands,
@@ -404,7 +400,6 @@ pub struct TimeOfDayConsoleCommand {
     pub speed: Option<f32>,
 }
 
-#[expect(clippy::type_complexity, reason = "Queries are complex")]
 fn timeofday_console_command(
     mut input: ConsoleCommand<TimeOfDayConsoleCommand>,
     mut commands: Commands,

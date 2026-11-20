@@ -429,10 +429,10 @@ describe('ReportIssue', () => {
 
       await sendWith('unknown');
 
-      expect(screen.getByRole('dialog', { name: "Couldn't Confirm Your Report" })).toBeTruthy();
+      expect(screen.getByRole('dialog', { name: 'Issue Report Sent' })).toBeTruthy();
       expect(
         screen.getByText(
-          "We sent your report but couldn't confirm it arrived. If the problem continues, report it again.",
+          "We sent your report but couldn't confirm it arrived yet. You don't need to send it again.",
         ),
       ).toBeTruthy();
       expect(closeButton()).toBeTruthy();

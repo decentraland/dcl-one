@@ -1096,7 +1096,7 @@ async fn a_second_node_syncs_from_the_first_nodes_snapshots_and_pointer_changes(
         db_a.pool.clone(),
         node_a.storage.clone(),
         node_a.sync.clone(),
-        reqwest::Client::new(),
+        catalyst::content::sync::test_sync_client(reqwest::Client::new()),
         catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,
         &jobs_a,
     )
@@ -1127,7 +1127,7 @@ async fn a_second_node_syncs_from_the_first_nodes_snapshots_and_pointer_changes(
         db_b.pool.clone(),
         node_b.storage.clone(),
         node_b.sync.clone(),
-        reqwest::Client::new(),
+        catalyst::content::sync::test_sync_client(reqwest::Client::new()),
         catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,
         &jobs_b,
     )
@@ -1218,7 +1218,7 @@ async fn a_second_node_syncs_from_the_first_nodes_snapshots_and_pointer_changes(
         db_b.pool.clone(),
         node_b.storage.clone(),
         node_b.sync.clone(),
-        reqwest::Client::new(),
+        catalyst::content::sync::test_sync_client(reqwest::Client::new()),
         catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,
         &jobs_b,
     )
@@ -1394,7 +1394,7 @@ async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
         db_b.pool.clone(),
         node_b.storage.clone(),
         node_b.sync.clone(),
-        reqwest::Client::new(),
+        catalyst::content::sync::test_sync_client(reqwest::Client::new()),
         catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,
         &jobs_b,
     )
