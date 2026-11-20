@@ -119,38 +119,6 @@
   color: var(--dcl-feedback-error);
 }
 
-.control {
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 48px;
-  padding: var(--dcl-space-8) var(--dcl-space-16);
-  border: 1px solid var(--dcl-transparencies-white-20);
-  border-radius: var(--dcl-radius-md);
-  background: var(--dcl-transparencies-white-10);
-  color: var(--dcl-text-primary);
-  color-scheme: dark;
-  font: inherit;
-  font-size: var(--dcl-font-size-body-md);
-  line-height: 1.5;
-}
-
-.control:focus-visible {
-  outline: 2px solid var(--dcl-primary-primary);
-  outline-offset: 2px;
-}
-
-.control[aria-invalid="true"] {
-  border-color: var(--dcl-feedback-error);
-}
-
-.textarea {
-  resize: vertical;
-}
-
-.textarea::placeholder {
-  color: var(--dcl-neutrals-silver);
-}
-
 .inputGroup {
   display: flex;
   flex-direction: column;
@@ -239,7 +207,8 @@
 }
 
 .chip {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--dcl-space-4);
   background-color: var(--report-hover);
@@ -256,11 +225,6 @@
 .fileName {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-
-.chipRemove {
-  flex-shrink: 0;
-  color: var(--report-text-secondary);
 }
 
 /* Button (md) from @dcl/one-ui, drawn as the reference's MUI contained small button. */
@@ -331,8 +295,7 @@
 .footerLink:focus-visible,
 .signInButton:focus-visible,
 .addFile:focus-visible,
-.submit:focus-visible,
-.chipRemove:focus-visible {
+.submit:focus-visible {
   outline: 2px solid var(--dcl-primary-primary);
   outline-offset: 2px;
 }

@@ -59,20 +59,23 @@ describe('when the Sites profile panel is open', () => {
     await user.click(button)
     expect(await navigator.clipboard.readText()).toBe('0x1234567890abcdef1234567890abcdef12345678')
     expect(screen.getByRole('status')).toHaveTextContent('User ID copied')
-    expect(screen.getByText('Address copied!')).toBeVisible()
+    expect(screen.getByText('User ID copied', { selector: '[aria-hidden="true"]' })).toBeVisible()
     expect(screen.queryByText('0x1234...5678')).toBeNull()
     expect(screen.getByRole('button', { name: 'Copy user ID' })).toBe(button)
     expect(screen.queryByText('Copied')).toBeNull()
     await user.keyboard('{Escape}')
     await user.click(trigger)
-    expect(screen.queryByText('Address copied!')).toBeNull()
+    expect(screen.queryByText('User ID copied')).toBeNull()
     expect(screen.getByText('0x1234...5678')).toBeVisible()
   })
 
   it('should show the localized copy confirmation', async () => {
-    widget.rerender(<NavBar {...props} labels={{ addressCopied: 'Dirección copiada' }} />)
+    widget.rerender(<NavBar {...props} labels={{ userIdCopied: 'ID de usuario copiado' }} />)
     await user.click(screen.getByRole('button', { name: 'Copy user ID' }))
-    expect(screen.getByText('Dirección copiada')).toBeVisible()
+    expect(
+      screen.getByText('ID de usuario copiado', { selector: '[aria-hidden="true"]' })
+    ).toBeVisible()
+    expect(screen.getByRole('status')).toHaveTextContent('ID de usuario copiado')
   })
 
   it('should drop an unavailable body snapshot', () => {

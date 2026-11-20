@@ -321,3 +321,74 @@ describe('Modal', () => {
     expect(html).not.toMatch(/<dialog[^>]* open/)
   })
 })
+
+describe('when the modal displays a gallery', () => {
+  it('should hide the visible title and retain the accessible name', () => {
+    render(<Modal layout="gallery" title="Photo at the plaza" onClose={vi.fn()} />)
+    const gallery = screen.getByRole('dialog', { name: 'Photo at the plaza' })
+    expect(gallery).toHaveAttribute('data-layout', 'gallery')
+    expect(within(gallery).getByRole('heading')).toHaveAttribute('data-hidden')
+  })
+})
+
+describe('when a caller handles keys', () => {
+  let onDismiss: ReturnType<typeof vi.fn<() => void>>
+
+  beforeEach(() => {
+    onDismiss = vi.fn<() => void>()
+  })
+
+  it('should call the handler before dismissing on Escape', () => {
+    const onKeyDown = vi.fn()
+    render(<Modal title="Photo" onClose={onDismiss} onKeyDown={onKeyDown} />)
+
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+
+    expect(onKeyDown).toHaveBeenCalledOnce()
+    expect(onDismiss).toHaveBeenCalledOnce()
+    expect(onKeyDown.mock.invocationCallOrder[0]).toBeLessThan(
+      onDismiss.mock.invocationCallOrder[0]!
+    )
+  })
+
+  it('should let a caller consume Escape', () => {
+    render(
+      <Modal title="Photo" onClose={onDismiss} onKeyDown={(event) => event.preventDefault()} />
+    )
+
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+
+    expect(onDismiss).not.toHaveBeenCalled()
+  })
+})
+
+describe('when the browser lacks showModal', () => {
+  beforeEach(() => {
+    // @ts-expect-error an old browser has no showModal
+    HTMLDialogElement.prototype.showModal = undefined
+    render(
+      <Modal title="Gallery" closeButton={false} onClose={vi.fn()}>
+        <button type="button">First</button>
+        <button type="button">Last</button>
+      </Modal>
+    )
+  })
+
+  it('should wrap Tab from the last control to the first', () => {
+    const last = screen.getByRole('button', { name: 'Last' })
+    last.focus()
+
+    fireEvent.keyDown(last, { key: 'Tab' })
+
+    expect(screen.getByRole('button', { name: 'First' })).toHaveFocus()
+  })
+
+  it('should wrap Shift+Tab from the first control to the last', () => {
+    const first = screen.getByRole('button', { name: 'First' })
+    first.focus()
+
+    fireEvent.keyDown(first, { key: 'Tab', shiftKey: true })
+
+    expect(screen.getByRole('button', { name: 'Last' })).toHaveFocus()
+  })
+})
