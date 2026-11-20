@@ -281,6 +281,49 @@ async fn bind(address: SocketAddr) -> std::io::Result<UdpSocket> {
 /// The listen socket, which a closed port takes away and a restore puts back.
 type Listen = Arc<Mutex<Option<Arc<UdpSocket>>>>;
 
+/// What a closed port keeps of the listen socket. On Linux the socket stays bound, connected to
+/// its own address: a datagram from anyone else finds no socket, so this machine answers "port
+/// unreachable" as for a port nobody holds, and no other socket can take the port meanwhile.
+/// Elsewhere a connected socket drops such a datagram without an answer, so the socket is given
+/// up and the port is bound again on restore.
+async fn reserve(socket: Arc<UdpSocket>, address: SocketAddr) -> Option<Arc<UdpSocket>> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    socket.connect(address).await.ok().map(|()| socket)
+}
+
+/// Binds the link's port again after a restore. Until it is free (another socket took it while
+/// it was closed) the relay tries again every few milliseconds and the timeline says so: the
+/// link never gives up its port while it lives. `None`: the link was dropped first.
+async fn rebind(shared: &Shared, address: SocketAddr) -> Option<UdpSocket> {
+    let mut reported = false;
+    loop {
+        match UdpSocket::bind(address).await {
+            Ok(socket) => {
+                if reported {
+                    shared.record("port free again", address.to_string());
+                }
+                return Some(socket);
+            }
+            Err(error) if !reported => {
+                shared.record(
+                    "port taken",
+                    format!("cannot bind {address} again yet, trying until it is free: {error}"),
+                );
+                reported = true;
+            }
+            Err(_) => {}
+        }
+        if !shared
+            .sleep_unless_closed(std::time::Duration::from_millis(20))
+            .await
+        {
+            return None;
+        }
+    }
+}
+
 pub(super) async fn start(
     shared: Arc<Shared>,
     listen: SocketAddr,
@@ -307,27 +350,32 @@ async fn relay(
     let mut flows: HashMap<SocketAddr, Flow> = HashMap::new();
     let mut buffer = vec![0u8; MAX_DATAGRAM];
     loop {
-        // A closed port: give the socket up, wait for the restore, bind the same port again.
+        // A closed port: take the socket away from the flows (keeping the port where the
+        // platform allows), wait for the restore, bind the same port again.
         if shared.port_closed.load(Ordering::SeqCst) {
-            listen.lock().take();
+            let taken = listen.lock().take();
+            let reserved = match taken {
+                Some(socket) => reserve(socket, address).await,
+                None => None,
+            };
             loop {
                 let changed = shared.changed.notified();
                 tokio::pin!(changed);
                 changed.as_mut().enable();
-                if !shared.port_closed.load(Ordering::SeqCst) {
+                if !shared.port_closed.load(Ordering::SeqCst)
+                    || shared.closed.load(Ordering::SeqCst)
+                {
                     break;
                 }
                 changed.await;
             }
-            match bind(address).await {
-                Ok(socket) => {
+            drop(reserved);
+            match rebind(&shared, address).await {
+                Some(socket) => {
                     *listen.lock() = Some(Arc::new(socket));
                     shared.record("port reopened", ());
                 }
-                Err(error) => {
-                    shared.record("port lost", format!("cannot bind {address} again: {error}"));
-                    return;
-                }
+                None => return,
             }
         }
         let socket = listen.lock().clone().expect("the port is open here");

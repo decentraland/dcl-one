@@ -813,13 +813,94 @@ async fn a_closed_udp_port_is_unreachable_and_reopens_with_the_flow_intact() {
             break;
         }
     }
-    assert!(echoed, "nothing passed after the port reopened");
+    assert!(
+        echoed,
+        "nothing passed after the port reopened\n{}",
+        link_timeline(&ctx)
+    );
     assert_eq!(
         seen.recv().await.unwrap(),
         source,
         "the flow moved to another port"
     );
     assert_eq!(link.counters().flows, 1);
+}
+
+/// Sends `back` until its echo returns, for up to [`SOON`]; whether it did. A refusal (the port
+/// is not bound yet) is answered at once, so each try waits a little.
+async fn echoes_again(client: &UdpSocket) -> bool {
+    let deadline = std::time::Instant::now() + SOON;
+    let mut buffer = [0u8; 64];
+    while std::time::Instant::now() < deadline {
+        let _ = client.send(b"back").await;
+        match tokio::time::timeout(Duration::from_millis(50), client.recv(&mut buffer)).await {
+            Ok(Ok(length)) if &buffer[..length] == b"echo:back" => return true,
+            Ok(Err(_)) => tokio::time::sleep(Duration::from_millis(20)).await,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The link's own timeline, for a failure message.
+fn link_timeline(ctx: &Ctx) -> String {
+    ctx.timeline()
+        .snapshot()
+        .iter()
+        .map(|entry| format!("{} {} {}", entry.at_ms, entry.kind, entry.detail))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// While the port is closed another socket may try to take it. Where the platform lets the link
+/// keep the port and still answer "port unreachable" (Linux), the other socket is refused; where
+/// it does not, the other socket takes the port, and the link binds it again once it is free,
+/// however long that takes: it never stays deaf.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_port_taken_while_closed_is_bound_again_once_it_is_free() {
+    let ctx = ctx("udp-port-taken");
+    let (server, _seen) = udp_echo().await;
+    let link = FaultLink::udp(&ctx, "link", ANY.parse().unwrap(), server)
+        .await
+        .unwrap();
+    let client = udp_client(&link).await;
+    client.send(b"one").await.unwrap();
+    assert_eq!(
+        receive(&client, SOON).await.as_deref(),
+        Some(&b"echo:one"[..])
+    );
+
+    link.close_port().unwrap();
+    // the client is refused, so the link has given the port up or reserved it
+    let mut refused = false;
+    let mut buffer = [0u8; 64];
+    for _ in 0..100 {
+        if client.send(b"anyone?").await.is_err() {
+            refused = true;
+            break;
+        }
+        if let Ok(Err(_)) =
+            tokio::time::timeout(Duration::from_millis(30), client.recv(&mut buffer)).await
+        {
+            refused = true;
+            break;
+        }
+    }
+    assert!(refused, "no port-unreachable error reached the client");
+    let other = std::net::UdpSocket::bind(link.address()).ok();
+    if cfg!(target_os = "linux") {
+        assert!(other.is_none(), "the closed port was not kept for the link");
+    }
+
+    link.restore();
+    // the other socket holds the port for longer than a link once waited for it
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    drop(other);
+    assert!(
+        echoes_again(&client).await,
+        "nothing passed after the port was free again\n{}",
+        link_timeline(&ctx)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
