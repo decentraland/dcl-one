@@ -19,11 +19,12 @@
 //! by /64) may send [`PREAUTH_PER_MINUTE`], an IPv6 /48
 //! [`PREAUTH_PER_MINUTE_PER_48`]; a private or loopback peer (an unlisted
 //! gateway) is not limited before it.
-//! Without a running index (no process, this one included, walking the
-//! `mana_transfers` cursor close enough to publish within the claim's hour,
-//! [`chain_walk::is_walked`]) a signed
-//! forward is answered 503 and no claim is stored or settled, since it could
-//! only expire.
+//! A signed forward the MANA transfer index cannot serve is refused and
+//! nothing is stored: with no `mana_transfers` cursor or one without its whole
+//! history, a 503 with the body code [`TIP_INDEX_UNAVAILABLE`] (its claim
+//! could only expire, so clients stop); with a whole-history walk lagging or
+//! paused ([`chain_walk::is_walked`] false), a 503 with `Retry-After`; when the
+//! cursor cannot be read, a 500.
 //! The auth dApp posts cross-origin with signed-fetch headers, so the route
 //! answers the browser's preflight with the events-notifier's CORS ([`CORS`]).
 //! A transfer below the minimum amount, or mined longer than the maximum age
@@ -327,11 +328,36 @@ async fn forward(
         Ok(tx) => tx,
         Err(message) => return error(StatusCode::BAD_REQUEST, message),
     };
-    if !index_runs(&state).await {
-        return error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Tip confirmation is unavailable on this node",
-        );
+    match index_state(&state).await {
+        IndexState::Serves => {}
+        IndexState::Off => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({
+                    "error": "Tip confirmation is unavailable on this node",
+                    "code": TIP_INDEX_UNAVAILABLE,
+                })),
+            )
+                .into_response();
+        }
+        IndexState::Behind => {
+            let secs = INDEX_BEHIND_RETRY_SECS;
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [(header::RETRY_AFTER, secs.to_string())],
+                Json(json!({
+                    "error": "Tip confirmation is behind on this node, retry later",
+                    "retryAfter": secs,
+                })),
+            )
+                .into_response();
+        }
+        IndexState::Unknown => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Tip could not be processed",
+            );
+        }
     }
     match claim(&state.pool, &state.settings.market.tips, &tx, &signer).await {
         Ok(Outcome::Notified) => StatusCode::NO_CONTENT.into_response(),
@@ -350,21 +376,43 @@ async fn forward(
     }
 }
 
-/// Whether a MANA transfer index serves this database, walked here or by
-/// another process: [`chain_walk::is_walked`] within the claim's hour, even
-/// with the local setting on (a walk just started or stalled serves no claim).
-async fn index_runs(state: &SharedState) -> bool {
+/// The 503 body code for a node with no MANA transfer index: a client stops
+/// asking. Any other 503 is worth retrying.
+pub const TIP_INDEX_UNAVAILABLE: &str = "tip-index-unavailable";
+/// The `Retry-After` of a forward refused while the walk is behind.
+const INDEX_BEHIND_RETRY_SECS: i64 = 60;
+
+/// What the MANA transfer index, walked here or by another process, can do
+/// for a forward now.
+#[derive(Debug, PartialEq, Eq)]
+enum IndexState {
+    /// A live walk near the head ([`chain_walk::is_walked`] within the claim's hour).
+    Serves,
+    /// No cursor, or one without its whole history: no claim can settle.
+    Off,
+    /// A whole-history walk lagging or paused: it may serve again soon.
+    Behind,
+    /// The cursor could not be read.
+    Unknown,
+}
+
+async fn index_state(state: &SharedState) -> IndexState {
     match chain_walk::cursor(&state.pool, INDEXER_MANA, NET).await {
-        Ok(cursor) => cursor.is_some_and(|c| {
-            chain_walk::is_walked(
+        Ok(Some(c)) if !c.full_history => IndexState::Off,
+        Ok(Some(c))
+            if chain_walk::is_walked(
                 &c,
                 chrono::Utc::now(),
                 chrono::Duration::seconds(CLAIM_TTL_SECS),
-            )
-        }),
+            ) =>
+        {
+            IndexState::Serves
+        }
+        Ok(Some(_)) => IndexState::Behind,
+        Ok(None) => IndexState::Off,
         Err(e) => {
-            tracing::warn!(error = %e, "cannot read the MANA transfer cursor; refusing the tip forward");
-            false
+            tracing::error!(error = %e, "cannot read the MANA transfer cursor; refusing the tip forward");
+            IndexState::Unknown
         }
     }
 }
@@ -1504,14 +1552,18 @@ mod tests {
         };
         let off = app_with(false);
         let w = crate::outfits::testkit::scratch_wallet();
+        let index_off = Some(json!({
+            "error": "Tip confirmation is unavailable on this node",
+            "code": TIP_INDEX_UNAVAILABLE,
+        }));
+        let behind = Some(json!({
+            "error": "Tip confirmation is behind on this node, retry later",
+            "retryAfter": 60,
+        }));
 
-        let res = forward_tip(&off, &w).await;
-        assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert!(res.headers().get(header::RETRY_AFTER).is_none());
-        let body = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
         assert_eq!(
-            serde_json::from_slice::<Value>(&body).unwrap(),
-            json!({ "error": "Tip confirmation is unavailable on this node" })
+            refused(forward_tip(&off, &w).await).await,
+            (None, index_off.clone())
         );
         assert_eq!(claim_count(&db.pool).await, 0, "nothing stored");
 
@@ -1533,33 +1585,41 @@ mod tests {
                 .unwrap();
             }
         };
-        for (full, behind, advanced, why) in [
-            (true, 5, "2 hours", "a walk that stopped"),
+        for (full, behind_mins, advanced, expected, why) in [
+            (
+                true,
+                5,
+                "2 hours",
+                (Some("60"), behind.clone()),
+                "a walk that paused",
+            ),
             (
                 false,
                 5,
                 "0 seconds",
+                (None, index_off.clone()),
                 "a walk without its whole history never publishes",
             ),
             (
                 true,
                 120,
                 "0 seconds",
-                "a catch-up too far behind to publish within the hour",
+                (Some("60"), behind.clone()),
+                "a catch-up lagging behind the hour",
             ),
         ] {
-            walk(full, behind, advanced).await;
+            walk(full, behind_mins, advanced).await;
             assert_eq!(
-                forward_tip(&off, &w).await.status(),
-                StatusCode::SERVICE_UNAVAILABLE,
+                refused(forward_tip(&off, &w).await).await,
+                (expected.0.map(String::from), expected.1),
                 "{why}"
             );
         }
 
         let on = app_with(true);
         assert_eq!(
-            forward_tip(&on, &w).await.status(),
-            StatusCode::SERVICE_UNAVAILABLE,
+            refused(forward_tip(&on, &w).await).await.0.as_deref(),
+            Some("60"),
             "the local setting does not skip the check"
         );
         walk(true, 5, "0 seconds").await;
@@ -1571,8 +1631,8 @@ mod tests {
         assert_eq!(claim_count(&db.pool).await, 1);
         walk(true, 5, "2 hours").await;
         assert_eq!(
-            forward_tip(&on, &w).await.status(),
-            StatusCode::SERVICE_UNAVAILABLE,
+            refused(forward_tip(&on, &w).await).await.0.as_deref(),
+            Some("60"),
             "a retried claim once the local walk stalled"
         );
 
@@ -1593,6 +1653,27 @@ mod tests {
             "a database clock ahead of this node's"
         );
         db.drop().await;
+    }
+
+    /// A 503's `Retry-After` and body.
+    async fn refused(res: Response) -> (Option<String>, Option<Value>) {
+        assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let retry_after = res
+            .headers()
+            .get(header::RETRY_AFTER)
+            .map(|v| v.to_str().unwrap().to_string());
+        let body = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
+        (retry_after, serde_json::from_slice(&body).ok())
+    }
+
+    #[tokio::test]
+    async fn a_cursor_that_cannot_be_read_is_a_500() {
+        let app = Router::new().nest(
+            "/events-notifier",
+            router(crate::market::tests::support::state_without_db()),
+        );
+        let res = forward_tip(&app, &crate::outfits::testkit::scratch_wallet()).await;
+        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     async fn claim_count(pool: &PgPool) -> i64 {

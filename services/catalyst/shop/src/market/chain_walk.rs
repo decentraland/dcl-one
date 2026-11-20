@@ -455,10 +455,11 @@ pub fn ready_sql(alias: &str, now_p: &str) -> String {
     )
 }
 
-/// Whether a walk serves `indexer` at `now`: ready, or with its whole history
-/// walked, advanced within [`READY_WINDOW`] and its last block under `horizon`
-/// old, so it can publish within `horizon`. A future `updated_at` (written by
-/// the database clock) counts as advanced.
+/// A liveness heuristic for whether a walk serves `indexer` at `now`: ready,
+/// or with its whole history walked, advanced within [`READY_WINDOW`] and its
+/// last block under `horizon` old. It does not measure the walk's speed or
+/// publish lag. A future `updated_at` (written by the database clock) counts
+/// as advanced.
 pub fn is_walked(c: &Cursor, now: DateTime<Utc>, horizon: ChronoDuration) -> bool {
     if is_ready(c, now) {
         return true;
