@@ -13,24 +13,10 @@ use super::types::*;
 #[serde(rename_all = "camelCase")]
 pub struct MerkleProof {
     pub proof: Vec<String>,
-    #[serde(deserialize_with = "integral_index")]
+    #[serde(deserialize_with = "catalyst_shared::json_number::integral_u64")]
     pub index: u64,
     pub entity_hash: String,
     pub hashing_keys: Vec<String>,
-}
-
-/// A non-negative integer in any JSON number form (`1`, `1.0`, `1e0`).
-fn integral_index<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
-    let n = serde_json::Number::deserialize(deserializer)?;
-    if let Some(i) = n.as_u64() {
-        return Ok(i);
-    }
-    match n.as_f64() {
-        Some(f) if f >= 0.0 && f.fract() == 0.0 && f < u64::MAX as f64 => Ok(f as u64),
-        _ => Err(serde::de::Error::custom(format!(
-            "invalid merkle proof index {n}, expected a non-negative integer"
-        ))),
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

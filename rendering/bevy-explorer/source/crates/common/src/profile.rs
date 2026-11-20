@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use bevy::log::warn;
 use dcl_component::proto_components::common::Color3;
 use serde::{Deserialize, Serialize};
 
@@ -29,28 +30,39 @@ fn integral_slot<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u3
     }
 }
 
-/// Emotes without a valid slot are dropped, so one entry does not fail the
-/// whole profile, nor a batched profile fetch with it.
+/// Emotes that do not parse (a non-integral slot, a missing `urn`) are dropped
+/// with a warning, so one entry does not fail the whole profile, nor a batched
+/// profile fetch with it.
 fn valid_emotes<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<Vec<AvatarEmote>>, D::Error> {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Entry {
-        Valid(AvatarEmote),
-        Invalid(serde::de::IgnoredAny),
-    }
     Ok(
-        Option::<Vec<Entry>>::deserialize(deserializer)?.map(|entries| {
+        Option::<Vec<serde_json::Value>>::deserialize(deserializer)?.map(|entries| {
             entries
                 .into_iter()
-                .filter_map(|entry| match entry {
-                    Entry::Valid(emote) => Some(emote),
-                    Entry::Invalid(_) => None,
+                .filter_map(|entry| {
+                    AvatarEmote::deserialize(entry)
+                        .inspect_err(|e| warn!("dropping an emote of a profile: {e}"))
+                        .ok()
                 })
                 .collect()
         }),
     )
+}
+
+/// A profile version in any integral JSON number form, bounded to the `u32`
+/// the profile cache ranks by; any other value reads as 0, like a missing one.
+fn profile_version<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<i64, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value.as_f64() {
+        Some(version) if version.fract() == 0.0 && (0.0..=u32::MAX as f64).contains(&version) => {
+            Ok(version as i64)
+        }
+        _ => {
+            warn!("reading the invalid profile version {value} as 0");
+            Ok(0)
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, Default)]
@@ -155,7 +167,7 @@ pub struct SerializedProfile {
     pub user_id: Option<String>,
     #[serde(default)]
     pub name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "profile_version")]
     pub version: i64,
     pub eth_address: String,
     #[serde(default)]
@@ -286,6 +298,66 @@ mod tests {
 
         let no_emotes: AvatarWireFormat = serde_json::from_str(r#"{"wearables": []}"#).unwrap();
         assert_eq!(no_emotes.emotes, None);
+    }
+
+    #[test]
+    fn emotes_that_do_not_parse_are_dropped_from_a_profile() {
+        let avatar: AvatarWireFormat = serde_json::from_str(
+            r#"{"wearables": [], "emotes": [
+                {"slot": 1},
+                {"slot": 2, "urn": 7},
+                "wave",
+                {"slot": 3, "urn": "wave"}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            avatar.emotes,
+            Some(vec![AvatarEmote {
+                slot: 3,
+                urn: "wave".to_owned(),
+            }])
+        );
+    }
+
+    #[test]
+    fn profile_versions_read_as_bounded_integers() {
+        let version = |version: &str| {
+            serde_json::from_str::<SerializedProfile>(&format!(
+                r#"{{"ethAddress": "0x1", "version": {version}, "avatar": {{"wearables": []}}}}"#
+            ))
+            .unwrap()
+            .version
+        };
+        for (text, expected) in [("7", 7), ("7.0", 7), ("7e0", 7), ("4294967295", 4294967295)] {
+            assert_eq!(version(text), expected, "{text}");
+        }
+        for text in ["1.5", "-1", "4294967296", "\"7\"", "null"] {
+            assert_eq!(version(text), 0, "{text}");
+        }
+        let missing: SerializedProfile =
+            serde_json::from_str(r#"{"ethAddress": "0x1", "avatar": {"wearables": []}}"#).unwrap();
+        assert_eq!(missing.version, 0);
+
+        // One profile with an invalid version does not fail the batch.
+        let batch: LambdaProfiles = serde_json::from_str(
+            r#"{"avatars": [
+                {"ethAddress": "0x1", "version": 1.5, "avatar": {"wearables": []}},
+                {"ethAddress": "0x2", "version": 3.0, "avatar": {"wearables": []}}
+            ]}"#,
+        )
+        .unwrap();
+        let versions: Vec<i64> = batch.avatars.iter().map(|p| p.version).collect();
+        assert_eq!(versions, [0, 3]);
+
+        // The scene IPC still round-trips the version.
+        let profile = SerializedProfile {
+            version: 42,
+            ..Default::default()
+        };
+        let bytes = crate::rpc::rmp_encode(&profile).unwrap();
+        let decoded: SerializedProfile = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(decoded.version, 42);
     }
 
     #[test]

@@ -206,23 +206,22 @@ fn filter_avatars_by_ownership(avatars: &mut [Value], owned: Option<&OwnedTokens
                 })
                 .collect(),
         };
-        let validated = validated.into_iter().map(integral_slot).collect();
+        let validated = validated.into_iter().map(normalize_slot).collect();
         avatar_obj.insert("emotes".to_string(), Value::Array(validated));
     }
 }
 
-/// An integral `slot` in float form (`1.0`, `1e0`) served as the integer the
-/// reference's JSON round trip emits.
-pub(super) fn integral_slot(mut emote: Value) -> Value {
-    if let Some(slot) = emote.get_mut("slot")
-        && slot.as_u64().is_none()
-        && let Some(f) = slot.as_f64()
-        && f.fract() == 0.0
-        && (0.0..=u32::MAX as f64).contains(&f)
+/// An emote's or outfit's integral `slot` in float form (`1.0`, `1e0`),
+/// served as the integer the reference's JSON round trip emits.
+pub(super) fn normalize_slot(mut entry: Value) -> Value {
+    if let Some(slot) = entry.get_mut("slot")
+        && !slot.is_u64()
+        && let Some(n) = catalyst_shared::json_number::as_integral_u64(slot)
+            .filter(|n| *n <= u64::from(u32::MAX))
     {
-        *slot = Value::from(f as u64);
+        *slot = Value::from(n);
     }
-    emote
+    entry
 }
 
 /// Every non-base wearable the profile's avatars wear, for the third-party check.

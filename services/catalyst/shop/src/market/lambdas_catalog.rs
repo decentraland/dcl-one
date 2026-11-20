@@ -1336,7 +1336,7 @@ fn apply_names(entity: &mut Value, owned_names: &[String]) {
     }
     let kept: Vec<Value> = kept
         .into_iter()
-        .map(super::profiles::integral_slot)
+        .map(super::profiles::normalize_slot)
         .collect();
     *metadata = json!({ "outfits": kept, "namesForExtraSlots": owned_names });
 }
