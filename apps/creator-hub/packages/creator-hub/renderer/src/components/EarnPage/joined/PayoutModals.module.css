@@ -11,6 +11,11 @@
   gap: 50px;
 }
 
+.modalForm[data-variant="confirm"] {
+  min-height: 356px;
+  justify-content: space-between;
+}
+
 .modalIntro {
   display: flex;
   flex-direction: column;
@@ -38,6 +43,10 @@
 
 .body b {
   font-weight: var(--fw-bold);
+}
+
+.modalForm[data-variant="verify"] .body {
+  line-height: 19px;
 }
 
 .field {
@@ -156,6 +165,17 @@
   color: var(--error);
 }
 
+.waitingLine {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+  margin: 0;
+  color: var(--gray);
+}
+
 .payoutActions.payoutActions {
   gap: 30px;
 }
@@ -252,4 +272,74 @@
   flex-shrink: 0;
   width: 16px;
   height: 16px;
+}
+
+.emailField.emailField {
+  gap: 12px;
+}
+
+.emailField .fieldLabel {
+  line-height: 1.5;
+  color: var(--palette-neutral-softWhite);
+}
+
+.emailControl {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.emailInput.emailInput.emailInput[data-tone] > div {
+  height: 48px;
+  padding: 0 16px;
+  gap: 8px;
+  background-color: var(--palette-whiteTransparent-subtle);
+  line-height: 1.5;
+}
+
+.emailInput.emailInput.emailInput[data-tone] input {
+  height: 1.5em;
+  padding: 0;
+}
+
+.emailInput.emailInput.emailInput[data-tone] input[readonly] {
+  font-weight: var(--type-h6-semi-weight);
+}
+
+.emailInput.emailInput.emailInput[data-tone] > div:focus-within::after,
+.emailInput.emailInput.emailInput[data-tone][data-error] > div::after {
+  border-width: 2px;
+}
+
+.emailInput.emailInput.emailInput[data-tone] > div:has(> input[readonly])::after {
+  border-width: 1px;
+  border-color: var(--palette-whiteTransparent-blurry);
+}
+
+.editButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 15px;
+  background-color: transparent;
+  color: var(--palette-neutral-softWhite);
+  cursor: pointer;
+}
+
+.editButton:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.editButton svg {
+  width: 30px;
+  height: 30px;
+}
+
+.helperRow {
+  height: 18px;
 }

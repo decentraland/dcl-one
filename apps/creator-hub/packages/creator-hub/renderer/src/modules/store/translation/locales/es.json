@@ -1896,13 +1896,20 @@
         },
         "erc20": "Asegúrate de que esta billetera pueda recibir USDC en Ethereum (ERC-20). Los fondos enviados a una billetera que no lo admite no se pueden recuperar.",
         "verify": {
-          "title": "Verifica tu correo",
+          "confirm_title": "1. Confirma tu correo",
+          "confirm_body": "Asegúrate de que tu correo sea correcto. Enviaremos un código de verificación a esta dirección.",
+          "edit_email": "Editar correo",
+          "daily_limit": "Solicitaste demasiados códigos hoy. Inténtalo de nuevo mañana.",
+          "send_soon": "Podrás enviar un código a esta dirección en un momento.",
+          "continue": "Continuar",
+          "title": "2. Introduce el código de verificación",
           "body_sent": "Enviamos un código de 6 dígitos a <b>{email}</b>.",
           "body_instruction": "Introduce el código a continuación para completar la verificación.",
           "digit": "Dígito {n} de 6",
           "resend": "Reenviar código",
           "incorrect": "Código incorrecto. Revisa el correo e inténtalo de nuevo.",
           "expired": "Este código caducó. Reenvía uno nuevo.",
+          "back": "Atrás",
           "submit": "Verificar"
         },
         "snackbar": {

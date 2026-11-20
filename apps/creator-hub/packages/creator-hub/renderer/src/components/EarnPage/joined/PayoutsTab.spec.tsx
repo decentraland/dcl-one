@@ -6,6 +6,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import type { Enrollment, PayoutWallet } from '/shared/types/creator-fund';
 
 import { analytics, misc } from '#preload';
+import { actions } from '/@/modules/store/creatorFund';
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 import * as api from '/@/lib/creatorFundApi';
@@ -33,6 +34,7 @@ vi.mock('/@/lib/creatorFundApi', () => ({
   getPayoutWallet: vi.fn(),
   getPlaces: vi.fn(),
   putPayoutWallet: vi.fn(),
+  putEnrollment: vi.fn(),
   postEmailVerification: vi.fn(),
   putEmailVerification: vi.fn(),
 }));
@@ -782,6 +784,18 @@ describe('PayoutsTab', () => {
   });
 
   describe('when the email is not verified', () => {
+    const CONFIRM_TITLE = '1. Confirm your email';
+    const CODE_TITLE = '2. Enter the verification code';
+    const NEW_EMAIL = 'jane.doe@example.org';
+    const GENERIC = 'Something went wrong. Please try again.';
+    const DAILY_LIMIT = "You've requested too many codes today. Try again tomorrow.";
+    const SEND_SOON = 'You can send a code to this address in a moment.';
+
+    const tooSoon = (inMs: number) => ({
+      ...fail(429),
+      body: { error: 'too_soon', resend_available_at: new Date(Date.now() + inMs).toISOString() },
+    });
+
     beforeEach(() => {
       vi.mocked(api.getEnrollment).mockResolvedValue(ok(ENROLLMENT));
       vi.mocked(api.postEmailVerification).mockResolvedValue(
@@ -794,13 +808,39 @@ describe('PayoutsTab', () => {
           202,
         ),
       );
+      vi.mocked(api.putEnrollment).mockImplementation(async request =>
+        ok({ ...ENROLLMENT, ...request }),
+      );
     });
 
     async function openVerify() {
-      await renderTab();
+      const store = await renderTab();
       fireEvent.click(await (await contactCard()).findByRole('button', { name: 'Verify email' }));
-      return screen.findByRole('dialog', { name: 'Verify your email' });
+      return { store, dialog: await screen.findByRole('dialog', { name: CONFIRM_TITLE }) };
     }
+
+    const continueButton = (dialog: HTMLElement) => within(dialog).getByText('Continue');
+    const emailInput = (dialog: HTMLElement) =>
+      within(dialog).getByLabelText('Email') as HTMLInputElement;
+    const pencil = (dialog: HTMLElement) => within(dialog).getByLabelText('Edit email');
+    const focusOn = (element: HTMLElement) =>
+      waitFor(() => expect(document.activeElement).toBe(element));
+
+    const toCodeStep = async (dialog: HTMLElement) => {
+      fireEvent.click(continueButton(dialog));
+      await screen.findByRole('dialog', { name: CODE_TITLE });
+    };
+
+    async function openCodeStep() {
+      const { dialog } = await openVerify();
+      await toCodeStep(dialog);
+      return dialog;
+    }
+
+    const editEmail = (dialog: HTMLElement, value: string) => {
+      fireEvent.click(pencil(dialog));
+      fireEvent.change(emailInput(dialog), { target: { value } });
+    };
 
     const typeCode = (dialog: HTMLElement, code: string) =>
       fireEvent.paste(within(dialog).getByLabelText('Digit 1 of 6'), {
@@ -814,6 +854,380 @@ describe('PayoutsTab', () => {
       expectNoPrivateValuesTracked();
     });
 
+    describe('and the dialog opens on its first step', () => {
+      it('should show the email read-only with focus on CONTINUE, and send nothing', async () => {
+        const { dialog } = await openVerify();
+
+        expect(emailInput(dialog).value).toBe('jane.doe@example.com');
+        expect(emailInput(dialog).readOnly).toBe(true);
+        expect(document.activeElement).toBe(continueButton(dialog));
+        expect(api.postEmailVerification).not.toHaveBeenCalled();
+      });
+
+      it('should send a code on CONTINUE and open the code step on the first box', async () => {
+        const dialog = await openCodeStep();
+
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
+        expect(api.putEnrollment).not.toHaveBeenCalled();
+        expect(within(dialog).getByText('jane.doe@example.com').tagName).toBe('B');
+        expect(document.activeElement).toBe(within(dialog).getByLabelText('Digit 1 of 6'));
+        const resend = within(dialog).getByText('Resend code');
+        await waitFor(() => expect(resend.getAttribute('aria-disabled')).toBe('true'));
+        expect(within(dialog).getByText('Verify').hasAttribute('disabled')).toBe(true);
+        expect(within(dialog).getByText('Back')).toBeTruthy();
+        expect(within(dialog).queryByText('Cancel')).toBeNull();
+      });
+
+      it('should make the field editable from the pencil, with focus in it and its text selected', async () => {
+        const select = vi.spyOn(HTMLInputElement.prototype, 'select');
+        const { dialog } = await openVerify();
+
+        fireEvent.click(pencil(dialog));
+
+        const input = emailInput(dialog);
+        expect(input.readOnly).toBe(false);
+        expect(document.activeElement).toBe(input);
+        expect(select.mock.contexts).toEqual([input]);
+        expect(within(dialog).queryByLabelText('Edit email')).toBeNull();
+        select.mockRestore();
+      });
+
+      it('should save a changed email with the names and the current terms, then send the code to it', async () => {
+        const { store, dialog } = await openVerify();
+        store.dispatch(actions.fetchTerms.pending('terms', undefined));
+        store.dispatch(
+          actions.fetchTerms.fulfilled(
+            { version: 2, title: 'Terms', published_at: '2026-11-01T00:00:00Z', content: '' },
+            'terms',
+            undefined,
+          ),
+        );
+
+        editEmail(dialog, `  ${NEW_EMAIL} `);
+        await toCodeStep(dialog);
+
+        expect(api.putEnrollment).toHaveBeenCalledWith({
+          first_name: 'Jane',
+          last_name: 'Doe',
+          email: NEW_EMAIL,
+          terms_version: 2,
+        });
+        expect(vi.mocked(api.putEnrollment).mock.invocationCallOrder[0]).toBeLessThan(
+          vi.mocked(api.postEmailVerification).mock.invocationCallOrder[0],
+        );
+        expect(within(dialog).getByText(NEW_EMAIL).tagName).toBe('B');
+      });
+
+      it('should count an email equal to the current one once trimmed as unchanged', async () => {
+        const { dialog } = await openVerify();
+
+        editEmail(dialog, ' jane.doe@example.com ');
+        await toCodeStep(dialog);
+
+        expect(api.putEnrollment).not.toHaveBeenCalled();
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
+      });
+
+      it('should count an email that differs from the current one only in case as unchanged', async () => {
+        const { dialog } = await openVerify();
+
+        editEmail(dialog, ' JANE.DOE@Example.com ');
+        await toCodeStep(dialog);
+
+        expect(api.putEnrollment).not.toHaveBeenCalled();
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
+      });
+
+      it('should open the code step on the cooling code when its address comes back in another case', async () => {
+        const dialog = await openCodeStep();
+        fireEvent.click(within(dialog).getByText('Back'));
+        await screen.findByRole('dialog', { name: CONFIRM_TITLE });
+
+        editEmail(dialog, 'Jane.Doe@EXAMPLE.com');
+        await toCodeStep(dialog);
+
+        expect(api.putEnrollment).not.toHaveBeenCalled();
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
+      });
+
+      it('should hold CONTINUE on an empty or invalid email and flag an invalid one under the field', async () => {
+        const { dialog } = await openVerify();
+
+        editEmail(dialog, '');
+        expect(continueButton(dialog).hasAttribute('disabled')).toBe(true);
+        expect(within(dialog).queryByRole('alert')).toBeNull();
+
+        fireEvent.change(emailInput(dialog), { target: { value: 'jane.doe@' } });
+        fireEvent.blur(emailInput(dialog));
+
+        const alert = await within(dialog).findByRole('alert');
+        expect(alert.textContent).toBe('Invalid email');
+        expect(emailInput(dialog).getAttribute('aria-invalid')).toBe('true');
+        expect(emailInput(dialog).getAttribute('aria-describedby')).toContain(alert.id);
+        expect(continueButton(dialog).hasAttribute('disabled')).toBe(true);
+      });
+
+      it('should stay on the step with the error line when the save fails', async () => {
+        vi.mocked(api.putEnrollment).mockResolvedValue(fail(500));
+        const { dialog } = await openVerify();
+
+        editEmail(dialog, NEW_EMAIL);
+        fireEvent.click(continueButton(dialog));
+
+        expect((await within(dialog).findByRole('alert')).textContent).toBe(GENERIC);
+        expect(api.postEmailVerification).not.toHaveBeenCalled();
+        expect(continueButton(dialog).hasAttribute('disabled')).toBe(false);
+        await focusOn(emailInput(dialog));
+      });
+
+      it('should keep the saved email read-only when the send fails after it, and retry only the send', async () => {
+        vi.mocked(api.postEmailVerification).mockResolvedValueOnce(fail(500));
+        const { dialog } = await openVerify();
+
+        editEmail(dialog, NEW_EMAIL);
+        fireEvent.click(continueButton(dialog));
+
+        expect((await within(dialog).findByRole('alert')).textContent).toBe(GENERIC);
+        expect(emailInput(dialog).value).toBe(NEW_EMAIL);
+        expect(emailInput(dialog).readOnly).toBe(true);
+        await waitFor(() => expect(continueButton(dialog).hasAttribute('disabled')).toBe(false));
+        await focusOn(emailInput(dialog));
+
+        await toCodeStep(dialog);
+        expect(api.putEnrollment).toHaveBeenCalledTimes(1);
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(2);
+      });
+
+      it('should say a failed send under the field and let CONTINUE try again', async () => {
+        vi.mocked(api.postEmailVerification).mockResolvedValueOnce(fail(500));
+        const { dialog } = await openVerify();
+
+        fireEvent.click(continueButton(dialog));
+
+        expect((await within(dialog).findByRole('alert')).textContent).toBe(GENERIC);
+        await waitFor(() => expect(continueButton(dialog).hasAttribute('disabled')).toBe(false));
+        await focusOn(emailInput(dialog));
+        await toCodeStep(dialog);
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(2);
+      });
+
+      it.each([
+        ['30 s', 30e3],
+        ['90 s', 90e3],
+      ])(
+        'should open the code step without a new code while the last one cools down for %s',
+        async (_away, ms) => {
+          vi.mocked(api.postEmailVerification).mockResolvedValue(tooSoon(ms) as never);
+          const { dialog } = await openVerify();
+
+          await toCodeStep(dialog);
+
+          expect(within(dialog).queryByRole('alert')).toBeNull();
+          expect(within(dialog).getByText('Resend code').getAttribute('aria-disabled')).toBe(
+            'true',
+          );
+        },
+      );
+
+      it.each([
+        ['hours', 6 * 3600e3],
+        ['3 min', 180e3],
+      ])(
+        'should say the daily limit and hold CONTINUE when the next code is %s away',
+        async (_away, ms) => {
+          vi.mocked(api.postEmailVerification).mockResolvedValue(tooSoon(ms) as never);
+          const { dialog } = await openVerify();
+
+          fireEvent.click(continueButton(dialog));
+
+          expect((await within(dialog).findByRole('alert')).textContent).toBe(DAILY_LIMIT);
+          expect(continueButton(dialog).hasAttribute('disabled')).toBe(true);
+          await focusOn(emailInput(dialog));
+          expect(screen.getByRole('dialog', { name: CONFIRM_TITLE })).toBe(dialog);
+        },
+      );
+
+      const expectWaiting = async (dialog: HTMLElement) => {
+        const status = await within(dialog).findByRole('status');
+        expect(status.textContent).toBe(SEND_SOON);
+        expect(within(dialog).queryByRole('alert')).toBeNull();
+        expect(emailInput(dialog).value).toBe(NEW_EMAIL);
+        expect(emailInput(dialog).readOnly).toBe(true);
+        expect(pencil(dialog)).toBeTruthy();
+        expect(continueButton(dialog).hasAttribute('disabled')).toBe(true);
+        expect(continueButton(dialog).getAttribute('aria-describedby')).toBe(status.id);
+        expect(screen.queryByRole('dialog', { name: CODE_TITLE })).toBeNull();
+        await focusOn(emailInput(dialog));
+      };
+
+      const waitOut = async (dialog: HTMLElement) => {
+        await waitFor(() => expect(continueButton(dialog).hasAttribute('disabled')).toBe(false), {
+          timeout: 3000,
+        });
+        expect(within(dialog).queryByRole('status')).toBeNull();
+      };
+
+      it('should keep a changed email on this step until the cooldown the service answers ends, then send on CONTINUE', async () => {
+        vi.mocked(api.postEmailVerification).mockResolvedValueOnce(tooSoon(600) as never);
+        const { dialog } = await openVerify();
+
+        editEmail(dialog, NEW_EMAIL);
+        fireEvent.click(continueButton(dialog));
+
+        await expectWaiting(dialog);
+        await waitOut(dialog);
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
+        await toCodeStep(dialog);
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(2);
+        expect(api.putEnrollment).toHaveBeenCalledTimes(1);
+        expect(within(dialog).getByText(NEW_EMAIL).tagName).toBe('B');
+      });
+
+      it('should keep a changed email on this step while the code just sent cools down, sending nothing until CONTINUE', async () => {
+        vi.mocked(api.postEmailVerification).mockResolvedValueOnce(
+          ok(
+            {
+              sent_at: new Date().toISOString(),
+              expires_at: new Date(Date.now() + 600e3).toISOString(),
+              resend_available_at: new Date(Date.now() + 600).toISOString(),
+            },
+            202,
+          ),
+        );
+        const dialog = await openCodeStep();
+        fireEvent.click(within(dialog).getByText('Back'));
+        await screen.findByRole('dialog', { name: CONFIRM_TITLE });
+
+        editEmail(dialog, NEW_EMAIL);
+        fireEvent.click(continueButton(dialog));
+
+        await expectWaiting(dialog);
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
+        await waitOut(dialog);
+        await toCodeStep(dialog);
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(2);
+        expect(within(dialog).getByText(NEW_EMAIL).tagName).toBe('B');
+      });
+
+      const waitOnNewEmail = async () => {
+        const dialog = await openCodeStep();
+        fireEvent.click(within(dialog).getByText('Back'));
+        await screen.findByRole('dialog', { name: CONFIRM_TITLE });
+        editEmail(dialog, NEW_EMAIL);
+        fireEvent.click(continueButton(dialog));
+        await expectWaiting(dialog);
+        return dialog;
+      };
+
+      it('should take the address the last code went to back while waiting, and open the code step on that code', async () => {
+        const dialog = await waitOnNewEmail();
+
+        editEmail(dialog, 'jane.doe@example.com');
+
+        expect(within(dialog).queryByRole('status')).toBeNull();
+        expect(continueButton(dialog).hasAttribute('disabled')).toBe(false);
+        await toCodeStep(dialog);
+        expect(vi.mocked(api.putEnrollment).mock.calls.map(([request]) => request.email)).toEqual([
+          NEW_EMAIL,
+          'jane.doe@example.com',
+        ]);
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
+        expect(within(dialog).getByText('jane.doe@example.com').tagName).toBe('B');
+      });
+
+      it('should keep waiting when the saved address is edited only in case', async () => {
+        const dialog = await waitOnNewEmail();
+
+        editEmail(dialog, 'JANE.DOE@example.ORG');
+
+        expect(within(dialog).getByRole('status').textContent).toBe(SEND_SOON);
+        expect(continueButton(dialog).hasAttribute('disabled')).toBe(true);
+        expect(api.putEnrollment).toHaveBeenCalledTimes(1);
+      });
+
+      it('should save a third address at once while waiting, then wait on it', async () => {
+        const dialog = await waitOnNewEmail();
+
+        editEmail(dialog, 'jane.doe@example.net');
+
+        expect(within(dialog).queryByRole('status')).toBeNull();
+        expect(continueButton(dialog).hasAttribute('disabled')).toBe(false);
+        fireEvent.click(continueButton(dialog));
+        await waitFor(() => expect(api.putEnrollment).toHaveBeenCalledTimes(2));
+        expect(vi.mocked(api.putEnrollment).mock.calls[1][0].email).toBe('jane.doe@example.net');
+        expect((await within(dialog).findByRole('status')).textContent).toBe(SEND_SOON);
+        expect(emailInput(dialog).value).toBe('jane.doe@example.net');
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
+      });
+
+      it('should keep waiting for the changed email when the dialog is closed and opened again', async () => {
+        const dialog = await openCodeStep();
+        fireEvent.click(within(dialog).getByText('Back'));
+        await screen.findByRole('dialog', { name: CONFIRM_TITLE });
+        editEmail(dialog, NEW_EMAIL);
+        fireEvent.click(continueButton(dialog));
+        await expectWaiting(dialog);
+
+        fireEvent.keyDown(dialog, { key: 'Escape' });
+        await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+        fireEvent.click(await (await contactCard()).findByRole('button', { name: 'Verify email' }));
+        const again = await screen.findByRole('dialog', { name: CONFIRM_TITLE });
+        fireEvent.click(continueButton(again));
+
+        await expectWaiting(again);
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
+      });
+
+      it('should say a refused send with no time for the next code as a failure, and let CONTINUE try again', async () => {
+        vi.mocked(api.postEmailVerification).mockResolvedValue({
+          ...fail(429),
+          body: { error: 'too_soon' },
+        });
+        const { dialog } = await openVerify();
+
+        fireEvent.click(continueButton(dialog));
+
+        expect((await within(dialog).findByRole('alert')).textContent).toBe(GENERIC);
+        await waitFor(() => expect(continueButton(dialog).hasAttribute('disabled')).toBe(false));
+        expect(screen.getByRole('dialog', { name: CONFIRM_TITLE })).toBe(dialog);
+      });
+
+      it('should say an active place is needed when the service refuses the code for it, and lock the step', async () => {
+        vi.mocked(api.postEmailVerification).mockResolvedValue({
+          ...fail(403),
+          body: { error: 'no_active_place' },
+        });
+        vi.mocked(api.getPlaces)
+          .mockResolvedValueOnce(ok(myPlaces([place('a')])))
+          .mockResolvedValue(ok(myPlaces([])));
+        const { dialog } = await openVerify();
+
+        fireEvent.click(continueButton(dialog));
+
+        expect((await within(dialog).findByRole('alert')).textContent).toBe(EMAIL_NEEDS_SCENE);
+        expect(continueButton(dialog).hasAttribute('disabled')).toBe(true);
+        await focusOn(emailInput(dialog));
+        const contact = await contactCard();
+        await waitFor(() => expect(lockHint(contact, EMAIL_NEEDS_SCENE)).toBeTruthy());
+      });
+    });
+
+    describe('and BACK is pressed on the code step', () => {
+      it('should return to the first step read-only, with focus on the pencil and the code cleared', async () => {
+        const dialog = await openCodeStep();
+        typeCode(dialog, '12');
+
+        fireEvent.click(within(dialog).getByText('Back'));
+
+        expect(await screen.findByRole('dialog', { name: CONFIRM_TITLE })).toBe(dialog);
+        expect(emailInput(dialog).readOnly).toBe(true);
+        await waitFor(() => expect(document.activeElement).toBe(pencil(dialog)));
+        await toCodeStep(dialog);
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
+        expect((within(dialog).getByLabelText('Digit 1 of 6') as HTMLInputElement).value).toBe('');
+      });
+    });
+
     it.each([
       ['verified', ok({ ...ENROLLMENT, email_verified_at: '2026-11-04T10:02:00Z' })],
       ['incorrect', { ...fail(400), body: { error: 'invalid_code' } }],
@@ -821,7 +1235,7 @@ describe('PayoutsTab', () => {
       ['locked', { ...fail(429), body: { error: 'too_many_attempts' } }],
     ] as const)('should track a %s code once', async (result, response) => {
       vi.mocked(api.putEmailVerification).mockResolvedValue(response as never);
-      const dialog = await openVerify();
+      const dialog = await openCodeStep();
 
       typeCode(dialog, '123456');
       fireEvent.click(within(dialog).getByRole('button', { name: 'Verify' }));
@@ -834,7 +1248,7 @@ describe('PayoutsTab', () => {
 
     it('should track no code verdict when the check itself fails', async () => {
       vi.mocked(api.putEmailVerification).mockResolvedValue(fail(500));
-      const dialog = await openVerify();
+      const dialog = await openCodeStep();
 
       typeCode(dialog, '123456');
       fireEvent.click(within(dialog).getByRole('button', { name: 'Verify' }));
@@ -851,24 +1265,11 @@ describe('PayoutsTab', () => {
       expect(screen.getByText('Unverified')).toBeTruthy();
     });
 
-    it('should send a code on open and hold Resend Code', async () => {
-      const dialog = await openVerify();
-
-      expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
-      expect(within(dialog).getByText('jane.doe@example.com').tagName).toBe('B');
-      expect(document.activeElement).toBe(within(dialog).getByLabelText('Digit 1 of 6'));
-      const resend = within(dialog).getByRole('button', { name: 'Resend Code' });
-      await waitFor(() => expect(resend.getAttribute('aria-disabled')).toBe('true'));
-      expect(within(dialog).getByRole('button', { name: 'Verify' }).hasAttribute('disabled')).toBe(
-        true,
-      );
-    });
-
     it('should verify the code, say so and drop the badge and VERIFY EMAIL', async () => {
       vi.mocked(api.putEmailVerification).mockResolvedValue(
         ok({ ...ENROLLMENT, email_verified_at: '2026-11-04T10:02:00Z' }),
       );
-      const dialog = await openVerify();
+      const dialog = await openCodeStep();
 
       typeCode(dialog, '000000');
       fireEvent.click(within(dialog).getByRole('button', { name: 'Verify' }));
@@ -908,22 +1309,28 @@ describe('PayoutsTab', () => {
       expect(edit.getAttribute('aria-describedby')).toBe(lockHint(wallet, VERIFY_FIRST).id);
     });
 
-    it('should say an active place is needed when the service refuses the code for it, and lock the step', async () => {
-      vi.mocked(api.postEmailVerification).mockResolvedValue({
-        ...fail(403),
-        body: { error: 'no_active_place' },
-      });
-      vi.mocked(api.getPlaces)
-        .mockResolvedValueOnce(ok(myPlaces([place('a')])))
-        .mockResolvedValue(ok(myPlaces([])));
-      const dialog = await openVerify();
+    it.each([
+      ['an incorrect code', { ...fail(400), body: { error: 'invalid_code' } }, 'first box'],
+      ['an expired code', { ...fail(410), body: { error: 'code_expired' } }, 'resend'],
+      ['too many tries', { ...fail(429), body: { error: 'too_many_attempts' } }, 'resend'],
+    ] as const)('should move focus to what %s is about', async (_case, response, target) => {
+      vi.mocked(api.putEmailVerification).mockResolvedValue(response as never);
+      const dialog = await openCodeStep();
 
-      expect((await within(dialog).findByRole('alert')).textContent).toBe(EMAIL_NEEDS_SCENE);
-      const contact = await contactCard();
-      await waitFor(() => expect(lockHint(contact, EMAIL_NEEDS_SCENE)).toBeTruthy());
+      typeCode(dialog, '123456');
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Verify' }));
+
+      await within(dialog).findByRole('alert');
+      await waitFor(() =>
+        expect(document.activeElement).toBe(
+          target === 'resend'
+            ? within(dialog).getByRole('button', { name: 'Resend code' })
+            : within(dialog).getByLabelText('Digit 1 of 6'),
+        ),
+      );
     });
 
-    it('should keep Resend Code under an expired code and let it send a new one', async () => {
+    it('should keep Resend code under an expired code and let it send a new one', async () => {
       vi.mocked(api.putEmailVerification).mockResolvedValue({
         ...fail(410),
         body: { error: 'code_expired' },
@@ -949,12 +1356,12 @@ describe('PayoutsTab', () => {
             202,
           ),
         );
-      const dialog = await openVerify();
+      const dialog = await openCodeStep();
       typeCode(dialog, '123456');
       fireEvent.click(within(dialog).getByRole('button', { name: 'Verify' }));
       await within(dialog).findByRole('alert');
 
-      const resend = within(dialog).getByRole('button', { name: 'Resend Code' });
+      const resend = within(dialog).getByRole('button', { name: 'Resend code' });
       expect(resend.getAttribute('aria-disabled')).toBeNull();
       fireEvent.click(resend);
 
@@ -962,8 +1369,18 @@ describe('PayoutsTab', () => {
       expect(within(dialog).queryByRole('alert')).toBeNull();
     });
 
-    it('should say a failed send on the error line and keep Resend Code to try again', async () => {
+    it('should say a failed resend on the error line and keep Resend code to try again', async () => {
       vi.mocked(api.postEmailVerification)
+        .mockResolvedValueOnce(
+          ok(
+            {
+              sent_at: '2026-11-04T09:00:00Z',
+              expires_at: '2026-11-04T09:10:00Z',
+              resend_available_at: '2026-11-04T09:01:00Z',
+            },
+            202,
+          ),
+        )
         .mockResolvedValueOnce(fail(500))
         .mockResolvedValue(
           ok(
@@ -975,25 +1392,24 @@ describe('PayoutsTab', () => {
             202,
           ),
         );
-      const dialog = await openVerify();
+      const dialog = await openCodeStep();
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Resend code' }));
 
-      expect((await within(dialog).findByRole('alert')).textContent).toBe(
-        'Something went wrong. Please try again.',
-      );
-      const resend = within(dialog).getByRole('button', { name: 'Resend Code' });
+      expect((await within(dialog).findByRole('alert')).textContent).toBe(GENERIC);
+      const resend = within(dialog).getByRole('button', { name: 'Resend code' });
       expect(resend.getAttribute('aria-disabled')).toBeNull();
       fireEvent.click(resend);
 
-      await waitFor(() => expect(api.postEmailVerification).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(api.postEmailVerification).toHaveBeenCalledTimes(3));
       await waitFor(() => expect(within(dialog).queryByRole('alert')).toBeNull());
     });
 
     it.each([
-      [400, 'invalid_code', 'Incorrect Code. Check the email and try again.'],
-      [429, 'too_many_attempts', 'Something went wrong. Please try again.'],
-    ])('should explain a %s %s', async (status, error, message) => {
+      [400, 'invalid_code', 'Incorrect code. Check the email and try again.', false],
+      [429, 'too_many_attempts', GENERIC, true],
+    ])('should explain a %s %s', async (status, error, message, resendShown) => {
       vi.mocked(api.putEmailVerification).mockResolvedValue({ ...fail(status), body: { error } });
-      const dialog = await openVerify();
+      const dialog = await openCodeStep();
 
       typeCode(dialog, '123456');
       fireEvent.click(within(dialog).getByRole('button', { name: 'Verify' }));
@@ -1002,7 +1418,7 @@ describe('PayoutsTab', () => {
       expect(within(dialog).getByLabelText('Digit 1 of 6').getAttribute('aria-invalid')).toBe(
         'true',
       );
-      expect(within(dialog).queryByRole('button', { name: 'Resend Code' })).toBeNull();
+      expect(!!within(dialog).queryByRole('button', { name: 'Resend code' })).toBe(resendShown);
     });
   });
 

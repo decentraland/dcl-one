@@ -220,7 +220,7 @@ type Resources = {
   payouts: Resource<CreatorFundPayouts>;
   payoutWallet: Resource<PayoutWallet>;
   payoutWalletSave: Resource<PayoutWallet>;
-  emailVerification: Resource<EmailVerification>;
+  emailVerification: Resource<EmailVerification & { email?: string }>;
   emailVerificationConfirm: Resource<Enrollment>;
 };
 
@@ -324,7 +324,9 @@ const slice = createSlice({
       state.payoutWallet.data = payload;
       state.payoutWallet.status = 'succeeded';
     });
-    track(builder, 'emailVerification', sendEmailVerification);
+    track(builder, 'emailVerification', sendEmailVerification, (state, payload) => {
+      state.emailVerification.data = { ...payload, email: state.enrollment.data?.email };
+    });
     track(builder, 'emailVerificationConfirm', confirmEmailVerification, (state, payload) => {
       state.emailVerificationConfirm.data = payload;
       state.enrollment.data = payload;

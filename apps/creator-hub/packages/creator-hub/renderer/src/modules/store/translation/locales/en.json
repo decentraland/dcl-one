@@ -1896,13 +1896,20 @@
         },
         "erc20": "Make sure this wallet can receive USDC on Ethereum (ERC-20). Funds sent to a wallet that doesn't support it can't be recovered.",
         "verify": {
-          "title": "Verify your email",
+          "confirm_title": "1. Confirm your email",
+          "confirm_body": "Make sure your email is correct. We’ll send a verification code to this address.",
+          "edit_email": "Edit email",
+          "daily_limit": "You've requested too many codes today. Try again tomorrow.",
+          "send_soon": "You can send a code to this address in a moment.",
+          "continue": "Continue",
+          "title": "2. Enter the verification code",
           "body_sent": "6-digit code sent to <b>{email}</b>.",
           "body_instruction": "Please enter the code below to complete verification.",
           "digit": "Digit {n} of 6",
-          "resend": "Resend Code",
-          "incorrect": "Incorrect Code. Check the email and try again.",
+          "resend": "Resend code",
+          "incorrect": "Incorrect code. Check the email and try again.",
           "expired": "This code has expired. Resend a new one.",
+          "back": "Back",
           "submit": "Verify"
         },
         "snackbar": {
