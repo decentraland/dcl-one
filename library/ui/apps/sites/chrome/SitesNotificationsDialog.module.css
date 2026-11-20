@@ -70,7 +70,12 @@ a.row:focus-visible {
   width: 50px;
   height: 50px;
 }
-.media svg {
+.badge {
+  width: 22px;
+  height: 22px;
+}
+.media svg,
+.media .badge {
   position: absolute;
   right: 0;
   bottom: 0;

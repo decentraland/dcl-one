@@ -5,8 +5,7 @@ import {
   NotificationsCommunity,
   NotificationsGift,
   NotificationsReward,
-  NotificationsItemAirdropped,
-  NotificationsEventStarted
+  NotificationsItemAirdropped
 } from '../../../foundations/icons/notifications'
 import type { NavBarLinkProps } from '../../../components/NavBar/NavBar'
 import styles from './SitesNotificationsDialog.module.css'
@@ -14,13 +13,14 @@ import styles from './SitesNotificationsDialog.module.css'
 import emptyBell from '../assets/notifications-empty.webp'
 import defaultThumbnail from '../assets/dcl-logo.svg'
 
+export { notificationMedia } from './notification-media'
+
 const badges: Record<string, typeof NotificationsDefault> = {
   friends: NotificationsFriend,
   community: NotificationsCommunity,
   gift: NotificationsGift,
   badge: NotificationsReward,
-  marketplace: NotificationsItemAirdropped,
-  event: NotificationsEventStarted
+  marketplace: NotificationsItemAirdropped
 }
 type Row = {
   category?: string
@@ -29,6 +29,8 @@ type Row = {
   description: string
   href?: string | undefined
   image?: string | undefined
+  badge?: string | undefined
+  standalone?: boolean
   time: string
   unread: boolean
 }
@@ -160,13 +162,19 @@ export default function SitesNotificationsDialog({
                   <img
                     className={styles.thumbnail}
                     src={row.image || defaultThumbnail}
+                    referrerPolicy="no-referrer"
+                    loading="lazy"
                     alt=""
                     onError={(event) => {
                       if (event.currentTarget.getAttribute('src') !== defaultThumbnail)
                         event.currentTarget.src = defaultThumbnail
                     }}
                   />
-                  <Badge size={22} />
+                  {row.badge ? (
+                    <img className={styles.badge} src={row.badge} alt="" />
+                  ) : row.standalone ? null : (
+                    <Badge size={22} />
+                  )}
                 </span>
                 <span className={styles.copy}>
                   <strong>{row.title}</strong>

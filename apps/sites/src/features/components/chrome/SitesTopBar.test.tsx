@@ -568,6 +568,20 @@ it("restores the actual bell opener after pointer activation and dialog dismissa
   expect(document.activeElement).toBe(bell);
 });
 
+it("shows standalone artwork for a community event and a badged thumbnail for a sale", async () => {
+  const fetchNotifications = vi.fn().mockResolvedValue({ notifications: ["events_started", "item_sold"].map(type => ({
+    id: type, type, timestamp: Date.now(), metadata: { title: type, image: "https://example.org/item.png" }
+  })) });
+  render(<Host auth={{ ...baseAuth, signedIn: true, account: "0xa", fetchNotifications }} />);
+  fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
+  const event = (await screen.findByText("events_started")).closest("li")!;
+  const sale = screen.getByText("item_sold").closest("li")!;
+  expect(event.querySelectorAll("img")).toHaveLength(1);
+  expect(event.querySelector("img")?.getAttribute("src")).not.toBe("https://example.org/item.png");
+  expect(sale.querySelectorAll("img")).toHaveLength(2);
+  expect(sale.querySelector("img")?.getAttribute("src")).toBe("https://example.org/item.png");
+});
+
 it("keeps cached notifications alongside a background refresh error", async () => {
   const fetchNotifications = vi
     .fn()
