@@ -69,13 +69,13 @@ let calendar: Event[];
 let upcoming: Event[];
 let live: { events: Event[]; places: ReturnType<typeof placeRecord>[] };
 
-function setup(path: string, platform: DetectedPlatform = DESKTOP, origin = "https://example.org") {
+function setup(path: string, platform: DetectedPlatform = DESKTOP, pageOrigin = "https://example.org") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createMemoryRouter(
     [
       {
         path: "/events",
-        element: <EventsView sid="sid" platform={platform} origin={origin} initial={null} />,
+        element: <EventsView sid="sid" platform={platform} origin="https://example.org" pageOrigin={pageOrigin} initial={null} />,
       },
     ],
     { initialEntries: [path] },

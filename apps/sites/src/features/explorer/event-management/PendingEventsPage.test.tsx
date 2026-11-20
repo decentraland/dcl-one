@@ -73,7 +73,7 @@ describe("when opening the Pending Events page", () => {
       api.events = [makeEvent({ image: `${window.location.origin}${poster}` })];
     });
 
-    it("should show the cover on its card and in its review", async () => {
+    it("should show the cover on its card, and pass the review the same path", async () => {
       renderAdminPage(<PendingEventsPage />, PATH);
       const pending = await screen.findByRole("region", { name: "Pending Events" });
       const card = (await within(pending).findByRole("link", { name: "Moon concert" })).closest("li")!;

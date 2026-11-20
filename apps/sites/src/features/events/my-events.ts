@@ -28,7 +28,7 @@ export function myEventsQuery(identity: AuthIdentity | null) {
  */
 export function myEventCards(
   events: readonly ManagedEvent[],
-  ctx: { signer: string; now: number; zone: Zone; origin: string; profiles: CreatorProfiles; locale: EventsLocale },
+  ctx: { signer: string; now: number; zone: Zone; pageOrigin: string; profiles: CreatorProfiles; locale: EventsLocale },
 ): MyEventCardProps[] {
   const owner = ctx.signer.toLowerCase();
   return events
@@ -42,7 +42,7 @@ export function myEventCards(
     .map(({ event, start }) => ({
       id: event.id,
       title: event.name || eventText(ctx.locale, "Untitled event"),
-      image: eventImage(event.image, ctx.origin),
+      image: eventImage(event.image, ctx.pageOrigin),
       href: editEventHref(event.id),
       creator: eventCreator(event, ctx.profiles, ctx.locale),
       time: { label: relativeStart(start, ctx.now, ctx.zone, ctx.locale), dateTime: start },

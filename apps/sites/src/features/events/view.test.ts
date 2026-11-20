@@ -232,12 +232,14 @@ describe("page URLs", () => {
 describe("when rendering an event cover", () => {
   const POSTER = "/events-assets-099ac00/poster/abc.png";
 
-  it("should turn a cover on the page's own http origin into its path", () => {
+  it("should turn an http cover on the page's own origin into its path, keeping its query", () => {
     expect(eventImage(`http://127.0.0.1:5254${POSTER}`, "http://127.0.0.1:5254")).toBe(POSTER);
+    expect(eventImage(`http://127.0.0.1:5254${POSTER}?v=2`, "http://127.0.0.1:5254/")).toBe(`${POSTER}?v=2`);
   });
 
-  it("should turn a cover on the page's own https origin into its path, keeping its query", () => {
-    expect(eventImage(`https://example.org${POSTER}?v=2`, "https://example.org/")).toBe(`${POSTER}?v=2`);
+  it("should keep an https cover unchanged, on the page's own origin or under a catalyst base on another origin", () => {
+    expect(eventImage(`https://example.org${POSTER}`, "https://example.org")).toBe(`https://example.org${POSTER}`);
+    expect(eventImage(`https://catalyst.example.org${POSTER}`, "https://example.org")).toBe(`https://catalyst.example.org${POSTER}`);
   });
 
   it("should keep a cover on another origin, another port or another scheme unchanged", () => {
@@ -251,7 +253,7 @@ describe("when rendering an event cover", () => {
   });
 
   it("should keep a cover whose path would read as another host once the origin is dropped", () => {
-    expect(eventImage("https://example.org//evil.example/x.png", "https://example.org")).toBe("https://example.org//evil.example/x.png");
+    expect(eventImage("http://example.org//evil.example/x.png", "http://example.org")).toBe("http://example.org//evil.example/x.png");
   });
 
   it("should give no cover for an empty or missing one", () => {

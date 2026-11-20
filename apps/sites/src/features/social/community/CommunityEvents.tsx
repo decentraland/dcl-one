@@ -81,7 +81,7 @@ export function CommunityEvents({ communityId, now: initialNow }: { communityId:
             return (
               <li key={event.id}>
                 <UpcomingCard
-                  {...upcomingCardProps(event, { href: eventHref(event.id), now, zone, origin, profiles })}
+                  {...upcomingCardProps(event, { href: eventHref(event.id), now, zone, origin, pageOrigin: origin, profiles })}
                   remind={{ active: reminder.active, pending: reminder.pending, onToggle: reminder.toggle }}
                 />
               </li>

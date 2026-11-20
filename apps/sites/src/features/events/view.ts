@@ -98,16 +98,16 @@ export function eventPageShareUrl(origin: string, event: Pick<Event, "id" | "liv
 
 /**
  * An event cover as the page renders it. The API names an uploaded poster under its public base, which is
- * http on a local or preview node, and the library's images take only root-relative paths and https: a
- * cover on the page's own origin becomes its path, so it renders on any scheme and identically on server
- * and client. Anything else is unchanged and left to the library's check.
+ * http on a local or preview node, and the library's images take only root-relative paths and https: an
+ * http cover on the page's own origin (`pageOrigin`, the origin the browser loaded the page from) becomes
+ * its path. Anything else, https covers included, is unchanged and left to the library's check.
  */
-export function eventImage(image: string | null | undefined, origin: string): string | null {
-  if (!image || !origin) return image ?? null;
+export function eventImage(image: string | null | undefined, pageOrigin: string): string | null {
+  if (!image || !pageOrigin) return image ?? null;
   try {
     const url = new URL(image);
     // A path starting `//` would read as another host once the origin is dropped.
-    if (url.origin !== new URL(origin).origin || url.pathname.startsWith("//")) return image;
+    if (url.protocol !== "http:" || url.origin !== new URL(pageOrigin).origin || url.pathname.startsWith("//")) return image;
     return `${url.pathname}${url.search}${url.hash}`;
   } catch {
     return image;
@@ -407,14 +407,14 @@ export function readDayOffset(params: URLSearchParams): number {
  */
 export function upcomingCardProps(
   event: Event,
-  ctx: { href: string; now: number; zone: Zone; origin: string; profiles: CreatorProfiles; locale?: EventsLocale },
+  ctx: { href: string; now: number; zone: Zone; origin: string; pageOrigin: string; profiles: CreatorProfiles; locale?: EventsLocale },
 ): UpcomingEventCardProps {
   const locale = ctx.locale ?? "en";
   const start = event.next_start_at ?? event.start_at;
   return {
     id: event.id,
     title: event.name ?? eventText(locale, "Untitled event"),
-    image: eventImage(event.image, ctx.origin),
+    image: eventImage(event.image, ctx.pageOrigin),
     href: ctx.href,
     creator: eventCreator(event, ctx.profiles, locale),
     time: start ? { label: relativeStart(start, ctx.now, ctx.zone, locale), dateTime: start } : { label: eventText(locale, "Soon") },

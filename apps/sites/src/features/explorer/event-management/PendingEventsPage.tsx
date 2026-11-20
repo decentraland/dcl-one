@@ -46,8 +46,8 @@ export default function PendingEventsPage() {
 
 function PendingQueue({ access }: { access: EventAdminAccess }) {
   const identity = access.identity;
-  // The queue is a signed read, so its cards render in the browser only: the page origin is known.
-  const origin = typeof window === "undefined" ? "" : window.location.origin;
+  // The queue is a signed read, so its cards render in the browser only, where the page origin is the window's.
+  const pageOrigin = typeof window === "undefined" ? "" : window.location.origin;
   const client = useQueryClient();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -126,7 +126,7 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
           <li key={event.id}>
             <PendingEventCard
               title={event.name}
-              image={eventImage(event.image, origin)}
+              image={eventImage(event.image, pageOrigin)}
               href={`${PENDING_PATH}?id=${encodeURIComponent(event.id)}`}
               onOpen={(click) => {
                 click.preventDefault();
@@ -172,7 +172,7 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
       {review && !rejecting ? (
         <EventDetailModal
           title={review.name}
-          image={eventImage(review.image, origin)}
+          image={eventImage(review.image, pageOrigin)}
           live={false}
           when={reviewStart ? { label: new Date(reviewStart).toLocaleString(DATE_LOCALE), dateTime: reviewStart } : undefined}
           location={{ world: review.world, label: review.world ? review.server || "World location not published" : `${review.x},${review.y}` }}
