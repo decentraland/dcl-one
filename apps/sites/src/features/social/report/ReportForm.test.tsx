@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { ReactNode } from "react";
+import { StrictMode, type ReactNode } from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter } from "react-router";
@@ -47,13 +47,15 @@ describe("when a signed-out visitor fills the report form", () => {
     const { pathname, search, hash } = new URL(path, "http://192.0.2.1:5231");
     vi.stubGlobal("location", { pathname, search, hash, assign });
     return render(
-      <MemoryRouter initialEntries={[path]}>
-        <ReportForm trackCtx={{ sid: "sid", story: "report" } as never} />
-        <button type="button" onClick={() => openSignIn()}>
-          Header Sign In
-        </button>
-        <Link to={returnTo}>Original report</Link>
-      </MemoryRouter>,
+      <StrictMode>
+        <MemoryRouter initialEntries={[path]}>
+          <ReportForm trackCtx={{ sid: "sid", story: "report" } as never} />
+          <button type="button" onClick={() => openSignIn()}>
+            Header Sign In
+          </button>
+          <Link to={returnTo}>Original report</Link>
+        </MemoryRouter>
+      </StrictMode>,
     );
   }
 

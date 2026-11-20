@@ -197,7 +197,10 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
   const [submitting, setSubmitting] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
+  const lastReportedParam = useRef(reportedParam);
   useEffect(() => {
+    if (lastReportedParam.current === reportedParam) return;
+    lastReportedParam.current = reportedParam;
     if (reportedParam) setReportedAddress(reportedParam);
   }, [reportedParam]);
 
