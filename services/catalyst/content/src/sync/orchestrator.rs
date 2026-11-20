@@ -290,7 +290,8 @@ impl SyncOrchestrator {
 
 /// The sync job for [`crate::jobs::Jobs`]: starts sync against `peers` and holds until the job
 /// is cancelled, then stops the orchestrator. A bootstrap task that dies (panics) marks the node
-/// `Failed`; that is what `/status` 503s on. The bootstrap task ends once every peer streams (the
+/// `Failed`: `/about` answers 503 and every deploy is refused, while `/status` stays 200 and
+/// names the state. The bootstrap task ends once every peer streams (the
 /// streams are their own tasks), so the job keeps running without it. `on_bootstrap` (what starts
 /// the failed-deployments retry) runs once the node is `Syncing`, every type bootstrapped; a
 /// `PartiallySynced` node is still deploying profile snapshots.

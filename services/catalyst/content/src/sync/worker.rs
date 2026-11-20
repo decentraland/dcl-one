@@ -579,9 +579,10 @@ const STILL_WAITING_EVERY: Duration = Duration::from_secs(600);
 /// [`run_sync_job`]), or after `delay` when one is given, whichever comes first; at once with no
 /// bootstrap to wait for, and on cancellation, which the loop then sees. While it waits, every
 /// [`STILL_WAITING_EVERY`] it warns and sets the job's progress line: a node that never reaches
-/// `Syncing` never starts the loop, and this is what shows it.
+/// `Syncing` never starts the loop, and this is what shows it. `job` names the loop in the log.
 async fn wait_to_start(
     ctx: &JobContext,
+    job: &str,
     bootstrapped: Option<watch::Receiver<bool>>,
     delay: Option<Duration>,
 ) {
@@ -609,6 +610,7 @@ async fn wait_to_start(
             _ = reminder.tick() => {
                 let waited_min = waiting_since.elapsed().as_secs() / 60;
                 tracing::warn!(
+                    job,
                     waited_min,
                     "Still waiting for the sync bootstrap to reach Syncing; this loop has not started"
                 );
@@ -641,7 +643,7 @@ fn spawn_failed_deployment_jobs(
         );
         let bootstrapped = deps.bootstrapped.clone();
         jobs.spawn_scoped(ctx, "retry-failed", move |ctx| async move {
-            wait_to_start(&ctx, bootstrapped, None).await;
+            wait_to_start(&ctx, "retry-failed", bootstrapped, None).await;
             let trace = ctx.clone();
             retry
                 .run(ctx.cancel.clone(), move |outcome| match outcome {
@@ -656,7 +658,13 @@ fn spawn_failed_deployment_jobs(
     let pool = deps.pool;
     let bootstrapped = deps.bootstrapped;
     jobs.spawn_scoped(ctx, "failed-deployments-prune", move |ctx| async move {
-        wait_to_start(&ctx, bootstrapped, Some(PRUNE_START)).await;
+        wait_to_start(
+            &ctx,
+            "failed-deployments-prune",
+            bootstrapped,
+            Some(PRUNE_START),
+        )
+        .await;
         let trace = ctx.clone();
         run_prune_loop(
             pool,
@@ -989,7 +997,7 @@ mod tests {
         let gate = |bootstrapped: Option<watch::Receiver<bool>>, delay: Option<Duration>| {
             let (tx, rx) = tokio::sync::oneshot::channel();
             let cancel = jobs.spawn("gate", move |ctx| async move {
-                wait_to_start(&ctx, bootstrapped, delay).await;
+                wait_to_start(&ctx, "gate", bootstrapped, delay).await;
                 let _ = tx.send(());
                 Ok(())
             });
