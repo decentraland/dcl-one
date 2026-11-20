@@ -167,7 +167,9 @@ pub fn shop_router(state: SharedState) -> Router {
             get(read).post(erase(create)).delete(erase(unsubscribe)),
         )
         .with_state(state);
-    DataWrites::guard(api, enabled)
+    DataWrites::guard(api, enabled).layer(axum::middleware::from_fn(
+        crate::shared::cors::decentraland_cors,
+    ))
 }
 
 #[derive(Debug)]

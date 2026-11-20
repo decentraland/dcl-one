@@ -1,10 +1,9 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment } from "react";
 
 import { GeneralCheck, GeneralCopy } from "@dcl/one-ui/foundations/icons";
 
 import styles from "./CopyAddress.module.css";
-
-type CopyState = "idle" | "copied" | "failed";
+import { useCopyStatus } from "./useCopyStatus";
 
 /**
  * The live region stays mounted and only its text changes, so screen readers announce the result.
@@ -12,24 +11,8 @@ type CopyState = "idle" | "copied" | "failed";
  * silently.
  */
 export function CopyAddress({ address }: { address: string }) {
-  const [state, setState] = useState<CopyState>("idle");
-  const [announcement, setAnnouncement] = useState(0);
-  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
-  const show = (next: CopyState) => {
-    setState(next);
-    setAnnouncement((current) => current + 1);
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => setState("idle"), 2000);
-  };
-  const copy = () => {
-    const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
-    if (!clipboard) return show("failed");
-    clipboard.writeText(address).then(
-      () => show("copied"),
-      () => show("failed"),
-    );
-  };
+  const { state, announcement, copy: copyText } = useCopyStatus();
+  const copy = () => copyText(address);
   return (
     <span className={styles.copyWrap}>
       <button type="button" className={styles.copy} aria-label="Copy address" onClick={copy}>

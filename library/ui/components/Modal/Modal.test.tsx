@@ -1,0 +1,323 @@
+import { useRef, useState } from 'react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { renderToString } from 'react-dom/server'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { Modal } from './Modal'
+
+// jsdom has no modal dialogs: opening and closing only toggle `open`, so the dialog's role shows.
+const showModal = vi.fn(function (this: HTMLDialogElement) {
+  this.open = true
+})
+const close = vi.fn(function (this: HTMLDialogElement) {
+  this.open = false
+})
+const nativeShowModal = HTMLDialogElement.prototype.showModal
+const nativeClose = HTMLDialogElement.prototype.close
+
+beforeEach(() => {
+  showModal.mockClear()
+  close.mockClear()
+  HTMLDialogElement.prototype.showModal = showModal
+  HTMLDialogElement.prototype.close = close
+})
+
+afterEach(() => {
+  cleanup()
+  HTMLDialogElement.prototype.showModal = nativeShowModal
+  HTMLDialogElement.prototype.close = nativeClose
+})
+
+const outside = { clientX: -10, clientY: -10 }
+
+function pressBackdrop(dialog: HTMLElement) {
+  fireEvent.pointerDown(dialog, outside)
+  fireEvent.click(dialog, outside)
+}
+
+describe('Modal', () => {
+  describe('when it is mounted', () => {
+    it('opens as a modal dialog named by its title and described by its text', () => {
+      render(
+        <Modal title="Leave the program?" description="You lose your credits." onClose={() => {}} />
+      )
+      const dialog = screen.getByRole('dialog', { name: 'Leave the program?' })
+      expect(showModal).toHaveBeenCalledTimes(1)
+      expect(dialog).toHaveAccessibleDescription('You lose your credits.')
+      expect(
+        within(dialog).getByRole('heading', { level: 2, name: 'Leave the program?' })
+      ).toBeVisible()
+    })
+
+    it('has no description when it has no text', () => {
+      render(<Modal title="Saved" onClose={() => {}} />)
+      expect(screen.getByRole('dialog', { name: 'Saved' })).not.toHaveAttribute('aria-describedby')
+    })
+
+    it('keeps the caller’s description beside its own', () => {
+      render(
+        <>
+          <p id="more">More detail.</p>
+          <Modal title="Saved" description="Done." aria-describedby="more" onClose={() => {}} />
+        </>
+      )
+      expect(screen.getByRole('dialog')).toHaveAccessibleDescription('Done. More detail.')
+    })
+
+    it('stops the page behind it from scrolling, and lets it scroll again when it closes', () => {
+      document.documentElement.style.overflow = 'clip'
+      const { unmount } = render(<Modal title="Saved" onClose={() => {}} />)
+      expect(document.documentElement.style.overflow).toBe('hidden')
+      unmount()
+      expect(document.documentElement.style.overflow).toBe('clip')
+      document.documentElement.style.overflow = ''
+    })
+
+    it('closes the native dialog when it is removed', () => {
+      const { unmount } = render(<Modal title="Saved" onClose={() => {}} />)
+      unmount()
+      expect(close).toHaveBeenCalledTimes(1)
+    })
+
+    it('shows the dialog in a browser without modal dialogs', () => {
+      // @ts-expect-error an old browser has no showModal
+      HTMLDialogElement.prototype.showModal = undefined
+      render(<Modal title="Saved" onClose={() => {}} />)
+      expect(screen.getByRole('dialog', { name: 'Saved' })).toHaveAttribute('open')
+    })
+  })
+
+  describe('when the title is hidden', () => {
+    it('still names the dialog', () => {
+      render(<Modal title="Collection in review" titleHidden onClose={() => {}} />)
+      expect(screen.getByRole('dialog', { name: 'Collection in review' })).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: 'Collection in review' })).toHaveAttribute(
+        'data-hidden'
+      )
+    })
+  })
+
+  describe('when the reader closes it', () => {
+    it.each([
+      [
+        'the close button',
+        (dialog: HTMLElement) =>
+          fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+      ],
+      ['Escape', (dialog: HTMLElement) => fireEvent.keyDown(dialog, { key: 'Escape' })],
+      [
+        'the browser’s cancel request',
+        (dialog: HTMLElement) => fireEvent(dialog, new Event('cancel', { cancelable: true }))
+      ],
+      ['a press on the backdrop', pressBackdrop],
+      [
+        'a close the browser forces',
+        (dialog: HTMLElement) => {
+          ;(dialog as HTMLDialogElement).open = false
+          fireEvent(dialog, new Event('close'))
+        }
+      ]
+    ])('calls onClose once for %s', (_how, act) => {
+      const onClose = vi.fn()
+      render(<Modal title="Saved" onClose={onClose} />)
+      act(screen.getByRole('dialog'))
+      expect(onClose).toHaveBeenCalledTimes(1)
+    })
+
+    it('stops the browser from closing the dialog by itself, so the caller decides', () => {
+      render(<Modal title="Saved" onClose={() => {}} />)
+      const cancel = new Event('cancel', { cancelable: true })
+      fireEvent(screen.getByRole('dialog'), cancel)
+      expect(cancel.defaultPrevented).toBe(true)
+    })
+
+    it('stays open for another key, or an Escape a control inside already used', () => {
+      const onClose = vi.fn()
+      render(
+        <Modal title="Saved" onClose={onClose}>
+          <input aria-label="Name" onKeyDown={(event) => event.preventDefault()} />
+        </Modal>
+      )
+      fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Enter' })
+      fireEvent.keyDown(screen.getByRole('textbox', { name: 'Name' }), { key: 'Escape' })
+      expect(onClose).not.toHaveBeenCalled()
+    })
+
+    it('stays open on a click on its own padding, or a drag that ends on the backdrop', () => {
+      const onClose = vi.fn()
+      render(<Modal title="Saved" onClose={onClose} />)
+      const dialog = screen.getByRole('dialog')
+      vi.spyOn(dialog, 'getBoundingClientRect').mockReturnValue({
+        left: 0,
+        top: 0,
+        right: 100,
+        bottom: 100
+      } as DOMRect)
+      fireEvent.pointerDown(dialog, { clientX: 50, clientY: 50 })
+      fireEvent.click(dialog, { clientX: 50, clientY: 50 })
+      fireEvent.pointerDown(dialog, { clientX: 50, clientY: 50 })
+      fireEvent.click(dialog, { clientX: 150, clientY: 150 })
+      expect(onClose).not.toHaveBeenCalled()
+    })
+
+    it('uses the caller’s name for the close button', () => {
+      render(<Modal title="Guardado" closeLabel="Cerrar" onClose={() => {}} />)
+      expect(screen.getByRole('button', { name: 'Cerrar' })).toBeInTheDocument()
+    })
+  })
+
+  describe('when it has no close button', () => {
+    it('draws none, and Escape still closes it', () => {
+      const onClose = vi.fn()
+      render(<Modal title="Saved" closeButton={false} onClose={onClose} />)
+      expect(screen.queryByRole('button', { name: 'Close' })).toBeNull()
+      fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+      expect(onClose).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('when it must stay open', () => {
+    it('ignores Escape, the cancel request and the backdrop, and disables the close button', () => {
+      const onClose = vi.fn()
+      render(<Modal title="Leaving" dismissible={false} onClose={onClose} />)
+      const dialog = screen.getByRole('dialog')
+      fireEvent.keyDown(dialog, { key: 'Escape' })
+      fireEvent(dialog, new Event('cancel', { cancelable: true }))
+      pressBackdrop(dialog)
+      expect(onClose).not.toHaveBeenCalled()
+      expect(within(dialog).getByRole('button', { name: 'Close' })).toBeDisabled()
+    })
+
+    it('shows the dialog again after a close the browser forces', () => {
+      const onClose = vi.fn()
+      render(<Modal title="Leaving" dismissible={false} onClose={onClose} />)
+      const dialog = screen.getByRole('dialog') as HTMLDialogElement
+      dialog.open = false
+      fireEvent(dialog, new Event('close'))
+      expect(dialog.open).toBe(true)
+      expect(onClose).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('when it closes', () => {
+    function Page({ withRef = false }: { withRef?: boolean }) {
+      const [open, setOpen] = useState(false)
+      const other = useRef<HTMLButtonElement>(null)
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Open
+          </button>
+          <button type="button" ref={other}>
+            Other
+          </button>
+          {open ? (
+            <Modal
+              title="Saved"
+              onClose={() => setOpen(false)}
+              returnFocusRef={withRef ? other : undefined}
+            />
+          ) : null}
+        </>
+      )
+    }
+
+    it('returns focus to the control that opened it', async () => {
+      const user = userEvent.setup()
+      render(<Page />)
+      await user.click(screen.getByRole('button', { name: 'Open' }))
+      await user.click(screen.getByRole('button', { name: 'Close' }))
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(screen.getByRole('button', { name: 'Open' })).toHaveFocus()
+    })
+
+    it('returns focus to the element the caller names', async () => {
+      const user = userEvent.setup()
+      render(<Page withRef />)
+      await user.click(screen.getByRole('button', { name: 'Open' }))
+      await user.click(screen.getByRole('button', { name: 'Close' }))
+      expect(screen.getByRole('button', { name: 'Other' })).toHaveFocus()
+    })
+  })
+
+  describe('when the caller names the first control', () => {
+    it('moves focus to it when the dialog opens', () => {
+      function Confirm() {
+        const cancel = useRef<HTMLButtonElement>(null)
+        return (
+          <Modal
+            title="Delete?"
+            onClose={() => {}}
+            initialFocusRef={cancel}
+            actions={
+              <>
+                <button type="button" ref={cancel}>
+                  Cancel
+                </button>
+                <button type="button">Delete</button>
+              </>
+            }
+          />
+        )
+      }
+      render(<Confirm />)
+      expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus()
+    })
+  })
+
+  describe('when it has parts', () => {
+    it('shows the picture, the content, the checkbox and the actions in reading order', async () => {
+      const onCheckedChange = vi.fn()
+      const user = userEvent.setup()
+      render(
+        <Modal
+          title="Follow this link?"
+          description="It opens in your browser."
+          image={<img src="/alert.png" alt="" data-testid="picture" />}
+          checkbox={{ label: 'Always allow this domain', onCheckedChange }}
+          actions={
+            <>
+              <button type="button">Cancel</button>
+              <button type="button">Continue</button>
+            </>
+          }
+          divider
+          onClose={() => {}}
+        >
+          <a href="https://example.org/">https://example.org/</a>
+        </Modal>
+      )
+      const dialog = screen.getByRole('dialog', { name: 'Follow this link?' })
+      const order = [
+        screen.getByTestId('picture'),
+        within(dialog).getByRole('heading'),
+        within(dialog).getByRole('link'),
+        within(dialog).getByRole('checkbox', { name: 'Always allow this domain' }),
+        within(dialog).getByRole('separator'),
+        within(dialog).getByRole('button', { name: 'Cancel' }),
+        within(dialog).getByRole('button', { name: 'Continue' })
+      ]
+      order.slice(1).forEach((node, index) => {
+        expect(
+          order[index]!.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING
+        ).toBeTruthy()
+      })
+      await user.click(within(dialog).getByRole('checkbox'))
+      expect(onCheckedChange).toHaveBeenCalledWith(true)
+    })
+
+    it('draws no line, checkbox or actions it was not given', () => {
+      render(<Modal title="Saved" onClose={() => {}} />)
+      const dialog = screen.getByRole('dialog')
+      expect(within(dialog).queryByRole('separator')).toBeNull()
+      expect(within(dialog).queryByRole('checkbox')).toBeNull()
+      expect(within(dialog).getAllByRole('button')).toHaveLength(1)
+    })
+  })
+
+  it('renders on the server as a closed dialog with its title', () => {
+    const html = renderToString(<Modal title="Saved" description="Done." onClose={() => {}} />)
+    expect(html).toContain('Saved')
+    expect(html).not.toMatch(/<dialog[^>]* open/)
+  })
+})

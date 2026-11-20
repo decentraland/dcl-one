@@ -417,6 +417,78 @@ pub(crate) mod tests {
         out
     }
 
+    /// A signed request's preflight to the relay, waitlist, outfits and rentals routes, at each
+    /// mount, answers 204 to a Decentraland origin with that origin, credentials and the requested
+    /// `x-identity-*` headers, and grants any other origin no allow-origin, method or header.
+    #[tokio::test]
+    async fn signed_preflights_answer_the_decentraland_origins_only() {
+        let root =
+            std::env::temp_dir().join(format!("catalyst-shop-cors-{}", uuid::Uuid::new_v4()));
+        let credits = Arc::new(credits::State::new(
+            lazy_pool(),
+            Outbound::for_tests(),
+            credits::Settings::for_tests(),
+            credits::Sources {
+                market: None,
+                price: None,
+                economy: None,
+            },
+            None,
+        ));
+        let app = mounted_with_credits(&root, credits).await;
+        let requested = "content-type,x-identity-auth-chain-0,x-identity-auth-chain-1,x-identity-metadata,x-identity-timestamp";
+        for path in [
+            "/v1/transactions",
+            "/transactions-api/v1/transactions",
+            "/shop-api/v1/outfits",
+            "/shop-api/v1/outfits/thumbnails",
+            "/shop-api/v1/notify-requests",
+            "/v1/rentals-listings",
+            "/signatures-api/v1/rentals-listings",
+            "/shop-api/v1/rentals-listings",
+        ] {
+            for (origin, listed) in [
+                ("https://decentraland.org", true),
+                ("https://example.org", false),
+            ] {
+                let preflight = Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri(path)
+                    .header("origin", origin)
+                    .header("access-control-request-method", "POST")
+                    .header("access-control-request-headers", requested)
+                    .body(Body::empty())
+                    .unwrap();
+                let resp = app.clone().oneshot(preflight).await.unwrap();
+                assert_eq!(resp.status(), StatusCode::NO_CONTENT, "{path} {origin}");
+                let h = resp.headers();
+                assert_eq!(
+                    h.get("access-control-allow-headers")
+                        .map(|v| v.to_str().unwrap()),
+                    listed.then_some(requested),
+                    "{path} {origin}"
+                );
+                assert_eq!(
+                    h.contains_key("access-control-allow-methods"),
+                    listed,
+                    "{path} {origin}"
+                );
+                assert_eq!(
+                    h.get("access-control-allow-origin")
+                        .map(|v| v.to_str().unwrap()),
+                    listed.then_some(origin),
+                    "{path}"
+                );
+                assert_eq!(
+                    h.contains_key("access-control-allow-credentials"),
+                    listed,
+                    "{path} {origin}"
+                );
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[tokio::test]
     async fn every_listed_path_is_routed_where_serve_mounts_the_shop() {
         let root =

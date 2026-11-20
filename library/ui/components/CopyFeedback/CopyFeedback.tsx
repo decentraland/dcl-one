@@ -3,7 +3,11 @@ import styles from './CopyFeedback.module.css'
 
 export type CopyFeedbackProps = {
   value: string
-  children: (copy: () => void) => ReactNode
+  children: (copy: () => void, state: 'idle' | 'copied' | 'failed') => ReactNode
+  /** A block layout can include input groups or menus. */
+  as?: 'span' | 'div'
+  /** Turn off the tooltip when the control renders feedback through its label. */
+  showTooltip?: boolean
   /** A value beside the control that the success message replaces. Omit for a tooltip. */
   inlineValue?: ReactNode
   copiedLabel?: string
@@ -18,6 +22,8 @@ const INLINE_MS = 2000
 export function CopyFeedback({
   value,
   children,
+  as: Wrapper = 'span',
+  showTooltip = true,
   inlineValue,
   copiedLabel = 'Copied',
   successAnnouncement = copiedLabel,
@@ -47,14 +53,14 @@ export function CopyFeedback({
   }
 
   return (
-    <span className={inline ? `${styles.root} ${styles.inline}` : styles.root}>
+    <Wrapper className={inline ? `${styles.root} ${styles.inline}` : styles.root}>
       {inline && (feedback?.succeeded ? (
         <span key={feedback.attempt} className={styles.inlineSuccess} aria-hidden="true">
           {copiedLabel}
         </span>
       ) : inlineValue)}
-      {children(() => void copy())}
-      {!inline && feedback?.succeeded ? (
+      {children(() => void copy(), feedback ? (feedback.succeeded ? 'copied' : 'failed') : 'idle')}
+      {!inline && showTooltip && feedback?.succeeded ? (
         <span key={feedback.attempt} className={styles.tooltip} aria-hidden="true">
           {copiedLabel}
         </span>
@@ -64,6 +70,6 @@ export function CopyFeedback({
           <span key={feedback.attempt}>{feedback.succeeded ? successAnnouncement : errorAnnouncement}</span>
         ) : null}
       </span>
-    </span>
+    </Wrapper>
   )
 }

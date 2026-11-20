@@ -126,7 +126,9 @@ pub fn shop_router(state: SharedState) -> Router {
             get(one).put(erase(replace)).delete(erase(remove)),
         )
         .with_state(state);
-    DataWrites::guard(api, enabled)
+    DataWrites::guard(api, enabled).layer(axum::middleware::from_fn(
+        crate::shared::cors::decentraland_cors,
+    ))
 }
 
 /// The upstream envelopes: `{ ok: false, error: <label> }` for a handler

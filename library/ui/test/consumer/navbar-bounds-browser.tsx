@@ -44,6 +44,7 @@ const authentication = example.signedIn
 root.render(
   <NavBar
     {...authentication}
+    accountMenuAppearance={params.has('profile') ? 'profile' : undefined}
     sections={publicNavigation?.desktop ?? decentralandNavSections('', '/')}
     mobileSections={publicNavigation?.mobile}
     balances={example.balances}

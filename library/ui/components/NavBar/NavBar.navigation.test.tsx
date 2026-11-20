@@ -17,7 +17,7 @@ describe('when building the default Decentraland navigation', () => {
           { label: 'Places', href: '/places', active: false }
         ]
       },
-      { label: 'Shop', href: '/shop', active: false },
+      { label: 'Shop', href: '/shop/overview', active: false },
       { label: 'Create', href: '/create', active: false },
       { label: 'Learn', href: '/blog', active: false }
     ])
@@ -26,7 +26,7 @@ describe('when building the default Decentraland navigation', () => {
   it('should give every section a destination for hosts that render it as one link', () => {
     expect(decentralandNavigation.map(({ href }) => href)).toEqual([
       '/events',
-      '/shop',
+      '/shop/overview',
       '/create',
       '/blog'
     ])
@@ -131,7 +131,7 @@ describe('when building the public Sites navigation', () => {
     expect(desktop[2]?.items).toEqual([
       { label: 'Create in Decentraland', href: '/create', active: false },
       { label: 'Publish Wearables & Emotes', href: '/create/wearables', active: true },
-      { label: 'Publish LAND', href: '/create/land', active: false }
+      { label: 'Publish LAND', href: '/download/creator-hub', active: false }
     ])
   })
 })

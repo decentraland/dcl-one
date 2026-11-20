@@ -96,16 +96,15 @@ describe("profile assets", () => {
     expect(within(token).getByRole("link", { name: "View Power Up 1" }).getAttribute("href")).toBe("/shop/token/0xabc/1");
   });
 
-  it("gives a NAME in the full list its Edit and Transfer instead of View", async () => {
+  it("gives a NAME in the full list its View and Transfer", async () => {
     net.fetchProfileAssets.mockResolvedValue(page([name(5, "brai")]));
 
     show();
 
     const ens = await screen.findByRole("link", { name: "brai" }).then(() => card("brai"));
     expect(within(ens).queryByText("common")).toBeNull();
-    expect(within(ens).getByRole("link", { name: "Edit brai" }).getAttribute("href")).toBe("/create/names");
+    expect(within(ens).getByRole("link", { name: "View brai" }).getAttribute("href")).toBe("/shop/token/0xens/5");
     expect(within(ens).getByRole("link", { name: "Transfer brai" }).getAttribute("href")).toBe("/shop/token/0xens/5/transfer");
-    expect(within(ens).queryByRole("link", { name: /^View/ })).toBeNull();
     expect(screen.getByText("1 asset")).toBeTruthy();
   });
 

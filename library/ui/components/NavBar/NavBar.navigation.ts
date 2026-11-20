@@ -1,4 +1,4 @@
-import type { NavBarSection } from './NavBar'
+import type { NavBarLink, NavBarSection } from './NavBar'
 
 export type DecentralandNavigationSectionId = 'discover' | 'shop' | 'create' | 'learn'
 
@@ -6,10 +6,7 @@ export type DecentralandNavigationSectionId = 'discover' | 'shop' | 'create' | '
 export type DecentralandNavigationArea =
   'explore' | 'whatson' | 'events' | 'social' | 'shop' | 'create' | 'learn'
 
-export type DecentralandNavigationItem = {
-  label: string
-  href: string
-}
+export type DecentralandNavigationItem = Omit<NavBarLink, 'active'>
 
 export type DecentralandNavigationEntry = {
   id: DecentralandNavigationSectionId
@@ -30,7 +27,8 @@ export const decentralandNavigation: readonly DecentralandNavigationEntry[] = [
       { label: 'Places', href: '/places' }
     ]
   },
-  { id: 'shop', label: 'Shop', href: '/shop' },
+  // The overview itself: /shop only redirects to it, one more route request before the page.
+  { id: 'shop', label: 'Shop', href: '/shop/overview' },
   { id: 'create', label: 'Create', href: '/create' },
   { id: 'learn', label: 'Learn', href: '/blog' }
 ]
@@ -67,8 +65,7 @@ export function decentralandNavSections(
       label,
       active,
       items: items.map((item) => ({
-        label: item.label,
-        href: item.href,
+        ...item,
         active: active && underPath(pathname, item.href)
       }))
     }
@@ -85,12 +82,12 @@ const publicSectionItems: Record<
     { label: 'Emotes', href: '/shop/items?category=emote' },
     { label: 'NAMEs', href: '/shop/names' },
     { label: 'LAND', href: '/shop/lands' },
-    { label: 'Merch', href: 'https://store.decentraland.org/' }
+    { label: 'Merch', href: 'https://store.decentraland.org/', target: '_blank' }
   ],
   create: [
     { label: 'Create in Decentraland', href: '/create' },
     { label: 'Publish Wearables & Emotes', href: '/create/wearables' },
-    { label: 'Publish LAND', href: '/create/land' }
+    { label: 'Publish LAND', href: '/download/creator-hub' }
   ],
   learn: [
     { label: 'Get Started', href: '/docs/player/' },

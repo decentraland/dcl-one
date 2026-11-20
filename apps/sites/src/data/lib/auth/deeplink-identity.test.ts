@@ -63,6 +63,22 @@ describe("postIdentityHandoff", () => {
     const body = JSON.parse(String(init.body));
     expect(body.isMobile).toBe(false);
     expect(body.identity).toEqual(handoff);
+    expect("authRequestId" in body).toBe(false);
+  });
+
+  it("binds the identity to the deep-link request id when one is given", async () => {
+    const identity = await createIdentityFromPrivateKey(SIGNER_KEY);
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(201, { identityId: "9b2c1a1e-4c3d-4f5e-8a6b-7c8d9e0f1a2b", expiration: "" }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await postIdentityHandoff(identity, "/auth-api", {
+      authRequestId: "0f007385-b6f9-44b7-aeb2-748605afe1a9",
+    });
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body)).authRequestId).toBe(
+      "0f007385-b6f9-44b7-aeb2-748605afe1a9",
+    );
   });
 
   it("surfaces the server error when refused and rejects a success that carries no identity id", async () => {

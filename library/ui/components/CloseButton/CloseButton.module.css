@@ -1,0 +1,103 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+/* Figma `CloseCTA` (Property 1=Default|Hover): 46px, radius 12px, black, white at 10% on hover, a
+ * 16.6px pearl cross. Figma `Close Button` (style=filled|plain, state=default|hover): filled is
+ * 40px, radius 10px, black at 40% (20% on hover) with the 32px close icon; plain is 32px, radius
+ * 8px, no background (white at 20% on hover) with the 24px thin close icon. */
+@layer dcl.components {
+  .root {
+    position: relative;
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    color: var(--dcl-icon-default);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .root[data-variant='solid'] {
+    width: 46px;
+    height: 46px;
+    border-radius: var(--dcl-radius-md);
+    background: var(--dcl-neutrals-black);
+    color: var(--dcl-neutrals-pearl);
+  }
+
+  /* The capture's 10px radius has no token. */
+  .root[data-variant='filled'] {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background: var(--dcl-transparencies-black-40);
+  }
+
+  .root[data-variant='plain'] {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--dcl-radius-sm);
+    background: transparent;
+  }
+
+  .icon {
+    flex: none;
+  }
+
+  @media (hover: hover) {
+    .root[data-variant='solid']:hover:not(:disabled) {
+      background: var(--dcl-transparencies-white-10);
+    }
+
+    .root[data-variant='filled']:hover:not(:disabled) {
+      background: var(--dcl-transparencies-black-20);
+    }
+
+    .root[data-variant='plain']:hover:not(:disabled) {
+      background: var(--dcl-transparencies-white-20);
+    }
+  }
+
+  /* The keyboard focus ring is not in the design; it matches the other controls'. */
+  .root:focus-visible {
+    outline: 2px solid var(--dcl-transparencies-white-60);
+    outline-offset: 2px;
+  }
+
+  .root:disabled {
+    color: var(--dcl-text-disabled);
+    cursor: not-allowed;
+  }
+
+  /* A finger gets a 44px target around the smaller looks; the look keeps its size. */
+  @media (pointer: coarse) {
+    .root[data-variant='filled']::after,
+    .root[data-variant='plain']::after {
+      position: absolute;
+      inset: 50% auto auto 50%;
+      width: 44px;
+      height: 44px;
+      transform: translate(-50%, -50%);
+      content: '';
+    }
+  }
+
+  @media (forced-colors: active) {
+    .root {
+      border: 1px solid ButtonText;
+      background: ButtonFace;
+      color: ButtonText;
+    }
+
+    .root:disabled {
+      border-color: GrayText;
+      color: GrayText;
+    }
+
+    .root:focus-visible {
+      outline-color: Highlight;
+    }
+  }
+}
