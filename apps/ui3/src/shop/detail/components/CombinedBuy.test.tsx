@@ -736,6 +736,34 @@ describe("a split whose outcome is not known", () => {
     expect(first).toBe(false);
   });
 
+  it("a live outcome whose record the storage will neither clear nor rewrite says so: once closed, checking it can take until its Credits expire", async () => {
+    const { demo, line } = setup();
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    const removeItem = Storage.prototype.removeItem;
+    const setItem = Storage.prototype.setItem;
+    let writes = 0;
+    const stuckRemove = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(function (this: Storage, key: string) {
+      if (!key.startsWith("dcl-shop-buynow-split:")) return removeItem.call(this, key);
+    });
+    // Written before the sale leaves (its terms, then its envelope); every write after that fails.
+    const stuckWrite = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key: string, value: string) {
+      if (key.startsWith("dcl-shop-buynow-split:") && ++writes > 2) throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+      setItem.call(this, key, value);
+    });
+    try {
+      await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+      expect(await screen.findByTestId("combined-check-notice", {}, { timeout: 5000 })).toHaveTextContent(
+        "This browser couldn't save this purchase's transaction. Once you close this, checking it can take until its Credits expire.",
+      );
+      expect(screen.queryByText(/Purchase complete/)).toBeNull();
+      // What is stored is the record made before it left: no hash.
+      expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toMatchObject({ txHash: null });
+    } finally {
+      stuckRemove.mockRestore();
+      stuckWrite.mockRestore();
+    }
+  });
+
   it("a successful receipt for a transaction that is not this sale's, with nothing in the history, is held confirming with that hash, never complete", async () => {
     const { demo, line } = setup(undefined, undefined, MANA, undefined, { userPurchases: () => ({ purchases: [], total: 0 }) });
     demo.chain.allowances.set(managerKey(), 10n ** 21n);
@@ -1143,6 +1171,39 @@ describe("a held split with no transaction to read", () => {
     expect(screen.getByText(/still confirming/)).toBeTruthy();
     expect(screen.queryByText(/spent on another purchase/)).toBeNull();
     expect(readSplitHold(BOOK.buyer, demo.lineId)).not.toBeNull();
+  });
+
+  it("Check again stays busy until its outcome is applied: a second press can't put the item back on sale over a success", async () => {
+    const demo = heldSplit({ value: "SETTLED" }, nowSeconds() - 1, { attempt: "a" });
+    // The item's lock is granted a moment late, as a browser may: the window in which Check again must stay off.
+    const locks = demo.services.locks as unknown as { request: (...args: unknown[]) => Promise<unknown> };
+    const request = locks.request.bind(locks);
+    let grant!: () => void;
+    const late = new Promise<void>((resolve) => (grant = resolve));
+    let asked = false;
+    locks.request = async (name: unknown, ...rest: unknown[]) => {
+      if (String(name).startsWith("dcl-shop-buynow-split:")) {
+        asked = true;
+        await late;
+      }
+      return request(name, ...rest);
+    };
+    const button = await screen.findByTestId("combined-check-again");
+    act(() => {
+      fireEvent.click(button);
+    });
+    await waitFor(() => expect(asked).toBe(true));
+    // Its outcome is read (spent) and being applied: Check again is off, and a press does nothing.
+    expect(screen.getByTestId("combined-check-again")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("combined-check-again"));
+    await act(async () => grant());
+    expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(screen.getByText(/Purchase complete/)).toBeTruthy();
+    expect(screen.queryByTestId("combined-confirm")).toBeNull();
+    expect(demo.shop.log.filter((r) => r.name === "userPurchases")).toHaveLength(1);
   });
 
   it("SETTLED alone, with no transaction to read, proves the credit was spent, not on what: the split stays held", async () => {

@@ -53,8 +53,6 @@ import {
   writeSplitHold,
   type SplitHold,
   noteSplitHoldExpiry,
-  type SplitHoldClearing,
-  type SplitSettlement,
 } from "../../checkout/purchase/splitHold";
 import { splitEnvelope, type SplitSale } from "../../checkout/purchase/splitEvidence";
 import { createSpendGuard } from "@shop/checkout/purchase/spend-guard";
@@ -100,6 +98,7 @@ const UNCHECKABLE = "This browser can't check this purchase safely here. Open it
 const SPENT_ELSEWHERE = "The Credits this purchase held were spent on another purchase, so nothing was bought here.";
 const EXPIRING = "This purchase's Credits expired unspent. The item is let go once that is confirmed, in a few minutes: check again then.";
 const UNCLEARED = "This browser couldn't update its record of this purchase. Check again in a moment.";
+const UNKEPT = "This browser couldn't save this purchase's transaction. Once you close this, checking it can take until its Credits expire.";
 /** How often, and how far apart, the sale asks again for the grant's lock right after this tab's own approval let it go. */
 const GRANT_LOCK_TRIES = 5;
 const GRANT_LOCK_RETRY_MS = 50;
@@ -193,6 +192,8 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     return () => clearTimeout(t);
   }, [sent]);
   const [checking, setChecking] = useState(false);
+  // Set while a Check again runs, at once (the state that disables its button only lands on the next render).
+  const checkingNow = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
   // A run that proved it sent nothing, whose record the storage kept: its attempt, and the outcome shown once it clears.
   const [unsent, setUnsent] = useState<{ attempt: string; message: string } | null>(null);
@@ -342,11 +343,14 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     // Set once the sale itself goes to the relay or the wallet: before it, a failure is the MANA approval's, and no sale left.
     let dispatched = false;
     /** Held for this account and item, with what is known of it, and shown confirming. */
-    const holdConfirming = (record: SplitHold) => {
+    /** Whether its record now says so; if not, the notice says it can only be checked by its credit later. */
+    const holdConfirming = (record: SplitHold): boolean => {
       // Should this write fail, the record made before the sale left stays: held, with no hash, until the node settles it.
-      writeSplitHold(ctx.buyer, lineId, record);
+      const kept = writeSplitHold(ctx.buyer, lineId, record);
       setSent(record);
       setPhase({ kind: "pending" });
+      if (!kept) setNotice(UNKEPT);
+      return kept;
     };
     /**
      * Applies what the chain and the node say of this run's sale as `record` (settleSplitHold), if that settles it: bought
@@ -360,8 +364,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       if (settled?.kind !== "spent" && settled?.kind !== "elsewhere") return false;
       if (!clearSplitHold(ctx.buyer, lineId, attempt)) {
         // Kept with the hash that settled it (a sibling the node attributed, say), so the next check reads that one at once.
-        holdConfirming(settled.kind === "spent" ? { ...record, txHash: settled.txHash } : record);
-        setNotice(UNCLEARED);
+        if (holdConfirming(settled.kind === "spent" ? { ...record, txHash: settled.txHash } : record)) setNotice(UNCLEARED);
         return true;
       }
       setSent(null);
@@ -501,6 +504,58 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     }
   }
 
+  /** What Check again does with the record it read, while it holds `checking` throughout. */
+  async function checkRecord(record: SplitHold, account: string | null) {
+    // This run proved it sent nothing: only its record is left to go, and then its outcome shows.
+    if (unsent && record.attempt === unsent.attempt && account) {
+      const clearing = await clearSettledSplitHold(services.locks, account, lineId, record);
+      if (clearing.kind === "busy") {
+        setNotice(clearing.unremoved ? UNCLEARED : services.locks ? CHECKING_ELSEWHERE : UNCHECKABLE);
+        return;
+      }
+      setUnsent(null);
+      if (clearing.kind === "replaced") {
+        setSent(clearing.current);
+        if (!clearing.current) setPhase({ kind: "review" });
+        return;
+      }
+      setSent(null);
+      setPhase({ kind: "error", message: unsent.message });
+      return;
+    }
+    const settled = await settleSplitHold(record, { account, reader: services.reader, client: services.client });
+    if (!settled || !account) return;
+    if (settled.kind === "expiring") {
+      // Its credit expired unspent: noted, so the grace runs from now in every tab, and the item stays held until it ends.
+      const noted = await noteSplitHoldExpiry(services.locks, account, lineId, record);
+      setSent(readSplitHold(account, lineId));
+      setNotice(noted === "busy" ? (services.locks ? CHECKING_ELSEWHERE : UNCHECKABLE) : noted === "noted" ? EXPIRING : null);
+      return;
+    }
+    // Applied under the item's lock, and only to the attempt that was read: another tab or surface may have settled it
+    // meanwhile and sent a new split, whose record an outcome of this one never wipes.
+    const clearing = await clearSettledSplitHold(services.locks, account, lineId, record);
+    if (clearing.kind === "busy") {
+      setNotice(clearing.unremoved ? UNCLEARED : services.locks ? CHECKING_ELSEWHERE : UNCHECKABLE);
+      return;
+    }
+    if (clearing.kind === "replaced") {
+      setSent(clearing.current);
+      if (!clearing.current && phase.kind === "pending") setPhase({ kind: "review" });
+      return;
+    }
+    setSent(null);
+    if (settled.kind === "spent") {
+      setPhase({ kind: "success", txHash: settled.txHash });
+      finished(settled.txHash);
+    } else if (settled.kind === "elsewhere") {
+      // Its credit paid for something else: nothing was bought here, and there is no credit left to give back.
+      setPhase({ kind: "error", message: SPENT_ELSEWHERE });
+    } else if (phase.kind === "pending") {
+      setPhase({ kind: "review" });
+    }
+  }
+
   return {
     phase,
     busy,
@@ -543,6 +598,8 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     notice,
     unsent: unsent && sent?.attempt === unsent.attempt ? unsent.message : null,
     checkAgain: async () => {
+      // One at a time, from its first read to its last write: a press while one runs does nothing.
+      if (checkingNow.current) return;
       setNotice(null);
       const account = wallet.account;
       // Read even past the hold: a purchase that mined in the meantime is completed, never offered a second time.
@@ -552,65 +609,13 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
         if (phase.kind === "pending") setPhase({ kind: "review" });
         return;
       }
-      // This run proved it sent nothing: only its record is left to go, and then its outcome shows.
-      if (unsent && record.attempt === unsent.attempt && account) {
-        setChecking(true);
-        let clearing: SplitHoldClearing;
-        try {
-          clearing = await clearSettledSplitHold(services.locks, account, lineId, record);
-        } finally {
-          setChecking(false);
-        }
-        if (clearing.kind === "busy") {
-          setNotice(clearing.unremoved ? UNCLEARED : services.locks ? CHECKING_ELSEWHERE : UNCHECKABLE);
-          return;
-        }
-        setUnsent(null);
-        if (clearing.kind === "replaced") {
-          setSent(clearing.current);
-          if (!clearing.current) setPhase({ kind: "review" });
-          return;
-        }
-        setSent(null);
-        setPhase({ kind: "error", message: unsent.message });
-        return;
-      }
+      checkingNow.current = true;
       setChecking(true);
-      let settled: SplitSettlement | null;
       try {
-        settled = await settleSplitHold(record, { account, reader: services.reader, client: services.client });
+        await checkRecord(record, account);
       } finally {
+        checkingNow.current = false;
         setChecking(false);
-      }
-      if (!settled || !account) return;
-      if (settled.kind === "expiring") {
-        // Its credit expired unspent: noted, so the grace runs from now in every tab, and the item stays held until it ends.
-        const noted = await noteSplitHoldExpiry(services.locks, account, lineId, record);
-        setSent(readSplitHold(account, lineId));
-        setNotice(noted === "busy" ? (services.locks ? CHECKING_ELSEWHERE : UNCHECKABLE) : noted === "noted" ? EXPIRING : null);
-        return;
-      }
-      // Applied under the item's lock, and only to the attempt that was read: another tab or surface may have settled it
-      // meanwhile and sent a new split, whose record an outcome of this one never wipes.
-      const clearing = await clearSettledSplitHold(services.locks, account, lineId, record);
-      if (clearing.kind === "busy") {
-        setNotice(clearing.unremoved ? UNCLEARED : services.locks ? CHECKING_ELSEWHERE : UNCHECKABLE);
-        return;
-      }
-      if (clearing.kind === "replaced") {
-        setSent(clearing.current);
-        if (!clearing.current && phase.kind === "pending") setPhase({ kind: "review" });
-        return;
-      }
-      setSent(null);
-      if (settled.kind === "spent") {
-        setPhase({ kind: "success", txHash: settled.txHash });
-        finished(settled.txHash);
-      } else if (settled.kind === "elsewhere") {
-        // Its credit paid for something else: nothing was bought here, and there is no credit left to give back.
-        setPhase({ kind: "error", message: SPENT_ELSEWHERE });
-      } else if (phase.kind === "pending") {
-        setPhase({ kind: "review" });
       }
     },
   };
