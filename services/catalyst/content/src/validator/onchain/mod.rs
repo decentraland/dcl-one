@@ -242,15 +242,18 @@ fn call_params(to: Address, data: &[u8], block: BlockTag, overrides: Option<&Val
 /// way), a JSON-RPC internal or server error, or a replica that has not seen
 /// the block yet. A rate limit (HTTP 429, or EIP-1474's -32005 "limit
 /// exceeded") is not asked again within the check, nor is an answer that
-/// will not change (a refused endpoint, a bad key or path, invalid params, a
-/// block without a usable number or timestamp).
+/// will not change (a refused endpoint, a bad key or path, invalid params,
+/// EIP-1474's resource not found, transaction rejected, method or version
+/// not supported, a block without a usable number or timestamp).
 fn transient(e: &RpcError) -> bool {
     match e {
         RpcError::Transport(_) => true,
         RpcError::Status(s) => *s == 408 || (500..600).contains(s),
         RpcError::Malformed(m) => !m.starts_with("block "),
         RpcError::Response { code, .. } => {
-            *code == -32603 || ((-32099..=-32000).contains(code) && *code != -32005)
+            *code == -32603
+                || ((-32099..=-32000).contains(code)
+                    && ![-32001, -32003, -32004, -32005, -32006].contains(code))
         }
         RpcError::Refused(_) => false,
     }
