@@ -353,7 +353,8 @@ const WORLD_SCENE_IDS: &str =
     "SELECT identity FROM explore.world_scene_place WHERE identity = ANY($1)";
 
 /// The ranked, uncurated world-scene places the places leg clears, curation
-/// read as the projection reads it; `$2`, when set, narrows them to `$2`.
+/// read as the projection reads it; an id with a catalogue row is left to
+/// that row's leg. `$1` is spared; `$2`, when set, narrows them to `$2`.
 const SCENE_CLEAR_CANDIDATES: &str = "SELECT p.identity::text FROM explore.world_scene_place p \
      JOIN explore.place_ranking r ON r.place_id = p.identity::text \
      LEFT JOIN explore.place_moderation m ON m.place_id = p.identity::text \
@@ -361,6 +362,7 @@ const SCENE_CLEAR_CANDIDATES: &str = "SELECT p.identity::text FROM explore.world
      WHERE jsonb_typeof(r.overlay->'ranking') = 'number' AND r.overlay->'ranking' <> '0'::jsonb \
      AND NOT COALESCE(m.highlighted, wm.highlighted, false) \
      AND NOT COALESCE(r.overlay->'exclude_from_ranking' = 'true'::jsonb, false) \
+     AND NOT EXISTS (SELECT 1 FROM explore.place_indexed c WHERE c.id = p.identity::text) \
      AND p.identity::text <> ALL($1::text[]) \
      AND ($2::text[] IS NULL OR p.identity::text = ANY($2::text[])) \
      ORDER BY p.identity";
@@ -386,8 +388,8 @@ fn clear_candidates_sql(world: bool) -> String {
 /// Replaces the automated ranking set of each leg in `scope` in one
 /// transaction: every ranking named is written, every automated ranking of
 /// that leg not named is cleared to 0 (world-scene places with the places
-/// leg, which reports them world-backed), curated rows are never touched, and
-/// a leg out of scope is neither written nor cleared. A clear then a separate
+/// leg; one the run names is reported world-backed and kept), curated rows
+/// are never touched, and a leg out of scope is neither written nor cleared. A clear then a separate
 /// write would leave a window where the population reads as unranked.
 pub async fn replace_ranking(
     pool: &PgPool,
@@ -500,18 +502,22 @@ pub async fn replace_ranking(
                 .bind(&keep)
                 .fetch_all(&mut *tx)
                 .await?;
-        let mut scene_ids: Vec<String> = if world {
+        // A scene named in this run is reported world-backed and keeps its ranking.
+        let spared: Vec<String> = keep
+            .iter()
+            .chain(&place_buckets.world_backed)
+            .cloned()
+            .collect();
+        let scene_ids: Vec<String> = if world {
             Vec::new()
         } else {
             sqlx::query_scalar(SCENE_CLEAR_CANDIDATES)
-                .bind(&keep)
+                .bind(&spared)
                 .bind(None::<Vec<String>>)
                 .fetch_all(&mut *tx)
                 .await?
         };
-        // An id that is also a catalogue row is cleared once, with the catalogue.
-        scene_ids.retain(|id| !cleared_ids.contains(id));
-        legs.push((world, keep, applied, cleared_ids, scene_ids));
+        legs.push((world, spared, applied, cleared_ids, scene_ids));
     }
     let touched: Vec<String> = legs
         .iter()
@@ -525,7 +531,7 @@ pub async fn replace_ranking(
         .cloned()
         .collect();
     lock_world_scenes(&mut tx, &touched).await?;
-    for (world, keep, applied, cleared_ids, scene_ids) in legs {
+    for (world, spared, applied, cleared_ids, scene_ids) in legs {
         let applied_count = write_overlays(&mut tx, &applied, actor).await? as i64;
         let cleared: Vec<(String, Value)> = cleared_ids
             .into_iter()
@@ -536,7 +542,7 @@ pub async fn replace_ranking(
             // Re-read under the lock: a scene curated meanwhile keeps its ranking.
             let scenes: Vec<(String, Value)> =
                 sqlx::query_scalar::<_, String>(SCENE_CLEAR_CANDIDATES)
-                    .bind(&keep)
+                    .bind(&spared)
                     .bind(&scene_ids)
                     .fetch_all(&mut *tx)
                     .await?

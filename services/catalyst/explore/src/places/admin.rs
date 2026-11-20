@@ -2896,34 +2896,51 @@ mod tests {
         assert_eq!(score.await.unwrap().unwrap(), ScoreRankingOutcome::Stored);
     }
 
-    /// The replace reports a world-scene place named as a place world-backed
-    /// and clears a stale scene ranking, never a curated one.
+    /// The places leg clears a stale scene ranking; a scene it names is
+    /// reported world-backed and kept, as is a curated one, and a scene id
+    /// with a world catalogue row is left to that row's leg.
     #[tokio::test]
     async fn the_replace_clears_world_scene_rankings_with_the_places_leg() {
         let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
-        let (stale, curated, plain) = (
-            uuid::Uuid::new_v4().to_string(),
-            uuid::Uuid::new_v4().to_string(),
-            uuid::Uuid::new_v4().to_string(),
-        );
+        let [named, dropped, curated, shared, plain] =
+            [(); 5].map(|_| uuid::Uuid::new_v4().to_string());
         sqlx::query("INSERT INTO worlds.worlds (name) VALUES ('bulk.dcl.eth')")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO explore.world_scene_place (world_name, identity, parcels, entity_id, active) VALUES ('bulk.dcl.eth', $1::uuid, ARRAY['1,1'], NULL, false), ('bulk.dcl.eth', $2::uuid, ARRAY['2,2'], NULL, false)")
-            .bind(&stale)
-            .bind(&curated)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO explore.place (id, base_position, title, raw) VALUES ($1, '0,0', 'plain', '{}')")
-            .bind(&plain)
-            .execute(&pool)
-            .await
-            .unwrap();
-        for (id, value) in [(&stale, 5.0), (&curated, 4.0)] {
+        for (index, id) in [&named, &dropped, &curated, &shared]
+            .into_iter()
+            .enumerate()
+        {
+            sqlx::query("INSERT INTO explore.world_scene_place (world_name, identity, parcels, entity_id, active) VALUES ('bulk.dcl.eth', $1::uuid, ARRAY[$2], NULL, false)")
+                .bind(id)
+                .bind(format!("{index},{index}"))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        for (id, raw) in [
+            (&plain, json!({})),
+            (
+                &shared,
+                json!({"world": true, "world_name": "bulk.dcl.eth"}),
+            ),
+        ] {
+            sqlx::query("INSERT INTO explore.place (id, base_position, title, raw) VALUES ($1, '0,0', 'row', $2)")
+                .bind(id)
+                .bind(raw)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        for (id, value) in [
+            (&named, 5.0),
+            (&dropped, 6.0),
+            (&curated, 4.0),
+            (&shared, 3.0),
+        ] {
             ranking::set_ranking(&pool, id, Some(value), "data")
                 .await
                 .unwrap();
@@ -2941,7 +2958,7 @@ mod tests {
                     ranking: 2.0,
                 },
                 RankingEntry {
-                    id: stale.clone(),
+                    id: named.clone(),
                     ranking: 9.0,
                 },
             ],
@@ -2960,9 +2977,14 @@ mod tests {
                 result.places.cleared,
                 result.places.skipped_world_backed.clone()
             ),
-            (1, 1, vec![stale.clone()])
+            (1, 1, vec![named.clone()])
         );
-        for (id, expected) in [(&stale, json!(0)), (&curated, json!(4.0))] {
+        for (id, expected) in [
+            (&named, json!(5.0)),
+            (&dropped, json!(0)),
+            (&curated, json!(4.0)),
+            (&shared, json!(3.0)),
+        ] {
             let stored: Value = sqlx::query_scalar(
                 "SELECT overlay->'ranking' FROM explore.place_ranking WHERE place_id = $1",
             )

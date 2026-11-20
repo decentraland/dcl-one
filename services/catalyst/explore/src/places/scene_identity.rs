@@ -23,6 +23,18 @@ pub const BOUND_WORLD_SCENE_FROM: &str = "FROM explore.world_scene_place p \
 
 pub const LOCAL_WORLD_SCENE: &str = "(s.mirror_source IS NULL AND w.mirror_source IS NULL)";
 
+/// Locks the active identities of `worlds` in identity order, the order the
+/// ranking writes take, so a reconcile and a ranking replace cannot deadlock.
+async fn lock_worlds(conn: &mut PgConnection, worlds: &[String]) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "SELECT 1 FROM explore.world_scene_place WHERE world_name = ANY($1) AND active ORDER BY identity FOR UPDATE",
+    )
+    .bind(worlds)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 /// Applies the overlap rule to a scene of `world` now standing on `parcels`
 /// and returns its identity; `None` for an empty footprint (no scope).
 pub async fn assign(
@@ -34,6 +46,7 @@ pub async fn assign(
     if parcels.is_empty() {
         return Ok(None);
     }
+    lock_worlds(conn, std::slice::from_ref(&world.to_string())).await?;
     let overlapped: Vec<Uuid> = sqlx::query_scalar(
         "SELECT identity FROM explore.world_scene_place \
          WHERE world_name = $1 AND active AND parcels && $2::text[] ORDER BY identity FOR UPDATE",
@@ -83,6 +96,7 @@ pub async fn retire_orphans(
     if worlds.is_empty() {
         return Ok(0);
     }
+    lock_worlds(conn, worlds).await?;
     Ok(sqlx::query(
         "UPDATE explore.world_scene_place i SET active = false, entity_id = NULL, updated_at = timezone('UTC', now()) \
          WHERE i.world_name = ANY($1) AND i.active AND NOT EXISTS ( \
