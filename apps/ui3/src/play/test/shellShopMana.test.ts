@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, keccak256, maxUint256, parseAbi, type Hex } from 'viem'
 import { batchAuthorization, createFakeChain, createFakeLocks, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade } from '../../shop/checkout/fakes'
 import { CREDITS_MANAGER_ABI, OFFCHAIN_META_TX_ABI } from '@shop/checkout/chain/abi'
-import { claimSplitHold, readSplitHold, readSplitHoldRecord, splitHoldKey, splitHoldLine, writeSplitHold } from '../../shop/checkout/purchase/splitHold'
+import { claimSplitHold, readSplitHold, readSplitHoldRecord, settleSplitHold, splitHoldKey, splitHoldLine, writeSplitHold } from '../../shop/checkout/purchase/splitHold'
 import { ASSET_TYPE, buildStoreUseCreditsArgs, encodeStoreBuy, encodeUseCredits } from '../../shop/checkout/purchase/encoding'
 import { encodeExecuteMetaTransaction } from '../../shop/checkout/chain/metatx'
 import { manaFingerprint } from '../shell/shop/manaPurchase'
@@ -875,6 +875,71 @@ describe('the in-world purchase with MANA', () => {
         w.storage.setItem(`dcl-inworld-shop:record:v1:${BUYER}:abcdef01-0001`, JSON.stringify({ ...base, state: 'cancelled', updatedAt }))
         expect(ledger.saved(BUYER, 'abcdef01-0001')).toMatchObject({ state: 'pending', split: { creditId: sale.creditId } })
       }
+    })
+
+    it('lets the item go when a reload takes over a split whose sale was never signed, and buys it again', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      // The sale's signature never comes back on the first page.
+      const original = w.wallet.request.bind(w.wallet)
+      w.wallet.request = (async (args: { method: string; params?: unknown[] }) => {
+        if (args.method === 'eth_signTypedData_v4') return new Promise(() => {})
+        return original(args)
+      }) as typeof w.wallet.request
+      const first = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await first.open()
+      ;(await first.until('method')).handlers.onPay?.('split')
+      await first.until('wallet')
+      expect(readSplitHold(BUYER, HOLD_LINE)).not.toBeNull()
+      // A reload takes the purchase over: provably never sent, so its credit and its hold on the item go.
+      w.wallet.request = original as typeof w.wallet.request
+      const again = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await again.open()
+      await vi.waitFor(() => expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toBeNull())
+      expect(w.relay.posts).toHaveLength(0)
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(true)
+      // And the next BUY claims the item.
+      const next = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await next.open()
+      ;(await next.until('method')).handlers.onPay?.('split')
+      await next.until('success')
+    })
+
+    it('clears a hold its own finished purchase left behind before buying, and never another attempt\'s', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      // A cancelled purchase of this page's, whose hold on the item stayed (its cleanup found the item busy).
+      const ledger = createLedger(() => w.storage)
+      const sale = { buyer: BUYER, chainId: 137, manager: MANAGER, creditId: `0x${'e5'.repeat(32)}`, creditWei: '1', gapWei: '2', target: STORE, selector: '0x12345678' as Hex, callData: '0x' as Hex, hold: { line: HOLD_LINE, attempt: 'stranded' } }
+      expect(ledger.save({ id: 'abcdef01-0002', buyer: BUYER, items: [{ contract: CONTRACT, itemId: String(ITEM), quantity: 1 }], state: 'cancelled', createdAt: 1, updatedAt: 2, split: sale })).toBe(true)
+      expect(writeSplitHold(BUYER, HOLD_LINE, { ...webHold, attempt: 'stranded', creditId: sale.creditId })).toBe(true)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('success')
+    })
+
+    it('carries its sale\'s terms in the shared hold, so the web Shop\'s Check again keeps it held on a foreign hash', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      // The relay answers the hash of some other transaction (successful), never this sale's.
+      w.onChain.foreignHash = true
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, creditRecordOf: async () => null } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      const hold = readSplitHoldRecord(BUYER, HOLD_LINE)!
+      expect(hold.sale).toMatchObject({ creditId: `0x${'a1'.repeat(32)}`, manager: MANAGER, target: STORE })
+      // What the web Shop's Check again reads, given that foreign hash: nothing attributable, so it stays held.
+      const foreign = [...w.txs.keys()][0]!
+      const reader = { ...w.chain, transaction: (c: number, h: string) => w.evidence.transaction(c, h) }
+      expect(await settleSplitHold({ ...hold, txHash: foreign }, { account: BUYER, reader: reader as never, client: w.shop.client })).toBeNull()
     })
 
     it('reserves nothing and asks nothing of the wallet without Web Locks', async () => {

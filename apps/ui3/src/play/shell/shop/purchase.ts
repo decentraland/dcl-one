@@ -26,7 +26,7 @@ import type { Hex } from 'viem'
 import { releaseAuthorizing, runGroup, splitPriceOf, watchGroup, type CheckoutDeps, type GroupResult, type SplitPlan } from '../../../shop/checkout/purchase/executor'
 import { buildAcceptCalldata, buildAcceptWithCouponCalldata, buildStoreBuyCalldata } from '../../../shop/checkout/purchase/encoding'
 import { purchaseTargetFor } from '../../../shop/checkout/purchase/cart'
-import { claimSplitHold, clearSettledSplitHold, clearSplitHold, readSplitHoldRecord, splitHoldLine, writeSplitHold } from '../../../shop/checkout/purchase/splitHold'
+import { claimSplitHold, clearSettledSplitHold, clearSplitHold, findCreditRecord, readSplitHoldRecord, splitHoldLine, writeSplitHold, type SplitHold } from '../../../shop/checkout/purchase/splitHold'
 import { ensureAuthorization, exactAllowanceReady, exactGrantLock, getManaSpendingAuthorization } from '../../../shop/checkout/lib/authorizations'
 import { pageLocks, webLock as lockIfFree } from '../../../shop/checkout/lib/web-lock'
 import type { RailContext } from '../../../shop/checkout/purchase/rail'
@@ -380,16 +380,8 @@ const LIVE: ShellShopServices = {
     if (mine.some((p) => p.status === 'SETTLED')) return 'settled'
     return mine.length > 0 && mine.every((p) => p.status === 'EXPIRED') ? 'expired' : 'open'
   },
-  creditRecordOf: async (buyer, creditId, client) => {
-    const salt = creditId.toLowerCase()
-    for (let skip = 0; ; ) {
-      const { items, total } = await fetchUserPurchases(buyer, { all: true, first: 200, skip }, client)
-      const found = items.find((p) => p.id.split(':')[0]!.toLowerCase() === salt)
-      if (found) return found
-      skip += items.length
-      if (items.length === 0 || skip >= total) return null
-    }
-  },
+  // Paged by the rows the server sent (shop/checkout/purchase/splitHold), as the web Shop reads the same record.
+  creditRecordOf: (buyer, creditId, client) => findCreditRecord(buyer, creditId, client),
   creatorName: async (address) => {
     const avatar = await creatorProfile(address)
     const name = avatar?.name?.trim()
@@ -972,16 +964,33 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
    * handed off, for the Credits path to decide.
    */
   /** A found-out split's record in the hold it shares with the web Shop goes, if it is still this attempt's. */
-  const releaseSplitHold = (sale: SplitSale): void => {
+  const releaseSplitHold = async (sale: SplitSale): Promise<boolean> => {
     const hold = sale.hold
-    if (!hold) return
+    if (!hold) return true
     const read = readSplitHoldRecord(sale.buyer, hold.line)
-    if (read && read.attempt === hold.attempt) void clearSettledSplitHold(svc.locks(), sale.buyer, hold.line, read).catch(() => undefined)
+    if (!read || read.attempt !== hold.attempt) return true
+    const cleared = await clearSettledSplitHold(svc.locks(), sale.buyer, hold.line, read).catch(() => ({ kind: 'busy' as const }))
+    // Busy (another window holds the item) or a removal that didn't stick: the next BUY of the item clears it
+    // (strandedOwnHold), since this operation is over.
+    return cleared.kind !== 'busy'
+  }
+
+  /**
+   * A hold on the item that one of this buyer's own operations wrote and that is over (bought, failed or cancelled, its
+   * record here says so), cleared so a new purchase may claim the item. Another attempt's hold, the web Shop's or a live
+   * one of this page's, is never touched.
+   */
+  const strandedOwnHold = async (buyer: string, line: string, hold: SplitHold): Promise<boolean> => {
+    if (!hold.attempt) return false
+    const mine = ledger.load(buyer).find((r) => r.split?.hold?.attempt === hold.attempt && r.split.hold.line === line)
+    if (!mine || !TERMINAL_STATES.includes(mine.state)) return false
+    const cleared = await clearSettledSplitHold(svc.locks(), buyer, line, hold).catch(() => ({ kind: 'busy' as const }))
+    return cleared.kind === 'cleared'
   }
 
   const checkSplit = async (op: Operation & { buyer: string }, sale: SplitSale, store: CartStore): Promise<boolean | null> => {
     const decided = await findOutSplit(op, sale, store)
-    if (decided === true) releaseSplitHold(sale)
+    if (decided === true) await releaseSplitHold(sale)
     return decided
   }
 
@@ -1045,6 +1054,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     }
     if (!progress) {
       if (!handedOff) {
+        // Provably never sent: a split's hold on the item goes too, so the item can be bought again.
+        if (op.split) await releaseSplitHold(op.split)
         settled(op, 'cancelled')
         return true
       }
@@ -1069,6 +1080,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         const state: PurchaseState = store.getSnapshot().checkout ?? { id: op.id, account: op.buyer, groups: [progress], createdAt: op.createdAt }
         await releaseAuthorizing(watchDeps(op, store), { ...state, groups: [progress] })
       }
+      // Provably never sent: a split's hold on the item goes too, so the item can be bought again.
+      if (op.split) await releaseSplitHold(op.split)
       settled(op, 'cancelled')
       return true
     } else {
@@ -1610,7 +1623,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         // The shared hold follows the outcome before its lock goes: kept with the hash while unknown, else cleared.
         if (split) {
           if (outcome.kind === 'pending') {
-            if (run.txHash) writeSplitHold(quote.buyer, split.hold.line, { at: Date.now(), attempt: split.hold.attempt, txHash: run.txHash, chainId: run.chainId ?? null, creditId: run.split?.creditId ?? null, creditExpiresAt: readSplitHoldRecord(quote.buyer, split.hold.line)?.creditExpiresAt ?? null })
+            const kept = readSplitHoldRecord(quote.buyer, split.hold.line)
+            if (run.txHash && kept?.attempt === split.hold.attempt) writeSplitHold(quote.buyer, split.hold.line, { ...kept, at: Date.now(), txHash: run.txHash })
           } else clearSplitHold(quote.buyer, split.hold.line, split.hold.attempt)
         }
         if (outcome.kind === 'pending') {
@@ -1719,6 +1733,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     let claim: Awaited<ReturnType<typeof claimSplitHold>>
     try {
       claim = await claimSplitHold(locks, quote.buyer, holdLine)
+      // A hold one of this buyer's own finished operations left behind (its cleanup was busy or didn't stick) goes first.
+      if (claim.kind === 'held' && (await strandedOwnHold(quote.buyer, holdLine, claim.hold))) claim = await claimSplitHold(locks, quote.buyer, holdLine)
     } catch (e) {
       release()
       throw e
@@ -1922,11 +1938,13 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
                   ...split.plan,
                   // Kept before anything is signed for it: what its execution must carry to count as this purchase.
                   onCredit: (credit: { id: string; expiresAt: number }) => {
-                    // The shared hold, written and read back before anything is signed: unkept, nothing goes.
-                    const held = writeSplitHold(quote.buyer, split.hold.line, { at: Date.now(), attempt: split.hold.attempt, txHash: null, chainId, creditId: credit.id, creditExpiresAt: credit.expiresAt })
+                    const sale: SplitSale = { buyer: quote.buyer, chainId, manager: manager.address, creditId: credit.id, creditWei: split.creditWei.toString(), gapWei: split.gapWei.toString(), target: split.target, selector: split.selector, callData: split.callData, hold: split.hold }
+                    // The shared hold, with the sale's terms so either surface can find it out, written and read back
+                    // before anything is signed: unkept, nothing goes.
+                    const held = writeSplitHold(quote.buyer, split.hold.line, { at: Date.now(), attempt: split.hold.attempt, txHash: null, chainId, creditId: credit.id, creditExpiresAt: credit.expiresAt, sale })
                     if (!held) return false
                     issued = credit
-                    op.split = { buyer: quote.buyer, chainId, manager: manager.address, creditId: credit.id, creditWei: split.creditWei.toString(), gapWei: split.gapWei.toString(), target: split.target, selector: split.selector, callData: split.callData, hold: split.hold }
+                    op.split = sale
                     keep(op)
                     return true
                   }
