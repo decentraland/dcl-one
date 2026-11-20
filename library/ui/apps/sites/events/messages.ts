@@ -333,13 +333,6 @@ const messages = {
     'イベントを管理するにはログインしてください。'
   ],
   'Sign in': ['Iniciar sesión', 'Se connecter', '登录', '로그인', 'ログイン'],
-  'Sign in to edit your hangout.': [
-    'Iniciá sesión para editar tu evento.',
-    'Connectez-vous pour modifier votre événement.',
-    '请登录以编辑你的活动。',
-    '이벤트를 편집하려면 로그인하세요.',
-    'イベントを編集するにはログインしてください。'
-  ],
   'Search hangouts': [
     'Buscar eventos',
     'Rechercher des événements',

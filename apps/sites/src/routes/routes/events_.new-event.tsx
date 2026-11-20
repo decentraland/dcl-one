@@ -155,8 +155,8 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
   const permissionsError = original && !owner && optionsResult ? optionsResult.error || options?.profileError || null : null;
   // A signed-out visitor goes straight to sign-in and comes back to this same editor: creating needs an
   // account, and an edit link (a rejection email, say) names an event only its owner or a moderator edits.
-  const signInNeeded = (d.mode === "create" || Boolean(d.eventId)) && hydrated && !auth.isConnected;
-  useSignInRequired(signInNeeded, auth.isConnected);
+  const signedOut = !auth.isConnected && (d.mode === "create" || Boolean(d.eventId));
+  useSignInRequired(signedOut && hydrated, auth.isConnected);
   // As decentraland.org: an edit link that is missing its event, refused or not found, or definitely not
   // this account's to edit goes back to the Events page instead of showing an error.
   const editDenied = d.mode === "edit" && (
@@ -199,10 +199,10 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
   return (
     <SitesLayoutMaybe active="whatson" headerSurface={inline ? "overlay" : "solid"} overlayNav={inline} footerCopy={footerCopy}>
     <LdSubmitHangoutView>
-      {d.mode === "edit" && !editReady ? <SubmitHangoutLoading
-        mode="edit"
-        error={editFailed}
-        onSignIn={signInNeeded ? () => openSignIn() : undefined}
+      {/* Signed out (and on the server, which renders anonymously) the page only waits: sign-in opens on its own. */}
+      {signedOut || (d.mode === "edit" && !editReady) ? <SubmitHangoutLoading
+        mode={d.mode}
+        error={signedOut ? null : editFailed}
         onRetry={() => { setLoaded(null); setOptionsRead(null); setAttempt((previous) => previous + 1); }}
       /> : <SubmitHangout
         key={`${auth.address ?? "signed-out"}:${d.eventId ?? "new"}`}

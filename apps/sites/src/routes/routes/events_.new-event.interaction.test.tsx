@@ -156,23 +156,11 @@ describe("when editing a hangout through its route", () => {
       await waitFor(() => expect(openSignIn).toHaveBeenCalledWith({ redirectTo: EDIT_PATH }));
     });
 
-    it("should stay on the edit page with a sign-in action instead of leaving for the Events page", () => {
+    it("should stay on the edit page showing only the loading state, without reading the event", () => {
       expect(router.state.location.pathname).toBe(EDIT_PATH);
-      expect(screen.getByRole("status").textContent).toBe("Sign in to edit your hangout.");
-      expect(screen.getByRole("button", { name: "Sign in" })).toBeTruthy();
+      expect(screen.getByRole("status").textContent).toBe("Loading your hangout…");
+      expect(screen.queryByRole("button", { name: /sign in/i })).toBeNull();
       expect(authoring.loadEditableHangout).not.toHaveBeenCalled();
-    });
-
-    describe("and the visitor closes the sign-in prompt and asks again", () => {
-      beforeEach(async () => {
-        await waitFor(() => expect(openSignIn).toHaveBeenCalledTimes(1));
-        await user.click(screen.getByRole("button", { name: "Sign in" }));
-      });
-
-      it("should open sign-in again for this page", () => {
-        expect(openSignIn).toHaveBeenCalledTimes(2);
-        expect(router.state.location.pathname).toBe(EDIT_PATH);
-      });
     });
   });
 
@@ -186,6 +174,12 @@ describe("when editing a hangout through its route", () => {
     it("should send the visitor to sign-in and back to the create page", async () => {
       await waitFor(() => expect(openSignIn).toHaveBeenCalledWith({ redirectTo: CREATE_PATH }));
       expect(openSignIn).toHaveBeenCalledTimes(1);
+    });
+
+    it("should show only the loading state, not the form or a sign-in button", () => {
+      expect(screen.getByRole("status").textContent).toBe("Loading your hangout…");
+      expect(screen.queryByRole("button", { name: /sign in/i })).toBeNull();
+      expect(screen.queryByRole("textbox", { name: "Event Name" })).toBeNull();
     });
   });
 

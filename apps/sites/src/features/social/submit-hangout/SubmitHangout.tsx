@@ -402,7 +402,7 @@ function EditorHeader({ mode }: { mode: "create" | "edit" }) {
  * The editor's page while the event to edit is read, or when that read failed and can be retried:
  * the same header, so nothing jumps when the form arrives.
  */
-export function SubmitHangoutLoading({ mode, error, onRetry, onSignIn }: { mode: "create" | "edit"; error?: string | null; onRetry?: () => void; onSignIn?: () => void }) {
+export function SubmitHangoutLoading({ mode, error, onRetry }: { mode: "create" | "edit"; error?: string | null; onRetry?: () => void }) {
   const { text, errorText } = useEventsCopy();
   return (
     <div className={`submit-hangout ${styles.authoring}`} data-editor>
@@ -411,11 +411,6 @@ export function SubmitHangoutLoading({ mode, error, onRetry, onSignIn }: { mode:
         <div className={styles.loadState}>
           <Notice tone="error">{errorText(error)}</Notice>
           {onRetry && <Button variant="tertiary" onClick={onRetry}>{text("Retry")}</Button>}
-        </div>
-      ) : onSignIn ? (
-        <div className={styles.loadState}>
-          <Notice>{text("Sign in to edit your hangout.")}</Notice>
-          <Button variant="primary" onClick={onSignIn}>{text("Sign in")}</Button>
         </div>
       ) : <div className={styles.loadState}><Notice>{text("Loading your hangout…")}</Notice></div>}
     </div>

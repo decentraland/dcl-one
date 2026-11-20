@@ -58,8 +58,8 @@ describe.each([
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
   it(`should explain it in a ${tone} notice`, () => {
-    const notice = screen.getByText(message);
-    expect(notice.getAttribute("role")).toBe("status");
-    expect(notice.dataset.tone).toBe(tone);
+    const notice = screen.getByText(message).closest<HTMLElement>("[data-tone]");
+    expect(notice?.getAttribute("role")).toBe("status");
+    expect(notice?.dataset.tone).toBe(tone);
   });
 });

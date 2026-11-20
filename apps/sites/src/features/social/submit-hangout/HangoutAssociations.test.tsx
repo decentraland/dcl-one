@@ -35,7 +35,7 @@ describe("when the actual association controls render", () => {
     });
 
     it("should report it in an error notice, and nothing about schedules", () => {
-      expect(html).toMatch(/<p[^>]*data-tone="error"[^>]*role="alert"[^>]*>Could not load your communities: Social down<\/p>/);
+      expect(html).toMatch(/<p[^>]*data-tone="error"[^>]*role="alert"[^>]*>.*Could not load your communities: Social down.*<\/p>/);
       expect(html).not.toContain("Could not load schedules");
     });
   });
