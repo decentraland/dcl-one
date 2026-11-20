@@ -23,7 +23,8 @@ import type { CartAddInput, CartStore } from '../../../shop/cart/store'
 import { shopChainReader, type ChainReader } from '../../../shop/checkout/chain/rpc'
 import { liveResolvers, reviewCart, type SettlementResolvers } from '../../../shop/checkout/purchase/cart'
 import { releaseAuthorizing, runGroup, splitPriceOf, watchGroup, type CheckoutDeps, type GroupResult, type SplitPlan } from '../../../shop/checkout/purchase/executor'
-import { ensureAuthorization, getAuthorizationStatus, getManaSpendingAuthorization } from '../../../shop/checkout/lib/authorizations'
+import { ensureAuthorization, exactAllowanceReady, exactGrantLock, getManaSpendingAuthorization } from '../../../shop/checkout/lib/authorizations'
+import { pageLocks, webLock as lockIfFree } from '../../../shop/checkout/lib/web-lock'
 import type { RailContext } from '../../../shop/checkout/purchase/rail'
 import { createSpendGuard } from '@shop/checkout/purchase/spend-guard'
 import { fetchUserPurchases, getUsdBalance, type UsdBalance } from '@shop/credits/credits'
@@ -255,6 +256,8 @@ export interface ShellShopServices {
   manaInWorld(): boolean
   /** `dapps-shop-credits-mana-split`, from the flags file only (no host declares it): Credits and MANA together. */
   creditsManaSplit(): boolean
+  /** This page's Web Locks (null without them): a split and its exact MANA approval run in one window at a time. */
+  locks(): LockManager | null
   /** The buyer's MANA on a chain, in wei. */
   manaBalance(buyer: string, chainId: number): Promise<bigint>
   /** The wallet bound to one confirmed purchase paid in MANA (./manaGuard). */
@@ -394,6 +397,7 @@ const LIVE: ShellShopServices = {
   namesMode: () => namesModeFor(nameBuild(), { settles: settlementChainId(), ethereum: ethereumChainId() }),
   manaInWorld: () => hostOr('manaInWorld', remoteFlag(REMOTE_FLAG.manaInWorld)) === true,
   creditsManaSplit: () => remoteFlag(REMOTE_FLAG.creditsManaSplit) === true,
+  locks: pageLocks,
   manaBalance: (buyer, chainId) => readManaBalanceWei(buyer, chainId, boundedReader(shopChainReader(), MANA_BALANCE_TIMEOUT_MS)),
   manaGuard: manaGuardedProvider,
   manaEvidence: () => createManaEvidence({ reader: shopChainReader() }),
@@ -478,6 +482,8 @@ interface SplitRun {
   resolved: Resolved
   plan: SplitPlan
   gapWei: bigint
+  /** Lets go of the exact approval's lock, held from the last allowance read through the sale's hand-off. */
+  release: () => void
 }
 
 /** What the buyer is shown agreeing to: the session it was read for and the quoted terms. */
@@ -1522,6 +1528,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       else showSuccess(last, quote.items)
     } finally {
       running = false
+      split?.release()
       for (const pending of follow) void reconcile(pending)
     }
   }
@@ -1563,15 +1570,22 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     const manager = svc.manager(chainId)
     if (!manager) return { why: "Buying with Credits isn't available here right now." }
     const auth = getManaSpendingAuthorization(chainId as ChainId, manager.address)
-    let covered: boolean
-    try {
-      covered = await getAuthorizationStatus(auth, quote.buyer, gap, svc.reader())
-    } catch {
-      return { why: "We couldn't read your MANA allowance. Nothing was charged; try again." }
-    }
-    if (!covered && !(await authorizeGap(op, quote, part, wallet, current, auth, gap))) return 'stop'
+    // The exact approval and the sale each run in one window at a time; without Web Locks nothing proves that.
+    const locks = svc.locks()
+    if (!locks) return { why: "This browser can't keep a purchase with Credits and MANA to one window, so nothing was charged." }
+    // An approval of this account still able to run (its answer lost) holds the sale even where the allowance looks covered.
+    const ready = await exactAllowanceReady(auth, quote.buyer, gap, svc.reader()).catch(() => false)
+    if (!ready && !(await authorizeGap(op, quote, part, wallet, current, auth, gap))) return 'stop'
     if (op.state !== 'reviewing' || !slot.holds(op) || !current()) return 'stop'
-    return { resolved: review.resolved, plan: { creditsCents: terms.creditsCents, confirmedWei: terms.manaWei, session: { walletKind: 'web3' } }, gapWei: gap }
+    // The approval's lock, held through the sale's hand-off, and the allowance read again under it.
+    const release = await lockIfFree(locks, exactGrantLock(auth, quote.buyer))
+    if (!release) return { why: 'A purchase with Credits and MANA, or its MANA approval, is in progress in another window. Nothing was charged here.' }
+    const stillReady = await exactAllowanceReady(auth, quote.buyer, gap, svc.reader()).catch(() => false)
+    if (!stillReady) {
+      release()
+      return { why: 'Your MANA approval is still confirming. Nothing was charged; try again in a minute.' }
+    }
+    return { resolved: review.resolved, plan: { creditsCents: terms.creditsCents, confirmedWei: terms.manaWei, session: { walletKind: 'web3' } }, gapWei: gap, release }
   }
 
   /**
@@ -1632,6 +1646,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
             account: quote.buyer,
             walletKind: quote.kind,
             reader: svc.reader(),
+            locks: svc.locks(),
             relayerUrl: rail.relayerUrl,
             ...(rail.fetchImpl ? { fetchImpl: rail.fetchImpl } : {})
           })

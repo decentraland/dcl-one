@@ -3,7 +3,7 @@
 // (shell/shop/manaPurchase). The Shop server, the chain, the relay and the wallet are the checkout's fakes.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, keccak256, maxUint256, parseAbi, type Hex } from 'viem'
-import { batchAuthorization, createFakeChain, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade } from '../../shop/checkout/fakes'
+import { batchAuthorization, createFakeChain, createFakeLocks, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade } from '../../shop/checkout/fakes'
 import { CREDITS_MANAGER_ABI, OFFCHAIN_META_TX_ABI } from '@shop/checkout/chain/abi'
 import { ASSET_TYPE, encodeStoreBuy } from '../../shop/checkout/purchase/encoding'
 import { encodeExecuteMetaTransaction } from '../../shop/checkout/chain/metatx'
@@ -206,6 +206,7 @@ function page(
 ) {
   const shown: { view: ShellPurchaseView; handlers: ShellPurchaseHandlers }[] = []
   const events: ShopOperationEvent[] = []
+  const locks = createFakeLocks()
   const manaReads: number[] = []
   let clock = 0
   const cents = opts.creditsCents ?? 7000
@@ -240,6 +241,7 @@ function page(
       manaEvidence: () => w.evidence,
       ...(opts.liveFlag ? {} : { manaInWorld: () => opts.flag ?? true }),
       creditsManaSplit: () => opts.split ?? false,
+      locks: () => locks,
       manaBalance: async (_buyer, chainId) => {
         manaReads.push(chainId)
         if (opts.manaBalance === 'fail') throw new Error('rpc down')
@@ -419,7 +421,11 @@ describe('the in-world purchase with MANA', () => {
   describe('Credits and MANA together (one item)', () => {
     // `dapps-shop-credits-mana-split` on for the page (its own service); off unless a test turns it on.
     let splitOn = false
-    afterEach(() => (splitOn = false))
+    afterEach(() => {
+      splitOn = false
+      // An exact approval's record (any tab's, in localStorage) never carries over to the next test.
+      for (const key of Object.keys(localStorage)) if (key.startsWith('dcl-shop-exact-grant')) localStorage.removeItem(key)
+    })
     const on = () => (splitOn = true)
 
     it('splits whole credits from the balance and MANA for the rest, rounded up, as the web Shop does', () => {
@@ -573,6 +579,18 @@ describe('the in-world purchase with MANA', () => {
       await p.until('failed')
       expect(w.relay.posts).toHaveLength(0)
       expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(true)
+    })
+
+    it('reserves nothing and asks nothing of the wallet without Web Locks', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, locks: () => null } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('failed')
+      expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
+      expect(signatures(w)).toHaveLength(0)
     })
 
     it('offers no split for an offer the node doesn\'t mark splittable', async () => {
