@@ -23,15 +23,30 @@ crate in the Catalyst workspace.
   No crate depends on it, and the root `lib.rs` does not re-export it.
 - It is a workspace member: it resolves the servers' lock file and reads their constants
   at the same commit.
-- `docs/module-layers.toml` lists it above `comms`, the one domain crate it uses.
+- `docs/module-layers.toml` puts it on a layer above every other module. A module may use
+  only modules on lower layers, so the tool may use `comms`, and
+  `scripts/check-module-dag.sh` refuses any module that names it.
+- The WebTransport client its bots use (`pulse::transport::webtransport::client`, with the
+  verifier that trusts a pinned certificate hash) lives in `catalyst-comms`, compiled only
+  with the `test-support` feature. The node's own WebTransport tests
+  (`tests/pulse_webtransport_*.rs`, `tests/pulse_batch_bandwidth.rs`) dial Pulse with the
+  same client. So there is one copy, beside the server's host it is the counterpart of, and
+  its callers frame messages with that module's `framing`, as the server does. The tool
+  holds the bots, the fault relay and the Explorer driver, which nothing in
+  `catalyst-comms` uses.
 - The node is built with `--bin catalyst`, so neither the tool nor `test-support` is in
-  what is deployed.
+  what is deployed. Only `test-support` features, dev-dependencies and this tool enable
+  `catalyst-comms/test-support`, and a build of the node alone enables none of them: Cargo
+  applies neither a dev-dependency's features nor another member's to it.
 - `ownership.json` and `CODEOWNERS` name its path.
 
 ## Alternatives considered
 
 - **A module of `catalyst-comms`.** The bots, the fault relay and the Explorer driver, and
-  their dependencies, would compile into the server crate.
+  their dependencies, would compile into the server crate. Only the WebTransport client is
+  there, behind `test-support`, because the node's tests need it too.
+- **The WebTransport client in the tool.** The node's tests would then depend on the tool,
+  or keep a second copy of the client.
 - **A workspace of its own under `tooling/`.** It would resolve its own versions of the
   servers' dependencies and could drift from the code it checks.
 - **`library/`.** That folder holds code several deliverables share and that depends on
