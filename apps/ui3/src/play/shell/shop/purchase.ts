@@ -1811,6 +1811,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
             walletKind: quote.kind,
             reader: svc.reader(),
             locks: svc.locks(),
+            // Read after the wallet signs and before anything is recorded or sent: a CANCEL meanwhile leaves no grant.
+            live: () => approving && !answered && slot.holds(op) && current(),
             relayerUrl: rail.relayerUrl,
             fetchImpl: gated
           })

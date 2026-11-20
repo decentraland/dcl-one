@@ -561,6 +561,18 @@ describe('the in-world purchase with MANA', () => {
       await new Promise((r) => setTimeout(r, 50))
       expect(w.relay.posts).toHaveLength(0)
       expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
+      // No grant was kept for the cancelled signature: nothing to resend, nothing holding the next approval back.
+      expect(Object.keys(localStorage).some((k) => k.startsWith('dcl-shop-exact-grant'))).toBe(false)
+      w.wallet.request = original as typeof w.wallet.request
+      const before = p.shown.length
+      await p.open()
+      await vi.waitFor(() => expect(p.shown.slice(before).some((s) => s.view.step === 'method')).toBe(true))
+      p.shown.slice(before).find((s) => s.view.step === 'method')!.handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.shown.slice(before).some((s) => s.view.step === 'authorize')).toBe(true))
+      p.shown.slice(before).find((s) => s.view.step === 'authorize')!.handlers.onAuthorize?.()
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'succeeded' }), { timeout: 5000 })
+      // A fresh approval, signed anew: the cancelled one was never sent.
+      expect(relayedTo(w)).toEqual([MANA, MANAGER])
     })
 
     it('reserves nothing when the buyer cancels Authorize MANA', async () => {
