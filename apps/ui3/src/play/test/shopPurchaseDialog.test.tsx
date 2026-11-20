@@ -116,6 +116,14 @@ describe('the purchase dialog', () => {
     expect(screen.getByRole('dialog', { name: 'Insufficient Funds' }).textContent).toContain('You will need to buy 1,300 Credits to purchase these items.')
   })
 
+  it('says which payment of several it is processing, and nothing for one', () => {
+    show({ step: 'processing', balance: null, count: 2, progress: { at: 2, of: 3 } })
+    expect(screen.getByRole('dialog', { name: 'Buy 2 Items' }).textContent).toContain('Payment 2 of 3')
+    cleanup()
+    show({ step: 'processing', balance: null, count: 2, progress: { at: 1, of: 1 } })
+    expect(screen.getByRole('dialog', { name: 'Buy 2 Items' }).textContent).not.toContain('Payment')
+  })
+
   it('counts the units while loading and processing', () => {
     show({ step: 'loading', count: 3 })
     expect(screen.getByRole('dialog', { name: 'Buy 3 Items' })).toBeInTheDocument()
@@ -378,6 +386,11 @@ describe('the purchase dialog', () => {
       act(() => void vi.advanceTimersByTime(ARM_MS))
       fireEvent.click(screen.getByRole('button', { name: 'Authorize' }))
       expect(h.onAuthorize).toHaveBeenCalledTimes(1)
+    })
+
+    it('says which payment of several it authorizes', () => {
+      show({ ...view, state: 'ready', progress: { at: 2, of: 2 } })
+      expect(screen.getByRole('dialog', { name: 'Authorize MANA' }).textContent).toContain('Payment 2 of 2')
     })
 
     it('waits for the authorization with AUTHORIZE held and CANCEL still live', () => {

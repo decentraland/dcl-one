@@ -410,14 +410,24 @@ export interface Quote {
 }
 
 /**
- * Paying one item in Polygon MANA, as the buyer is shown it: its one group, the sale built from its lines as the
- * chain and the server read them when the terms were read (the guard binds exactly this), and the buyer's MANA.
+ * One sale of a purchase paid in Polygon MANA: its group, and the sale built from the group's lines as the chain and the
+ * server read them when the terms were read (the guard binds exactly this).
  */
-export interface ManaQuote {
+export interface ManaQuotePart {
   part: QuotePart
   terms: ManaSaleTerms
   fingerprint: string
   /** The group's MANA, in wei. */
+  price: bigint
+}
+
+/**
+ * Paying in Polygon MANA, as the buyer is shown it: one sale per group (a cart of the Collection Store's mints and a
+ * Marketplace's trades is two), in the order they run, and the buyer's MANA against all of them.
+ */
+export interface ManaQuote {
+  parts: ManaQuotePart[]
+  /** Every group's MANA together, in wei. */
   price: bigint
   balance: bigint
   pays: boolean
@@ -473,7 +483,7 @@ export { RETRY_AFTER_MS } from './manaFlow'
  * of its operations is, successful once every group was bought, and partly bought if any wasn't. Each
  * operation keeps its own record, lock and watch; this is only what the dialog makes of them.
  */
-interface Checkout {
+export interface Checkout {
   ops: Operation[]
   /** Every unit, in the request's order. */
   displays: ShellPurchaseItem[]
@@ -482,6 +492,8 @@ interface Checkout {
   cart: boolean
   /** Why each part of it that wasn't bought wasn't, in the order they ended. */
   failures: string[]
+  /** Paid in MANA: what wasn't bought is said to have spent none. */
+  mana?: true
 }
 
 /** An operation and, while its dialog is up, what it shows. */
@@ -682,6 +694,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     reconcile: (op) => reconcile(op),
     check: (op, store) => check(op, store),
     reviewPart: (part, quote) => reviewPart(part, quote),
+    create: (req, buyer, items) => create(req, buyer, items),
+    presentCheckout: (co) => presentCheckout(co),
     busy: () => running,
     hold: () => {
       running = true
@@ -762,8 +776,11 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   const presentCheckout = (co: Checkout): void => {
     const anchor = co.ops[co.ops.length - 1]
     if (!anchor) return
-    if (co.ops.some((o) => o.state === 'processing' || o.state === 'pending')) {
-      showPending(anchor)
+    // The part still in progress, shown as itself (CHECK AGAIN, or RETRY for MANA): in a MANA cart it may come before
+    // the last, which the executor saw confirmed while the chain hasn't finalized it yet.
+    const unsettled = co.ops.find((o) => o.state === 'processing' || o.state === 'pending')
+    if (unsettled) {
+      showPending(unsettled)
       return
     }
     const bought = co.ops.filter((o) => o.state === 'succeeded').length
@@ -774,8 +791,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     // Each part's reason is said as one transaction of it; several, as what they add up to.
     const message =
       bought === 0
-        ? `None of its transactions went through: nothing was bought.${co.cart ? ' Everything is still in your cart.' : ''}`
-        : partly(co.failures.length === 1 ? co.failures[0] : 'more than one of its transactions didn’t go through.', co.cart)
+        ? `None of its transactions went through: nothing was bought${co.mana ? ' and no MANA was spent' : ''}.${co.cart ? ' Everything is still in your cart.' : ''}`
+        : partly(co.failures.length === 1 ? co.failures[0] : `more than one of its transactions didn’t go through${co.mana ? '; no MANA was spent for them' : ''}.`, co.cart)
     show(anchor, { step: 'failed', message, retry: false }, { onClose: () => hide(anchor) })
   }
 
@@ -1059,8 +1076,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   const readQuote = async (op: Operation, login: StoredLogin, buyer: string, kind: ShopWalletKind, req: ShopBuyRequest): Promise<Quote | string> => {
     const c = confirmedClient(loginKey(login))
     await svc.primeFlags().catch(() => {})
-    // MANA is offered for one item, bought by a self-custody wallet (as the web Shop offers it), where this page may.
-    const manaOffered = req.items.length === 1 && !req.cart && kind === 'web3' && svc.manaInWorld()
+    // MANA is offered to a self-custody wallet (as the web Shop offers it), for one item or a cart, where this page may.
+    const manaOffered = kind === 'web3' && svc.manaInWorld()
     let creditsUnread: unknown = null
     const [listings, balance, manaBalance] = await Promise.all([
       Promise.all(req.items.map((l) => svc.fetchItem(l.contract, l.itemId, c))),
@@ -1150,7 +1167,14 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     const parts: QuotePart[] = creditsBuys ? partition.groups.map((group) => partOf(group, priced)) : []
     const items = cartLines.flatMap((_, i) => unitsFor(i))
     op.displays = items
-    const manaQuote: ManaQuote | null = mana ? { terms: mana.terms, fingerprint: mana.fingerprint, price: mana.price, balance: mana.balance, pays: mana.pays, part: partOf(mana.group, mana.priced) } : null
+    const manaQuote: ManaQuote | null = mana
+      ? {
+          parts: mana.sales.map((sale) => ({ part: partOf(sale.group, mana.priced), terms: sale.terms, fingerprint: sale.fingerprint, price: sale.price })),
+          price: mana.price,
+          balance: mana.balance,
+          pays: mana.pays
+        }
+      : null
     return {
       login: loginKey(login),
       buyer,
@@ -1208,7 +1232,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       return
     }
     if (quote.parts.length === 0) {
-      fail(op, "This item can't be bought with Credits. You can still buy it on the website.")
+      fail(op, quote.items.length === 1 ? "This item can't be bought with Credits. You can still buy it on the website." : "Some of these items can't be bought with Credits. You can still buy them on the website.")
       return
     }
     if (short > 0) {
