@@ -771,7 +771,9 @@ async fn create_request(
         return chain_refused(ChainRefusal::Throttled(spent));
     }
     // Before the RPC and the admission lock.
-    match network_over_cap(&state, source.as_deref(), now).await {
+    // A network at its cap neither reaches the RPC nor queues on the lock every
+    // create takes, holding pool connections.
+    match network_at_cap(&state, Pending::Requests, source.as_deref(), now).await {
         Ok(false) => {}
         Ok(true) => return too_many_from_network(),
         Err(err) => return internal_error("auth-api: counting the network's requests", err),
@@ -823,18 +825,6 @@ async fn create_request(
         }),
     )
         .into_response()
-}
-
-/// Whether `source` is at its cap of pending requests, checked once the chain
-/// passed its checks that need no RPC and before its contract-wallet check and
-/// the admission lock: a flood from one network neither reaches the RPC nor
-/// queues on the lock every create takes, holding pool connections.
-async fn network_over_cap(
-    state: &AppState,
-    source: Option<&str>,
-    now: DateTime<Utc>,
-) -> sqlx::Result<bool> {
-    network_at_cap(state, Pending::Requests, source, now).await
 }
 
 /// The relay's tables with a per-network cap of live rows.
@@ -894,7 +884,7 @@ async fn admit_request(
     record: &ChallengeRecord,
     now: DateTime<Utc>,
 ) -> sqlx::Result<Option<Response>> {
-    // The caller already refused a network over its cap (`network_over_cap`);
+    // The caller already refused a network over its cap (`network_at_cap`);
     // under the lock the count is taken again, exactly.
     let mut tx = state.pool.begin().await?;
     admission_lock(&mut tx, REQUEST_ADMISSION_LOCK).await?;

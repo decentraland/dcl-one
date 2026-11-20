@@ -9,11 +9,11 @@ use sqlx::PgConnection;
 use uuid::Uuid;
 
 use crate::api::internal_error;
-use crate::auth::AuthChain;
+use crate::auth::{AuthChain, AuthError};
 use crate::shared::signed_fetch::{self, PayloadPolicy, Signer};
 
 use super::contract_checks::{Budgeted, Offline};
-use super::validation::{ChainRefusal, needs_contract_check, validate_identity_chain};
+use super::validation::{self, ChainRefusal, needs_contract_check, validate_identity_chain};
 use super::{
     ErrorBody, EvictedBody, Pending, admission_lock, as_validator, bad_request, budgeted,
     chain_refused, client_ip, ips_match, is_valid_uuid, naive, network_at_cap, normalize_ip,
@@ -366,11 +366,21 @@ async fn verify_identity_post(
     )
     .await
     .map_err(|err| {
-        let (status, message) = err.http_status_and_message();
-        // A contract wallet no validator could decide: as on the other relay routes.
-        if status == 503 || matches!(err, signed_fetch::SignedFetchError::EipNotImplemented) {
-            return Box::new(chain_refused(ChainRefusal::Unavailable));
+        // A contract wallet no validator could decide: logged and answered as on
+        // the other relay routes.
+        let undecided = match &err {
+            signed_fetch::SignedFetchError::EipNotImplemented => {
+                Some(AuthError::Eip1654NotImplemented)
+            }
+            signed_fetch::SignedFetchError::CatalystUnavailable(detail) => {
+                Some(AuthError::Eip1654ValidationFailed(detail.clone()))
+            }
+            _ => None,
+        };
+        if let Some(undecided) = undecided {
+            return Box::new(chain_refused(validation::refusal(undecided)));
         }
+        let (_, message) = err.http_status_and_message();
         Box::new(
             (
                 StatusCode::UNAUTHORIZED,

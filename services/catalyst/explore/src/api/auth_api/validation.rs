@@ -169,19 +169,27 @@ async fn verify_chain(
 ) -> Result<(), ChainRefusal> {
     match verify_login_chain_async(chain, final_authority, None, eip1654).await {
         Ok(()) => Ok(()),
-        Err(AuthError::Eip1654NotImplemented) => {
+        Err(e) => Err(refusal(e)),
+    }
+}
+
+/// The refusal for a chain verification error, logging why a contract-wallet
+/// link could not be decided.
+pub(super) fn refusal(err: AuthError) -> ChainRefusal {
+    match err {
+        AuthError::Eip1654NotImplemented => {
             if !NO_VALIDATOR_WARNED.swap(true, Ordering::Relaxed) {
                 tracing::warn!(
                     "auth-api: contract-wallet chain refused, no EIP-1654 validator configured"
                 );
             }
-            Err(ChainRefusal::Unavailable)
+            ChainRefusal::Unavailable
         }
         // A spent budget, not the RPC: the handler answers it as a 429.
-        Err(AuthError::Eip1654ValidationFailed(detail)) if detail == BUDGET_SPENT => {
-            Err(ChainRefusal::Unavailable)
+        AuthError::Eip1654ValidationFailed(detail) if detail == BUDGET_SPENT => {
+            ChainRefusal::Unavailable
         }
-        Err(AuthError::Eip1654ValidationFailed(detail)) => {
+        AuthError::Eip1654ValidationFailed(detail) => {
             // Callers can provoke this one; repeats within the interval go to debug.
             let now = chrono::Utc::now().timestamp();
             if warn_due(
@@ -193,9 +201,9 @@ async fn verify_chain(
             } else {
                 tracing::debug!(%detail, "auth-api: contract-wallet chain refused, EIP-1654 validation failed");
             }
-            Err(ChainRefusal::Unavailable)
+            ChainRefusal::Unavailable
         }
-        Err(e) => Err(ChainRefusal::Invalid(e.to_string())),
+        e => ChainRefusal::Invalid(e.to_string()),
     }
 }
 

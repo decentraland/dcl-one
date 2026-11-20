@@ -105,6 +105,33 @@ struct Windows {
     prunes: u64,
 }
 
+impl Windows {
+    /// The budget `source` is charged to: its network's, or, while the table
+    /// is full once the ended windows are dropped, the overflow one.
+    fn key_for(&mut self, source: Option<&str>, now: Instant) -> Key {
+        let key = source.map_or(Key::NoSource, |s| Key::Source(network_key(s)));
+        if !self.by_key.contains_key(&key)
+            && self.by_key.len() >= MAX_SOURCES
+            && self.next_prune.is_none_or(|at| now >= at)
+        {
+            self.by_key
+                .retain(|_, w| now.saturating_duration_since(w.started) < WINDOW);
+            #[cfg(test)]
+            {
+                self.prunes += 1;
+            }
+            self.next_prune = self.by_key.values().map(|w| w.started + WINDOW).min();
+        }
+        if !self.by_key.contains_key(&key)
+            && self.by_key.len() >= MAX_SOURCES
+            && matches!(key, Key::Source(_))
+        {
+            return Key::Overflow;
+        }
+        key
+    }
+}
+
 pub struct ContractChecks {
     windows: Mutex<Windows>,
 }
@@ -136,20 +163,12 @@ impl ContractChecks {
     /// Whether `source` could be charged a call now, without charging it: a
     /// spent budget is refused before any database count.
     pub(super) fn has_room(&self, source: Option<&str>, now: Instant) -> Result<(), Spent> {
-        let windows = self.windows.lock();
+        let mut windows = self.windows.lock();
         let live = |w: &Window| now.saturating_duration_since(w.started) < WINDOW;
         if live(&windows.global) && windows.global.count >= GLOBAL {
             return Err(Spent::Replica);
         }
-        let key = source.map_or(Key::NoSource, |s| Key::Source(network_key(s)));
-        let key = if windows.by_key.contains_key(&key)
-            || windows.by_key.len() < MAX_SOURCES
-            || !matches!(key, Key::Source(_))
-        {
-            key
-        } else {
-            Key::Overflow
-        };
+        let key = windows.key_for(source, now);
         match windows.by_key.get(&key) {
             Some(w) if live(w) && w.count >= key.max() => Err(Spent::Network),
             _ => Ok(()),
@@ -173,26 +192,7 @@ impl ContractChecks {
             }
             return Err(Spent::Replica);
         }
-        let mut key = source.map_or(Key::NoSource, |s| Key::Source(network_key(s)));
-        if !windows.by_key.contains_key(&key)
-            && windows.by_key.len() >= MAX_SOURCES
-            && windows.next_prune.is_none_or(|at| now >= at)
-        {
-            windows
-                .by_key
-                .retain(|_, w| now.saturating_duration_since(w.started) < WINDOW);
-            #[cfg(test)]
-            {
-                windows.prunes += 1;
-            }
-            windows.next_prune = windows.by_key.values().map(|w| w.started + WINDOW).min();
-        }
-        if !windows.by_key.contains_key(&key)
-            && windows.by_key.len() >= MAX_SOURCES
-            && matches!(key, Key::Source(_))
-        {
-            key = Key::Overflow;
-        }
+        let key = windows.key_for(source, now);
         let max = key.max();
         let w = windows
             .by_key
@@ -375,6 +375,42 @@ mod tests {
         assert!(checks.has_room(Some("b"), now).is_ok());
         assert!(checks.has_room(Some("a"), now + WINDOW).is_ok());
         assert_eq!(checks.windows.lock().global.count, PER_SOURCE);
+    }
+
+    #[test]
+    fn room_follows_the_replica_cap() {
+        let checks = ContractChecks::default();
+        let now = Instant::now();
+        for i in 0..GLOBAL / PER_SOURCE {
+            spend(&checks, Some(&i.to_string()), PER_SOURCE, now);
+        }
+        assert!(matches!(
+            checks.has_room(Some("fresh"), now),
+            Err(Spent::Replica)
+        ));
+        assert!(checks.has_room(Some("fresh"), now + WINDOW).is_ok());
+    }
+
+    #[test]
+    fn room_files_a_network_where_a_charge_would() {
+        let checks = ContractChecks::default();
+        let t0 = Instant::now();
+        for i in 0..MAX_SOURCES {
+            let charge = checks.charge(Some(&i.to_string()), t0).unwrap();
+            checks.refund(charge);
+        }
+        let t1 = t0 + Duration::from_secs(30);
+        spend(&checks, Some("new"), OVERFLOW, t1);
+        assert!(
+            matches!(checks.has_room(Some("newer"), t1), Err(Spent::Network)),
+            "a full table files a new network under the spent overflow budget"
+        );
+        let t2 = t0 + WINDOW;
+        assert!(
+            checks.has_room(Some("fresh"), t2).is_ok(),
+            "once the tracked windows ended, a new network has its own"
+        );
+        assert!(checks.charge(Some("fresh"), t2).is_ok());
     }
 
     #[test]
