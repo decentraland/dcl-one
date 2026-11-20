@@ -151,6 +151,23 @@ describe("the record of an attempt", () => {
     expect(readSplitHoldRecord(ACCOUNT, LINE)).toBeNull();
   });
 
+  it("a removal the storage refuses is never reported cleared: the record stays, and once the storage recovers it clears", async () => {
+    const read = hold({ attempt: "a" });
+    writeSplitHold(ACCOUNT, LINE, read);
+    const refused = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new DOMException("The operation is insecure.", "SecurityError");
+    });
+    expect(await clearSettledSplitHold(createFakeLocks(), ACCOUNT, LINE, read)).toEqual({ kind: "busy", unremoved: true });
+    expect(clearSplitHold(ACCOUNT, LINE, "a")).toBe(false);
+    expect(readSplitHoldRecord(ACCOUNT, LINE)?.attempt).toBe("a");
+    // One that keeps it without a word is caught too: the record is read back.
+    refused.mockImplementation(() => {});
+    expect(await clearSettledSplitHold(createFakeLocks(), ACCOUNT, LINE, read)).toEqual({ kind: "busy", unremoved: true });
+    refused.mockRestore();
+    expect(await clearSettledSplitHold(createFakeLocks(), ACCOUNT, LINE, read)).toEqual({ kind: "cleared" });
+    expect(readSplitHoldRecord(ACCOUNT, LINE)).toBeNull();
+  });
+
   it("an outcome waits while another run holds the line", async () => {
     const locks = createFakeLocks();
     writeSplitHold(ACCOUNT, LINE, hold());
@@ -182,16 +199,23 @@ describe("what settles a hold", () => {
   const dispatchedAs = (tx: ReturnType<typeof splitSaleTransaction>): SplitSale => ({ ...SALE, envelope: splitEnvelope(tx.input) });
   const ANOTHER_SIGNATURE = `0x${"22".repeat(65)}` as const;
 
-  it("its own transaction, carrying exactly its terms: mined completes it; its own bytes reverted, with no SETTLED since, release its credit", async () => {
+  it("its own transaction, carrying exactly its terms, mined completes it; its own bytes reverted settle nothing: the node's record decides", async () => {
     const ok = deps(null);
     mined(ok.chain, HASH, splitSaleTransaction(SALE));
     expect(await settleSplitHold(hold({ txHash: HASH }), ok.deps)).toEqual({ kind: "spent", txHash: HASH });
-    for (const listed of [null, { status: "PENDING" as const }, { status: "EXPIRED" as const }]) {
+    const tx = splitSaleTransaction(SALE);
+    // Still reserved, or not listed (the index may be behind a sibling that ran): held, its credit not given back.
+    for (const listed of [null, { status: "PENDING" as const }]) {
       const reverted = deps(listed);
-      const tx = splitSaleTransaction(SALE);
       mined(reverted.chain, HASH, tx, "reverted");
-      expect(await settleSplitHold(hold({ txHash: HASH, sale: dispatchedAs(tx) }), reverted.deps), JSON.stringify(listed)).toEqual({ kind: "reverted" });
+      expect(await settleSplitHold(hold({ txHash: HASH, sale: dispatchedAs(tx) }), reverted.deps), JSON.stringify(listed)).toBeNull();
     }
+    // Expired unspent: let go only past the grace, as any other.
+    const expired = deps({ status: "EXPIRED" });
+    mined(expired.chain, HASH, tx, "reverted");
+    expect(await settleSplitHold(hold({ txHash: HASH, sale: dispatchedAs(tx) }), expired.deps)).toEqual({ kind: "expiring" });
+    const seen = Date.now() - SPLIT_EXPIRY_CONFIRM_MS;
+    expect(await settleSplitHold(hold({ txHash: HASH, sale: dispatchedAs(tx), expiredSeenAt: seen }), expired.deps)).toEqual({ kind: "released" });
   });
 
   it("a revert of its terms in another envelope (signed again) is not its own: the node's record decides, and nothing is released on it", async () => {

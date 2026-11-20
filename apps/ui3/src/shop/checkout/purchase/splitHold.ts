@@ -33,8 +33,8 @@ export const SPLIT_EXPIRY_CONFIRM_MS = 15 * 60 * 1000;
 
 /**
  * A split sent and not settled. `attempt`: the run that wrote it, the only one that changes or clears it. `txHash` and
- * `chainId`: the sale's transaction, once one is known. `creditId`: the credit the split reserved (a sale found reverted
- * retires it). `creditExpiresAt` (unix seconds): when that credit stops being spendable. `sale`: its terms, what an
+ * `chainId`: the sale's transaction, once one is known. `creditId`: the credit the split reserved. `creditExpiresAt` (unix
+ * seconds): when that credit stops being spendable. `sale`: its terms, what an
  * execution must carry to count as this split (none on a record from before they were kept: nothing settles it then).
  * `expiredSeenAt`: when the node was first seen to report its credit EXPIRED.
  */
@@ -143,14 +143,18 @@ export function writeSplitHold(account: string | null, lineId: string, hold: Spl
   }
 }
 
-/** Clears the record only while it is `attempt`'s: an older attempt's outcome never wipes a newer one's record. */
-export function clearSplitHold(account: string | null, lineId: string, attempt: string | null): void {
+/**
+ * Clears the record only while it is `attempt`'s: an older attempt's outcome never wipes a newer one's record. Whether no
+ * record of `attempt` is left (read back): false when the storage kept it (a removal that failed, or didn't stick).
+ */
+export function clearSplitHold(account: string | null, lineId: string, attempt: string | null): boolean {
   try {
-    if (readSplitHoldRecord(account, lineId)?.attempt !== attempt) return;
+    if (readSplitHoldRecord(account, lineId)?.attempt !== attempt) return true;
     holdStorage()?.removeItem(splitHoldKey(account, lineId));
   } catch {
-    // Nothing was stored.
+    // Read back below.
   }
+  return readSplitHoldRecord(account, lineId)?.attempt !== attempt;
 }
 
 /** A new run's own id. */
@@ -182,15 +186,13 @@ export async function claimSplitHold(locks: LockManager | null | undefined, acco
 }
 
 /**
- * What became of a held split. `spent`: an execution of exactly its terms mined (complete it). `reverted`: its own execution
- * mined and reverted (its credit unspent: retire it). `released`: the node reported its credit EXPIRED, unspent, for the
- * whole grace. `elsewhere`: the node reports its credit SETTLED by an execution that is provably not this split (nothing
+ * What became of a held split. `spent`: an execution of exactly its terms mined (complete it). `released`: the node reported
+ * its credit EXPIRED, unspent, for the whole grace. `elsewhere`: the node reports its credit SETTLED by an execution that is provably not this split (nothing
  * to complete, and its credit is gone). `expiring`: the node reports it EXPIRED, not yet for the whole grace (the caller
  * notes when that was first seen, `noteSplitHoldExpiry`).
  */
 export type SplitSettlement =
   | { kind: "spent"; txHash: string }
-  | { kind: "reverted" }
   | { kind: "released" }
   | { kind: "elsewhere" }
   | { kind: "expiring" };
@@ -221,11 +223,10 @@ export async function findCreditRecord(account: string, creditId: string, client
  * What became of a held split, decided only by its terms (the same rules the in-world Shop follows):
  * - its own transaction, read and matched (`splitExecution`): bought completes it;
  * - else the node's record of its credit: SETTLED by an execution of exactly its terms completes it, by one provably not
- *   it is `elsewhere`;
- * - its own dispatched bytes mined and reverted (`reverted`): that invocation failed, though the same execution may have
- *   run since in another transaction, which is why the node's record is read first. With it read and no SETTLED, the
- *   credit is unspent and released (`reverted`); with it unread (the read failed), still held;
- * - EXPIRED releases it once that has been seen for `SPLIT_EXPIRY_CONFIRM_MS` (`expiring` before);
+ *   it is `elsewhere`; EXPIRED releases it once that has been seen for `SPLIT_EXPIRY_CONFIRM_MS` (`expiring` before);
+ * - its own dispatched bytes mined and reverted settle nothing on their own: that invocation failed, but a sibling
+ *   invocation of the same terms may have run (the index may not show it yet), and a credit the node retired stays
+ *   spendable on chain until it expires. So it is held, as anything else is, until the node's record says one of the above;
  * - anything else (no transaction, one this page can't read, a failed read, a credit still reserved or not listed): null,
  *   still held, however long ago it was sent.
  * A record with a credit and no terms is never settled. One from before credits were kept with it is let go once its hold
@@ -240,12 +241,10 @@ export async function settleSplitHold(
   const sale = hold.sale;
   if (!sale) return null;
   const evidence = evidenceOf(deps.reader);
-  let ownReverted = false;
   if (hold.txHash) {
     const own = await splitExecution(evidence, sale, hold.txHash);
     if (own === "bought") return { kind: "spent", txHash: hold.txHash };
-    // Reverted, another execution, none yet, or one this page can't read: the node's record of the credit is read next.
-    ownReverted = own === "reverted";
+    // Its own bytes reverted, another execution, none yet, or one this page can't read: the node's record decides.
   }
   if (!deps.account) return null;
   let credit: PurchaseRecord | null;
@@ -261,7 +260,6 @@ export async function settleSplitHold(
     if (spent === "other") return { kind: "elsewhere" };
     return null;
   }
-  if (ownReverted) return { kind: "reverted" };
   if (credit?.status === "EXPIRED") {
     const seen = hold.expiredSeenAt ?? null;
     return seen !== null && now >= seen && now - seen >= SPLIT_EXPIRY_CONFIRM_MS ? { kind: "released" } : { kind: "expiring" };
@@ -296,10 +294,11 @@ export async function noteSplitHoldExpiry(
 
 /**
  * Applying an outcome settled for `read`. `cleared`: it was still the line's record (the same attempt; for one with no
- * attempt, the same `at`) and is gone. `replaced`: another run settled it and wrote another meanwhile (`current`, kept, or
- * null): the outcome is not applied to that one. `busy`: a run holds the line's lock (or there are no Web Locks); try later.
+ * attempt, the same `at`) and is gone, read back. `replaced`: another run settled it and wrote another meanwhile
+ * (`current`, kept, or null): the outcome is not applied to that one. `busy`: a run holds the line's lock (or there are no
+ * Web Locks), or the storage kept the record when it was removed (`unremoved`: it is still there); try later.
  */
-export type SplitHoldClearing = { kind: "cleared" } | { kind: "replaced"; current: SplitHold | null } | { kind: "busy" };
+export type SplitHoldClearing = { kind: "cleared" } | { kind: "replaced"; current: SplitHold | null } | { kind: "busy"; unremoved?: true };
 
 /** Clears the settled `read` under the line's lock, only while it is still the record; see `SplitHoldClearing`. */
 export async function clearSettledSplitHold(locks: LockManager | null | undefined, account: string, lineId: string, read: SplitHold): Promise<SplitHoldClearing> {
@@ -309,8 +308,7 @@ export async function clearSettledSplitHold(locks: LockManager | null | undefine
     const current = readSplitHoldRecord(account, lineId);
     const same = current !== null && current.attempt === read.attempt && (read.attempt !== null || current.at === read.at);
     if (!same) return { kind: "replaced", current: current && splitHoldKeeps(current, Date.now()) ? current : null };
-    clearSplitHold(account, lineId, read.attempt);
-    return { kind: "cleared" };
+    return clearSplitHold(account, lineId, read.attempt) ? { kind: "cleared" } : { kind: "busy", unremoved: true };
   } finally {
     release();
   }

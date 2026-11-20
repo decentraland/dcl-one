@@ -616,19 +616,30 @@ describe("Buy now's dialog", () => {
     expect(readSplitHold(BOOK.buyer, lineId)).toBeNull();
   });
 
-  it("Check again on a remembered split that reverted says so and releases the item", async () => {
+  it("Check again on a remembered split whose own bytes reverted keeps it held, no credit retired, until the node settles its credit", async () => {
     const sent = await sendSplitThatStaysPending();
-    const { demo, holdLine: lineId } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
-    const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
+    const listed: { status: "PENDING" | "SETTLED"; txHash: string | null } = { status: "PENDING", txHash: null };
+    const userPurchases = () => ({ purchases: [{ id: `${sent.creditId}:0`, status: listed.status, usdCents: 30, createdAt: 1, txHash: listed.txHash }], total: 1 });
+    const { demo, holdLine: lineId } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit, userPurchases } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const modal = await screen.findByTestId("buy-modal");
+    const pending = await within(modal).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
     mined(demo, sent, "reverted");
     await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
-    // The credit it reserved went into nothing that mined: retired now, that one and no other. Retired Credits come back
-    // with the expiry sweep, which is what the copy says.
-    expect(await screen.findByTestId("buy-error", undefined, { timeout: 5000 })).toHaveTextContent(
-      "The purchase failed on-chain, so nothing was bought. The Credits it held come back on their own.",
-    );
-    const cancels = demo.shop.log.filter((r) => r.name === "cancelCreditAuthorizations");
-    expect(cancels.at(-1)?.body).toEqual({ salts: [sent.creditId] });
+    // That invocation failed, but a sibling of the same terms may have run: still confirming, its credit not given back.
+    await waitFor(() => expect(demo.shop.log.some((r) => r.name === "userPurchases")).toBe(true));
+    expect(within(modal).getByTestId("buy-modal-pending")).toBeTruthy();
+    expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
+    expect(readSplitHold(BOOK.buyer, lineId)).not.toBeNull();
+    // One had: the node settles the credit by it, and Check again completes the purchase.
+    const sibling = `0x${"ab".repeat(32)}`;
+    demo.chain.transactions.set(sibling, sent.tx);
+    demo.chain.receipts.set(sibling, "success");
+    Object.assign(listed, { status: "SETTLED", txHash: sibling });
+    const again = within(within(modal).getByTestId("buy-modal-pending")).getByRole("button", { name: "Check again" });
+    await waitFor(() => expect(again).toBeEnabled());
+    await act(async () => fireEvent.click(again));
+    expect(await screen.findByTestId("buy-modal-complete", undefined, { timeout: 5000 })).toBeTruthy();
+    expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
     expect(readSplitHold(BOOK.buyer, lineId)).toBeNull();
   });
 

@@ -587,14 +587,63 @@ describe("a split whose outcome is not known", () => {
     expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toBeNull();
   });
 
-  it("control: a sale whose own receipt shows it mined and reverted releases its credit and lets the item go", async () => {
-    const { demo, line } = setup(undefined, "reverted");
+  it.each([
+    ["still reserved (PENDING)", "PENDING"],
+    ["not listed yet", null],
+  ] as const)("its own bytes mined and reverted, its credit %s: held with no credit retired until the node settles it, and bought once", async (_, first) => {
+    const credit = `0x${"a1".repeat(32)}`;
+    const sibling = `0x${"ab".repeat(32)}`;
+    const listed: { status: "PENDING" | "SETTLED" | null; txHash: string | null } = { status: first, txHash: null };
+    const { demo, line } = setup(undefined, "reverted", MANA, undefined, {
+      userPurchases: () => ({
+        purchases: listed.status ? [{ id: `${credit}:0`, status: listed.status, usdCents: 50, createdAt: 1, txHash: listed.txHash }] : [],
+        total: listed.status ? 1 : 0,
+      }),
+    });
+    const cancels = () => demo.shop.log.filter((r) => r.name === "cancelCreditAuthorizations").length;
     demo.chain.allowances.set(managerKey(), 10n ** 21n);
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
-    expect(await screen.findByText("The purchase failed on-chain, so nothing was bought. The Credits it held come back on their own.", {}, { timeout: 5000 })).toBeTruthy();
+    expect(await screen.findByText(/still confirming/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(cancels()).toBe(0);
+    const held = readSplitHold(BOOK.buyer, splitHoldLine(line.asset));
+    expect(held).toMatchObject({ txHash: expect.any(String), creditId: credit });
+    // Checked again while the node still says so: nothing changes.
+    await act(async () => fireEvent.click(screen.getByTestId("combined-check-again")));
+    await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
+    expect(screen.getByText(/still confirming/)).toBeTruthy();
+    expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toEqual(held);
+    expect(cancels()).toBe(0);
+    // A sibling invocation of the same terms had run: the node settles the credit by it.
+    const [to, input] = (demo.relay.posts.at(-1) as { transactionData: { params: [string, Hex] } }).transactionData.params;
+    demo.chain.transactions.set(sibling, { from: null, to, input });
+    demo.chain.receipts.set(sibling, "success");
+    Object.assign(listed, { status: "SETTLED", txHash: sibling });
+    await act(async () => fireEvent.click(screen.getByTestId("combined-check-again")));
+    expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(cancels()).toBe(0);
     expect(demo.relay.posts).toHaveLength(1);
-    expect(demo.shop.log.filter((r) => r.name === "cancelCreditAuthorizations")).toHaveLength(1);
     expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toBeNull();
+  });
+
+  it("a successful receipt for a transaction that is not this sale's, with nothing in the history, is held confirming with that hash, never complete", async () => {
+    const { demo, line } = setup(undefined, undefined, MANA, undefined, { userPurchases: () => ({ purchases: [], total: 0 }) });
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    // What the chain shows at the relay's hash: another buyer's useCredits, mined.
+    const read = demo.chain.transaction!;
+    demo.chain.transaction = async (chainId, hash) => {
+      const tx = await read(chainId, hash);
+      if (!tx) return tx;
+      const meta = decodeFunctionData({ abi: OFFCHAIN_META_TX_ABI, data: tx.input });
+      return { ...tx, input: encodeExecuteMetaTransaction("functionData", `0x${"cc".repeat(20)}`, meta.args[1] as Hex, `0x${"11".repeat(65)}`) };
+    };
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText(/still confirming/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(screen.queryByText(/Purchase complete/)).toBeNull();
+    const held = readSplitHold(BOOK.buyer, splitHoldLine(line.asset));
+    expect(held).toMatchObject({ txHash: expect.any(String), creditId: expect.any(String) });
+    expect(demo.chain.receipts.get(held!.txHash!.toLowerCase())).toBe("success");
+    expect(demo.relay.posts).toHaveLength(1);
+    expect(demo.shop.log.filter((r) => r.name === "cancelCreditAuthorizations")).toHaveLength(0);
   });
 
   it("a revert of its terms in bytes it did not dispatch (the relay's hash is the same call signed again) is not its own: held, its credit kept", async () => {
@@ -889,7 +938,7 @@ describe("a held split with no transaction to read", () => {
   it.each([
     ["its terms signed again (another envelope)", false],
     ["the very bytes it dispatched", true],
-  ] as const)("Check again on its hash mined and reverted as %s: released only for its own bytes", async (_, own) => {
+  ] as const)("Check again on its hash mined and reverted as %s, its credit still reserved: held, no credit retired", async (_, own) => {
     const HASH = `0x${"5a".repeat(32)}`;
     const mine = splitSaleTransaction(SALE);
     const demo = heldSplit({ value: "PENDING" }, nowSeconds() + 300, { attempt: "a", txHash: HASH, envelope: splitEnvelope(mine.input), settledBy: "none" });
@@ -897,16 +946,33 @@ describe("a held split with no transaction to read", () => {
     demo.chain.receipts.set(HASH, "reverted");
     await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
     await waitFor(() => expect(demo.shop.log.some((r) => r.name === "userPurchases")).toBe(true));
-    if (own) {
-      expect(await screen.findByText(/failed on-chain/)).toBeTruthy();
-      expect(demo.shop.log.filter((r) => r.name === "cancelCreditAuthorizations")).toHaveLength(1);
-      expect(readSplitHold(BOOK.buyer, demo.lineId)).toBeNull();
-    } else {
-      await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
+    await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
+    expect(screen.getByText(/still confirming/)).toBeTruthy();
+    expect(screen.queryByText(/failed on-chain/)).toBeNull();
+    expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
+    expect(readSplitHold(BOOK.buyer, demo.lineId)).toMatchObject({ attempt: "a", txHash: HASH });
+  });
+
+  it("an outcome this browser can't clear from its record is not applied: Check again says so, and completes once the storage recovers", async () => {
+    const demo = heldSplit({ value: "SETTLED" }, nowSeconds() - 1, { attempt: "a" });
+    const removeItem = Storage.prototype.removeItem;
+    const refused = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(function (this: Storage, key: string) {
+      if (key.startsWith("dcl-shop-buynow-split:")) throw new DOMException("The operation is insecure.", "SecurityError");
+      removeItem.call(this, key);
+    });
+    try {
+      await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
+      expect(await screen.findByTestId("combined-check-notice")).toHaveTextContent("This browser couldn't update its record of this purchase. Check again in a moment.");
+      expect(screen.queryByText(/Purchase complete/)).toBeNull();
       expect(screen.getByText(/still confirming/)).toBeTruthy();
-      expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
-      expect(readSplitHold(BOOK.buyer, demo.lineId)).toMatchObject({ attempt: "a", txHash: HASH });
+      expect(readSplitHold(BOOK.buyer, demo.lineId)).toMatchObject({ attempt: "a" });
+    } finally {
+      refused.mockRestore();
     }
+    await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
+    await act(async () => fireEvent.click(screen.getByTestId("combined-check-again")));
+    expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(readSplitHold(BOOK.buyer, demo.lineId)).toBeNull();
   });
 
   it("after another surface's dispatch, a FOREIGN hash leaves its unresolved attempt held on the web", async () => {
