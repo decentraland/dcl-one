@@ -13,7 +13,7 @@ import type { AuthIdentity } from '@explorer-core/features/auth/sso'
 import type { PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
 import { GENESIS_SATELLITE_VIEW } from '@explorer-core/features/map/atlas'
 import { emptyEventsStore } from '../features/events/eventsStore'
-import { useEngineSession, type EngineSession, type ProfileState } from '../features/session/useEngineSession'
+import { useEngineSession, type EngineSession, type ProfileState, type SessionHost } from '../features/session/useEngineSession'
 
 export async function renderSettled(...args: Parameters<typeof render>): Promise<ReturnType<typeof render>> {
   let view!: ReturnType<typeof render>
@@ -137,10 +137,11 @@ export interface Harness {
 /** Render the real session hook wired to a FakeDriver (pass a subclass to simulate boot panics). */
 export function renderSession(
   previousLogin?: { userId: string | null },
-  driver: FakeDriver = new FakeDriver()
+  driver: FakeDriver = new FakeDriver(),
+  host: SessionHost = {}
 ): Harness {
   if (previousLogin) driver.previousLogin = previousLogin
-  const { result, unmount } = renderHook(() => useEngineSession(() => driver))
+  const { result, unmount } = renderHook(() => useEngineSession(() => driver, host))
   return { driver, result, session: () => result.current, unmount }
 }
 
@@ -236,7 +237,7 @@ export function fakeSession(): EngineSession {
     runDebugCommand: vi.fn(),
     skybox: { open: false, toggle: vi.fn(), hours: 10, progressing: true, setHours: vi.fn(), setProgressing: vi.fn() },
     emotes: { list: [], open: false, toggle: vi.fn(), play: vi.fn(), equip: vi.fn() },
-    backpack: { list: [], total: 0, loading: false, query: vi.fn(), equipped: [], setColor: vi.fn(), open: false, toggle: vi.fn(), equip: vi.fn(), saveError: null, retrySave: vi.fn(), revertSave: vi.fn(), preview: vi.fn(), focus: vi.fn(), stage: vi.fn(), emote: vi.fn(), rotate: vi.fn(), zoom: vi.fn(), outfitsLoaded: true, forceRender: [], setForceRender: vi.fn(), outfits: [], outfitSlots: 5, saveOutfit: vi.fn(), deleteOutfit: vi.fn(), equipOutfit: vi.fn(), outfitHistory: { canUndo: false, canRedo: false, rolling: false }, randomizeOutfit: vi.fn(), undoOutfit: vi.fn(), redoOutfit: vi.fn() },
+    backpack: { list: [], total: 0, loading: false, query: vi.fn(), equipped: [], setColor: vi.fn(), open: false, toggle: vi.fn(), equip: vi.fn(), saveError: null, retrySave: vi.fn(), revertSave: vi.fn(), preview: vi.fn(), focus: vi.fn(), stage: vi.fn(), emote: vi.fn(), rotate: vi.fn(), zoom: vi.fn(), outfitsLoaded: true, forceRender: [], setForceRender: vi.fn(), outfits: [], outfitSlots: 5, warnAboutClearingExtraOutfits: false, saveOutfit: vi.fn(), deleteOutfit: vi.fn(), outfitError: null, dismissOutfitError: vi.fn(), equipOutfit: vi.fn(), outfitHistory: { canUndo: false, canRedo: false, rolling: false }, randomizeOutfit: vi.fn(), undoOutfit: vi.fn(), redoOutfit: vi.fn() },
     communities: { list: [], browse: { search: '', items: [], total: 0, loading: false, loadingMore: false }, loadBrowse: vi.fn(), loadMoreBrowse: vi.fn(), open: false, toggle: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(), deleted: null, save: null, clearSave: vi.fn(), placeOptions: null, loadPlaceOptions: vi.fn(), clearPlaceOptions: vi.fn(), removePlace: vi.fn(), memberAction: vi.fn(), join: vi.fn(), requestToJoin: vi.fn(), cancelRequest: vi.fn(), leave: vi.fn(), error: null, detail: null, loadDetail: vi.fn(), cards: {}, fetch: vi.fn(), invites: null, loadInvites: vi.fn(), pendingCount: null, loadInvitesCount: vi.fn(), manageRequest: vi.fn(), memberSections: {}, cardOpen: vi.fn(), loadMemberSection: vi.fn(), invitable: null, loadInvitable: vi.fn(), invite: vi.fn(), unban: vi.fn(), posts: null, loadPosts: vi.fn(), loadMorePosts: vi.fn(), createPost: vi.fn(), deletePost: vi.fn(), likePost: vi.fn() },
     map: { x: 0, y: 0, open: false, toggle: vi.fn(), teleport: vi.fn(() => 'sent' as const), changeRealm: vi.fn(() => 'sent' as const), teleportToPlace: vi.fn(() => 'sent' as const), home: null, setHome: vi.fn() },
     minimap: { pose: { current: { x: 0, z: 0, yaw: 0, camYaw: 0 } }, satelliteView: GENESIS_SATELLITE_VIEW, sceneTitle: '', restrictions: [], donatePlace: null, linkRealm: null, setConfig: vi.fn(), reloadScene: vi.fn() },

@@ -12,6 +12,10 @@ import type {
   CommunityVoiceStatus,
   ConnectivitySnapshot,
   HomeScene,
+  MapPinInfo,
+  OutfitData,
+  OutfitSlotData,
+  OutfitsData,
   PlatformBanNotice,
   PortableInfo,
   SatelliteView,
@@ -21,6 +25,8 @@ import type {
   VoiceChatState,
   WelcomeState,
   WorldAccessVerdict,
+  ItemPurchaseItem,
+  ItemPurchaseState,
 } from './generated'
 import type { AvatarLook } from './avatarEquip'
 
@@ -282,6 +288,7 @@ export type PageToScene =
   | ResetPermissionsRequest
   | GetPermissionRulesRequest
   | WorldPasswordResolveRequest
+  | ItemPurchaseStateRequest
   | EditorSceneRequest
   | EngineViewportRequest
   | InteractableAreaMessage
@@ -747,6 +754,8 @@ export interface GetUserProfileRequest {
   kind: 'getUserProfile'
   address: string
   extras?: boolean
+  /** Optional for older HUDs. All replies to this read echo the same ID. */
+  requestId?: number
 }
 
 /** A fetched user's passport (kept separate from the local `profile` message so it
@@ -754,6 +763,8 @@ export interface GetUserProfileRequest {
 export interface UserProfileMessage {
   kind: 'userProfile'
   address: string
+  /** Echoed from the read it answers. Older bridges omit it. */
+  requestId?: number
   profile: Profile | null
 }
 
@@ -799,6 +810,8 @@ export interface GetOwnedNamesRequest {
 export interface OwnedNamesMessage {
   kind: 'ownedNames'
   names: string[]
+  /** The lookup failed, so `names` is empty but not known to be. */
+  failed?: boolean
 }
 
 /** Mirrors the engine's BaseNotification (metadata varies by type). */
@@ -1115,6 +1128,13 @@ export interface PortablesMessage {
   portables: PortableInfo[]
 }
 
+/** The map pins of portable experiences (scene → page, from getMapPinsStream): the whole list
+ *  on subscribe and on every change. */
+export interface MapPinsMessage {
+  kind: 'mapPins'
+  pins: MapPinInfo[]
+}
+
 /** The engine needs a password to enter the world the player is travelling to (scene → page).
  *  Shown as the password dialog; answered with worldPasswordResolve. Re-sent with an `error` when
  *  an answer was refused (wrong password, too many attempts). There is only ever one open prompt:
@@ -1147,6 +1167,25 @@ export interface WorldPasswordWithdrawnMessage {
 export interface WorldPasswordResolveRequest {
   kind: 'worldPasswordResolve'
   password: string | null
+}
+
+/** A scene asked to open the purchase confirmation for one item (scene → page). The engine has
+ *  applied its gates; the HUD answers with itemPurchaseState, at once with whether it can show the
+ *  confirmation and, if it can, once more with how it ended. One request is in flight at a time. */
+export interface ItemPurchaseRequestMessage {
+  kind: 'itemPurchaseRequest'
+  /** Engine-assigned request id, echoed in each itemPurchaseState. */
+  id: number
+  /** The collection item the scene's urn names; null when it names none (the purchase fails). */
+  item: ItemPurchaseItem | null
+}
+
+/** The HUD's report on an item purchase request (page → scene → SystemApi): `accepted` or
+ *  `unavailable` first, then for an accepted request exactly one of the outcomes. */
+export interface ItemPurchaseStateRequest {
+  kind: 'itemPurchaseState'
+  id: number
+  state: ItemPurchaseState
 }
 
 /** Which scope an Allow/Deny applies to. `once` = just this request (dismissing the prompt);
@@ -1282,11 +1321,13 @@ export interface CommunityFriend {
   hasClaimedName: boolean
 }
 
-/** A page request's handler threw, so its reply never came (scene → page). */
+/** A page request's handler threw while handling the request (scene → page). */
 export interface RequestFailedMessage {
   kind: 'requestFailed'
   request: PageToScene['kind']
   error: string
+  /** Correlation for a failed getUserProfile request that carried a request ID. */
+  profileRead?: { address: string; requestId: number }
 }
 
 /** Deploying the Backpack's look was rejected (scene → page). */
@@ -2188,35 +2229,28 @@ export interface RGBColor {
   b: number
 }
 
-/** A saved avatar look (backpack Outfits tab). The shape mirrors the catalyst `outfits` entity's
- *  per-slot outfit so a saved look can later be deployed unchanged (Phase 2); Phase 1 persists
- *  these locally (localStorage in the bridge scene). */
-export interface Outfit {
-  bodyShape: string
-  eyes: { color: RGBColor }
-  hair: { color: RGBColor }
-  skin: { color: RGBColor }
-  wearables: string[]
-  forceRender: string[]
-}
+/** A saved avatar look (backpack Outfits tab): one slot of the player's catalyst `outfits`
+ *  entity, which the bridge scene has the engine deploy (a guest's last for the session). */
+export type Outfit = OutfitData
 
-/** One saved outfit at a fixed slot index (0-based). */
-export interface OutfitSlot {
-  slot: number
-  outfit: Outfit
-  /** A picture of the outfit worn (PNG data URL), kept on this device only. */
-  thumbnail?: string
-}
+/** One saved outfit at a fixed slot index (0-based), with a picture of it worn (PNG data URL)
+ *  kept on this device only. */
+export type OutfitSlot = OutfitSlotData & { thumbnail?: string }
 
 /** The player's saved outfits + owned DCL names that unlock extra slots (beyond the 5 free). */
-export interface OutfitsMetadata {
-  outfits: OutfitSlot[]
-  namesForExtraSlots: string[]
-}
+export type OutfitsMetadata = Omit<OutfitsData, 'outfits'> & { outfits: OutfitSlot[] }
 
 export interface OutfitsMessage {
   kind: 'outfits'
   metadata: OutfitsMetadata
+}
+
+/** A save or delete of a saved outfit was refused, so the outfits stay as they were (scene → page). */
+export interface OutfitSaveFailedMessage {
+  kind: 'outfitSaveFailed'
+  slot: number
+  action: 'save' | 'delete'
+  message: string
 }
 
 export interface GetOutfitsRequest {
@@ -2509,6 +2543,7 @@ export type SceneToPage =
   | CatalogPageMessage
   | GiftingPageMessage
   | OutfitsMessage
+  | OutfitSaveFailedMessage
   | OutfitHistoryMessage
   | CommunitiesMessage
   | CommunityBrowseMessage
@@ -2566,9 +2601,11 @@ export type SceneToPage =
   | PermissionRulesMessage
   | WorldPasswordRequestMessage
   | WorldPasswordWithdrawnMessage
+  | ItemPurchaseRequestMessage
   | PlatformBanMessage
   | EditorSceneResultMessage
   | PortablesMessage
+  | MapPinsMessage
 
 // ---- events ----------------------------------------------------------------
 

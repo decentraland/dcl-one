@@ -35,7 +35,7 @@ beforeAll(async () => {
   await import("@ui/components/SignInModalView");
 }, 60_000);
 beforeEach(() => {
-  vi.stubGlobal("location", { pathname: "/create/storage", search: "?step=edit", hash: "", origin: "http://localhost:3000", assign: vi.fn() });
+  vi.stubGlobal("location", { pathname: "/create/preview", search: "?step=edit", hash: "", origin: "http://localhost:3000", assign: vi.fn() });
 });
 afterEach(() => {
   cleanup();
@@ -60,7 +60,7 @@ describe("the in-place sign-in modal", () => {
   it("signs in with Google through Magic, back to this page, as /auth/login does", async () => {
     await openModal();
     fireEvent.click(await screen.findByRole("button", { name: "Continue with Google" }));
-    await vi.waitFor(() => expect(magic.start).toHaveBeenCalledWith("pk_example123", "google", "/create/storage?step=edit"));
+    await vi.waitFor(() => expect(magic.start).toHaveBeenCalledWith("pk_example123", "google", "/create/preview?step=edit"));
   });
 
   it("starts one social sign-in however often it is pressed", async () => {
@@ -102,7 +102,7 @@ describe("the in-place sign-in modal", () => {
 
   it("says when social sign-in cannot start, keeps the page to return to, and lets the reader try again", async () => {
     await act(async () => {
-      openSignIn({ inPlace: true, redirectTo: "/create/storage?step=pay" });
+      openSignIn({ inPlace: true, redirectTo: "/create/preview?step=pay" });
     });
     render(
       <MemoryRouter>
@@ -114,12 +114,12 @@ describe("the in-place sign-in modal", () => {
       fireEvent.click(await screen.findByRole("button", { name: "Continue with Google" }));
     });
     expect(await screen.findByText("Magic is unreachable")).toBeTruthy();
-    expect(peekPendingRedirect()).toBe("/create/storage?step=pay");
+    expect(peekPendingRedirect()).toBe("/create/preview?step=pay");
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Continue with Google" }));
     });
     expect(magic.start).toHaveBeenCalledTimes(2);
-    expect(magic.start).toHaveBeenLastCalledWith("pk_example123", "google", "/create/storage?step=pay");
+    expect(magic.start).toHaveBeenLastCalledWith("pk_example123", "google", "/create/preview?step=pay");
   });
 
   it("signs a wallet session for a month, as /auth/login does, and keeps no email for it", async () => {

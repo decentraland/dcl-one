@@ -560,13 +560,11 @@ fn build_cpal_stream(
         .build_input_stream(
             &config.into(),
             move |data_f32: &[f32], _: &cpal::InputCallbackInfo| {
-                let mut data_uninit = Arc::new_uninit_slice(data_f32.len());
-                let data_slice = Arc::get_mut(&mut data_uninit).unwrap();
-                for (src, dest) in data_f32.iter().zip(data_slice.iter_mut()) {
-                    dest.write((*src * i16::MAX as f32).round() as i16);
-                }
-                // SAFETY: we have initialized all 'len' elements
-                let data = unsafe { data_uninit.assume_init() };
+                // an exact-size iterator, so this allocates once and writes in place
+                let data: Arc<[i16]> = data_f32
+                    .iter()
+                    .map(|src| (*src * i16::MAX as f32).round() as i16)
+                    .collect();
                 if sender
                     .send(LocalAudioFrame {
                         data: data.to_owned(),
@@ -658,7 +656,6 @@ fn microphone_route_enabled(
         }
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn reconcile_publications(
     mut commands: Commands,
     participants: Query<
@@ -906,7 +903,9 @@ fn locate_foreign_streams(
             let panning = voice_pan.update(panning, &panning_settings, time.delta_secs());
             for (livekit_track, multiplier) in tracks.iter_many(publishing) {
                 if let Some(track) = livekit_track.track() {
-                    track.pan_and_volume(panning, volume * multiplier.map_or(1.0, |value| **value));
+                    let multiplier =
+                        crate::livekit::track::transmitter_volume(multiplier.map(|value| **value));
+                    track.pan_and_volume(panning, volume * multiplier);
                 }
             }
         }

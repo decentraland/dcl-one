@@ -1138,12 +1138,37 @@ returns only the numeric status. The pinned source's complete response bodies
 are compared for accepted, sent/received requests, absent friendship and empty
 history, with V2 and anonymous controls; no performance change was measured.
 
+## Message router workload
+
+The community chat message router (`catalyst-message-router`, its own process with its own
+pool, `MESSAGE_ROUTER_DB_MAX_CONNECTIONS`, default 4, 5 s statement timeout) reads social's
+community tables by shared SQL and writes nothing. Per routed packet (a community chat message
+or reaction, at most 10 per sender in a burst and 5 per second sustained) it runs one statement
+with two parts:
+
+- membership: `EXISTS` over `social.community_members` on `(community_id, member_address)`,
+  one probe of `community_members_pkey`, whatever the community's state;
+- recipients: `ARRAY(...)` of `social.communities` by `id` (its primary key), `active` and not
+  `suspended`, joined to the community's `social.community_members` rows through the
+  `community_members_pkey` prefix, every member but the sender, `lower(member_address)`. The
+  result is the community's member count, which the router publishes in batches of 100
+  identities.
+
+The router routes at most as many packets at once as the pool has connections, so a packet
+never waits for a connection; one that finds every routing slot taken is dropped and counted
+`overloaded` instead of timing out on the pool.
+
+Inputs are a community uuid from the packet topic and the sender's LiveKit identity, lowercased
+(member addresses are stored lowercase). No table, index or column is added. Changing a column
+either query reads updates this section and the root `AGENTS.md` comms ownership in the same
+change.
+
 ## Native referral login workload
 
 `POST /social-api/v1/client-login` derives the invited wallet from ADR-44 signed
 fetch. Its signed metadata contains `loginId` and `occurredAt`; the timestamp
-limits admission to the preceding 24 hours with five minutes of future tolerance,
-matching the signed-fetch clock window.
+limits admission to the preceding 24 hours with five minutes of future tolerance.
+The request itself still passes the 60-second signed-fetch window.
 The client preserves these values across retries and signs each request afresh.
 The occurrence timestamp bounds replay acceptance, while login-day accounting
 continues to use the database's UTC processing date.
@@ -2031,9 +2056,16 @@ identities (100 per network). No production rate is measured.
   the backups, which keep it after the row is deleted for as long as they
   are retained. A copy of the key signs for the identity's account until the
   expiration in its auth chain.
-  The pickup consumes it with `DELETE ... RETURNING` in the transaction that
-  writes its tombstone, so exactly one pickup gets it; a concurrent one waits
-  on the row, finds it gone and reads the tombstone.
+  A deep-link create for a client that holds a verifier (Creator Hub) binds
+  it to the client's `authRequestId` (`auth_request_id`, lowercase), which
+  the client derives from the verifier it presents on pickup
+  (`x-identity-verifier`); other identities stay unbound and keep the IP
+  check. The pickup locks the row (`SELECT ... FOR UPDATE`), decides, and
+  deletes it in the transaction that writes its tombstone when it is served,
+  expired or refused for its IP, so exactly one pickup gets it; a concurrent
+  one waits on the row, finds it gone and reads the tombstone. A bound
+  identity is served only to its verifier, from any network; a pickup with a
+  wrong or missing one (401) leaves the row parked.
 - `auth_identity_tombstones`: why an identity is gone (`consumed`, `expired`,
   `ip_mismatch`, or NULL while parked and once evicted by the sweep or an
   operator's revoke), for the 404 bodies, kept 14 days and at most 50,000

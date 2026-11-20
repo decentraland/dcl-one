@@ -245,6 +245,15 @@
   transform-origin: 0 0;
 }
 
+/* As .poiPin, but centred on the anchor: the quest pin is round. */
+.questPin {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  transform: scale(calc(1 / var(--map-scale))) rotate(calc(var(--map-yaw) * -1deg)) translate(-50%, -50%);
+  transform-origin: 0 0;
+}
+
 /* Same inverse transform as the pin, offset below the anchor instead of above it. */
 .poiLabel {
   position: absolute;

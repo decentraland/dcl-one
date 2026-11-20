@@ -240,7 +240,8 @@ describe("the NAME buy dialog", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Continue" }));
     fireEvent.change(within(dialog).getByRole("textbox", { name: "Re-enter the NAME" }), { target: { value: "nacho" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Buy" }));
-    expect(await screen.findByRole("dialog", { name: "Purchase complete!" })).toBeInTheDocument();
+    const done = await screen.findByRole("dialog", { name: "Purchase complete!" });
+    expect(within(done).getByRole("link", { name: "Use it for your World" })).toHaveAttribute("href", "/download/creator-hub");
     expect(wallet.sent.map((t) => [t.to, t.fn])).toEqual([
       [MAINNET.mana, "approve"],
       [MAINNET.nameController, "register"],

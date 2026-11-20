@@ -396,7 +396,6 @@ struct MultiClick {
 // is no cursor and the engine keeps everything. While a synthetic aim drives the pointer
 // (`/hover_entity`, `/click_entity`), its presses are meant for the aimed entity, not for the page
 // under the OS cursor, so button presses and releases are not forwarded (motion still is).
-#[allow(clippy::too_many_arguments)]
 fn route_mouse(
     state: Option<ResMut<ReactHudCef>>,
     images: Res<Assets<Image>>,
@@ -652,15 +651,18 @@ fn on_page_envelope(
     // through one at a time.
     if env.get("to").and_then(|t| t.as_str()) == Some("engine") {
         match env.get("kind").and_then(|k| k.as_str()) {
-            Some("prefsLoad") => {
-                commands.trigger_targets(
-                    HostEmitEvent {
-                        id: "prefs".to_string(),
-                        payload: serde_json::to_string(&state.prefs).unwrap(),
-                    },
-                    state.hud,
-                );
-            }
+            Some("prefsLoad") => match serde_json::to_string(&state.prefs) {
+                Ok(payload) => {
+                    commands.trigger_targets(
+                        HostEmitEvent {
+                            id: "prefs".to_string(),
+                            payload,
+                        },
+                        state.hud,
+                    );
+                }
+                Err(e) => error!("[react-hud-cef] failed to serialize prefs: {e}"),
+            },
             Some("prefSet") => {
                 if let (Some(key), Some(value)) = (
                     env.get("key").and_then(|k| k.as_str()),
@@ -789,10 +791,17 @@ fn read_prefs() -> BTreeMap<String, String> {
 
 fn write_prefs(prefs: &BTreeMap<String, String>) {
     let Some(file) = prefs_file() else { return };
+    let json = match serde_json::to_string(prefs) {
+        Ok(json) => json,
+        Err(e) => {
+            error!("[react-hud-cef] failed to serialize prefs: {e}");
+            return;
+        }
+    };
     if let Some(folder) = file.parent() {
         let _ = std::fs::create_dir_all(folder);
     }
-    if let Err(e) = std::fs::write(&file, serde_json::to_string(prefs).unwrap()) {
+    if let Err(e) = std::fs::write(&file, json) {
         warn!("[react-hud-cef] failed to write {file:?}: {e}");
     }
 }

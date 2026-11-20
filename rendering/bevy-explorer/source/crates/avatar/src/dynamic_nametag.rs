@@ -126,7 +126,6 @@ pub(crate) fn smallest_scale(avatar: &GlobalTransform) -> Option<f32> {
     (smallest > SCALE_MIN).then_some(smallest)
 }
 
-#[allow(clippy::type_complexity)]
 pub(crate) fn dynamic_nametag_position(
     players: Query<(
         &AttachPoints,

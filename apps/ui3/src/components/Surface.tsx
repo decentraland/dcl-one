@@ -13,14 +13,6 @@ export function PageHeader({ title, description, actions, children, className = 
   </header>;
 }
 
-export function FilterButton({ selected = false, className = "", children, ...rest }: ComponentPropsWithoutRef<"button"> & { selected?: boolean }) {
-  return <button type="button" aria-pressed={selected} className={`ui-filter${selected ? " is-active" : ""} ${className}`} {...rest}>{children}</button>;
-}
-
-export function SurfaceCard({ className = "", children, ...rest }: ComponentPropsWithoutRef<"article">) {
-  return <article className={`ui-card ${className}`} {...rest}>{children}</article>;
-}
-
 export function SectionCard({ title, titleId, headingLevel = 2, icon, action, footer, children, className = "", ...rest }: Omit<ComponentPropsWithoutRef<"section">, "title"> & {
   title: ReactNode;
   titleId: string;

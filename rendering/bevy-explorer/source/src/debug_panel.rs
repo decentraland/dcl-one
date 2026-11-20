@@ -86,7 +86,6 @@ enum SimulatedMemoryPressure {
     Off,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn debug_memory(
     mut cmd: ConsoleCommand<MemoryCommand>,
     mut memory: ResMut<MemoryStatus>,

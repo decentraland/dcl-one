@@ -54,6 +54,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   at full resolution; `/screenshot` captures the window. The primary camera always keeps the
   depth prepass (the jump marker reads it); the normal prepass, and both on texture cameras, only
   while the avatar outline is on or the camera has SSAO (native only).
+- **Render Resolution stops at 100%.** Unity's Resolution Scale moves in the same 10% steps
+  but reaches 120%. The compositor only upscales, so the range is 50–100%. A saved value
+  between steps or outside that range moves to the nearest step in it once, when the saved
+  settings are migrated, so the slider shows what is rendered.
 - **Sun shadows keep bevy's default bias.** Unity's `DepthBias` (1.75 or 1.56 texels, times
   URP's soft kernel radius 2.5) is a depth bias, not a normal bias, and carried over as bevy's
   normal bias it offset each lookup about half a metre on Low at 60 m, dropping thin and contact
@@ -70,9 +74,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   worst-case change between near and far is smaller. Fading to no shadow looked worse about
   half the time.
 - **Low shadows keep hardware 2x2 filtering.** Unity's soft shadows filter every quality. Low is
-  the default preset and the filter applies per view, spot shadows included, so Low keeps
-  bevy's `Hardware2x2` (one PCF sample) instead of `Gaussian` (nine) to stay cheap on weak GPUs
-  and web. High uses `Gaussian`.
+  the Medium preset's shadow quality and the filter applies per view, spot shadows included, so
+  Low keeps bevy's `Hardware2x2` (one PCF sample) instead of `Gaussian` (nine) to stay cheap on
+  weak GPUs and web. High uses `Gaussian`.
 - **Jump marker reads the depth prepass.** Like Unity's projector, the blob (`BlobShadow.mat`)
   is projected onto the surface below, so it follows slopes, steps and ledges; a flat quad
   cut into rising ground. A depth bias does not fix that: it offsets the quad's depth test,
@@ -109,11 +113,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   ([ADR](../../../../docs/adr/2026-11-09-explorer-scene-streaming.md)).
 - **Voice chat (private calls and community streams)** keeps the call statuses and guards, the
   3 × 2000 ms re-dial budget, the 1 s hang-up-before-join delay and the server's 60 s ring.
-  - Don't bind the mic to `T`: it opens the chat. The `Microphone` key (`V`) drives the call mic
-    while a call is connected and the nearby mic otherwise, as Unity's `T` does. Nearby, a press
-    opens the mic and its release closes it. In a call, a press shorter than 0.5 s leaves the mic
-    open and a longer one is push-to-talk. A press while the mic is open closes it on release. A
-    community listener's `V` does nothing, since a listener can't speak.
+  - The `Microphone` key is `T`, Unity's `Talk` key. The chat opens with `Enter`, so the chat
+    panel has no default key. The `Microphone` key drives the call mic while a call is connected
+    and the nearby mic otherwise, as Unity's `T` does. Nearby, a press opens the mic and its
+    release closes it. In a call, a press shorter than 0.5 s leaves the mic open and a longer one
+    is push-to-talk. A press while the mic is open closes it on release. A community listener's
+    `T` does nothing, since a listener can't speak.
   - Don't start a call's mic from a stored setting. It goes up on the call's first connect for
     whoever may speak (both sides of a private call, a stream's speakers). Don't turn it back on
     after a re-dial: what the user chose since then stands.
@@ -417,6 +422,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   what both servers allow for them, and keeps only the latest teleport and the latest emote command
   while that is spent. Overrunning the servers' budget ends the session for good, and a scene that
   repositions the player every frame would do it; unity-explorer has no limiter (`pacing.rs`).
+- **The client never sends what the Pulse server refuses for good.** A one-shot emote longer than
+  60 s goes out without a duration and ends with an explicit stop, and inputs and teleports from
+  outside the parcel grid are not sent (`lib.rs`, `pulse/mod.rs`).
+- **A second device on the same wallet takes over; Pulse tells the old one.** Pulse ends the older
+  session with `DuplicateSession` and the gatekeeper removes it from its island room; on
+  `DuplicateSession` a player ends its island connection for good: the realm's rooms end in the
+  identity-conflict state, which nothing retries, and a realm change starts them again, as it ends
+  Pulse's terminal stop. A removal from the island room on its own stays a transient failure. The
+  archipelago leaves the older socket open and sends it nothing more: it replaces, and tells with
+  `Kicked`, only this device's own stale socket (same session key). `already_connected` is set in
+  both cases, so it is only logged. A newer device that never reaches Pulse tells the older one
+  nothing through Pulse (`archipelago.rs`, `pulse/plugin.rs`).
+- **The scene-room request always signs as the explorer.** The engine's own gatekeeper requests
+  carry `signer: dcl:explorer` and the comms-handshake intent; only fetches a scene makes sign as
+  `decentraland-kernel-scene` (`lib.rs`, `restricted_actions`).
 - **IPv6 when no IPv4 address resolves.** The native driver connects to the first IPv4 address and
   falls back to the first IPv6 one, on an IPv6 socket, only when there is none. unity-explorer
   fails without an IPv4 address, and the servers bind IPv4 by default.
@@ -546,9 +566,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Where Gift is offered.** The profile card of chat names, nametags and the friend row (after
   View Profile), the community member menu (after Call; greyed for a blocked member either way),
   and another player's passport options (before Block; the picker replaces the passport). The
-  voice-stream panel's menu has none, as in unity-explorer. It is not offered to a guest
-  recipient either (unity-explorer doesn't check): a guest's account is a throwaway key on one
-  device, so an item sent there would be lost with it. A picker error is a toast and the
+  voice-stream panel's menu has none, as in unity-explorer. As there, a guest recipient is offered
+  Gift too. A picker error is a toast and the
   picker stays open; unity-explorer closes its picker on SEND before it can show the error.
 - **Gifting's analytics events and popup sounds are not ported.** unity-explorer reports sent,
   successful, failed and cancelled gifts and plays a sound with the sent and received popups; this
@@ -598,14 +617,28 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   as unity-explorer's. unity-explorer's minimap doesn't zoom and moves the pin to the edge past a
   fixed distance (about eight parcels); this one zooms, so the pin moves to the edge exactly when
   the destination leaves the visible map. It is the full map's destination pin, and the minimap
-  being square, it runs along the square's edge rather than a circle. Scene map pins are
-  on neither (below). The header's heart marks the place the player stands in as a favourite; in
+  being square, it runs along the square's edge rather than a circle. Scene map pins are on
+  both (below). The header's heart marks the place the player stands in as a favourite; in
   a World, the World's scene there.
-- **The map draws no scene map pins.** unity-explorer shows the `MapPin`s of every portable
-  experience, among them the quests' global one (`globalpx.dcl.eth`, loaded at startup from
-  `alfa-global-portable-experiences`), and of any scene under `alfa-map-pins`, with a Quest
-  Mini-Games layer to hide them. This explorer loads no global portable experience, so the map
-  reads no `MapPin` and has no such layer.
+- **Scene map pins come only from portable experiences.** The engine reads `MapPin` only from
+  scenes running as a portable (from the launch option or console, spawned by a scene, or a smart
+  wearable's) whose scene.json also declares `isPortableExperience: true`, and streams them to the
+  HUD (`getMapPinsStream`); every other scene's pins are ignored, and no flag turns them on for
+  other scenes. unity-explorer reads them from any scene that declares `isPortableExperience:
+  true`, however it was loaded, and from every scene under `alfa-map-pins`; here a parcel scene or
+  World that declares it can't put pins on its visitors' maps. The Layers panel's Quest Mini-Games
+  switch (on by default, for the session) shows or hides them on the full map and the minimap. A
+  pin stands on the centre of its parcel, its position rounded halves to even; it is never
+  clustered, its title and description are not drawn, and a click opens the place panel for its
+  parcel. It shows the scene's own icon, a content file of the scene, cut round on a white disc;
+  with no such file (another texture kind, a src that parses as a url, a missing file, or an image
+  that fails to load) it shows the default quest pin, so a scene can't make the HUD request a host
+  of its choosing. The icon resolves again only when its src changes, and a moved pin keeps its
+  icon. The title is cut to 100 characters. unity-explorer loads that icon only under
+  `alfa-map-pins-custom-icons`, and otherwise always shows its default pin. The pin doesn't pulse.
+  This explorer loads no global portable experience at startup: unity-explorer loads the quests'
+  one (`globalpx.dcl.eth`) from `alfa-global-portable-experiences`; here it is loaded with the
+  launch option (`--portables` or `?portables=`, e.g. `basiccontroller.dcl.eth;globalpx.dcl.eth`).
 - **Arrival is checked on every position report.** unity-explorer checks the route only after
   the player's squared distance from the map's origin has changed by 300 map units, which can
   skip the arrival spot when the player stops on it or reaches it sideways, so the route never
@@ -682,8 +715,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   nothing is shown, as there. The profile card offers the jump after View Profile, since its rows
   already follow a different order from unity-explorer's user menu.
 - **INVITE FRIENDS is for a signed-in player only.** unity-explorer's copy runs for any
-  identity it holds. Here a guest gets no button, since a guest's address is never kept and a referral
-  to it could not be credited. As there, it copies the deployment site's `/invite/<address>`
+  identity it holds. Here neither kind of guest gets the button: not the throwaway guest, and not a
+  guest account. As there, it copies the deployment site's `/invite/<address>`
   and says "Link copied!"; the panel stays open.
 - **A new referral tier opens the site's Referral Rewards tab.** unity-explorer opens
   `profile/accounts/<address>/referral`, which this site does not serve; its profile names the
@@ -704,6 +737,32 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Distance. Bevy has one sea plane, a single opaque quad that casts no shadows, so hiding it would
   save almost nothing, and the water material draws without fog, so nothing would soften it
   appearing and disappearing.
+- **Graphics presets set fewer settings than Unity's, and four differently.** Low, Medium and High
+  carry Unity's values for the frame rate, VSync, render scale, avatar outline, jiggle bones, sun
+  shadow quality, the Low and High shadow distances and scene lights; Medium is the default and
+  the one every saved config migrates to, except jiggle bones, which stay off by default (see the
+  spring bones ADR). Anti-aliasing and depth of field differ (next entry). Bloom is Low in every
+  preset, closer to Unity's look than High. Medium's sun shadow distance is 20 m, not 60 m: Medium
+  has one cascade on a 4096 map (above), so at 60 m each texel is three times as large and the
+  shadows break up. The presets leave out Unity's scene distance (in parcels, where far scenes
+  load as LODs; here imposters draw them and the load distance stays the player's), the landscape
+  distance (read only at startup; its default is Medium's 1000 m), current-scene streams and HDR
+  (always on). The preset is not stored: the HUD reads it off the settings, and any difference
+  shows as Custom.
+- **Depth of field yields to MSAA.** The fork's transparent focus texture takes the sample count
+  of the resolved main texture, so a multisampled transparent pass with depth of field fails
+  wgpu validation. While MSAA is on, the camera has no depth of field and the stars draw before
+  the transparent pass. Unlike Unity, which has none, the presets keep depth of field on, because
+  it hides the lack of detail in distant imposters, and they use FXAA so it stays on: the yield
+  only applies when a player picks MSAA. SSAO is off in every preset: bevy 0.16's SSAO is not
+  good enough to put in one.
+- **VSync caps the frame rate; it does not set it.** Unity's `vSyncCount` hands the rate to the
+  monitor and ignores the frame limit. Here VSync only removes tearing: the explorer paces to the
+  lower of the Target Frame Rate (or a session override) and the monitor's refresh rate. Medium's
+  60 fps holds on a 120 or 144 Hz monitor, and the debug panel's 30 FPS limit, `/fps` and
+  `--fps` still apply; Max means the monitor's rate. A target that does not divide the refresh rate
+  shows frames for an uneven number of refreshes (60 fps on 144 Hz alternates 2 and 3), so motion
+  can judder slightly; 60 fps on 60 or 120 Hz is even.
 - **No satellite floor.** unity-explorer lays the minimap's satellite images flat at 0.205 m under the
   terrain in Genesis City; here the ground covers that plane everywhere, so the floor would never be
   seen and is not shipped.
@@ -723,6 +782,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **glTF occlusion textures are ignored.** Scene materials drop a glTF's occlusion texture, so
   baked ambient occlusion does not darken the ambient light. The Unity client's scene shader
   does not sample it either, and content is authored against that look.
+- **Colliders are bounded by the scene's rectangle, meshes by its parcels.** A scene collider is
+  off as a whole while its box reaches outside the rectangle around the scene's parcels or above
+  the scene's height limit; the shaders clip meshes to the parcels themselves. One large collider
+  often covers an irregular scene's whole footprint: Genesis Plaza's ground and building colliders
+  span the notches its road scenes sit in, and a test against the parcels would turn them off as
+  a whole. Unity (`333aa8826979186f1380058cc75f74b9630e4879`) tests the same rectangle, with the
+  same allowance at the edge. The height limit splits the same way: colliders take one limit from
+  the scene's whole parcel count, as Unity does, while the shaders clip each connected group of
+  parcels at its own, so over a scene in several pieces a collider can be solid above the height
+  its mesh is drawn to (two parcels apart: meshes to 20 m, colliders to 31.7 m). The box tested
+  for a mesh collider is the mesh's own box turned with the collider, which can be larger than the
+  mesh: a wall that runs diagonally in its own model can turn off while it is still inside the
+  rectangle. Triggers are not tested in either client. Preview, loopback and editor runs draw
+  out-of-bounds geometry and leave its colliders on too, so a creator can stand on, bump into
+  and select what reaches outside; every other run turns them off.
 - **The map carries over upstream's marker rules as they are**, so the two clients' maps match.
   A place of several parcels is marked on the parcel a walk over them stops at, which depends on
   their order and is not always the middle one; a cluster stands half a parcel south-west of the

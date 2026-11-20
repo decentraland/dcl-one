@@ -572,7 +572,6 @@ fn init_scene_ui_root(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn update_scene_ui_components(
     changed_entities: Query<(Entity, &SceneEntity), Changed<UiTransform>>,
     mut ui_roots: Query<&mut SceneUiData>,
@@ -1043,7 +1042,6 @@ fn update_canvas_material_uvs(
     }
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn layout_scene_ui(
     mut commands: Commands,
     mut scene_uis: Query<(Entity, &mut SceneUiData)>,

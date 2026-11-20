@@ -21,6 +21,16 @@ BADGES_ASSET_CAP = "16m"
 # One report evidence file (the gatekeeper reports `MAX_FILE_BYTES`); a
 # gateway test pins it.
 REPORT_EVIDENCE_CAP = "5m"
+# A Cast presentation upload: the presenter's `MAX_FILE_SIZE` (100 MiB, the whole
+# multipart body) plus 1 MiB, so its own JSON 413 is the one a client meets; a
+# gateway test pins it.
+CAST_PRESENTATION_CAP = "101m"
+# A camera reel multipart upload: the app's field budget (`MAX_MULTIPART_MEMORY_BYTES`,
+# 6 MiB) plus 1 MiB of framing, so its own error is the one a client meets; a gateway
+# test pins it. The 15 MiB JSON upload keeps the 1m cap.
+CAMERA_REEL_UPLOAD_CAP = "7m"
+# The root alias whose upload path takes CAMERA_REEL_UPLOAD_CAP.
+CAMERA_REEL_ALIAS = "^~ /camera-reel/"
 # The content server's `POST /entities` route limit at the default field
 # count (`max_deployment_body_bytes`: 200 MiB of files and fields plus
 # multipart framing), rounded up, so its own 413 is the one a client meets.
@@ -257,8 +267,11 @@ def render(table, cfg, mime):
         locations += (location("= " + row["path"], proxy("apis", extra))
                       + location("= " + row["path"] + "/", proxy("apis", extra))
                       if row.get("exact") else pair(row["path"], "apis", True, extra))
+    def alias_rewrite(row):
+        return row.get("rewrite") or "^(.*)$ " + row["to"].replace("$uri", "$1")
+
     for row in table["aliases"]:
-        rewrite = row.get("rewrite") or "^(.*)$ " + row["to"].replace("$uri", "$1")
+        rewrite = alias_rewrite(row)
         # These aliases belong to APIs. Re-selecting a location after the
         # rewrite could send /social/... to the Sites /social page instead.
         locations += location(row["key"], f"rewrite {rewrite} break;\n" + proxy("apis"))
@@ -324,6 +337,22 @@ def render(table, cfg, mime):
     # /report-user request takes `location /` and the server-wide cap.
     locations += location('~ "^/report-user/api/reports/(players/)?[^/]+/evidence/[^/]+$"', proxy("apis",
         f"client_max_body_size {REPORT_EVIDENCE_CAP}; {uploads}"))
+    # A Cast presentation (`cast-presenter-service.<domain>/presentations` arrives
+    # rewritten under its prefix): one PDF in the body, which the app reads only after
+    # nginx buffers it, so concurrent uploads are capped as on the deploy routes.
+    locations += location('~ "^/cast-presenter-service/presentations/*$"', proxy("apis",
+        f"client_max_body_size {CAST_PRESENTATION_CAP}; client_body_timeout 300s; {uploads}"))
+    # A camera reel photo upload, on its prefix and its host (rewritten under it). The app
+    # reads the signature after nginx buffers the body, so concurrent uploads are capped as
+    # on the deploy routes.
+    camera_upload = f"client_max_body_size {CAMERA_REEL_UPLOAD_CAP}; {uploads}"
+    locations += location('~ "^/camera-reel-service/api/images/*$"', proxy("apis", camera_upload))
+    # The root alias is a `^~` prefix, which skips regex locations; exact matches win.
+    for row in table["aliases"]:
+        if row["key"] == CAMERA_REEL_ALIAS:
+            for path in ("/camera-reel/api/images", "/camera-reel/api/images/"):
+                locations += location("= " + path, f"rewrite {alias_rewrite(row)} break;\n"
+                                      + proxy("apis", camera_upload))
     # Both badges host forms reach this already rewritten under /badges. The admin
     # check is a bearer token the app reads after nginx buffers the body, so
     # concurrent uploads are capped as on the deploy routes.
@@ -351,7 +380,7 @@ def render(table, cfg, mime):
         if prefix == "/cast":
             for page in ("/cast/s/", "/cast/w/"):
                 locations += location("^~ " + page, proxy("sites"))
-    for path in ("/", "/favicon.ico", "/dcl-sdk-types.json", "/docs/index.md", "/_root.data",
+    for path in ("/", "/favicon.ico", "/docs/index.md", "/_root.data",
                  "/terms", "/privacy", "/content-policy", "/ethics", "/rewards", "/rewards-terms",
                  "/creator-fund-terms", "/referral", "/referral-terms", "/credits-terms", "/security",
                  "/brand"):
@@ -359,7 +388,7 @@ def render(table, cfg, mime):
     # The Content Policy page on the apex host; on every other host (peer., worlds., content.)
     # /content stays the content server's.
     locations += location("= /content", proxy("$content_root"))
-    for path in ("/assets/", "/fonts/", "/errors/", "/template-bundles/"):
+    for path in ("/assets/", "/fonts/", "/errors/"):
         locations += location("^~ " + path, proxy("sites"))
     locations += location("/content/", proxy("apis", "limit_req zone=content burst=1000 nodelay;"))
     # Matched after host rewrites, so every storage host form shares this budget.
@@ -584,6 +613,12 @@ http {{
 """
 
 
+def check_table(table):
+    # Without this alias row, render() would emit no camera reel upload locations.
+    if not any(row["key"] == CAMERA_REEL_ALIAS for row in table["aliases"]):
+        raise ValueError(f"root-aliases.nix has no {CAMERA_REEL_ALIAS} alias")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--table", required=True, type=Path)
@@ -592,7 +627,9 @@ def main():
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     try:
-        text = render(json.loads(args.table.read_text()), settings(os.environ), args.mime)
+        table = json.loads(args.table.read_text())
+        check_table(table)
+        text = render(table, settings(os.environ), args.mime)
     except ValueError as error:
         parser.error(str(error))
     folder = Path("/tmp/gateway")

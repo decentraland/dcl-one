@@ -79,7 +79,10 @@ impl enet::Socket for PulseSocket {
     fn send(&mut self, address: SocketAddr, buffer: &[u8]) -> io::Result<usize> {
         match self.0.try_send_to(buffer, address) {
             Ok(sent) => Ok(sent),
-            Err(err) if err.kind() == ErrorKind::WouldBlock => Ok(0),
+            Err(err) if is_transient(&err) => {
+                bevy::log::debug!("pulse: send skipped: {err}");
+                Ok(0)
+            }
             Err(err) => Err(err),
         }
     }
@@ -90,10 +93,46 @@ impl enet::Socket for PulseSocket {
     ) -> io::Result<Option<(SocketAddr, enet::PacketReceived)>> {
         match self.0.try_recv_from(buffer) {
             Ok((len, address)) => Ok(Some((address, enet::PacketReceived::Complete(len)))),
-            Err(err) if err.kind() == ErrorKind::WouldBlock => Ok(None),
+            Err(err) if is_transient(&err) => {
+                bevy::log::debug!("pulse: receive skipped: {err}");
+                Ok(None)
+            }
             Err(err) => Err(err),
         }
     }
+}
+
+/// `ENOBUFS`, which has no stable [`ErrorKind`]: the send queue is momentarily full.
+#[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
+const ENOBUFS: Option<i32> = Some(55);
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const ENOBUFS: Option<i32> = Some(105);
+#[cfg(windows)]
+const ENOBUFS: Option<i32> = Some(10055); // WSAENOBUFS
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "linux",
+    target_os = "android",
+    windows
+)))]
+const ENOBUFS: Option<i32> = None;
+
+/// A socket error the network recovers from on its own: a lost route, an ICMP unreachable, a full
+/// buffer. The datagram is lost like any other and ENet's own timeout decides whether the peer is
+/// gone, rather than one error ending the session.
+fn is_transient(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        ErrorKind::WouldBlock
+            | ErrorKind::Interrupted
+            | ErrorKind::ConnectionReset
+            | ErrorKind::ConnectionRefused
+            | ErrorKind::NetworkUnreachable
+            | ErrorKind::HostUnreachable
+            | ErrorKind::NetworkDown
+    ) || (ENOBUFS.is_some() && err.raw_os_error() == ENOBUFS)
 }
 
 fn run(config: PulseTransportConfig, mut channels: PulseDriverChannels, stop: &AtomicBool) {

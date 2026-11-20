@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { describe, expect, it, vi } from "vitest";
@@ -12,7 +13,11 @@ function renderAt(path: string) {
     initialEntries: [path],
     hydrationData: { loaderData: { events: null } },
   });
-  return renderToString(<RouterProvider router={router} />).replace(/<!--.*?-->/g, "");
+  return renderToString(
+    <QueryClientProvider client={new QueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  ).replace(/<!--.*?-->/g, "");
 }
 
 describe("when /events opens My Events", () => {

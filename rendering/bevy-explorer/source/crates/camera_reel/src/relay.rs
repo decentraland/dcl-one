@@ -35,7 +35,6 @@ impl Plugin for PhotoModeRelayPlugin {
     }
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn relay_photo_mode(
     mut events: EventReader<SystemApi>,
     mut relay: Local<Relay>,

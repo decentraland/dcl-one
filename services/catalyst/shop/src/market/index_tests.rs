@@ -62,10 +62,7 @@ impl ScratchDb {
             "catalyst_z_mkt_{}",
             &uuid::Uuid::new_v4().simple().to_string()[..12]
         );
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let mut url = url::Url::parse(&base).unwrap();
         url.set_path(&format!("/{name}"));
         let pool = crate::db::connect_pool(
@@ -77,7 +74,6 @@ impl ScratchDb {
         )
         .await
         .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         Some(Self { name, pool, admin })
     }
 
@@ -643,6 +639,16 @@ async fn trade_events_walk_under_a_budget_resume_after_a_kill_fold_the_verdicts_
         .await
         .unwrap();
     }
+    sqlx::query(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, minters, created_at, updated_at, reviewed_at, mirrored_at) \
+         VALUES ('matic', $1, 137, 'Hats', $2, $2, 'urn:decentraland:matic:collections-v2:0xc1', true, true, false, ARRAY[$3], 1, 1, 1, timezone('UTC', now()))",
+    )
+    .bind(item)
+    .bind(ALICE)
+    .bind(market)
+    .execute(&db.pool)
+    .await
+    .unwrap();
     let s = start;
     let logs = vec![
         traded(s + 100, 0, market, CARL, ALICE, &sold.1),

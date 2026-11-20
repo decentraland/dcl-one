@@ -173,7 +173,6 @@ pub struct SocialClientHandler {
 }
 
 impl SocialClientHandler {
-    #[allow(clippy::too_many_arguments)]
     pub fn connect(
         wallet: wallet::Wallet,
         runtime: &SocialRuntime,
