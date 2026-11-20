@@ -1050,9 +1050,12 @@ catalyst list and its `/about` is healthy.
     - Left: without `ETH_RPC_URL`, or on a network other than mainnet and sepolia, the node syncs from
       `SYNC_SOURCE` only; `lastSyncWithDAO` stays the sync heartbeat (CS-15). Difference: upstream
       applies a changed list only after the bootstrap; dcl-one also applies it during the bootstrap
-      (which restarts from the persisted cursors). As upstream, a peer that never answers does not
+      (which restarts from the persisted cursors). As upstream
+      (`decentraland/catalyst:src/logic/sync-orchestrator/component.ts:45-60`,
+      `decentraland/snapshots-fetcher@53e9c07a:src/synchronizer.ts:708-740`), a peer that never answers does not
       hold the node in `Bootstrapping`: the node leaves it once a bootstrap pass over every listed
-      peer ended, and the peers that did not finish are retried in the background.
+      peer ended, whatever each peer's outcome, and the peers that did not finish are retried in
+      the background. A node whose peers all failed that pass therefore becomes `Syncing` too.
     - Severity: none (closed).
 
 ## Endpoints dcl-one serves in this area that upstream does not
