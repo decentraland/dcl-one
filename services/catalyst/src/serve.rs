@@ -32,6 +32,8 @@ use lifecycle::{install_metrics, run_http};
 pub(crate) use routes::live_presence_routes;
 #[cfg(test)]
 use routes::registry_profiles;
+#[cfg(test)]
+use routes::shop_routes;
 use routes::{Routes, build_routes};
 use settings::*;
 use states::*;
@@ -1429,6 +1431,184 @@ mod stats_content_url_tests {
             ),
             "https://cdn.example/content/"
         );
+    }
+}
+
+#[cfg(test)]
+mod shop_cors_mount_tests {
+    use std::sync::Arc;
+
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    use super::shop_routes;
+    use crate::http::Outbound;
+    use crate::shared::notifications::SendFailure;
+    use crate::shop;
+
+    struct UnconfiguredMailer;
+
+    #[async_trait::async_trait]
+    impl shop::subscriptions::AvailabilityMailer for UnconfiguredMailer {
+        fn is_configured(&self) -> bool {
+            false
+        }
+        async fn send_html(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &serde_json::Value,
+        ) -> Result<Option<String>, SendFailure> {
+            Err(SendFailure::NotConfigured)
+        }
+    }
+
+    /// The Shop mounts as `serve` composes them, with data writes off, over a
+    /// pool that never connects.
+    async fn app(files: &std::path::Path) -> axum::Router {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(500))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/nowhere")
+            .unwrap();
+        let http = Outbound::for_tests();
+        let market = Arc::new(shop::market::MarketplaceState::new(
+            pool.clone(),
+            http.clone(),
+            shop::market::Settings::for_tests(),
+        ));
+        let credits = Arc::new(shop::credits::State::new(
+            pool.clone(),
+            http.clone(),
+            shop::credits::Settings::for_tests(),
+            shop::credits::Sources {
+                market: None,
+                price: None,
+                economy: None,
+            },
+            None,
+        ));
+        let mut economy_settings = shop::evm::Settings::for_tests();
+        economy_settings.data_writes_enabled = false;
+        let economy =
+            Arc::new(shop::evm::State::new(pool.clone(), http.clone(), economy_settings).unwrap());
+        let signatures = Arc::new(shop::rentals::State::new(
+            pool.clone(),
+            Some(market.clone()),
+            shop::rentals::Settings {
+                writes_enabled: false,
+            },
+            None,
+        ));
+        let storage = crate::storage::Storage::from_config(files).await.unwrap();
+        let outfits = Arc::new(shop::outfits::State::new(
+            pool.clone(),
+            Arc::new(storage),
+            shop::outfits::Settings {
+                creators: Vec::new(),
+                writes_enabled: false,
+            },
+            None,
+        ));
+        let subscriptions = Arc::new(shop::subscriptions::State::new(
+            pool.clone(),
+            Arc::new(UnconfiguredMailer),
+            shop::subscriptions::Settings {
+                shop_base_url: String::new(),
+                delivery_interval: std::time::Duration::from_secs(60),
+                watch_interval: std::time::Duration::from_secs(60),
+                writes_enabled: false,
+            },
+            None,
+        ));
+        let mana = Arc::new(
+            shop::mana::State::new(
+                pool,
+                http,
+                market.clone(),
+                signatures.clone(),
+                shop::mana::Settings::default(),
+                None,
+            )
+            .unwrap(),
+        );
+        shop_routes(shop::States {
+            market,
+            credits,
+            economy,
+            signatures,
+            outfits,
+            subscriptions,
+            mana,
+        })
+    }
+
+    /// At every mount, a signed preflight answers 204 and a write refused
+    /// while data writes are off answers 503; both carry the allow-origin and
+    /// credentials for a Decentraland origin and neither does for any other.
+    #[tokio::test]
+    async fn the_signed_routes_answer_cors_at_their_serve_mounts() {
+        let files = std::env::temp_dir().join(format!(
+            "catalyst-shop-cors-mount-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let app = app(&files).await;
+        let requested =
+            "content-type,x-identity-auth-chain-0,x-identity-metadata,x-identity-timestamp";
+        for path in [
+            "/v1/transactions",
+            "/transactions-api/v1/transactions",
+            "/shop-api/v1/outfits",
+            "/shop-api/v1/notify-requests",
+            "/v1/rentals-listings",
+            "/signatures-api/v1/rentals-listings",
+            "/shop-api/v1/rentals-listings",
+        ] {
+            for (origin, listed) in [
+                ("https://decentraland.org", true),
+                ("https://example.com", false),
+            ] {
+                for (method, status) in [
+                    ("OPTIONS", StatusCode::NO_CONTENT),
+                    ("POST", StatusCode::SERVICE_UNAVAILABLE),
+                ] {
+                    let request = Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .header("origin", origin)
+                        .header("access-control-request-method", "POST")
+                        .header("access-control-request-headers", requested)
+                        .body(Body::empty())
+                        .unwrap();
+                    let response = app.clone().oneshot(request).await.unwrap();
+                    let at = format!("{method} {path} {origin}");
+                    assert_eq!(response.status(), status, "{at}");
+                    let h = response.headers();
+                    assert_eq!(
+                        h.get("access-control-allow-origin")
+                            .map(|v| v.to_str().unwrap()),
+                        listed.then_some(origin),
+                        "{at}"
+                    );
+                    assert_eq!(
+                        h.contains_key("access-control-allow-credentials"),
+                        listed,
+                        "{at}"
+                    );
+                    if method == "OPTIONS" {
+                        assert_eq!(
+                            h.get("access-control-allow-headers")
+                                .map(|v| v.to_str().unwrap()),
+                            listed.then_some(requested),
+                            "{at}"
+                        );
+                    }
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&files);
     }
 }
 

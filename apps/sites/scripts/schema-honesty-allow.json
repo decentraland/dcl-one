@@ -6,82 +6,10 @@
     "why": "`pending` marks a publish that is in flight. It is written onto a row only while one is, so its absence is the fact and not a gap: catalyrst-builder/src/ports/marketplace.rs:218 emits `false` for every on-chain row, and 7 of the 8 rows in src/fixtures/builder-collections.json omit the key entirely. The single consumer, `toCollectionCard`, writes `pending: c.pending || undefined` and renders nothing for it, so absent and false are the same value to every caller. The measurement fields on this row -- `count` and `thumbs` -- are required precisely because they are not like this one."
   },
   {
-    "file": "src/data/lib/catalyst/creator-hub/land-rights.ts",
-    "rule": "fabricating-catch",
-    "text": "return { parcel, outcome: \"unknown\" as const };",
-    "why": "`outcome: \"unknown\"` is the name this arm gives its own failure, and it is the same value the non-throwing branch two lines above returns when `fetchParcelPermissions` answers null. Nothing downstream reads it as a grant: `probeDeployRights` treats the first `unknown` in the batch as terminal and returns `{ status: \"unknown\", parcel }`, which the LAND publish flow renders as \"we couldn't check your rights on this parcel\" and refuses to deploy. The two outcomes that do decide something -- `granted` and `denied` -- are only ever reached from a permissions payload that actually parsed."
-  },
-  {
-    "file": "src/data/lib/catalyst/creator-hub/manage-worlds.server.ts",
-    "rule": "fabricating-catch",
-    "text": "return 0;",
-    "why": "The zero is guarded by `err.status === 404` on `/world/{name}/about`, which is catalyst's answer for a NAME that has never had a scene deployed to it -- so the count is measured, not defaulted. Every other failure rethrows: the `catch` re-raises anything that is not a 404 CatalystError, and an about payload that parses but carries no `configurations` block throws a CatalystError two statements later, so a broken read is kept out of the world list rather than published as \"0 scenes, unpublished\"."
-  },
-  {
-    "file": "src/data/lib/catalyst/creator-hub/scene-drafts.server.ts",
-    "rule": "fabricating-catch",
-    "text": "return [];",
-    "why": "ENOENT on the wallet's draft directory is the filesystem stating that this wallet has never saved a draft -- the directory is created on first write, so its absence is the empty result, not a failed read. Every other errno rethrows on the next line, so a permissions error or an I/O fault reaches the caller instead of arriving as \"you have no drafts\"."
-  },
-  {
-    "file": "src/data/lib/catalyst/creator-hub/world-permissions.server.ts",
-    "rule": "fabricated-default",
-    "text": "z.array(z.string()).nullish().transform((v) => v ?? [])",
-    "why": "worlds-content-server sends `wallets` on a deployment/streaming permission exactly when that permission is an allow-list; a leg that omits it is not gated by a list at all, so the empty list is the real membership. The enclosing `permissions` object is required, so a truncated or error payload still fails the parse before this default is reached."
-  },
-  {
-    "file": "src/data/lib/catalyst/creator-hub/world-permissions.server.ts",
-    "rule": "fabricated-default",
-    "text": "z.array(z.string()).nullish().transform((v) => v ?? [])",
-    "why": "Same allow-list contract on the access leg: `wallets` is present only for `type: \"allow-list\"`. For unrestricted / shared-secret / nft-ownership worlds there is no wallet allow-list, and an empty one is exactly what the ACL panel should show. A broken payload fails earlier on the required `permissions` object."
-  },
-  {
-    "file": "src/data/lib/catalyst/creator-hub/world-permissions.server.ts",
-    "rule": "fabricated-default",
-    "text": "z.array(z.string()).nullish().transform((v) => v ?? [])",
-    "why": "`communities` is the catalyrst extension to the access leg and is emitted only when a community gate exists; its absence means no community can enter by membership, which is what the empty list renders. As above, a payload that is not a permissions answer fails on the required `permissions` object rather than defaulting here."
-  },
-  {
     "file": "src/data/lib/catalyst/marketplace/credit-quotes.ts",
     "rule": "fabricated-default",
     "text": "quoteCreditPrices(\n        { items: items.slice(start, start + MAX_QUOTE_ITEMS) },\n        opts,\n      ).catch(\n        (): PriceQuotes => ({\n          items: items\n            .slice(start, start + MAX_QUOTE_ITEMS)\n            .map((r) => ({ ...r, credits: null })),\n          amounts: [],\n        }),\n      )",
     "why": "Every value this batch fallback invents is null, which is the answer the rule endorses -- it is flagged only because null-valued fields arrive inside an object literal. `credits: null` means \"no credit price is known for this item\", and `tryQuoteCreditItems` copies exactly that into `(string | null)[]`; its callers show a MANA price and no credit option, the same as for an item the endpoint answered about with no credit price. `amounts: []` matches the request, which asks for items only and never amounts, and the reader loops over `res.items` alone. A quote that failed therefore reduces credit availability, never invents one, and never moves a price."
-  },
-  {
-    "file": "src/data/lib/fs/disk.ts",
-    "rule": "fabricating-catch",
-    "text": "return [];",
-    "why": "isAbort(e) only: the user dismissed the file picker, so an empty selection is the true answer, not a failed read. Any non-abort error falls through and propagates."
-  },
-  {
-    "file": "src/data/lib/fs/disk.ts",
-    "rule": "fabricating-catch",
-    "text": "return { status: isAbort(e) ? \"cancelled\" : \"unsupported\" };",
-    "why": "The returned object names the outcome -- status is 'cancelled' or 'unsupported' -- so the caller can tell a dismissed picker from an unavailable File System Access API. Nothing is invented."
-  },
-  {
-    "file": "src/data/lib/fs/disk.ts",
-    "rule": "fabricating-catch",
-    "text": "return \"canceled\";",
-    "why": "'canceled' is the outcome itself, not a stand-in for one: the user dismissed the picker and the caller branches on that string."
-  },
-  {
-    "file": "src/data/lib/fs/save-scene.ts",
-    "rule": "fabricating-catch",
-    "text": "return \"glb\";",
-    "why": "Sniffing the glTF magic bytes; an unreadable header means the extension is unknown and 'glb' is the binary default the writer then honours. It labels a file we are about to write, not a measurement of one we read."
-  },
-  {
-    "file": "src/data/lib/fs/save-scene.ts",
-    "rule": "fabricating-catch",
-    "text": "return { status: aborted ? \"canceled\" : \"unsupported\" };",
-    "why": "The object states 'canceled' or 'unsupported', so a dismissed picker is distinguishable from a browser without the API."
-  },
-  {
-    "file": "src/data/lib/fs/scaffold-project.ts",
-    "rule": "fabricating-catch",
-    "text": "return { written: false, via: \"canceled\", folder, paths: [] };",
-    "why": "written:false plus via:'canceled' says explicitly that nothing was scaffolded and why; the caller renders that rather than a success with no files."
   },
   {
     "file": "src/data/lib/catalyst/schema.ts",
@@ -142,12 +70,6 @@
     "rule": "fabricating-catch",
     "text": "return { data: [], total: 0, state };",
     "why": "The object names its own failure: `state` is still 'unavailable' on this path (it becomes 'ready' only after the load resolves), so the page renders the section as unavailable rather than as an empty shop. The scanner cannot see it because the property is a shorthand variable, not a literal."
-  },
-  {
-    "file": "src/data/lib/fs/sdk-project.ts",
-    "rule": "fabricated-default",
-    "text": "response.text().catch(() => \"\")",
-    "why": "This is inside sdkFailure after an unsuccessful HTTP response. The result is always an Error; an unreadable diagnostic body omits optional detail and cannot turn the failed SDK operation into success. HTTP 401 has its own token error before this read."
   },
   {
     "file": "../ui3/src/data/screens/play-client.ts",

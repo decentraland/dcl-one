@@ -504,6 +504,98 @@ fn unique_address() -> String {
     format!("{:#x}", PrivateKeySigner::random().address())
 }
 
+/// `createOrder` on the legacy order books is answered 400 before any check
+/// that reaches the chain, the quota or the database; `executeOrder` on the
+/// same targets and `createOrder`'s selector on other targets are not, in
+/// both calldata formats.
+#[tokio::test]
+async fn create_order_on_the_legacy_marketplaces_is_refused_before_simulation() {
+    let app = router(state(lazy_pool(), Settings::for_tests()));
+    let key = PrivateKeySigner::random();
+    let user = format!("{:#x}", key.address());
+    let mut call = super::abi::createOrderCall::SELECTOR.to_vec();
+    call.extend_from_slice(&[0u8; 32 * 4]);
+    for market in [
+        "0x02080031b45a3c67d338dd4a2cc309d28756a160",
+        "0x480a0f4e360e8964e68858dd231c2922f1df45ef",
+    ] {
+        for calldata in [
+            signed_split_calldata(&key, &call),
+            signed_combined_calldata(&key, &call),
+        ] {
+            let (status, body) = post_transaction(&app, &user, market, &calldata).await;
+            assert_eq!(status, 400, "{market}: {body}");
+            assert_eq!(body["error"], "invalid_transaction", "{body}");
+            assert_eq!(body["not_sent"], true, "{body}");
+            assert_eq!(
+                body["message"],
+                format!(
+                    "The meta-transaction method createOrder(address,uint256,uint256,uint256) is not allowed for contract {market}."
+                ),
+            );
+        }
+    }
+    let mut execute_order = super::abi::executeOrderCall::SELECTOR.to_vec();
+    execute_order.extend_from_slice(&[0u8; 32 * 3]);
+    // Each reaches a later check: the zero price, or the unreachable database.
+    for (contract, inner, later) in [
+        (
+            "0x02080031b45a3c67d338dd4a2cc309d28756a160",
+            &execute_order,
+            "sale_price_too_low",
+        ),
+        (
+            "0x480a0f4e360e8964e68858dd231c2922f1df45ef",
+            &execute_order,
+            "sale_price_too_low",
+        ),
+        (
+            "0x214ffc0f0103735728dc66b61a22e4f163e275ae",
+            &call,
+            "sale_price_too_low",
+        ),
+        (COLLECTION, &call, "unknown"),
+    ] {
+        for calldata in [
+            signed_split_calldata(&key, inner),
+            signed_combined_calldata(&key, inner),
+        ] {
+            let (_, body) = post_transaction(&app, &user, contract, &calldata).await;
+            assert_eq!(body["error"], later, "{contract}: {body}");
+        }
+    }
+}
+
+/// A trial relay answers a wallet outside the trial 403 before refusing its `createOrder`.
+#[tokio::test]
+async fn a_trial_relay_refuses_a_non_buyer_create_order_as_forbidden() {
+    let app = router(state(
+        lazy_pool(),
+        Settings {
+            data_writes_enabled: false,
+            ops_writes_enabled: true,
+            ..trial_relay()
+        },
+    ));
+    let key = PrivateKeySigner::random();
+    let user = format!("{:#x}", key.address());
+    let mut call = super::abi::createOrderCall::SELECTOR.to_vec();
+    call.extend_from_slice(&[0u8; 32 * 4]);
+    let calldata = signed_split_calldata(&key, &call);
+    let (status, body) = post_transaction(
+        &app,
+        &user,
+        "0x480a0f4e360e8964e68858dd231c2922f1df45ef",
+        &calldata,
+    )
+    .await;
+    assert_eq!(status, 403, "{body}");
+    assert_eq!(
+        body["message"],
+        "this relay serves only the test's buyers (CREDITS_TRIAL_MODE)"
+    );
+}
+
 /// A spent free-call budget says when the next free call is admitted, counted over every free
 /// call (not the refused address's): the first whole second after the budget-th newest one
 /// leaves the window. A sale in the window is no free call and moves nothing.
@@ -4269,6 +4361,10 @@ async fn a_trial_relays_meta_transactions_for_its_buyers_only() {
     )
     .await;
     assert_eq!(status, 403, "{body}");
+    assert_eq!(
+        body["message"],
+        "this relay serves only the test's buyers (CREDITS_TRIAL_MODE)"
+    );
     assert!(body.to_string().contains("CREDITS_TRIAL_MODE"), "{body}");
     assert_eq!(
         row_count(&pool, &stranger_address).await,

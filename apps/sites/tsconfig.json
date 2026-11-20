@@ -8,13 +8,11 @@
     "**/.client/**/*.tsx",
     ".react-router/types/**/*",
     "../ui3/src/overlay/dcl-globals.d.ts",
-    "../ui3/src/editor/code/monaco-modules.d.ts",
     "../ui3/src/wearable-preview/three-shim.d.ts"
   ],
   "exclude": [
     "node_modules",
-    "build",
-    "template-games"
+    "build"
   ],
   "compilerOptions": {
     "lib": ["DOM", "DOM.Iterable", "ES2022"],

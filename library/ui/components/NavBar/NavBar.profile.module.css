@@ -50,9 +50,16 @@
     object-fit: contain;
   }
 
-  .panel .header {
+  .header {
+    display: flex;
     align-items: flex-start;
+    gap: var(--dcl-space-12);
     padding-inline: var(--dcl-space-16);
+  }
+
+  .details {
+    flex: 1;
+    min-width: 0;
   }
 
   .face,
@@ -156,7 +163,7 @@
       width: 100%;
     }
 
-    .panel .header {
+    .header {
       padding-inline: var(--dcl-space-12);
     }
 
