@@ -1,0 +1,22 @@
+{
+  // The gallery: a browser app over the public package, its tests and its Vite config.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "types": ["node"],
+    "paths": {
+      "@dcl/one-ui": ["../index.ts"],
+      "@dcl/one-ui/foundations": ["../foundations/index.ts"]
+    }
+  },
+  "include": ["src", "test", "vite.config.ts", "../css-modules.d.ts"]
+}

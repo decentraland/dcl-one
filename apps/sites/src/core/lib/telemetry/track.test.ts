@@ -48,8 +48,8 @@ describe("track (fetch mocked)", () => {
   });
 
   it("preserves an event variant when the context does not override it", () => {
-    expect(buildSegmentBody("cl_open_screen_shown", { variant: "base" }, { sid: "test" }).properties.variant).toBe("base");
-    expect(buildSegmentBody("cl_open_screen_shown", { variant: "base" }, { sid: "test", variant: "genesis" }).properties.variant).toBe("genesis");
+    expect(buildSegmentBody("cast_ending", { variant: "base" }, { sid: "test" }).properties.variant).toBe("base");
+    expect(buildSegmentBody("cast_ending", { variant: "base" }, { sid: "test", variant: "genesis" }).properties.variant).toBe("genesis");
   });
 
   it("wraps the body in Segment's HTTP API envelope: the public write key, a message id, timestamps and the library context", () => {
