@@ -161,7 +161,7 @@ that does not sync a type answers `[]` for it (upstream full nodes hold every ty
 | no match | 200 | `{"total":0,"entities":[]}` | `logic/active-entities/component.ts:373-375` | `queries.rs:425-460` | MATCH |
 
 Order: upstream pages the id list in `active_pointers` scan order and then re-orders by cache
-state (`component.ts:377-380`); dcl-one orders by pointer (`queries.rs:292-300`). Not a contract.
+state (`component.ts:377-380`); dcl-one orders by pointer (`queries.rs:441`). Not a contract.
 
 **Data dependency**: `content.active_pointers` and deployments for wearables/emotes. Upstream third-party
 lists come from a materialized view refreshed on a schedule (stale until refresh); dcl-one reads
