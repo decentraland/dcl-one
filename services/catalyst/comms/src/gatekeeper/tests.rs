@@ -223,13 +223,14 @@ fn land_policy(doc: LandOperators) -> StubPolicy {
     }
 }
 
-/// Every LAND-document role held by `holder`; the operator's is checksummed.
+/// Every LAND-document role held by `holder`, in checksummed form.
 fn extended_land_roles(holder: &str) -> [(&'static str, LandOperators); 5] {
     [
+        // Admitted via the LAND document; `is_admin` refuses.
         (
             "LAND owner",
             LandOperators {
-                owner: holder.into(),
+                owner: checksummed(holder),
                 ..Default::default()
             },
         ),
@@ -243,21 +244,21 @@ fn extended_land_roles(holder: &str) -> [(&'static str, LandOperators); 5] {
         (
             "update operator",
             LandOperators {
-                update_operator: Some(holder.into()),
+                update_operator: Some(checksummed(holder)),
                 ..Default::default()
             },
         ),
         (
             "update manager",
             LandOperators {
-                update_managers: vec![holder.into()],
+                update_managers: vec![checksummed(holder)],
                 ..Default::default()
             },
         ),
         (
             "approved for all",
             LandOperators {
-                approved_for_all: vec![holder.into()],
+                approved_for_all: vec![checksummed(holder)],
                 ..Default::default()
             },
         ),
