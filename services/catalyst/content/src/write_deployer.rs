@@ -183,8 +183,8 @@ pub(crate) async fn bounded_upload_hash<T: Send + 'static>(
     })
 }
 
-/// Every upload with its CIDv0 and CIDv1: a spooled part's were computed
-/// while it was written, so only the uploads in memory are hashed here.
+/// Every upload with its CIDv1 and CIDv0 (a spooled part's as its spool computed
+/// them while writing it), so only the uploads in memory are hashed here.
 async fn hash_uploads(files: Vec<Upload>) -> Result<Vec<HashedUpload>, String> {
     bounded_upload_hash(Arc::clone(&UPLOAD_HASH_JOBS), move || {
         files
