@@ -1,6 +1,6 @@
 # ADR: Hand-written mappings are checked against a tracked manifest
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-20
 
 ## Context
