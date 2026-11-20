@@ -323,13 +323,23 @@ fn the_scenario_is_registered_and_not_hostile() {
 
 /// Runs `crowd-discovery` once against `stack` with a crowd of `players`.
 async fn discovery_with(stack: &str, players: usize) -> catalyst_comms_e2e::engine::ScenarioResult {
+    discovery_with_room(stack, players, None).await
+}
+
+/// Runs `crowd-discovery` once against `stack` with a crowd of `players`, `room_players` of them
+/// asked to join the room.
+async fn discovery_with_room(
+    stack: &str,
+    players: usize,
+    room_players: Option<usize>,
+) -> catalyst_comms_e2e::engine::ScenarioResult {
     let options = RunOptions {
         repeat: Some(1),
         seed: Some(7),
         transport: Transport::Enet,
         crowd: CrowdSize {
             players: Some(players),
-            room_players: None,
+            room_players,
         },
         ..Default::default()
     };
@@ -408,6 +418,31 @@ async fn without_a_livekit_client_the_room_step_is_left_out_with_a_note() {
         "{:?}",
         result.notes
     );
+}
+
+/// A room count set above 0 with no LiveKit client in the stack file is a mistake in the stack
+/// file: the run fails, naming the client, before it dials anything. A count of 0 asks for no
+/// room and needs no client.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_room_count_set_without_a_livekit_client_fails() {
+    let stack = "api = \"http://127.0.0.1:9\"\npulse_enet = \"127.0.0.1:9\"\n";
+    let result = discovery_with_room(stack, 2, Some(2)).await;
+    let Outcome::Failed { expectation, .. } = &result.outcome else {
+        panic!(
+            "a room count with no client should fail, got {:?}",
+            result.outcome
+        );
+    };
+    assert!(
+        expectation.contains("LiveKit client") && expectation.contains("CE2E_CROWD_ROOM_PLAYERS"),
+        "{expectation}"
+    );
+    // no room asked for: the run goes on to discovery
+    let result = discovery_with_room(stack, 2, Some(0)).await;
+    let Outcome::Failed { expectation, .. } = &result.outcome else {
+        panic!("nothing answers at the API, got {:?}", result.outcome);
+    };
+    assert!(expectation.contains("realm description"), "{expectation}");
 }
 
 /// Whether any island message carried peers: the gatekeeper may send assignments with none, and

@@ -158,7 +158,11 @@ itself. Neither the gatekeeper client nor the room-service client follows a redi
 **Crowds.** `pulse-crowd` and `crowd-discovery` put 20 players in one place at once. Their size
 comes from `CE2E_CROWD_PLAYERS` (2 to 100), and `CE2E_CROWD_ROOM_PLAYERS` says how many of
 `crowd-discovery`'s players join the island's LiveKit room (all unless it says fewer, `0` for
-none). Every player dials from one address at the same moment, so a crowd larger than a correct
+none). The two are read only when a crowd scenario is selected. With no LiveKit client in the
+stack file, `crowd-discovery` leaves the room step out with a note while
+`CE2E_CROWD_ROOM_PLAYERS` is unset, and fails when it asks for players in the room. In both
+scenarios the 20 s each player has to see every other count from when the whole crowd has entered
+Pulse. Every player dials from one address at the same moment, so a crowd larger than a correct
 server admits from one address is refused before the first packet, naming the limit: Pulse's
 `limits.max_concurrent_pre_auth_per_ip` for both, and the archipelago's
 `limits.max_sockets_per_ip` for `crowd-discovery`. `crowd-discovery` checks an island's peer

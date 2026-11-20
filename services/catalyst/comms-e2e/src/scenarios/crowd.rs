@@ -41,7 +41,8 @@ const SPACING: f32 = 2.0;
 /// How far a position the server stored may differ from the one sent: one quantization step.
 const QUANTIZATION: f32 = 0.15;
 
-/// How long, from the first dial, every player may take to see every other player.
+/// How long every player may take to see every other player, counted from when the whole crowd
+/// has entered Pulse: in `pulse-crowd` and `crowd-discovery` alike.
 pub const SIGHTING_DEADLINE: Duration = Duration::from_secs(20);
 
 /// How often the views are read while waiting.
@@ -508,7 +509,7 @@ async fn crowd(ctx: Ctx) -> Result<()> {
     let bots = enter_crowd(&ctx, &identities, &realm, &spots).await?;
     ctx.note("all_entered_ms", started.elapsed().as_millis() as u64);
 
-    let deadline = started + SIGHTING_DEADLINE;
+    let deadline = Instant::now() + SIGHTING_DEADLINE;
     let watched = watch(&bots, &wallets, &spots, &realm, started, deadline).await;
     let outcome = match watched {
         Ok(sightings) => {

@@ -11,7 +11,7 @@ use catalyst_comms::pulse::hardening::DisconnectReason;
 use catalyst_comms::pulse::interest::{SpatialAreaOfInterest, SpatialAreaOfInterestOptions};
 use catalyst_comms::pulse::ip_limiter::IpLimiterOptions;
 use catalyst_comms_e2e::engine::{
-    CrowdSize, Entry, Outcome, RunOptions, ScenarioResult, Transport, run_scenarios,
+    CrowdSize, Ctx, Entry, Outcome, RunOptions, ScenarioResult, Transport, run_scenarios,
 };
 use catalyst_comms_e2e::pulse::messages;
 use catalyst_comms_e2e::scenarios::crowd::{
@@ -368,17 +368,20 @@ async fn the_crowd_is_watched_on_pulse_while_other_work_runs() {
     let bots = crowd::enter_crowd(&ctx, &identities, &realm, &spots)
         .await
         .unwrap();
-    let (watched, ()) = watch_alongside(
+    let (sightings, ()) = watch_alongside(
         &bots,
         &wallets,
         &spots,
         &realm,
         started,
         std::time::Duration::from_secs(2),
-        tokio::time::sleep(std::time::Duration::from_secs(3)),
+        async {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            Ok(())
+        },
     )
-    .await;
-    let sightings = watched.unwrap();
+    .await
+    .unwrap();
     for at in &sightings.complete_at {
         let at = at.expect("every player held everyone");
         assert!(
@@ -387,6 +390,92 @@ async fn the_crowd_is_watched_on_pulse_while_other_work_runs() {
         );
     }
     leave_all(&ctx, bots).await.unwrap();
+}
+
+/// A crowd of three on an in-process Pulse, with spots none of them stands at: watched, it never
+/// completes before its deadline.
+async fn crowd_that_never_completes(
+    name: &str,
+) -> (
+    Ctx,
+    Vec<catalyst_comms_e2e::pulse::PulseBot>,
+    Vec<String>,
+    String,
+) {
+    let address = support::serve(PulseServer::new()).await;
+    let ctx = support::ctx(address, name);
+    let identities: Vec<_> = (0..3).map(|index| ctx.identity(index)).collect();
+    let wallets: Vec<String> = identities
+        .iter()
+        .map(|identity| identity.address())
+        .collect();
+    let spots: Vec<[f32; 3]> = (0..3)
+        .map(|index| crowd::spot([8.0, 0.0, 8.0], index))
+        .collect();
+    let realm = ctx.realm("crowd");
+    let bots = crowd::enter_crowd(&ctx, &identities, &realm, &spots)
+        .await
+        .unwrap();
+    (ctx, bots, wallets, realm)
+}
+
+/// Work that fails ends the watch at once, and its error is what comes back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn work_that_fails_ends_the_watch_at_once() {
+    let (ctx, bots, wallets, realm) = crowd_that_never_completes("alongside-work-fails").await;
+    let elsewhere = vec![[200.0, 0.0, 200.0]; 3];
+    let started = std::time::Instant::now();
+    let outcome = watch_alongside(
+        &bots,
+        &wallets,
+        &elsewhere,
+        &realm,
+        started,
+        std::time::Duration::from_secs(15),
+        async {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            Err::<(), _>(anyhow::anyhow!("the first wave could not open"))
+        },
+    )
+    .await;
+    let error = outcome.err().expect("the work failed").to_string();
+    assert!(error.contains("first wave"), "{error}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "the watch ran on for {:?}",
+        started.elapsed()
+    );
+    leave_all(&ctx, bots).await.unwrap();
+}
+
+/// A session that ends while the crowd is watched ends the work at once, and the watch says why.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn a_session_that_ends_ends_the_work_at_once() {
+    let (ctx, bots, wallets, realm) = crowd_that_never_completes("alongside-session-ends").await;
+    let elsewhere = vec![[200.0, 0.0, 200.0]; 3];
+    bots[0].disconnect(DisconnectReason::Graceful as u32);
+    let started = std::time::Instant::now();
+    let outcome = watch_alongside(
+        &bots,
+        &wallets,
+        &elsewhere,
+        &realm,
+        started,
+        std::time::Duration::from_secs(15),
+        async {
+            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            Ok(())
+        },
+    )
+    .await;
+    let error = outcome.err().expect("a session ended").to_string();
+    assert!(error.contains("connection ended"), "{error}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "the work ran on for {:?}",
+        started.elapsed()
+    );
+    leave_all(&ctx, bots).await.ok();
 }
 
 /// A session the server ended and a view that breaks a rule of the protocol are told apart.

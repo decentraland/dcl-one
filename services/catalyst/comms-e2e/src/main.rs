@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
-use catalyst_comms_e2e::engine::{CrowdSize, Ctx, RunOptions, Transport, run_scenarios};
+use catalyst_comms_e2e::engine::{CrowdSize, Ctx, RunOptions, Scenario, Transport, run_scenarios};
 use catalyst_comms_e2e::explorer::{Explorer, ExplorerOptions, Fronts};
 use catalyst_comms_e2e::scenarios;
 use catalyst_comms_e2e::stack::Stack;
@@ -186,7 +186,7 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
                 scenario_deadline: Duration::from_secs(deadline),
                 transport,
                 one_source_address,
-                crowd: crowd_from_environment()?,
+                crowd: crowd_from_environment(&selection)?,
                 ..RunOptions::default()
             };
             options.work_dir = match work_dir {
@@ -324,11 +324,28 @@ fn new_run_dir(parent: &Path, prefix: &str) -> Result<PathBuf> {
 }
 
 /// The crowd size the environment asks for: `CE2E_CROWD_PLAYERS` and `CE2E_CROWD_ROOM_PLAYERS`.
-fn crowd_from_environment() -> Result<CrowdSize> {
-    crowd_from(
+fn crowd_from_environment(selection: &[&Scenario]) -> Result<CrowdSize> {
+    crowd_for(
+        selection,
         std::env::var(scenarios::crowd::PLAYERS_VARIABLE).ok(),
         std::env::var(scenarios::crowd_discovery::ROOM_PLAYERS_VARIABLE).ok(),
     )
+}
+
+/// The crowd size the texts of the two variables name, for a run of `selection`. They are read
+/// only when it holds a crowd scenario: a variable the run does not use cannot stop it.
+fn crowd_for(
+    selection: &[&Scenario],
+    players: Option<String>,
+    room_players: Option<String>,
+) -> Result<CrowdSize> {
+    if !selection
+        .iter()
+        .any(|scenario| scenario.tags.contains(&"crowd"))
+    {
+        return Ok(CrowdSize::default());
+    }
+    crowd_from(players, room_players)
 }
 
 /// The crowd size the texts of the two variables name.
@@ -363,6 +380,29 @@ mod tests {
         assert!(!error.contains("not-a-real-key-fake-0123"), "{error}");
         // an obviously made-up key that parses
         assert!(address_of_key(&"11".repeat(32)).unwrap().starts_with("0x"));
+    }
+
+    #[test]
+    fn a_run_without_a_crowd_scenario_does_not_read_the_crowd_variables() {
+        let smoke = scenarios::select(Some("pulse-smoke"), None, false);
+        assert_eq!(smoke.len(), 1);
+        assert_eq!(
+            crowd_for(&smoke, Some("1".into()), Some("abc".into())).unwrap(),
+            CrowdSize::default()
+        );
+        for crowd in ["pulse-crowd", "crowd-discovery"] {
+            let selection = scenarios::select(Some(crowd), None, false);
+            assert_eq!(selection.len(), 1, "{crowd}");
+            assert!(crowd_for(&selection, Some("1".into()), None).is_err());
+            assert!(crowd_for(&selection, None, Some("abc".into())).is_err());
+            assert_eq!(
+                crowd_for(&selection, Some("12".into()), None).unwrap(),
+                CrowdSize {
+                    players: Some(12),
+                    room_players: None,
+                }
+            );
+        }
     }
 
     #[test]

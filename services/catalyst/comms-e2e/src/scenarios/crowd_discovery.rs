@@ -223,7 +223,9 @@ pub fn strangers(views: &[ClientView]) -> Vec<String> {
 
 /// Watches the crowd on Pulse while `work` runs, and returns both. The deadline, `within`,
 /// counts from this call, when the players have entered Pulse; each player's time is when it
-/// first held everyone, from `started`.
+/// first held everyone, from `started`. When either side fails the other is stopped at once:
+/// failed work is returned as it is, and a watch that a session ended, or a view broke, is
+/// returned as the error.
 pub async fn watch_alongside<T>(
     bots: &[PulseBot],
     wallets: &[String],
@@ -231,10 +233,22 @@ pub async fn watch_alongside<T>(
     realm: &str,
     started: Instant,
     within: Duration,
-    work: impl std::future::Future<Output = T>,
-) -> (Result<Sightings, Interrupted>, T) {
+    work: impl std::future::Future<Output = Result<T>>,
+) -> Result<(Sightings, T)> {
     let deadline = Instant::now() + within;
-    tokio::join!(watch(bots, wallets, spots, realm, started, deadline), work)
+    let watching = watch(bots, wallets, spots, realm, started, deadline);
+    tokio::pin!(watching, work);
+    let interrupted = |interrupted: Interrupted| anyhow!(interrupted);
+    tokio::select! {
+        watched = &mut watching => {
+            let sightings = watched.map_err(interrupted)?;
+            Ok((sightings, work.await?))
+        }
+        done = &mut work => {
+            let done = done?;
+            Ok((watching.await.map_err(interrupted)?, done))
+        }
+    }
 }
 
 /// The count of room players `text` (the text of [`ROOM_PLAYERS_VARIABLE`]) names.
@@ -518,6 +532,11 @@ async fn crowd_discovery(ctx: Ctx) -> Result<()> {
         .livekit_client()
         .map(std::path::Path::to_path_buf);
     if room_count > 0 && client.is_none() {
+        if let Some(count) = ctx.crowd().room_players {
+            bail!(
+                "{ROOM_PLAYERS_VARIABLE} asks for {count} players in the room, and the stack file names no LiveKit client (`[livekit] client` or `livekit_client`) to join it with"
+            );
+        }
         // as the joins of the connection scenarios: the room is left out, and the report says so
         ctx.note(
             "room",
@@ -558,7 +577,7 @@ async fn crowd_discovery(ctx: Ctx) -> Result<()> {
         return settle(&ctx, Err(error), left);
     }
     ctx.note("pulse_entered_ms", started.elapsed().as_millis() as u64);
-    let (watched, opened) = watch_alongside(
+    let watched = watch_alongside(
         &bots,
         &wallets,
         &spots,
@@ -572,18 +591,15 @@ async fn crowd_discovery(ctx: Ctx) -> Result<()> {
         },
     )
     .await;
-    let sockets = match opened {
-        Ok(sockets) => sockets,
+    let (sightings, sockets) = match watched {
+        Ok(both) => both,
         Err(error) => {
             let left = leave_all(&ctx, bots).await;
             return settle(&ctx, Err(error), left);
         }
     };
     let (_, joins) = note_joins(&ctx, &wallets, &realm);
-    let held = match &watched {
-        Ok(sightings) => note_sightings(&ctx, sightings),
-        Err(interrupted) => Err(interrupted.to_string()),
-    };
+    let held = note_sightings(&ctx, &sightings);
 
     // 3. the island each client was given
     wait_for_one_island(&sockets, &spots, started + ISLAND_DEADLINE).await;
@@ -618,10 +634,7 @@ async fn crowd_discovery(ctx: Ctx) -> Result<()> {
     }
 
     // what each client was told, layer by layer
-    let held_by_player: Vec<usize> = match &watched {
-        Ok(sightings) => sightings.seen.clone(),
-        Err(_) => vec![0; players],
-    };
+    let held_by_player: Vec<usize> = sightings.seen.clone();
     let views: Vec<ClientView> = (0..players)
         .map(|index| {
             let socket_view = sockets[index].view();
