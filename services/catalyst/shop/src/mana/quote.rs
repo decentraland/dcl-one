@@ -509,7 +509,10 @@ pub async fn quote_line(
             _ => None,
         },
         mana,
-        splittable: crate::policy::split_price(&authoritative).is_ok(),
+        splittable: crate::policy::offered_splittable(
+            state.market.credits_mana_split(),
+            &authoritative,
+        ),
     }))
 }
 

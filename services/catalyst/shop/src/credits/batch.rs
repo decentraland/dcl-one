@@ -93,6 +93,8 @@ pub const CREDITS_CENTS_QUANTITY: &str = "\"creditsCents\" pays one unit: \"quan
 /// What refuses a Credits part beside other lines.
 pub const CREDITS_CENTS_ALONE: &str =
     "\"creditsCents\" pays part of one line alone: a request with it holds exactly one line";
+/// What refuses a Credits part while this node takes none.
+pub const CREDITS_CENTS_OFF: &str = "this node takes no Credits part (\"creditsCents\"): pay the whole price with Credits or with MANA";
 
 /// Upstream `validateCreditLine`, message for message, then this node's
 /// Credits part (`creditsCents`, with `quantity` 1 at most and no NAME).
@@ -268,6 +270,10 @@ pub enum AuthorizeError {
     OperationReused,
     /// 403: a trial (`CREDITS_TRIAL_MODE`) whose buyers don't include the signer.
     NotATrialBuyer,
+    /// 400: a Credits part (`creditsCents`) while this node takes none (`State::credits_mana_split`).
+    CreditsPartOff {
+        index: usize,
+    },
     Api(ApiError),
 }
 
@@ -360,6 +366,25 @@ impl AuthorizeError {
                 envelope(
                     403,
                     "Credits can't be used by this account in this test.".to_string(),
+                    extra,
+                )
+            }
+            Self::CreditsPartOff { index } => {
+                let mut extra = serde_json::Map::new();
+                extra.insert("index".into(), json!(index));
+                extra.insert("code".into(), json!("credits_mana_split_off"));
+                let reason = format!(
+                    "{CREDITS_CENTS_OFF} ({}-{})",
+                    crate::market::features::APP,
+                    crate::market::features::CREDITS_MANA_SPLIT
+                );
+                envelope(
+                    400,
+                    if single {
+                        reason
+                    } else {
+                        format!("items[{index}]: {reason}")
+                    },
                     extra,
                 )
             }
@@ -826,6 +851,14 @@ pub async fn authorize_group(
             index: 0,
             message: format!("A checkout may hold at most {MAX_LINES_PER_GROUP} items"),
         });
+    }
+    // A Credits part is taken only while its rollout is on: refused here, on
+    // either route, before an operation is recovered (a replay of one issued
+    // while it was on included), anything is read, reserved or signed.
+    if !state.credits_mana_split()
+        && let Some(index) = lines.iter().position(|l| l.credits_cents.is_some())
+    {
+        return Err(AuthorizeError::CreditsPartOff { index });
     }
     // A Credits part pays one line of one unit, on either route: refused here,
     // before an operation is recovered or anything is read or reserved.

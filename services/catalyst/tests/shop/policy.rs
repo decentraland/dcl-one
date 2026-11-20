@@ -8,7 +8,7 @@ use catalyst::shop::policy::{
     Authoritative, CartLine, Facts, GroupTotal, LineRefusal, MAX_CREDIT_LINES_PER_GROUP,
     MissingFact, PartitionError, Quote, Reason, Refusal, SettlementGroup, WalletGuidance,
     credit_cap, eligibility, guard_credit_spend, guard_group_credit_spend, guard_method,
-    partial_credit_cap, partition, quote, split_price,
+    offered_splittable, partial_credit_cap, partition, quote, split_price,
 };
 use catalyst::shop::types::{
     AssetId, AssetKind, ChainId, ContractRef, ContractRole, CreditSizing, CustomEffect, EvmAddress,
@@ -1674,6 +1674,9 @@ fn the_split_vector_is_one_credit_and_gap_whatever_the_buffer_and_headroom() {
     // 3.2e15 USD a MANA: 101 wei is $0.3232, 33 cents rounded up, 30 after the coupon.
     let rate = ManaUsdRate::new(n(3_200_000_000_000_000), 0).unwrap();
     assert_eq!(split_price(&order[0]), Ok(ManaWei::new(n(91))));
+    // A line the rule splits is offered `splittable` only while the node's rollout is on.
+    assert!(offered_splittable(true, &order[0]));
+    assert!(!offered_splittable(false, &order[0]));
     assert_eq!(
         quote(&order[0], Credits, Some(&rate)),
         Ok(Quote::Credits {

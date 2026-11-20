@@ -768,7 +768,7 @@ pub fn credit_cap(lines: &[Authoritative], sizing: &CreditSizing) -> Result<Mana
 /// whose one received asset is not the chain's MANA (the ERC-20 at the
 /// CreditsManager's registered MANA address), any other offer, and a line the
 /// session may not pay with both credits and MANA have no Credits part.
-/// [`partial_credit_cap`] and the offer's `splittable` both read this.
+/// [`partial_credit_cap`] and the offer's `splittable` ([`offered_splittable`]) both read this.
 pub fn split_price(line: &Authoritative) -> Result<ManaWei, Refusal> {
     let asset = line.asset;
     let unavailable = |detail| Refusal::PartialCreditUnavailable { asset, detail };
@@ -812,6 +812,13 @@ pub fn split_price(line: &Authoritative) -> Result<ManaWei, Refusal> {
         return Err(Refusal::ManaRemainderNotAllowed { asset });
     }
     mana_quote(line, None)
+}
+
+/// Whether a quote marks an offer `splittable`: only while the node takes a Credits part (its
+/// `dapps-shop-credits-mana-split` rollout, `rollout`), and then only for a line [`split_price`] splits. Off, no
+/// offer says it, so a client that offers the split on that word alone never does.
+pub fn offered_splittable(rollout: bool, line: &Authoritative) -> bool {
+    rollout && split_price(line).is_ok()
 }
 
 /// The credit for the Credits part (`leg`, in cents) of a one-line purchase:

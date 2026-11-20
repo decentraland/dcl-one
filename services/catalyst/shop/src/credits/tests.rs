@@ -8432,6 +8432,25 @@ async fn opid_lane_with(
     market: FakeMarket,
     trial: Option<super::trial::TrialBuyers>,
 ) -> Router {
+    opid_lane_flagged(pool, contract, market, trial, split_on()).await
+}
+
+/// The market's flags with the Credits + MANA split on: a node that takes a Credits part.
+fn split_on() -> Arc<crate::market::features::DappsFlags> {
+    crate::market::features::DappsFlags::for_tests(&[(
+        crate::market::features::CREDITS_MANA_SPLIT,
+        true,
+    )])
+}
+
+/// [`opid_lane_with`] over the given `dapps` flags.
+async fn opid_lane_flagged(
+    pool: &PgPool,
+    contract: &str,
+    market: FakeMarket,
+    trial: Option<super::trial::TrialBuyers>,
+    flags: Arc<crate::market::features::DappsFlags>,
+) -> Router {
     let mut settings = Settings::parse(RawSettings {
         writes_enabled: true,
         mock_card: true,
@@ -8462,7 +8481,8 @@ async fn opid_lane_with(
             Arc::new(MockBroker::configured()),
             None,
         )
-        .with_gate(Arc::new(super::settlement::FixedGate(Ok(())))),
+        .with_gate(Arc::new(super::settlement::FixedGate(Ok(()))))
+        .with_dapps_flags(flags),
     );
     app(state)
 }
@@ -8829,6 +8849,132 @@ async fn a_credits_part_needs_a_signed_web3_session_on_both_routes() {
     db.drop().await;
 }
 
+/// The Credits + MANA split's rollout (`dapps-shop-credits-mana-split`) is read
+/// on the shared authorization path. Off, a request with `creditsCents` is a
+/// 400 on either route before anything else, a replay of an operation it
+/// authorized while on included, and nothing new is reserved; a whole price
+/// authorizes, and a credit issued while it was on is still cancelled. On, a
+/// Credits part authorizes on both routes.
+#[tokio::test]
+async fn a_credits_part_follows_its_rollout_on_both_routes_and_a_whole_price_never_does() {
+    let Some(db) = OwnDatabase::create("split-rollout").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    sqlx::query("INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, folded_block, folded_at) VALUES (137, $1, 100, 100, timezone('UTC', now()))")
+        .bind(OPID_MANAGER)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let market = FakeMarket::default()
+        .with_item(COLLECTION, "200", "4000000000000000000", true)
+        .with_mana_usd("0.5");
+    let flags = crate::market::features::DappsFlags::for_tests(&[]);
+    let lane = opid_lane_flagged(&pool, OPID_MANAGER, market, None, flags.clone()).await;
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "200").await;
+    const SINGLE: &str = "/credits/credits/authorize";
+    const BATCH: &str = "/credits/credits/authorize/batch";
+    let split = crate::market::features::CREDITS_MANA_SPLIT;
+    const OP_A: &str = "5a1e0d2c-7b44-4c1e-9a43-0e6f1c2b3a01";
+    const OP_B: &str = "5a1e0d2c-7b44-4c1e-9a43-0e6f1c2b3a02";
+    let part = |op: &str| {
+        let mut body = opid_item(200, "200", Some(op));
+        body["creditsCents"] = json!(120);
+        body
+    };
+    let refused = |status: StatusCode, v: &Value, why: &str| {
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{why}: {v}");
+        assert_eq!(v["code"], "credits_mana_split_off", "{why}: {v}");
+        assert!(
+            v["error"]
+                .as_str()
+                .unwrap()
+                .contains("dapps-shop-credits-mana-split"),
+            "{why}: {v}"
+        );
+    };
+
+    // Off from the start (absent reads off): no Credits part on either route, nothing reserved.
+    let (status, v) = call_signed(&lane, &wallet, SINGLE, WEB3, part(OP_A)).await;
+    refused(status, &v, "single, off");
+    let (status, v) = call_signed(
+        &lane,
+        &wallet,
+        BATCH,
+        WEB3,
+        json!({ "items": [part(OP_B)] }),
+    )
+    .await;
+    refused(status, &v, "batch, off");
+    assert_eq!(v["index"], 0);
+    assert_eq!(rows_of(&pool, &wallet.address).await, 0);
+
+    // On: both routes authorize the part.
+    flags.set_for_tests(split, true);
+    let (status, v) = call_signed(&lane, &wallet, SINGLE, WEB3, part(OP_A)).await;
+    assert_eq!(status, StatusCode::OK, "single, on: {v}");
+    assert_eq!(v["usdCents"], 120);
+    let issued = v["credit"]["id"].as_str().unwrap().to_string();
+    let (status, v) = call_signed(
+        &lane,
+        &wallet,
+        BATCH,
+        WEB3,
+        json!({ "items": [part(OP_B)] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "batch, on: {v}");
+    assert_eq!(rows_of(&pool, &wallet.address).await, 2);
+
+    // Off again: a replay of the operation it authorized is refused before it is recovered, and nothing new is
+    // reserved; a whole price authorizes on both routes.
+    flags.set_for_tests(split, false);
+    let (status, v) = call_signed(&lane, &wallet, SINGLE, WEB3, part(OP_A)).await;
+    refused(status, &v, "a replay, off");
+    let (status, v) = call_signed(
+        &lane,
+        &wallet,
+        BATCH,
+        WEB3,
+        json!({ "items": [part(OP_B)] }),
+    )
+    .await;
+    refused(status, &v, "a batch replay, off");
+    assert_eq!(rows_of(&pool, &wallet.address).await, 2);
+    let (status, v) = call_signed(&lane, &wallet, SINGLE, WEB3, opid_item(200, "200", None)).await;
+    assert_eq!(status, StatusCode::OK, "a whole price, off: {v}");
+    let (status, v) = call_signed(
+        &lane,
+        &wallet,
+        BATCH,
+        "{}",
+        json!({ "items": [opid_item(200, "200", None)] }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a whole price on the batch route, off: {v}"
+    );
+    assert_eq!(rows_of(&pool, &wallet.address).await, 4);
+
+    // A credit issued while it was on is still cancelled.
+    let (status, v) = call(
+        &lane,
+        &wallet,
+        "post",
+        "/credits/credits/authorize/cancel",
+        &[],
+        Some(json!({ "salts": [issued] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["released"].as_i64(), Some(1), "{v}");
+
+    db.drop().await;
+}
+
 /// A USD-pegged trade has no Credits part: its MANA is only fixed when the
 /// marketplace reads its feed at settlement. Refused with the rule's reason,
 /// before the feed is read and before anything is reserved; its whole price
@@ -8886,7 +9032,8 @@ async fn a_credits_part_of_a_usd_pegged_trade_is_refused_before_the_feed_or_a_re
             None,
         )
         .with_gate(Arc::new(super::settlement::FixedGate(Ok(()))))
-        .with_feed(feed.clone()),
+        .with_feed(feed.clone())
+        .with_dapps_flags(split_on()),
     );
     let lane = app(state);
     let wallet = scratch_wallet();
@@ -8979,7 +9126,8 @@ async fn the_split_vector_reserves_its_part_and_signs_the_same_credit_at_any_siz
                 Arc::new(MockBroker::configured()),
                 None,
             )
-            .with_gate(Arc::new(super::settlement::FixedGate(Ok(())))),
+            .with_gate(Arc::new(super::settlement::FixedGate(Ok(()))))
+            .with_dapps_flags(split_on()),
         ))
     };
     let part = json!({ "usdPriceCents": 30, "tradeId": "5b1a", "creditsCents": 10 });
