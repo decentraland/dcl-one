@@ -4,7 +4,7 @@ import { readJumpTarget } from "@/data/lib/catalyst/jump/jump";
 import type { Event } from "@/data/lib/catalyst/places/events";
 import type { Place } from "@/data/lib/catalyst/schema";
 
-import { SITE_NAME, absoluteUrl, notFoundMeta, oneLine, socialMeta } from "./social-meta";
+import { SITE_NAME, absoluteUrl, notFoundMeta, oneLine, socialMeta, SCHEMA_ORG, absoluteImage } from "./social-meta";
 
 /**
  * Link-preview cards for events, jump and places pages, as decentraland.org's destinations handler
@@ -29,7 +29,6 @@ export type DestinationCard = { title: string; description: string; image?: stri
 /** The fields a card reads from a place or World catalogue row. */
 type CatalogueRow = { title: string | null; description: string | null; image: string | null };
 
-const httpUrl = (value: string | null | undefined) => (value && /^https?:\/\//i.test(value) ? value : undefined);
 
 export function sectionCard(section: Section): DestinationCard {
   return { title: section.title, description: section.description };
@@ -41,7 +40,7 @@ export function eventCard(event: Pick<Event, "name" | "description" | "image"> &
   return {
     title: `${oneLine(event.name) ?? EVENTS_SECTION.title}${scene ? ` at ${scene}` : ""}`,
     description: oneLine(event.description) ?? EVENTS_SECTION.description,
-    image: httpUrl(event.image),
+    image: absoluteImage(undefined, event.image),
   };
 }
 
@@ -50,7 +49,7 @@ export function worldCard(name: string, row?: CatalogueRow | null): DestinationC
   return {
     title: oneLine(row?.title) ?? `Visit ${name} in Decentraland`,
     description: oneLine(row?.description) ?? `Discover ${name}, a Decentraland world.`,
-    image: httpUrl(row?.image),
+    image: absoluteImage(undefined, row?.image),
   };
 }
 
@@ -59,7 +58,7 @@ export function parcelCard(position: string, row?: CatalogueRow | null): Destina
   return {
     title: oneLine(row?.title) ?? `Explore (${position}) in Decentraland`,
     description: oneLine(row?.description) ?? `Discover what's happening at coordinates ${position} in Decentraland.`,
-    image: httpUrl(row?.image),
+    image: absoluteImage(undefined, row?.image),
   };
 }
 
@@ -68,7 +67,6 @@ export function destinationMeta(card: DestinationCard, options: { url?: string; 
   return socialMeta({ title: `${card.title} | ${SITE_NAME}`, description: card.description, image: card.image, ...options });
 }
 
-const SCHEMA = "https://schema.org";
 
 const isoDate = (value: string | null | undefined) => {
   if (!value) return undefined;
@@ -92,15 +90,15 @@ export function eventJsonLd(event: Event, url: string): object | null {
   const where = [scene, parcel ? `Genesis City parcel ${parcel}` : null].filter(Boolean).join(", ");
   const { start, end } = occurrence(event);
   const description = oneLine(event.description);
-  const image = httpUrl(event.image);
+  const image = absoluteImage(undefined, event.image);
   const organizer = oneLine(event.user_name);
   return {
-    "@context": SCHEMA,
+    "@context": SCHEMA_ORG,
     "@type": "Event",
     name,
     url,
-    eventAttendanceMode: `${SCHEMA}/OnlineEventAttendanceMode`,
-    eventStatus: `${SCHEMA}/EventScheduled`,
+    eventAttendanceMode: `${SCHEMA_ORG}/OnlineEventAttendanceMode`,
+    eventStatus: `${SCHEMA_ORG}/EventScheduled`,
     location: { "@type": "VirtualLocation", url, ...(where ? { name: where } : {}) },
     ...(description ? { description } : {}),
     ...(start ? { startDate: start } : {}),
@@ -115,12 +113,12 @@ export function placeJsonLd(place: Place, url: string): object | null {
   const name = oneLine(place.title);
   if (!name) return null;
   const description = oneLine(place.description);
-  const image = httpUrl(place.image);
+  const image = absoluteImage(undefined, place.image);
   const keywords = place.categories.filter((category) => category.trim()).join(", ");
   const worldName = place.world ? oneLine(place.world_name)?.toLowerCase() : undefined;
   const parcel = place.world ? undefined : oneLine(place.base_position) ?? oneLine(place.positions[0]);
   return {
-    "@context": SCHEMA,
+    "@context": SCHEMA_ORG,
     "@type": "Place",
     name,
     url,
@@ -183,7 +181,7 @@ export function eventsListingJsonLd(base: string, lists: { name: string; events:
       itemListElement: items.map((item, index) => ({ "@type": "ListItem", position: index + 1, ...item })),
     };
   });
-  return { "@context": SCHEMA, "@graph": graph };
+  return { "@context": SCHEMA_ORG, "@graph": graph };
 }
 
 /** The head of a place page, shared with the World route; `unavailable` is the card while the catalogue is down. */
