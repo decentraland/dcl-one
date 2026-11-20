@@ -91,6 +91,8 @@ pub struct RawBakeSettings {
 }
 
 /// The upstream imposter CDN and the realm key its tiles live under.
+/// Temporary: the read-through goes once this node bakes its own tiles
+/// (decentraland/dcl-one#1711).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Upstream {
     /// No trailing slash.

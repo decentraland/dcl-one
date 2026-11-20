@@ -293,6 +293,7 @@ pub struct ImpostersConfig {
     /// The realm key the upstream's tiles are stored under (a tile's crc is
     /// realm-independent, so this node asks under it whatever realm the client
     /// sent); empty, the Decentraland main realm's about URL. A key, never dialed.
+    /// Temporary, with `BVIMPOSTERS_UPSTREAM_URL` (decentraland/dcl-one#1711).
     #[arg(long, env = "BVIMPOSTERS_UPSTREAM_REALM", default_value = "")]
     pub bvimposters_upstream_realm: String,
 
