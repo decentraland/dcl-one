@@ -7,6 +7,8 @@
 mod content_live;
 #[path = "explore_mirrors.rs"]
 mod explore_mirrors;
+#[path = "explore_node_origin.rs"]
+mod explore_node_origin;
 #[path = "explore_parity.rs"]
 mod explore_parity;
 #[path = "gatekeeper_policy.rs"]

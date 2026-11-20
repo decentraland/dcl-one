@@ -14,8 +14,10 @@
 //!   the credential): publish tokens for the key's room; the streamer is
 //!   added to the room's presenters.
 //! - `POST /watcher-token` (a viewer's own signed fetch, never a scene's):
-//!   the platform ban, then the scene ban of the room the stream runs in;
-//!   a subscribe-only token.
+//!   the platform ban, then the scene ban of the room the stream runs in
+//!   and, for a world, its access policy; a subscribe-only token whose
+//!   `dcl.castWatcher` attribute carries the wallet, so the ban and world
+//!   access sweeps reach a watcher already in the room.
 //! - `GET /presenters`, `PUT|DELETE /presenters/{identity}` (signed as
 //!   scene): owner or admin of the place the room's stream credential is
 //!   stored for. As upstream, a demotion does not stick for a scene admin:
@@ -28,10 +30,18 @@
 //! `participant_joined` webhook removes one that connects later with a token
 //! still inside its five-minute lifetime.
 //!
+//! A display name is shown as asked, without invisible characters, and a name
+//! that reads as another wallet's address (in full or abbreviated, through the
+//! lookalikes `shown_name` folds) or as another viewer's `Guest#` default is
+//! replaced by the caller's own default. Lookalikes outside that fold are not
+//! caught.
+//!
 //! Errors answer upstream's `{"error": msg}` with its statuses; a signature
 //! refusal answers the crypto middleware's `{"ok": false, "message"}` and a
 //! body refusal `@dcl/schema-validator-component`'s. Local preview realms are
-//! not special-cased: upstream does so only with `ALLOW_LOCAL_PREVIEW=true`.
+//! not special-cased here, and `ALLOW_LOCAL_PREVIEW` does not apply to Cast
+//! (it only skips `/get-scene-adapter`'s deployment check); upstream's Cast
+//! skips the place permission check for them when that setting is on.
 
 use axum::Json;
 use axum::body::Bytes;
@@ -173,7 +183,30 @@ async fn publishing_access(pool: &PgPool, key: &str) -> Result<(String, String, 
 /// The credential id is what lets a revocation tell a revoked key's
 /// publishers from the replacement's, whenever they connect.
 fn publisher_identity(kind: &str, scope: &str, access_id: Uuid) -> String {
-    format!("{kind}:{scope}:{access_id}:{}", Uuid::new_v4())
+    format!("{kind}:{scope}:{access_id}:{}", timestamped_uuid())
+}
+
+/// A random UUID in the version 7 layout: its first 48 bits are the minting
+/// time in unix milliseconds, so a presenter id tells how old its token is.
+fn timestamped_uuid() -> Uuid {
+    let mut bytes = *Uuid::new_v4().as_bytes();
+    let ms = (chrono::Utc::now().timestamp_millis().max(0) as u64).to_be_bytes();
+    bytes[..6].copy_from_slice(&ms[2..]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x70;
+    Uuid::from_bytes(bytes)
+}
+
+/// When the identity's token was minted, for an identity whose last segment
+/// is a `timestamped_uuid`.
+fn minted_at_ms(identity: &str) -> Option<i64> {
+    let uuid = Uuid::parse_str(identity.rsplit(':').next()?).ok()?;
+    let bytes = uuid.as_bytes();
+    if bytes[6] >> 4 != 7 {
+        return None;
+    }
+    let mut ms = [0u8; 8];
+    ms[2..].copy_from_slice(&bytes[..6]);
+    Some(u64::from_be_bytes(ms) as i64)
 }
 
 /// What a participant identity says about the credential that admitted it.
@@ -318,12 +351,120 @@ struct ParticipantMetadata<'a> {
 /// in the token's own `cast` list publishes any source, any other only the
 /// microphone; `name` is the display name; five minutes.
 struct Grant<'a> {
+    /// Signed participant attributes; the participant cannot change them.
+    attributes: Vec<(&'static str, String)>,
     identity: &'a str,
     room: &'a str,
     can_publish: bool,
     can_update_own_metadata: bool,
     all_sources: bool,
     metadata: ParticipantMetadata<'a>,
+}
+
+/// The display name a streamer or watcher asked for, as the room shows it.
+/// Upstream shows it verbatim. Here characters that render as nothing
+/// (controls, Unicode default-ignorables such as direction overrides,
+/// zero-width marks, fillers and tags, and the blank braille cell) are
+/// dropped, the name is NFKC-normalized and runs of whitespace become one
+/// space. A name that reads as a wallet address other than the caller's own,
+/// in full or abbreviated (`0x1234…abcd`), or as another viewer's `Guest#`
+/// default, becomes the caller's default (`Guest#<last 4>` for a watcher,
+/// `Streamer` for a key holder, who has no wallet here); so does a blank one.
+/// Lookalike letters are folded for that check (`address_fold`); ones outside
+/// the fold are not caught.
+pub(crate) fn shown_name(requested: &str, wallet: Option<&Address>) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    let own_default = wallet.map(|wallet| {
+        let hex = wallet.as_str();
+        format!("Guest#{}", &hex[hex.len().saturating_sub(4)..])
+    });
+    let fallback = || own_default.clone().unwrap_or_else(|| "Streamer".to_owned());
+    let visible: String = requested
+        .nfkc()
+        .filter(|c| !c.is_control() && !renders_as_nothing(*c))
+        .collect();
+    let name = visible.split_whitespace().collect::<Vec<_>>().join(" ");
+    let folded = address_fold(&name);
+    let own = wallet.map(|w| w.as_str().to_ascii_lowercase());
+    let foreign_address = shown_addresses(&folded).any(|(head, tail)| {
+        own.as_deref()
+            .is_none_or(|own| !(own.starts_with(&head) && own.ends_with(&tail)))
+    });
+    let foreign_default = shown_guest_suffixes(&folded).any(|suffix| {
+        own_default
+            .as_deref()
+            .is_none_or(|own| !own.to_ascii_lowercase().ends_with(&format!("#{suffix}")))
+    });
+    if name.is_empty() || foreign_address || foreign_default {
+        fallback()
+    } else {
+        name
+    }
+}
+
+/// Characters that take no visible space: Unicode's default-ignorable code
+/// points, and the blank braille pattern, which renders as a blank cell.
+fn renders_as_nothing(c: char) -> bool {
+    use icu_properties::CodePointSetData;
+    use icu_properties::props::DefaultIgnorableCodePoint;
+    c == '\u{2800}' || CodePointSetData::new::<DefaultIgnorableCodePoint>().contains(c)
+}
+
+/// `name` lowercased, with the letters that pass for `0`, `x` and the hex
+/// digits mapped to them (Cyrillic and Greek lookalikes, `o` for zero) and
+/// the ellipsis spelled `...`: what the address checks read.
+fn address_fold(name: &str) -> String {
+    name.chars()
+        .flat_map(|c| c.to_lowercase())
+        .map(|c| match c {
+            'о' | 'ο' | 'o' => '0',
+            'х' | 'χ' | '×' => 'x',
+            'а' | 'α' => 'a',
+            'в' | 'β' => 'b',
+            'с' | 'ϲ' => 'c',
+            'е' | 'ε' => 'e',
+            other => other,
+        })
+        .collect::<String>()
+        .replace('…', "...")
+}
+
+/// Every wallet address the folded name shows, as the (head, tail) a reader
+/// sees: `0x` + 40 hex digits is a full address (tail empty); `0x` + at least
+/// 3 hex digits, two or more dots, and at least 3 hex digits is an
+/// abbreviated one.
+fn shown_addresses(folded: &str) -> impl Iterator<Item = (String, String)> + '_ {
+    folded.match_indices("0x").filter_map(|(at, _)| {
+        let rest = &folded[at + 2..];
+        let head_len = rest.bytes().take_while(u8::is_ascii_hexdigit).count();
+        if head_len >= 40 {
+            return Some((format!("0x{}", &rest[..40]), String::new()));
+        }
+        if head_len < 3 {
+            return None;
+        }
+        let after = &rest[head_len..];
+        let dots = after.bytes().take_while(|b| *b == b'.').count();
+        let tail_len = after[dots..]
+            .bytes()
+            .take_while(u8::is_ascii_hexdigit)
+            .count();
+        (dots >= 2 && tail_len >= 3).then(|| {
+            (
+                format!("0x{}", &rest[..head_len]),
+                after[dots..dots + tail_len].to_owned(),
+            )
+        })
+    })
+}
+
+/// The four hex digits after every `guest#` the folded name shows.
+fn shown_guest_suffixes(folded: &str) -> impl Iterator<Item = &str> {
+    folded.match_indices("guest#").filter_map(|(at, _)| {
+        let rest = &folded[at + "guest#".len()..];
+        (rest.len() >= 4 && rest.as_bytes()[..4].iter().all(u8::is_ascii_hexdigit))
+            .then(|| &rest[..4])
+    })
 }
 
 fn mint(state: &CommsState, grant: Grant<'_>) -> Result<String, ApiError> {
@@ -347,6 +488,9 @@ fn mint(state: &CommsState, grant: Grant<'_>) -> Result<String, ApiError> {
         serde_json::to_string(&grant.metadata)
             .map_err(|e| ApiError::internal(format!("cast metadata: {e}")))?,
     );
+    for (key, value) in grant.attributes {
+        token = token.with_attribute(key, value);
+    }
     token.name = grant.metadata.display_name.map(str::to_owned);
     token
         .to_jwt()
@@ -374,6 +518,99 @@ async fn add_presenter(state: &CommsState, room: &str, identity: &str) -> Result
 }
 
 const PRESENTERS_FIELD: &str = "presenters";
+
+/// How many streamer ids of one place `presenters` keeps. Each streamer
+/// token adds one, connected or not.
+const STREAMER_PRESENTERS_MAX: usize = 32;
+
+/// A streamer token's lifetime (the token's default TTL): an id older than
+/// this that is not in the room can no longer join.
+const STREAMER_TOKEN_TTL_MS: i64 = 5 * 60 * 1000;
+
+/// Upstream's `addPresenter` for a new streamer id, in one read and one write
+/// of the room's metadata: streamer ids of the place that are not in the room
+/// and whose token has expired go first; if the place still has
+/// `STREAMER_PRESENTERS_MAX`, the oldest not in the room make way (a token
+/// minted moments ago and not yet connected included). Connected streamers
+/// always stay.
+async fn add_streamer_presenter(
+    state: &CommsState,
+    room: &str,
+    place_id: &str,
+    identity: &str,
+) -> Result<(), ApiError> {
+    let rooms = state.room_service();
+    rooms
+        .ensure_room(room)
+        .await
+        .map_err(|e| room_service_failure(room, e))?;
+    let connected: std::collections::HashSet<String> = match rooms.list_participants(room).await {
+        Ok(participants) => participants.into_iter().map(|p| p.identity).collect(),
+        Err(crate::shared::livekit::RoomServiceError::NotFound) => Default::default(),
+        Err(e) => return Err(room_service_failure(room, e)),
+    };
+    let prefix = format!("stream:{place_id}:");
+    let now = now_ms();
+    rooms
+        .rewrite_room_metadata_array(room, PRESENTERS_FIELD, |current| {
+            prune_streamers(current, &prefix, &connected, now, identity)
+        })
+        .await
+        .map_err(|e| room_service_failure(room, e))
+}
+
+/// `add_streamer_presenter`'s rewrite of `presenters`.
+fn prune_streamers(
+    current: Vec<String>,
+    prefix: &str,
+    connected: &std::collections::HashSet<String>,
+    now: i64,
+    identity: &str,
+) -> Vec<String> {
+    let idle = |id: &String| id.starts_with(prefix) && !connected.contains(id);
+    let mut kept: Vec<String> = current
+        .into_iter()
+        .filter(|id| {
+            !(idle(id) && minted_at_ms(id).is_none_or(|at| now - at > STREAMER_TOKEN_TTL_MS))
+        })
+        .collect();
+    let streamers = kept.iter().filter(|id| id.starts_with(prefix)).count();
+    let mut excess = (streamers + 1).saturating_sub(STREAMER_PRESENTERS_MAX);
+    kept.retain(|id| {
+        if excess > 0 && idle(id) {
+            excess -= 1;
+            false
+        } else {
+            true
+        }
+    });
+    if !kept.iter().any(|id| id == identity) {
+        kept.push(identity.to_owned());
+    }
+    kept
+}
+
+/// The `participant_left` webhook: a streamer that left its room leaves
+/// `presenters`. The caller skips a leave LiveKit reports for a session the
+/// same identity replaced (`DUPLICATE_IDENTITY`), and `on_publisher_joined`
+/// puts back a streamer that joins again with a live credential, so a leave
+/// that arrives after the rejoin does not drop it for good.
+/// Returns whether the participant was a Cast streamer.
+pub async fn forget_departed_streamer(
+    state: &CommsState,
+    room: &str,
+    identity: &str,
+) -> Result<bool, ApiError> {
+    if !state.livekit.configured || !identity.starts_with("stream:") {
+        return Ok(false);
+    }
+    state
+        .room_service()
+        .remove_from_room_metadata_array(room, PRESENTERS_FIELD, identity)
+        .await
+        .map_err(|e| ApiError::internal(format!("cast presenters: {e}")))?;
+    Ok(true)
+}
 
 // ── request bodies ──
 
@@ -632,8 +869,12 @@ pub async fn generate_stream_link(
     let place_id = resolve_place_id(&state.pool, world, &base, true)
         .await?
         .ok_or_else(|| ApiError::not_found(PLACE_NOT_FOUND_MSG))?;
-    let place = PlaceLookup::resolved(&state, &place_id, bound.footprint);
-    match scene::scene_owner_or_admin_decision(&state, &place, &sf.signer).await {
+    // Explicit admins are stored under the bound scene's entity id
+    // (`/scene-admin`); the credential stays under the catalogue place, and
+    // a world's one credential takes authority over the whole world or an
+    // admin of the bound scene.
+    let authority = super::key_authority(&state, &place_id, world, bound.place);
+    match super::key_decision(&state, &authority, bound.world_scene.as_ref(), &sf.signer).await {
         PermissionDecision::Allowed => {}
         PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
             tracing::warn!(signer = %sf.signer, place_id, "stream link refused: not a scene admin");
@@ -738,7 +979,8 @@ pub async fn streamer_token(
         Err(refusal) => return Ok(refusal),
     };
     let key = text(&body, "token").unwrap_or_default();
-    let display_name = text(&body, "identity").unwrap_or_default();
+    let display_name = shown_name(text(&body, "identity").unwrap_or_default(), None);
+    let display_name = display_name.as_str();
     let (place_id, room, access_id) = publishing_access(&state.pool, key).await?;
     // The streamer is registered as a presenter in the room's metadata.
     require_livekit(&state)?;
@@ -748,6 +990,7 @@ pub async fn streamer_token(
     let token = mint(
         &state,
         Grant {
+            attributes: Vec::new(),
             identity: &identity,
             room: &room,
             can_publish: true,
@@ -760,7 +1003,7 @@ pub async fn streamer_token(
             },
         },
     )?;
-    add_presenter(&state, &room, &identity).await?;
+    add_streamer_presenter(&state, &room, &place_id, &identity).await?;
     tracing::info!(room, place_id, "cast streamer token issued");
     Ok(Json(Credentials {
         url: state.livekit.client_url.clone(),
@@ -793,8 +1036,9 @@ pub async fn watcher_token(
         Err(refusal) => return Ok(refusal),
     };
     let location = text(&body, "location").unwrap_or_default();
-    let display_name = text(&body, "identity").unwrap_or_default();
     let watcher = &sf.signer;
+    let display_name = shown_name(text(&body, "identity").unwrap_or_default(), Some(watcher));
+    let display_name = display_name.as_str();
     // Before the location, so an unresolvable place still refuses.
     let device_id = device_identifier(&sf.metadata);
     refuse_if_platform_banned(&state, watcher, device_id.as_deref()).await?;
@@ -822,7 +1066,20 @@ pub async fn watcher_token(
         tracing::warn!(%watcher, place_id, "cast watcher token refused: scene ban");
         return Err(forbidden(SCENE_BANNED_WATCHER_MSG));
     }
+    let identity = format!("watch:{room}:{}", Uuid::new_v4());
+    // A world watcher carries the authorization proof a scene join carries
+    // (`admission::handlers`), stamped before the access check: the world
+    // access sweep keeps a watcher admitted after the world's last access
+    // edit (a password rotation included) and removes the rest.
+    let mut world_proof = None;
     if let Some(world) = scene_room.realm.world() {
+        let started =
+            super::super::admission::world_mint::authorization_started(&state.pool, world)
+                .await
+                .map_err(|error| {
+                    tracing::error!(%error, "world authorization unavailable");
+                    ApiError::http(503, "World authorization unavailable")
+                })?;
         let caller_ip = crate::shared::client_ip::client_ip(&headers);
         let caller = if caller_ip.is_empty() {
             watcher.as_str()
@@ -844,11 +1101,28 @@ pub async fn watcher_token(
             tracing::warn!(%watcher, place_id, "cast watcher token refused: world access");
             return Err(unauthorized(WORLD_ACCESS_DENIED_MSG));
         }
+        let proof = super::super::admission::world_mint::authorization_proof(
+            &state.livekit.api_secret,
+            world,
+            &identity,
+            &room,
+            started,
+        );
+        world_proof = Some(
+            json!({ super::super::admission::world_mint::AUTHORIZATION_FIELD: proof }).to_string(),
+        );
     }
-    let identity = format!("watch:{room}:{}", Uuid::new_v4());
+    let mut attributes = vec![(WATCHER_WALLET_ATTRIBUTE, watcher.as_str().to_owned())];
+    if let Some(proof) = world_proof {
+        attributes.push((
+            super::super::admission::world_mint::AUTHORIZATION_ATTRIBUTE,
+            proof,
+        ));
+    }
     let token = mint(
         &state,
         Grant {
+            attributes,
             identity: &identity,
             room: &room,
             can_publish: false,
@@ -914,6 +1188,7 @@ pub async fn presentation_bot_token(
     let token = mint(
         &state,
         Grant {
+            attributes: Vec::new(),
             identity: &identity,
             room: &room,
             can_publish: true,
@@ -933,6 +1208,26 @@ pub async fn presentation_bot_token(
         room_id: room,
     })
     .into_response())
+}
+
+// ── watchers ──
+
+/// The attribute of a watcher's token that holds the viewer's wallet.
+pub(crate) const WATCHER_WALLET_ATTRIBUTE: &str = "dcl.castWatcher";
+
+/// The wallet a Cast watcher (`watch:<room>:<uuid>`) signed in with, from
+/// the attribute its token set: its identity is synthetic, so the ban and
+/// world access sweeps read it here. `None` for any other participant.
+pub(crate) fn watcher_wallet(
+    identity: &str,
+    attributes: &std::collections::BTreeMap<String, String>,
+) -> Option<Address> {
+    if !identity.starts_with("watch:") {
+        return None;
+    }
+    attributes
+        .get(WATCHER_WALLET_ATTRIBUTE)
+        .and_then(|wallet| Address::parse(wallet).ok())
 }
 
 // ── revoking a credential ──
@@ -1007,6 +1302,28 @@ pub(crate) async fn evict_revoked_publishers(
 /// Untagged publishers (minted before identities carried the credential) are
 /// removed when the room has no active credential. Returns whether it removed
 /// the participant.
+/// The `participant_joined` webhook for Cast publishers: a revoked key's
+/// publisher is removed (`refuse_revoked_publisher`); a streamer of the live
+/// credential is (again) a presenter, which a full reconnect's leave of the
+/// old session may have removed.
+pub async fn on_publisher_joined(
+    state: &CommsState,
+    room: &str,
+    identity: &str,
+) -> Result<(), ApiError> {
+    if refuse_revoked_publisher(state, room, identity).await? || !identity.starts_with("stream:") {
+        return Ok(());
+    }
+    if !state.livekit.configured {
+        return Ok(());
+    }
+    state
+        .room_service()
+        .append_to_room_metadata_array(room, PRESENTERS_FIELD, identity)
+        .await
+        .map_err(|e| ApiError::internal(format!("cast presenters: {e}")))
+}
+
 pub async fn refuse_revoked_publisher(
     state: &CommsState,
     room: &str,
@@ -1059,8 +1376,13 @@ pub async fn add_admin_presenter_on_join(
     let Some(access) = access_by_room(&state.pool, room).await? else {
         return Ok(false);
     };
-    let place = PlaceLookup::new(state, &access.place_id);
-    match scene::scene_owner_or_admin_decision(state, &place, identity).await {
+    // The room's own scene: explicit admins are stored under its entity id.
+    let place = match room_scene(state, room).await? {
+        Some(resolved) => super::scene_authority(state, &resolved, &access.place_id).await?,
+        None => None,
+    }
+    .unwrap_or_else(|| PlaceLookup::new(state, &access.place_id));
+    match scene::scene_manager_decision(state, &place, identity).await {
         PermissionDecision::Allowed => {
             add_presenter(state, room, identity.as_str()).await?;
             Ok(true)
@@ -1126,7 +1448,7 @@ pub fn spawn_admin_presenter_on_join(state: SharedState, room: String, identity:
         );
         return;
     };
-    tokio::spawn(async move {
+    crate::shared::task::spawn(async move {
         let _permit = permit;
         match tokio::time::timeout(
             ADMIN_LOOKUP_TIMEOUT,
@@ -1183,12 +1505,13 @@ pub fn is_valid_presenter_identity(identity: &str) -> bool {
 async fn presenter_room(state: &CommsState, sf: &SignedFetch) -> Result<String, ApiError> {
     require_scene_metadata(sf, "sceneId is required in authMetadata")?;
     require_livekit(state)?;
-    let room = Context::resolve(state, &sf.metadata).await?.room;
+    let bound = Context::resolve(state, &sf.metadata).await?;
+    let room = bound.room;
     let access = access_by_room(&state.pool, &room)
         .await?
         .ok_or_else(|| no_active_stream(&room))?;
-    let place = PlaceLookup::new(state, &access.place_id);
-    match place.get().await {
+    let stored = PlaceLookup::new(state, &access.place_id);
+    match stored.get().await {
         Ok(Some(_)) => {}
         Ok(None) => {
             return Err(ApiError::not_found(format!(
@@ -1206,7 +1529,9 @@ async fn presenter_room(state: &CommsState, sf: &SignedFetch) -> Result<String, 
             ));
         }
     }
-    match scene::scene_owner_or_admin_decision(state, &place, &sf.signer).await {
+    // The signed scene is the room's: its explicit admins are stored under
+    // its entity id (`/scene-admin`), not under the credential's place.
+    match scene::scene_manager_decision(state, &bound.place, &sf.signer).await {
         PermissionDecision::Allowed => Ok(room),
         PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
             Err(forbidden(NOT_PRESENTER_ADMIN_MSG))

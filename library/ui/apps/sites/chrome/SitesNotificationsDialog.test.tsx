@@ -3,6 +3,7 @@ import { renderToString } from 'react-dom/server'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NavBarLinkProps } from '../../../components/NavBar/NavBar'
+import defaultThumbnail from '../assets/dcl-logo.svg'
 import SitesNotificationsDialog from './SitesNotificationsDialog'
 const Link = (props: NavBarLinkProps) => <a {...props} />
 const props = { onClose: () => {}, state: 'loading' as const, rows: [], Link }
@@ -118,7 +119,11 @@ describe('Sites notifications presentation', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Couldn’t load notifications.')
     expect(screen.queryByRole('status')).toBeNull()
     view.rerender(<SitesNotificationsDialog {...props} state="ready" />)
-    expect(screen.getByText('No notifications yet')).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'No Notifications Yet' })).toBeVisible()
+    expect(screen.getByRole('link', { name: 'Decentraland Foundation Community' })).toHaveAttribute(
+      'href',
+      '/social/communities/e99471aa-31c4-4952-abf6-99905445f43b'
+    )
     view.rerender(
       <SitesNotificationsDialog
         {...props}
@@ -133,7 +138,20 @@ describe('Sites notifications presentation', () => {
     expect(screen.getByText('Read item').closest('li')).not.toHaveAttribute('data-unread')
     expect(screen.getByText(row.title).closest('li')).toHaveAttribute('data-unread', 'true')
     expect(screen.getAllByRole('dialog')).toHaveLength(1)
-    expect(screen.queryByText('No notifications yet')).toBeNull()
+    expect(screen.queryByText('No Notifications Yet')).toBeNull()
+  })
+  it('replaces a failed notification thumbnail with the default image', () => {
+    render(
+      <SitesNotificationsDialog
+        {...props}
+        state="ready"
+        rows={[{ ...row, image: '/missing.png' }]}
+      />
+    )
+    const image = screen.getByRole('listitem').querySelector('img')!
+    expect(image).toHaveAttribute('src', '/missing.png')
+    fireEvent.error(image)
+    expect(image).toHaveAttribute('src', defaultThumbnail)
   })
   it('closes through the owner without leaving a modal mounted', () => {
     function Host() {
@@ -158,4 +176,38 @@ it('keeps cached notification rows visible with an inline refresh error', () => 
     'Couldn’t refresh notifications. Showing previous notifications.'
   )
   expect(screen.getByRole('link', { name: /Notification title/ })).toHaveAttribute('href', '/shop')
+})
+
+describe('when the notification popover has a different first button', () => {
+  beforeEach(() => {
+    function Host() {
+      const [open, setOpen] = useState(false)
+      return (
+        <div>
+          <button type="button">Unrelated action</button>
+          <button type="button" onClick={() => setOpen(true)}>
+            Open notifications
+          </button>
+          {open ? (
+            <SitesNotificationsDialog
+              {...props}
+              presentation="popover"
+              onClose={() => setOpen(false)}
+            />
+          ) : null}
+        </div>
+      )
+    }
+    render(<Host />)
+  })
+
+  it('should restore focus to the actual opener after closing', () => {
+    const opener = screen.getByRole('button', { name: 'Open notifications' })
+    opener.focus()
+    fireEvent.click(opener)
+    const dismiss = screen.getByRole('button', { name: 'Close' })
+    dismiss.focus()
+    fireEvent.click(dismiss)
+    expect(opener).toHaveFocus()
+  })
 })

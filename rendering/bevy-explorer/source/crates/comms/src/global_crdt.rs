@@ -401,6 +401,25 @@ impl CrdtContexts {
             .copied()
             .or_else(|| (!common::structs::multi_tenant()).then(|| self.shared()))
     }
+
+    /// Removes the contexts `keep` rejects and returns their entities. Marks the resource changed
+    /// only when something was removed: change-detecting readers (the listener AoI rebuild) must
+    /// not run on every frame of a per-frame sweep.
+    pub fn reap(contexts: &mut ResMut<Self>, mut keep: impl FnMut(&str) -> bool) -> Vec<Entity> {
+        let doomed: Vec<String> = contexts
+            .0
+            .iter()
+            .filter(|(hash, _)| !keep(hash))
+            .map(|(hash, _)| hash.clone())
+            .collect();
+        if doomed.is_empty() {
+            return Vec::new();
+        }
+        doomed
+            .iter()
+            .filter_map(|hash| contexts.0.remove(hash))
+            .collect()
+    }
 }
 
 impl GlobalCrdtState {
@@ -512,7 +531,10 @@ impl GlobalCrdtState {
     }
 }
 
+/// Requires `ForeignAvatar`: the avatar crate tells remote avatars apart by that marker, as it
+/// does not depend on comms.
 #[derive(Component, Debug)]
+#[require(common::structs::ForeignAvatar)]
 pub struct ForeignPlayer {
     pub address: Address,
     /// the crdt context (player-presence view) this player entity belongs to; the same
@@ -758,7 +780,6 @@ fn remote_move_kind(
 /// [`PlayerMessage::Movement`]) or as a legacy rfc4 packet over a websocket transport (as
 /// [`PlayerMessage::PlayerData`]). Writes the CRDT transform and emits a [`PlayerPositionEvent`]
 /// for `foreign_dynamics` to interpolate.
-#[allow(clippy::too_many_arguments)]
 fn apply_foreign_movement(
     m: &rfc4::Movement,
     entity: Entity,
@@ -828,7 +849,6 @@ fn apply_foreign_movement(
     });
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn process_transport_updates(
     mut commands: Commands,
     mut contexts: Query<(Entity, &mut GlobalCrdtState)>,
@@ -1508,7 +1528,11 @@ fn remove_transport_from_foreign_audio_source(
 
 fn handle_foreign_audio(
     transports: Query<(Entity, &Transport)>,
-    mut q: Query<(&mut ForeignAudioSource, &ForeignPlayer)>,
+    mut q: Query<(
+        &mut ForeignAudioSource,
+        &ForeignPlayer,
+        Has<crate::BlockedOrBanned>,
+    )>,
     #[cfg(feature = "livekit")] call_rooms: Query<
         &crate::livekit::participant::ParticipantIndex,
         With<crate::voice_chat::VoiceRoom>,
@@ -1519,26 +1543,7 @@ fn handle_foreign_audio(
         .filter_map(|(e, transport)| transport.control.as_ref().map(|t| (e, t)))
         .collect::<HashMap<_, _>>();
 
-    for (mut source, player) in q.iter_mut() {
-        // a call's peers are heard flat through the call, not spatially as well
-        #[cfg(feature = "livekit")]
-        let in_call_with = call_rooms.iter().any(|index| {
-            index.contains_key(&crate::livekit::participant::ParticipantIndex::key(
-                &format!("{:#x}", player.address),
-            ))
-        });
-        #[cfg(not(feature = "livekit"))]
-        let in_call_with = false;
-        if in_call_with {
-            if let Some(current) = source.current_transport.take() {
-                if let Some(control) = transports.get(&current) {
-                    let _ = control.try_send(ChannelControl::VoiceUnsubscribe(player.address));
-                }
-                source.audio_receiver = None;
-            }
-            continue;
-        }
-
+    for (mut source, player, blocked_or_banned) in q.iter_mut() {
         let prev_available = source.available_transports.clone();
         let prev_transport = source.current_transport;
 
@@ -1568,8 +1573,25 @@ fn handle_foreign_audio(
             source.audio_receiver = None;
         }
 
-        // request a new source
-        if source.current_transport.is_none() {
+        // A call's peers are heard flat through the call, not spatially as well. Skipping after
+        // the availability events are read keeps a long skip from filling their channel.
+        #[cfg(feature = "livekit")]
+        let in_call_with = call_rooms.iter().any(|index| {
+            index.contains_key(&crate::livekit::participant::ParticipantIndex::key(
+                &format!("{:#x}", player.address),
+            ))
+        });
+        #[cfg(not(feature = "livekit"))]
+        let in_call_with = false;
+        if in_call_with || blocked_or_banned {
+            if let Some(current) = source.current_transport.take() {
+                if let Some(control) = transports.get(&current) {
+                    let _ = control.try_send(ChannelControl::VoiceUnsubscribe(player.address));
+                }
+                source.audio_receiver = None;
+            }
+        } else if source.current_transport.is_none() {
+            // request a new source
             if let Some(entity) = source.available_transports.iter().next() {
                 let control = transports.get(entity).unwrap();
                 let (sx, rx) = oneshot::channel();
@@ -1625,6 +1647,59 @@ pub fn acceptable_emote_urn(urn: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Resource, Default)]
+    struct Doomed(Option<String>);
+
+    #[derive(Resource, Default)]
+    struct Observed {
+        changed: bool,
+    }
+
+    fn reap_doomed(mut contexts: ResMut<CrdtContexts>, doomed: Res<Doomed>) {
+        CrdtContexts::reap(&mut contexts, |hash| Some(hash) != doomed.0.as_deref());
+    }
+
+    fn observe(contexts: Res<CrdtContexts>, mut observed: ResMut<Observed>) {
+        observed.changed = contexts.is_changed();
+    }
+
+    #[test]
+    fn reaping_marks_contexts_changed_only_when_something_is_removed() {
+        let mut app = App::new();
+        let shared = app.world_mut().spawn_empty().id();
+        let room = app.world_mut().spawn_empty().id();
+        app.insert_resource(CrdtContexts(HashMap::from_iter([
+            (String::new(), shared),
+            ("room".to_owned(), room),
+        ])))
+        .init_resource::<Doomed>()
+        .init_resource::<Observed>()
+        .add_systems(Update, (reap_doomed, observe).chain());
+
+        // the first frame sees the resource as added
+        app.update();
+        assert!(app.world().resource::<Observed>().changed);
+
+        app.update();
+        assert!(!app.world().resource::<Observed>().changed);
+        assert_eq!(app.world().resource::<CrdtContexts>().0.len(), 2);
+
+        app.world_mut().resource_mut::<Doomed>().0 = Some("room".to_owned());
+        app.update();
+        assert!(app.world().resource::<Observed>().changed);
+        assert_eq!(
+            app.world()
+                .resource::<CrdtContexts>()
+                .0
+                .keys()
+                .collect::<Vec<_>>(),
+            vec![""]
+        );
+
+        app.update();
+        assert!(!app.world().resource::<Observed>().changed);
+    }
 
     #[test]
     fn a_packet_names_the_movement_state_it_announces() {
@@ -2031,5 +2106,90 @@ mod tests {
             foreign_players(&mut app),
             vec![HashSet::from_iter([other, socket])]
         );
+    }
+
+    fn voice_app() -> (App, Entity, Entity, mpsc::Receiver<ChannelControl>) {
+        let mut app = App::new();
+        app.add_systems(Update, handle_foreign_audio);
+        let context = app.world_mut().spawn(GlobalCrdtState::new(None)).id();
+        let (sender, _) = mpsc::channel(1);
+        let (control, control_rx) = mpsc::channel(8);
+        let transport = app
+            .world_mut()
+            .spawn(Transport {
+                transport_type: crate::TransportType::Livekit,
+                sender,
+                control: Some(control),
+                context,
+            })
+            .id();
+        let peer = Address::repeat_byte(0xab);
+        let (audio_sender, audio_receiver) = mpsc::channel(10);
+        audio_sender
+            .try_send(ForeignAudioData::TransportAvailable(transport))
+            .unwrap();
+        let player = app
+            .world_mut()
+            .spawn((
+                ForeignPlayer {
+                    address: peer,
+                    context,
+                    transports: HashSet::from_iter([transport]),
+                    scene_id: SceneEntityId::new(*SceneEntityId::FOREIGN_PLAYER_RANGE.start(), 0),
+                    profile_version: 0,
+                    audio_sender,
+                },
+                ForeignAudioSource {
+                    audio_available_receiver: audio_receiver,
+                    audio_receiver: None,
+                    available_transports: Default::default(),
+                    current_transport: None,
+                },
+            ))
+            .id();
+        (app, player, transport, control_rx)
+    }
+
+    fn voice_controls(rx: &mut mpsc::Receiver<ChannelControl>) -> Vec<&'static str> {
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .map(|control| match control {
+                ChannelControl::VoiceSubscribe(..) => "subscribe",
+                ChannelControl::VoiceUnsubscribe(_) => "unsubscribe",
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_blocked_or_banned_player_is_unsubscribed_and_heard_again_once_cleared() {
+        let (mut app, player, _, mut controls) = voice_app();
+        app.update();
+        assert_eq!(voice_controls(&mut controls), ["subscribe"]);
+
+        app.world_mut()
+            .entity_mut(player)
+            .insert(crate::BlockedOrBanned);
+        app.update();
+        app.update();
+        assert_eq!(voice_controls(&mut controls), ["unsubscribe"]);
+
+        app.world_mut()
+            .entity_mut(player)
+            .remove::<crate::BlockedOrBanned>();
+        app.update();
+        assert_eq!(voice_controls(&mut controls), ["subscribe"]);
+    }
+
+    #[test]
+    fn a_blocked_or_banned_player_is_never_subscribed_and_keeps_its_streams_known() {
+        let (mut app, player, transport, mut controls) = voice_app();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(crate::BlockedOrBanned);
+        app.update();
+        assert!(voice_controls(&mut controls).is_empty());
+        let mut sources = app.world_mut().query::<&ForeignAudioSource>();
+        let source = sources.single(app.world()).unwrap();
+        assert!(source.available_transports.contains(&transport));
+        assert!(source.current_transport.is_none());
     }
 }

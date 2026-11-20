@@ -19,6 +19,8 @@
 //! by /64) may send [`PREAUTH_PER_MINUTE`], an IPv6 /48
 //! [`PREAUTH_PER_MINUTE_PER_48`]; a private or loopback peer (an unlisted
 //! gateway) is not limited before it.
+//! The auth dApp posts cross-origin with signed-fetch headers, so the route
+//! answers the browser's preflight with the events-notifier's CORS ([`CORS`]).
 //! A transfer below the minimum amount, or mined longer than the maximum age
 //! before its claim, is rejected (`TipSettings`). The notification id is a
 //! uuid v5 of the transaction hash.
@@ -28,6 +30,7 @@ use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
+use crate::shared::routing::post;
 use alloy_primitives::U256;
 use axum::Json;
 use axum::Router;
@@ -35,7 +38,6 @@ use axum::body::Bytes;
 use axum::extract::{ConnectInfo, Extension, OriginalUri, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
 use chrono::NaiveDateTime;
 use parking_lot::Mutex;
 use serde_json::{Value, json};
@@ -120,9 +122,20 @@ pub fn notification_id(transaction_hash: &str) -> Uuid {
     )
 }
 
+/// The events-notifier's `@dcl/http-server` CORS (`src/components.ts`: these
+/// methods, `maxAge: 86400`, no origin list): a preflight answers 204 with
+/// origin `*` and the requested signed-fetch headers reflected.
+const CORS: crate::shared::cors::HttpServerCors = crate::shared::cors::HttpServerCors {
+    methods: Some("GET,HEAD,OPTIONS,DELETE,POST,PUT"),
+    max_age: "86400",
+    nosniff: false,
+    preflight_echoes_request: false,
+};
+
 pub fn router(state: SharedState) -> Router {
     Router::new()
         .route("/forward-blockchain", post(forward))
+        .layer(axum::middleware::from_fn(|req, next| CORS.run(req, next)))
         .with_state(state)
 }
 
@@ -1422,6 +1435,50 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn a_cross_origin_forward_is_preflighted() {
+        use tower::ServiceExt;
+        let app = Router::new().nest(
+            "/events-notifier",
+            router(crate::market::tests::support::state_without_db()),
+        );
+        let requested = "content-type,x-identity-auth-chain-0,x-identity-auth-chain-1,x-identity-auth-chain-2,x-identity-timestamp,x-identity-metadata";
+        let res = app
+            .clone()
+            .oneshot(
+                axum::http::Request::options("/events-notifier/forward-blockchain")
+                    .header(header::ORIGIN, "https://auth.example.org")
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                    .header(header::ACCESS_CONTROL_REQUEST_HEADERS, requested)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NO_CONTENT);
+        let h = res.headers();
+        assert_eq!(h[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+        assert_eq!(
+            h[header::ACCESS_CONTROL_ALLOW_METHODS],
+            "GET,HEAD,OPTIONS,DELETE,POST,PUT"
+        );
+        assert_eq!(h[header::ACCESS_CONTROL_ALLOW_HEADERS], requested);
+        assert_eq!(h[header::ACCESS_CONTROL_MAX_AGE], "86400");
+        assert_eq!(h[header::VARY], "Access-Control-Request-Headers");
+
+        let res = app
+            .oneshot(
+                axum::http::Request::post("/events-notifier/forward-blockchain")
+                    .header(header::ORIGIN, "https://auth.example.org")
+                    .body(axum::body::Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(res.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
     }
 
     #[test]

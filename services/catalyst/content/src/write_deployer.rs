@@ -931,6 +931,32 @@ impl WriteDeployer {
         }
     }
 
+    /// Access at the current chain state, for a partial upload's scene
+    /// published past `REQUEST_TTL_BACKWARDS`: access at its timestamp alone
+    /// may predate a LAND transfer. Like every access check it grants what
+    /// the block five minutes before allows, so a transfer in the last five
+    /// minutes does not refuse it.
+    async fn validate_current_access(
+        &self,
+        entity: &Entity,
+        auth_chain: &AuthChain,
+    ) -> Result<(), DeployFailure> {
+        match &self.validator {
+            LocalValidation::Content(sources) => {
+                let ctx = super::validator::Context {
+                    sources,
+                    auth_chain,
+                };
+                super::validator::validate_current_access(entity, &ctx)
+                    .await
+                    .map_err(super::validator::into_deploy_failure)
+            }
+            // Its LAND check already reads the current state.
+            #[cfg(any(test, feature = "test-support"))]
+            LocalValidation::PartialChecks => Ok(()),
+        }
+    }
+
     async fn is_content_unchanged(&self, entity: &Entity) -> bool {
         let Some(pointer) = entity.pointers.first() else {
             return false;
@@ -1235,6 +1261,16 @@ impl WriteDeployer {
             }
         }
 
+        if context == "LOCAL"
+            && ttl_anchor_ms.is_some()
+            && entity.entity_type == EntityType::Scene
+            && now_ms - entity.timestamp > self.request_ttl_backwards_ms()
+            && let Err(failure) = self.validate_current_access(&entity, &auth_chain).await
+        {
+            warn!(entity_id, errors = ?failure, "deployment refused: no current access");
+            return Err(failure);
+        }
+
         let validation_us = validation_started.elapsed().as_micros() as u64;
         // Claimed once validation passed, so a deploy without rights never holds a pointer;
         // the deploy function's per-pointer locks stay the binding serializer.
@@ -1325,7 +1361,7 @@ fn persist_statement(local_provenance: bool) -> String {
             LIMIT 1
         ),
         overwrote AS (
-            SELECT dep1.id, dep1.entity_pointers
+            SELECT dep1.id, dep1.entity_id, dep1.entity_pointers
             FROM content.deployments AS dep1
             LEFT JOIN content.deployments AS dep2 ON dep1.deleter_deployment = dep2.id
             WHERE dep1.entity_type = $3
@@ -1367,6 +1403,7 @@ fn persist_statement(local_provenance: bool) -> String {
             DELETE FROM content.active_pointers
             WHERE EXISTS (SELECT 1 FROM ins)
               AND pointer IN (SELECT unnest(entity_pointers) FROM overwrote)
+              AND entity_id IN (SELECT entity_id FROM overwrote)
               AND NOT (pointer = ANY($7))
             RETURNING pointer
         ),

@@ -17,7 +17,16 @@ vi.hoisted(() => {
     $RefreshReg$: () => {},
   });
 });
-const net = vi.hoisted(() => ({ fetchProfile: vi.fn(), fetchMyCommunities: vi.fn(), fetchProfilePlaces: vi.fn(), track: vi.fn() }));
+const net = vi.hoisted(() => ({
+  fetchProfile: vi.fn(),
+  fetchMyCommunities: vi.fn(),
+  fetchMemberCommunities: vi.fn(),
+  fetchProfilePlaces: vi.fn(),
+  fetchProfileCreations: vi.fn(),
+  fetchProfileAssets: vi.fn(),
+  fetchUserPhotos: vi.fn(),
+  track: vi.fn(),
+}));
 const auth = vi.hoisted(() => ({
   state: { isConnected: false, address: null as string | null, identity: null as unknown },
 }));
@@ -25,16 +34,29 @@ vi.mock("@/data/lib/catalyst/social/profile", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/social/profile")>()),
   fetchProfile: net.fetchProfile,
 }));
-vi.mock("@/data/lib/catalyst/social/profile-communities", () => ({ fetchMyCommunities: net.fetchMyCommunities }));
+vi.mock("@/data/lib/catalyst/social/profile-communities", () => ({
+  fetchMyCommunities: net.fetchMyCommunities,
+  fetchMemberCommunities: net.fetchMemberCommunities,
+}));
 vi.mock("@/data/lib/catalyst/places/profile-places", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/places/profile-places")>()),
   fetchProfilePlaces: net.fetchProfilePlaces,
+}));
+vi.mock("@/data/lib/catalyst/marketplace/profile-collectibles", async (original) => ({
+  ...(await original<typeof import("@/data/lib/catalyst/marketplace/profile-collectibles")>()),
+  fetchProfileCreations: net.fetchProfileCreations,
+  fetchProfileAssets: net.fetchProfileAssets,
+  fetchProfileAssetCount: async () => 0,
+}));
+vi.mock("@/data/lib/catalyst/social/photos", async (original) => ({
+  ...(await original<typeof import("@/data/lib/catalyst/social/photos")>()),
+  fetchUserPhotos: net.fetchUserPhotos,
 }));
 vi.mock("@/data/lib/catalyst/social/badges", () => ({ fetchUserBadges: () => Promise.resolve([]) }));
 vi.mock("@/core/lib/telemetry/track", () => ({ track: net.track }));
 vi.mock("@/data/lib/auth/index", () => ({ useAuth: () => auth.state }));
 
-// The tab components are today's ui3 pages; these stand-ins show what the route hands them.
+// The tabs still on ui3 pages; these stand-ins show what the route hands them.
 const { stub } = vi.hoisted(() => ({
   stub: (tab: string) => ({
     default: (props: { profile: { name: string }; isOwnProfile?: boolean }) => (
@@ -46,10 +68,6 @@ const { stub } = vi.hoisted(() => ({
   }),
 }));
 vi.mock("@ui/web/pages/StProfileOverviewTab", () => stub("overview"));
-vi.mock("@ui/web/pages/StProfileCreationsTab", () => stub("creations"));
-vi.mock("@ui/web/pages/StProfilePhotosTab", () => stub("photos"));
-vi.mock("@ui/web/pages/StProfileCommunitiesTab", () => stub("communities"));
-vi.mock("@ui/web/pages/StProfileMyAssetsTab", () => stub("assets"));
 
 import { CatalystError } from "@/data/lib/catalyst/client";
 import { mapProfile } from "@/data/lib/catalyst/social/profile";
@@ -405,6 +423,71 @@ describe("profile route, places", () => {
   });
 });
 
+describe("profile route, creations and assets", () => {
+  const hat = { id: "c-0", contractAddress: "0xabc", itemId: "0", name: "Billyjuice", network: "polygon", payment: { kind: "none" }, traits: { bodyShapes: [], isSmart: false } };
+
+  it("shows a member's creations under their own tab", async () => {
+    net.fetchProfile.mockResolvedValue(avatar("Alice"));
+    net.fetchProfileCreations.mockResolvedValue({ items: [hat], received: 1, total: 1 });
+
+    mount(`/profile/${A}/creations`);
+
+    expect((await screen.findByRole("link", { name: "Billyjuice" })).getAttribute("href")).toBe("/shop/item/0xabc/0");
+    expect(screen.getByText("Alice", { selector: "article *" })).toBeTruthy();
+  });
+
+  it("opens another profile's creations on the default category", async () => {
+    const B = "0x1111111111111111111111111111111111111111";
+    net.fetchProfile.mockResolvedValue(avatar("Alice"));
+    net.fetchProfileCreations.mockResolvedValue({ items: [hat], received: 1, total: 1 });
+    const router = mount(`/profile/${A}/creations`);
+    await screen.findByRole("link", { name: "Billyjuice" });
+    await act(async () => screen.getByRole("tab", { name: "Emotes" }).click());
+    expect(screen.getByRole("tab", { name: "Emotes" }).getAttribute("aria-selected")).toBe("true");
+
+    await act(async () => router.navigate(`/profile/${B}/creations`));
+
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Wearables" }).getAttribute("aria-selected")).toBe("true"));
+    expect(net.fetchProfileCreations).toHaveBeenLastCalledWith(B, expect.objectContaining({ category: "wearable" }), expect.anything());
+  });
+
+  it("shows the owner's assets on their own profile", async () => {
+    auth.state = { isConnected: true, address: A, identity };
+    net.fetchProfile.mockResolvedValue(avatar("Alice"));
+    net.fetchProfileAssets.mockResolvedValue({ items: [{ ...hat, id: "t-1", tokenId: "7", category: "wearable" }], received: 1, total: 1 });
+
+    mount(`/profile/${A}/assets`);
+
+    expect((await screen.findByRole("link", { name: "Billyjuice" })).getAttribute("href")).toBe("/shop/token/0xabc/7");
+    expect(screen.getByText("1 asset")).toBeTruthy();
+  });
+});
+
+describe("profile route, photos", () => {
+  const shot = {
+    id: "p-1",
+    url: "https://reel.example/p-1.jpg",
+    thumbnailUrl: "https://reel.example/p-1-thumbnail.jpg",
+    isPublic: true,
+    dateTime: "",
+    realm: "main",
+    scene: { name: "Genesis Plaza", x: "0", y: "1" },
+    author: { name: "Alice", address: A },
+    people: [],
+  };
+
+  it("shows a member's photos and opens the one the link names", async () => {
+    net.fetchProfile.mockResolvedValue(avatar("Alice"));
+    net.fetchUserPhotos.mockResolvedValue({ items: [shot], received: 1, total: 1 });
+
+    mount(`/profile/${A}/photos?photo=p-1`);
+
+    expect(await screen.findByRole("dialog", { name: "Photo at Genesis Plaza, 1 of 1" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Photo at Genesis Plaza" })).toBeTruthy();
+    expect(screen.getByText("1 photo")).toBeTruthy();
+  });
+});
+
 describe("profile route, communities", () => {
   it("reports a failed read of the member's own communities once", async () => {
     auth.state = { isConnected: true, address: A, identity };
@@ -426,13 +509,19 @@ describe("profile route, communities", () => {
     expect(net.fetchMyCommunities).toHaveBeenCalledTimes(1);
   });
 
-  it("neither reads nor reports communities on another member's profile", async () => {
+  it("lists another member's public communities in the profile's frame, unsigned", async () => {
     auth.state = { isConnected: true, address: "0x1111111111111111111111111111111111111111", identity };
     net.fetchProfile.mockResolvedValue(avatar("Alice"));
+    net.fetchMemberCommunities.mockResolvedValue({
+      communities: [{ id: "c1", name: "Builders", role: "owner", membersCount: null, privacy: null, thumbnailUrl: null }],
+      total: 1,
+    });
 
     mount(`/profile/${A}/communities`);
 
-    expect(await screen.findByRole("heading", { name: "Alice" })).toBeTruthy();
+    expect((await screen.findByRole("link", { name: /Builders/ })).getAttribute("href")).toBe("/social/communities/c1");
+    expect(screen.getByRole("tab", { name: "Communities" }).getAttribute("aria-selected")).toBe("true");
+    expect(net.fetchMemberCommunities).toHaveBeenCalledWith(A, expect.anything());
     expect(net.fetchMyCommunities).not.toHaveBeenCalled();
     expect(net.track.mock.calls.some(([event]) => event === "profile_communities_load_failed")).toBe(false);
   });

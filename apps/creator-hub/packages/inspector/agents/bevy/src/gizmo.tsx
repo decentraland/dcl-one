@@ -21,7 +21,7 @@ import type { Entity } from '@dcl/sdk/ecs';
 // ReactEcs is the JSX pragma (used as a value by the JSX transform for the
 // gizmoOverlay UI), so it must be a runtime default import — the
 // consistent-type-imports rule mis-flags it because it sees no explicit usage.
-// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+// oxlint-disable-next-line typescript/consistent-type-imports
 import ReactEcs, { ReactEcsRenderer, UiEntity } from '@dcl/sdk/react-ecs';
 import { Vector3, Quaternion, Color4, Color3 } from '@dcl/sdk/math';
 import type { GizmoMode } from '@dcl/inspector-bevy-protocol';

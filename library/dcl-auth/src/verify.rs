@@ -11,13 +11,45 @@ use super::error::AuthError;
 use super::hex0x::{HexDecodeError, decode_hex_0x};
 use super::recover::recover_address;
 
+/// The first line of an ephemeral payload signed as a login.
+pub const LOGIN_PURPOSE: &str = "Decentraland Login";
+
+/// Which delegations an ephemeral link may carry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DelegationPurpose {
+    /// Any first line: an entity's deployment chain.
+    Any,
+    /// A login: every ephemeral payload starts with exactly [`LOGIN_PURPOSE`].
+    Login,
+}
+
 /// Walks the chain with plain ECDSA links only; an EIP-1654 link fails with
 /// [`AuthError::Eip1654NotImplemented`], exactly as [`verify_auth_chain_async`]
-/// does without a validator.
+/// does without a validator. Delegations of any purpose; a surface that
+/// accepts the chain as a login uses [`verify_login_chain`].
 pub fn verify_auth_chain(
     chain: &AuthChain,
     expected_address: &str,
     now_ms: Option<i64>,
+) -> Result<(), AuthError> {
+    walk_chain_sync(chain, expected_address, now_ms, DelegationPurpose::Any)
+}
+
+/// [`verify_auth_chain`] for a chain presented as a login: every ephemeral
+/// delegation must be a [`LOGIN_PURPOSE`] one.
+pub fn verify_login_chain(
+    chain: &AuthChain,
+    expected_address: &str,
+    now_ms: Option<i64>,
+) -> Result<(), AuthError> {
+    walk_chain_sync(chain, expected_address, now_ms, DelegationPurpose::Login)
+}
+
+fn walk_chain_sync(
+    chain: &AuthChain,
+    expected_address: &str,
+    now_ms: Option<i64>,
+    purpose: DelegationPurpose,
 ) -> Result<(), AuthError> {
     check_structure(chain)?;
 
@@ -35,6 +67,7 @@ pub fn verify_auth_chain(
                     &current_authority,
                     now_ms,
                     ExpirationPolicy::Strict,
+                    purpose,
                 )?
                 .0
             }
@@ -64,6 +97,8 @@ pub struct ChainVerdict {
     pub trusted_expirations: Vec<String>,
 }
 
+/// Delegations of any purpose; a surface that accepts the chain as a login
+/// uses [`verify_login_chain_async`].
 pub async fn verify_auth_chain_async(
     chain: &AuthChain,
     expected_address: &str,
@@ -77,14 +112,38 @@ pub async fn verify_auth_chain_async(
         eip1654_validator,
         ExpirationPolicy::Strict,
         ContractPolicy::Latest,
+        DelegationPurpose::Any,
     )
     .await
     .map(|_| ())
 }
 
-/// Fresh socket authentication: latest hash pair, then a block selected for `started_ms`.
-/// The same timestamp checks every delegation expiry and every contract fallback.
-pub async fn verify_auth_chain_at_verification_time(
+/// [`verify_auth_chain_async`] for a chain presented as a login (signed
+/// fetch, socket handshakes, identities): every ephemeral delegation must be
+/// a [`LOGIN_PURPOSE`] one.
+pub async fn verify_login_chain_async(
+    chain: &AuthChain,
+    expected_address: &str,
+    now_ms: Option<i64>,
+    eip1654_validator: Option<&dyn Eip1654Validator>,
+) -> Result<(), AuthError> {
+    walk_chain(
+        chain,
+        expected_address,
+        now_ms,
+        eip1654_validator,
+        ExpirationPolicy::Strict,
+        ContractPolicy::Latest,
+        DelegationPurpose::Login,
+    )
+    .await
+    .map(|_| ())
+}
+
+/// Fresh socket login: latest hash pair, then a block selected for `started_ms`.
+/// The same timestamp checks every delegation expiry and every contract fallback;
+/// every ephemeral delegation must be a [`LOGIN_PURPOSE`] one.
+pub async fn verify_login_chain_at_verification_time(
     chain: &AuthChain,
     expected_address: &str,
     started_ms: i64,
@@ -97,6 +156,7 @@ pub async fn verify_auth_chain_at_verification_time(
         eip1654_validator,
         ExpirationPolicy::Strict,
         ContractPolicy::VerificationTime,
+        DelegationPurpose::Login,
     )
     .await
     .map(|_| ())
@@ -118,6 +178,7 @@ pub async fn verify_peer_auth_chain(
         Some(&PeerValidated),
         ExpirationPolicy::TrustPeer,
         ContractPolicy::Latest,
+        DelegationPurpose::Any,
     )
     .await
 }
@@ -138,6 +199,7 @@ pub async fn verify_synced_auth_chain(
         eip1654_validator,
         ExpirationPolicy::TrustPeer,
         ContractPolicy::Latest,
+        DelegationPurpose::Any,
     )
     .await
 }
@@ -176,6 +238,7 @@ async fn walk_chain(
     eip1654_validator: Option<&dyn Eip1654Validator>,
     policy: ExpirationPolicy,
     contract_policy: ContractPolicy,
+    purpose: DelegationPurpose,
 ) -> Result<ChainVerdict, AuthError> {
     check_structure(chain)?;
 
@@ -189,7 +252,7 @@ async fn walk_chain(
             AuthLinkType::EcdsaSignedEntity => signed_entity_link(link, index, &current_authority)?,
             AuthLinkType::EcdsaEphemeral => {
                 let (authority, trusted) =
-                    ephemeral_link(link, index, &current_authority, now_ms, policy)?;
+                    ephemeral_link(link, index, &current_authority, now_ms, policy, purpose)?;
                 verdict.trusted_expirations.extend(trusted);
                 authority
             }
@@ -198,7 +261,7 @@ async fn walk_chain(
                 let validator = eip1654_validator.ok_or(AuthError::Eip1654NotImplemented)?;
                 let signature = require_signature(link, index)?;
                 let (message, ephemeral_address, expiration) =
-                    ephemeral_payload_within(link, now_ms, policy)?;
+                    ephemeral_payload_within(link, now_ms, policy, purpose)?;
 
                 let sig_bytes = decode_hex_signature(&signature)?;
 
@@ -345,9 +408,11 @@ fn ephemeral_link(
     current_authority: &str,
     now_ms: i64,
     policy: ExpirationPolicy,
+    purpose: DelegationPurpose,
 ) -> Result<(String, Option<String>), AuthError> {
     let signature = require_signature(link, index)?;
-    let (message, ephemeral_address, expiration) = ephemeral_payload_within(link, now_ms, policy)?;
+    let (message, ephemeral_address, expiration) =
+        ephemeral_payload_within(link, now_ms, policy, purpose)?;
 
     let recovered = recover_address(message.as_bytes(), &signature)?;
 
@@ -370,8 +435,14 @@ fn ephemeral_payload_within(
     link: &AuthLink,
     now_ms: i64,
     policy: ExpirationPolicy,
+    purpose: DelegationPurpose,
 ) -> Result<(String, String, Result<i64, String>), AuthError> {
     let (message, ephemeral_address, expiration) = split_ephemeral_payload(&link.payload)?;
+    if purpose == DelegationPurpose::Login && message.split('\n').next() != Some(LOGIN_PURPOSE) {
+        return Err(AuthError::InvalidEphemeralPayload(format!(
+            "a login delegation's first line must be '{LOGIN_PURPOSE}'"
+        )));
+    }
     match expiration {
         Ok(expiration_ms) if expiration_ms <= now_ms => Err(AuthError::EphemeralExpired {
             expiration_ms,
@@ -543,6 +614,12 @@ mod tests {
     }
 
     async fn ecdsa_chain_expiring(expiration: &str) -> (AuthChain, &'static str) {
+        ecdsa_chain_delegating(&format!("{LOGIN_PURPOSE}\n"), expiration).await
+    }
+
+    /// A SIGNER, an ephemeral delegation whose payload starts with `head` (its
+    /// first line and newline, or nothing), and an entity the delegate signed.
+    async fn ecdsa_chain_delegating(head: &str, expiration: &str) -> (AuthChain, &'static str) {
         use alloy::signers::{Signer, local::PrivateKeySigner};
 
         let root_key: PrivateKeySigner =
@@ -554,7 +631,7 @@ mod tests {
                 .parse()
                 .unwrap();
         let ephemeral_payload = format!(
-            "Decentraland Login\nEphemeral address: {:#x}\nExpiration: {expiration}",
+            "{head}Ephemeral address: {:#x}\nExpiration: {expiration}",
             ephemeral_key.address()
         );
         let entity_payload = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
@@ -824,5 +901,99 @@ mod tests {
         let logs = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
         assert_eq!(logs.matches("ECDSA_SIGNED_ENTITY: verified").count(), 2);
         assert!(!logs.contains(CANARY), "signed payload survived in {logs}");
+    }
+
+    /// A login verifier accepts only delegations whose first line is exactly
+    /// the login purpose; the entity verifiers keep accepting any purpose.
+    #[tokio::test]
+    async fn login_chains_require_the_login_delegation_purpose() {
+        let expiration = "2099-01-01T00:00:00.000Z";
+        let now = Some(0);
+
+        let (chain, entity) = ecdsa_chain_delegating("Decentraland Login\n", expiration).await;
+        verify_login_chain(&chain, entity, now).unwrap();
+        verify_login_chain_async(&chain, entity, now, None)
+            .await
+            .unwrap();
+        verify_login_chain_at_verification_time(&chain, entity, 0, None)
+            .await
+            .unwrap();
+
+        for head in [
+            "Decentraland Authoritative Storage Delegation\n",
+            "decentraland login\n",
+            "Decentraland Login \n",
+            "Decentraland Login extra\n",
+        ] {
+            let (chain, entity) = ecdsa_chain_delegating(head, expiration).await;
+            let refused = |err: AuthError| {
+                assert!(
+                    matches!(&err, AuthError::InvalidEphemeralPayload(m) if m.contains(LOGIN_PURPOSE)),
+                    "{head:?}: {err}"
+                );
+            };
+            refused(verify_login_chain(&chain, entity, now).unwrap_err());
+            refused(
+                verify_login_chain_async(&chain, entity, now, None)
+                    .await
+                    .unwrap_err(),
+            );
+            refused(
+                verify_login_chain_at_verification_time(&chain, entity, 0, None)
+                    .await
+                    .unwrap_err(),
+            );
+            verify_auth_chain(&chain, entity, now).unwrap();
+            verify_auth_chain_async(&chain, entity, now, None)
+                .await
+                .unwrap();
+            verify_peer_auth_chain(&chain, entity, 0).await.unwrap();
+            verify_synced_auth_chain(&chain, entity, 0, None)
+                .await
+                .unwrap();
+        }
+    }
+
+    /// The purpose binds contract-wallet delegations too.
+    #[tokio::test]
+    async fn login_chains_require_the_login_purpose_on_contract_delegations() {
+        let delegate = "0x0000000000000000000000000000000000000002";
+        let chain_with = |first_line: &str| -> AuthChain {
+            vec![
+                AuthLink {
+                    link_type: AuthLinkType::SIGNER,
+                    payload: "0x0000000000000000000000000000000000000001".into(),
+                    signature: None,
+                },
+                AuthLink {
+                    link_type: AuthLinkType::EcdsaEip1654Ephemeral,
+                    payload: format!(
+                        "{first_line}\nEphemeral address: {delegate}\nExpiration: 2099-01-01T00:00:00.000Z"
+                    ),
+                    signature: Some("0x1234".into()),
+                },
+            ]
+        };
+        let validator: &dyn Eip1654Validator = &PeerValidated;
+
+        verify_login_chain_async(
+            &chain_with(LOGIN_PURPOSE),
+            delegate,
+            Some(0),
+            Some(validator),
+        )
+        .await
+        .unwrap();
+        let foreign = chain_with("Another Purpose");
+        let err = verify_login_chain_async(&foreign, delegate, Some(0), Some(validator))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AuthError::InvalidEphemeralPayload(_)),
+            "{err}"
+        );
+        verify_auth_chain_async(&foreign, delegate, Some(0), Some(validator))
+            .await
+            .unwrap();
     }
 }

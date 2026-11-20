@@ -43,11 +43,11 @@ pub mod world_manifest;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::get;
 use anyhow::Context as _;
 use axum::Router;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use serde_json::json;
 use sqlx::PgPool;
 use tower_http::cors::CorsLayer;
@@ -126,6 +126,26 @@ impl Sources {
             ("EXPLORER_MAP_SOURCE_URL", &self.map),
             ("ABGEN_UPSTREAM_AB_CDN", &self.ab_cdn),
         ]
+    }
+}
+
+/// The realm document's `comms.adapter`. `COMMS_ADAPTER` when it names one;
+/// left at its offline default while `COMMS_FIXED_ADAPTER` is set, the
+/// adapter this node's `/about` derives from that one setting
+/// (`content::about_comms::build_comms_config`), as upstream's realm provider
+/// derives its own from the connector URL alone. Otherwise the two documents
+/// of one node disagree and a client reading `adapter` first joins no room.
+fn realm_comms_adapter(adapter: &str, fixed_adapter: Option<&str>) -> String {
+    const OFFLINE: &str = "offline:offline";
+    let adapter = value_or(adapter, OFFLINE.into());
+    let fixed = value_or(fixed_adapter.unwrap_or_default(), String::new());
+    let fixed = fixed.as_str();
+    if adapter != OFFLINE || fixed.is_empty() || fixed == OFFLINE {
+        adapter
+    } else if fixed.starts_with("archipelago:") {
+        format!("archipelago:{fixed}")
+    } else {
+        format!("fixed-adapter:{fixed}")
     }
 }
 
@@ -231,7 +251,10 @@ impl Settings {
                 .unwrap_or("main")
                 .to_string(),
             network_id: network_id(&config.node.eth_network),
-            comms_adapter: value_or(&config.explore.comms_adapter, "offline:offline".into()),
+            comms_adapter: realm_comms_adapter(
+                &config.explore.comms_adapter,
+                config.explore.comms_fixed_adapter.as_deref(),
+            ),
             comms_fixed_adapter: value_or(
                 config.explore.comms_fixed_adapter.as_deref().unwrap_or(""),
                 "offline:offline".into(),
@@ -490,12 +513,11 @@ pub struct State {
     pub world_manifest: world_manifest::WorldManifestState,
     pub posters: posters::PosterState,
     pub opensea: opensea::Runtime,
-    /// The `/auth-api` sign-in relay's requests and identities (process state).
-    pub auth_api: auth_api::AuthApiState,
     /// The operator's runtime key/value map (process state).
     pub runtime_config: runtime_config::RuntimeConfigState,
-    /// The onboarding checkpoints (process state), shared with the Segment
-    /// webhooks that forward them (`social::segment_webhooks`).
+    /// The onboarding checkpoints (`explore_api.onboarding_checkpoints` over
+    /// this pool), shared with the Segment webhooks that forward them
+    /// (`social::segment_webhooks`).
     pub onboarding: Arc<onboarding::OnboardingState>,
     /// `GET /asset-bundle-registry/denylist`'s read of `content.denylist`.
     pub registry_denylist: registry::LocalDenylist,
@@ -524,22 +546,24 @@ impl State {
             settings.ab_cdn_cache_dir.clone(),
             settings.ab_cdn_cache_max_bytes,
         )?;
+        let onboarding = Arc::new(onboarding::OnboardingState::new(pool.clone()));
         let state = Arc::new(Self {
             settings,
             pool,
             http,
             content,
             denylist: Arc::default(),
-            flags: Arc::new(feature_flags::Snapshot::from_document(feature_flags::embedded_document())),
+            flags: Arc::new(feature_flags::Snapshot::from_document(
+                feature_flags::embedded_document(),
+            )),
             map: map::MapState::new(),
             ab_cdn,
             satellite: satellite::SatelliteState::new(settings_budget.0, settings_budget.1),
             world_manifest: world_manifest::WorldManifestState::default(),
             posters: posters::PosterState::default(),
             opensea: opensea::Runtime::default(),
-            auth_api: auth_api::AuthApiState::default(),
             runtime_config: runtime_config::RuntimeConfigState::default(),
-            onboarding: Arc::default(),
+            onboarding,
             registry_denylist: Default::default(),
             eip1654: std::sync::OnceLock::new(),
         });
@@ -575,7 +599,12 @@ impl State {
     /// maintenance and denylist snapshot reload run on every process.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         auth_api::spawn_identity_sweeper(self, jobs);
-        denylist::spawn_reload(self, jobs, denylist::RELOAD_INTERVAL);
+        denylist::spawn_reload(
+            self,
+            jobs,
+            denylist::RELOAD_INTERVAL,
+            denylist::RELOAD_TIMEOUT,
+        );
         let pool = self.pool.clone();
         jobs.spawn_periodic_leased(
             "opensea-cache-expiry",
@@ -796,12 +825,11 @@ pub(crate) fn json_error(status: StatusCode, message: impl Into<String>) -> Resp
     (status, axum::Json(json!({ "error": message.into() }))).into_response()
 }
 
+/// A 500 whose body names only `context`, a fixed text: `err` (a database or
+/// pool error, say) goes to the log, never to the caller.
 pub(crate) fn internal_error(context: &str, err: impl std::fmt::Display) -> Response {
     tracing::error!(%err, "{context}");
-    json_error(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        format!("{context}: {err}"),
-    )
+    json_error(StatusCode::INTERNAL_SERVER_ERROR, context)
 }
 
 #[cfg(test)]
@@ -810,5 +838,47 @@ pub(crate) mod tests_support {
     pub async fn state_without_db() -> super::Shared {
         super::tests::node_without_db_state(super::Settings::for_tests(super::Sources::defaults()))
             .await
+    }
+
+    /// A state over `pool` (the auth-api DB tests; one per replica).
+    pub async fn state_on_pool(pool: sqlx::PgPool) -> super::Shared {
+        super::tests::node_on_pool_state(
+            super::Settings::for_tests(super::Sources::defaults()),
+            pool,
+        )
+        .await
+    }
+
+    pub(crate) use super::tests::{ScratchDb, scratch_database};
+}
+
+#[cfg(test)]
+mod realm_comms_adapter_tests {
+    use super::realm_comms_adapter;
+
+    #[test]
+    fn the_realm_adapter_follows_the_fixed_adapter_when_only_that_is_set() {
+        let derived = |adapter, fixed| realm_comms_adapter(adapter, fixed);
+        assert_eq!(derived("offline:offline", None), "offline:offline");
+        assert_eq!(derived("", Some("  ")), "offline:offline");
+        assert_eq!(
+            derived("offline:offline", Some("archipelago:wss://node.example/ws")),
+            "archipelago:archipelago:wss://node.example/ws"
+        );
+        assert_eq!(
+            derived(
+                "offline:offline",
+                Some("livekit:wss://sfu.example?access_token=t")
+            ),
+            "fixed-adapter:livekit:wss://sfu.example?access_token=t"
+        );
+        // An adapter that names one is advertised as set.
+        assert_eq!(
+            derived(
+                "fixed-adapter:archipelago:wss://node.example/ws",
+                Some("archipelago:wss://node.example/ws")
+            ),
+            "fixed-adapter:archipelago:wss://node.example/ws"
+        );
     }
 }

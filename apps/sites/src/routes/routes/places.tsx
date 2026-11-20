@@ -31,7 +31,6 @@ import { openSignIn } from "@/features/components/auth/signin-store";
 import { detectPlatform, type DetectedPlatform } from "@/features/download/options";
 import { modalPlace, placeCard, placeJumpIn, type CreatorProfiles } from "@/features/places/cards";
 import { useBrowsePlaces, useLiveRail, useMemberPlaces, usePlaceCreators } from "@/features/places/hooks";
-import { PlacesTabs } from "@/features/places/PlacesTabs";
 
 import type { Route } from "./+types/places";
 
@@ -324,7 +323,6 @@ function PlacesExplorer({ loaderSid, loaderPlatform, unavailable }: ExplorerProp
     <SitesChrome active="explore">
       <PlacesPage
         title="Places"
-        tabs={<PlacesTabs active="places" />}
         status={status}
         live={
           liveCards.length ? (

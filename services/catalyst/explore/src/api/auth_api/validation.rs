@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::auth::{
-    AuthChain, AuthLinkType, parse_ephemeral_payload, recover_address, verify_auth_chain,
+    AuthChain, AuthLinkType, parse_ephemeral_payload, recover_address, verify_login_chain,
 };
 
 use super::CreateRequestBody;
@@ -77,6 +77,12 @@ pub(super) fn validate_request_message(
         ));
     }
 
+    // The method is stored as text, and in the challenge text: PostgreSQL
+    // refuses a NUL there. (params are stored serialized, a NUL escaped.)
+    if body.method.contains('\0') {
+        return Err("method must not contain NUL characters".into());
+    }
+
     if params.len() > MAX_PARAMS_ITEMS {
         return Err(format!(
             "params must have at most {} items",
@@ -122,7 +128,7 @@ pub(super) fn validate_auth_chain(chain: &AuthChain) -> Result<VerifiedChain, St
         .map(|l| l.payload.clone())
         .ok_or_else(|| "Auth chain is required".to_string())?;
     let final_authority = derive_final_authority(chain)?;
-    verify_auth_chain(chain, &final_authority, None)
+    verify_login_chain(chain, &final_authority, None)
         .map(|_| ())
         .map_err(|e| e.to_string())?;
     Ok(VerifiedChain { sender })
@@ -158,7 +164,7 @@ pub(super) fn validate_identity_chain(chain: &AuthChain) -> Result<(String, Stri
     };
     let (_, final_authority, _) = parse_ephemeral_payload(&last.payload)
         .map_err(|_| "Could not get final authority from auth chain".to_string())?;
-    verify_auth_chain(chain, &final_authority, None)
+    verify_login_chain(chain, &final_authority, None)
         .map(|_| ())
         .map_err(|e| e.to_string())?;
     Ok((first.payload.clone(), final_authority))
@@ -421,6 +427,23 @@ mod tests {
         );
     }
 
+    /// A NUL in the method is a 400 here, not a 500 at the text insert; one in
+    /// params is stored escaped.
+    #[test]
+    fn create_request_refuses_a_nul_in_the_method() {
+        let err = validate_request_message(&request("eth_\0call", vec![], Some(stub_auth_chain())))
+            .unwrap_err();
+        assert_eq!(err, "method must not contain NUL characters");
+        assert!(
+            validate_request_message(&request(
+                "eth_call",
+                vec![json!("a\0b")],
+                Some(stub_auth_chain())
+            ))
+            .is_ok()
+        );
+    }
+
     #[test]
     fn create_request_refuses_properties_outside_the_wire_shape() {
         let body = parse(
@@ -520,10 +543,19 @@ mod tests {
     }
 
     fn delegated_chain(signer_key: &str, ephemeral_key: &str, expiration: &str) -> AuthChain {
+        delegated_chain_for("Decentraland Login", signer_key, ephemeral_key, expiration)
+    }
+
+    fn delegated_chain_for(
+        first_line: &str,
+        signer_key: &str,
+        ephemeral_key: &str,
+        expiration: &str,
+    ) -> AuthChain {
         use alloy_signer::SignerSync;
         let signer = wallet(signer_key);
         let message = format!(
-            "Decentraland Login\nEphemeral address: {}\nExpiration: {expiration}",
+            "{first_line}\nEphemeral address: {}\nExpiration: {expiration}",
             address_of(ephemeral_key)
         );
         let signature = format!(
@@ -572,6 +604,26 @@ mod tests {
     fn identity_chain_refuses_an_expired_delegation() {
         let chain = delegated_chain(SIGNER_KEY, EPHEMERAL_KEY, "2020-01-01T00:00:00.000Z");
         assert!(validate_identity_chain(&chain).is_err());
+    }
+
+    #[test]
+    fn requests_and_identities_need_a_login_delegation() {
+        let login = delegated_chain(SIGNER_KEY, EPHEMERAL_KEY, "2100-01-01T00:00:00.000Z");
+        assert!(validate_auth_chain(&login).is_ok());
+        assert!(validate_identity_chain(&login).is_ok());
+
+        let other = delegated_chain_for(
+            "Decentraland Storage Delegation",
+            SIGNER_KEY,
+            EPHEMERAL_KEY,
+            "2100-01-01T00:00:00.000Z",
+        );
+        for err in [
+            validate_auth_chain(&other).map(|_| ()).unwrap_err(),
+            validate_identity_chain(&other).map(|_| ()).unwrap_err(),
+        ] {
+            assert!(err.starts_with("Invalid ephemeral payload"), "{err}");
+        }
     }
 
     #[test]

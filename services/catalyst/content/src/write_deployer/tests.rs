@@ -1025,6 +1025,82 @@ async fn persist_statement_writes_everything_off_one_insert() {
     pool.close().await;
 }
 
+async fn active(tx: &mut sqlx::PgConnection, names: Vec<String>) -> Vec<(String, String)> {
+    sqlx::query_as(
+        "SELECT pointer, entity_id FROM content.active_pointers
+         WHERE pointer = ANY($1) ORDER BY pointer",
+    )
+    .bind(names)
+    .fetch_all(tx)
+    .await
+    .unwrap()
+}
+
+/// An entity older than an already superseded deployment's deleter takes over only its own
+/// pointers: a pointer of the superseded deployment that a newer entity holds stays with it.
+#[tokio::test]
+async fn persist_statement_keeps_pointers_a_newer_entity_holds() {
+    let Some(pool) = test_pool(2).await else {
+        return;
+    };
+    for provenance in [false, true] {
+        let scope = Scope::new();
+        let (first_id, newest_id, middle_id) =
+            (scope.id("first"), scope.id("newest"), scope.id("middle"));
+        let p = |names: &[&str]| scope.pointers(names);
+        let mut tx = pool.begin().await.unwrap();
+        run_persist(
+            &mut tx,
+            provenance,
+            &first_id,
+            1_000.0,
+            &p(&["0,0", "1,0"]),
+            &[],
+        )
+        .await
+        .dep_id
+        .expect("first inserts");
+        let newest =
+            run_persist(&mut tx, provenance, &newest_id, 10_000.0, &p(&["1,0"]), &[]).await;
+        assert_eq!(
+            (newest.overwrote, newest.cleared),
+            (1, 1),
+            "provenance {provenance}"
+        );
+        assert_eq!(
+            active(&mut tx, p(&["0,0", "1,0"])).await,
+            vec![(p(&["1,0"]).remove(0), newest_id.clone())],
+            "provenance {provenance}: the overwritten entity's other pointer is cleared"
+        );
+
+        let middle = run_persist(&mut tx, provenance, &middle_id, 5_000.0, &p(&["0,0"]), &[]).await;
+        let middle_dep = middle.dep_id.expect("no newer entity on 0,0");
+        assert_eq!(
+            (middle.newer, middle.overwrote, middle.cleared),
+            (false, 1, 0),
+            "provenance {provenance}"
+        );
+        assert_eq!(
+            active(&mut tx, p(&["0,0", "1,0"])).await,
+            vec![
+                (p(&["0,0"]).remove(0), middle_id.clone()),
+                (p(&["1,0"]).remove(0), newest_id.clone()),
+            ],
+            "provenance {provenance}"
+        );
+        let deleter: Option<i32> = sqlx::query_scalar(
+            "SELECT deleter_deployment FROM content.deployments WHERE entity_id = $1",
+        )
+        .bind(&first_id)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+        assert_eq!(deleter, Some(middle_dep), "provenance {provenance}");
+        tx.rollback().await.unwrap();
+    }
+    pool.close().await;
+}
+
 /// The installed function and the raw statement are the same SQL; a deploy through the
 /// function must produce the same outcome and rows, and a stale deploy the same rejection.
 #[tokio::test]
@@ -1404,4 +1480,218 @@ async fn binding_sql_supersession_has_a_typed_rejection() {
     ));
     assert_eq!(failure.errors(), &[newer_entity_message(&entity)]);
     let _ = std::fs::remove_dir_all(tmp);
+}
+
+/// A `WriteDeployer` over `chain` with a ten-minute `REQUEST_TTL_BACKWARDS`.
+fn deployer_over_chain(
+    pool: &PgPool,
+    storage: &Arc<Storage>,
+    chain: &crate::validator::fake_chain::FakeChain,
+    ignore_blockchain_access: bool,
+) -> WriteDeployer {
+    let settings = crate::validator::Settings {
+        eth_network: "mainnet".into(),
+        l1_rpc_url: Some(chain.url.clone()),
+        l2_rpc_url: Some(chain.url.clone()),
+        ignore_blockchain_access,
+        ..Default::default()
+    };
+    let sources = crate::validator::Sources::new(
+        pool.clone(),
+        storage.clone(),
+        crate::http::Outbound::for_tests(),
+        None,
+        settings,
+    );
+    let deployer = WriteDeployer::new(pool.clone(), storage.clone(), None, Arc::new(sources));
+    deployer.configure(&DeployLimits {
+        request_ttl_backwards_ms: 10 * 60_000,
+        ..Default::default()
+    });
+    deployer
+}
+
+/// A signed one-parcel scene at `timestamp`: its files, id, auth chain and parcel.
+async fn signed_scene_at(timestamp: i64) -> (Vec<Bytes>, String, Value, String) {
+    let n = uuid::Uuid::new_v4().as_u128();
+    let parcel = format!("{},{}", 130 + (n % 20) as i32, 130 + ((n >> 8) % 20) as i32);
+    let model = Bytes::from_static(b"current access model");
+    let (bytes, id, chain) = signed_entity_of(serde_json::json!({
+        "version": "v3",
+        "type": "scene",
+        "pointers": [parcel],
+        "timestamp": timestamp,
+        "content": [{"file": "model.glb", "hash": hash_bytes_v1(&model)}],
+        "metadata": {"main": "bin/index.js", "scene": {"base": parcel, "parcels": [parcel]}}
+    }))
+    .await;
+    (vec![bytes, model], id, chain, parcel)
+}
+
+/// The block mined `minutes_ago` minutes before now on the fake chain.
+fn block_minutes_ago(minutes_ago: i64) -> u64 {
+    use crate::validator::fake_chain::{GENESIS, INTERVAL};
+    let now = chrono::Utc::now().timestamp();
+    ((now - minutes_ago * 60 - GENESIS) / INTERVAL) as u64
+}
+
+fn deployer_address() -> alloy_primitives::Address {
+    let key: alloy::signers::local::PrivateKeySigner = DEPLOYER_KEY.parse().unwrap();
+    key.address()
+}
+
+/// A chain where the deployer held every parcel until `sold_block`.
+async fn chain_sold_at(sold_block: u64) -> crate::validator::fake_chain::FakeChain {
+    use crate::validator::fake_chain::{self, Query, Reply};
+    let signer = deployer_address();
+    fake_chain::serve(move |q, block| match q {
+        Query::Land { sender, .. } => Reply::Yes(block < sold_block && *sender == signer),
+        other => panic!("unexpected question {other:?}"),
+    })
+    .await
+}
+
+/// A scene published past `REQUEST_TTL_BACKWARDS` (a partial upload's
+/// publication, its TTL measured from the upload's start) needs access at
+/// the current chain state, not only at its timestamp.
+#[tokio::test]
+async fn a_scene_published_past_the_request_ttl_needs_current_access() {
+    use crate::validator::fake_chain::{self, Query, Reply};
+    let Some(pool) = test_pool(4).await else {
+        return;
+    };
+    let (storage, tmp) = temp_storage("current-access").await;
+    let signer = deployer_address();
+    let timestamp = chrono::Utc::now().timestamp_millis() - 15 * 60_000;
+    // The parcel changed hands eight minutes ago, after the upload started.
+    let sold = chain_sold_at(block_minutes_ago(8)).await;
+    let kept = fake_chain::serve(move |q, _| match q {
+        Query::Land { sender, .. } => Reply::Yes(*sender == signer),
+        other => panic!("unexpected question {other:?}"),
+    })
+    .await;
+    let (files, id, chain, parcel) = signed_scene_at(timestamp).await;
+    let publish = |deployer: WriteDeployer| {
+        let (files, id, chain) = (files.clone(), id.clone(), chain.clone());
+        async move {
+            deployer
+                .deploy_entity_anchored(files, &id, chain, "LOCAL", Some(timestamp + 60_000))
+                .await
+        }
+    };
+
+    match publish(deployer_over_chain(&pool, &storage, &sold, false)).await {
+        Err(DeployFailure::Rejected(RejectionKind::Validation, errors)) => assert_eq!(
+            errors,
+            [format!(
+                "The provided Eth Address does not have access to the following parcel: ({parcel})"
+            )]
+        ),
+        other => panic!("a parcel sold since the upload started must be refused, got {other:?}"),
+    }
+    assert!(
+        publish(deployer_over_chain(&pool, &storage, &kept, false))
+            .await
+            .is_ok(),
+        "a deployer still holding the parcel publishes"
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// The current check grants what the block five minutes before now allows,
+/// as every access check does: a transfer in the last five minutes does not
+/// refuse the publication.
+#[tokio::test]
+async fn a_transfer_within_five_minutes_of_publication_is_tolerated() {
+    let Some(pool) = test_pool(4).await else {
+        return;
+    };
+    let (storage, tmp) = temp_storage("current-access-grace").await;
+    let timestamp = chrono::Utc::now().timestamp_millis() - 15 * 60_000;
+    let sold = chain_sold_at(block_minutes_ago(2)).await;
+    let (files, id, chain, _) = signed_scene_at(timestamp).await;
+    let deployer = deployer_over_chain(&pool, &storage, &sold, false);
+    let published = deployer
+        .deploy_entity_anchored(files, &id, chain, "LOCAL", Some(timestamp + 60_000))
+        .await;
+    assert!(published.is_ok(), "got {published:?}");
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// With `IGNORE_BLOCKCHAIN_ACCESS_CHECKS` the current check asks no chain.
+#[tokio::test]
+async fn the_current_access_check_honours_ignore_blockchain_access() {
+    let Some(pool) = test_pool(4).await else {
+        return;
+    };
+    let (storage, tmp) = temp_storage("current-access-ignore").await;
+    let timestamp = chrono::Utc::now().timestamp_millis() - 15 * 60_000;
+    let sold = chain_sold_at(block_minutes_ago(8)).await;
+    let (files, id, chain, _) = signed_scene_at(timestamp).await;
+    let deployer = deployer_over_chain(&pool, &storage, &sold, true);
+    let published = deployer
+        .deploy_entity_anchored(files, &id, chain, "LOCAL", Some(timestamp + 60_000))
+        .await;
+    assert!(published.is_ok(), "got {published:?}");
+    assert_eq!(sold.requests(), 0, "no chain request: {:?}", sold.calls());
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// A chain that cannot answer at the current blocks makes the publication
+/// `Unavailable`, never a grant.
+#[tokio::test]
+async fn an_undecidable_current_access_check_is_unavailable() {
+    use crate::validator::fake_chain::{self, Query, Reply};
+    let Some(pool) = test_pool(4).await else {
+        return;
+    };
+    let (storage, tmp) = temp_storage("current-access-undecidable").await;
+    let signer = deployer_address();
+    let timestamp = chrono::Utc::now().timestamp_millis() - 15 * 60_000;
+    let recent = block_minutes_ago(8);
+    let failing = fake_chain::serve(move |q, block| match q {
+        Query::Land { sender, .. } if block < recent => Reply::Yes(*sender == signer),
+        Query::Land { .. } => Reply::Fail,
+        other => panic!("unexpected question {other:?}"),
+    })
+    .await;
+    let (files, id, chain, _) = signed_scene_at(timestamp).await;
+    let deployer = deployer_over_chain(&pool, &storage, &failing, false);
+    match deployer
+        .deploy_entity_anchored(files, &id, chain, "LOCAL", Some(timestamp + 60_000))
+        .await
+    {
+        Err(DeployFailure::Unavailable(_)) => {}
+        other => panic!("an undecidable chain must not grant, got {other:?}"),
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// A plain deploy, within the TTL when it arrives, never takes the current
+/// check, however long its validation runs.
+#[tokio::test]
+async fn a_plain_deploy_crossing_the_ttl_during_validation_skips_the_current_check() {
+    use crate::validator::fake_chain::{self, Query, Reply};
+    let Some(pool) = test_pool(4).await else {
+        return;
+    };
+    let (storage, tmp) = temp_storage("current-access-plain").await;
+    let signer = deployer_address();
+    let sold_block = block_minutes_ago(8);
+    let slow = fake_chain::serve(move |q, block| match q {
+        Query::Land { sender, .. } if block < sold_block => {
+            std::thread::sleep(Duration::from_secs(6));
+            Reply::Yes(*sender == signer)
+        }
+        Query::Land { .. } => Reply::Yes(false),
+        other => panic!("unexpected question {other:?}"),
+    })
+    .await;
+    let deployer = deployer_over_chain(&pool, &storage, &slow, false);
+    // Four seconds inside the TTL; the access step at its timestamp takes six.
+    let timestamp = chrono::Utc::now().timestamp_millis() - 10 * 60_000 + 4_000;
+    let (files, id, chain, _) = signed_scene_at(timestamp).await;
+    let published = deployer.deploy_entity(files, &id, chain, "LOCAL").await;
+    assert!(published.is_ok(), "got {published:?}");
+    let _ = std::fs::remove_dir_all(&tmp);
 }

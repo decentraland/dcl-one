@@ -23,7 +23,10 @@ import {
   GaslessUnavailableError,
   metaTxType,
   normalizeSignature,
+  refusedBeforeBroadcast,
   relayMetaTransaction,
+  relayRefusal,
+  relaySignedMetaTransaction,
   SignatureDeclinedError,
 } from "./metatx";
 import { createRpcReader, waitForReceipt, type ChainReader } from "./rpc";
@@ -255,13 +258,32 @@ describe("relaying a meta-transaction", () => {
     expect((decoded.args[2] as Hex).slice(-2)).toBe("1c");
   });
 
+  it("sends an execution already signed as the relay request it was, and tells a refusal from a lost answer", async () => {
+    const posts: unknown[] = [];
+    const answer = { body: { ok: true, txHash: `0x${"ab".repeat(32)}` } as unknown, status: 200 };
+    const fetchImpl = (async (url: string, init?: RequestInit) => {
+      posts.push({ url, body: JSON.parse(String(init?.body)) });
+      return new Response(JSON.stringify(answer.body), { status: answer.status });
+    }) as unknown as typeof fetch;
+    const data = encodeExecuteMetaTransaction("functionData", from, "0x1234", `0x${"22".repeat(64)}1c`);
+    const sent = { from, to: target.address, data, relayerUrl: "https://relay.example/v1/", fetchImpl };
+    expect(await relaySignedMetaTransaction(sent)).toBe(`0x${"ab".repeat(32)}`);
+    expect(posts[0]).toEqual({ url: "https://relay.example/v1/transactions", body: { transactionData: { from, params: [target.address, data] } } });
+    answer.body = { ok: false, not_sent: true, message: "quota" };
+    answer.status = 429;
+    await expect(relaySignedMetaTransaction(sent)).rejects.toMatchObject({ reason: "relayer-rejected" });
+    answer.body = { ok: false, message: "boom" };
+    answer.status = 500;
+    await expect(relaySignedMetaTransaction(sent)).rejects.toMatchObject({ reason: "relayer-unreachable" });
+  });
+
   it("a declined prompt is a cancellation; a refusal and a dead relay are told apart", async () => {
     const declineProvider = { request: async () => Promise.reject(Object.assign(new Error("User rejected the request"), { code: 4001 })) };
     await expect(
       relayMetaTransaction({ provider: declineProvider, reader: fakeReader(), target, from, functionData: "0x12" }),
     ).rejects.toBeInstanceOf(SignatureDeclinedError);
     const provider = { request: async () => `0x${"22".repeat(65)}` };
-    const refused = (async () => new Response(JSON.stringify({ ok: false, message: "gas estimation failed" }), { status: 400 })) as unknown as typeof fetch;
+    const refused = (async () => new Response(JSON.stringify({ ok: false, message: "gas estimation failed", not_sent: true }), { status: 400 })) as unknown as typeof fetch;
     await expect(
       relayMetaTransaction({ provider, reader: fakeReader(), target, from, functionData: "0x12", fetchImpl: refused }),
     ).rejects.toMatchObject({ reason: "relayer-rejected" });
@@ -274,6 +296,96 @@ describe("relaying a meta-transaction", () => {
     await expect(
       relayMetaTransaction({ provider, reader: fakeReader({ code: async () => "0x6080" }), target, from, functionData: "0x12" }),
     ).rejects.toBeInstanceOf(GaslessUnavailableError);
+  });
+
+  it("keeps the relay's own word for a refusal: its error code, and when a spent quota frees up", async () => {
+    const provider = { request: async () => `0x${"22".repeat(65)}` };
+    const answering = (status: number, body: unknown) => (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
+    const relay = (fetchImpl: typeof fetch) => relayMetaTransaction({ provider, reader: fakeReader(), target, from, functionData: "0x12", fetchImpl });
+    const quota = { ok: false, error: "quota_reached", message: "Max amount of transactions reached for address. Quota: 30", not_sent: true, retryAt: 1_767_230_000, quota: 30 };
+    await expect(relay(answering(429, quota))).rejects.toMatchObject({ reason: "relayer-rejected", refusal: { error: "quota_reached", retryAt: 1_767_230_000, quota: 30 } });
+    await expect(relay(answering(429, { ok: false, error: "relay_budget_spent", message: "spent", not_sent: true }))).rejects.toMatchObject({ refusal: { error: "relay_budget_spent" } });
+    // Each field only in its own shape: no code without a string, no time or count but a positive whole number.
+    const odd = { ok: false, error: 7, retryAt: "soon", quota: -1, not_sent: true };
+    await expect(relay(answering(429, odd))).rejects.toMatchObject({ refusal: {} });
+    expect(relayRefusal({ error: "", retryAt: 1.5, quota: -1 })).toEqual({});
+    // A quota of none is kept: the account gets no fee-free transactions.
+    expect(relayRefusal({ error: "quota_reached", quota: 0 })).toEqual({ error: "quota_reached", quota: 0 });
+    // The code from `code` (upstream's, and dcl-one's relay too), else `error` (dcl-one's, before it answered `code`).
+    expect(relayRefusal({ code: "quota_reached" })).toEqual({ error: "quota_reached" });
+    expect(relayRefusal({ code: "quota_reached", error: "invalid_transaction" })).toEqual({ error: "quota_reached" });
+    expect(relayRefusal({ code: "", error: "relay_budget_spent" })).toEqual({ error: "relay_budget_spent" });
+    // Marked as not sent, a code-only refusal (upstream's shape) is a refusal like any; unmarked, a forwarded 429
+    // proves nothing was sent no more than any other status does.
+    await expect(relay(answering(429, { ok: false, code: "quota_reached", message: "quota", not_sent: true }))).rejects.toMatchObject({ reason: "relayer-rejected", refusal: { error: "quota_reached" } });
+    await expect(relay(answering(429, { ok: false, code: "quota_reached", message: "quota" }))).rejects.toMatchObject({ reason: "relayer-unreachable" });
+    expect(relayRefusal(null)).toEqual({});
+  });
+
+  it("only the relay's explicit evidence proves nothing was sent", async () => {
+    const provider = { request: async () => `0x${"22".repeat(65)}` };
+    const answering = (status: number, body: unknown) =>
+      (async () => new Response(typeof body === "string" ? body : JSON.stringify(body), { status })) as unknown as typeof fetch;
+    const relay = (fetchImpl: typeof fetch) => relayMetaTransaction({ provider, reader: fakeReader(), target, from, functionData: "0x12", fetchImpl });
+    // The relay marks its refusals before any send, whatever their status.
+    for (const [status, error] of [
+      [400, "invalid_transaction"],
+      [429, "quota_reached"],
+      [500, "unknown"],
+      [503, "high_congestion"],
+    ] as const) {
+      await expect(relay(answering(status, { ok: false, error, message: error, not_sent: true })), `${status}`).rejects.toMatchObject({ reason: "relayer-rejected" });
+    }
+    // The same statuses without that evidence, as a relay of another version or a transactions-server
+    // answers them, can follow a send: a 400 for a send the node answered with a revert, a 500 when the
+    // hash could not be recorded or the relayer failed after signing.
+    for (const status of [400, 429, 500, 503, 501, 502, 504, 520, 524]) {
+      await expect(relay(answering(status, { ok: false, error: "unknown", message: "Unknown error" })), `${status}`).rejects.toMatchObject({
+        reason: "relayer-unreachable",
+      });
+    }
+    // Evidence that is not exactly `true`, or a body that is not the relay's JSON, is no evidence.
+    for (const body of [
+      { ok: false, not_sent: "true" },
+      { ok: false, not_sent: false },
+      { ok: true, not_sent: true },
+      "<html>Service Unavailable</html>",
+    ]) {
+      await expect(relay(answering(503, body)), JSON.stringify(body)).rejects.toMatchObject({ reason: "relayer-unreachable" });
+    }
+    await expect(relay(answering(200, { ok: true }))).rejects.toMatchObject({ reason: "relayer-unreachable" });
+    expect(refusedBeforeBroadcast({ ok: false, not_sent: true })).toBe(true);
+    expect(refusedBeforeBroadcast({ ok: false })).toBe(false);
+    expect(refusedBeforeBroadcast(null)).toBe(false);
+  });
+
+  it("reads the relays' real answers by the evidence they carry", async () => {
+    const provider = { request: async () => `0x${"22".repeat(65)}` };
+    const answering = (status: number, body: unknown) =>
+      (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
+    const relay = (fetchImpl: typeof fetch) => relayMetaTransaction({ provider, reader: fakeReader(), target, from, functionData: "0x12", fetchImpl });
+    // This relay (services/catalyst/shop, evm/tests.rs): refusals before any send carry the evidence.
+    const estimateReverted = { ok: false, error: "invalid_transaction", message: "gas estimation reverted: execution reverted", not_sent: true };
+    await expect(relay(answering(400, estimateReverted))).rejects.toMatchObject({ reason: "relayer-rejected" });
+    const aboveTheFeeCap = { ok: false, error: "high_congestion", message: "the fee per gas 2000 wei exceeds RELAYER_MAX_FEE_PER_GAS_WEI 1000: not sent", not_sent: true };
+    await expect(relay(answering(503, aboveTheFeeCap))).rejects.toMatchObject({ reason: "relayer-rejected" });
+    // This relay after a send attempt: a 504 without it.
+    const afterTheSend = {
+      ok: false,
+      error: "unknown",
+      message: `transaction 0x${"ab".repeat(32)} may have been broadcast: eth_sendRawTransaction failed (rpc error 3: execution reverted)`,
+    };
+    await expect(relay(answering(504, afterTheSend))).rejects.toMatchObject({ reason: "relayer-unreachable" });
+    // An upstream's answer passed through, or a transactions-server this client is pointed at: a
+    // failure after its submission is a 500 without the evidence.
+    const broadcastFailed = { ok: false, message: "Transaction failed: execution reverted", code: "expectation_failed" };
+    await expect(relay(answering(500, broadcastFailed))).rejects.toMatchObject({ reason: "relayer-unreachable" });
+    // An earlier version of this relay, after the send: 500 (the hash not recorded) or 400 (a revert
+    // answered to the send), without the evidence.
+    await expect(relay(answering(500, { ok: false, error: "unknown", message: "Unknown error" }))).rejects.toMatchObject({ reason: "relayer-unreachable" });
+    await expect(relay(answering(400, { ok: false, error: "invalid_transaction", message: "transaction reverted: execution reverted" }))).rejects.toMatchObject({
+      reason: "relayer-unreachable",
+    });
   });
 });
 
@@ -330,5 +442,14 @@ describe("the RPC reader", () => {
       },
     });
     expect(await waitForReceipt(flaky, 137, "0x02", { sleep: async () => {} })).toMatchObject({ transactionHash: "0x02" });
+  });
+
+  it("lets an error answer's body go instead of leaving it open, so polling through errors leaks nothing", async () => {
+    let cancelled = false;
+    const body = new ReadableStream({ pull: () => new Promise<void>(() => {}), cancel: () => void (cancelled = true) });
+    const fetchImpl = (async () => new Response(body, { status: 502 })) as unknown as typeof fetch;
+    const reader = createRpcReader({ url: () => "https://rpc.example", fetchImpl });
+    await expect(reader.balance(137, "0x00")).rejects.toThrow(/HTTP 502/);
+    await vi.waitFor(() => expect(cancelled).toBe(true));
   });
 });

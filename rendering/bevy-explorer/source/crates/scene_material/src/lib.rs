@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::marker::PhantomData;
 
 use bevy::{
@@ -15,6 +17,7 @@ use boimp::bake::{
     ImposterBakeMaterial, ImposterBakeMaterialExtension, ImposterBakeMaterialPlugin,
 };
 use common::{
+    sky_preset::{ambient_trilight, LIGHT_UNIT_LUX},
     structs::{PreviewMode, ShowOutOfBounds},
     util::InvertedScaleExt,
 };
@@ -29,10 +32,11 @@ pub const SCENE_MATERIAL_NO_DITHERING_MESH_TAG: u32 = 0x02000000;
 pub const SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG: u32 = 0x04000000;
 // cel-shade this mesh (avatars) instead of standard PBR — see toon.wgsl
 pub const SCENE_MATERIAL_TOON_MESH_TAG: u32 = 0x08000000;
-pub const SCENE_MATERIAL_OUTLINE_MESH_TAGS: u32 = 0xF0000000;
-pub const SCENE_MATERIAL_OUTLINE_BLACK_MESH_TAG: u32 = 0x10000000;
-pub const SCENE_MATERIAL_OUTLINE_RED_MESH_TAG: u32 = 0x20000000;
-pub const SCENE_MATERIAL_OUTLINE_BLUE_MESH_TAG: u32 = 0x80000000;
+// the tone-on-tone avatar outline (bound_material.wgsl, mask_material.wgsl)
+pub const SCENE_MATERIAL_OUTLINE_MESH_TAG: u32 = 0x10000000;
+// an avatar's eyes, eyebrows or mouth: lit by the ambient light alone (toon.wgsl's
+// facial_feature_lighting) instead of the toon bands
+pub const SCENE_MATERIAL_FACIAL_FEATURE_MESH_TAG: u32 = 0x20000000;
 /// an avatar being revealed bottom-up from its ghost: the shaders discard fragments above the
 /// reveal height, carried in the tag's low byte: 0 is no reveal, and 1..=255 span the range from
 /// `SCENE_MATERIAL_REVEAL_HIDE_HEIGHT` to `SCENE_MATERIAL_REVEAL_FULL_HEIGHT` above the mesh
@@ -61,6 +65,48 @@ pub fn reveal_mesh_tag(tag: u32, height: f32) -> u32 {
 /// `tag` with no reveal
 pub fn unrevealed_mesh_tag(tag: u32) -> u32 {
     tag & !SCENE_MATERIAL_REVEAL_MESH_TAG_MASK
+}
+
+/// the tag bits an avatar's style is read from (the camera dither, the toon lighting and the
+/// outline) and the toon values derived here, for the pipeline of every shader that styles an
+/// avatar's meshes: bound_material.wgsl and mask_material.wgsl. A def carries only integers, so
+/// each `f32` travels as its bit pattern and the shader reads it with `bitcast<f32>(#{NAME}u)`:
+/// - `TOON_LIGHT_UNIT_LUX`, the light unit;
+/// - `TOON_FACIAL_FLAT_AMBIENT_R/G/B`, the ambient light, in light units, that lights the eyes,
+///   eyebrows and mouth in a view without the sky environment map (the Backpack preview, a photo
+///   booth): the noon Trilight's equator colour, about what the sky gives a surface facing the
+///   horizon at noon. Such a view's flat ambient is set to light the body flat, far above any
+///   sky, so it is not read there.
+pub fn avatar_style_shader_defs() -> Vec<ShaderDefVal> {
+    [
+        (
+            "NO_DITHERING_MESH_TAG",
+            SCENE_MATERIAL_NO_DITHERING_MESH_TAG,
+        ),
+        (
+            "CONE_ONLY_DITHER_MESH_TAG",
+            SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG,
+        ),
+        ("TOON_MESH_TAG", SCENE_MATERIAL_TOON_MESH_TAG),
+        ("OUTLINE_MESH_TAG", SCENE_MATERIAL_OUTLINE_MESH_TAG),
+        (
+            "FACIAL_FEATURE_MESH_TAG",
+            SCENE_MATERIAL_FACIAL_FEATURE_MESH_TAG,
+        ),
+    ]
+    .into_iter()
+    .map(|(name, tag)| ShaderDefVal::UInt(name.to_owned(), tag))
+    .chain({
+        let flat = ambient_trilight(0.5)[1];
+        [
+            ("TOON_LIGHT_UNIT_LUX", LIGHT_UNIT_LUX),
+            ("TOON_FACIAL_FLAT_AMBIENT_R", flat.x),
+            ("TOON_FACIAL_FLAT_AMBIENT_G", flat.y),
+            ("TOON_FACIAL_FLAT_AMBIENT_B", flat.z),
+        ]
+        .map(|(name, value)| ShaderDefVal::UInt(name.to_owned(), value.to_bits()))
+    })
+    .collect()
 }
 
 /// the reveal encoding, for the pipeline of every shader that imports `reveal_discard`
@@ -117,7 +163,7 @@ impl From<&SceneBound> for SceneBoundKey {
 pub struct SceneBound {
     #[uniform(100)]
     pub data: SceneBoundData,
-    #[storage(101, read_only, visibility(fragment))]
+    #[cfg_attr(not(feature = "webgl2"), storage(101, read_only, visibility(fragment)))]
     pub cells: Handle<ShaderStorageBuffer>,
     /// Meshes that have 1 or 3 negative scale axis require special handling
     /// of the face culling
@@ -214,21 +260,14 @@ impl SceneBounds {
     /// no regions = unbounded. without `buffers` (or for huge extents) an irregular scene falls
     /// back to its bounding box.
     pub fn new(regions: &[BoundRegion], buffers: Option<&mut Assets<ShaderStorageBuffer>>) -> Self {
-        let [first, rest @ ..] = regions else {
+        let Some(((min, max), max_height)) = BoundRegion::enclosing(regions) else {
             return Self::unbounded();
         };
-        if rest.is_empty() {
-            return Self::rect(first);
+        if let [region] = regions {
+            return Self::rect(region);
         }
 
-        let (min, max) = regions
-            .iter()
-            .map(BoundRegion::cells)
-            .fold((IVec2::MAX, IVec2::MIN), |(min, max), (rmin, rmax)| {
-                (min.min(rmin), max.max(rmax))
-            });
         let size = (max - min + IVec2::ONE).as_uvec2();
-        let max_height = regions.iter().fold(0.0f32, |h, r| h.max(r.height));
         let cell_count = size.x as u64 * size.y as u64;
         let Some(buffers) = buffers.filter(|_| cell_count <= MAX_SCENE_CELLS) else {
             if cell_count > MAX_SCENE_CELLS {
@@ -297,8 +336,10 @@ impl SceneBounds {
 }
 
 mod decl {
-    // temporary for ShaderType macro, remove in future
-    #![allow(dead_code)]
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
 
     use bevy::{
         math::{IVec2, UVec2},
@@ -326,14 +367,44 @@ mod decl {
 }
 pub use decl::*;
 
+/// The height limit, in metres, of a scene in a World: the parcel-count limit of the largest
+/// scene a World allows, 300 × 300 parcels (log2(90001) × 20 = 329.15 m), rounded up.
+pub const FIXED_SCENE_HEIGHT: f32 = 330.0;
+
 impl BoundRegion {
     pub fn new(min: IVec2, max: IVec2, parcel_count: u32) -> Self {
         Self {
             min: ((min.x as i16 as u16 as u32) << 16) | (-(max.y + 1) as i16 as u16 as u32),
             max: (((max.x + 1) as i16 as u16 as u32) << 16) | (-min.y as i16 as u16 as u32),
-            height: f32::log2(parcel_count as f32 + 1.0) * 20.0,
+            height: Self::height_for_parcels(parcel_count),
             parcel_count,
         }
+    }
+
+    /// the region with this height limit, in metres, in place of its parcel count's
+    pub fn with_height(self, height: f32) -> Self {
+        Self { height, ..self }
+    }
+
+    /// The height limit, in metres, over `parcel_count` parcels.
+    pub fn height_for_parcels(parcel_count: u32) -> f32 {
+        f32::log2(parcel_count as f32 + 1.0) * 20.0
+    }
+
+    /// The rectangle of cells around `regions` (inclusive, as [`Self::cells`] gives them) and
+    /// the highest of their height limits. None without regions.
+    pub fn enclosing(regions: &[BoundRegion]) -> Option<((IVec2, IVec2), f32)> {
+        let (first, rest) = regions.split_first()?;
+        Some(rest.iter().fold(
+            (first.cells(), first.height),
+            |((min, max), height), region| {
+                let (region_min, region_max) = region.cells();
+                (
+                    (min.min(region_min), max.max(region_max)),
+                    height.max(region.height),
+                )
+            },
+        ))
     }
 }
 
@@ -447,35 +518,12 @@ impl MaterialExtension for SceneBound {
                 "SHOW_OUTSIDE_BOUNDS_MESH_TAG".to_owned(),
                 SCENE_MATERIAL_SHOW_OUTSIDE_BOUNDS_MESH_TAG,
             ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
-                "NO_DITHERING_MESH_TAG".to_owned(),
-                SCENE_MATERIAL_NO_DITHERING_MESH_TAG,
-            ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
-                "CONE_ONLY_DITHER_MESH_TAG".to_owned(),
-                SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG,
-            ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
-                "TOON_MESH_TAG".to_owned(),
-                SCENE_MATERIAL_TOON_MESH_TAG,
-            ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
-                "OUTLINE_MESH_TAGS".to_owned(),
-                SCENE_MATERIAL_OUTLINE_MESH_TAGS,
-            ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
-                "OUTLINE_BLACK_MESH_TAG".to_owned(),
-                SCENE_MATERIAL_OUTLINE_BLACK_MESH_TAG,
-            ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
-                "OUTLINE_RED_MESH_TAG".to_owned(),
-                SCENE_MATERIAL_OUTLINE_RED_MESH_TAG,
-            ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
-                "OUTLINE_BLUE_MESH_TAG".to_owned(),
-                SCENE_MATERIAL_OUTLINE_BLUE_MESH_TAG,
-            ));
+            fragment.shader_defs.extend(avatar_style_shader_defs());
             fragment.shader_defs.extend(reveal_shader_defs());
+            // the material has no cell table (`webgl2`), so scene_bounds.wgsl leaves it out too
+            if cfg!(feature = "webgl2") {
+                fragment.shader_defs.push("NO_SCENE_CELLS".into());
+            }
 
             if data.inverted_scale {
                 fragment.shader_defs.push("INVERTED_SCALE".into());
@@ -664,8 +712,9 @@ mod test {
     use bevy::math::{IVec2, Vec2, Vec3, Vec3Swizzles};
 
     use crate::{
-        reveal_mesh_tag, unrevealed_mesh_tag, BoundRegion, SCENE_MATERIAL_REVEAL_FULL_HEIGHT,
-        SCENE_MATERIAL_REVEAL_HIDE_HEIGHT, SCENE_MATERIAL_REVEAL_MESH_TAG_MASK,
+        reveal_mesh_tag, unrevealed_mesh_tag, BoundRegion, FIXED_SCENE_HEIGHT,
+        SCENE_MATERIAL_REVEAL_FULL_HEIGHT, SCENE_MATERIAL_REVEAL_HIDE_HEIGHT,
+        SCENE_MATERIAL_REVEAL_MESH_TAG_MASK,
     };
 
     /// the reveal height a shader reads back from a tag (reveal_discard in
@@ -852,6 +901,21 @@ mod test {
     }
 
     #[test]
+    fn enclosing_is_the_rectangle_around_the_regions_and_their_highest_limit() {
+        assert!(BoundRegion::enclosing(&[]).is_none());
+
+        // parcels (0, 0) and (2, 3), each a region of its own, the second with the higher limit
+        let regions = [
+            BoundRegion::new(IVec2::ZERO, IVec2::ZERO, 1),
+            BoundRegion::new(IVec2::new(2, 3), IVec2::new(2, 3), 3),
+        ];
+        let ((min, max), height) = BoundRegion::enclosing(&regions).unwrap();
+        // cells are world xz / 16, so parcel (x, y) is cell (x, -y - 1)
+        assert_eq!((min, max), (IVec2::new(0, -4), IVec2::new(2, -1)));
+        assert_eq!(height, BoundRegion::height_for_parcels(3));
+    }
+
+    #[test]
     fn parcel_index_matches_rect_loop() {
         use common::bounds_calc::scene_regions;
 
@@ -902,6 +966,38 @@ mod test {
                         assert!(new >= reach, "{pos} old {old} new {new}");
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn bounds_clip_at_the_height_their_regions_carry() {
+        use common::bounds_calc::scene_regions;
+
+        // one parcel (a single rectangle), and an L with a parcel apart (the cell table)
+        let shapes = [
+            vec![IVec2::ZERO],
+            vec![IVec2::ZERO, IVec2::X, IVec2::Y, IVec2::splat(5)],
+        ];
+
+        for parcels in shapes {
+            let regions = scene_regions(parcels.iter().copied())
+                .into_iter()
+                .map(|r| BoundRegion::new(r.min, r.max, r.count).with_height(FIXED_SCENE_HEIGHT))
+                .collect::<Vec<_>>();
+            let mut buffers = bevy::asset::Assets::<super::ShaderStorageBuffer>::default();
+            let bounds = super::SceneBounds::new(&regions, Some(&mut buffers));
+
+            for parcel in parcels {
+                let centre = Vec3::new(
+                    parcel.x as f32 * 16.0 + 8.0,
+                    0.0,
+                    -parcel.y as f32 * 16.0 - 8.0,
+                );
+                let below = centre.with_y(FIXED_SCENE_HEIGHT - 1.0);
+                let above = centre.with_y(FIXED_SCENE_HEIGHT + 1.0);
+                assert_eq!(new_amount(&bounds, &buffers, 0.0, below), 0.0, "{parcel}");
+                assert_eq!(new_amount(&bounds, &buffers, 0.0, above), 1.0, "{parcel}");
             }
         }
     }

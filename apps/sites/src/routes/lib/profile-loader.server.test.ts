@@ -2,11 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const net = vi.hoisted(() => ({
   fetchProfile: vi.fn(),
-  fetchCreations: vi.fn(),
+  fetchProfileCreations: vi.fn(),
+  fetchProfileAssets: vi.fn(),
   fetchProfilePlaces: vi.fn(),
   fetchUserPhotos: vi.fn(),
-  fetchOwnedWearables: vi.fn(),
-  fetchOwnedNames: vi.fn(),
   fetchUserBadges: vi.fn(),
 }));
 vi.mock("@/data/lib/catalyst/social/badges", () => ({ fetchUserBadges: net.fetchUserBadges }));
@@ -14,19 +13,18 @@ vi.mock("@/data/lib/catalyst/social/profile", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/social/profile")>()),
   fetchProfile: net.fetchProfile,
 }));
-vi.mock("@/data/lib/catalyst/marketplace/index", async (original) => ({
-  ...(await original<typeof import("@/data/lib/catalyst/marketplace/index")>()),
-  fetchCreations: net.fetchCreations,
+vi.mock("@/data/lib/catalyst/marketplace/profile-collectibles", async (original) => ({
+  ...(await original<typeof import("@/data/lib/catalyst/marketplace/profile-collectibles")>()),
+  fetchProfileCreations: net.fetchProfileCreations,
+  fetchProfileAssets: net.fetchProfileAssets,
 }));
 vi.mock("@/data/lib/catalyst/places/profile-places", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/places/profile-places")>()),
   fetchProfilePlaces: net.fetchProfilePlaces,
 }));
 vi.mock("@/data/lib/catalyst/social/photos", () => ({ fetchUserPhotos: net.fetchUserPhotos }));
-vi.mock("@/data/lib/catalyst/marketplace/account", () => ({
-  fetchOwnedWearables: net.fetchOwnedWearables,
-  fetchOwnedNames: net.fetchOwnedNames,
-}));
+const flags = vi.hoisted(() => ({ dappsFlags: vi.fn() }));
+vi.mock("@/data/lib/feature-flags.server", () => ({ knownDappsFlags: flags.dappsFlags }));
 
 import { createStaticHandler, RouterContextProvider } from "react-router";
 
@@ -85,7 +83,8 @@ const keysOf = (data: ProfileLoaderData) => data.dehydratedState.queries.map((q)
 
 beforeEach(() => {
   net.fetchProfile.mockImplementation(async (address: string) => avatar(address === A ? "Alice" : "Bob"));
-  net.fetchCreations.mockResolvedValue({ wearables: [], emotes: [] });
+  net.fetchProfileCreations.mockResolvedValue({ items: [], received: 0, total: 0 });
+  flags.dappsFlags.mockResolvedValue({ "dapps-show-referral": true });
 });
 afterEach(() => vi.resetAllMocks());
 
@@ -132,7 +131,10 @@ describe("profile loader, dehydrated state", () => {
   it("dehydrates the profile and the active tab's data only", async () => {
     const out = await run(`/profile/${A}/creations`, { address: A, tab: "creations" });
 
-    expect(out.ok && keysOf(out.data)).toEqual([profileKeys.profile(A), profileKeys.creations(A)]);
+    // Creations opens on wearables: only that list's first page is read.
+    expect(out.ok && keysOf(out.data)).toEqual([profileKeys.profile(A), profileKeys.creations(A, "wearable")]);
+    expect(net.fetchProfileCreations).toHaveBeenCalledTimes(1);
+    expect(net.fetchProfileCreations.mock.calls[0]?.[1]).toMatchObject({ category: "wearable", skip: 0 });
     expect(net.fetchProfilePlaces).not.toHaveBeenCalled();
     expect(net.fetchUserPhotos).not.toHaveBeenCalled();
   });
@@ -152,7 +154,7 @@ describe("profile loader, dehydrated state", () => {
     beforeEach(async () => {
       vi.useFakeTimers();
       settled = false;
-      net.fetchCreations.mockReturnValue(new Promise(() => {}));
+      net.fetchProfileCreations.mockReturnValue(new Promise(() => {}));
       result = run(`/profile/${A}/creations`, { address: A, tab: "creations" });
       void result.then(() => { settled = true; });
       await vi.advanceTimersByTimeAsync(OPTIONAL_READS_BUDGET_MS - 1);
@@ -193,7 +195,7 @@ describe("profile loader, dehydrated state", () => {
   });
 
   it("leaves a failed optional read to the browser and still renders", async () => {
-    net.fetchCreations.mockRejectedValue(new Error("marketplace down"));
+    net.fetchProfileCreations.mockRejectedValue(new Error("marketplace down"));
 
     const out = await run(`/profile/${A}/creations`, { address: A, tab: "creations" });
 
@@ -205,21 +207,28 @@ describe("profile loader, dehydrated state", () => {
 
     expect(out.ok).toBe(false);
     expect(locationOf(out.ok ? null : out.thrown)).toBe(`/profile/${A}`);
-    expect(net.fetchOwnedWearables).not.toHaveBeenCalled();
+    expect(net.fetchProfileAssets).not.toHaveBeenCalled();
   });
 
-  it("reads the signed-in member's own assets", async () => {
-    net.fetchOwnedWearables.mockResolvedValue({ elements: [], total: 0 });
-    net.fetchOwnedNames.mockResolvedValue({ elements: [], total: 0 });
+  it("reads the signed-in member's own assets, every category, first page", async () => {
+    net.fetchProfileAssets.mockResolvedValue({ items: [], received: 0, total: 0 });
 
     const out = await run(`/profile/${A}/assets`, { address: A, tab: "assets" }, A);
 
     expect(out.ok && out.data.own).toBe(true);
-    expect(out.ok && keysOf(out.data)).toEqual([
-      profileKeys.profile(A),
-      profileKeys.ownedWearables(A),
-      profileKeys.ownedNames(A),
-    ]);
+    expect(out.ok && keysOf(out.data)).toEqual([profileKeys.flags(), profileKeys.profile(A), profileKeys.assets(A, null)]);
+    expect(net.fetchProfileAssets.mock.calls[0]?.[1]).toMatchObject({ category: undefined, skip: 0 });
+  });
+
+  it("reads the public gallery's first page on Photos, unsigned even for the owner", async () => {
+    net.fetchUserPhotos.mockResolvedValue({ items: [], received: 0, total: 0 });
+
+    const out = await run(`/profile/${A}/photos`, { address: A, tab: "photos" }, A);
+
+    expect(out.ok && keysOf(out.data)).toEqual([profileKeys.flags(), profileKeys.profile(A), profileKeys.photos(A)]);
+    expect(net.fetchUserPhotos).toHaveBeenCalledTimes(1);
+    expect(net.fetchUserPhotos.mock.calls[0]?.[1]).toEqual({ limit: 24, offset: 0 });
+    expect(net.fetchUserPhotos.mock.calls[0]?.[2]).not.toHaveProperty("identity");
   });
 
   it("keeps two interleaved requests for different profiles apart", async () => {
@@ -313,8 +322,7 @@ describe("profile loader, canonical paths", () => {
   });
 
   it("opens a browser-wallet member's own-only tab from a deep link", async () => {
-    net.fetchOwnedWearables.mockResolvedValue({ elements: [], total: 0 });
-    net.fetchOwnedNames.mockResolvedValue({ elements: [], total: 0 });
+    net.fetchProfileAssets.mockResolvedValue({ items: [], received: 0, total: 0 });
 
     const out = await run(`/profile/${A}/assets`, { address: A, tab: "assets" }, A);
 
@@ -427,5 +435,64 @@ describe("profile document request, through the router's handler", () => {
 
     expect(context.statusCode).toBe(200);
     expect(context.loaderData.profile?.dehydratedState.queries[0]?.queryKey).toEqual(profileKeys.profile(A));
+  });
+});
+
+describe("profile loader, Referral Rewards", () => {
+  const referral = `/profile/${A}/referral-rewards`;
+
+  it("opens the member's own Referral Rewards while the flag is on, and hands the page the flag", async () => {
+    const out = await run(referral, { address: A, tab: "referral-rewards" }, A);
+
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    const entry = out.data.dehydratedState.queries.find((q) => q.queryHash === JSON.stringify(profileKeys.flags()));
+    expect(entry?.state.data).toEqual({ referral: true });
+  });
+
+  it("sends the tab to the profile root while the flag is off", async () => {
+    flags.dappsFlags.mockResolvedValue({});
+
+    const out = await run(referral, { address: A, tab: "referral-rewards" }, A);
+
+    expect(out.ok).toBe(false);
+    expect(locationOf(out.ok ? null : out.thrown)).toBe(`/profile/${A}`);
+  });
+
+  it("keeps the owner's referral URL while flags are unavailable and leaves the flags query unseeded", async () => {
+    flags.dappsFlags.mockResolvedValue(null);
+
+    const out = await run(referral, { address: A, tab: "referral-rewards" }, A);
+
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      expect(out.data.dehydratedState.queries.some((query) => query.queryKey.includes("flags"))).toBe(false);
+    }
+  });
+
+  it("sends the profile site's old `referral` tab id to Referral Rewards, keeping the query", async () => {
+    const out = await run(`/profile/${A}/referral?utm_source=mail`, { address: A, tab: "referral" }, A);
+
+    expect(out.ok).toBe(false);
+    expect(locationOf(out.ok ? null : out.thrown)).toBe(`${referral}?utm_source=mail`);
+  });
+
+  it("sends the old `?tab=referral` link to Referral Rewards", async () => {
+    const out = await run(`/profile/${A}?tab=referral`, { address: A }, A);
+
+    expect(locationOf(out.ok ? null : out.thrown)).toBe(referral);
+  });
+
+  it("does not show another member's Referral Rewards, and reads no flags for them", async () => {
+    const out = await run(`/profile/${B}/referral-rewards`, { address: B, tab: "referral-rewards" }, A);
+
+    expect(locationOf(out.ok ? null : out.thrown)).toBe(`/profile/${B}`);
+    expect(flags.dappsFlags).not.toHaveBeenCalled();
+  });
+
+  it("keeps the tab of /profile/me/referral for the profile's own loader to decide", () => {
+    const thrown = thrownBy(() => ownProfileRedirect(request("/profile/me/referral", A), "referral"));
+
+    expect(locationOf(thrown)).toBe(referral);
   });
 });

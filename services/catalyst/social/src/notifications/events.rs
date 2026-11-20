@@ -57,8 +57,10 @@ pub struct Links {
     /// The events site (`/whats-on/{id}`): the link of the notices the old
     /// service sent without one (rejected, deleted, community created).
     pub base: String,
-    /// Backend asset origin and mount for relative default posters.
+    /// Backend events asset mount (`<origin>/events`) for the bundled default image.
     pub asset_base: String,
+    /// `PUBLIC_URL` as the event read projection uses it for poster URLs.
+    pub public_base: Option<String>,
     /// `JUMP_IN_SITE_URL`: `buildEventLink` (`Notifications/index.ts:30-39`)
     /// for the reminder, start and approval notices.
     pub jump_in_site_url: String,
@@ -278,7 +280,7 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
         _ if name.is_empty() => ("Event".to_string(), description),
         _ => (name.to_string(), description),
     };
-    let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":catalyst_explore::events::posters::absolute_default_image(text(&intent.event,"image"),&links.asset_base),"link":link,"occurredAt":intent.occurred_at.and_utc().to_rfc3339()});
+    let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":catalyst_explore::node_assets::notice_image_url(text(&intent.event,"image"),links.public_base.as_deref(),&links.asset_base),"link":link,"occurredAt":intent.occurred_at.and_utc().to_rfc3339()});
     if matches!(
         intent.kind.as_str(),
         "events_starts_soon" | "events_started" | "event_created"
@@ -626,6 +628,7 @@ mod tests {
         Links {
             base: link.into(),
             asset_base: assets.into(),
+            public_base: None,
             jump_in_site_url: "https://decentraland.org/jump".into(),
             community_cdn: CDN.into(),
             slack_notices: false,
@@ -956,13 +959,15 @@ mod tests {
         .await
         .unwrap();
         assert!(finished);
-        catch_up_pages_live_audiences_and_retention(&pool).await;
-        bounded_work_preserves_fairness_cleanup_and_polling(&pool).await;
-        drain_waits_for_an_intent_claimed_by_another_transaction(&pool).await;
-        blocked_metrics_preserve_notification_delivery(&pool).await;
     }
 
-    async fn blocked_metrics_preserve_notification_delivery(pool: &PgPool) {
+    #[tokio::test]
+    async fn blocked_metrics_preserve_notification_delivery() {
+        let _guard = super::super::event_ended::TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        let pool = &pool;
         let id = Uuid::new_v4();
         let event_id = format!("metric-lock-{id}");
         let now = Utc::now().naive_utc();
@@ -985,7 +990,13 @@ mod tests {
         assert_eq!(count(pool, &event_id, "event_approved", &address).await, 1);
     }
 
-    async fn drain_waits_for_an_intent_claimed_by_another_transaction(pool: &PgPool) {
+    #[tokio::test]
+    async fn drain_waits_for_an_intent_claimed_by_another_transaction() {
+        let _guard = super::super::event_ended::TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        let pool = &pool;
         let id = Uuid::new_v4();
         let event_id = format!("claimed-{id}");
         let now = Utc::now().naive_utc();
@@ -1107,7 +1118,13 @@ mod tests {
         );
     }
 
-    async fn catch_up_pages_live_audiences_and_retention(pool: &PgPool) {
+    #[tokio::test]
+    async fn catch_up_pages_live_audiences_and_retention() {
+        let _guard = super::super::event_ended::TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        let pool = &pool;
         let now = chrono::DateTime::parse_from_rfc3339("2101-06-01T18:00:00Z")
             .unwrap()
             .naive_utc();
@@ -1381,7 +1398,13 @@ mod tests {
         );
     }
 
-    async fn bounded_work_preserves_fairness_cleanup_and_polling(pool: &PgPool) {
+    #[tokio::test]
+    async fn bounded_work_preserves_fairness_cleanup_and_polling() {
+        use crate::db::scratch::{OwnedDatabase, Schema};
+        let Some(db) = OwnedDatabase::new("event_fairness", Schema::Full, 6).await else {
+            return;
+        };
+        let pool = &db.pool;
         let now = chrono::DateTime::from_timestamp_micros(Utc::now().timestamp_micros())
             .unwrap()
             .naive_utc();
@@ -1742,13 +1765,7 @@ mod tests {
             count(pool, &lock_event, "events_starts_soon", &address).await,
             1
         );
-        // This fixture's wall-clock events (a local community one among them)
-        // would otherwise count as endings in the metric tests of this process.
-        sqlx::query("DELETE FROM explore.event WHERE id LIKE $1")
-            .bind(format!("{prefix}-%"))
-            .execute(pool)
-            .await
-            .unwrap();
+        db.drop().await;
     }
 
     fn intent(kind: &str, event: Value) -> Intent {
@@ -1790,6 +1807,58 @@ mod tests {
             payload["image"],
             "https://assets.example.org/events/assets/event-default.webp"
         );
+        for (stored, absolute) in [
+            (
+                "/poster/a.webp",
+                "https://assets.example.org/events-assets-099ac00/poster/a.webp",
+            ),
+            (
+                "/poster-vertical/a.webp",
+                "https://assets.example.org/events-assets-099ac00/poster-vertical/a.webp",
+            ),
+            (
+                "https://img.example.org/p.png",
+                "https://img.example.org/p.png",
+            ),
+        ] {
+            let payload = metadata(
+                &intent("event_approved", json!({"name":"Poster","image":stored})),
+                &recipient(false, false),
+                &Links {
+                    public_base: Some("https://assets.example.org".into()),
+                    ..origins(
+                        "https://web.example.org",
+                        "https://assets.example.org/events",
+                    )
+                },
+            );
+            assert_eq!(payload["image"], absolute, "{stored}");
+        }
+        // An image the read side drops is sent empty.
+        for dropped in ["javascript:x", "/other/a.webp"] {
+            let payload = metadata(
+                &intent("event_approved", json!({"name":"Dropped","image":dropped})),
+                &recipient(false, false),
+                &origins(
+                    "https://web.example.org",
+                    "https://assets.example.org/events",
+                ),
+            );
+            assert_eq!(payload["image"], "", "{dropped}");
+        }
+        // Without `PUBLIC_URL` a poster stays relative, as `GET` serves it.
+        let payload = metadata(
+            &intent(
+                "event_approved",
+                json!({"name":"Poster","image":"/poster/a.webp"}),
+            ),
+            &recipient(false, false),
+            &origins(
+                "https://web.example.org",
+                "https://assets.example.org/events",
+            ),
+        );
+        assert_eq!(payload["image"], "/events-assets-099ac00/poster/a.webp");
         assert_eq!(
             payload["link"], "https://decentraland.org/jump/events?id=legacy-event&position=0%2C0",
             "an approval links the jump-in site (`Notifications/index.ts:205`)"

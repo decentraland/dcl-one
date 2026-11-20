@@ -433,6 +433,20 @@ describe('Explorer', () => {
     ])
   })
 
+  test('mediaState and mediaRetryDelay compose the lines and parse the replies', async () => {
+    const fake = new FakeConsole({
+      media_state: JSON.stringify({ backend: 'HTML media', players: [{ type: 'video', entity: '512', scene: 'video', source: 'media/flaky.webm', retryAttempt: 2, retryFailures: 3, retryDelaySeconds: 0.2, retryGaveUp: false, lastError: 'source not supported' }] }),
+      media_retry_delay: JSON.stringify({ firstDelayMs: 100, maxReopens: 5 })
+    })
+    const explorer = new Explorer(fake)
+    const [row] = (await explorer.mediaState()).players
+    assert.equal(row!.retryAttempt, 2)
+    assert.equal(row!.retryFailures, 3)
+    assert.deepEqual(await explorer.mediaRetryDelay(100), { firstDelayMs: 100, maxReopens: 5 })
+    await explorer.mediaRetryDelay()
+    assert.deepEqual(fake.lines, ['/media_state', '/media_retry_delay 100', '/media_retry_delay'])
+  })
+
   test("profileDeployWindow waits out the catalyst's window after the own profile changed, and only then", async () => {
     let version = 3
     const fake = new FakeConsole({ get_user_data: () => `tester (0x${'a'.repeat(40)}): v${version}, web3=true` })
@@ -456,6 +470,38 @@ describe('Explorer', () => {
     const started = Date.now()
     await explorer.profileDeployWindow()
     assert.ok(Date.now() - started >= 250, 'the window starts at the deployment it was told of')
+  })
+
+  test('profileDeployWindow holds a deployment past a burst until the oldest leaves its span', async () => {
+    let version = 1
+    const fake = new FakeConsole({ get_user_data: () => `tester (0x${'a'.repeat(40)}): v${version}, web3=true` })
+    const explorer = new Explorer(fake, { profileDeployWindowMs: 0, profileDeployBurst: { count: 2, spanMs: 400 } })
+    await explorer.userData()
+    version = 2
+    await explorer.userData()
+    let started = Date.now()
+    await explorer.profileDeployWindow()
+    assert.ok(Date.now() - started < 150, 'one deployment in the span leaves room for another')
+    version = 3
+    await explorer.userData()
+    started = Date.now()
+    await explorer.profileDeployWindow()
+    assert.ok(Date.now() - started >= 350, 'a full burst waits for its oldest deployment to leave the span')
+    started = Date.now()
+    await explorer.profileDeployWindow()
+    assert.ok(Date.now() - started < 150, 'and then there is room again')
+  })
+
+  test('profileDeployWindow counts every version a read skipped as a deployment', async () => {
+    let version = 3
+    const fake = new FakeConsole({ get_user_data: () => `tester (0x${'a'.repeat(40)}): v${version}, web3=true` })
+    const explorer = new Explorer(fake, { profileDeployWindowMs: 0, profileDeployBurst: { count: 2, spanMs: 400 } })
+    await explorer.userData()
+    version = 5
+    await explorer.userData()
+    const started = Date.now()
+    await explorer.profileDeployWindow()
+    assert.ok(Date.now() - started >= 350, 'two deployments between reads fill a burst of two')
   })
 
   test('a long reply is cut in the record, not in the result', async () => {

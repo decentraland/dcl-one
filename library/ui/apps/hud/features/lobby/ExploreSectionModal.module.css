@@ -1,0 +1,55 @@
+/* The close button sits on the hosted pages' 68px header line. */
+.scrim.scrim {
+  background: var(--explore-modal-scrim);
+  backdrop-filter: none;
+}
+.panel {
+  border-radius: var(--r-xl);
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  width: 1542px;
+  height: 1000px;
+  max-height: 100%;
+  overflow: hidden;
+  background: var(--brand-purple-dark);
+  animation: fadeIn 0.2s linear;
+}
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.host {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.places {
+  overflow-y: auto;
+  padding: 68px 30px 30px;
+}
+.communities {
+  overflow-y: auto;
+  padding: 0 30px 30px;
+}
+.close {
+  position: absolute;
+  top: 13px;
+  right: 20px;
+  z-index: 4;
+  width: 42px;
+  height: 42px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel {
+    animation: none;
+  }
+}

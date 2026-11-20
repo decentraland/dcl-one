@@ -5,7 +5,7 @@
 import { ControlButton } from '../../design'
 import type { AppNotification } from '@explorer-core/engine/protocol'
 import type { ChatState, FriendsState, NotificationsState, VoiceChatSession } from '../session/useEngineSession'
-import { ago, communityTarget, friendshipTarget, tipTarget, streamTarget, summarize } from './summary'
+import { ago, communityTarget, friendshipTarget, giftTarget, referralTarget, tipTarget, streamTarget, summarize } from './summary'
 import styles from './NotificationsPanel.module.css'
 
 // The kind badge on the thumbnail's corner, marking each notification: a
@@ -35,7 +35,7 @@ function KindBadge({ type }: { type: string }): React.JSX.Element {
 
 function NotificationRow({ n, friends, voiceChat, chat }: { n: AppNotification; friends?: FriendsState; voiceChat?: VoiceChatSession; chat?: ChatState }): React.JSX.Element {
   const { title, body, image } = summarize(n)
-  const onOpen = friendshipTarget(n, friends) ?? tipTarget(n) ?? streamTarget(n, voiceChat, chat) ?? communityTarget(n)
+  const onOpen = friendshipTarget(n, friends) ?? tipTarget(n) ?? giftTarget(n) ?? referralTarget(n) ?? streamTarget(n, voiceChat, chat) ?? communityTarget(n)
   return (
     <div
       className={`${styles.row} ${onOpen ? styles.clickable : ''}`.trim()}

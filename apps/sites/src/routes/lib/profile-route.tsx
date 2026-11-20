@@ -1,13 +1,13 @@
-import { HydrationBoundary, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
-import { useLocation, useNavigate, useParams, useRouteError, useRouteLoaderData } from "react-router";
+import { HydrationBoundary } from "@tanstack/react-query";
+import { useParams, useRouteError, useRouteLoaderData } from "react-router";
 
-import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
+import { ProfileError } from "@dcl/one-ui/apps/sites/profile/ProfileError";
 
 import { normalizeAddress } from "@/data/lib/catalyst/social/profile";
 import { profileKeys } from "@/data/lib/profile/queries";
 import { isProfileError, profileErrorAddress, profileErrorReason, type ProfileErrorReason } from "@/features/profile/errors";
 import { ProfilePage } from "@/features/profile/ProfilePage";
+import { useFailedReadRecovery } from "@/features/components/useFailedReadRecovery";
 
 import type { ProfileLoaderData } from "./profile-loader.server";
 
@@ -51,51 +51,13 @@ const COPY: Record<ProfileErrorReason, (address: string) => { title: string; bod
 export function ProfileErrorBoundary() {
   const error = useRouteError();
   const params = useParams();
-  const client = useQueryClient();
-  const navigate = useNavigate();
-  const location = useLocation();
   const address = normalizeAddress(params.address);
   // A bug is the root boundary's to show, not a profile failure.
   if (!isProfileError(error)) throw error;
   const reason = profileErrorReason(error);
   const copy = COPY[reason](profileErrorAddress(error) ?? params.address ?? "");
 
-  useEffect(
-    () => () => {
-      // A departing boundary releases its failed read, not newer data or another owner's request.
-      void client.resetQueries({
-        queryKey: profileKeys.profile(address),
-        exact: true,
-        type: "inactive",
-        predicate: ({ state }) =>
-          state.status === "error" &&
-          state.data === undefined &&
-          state.fetchStatus === "idle",
-      });
-    },
-    [client, address],
-  );
+  const retry = useFailedReadRecovery(profileKeys.profile(address));
 
-  const retry = async () => {
-    await client.resetQueries({
-      queryKey: profileKeys.profile(address),
-      exact: true,
-      predicate: ({ state }) => state.status === "error" && state.data === undefined,
-    });
-    // A navigation to the same URL clears the router's error, which a revalidation does not for an
-    // error thrown while rendering.
-    void navigate(`${location.pathname}${location.search}`, { replace: true });
-  };
-
-  return (
-    <main className="landings-profile" role="alert">
-      <h1>{copy.title}</h1>
-      <p>{copy.body}</p>
-      {reason === "unavailable" ? (
-        <Button variant="secondary" onClick={retry}>
-          Try again
-        </Button>
-      ) : null}
-    </main>
-  );
+  return <ProfileError {...copy} onRetry={reason === "unavailable" ? retry : undefined} />;
 }

@@ -177,6 +177,28 @@
         "needs_login_help": "Puede que su sesión guardada haya caducado, aunque aparezca como conectado. Cierra sesión y vuelve a iniciarla: ejecuta esto en una terminal, un comando a la vez, y termina en tu navegador. Luego vuelve a enviar tu mensaje:",
         "needs_login_managed_help": "Puede que su inicio de sesión guardado haya caducado, aunque apareciera como conectado. En Configuración → IA, haz clic en Cerrar sesión y luego en Iniciar sesión, y vuelve a enviar tu mensaje.",
         "api_key_alternative": "O usa una clave de API: define {envVar} y activa \"{setting}\" en Configuración → IA."
+      },
+      "sharing": {
+        "card_title": "Ayúdanos a mejorar el asistente de IA",
+        "card_body": "Comparte tus conversaciones con Decentraland para ayudar a mejorar el asistente. Un modelo de IA las lee para encontrar qué funciona y qué no. Antes de enviar nada, tu computadora quita claves, frases semilla, correos y otros datos personales comunes.",
+        "signin_body": "Inicia sesión para compartir tus conversaciones y ayudar a mejorar el asistente.",
+        "details_toggle": "Qué se comparte y qué no",
+        "details_shared": "Se comparte: lo que escribes, las respuestas del asistente, las herramientas que usó con sus nombres de archivo y comandos, el agente y el modelo, y cuánto tardó cada respuesta.",
+        "details_not_shared": "No se comparte: imágenes, contenido de archivos, el nombre de tu escena ni las conversaciones que marques como no compartidas.",
+        "details_analysis": "Cómo se usan: un modelo de IA de un proveedor que trabaja para Decentraland resume cada conversación. El proveedor no guarda ninguna copia ni entrena con ellas. Guardamos los patrones que vemos entre muchos creadores para mejorar el asistente.",
+        "details_publish": "El equipo comenta esos patrones. Los cambios que salgan de ellos pueden publicarse en las instrucciones, habilidades y documentación públicas del asistente, y en las descripciones de esos cambios. Una vez publicados, siguen siendo públicos aunque borres lo que compartiste.",
+        "details_control": "Puedes dejar de compartir o borrar todo lo compartido en cualquier momento desde Configuración. Dejar de compartir también detiene el análisis, y borrar también borra los resúmenes. Las conversaciones compartidas y sus resúmenes se guardan hasta 180 días.",
+        "accept": "Compartir para ayudar",
+        "decline": "No, gracias",
+        "not_now": "Ahora no",
+        "chip": "Compartiendo",
+        "chip_excluded": "Sin compartir",
+        "chip_menu": "opciones para compartir",
+        "rate_up": "Buena respuesta",
+        "rate_down": "Mala respuesta",
+        "menu_share_chat": "Compartir este chat",
+        "menu_share_all": "Compartir todos los chats",
+        "menu_chat_erased": "Lo que este chat compartió se borró."
       }
     },
     "publish": {
@@ -383,6 +405,8 @@
         "select_world": {
           "title": "Publicar en tu Mundo",
           "description": "Elige el dominio donde se publicará tu mundo.",
+          "domain_type_label": "Tipo de dominio",
+          "world_name_label": "Nombre del mundo",
           "world_name": "MUNDO (NOMBRE)",
           "placeholder": "Seleccione un Nombre",
           "claim_new_name": "Solicitar un nuevo Nombre",
@@ -616,12 +640,16 @@
         "code_editor": {
           "label": "Editor de código preferido",
           "choose_device": "Elegir desde tu dispositivo...",
+          "placeholder": "Agrega o elige un editor por defecto",
+          "list": "Editores de código agregados",
+          "remove": "Quitar {name}",
           "errors": {
             "load": "Error al cargar los editores de código",
             "set": "Error al establecer el editor por defecto",
             "invalid_app_extension": "Aplicación inválida. Por favor selecciona un archivo .app válido",
             "invalid_app_bundle": "Estructura de aplicación inválida",
             "invalid_exe_file": "Aplicación inválida. Por favor selecciona un archivo .exe válido",
+            "invalid_executable": "Aplicación inválida. Por favor selecciona un archivo que puedas ejecutar",
             "unknown": "Error al establecer el editor por defecto"
           }
         },
@@ -668,6 +696,55 @@
           "install": "Instalar",
           "sign_in_label": "Iniciar sesión",
           "copy": "Copiar"
+        },
+        "ai_sharing": {
+          "label": "Compartir conversaciones para mejorar Creator Hub",
+          "description": "Envía a Decentraland lo que le pides al asistente y sus respuestas, después de quitar en tu computadora las claves y los datos personales comunes. Un modelo de IA los resume para encontrar formas de mejorar el asistente. Se guardan hasta 180 días.",
+          "signin": "Inicia sesión para compartir conversaciones.",
+          "queued_title": "Pendientes de enviar ({count})",
+          "queued_empty": "No hay nada pendiente de enviar.",
+          "delete": "Borrar todo lo que compartí",
+          "deleting": "Borrando…",
+          "deleted": "Se borraron {count} turnos compartidos.",
+          "delete_failed": "No se pudieron borrar tus conversaciones compartidas. Revisa tu conexión e inténtalo de nuevo.",
+          "viewer_show": "Ver lo que compartí",
+          "viewer_hide": "Ocultar lo que compartí",
+          "viewer_empty": "Todavía no compartiste nada.",
+          "viewer_failed": "No se pudo cargar lo que compartiste. Revisa tu conexión e inténtalo de nuevo.",
+          "viewer_delete": "Borrar este turno",
+          "viewer_more": "Ver más",
+          "delete_confirm": "¿Seguro que quieres borrar todo lo que compartiste? Esta acción no se puede deshacer.",
+          "delete_confirm_yes": "Borrar todo",
+          "delete_cancel": "Cancelar",
+          "digests_show": "Ver los resúmenes hechos de tus conversaciones",
+          "digests_hide": "Ocultar los resúmenes",
+          "digests_empty": "Todavía no hay resúmenes. Cada conversación se resume unas horas después de terminar.",
+          "digests_failed": "No se pudieron cargar los resúmenes. Revisa tu conexión e inténtalo de nuevo.",
+          "digests_more": "Ver más",
+          "digests_problems": "Problemas: {kinds}",
+          "digest_outcome": {
+            "achieved": "Logrado",
+            "partial": "Logrado en parte",
+            "not_achieved": "No logrado",
+            "abandoned": "Abandonado",
+            "unclear": "No está claro"
+          },
+          "digest_friction": {
+            "misunderstood_request": "pedido mal entendido",
+            "wrong_sdk_knowledge": "conocimiento del SDK incorrecto",
+            "tool_failed": "falló una herramienta",
+            "tool_missing": "falta una herramienta",
+            "skill_missing": "falta una habilidad",
+            "skill_ignored": "habilidad sin usar",
+            "asset_not_found": "recurso no encontrado",
+            "scene_broke": "la escena se rompió",
+            "slow_or_stuck": "lento o trabado",
+            "creator_corrected_agent": "corregiste al asistente",
+            "creator_stopped_reply": "detuviste una respuesta",
+            "setup_or_sign_in": "configuración o inicio de sesión",
+            "other": "otro"
+          },
+          "signin_link": "Iniciar sesión"
         }
       },
       "actions": {
@@ -729,7 +806,6 @@
     },
     "install_client": {
       "title": "Para entrar, primero necesitarás instalar Decentraland",
-      "download": "Descargar",
       "download_macos": "DESCARGAR PARA MACOS",
       "download_win": "DESCARGAR PARA WINDOWS",
       "cancel": "AHORA NO"
@@ -777,8 +853,8 @@
       "sent": "¡Gracias por ayudarnos a mejorar Creator Hub! Recibimos tu reporte y nuestro equipo investigará el problema y trabajará en una solución.",
       "queued_title": "Reporte de problema guardado",
       "queued": "Guardamos tu reporte y lo enviaremos en cuanto vuelvas a tener conexión.",
-      "unknown_title": "No pudimos confirmar tu reporte",
-      "unknown": "Enviamos tu reporte, pero no pudimos confirmar que llegó. Si el problema continúa, vuelve a reportarlo.",
+      "unknown_title": "Reporte enviado",
+      "unknown": "Enviamos tu reporte, pero todavía no pudimos confirmar que llegó. No hace falta enviarlo de nuevo.",
       "failed_title": "Algo salió mal",
       "failed": "No pudimos enviar tu reporte. Revisa tu conexión e inténtalo de nuevo."
     }
@@ -796,8 +872,6 @@
       "delete_scene": "Borrando escena...",
       "delete_scene_failed": "Error al borrar escena",
       "dependencies_updated": "Las dependencias de la escena fueron actualizadas",
-      "multiplayer_sdk_installed": "SDK de Multiplayer Server instalado.",
-      "multiplayer_sdk_uninstalled": "SDK de Multiplayer Server quitado. Última versión del SDK instalada.",
       "updating_sdk_skills": "Instalando las últimas habilidades de IA...",
       "sdk_skills_updated": "Las habilidades de IA están al día",
       "sdk_skills_update_failed": "No se pudieron instalar las habilidades de IA",
@@ -1470,7 +1544,6 @@
         "title": "Interacción",
         "description": "Entendé cómo interactúan los usuarios con tu place.",
         "minutes": "min",
-        "delta": "{value} min",
         "vs_last_week": "{value} vs. la semana pasada",
         "daily": {
           "title": "Tiempo de Juego Diario Promedio",
@@ -1566,6 +1639,10 @@
       "day_7_retention": {
         "label": "Retención Día 7",
         "tooltip": "El porcentaje de usuarios nuevos que volvieron a tu place dentro de los 7 días posteriores a su primera visita."
+      },
+      "total_playtime": {
+        "label": "Tiempo de Juego Total",
+        "tooltip": "Todo el tiempo que los usuarios pasaron en tu place, sumando cada visita."
       },
       "median_playtime": {
         "label": "Mediana de Tiempo de Juego",
@@ -1811,9 +1888,9 @@
           "d3_retention": "Retención D3",
           "d3_retention_info_label": "Acerca de la retención D3",
           "playtime": "Tiempo de juego total",
-          "playtime_info": "Tiempo promedio que cada jugador pasó en tu lugar en los últimos 30 días.",
+          "playtime_info": "Tiempo total que los jugadores pasaron en tu lugar en los últimos 30 días.",
           "playtime_info_label": "Acerca del tiempo de juego total",
-          "minutes": "{value} min",
+          "minutes": "{value} {minutes, plural, one {minuto} other {minutos}}",
           "no_data": "Sin datos"
         },
         "empty_body": "Cuando publiques una escena, aparecerá aquí con su rendimiento en el ciclo actual.",

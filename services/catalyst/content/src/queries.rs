@@ -76,7 +76,12 @@ impl EntityDoc {
 /// Fail closed: an entity carrying no string `id` cannot be checked against
 /// the denylist, so it is dropped rather than served.
 pub fn retain_non_denylisted(docs: &mut Vec<EntityDoc>, denylist: &super::Denylist) {
-    docs.retain(|doc| !doc.id.is_empty() && !denylist.contains(&doc.id));
+    docs.retain(|doc| non_denylisted(&doc.id, denylist));
+}
+
+/// Whether a read may serve the entity `id` ([`retain_non_denylisted`]'s test).
+pub fn non_denylisted(id: &str, denylist: &super::Denylist) -> bool {
+    !id.is_empty() && !denylist.contains(id)
 }
 
 #[derive(Debug, sqlx::FromRow)]

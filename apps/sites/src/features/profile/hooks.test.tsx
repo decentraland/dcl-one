@@ -11,18 +11,22 @@ vi.hoisted(() => {
     $RefreshReg$: () => {},
   });
 });
-const communities = vi.hoisted(() => ({ fetch: vi.fn() }));
+const communities = vi.hoisted(() => ({ mine: vi.fn(), member: vi.fn() }));
 vi.mock("@/data/lib/catalyst/social/profile-communities", () => ({
-  fetchMyCommunities: communities.fetch,
+  fetchMyCommunities: communities.mine,
+  fetchMemberCommunities: communities.member,
 }));
+const photos = vi.hoisted(() => ({ fetch: vi.fn() }));
+vi.mock("@/data/lib/catalyst/social/photos", () => ({ fetchUserPhotos: photos.fetch }));
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { profileKeys } from "@/data/lib/profile/queries";
 import {
-  useMyCommunities,
   useProfile,
   useProfileAssets,
+  useProfileCommunities,
   useProfileCreations,
+  useProfilePhotos,
 } from "./hooks";
 
 const ADDRESS = "0x17a253c2ac0d5ba92cadbbf665e3390c9913dc5d";
@@ -43,8 +47,6 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
-const assetsPage = (elements: unknown[]) =>
-  json({ ok: true, data: { elements, total: elements.length, page: 0, pages: 1, limit: 48 } });
 
 beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -54,7 +56,9 @@ beforeEach(() => {
 afterEach(() => {
   client.clear();
   vi.unstubAllGlobals();
-  communities.fetch.mockReset();
+  communities.mine.mockReset();
+  communities.member.mockReset();
+  photos.fetch.mockReset();
 });
 
 describe("useProfile", () => {
@@ -76,81 +80,181 @@ describe("useProfile", () => {
 });
 
 describe("useProfileCreations", () => {
-  it("relabels every creation with the profile's name without changing the cached value", async () => {
-    fetchMock.mockResolvedValue(json({ ok: true, data: [] }));
+  it("reads one category a page at a time and loads the next page after the rows already shown", async () => {
+    const item = (n: number) => ({ id: `c-${n}`, itemId: `${n}`, name: `Hat ${n}`, thumbnail: "", contractAddress: "0xabc", rarity: "rare", network: "MATIC", price: "0", minListingPrice: null });
+    fetchMock.mockImplementation(async (input: string) => {
+      const skip = Number(new URL(input).searchParams.get("skip"));
+      return json({ data: Array.from({ length: skip === 0 ? 24 : 1 }, (_, n) => item(skip + n)), total: 25 });
+    });
 
-    const { result } = renderHook(() => useProfileCreations(ADDRESS, "Alice"), { wrapper });
+    const { result } = renderHook(() => useProfileCreations(ADDRESS, "emote"), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toEqual({ wearables: [], emotes: [] });
-    expect(client.getQueryData(profileKeys.creations(ADDRESS))).toEqual({ wearables: [], emotes: [] });
-  });
-});
+    const first = new URL(fetchMock.mock.calls[0]![0] as string);
+    expect(first.pathname).toBe("/marketplace-api/v2/catalog");
+    expect(Object.fromEntries(first.searchParams)).toMatchObject({ creator: ADDRESS, category: "emote", first: "24", skip: "0", sortBy: "newest" });
+    expect(result.current.hasNextPage).toBe(true);
 
-describe("useProfileAssets", () => {
-  it("shows the names when the wearables fail, and reports the failure", async () => {
-    fetchMock.mockImplementation(async (input: string) => {
-      const path = new URL(input).pathname;
-      if (path.endsWith("/wearables")) return json({ error: "down" }, 500);
-      return assetsPage([{ tokenId: "1", name: "alice", contractAddress: "0x0" }]);
-    });
+    await result.current.fetchNextPage();
 
-    const { result } = renderHook(() => useProfileAssets(ADDRESS), { wrapper });
-
-    await waitFor(() => expect(result.current.isPending).toBe(false));
-    expect(result.current.isError).toBe(true);
-    expect(result.current.data.wearables).toEqual([]);
-    expect(result.current.data.names).toEqual([{ id: "1", stem: "alice" }]);
+    await waitFor(() => expect(result.current.data?.pages).toHaveLength(2));
+    expect(new URL(fetchMock.mock.calls[1]![0] as string).searchParams.get("skip")).toBe("24");
+    expect(result.current.hasNextPage).toBe(false);
+    expect(client.getQueryData(profileKeys.creations(ADDRESS, "emote"))).toBeDefined();
+    expect(client.getQueryData(profileKeys.creations(ADDRESS, "wearable"))).toBeUndefined();
   });
 
-  it("is empty and not pending for an address that cannot have assets", () => {
-    const { result } = renderHook(() => useProfileAssets(""), { wrapper });
+  it("requests nothing for a value that is not a wallet address", () => {
+    const { result } = renderHook(() => useProfileCreations("alice", "wearable"), { wrapper });
 
-    expect(result.current).toEqual({
-      data: { wearables: [], names: [] },
-      isPending: false,
-      isError: false,
-    });
+    expect(result.current.fetchStatus).toBe("idle");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
-describe("useMyCommunities", () => {
-  it("requests nothing without an identity", () => {
-    const { result } = renderHook(() => useMyCommunities(null), { wrapper });
+describe("useProfileAssets", () => {
+  it("reads every category without a filter, and exposes a failure instead of an empty list", async () => {
+    fetchMock.mockResolvedValue(json({ error: "down" }, 503));
 
-    expect(result.current.fetchStatus).toBe("idle");
-    expect(communities.fetch).not.toHaveBeenCalled();
-  });
-
-  it("requests nothing when the page is not the member's own", () => {
-    const { result } = renderHook(() => useMyCommunities(identity, false), { wrapper });
-
-    expect(result.current.fetchStatus).toBe("idle");
-    expect(communities.fetch).not.toHaveBeenCalled();
-  });
-
-  it("caches the list under the signer's private prefix", async () => {
-    const row = { id: "c1", name: "Builders", membersCount: 3, role: "owner", thumb: null };
-    communities.fetch.mockResolvedValue([row]);
-
-    const { result } = renderHook(() => useMyCommunities(identity), { wrapper });
-
-    await waitFor(() => expect(result.current.data).toEqual([row]));
-    expect(communities.fetch).toHaveBeenCalledWith(identity, { signal: expect.any(AbortSignal) });
-    const key = ["private", SIGNER.toLowerCase(), "profile", "communities"];
-    expect(client.getQueryData(key)).toEqual([row]);
-
-    client.removeQueries({ queryKey: ["private", SIGNER.toLowerCase()] });
-    expect(client.getQueryData(key)).toBeUndefined();
-  });
-
-  it("reports a failed load as an error with no rows", async () => {
-    communities.fetch.mockRejectedValue(new Error("401"));
-
-    const { result } = renderHook(() => useMyCommunities(identity), { wrapper });
+    const { result } = renderHook(() => useProfileAssets(ADDRESS, null), { wrapper });
 
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.data).toBeUndefined();
+    const url = new URL(fetchMock.mock.calls[0]![0] as string);
+    expect(url.pathname).toBe("/marketplace-api/v1/nfts");
+    expect(url.searchParams.get("owner")).toBe(ADDRESS);
+    expect(url.searchParams.has("category")).toBe(false);
+  });
+});
+
+describe("useProfileCommunities", () => {
+  const OWNER = SIGNER.toLowerCase();
+  const row = (id: string) => ({ id, name: "Builders", role: "owner", membersCount: null, privacy: null, thumbnailUrl: null });
+  const page = (rows: unknown[]) => ({ communities: rows, total: rows.length });
+
+  it("requests nothing for a value that is not a wallet address", () => {
+    const { result } = renderHook(() => useProfileCommunities("alice", null), { wrapper });
+
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(communities.member).not.toHaveBeenCalled();
+  });
+
+  it("reads the public list of another member unsigned, also with a visitor's identity", async () => {
+    communities.member.mockResolvedValue(page([row("c1")]));
+
+    const { result } = renderHook(() => useProfileCommunities(ADDRESS, identity), { wrapper });
+
+    await waitFor(() => expect(result.current.data).toEqual(page([row("c1")])));
+    expect(communities.member).toHaveBeenCalledWith(ADDRESS, { signal: expect.any(AbortSignal) });
+    expect(communities.mine).not.toHaveBeenCalled();
+    expect(client.getQueryData(profileKeys.communities(ADDRESS))).toEqual(page([row("c1")]));
+  });
+
+  it("reads the member's own list signed and caches it under the signer's private prefix", async () => {
+    communities.mine.mockResolvedValue(page([row("c1")]));
+
+    const { result } = renderHook(() => useProfileCommunities(OWNER, identity), { wrapper });
+
+    await waitFor(() => expect(result.current.data).toEqual(page([row("c1")])));
+    expect(communities.mine).toHaveBeenCalledWith(identity, { signal: expect.any(AbortSignal) });
+    expect(communities.member).not.toHaveBeenCalled();
+    const key = ["private", OWNER, "profile", "communities"];
+    expect(client.getQueryData(key)).toEqual(page([row("c1")]));
+
+    client.removeQueries({ queryKey: ["private", OWNER] });
+    expect(client.getQueryData(key)).toBeUndefined();
+  });
+
+  it("keeps the public list on screen while the signed one first loads, and drops private rows on sign-out", async () => {
+    communities.member.mockResolvedValue(page([row("public")]));
+    let settle: (value: unknown) => void = () => {};
+    communities.mine.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+
+    const { result, rerender } = renderHook(({ who }: { who: AuthIdentity | null }) => useProfileCommunities(OWNER, who), {
+      wrapper,
+      initialProps: { who: null as AuthIdentity | null },
+    });
+    await waitFor(() => expect(result.current.data).toEqual(page([row("public")])));
+
+    rerender({ who: identity });
+    expect(result.current.data).toEqual(page([row("public")]));
+    settle(page([row("public"), row("private")]));
+    await waitFor(() => expect(result.current.data?.communities).toHaveLength(2));
+
+    rerender({ who: null });
+    expect(result.current.data).toEqual(page([row("public")]));
+  });
+
+  it("reports a failed load as an error with no rows", async () => {
+    communities.member.mockRejectedValue(new Error("503"));
+
+    const { result } = renderHook(() => useProfileCommunities(ADDRESS, null), { wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.data).toBeUndefined();
+  });
+});
+
+describe("useProfilePhotos", () => {
+  const OWNER = SIGNER.toLowerCase();
+  const row = (id: string, isPublic = true) => ({ id, isPublic });
+  const page = (rows: unknown[]) => ({ items: rows, received: rows.length, total: rows.length });
+
+  it("keeps the public photos on screen while the owner's signed list first loads", async () => {
+    let release!: (value: unknown) => void;
+    photos.fetch.mockImplementation((_address: string, _params: unknown, opts: { identity?: AuthIdentity }) =>
+      opts.identity ? new Promise((resolve) => (release = resolve)) : Promise.resolve(page([row("pub")])),
+    );
+    const { result, rerender } = renderHook(({ id }) => useProfilePhotos(OWNER, id), {
+      wrapper,
+      initialProps: { id: null as AuthIdentity | null },
+    });
+    await waitFor(() => expect(result.current.data?.pages[0]?.items).toEqual([row("pub")]));
+
+    rerender({ id: identity });
+
+    expect(result.current.isPlaceholderData).toBe(true);
+    expect(result.current.data?.pages[0]?.items).toEqual([row("pub")]);
+    release(page([row("pub"), row("mine", false)]));
+    await waitFor(() => expect(result.current.isPlaceholderData).toBe(false));
+    expect(result.current.data?.pages[0]?.items).toEqual([row("pub"), row("mine", false)]);
+  });
+
+  it("never keeps the owner's private photos once the list is no longer signed", async () => {
+    photos.fetch.mockImplementation((_address: string, _params: unknown, opts: { identity?: AuthIdentity }) =>
+      opts.identity ? Promise.resolve(page([row("mine", false)])) : new Promise(() => {}),
+    );
+    const { result, rerender } = renderHook(({ id }) => useProfilePhotos(OWNER, id), {
+      wrapper,
+      initialProps: { id: identity as AuthIdentity | null },
+    });
+    await waitFor(() => expect(result.current.data?.pages[0]?.items).toEqual([row("mine", false)]));
+
+    rerender({ id: null });
+
+    expect(result.current.data).toBeUndefined();
+    expect(result.current.isPending).toBe(true);
+  });
+
+  it("does not carry one profile's photos over to another's", async () => {
+    photos.fetch.mockImplementation((address: string) =>
+      address === OWNER ? Promise.resolve(page([row("a")])) : new Promise(() => {}),
+    );
+    const { result, rerender } = renderHook(({ address }) => useProfilePhotos(address, null), {
+      wrapper,
+      initialProps: { address: OWNER },
+    });
+    await waitFor(() => expect(result.current.data).toBeDefined());
+
+    rerender({ address: ADDRESS });
+
+    expect(result.current.data).toBeUndefined();
+  });
+
+  it("requests nothing for a value that is not a wallet address", () => {
+    const { result } = renderHook(() => useProfilePhotos("alice", null), { wrapper });
+
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(photos.fetch).not.toHaveBeenCalled();
   });
 });

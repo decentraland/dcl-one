@@ -25,11 +25,18 @@ import type {
   FriendStatusData,
   HoverAction,
   HoverEvent,
+  ItemPurchaseRequest,
+  SetItemPurchaseState,
   HomeScene,
+  OutfitsData,
   LiveSceneInfo,
+  LobbyStage,
+  MapPinInfo,
+  WorldAccessVerdict,
   PermanentPermissionItem,
   PermissionRequestEvent,
   PhotoModeState,
+  PlatformBanNotice,
   PortableInfo,
   ProfileChangedEvent,
   ProximityEvent,
@@ -145,6 +152,11 @@ export type PermissionUsedRaw = {
 
 export type BevyApiInterface = {
   getHomeScene: () => Promise<HomeScene>
+  /** null takes the lobby stage down. */
+  setLobbyStage?: (stage: LobbyStage | null) => Promise<void>
+  quit?: () => void
+  /** Whether the local user may enter a world (`name.dcl.eth`), by the realm change's own check. */
+  getWorldAccess?: (world: string) => Promise<WorldAccessVerdict>
   /** Pin the home scene the engine boots into and the HUD's home actions go to. */
   setHomeScene: (home: { realm: string; parcel: { x: number; y: number } }) => Promise<void>
   /** What the welcome page must show for the signed-in account (all false when the host shows none). */
@@ -212,9 +224,16 @@ export type BevyApiInterface = {
   getAvatarModifiers: () => Promise<AvatarModifierState[]>
   getPermissionRequestStream: () => Promise<AsyncIterable<PermissionRequestRaw>>
   setSinglePermission: (body: SetSinglePermission) => void
+  /** Scene requests to open the item purchase confirmation. Optional: absent on runtimes whose
+   *  SystemApi predates it. */
+  getItemPurchaseRequestStream?: () => Promise<AsyncIterable<ItemPurchaseRequest>>
+  setItemPurchaseState?: (body: SetItemPurchaseState) => void
   /** Password prompts for a world being entered (and their withdrawal). Optional: absent on
    *  runtimes whose SystemApi predates it. */
   getWorldAccessStream?: () => Promise<AsyncIterable<WorldAccessEvent>>
+  /** The signed-in wallet's platform ban: now, then again on every change. Optional: absent on
+   *  runtimes whose SystemApi predates it. */
+  getPlatformBanStream?: () => Promise<AsyncIterable<PlatformBanNotice>>
   /** Answer a password prompt; `password: null` = the player gave up. */
   setWorldPassword?: (body: { password: string | null }) => void
   setPermanentPermission: (body: SetPermanentPermissionBody) => void
@@ -224,6 +243,8 @@ export type BevyApiInterface = {
   /** The portables the player can see and stop, tagged by kind: the whole list on subscribe and on
    *  every change (never the HUD's own scene or a startup portable). */
   getPortablesStream: () => Promise<AsyncIterable<PortableInfo[]>>
+  /** The map pins of portable experiences: the whole list on subscribe and on every change. */
+  getMapPinsStream: () => Promise<AsyncIterable<MapPinInfo[]>>
   /** Live scenes, for resolving a permission request's scene name (hash → title) and the current
    *  scene to reload — `/reload` uses `parcels`/`isSuper` to target the scene the player stands in,
    *  never the bridge. */
@@ -232,6 +253,9 @@ export type BevyApiInterface = {
    *  `/about`), null or undefined when it advertises none — only Genesis City realms do. */
   getSatelliteView: () => Promise<SatelliteView | null | undefined>
   setAvatar: (data: SetAvatarData) => Promise<unknown>
+  /** Signs and deploys the player's catalyst `outfits` entity; rejects for a guest, when `address`
+   *  is not the signed-in account, or when the catalyst refuses it. */
+  deployOutfits: (address: string, outfits: OutfitsData) => Promise<void>
   /** Any user's full deployed profile as the engine holds it (own, nearby and remote players,
    *  guests included), resolved through its profile cache and fetch cascade. Rejects once the
    *  engine has concluded the address can't be resolved. */

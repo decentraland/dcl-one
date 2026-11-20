@@ -13,8 +13,8 @@
 #import bevy_core_pipeline::tonemapping::approximate_inverse_tone_mapping
 
 #import "embedded://shaders/simplex.wgsl"::simplex_noise_3d
-#import "embedded://shaders/bound_material_effect.wgsl"::{apply_outline, discard_dither, reveal_discard}
-#import "embedded://shaders/toon.wgsl"::toon_lighting
+#import "embedded://shaders/bound_material_effect.wgsl"::{camera_dither, reveal_discard, toon_outline}
+#import "embedded://shaders/toon.wgsl"::{facial_feature_lighting, toon_lighting}
 #import "embedded://shaders/shadow_softening.wgsl"::soften_directional_shadow
 #import "embedded://shaders/scene_bounds.wgsl"::{scene_bounds, scene_outside_amount, SCENE_DITHER_CAPSULE}
 
@@ -29,14 +29,19 @@ override fn shadows::fetch_directional_shadow(light_id: u32, frag_position: vec4
 
 #ifdef ENVIRONMENT_MAP
 #import bevy_pbr::{ambient, clustered_forward::ClusterableObjectIndexRanges, environment_map, lighting}
-#import "embedded://shaders/sky_envmap_lookup.wgsl"::{sky_envmap_input, sky_envmap_level}
+#import "embedded://shaders/sky_envmap_lookup.wgsl"::{sky_envmap_input, sky_envmap_level, sky_envmap_light}
 
-// the sky envmap, levelled towards the flat ambient light, is the only ambient light
-// (see sky_envmap_lookup.wgsl)
+// the sky envmaps are the only ambient light: the Trilight ambient, and the sky reflections
+// levelled towards the flat ambient light (see sky_envmap_lookup.wgsl)
 override fn environment_map::compute_radiances(input: lighting::LayerLightingInput, clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>, world_position: vec3<f32>, found_diffuse_indirect: bool) -> environment_map::EnvironmentMapRadiances {
     let upper = sky_envmap_input(input);
     let radiances = environment_map::compute_radiances(upper, clusterable_object_index_ranges, world_position, found_diffuse_indirect);
     return sky_envmap_level(radiances, input, upper, lights.ambient_color);
+}
+
+// the ambient diffuse at full strength, the reflection added on top (see sky_envmap_lookup.wgsl)
+override fn environment_map::environment_map_light(input: ptr<function, lighting::LightingInput>, clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>, found_diffuse_indirect: bool) -> environment_map::EnvironmentMapLight {
+    return sky_envmap_light(input, clusterable_object_index_ranges, found_diffuse_indirect);
 }
 
 override fn ambient::ambient_light(world_position: vec4<f32>, world_normal: vec3<f32>, V: vec3<f32>, NdotV: f32, diffuse_color: vec3<f32>, specular_color: vec3<f32>, perceptual_roughness: f32, occlusion: vec3<f32>) -> vec3<f32> {
@@ -65,13 +70,9 @@ fn fragment(
     let is_front_m = is_front;
 #endif
 
-    var cap_brightness: f32 = 0.0;
-    var dither_opacity: f32 = 1.0;
-    if (mesh_tag & (#{NO_DITHERING_MESH_TAG} | #{OUTLINE_RED_MESH_TAG})) == 0 {
-        let dither = discard_dither(in.position.xy, in.world_position.xyz, view.user_value, (mesh_tag & #{CONE_ONLY_DITHER_MESH_TAG}) == 0, scene_bounds.base_opacity, mesh_functions::get_world_from_local(in.instance_index)[3].xyz, (scene_bounds.flags & SCENE_DITHER_CAPSULE) != 0u);
-        cap_brightness = dither.transparency;
-        dither_opacity = dither.opacity;
-    }
+    let dither = camera_dither(mesh_tag, in.position.xy, in.world_position.xyz, in.instance_index, scene_bounds.base_opacity, (scene_bounds.flags & SCENE_DITHER_CAPSULE) != 0u);
+    let cap_brightness = dither.transparency;
+    let dither_opacity = dither.opacity;
 
     // generate a PbrInput struct from the StandardMaterial bindings
     var pbr_input = pbr_input_from_standard_material(in, is_front_m);
@@ -148,9 +149,13 @@ fn fragment(
 
     // apply lighting
     if (pbr_input.material.flags & bevy_pbr::pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT) == 0u {
-        if (mesh_tag & #{TOON_MESH_TAG}) != 0u {
-            // avatars: cel shading (own light model; uses the cast shadow only
-            // to pick the lit-vs-shadowed band pair)
+        if (mesh_tag & #{FACIAL_FEATURE_MESH_TAG}) != 0u {
+            // the eyes, eyebrows and mouth without a mask texture: the face features' own
+            // light model, by the ambient light (toon.wgsl)
+            out.color = facial_feature_lighting(pbr_input);
+        } else if (mesh_tag & #{TOON_MESH_TAG}) != 0u {
+            // avatars: cel shading, a light model of its own (toon.wgsl) lit by the sun and
+            // the ambient light; the sun's cast shadow pushes surfaces towards the shades
             out.color = toon_lighting(pbr_input);
         } else {
             out.color = apply_pbr_lighting(pbr_input);
@@ -169,18 +174,16 @@ fn fragment(
         }
     }
 
-    if (mesh_tag & #{OUTLINE_MESH_TAGS}) != 0 {
-        let outline_color = vec3(
-            f32((mesh_tag & #{OUTLINE_RED_MESH_TAG}) != 0),
-            0.0,
-            f32((mesh_tag & #{OUTLINE_BLUE_MESH_TAG}) != 0),
-        );
-        let black = (mesh_tag & (#{OUTLINE_MESH_TAGS} & ~#{OUTLINE_BLACK_MESH_TAG})) == 0;
-        out.color = apply_outline(
+    let view_z = -view_transformations::depth_ndc_to_view_z(in.position.z);
+
+    if (mesh_tag & #{OUTLINE_MESH_TAG}) != 0u {
+        // the avatar outline
+        out.color = toon_outline(
             in.position,
-            out.color, 
-            outline_color,
-            !black,
+            out.color,
+            pbr_input.material.base_color.rgb,
+            in.instance_index,
+            view_z,
             sample_index,
             dither_opacity,
         );
@@ -201,7 +204,7 @@ fn fragment(
 #ifdef TRANSPARENT_FOCUS_OUTPUT
     // accumulate alpha-weighted view depth + coverage for depth of field
     out.focus = vec4(
-        -view_transformations::depth_ndc_to_view_z(in.position.z),
+        view_z,
         1.0,
         0.0,
         out.color.a,

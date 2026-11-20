@@ -39,11 +39,13 @@ DCL_SCENE_CLI=/path/to/dcl-scene-cli pnpm run build-scenes core   # one
 Two scenes outside explorer-automation, in the workspace but not in `SCENES`, so without a
 reference:
 
-- `pointer-targets`, parcels `0,20` to `9,20`, spawn at `(8, 0, 8)` facing +X: the targets of
+- `pointer-targets`, parcels `0,20` to `9,20`, spawn at `(8, 0, 8)`: the targets of
   `specs/visual/pointer.test.ts`, which hovers and clicks them through `/hover_entity` and
   `/click_entity`. A near box with a Down and an Up (`Near`), a wall and the box it hides
   (`Behind`), a box 50 m out reachable by camera distance (`Far`, `maxCameraDistance: 60`) and
-  the avocado glTF (`Model`, its pointer events on the container). It logs `pointer-targets ready` once the entities exist, then
+  the avocado glTF (`Model`, its pointer events on the container). The layout holds whether the
+  player faces the spawn's `cameraTarget` (+X) or keeps facing +Z after the teleport, as the
+  explorer does. It logs `pointer-targets ready` once the entities exist, then
   `pointer down entity=<id> tick=<tick>` and `pointer up entity=<id> tick=<tick>` once per new
   input command on a target.
 - `raycast-storm`, parcel `0,22`: 200 invisible entities in a 10 by 20 grid, each with a
@@ -51,8 +53,23 @@ reference:
   It logs `raycast entity=<id>` the first time an entity's raycast answers and
   `raycast-storm complete` once all 200 have.
 
-`bin/`, `node_modules/` and the other build outputs are ignored. The `.glb`, `.png` and `.jpg`
-assets are in Git LFS.
+## The video scene
+
+`video`, parcel `0,26`, spawn at `(8, 0, 4)` facing the screens: the scene of
+`specs/media-retry.test.ts`, in the workspace but not in `SCENES`, so without a reference, and
+left out of the visual specs' realm, so its looping decoders run only beside its own spec. Three
+planes each show one looped file of `assets/` in a basic material: `recover`
+(`assets/recover.webm`, at `(5, 2, 8)`), `broken` (`assets/broken.webm`, at `(11, 2, 15)`) and
+`paused` (`assets/paused.webm`, at `(2, 2, 15)`), 2 s, 64 by 64 VP8 of one colour each, so their
+bytes and content hashes differ. `recover` and `broken` play from the start; `paused` starts
+paused and is set playing 1 s after it first reports `VS_ERROR`, logging `video paused play`. One
+video plays at a time, the nearest: `recover` from the spawn, `broken` from `(11, 0, 12)` and
+`paused` from `(2, 0, 12)`, where the spec walks. It logs `video ready` once all exist and
+`video <name> state=<VideoState>` (`VS_PLAYING`, `VS_ERROR`, ...) on every state the engine
+reports. The spec's realm fails the files' first GETs.
+
+`bin/`, `node_modules/` and the other build outputs are ignored. The `.glb`, `.png`, `.jpg` and
+`.webm` assets are in Git LFS.
 
 ## Environment components
 

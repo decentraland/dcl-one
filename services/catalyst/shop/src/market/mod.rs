@@ -60,6 +60,7 @@ pub mod bids;
 pub mod catalog;
 pub mod chain_walk;
 pub mod collections;
+pub mod committee_index;
 pub mod contracts;
 pub mod definitions;
 pub mod features;
@@ -114,12 +115,12 @@ pub(crate) mod tests;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::{any, delete, erase, get, post};
 use anyhow::Context;
 use axum::Json;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
-use axum::routing::{any, get, post};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower_http::timeout::TimeoutLayer;
@@ -741,6 +742,21 @@ impl MarketplaceState {
         self.rpc_url_for(net, self.settings.market.indexes.chain_id(net))
     }
 
+    /// The endpoint the committee walk reads (Polygon only): the
+    /// `TRADE_RPC_URLS` 137 entry, else on mainnet `RPC_ENDPOINT_POLYGON`
+    /// (off mainnet it serves another chain); the walk checks the endpoint
+    /// serves chain 137 before each pass.
+    pub fn committee_rpc_url(&self, net: chain_walk::ChainNet) -> Option<String> {
+        if net != chain_walk::ChainNet::Matic {
+            return None;
+        }
+        self.chain_rpc_url(net).or_else(|| {
+            (self.settings.eth_network.trim() == "mainnet")
+                .then(|| self.settings.polygon_rpc_url.clone())
+                .flatten()
+        })
+    }
+
     fn rpc_url_for(&self, net: chain_walk::ChainNet, chain_id: i64) -> Option<String> {
         self.settings
             .market
@@ -774,8 +790,8 @@ pub(crate) async fn ensure_chain(
     Ok(())
 }
 
-/// Attaches `nft-index`, `trade-events-index` and `mana-transfers-index`
-/// when their switches are on: one periodic job each, a pass walking both
+/// Attaches `nft-index`, `trade-events-index`, `mana-transfers-index` and
+/// `committee-index` (Polygon only) when their switches are on: one periodic job each, a pass walking both
 /// networks in turn (the budget is per network), the nft walk of a network
 /// waiting for the collections mirror's first complete pass (its address
 /// set); then `sales-index` (`sales_index::spawn_job`, Polygon only).
@@ -789,25 +805,38 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
         ),
         (settings.nft_enabled, chain_walk::INDEXER_NFT),
         (settings.mana_transfers_enabled, chain_walk::INDEXER_MANA),
+        (settings.committee_enabled, chain_walk::INDEXER_COMMITTEE),
     ] {
         let job = if name == chain_walk::INDEXER_NFT {
             "nft-index"
         } else if name == chain_walk::INDEXER_MANA {
             "mana-transfers-index"
+        } else if name == chain_walk::INDEXER_COMMITTEE {
+            "committee-index"
         } else {
             "trade-events-index"
         };
         if !enabled {
-            tracing::info!(
-                job,
-                "marketplace chain index off: its routes answer the unavailable envelope"
-            );
+            if name == chain_walk::INDEXER_COMMITTEE {
+                tracing::info!(
+                    job,
+                    "committee index off: builder's committee routes admit only BUILDER_ADMIN_ADDRESSES"
+                );
+            } else {
+                tracing::info!(
+                    job,
+                    "marketplace chain index off: its routes answer the unavailable envelope"
+                );
+            }
             continue;
         }
         let trade_events = name == chain_walk::INDEXER_TRADE_EVENTS;
+        let committee = name == chain_walk::INDEXER_COMMITTEE;
         let rpc_url = move |state: &MarketplaceState, net: chain_walk::ChainNet| {
             if trade_events {
                 state.trade_events_rpc_url(net)
+            } else if committee {
+                state.committee_rpc_url(net)
             } else {
                 state.chain_rpc_url(net)
             }
@@ -817,10 +846,17 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
             .filter(|n| rpc_url(state, *n).is_some())
             .collect();
         if nets.is_empty() {
-            tracing::warn!(
-                job,
-                "marketplace chain index enabled but no JSON-RPC endpoint is configured (TRADE_RPC_URLS 1= / 137=, or ETH_RPC_URL): it stays off"
-            );
+            if committee {
+                tracing::warn!(
+                    job,
+                    "committee index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=, or RPC_ENDPOINT_POLYGON on mainnet): it stays off"
+                );
+            } else {
+                tracing::warn!(
+                    job,
+                    "marketplace chain index enabled but no JSON-RPC endpoint is configured (TRADE_RPC_URLS 1= / 137=, or ETH_RPC_URL): it stays off"
+                );
+            }
             continue;
         }
         let state = state.clone();
@@ -844,6 +880,11 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
                                     return Ok(());
                                 }
                                 chain_walk::run_pass(&state.pool, &rpc, &nft_indexes[i], &state.settings.market.indexes, Some(&ctx.cancel), &progress).await
+                            } else if name == chain_walk::INDEXER_COMMITTEE {
+                                match ensure_chain(&rpc, 137).await {
+                                    Ok(()) => chain_walk::run_pass(&state.pool, &rpc, &committee_index::CommitteeIndex, &state.settings.market.indexes, Some(&ctx.cancel), &progress).await,
+                                    Err(e) => Err(e),
+                                }
                             } else if name == chain_walk::INDEXER_MANA {
                                 chain_walk::run_pass(&state.pool, &rpc, &mana_transfers::ManaTransfersIndex { net: *net }, &state.settings.market.indexes, Some(&ctx.cancel), &progress).await
                             } else {
@@ -880,7 +921,7 @@ pub fn shop_admin_router(state: SharedState) -> Router {
         .route("/admin/moderation/flags", get(admin::list_flags))
         .route(
             "/admin/moderation/{kind}/{hash}/flag",
-            post(admin::set_flag).delete(admin::clear_flag),
+            post(admin::set_flag).delete(erase(admin::clear_flag)),
         )
         .route("/admin/disputes", get(admin::list_disputes))
         .route(
@@ -1172,7 +1213,7 @@ pub fn market_router(state: SharedState) -> Router {
         .route(
             "/v1/trades",
             get(trades::get_trades)
-                .post(listings::post_trade)
+                .post(erase(listings::post_trade))
                 .layer(DefaultBodyLimit::max(256 * 1024)),
         )
         .route("/v1/trades-mirror", get(trades::get_mirror_status))
@@ -1181,37 +1222,40 @@ pub fn market_router(state: SharedState) -> Router {
             "/v1/trades/{hashed_signature}/accept",
             get(trade_events::get_trade_accepted_event),
         )
-        .route("/v1/lists", get(lists::get_lists).post(lists::create_list))
+        .route(
+            "/v1/lists",
+            get(lists::get_lists).post(erase(lists::create_list)),
+        )
         .route(
             "/v1/lists/{id}",
             get(lists::get_list_route)
-                .put(lists::update_list_route)
-                .delete(lists::delete_list_route),
+                .put(erase(lists::update_list_route))
+                .delete(erase(lists::delete_list_route)),
         )
         .route(
             "/v1/lists/{id}/picks",
-            get(lists::get_list_picks).post(lists::add_pick_to_list_route),
+            get(lists::get_list_picks).post(erase(lists::add_pick_to_list_route)),
         )
         .route(
             "/v1/lists/{id}/picks/{item_id}",
-            axum::routing::delete(lists::delete_pick_in_list_route),
+            delete(lists::delete_pick_in_list_route),
         )
         .route(
             "/v1/lists/{id}/access",
-            post(lists::create_access_route).delete(lists::delete_access_route),
+            post(lists::create_access_route).delete(erase(lists::delete_access_route)),
         )
         .route("/v1/picks/stats", get(lists::get_picks_stats))
         .route("/v1/picks/{item_id}/stats", get(lists::get_item_pick_stats))
         .route(
             "/v1/picks/{item_id}",
             get(lists::get_picks_by_item)
-                .post(lists::pick_unpick_in_bulk)
-                .delete(lists::unpick_everywhere),
+                .post(erase(lists::pick_unpick_in_bulk))
+                .delete(erase(lists::unpick_everywhere)),
         )
         .route(
             "/v1/coupons",
             get(crate::coupons::get_coupons)
-                .post(crate::coupons::add_coupon)
+                .post(erase(crate::coupons::add_coupon))
                 .layer(DefaultBodyLimit::max(64 * 1024)),
         )
         .route("/v1/coupons/{id}", get(crate::coupons::get_coupon))
@@ -1234,7 +1278,7 @@ pub fn market_router(state: SharedState) -> Router {
         .route("/federation/market/changes", get(federation::changes))
         .route(
             "/v1/admin/moderation/{kind}/{hash}/flag",
-            post(admin::set_flag).delete(admin::clear_flag),
+            post(admin::set_flag).delete(erase(admin::clear_flag)),
         )
         .route("/v1/admin/disputes", get(admin::list_disputes))
         .route(

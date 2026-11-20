@@ -49,8 +49,8 @@
   color: var(--dcl-neutrals-shadow);
 }
 
-/* Three tabs do not fit one phone row: they wrap instead of breaking their labels. */
-@media (max-width: 767px) {
+/* Tablets and phones lay the tabs in a row; three do not fit one phone row, so they wrap instead of breaking. */
+@media (max-width: 1023px) {
   .root {
     flex-direction: row;
     flex-wrap: wrap;

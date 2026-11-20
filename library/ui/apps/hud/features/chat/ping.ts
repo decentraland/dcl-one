@@ -95,6 +95,12 @@ export function shouldPing(channel: string, mentioned: boolean): boolean {
   return mode === 'all' || (mode === 'mentions' && mentioned)
 }
 
+/** Whether a line the user sends makes a sound: only while the default is All Messages. A
+ *  conversation's own setting gates what lands in it, never what is sent from it. */
+export function sendSoundEnabled(): boolean {
+  return getPrefs().default === 'all'
+}
+
 /** Forget everything: for tests. */
 export function resetPingPrefs(): void {
   prefs = null

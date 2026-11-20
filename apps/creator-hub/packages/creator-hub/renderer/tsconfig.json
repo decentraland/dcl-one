@@ -3,18 +3,18 @@
     "module": "esnext",
     "target": "esnext",
     "sourceMap": false,
-    "moduleResolution": "Node",
+    "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "strict": true,
     "isolatedModules": true,
     "types": ["node"],
-    "baseUrl": ".",
     "paths": {
       "#preload": ["../preload/src/index"],
       "#store": ["./src/modules/store"],
       "/@/*": ["./src/*"],
-      "/shared/*": ["../shared/*"]
+      "/shared/*": ["../shared/*"],
+      "@ui/*": ["../../../../ui3/src/*"]
     },
     "lib": ["ESNext", "dom", "dom.iterable"],
     "jsx": "react-jsx",
@@ -22,5 +22,6 @@
     "esModuleInterop": true
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "types/**/*.d.ts", "../types/**/*.d.ts"],
-  "exclude": ["**/*.spec.ts", "**/*.test.ts"]
+  "exclude": ["**/*.spec.ts", "**/*.test.ts"],
+  "references": [{ "path": "./tsconfig.ui3.json" }]
 }

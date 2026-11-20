@@ -437,10 +437,19 @@ async fn discover(state: &CommsState, row: &Intent) -> Result<()> {
         if !current(&state.pool, row).await? {
             return Ok(());
         }
-        let Some(wallet) = address_from_identity(&participant.identity) else {
-            continue;
+        // A Cast watcher's identity is synthetic; its token carries the wallet.
+        let actor = match address_from_identity(&participant.identity) {
+            Some(wallet) => {
+                Address::parse(&wallet).map_err(|_| anyhow!("invalid participant wallet"))?
+            }
+            None => match super::streaming::cast::watcher_wallet(
+                &participant.identity,
+                &participant.attributes,
+            ) {
+                Some(wallet) => wallet,
+                None => continue,
+            },
         };
-        let actor = Address::parse(&wallet).map_err(|_| anyhow!("invalid participant wallet"))?;
         if authorized(state, row, &actor).await? {
             add_target(state, row, room, sid, &participant.identity, &actor).await?;
         }
@@ -1101,17 +1110,29 @@ mod tests {
         tx.commit().await.unwrap();
         let direct = format!("{}-browser", actor.as_str().to_uppercase());
         let same_device = format!("{}-desktop", device_actor.as_str());
+        // Cast watchers: a synthetic identity, the wallet in a signed attribute.
+        let watcher = format!("watch:device-room:{}", Uuid::new_v4());
+        let other_watcher = format!("watch:device-room:{}", Uuid::new_v4());
+        let anonymous_watcher = format!("watch:device-room:{}", Uuid::new_v4());
         {
             let mut f = fixture.lock().unwrap();
             f.rooms = serde_json::json!({"rooms":[{"name":"device-room","sid":"D"}]});
-            f.rosters.insert("device-room".into(),serde_json::json!({"participants":[{"identity":direct},{"identity":same_device},{"identity":unrelated.as_str()}]}));
+            f.rosters.insert(
+                "device-room".into(),
+                serde_json::json!({"participants":[
+                    {"identity":direct},{"identity":same_device},{"identity":unrelated.as_str()},
+                    {"identity":watcher,"attributes":{"dcl.castWatcher":actor.as_str()}},
+                    {"identity":other_watcher,"attributes":{"dcl.castWatcher":unrelated.as_str()}},
+                    {"identity":anonymous_watcher},
+                ]}),
+            );
         }
         for _ in 0..4 {
             assert_eq!(step(&state, &root_key).await, 0);
         }
         let mut removed = fixture.lock().unwrap().removed.clone();
         removed.sort();
-        let mut expected = vec![direct, same_device];
+        let mut expected = vec![direct, same_device, watcher];
         expected.sort();
         assert_eq!(removed, expected);
         sqlx::query("DELETE FROM social.user_bans WHERE id=$1")
@@ -1618,16 +1639,12 @@ mod tests {
             .unwrap();
         let name = format!("dcl_island_job_{}", Uuid::new_v4().simple());
         assert!(name.bytes().all(|v| v.is_ascii_alphanumeric() || v == b'_'));
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(8)
             .connect_with(base.connect_options().as_ref().clone().database(&name))
             .await
             .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         let (state, fixture, server) = sfu_fixture(pool.clone()).await;
         let actor = wallet();
         let island = format!("island-{}", Uuid::new_v4());
@@ -2028,16 +2045,12 @@ mod tests {
             .await
             .unwrap();
         let name = format!("dcl_liveness_{}", uuid::Uuid::new_v4().simple());
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(8)
             .connect_with(base.connect_options().as_ref().clone().database(&name))
             .await
             .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         (pool, admin, name)
     }
     async fn liveness_drop_pool(pool: &sqlx::PgPool, admin: &sqlx::PgPool, name: &str) {

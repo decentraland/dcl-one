@@ -88,9 +88,9 @@ export type SceneComponent = {
   spawnPoints?: SceneSpawnPoint[];
 };
 
-// eslint-disable-next-line @typescript-eslint/ban-types
+// oxlint-disable-next-line typescript/ban-types
 export type GroundComponent = {};
-// eslint-disable-next-line @typescript-eslint/ban-types
+// oxlint-disable-next-line typescript/ban-types
 export type TileComponent = {};
 
 export type CustomAssetComponent = {

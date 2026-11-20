@@ -1,5 +1,6 @@
 //! Scene lookup responsibilities.
 use super::*;
+use crate::world_identity::signed_realm_name;
 
 pub(crate) fn meta_str(meta: &Value, key: &str) -> Option<String> {
     meta.get(key)
@@ -8,12 +9,21 @@ pub(crate) fn meta_str(meta: &Value, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// The signed realm name, `realmName` else `realm.serverName`; a non-world
+/// name signed beside a realm URL naming a world reads as that world
+/// ([`crate::world_identity::signed_realm_name`]).
 pub fn realm_name_from_metadata(metadata: &Value) -> Option<String> {
-    meta_str(metadata, "realmName").or_else(|| {
+    let signed = meta_str(metadata, "realmName").or_else(|| {
         metadata
             .get("realm")
             .and_then(|r| meta_str(r, "serverName"))
-    })
+    })?;
+    Some(signed_realm_name(&signed, signed_realm_url(metadata)))
+}
+
+/// The signed realm URL (`realm.hostname`), when it is a string.
+pub(crate) fn signed_realm_url(metadata: &Value) -> Option<&str> {
+    metadata.pointer("/realm/hostname").and_then(Value::as_str)
 }
 
 /// The place a scene-signed request stands on: the world name for a world
@@ -100,8 +110,9 @@ pub(crate) async fn participant_room(
 /// scene; an explicit id under a world realm must be a scene deployed in
 /// that world (the ONE room resolver's rows; the worlds service answered 404
 /// for any other, and a room is minted for active deployments only, never
-/// for a replaced version or an invented id); a shared realm's id is taken
-/// as given (the old gatekeeper's contract for `main`/preview realms).
+/// for a replaced version or an invented id); a shared realm's id is
+/// returned as signed, and `/get-scene-adapter` then checks it against this
+/// node's content with [`require_genesis_deployment`].
 pub async fn resolve_world_scene_id(
     state: &CommsState,
     realm_name: &str,
@@ -117,7 +128,8 @@ pub async fn resolve_world_scene_id(
 /// Resolve once, retaining the room and the deployment's original scene key.
 /// Signed keys must already be well-formed: parsing must not trim a request
 /// into a different deployment. Shared/preview realms retain their signed
-/// room bytes and require no catalogue/database lookup.
+/// room bytes with no lookup here; `/get-scene-adapter` checks the scene
+/// with [`require_genesis_deployment`].
 pub(crate) async fn resolve_adapter_room(
     state: &CommsState,
     realm_name: &str,
@@ -167,6 +179,57 @@ pub(crate) async fn resolve_adapter_room(
             }
             _ => ApiError::internal(error.to_string()),
         })
+}
+
+/// A client's Genesis scene token names a scene deployed and active on this
+/// node, looked up by its entity id (upstream asked the content server).
+/// Active means the deployment is not deleted (`deleter_deployment IS NULL`,
+/// `worlds::rooms::genesis_scene`); whether it still holds a pointer in
+/// `content.active_pointers` is not checked. An unknown or denylisted id is
+/// 404 and an unreadable catalogue 503, never a mint. With
+/// `ALLOW_LOCAL_PREVIEW`, a local preview scene is accepted unchecked.
+pub(crate) async fn require_genesis_deployment(
+    state: &CommsState,
+    resolved: &ResolvedRoom,
+) -> Result<(), ApiError> {
+    let scene = resolved
+        .scene_id
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("scene resolution returned a lobby"))?;
+    if state.settings.allow_local_preview
+        && is_local_preview(resolved.realm.as_str(), scene.as_str())
+    {
+        return Ok(());
+    }
+    let not_found = || ApiError::not_found(format!("No scene entity found for scene ID {scene}"));
+    if state.content_denylist.contains(scene.as_str()) {
+        return Err(not_found());
+    }
+    match state
+        .scenes
+        .resolve(RoomRequest::Adapter {
+            realm: &resolved.realm,
+            scene,
+        })
+        .await
+    {
+        Ok(found) if found.deployment.is_some() => Ok(()),
+        Ok(_) | Err(ResolveError::NoParcels { .. }) => Err(not_found()),
+        Err(error) => {
+            tracing::error!(%error, scene = %scene, "genesis scene lookup failed");
+            Err(ApiError::http(
+                503,
+                "Scene verification is temporarily unavailable",
+            ))
+        }
+    }
+}
+
+/// A local preview scene: a `b64-` scene id or a `preview`/`localpreview` realm.
+fn is_local_preview(realm_name: &str, scene_id: &str) -> bool {
+    scene_id.starts_with("b64-")
+        || realm_name.eq_ignore_ascii_case("preview")
+        || realm_name.eq_ignore_ascii_case("localpreview")
 }
 
 /// The scene-bans listing key: an explicit `place_id`, else the metadata's,

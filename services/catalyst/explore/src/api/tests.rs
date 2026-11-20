@@ -366,11 +366,16 @@ fn lazy_pool() -> PgPool {
 /// A node with no database behind it: everything the routes answer from
 /// memory (the realm doc, the registry reader, the embedded flags).
 async fn node_without_db(settings: Settings) -> Node {
-    let pool = lazy_pool();
+    node_on_pool(settings, lazy_pool()).await
+}
+
+/// A node over `pool` without `State::new`'s mirror loads: the routes that
+/// keep their own rows (the auth-api relay) on a scratch database.
+async fn node_on_pool(settings: Settings, pool: PgPool) -> Node {
     let (content, tmp) = content_state(pool.clone()).await;
     let state = Arc::new(State {
         settings,
-        pool,
+        pool: pool.clone(),
         http: crate::http::Outbound::for_tests(),
         content,
         denylist: Default::default(),
@@ -383,9 +388,8 @@ async fn node_without_db(settings: Settings) -> Node {
         world_manifest: world_manifest::WorldManifestState::default(),
         posters: posters::PosterState::default(),
         opensea: opensea::Runtime::default(),
-        auth_api: auth_api::AuthApiState::default(),
         runtime_config: runtime_config::RuntimeConfigState::default(),
-        onboarding: Arc::default(),
+        onboarding: Arc::new(onboarding::OnboardingState::new(pool)),
         registry_denylist: Default::default(),
         eip1654: std::sync::OnceLock::new(),
     });
@@ -394,7 +398,12 @@ async fn node_without_db(settings: Settings) -> Node {
 
 /// The state alone, its temporary storage leaked for the test's lifetime.
 pub(crate) async fn node_without_db_state(settings: Settings) -> Shared {
-    let node = node_without_db(settings).await;
+    node_on_pool_state(settings, lazy_pool()).await
+}
+
+/// [`node_on_pool`]'s state alone, its temporary storage leaked.
+pub(crate) async fn node_on_pool_state(settings: Settings, pool: PgPool) -> Shared {
+    let node = node_on_pool(settings, pool).await;
     let state = node.state.clone();
     std::mem::forget(node);
     state
@@ -409,13 +418,22 @@ async fn node_with_db(settings: Settings, pool: PgPool) -> Node {
     Node { state, _tmp: tmp }
 }
 
-struct ScratchDb {
-    pool: PgPool,
+/// [`node_with_db`]'s state alone, its temporary storage leaked for the
+/// test's lifetime.
+pub(crate) async fn node_with_db_state(settings: Settings, pool: PgPool) -> Shared {
+    let node = node_with_db(settings, pool).await;
+    let state = node.state.clone();
+    std::mem::forget(node);
+    state
+}
+
+pub(crate) struct ScratchDb {
+    pub(crate) pool: PgPool,
     admin: PgPool,
     name: String,
 }
 
-async fn scratch_database() -> Option<ScratchDb> {
+pub(crate) async fn scratch_database() -> Option<ScratchDb> {
     let Ok(url) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
         eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
         return None;
@@ -429,21 +447,28 @@ async fn scratch_database() -> Option<ScratchDb> {
         .await
         .unwrap();
     let name = format!("catalyst_test_{}", uuid::Uuid::new_v4().simple());
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-        .execute(&admin)
-        .await
-        .unwrap();
+    crate::db::scratch::create_database_with_schema(&admin, &name).await;
     let pool = PgPoolOptions::new()
         .max_connections(6)
         .connect_with(base.database(&name).options([("TimeZone", "UTC")]))
         .await
         .unwrap();
-    crate::db::apply_schema(&pool).await.unwrap();
     Some(ScratchDb { pool, admin, name })
 }
 
 impl ScratchDb {
-    async fn teardown(self) {
+    /// Another pool on the same database, as a second replica holds.
+    pub(crate) async fn second_pool(&self) -> PgPool {
+        let url = std::env::var("CATALYST_TEST_DATABASE_URL").unwrap();
+        let base: PgConnectOptions = url.parse().unwrap();
+        PgPoolOptions::new()
+            .max_connections(6)
+            .connect_with(base.database(&self.name).options([("TimeZone", "UTC")]))
+            .await
+            .unwrap()
+    }
+
+    pub(crate) async fn teardown(self) {
         self.pool.close().await;
         let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
             "DROP DATABASE \"{}\" WITH (FORCE)",
@@ -505,7 +530,12 @@ async fn every_replica_reloads_the_shared_denylist() {
     let wallet = "0x00000000000000000000000000000000000000fe";
     assert!(!replica.state.denylist.contains(wallet));
     let jobs = Jobs::new();
-    denylist::spawn_reload(&replica.state, &jobs, std::time::Duration::from_millis(20));
+    denylist::spawn_reload(
+        &replica.state,
+        &jobs,
+        std::time::Duration::from_millis(20),
+        denylist::RELOAD_TIMEOUT,
+    );
     denylist::set_local(&db.pool, wallet, true).await.unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         while !replica.state.denylist.contains(wallet) {
@@ -565,10 +595,10 @@ async fn denylist_reload_timeout_retains_last_snapshot_and_recovers_after_sql_un
 
     let jobs = Jobs::new().with_fleet_jobs(false).with_first_pass_now(true);
     let started = tokio::time::Instant::now();
-    // Only shorten the interval between passes; the production five-second
-    // pass timeout and real SQL wait remain unchanged.
-    denylist::spawn_reload(&replica.state, &jobs, Duration::from_millis(100));
-    tokio::time::timeout(Duration::from_secs(3), async {
+    // Observe the SQL lock wait before the reload pass times out.
+    let timeout = Duration::from_secs(3);
+    denylist::spawn_reload(&replica.state, &jobs, Duration::from_millis(100), timeout);
+    tokio::time::timeout(timeout - Duration::from_millis(500), async {
         loop {
             let blocked: bool = sqlx::query_scalar(
                 "SELECT EXISTS (SELECT 1 FROM pg_stat_activity
@@ -588,14 +618,14 @@ async fn denylist_reload_timeout_retains_last_snapshot_and_recovers_after_sql_un
     .expect("the real snapshot query must reach PostgreSQL and wait for the table lock");
     assert_eq!(jobs.report()[0].passes, 0);
 
-    tokio::time::timeout_at(started + Duration::from_secs(8), async {
+    tokio::time::timeout_at(started + timeout + Duration::from_secs(3), async {
         while jobs.report()[0].passes == 0 {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("the five-second reload deadline must finish a pass despite the SQL lock");
-    assert!(started.elapsed() >= Duration::from_secs(5));
+    .expect("the reload deadline must finish a pass despite the SQL lock");
+    assert!(started.elapsed() >= timeout);
     let failed = &jobs.report()[0];
     assert!(
         failed
@@ -634,6 +664,12 @@ async fn denylist_reload_timeout_retains_last_snapshot_and_recovers_after_sql_un
     assert_eq!(body, json!({"users": [{"wallet": "0xReplacement"}]}));
     assert!(jobs.shutdown(Duration::from_secs(2)).await.is_empty());
     db.teardown().await;
+}
+
+#[test]
+fn production_denylist_reload_has_thirty_second_interval_and_five_second_budget() {
+    assert_eq!(denylist::RELOAD_INTERVAL, Duration::from_secs(30));
+    assert_eq!(denylist::RELOAD_TIMEOUT, Duration::from_secs(5));
 }
 
 async fn job_ctx() -> (Jobs, crate::jobs::JobContext) {
@@ -876,6 +912,21 @@ fn opensea_reads_no_chain_or_cryptokitties_without_an_rpc_upstream() {
 async fn realm_about_keeps_the_upstream_shape_and_reflects_the_sync_state() {
     let node = node_without_db(Settings::for_tests(Sources::defaults())).await;
     let app = router(node.state.clone());
+
+    let ping = app
+        .clone()
+        .oneshot(
+            axum::http::Request::get("/realm-provider-ea/ping")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ping.status(), StatusCode::OK);
+    assert_eq!(
+        axum::body::to_bytes(ping.into_body(), 64).await.unwrap(),
+        "/ping"
+    );
 
     let (status, ours) = call_json(&app, "GET", "/realm-provider-ea/main/about", None).await;
     assert_eq!(status, StatusCode::OK);

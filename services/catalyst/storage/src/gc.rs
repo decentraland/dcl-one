@@ -154,6 +154,14 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
         "the blobs of rejected or deleted photos: garbage for this collector",
     ),
     ("camera_reel.images.image_content_type", "a MIME type"),
+    (
+        "explore_api.auth_identities.identity_id",
+        "an /auth-api identity's random id",
+    ),
+    (
+        "explore_api.auth_identity_tombstones.identity_id",
+        "an /auth-api identity's random id",
+    ),
     ("explore.place.image_url", "a URL"),
     ("explore.place_world_local.image_url", "a URL"),
     (
@@ -1168,10 +1176,7 @@ mod tests {
             "catalyst_test_gc_{}",
             &uuid::Uuid::new_v4().simple().to_string()[..12]
         );
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let mut url = url::Url::parse(&base_url).unwrap();
         url.set_path(&format!("/{name}"));
         let pool = crate::db::connect_pool(
@@ -1183,7 +1188,6 @@ mod tests {
         )
         .await
         .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         let dir =
             std::env::temp_dir().join(format!("catalyst-gc-{}", uuid::Uuid::new_v4().simple()));
         let storage = Storage::from_config(&dir).await.unwrap();

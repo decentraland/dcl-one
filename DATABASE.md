@@ -1138,12 +1138,37 @@ returns only the numeric status. The pinned source's complete response bodies
 are compared for accepted, sent/received requests, absent friendship and empty
 history, with V2 and anonymous controls; no performance change was measured.
 
+## Message router workload
+
+The community chat message router (`catalyst-message-router`, its own process with its own
+pool, `MESSAGE_ROUTER_DB_MAX_CONNECTIONS`, default 4, 5 s statement timeout) reads social's
+community tables by shared SQL and writes nothing. Per routed packet (a community chat message
+or reaction, at most 10 per sender in a burst and 5 per second sustained) it runs one statement
+with two parts:
+
+- membership: `EXISTS` over `social.community_members` on `(community_id, member_address)`,
+  one probe of `community_members_pkey`, whatever the community's state;
+- recipients: `ARRAY(...)` of `social.communities` by `id` (its primary key), `active` and not
+  `suspended`, joined to the community's `social.community_members` rows through the
+  `community_members_pkey` prefix, every member but the sender, `lower(member_address)`. The
+  result is the community's member count, which the router publishes in batches of 100
+  identities.
+
+The router routes at most as many packets at once as the pool has connections, so a packet
+never waits for a connection; one that finds every routing slot taken is dropped and counted
+`overloaded` instead of timing out on the pool.
+
+Inputs are a community uuid from the packet topic and the sender's LiveKit identity, lowercased
+(member addresses are stored lowercase). No table, index or column is added. Changing a column
+either query reads updates this section and the root `AGENTS.md` comms ownership in the same
+change.
+
 ## Native referral login workload
 
 `POST /social-api/v1/client-login` derives the invited wallet from ADR-44 signed
 fetch. Its signed metadata contains `loginId` and `occurredAt`; the timestamp
-limits admission to the preceding 24 hours with five minutes of future tolerance,
-matching the signed-fetch clock window.
+limits admission to the preceding 24 hours with five minutes of future tolerance.
+The request itself still passes the 60-second signed-fetch window.
 The client preserves these values across retries and signs each request afresh.
 The occurrence timestamp bounds replay acceptance, while login-day accounting
 continues to use the database's UTC processing date.
@@ -1214,7 +1239,8 @@ Admitted effects retain the ten-second deadline. Reward requests run in the exis
 leased worker after login recording commits; they do not delay login acknowledgement. One nullable receipt per milestone stores a
 pre-POST `reward_requested_at`, confirmed provider `reward_response` and
 `reward_retry_at`. The expected workload is at most one receipt per milestone,
-with a 64-row due batch every minute; this bound is not a throughput measurement.
+with a 64-row due batch every minute; a tier with an empty supply is asked once
+an hour, plus once per new grant; this bound is not a throughput measurement.
 The partial due index excludes completed and ambiguous requests. A session
 advisory guard serializes attempts without an open transaction across HTTP; its
 connection closes on cancellation.
@@ -1223,7 +1249,18 @@ Configuration failures leave the request unclaimed. After the POST claim commits
 transport errors, non-success statuses, malformed replies and a crash before
 response persistence leave an ambiguous receipt that is never automatically
 reissued. Operators must reconcile the outcome before restoring it to pending or
-supplying a confirmed response. Additive step `0024_social_referral_reward_receipt`
+supplying a confirmed response. A held claim with no stored response stays
+quarantined until an operator clears `reward_requested_at`. A successful reply
+`{"ok": true, "data": []}` means the tier's campaign has no stock left ([greeter-dapp
+reads it as "No Stock"](https://github.com/decentraland/greeter-dapp/blob/30631bd10335f6f89f708829c26c3d679f9a626f/src/api/Rewards.ts)): the claim is cleared and
+the tier's other unclaimed rows without a stored response move one hour ahead
+in their current order, through the partial due index, with the answered row
+placed last. A reply for a new grant moves only rows that are due or new, so a
+row already waiting keeps its time; a reply for a waiting row also moves every
+row due within the hour. One request per hour therefore covers the tier, each
+asking the next row, plus one per new grant on arrival, until its campaign is
+restocked. After restocking, operators may clear
+`reward_retry_at` on those rows to retry sooner. Additive step `0024_social_referral_reward_receipt`
 imports previously confirmed object-valued `reward_paid` responses, including
 receipts with missing or invalid image metadata, and quarantines uncertain pending
 markers. A confirmed receipt with unusable image metadata remains confirmed and
@@ -1414,6 +1451,73 @@ index: drop it before retrying).
 `client_events_seq_idx` serves the cursor scan and
 `client_events_session_moves_idx` traveler's read-back of one session.
 
+## Onboarding checkpoints workload
+
+`POST /onboarding/checkpoint` and `GET /onboarding/pending-nudges?sequence=1..3`
+(`services/catalyst/explore/src/api/onboarding.rs`, bearer `ONBOARDING_API_KEY`)
+keep the auth server's onboarding component (`decentraland/auth-server`
+`src/ports/onboarding/component.ts`, at 08461d2b) in
+`explore_api.onboarding_checkpoints` (`schemas/11_explore_api.sql`) over the
+explore pool, so every `apis` replica the gateway picks reads what any other
+wrote and a restart loses nothing. Writers: the auth server's checkpoint posts
+(1-7 per onboarding user) and the Segment `/forward` webhook's CP7 for a
+verified wallet (`social::segment_webhooks`), each a request. Reader: the
+mailer's poll of the nudge list. No production rate is measured; the expected
+order is one row per onboarding user and checkpoint reached, at most 7 per
+user, about 150 bytes plus the metadata (at most `MAX_METADATA_BYTES`, 4 KiB,
+as compact JSON; checked by the handler).
+
+Invariants: one row per `(user_id, checkpoint)` (the unique key);
+`reached_at` is the first `reached` and never moves; `completed_at` is set
+once, by `completed` or by reaching the next checkpoint; email, wallet and
+metadata are only filled in (`COALESCE`), never cleared; `wallet` is stored
+lower-cased (checked). A checkpoint is one transaction: the wallet's
+resolution (a `wallet`-identified checkpoint without an email takes the user
+and email of the lowest checkpoint, then the oldest row, bound to that wallet
+with an email), the `INSERT ... ON CONFLICT (user_id, checkpoint) DO UPDATE`
+and the completion of the previous checkpoint; concurrent reports of one
+checkpoint from several replicas meet on the key. A wallet-identified
+`reached` that resolves to no email inserts no row (no nudge could reach it),
+as before. `id` is the insertion order: the nudge list's order and the
+resolution's tie-break. Nothing references a row: no FK.
+
+The nudge read selects each user's highest checkpoint that is open, has an
+email and was reached before `now - 12/24/36 h`: the candidates through
+`onboarding_checkpoints_pending_idx` (`reached_at`, partial on `email IS NOT
+NULL AND completed_at IS NULL`, the open rows only), the later-checkpoint
+probe through the unique key, sorted by `id`. The resolution reads
+`onboarding_checkpoints_wallet_idx` (`wallet, checkpoint, id`, partial on a
+wallet and an email), one row. The upserts and completions go by the unique
+key. A test checks both reads' plans with sequential scans priced out.
+
+Retention replaces the in-process cap (10,000 rows, the oldest evicted
+first), which only bounded memory: a row is deleted `RETENTION_DAYS` (30)
+after it was first reached. The nudges fall due at most 36 h after the latest
+checkpoint, so a row that old serves only a late wallet resolution, and
+without a bound the open rows of users who stopped would make the nudge
+list grow forever (the node records no sent nudge, below). Every `reached`
+write deletes, after its commit, those of the 16 oldest rows by `id` that are
+past the retention (`FOR UPDATE SKIP LOCKED`, so two replicas never wait on
+each other); `reached_at` follows `id`, so expired rows are at the head of
+the primary key and the sweep reads 16 index entries. Sixteen per insert
+outruns the rate at which rows expire unless the inserts fall by more than
+16 times within a retention; a failed sweep is logged and the next write
+retries. Clients see the same contract: rows unseen for a month leave as the
+oldest rows did under the cap, with no fixed row count behind it.
+
+Differences from the auth server, kept from the in-process store: no
+`email_nudges` table (the node runs no nudge mailer, so no nudge is marked
+sent and the list holds every due user until they move on, complete or
+expire); `id_type` and `source` are validated and not stored (nothing reads
+them); a wallet-identified checkpoint binds the identifier as the wallet even
+when the body carries an email; ties in the resolution go to the oldest row.
+
+The table and its indexes are new objects: the object pass of `catalyst
+schema migrate` creates them on a stamped database (a step under
+`schemas/migrations/` may not create objects), with no rewrite of any
+existing table. Checkpoints the in-process store held before the upgrade are
+not carried over.
+
 ## Credits wallet flags workload
 
 `credits.wallet_flags` (`schemas/60_ops.sql`) is the multi-accounting flag
@@ -1455,6 +1559,35 @@ primary key); flagging it again keeps `flagged_at` and takes the new source,
 IP and links. Addresses are lower-cased and checked by the table; the handler
 normalises the body's. The bootstrap defines the table; an existing database
 gains it from the object pass, so no step exists.
+
+## Credits checkout and broker claim edges
+
+A credits checkout line buys through the shop broker under the claim key
+`checkout:{checkout_id}:{outbox_id}` in `shop.broker_purchases`. Two SQL edges
+cross the areas. The broker claim (`shop/src/checkout/claims.rs`,
+`claim_broker_purchase`) reads `credits.checkouts` by the id in such a key,
+`FOR SHARE`, and neither inserts nor re-arms the claim while that checkout is
+`reversing`, `reversed` or `failed`; `checkout_frozen` reads the same predicate
+to answer a refused request. Credits writes `shop.broker_purchases` through
+`claims::fence_unrecorded`, called by compensation (`credits/fulfillment.rs`)
+and, in its closing transaction, by the manual refund
+(`credits/checkout.rs`): it marks the frozen checkout's unconfirmed lines'
+`pending` write-ahead claims with no `tx_hash` as `error`.
+
+Invariants: once a checkout is frozen, no line of it gains a recorded buy. The
+freeze is a row update of the checkout, which conflicts with the claim's
+`FOR SHARE` read: a claim that commits first is fenced, one that waits reads
+the frozen status and is refused, and the claimant's record (fenced on
+`pending` and its claim time) matches no fenced row. The fence covers only
+claims with no transaction recorded: a buy already recorded (`sent`, `bought`,
+`forwarding`) still settles and may deliver. Compensation holds such a line
+out of its refund; the manual refund pays the amount the operator gives. The
+manual refund locks the wallet, then the checkout (`FOR UPDATE`, refusing
+unless it is still `fulfilling` or `fulfilled`, so it never refunds a checkout
+compensation is reversing), then the claims; a transaction that locks a
+checkout and a claim takes the checkout first, so the edges add no lock
+cycle. Changing the
+key format, the frozen statuses or either statement updates this section.
 
 ## Camera reel photo events workload
 
@@ -1900,6 +2033,107 @@ each publication or archive transition appends a row to
 `social.badge_catalog_audit`; `badge_admin_audit` keeps per-wallet grants and
 revokes, whose `address` a catalog write does not have.
 
+## Curation committee
+
+Builder's committee routes (the drafts and items of every wallet, another
+wallet's collections and items, the curation console's committee list)
+admit `BUILDER_ADMIN_ADDRESSES` and the current members of the Polygon
+curation committee. Shop's `committee` index
+(`MARKETPLACE_COMMITTEE_INDEX_ENABLED`) walks the two Committee contracts'
+`MemberSet` logs from the first one's deployment into `shop.committee_event`
+over the `TRADE_RPC_URLS` 137 entry, else on mainnet `RPC_ENDPOINT_POLYGON`,
+once the endpoint answers chain id 137 (tens of rows, appended with the cursor advance in `shop.chain_cursor`,
+deleted past a reorg rewind). Builder reads, never writes, both tables by
+shared SQL in one statement: `shop.committee_event` (`network`,
+`block_number`, `log_index`, `member`, `is_member`) and `shop.chain_cursor`
+(`indexer`, `network`, `full_history`, `folded_block`, `folded_at`). A
+wallet is a member when its latest event (block, log index) at or below the
+published block (`folded_block`) set it, so rows a pass adds before its
+publish wait for it. Unlike the shop routes' readiness rule, it does not
+require `folded_block = last_block`, so the published membership stays
+readable while a pass runs. An index that is off, not yet published or
+published more than 30 minutes ago (`READY_WINDOW`) admits only the
+configured addresses, and a failed read answers 503. Changing a column builder reads updates this section
+and the AGENTS.md "Ownership" entry in the same change.
+
+## Auth API relay state workload
+
+`/auth-api` (`services/catalyst/explore/src/api/auth_api/`) is the sign-in
+relay: a client posts a signing request, a wallet page recovers it by id and
+posts the outcome, and the client polls for it; a signed identity is parked
+for one pickup by a device. The gateway spreads `/auth-api` across the API
+replicas round-robin without affinity, so the state lives in three
+`explore_api` tables (`schemas/11_explore_api.sql`) every replica reads and
+writes through the explore pool, as the upstream auth server keeps it in Redis.
+
+Workload: a sign-in is one create, one or two recover reads, a validation mark
+at most, one outcome and a poll about once a second until the outcome lands;
+an identity is one create and one pickup. Rows are small (a challenge of a
+few hundred bytes; an outcome or identity of 1-2 KB with its auth chain) and
+short-lived. The caps bound the live set: at most 10,000 undelivered
+unexpired requests (100 per creating network) and 10,000 unexpired
+identities (100 per network). No production rate is measured.
+
+- `auth_requests`: one row per request, keyed by its UUID. `status` moves
+  only forward, `pending` -> `signed` -> `fulfilled`; `outcome` is set exactly
+  while it is `signed` (a `CHECK`). The outcome is stored by
+  `UPDATE ... WHERE status = 'pending'`, so of two answers the second finds it
+  signed (400). It is delivered once: the poll's `UPDATE ... FROM (SELECT ...
+  WHERE status = 'signed' FOR UPDATE) RETURNING` moves it to `fulfilled` and
+  clears `outcome`, `params` and `challenge`, so a concurrent poller on any
+  replica waits on the row, finds it fulfilled and answers 410. A request
+  expires 5 minutes after its creation; the read that finds it expired
+  deletes it and answers 410, and the sweep drops the rest 5 minutes later.
+- `auth_identities`: one row per parked identity, keyed by its UUID, holding
+  the identity document with its ephemeral private key for at most an hour.
+  The key is stored in clear, as the upstream auth server keeps it in Redis:
+  it is never logged, but the row reaches the WAL, the streaming replicas and
+  the backups, which keep it after the row is deleted for as long as they
+  are retained. A copy of the key signs for the identity's account until the
+  expiration in its auth chain.
+  A deep-link create for a client that holds a verifier (Creator Hub) binds
+  it to the client's `authRequestId` (`auth_request_id`, lowercase), which
+  the client derives from the verifier it presents on pickup
+  (`x-identity-verifier`); other identities stay unbound and keep the IP
+  check. The pickup locks the row (`SELECT ... FOR UPDATE`), decides, and
+  deletes it in the transaction that writes its tombstone when it is served,
+  expired or refused for its IP, so exactly one pickup gets it; a concurrent
+  one waits on the row, finds it gone and reads the tombstone. A bound
+  identity is served only to its verifier, from any network; a pickup with a
+  wrong or missing one (401) leaves the row parked.
+- `auth_identity_tombstones`: why an identity is gone (`consumed`, `expired`,
+  `ip_mismatch`, or NULL while parked and once evicted by the sweep or an
+  operator's revoke), for the 404 bodies, kept 14 days and at most 50,000
+  rows: a create past that stores none, and a pickup sets the reason of the
+  row its create stored or, when there is none, inserts one only under the
+  same cap. Pickups take no lock, so concurrent ones can pass the count
+  together; the overshoot is at most the pickups in flight.
+
+Caps: a request create first counts its network's live requests without any
+lock and refuses one over the per-network cap (429) there, so a flood from one
+network does not queue on the lock. Then a create takes `pg_advisory_xact_lock` on one key per table
+(`hashtextextended('explore_api.auth_requests:admission', 0)` and the
+identities' twin), counts the live rows and those of its network in one pass
+and inserts in the same transaction, so concurrent creates on every replica
+admit one at a time and never overshoot. A full request table first drops
+requests past their grace, then the oldest delivered ones, just enough to
+admit one more. The count scans the table, bounded by the caps to about
+10,000 rows; sign-in creates are rare enough that serializing them on the
+lock costs nothing measurable.
+
+Expiry compares the stored instant with the handling replica's clock, so
+replicas need synchronized clocks (NTP); a second of skew moves the 410 by a
+second. The periodic `auth-api-identity-sweep` job runs on every replica
+every 30 seconds: three idempotent `DELETE`s by expiry (requests past their
+grace, identities past their hour, tombstones past 14 days), so replicas
+sweeping at once delete each row once. The expiry indexes
+(`auth_requests_expiration_idx`, `auth_identities_expiration_idx`,
+`auth_identity_tombstones_created_idx`) serve those deletes; every other read
+and write is by primary key. Nothing references these rows and they
+reference nothing: no FK. The bootstrap defines the tables; an existing
+database gains them from the object pass, so no step exists. A restart of
+every replica keeps the relay's state.
+
 ## Place removal feed
 
 `explore.place_removal_pending` (`schemas/10_explore.sql`) is a sparse outbox
@@ -2049,3 +2283,46 @@ bytes are content-addressed and rooted by `content_hash`
 (`services/catalyst/storage/src/gc.rs`), so two reports attaching the same
 file share one blob and a report's deletion never removes bytes another one
 references.
+
+## Sites pairing sessions workload
+
+`explore_api.pair_sessions` (`schemas/11_explore_api.sql`) holds the phone
+pairing sessions of Sites (`/auth/pair/:session` and `/internal/pair`,
+`apps/sites/src/data/lib/auth/pair-store.server.ts`), so a create, the phone's
+complete and the desktop's polls may land on different Sites replicas behind
+the gateway's round-robin `sites` upstream. Sites is the only reader and
+writer, through its catalyst pool (`CATALYST_DATABASE_URL`, shared with the
+places reads); the node never touches the table. It sits in `explore_api`
+beside the other explorer sign-in surface tables and shares their lifecycle:
+rows are disposable, and a restore may lose them.
+
+Inputs: a desktop creates a session (rate-limited per client IP to 30 in five
+minutes, in each Sites process), polls it every few seconds, and the phone
+completes it once with a signature. One row per session: id (16 random bytes,
+base64url), the sha256 of the 32-byte poll token (the token itself is handed
+to the desktop once and never stored), the ephemeral address, its expiration
+and the message to sign, the creation and expiry instants and, once
+completed, the signer and signature. A few hundred bytes a row; at most 500
+live rows by design.
+
+Transitions, each one statement against the database clock (`now()`):
+create takes `pg_advisory_xact_lock(hashtextextended('sites-pair-sessions',
+0))`, deletes the expired rows, and inserts only while fewer than 500 rows
+remain, so concurrent creates on several replicas never exceed the cap and
+never evict a live session; complete is `UPDATE ... WHERE completed_signer IS
+NULL AND expires_at > now()`, so exactly one phone wins (`already` for the
+others, `expired` or `missing` after a lookup); poll reads the row by id,
+compares the token's sha256 to the stored digest in constant time, and
+releases a completed session by deleting it with `RETURNING`, so one poll
+receives the signature; cancel deletes by id and token digest. Expired rows
+are deleted by the next create, and by a poll or complete that finds one;
+no job sweeps them, so between creates they stay bounded by the creates of
+the last five minutes. No secondary index: every read is by primary key and
+the sweep and count scan at most a few hundred rows.
+
+Without a catalyst database (`CATALYST_DATABASE_URL` and
+`PLACES_PG_COMPONENT_PSQL_CONNECTION_STRING` unset), Sites keeps the sessions
+in its own memory with the same rules, like the places reads fall back to the
+API; that mode serves one process only, so a deployment with several Sites
+replicas sets the database URL. The bootstrap defines the table; an existing
+database gains it from the object pass, so no step exists.

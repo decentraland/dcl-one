@@ -30,7 +30,7 @@ use crate::auth::signed_fetch::{
 };
 use crate::auth::{AuthChain, AuthError, AuthLinkType};
 use crate::shared::signed_fetch::{
-    self, AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER, FIVE_MINUTES,
+    self, AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER, SIGNED_FETCH_WINDOW_SECS,
     SignedFetchError as ChainError, SignedPath, candidate_paths, check_timestamp_window,
     header_str,
 };
@@ -39,7 +39,7 @@ use crate::{Address, AuthorityNotEstablished};
 use super::errors::ApiError;
 
 /// The comms-gatekeeper freshness window of every signed-fetch route.
-pub const DEFAULT_EXPIRATION_SECS: i64 = 60;
+pub const DEFAULT_EXPIRATION_SECS: i64 = SIGNED_FETCH_WINDOW_SECS;
 
 pub const SCENE_SIGNER: &str = "decentraland-kernel-scene";
 pub const SERVER_SIGNER: &str = "dcl:authoritative-server";
@@ -281,9 +281,9 @@ pub async fn verify_signed_fetch(
     .await
 }
 
-/// A wallet's own signed fetch (the player-report routes): any `signer`
-/// but the scene's (a re-spelled key refused too, 400), so a scene-signed
-/// chain is never filed as the wallet that signed it.
+/// A wallet's own signed fetch (player reports, scene adapter, island
+/// refresh): any `signer` but the scene's (a re-spelled key refused too,
+/// 400), so a scene-signed chain never acts as the wallet that signed it.
 pub async fn verify_wallet_signed_fetch(
     headers: &HeaderMap,
     method: &str,
@@ -326,7 +326,7 @@ pub async fn verify_viewer_signed_fetch(
     .await
 }
 
-/// Authoritative server context, verified with its existing five-minute window.
+/// Authoritative server context, verified with the shared 60-second window.
 pub async fn verify_server_signed_fetch(
     headers: &HeaderMap,
     method: &str,
@@ -340,11 +340,14 @@ pub async fn verify_server_signed_fetch(
         &[],
         &[],
         CANONICAL_METADATA_KEYS,
-        FIVE_MINUTES,
+        SIGNED_FETCH_WINDOW_SECS,
         validator,
     )
     .await
 }
+
+/// The refusal detail of a request without an `Authorization` header.
+const NO_AUTHORIZATION_HEADER: &str = "no authorization header";
 
 /// The platform service token in front of the voice routes and the world
 /// ban-status route: unset is a misconfiguration (503), a missing or wrong
@@ -359,21 +362,35 @@ pub fn require_service_token(
             environment_variable: "COMMS_GATEKEEPER_AUTH_TOKEN",
         }),
         Err(Refusal::Mismatch) => Err(AuthorityNotEstablished::PresentedSharedSecretDidNotMatch),
-        Err(Refusal::NoBearer) => Err(AuthorityNotEstablished::AuthenticationMissingOrInvalid {
-            detail: "no bearer token",
-        }),
+        Err(Refusal::NoBearer) => {
+            let absent = headers
+                .get(axum::http::header::AUTHORIZATION)
+                .is_none_or(|v| v.is_empty());
+            Err(AuthorityNotEstablished::AuthenticationMissingOrInvalid {
+                detail: if absent {
+                    NO_AUTHORIZATION_HEADER
+                } else {
+                    "no bearer token"
+                },
+            })
+        }
     }
 }
 
-/// The wire text of every service-token refusal (the old gate answered 401
-/// "Authentication required" for both the missing and the wrong bearer).
+/// The wire text of every service-token refusal, as upstream's
+/// `bearerTokenMiddleware` (`@dcl/http-commons`) words it: 401 "Authorization
+/// header is missing" without the header (capture
+/// `voice-chat-status-401-no-token`), else 401 "Invalid authorization header".
 pub fn service_token_error(why: AuthorityNotEstablished) -> ApiError {
     match why {
         AuthorityNotEstablished::CredentialNotConfigured { .. } => ApiError::http(
             503,
             "This route is unavailable: COMMS_GATEKEEPER_AUTH_TOKEN is not configured, so the platform service token cannot be verified",
         ),
-        _ => ApiError::http(401, "Authentication required"),
+        AuthorityNotEstablished::AuthenticationMissingOrInvalid {
+            detail: NO_AUTHORIZATION_HEADER,
+        } => ApiError::http(401, "Authorization header is missing"),
+        _ => ApiError::http(401, "Invalid authorization header"),
     }
 }
 
@@ -436,7 +453,7 @@ pub async fn authorize_moderator(
         &[],
         &[SCENE_SIGNER],
         MODERATOR_METADATA_KEYS,
-        FIVE_MINUTES,
+        SIGNED_FETCH_WINDOW_SECS,
         validator,
     )
     .await
@@ -636,11 +653,14 @@ mod tests {
             (401, "Expired signature".to_string()),
             "the gatekeeper window is 60 s"
         );
-        assert!(
-            verify_server_signed_fetch(&headers, "post", &SignedPath::local(PATH), None)
-                .await
-                .is_ok(),
-            "the authoritative server route keeps the five minute window"
+        let err = verify_server_signed_fetch(&headers, "post", &SignedPath::local(PATH), None)
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(
+            failure(err),
+            (401, "Expired signature".to_string()),
+            "the authoritative server route shares the 60 s window"
         );
     }
 
@@ -861,6 +881,18 @@ mod tests {
         ));
         headers.insert("authorization", HeaderValue::from_static("Bearer t"));
         assert!(require_service_token(Some("t"), &headers).is_ok());
+        let message = |headers: &HeaderMap| {
+            service_token_error(require_service_token(Some("t"), headers).unwrap_err()).message
+        };
+        assert_eq!(
+            message(&HeaderMap::new()),
+            "Authorization header is missing"
+        );
+        for value in ["Bearer nope", "Basic t", "t"] {
+            let mut headers = HeaderMap::new();
+            headers.insert("authorization", HeaderValue::from_str(value).unwrap());
+            assert_eq!(message(&headers), "Invalid authorization header", "{value}");
+        }
         assert_eq!(
             service_token_error(AuthorityNotEstablished::PresentedSharedSecretDidNotMatch).code,
             401

@@ -3,16 +3,20 @@
 // (light Select / ruby Toggle / arrow Slider). Data + actions via the bridge relay
 // of BevyApi.getSettings / setSetting.
 
-import { memo, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { Select, Slider, Tabs, Toggle, Tooltip, showConfirm } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import type { Setting } from '@explorer-core/engine/protocol'
-import type { BindingsState, ProfileState, SettingsState } from '../session/useEngineSession'
+import type { BindingsState, EngineSession, ProfileState, SettingsState } from '../session/useEngineSession'
 import { KeyBindingsTab } from './KeyBindingsTab'
+import { LobbyStageTab } from './LobbyStageTab'
+import { LOBBY_STAGE_PRESETS } from '@explorer-core/engine/lobbyStage'
 import { clearAutoTranslate, setAutoTranslateDefault } from '@explorer-core/features/chat/translation'
 import { useTranslationPrefs } from '../chat/useTranslation'
 import { PING_MODES, clearPingMode, setPingDefault, usePingPrefs, type PingMode } from '../chat/ping'
 import { Mark } from '../../design/Glyphs'
+import { CAN_ASK_BEFORE_LEAVING } from '@hud-host'
+import { setAskBeforeLeaving, useAskBeforeLeaving } from './askBeforeLeaving'
 import styles from './SettingsPanel.module.css'
 
 // The Controls tab holds the engine's Controls rows and, in a card of its own under them, the key
@@ -21,6 +25,7 @@ import styles from './SettingsPanel.module.css'
 const CONTROLS_TAB = 'Controls'
 // The HUD's own chat settings (translation, the notification ping) join the engine's in this tab.
 const CHAT_TAB = 'Chat'
+const LOBBY_TAB = 'Lobby'
 
 // A name with a space or a capital is already written for people (the engine's 'Voice Volume',
 // 'VSync'); only an identifier (fps_limit) is turned into words.
@@ -217,7 +222,7 @@ function PingField(): React.JSX.Element {
   return (
       <div className={styles.field}>
         <div className={styles.fieldHead}>
-          <Tooltip label="The sound for a chat line landing in a conversation; each conversation's menu can choose otherwise." side="bottom" multiline className={styles.hint}>
+          <Tooltip label="The sound for a chat line landing in a conversation; each conversation's menu can choose otherwise. Sending a message sounds only on All Messages." side="bottom" multiline className={styles.hint}>
             <span className={styles.label}>Notification Ping</span>
           </Tooltip>
         </div>
@@ -247,36 +252,69 @@ function AutoTranslateField(): React.JSX.Element {
   )
 }
 
-export function SettingsPanel({
-  settings,
-  bindings,
-  profile,
-  onNavigate
-}: {
+/** The browser's question before Back or a closed tab ends a session, in the Gameplay tab where the
+ *  host can ask it. */
+function AskBeforeLeavingField(): React.JSX.Element {
+  const ask = useAskBeforeLeaving()
+  return (
+      <div className={styles.field}>
+        <div className={styles.fieldHead}>
+          <span className={styles.label}>Ask Before Leaving the Page</span>
+        </div>
+        <div className={styles.control}>
+          <Toggle checked={ask} onChange={setAskBeforeLeaving} aria-label="Ask Before Leaving the Page" />
+        </div>
+      </div>
+  )
+}
+
+// The full page and the lobby's compact Settings open on the tab last picked in either.
+let lastTab: string | null = null
+
+/** Forget the last tab: for tests. */
+export function resetSettingsTab(): void {
+  lastTab = null
+}
+
+type SettingsPanelProps = {
   settings: SettingsState
   bindings: BindingsState
   profile: ProfileState
-  onNavigate: (page: string) => void
-}): React.JSX.Element | null {
+  lobbyStage: EngineSession['lobbyStage']
+} & ({ compact?: undefined; onNavigate: (page: string) => void } | { compact: true; onNavigate?: undefined })
+
+/** `compact`: the body alone, for the lobby's section modal, which owns the close control. */
+export function SettingsPanel({ settings, bindings, profile, lobbyStage, compact, onNavigate }: SettingsPanelProps): React.JSX.Element | null {
   const categories = useMemo(
     () => {
       // the engine's own spelling of a category wins over the tab the HUD adds
       const engine = [...new Set(settings.list.map((s) => s.category))]
-      const own = [CONTROLS_TAB, CHAT_TAB].filter((t) => !engine.some((c) => c.toLowerCase() === t.toLowerCase()))
+      const own = [CONTROLS_TAB, CHAT_TAB, LOBBY_TAB].filter((t) => !engine.some((c) => c.toLowerCase() === t.toLowerCase()))
       return [...engine, ...own].sort((a, b) => tabRank(a) - tabRank(b))
     },
     [settings.list]
   )
-  const [tab, setTab] = useState<string | null>(null)
+  // The full page stays mounted while closed, so the shared value is read on each render.
+  const [, rerender] = useState(0)
+  const setTab = (next: string): void => {
+    lastTab = next
+    rerender((n) => n + 1)
+  }
+  const { refresh } = settings
+  // The engine changes settings itself, so each compact open re-reads them.
+  useEffect(() => {
+    if (compact) refresh()
+  }, [compact, refresh])
 
-  if (!settings.open) return null
+  if (!settings.open && !compact) return null
 
   // Opens on Graphics, as the reference does; without it, on the engine's first category.
   const firstTab = categories.find((c) => tabRank(c) === 0) ?? settings.list[0]?.category ?? categories[0]
-  const activeTab = tab && categories.includes(tab) ? tab : firstTab
+  const activeTab = lastTab && categories.includes(lastTab) ? lastTab : firstTab
   const items = settings.list.filter((s) => s.category === activeTab)
   const isControls = activeTab.toLowerCase() === CONTROLS_TAB.toLowerCase()
   const isChat = activeTab.toLowerCase() === CHAT_TAB.toLowerCase()
+  const asksHere = CAN_ASK_BEFORE_LEAVING && activeTab.toLowerCase() === 'gameplay'
   const resetAll = (): void => {
     items.forEach((s) => settings.set(s.name, s.default))
     if (isControls) {
@@ -286,12 +324,76 @@ export function SettingsPanel({
         confirmLabel: 'Reset'
       }).then((ok) => ok && bindings.reset())
     }
+    if (activeTab === LOBBY_TAB) lobbyStage.set({ preset: LOBBY_STAGE_PRESETS[0].id })
+    if (asksHere) setAskBeforeLeaving(false)
     if (isChat) {
       setAutoTranslateDefault(false)
       clearAutoTranslate()
       setPingDefault('all')
       clearPingMode()
     }
+  }
+
+  const head = (
+    <div className={styles.head}>
+      <h1 className={styles.title}>Settings</h1>
+      <Tabs
+        variant="section"
+        className={styles.tabs}
+        items={categories.map((c) => ({ id: c, label: tabLabel(c), icon: <TabGlyph category={c} /> }))}
+        value={activeTab}
+        onChange={setTab}
+        aria-label="Settings categories"
+      />
+      <button type="button" className={styles.reset} onClick={resetAll}>
+        <Mark name="reset" /> Reset all defaults
+      </button>
+    </div>
+  )
+  const scroll = (
+    <div className={styles.scroll}>
+      {activeTab === LOBBY_TAB ? (
+        <div className={styles.card} role="group" aria-label="Lobby settings">
+          <LobbyStageTab preset={lobbyStage.preset} onPick={(preset) => lobbyStage.set({ preset })} />
+        </div>
+      ) : (
+        (items.length > 0 || !isControls) && (
+          <div className={styles.card} role="group" aria-label={`${tabLabel(activeTab)} settings`}>
+            {items.length === 0 && !isChat ? (
+              <div className={styles.empty}>No settings available.</div>
+            ) : (
+              chatSections(isChat, sections(activeTab, items)).map((g, i, all) => (
+                <section key={g.title ?? 'all'} className={styles.section}>
+                  {g.title != null && <h2 className={styles.sectionTitle}>{g.title}</h2>}
+                  <div className={styles.grid}>
+                    {isChat && i === 0 && <PingField />}
+                    {g.items.map((s) => (
+                      <SettingField key={s.name} s={s} onSet={settings.set} />
+                    ))}
+                    {isChat && i === all.length - 1 && <AutoTranslateField />}
+                    {asksHere && i === all.length - 1 && <AskBeforeLeavingField />}
+                  </div>
+                </section>
+              ))
+            )}
+          </div>
+        )
+      )}
+      {isControls && (
+        <div className={styles.card} role="group" aria-label="Key bindings">
+          <KeyBindingsTab bindings={bindings} />
+        </div>
+      )}
+    </div>
+  )
+
+  if (compact) {
+    return (
+      <div className={`${styles.page} ${styles.compact}`}>
+        {head}
+        {scroll}
+      </div>
+    )
   }
 
   const p = profile.data
@@ -306,48 +408,8 @@ export function SettingsPanel({
       onClose={settings.toggle}
     >
       <div className={styles.page}>
-        <div className={styles.head}>
-          <h1 className={styles.title}>Settings</h1>
-          <Tabs
-            variant="section"
-            className={styles.tabs}
-            items={categories.map((c) => ({ id: c, label: tabLabel(c), icon: <TabGlyph category={c} /> }))}
-            value={activeTab}
-            onChange={setTab}
-            aria-label="Settings categories"
-          />
-          <button type="button" className={styles.reset} onClick={resetAll}>
-            <Mark name="reset" /> Reset all defaults
-          </button>
-        </div>
-
-        <div className={styles.scroll}>
-          {(items.length > 0 || !isControls) && (
-            <div className={styles.card} role="group" aria-label={`${tabLabel(activeTab)} settings`}>
-              {items.length === 0 && !isChat ? (
-                <div className={styles.empty}>No settings available.</div>
-              ) : (
-                chatSections(isChat, sections(activeTab, items)).map((g, i, all) => (
-                  <section key={g.title ?? 'all'} className={styles.section}>
-                    {g.title != null && <h2 className={styles.sectionTitle}>{g.title}</h2>}
-                    <div className={styles.grid}>
-                      {isChat && i === 0 && <PingField />}
-                      {g.items.map((s) => (
-                        <SettingField key={s.name} s={s} onSet={settings.set} />
-                      ))}
-                      {isChat && i === all.length - 1 && <AutoTranslateField />}
-                    </div>
-                  </section>
-                ))
-              )}
-            </div>
-          )}
-          {isControls && (
-            <div className={styles.card} role="group" aria-label="Key bindings">
-              <KeyBindingsTab bindings={bindings} />
-            </div>
-          )}
-        </div>
+        {head}
+        {scroll}
       </div>
     </MainMenuShell>
   )

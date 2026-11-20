@@ -126,6 +126,13 @@ export async function setAuthorization(opts: AuthorizationContext & { auth: Shop
       return;
     } catch (e) {
       if (isSignatureDeclined(e) || e instanceof TxPendingError) throw e;
+      // Unlike a purchase, this falls back to the wallet even when the relay may have sent the
+      // call (`relayer-unreachable`): the same change applied twice leaves it applied once, so the
+      // cost is a second prompt and its gas, and a web3 buyer can still approve or revoke while the
+      // relay is down. The risk taken: the relayed call may still land later, after the wallet sent
+      // the opposite change meanwhile (the wallet's own transaction does not consume the
+      // meta-transaction nonce). A late relayed grant turns back on an authorization revoked since,
+      // and a late relayed revoke turns off one granted again since. Accepted, not handled.
       const fallback = canPayGasItself(opts.walletKind) && (await onChain(provider, auth.chainId));
       if (!fallback) throw e;
     }

@@ -238,7 +238,6 @@ pub fn create_runtime(
 pub struct StorageRoot(pub String);
 
 // main scene processing thread - constructs an isolate and runs the scene
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn scene_thread(
     initial_crdt_store: CrdtStore,
     scene_context: CrdtContext,
@@ -830,6 +829,54 @@ mod tests {
         .unwrap();
     }
 
+    /// `@dcl/ecs` installs its own `clearInterval` when the global is missing, and that one only
+    /// deletes SDK timers: the interval would keep firing.
+    #[test]
+    fn clear_interval_stops_an_interval() {
+        let (mut runtime, _) = create_runtime(
+            false,
+            false,
+            "test-clear-interval",
+            false,
+            Default::default(),
+        );
+        {
+            let state = runtime.op_state();
+            let mut state = state.borrow_mut();
+            state.put(context(false));
+            state.put(SceneJsFile(Arc::new(
+                r#"
+                globalThis.clearInterval ??= () => {};
+                globalThis.__ticks = 0;
+                const id = setInterval(() => {
+                    if (++globalThis.__ticks === 2) clearInterval(id);
+                }, 1);
+                "#
+                .to_owned(),
+            )));
+        }
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _guard = rt.enter();
+        runtime
+            .execute_script("<test>", ascii_str!("require(\"~scene.js\")"))
+            .unwrap();
+        rt.block_on(tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            runtime.run_event_loop(Default::default()),
+        ))
+        .expect("the interval was not cleared")
+        .unwrap();
+        let ticks = runtime
+            .execute_script("<test>", ascii_str!("globalThis.__ticks"))
+            .unwrap();
+        let scope = &mut runtime.handle_scope();
+        let ticks = deno_core::v8::Local::new(scope, ticks);
+        assert_eq!(ticks.uint32_value(scope), Some(2));
+    }
+
     /// The seal is scoped to the authoritative server on purpose: the desktop client runs on
     /// the user's own machine, and narrowing the change keeps preview and every deployed
     /// scene behaving exactly as they do today. Pinned so the scoping is a decision rather
@@ -841,6 +888,24 @@ mod tests {
             r#"if (typeof Deno === "undefined") { throw new Error("client behaviour changed"); }"#,
         )
         .unwrap();
+    }
+
+    /// A scene server has no player to partition `localStorage` by, and no business writing to
+    /// its host's disk: every storage op must raise there.
+    #[test]
+    fn local_storage_raises_on_a_scene_server() {
+        for call in [
+            "localStorage.length",
+            "localStorage.key(0)",
+            "localStorage.getItem('k')",
+            "localStorage.setItem('k', 'v')",
+            "localStorage.removeItem('k')",
+            "localStorage.clear()",
+            "Object.keys(localStorage)",
+        ] {
+            let err = run_scene(true, call).expect_err(call);
+            assert!(err.contains("scene server"), "{call}: {err}");
+        }
     }
 
     /// `deno_net`'s ops are registered, unwrapped, and reachable from any scene that gets at

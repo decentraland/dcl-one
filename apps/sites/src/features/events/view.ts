@@ -1,4 +1,5 @@
-import type { EventCardCreator, EventCardTime } from "@dcl/one-ui/apps/sites/events/types";
+import { eventText, type EventsLocale } from "@dcl/one-ui/apps/sites/events/locale";
+import type { EventCardCreator, UpcomingEventCardProps } from "@dcl/one-ui/apps/sites/events/types";
 
 import { eventOccurrence, type Event } from "@/data/lib/catalyst/places/events";
 import {
@@ -14,6 +15,7 @@ import { DEFAULT_MIN_USERS, type LiveNowData } from "@/data/lib/catalyst/places/
 import { ETH_ADDRESS_RE, shortAddress } from "@/data/lib/catalyst/format/address";
 import type { Place } from "@/data/lib/catalyst/schema";
 import type { CreatorProfiles } from "@/data/lib/catalyst/social/creator-profiles";
+import { formatDate, formatTime, type Zone } from "../components/event-schedule";
 
 /**
  * The /events page's view model: API records mapped to the card and modal props of
@@ -30,8 +32,6 @@ export const DAY_PARAM = "day";
 
 const MINUTE = 60_000;
 const DAY_MS = 86_400_000;
-
-export type Zone = string | undefined;
 
 /** A travel target: a Genesis City parcel, or a World (with its scene parcel). */
 export type Target = { coordinates: [number, number]; realm?: string };
@@ -108,10 +108,11 @@ function faceOf(address: string | undefined, profiles: CreatorProfiles): { avata
 export function eventCreator(
   event: Pick<Event, "user" | "user_name">,
   profiles: CreatorProfiles = {},
+  locale: EventsLocale = "en",
 ): EventCardCreator {
   const address = event.user && ETH_ADDRESS_RE.test(event.user) ? event.user : undefined;
   return {
-    name: event.user_name || (address ? shortAddress(address) : "Unknown"),
+    name: event.user_name || (address ? shortAddress(address) : eventText(locale, "Unknown")),
     href: address ? profileHref(address) : undefined,
     ...faceOf(address, profiles),
   };
@@ -120,9 +121,10 @@ export function eventCreator(
 export function placeCreator(
   place: Pick<JumpPlaceRecord, "owner" | "contact_name">,
   profiles: CreatorProfiles = {},
+  locale: EventsLocale = "en",
 ): EventCardCreator {
   const owner = place.owner && ETH_ADDRESS_RE.test(place.owner) ? place.owner : undefined;
-  const name = place.contact_name || (owner ? shortAddress(owner) : place.owner) || "Unknown";
+  const name = place.contact_name || (owner ? shortAddress(owner) : place.owner) || eventText(locale, "Unknown");
   // The Foundation keeps its logo, as source does for Genesis Plaza.
   if (name === FOUNDATION_CONTACT_NAME) return { name, href: owner ? profileHref(owner) : undefined, foundation: true };
   return { name, href: owner ? profileHref(owner) : undefined, ...faceOf(owner, profiles) };
@@ -142,8 +144,8 @@ export function eventUsers(event: Pick<Event, "connected_addresses">): number | 
     : undefined;
 }
 
-export function usersLabel(count: number): string {
-  return count === 1 ? "1 online" : `${count} online`;
+export function usersLabel(count: number, locale: EventsLocale = "en"): string {
+  return eventText(locale, "{count} online", { count });
 }
 
 export type LiveNowItem =
@@ -197,14 +199,14 @@ export function visibleDays(now: number, timeZone: Zone, offset: number, count: 
 }
 
 /** "Today", "Tomorrow", else "Fri, Nov 13", as source's date bar. */
-export function dayLabel(date: Date, offset: number): string {
-  if (offset === 0) return "Today";
-  if (offset === 1) return "Tomorrow";
-  return date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+export function dayLabel(date: Date, offset: number, locale: EventsLocale = "en"): string {
+  if (offset === 0) return eventText(locale, "Today");
+  if (offset === 1) return eventText(locale, "Tomorrow");
+  return date.toLocaleDateString(locale, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
 }
 
-export function dayFullLabel(date: Date): string {
-  return date.toLocaleDateString("en-US", {
+export function dayFullLabel(date: Date, locale: EventsLocale = "en"): string {
+  return date.toLocaleDateString(locale, {
     weekday: "long",
     month: "long",
     day: "numeric",
@@ -213,29 +215,17 @@ export function dayFullLabel(date: Date): string {
   });
 }
 
-export function formatTime(iso: string, timeZone: Zone): string {
-  return new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone }).format(
-    new Date(iso),
-  );
-}
-
-function formatDate(iso: string, timeZone: Zone): string {
-  return new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", timeZone }).format(
-    new Date(iso),
-  );
-}
-
 /** Source's Upcoming label: "Starts in 8 mins", "Today 5:00 PM", "Tomorrow 1:00 AM", else the time. */
-export function relativeStart(iso: string, now: number, timeZone: Zone): string {
+export function relativeStart(iso: string, now: number, timeZone: Zone, locale: EventsLocale = "en"): string {
   const start = Date.parse(iso);
   const diff = start - now;
-  if (diff <= 0) return formatTime(iso, timeZone);
+  if (diff <= 0) return formatTime(iso, timeZone, locale);
   const minutes = Math.round(diff / MINUTE);
-  if (minutes < 60) return `Starts in ${minutes} ${minutes === 1 ? "min" : "mins"}`;
+  if (minutes < 60) return eventText(locale, minutes === 1 ? "Starts in {count} min" : "Starts in {count} mins", { count: minutes });
   const day = dayKey(start, timeZone);
-  if (day === dayKey(now, timeZone)) return `Today ${formatTime(iso, timeZone)}`;
-  if (day === dayKey(now + DAY_MS, timeZone)) return `Tomorrow ${formatTime(iso, timeZone)}`;
-  return `${formatDate(iso, timeZone)} ${formatTime(iso, timeZone)}`;
+  if (day === dayKey(now, timeZone)) return eventText(locale, "Today {time}", { time: formatTime(iso, timeZone, locale) });
+  if (day === dayKey(now + DAY_MS, timeZone)) return eventText(locale, "Tomorrow {time}", { time: formatTime(iso, timeZone, locale) });
+  return `${formatDate(iso, timeZone, locale)} ${formatTime(iso, timeZone, locale)}`;
 }
 
 export type Occurrence = { event: Event; start: string; finish: string | undefined; live: boolean };
@@ -284,60 +274,17 @@ export function bucketByDay(
   return buckets;
 }
 
-const FREQUENCY: Record<string, [one: string, many: (n: number) => string]> = {
-  DAILY: ["Repeats daily", (n) => `Every ${n} days`],
-  WEEKLY: ["Repeats weekly", (n) => `Every ${n} weeks`],
-  MONTHLY: ["Repeats monthly", (n) => `Every ${n} months`],
-  YEARLY: ["Repeats yearly", (n) => `Every ${n} years`],
-};
-
-export function recurrenceLabel(
-  event: Pick<Event, "recurrent" | "recurrent_frequency" | "recurrent_interval">,
-): string | undefined {
-  if (!event.recurrent || !event.recurrent_frequency) return undefined;
-  const labels = FREQUENCY[event.recurrent_frequency];
-  if (!labels) return undefined;
-  const interval = event.recurrent_interval ?? 1;
-  return interval > 1 ? labels[1](interval) : labels[0];
-}
-
-/** The hero line: "Wed, Nov 11 - 5:00 PM", or "Every Wednesday - 5:00 PM" for a weekly event. */
-export function heroWhen(event: Event, timeZone: Zone): EventCardTime | undefined {
-  const { start } = eventOccurrence(event);
-  if (!start || Number.isNaN(Date.parse(start))) return undefined;
-  const time = formatTime(start, timeZone);
-  if (event.recurrent && event.recurrent_frequency === "WEEKLY" && (event.recurrent_interval ?? 1) === 1) {
-    const weekday = new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone }).format(new Date(start));
-    return { label: `Every ${weekday} - ${time}`, dateTime: start };
-  }
-  if (event.recurrent && event.recurrent_frequency === "DAILY" && (event.recurrent_interval ?? 1) === 1) {
-    return { label: `Every day - ${time}`, dateTime: start };
-  }
-  return { label: `${formatDate(start, timeZone)} - ${time}`, dateTime: start };
-}
-
-/** The schedule line: "Wed, Nov 11 · 5:00 PM – 7:00 PM", prefixed "Starting" for a recurring event. */
-export function scheduleLine(event: Event, timeZone: Zone): (EventCardTime & { recurrence?: string }) | undefined {
-  const { start, finish } = eventOccurrence(event);
-  if (!start || Number.isNaN(Date.parse(start))) return undefined;
-  const range = `${formatDate(start, timeZone)} · ${formatTime(start, timeZone)}${finish ? ` – ${formatTime(finish, timeZone)}` : ""}`;
-  return {
-    label: event.recurrent ? `Starting ${range}` : range,
-    dateTime: start,
-    recurrence: recurrenceLabel(event),
-  };
-}
-
 export function calendarHref(
   event: Event,
   shareUrl: string,
   occurrence?: { start: string; finish?: string },
+  locale: EventsLocale = "en",
 ): string | undefined {
   const { start, finish } = occurrence ?? eventOccurrence(event);
   return (
     googleCalendarUrl(
       {
-        title: event.name ?? "Untitled event",
+        title: event.name ?? eventText(locale, "Untitled event"),
         description: event.description ?? undefined,
         startAt: start ?? null,
         finishAt: finish ?? null,
@@ -387,4 +334,25 @@ export const MAX_DAY_OFFSET = 365;
 export function readDayOffset(params: URLSearchParams): number {
   const value = Number(params.get(DAY_PARAM) ?? 0);
   return Number.isSafeInteger(value) && value > 0 ? Math.min(value, MAX_DAY_OFFSET) : 0;
+}
+
+/**
+ * An event as an Upcoming card: title, cover, host, relative start and the calendar link (left out
+ * while the origin is unknown, as on a server render). The caller adds how it opens and Remind me.
+ */
+export function upcomingCardProps(
+  event: Event,
+  ctx: { href: string; now: number; zone: Zone; origin: string; profiles: CreatorProfiles; locale?: EventsLocale },
+): UpcomingEventCardProps {
+  const locale = ctx.locale ?? "en";
+  const start = event.next_start_at ?? event.start_at;
+  return {
+    id: event.id,
+    title: event.name ?? eventText(locale, "Untitled event"),
+    image: event.image,
+    href: ctx.href,
+    creator: eventCreator(event, ctx.profiles, locale),
+    time: start ? { label: relativeStart(start, ctx.now, ctx.zone, locale), dateTime: start } : { label: eventText(locale, "Soon") },
+    calendarHref: ctx.origin ? calendarHref(event, eventPageShareUrl(ctx.origin, event), undefined, locale) : undefined,
+  };
 }

@@ -20,6 +20,7 @@ import {
   type Emote,
   type Envelope,
   type GalleryPhoto,
+  type GiftableItem,
   type Outfit,
   type OutfitsMetadata,
   type PageToScene,
@@ -41,7 +42,7 @@ import { mockEventList, mockEventPlaces, setMockReminder } from './mockEvents'
 import type { Color3, PortableInfo, PortableState } from './generated/index'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
 import { fixMapPublicReads } from '../features/map/mapApi'
-import { MOCK_NEARBY_PLAYERS, MOCK_PEERS, MOCK_POIS, mockMapReply } from './mockMap'
+import { MOCK_MAP_PINS, MOCK_NEARBY_PLAYERS, MOCK_PEERS, MOCK_POIS, mockMapReply } from './mockMap'
 import { DEFAULT_REALM } from '@hud-host'
 
 // The empty account's events are the reference client's calendar page: five days of seven cards,
@@ -331,9 +332,9 @@ const mockWearables: Wearable[] = BASE.map((b, i) => {
 const BASE_MALE = 'urn:decentraland:off-chain:base-avatars:BaseMale'
 const mockOutfit = (urns: string[]): Outfit => ({
   bodyShape: BASE_MALE,
-  eyes: { color: { r: 0.37, g: 0.22, b: 0.19 } },
-  hair: { color: { r: 0.6, g: 0.36, b: 0.2 } },
-  skin: { color: { r: 0.8, g: 0.6, b: 0.47 } },
+  eyes: { color: { r: 0.37, g: 0.22, b: 0.19, a: 1 } },
+  hair: { color: { r: 0.6, g: 0.36, b: 0.2, a: 1 } },
+  skin: { color: { r: 0.8, g: 0.6, b: 0.47, a: 1 } },
   wearables: urns,
   forceRender: []
 })
@@ -476,7 +477,7 @@ const defaultBindings = (): BindingEntry[] => [
   [{ System: 'PhotoTiltLeft' }, ['KeyQ', 'Gamepad DPadLeft']],
   [{ System: 'PhotoTiltRight' }, ['KeyE', 'Gamepad DPadRight']],
   [{ System: 'PointAt' }, ['Mouse Middle', 'KeyQ']],
-  [{ System: 'Microphone' }, ['KeyV']],
+  [{ System: 'Microphone' }, ['KeyT']],
   [{ System: 'Map' }, ['KeyM', 'Tab']],
   [{ System: 'Chat' }, ['Enter', 'NumpadEnter']],
   [{ System: 'CameraUp' }, ['ArrowUp']],
@@ -501,7 +502,7 @@ const defaultBindings = (): BindingEntry[] => [
   [{ System: 'Gallery' }, ['KeyG']],
   [{ System: 'Settings' }, ['KeyP']],
   [{ System: 'Friends' }, ['KeyL']],
-  [{ System: 'ChatPanel' }, ['KeyT']]
+  [{ System: 'ChatPanel' }, []]
 ]
 
 // Saved profile edits, in order. Applied over the mock's stock passport so an edit made in ?mock=1
@@ -1075,6 +1076,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       for (let done = 0; done <= total; done++) setTimeout(() => reply(at(done, 'running')), 3000 + done * 500)
       setTimeout(() => reply(at(total, 'ready')), 3000 + (total + 1) * 500)
     }
+    // ?mockpins=1 → two quest pins on both maps, one with a broken icon url to show the fallback.
+    if (new URLSearchParams(location.search).get('mockpins') === '1') reply({ kind: 'mapPins', pins: MOCK_MAP_PINS })
     // ?mockportables=1 → the portables list, so the rail button and its popover are exercisable.
     if (new URLSearchParams(location.search).get('mockportables') === '1') sendPortables()
     // ?perm=1 → fire a sample scene permission prompt so the dialog is exercisable in the mock, and
@@ -1282,6 +1285,29 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       reply({ kind: 'catalogPage', catalog: 'wearables', items: items.slice(start, start + msg.pageSize), total, requestId: msg.requestId })
       return
     }
+    if (msg.kind === 'giftingQuery') {
+      // The collectibles as owned matic tokens: every third one owns three copies, and the first equipped one
+      // only one, so the picker's count, equipped cover and spare-copy rules all show in ?mock=1.
+      const collectibles = mockWearables.filter((w) => (w.rarity ?? 'base') !== 'base')
+      const owned: GiftableItem[] = (msg.catalog === 'wearables' ? collectibles : collectibles.slice(0, 5)).map((w, i) => {
+        const item = `urn:decentraland:matic:collections-v2:0x${(i + 1).toString(16).padStart(40, '0')}:0`
+        const amount = i % 3 === 0 ? 3 : 1
+        return {
+          urn: item,
+          name: msg.catalog === 'wearables' ? w.name : `Mock Emote ${i + 1}`,
+          rarity: w.rarity,
+          category: msg.catalog === 'wearables' ? w.category : 'dance',
+          thumbnail: w.thumbnail,
+          amount,
+          tokens: Array.from({ length: amount }, (_, t) => ({ urn: `${item}:${100 + t}`, tokenId: String(100 + t), transferredAt: 1_700_000_000 + t }))
+        }
+      })
+      const items = msg.search ? owned.filter((o) => o.name.toLowerCase().includes(msg.search!.toLowerCase())) : owned
+      const start = msg.page * msg.pageSize
+      const equipped = owned[1] != null ? [owned[1].tokens[0]!.urn] : []
+      reply({ kind: 'giftingPage', catalog: msg.catalog, items: items.slice(start, start + msg.pageSize), total: items.length, equipped, failed: false, requestId: msg.requestId })
+      return
+    }
     if (msg.kind === 'setAvatarColor') {
       mockColors[msg.target] = msg.color
       reply({ kind: 'wearables', equipped: equippedNow(), colors: mockColors })
@@ -1400,7 +1426,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     // no engine to apply the decision in, and no editor in mock mode
-    if (msg.kind === 'permissionResolve' || msg.kind === 'permissionRule' || msg.kind === 'resetPermissions' || msg.kind === 'editorScene') return
+    if (msg.kind === 'itemPurchaseState' || msg.kind === 'permissionResolve' || msg.kind === 'permissionRule' || msg.kind === 'resetPermissions' || msg.kind === 'editorScene') return
     if (msg.kind === 'getPermissionRules') {
       reply({
         kind: 'permissionRules',
@@ -1422,6 +1448,14 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     if (msg.kind === 'setEventAttending') {
       setMockReminder(msg.eventId, msg.attending)
       setTimeout(() => reply({ kind: 'eventAttending', eventId: msg.eventId, attending: msg.attending }), 300)
+      return
+    }
+    if (msg.kind === 'getPlace') {
+      setTimeout(() => reply({ kind: 'place', requestId: msg.requestId, place: { id: msg.id, user_like: false, user_dislike: false, user_favorite: false, user_visits: 1234, updated_at: new Date().toISOString() } }), 300)
+      return
+    }
+    if (msg.kind === 'getWorldAccess') {
+      setTimeout(() => reply({ kind: 'worldAccess', requestId: msg.requestId, access: 'allowed' }), 300)
       return
     }
     if (msg.kind === 'getEventPlaces') {
@@ -1811,6 +1845,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       })
       return
     }
+    if (msg.kind === 'quit') return
     if (msg.kind === 'deleteGalleryPhoto') {
       const i = mockGallery.findIndex((p) => p.id === msg.id)
       if (i >= 0) mockGallery.splice(i, 1)
@@ -1846,7 +1881,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     if (msg.kind === 'getUserProfile') {
       if (msg.address.toLowerCase() === o.userId.toLowerCase()) {
-        reply({ kind: 'userProfile', address: msg.address, profile: ownProfile(o) })
+        reply({ kind: 'userProfile', address: msg.address, requestId: msg.requestId, profile: ownProfile(o) })
         return
       }
       // Resolve a real name from the nearby roster (real engine gets it from the catalyst).
@@ -1855,10 +1890,10 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       if (msg.extras !== true) {
         // Like the engine, hold nothing for someone never seen: a friend's seeded name stays.
         const profile = member == null ? null : { address: msg.address, name, picture: member.picture, hasClaimedName: !name.includes('#'), isGuest: false }
-        reply({ kind: 'userProfile', address: msg.address, profile })
+        reply({ kind: 'userProfile', address: msg.address, requestId: msg.requestId, profile })
         return
       }
-      reply({ kind: 'userProfile', address: msg.address, profile: richProfile(msg.address, name, false) })
+      reply({ kind: 'userProfile', address: msg.address, requestId: msg.requestId, profile: richProfile(msg.address, name, false) })
       return
     }
     // Slash-command effects (no engine in mock): echo a system chat line so the flow is testable in ?mock=1.

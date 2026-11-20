@@ -25,15 +25,45 @@ export type MetaTxTarget = {
 
 /**
  * Why a relayed rail could not run. `relayer-rejected` vs `relayer-unreachable` is a money distinction:
- * a parsed answer with no hash was provably not broadcast, while no usable answer may have been.
+ * `relayer-rejected` is a refusal the relay marks as not sent (`refusedBeforeBroadcast`), so nothing
+ * was sent; `relayer-unreachable` is any other answer (none at all, a timeout, a failure without that
+ * evidence, an answer without a hash), so the transaction may still land.
  */
 export type GaslessReason = "disabled" | "contract-account" | "signing-failed" | "relayer-rejected" | "relayer-unreachable" | "unknown";
+
+/**
+ * What a relay's refusal says of itself, when it does: its code (its daily limits name themselves:
+ * `quota_reached` for the account's own fee-free quota, `relay_budget_spent` for the relay's), and for a spent quota
+ * when its next slot frees (`retryAt`, unix seconds) and how many it holds (`quota`).
+ */
+export type RelayRefusal = { error?: string; retryAt?: number; quota?: number };
+
+/**
+ * A relay answer's refusal fields, each kept only in its own shape. The code is read from `code` (the upstream
+ * transactions-server's field, which dcl-one's relay also answers), else from `error` (dcl-one's own, and its only
+ * one before it answered `code` too).
+ */
+export function relayRefusal(body: unknown): RelayRefusal {
+  const answer = (body && typeof body === "object" ? body : {}) as { code?: unknown; error?: unknown; retryAt?: unknown; quota?: unknown };
+  const positive = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n > 0;
+  // A quota of none is an answer too: the account gets no fee-free transactions at all.
+  const count = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
+  const named = (v: unknown): v is string => typeof v === "string" && v !== "";
+  const error = named(answer.code) ? answer.code : named(answer.error) ? answer.error : undefined;
+  return {
+    ...(error != null ? { error } : {}),
+    ...(positive(answer.retryAt) ? { retryAt: answer.retryAt } : {}),
+    ...(count(answer.quota) ? { quota: answer.quota } : {}),
+  };
+}
 
 export class GaslessUnavailableError extends Error {
   override name = "GaslessUnavailableError";
   constructor(
     message: string,
     readonly reason: GaslessReason = "unknown",
+    /** The relay's own word for the refusal, when it answered one. */
+    readonly refusal: RelayRefusal = {},
   ) {
     super(message);
   }
@@ -147,16 +177,27 @@ export async function relayMetaTransaction(opts: RelayOptions): Promise<Relayed>
   opts.onSigned?.();
 
   const data = encodeExecuteMetaTransaction(target.metaTx, from, functionData, signature);
+  const txHash = await relaySignedMetaTransaction({ from, to: target.address, data, relayerUrl: opts.relayerUrl, fetchImpl: opts.fetchImpl });
+  return { txHash, nonce };
+}
+
+/**
+ * Sends an execution already signed (`encodeExecuteMetaTransaction`'s call data) through the relay: its hash, or a
+ * GaslessUnavailableError, "relayer-rejected" only when the relay says nothing was broadcast (refusedBeforeBroadcast).
+ * Sending the same signed execution again can run it at most once: its signature names one nonce.
+ */
+export async function relaySignedMetaTransaction(opts: { from: string; to: string; data: Hex; relayerUrl?: string; fetchImpl?: typeof fetch }): Promise<Hex> {
+  const { from, data } = opts;
   const base = (opts.relayerUrl ?? configuredRelayer()).replace(/\/$/, "");
   const fetchImpl = opts.fetchImpl ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
-  type RelayerBody = { ok?: boolean; txHash?: string; message?: string; code?: unknown };
+  type RelayerBody = { ok?: boolean; txHash?: string; message?: string; code?: unknown; error?: unknown; not_sent?: unknown };
   let body: RelayerBody | null = null;
   let status = 0;
   try {
     const res = await fetchImpl(`${base}/transactions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ transactionData: { from, params: [target.address, data] } }),
+      body: JSON.stringify({ transactionData: { from, params: [opts.to, data] } }),
     });
     status = res.status;
     body = (await res.json().catch(() => null)) as RelayerBody | null;
@@ -164,10 +205,21 @@ export async function relayMetaTransaction(opts: RelayOptions): Promise<Relayed>
     throw new GaslessUnavailableError((e as Error)?.message ?? "relayer unreachable", "relayer-unreachable");
   }
   if (!body) throw new GaslessUnavailableError(`relayer answered ${status} with no body`, "relayer-unreachable");
-  if (body.ok === false || !body.txHash) {
-    throw new GaslessUnavailableError(body.message ?? `relayer ${status}`, "relayer-rejected");
-  }
-  return { txHash: body.txHash as Hex, nonce };
+  if (body.ok !== false && body.txHash) return body.txHash as Hex;
+  const reason = refusedBeforeBroadcast(body) ? "relayer-rejected" : "relayer-unreachable";
+  throw new GaslessUnavailableError(body.message ?? `relayer ${status}`, reason, relayRefusal(body));
+}
+
+/**
+ * Whether a relay's failure proves nothing was broadcast, so the credit can be given back and the
+ * buyer may sign again: only when the relay says so explicitly, `{"ok":false,"not_sent":true}`. The
+ * relay marks only the failures it answered before any send, or after a send attempt that proves
+ * nothing went out. No status is evidence by itself: a relay of another version, or another relay
+ * this client is pointed at, can answer a 4xx or a 500 after it sent the transaction.
+ */
+export function refusedBeforeBroadcast(body: unknown): boolean {
+  const answer = body as { ok?: unknown; not_sent?: unknown } | null;
+  return answer?.ok === false && answer.not_sent === true;
 }
 
 export function isGaslessUnavailable(e: unknown): e is GaslessUnavailableError {

@@ -1,0 +1,128 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+/* Not captured from Figma yet (the FDS Switch is in the shared UI backlog): an MUI-sized pill on the
+ * shared tokens, the same on/off colours decentraland.org's settings switches use. */
+@layer dcl.components {
+  .root {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--dcl-space-12);
+    min-height: 44px;
+    color: var(--dcl-text-primary);
+    cursor: pointer;
+  }
+
+  .root[data-disabled] {
+    cursor: not-allowed;
+  }
+
+  .label {
+    composes: text626f64792f6d64 from '../../foundations/typography/text-styles.module.css';
+    min-width: 0;
+  }
+
+  .root[data-disabled] .label {
+    color: var(--dcl-text-disabled);
+  }
+
+  .hiddenLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .control {
+    position: relative;
+    flex: none;
+    display: inline-flex;
+    width: 40px;
+    height: 24px;
+  }
+
+  /* The native input covers the track, so a click, a tap and a screen reader all reach it. */
+  .input {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: inherit;
+  }
+
+  .track {
+    position: relative;
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+    border: 1px solid var(--dcl-transparencies-white-20);
+    border-radius: var(--dcl-radius-full);
+    background: var(--dcl-transparencies-white-20);
+    transition:
+      background-color 150ms ease,
+      border-color 150ms ease;
+  }
+
+  .track::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    border-radius: var(--dcl-radius-full);
+    background: var(--dcl-neutrals-white);
+    transition: transform 150ms ease;
+  }
+
+  .input:checked + .track {
+    border-color: var(--dcl-action-primary);
+    background: var(--dcl-action-primary);
+  }
+
+  .input:checked + .track::after {
+    transform: translateX(16px);
+  }
+
+  @media (hover: hover) {
+    .root:hover .input:not(:disabled) + .track {
+      background: var(--dcl-transparencies-white-40);
+    }
+
+    .root:hover .input:checked:not(:disabled) + .track {
+      border-color: var(--dcl-action-primary-hover);
+      background: var(--dcl-action-primary-hover);
+    }
+  }
+
+  .input:focus-visible + .track {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 2px;
+  }
+
+  .input:disabled + .track {
+    border-color: var(--dcl-transparencies-white-10);
+    background: var(--dcl-transparencies-white-10);
+  }
+
+  .input:disabled + .track::after {
+    background: var(--dcl-neutrals-gray);
+  }
+
+  .input:checked:disabled + .track {
+    border-color: var(--dcl-action-disabled);
+    background: var(--dcl-action-disabled);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .track,
+    .track::after {
+      transition: none;
+    }
+  }
+}

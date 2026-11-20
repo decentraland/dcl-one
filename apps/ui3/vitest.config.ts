@@ -14,6 +14,8 @@ export default defineConfig({
       { find: "@shop", replacement: fileURLToPath(new URL("../../library/shop", import.meta.url)) },
       // The Explorer HUD UI (library/ui/apps/hud) and the behaviours /play supplies to it.
       { find: "@hud-host", replacement: fileURLToPath(new URL("./src/play/host.ts", import.meta.url)) },
+      // What /play supplies to the in-world Shop UI (library/ui/apps/shop).
+      { find: "@shop-host", replacement: fileURLToPath(new URL("./src/play/shopHost.ts", import.meta.url)) },
       { find: "@hud", replacement: fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url)) },
       { find: "@explorer-core", replacement: fileURLToPath(new URL("../../library/explorer-core", import.meta.url)) },
       { find: /^@dcl\/one-ui$/, replacement: ui("index.ts") },
@@ -21,7 +23,7 @@ export default defineConfig({
     ],
     // library/ has no node_modules of its own: viem, React and the testing packages the shared HUD's test
     // harness imports resolve to ui3's copies.
-    dedupe: ["viem", "react", "react-dom", "@noble/curves", "@noble/hashes", "@testing-library/react", "@testing-library/user-event", "@testing-library/dom", "@testing-library/jest-dom"],
+    dedupe: ["viem", "react", "react-dom", "@tanstack/react-query", "@noble/curves", "@noble/hashes", "@testing-library/react", "@testing-library/user-event", "@testing-library/dom", "@testing-library/jest-dom"],
   },
   // The HUD UI and the Sites assets (the bar's wordmark) live outside this app; their assets load through the dev
   // server like ui3's own.
@@ -39,9 +41,20 @@ export default defineConfig({
         test: {
           name: "ui3",
           include: ["src/**/*.test.{ts,tsx}"],
-          exclude: ["src/play/**"],
+          exclude: ["src/play/**", "src/**/*.browser.test.ts"],
           setupFiles: ["src/test/setup.ts"],
           css: true,
+        },
+      },
+      {
+        // Tests that drive Chrome or Chromium over the DevTools protocol. `pnpm test` leaves them out;
+        // `pnpm test:browser` runs them, with BROWSER_PATH or CHROME_PATH naming the browser when it is not
+        // in a usual place.
+        extends: true,
+        test: {
+          name: "ui3-browser",
+          include: ["src/**/*.browser.test.ts"],
+          environment: "node",
         },
       },
       {

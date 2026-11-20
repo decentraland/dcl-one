@@ -1,7 +1,6 @@
 use bevy::{
     asset::RenderAssetTransferPriority,
     color::palettes::basic,
-    diagnostic::FrameCount,
     prelude::*,
     render::{
         render_asset::RenderAssetUsages,
@@ -10,9 +9,10 @@ use bevy::{
 };
 use common::{
     debug_panic,
-    structs::{AudioSettings, PrimaryUser},
+    structs::{AudioSettings, MonotonicTimestamp, PrimaryUser},
     util::ReportErr,
 };
+use dcl_component::proto_components::sdk::components::{PbAudioEvent, PbVideoEvent};
 use ipfs::IpfsResource;
 use livestream_manager::{ReceiverImage, ReceiverVolume};
 use media::{AVCommand, VideoData, VideoInfo};
@@ -68,7 +68,6 @@ impl Plugin for VideoPlayerPlugin {
     }
 }
 
-#[expect(clippy::type_complexity)]
 fn new_audio_stream_source(
     trigger: Trigger<OnInsert, <AudioStream as AVPlayer>::Source>,
     mut commands: Commands,
@@ -116,7 +115,6 @@ fn new_audio_stream_source(
     commands.entity(entity).try_insert(sinks);
 }
 
-#[expect(clippy::type_complexity)]
 fn new_video_player_source(
     trigger: Trigger<OnInsert, <VideoPlayer as AVPlayer>::Source>,
     mut commands: Commands,
@@ -236,7 +234,6 @@ fn player_source_replaced<T: AVPlayer>(
     }
 }
 
-#[expect(clippy::type_complexity)]
 fn player_config_added<T: AVPlayer>(
     trigger: Trigger<OnInsert, T::Config>,
     mut av_players: Query<(
@@ -306,6 +303,8 @@ fn update_av_volume<T: AVPlayer>(
             sent_event: _,
             sent_volume,
             sent_state: _,
+            #[cfg(feature = "html")]
+                retry: _,
             _phantom,
         } = sinks.as_mut();
 
@@ -321,7 +320,6 @@ fn update_av_volume<T: AVPlayer>(
     }
 }
 
-#[expect(clippy::type_complexity)]
 fn player_position_added<T: AVPlayer>(
     trigger: Trigger<OnInsert, T::Position>,
     av_players: Query<(&T::Position, Option<&AVSinks<T>>, Has<Stream>)>,
@@ -407,6 +405,8 @@ fn play_videos(
             sent_event: _,
             sent_volume: _,
             sent_state: _,
+            #[cfg(feature = "html")]
+                retry: _,
             _phantom,
         } = video_player_sinks.as_mut()
         else {
@@ -478,7 +478,8 @@ fn publish_av_player_state<T: AVPlayer>(
     mut q: Query<(&mut AVSinks<T>, &ContainerEntity)>,
     mut scenes: Query<&mut RendererSceneContext>,
     time: Res<Time>,
-    frame: Res<FrameCount>,
+    audio_timestamp: Res<MonotonicTimestamp<PbAudioEvent>>,
+    video_timestamp: Res<MonotonicTimestamp<PbVideoEvent>>,
 ) {
     for (mut video_player_sinks, container) in q.iter_mut() {
         let AVSinks {
@@ -491,6 +492,8 @@ fn publish_av_player_state<T: AVPlayer>(
             sent_event,
             sent_volume: _,
             sent_state,
+            #[cfg(feature = "html")]
+                retry: _,
             _phantom,
         } = video_player_sinks.as_mut();
 
@@ -504,7 +507,14 @@ fn publish_av_player_state<T: AVPlayer>(
         {
             *sent_event = time.elapsed_secs_f64();
             *sent_state = new_state;
-            push_state_to_crdt::<T>(&mut context, container, &frame, new_state, video.as_mut());
+            push_state_to_crdt::<T>(
+                &mut context,
+                container,
+                &audio_timestamp,
+                &video_timestamp,
+                new_state,
+                video.as_mut(),
+            );
         }
     }
 }
@@ -513,7 +523,8 @@ fn publish_stream_state(
     mut q: Query<(&mut ReceiverImage, &ContainerEntity), With<VideoPlayer>>,
     mut scenes: Query<&mut RendererSceneContext>,
     time: Res<Time>,
-    frame: Res<FrameCount>,
+    audio_timestamp: Res<MonotonicTimestamp<PbAudioEvent>>,
+    video_timestamp: Res<MonotonicTimestamp<PbVideoEvent>>,
 ) {
     for (mut receiver_image, container) in q.iter_mut() {
         let ReceiverImage {
@@ -533,7 +544,14 @@ fn publish_stream_state(
         {
             *sent_event = time.elapsed_secs_f64();
             *sent_state = new_state;
-            push_state_to_crdt::<VideoPlayer>(&mut context, container, &frame, new_state, None);
+            push_state_to_crdt::<VideoPlayer>(
+                &mut context,
+                container,
+                &audio_timestamp,
+                &video_timestamp,
+                new_state,
+                None,
+            );
         }
     }
 }
@@ -541,6 +559,7 @@ fn publish_stream_state(
 #[cfg(test)]
 mod snapshot_tests {
     use super::*;
+    use bevy::diagnostic::FrameCount;
     use dcl_component::{proto_components::sdk::components::VideoState, SceneEntityId};
 
     #[test]
@@ -608,6 +627,8 @@ mod snapshot_tests {
                 sent_event: 0.,
                 sent_state: VideoState::VsLoading,
                 sent_volume: None,
+                #[cfg(feature = "html")]
+                retry: tokio::sync::watch::channel(Default::default()).1,
                 _phantom: Default::default(),
             },
             ContainerEntity {

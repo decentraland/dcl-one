@@ -1,5 +1,3 @@
-import { Pool } from "pg";
-
 import { CatalystError } from "./client";
 import {
   CATEGORIES_SQL,
@@ -11,29 +9,7 @@ import { placeFromDbRow } from "./db-row";
 import { parseCategory, categoryI18nEn } from "./schema";
 import type { Place, Category } from "./schema";
 import type { PlacesSource } from "./types";
-
-function connectionString(): string | undefined {
-  if (typeof process === "undefined") return undefined;
-  return (
-    process.env.CATALYST_DATABASE_URL ||
-    process.env.PLACES_PG_COMPONENT_PSQL_CONNECTION_STRING ||
-    undefined
-  );
-}
-
-let pool: Pool | null = null;
-function getPool(): Pool {
-  if (!pool) {
-    pool = new Pool({
-      connectionString: connectionString(),
-      max: 5,
-      statement_timeout: 60_000,
-      idle_in_transaction_session_timeout: 30_000,
-      idleTimeoutMillis: 30_000,
-    });
-  }
-  return pool;
-}
+import { catalystPool as getPool } from "./pool.server";
 
 export const dbSource: PlacesSource = {
   async fetchPlaces(params = {}): Promise<{ data: Place[]; total: number }> {

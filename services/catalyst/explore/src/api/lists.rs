@@ -4,10 +4,10 @@
 //! disappeared; here that is the `lists` mirror pass, over `explore_api.lists`
 //! with the `lists_local` overlay on top.
 
+use crate::shared::routing::post;
 use anyhow::Context as _;
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;

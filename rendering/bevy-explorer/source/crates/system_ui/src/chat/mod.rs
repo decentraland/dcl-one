@@ -224,17 +224,19 @@ fn debug_chat(
                 setup_chat_popup(commands, root, dui);
             }
             "add" => {
-                tab.single_mut()
-                    .unwrap()
-                    .add(
-                        &mut commands,
-                        &dui,
-                        Some(3),
-                        DuiButton::new_enabled("new tab", || {}),
-                        false,
-                        None,
-                    )
-                    .unwrap();
+                let Ok(mut tab) = tab.single_mut() else {
+                    input.reply_failed("chat tabs not found");
+                    return;
+                };
+                tab.add(
+                    &mut commands,
+                    &dui,
+                    Some(3),
+                    DuiButton::new_enabled("new tab", || {}),
+                    false,
+                    None,
+                )
+                .unwrap();
             }
             _ => (),
         }
@@ -308,6 +310,10 @@ fn setup_chat_popup(mut commands: Commands, root: Res<SystemUiRoot>, dui: Res<Du
         ChatboxContainer,
         On::<Click>::new(
             |mut commands: Commands, q: Query<Entity, With<ChatInput>>| {
+                #[allow(
+                    clippy::unwrap_used,
+                    reason = "the chat template spawns the ChatInput with the chatbox; a missing input is a template bug"
+                )]
                 commands.entity(q.single().unwrap()).try_insert(Focus);
             },
         ),
@@ -441,7 +447,6 @@ fn make_log(commands: &mut Commands, log: SceneLogMessage) -> Entity {
         .id()
 }
 
-#[allow(clippy::too_many_arguments)]
 fn display_chat(
     mut commands: Commands,
     mut chatbox: Query<(Entity, &mut ChatBox, Option<&Children>)>,
@@ -544,7 +549,6 @@ pub struct ChatInput;
 #[derive(Event)]
 pub struct PrivateChatEntered(pub String);
 
-#[allow(clippy::too_many_arguments)]
 fn emit_user_chat(
     mut commands: Commands,
     mut chats: EventWriter<ChatEvent>,
@@ -604,6 +608,14 @@ fn emit_user_chat(
                 message: message.clone(),
             });
 
+            // This panel's own send sound. A line sent from the HUD page is sounded by the
+            // page, which knows the notification ping setting.
+            if output.active_tab == "Nearby" && !message.starts_with('/') {
+                commands.send_event(SystemAudio(
+                    "embedded://sounds/ui/widget_chat_message_private_send.wav".to_owned(),
+                ));
+            }
+
             if message.starts_with('/') {
                 let mut args = Shlex::new(message).collect::<Vec<_>>();
 
@@ -639,7 +651,6 @@ fn emit_user_chat(
 }
 
 pub fn broadcast_nearby_chats(
-    mut commands: Commands,
     mut chat_events: EventReader<ChatEvent>,
     transports: Query<&Transport>,
     player: Query<Entity, With<PrimaryUser>>,
@@ -654,10 +665,6 @@ pub fn broadcast_nearby_chats(
         .filter(|ev| ev.sender == player)
         .filter(|ev| !ev.message.starts_with("/"))
     {
-        commands.send_event(SystemAudio(
-            "embedded://sounds/ui/widget_chat_message_private_send.wav".to_owned(),
-        ));
-
         // we display receive time
         let timestamp = ev.timestamp;
 
@@ -682,7 +689,6 @@ pub fn broadcast_nearby_chats(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn select_chat_tab(
     In(tab): In<Option<&'static str>>,
     mut commands: Commands,
@@ -721,9 +727,19 @@ pub(crate) fn select_chat_tab(
                     false,
                 );
             }
-            text_entry.single_mut().unwrap().enabled = true;
+            #[allow(
+                clippy::unwrap_used,
+                reason = "the chat template spawns the ChatInput with the chatbox; a missing input is a template bug"
+            )]
+            let mut text_entry = text_entry.single_mut().unwrap();
+            text_entry.enabled = true;
         } else if tab == "Scene Log" {
-            text_entry.single_mut().unwrap().enabled = false;
+            #[allow(
+                clippy::unwrap_used,
+                reason = "the chat template spawns the ChatInput with the chatbox; a missing input is a template bug"
+            )]
+            let mut text_entry = text_entry.single_mut().unwrap();
+            text_entry.enabled = false;
         }
 
         debug!("tab set to {}", tab);
@@ -731,7 +747,6 @@ pub(crate) fn select_chat_tab(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn pipe_chats_to_scene(
     mut chat_events: EventReader<ChatEvent>,
     #[cfg(feature = "livekit")] mut dms: EventReader<comms::private_chat::PrivateChatReceived>,
@@ -1043,7 +1058,6 @@ fn react(mut input: ConsoleCommand<ReactCommand>, mut events: EventWriter<System
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn pipe_chats_from_scene(
     mut sender: EventWriter<ChatEvent>,
     primary_player: Res<PrimaryPlayerRes>,

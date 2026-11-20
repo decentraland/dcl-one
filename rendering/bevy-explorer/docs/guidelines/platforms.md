@@ -20,6 +20,13 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
 (the livekit bridge in `comms`, the page-event dispatch), behind a `cfg` there, not in
 `platform`. Either way the platform-specific part is a leaf; the logic that uses it is shared.
 
+- **Window focus goes through `ClientWindowFocus`.** Read the client's focus from the
+  `ClientWindowFocus` resource (the OS's focus report natively, `document.hasFocus()` on the
+  web) and ask for focus with `commands.trigger(RequestClientWindowFocus)`. Nothing else reads
+  or writes `Window::focused`: it also holds focus requests the OS may refuse, and on the web it
+  is the canvas's focus, not the page's. `ClientWindowFocusPlugin` is the only code that touches
+  it.
+
 ## Web
 
 - **Chrome only.** Design against Chrome's feature set (multi-memory, JSPI, `Atomics.waitAsync`)
@@ -50,23 +57,14 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
 - **Exit work runs before `Last`.** On `AppExit`, `close_rooms_on_app_exit` blocks in `Last`
   (`comms`), so on web a system in `Last` may never run again. Anything that must reach the page
   at exit, such as the benchmark stream's final bytes, runs in `Update`.
-- **The content cache is capped.** Downloaded content lives in the Cache API cache
-  `ipfs-path-cache-v2` (`crates/ipfs/src/web_cache.rs`), at most 1 GiB or the configured
-  `cache_bytes` if lower, and at most half the origin's quota. The service worker trims it,
-  oldest-written entries first, down to 90% of the cap, when the engine asks through the
-  `__contentCacheTrim` page function (`deploy/web/engine/content_cache.js`): at start, after each
-  sixteenth of the cap written (at most 64 MiB), and before retrying a write that failed for quota
-  (then it frees the oldest content worth a quarter of the cap, sizing no more, at most once a
-  minute). It never opens another cache. The cap applies to the content cache's own bytes: Cache
-  Storage usage (`usageDetails.caches`, or the origin's whole usage where the browser does not
-  report it) only bounds them, so at or under the cap nothing is enumerated, and over it every
-  entry is sized and that total alone decides what goes. A page no service worker controls (after
-  a hard reload) is not trimmed: it logs that once, and asks again if a worker takes control
-  later (a worker update; a hard-reloaded page stays uncontrolled until the next load). The page
-  asks once for persistent storage. The **Web Content Cache** debug section shows the readings;
-  in preview mode it can override the cap for the session (at least 1 MiB). The scene server's
-  frame runs a second engine that asks for its own configured cap, so an override above that
-  lasts only until its next trim.
+- **Content cache writes go through `web_cache`.** Every write to the Cache API cache
+  `ipfs-path-cache-v2` goes through `web_cache::store` or `web_cache::put`
+  (`crates/ipfs/src/web_cache.rs`; outside that file, `store` is reached through `keep` and
+  `share`). There the write is counted toward the next trim, retried after a trim when it fails
+  for quota, and recorded as a use. A write that bypasses them is none of these: the cache can
+  outgrow its cap unnoticed, and the entry ranks as unused until it is read. Reads go through
+  `web_cache::find`, which records the use. How the cap and the least-recently-used eviction
+  work is in `web_cache.rs` and `deploy/web/service_worker.js`.
 - **Two GPUs: Chrome takes the low-power one.** On a laptop with integrated and discrete GPUs,
   Chrome's WebGPU renders on the integrated one while native wgpu takes the discrete one: on one
   laptop the same web build ran much slower (measurements (evidence supplied for the task)).

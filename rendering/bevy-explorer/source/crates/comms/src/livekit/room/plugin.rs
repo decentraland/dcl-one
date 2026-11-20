@@ -55,6 +55,7 @@ impl Plugin for LivekitRoomPlugin {
             Update,
             (
                 try_reconnect.run_if(not(in_state(ConnectionAvailability::Unavailable))),
+                close_conflicted_rooms,
                 poll_connecting_rooms,
                 (
                     process_room_events,
@@ -224,7 +225,6 @@ pub struct ServerRoomTerminal;
 /// (LiveKit announces a joiner within a couple of seconds of its data channel opening).
 const UNANNOUNCED_GRACE_SECS: f64 = 15.0;
 
-#[expect(clippy::type_complexity)]
 fn process_room_events(
     mut commands: Commands,
     livekit_rooms: Query<(
@@ -445,7 +445,6 @@ fn process_channel_control(
 
 /// Outgoing messages are published only while the room is connected; otherwise they wait in
 /// the transport's bounded channel and go out once it is (again).
-#[allow(clippy::type_complexity)]
 fn process_network_message(
     rooms: Query<
         (&mut LivekitRoom, &mut LivekitNetworkMessage),
@@ -685,13 +684,53 @@ fn record_disconnect(
             commands.entity(entity).try_insert(ServerRoomTerminal);
         } else if reason == DisconnectReason::DuplicateIdentity {
             record_identity_conflict(commands, recovery, scope);
-        } else if island {
-            // ConnectionStateChanged can already have started the backoff.
-            if recovery.failure != Some(FailureKind::Transient) {
+        } else if island
+            || matches!(
+                scope.map(|scope| &scope.0),
+                Some(crate::access_status::AccessScope::Scene(_))
+            )
+        {
+            // The island owner or the scene gatekeeper decides whether the player may return; a
+            // scene ban comes back as a refusal that keeps checking for the unban.
+            // ConnectionStateChanged can already have started the backoff, and Pulse's
+            // `DuplicateSession` can already have ended the island for another device.
+            if !matches!(
+                recovery.failure,
+                Some(FailureKind::Transient | FailureKind::IdentityConflict)
+            ) {
                 recovery.fail(now, AdmissionError::new(FailureKind::Transient));
             }
         } else {
             recovery.failure = Some(FailureKind::Denied);
+        }
+    }
+}
+
+/// A room put in identity conflict while open or dialing (Pulse's `DuplicateSession` ends the
+/// realm's rooms) closes; the SDK's disconnect then retires its participants, and the conflict
+/// keeps it from dialing again.
+fn close_conflicted_rooms(
+    mut commands: Commands,
+    rooms: Query<
+        (Entity, &RoomRecovery, Option<&LivekitRoom>, Has<Connecting>),
+        Changed<RoomRecovery>,
+    >,
+    runtime: LivekitRuntimeRes,
+) {
+    for (entity, recovery, room, connecting) in &rooms {
+        if recovery.failure != Some(FailureKind::IdentityConflict) {
+            continue;
+        }
+        if connecting {
+            commands.entity(entity).try_remove::<Connecting>();
+        }
+        if let Some(room) = room.filter(|room| !room.closed) {
+            let room = room.room.clone();
+            runtime.spawn(async move {
+                if let Err(err) = room.close().await {
+                    warn!("Unable to close a room in identity conflict: {err}");
+                }
+            });
         }
     }
 }
@@ -707,6 +746,66 @@ fn record_identity_conflict(
         Some(crate::access_status::AccessScope::PrivateChat)
     ) {
         commands.set_state(ConnectionAvailability::Unavailable);
+    }
+}
+
+fn try_reconnect(
+    mut commands: Commands,
+    rooms: Query<
+        (
+            Entity,
+            &RoomRecovery,
+            Has<Disconnected>,
+            Has<CredentialRequest>,
+            Option<&crate::archipelago::IslandOwner>,
+        ),
+        (
+            With<LivekitTransport>,
+            Without<Connecting>,
+            Without<NeedsAdapter>,
+            Without<RoomSuspended>,
+            Without<VoiceRoom>,
+        ),
+    >,
+    time: Res<Time>,
+) {
+    if common::structs::multi_tenant() {
+        // orchestrated server: the adapter's token is long expired (the gatekeeper mints
+        // them with a five-minute TTL), so a re-dial can only be refused. The room stays
+        // Disconnected and the headless bin asks the orchestrator for a fresh adapter.
+        return;
+    }
+    for (entity, recovery, disconnected, refreshable, island) in &rooms {
+        if (!disconnected && recovery.failure.is_none())
+            || !recovery.can_retry(time.elapsed_secs_f64())
+        {
+            continue;
+        }
+        restart_room(
+            &mut commands,
+            entity,
+            refreshable,
+            island.map(|island| island.0),
+        );
+    }
+}
+
+/// Manual resume and automatic recovery use the same credential source.
+pub(super) fn restart_room(
+    commands: &mut Commands,
+    entity: Entity,
+    refreshable: bool,
+    island: Option<Entity>,
+) {
+    if let Some(island) = island {
+        if let Ok(mut owner) = commands.get_entity(island) {
+            owner.try_insert(crate::archipelago::RefreshIsland);
+            commands.entity(entity).try_insert(RoomSuspended);
+        }
+    } else if refreshable {
+        commands.entity(entity).try_insert(NeedsAdapter);
+    } else {
+        commands.entity(entity).try_insert(Connecting);
     }
 }
 
@@ -749,6 +848,80 @@ mod disconnect_tests {
         world.run_system_once(try_reconnect).unwrap();
         assert!(world.get::<RefreshIsland>(owner).is_some());
         assert!(world.get::<RoomSuspended>(island).is_some());
+    }
+
+    /// The gatekeeper's removal can reach the island room after Pulse's `DuplicateSession` has
+    /// ended the island: the identity conflict holds, and nothing asks for a fresh assignment.
+    #[test]
+    fn participant_removed_after_a_takeover_keeps_the_identity_conflict() {
+        let mut world = World::new();
+        let owner = world.spawn_empty().id();
+        let island = world
+            .spawn((
+                IslandOwner(owner),
+                LivekitTransport {
+                    address: String::new(),
+                },
+            ))
+            .id();
+        let mut recovery = RoomRecovery {
+            failure: Some(FailureKind::IdentityConflict),
+            ..default()
+        };
+        record_disconnect(
+            &mut world.commands(),
+            island,
+            &mut recovery,
+            None,
+            DisconnectReason::ParticipantRemoved,
+            true,
+            0.0,
+        );
+        assert_eq!(recovery.failure, Some(FailureKind::IdentityConflict));
+        world.entity_mut(island).insert(recovery);
+        world.init_resource::<Time>();
+        world
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(60));
+        world.run_system_once(try_reconnect).unwrap();
+        assert!(world.get::<RefreshIsland>(owner).is_none());
+    }
+
+    #[test]
+    fn participant_removed_from_a_scene_room_asks_the_gatekeeper_again() {
+        let mut world = World::new();
+        let room = world
+            .spawn((
+                CredentialRequest {
+                    method: "POST",
+                    url: "https://rooms.example/scene".into(),
+                    metadata: "{}".into(),
+                },
+                LivekitTransport {
+                    address: String::new(),
+                },
+            ))
+            .id();
+        let mut recovery = RoomRecovery::default();
+        record_disconnect(
+            &mut world.commands(),
+            room,
+            &mut recovery,
+            Some(&RoomAccessScope(AccessScope::Scene("scene".into()))),
+            DisconnectReason::ParticipantRemoved,
+            false,
+            0.0,
+        );
+        assert_eq!(recovery.failure, Some(FailureKind::Transient));
+        world.entity_mut(room).insert(recovery);
+        world.init_resource::<Time>();
+        world.run_system_once(try_reconnect).unwrap();
+        assert!(world.get::<NeedsAdapter>(room).is_none());
+        world
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(5));
+        world.run_system_once(try_reconnect).unwrap();
+        assert!(world.get::<NeedsAdapter>(room).is_some());
     }
 
     #[test]
@@ -827,65 +1000,5 @@ mod disconnect_tests {
                 NextState::Pending(ConnectionAvailability::Unavailable)
             ));
         }
-    }
-}
-
-fn try_reconnect(
-    mut commands: Commands,
-    rooms: Query<
-        (
-            Entity,
-            &RoomRecovery,
-            Has<Disconnected>,
-            Has<CredentialRequest>,
-            Option<&crate::archipelago::IslandOwner>,
-        ),
-        (
-            With<LivekitTransport>,
-            Without<Connecting>,
-            Without<NeedsAdapter>,
-            Without<RoomSuspended>,
-            Without<VoiceRoom>,
-        ),
-    >,
-    time: Res<Time>,
-) {
-    if common::structs::multi_tenant() {
-        // orchestrated server: the adapter's token is long expired (the gatekeeper mints
-        // them with a five-minute TTL), so a re-dial can only be refused. The room stays
-        // Disconnected and the headless bin asks the orchestrator for a fresh adapter.
-        return;
-    }
-    for (entity, recovery, disconnected, refreshable, island) in &rooms {
-        if (!disconnected && recovery.failure.is_none())
-            || !recovery.can_retry(time.elapsed_secs_f64())
-        {
-            continue;
-        }
-        restart_room(
-            &mut commands,
-            entity,
-            refreshable,
-            island.map(|island| island.0),
-        );
-    }
-}
-
-/// Manual resume and automatic recovery use the same credential source.
-pub(super) fn restart_room(
-    commands: &mut Commands,
-    entity: Entity,
-    refreshable: bool,
-    island: Option<Entity>,
-) {
-    if let Some(island) = island {
-        if let Ok(mut owner) = commands.get_entity(island) {
-            owner.try_insert(crate::archipelago::RefreshIsland);
-            commands.entity(entity).try_insert(RoomSuspended);
-        }
-    } else if refreshable {
-        commands.entity(entity).try_insert(NeedsAdapter);
-    } else {
-        commands.entity(entity).try_insert(Connecting);
     }
 }

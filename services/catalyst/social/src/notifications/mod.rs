@@ -40,8 +40,8 @@ pub mod unsubscribe;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use crate::shared::routing::{erase, get, post, put};
 use axum::Router;
-use axum::routing::{get, post, put};
 use sqlx::PgPool;
 
 use crate::auth::eip1654::Eip1654Validator;
@@ -92,6 +92,8 @@ pub struct Settings {
     pub events_base_url: String,
     /// Backend event asset origin and mount, distinct from notice links.
     pub events_asset_base_url: String,
+    /// `PUBLIC_URL` as the event read projection uses it for poster URLs.
+    pub events_public_base: Option<String>,
     /// `CURRENT_VERSION` and the node's `COMMIT_HASH`, for `GET /status`.
     pub current_version: Option<String>,
     pub commit_hash: Option<String>,
@@ -127,6 +129,7 @@ impl Default for Settings {
             delivery_max_age: Some(delivery::DEFAULT_MAX_AGE),
             events_base_url: "https://decentraland.org".into(),
             events_asset_base_url: "http://localhost/events".into(),
+            events_public_base: None,
             current_version: None,
             commit_hash: None,
             community_cdn_url: "https://decentraland.org".into(),
@@ -281,6 +284,7 @@ impl State {
             events::Links {
                 base: self.settings.events_base_url.clone(),
                 asset_base: self.settings.events_asset_base_url.clone(),
+                public_base: self.settings.events_public_base.clone(),
                 jump_in_site_url: self.settings.jump_in_site_url.clone(),
                 community_cdn: self.settings.community_cdn_url.clone(),
                 slack_notices: self.settings.event_slack_notices,
@@ -318,19 +322,19 @@ pub fn router(state: SharedState) -> Router {
         .route("/status", get(handlers::get_status))
         .route(
             "/notifications",
-            get(handlers::get_notifications).post(ingest::post_notifications),
+            get(handlers::get_notifications).post(erase(ingest::post_notifications)),
         )
         .route("/notifications/read", put(handlers::put_read))
         .route(
             "/subscription",
-            get(handlers::get_subscription).put(handlers::put_subscription),
+            get(handlers::get_subscription).put(erase(handlers::put_subscription)),
         )
         .route("/set-email", put(handlers::put_set_email))
         .route("/confirm-email", put(handlers::put_confirm_email))
         .route("/subscription/opt-outs", post(handlers::post_opt_out))
         .route(
             "/subscription/opt-outs/{scope}/{scopeId}",
-            get(handlers::get_opt_out).delete(handlers::delete_opt_out),
+            get(handlers::get_opt_out).delete(erase(handlers::delete_opt_out)),
         )
         .route("/notifications/broadcast", post(handlers::post_broadcast))
         .route("/notifications/email", post(common_email::post_email))
@@ -339,7 +343,9 @@ pub fn router(state: SharedState) -> Router {
             "/unsubscribe/{address}/{notificationType}",
             get(unsubscribe::unsubscribe_one),
         )
-        .fallback(|| async { (axum::http::StatusCode::NOT_FOUND, "Not found") })
+        .fallback(crate::shared::routing::erase(|| async {
+            (axum::http::StatusCode::NOT_FOUND, "Not found")
+        }))
         .layer(axum::middleware::from_fn(errors::json_wire))
         .layer(axum::extract::DefaultBodyLimit::max(256 * 1024))
         .layer(tower_http::cors::CorsLayer::permissive())

@@ -6,6 +6,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import type { ComponentType, ReactNode } from "react";
 import { createRoutesStub, redirect, useLoaderData } from "react-router";
@@ -19,8 +20,8 @@ const track = vi.hoisted(() => vi.fn());
 vi.mock("@/core/lib/telemetry/track", () => ({ track }));
 vi.mock("@ui/web/frames/SitesChrome", () => ({ default: ({ children }: { children?: ReactNode }) => <>{children}</> }));
 
-import { BlogIndexView } from "@/features/blog/BlogIndexView";
-import { BlogPostView } from "@/features/blog/BlogPostView";
+import { BlogIndexView } from "@/pages/blog/BlogIndexView";
+import { BlogPostView } from "@/pages/blog/BlogPostView";
 import { installFakeCms } from "@/data/lib/blog/cms.test-utils";
 import { loadBlogAuthor, loadBlogCategory, loadBlogHome, loadBlogPost, loadBlogSearch, type BlogOutcome } from "@/data/lib/blog/pages";
 
@@ -64,7 +65,11 @@ const Stub = createRoutesStub([
 const calls = (event: string) => track.mock.calls.filter(([name]) => name === event).map(([, props]) => props);
 
 function renderAt(url: string) {
-  return render(<Stub initialEntries={[url]} />);
+  return render(
+    <QueryClientProvider client={new QueryClient()}>
+      <Stub initialEntries={[url]} />
+    </QueryClientProvider>,
+  );
 }
 
 beforeEach(() => {
@@ -91,8 +96,8 @@ describe("blog list telemetry", () => {
     await screen.findByRole("heading", { level: 3, name: "News 9" });
     expect(screen.queryByRole("link", { name: "Load more" })).toBeNull();
 
-    const [box] = screen.getAllByRole("searchbox", { name: "Search articles" });
-    await user.type(box!, "news{Enter}");
+    const box = screen.getByRole("combobox", { name: "Search articles" });
+    await user.type(box, "news{Enter}");
     await screen.findByText("9 articles for “news”");
     expect(calls("lp_blog_viewed")).toEqual([{ post_count: 11 }]);
   });

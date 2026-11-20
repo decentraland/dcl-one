@@ -4,7 +4,7 @@ use bevy::{
     math::Vec3Swizzles,
     platform::{collections::HashSet, hash::FixedHasher},
     prelude::*,
-    render::mesh::Indices,
+    render::mesh::{Indices, MeshTag},
     text::JustifyText,
     ui::FocusPolicy,
 };
@@ -22,7 +22,7 @@ use common::{
 };
 use comms::{global_crdt::ForeignPlayer, Transport};
 use console::DoAddConsoleCommand;
-use scene_material::{highlight::Highlight, SceneMaterial};
+use scene_material::{highlight::Highlight, SceneMaterial, SCENE_MATERIAL_OUTLINE_MESH_TAG};
 use scene_runner::{
     initialize_scene::{SceneLoading, TestingData, PARCEL_SIZE},
     parcel_to_vec3,
@@ -31,7 +31,9 @@ use scene_runner::{
         gltf_container::{GltfLoadingCount, SceneResourceLookup},
         ComponentTracker, TrackComponents,
     },
-    vec3_to_parcel, ContainerEntity, ContainingScene, Toaster,
+    vec3_to_parcel,
+    visible_content_bytes::scene_visible_content_bytes,
+    ContainerEntity, ContainingScene, Toaster,
 };
 use ui_core::{
     bound_node::BoundedImageMaterial,
@@ -217,7 +219,6 @@ pub struct Minimap;
 #[derive(Component)]
 pub struct Tracker(bool);
 
-#[allow(clippy::too_many_arguments)]
 fn update_scene_load_state(
     q: Query<Entity, With<SysInfoMarker>>,
     q_children: Query<&Children>,
@@ -444,7 +445,6 @@ fn setup_minimap(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update_minimap(
     q: Query<&DuiEntities, With<Minimap>>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
@@ -513,7 +513,6 @@ fn update_minimap(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update_tracker(
     mut commands: Commands,
     mut q: Query<(Ref<Tracker>, &DuiEntities)>,
@@ -566,36 +565,44 @@ fn update_tracker(
     let default_lookup = SceneResourceLookup::default();
     let resource_lookup = stats.get(*scene).unwrap_or(&default_lookup);
 
-    let mut display_data = Vec::default();
+    // each row is formatted once, into the template's props
+    let content_root = entities.named("content");
+    let mut add_row = |label: &str, value: &dyn std::fmt::Display| {
+        commands
+            .entity(content_root)
+            .spawn_template(
+                &dui,
+                "tracker-item",
+                DuiProps::new()
+                    .with_prop("label", label.to_string())
+                    .with_prop("value", value.to_string()),
+            )
+            .unwrap();
+    };
 
     if let Some(fps) = diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS) {
-        display_data.push((
-            "FPS",
-            (fps.smoothed().unwrap_or_default() as usize).to_string(),
-        ));
+        add_row("FPS", &(fps.smoothed().unwrap_or_default() as usize));
     }
-    display_data.push(("GPU", gpu_frame_time_text(&diagnostics)));
+    add_row("GPU", &gpu_frame_time_text(&diagnostics));
 
-    display_data.push((
+    add_row(
         "Unique Gltf Meshes",
-        resource_lookup
+        &resource_lookup
             .meshes_by_hash
             .values()
             .filter(|c| meshes.get(c.mesh_id).is_some())
-            .count()
-            .to_string(),
-    ));
-    display_data.push((
+            .count(),
+    );
+    add_row(
         "Visible Mesh Count",
-        mesh_handles
+        &mesh_handles
             .iter()
             .filter(|(_, c, v)| &c.root == scene && !matches!(v, Visibility::Hidden))
-            .count()
-            .to_string(),
-    ));
-    display_data.push((
+            .count(),
+    );
+    add_row(
         "Visible Triangle Count",
-        mesh_handles
+        &mesh_handles
             .iter()
             .filter(|(_, c, v)| &c.root == scene && !matches!(v, Visibility::Hidden))
             .flat_map(|(h, _, _)| meshes.get(h.id()))
@@ -605,19 +612,17 @@ fn update_tracker(
                     .unwrap_or_else(|| mesh.attributes().next().unwrap().1.len())
                     / 3
             })
-            .sum::<usize>()
-            .to_string(),
-    ));
+            .sum::<usize>(),
+    );
 
-    display_data.push((
+    add_row(
         "Unique Gltf Materials",
-        resource_lookup
+        &resource_lookup
             .materials
             .values()
             .filter(|h| materials.get(h.id()).is_some())
-            .count()
-            .to_string(),
-    ));
+            .count(),
+    );
 
     let visible_mats = material_handles
         .iter()
@@ -625,52 +630,26 @@ fn update_tracker(
         .map(|(h, ..)| &h.0)
         .collect::<HashSet<_, FixedHasher>>();
 
-    display_data.push(("Visible Material Count", visible_mats.len().to_string()));
+    add_row("Visible Material Count", &visible_mats.len());
 
-    let textures = visible_mats
-        .iter()
-        .flat_map(|h| materials.get(h.id()))
-        .flat_map(|mat| {
-            mat.base
-                .base_color_texture
-                .iter()
-                .chain(mat.base.emissive_texture.as_ref())
-                .chain(mat.base.normal_map_texture.as_ref())
-        })
-        .collect::<HashSet<_>>();
+    let content = scene_visible_content_bytes(
+        *scene,
+        mesh_handles.iter(),
+        material_handles.iter(),
+        &meshes,
+        &materials,
+        &images,
+    );
+    let mib = |bytes: u64| ((bytes as f64) / 1024.0 / 1024.0).round() as u64;
 
-    display_data.push(("Total Texture Count", textures.len().to_string()));
+    add_row("Total Texture Count", &content.texture_count);
+    add_row("Total Texture Memory (mb)", &mib(content.texture_bytes_sum));
+    add_row("Visible Mesh Memory (mb)", &mib(content.mesh_bytes_sum));
 
-    let total_memory = textures
-        .iter()
-        .flat_map(|h| images.get(h.id()).and_then(|t| t.data.as_ref()))
-        .map(|data| data.len())
-        .sum::<usize>();
-    let total_mb = (total_memory as f32 / 1024.0 / 1024.0).round() as usize;
-
-    display_data.push(("Total Texture Memory (mb)", total_mb.to_string()));
-
-    display_data.push((
+    add_row(
         "Total Entities",
-        scene_entities
-            .iter()
-            .filter(|c| &c.root == scene)
-            .count()
-            .to_string(),
-    ));
-
-    for (key, value) in display_data {
-        commands
-            .entity(entities.named("content"))
-            .spawn_template(
-                &dui,
-                "tracker-item",
-                DuiProps::new()
-                    .with_prop("label", key.to_string())
-                    .with_prop("value", value),
-            )
-            .unwrap();
-    }
+        &scene_entities.iter().filter(|c| &c.root == scene).count(),
+    );
 }
 
 // set fps
@@ -687,9 +666,13 @@ fn set_sysinfo(
 ) {
     if let Some(Ok(command)) = input.take() {
         let on = command.on.unwrap_or(true);
+        let Ok(container) = q.single() else {
+            input.reply_failed("sysinfo panel not found");
+            return;
+        };
 
         commands
-            .entity(q.single().unwrap())
+            .entity(container)
             .modify_component(move |style: &mut Node| {
                 style.display = if on { Display::Flex } else { Display::None };
             });
@@ -723,14 +706,13 @@ fn update_map_visibilty(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn entity_count(
     q: Query<Entity>,
     f: Res<FrameCount>,
     meshes: Res<Assets<Mesh>>,
     textures: Res<Assets<Image>>,
     ui_nodes: Query<(), With<ComputedNode>>,
-    scene_mats: Query<Has<Highlight>, With<MeshMaterial3d<SceneMaterial>>>,
+    scene_mats: Query<(Has<Highlight>, Option<&MeshTag>), With<MeshMaterial3d<SceneMaterial>>>,
     std_mats: Query<(), With<MeshMaterial3d<StandardMaterial>>>,
     mask_mats: Query<(), With<MeshMaterial3d<MaskMaterial>>>,
     uv_mats: Query<(), With<MaterialNode<StretchUvMaterial>>>,
@@ -744,14 +726,18 @@ fn entity_count(
         let ui_nodes = ui_nodes.iter().count();
         debug!("{entities} ents, {meshes} meshes, {textures} textures, {ui_nodes} ui nodes");
 
-        let highlighted = scene_mats.iter().filter(|h| *h).count();
+        let highlighted = scene_mats.iter().filter(|(h, _)| *h).count();
+        let outlined = scene_mats
+            .iter()
+            .filter(|(_, tag)| tag.is_some_and(|tag| tag.0 & SCENE_MATERIAL_OUTLINE_MESH_TAG != 0))
+            .count();
         let scene_mats = scene_mats.iter().count();
         let std_mats = std_mats.iter().count();
         let mask_mats = mask_mats.iter().count();
         let uv_mats = uv_mats.iter().count();
         let bound_mats = bound_mats.iter().count();
         let textshape_mats = textshape_mats.iter().count();
-        debug!("scene {scene_mats} ({highlighted} highlighted), std {std_mats}, mask: {mask_mats}, uv: {uv_mats}, bound: {bound_mats}, text: {textshape_mats}");
+        debug!("scene {scene_mats} ({highlighted} highlighted, {outlined} outlined), std {std_mats}, mask: {mask_mats}, uv: {uv_mats}, bound: {bound_mats}, text: {textshape_mats}");
     }
 }
 

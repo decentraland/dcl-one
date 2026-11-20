@@ -13,7 +13,6 @@ import { profileKeys } from "../profile/queries";
 import {
   blogIndexToMarkdown,
   blogPostToMarkdown,
-  communityToMarkdown,
   discoverToMarkdown,
   eventDetailToMarkdown,
   legalDocToMarkdown,
@@ -81,10 +80,6 @@ const SERIALIZERS: Record<AgentMarkdownKey, (data: unknown) => string | null> = 
   discover: (data) => {
     const d = data as { content?: Parameters<typeof discoverToMarkdown>[0] | null } | undefined;
     return d?.content ? discoverToMarkdown(d.content) : null;
-  },
-  communityDetail: (data) => {
-    const d = data as { detail?: Parameters<typeof communityToMarkdown>[0] | null } | undefined;
-    return d?.detail && d.detail.source === "live" ? communityToMarkdown(d.detail) : null;
   },
 };
 

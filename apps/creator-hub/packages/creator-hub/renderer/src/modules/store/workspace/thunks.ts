@@ -1,4 +1,5 @@
 import type { Scene } from '@dcl/schemas';
+import { getProjectWorldName } from '/@/lib/project-world';
 import { captureException } from '@sentry/electron/renderer';
 
 import { shouldUpdateDependencies } from './utils';
@@ -64,7 +65,6 @@ export const fetchSdkCommandsVersion = createAsyncThunk(
   'workspace/fetchSdkCommandsVersion',
   async (path: string) => ({
     version: (await pkg.getPackageVersion(path, PACKAGES.SDK_PACKAGE)) ?? null,
-    hasAuthServer: await pkg.hasModuleEntry(path, PACKAGES.SDK_PACKAGE, 'server/index.js'),
   }),
 );
 
@@ -89,8 +89,10 @@ export const saveAndGetThumbnail = createAsyncThunk(
   'workspace/saveAndGetThumbnail',
   async (opts: Parameters<typeof workspace.saveThumbnail>[0], { dispatch }) => {
     await dispatch(saveThumbnail(opts)).unwrap();
-    const thumbnail = await workspace.getProjectThumbnailAsBase64(opts.path);
-    return thumbnail;
+    // The picture just captured, not the image scene.json names: a scene made from a template
+    // keeps naming the template's stock picture after a capture, and the publish screens show
+    // the scene as it is now.
+    return opts.thumbnail;
   },
 );
 export const createProjectAndInstall = createAsyncThunk(
@@ -107,22 +109,6 @@ export const updatePackages = createAsyncThunk(
       ([pkg, { latest }]) => `${pkg}@${latest}`,
     );
     await dispatch(installProject({ path: project.path, packages: latestPackages })).unwrap();
-  },
-);
-const MULTIPLAYER_PACKAGES = ['@dcl/sdk@auth-server', '@dcl/js-runtime@auth-server'];
-const LATEST_SDK_PACKAGES = ['@dcl/sdk@latest', '@dcl/js-runtime@latest'];
-
-export const installMultiplayerSdk = createAsyncThunk(
-  'workspace/installMultiplayerSdk',
-  async (project: Project, { dispatch }) => {
-    await dispatch(installProject({ path: project.path, packages: MULTIPLAYER_PACKAGES })).unwrap();
-  },
-);
-
-export const uninstallMultiplayerSdk = createAsyncThunk(
-  'workspace/uninstallMultiplayerSdk',
-  async (project: Project, { dispatch }) => {
-    await dispatch(installProject({ path: project.path, packages: LATEST_SDK_PACKAGES })).unwrap();
   },
 );
 export const updateAvailableDependencyUpdates = createAsyncThunk(
@@ -237,6 +223,10 @@ export const runProject = createAsyncThunk(
   },
 );
 export const updateSettings = createAsyncThunk('config/updateSettings', settings.updateAppSettings);
+export const updateAiSharingSettings = createAsyncThunk(
+  'config/updateAiSharingSettings',
+  settings.updateAiSharingSettings,
+);
 export const updateSceneJson = createAsyncThunk(
   'scene/updateScene',
   async ({ path, updates }: { path: string; updates: Partial<Scene> }) => {
@@ -259,7 +249,7 @@ export const recordDeployment = createAsyncThunk(
   'workspace/recordDeployment',
   async ({ path, info }: { path: string; info: Info }, { dispatch, getState }) => {
     const project = getState().workspace.projects.find($ => $.path === path);
-    const worldName = info.isWorld ? project?.worldConfiguration?.name : undefined;
+    const worldName = info.isWorld && project ? getProjectWorldName(project) : undefined;
     if (!project || (info.isWorld && !worldName)) return null;
     const record: ProjectDeployment = {
       publishedAt: Date.now(),

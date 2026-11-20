@@ -18,6 +18,7 @@ import * as mobileDebug from './mobile-debug-server';
 import * as oxc from './oxc';
 import * as metrics from './metrics';
 import * as ai from './ai';
+import * as aiSharing from './ai-sharing';
 import * as aiCli from './ai-cli';
 import * as aiWindow from './ai-window';
 import * as consoleWindow from './console-window';
@@ -43,12 +44,16 @@ export function initIpc({ beforeQuitCleanup }: InitIpcOptions) {
   handleSync('electron.getEnvOverride', () => electron.getEnvOverride());
   handle('electron.getAppVersion', () => electron.getAppVersion());
   handle('electron.getUserDataPath', () => electron.getUserDataPath());
+  handle('electron.getDefaultScenesPath', () => electron.getDefaultScenesPathForUser());
   handle('electron.getWorkspaceConfigPath', (_event, path) =>
     electron.getWorkspaceConfigPath(path),
   );
   handle('electron.showOpenDialog', (_event, opts) => electron.showOpenDialog(opts));
   handle('electron.showSaveDialog', (_event, opts) => electron.showSaveDialog(opts));
   handle('electron.openExternal', (_event, url) => electron.openExternal(url));
+  handle('electron.openDeepLink', (_event, url) => electron.openDeepLink(url));
+  handle('electron.logDeployment', (_event, entry) => electron.logDeployment(entry));
+  handle('electron.logRendererError', (_event, entry) => electron.logRendererError(entry));
   handle('electron.copyToClipboard', (_event, text) => electron.copyToClipboard(text));
 
   // analytics API (fetched here because the renderer's `Origin: null` fails CORS)
@@ -170,6 +175,20 @@ export function initIpc({ beforeQuitCleanup }: InitIpcOptions) {
     );
   });
   handle('ai.stop', async () => ai.aiStop());
+  handle('aiSharing.peek', async (_event, address, limit) =>
+    aiSharing
+      .getOutbox()
+      .peek(address, Math.min(Math.max(1, limit), 50), record =>
+        aiSharing.isConversationExcluded(record.conversationId),
+      ),
+  );
+  handle('aiSharing.ack', async (_event, ids) => aiSharing.getOutbox().ack(ids));
+  handle('aiSharing.list', async (_event, address) => aiSharing.getOutbox().list(address));
+  handle('aiSharing.purge', async (_event, address) => aiSharing.getOutbox().purge(address));
+  handle('aiSharing.setWallet', async (_event, address) => aiSharing.setSignedInWallet(address));
+  handle('aiSharing.setConversationShared', async (_event, conversationId, shared) =>
+    aiSharing.setConversationShared(conversationId, shared),
+  );
   handle('ai.reset', async (_event, path) => ai.aiReset(path));
   handle('ai.deleteSession', async (_event, path, sessionId) =>
     ai.aiDeleteSession(path, sessionId),

@@ -12,9 +12,8 @@
 //! reaches these routes either at the paths the old service served
 //! (`/v1/...`) or behind the gateway prefix (`/builder-api/v1/...`); a
 //! client signs the path it requested, which is what the shared verifier
-//! checks (`signed_fetch::candidate_paths`, the ONE path rule). Deviation: the
-//! old crate tolerated a 30-minute clock window on the required path; the
-//! shared verifier's window is 5 minutes on every surface.
+//! checks (`signed_fetch::candidate_paths`, the ONE path rule). The timestamp
+//! window is the shared verifier's 60 seconds, as on every signed route.
 
 use axum::http::{HeaderMap, Uri};
 

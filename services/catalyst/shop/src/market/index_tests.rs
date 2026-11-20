@@ -62,10 +62,7 @@ impl ScratchDb {
             "catalyst_z_mkt_{}",
             &uuid::Uuid::new_v4().simple().to_string()[..12]
         );
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let mut url = url::Url::parse(&base).unwrap();
         url.set_path(&format!("/{name}"));
         let pool = crate::db::connect_pool(
@@ -77,7 +74,6 @@ impl ScratchDb {
         )
         .await
         .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         Some(Self { name, pool, admin })
     }
 
@@ -643,6 +639,16 @@ async fn trade_events_walk_under_a_budget_resume_after_a_kill_fold_the_verdicts_
         .await
         .unwrap();
     }
+    sqlx::query(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, minters, created_at, updated_at, reviewed_at, mirrored_at) \
+         VALUES ('matic', $1, 137, 'Hats', $2, $2, 'urn:decentraland:matic:collections-v2:0xc1', true, true, false, ARRAY[$3], 1, 1, 1, timezone('UTC', now()))",
+    )
+    .bind(item)
+    .bind(ALICE)
+    .bind(market)
+    .execute(&db.pool)
+    .await
+    .unwrap();
     let s = start;
     let logs = vec![
         traded(s + 100, 0, market, CARL, ALICE, &sold.1),
@@ -1353,6 +1359,131 @@ async fn a_rewind_leaves_land_data_as_a_rebuild_of_the_remaining_log() {
         after_rewind,
         "the rewind's result is the truncate-and-rebuild's"
     );
+    db.drop().await;
+}
+
+/// A fold past `since` leaves `land_data` exactly as a truncate-and-rebuild would.
+#[tokio::test]
+async fn a_land_data_fold_past_since_equals_a_rebuild() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let land = crate::land_authz::LAND_REGISTRY_MAINNET;
+    let estate = crate::land_authz::ESTATE_REGISTRY_MAINNET;
+    let far = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+    let update = |block: i64, log: i32, contract: &str, token: &str, name: &str| {
+        format!(
+            "('ethereum', {block}, {log}, {block}, 'land_data', '{contract}', '{contract}', {token}, NULL, NULL, NULL, NULL, '0,\"{name}\",\"\"')"
+        )
+    };
+    let insert = |rows: Vec<String>| {
+        let pool = db.pool.clone();
+        async move {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address, amount, expires_at, detail) VALUES {}",
+                rows.join(", ")
+            )))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    let rows = || {
+        let pool = db.pool.clone();
+        async move {
+            sqlx::query_as::<_, (String, String, Option<String>, i64, i32)>(
+                "SELECT token_address, token_id::text, name, updated_block, updated_log FROM shop.land_data ORDER BY token_address, land_data.token_id",
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        }
+    };
+
+    insert(vec![
+        update(100, 0, land, "1", "A-old"),
+        update(150, 0, estate, "1", "E-old"),
+        update(120, 0, land, "7", "G-old"),
+        update(150, 1, land, "9", "Edge"),
+    ])
+    .await;
+    nft_index::fold(&db.pool, ChainNet::Ethereum, None)
+        .await
+        .unwrap();
+
+    insert(vec![
+        update(200, 0, land, "1", "A-first"),
+        update(200, 3, land, "1", "A-last"),
+        update(151, 0, estate, "1", "E-new"),
+        update(202, 0, land, far, "Far"),
+        format!(
+            "('ethereum', 203, 0, 203, 'transfer', '{land}', '{land}', 7, '{ALICE}', '{BOB}', NULL, NULL, NULL)"
+        ),
+    ])
+    .await;
+    let counts = nft_index::fold(&db.pool, ChainNet::Ethereum, Some(150))
+        .await
+        .unwrap();
+    assert_eq!(counts.land_data, 3, "LAND 1, Estate 1 and the far token");
+    let incremental = rows().await;
+    assert_eq!(
+        incremental,
+        vec![
+            (estate.into(), "1".into(), Some("E-new".into()), 151, 0),
+            (land.into(), "1".into(), Some("A-last".into()), 200, 3),
+            (land.into(), "7".into(), Some("G-old".into()), 120, 0),
+            (land.into(), "9".into(), Some("Edge".into()), 150, 1),
+            (land.into(), far.into(), Some("Far".into()), 202, 0),
+        ]
+    );
+
+    sqlx::query("TRUNCATE shop.land_data")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    nft_index::fold(&db.pool, ChainNet::Ethereum, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        rows().await,
+        incremental,
+        "the incremental fold's result is the rebuild's"
+    );
+    db.drop().await;
+}
+
+/// Pins `LAND_DATA_SQL`'s shape with seq scans off: one bounded index scan, not which index nor the fold's `SET LOCAL`.
+#[tokio::test]
+async fn the_land_data_read_is_one_bounded_index_scan() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let mut conn = db.pool.acquire().await.unwrap();
+    sqlx::query("SET enable_seqscan = off")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    let lines: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "EXPLAIN {}",
+        nft_index::LAND_DATA_SQL
+    )))
+    .bind(23_900_000_i64)
+    .fetch_all(&mut *conn)
+    .await
+    .unwrap();
+    let plan = lines.join("\n");
+    assert!(
+        plan.lines()
+            .any(|l| l.contains("Index Cond") && l.contains("block_number > "))
+            && plan.matches("on nft_event ").count() == 1
+            && !plan.contains("Seq Scan"),
+        "{plan}"
+    );
+    sqlx::query("RESET enable_seqscan")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    drop(conn);
     db.drop().await;
 }
 
@@ -2887,6 +3018,7 @@ async fn api_jobs_never_attach_market_indexing_even_when_enabled() {
     let mut settings = index_settings(100, 1000);
     settings.mana_transfers_enabled = true;
     settings.sales_enabled = true;
+    settings.committee_enabled = true;
     let mut state = state_over(db.pool.clone(), "https://rpc.example.org/", settings, false);
     let inner = Arc::get_mut(&mut state).unwrap();
     inner.settings.market.mirrors_enabled = true;
@@ -2898,6 +3030,7 @@ async fn api_jobs_never_attach_market_indexing_even_when_enabled() {
         "nft-index",
         "trade-events-index",
         "mana-transfers-index",
+        "committee-index",
         "sales-index",
         "collections-mirror",
         "items-mirror",
@@ -2916,6 +3049,7 @@ async fn api_jobs_never_attach_market_indexing_even_when_enabled() {
         "nft-index",
         "trade-events-index",
         "mana-transfers-index",
+        "committee-index",
         "sales-index",
         "collections-mirror",
         "items-mirror",
@@ -3202,5 +3336,194 @@ async fn a_reorg_rewind_replays_the_notification_producers() {
         "the replacing gift is read again below the old cursor"
     );
     assert_eq!(notified().await, vec![BOB.to_string(), CARL.to_string()]);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn committee_index_keeps_member_set_logs_of_both_contracts() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    use super::committee_index::{CONTRACTS, CommitteeIndex, MEMBER_SET, START_BLOCK};
+    let event =
+        |block: u64, contract: &str, member: &str, set: bool| crate::chain_index::rpc::RpcLog {
+            address: contract.into(),
+            topics: vec![MEMBER_SET.into(), format!("0x{:0>64}", &member[2..])],
+            data: format!("0x{:064x}", u8::from(set)),
+            block_number: format!("0x{block:x}"),
+            log_index: "0x0".into(),
+            block_timestamp: Some(format!("0x{:x}", time_of(block))),
+            block_hash: None,
+            transaction_hash: Some(format!("0x{block:064x}")),
+        };
+    let s = START_BLOCK;
+    let chain = FakeChain::new(
+        s + 100,
+        vec![
+            event(s + 1, CONTRACTS[0], ALICE, true),
+            event(s + 2, CONTRACTS[1], ALICE, false),
+            event(s + 3, CONTRACTS[1], BOB, true),
+        ],
+        10_000,
+        1000,
+    );
+    chain.finalized_lag.store(2, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let st = state_over(db.pool.clone(), &url, index_settings(100, 10_000), false);
+    let out = pass(&st, &url, &CommitteeIndex).await;
+    assert!(out.published, "{out:?}");
+    let rows: Vec<(String, String, bool)> = sqlx::query_as(
+        "SELECT contract_address, member, is_member FROM shop.committee_event ORDER BY block_number",
+    )
+    .fetch_all(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (CONTRACTS[0].to_string(), ALICE.to_string(), true),
+            (CONTRACTS[1].to_string(), ALICE.to_string(), false),
+            (CONTRACTS[1].to_string(), BOB.to_string(), true),
+        ]
+    );
+    let count = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM shop.committee_event")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap()
+    };
+
+    // A walk over blocks it already holds writes nothing new.
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = start_block - 1, last_block_hash = NULL, \
+         last_block_time = NULL, fold_through = NULL, folded_block = NULL, folded_at = NULL WHERE indexer = 'committee'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let again = pass(&st, &url, &CommitteeIndex).await;
+    assert!(again.published, "{again:?}");
+    assert_eq!(again.rows_written, 0, "{again:?}");
+    assert_eq!(count().await, 3);
+
+    // A reorg that drops BOB's MemberSet: the rewind deletes the rows past
+    // its target and unpublishes the index, and the next pass keeps only
+    // the logs the chain still has.
+    let cursor = chain_walk::cursor(&db.pool, chain_walk::INDEXER_COMMITTEE, ChainNet::Matic)
+        .await
+        .unwrap()
+        .unwrap();
+    chain
+        .forks
+        .lock()
+        .insert(cursor.last_block as u64, format!("0x{}", "ee".repeat(32)));
+    chain
+        .logs
+        .lock()
+        .retain(|l| l["blockNumber"] != json!(format!("0x{:x}", s + 3)));
+    let rewound = pass(&st, &url, &CommitteeIndex).await;
+    assert!(rewound.reorg_rewound_to.is_some(), "{rewound:?}");
+    assert!(!rewound.published, "{rewound:?}");
+    assert_eq!(count().await, 0, "the rewind deletes the reorged rows");
+    let unpublished: bool = sqlx::query_scalar(
+        "SELECT folded_block IS NULL AND folded_at IS NULL FROM shop.chain_cursor WHERE indexer = 'committee'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert!(unpublished, "the rewind clears the published block");
+    chain.forks.lock().clear();
+    let replayed = pass(&st, &url, &CommitteeIndex).await;
+    assert!(replayed.published, "{replayed:?}");
+    let members: Vec<String> =
+        sqlx::query_scalar("SELECT member FROM shop.committee_event ORDER BY block_number")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(members, vec![ALICE.to_string(), ALICE.to_string()]);
+
+    // The walk always rewinds below its start, so the partial case is
+    // checked on the index directly: rows at or below the target survive.
+    let mut conn = db.pool.acquire().await.unwrap();
+    CommitteeIndex
+        .rewind(&mut conn, (s + 1) as i64)
+        .await
+        .unwrap();
+    drop(conn);
+    let kept: Vec<(i64, bool)> =
+        sqlx::query_as("SELECT block_number, is_member FROM shop.committee_event")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(kept, vec![((s + 1) as i64, true)]);
+    db.drop().await;
+}
+
+/// A quiet committee stays published: a pass that finds no new MemberSet
+/// still refreshes `folded_at`, so builder keeps reading non-admin members
+/// past the readiness window.
+#[tokio::test]
+async fn a_committee_pass_without_new_logs_refreshes_the_publish() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    use super::committee_index::{CONTRACTS, CommitteeIndex, MEMBER_SET, START_BLOCK};
+    let s = START_BLOCK;
+    let chain = FakeChain::new(
+        s + 100,
+        vec![crate::chain_index::rpc::RpcLog {
+            address: CONTRACTS[1].into(),
+            topics: vec![MEMBER_SET.into(), format!("0x{:0>64}", &ALICE[2..])],
+            data: format!("0x{:064x}", 1),
+            block_number: format!("0x{:x}", s + 1),
+            log_index: "0x0".into(),
+            block_timestamp: Some(format!("0x{:x}", time_of(s + 1))),
+            block_hash: None,
+            transaction_hash: Some(format!("0x{:064x}", s + 1)),
+        }],
+        10_000,
+        1000,
+    );
+    chain.finalized_lag.store(2, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let st = state_over(db.pool.clone(), &url, index_settings(100, 10_000), false);
+    assert!(pass(&st, &url, &CommitteeIndex).await.published);
+    let age_out = || async {
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET folded_at = folded_at - interval '2 hours' WHERE indexer = 'committee'",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    };
+    let ready = || async {
+        let cursor = chain_walk::cursor(&db.pool, chain_walk::INDEXER_COMMITTEE, ChainNet::Matic)
+            .await
+            .unwrap()
+            .unwrap();
+        (
+            chain_walk::is_ready(&cursor, chrono::Utc::now()),
+            cursor.folded_block,
+        )
+    };
+
+    // The head has not moved.
+    age_out().await;
+    assert!(!ready().await.0, "aged out");
+    let quiet = pass(&st, &url, &CommitteeIndex).await;
+    assert!(quiet.published, "{quiet:?}");
+    assert_eq!(quiet.rows_written, 0, "{quiet:?}");
+    let (is_ready, folded) = ready().await;
+    assert!(is_ready, "the same head republishes");
+
+    // New blocks, none with a MemberSet.
+    age_out().await;
+    *chain.head.lock() = s + 200;
+    let quiet = pass(&st, &url, &CommitteeIndex).await;
+    assert!(quiet.published, "{quiet:?}");
+    assert_eq!(quiet.rows_written, 0, "{quiet:?}");
+    let (is_ready, advanced) = ready().await;
+    assert!(is_ready, "empty blocks republish");
+    assert!(advanced > folded, "{advanced:?} > {folded:?}");
     db.drop().await;
 }

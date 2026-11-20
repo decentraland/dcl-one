@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { IoClose } from 'react-icons/io5';
 import { FiAlertTriangle } from 'react-icons/fi';
-import cx from 'classnames';
+import { cx } from '../../lib/utils/cx';
 import { useSnackbar } from '../../hooks/useSnackbar';
 import { getStorage } from '../../lib/data-layer/client/storage';
 import { removeAssetFiles, removeEmptiedFolders } from '../../lib/data-layer/remove-assets';
@@ -229,14 +229,16 @@ const CleanAssets: React.FC<Props> = ({
 
               <div className="footer">
                 <Button
-                  type="text"
+                  variant="ghost"
+                  size="md"
                   onClick={onScan}
                   className="ScanButton"
                 >
                   SCAN AGAIN
                 </Button>
                 <Button
-                  type="danger"
+                  variant="primary"
+                  size="md"
                   onClick={validateRemove}
                   disabled={selectedAssets.size === 0}
                 >
@@ -263,14 +265,15 @@ const CleanAssets: React.FC<Props> = ({
           </div>
           <div className="actions">
             <Button
-              size="big"
-              type="danger"
+              variant="primary"
+              size="md"
               onClick={handleRemoveSelected}
             >
               Remove
             </Button>
             <Button
-              size="big"
+              variant="secondary"
+              size="md"
               onClick={() => setShowConfirmation(false)}
             >
               Back

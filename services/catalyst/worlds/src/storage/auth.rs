@@ -36,6 +36,7 @@ pub const CANONICAL_METADATA_KEYS: &[&str] = &[
     "signer",
     "realmName",
     "realm.serverName",
+    "realm.hostname",
     "parcel",
     "sceneId",
 ];
@@ -67,6 +68,14 @@ impl SceneAuthMetadata {
         server_name
             .filter(|v| v.truthy())
             .or_else(|| self.get("realmName").filter(|v| v.truthy()))
+    }
+
+    /// The signed realm URL, `realm.hostname` when it is a string.
+    pub fn realm_url(&self) -> Option<&str> {
+        match self.get("realm") {
+            Some(JsValue::Object(realm)) => realm.get("hostname").and_then(JsValue::as_str),
+            _ => None,
+        }
     }
 
     /// `parcel || undefined`.
@@ -323,7 +332,7 @@ async fn chain_authority(
     now_ms: i64,
     validator: Option<&dyn Eip1654Validator>,
 ) -> Result<String, AuthChainError> {
-    match crate::auth::verify_auth_chain_async(chain, probe, Some(now_ms), validator).await {
+    match crate::auth::verify_login_chain_async(chain, probe, Some(now_ms), validator).await {
         Ok(()) => Ok(probe.to_string()),
         Err(AuthError::FinalAuthorityMismatch { actual, .. }) => Ok(actual),
         Err(e) => Err(map_auth_error(e)),
@@ -817,5 +826,52 @@ mod tests {
                 assert_eq!(result.unwrap().signer.to_string(), CONTRACT);
             }
         }
+    }
+
+    /// SIGNER (wallet) -> ECDSA ephemeral whose first line is `first_line`
+    /// -> the 6.x payload for `/values/k`.
+    fn delegated_headers(first_line: &str) -> HeaderMap {
+        let owner = crate::auth::wallet::Wallet::random().unwrap();
+        let ephemeral = crate::auth::wallet::Wallet::random().unwrap();
+        let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+        let delegation = format!(
+            "{first_line}\nEphemeral address: {}\nExpiration: 2099-01-01T00:00:00.000Z",
+            ephemeral.address()
+        );
+        let payload = build_payload_v6("get", "/values/k", &timestamp, METADATA);
+        let links = [
+            serde_json::json!({"type": "SIGNER", "payload": owner.address(), "signature": ""}),
+            serde_json::json!({"type": "ECDSA_EPHEMERAL", "payload": delegation,
+                "signature": owner.sign_message(delegation.as_bytes()).unwrap()}),
+            serde_json::json!({"type": "ECDSA_SIGNED_ENTITY", "payload": payload,
+                "signature": ephemeral.sign_message(payload.as_bytes()).unwrap()}),
+        ];
+        let mut headers = HeaderMap::new();
+        for (index, link) in links.iter().enumerate() {
+            headers.insert(
+                axum::http::HeaderName::try_from(format!("x-identity-auth-chain-{index}")).unwrap(),
+                link.to_string().parse().unwrap(),
+            );
+        }
+        headers.insert(AUTH_TIMESTAMP_HEADER, timestamp.parse().unwrap());
+        headers.insert(AUTH_METADATA_HEADER, METADATA.parse().unwrap());
+        headers
+    }
+
+    #[tokio::test]
+    async fn only_a_login_delegation_signs_a_storage_request() {
+        let login = delegated_headers("Decentraland Login");
+        assert!(verify_request(&login, "get", &paths(), None).await.is_ok());
+
+        let other = delegated_headers("Decentraland Storage Delegation");
+        let Err(err @ AuthChainError::InvalidSignature(_)) =
+            verify_request(&other, "get", &paths(), None).await
+        else {
+            panic!("another delegation purpose verified")
+        };
+        assert!(
+            err.raw_message().contains("Invalid ephemeral payload"),
+            "{err:?}"
+        );
     }
 }

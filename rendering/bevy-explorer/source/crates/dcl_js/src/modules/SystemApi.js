@@ -121,6 +121,13 @@ module.exports.setAvatar = async function(avatar) {
     return await Deno.core.ops.op_set_avatar(avatar)
 }
 
+// signs and deploys the local player's catalyst `outfits` entity; refused when `address` is not
+// the signed-in account
+// outfits: { outfits: [{ slot, outfit: { bodyShape, eyes, hair, skin, wearables, forceRender } }], namesForExtraSlots }
+module.exports.deployOutfits = async function(address, outfits) {
+    return await Deno.core.ops.op_deploy_outfits(address, outfits)
+}
+
 // any user's full profile (own, nearby or remote), resolved through the engine's profile cache
 // and fetch cascade. Rejects if the address can't be resolved.
 // address: string => SerializedProfile
@@ -253,6 +260,12 @@ module.exports.setHomeScene = async function(args) {
     await Deno.core.ops.op_set_home_scene(args.realm, args.parcel)
 }
 
+// { preset: string, layer: number, feet: Vector3 } draws the lobby's stage around the preview
+// avatar for the camera on that layer; null takes it down. Bridge (super-user) scene only.
+module.exports.setLobbyStage = async function(stage) {
+    Deno.core.ops.op_set_lobby_stage(stage ?? null)
+}
+
 // { [service web param]: base url } for every service the web build can redirect, resolved by
 // the engine: the service's override, else its composition from the base domain
 module.exports.getServiceUrls = async function() {
@@ -283,6 +296,11 @@ module.exports.acceptTerms = async function() {
 // }
 module.exports.getSatelliteView = async function() {
     return await Deno.core.ops.op_get_satellite_view()
+}
+
+// 'allowed' | 'invited' | 'denied' | 'password' | 'failed'
+module.exports.getWorldAccess = async function(world) {
+    return await Deno.core.ops.op_get_world_access(world)
 }
 
 // get system actions as a stream
@@ -402,6 +420,22 @@ module.exports.getPortablesStream = async function() {
   return streamGenerator();
 }
 
+// stream of the map pins of portable-experience scenes, as a whole list on subscribe and on every
+// change: [{ id, x, y, title, icon? }]
+module.exports.getMapPinsStream = async function() {
+  const rid = await Deno.core.ops.op_get_map_pins_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_map_pins_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
 module.exports.getPermissionUsedStream = async function() {
   const rid = await Deno.core.ops.op_get_permission_used_stream();
 
@@ -414,6 +448,27 @@ module.exports.getPermissionUsedStream = async function() {
   }
 
   return streamGenerator();
+}
+
+// stream of scene requests to open the item purchase confirmation:
+// { id, item: { contract, itemId } | null }
+module.exports.getItemPurchaseRequestStream = async function() {
+  const rid = await Deno.core.ops.op_get_item_purchase_request_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_item_purchase_request_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// state: 'accepted' | 'unavailable' | 'purchased' | 'dismissed' | 'failed'
+module.exports.setItemPurchaseState = function(body) {
+    Deno.core.ops.op_set_item_purchase_state(body.id, body.state);
 }
 
 module.exports.setSinglePermission = function(body) {
@@ -522,6 +577,22 @@ module.exports.getWorldAccessStream = async function() {
   async function* streamGenerator() {
     while (true) {
       const next = await Deno.core.ops.op_read_world_access_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// the signed-in wallet's platform ban: now, then again on every change
+// type PlatformBanNotice = { banned: bool, reason: string, customMessage: string | null, expiresAt: string | null }
+module.exports.getPlatformBanStream = async function() {
+  const rid = await Deno.core.ops.op_get_platform_ban_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_platform_ban_stream(rid);
       if (next === null) break;
       yield next;
     }

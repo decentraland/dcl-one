@@ -158,8 +158,11 @@ export async function fetchPlacesAt(parcels: readonly Vec2[]): Promise<DiscoverP
   return res.places
 }
 
-export async function fetchPlaceAt(parcel: Vec2): Promise<DiscoverPlace | null> {
-  return (await fetchPlacesAt([parcel]))[0] ?? null
+/** The place covering a parcel: Genesis City's, or in `world` that World's scene there (or its first). */
+export async function fetchPlaceAt(parcel: Vec2, world?: string): Promise<DiscoverPlace | null> {
+  if (world == null) return (await fetchPlacesAt([parcel]))[0] ?? null
+  const res = await askFor<PlacesAtMessage>('placesAt', { kind: 'getPlacesAt', positions: [parcelKey(parcel)], world })
+  return res.places[0] ?? null
 }
 
 export type MapSort = PlaceSearchOrder
@@ -286,14 +289,27 @@ export interface Peer {
   z: number
 }
 
-/** The connected players, or with `id` only that wallet's entry. The stats service matches `id`
- *  exactly, and its addresses are lowercase, so the id is sent lowercased. */
-export async function fetchPeers(signal?: AbortSignal, id?: string): Promise<Peer[]> {
-  const wanted = id?.toLowerCase()
+// 100 wallets keep the peers URL near 5 KB, under common proxy limits
+const PEERS_PER_READ = 100
+
+/** The connected players, or with `ids` only those wallets' entries, read 100 wallets at a time.
+ *  The stats service matches `id` exactly, and its addresses are lowercase, so ids are sent
+ *  lowercased. */
+export async function fetchPeers(signal?: AbortSignal, ids?: string | readonly string[]): Promise<Peer[]> {
+  const wanted = ids == null ? null : (typeof ids === 'string' ? [ids] : ids).map((id) => id.toLowerCase())
   if (fixedPublicReads != null) {
-    return wanted == null ? fixedPublicReads.peers : fixedPublicReads.peers.filter((p) => p.address.toLowerCase() === wanted)
+    if (wanted == null) return fixedPublicReads.peers
+    const set = new Set(wanted)
+    return fixedPublicReads.peers.filter((p) => set.has(p.address.toLowerCase()))
   }
-  const query = wanted == null ? '' : `?id=${encodeURIComponent(wanted)}`
+  if (wanted == null) return fetchPeerBatch('', signal)
+  if (wanted.length === 0) return []
+  const batches: string[][] = []
+  for (let i = 0; i < wanted.length; i += PEERS_PER_READ) batches.push(wanted.slice(i, i + PEERS_PER_READ))
+  return (await Promise.all(batches.map((batch) => fetchPeerBatch(`?${batch.map((id) => `id=${encodeURIComponent(id)}`).join('&')}`, signal)))).flat()
+}
+
+async function fetchPeerBatch(query: string, signal?: AbortSignal): Promise<Peer[]> {
   const res = await fetch(`${serviceUrl('archipelagoStats')}/comms/peers${query}`, { signal })
   if (!res.ok) {
     await res.body?.cancel()

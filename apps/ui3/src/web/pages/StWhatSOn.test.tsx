@@ -80,3 +80,13 @@ describe("StWhatSOn, the Upcoming card's hover actions", () => {
     expect(assign).toHaveBeenCalledWith("/whats-on/e%201");
   });
 });
+
+describe("StWhatSOn, the Host an Event card", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("opens the hangout editor at /events/new-event", () => {
+    vi.stubGlobal("matchMedia", (media: string) => ({ matches: false, media, addEventListener() {}, removeEventListener() {} }));
+    const { getByTestId } = render(<StWhatSOn chrome={false} upcoming={upcoming} />);
+    expect(getByTestId("create-button").getAttribute("href")).toBe("/events/new-event");
+  });
+});

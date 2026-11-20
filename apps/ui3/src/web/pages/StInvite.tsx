@@ -1,10 +1,10 @@
 import type { ReactNode } from "react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Button } from "@dcl/one-ui";
-import SitesChrome from "../frames/SitesChrome";
-import AnimatedBackground from "../../shop/discovery/components/animated-background/AnimatedBackground";
+import { AnimatedBackground } from "@dcl/one-ui/apps/sites/shared/AnimatedBackground/AnimatedBackground";
 import { asset } from "../../asset";
 import { docsUrl } from "../../data/docs";
+import SitesChrome from "../frames/SitesChrome";
 import "./stinvite.css";
 
 const WearablePreview = lazy(() => import("../../wearable-preview/WearablePreview"));
@@ -171,7 +171,7 @@ function InviteHero({ title, subtitle, buttonLabel, referrer, secondary, loading
   }, [clipAllowed]);
   const address = referrer?.ethAddress.toLowerCase() ?? "";
   return (
-    <section className="stinvite__hero">
+    <section className={secondary ? "stinvite__hero" : "stinvite__hero stinvite__hero--primary"}>
       <div className="stinvite__hero-inner">
         <div className="stinvite__rail">
           <div className="stinvite__rail-text">

@@ -3,8 +3,11 @@
 //! "Backend work" 6, the shop-server fold), the one public-facing surface
 //! the old treasury service had. Reads are unauthenticated; writes are
 //! ADR-44 signed fetch (the author is the verified signer, never the path or
-//! the body) AND gated by the creator allowlist (`SHOP_OUTFIT_CREATORS`, the
-//! server-side twin of upstream's `dapps-shop-outfit-creators` flag). A
+//! the body) AND gated by the creator allowlist: the `dapps-shop-outfit-creators`
+//! variant, read per request from the Shop's held `dapps` flags
+//! (`market::features`; no answer, a disabled flag or an answer too old to
+//! stand is an empty list), or `SHOP_OUTFIT_CREATORS` when set (a local
+//! override that replaces the flag; set with no valid wallet, no one may author). A
 //! draft is visible to an allowlisted signer only; everyone else gets the
 //! same 404 (a 403 would confirm it exists). Thumbnail bytes go to the ONE
 //! blob store under their `hash_bytes_v1` cid; the sha256 hex of the bytes
@@ -27,12 +30,12 @@ mod tests;
 
 use std::sync::Arc;
 
+use crate::shared::routing::{erase, get, post};
 use axum::Json;
 use axum::body::{Body, Bytes};
 use axum::extract::{OriginalUri, Path, Query, State as Extract};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
 use axum::{Router, extract::Request};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -40,6 +43,8 @@ use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
 use crate::auth::eip1654::Eip1654Validator;
+use crate::market::MarketplaceState;
+use crate::market::features::OUTFIT_CREATORS;
 use crate::shared::signed_fetch::{self, PayloadPolicy, SignedFetchError, SignedPath};
 use crate::shared::writes::DataWrites;
 use crate::storage::Storage;
@@ -54,10 +59,10 @@ pub const MAX_OUTFIT_ITEMS: usize = 20;
 pub const OUTFITS_MAX_LIMIT: i64 = 50;
 
 /// `SHOP_OUTFIT_CREATORS` (comma or newline separated wallets, compared
-/// lowercase) and the write gate.
+/// lowercase; `Some` when set, and then it replaces the flag) and the write gate.
 #[derive(Clone, Debug, Default)]
 pub struct Settings {
-    pub creators: Vec<String>,
+    pub creators: Option<Vec<String>>,
     pub writes_enabled: bool,
 }
 
@@ -76,9 +81,14 @@ impl Settings {
         out
     }
 
+    /// The local override: `None` when blank (the flag decides), else the parsed list, which may be empty.
+    pub fn creators_override(raw: &str) -> Option<Vec<String>> {
+        (!raw.trim().is_empty()).then(|| Self::parse_creators(raw))
+    }
+
     pub fn is_creator(&self, address: &str) -> bool {
         let address = address.to_ascii_lowercase();
-        self.creators.contains(&address)
+        self.creators.as_ref().is_some_and(|c| c.contains(&address))
     }
 }
 
@@ -87,6 +97,8 @@ pub struct State {
     pub storage: Arc<Storage>,
     pub settings: Settings,
     pub eip1654: Option<Arc<dyn Eip1654Validator>>,
+    /// The `dapps` flags the creator allowlist is read from; `None` reads none.
+    flags: Option<Arc<MarketplaceState>>,
 }
 
 pub type SharedState = Arc<State>;
@@ -98,17 +110,41 @@ impl State {
         settings: Settings,
         eip1654: Option<Arc<dyn Eip1654Validator>>,
     ) -> Self {
-        if settings.creators.is_empty() {
-            tracing::info!(
-                "SHOP_OUTFIT_CREATORS is empty: every outfit write answers 403 (the allowlist fails closed)"
-            );
+        match settings.creators.as_deref() {
+            Some([]) => tracing::warn!(
+                "SHOP_OUTFIT_CREATORS is set but lists no valid wallet: no one may author outfits"
+            ),
+            Some(_) => tracing::info!(
+                "SHOP_OUTFIT_CREATORS is set: it replaces the dapps-shop-outfit-creators flag as the outfit allowlist"
+            ),
+            None => {}
         }
         Self {
             store: Outfits::new(pool),
             storage,
             settings,
             eip1654,
+            flags: None,
         }
+    }
+
+    pub fn with_flags(mut self, market: Arc<MarketplaceState>) -> Self {
+        self.flags = Some(market);
+        self
+    }
+
+    /// Whether `address` may author outfits now: the local override when set, else the flag's current variant.
+    pub fn is_creator(&self, address: &str) -> bool {
+        if self.settings.creators.is_some() {
+            return self.settings.is_creator(address);
+        }
+        let creators = self
+            .flags
+            .as_ref()
+            .and_then(|m| m.dapps_variant(OUTFIT_CREATORS))
+            .map(|raw| Settings::parse_creators(&raw))
+            .unwrap_or_default();
+        creators.contains(&address.to_ascii_lowercase())
     }
 }
 
@@ -117,13 +153,18 @@ impl State {
 pub fn shop_router(state: SharedState) -> Router {
     let enabled = state.settings.writes_enabled;
     let api = Router::new()
-        .route("/v1/outfits", get(list_published).post(create))
+        .route("/v1/outfits", get(list_published).post(erase(create)))
         .route("/v1/outfits/all", get(list_all))
         .route("/v1/outfits/thumbnails", post(upload_thumbnail))
         .route("/v1/outfits/thumbnails/{hash}", get(thumbnail))
-        .route("/v1/outfits/{id}", get(one).put(replace).delete(remove))
+        .route(
+            "/v1/outfits/{id}",
+            get(one).put(erase(replace)).delete(erase(remove)),
+        )
         .with_state(state);
-    DataWrites::guard(api, enabled)
+    DataWrites::guard(api, enabled).layer(axum::middleware::from_fn(
+        crate::shared::cors::decentraland_cors,
+    ))
 }
 
 /// The upstream envelopes: `{ ok: false, error: <label> }` for a handler
@@ -238,7 +279,7 @@ async fn require_creator(
     local: &str,
 ) -> Result<String, ApiError> {
     let author = require_signer(state, headers, method, original, local).await?;
-    if !state.settings.is_creator(&author) {
+    if !state.is_creator(&author) {
         return Err(ApiError::not_allowed());
     }
     Ok(author)
@@ -383,8 +424,8 @@ pub fn sniff_image_type(bytes: &[u8]) -> Option<&'static str> {
 }
 
 /// Whether the (possibly unsigned) caller may see an outfit: published, or an allowlisted author view.
-pub fn can_read(outfit: &Outfit, caller: Option<&str>, settings: &Settings) -> bool {
-    outfit.published || caller.is_some_and(|c| settings.is_creator(c))
+pub fn can_read(outfit: &Outfit, caller: Option<&str>, is_creator: impl Fn(&str) -> bool) -> bool {
+    outfit.published || caller.is_some_and(is_creator)
 }
 
 /// Upstream `Number(param ?? default) || default`: a value that is not a
@@ -471,7 +512,7 @@ async fn one(
     .await
     .map(|s| s.into_string());
     match outfit {
-        Some(outfit) if can_read(&outfit, caller.as_deref(), &state.settings) => {
+        Some(outfit) if can_read(&outfit, caller.as_deref(), |c| state.is_creator(c)) => {
             Ok(no_store(json!({ "outfit": outfit })))
         }
         _ => Err(ApiError::not_found()),

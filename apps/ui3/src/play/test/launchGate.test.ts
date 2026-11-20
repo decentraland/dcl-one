@@ -5,9 +5,9 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const load = async (onSites: boolean, search: string) => {
+const load = async (onSites: boolean, search: string, pub: { pulseServer?: string } = {}) => {
   vi.resetModules()
-  if (onSites) (window as { __DCL_PUBLIC__?: unknown }).__DCL_PUBLIC__ = {}
+  if (onSites) window.__DCL_PUBLIC__ = pub
   else delete (window as { __DCL_PUBLIC__?: unknown }).__DCL_PUBLIC__
   window.history.replaceState(null, '', search)
   const base = await import('../lib/baseDomain')
@@ -38,6 +38,17 @@ describe('the launch gate behind the gateway', () => {
     expect(rest).toEqual([])
     expect(p.name).toBe('catalyst')
     expect(p.value).toBe('https://evil.example')
+  })
+
+  it('passes the Pulse host the deployment names, as the engine writes it back', async () => {
+    const m = await load(true, '/?pulseServer=pulse.example.test', { pulseServer: 'pulse.example.test' })
+    expect(m.untrustedLaunchParams({ native: false })).toEqual([])
+  })
+
+  it('passes the page host an older session wrote back, and dials the named Pulse host instead', async () => {
+    const m = await load(true, `/?pulseServer=${window.location.host}`, { pulseServer: 'pulse.example.test' })
+    expect(m.untrustedLaunchParams({ native: false })).toEqual([])
+    expect(m.serviceUrl('pulseServer')).toBe('pulse.example.test')
   })
 
   it("upstream: derivation and trust agree on decentraland.org's own hosts", async () => {

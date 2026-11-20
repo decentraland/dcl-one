@@ -1,4 +1,4 @@
-import mitt from 'mitt';
+import { createEmitter } from '../../utils/emitter';
 import {
   GizmoManager as BabylonGizmoManager,
   Vector3,
@@ -18,7 +18,7 @@ import { getLayoutManager } from './layout-manager';
 
 export function createGizmoManager(context: SceneContext) {
   // events
-  const events = mitt<{ change: void }>();
+  const events = createEmitter<{ change: void }>();
 
   // Initialize state
   let selectedEntities: EcsEntity[] = [];
@@ -104,7 +104,7 @@ export function createGizmoManager(context: SceneContext) {
   // The gizmo is a renderer input device: it drags the local Babylon node, then
   // *emits* the committed transform. The inspector-side reverse-channel handler
   // performs the actual ECS write. `isUpdatingFromGizmo` still guards the
-  // Transform.onChange re-sync: mitt emits synchronously, so the ECS write
+  // Transform.onChange re-sync: the emitter emits synchronously, so the ECS write
   // happens inline within emitGizmoCommit — same ordering as the old direct
   // write — and the flag brackets it correctly.
   function emitGizmoCommit(transforms: RendererEvents['gizmoCommit']['transforms']) {
@@ -286,6 +286,14 @@ export function createGizmoManager(context: SceneContext) {
 
   return {
     gizmoManager,
+    /** The layers every gizmo draws in, to hide them all for a screenshot. */
+    getUtilityLayers() {
+      return [
+        gizmoManager.utilityLayer,
+        gizmoManager.keepDepthUtilityLayer,
+        freeTransformer.getUtilityLayer(),
+      ];
+    },
     isEnabled() {
       return isEnabled;
     },

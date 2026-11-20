@@ -15,7 +15,7 @@ inputs:
     required: false
     default: 'commit'
   additional-tags:
-    description: 'Comma-separated list of additional dist-tags to add (opt-in). Leave empty when initial-tag already covers the desired tag: npm dist-tag add is a registry-management call that OIDC Trusted Publishing does not authorize, so re-tagging under OIDC fails with E401.'
+    description: 'Comma-separated list of additional dist-tags to add (opt-in). Leave empty when initial-tag already covers the desired tag: adding a dist-tag is a registry-management call that OIDC Trusted Publishing does not authorize, so re-tagging under OIDC fails with E401.'
     required: false
     default: ''
   access:
