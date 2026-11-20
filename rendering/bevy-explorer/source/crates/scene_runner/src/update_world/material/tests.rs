@@ -836,6 +836,16 @@ mod definition {
     }
 
     #[test]
+    fn a_bump_texture_is_read_with_its_green_channel_down() {
+        let bumped = pbr(PbrMaterial {
+            bump_texture: texture("bumps.png"),
+            ..Default::default()
+        });
+        assert!(bumped.material.flip_normal_map_y);
+        assert!(!pbr(PbrMaterial::default()).material.flip_normal_map_y);
+    }
+
+    #[test]
     fn tiling_keeps_the_bottom_left_of_the_texture() {
         // meshes carry `1 - v`, so `offset + uv * tiling` from the bottom left is, in mesh uvs,
         // `v * tiling + (1 - tiling - offset)`
@@ -867,7 +877,10 @@ mod definition {
 mod readback {
     use std::path::PathBuf;
 
-    use dcl_component::proto_components::sdk::components::pb_material::GltfMaterial;
+    use dcl_component::proto_components::{
+        common::{texture_union::Tex, Texture, TextureUnion},
+        sdk::components::pb_material::{self, GltfMaterial},
+    };
     use ipfs::ipfs_path::IpfsType;
 
     use super::{super::*, container, material_app, material_app_with};
@@ -1033,6 +1046,60 @@ mod readback {
             "{:?}",
             read.translation
         );
+    }
+
+    fn written_with_normal_map(app: &App) -> (StandardMaterial, PbMaterial) {
+        let material = StandardMaterial {
+            normal_map_texture: Some(image(app, "bumps.png")),
+            ..Default::default()
+        };
+        let written = written(&material);
+        (material, written)
+    }
+
+    fn with_bump_src(mut written: PbMaterial, src: &str) -> PbMaterial {
+        let Some(pb_material::Material::Pbr(pbr)) = written.material.as_mut() else {
+            panic!("not a PBR material");
+        };
+        pbr.bump_texture = Some(TextureUnion {
+            tex: Some(Tex::Texture(Texture {
+                src: src.to_owned(),
+                ..Default::default()
+            })),
+        });
+        written
+    }
+
+    #[test]
+    fn a_normal_map_keeps_its_orientation() {
+        let (app, _) = material_app();
+        let (material, written) = written_with_normal_map(&app);
+        let definition =
+            MaterialDefinition::from_base_and_material(Some(&base(&material)), &written);
+        assert!(definition.normal_map.is_some());
+        assert!(!definition.material.flip_normal_map_y);
+    }
+
+    #[test]
+    fn a_bump_texture_put_in_a_normal_maps_place_is_the_scenes() {
+        let (app, _) = material_app();
+        let (material, written) = written_with_normal_map(&app);
+        let definition = MaterialDefinition::from_base_and_material(
+            Some(&base(&material)),
+            &with_bump_src(written, "scene-bumps.png"),
+        );
+        assert!(definition.material.flip_normal_map_y);
+    }
+
+    #[test]
+    fn a_bump_texture_without_a_source_leaves_the_normal_map_as_it_is() {
+        let (app, _) = material_app();
+        let (material, written) = written_with_normal_map(&app);
+        let definition = MaterialDefinition::from_base_and_material(
+            Some(&base(&material)),
+            &with_bump_src(written, ""),
+        );
+        assert!(!definition.material.flip_normal_map_y);
     }
 
     #[test]

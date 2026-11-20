@@ -95,6 +95,11 @@ fn tex_is_present(tex: &Option<TextureUnion>) -> bool {
     })
 }
 
+fn content_src(image: &Handle<Image>) -> Option<String> {
+    let ipfs_path = IpfsPath::new_from_path(image.path()?.path()).ok()??;
+    ipfs_path.content_path().map(ToOwned::to_owned)
+}
+
 /// `bound_material.wgsl` multiplies every emissive by 5; an SDK emissive of 1 is as bright as a
 /// white surface under a light of intensity 1.
 const SDK_EMISSIVE_SCALE: f32 = 0.2;
@@ -210,6 +215,15 @@ impl MaterialDefinition {
 
                 let uv_transform = texture_uv_transform(&pbr.texture);
 
+                // the glTF's own normal map comes back as a bump texture with its green channel up
+                let own_normal_map = gltf_backed
+                    && matches!(
+                        pbr.bump_texture.as_ref().and_then(|t| t.tex.as_ref()),
+                        Some(Tex::Texture(texture))
+                            if base.normal_map_texture.as_ref().and_then(content_src).as_deref()
+                                == Some(texture.src.as_str())
+                    );
+
                 (
                     StandardMaterial {
                         base_color,
@@ -220,7 +234,11 @@ impl MaterialDefinition {
                         // TODO specular intensity
                         alpha_mode,
                         // a bump texture's green channel points down the image
-                        flip_normal_map_y: pbr.bump_texture.is_some(),
+                        flip_normal_map_y: if own_normal_map || !tex_is_present(&pbr.bump_texture) {
+                            base.flip_normal_map_y
+                        } else {
+                            true
+                        },
                         uv_transform,
                         ..base.clone()
                     },
@@ -1009,9 +1027,7 @@ pub fn dcl_material_from_standard_material(
     images: &Assets<Image>,
 ) -> pb_material::Material {
     let dcl_texture = |h: &Handle<Image>| -> TextureUnion {
-        let path = h.path().unwrap().path();
-        let ipfs_path = IpfsPath::new_from_path(path).unwrap().unwrap();
-        let src = ipfs_path.content_path().unwrap().to_owned();
+        let src = content_src(h).unwrap();
         let sampler = if let Some(Image {
             sampler: ImageSampler::Descriptor(d),
             ..
