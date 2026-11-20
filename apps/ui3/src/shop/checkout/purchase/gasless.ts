@@ -133,6 +133,8 @@ export async function buyManyGasless(
   opts: {
     purchases: AnyPurchase[];
     onSigned?: () => void;
+    /** Each group's execution as signed, right before it goes to the relay: a throw sends nothing (see relayMetaTransaction). */
+    onSignedCall?: (call: SignedCall) => void;
     onBroadcast?: (info: { txHash: Hex; salts: string[] }) => void;
     onGroupSettling?: (progress: { settled: number; total: number }) => void;
   },
@@ -155,6 +157,7 @@ export async function buyManyGasless(
       fetchImpl: ctx.fetchImpl,
       minNonce: seen,
       onSigned: opts.onSigned,
+      onSignedCall: opts.onSignedCall,
     });
     opts.onBroadcast?.({ txHash, salts: built.salts });
     void reportSubmittedTx({ txHash, salts: built.salts, client: ctx.client });
