@@ -79,7 +79,8 @@ function serviceWorker(options: { quota?: number; usage?: number; usageDetails?:
   const navigator = { storage }
   const self = {
     addEventListener: (type: string, fn: (event: unknown) => void) => (listeners[type] = fn),
-    registration: { scope: 'https://play.example/' }
+    registration: { scope: 'https://play.example/' },
+    location: new URL('https://play.example/service_worker.js')
   }
   const source = readFileSync(resolve(__dirname, '../../../deploy/web/service_worker.js'), 'utf8')
   const load = new Function(

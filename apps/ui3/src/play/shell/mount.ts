@@ -1,8 +1,9 @@
 // The web shell (index.html): the top-level page that embeds the app (app.html: HUD + engine) in
 // an iframe. app.html is served with Document-Isolation-Policy, which makes it cross-origin
 // isolated on its own; this page is deliberately NOT isolated, so the browser keeps the two in
-// separate processes. The signed-in identity's key stays here: the app asks for the public
-// identity and for signatures, and never reads the origin's localStorage itself.
+// separate processes. A browser without that policy isolates this page too (lib/isolation.ts).
+// The signed-in identity's key stays here: the app asks for the public identity and for
+// signatures, and never reads the origin's localStorage itself.
 import { exitUrl } from '../host'
 import { authLoginUrl, isLoginMethod, authReturnUrl } from '@explorer-core/features/auth/sso'
 import { ANALYTICS_SESSION_PARAM, ANON_USER_ID_PARAM, dropAttributionParams } from '@explorer-core/lib/analytics'
@@ -16,6 +17,7 @@ import { loadOnce } from '../lib/loadOnce'
 import { reloadPage } from '@explorer-core/lib/reloadPage'
 import { dropDestination } from '@explorer-core/lib/startScreenUrl'
 import { shellResponse } from '@explorer-core/lib/shellReply'
+import { choosePageIsolation, servedByWorker, serviceWorkerUrl, shellMayMount } from '@explorer-core/lib/isolation'
 import type { ShellShop, ShellShopWallet } from './shop/purchase'
 import type { ShellDonate } from './donate/donation'
 import type { ShellGift } from './gift/gifting'
@@ -191,11 +193,20 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
     document.body.appendChild(p)
   }
 
-  // Mounts the app, unless this page is cross-origin isolated (the host's COOP/COEP without the
-  // service worker's rewrite, or an earlier version's worker): then the app shares its process.
+  // Mounts the app, unless this page is cross-origin isolated without page isolation (the host's
+  // COOP/COEP without the service worker's rewrite, or an earlier version's worker): then the app
+  // shares its process.
   function start(): void {
-    if (crossOriginIsolated) refuse()
-    else mount()
+    if (shellMayMount()) mount()
+    else refuse()
+  }
+
+  // The app is not isolated in its frame: this browser has no Document-Isolation-Policy. Choose page
+  // isolation and reload through the worker that gives it.
+  function isolatePage(): true {
+    if (!choosePageIsolation()) throw new Error('page isolation is not available')
+    register(false)
+    return true
   }
 
   // Messages from the app, for things only this page can do.
@@ -208,7 +219,9 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
       case 'bevy-shell:request': {
         const method = typeof m.method === 'string' ? m.method : ''
         const response = await shellResponse(m.id, async () =>
-          method.startsWith('shop.')
+          method === 'isolation.page'
+            ? isolatePage()
+            : method.startsWith('shop.')
             ? (await shellShop()).request(method, m.params)
             : method.startsWith('donate.')
               ? (await shellDonate()).request(method, m.params)
@@ -274,23 +287,10 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
   // version's worker isolates this page, so reload ONCE when the current one is active; the flag
   // stops a broken worker from reload-looping. Until then the app is not mounted.
   const FLAG = 'coi_sw_reloaded'
-  if (outOfScope) {
-    // leaving for the in-scope url
-  } else if ((window as { credentialless?: boolean }).credentialless) {
-    // no sign-in key to keep from the app here (see inShell in src/lib/shell.ts)
-    location.replace('app.html' + location.search + location.hash)
-  } else if (!('serviceWorker' in navigator)) {
-    start()
-  } else {
-    // whether THIS load went through the current worker: one that claims the page mid-load
-    // (clients.claim on a first visit) didn't rewrite its headers, so it still needs the reload
-    const ready = navigator.serviceWorker.controller != null && !crossOriginIsolated
-    if (ready) {
-      sessionStorage.removeItem(FLAG)
-      mount()
-    }
+  // Registers the worker of the chosen isolation; unless `ready`, reloads once it is active.
+  function register(ready: boolean): void {
     navigator.serviceWorker
-      .register(new URL('service_worker.js', PAGE_DIR))
+      .register(serviceWorkerUrl(PAGE_DIR))
       .then(async (reg) => {
         if (ready) return
         // registering again doesn't check for a newer worker than an earlier version's
@@ -322,5 +322,22 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
         console.log('[shell] service worker registration failed:', e)
         start()
       })
+  }
+  if (outOfScope) {
+    // leaving for the in-scope url
+  } else if ((window as { credentialless?: boolean }).credentialless) {
+    // no sign-in key to keep from the app here (see inShell in src/lib/shell.ts)
+    location.replace('app.html' + location.search + location.hash)
+  } else if (!('serviceWorker' in navigator)) {
+    start()
+  } else {
+    // whether THIS load went through the current worker: one that claims the page mid-load
+    // (clients.claim on a first visit) didn't rewrite its headers, so it still needs the reload
+    const ready = servedByWorker()
+    if (ready) {
+      sessionStorage.removeItem(FLAG)
+      mount()
+    }
+    register(ready)
   }
 }

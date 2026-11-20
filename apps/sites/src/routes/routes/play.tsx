@@ -6,7 +6,8 @@ import type { Route } from "./+types/play";
 // The web Explorer's shell page: the top-level document that keeps the sign-in key and embeds
 // the HUD + engine document (/play/app.html) in an iframe the browser isolates in a process of its
 // own. The logic is the upstream shell (apps/ui3/src/play/shell); this page is deliberately NOT
-// cross-origin isolated, the service worker at /play/service_worker.js strips any host COEP.
+// cross-origin isolated, the service worker at /play/service_worker.js strips any host COEP. A browser
+// without Document-Isolation-Policy isolates this page too (@explorer-core/lib/isolation).
 // play_.app[.]html.tsx (the app) is a sibling route, not a child: the shell never runs on /play/app.html.
 export function meta(_args: Route.MetaArgs) {
   return [

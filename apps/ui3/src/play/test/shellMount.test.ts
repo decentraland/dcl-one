@@ -73,6 +73,11 @@ describe('the shell’s answers to the app', () => {
     expect(await ask('shop.buy')).toEqual({ type: 'bevy-shell:response', id: expect.any(Number), error: 'a purchase is already open', code: SHOP_BUSY })
   })
 
+  it('refuses page isolation where it cannot help: here, no service worker', async () => {
+    expect(await ask('isolation.page')).toEqual({ type: 'bevy-shell:response', id: expect.any(Number), error: 'page isolation is not available' })
+    expect(localStorage.getItem('dcl-shell-isolation')).toBeNull()
+  })
+
   it('posts back any other failure as its message alone', async () => {
     shop.request.mockRejectedValue(new Error('this item is not sold here'))
     expect(await ask('shop.buy')).toEqual({ type: 'bevy-shell:response', id: expect.any(Number), error: 'this item is not sold here' })

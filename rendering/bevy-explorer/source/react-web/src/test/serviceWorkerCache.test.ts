@@ -10,7 +10,8 @@ function serviceWorker() {
   const network = vi.fn(async (req: Request) => new Response(new URL(req.url).origin))
   const self = {
     addEventListener: (type: string, fn: (event: unknown) => void) => (listeners[type] = fn),
-    registration: { scope: 'https://play.example/' }
+    registration: { scope: 'https://play.example/' },
+    location: new URL('https://play.example/service_worker.js')
   }
   const source = readFileSync(resolve(__dirname, '../../../deploy/web/service_worker.js'), 'utf8')
   const load = new Function('self', 'caches', 'fetch', 'console', source) as (

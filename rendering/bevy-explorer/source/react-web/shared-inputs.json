@@ -690,6 +690,14 @@
           "kind": "regular"
         },
         {
+          "name": "isolation.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "isolation.ts",
+          "kind": "regular"
+        },
+        {
           "name": "launchCount.ts",
           "kind": "regular"
         },
@@ -6125,7 +6133,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/shell/main.ts",
-      "sha256": "28e4c21223c4d1ad61a7a0174f82c331c8f19f79531bd780ad74408fdd32ddb0"
+      "sha256": "1d14ec47277475ba12167dfd0cf2194defe2adc1e91c64d611e30e81eb508d10"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/styles/global.css",
@@ -6317,11 +6325,15 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerCache.test.ts",
-      "sha256": "3f1d198907db693c7e280c15fb81aacaaa5fc9c130a8455a7cf9ffa1381487f9"
+      "sha256": "1106664083e2282a3a6b10b020c0c1cae872ad7cbb06634deca3671bedf6b5dd"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerContentCache.test.ts",
-      "sha256": "179c86a40ac1e98c97ef73f75821a9baee6df245b5d279bebb59f92c893db928"
+      "sha256": "38efeb40c92a0b4e5ed3d468d3eb190c1a6ad1711889db300758f845f7f967bc"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerIsolation.test.ts",
+      "sha256": "d3586a7559a97797bb062d2115b2bc4fa8eb154360814473f7c3fea2f5471beb"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/session.test.tsx",
@@ -6454,6 +6466,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/recoverSigner.ts",
     "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerCache.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerContentCache.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerIsolation.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/session.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/setup.ts",
     "rendering/bevy-explorer/source/react-web/src/test/sharedUi.test.tsx",
@@ -6865,7 +6878,7 @@
     },
     {
       "path": "library/explorer-core/lib/coiServiceWorker.ts",
-      "sha256": "41cdd406b7f2075f5583a18ee191abf11e3e026cd11862fcbe0a4082a34db378"
+      "sha256": "27bafe07df8784567b09fe31954016797651b8fc9fc79a46543430cdc610d9df"
     },
     {
       "path": "library/explorer-core/lib/color.ts",
@@ -6909,7 +6922,15 @@
     },
     {
       "path": "library/explorer-core/lib/isMobile.ts",
-      "sha256": "c7350a6ebe2cd5973e1e9ab63cb7e06bcfd2aebd5d90617acc6e18d82caa1a87"
+      "sha256": "fdaa03742fb38bb5b7adb597d858163d335d138fd31defe8a4c4fe5efcb2bbc3"
+    },
+    {
+      "path": "library/explorer-core/lib/isolation.test.ts",
+      "sha256": "0169d722e570a4811ea094a0babc268394c37fe0183d1c27945c313e3f75db4f"
+    },
+    {
+      "path": "library/explorer-core/lib/isolation.ts",
+      "sha256": "cf2fe6c33e1345d23b09f6cde3f2dd9a1842ef212eff576db76a1f2562bf9dcb"
     },
     {
       "path": "library/explorer-core/lib/launchCount.ts",
@@ -7129,7 +7150,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "bf0b506bcc719347237e5a3c7c84b5964bdc426440c65cd148ffbcb9503b4421"
+      "sha256": "d39f643918fd75c76ac92b1d8c85883a3cfab8a42b7d29cbf5d181955b71d76c"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -9609,7 +9630,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/gate/MobileGate.tsx",
-      "sha256": "8852d927b012432e2fece208e0d607a2fd450ab9b832c93dae179faa78a777e8"
+      "sha256": "5f0227c9251e80a5932ed24ecfd4a4961843d91ec52ee34ccd9d890a1f11ed93"
     },
     {
       "path": "library/ui/apps/hud/features/gate/UntrustedLaunchGate.module.css",
@@ -10421,7 +10442,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/gate.test.tsx",
-      "sha256": "ef7d1e0179fb658c6f28288d03c6b551a99ad9aad0a3d31f1aae3fe8915ac097"
+      "sha256": "bb57effd3f8047eb2048a54edf3cf402c1d507a13dbf75fe3a874fdab668d933"
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
@@ -12414,6 +12435,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/lib/coiServiceWorker.ts",
+      "to": "library/explorer-core/lib/isolation.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/lib/coiServiceWorker.ts",
+      "to": "library/explorer-core/lib/isolation.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/lib/coiServiceWorker.ts",
+      "to": "library/explorer-core/lib/isolation.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/lib/gpu.test.ts",
       "to": "library/explorer-core/lib/gpu.ts",
       "kind": "native:runtime"
@@ -12471,6 +12507,21 @@
     {
       "from": "library/explorer-core/lib/integratedGpu.test.ts",
       "to": "library/explorer-core/lib/integratedGpu.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/lib/isolation.test.ts",
+      "to": "library/explorer-core/lib/isolation.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/lib/isolation.test.ts",
+      "to": "library/explorer-core/lib/isolation.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/lib/isolation.test.ts",
+      "to": "library/explorer-core/lib/isolation.ts",
       "kind": "test:runtime"
     },
     {
@@ -45330,6 +45381,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/src/shell/main.ts",
+      "to": "library/explorer-core/lib/isolation.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/shell/main.ts",
       "to": "library/explorer-core/lib/prefs.ts",
       "kind": "production:runtime"
     },
@@ -46206,6 +46262,16 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/lib/isMobile.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/lib/isolation.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/lib/isolation.ts",
       "kind": "type"
     },
     {
