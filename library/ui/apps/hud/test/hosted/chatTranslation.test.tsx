@@ -62,6 +62,19 @@ describe('splitting a message for translation', () => {
     expect(parts.map((p) => p.value).join('')).toBe('hola @Ana 😀 ven a 10,20 https://x.org/a ok')
   })
 
+  it('keeps bold and italic tags back, around the words they style', () => {
+    expect(splitForTranslation('<b>hola</b> a <i>todos</i> <br>')).toEqual([
+      { value: '<b>', translate: false },
+      { value: 'hola', translate: true },
+      { value: '</b>', translate: false },
+      { value: ' a ', translate: true },
+      { value: '<i>', translate: false },
+      { value: 'todos', translate: true },
+      { value: '</i>', translate: false },
+      { value: ' <br>', translate: true }
+    ])
+  })
+
   it('a message of emoji and numbers has nothing to translate', async () => {
     const { requests } = mockServer(es({}))
     expect(await translateText('👍👍 100', 'en')).toBeNull()

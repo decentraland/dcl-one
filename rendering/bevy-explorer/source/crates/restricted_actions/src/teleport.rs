@@ -1,7 +1,11 @@
 use bevy::{math::Vec3Swizzles, prelude::*};
+use bevy_console::ConsoleCommand;
 use common::{
     rpc::{RpcCall, RpcCallEvent, RpcResultSender},
-    structs::{AvatarDynamicState, PermissionType, PrimaryUser, ReturnedToWorld},
+    structs::{
+        AvatarDynamicState, LandingSpawnPoint, PermissionType, PrimaryUser, ReturnedToWorld,
+        SpawnPoint,
+    },
 };
 use comms::global_crdt::ForeignPlayer;
 use ipfs::{ChangeRealmEvent, RealmInitialLocation};
@@ -18,9 +22,10 @@ use scene_runner::{
 };
 use wallet::Wallet;
 
-// (parcel, realm, response, report a realm change's outcome)
+// (parcel, realm, spawn point name, response, report a realm change's outcome)
 type TeleportAction = (
     Option<IVec2>,
+    Option<String>,
     Option<String>,
     RpcResultSender<Result<(), String>>,
     bool,
@@ -32,16 +37,24 @@ pub fn teleport_player(
     mut player: Query<(Entity, &mut Transform, &mut AvatarDynamicState), With<PrimaryUser>>,
     mut perms: Permission<TeleportAction>,
     mut realm_target: ResMut<RealmInitialLocation>,
+    mut landing_spawn_point: ResMut<LandingSpawnPoint>,
     super_user: Query<(), With<SuperUserScene>>,
 ) {
     let mut actions: Vec<TeleportAction> = Vec::new();
 
-    for (scene, to, realm, response) in events.read().filter_map(|ev| match &ev.call {
+    for (scene, to, realm, spawn_point, response) in events.read().filter_map(|ev| match &ev.call {
         RpcCall::TeleportPlayer {
             to,
             realm,
+            spawn_point,
             response,
-        } => Some((ev.origin.scene(), *to, realm.clone(), response.clone())),
+        } => Some((
+            ev.origin.scene(),
+            *to,
+            realm.clone(),
+            spawn_point.clone(),
+            response.clone(),
+        )),
         _ => None,
     }) {
         let parcel = to.map(|to| format!("({},{})", to.x, to.y));
@@ -59,14 +72,14 @@ pub fn teleport_player(
         // system requests reply to their requester; a scene is gone once its realm change lands,
         // so its player is told in the console, unless it is the HUD's own bridge scene
         let Some(scene) = scene else {
-            actions.push((to, realm, response, false));
+            actions.push((to, realm, spawn_point, response, false));
             continue;
         };
         let report = !super_user.contains(scene);
         perms.check(
             ty,
             scene,
-            (to, realm, response, report),
+            (to, realm, spawn_point, response, report),
             Some(detail),
             false,
         );
@@ -75,7 +88,9 @@ pub fn teleport_player(
     actions.extend(perms.drain_success(PermissionType::Teleport));
     actions.extend(perms.drain_success(PermissionType::ChangeRealm));
 
-    for (to, realm, response, report) in actions {
+    for (to, realm, spawn_point, response, report) in actions {
+        // each teleport names its own landing; a realm change that fails clears it again
+        landing_spawn_point.pending = spawn_point;
         if let Some(realm) = realm {
             // A realm change (a full reconnect, even to the realm we are in — same as changeRealm),
             // landing on the parcel once it is live, or on the realm's default spawn without one.
@@ -122,12 +137,61 @@ pub fn teleport_player(
         info!("teleported to {to}");
     }
 
-    for (_, _, response, _) in perms.drain_fail(PermissionType::Teleport) {
+    for (_, _, _, response, _) in perms.drain_fail(PermissionType::Teleport) {
         response.send(Err("User declined".to_owned()))
     }
-    for (_, _, response, _) in perms.drain_fail(PermissionType::ChangeRealm) {
+    for (_, _, _, response, _) in perms.drain_fail(PermissionType::ChangeRealm) {
         response.send(Err("User declined".to_owned()))
     }
+}
+
+/// The scene's first spawn point of this name, whatever the case of either.
+fn named_spawn_point<'a>(spawn_points: &'a [SpawnPoint], name: &str) -> Option<&'a SpawnPoint> {
+    spawn_points.iter().find(|spawn_point| {
+        spawn_point
+            .name
+            .as_deref()
+            .is_some_and(|own| own.eq_ignore_ascii_case(name))
+    })
+}
+
+fn default_spawn_points(spawn_points: &[SpawnPoint]) -> Vec<&SpawnPoint> {
+    let defaults = spawn_points
+        .iter()
+        .filter(|spawn_point| spawn_point.default)
+        .collect::<Vec<_>>();
+    if defaults.is_empty() {
+        spawn_points.iter().collect()
+    } else {
+        defaults
+    }
+}
+
+/// The spawn point a teleport named for its landing, for the debug panel's Teleport section.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/teleport_state")]
+pub struct TeleportState;
+
+pub fn teleport_state(
+    mut input: ConsoleCommand<TeleportState>,
+    landing_spawn_point: Res<LandingSpawnPoint>,
+) {
+    if input.take().is_none() {
+        return;
+    }
+    input.reply_ok(
+        serde_json::json!({
+            "pending": landing_spawn_point.pending,
+            "last": landing_spawn_point.last.as_ref().map(|(name, found)| {
+                serde_json::json!({ "name": name, "found": found })
+            }),
+            "unavailable": {
+                "pending": "No teleport waiting to land named a spawn point.",
+                "last": "No landing has looked for a named spawn point.",
+            },
+        })
+        .to_string(),
+    );
 }
 
 pub fn handle_out_of_world(
@@ -146,6 +210,7 @@ pub fn handle_out_of_world(
     foreign_players: Query<&GlobalTransform, With<ForeignPlayer>>,
     wallet: Res<Wallet>,
     mut returned: EventWriter<ReturnedToWorld>,
+    mut landing_spawn_point: ResMut<LandingSpawnPoint>,
 ) {
     let Ok((player, mut t)) = player.single_mut() else {
         return;
@@ -167,6 +232,9 @@ pub fn handle_out_of_world(
         Some(PointerResult::Nothing) => {
             debug!("scene {parcel} doesn't exist, returning to world");
             debug!("everything: {:?}", pointers);
+            if let Some(name) = landing_spawn_point.pending.take() {
+                landing_spawn_point.last = Some((name, false));
+            }
             commands.entity(player).remove::<OutOfWorld>();
             returned.write(ReturnedToWorld::SceneReady);
             return;
@@ -189,6 +257,9 @@ pub fn handle_out_of_world(
     // fetched has one and never ticks past its spawn tick.
     if matches!(maybe_loadstate, Some(SceneLoading::Failed)) {
         debug!("failed, returning to world");
+        if let Some(name) = landing_spawn_point.pending.take() {
+            landing_spawn_point.last = Some((name, false));
+        }
         commands.entity(player).remove::<OutOfWorld>();
         returned.write(ReturnedToWorld::SceneLoadFailed);
         return;
@@ -242,16 +313,22 @@ pub fn handle_out_of_world(
                     .unwrap_or(1000.0);
             let mut count = 100;
 
-            // spawn points marked `default` take precedence; a scene without any uses them all
-            let default_spawn_points = context
-                .spawn_points
-                .iter()
-                .filter(|sp| sp.default)
-                .collect::<Vec<_>>();
-            let spawn_points = if default_spawn_points.is_empty() {
-                context.spawn_points.iter().collect()
-            } else {
-                default_spawn_points
+            // the spawn point the teleport named, when the scene has it; without one, spawn
+            // points marked `default` take precedence, and a scene without any uses them all
+            let named = landing_spawn_point.pending.take().and_then(|name| {
+                let found = named_spawn_point(&context.spawn_points, &name);
+                if found.is_none() {
+                    warn!(
+                        "scene {} has no spawn point named `{name}`, using its default",
+                        context.hash
+                    );
+                }
+                landing_spawn_point.last = Some((name, found.is_some()));
+                found
+            });
+            let spawn_points = match named {
+                Some(named) => vec![named],
+                None => default_spawn_points(&context.spawn_points),
             };
 
             if !spawn_points.is_empty() {
@@ -305,6 +382,29 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn a_named_spawn_point_is_found_whatever_its_case() {
+        let spawn_points: Vec<SpawnPoint> = serde_json::from_value(serde_json::json!([
+            { "name": "Lobby", "default": true, "position": { "x": 1, "y": 0, "z": 1 } },
+            { "name": "roof", "position": { "x": 2, "y": 9, "z": 2 } },
+            { "name": "ROOF", "position": { "x": 3, "y": 9, "z": 3 } },
+            { "position": { "x": 4, "y": 0, "z": 4 } },
+        ]))
+        .unwrap();
+        // each one's x tells them apart
+        let named = |name| {
+            named_spawn_point(&spawn_points, name).map(|found| found.position.bounding_box().0.x)
+        };
+        assert_eq!(named("lobby"), Some(1.0));
+        // the first of two alike
+        assert_eq!(named("Roof"), Some(2.0));
+        assert_eq!(named("cellar"), None);
+        assert_eq!(named(""), None);
+        // without a name, the scene's default ones
+        assert_eq!(default_spawn_points(&spawn_points).len(), 1);
+        assert_eq!(default_spawn_points(&spawn_points[1..]).len(), 3);
+    }
+
     // A scene whose main js could not be fetched fails after it has a context, still at its first
     // tick: the player waiting outside it goes in, as for a scene that failed before it had one.
     #[test]
@@ -352,6 +452,7 @@ mod tests {
         wallet.finalize_as_guest();
         world.insert_resource(wallet);
         world.init_resource::<Events<ReturnedToWorld>>();
+        world.init_resource::<LandingSpawnPoint>();
         let player = world
             .spawn((
                 PrimaryUser::default(),

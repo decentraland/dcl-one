@@ -32,6 +32,39 @@ pub fn capped(text: &str, max: usize) -> String {
     capped
 }
 
+/// The length of the bold or italic tag opening `text`: `<b>`, `</b>`, `<i>` or `</i>`, each
+/// also with anything after whitespace before its `>`. The HUD's chat reads the same tags
+/// (`TOKEN_RE` in `chatParse.ts`).
+fn style_tag_len(text: &str) -> Option<usize> {
+    let body = text.strip_prefix('<')?;
+    let body = body.strip_prefix('/').unwrap_or(body);
+    let after = body.strip_prefix(['b', 'i'])?;
+    let name_end = text.len() - after.len();
+    match after.chars().next()? {
+        '>' => Some(name_end + 1),
+        c if c.is_whitespace() => Some(name_end + after.find('>')? + 1),
+        _ => None,
+    }
+}
+
+/// `message` without its bold and italic tags: the HUD's chat styles the text between them, a
+/// bubble has one face and shows the words alone.
+pub fn without_style_tags(message: &str) -> String {
+    let mut plain = String::with_capacity(message.len());
+    let mut rest = message;
+    while let Some(start) = rest.find('<') {
+        plain.push_str(&rest[..start]);
+        rest = &rest[start..];
+        let skipped = style_tag_len(rest).unwrap_or_else(|| {
+            plain.push('<');
+            1
+        });
+        rest = &rest[skipped..];
+    }
+    plain.push_str(rest);
+    plain
+}
+
 /// A chat message to show over its sender's nametag. Nothing is shown for a sender with no
 /// nametag up, and the message is not kept for later.
 #[derive(Event, Clone, Debug)]
@@ -229,6 +262,20 @@ mod tests {
         let long = capped(&"😀\n".repeat(5000), MAX_MESSAGE_CHARS);
         assert_eq!(long.chars().count(), MAX_MESSAGE_CHARS);
         assert!(!long.contains('\n'));
+    }
+
+    #[test]
+    fn bold_and_italic_tags_are_left_out() {
+        // the tags `parseMessage` in library/explorer-core/features/chat/chatParse.ts reads
+        assert_eq!(
+            without_style_tags("<b>bold</b> and <i>italic</i>"),
+            "bold and italic"
+        );
+        assert_eq!(without_style_tags("<b x=1>open</b >"), "open");
+        assert_eq!(without_style_tags("<i><b>both"), "both");
+        for kept in ["<B>caps</B>", "<br>", "<bold>", "< b>", "a < b", "<b", "<b x", "<>", "名<前"] {
+            assert_eq!(without_style_tags(kept), kept, "{kept}");
+        }
     }
 
     #[test]

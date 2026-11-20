@@ -53,7 +53,7 @@ use crate::{
 use self::{
     animation::{BubbleAnimation, BubblePhase, BubbleTarget, BUBBLE_LIFETIME},
     bubble::{
-        capped, message_spans, BubbleKind, ChatBubbleRequest, ChatBubbleRetext,
+        capped, message_spans, without_style_tags, BubbleKind, ChatBubbleRequest, ChatBubbleRetext,
         MAX_COMMUNITY_NAME_CHARS, MAX_MESSAGE_CHARS, MAX_NAME_CHARS,
     },
     layout::{
@@ -774,7 +774,7 @@ fn show_chat_bubbles(
         if !named.contains(request.sender) {
             continue;
         }
-        let message = capped(&request.message, MAX_MESSAGE_CHARS);
+        let message = capped(&without_style_tags(&request.message), MAX_MESSAGE_CHARS);
         // nothing to read: no bubble
         if message.trim().is_empty() {
             continue;
@@ -833,7 +833,7 @@ fn show_chat_bubbles(
     }
 
     for retext in retexts.read() {
-        let message = capped(&retext.message, MAX_MESSAGE_CHARS);
+        let message = capped(&without_style_tags(&retext.message), MAX_MESSAGE_CHARS);
         if message.trim().is_empty() {
             continue;
         }

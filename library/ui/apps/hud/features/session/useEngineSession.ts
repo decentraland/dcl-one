@@ -6,7 +6,8 @@ import { clearLogins, getLogin, redirectToAuth, returnedFromAuth, rootAddress, t
 import { hoverKey, proximityKey } from '@explorer-core/engine/pointerKeys'
 import type { LoginDriver, NewAccountPick } from '@explorer-core/engine/driver'
 import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
-import { recordVisit } from '@explorer-core/features/lobby/lobbyApi'
+import { fetchCrowd, recordVisit } from '@explorer-core/features/lobby/lobbyApi'
+import { type GotoTarget, randomParcel } from '@explorer-core/features/lobby/goto'
 import { answerItemPurchase, type PurchaseSceneItem } from '../itemPurchase/answer'
 import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
@@ -44,7 +45,7 @@ import { peekProfile, profileChanged, profileReadFailed, receiveOwnProfile, rece
 import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
 import { getCursor } from '@explorer-core/features/pointer/cursorStore'
 import { openProfileCard } from '../profileCard/ProfileCard'
-import { formatConsoleReply, parseChatCommand } from '@explorer-core/features/chat/chatCommands'
+import { formatConsoleReply, parseChatCommand, resolveGoto, type GotoHere } from '@explorer-core/features/chat/chatCommands'
 import { applyLanguageSetting, clearAutoTranslate } from '@explorer-core/features/chat/translation'
 import { clearPingMode, shouldPing } from '../chat/ping'
 import { useAskBeforeLeaving } from '../settings/askBeforeLeaving'
@@ -1398,6 +1399,11 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // the latest counts: an earlier one is answered as superseded when a newer one replaces it.
   const travelSeq = useRef(0)
   const [travellingTo, setTravellingTo] = useState<string | null>(null)
+  // Chat's /goto answers once its request ends: the line for each outcome, by travel id. A teleport
+  // inside the realm takes its id from below zero, apart from the realm changes' own.
+  const gotoReplies = useRef(new Map<number, { ok: string; failed: (reason: string) => string }>())
+  const gotoTeleportSeq = useRef(0)
+  const pushSystemMessageRef = useRef<(message: string) => void>(() => undefined)
   const [travelError, setTravelError] = useState<string | null>(null)
   const [platformBan, setPlatformBan] = useState<PlatformBanNotice | null>(null)
   const [banRefusedTravel, setBanRefusedTravel] = useState(false)
@@ -2475,7 +2481,14 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
         case 'homeScene':
           setHome({ realm: msg.realm === DEFAULT_REALM ? null : msg.realm, parcel: `${msg.parcel.x},${msg.parcel.y}` })
           break
-        case 'travelResult':
+        case 'travelResult': {
+          const reply = gotoReplies.current.get(msg.travelId)
+          if (reply != null) {
+            gotoReplies.current.delete(msg.travelId)
+            pushSystemMessageRef.current(msg.ok ? reply.ok : reply.failed(msg.message ?? 'unknown error'))
+          }
+          // a teleport inside the realm: no realm was left, and no loader shown
+          if (msg.travelId < 0) break
           if (msg.ok) travelCount.traveled()
           if (msg.travelId !== travelSeq.current) break
           setTravellingTo(null)
@@ -2488,6 +2501,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
             else setDestinationPicked(false)
           }
           break
+        }
         case 'lobbyStageReady':
           setLobbyStageReady(true)
           setAvatarLoaded(true)
@@ -2857,6 +2871,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       [...prev, { sender: '', message, channel: 'Nearby', messageId: '', id: chatId.current++, ts: Date.now() }].slice(-MAX_CHAT_LINES)
     )
   }, [])
+  pushSystemMessageRef.current = pushSystemMessage
 
   // A realm change from the HUD: the loader shows from the request until the engine reports the
   // outcome (it validates the destination before leaving the current realm).
@@ -2865,8 +2880,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     const travelId = ++travelSeq.current
     setTravellingTo(msg.realm)
     driverRef.current?.send({ ...msg, travelId })
+    return travelId
   }, [])
-  const changeRealm = useCallback((realm: string) => travel({ kind: 'changeRealm', realm }), [travel])
+  const changeRealm = useCallback((realm: string) => void travel({ kind: 'changeRealm', realm }), [travel])
   const dismissTravelError = useCallback(() => setTravelError(null), [])
   const dismissBanRefusedTravel = useCallback(() => setBanRefusedTravel(false), [])
 
@@ -2882,6 +2898,48 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     skipRefusal.current.clear()
   }, [])
 
+  // Chat's /goto and /goto-local: the destination becomes one request to the
+  // engine, and the command's answer is posted when that request ends.
+  const hereRef = useRef<GotoHere>({ genesis: true, realm: null, parcel: mapParcel })
+  hereRef.current = { genesis: isGenesisSatelliteView(satelliteView), realm: linkRealm, parcel: mapParcel }
+  const goto = useCallback(
+    async (target: GotoTarget, local: boolean) => {
+      let destination = target
+      if (target.random || target.crowd) {
+        try {
+          destination = { ...target, random: false, crowd: false, parcel: target.random ? randomParcel() : await fetchCrowd() }
+        } catch (e) {
+          console.warn('[chat] /goto crowd', e)
+          pushSystemMessage('🔴 Error running command.')
+          return
+        }
+      }
+      const plan = resolveGoto(destination, local, hereRef.current, DEFAULT_REALM)
+      if (plan.kind === 'reply') {
+        pushSystemMessage(plan.message)
+        return
+      }
+      const { spawnPoint } = plan
+      if (plan.kind === 'teleport') {
+        const travelId = --gotoTeleportSeq.current
+        gotoReplies.current.set(travelId, { ok: plan.reply, failed: (reason) => `🔴 Error: ${reason}` })
+        driverRef.current?.send({ kind: 'teleport', x: plan.x, y: plan.y, spawnPoint, travelId })
+        return
+      }
+      const travelId = travel(plan.parcel == null ? { kind: 'changeRealm', realm: plan.realm, spawnPoint } : { kind: 'teleport', realm: plan.realm, ...plan.parcel, spawnPoint })
+      const { world } = plan
+      gotoReplies.current.set(travelId, {
+        ok: plan.reply,
+        failed: (reason) => {
+          // a later travel took this one's place (the bridge's own words)
+          if (reason.startsWith('superseded')) return '🔴 Error: The operation was canceled!'
+          return world == null ? `🔴 Error: ${reason}` : `🔴 Error: The world ${world} doesn't exist or not reachable!`
+        }
+      })
+    },
+    [pushSystemMessage, travel]
+  )
+
   // Chat send doubles as the slash-command interceptor (parity with bevy-ui-scene's `sendChatMessage`):
   // a recognized `/command` never reaches other players — it teleports, reloads, runs an engine console
   // command, or echoes a system message. Anything else is sent as a normal Nearby message.
@@ -2893,13 +2951,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           if (cmd.text) driverRef.current?.send({ kind: 'sendChat', message: cmd.text, channel: channelRef.current })
           break
         case 'goto':
-          driverRef.current?.send({ kind: 'teleport', x: cmd.x, y: cmd.y })
-          break
-        case 'genesis':
-          changeRealm(DEFAULT_REALM)
-          break
-        case 'world':
-          changeRealm(cmd.realm)
+          void goto(cmd.target, cmd.local)
           break
         case 'reload':
           reloadScene()
@@ -2918,7 +2970,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           break
       }
     },
-    [pushSystemMessage, changeRealm, reloadScene]
+    [pushSystemMessage, goto, reloadScene]
   )
 
   // Toggle one exclusive panel (closing chat + all others); optionally run onOpen.

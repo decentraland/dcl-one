@@ -1916,6 +1916,15 @@ pub struct PlayerTeleported {
 #[derive(Component)]
 pub struct OutOfWorld;
 
+/// The spawn point a teleport asked to land on, by name, until the player lands. A realm change
+/// that fails, and a move that names none, clear `pending`.
+#[derive(Resource, Default, Debug)]
+pub struct LandingSpawnPoint {
+    pub pending: Option<String>,
+    /// The last name a landing looked for, and whether its scene had a spawn point of that name.
+    pub last: Option<(String, bool)>,
+}
+
 /// The primary camera is the camera reel's free photo camera: the player camera systems leave its
 /// transform and projection alone until it is removed.
 #[derive(Component)]

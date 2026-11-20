@@ -122,6 +122,7 @@ mod place {
         commands.send_event(RpcCallEvent::engine(RpcCall::TeleportPlayer {
             to: destination.parcel,
             realm: destination.realm.clone(),
+            spawn_point: None,
             response,
         }));
         let applied = destination.applied().to_string();

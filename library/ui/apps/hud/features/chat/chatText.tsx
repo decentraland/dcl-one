@@ -1,6 +1,7 @@
 // Rich chat text — ports the SDK7 chat's `decorateMessageWithLinks`: turn a raw
 // message into clickable URLs, location coords (teleport), and @username mentions
-// (clickable → profile viewer; highlighted when they mention you). Parsing is a pure
+// (clickable → profile viewer; highlighted when they mention you), with <b> and <i> as bold
+// and italic. Parsing is a pure
 // function so it's unit-testable; <MessageText> renders the tokens with handlers.
 
 import type { NearbyMember } from '@explorer-core/engine/protocol'
@@ -16,7 +17,7 @@ export function MessageText({
 }: {
   text: string
   members: NearbyMember[]
-  styles: { url: string; mention: string; location: string; world: string }
+  styles: { url: string; mention: string; location: string; world: string; bold: string; italic: string }
   /** A resolved @mention was clicked (address known). */
   onMention: (address: string, name: string, e: React.MouseEvent) => void
   /** A location link (x,y) was clicked. */
@@ -25,39 +26,51 @@ export function MessageText({
   onWorld?: (name: string) => void
 }): React.JSX.Element {
   const index = buildNameIndex(members)
+  // An opening tag styles everything up to its closing tag, or to the message's end without one;
+  // a closing tag with nothing open does nothing.
+  let bold = 0
+  let italic = 0
+  const styled = (className?: string): string | undefined =>
+    [className, bold > 0 ? styles.bold : null, italic > 0 ? styles.italic : null].filter(Boolean).join(' ') || undefined
   return (
     <>
       {parseMessage(text).map((t, i) => {
+        if (t.type === 'tag') {
+          const step = t.close ? -1 : 1
+          if (t.style === 'b') bold = Math.max(0, bold + step)
+          else italic = Math.max(0, italic + step)
+          return null
+        }
         if (t.type === 'url') {
           return (
-            <a key={i} className={styles.url} href={t.value} target="_blank" rel="noreferrer noopener">
+            <a key={i} className={styled(styles.url)} href={t.value} target="_blank" rel="noreferrer noopener">
               {t.value}
             </a>
           )
         }
         if (t.type === 'world') {
-          if (!onWorld) return <span key={i}>{t.value}</span>
+          if (!onWorld) return <span key={i} className={styled()}>{t.value}</span>
           return (
-            <button key={i} type="button" className={styles.world} onClick={() => onWorld(t.value)}>
+            <button key={i} type="button" className={styled(styles.world)} onClick={() => onWorld(t.value)}>
               {t.value}
             </button>
           )
         }
         if (t.type === 'location') {
           return (
-            <button key={i} type="button" className={styles.location} onClick={() => onLocation(t.x, t.y)}>
+            <button key={i} type="button" className={styled(styles.location)} onClick={() => onLocation(t.x, t.y)}>
               {t.value}
             </button>
           )
         }
         if (t.type === 'mention') {
           const addr = resolveMention(t, index)
-          if (!addr) return <span key={i}>{t.value}</span>
+          if (!addr) return <span key={i} className={styled()}>{t.value}</span>
           return (
             <button
               key={i}
               type="button"
-              className={styles.mention}
+              className={styled(styles.mention)}
               onClick={(e) => onMention(addr, t.name, e)}
               onContextMenu={(e) => onMention(addr, t.name, e)}
             >
@@ -65,7 +78,7 @@ export function MessageText({
             </button>
           )
         }
-        return <span key={i}>{t.value}</span>
+        return <span key={i} className={styled()}>{t.value}</span>
       })}
     </>
   )

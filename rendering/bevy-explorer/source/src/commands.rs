@@ -3,7 +3,7 @@ use bevy_console::ConsoleCommand;
 use common::{
     rpc::{RpcCall, RpcCallEvent, RpcResultSender},
     structs::{
-        AppConfig, ParcelGrassSetting, PreviewMode, PrimaryUser, SceneLoadDistance, SessionGraphics,
+        AppConfig, LandingSpawnPoint, ParcelGrassSetting, PreviewMode, PrimaryUser, SceneLoadDistance, SessionGraphics,
     },
 };
 use console::PendingConsoleResponses;
@@ -22,6 +22,9 @@ pub struct ChangeLocationCommand {
     y: i32,
     /// realm the parcel is in (a world name or realm url): change realm, then land on the parcel
     realm: Option<String>,
+    /// name of the spawn point of the parcel's scene to land on
+    #[arg(long)]
+    spawn: Option<String>,
 }
 
 pub fn change_location(
@@ -29,6 +32,7 @@ pub fn change_location(
     mut input: ConsoleCommand<ChangeLocationCommand>,
     mut player: Query<(Entity, &mut Transform), With<PrimaryUser>>,
     mut pending: ResMut<PendingConsoleResponses>,
+    mut spawn_point: ResMut<LandingSpawnPoint>,
 ) {
     if let Some(Ok(command)) = input.take() {
         if let Some(realm) = command.realm {
@@ -36,6 +40,7 @@ pub fn change_location(
             commands.send_event(RpcCallEvent::engine(RpcCall::TeleportPlayer {
                 to: Some(IVec2::new(command.x, command.y)),
                 realm: Some(realm.clone()),
+                spawn_point: command.spawn,
                 response,
             }));
             let location = (command.x, command.y);
@@ -52,6 +57,7 @@ pub fn change_location(
             if let Ok(mut commands) = commands.get_entity(ent) {
                 commands.try_insert(OutOfWorld);
             }
+            spawn_point.pending = command.spawn;
             input.reply_ok(format!("new location: {:?}", (command.x, command.y)));
             return;
         }

@@ -666,6 +666,7 @@ impl Plugin for IpfsIoPlugin {
         }
         app.insert_resource(IpfsResource { inner: ipfs_io });
         app.insert_resource(RealmInitialLocation::Base);
+        app.init_resource::<common::structs::LandingSpawnPoint>();
 
         #[cfg(feature = "hot_reload")]
         app.register_asset_source(
@@ -753,10 +754,12 @@ fn change_realm_command(
     mut input: ConsoleCommand<ChangeRealmCommand>,
     mut writer: EventWriter<ChangeRealmEvent>,
     mut target: ResMut<RealmInitialLocation>,
+    mut spawn_point: ResMut<common::structs::LandingSpawnPoint>,
     mut pending: ResMut<PendingConsoleResponses>,
 ) {
     if let Some(Ok(command)) = input.take() {
         *target = RealmInitialLocation::Base;
+        spawn_point.pending = None;
         debug!("change realm command -> base");
         let (response, rx) = RpcResultSender::channel();
         let realm = command.new_realm.clone();
@@ -810,7 +813,11 @@ pub fn change_realm(
     mut current_realm: ResMut<CurrentRealm>,
     mut print: EventWriter<PrintConsoleLine>,
     preview_mode: Res<PreviewMode>,
-    mut target: ResMut<RealmInitialLocation>,
+    // one parameter of the sixteen a system takes
+    (mut target, mut spawn_point): (
+        ResMut<RealmInitialLocation>,
+        ResMut<common::structs::LandingSpawnPoint>,
+    ),
     mut in_flight: Local<Vec<InFlightRealmChange>>,
     mut ids: Local<RealmChangeIds>,
     // the latest issued id and the refusal it carries
@@ -836,6 +843,7 @@ pub fn change_realm(
         // for the new one must not carry over to a later change. Only the latest request owns it.
         if result.is_err() && change.id == latest {
             *target = RealmInitialLocation::None;
+            spawn_point.pending = None;
         }
         if result.is_ok() {
             released = true;

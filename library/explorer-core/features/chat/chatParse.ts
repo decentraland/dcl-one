@@ -1,5 +1,5 @@
-// Rich chat text: a raw message as URLs, worlds, locations and @mentions, as tokens <MessageText>
-// renders (library/ui/apps/hud/features/chat/chatText.tsx). Pure, so it is unit-testable.
+// Rich chat text: a raw message as URLs, worlds, locations, @mentions and bold/italic tags, as
+// tokens <MessageText> renders (library/ui/apps/hud/features/chat/chatText.tsx). Pure, so it is unit-testable.
 import { MENTION_PATTERN, mentionName, mentionsName } from '../../engine/mention'
 import type { NearbyMember } from '../../engine/protocol'
 
@@ -9,12 +9,17 @@ export type Token =
   | { type: 'world'; value: string }
   | { type: 'location'; value: string; x: number; y: number }
   | { type: 'mention'; value: string; name: string; tag?: string }
+  /** `<b>`, `</b>`, `<i>` or `</i>`: styles the tokens after it and is not shown itself. */
+  | { type: 'tag'; value: string; style: 'b' | 'i'; close: boolean }
 
-// URL → world name → location (x,y) → @mention, scanned in one pass to keep original order.
-// Worlds are ENS names (e.g. boedo.dcl.eth) → clickable "jump to realm". Coords require both
-// signs/commas so we don't linkify every number; mentions use the shared MENTION_PATTERN.
+// Tag → URL → world name → location (x,y) → @mention, scanned in one pass to keep original order.
+// The tags are lowercase b and i, opening or closing, with anything after whitespace up to the
+// `>`: the two the Unity client's chat also styles, so a message reads alike in both. Any other
+// tag is text. Worlds are ENS
+// names (e.g. boedo.dcl.eth) → clickable "jump to realm". Coords require both signs/commas so we
+// don't linkify every number; mentions use the shared MENTION_PATTERN.
 const TOKEN_RE = new RegExp(
-  String.raw`(?<url>https?:\/\/[^\s<>"']+)|(?<world>[a-z0-9][\w-]*\.(?:dcl\.)?eth\b)|(?<loc>-?\d{1,3}\s*,\s*-?\d{1,3})|` + MENTION_PATTERN,
+  String.raw`(?<tag><(?<close>\/)?(?<style>[bi])(?:\s[^>]*)?>)|(?<url>https?:\/\/[^\s<>"']+)|(?<world>[a-z0-9][\w-]*\.(?:dcl\.)?eth\b)|(?<loc>-?\d{1,3}\s*,\s*-?\d{1,3})|` + MENTION_PATTERN,
   'gi'
 )
 
@@ -23,9 +28,13 @@ export function parseMessage(text: string): Token[] {
   let last = 0
   for (const m of text.matchAll(TOKEN_RE)) {
     const i = m.index ?? 0
-    if (i > last) tokens.push({ type: 'text', value: text.slice(last, i) })
     const g = m.groups ?? {}
-    if (g.url) {
+    // the scan ignores case, the tags don't: <B> stays in the text around it
+    if (g.tag && g.style !== 'b' && g.style !== 'i') continue
+    if (i > last) tokens.push({ type: 'text', value: text.slice(last, i) })
+    if (g.tag) {
+      tokens.push({ type: 'tag', value: g.tag, style: g.style as 'b' | 'i', close: g.close != null })
+    } else if (g.url) {
       tokens.push({ type: 'url', value: g.url })
     } else if (g.world) {
       tokens.push({ type: 'world', value: g.world })

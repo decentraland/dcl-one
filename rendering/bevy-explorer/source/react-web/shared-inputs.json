@@ -5066,6 +5066,10 @@
           "kind": "regular"
         },
         {
+          "name": "chatMessageText.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "chatText.test.ts",
           "kind": "regular"
         },
@@ -6338,7 +6342,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/realmTravel.test.tsx",
-      "sha256": "e16dc3f88748d06173160d70b18eb950146d37c292c85b53ecbff0021a295525"
+      "sha256": "8a86842f0495d1e36ada4c4a6e07438d18eed5fafe6ca134b4f118591e6eb8c8"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/recoverSigner.ts",
@@ -6587,7 +6591,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "c0aa82ebcc0a40560ebc404979ea516813a9aa4ede2eac55cb24b7423f77df57"
+      "sha256": "a3cc0fc5150a342dbee65992dcfb93edc1cf9af32ae2a7e5a08bbc4da080ecf6"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -6631,15 +6635,15 @@
     },
     {
       "path": "library/explorer-core/features/chat/chatCommands.test.ts",
-      "sha256": "0e11d4fa58c8ad08339da734af6f9bc3ddec06954f5d2363f29270c3c3131d3c"
+      "sha256": "dde143df34455b53041b4d911350ae129a11d5e94a58a1457800c036435a6495"
     },
     {
       "path": "library/explorer-core/features/chat/chatCommands.ts",
-      "sha256": "1499c6df83095cee7260041f03c2a452cd136979a3e35ff665fd1544d77e2a63"
+      "sha256": "d3deb2fec02fcf982040909722ea8b262c7e1c6043c1b4f13a9f15b32401ef3c"
     },
     {
       "path": "library/explorer-core/features/chat/chatParse.ts",
-      "sha256": "f0cd01b6242a1f3a2d85744b4d7427b8b8508e769291f3b416b20e31ab4cd5c3"
+      "sha256": "4c0d8b9692daa8d825418892fbff261a813cda04f479cfdf3ab170d7930b52d8"
     },
     {
       "path": "library/explorer-core/features/chat/lineIds.test.ts",
@@ -6731,7 +6735,7 @@
     },
     {
       "path": "library/explorer-core/features/lobby/goto.ts",
-      "sha256": "73c010d1fd3c82b072d71f5cab0a4412820d712476af4aa0d5fcaf063daf96d3"
+      "sha256": "51b1fce95d8258eecd1235d972eb74636e8372d944ebc36598ba85d2e29d8fe1"
     },
     {
       "path": "library/explorer-core/features/lobby/layout.ts",
@@ -9187,11 +9191,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.module.css",
-      "sha256": "228d230d44a31f95e3478456084395be2291c7168b79fd1fef8dabda32bf4664"
+      "sha256": "07ba1444afffb588e4151c77f8c6e5a1a25c2fc51580142360efb44603048504"
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.tsx",
-      "sha256": "0251bb18b38712d441168b0b3cccebcd981780050f4d5087d2711feeb0eca41f"
+      "sha256": "d6580e56316412355caf7b39c2d64e23c3a6f5818e8a25adffbbedce85982666"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ChatIcons.tsx",
@@ -9251,7 +9255,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/chatText.tsx",
-      "sha256": "d36b255137604cc2c16a4b74e8ba9aec3b4236836b7acc9175aecafef5bfdce2"
+      "sha256": "520ff12bed5003acce9b832fea3df25f13a20a3b17fbef1eecba3d0031486b87"
     },
     {
       "path": "library/ui/apps/hud/features/chat/dmStateCopy.ts",
@@ -10127,7 +10131,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "9a4030b57d7e9ef4313623135bc910d3ff98e360eb7668923e3894ef1e02fc2b"
+      "sha256": "1b95ef7e4b2a9fe0f4968a14e9a9060eeaf3f6ade2abd9a0ade91a8b75c2a407"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10422,8 +10426,12 @@
       "sha256": "0ff4076d5e415178ab088270681186aeb6ae90979fb6756f0bbaac62256e3de5"
     },
     {
+      "path": "library/ui/apps/hud/test/chatMessageText.test.tsx",
+      "sha256": "209a63d1cda412b4466eef736638a4e7a1c8a400457d81461f11a8344cd611cb"
+    },
+    {
       "path": "library/ui/apps/hud/test/chatText.test.ts",
-      "sha256": "94b66c992600523352309fbe97b89a54c36148d6b112b6c30665ef9beb60bbee"
+      "sha256": "1f5dc66f54c9dbcef33e69d3aa2f6211dc61b2ff9375529fa411d03f9ba66b7a"
     },
     {
       "path": "library/ui/apps/hud/test/colorPicker.test.tsx",
@@ -10551,7 +10559,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chatTranslation.test.tsx",
-      "sha256": "2442b196641ec0d749600aebbf732e84aa3605d0f613fd94f898c9a0791f8689"
+      "sha256": "61c948ac4f92d67d2c2f47d5cee78c7a7097e44b729dab7d140c684664cb5368"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/clicks.test.tsx",
@@ -11616,6 +11624,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/features/chat/chatCommands.test.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/chatCommands.test.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/chatCommands.test.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/chatCommands.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/chatCommands.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/chatCommands.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/features/chat/chatParse.ts",
       "to": "library/explorer-core/engine/mention.ts",
       "kind": "native:runtime"
@@ -33487,6 +33525,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "to": "library/explorer-core/features/lobby/lobbyApi.ts",
       "kind": "native:runtime"
     },
@@ -37938,6 +37991,21 @@
     {
       "from": "library/ui/apps/hud/test/cancelKey.test.ts",
       "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/chatMessageText.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatText.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/chatMessageText.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatText.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/chatMessageText.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatText.tsx",
       "kind": "test:runtime"
     },
     {
@@ -45692,6 +45760,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/src/test/realmTravel.test.tsx",
+      "to": "library/explorer-core/features/map/atlas.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/test/realmTravel.test.tsx",
       "to": "library/ui/apps/hud/features/session/SceneLoadingOverlay.tsx",
       "kind": "test:runtime"
     },
@@ -47953,6 +48026,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/cancelKey.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/chatMessageText.test.tsx",
       "kind": "type"
     },
     {

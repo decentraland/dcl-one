@@ -57,7 +57,7 @@ const GENESIS_BOUNDS: ReadonlyArray<readonly [number, number, number, number]> =
   [151, 59, 164, 151]
 ]
 /** The worlds server's bound on a deployment's parcels. */
-const WORLD_PARCEL_LIMIT = 150
+export const WORLD_PARCEL_LIMIT = 150
 
 export function isGenesisParcel(x: number, y: number): boolean {
   return GENESIS_BOUNDS.some(([minX, minY, maxX, maxY]) => x >= minX && x < maxX && y >= minY && y < maxY)

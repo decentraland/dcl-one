@@ -178,7 +178,7 @@ function NewSeparator(): React.JSX.Element {
   )
 }
 
-const MSG_STYLES = { url: styles.url, mention: styles.mention, location: styles.location, world: styles.world }
+const MSG_STYLES = { url: styles.url, mention: styles.mention, location: styles.location, world: styles.world, bold: styles.bold, italic: styles.italic }
 
 /** "Ana, Bo and you reacted with :fire:" — who reacted with one emoji, for its pill's tooltip. */
 export function reactionLabel(reaction: MessageReaction, me?: string): string {

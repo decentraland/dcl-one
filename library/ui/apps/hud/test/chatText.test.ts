@@ -52,6 +52,36 @@ describe('parseMessage', () => {
   })
 })
 
+describe('bold and italic tags', () => {
+  const tag = (value: string, style: 'b' | 'i', close = false) => ({ type: 'tag', value, style, close })
+
+  it('reads <b> and <i>, opening and closing', () => {
+    expect(parseMessage('This should not: <b>bold</b>')).toEqual([
+      { type: 'text', value: 'This should not: ' },
+      tag('<b>', 'b'),
+      { type: 'text', value: 'bold' },
+      tag('</b>', 'b', true)
+    ])
+    expect(parseMessage('<i>italic</i>').map((t) => t.type)).toEqual(['tag', 'text', 'tag'])
+    // anything after whitespace up to the `>`
+    expect(parseMessage('<b x=1>a</i\ty>')).toEqual([tag('<b x=1>', 'b'), { type: 'text', value: 'a' }, tag('</i\ty>', 'i', true)])
+  })
+
+  it('leaves every other tag as text', () => {
+    for (const text of ['<B>caps</B>', '<I>', 'This should be escaped: <br>', 'Multiple <br> and <hr>', "<font color='red'>", '<bold>', '< b>', '<>', 'a < b', '<b', '<u>x</u>']) {
+      expect(parseMessage(text)).toEqual([{ type: 'text', value: text }])
+    }
+  })
+
+  it('reads links between tags once a space parts them, and a URL up to a tag', () => {
+    expect(parseMessage('<b> @Alice </b>').map((t) => t.type)).toEqual(['tag', 'text', 'mention', 'text', 'tag'])
+    // a mention needs a space before it
+    expect(parseMessage('<b>@Alice</b>').map((t) => t.type)).toEqual(['tag', 'text', 'tag'])
+    expect(parseMessage('<b>https://dcl.org/x</b>')).toEqual([tag('<b>', 'b'), { type: 'url', value: 'https://dcl.org/x' }, tag('</b>', 'b', true)])
+    expect(parseMessage('<i>10,20</i>')[1]).toEqual({ type: 'location', value: '10,20', x: 10, y: 20 })
+  })
+})
+
 describe('buildNameIndex + mentionsMe', () => {
   const ALICE = '0x00000000000000000000000000000000000a1b2c'
   const members = [

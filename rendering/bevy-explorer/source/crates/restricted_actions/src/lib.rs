@@ -31,7 +31,7 @@ use common::{
         RpcCallEvent, RpcEventSender, RpcOrigin, RpcResultSender, SpawnResponse,
     },
     sets::SceneSets,
-    structs::{
+    structs::{LandingSpawnPoint, 
         server_mode, AvatarDynamicState, CurrentRealm, EngineMovementControl, PermissionType,
         PlayerTeleported, PreviewCommand, PreviewMode, PrimaryCamera, PrimaryUser, ReturnedToWorld,
         SceneMeta, StartupScenes, ZOrder,
@@ -46,7 +46,7 @@ use comms::{
     scene_topics::{is_topic_frame, SceneTopicTraffic},
     NetworkMessage, NetworkMessageRecipient,
 };
-use console::DoAddConsoleCommand;
+use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use copypwasmta::{ClipboardContext, ClipboardProvider};
 use dcl_component::proto_components::kernel::comms::rfc4;
 use explorer_ui::{open_explorer_ui, recent_user_gesture, track_explorer_ui, ExplorerUiState};
@@ -72,7 +72,7 @@ use scene_runner::{
 use serde::Serialize;
 use serde_json::{json, Value};
 use system_bridge::SystemApi;
-use teleport::{handle_out_of_world, teleport_player};
+use teleport::{handle_out_of_world, teleport_player, teleport_state, TeleportState};
 use ui_core::button::DuiButton;
 use user_input::avatar_movement::{ActivePlayerComponent, AvatarMovement, AvatarMovementInfo};
 use wallet::{browser_auth::remote_send_async, sign_request, Wallet};
@@ -131,6 +131,18 @@ impl Plugin for RestrictedActionsPlugin {
         app.init_resource::<ExplorerUiState>();
         // headless has no InputManagerPlugin; open_explorer_ui still needs the (empty) streams
         app.init_resource::<input_manager::SystemActionStreams>();
+        app.add_console_command::<TeleportState, _>(teleport_state)
+            .add_debug_section(DebugSection {
+                title: "Teleport",
+                query: "/teleport_state",
+                fields: &[
+                    ("Spawn point the next landing looks for", "pending"),
+                    ("Spawn point the last landing looked for", "last.name"),
+                    ("The landing scene had it", "last.found"),
+                ],
+                actions: &[],
+                inputs: &[],
+            });
         app.add_console_command::<SpawnPortableCommand, _>(spawn_portable_command);
         app.add_console_command::<KillPortableCommand, _>(kill_portable_command);
         app.add_plugins(agent_commands::AgentCommandsPlugin);
@@ -650,6 +662,7 @@ fn change_realm(
     mut events: EventReader<RpcCallEvent>,
     mut perms: Permission<ChangeRealmAction>,
     mut target: ResMut<RealmInitialLocation>,
+    mut spawn_point: ResMut<LandingSpawnPoint>,
     super_user: Query<(), With<SuperUserScene>>,
 ) {
     for (scene, to, message, response) in
@@ -682,6 +695,7 @@ fn change_realm(
     for (new_realm, response, report) in perms.drain_success(PermissionType::ChangeRealm) {
         debug!("change realm action -> base");
         *target = RealmInitialLocation::Base;
+        spawn_point.pending = None;
         // answered once the realm is actually set (or failed, keeping the player where they are)
         commands.send_event(ChangeRealmEvent {
             new_realm,
