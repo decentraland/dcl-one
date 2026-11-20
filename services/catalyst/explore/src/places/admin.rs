@@ -2896,27 +2896,35 @@ mod tests {
         assert_eq!(score.await.unwrap().unwrap(), ScoreRankingOutcome::Stored);
     }
 
-    /// The places leg clears a stale scene ranking; a scene it names is
-    /// reported world-backed and kept, as is a curated one, and a scene id
-    /// with a world catalogue row is left to that row's leg.
+    /// The places leg clears a stale scene ranking; a scene it names (in any
+    /// UUID spelling) is reported world-backed and kept, as are curated ones
+    /// (its own or its world's highlight, or an exclusion), and a scene id with
+    /// a world catalogue row is left to that row's leg. A worlds-only run
+    /// leaves scene rankings alone.
     #[tokio::test]
     async fn the_replace_clears_world_scene_rankings_with_the_places_leg() {
         let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
-        let [named, dropped, curated, shared, plain] =
-            [(); 5].map(|_| uuid::Uuid::new_v4().to_string());
-        sqlx::query("INSERT INTO worlds.worlds (name) VALUES ('bulk.dcl.eth')")
+        let [named, urn, dropped, curated, lit, excluded, shared, plain] =
+            [(); 8].map(|_| uuid::Uuid::new_v4().to_string());
+        sqlx::query("INSERT INTO worlds.worlds (name) VALUES ('bulk.dcl.eth'), ('lit.dcl.eth')")
             .execute(&pool)
             .await
             .unwrap();
-        for (index, id) in [&named, &dropped, &curated, &shared]
+        for (index, id) in [&named, &urn, &dropped, &curated, &lit, &excluded, &shared]
             .into_iter()
             .enumerate()
         {
-            sqlx::query("INSERT INTO explore.world_scene_place (world_name, identity, parcels, entity_id, active) VALUES ('bulk.dcl.eth', $1::uuid, ARRAY[$2], NULL, false)")
+            let world = if id == &lit {
+                "lit.dcl.eth"
+            } else {
+                "bulk.dcl.eth"
+            };
+            sqlx::query("INSERT INTO explore.world_scene_place (world_name, identity, parcels, entity_id, active) VALUES ($3, $1::uuid, ARRAY[$2], NULL, false)")
                 .bind(id)
                 .bind(format!("{index},{index}"))
+                .bind(world)
                 .execute(&pool)
                 .await
                 .unwrap();
@@ -2935,21 +2943,59 @@ mod tests {
                 .await
                 .unwrap();
         }
+        ranking::set_exclusion(&pool, &excluded, true, "admin")
+            .await
+            .unwrap();
         for (id, value) in [
             (&named, 5.0),
+            (&urn, 5.5),
             (&dropped, 6.0),
             (&curated, 4.0),
+            (&lit, 7.0),
+            (&excluded, 8.0),
             (&shared, 3.0),
         ] {
             ranking::set_ranking(&pool, id, Some(value), "data")
                 .await
                 .unwrap();
         }
-        sqlx::query("INSERT INTO explore.place_moderation (place_id, highlighted, set_by) VALUES ($1, true, 'admin')")
+        sqlx::query("INSERT INTO explore.place_moderation (place_id, highlighted, set_by) VALUES ($1, true, 'admin'), ('lit.dcl.eth', true, 'admin')")
             .bind(&curated)
             .execute(&pool)
             .await
             .unwrap();
+        let stored = |id: String| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, Value>(
+                    "SELECT overlay->'ranking' FROM explore.place_ranking WHERE place_id = $1",
+                )
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+
+        let worlds_only = ranking::replace_ranking(
+            &pool,
+            &[],
+            &[RankingEntry {
+                id: shared.clone(),
+                ranking: 3.0,
+            }],
+            ranking::ReplaceScope {
+                places: false,
+                worlds: true,
+            },
+            "data",
+        )
+        .await
+        .unwrap();
+        assert_eq!(worlds_only.places.cleared, 0);
+        assert_eq!(stored(dropped.clone()).await, json!(6.0), "worlds only");
+
+        let (upper, braced) = (named.to_uppercase(), format!("urn:uuid:{urn}"));
         let result = ranking::replace_ranking(
             &pool,
             &[
@@ -2958,7 +3004,11 @@ mod tests {
                     ranking: 2.0,
                 },
                 RankingEntry {
-                    id: named.clone(),
+                    id: upper.clone(),
+                    ranking: 9.0,
+                },
+                RankingEntry {
+                    id: braced.clone(),
                     ranking: 9.0,
                 },
             ],
@@ -2977,23 +3027,78 @@ mod tests {
                 result.places.cleared,
                 result.places.skipped_world_backed.clone()
             ),
-            (1, 1, vec![named.clone()])
+            (1, 1, vec![upper, braced])
         );
         for (id, expected) in [
             (&named, json!(5.0)),
+            (&urn, json!(5.5)),
             (&dropped, json!(0)),
             (&curated, json!(4.0)),
+            (&lit, json!(7.0)),
+            (&excluded, json!(8.0)),
             (&shared, json!(3.0)),
         ] {
-            let stored: Value = sqlx::query_scalar(
-                "SELECT overlay->'ranking' FROM explore.place_ranking WHERE place_id = $1",
-            )
-            .bind(id)
-            .fetch_one(&pool)
+            assert_eq!(stored(id.clone()).await, expected, "{id}");
+        }
+    }
+
+    /// Orphan retirement locks a world's identities in identity order, the
+    /// ranking writes' order: held the lower, it waits before taking the higher.
+    #[tokio::test]
+    async fn scene_retirement_locks_identities_in_identity_order() {
+        let Some(pool) = crate::db::scratch::isolated_pool(3).await else {
+            return;
+        };
+        let (mut low, mut high) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+        if high < low {
+            std::mem::swap(&mut low, &mut high);
+        }
+        // The higher identity first in heap and deployment-index order.
+        for (identity, parcel, entity) in [(high, "2,2", "gone-a"), (low, "1,1", "gone-b")] {
+            sqlx::query("INSERT INTO explore.world_scene_place (world_name, identity, parcels, entity_id) VALUES ('order.dcl.eth', $1, ARRAY[$2], $3)")
+                .bind(identity)
+                .bind(parcel)
+                .bind(entity)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let mut held = pool.begin().await.unwrap();
+        ranking::lock_world_scenes(&mut held, &[low.to_string()])
             .await
             .unwrap();
-            assert_eq!(stored, expected, "{id}");
-        }
+        let retire = tokio::spawn({
+            let pool = pool.clone();
+            async move {
+                let mut conn = pool.acquire().await.unwrap();
+                super::super::scene_identity::retire_orphans(
+                    &mut conn,
+                    &["order.dcl.eth".to_string()],
+                )
+                .await
+            }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while sqlx::query_scalar::<_, i64>("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+                == 0
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("retirement waits on the held identity");
+        sqlx::query(
+            "SELECT 1 FROM explore.world_scene_place WHERE identity = $1 FOR UPDATE NOWAIT",
+        )
+        .bind(high)
+        .execute(&mut *held)
+        .await
+        .expect("the higher identity is still free");
+        held.commit().await.unwrap();
+        assert_eq!(retire.await.unwrap().unwrap(), 2);
     }
 
     #[tokio::test]

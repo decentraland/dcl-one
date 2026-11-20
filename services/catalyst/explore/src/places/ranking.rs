@@ -502,11 +502,15 @@ pub async fn replace_ranking(
                 .bind(&keep)
                 .fetch_all(&mut *tx)
                 .await?;
-        // A scene named in this run is reported world-backed and keeps its ranking.
+        // A scene named in this run is reported world-backed and keeps its ranking;
+        // its id is compared in the identity's canonical spelling.
         let spared: Vec<String> = keep
             .iter()
-            .chain(&place_buckets.world_backed)
             .cloned()
+            .chain(place_buckets.world_backed.iter().map(|id| {
+                uuid::Uuid::parse_str(id)
+                    .map_or_else(|_| id.clone(), |identity| identity.to_string())
+            }))
             .collect();
         let scene_ids: Vec<String> = if world {
             Vec::new()
