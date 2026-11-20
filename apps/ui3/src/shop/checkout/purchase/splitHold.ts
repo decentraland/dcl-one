@@ -93,23 +93,28 @@ function holdStorage(): Storage | null {
 export function readSplitHoldRecord(account: string | null, lineId: string): SplitHold | null {
   try {
     const raw = holdStorage()?.getItem(splitHoldKey(account, lineId)) ?? null;
-    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
-    if (typeof parsed === "number") return { at: parsed, attempt: null, txHash: null, chainId: null, creditId: null, creditExpiresAt: null };
-    const hold = parsed as Partial<SplitHold> | null;
-    if (!hold || typeof hold.at !== "number") return null;
-    return {
-      at: hold.at,
-      attempt: typeof hold.attempt === "string" ? hold.attempt : null,
-      txHash: typeof hold.txHash === "string" ? hold.txHash : null,
-      chainId: typeof hold.chainId === "number" ? hold.chainId : null,
-      creditId: typeof hold.creditId === "string" ? hold.creditId : null,
-      creditExpiresAt: typeof hold.creditExpiresAt === "number" ? hold.creditExpiresAt : null,
-      sale: isSplitSale(hold.sale) ? hold.sale : null,
-      expiredSeenAt: typeof hold.expiredSeenAt === "number" ? hold.expiredSeenAt : null,
-    };
+    return raw ? parseSplitHold(raw) : null;
   } catch {
     return null;
   }
+}
+
+/** A stored record read: null when it isn't one (not a hold's shape); throws when it isn't JSON. */
+function parseSplitHold(raw: string): SplitHold | null {
+  const parsed = JSON.parse(raw) as unknown;
+  if (typeof parsed === "number") return { at: parsed, attempt: null, txHash: null, chainId: null, creditId: null, creditExpiresAt: null };
+  const hold = parsed as Partial<SplitHold> | null;
+  if (!hold || typeof hold.at !== "number") return null;
+  return {
+    at: hold.at,
+    attempt: typeof hold.attempt === "string" ? hold.attempt : null,
+    txHash: typeof hold.txHash === "string" ? hold.txHash : null,
+    chainId: typeof hold.chainId === "number" ? hold.chainId : null,
+    creditId: typeof hold.creditId === "string" ? hold.creditId : null,
+    creditExpiresAt: typeof hold.creditExpiresAt === "number" ? hold.creditExpiresAt : null,
+    sale: isSplitSale(hold.sale) ? hold.sale : null,
+    expiredSeenAt: typeof hold.expiredSeenAt === "number" ? hold.expiredSeenAt : null,
+  };
 }
 
 /** Recorded no later than now and less than `SPLIT_HOLD_MS` ago. */
@@ -137,25 +142,53 @@ export function readSplitHold(account: string | null, lineId: string, now: numbe
 }
 
 /**
- * The splits of `account` that may still spend its MANA allowance, on any surface: every kept hold whose credit is still
- * spendable, and, before a credit is reserved, a run still preparing (a fresh hold). An exact approval sets the allowance
- * to one gap, so another split's approval would take an earlier one's, and another split finding the allowance covered
- * could spend it: while one is listed, a split of another item doesn't start. One whose credit can no longer be spent
- * can't pull the allowance, so it isn't listed. Throws where the storage can't be read: the caller holds the split.
+ * Every hold of `account`, read strictly: throws where the storage can't be reached, or where a record that is there
+ * can't be read or isn't a hold's, so a caller deciding whether another split may spend the allowance holds instead of
+ * reading nothing. A key gone between listing and reading is simply gone.
  */
-export function splitsInFlight(account: string, now: number = Date.now()): { line: string; hold: SplitHold }[] {
+export function readAccountSplitHolds(account: string): { line: string; hold: SplitHold }[] {
   const storage = holdStorage();
-  if (!storage) return [];
+  if (!storage) throw new Error("This browser's storage can't be read.");
   const prefix = splitHoldKey(account, "");
-  const lines: string[] = [];
+  const keys: string[] = [];
   for (let i = 0; i < storage.length; i++) {
     const key = storage.key(i);
-    if (key && key.startsWith(prefix) && key.length > prefix.length) lines.push(key.slice(prefix.length));
+    if (key && key.startsWith(prefix) && key.length > prefix.length) keys.push(key);
   }
-  return lines.flatMap((line) => {
-    const hold = readSplitHold(account, line, now);
-    return hold && (hold.creditId === null ? splitHoldFresh(hold, now) : !splitHoldCreditOver(hold, now)) ? [{ line, hold }] : [];
+  return keys.flatMap((key) => {
+    const raw = storage.getItem(key);
+    if (raw === null) return [];
+    const hold = parseSplitHold(raw);
+    if (!hold) throw new Error("A purchase's record in this browser can't be read.");
+    return [{ line: key.slice(prefix.length), hold }];
   });
+}
+
+/**
+ * The splits of `account` that may still spend its MANA allowance, on any surface (readAccountSplitHolds, so it throws
+ * where it can't read them all). An exact approval sets the allowance to one gap, so another split's approval would take
+ * an earlier one's, and another split finding the allowance covered could spend it: while one is listed, a split of
+ * another item doesn't start. A run still preparing (no credit yet, a fresh hold) is listed; one with a credit is listed
+ * until `over` proves that credit can't spend anything any more (its purchase over, or its expiry reached by the chain's
+ * own time: splitCreditOverOnChain). An unknown expiry, or a local clock past it, proves nothing.
+ */
+export function splitsInFlight(account: string, now: number, over: (line: string, hold: SplitHold) => boolean): { line: string; hold: SplitHold }[] {
+  return readAccountSplitHolds(account).filter(({ line, hold }) => (hold.creditId === null ? splitHoldFresh(hold, now) : !over(line, hold)));
+}
+
+/**
+ * Whether `hold`'s credit provably can't be spent any more: the chain's finalized block time (`finalizedTime`) has
+ * reached its expiry, and the manager refuses a credit once `block.timestamp >= expiresAt`, in every block after. The local
+ * clock (`now`) only says when that is worth asking. An unknown expiry or chain, or a read that fails: not proven.
+ */
+export async function splitCreditOverOnChain(hold: SplitHold, finalizedTime: (chainId: number) => Promise<number>, now: number = Date.now()): Promise<boolean> {
+  if (hold.creditId === null || hold.creditExpiresAt === null || hold.chainId === null) return false;
+  if (now < hold.creditExpiresAt * 1000) return false;
+  try {
+    return (await finalizedTime(hold.chainId)) >= hold.creditExpiresAt;
+  } catch {
+    return false;
+  }
 }
 
 /**

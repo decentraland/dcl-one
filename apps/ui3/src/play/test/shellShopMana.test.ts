@@ -127,6 +127,8 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
     /** Where the relay's transactions land: past the checkpoint, and final. */
     receiptBlock: 1050n,
     foreignHash: false,
+    /** The finalized block's time (unix seconds). */
+    chainTime: 0,
     rewrite: null as ((input: Hex) => Hex) | null,
     /** Holds every finalized-block read after the first (the pre-dispatch checkpoint) until released. */
     hold: null as Promise<void> | null,
@@ -165,6 +167,8 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
       return onChain.executions.filter((e) => e.blockNumber >= from && e.blockNumber <= to)
     },
     transaction: async (_c, hash) => txs.get(hash.toLowerCase()) ?? null,
+    // The finalized block's time (unix seconds): `chainTime`, the epoch unless a test moves it.
+    finalizedTime: async () => onChain.chainTime,
     receipt: async (_c, hash) => {
       const status = chain.receipts.get(hash.toLowerCase())
       return status ? { transactionHash: hash as Hex, status, blockNumber: onChain.blocks.get(hash.toLowerCase()) ?? onChain.receiptBlock } : null
@@ -911,13 +915,79 @@ describe('the in-world purchase with MANA', () => {
       expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
     })
 
+    it('sends no approval when this item gets held while AUTHORIZE waits, and leaves that hold as it is', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      const auth = await p.until('authorize')
+      // Another tab's split of this very item hands off before the buyer confirms.
+      expect(writeSplitHold(BUYER, HOLD_LINE, webHold)).toBe(true)
+      auth.handlers.onAuthorize?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'authorize', state: 'failed', message: expect.stringContaining('this item with Credits and MANA is still confirming') }))
+      expect(w.relay.posts).toHaveLength(0)
+      expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toMatchObject({ attempt: 'web-attempt', creditId: webHold.creditId })
+    })
+
+    it.each([
+      ['its record can\'t be read', 'throws'],
+      ['its record isn\'t a hold\'s', 'garbage']
+    ] as const)('holds the split when another item\'s hold is there but %s: nothing asked or sent', async (_, kind) => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      const key = splitHoldKey(BUYER, OTHER_LINE)
+      if (kind === 'garbage') localStorage.setItem(key, JSON.stringify({ not: 'a hold' }))
+      else expect(writeSplitHold(BUYER, OTHER_LINE, otherHold)).toBe(true)
+      const getItem = Storage.prototype.getItem
+      const spy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, k: string) {
+        if (kind === 'throws' && k === key) throw new Error('storage read failed')
+        return getItem.call(this, k)
+      })
+      try {
+        const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+        await p.open()
+        ;(await p.until('method')).handlers.onPay?.('split')
+        expect((await p.until('failed')).view).toMatchObject({ message: expect.stringContaining('can\'t read your other purchases with Credits and MANA') })
+        expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
+        expect(w.relay.posts).toHaveLength(0)
+      } finally {
+        spy.mockRestore()
+        localStorage.removeItem(key)
+      }
+    })
+
+    it.each([
+      ['its credit\'s expiry isn\'t known', { creditExpiresAt: null }, 0],
+      ['only this device\'s clock is past its expiry, not the chain', { creditExpiresAt: 500 }, 400]
+    ] as const)('keeps holding a split while another item\'s may still spend: %s', async (_, over, chainTime) => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.onChain.chainTime = chainTime
+      expect(writeSplitHold(BUYER, OTHER_LINE, { ...otherHold, ...over })).toBe(true)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      expect((await p.until('failed')).view).toMatchObject({ message: expect.stringContaining('Another purchase with Credits and MANA') })
+      expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
     it('isn\'t held by another item\'s split that can\'t spend anything any more: its credit expired, or its purchase here is over', async () => {
       on()
       const w = world()
       splitShop(w)
       w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
       const THIRD_LINE = splitHoldLine(itemAsset(CHAIN.POLYGON, CONTRACT as never, '9'))
-      expect(writeSplitHold(BUYER, OTHER_LINE, { ...otherHold, creditExpiresAt: Math.floor(Date.now() / 1000) - 1 })).toBe(true)
+      // Its credit expired at 500 s: the page's clock (1,000 s) says it's worth asking, and the chain's finalized time (600 s)
+      // proves it can't be spent any more.
+      expect(writeSplitHold(BUYER, OTHER_LINE, { ...otherHold, creditExpiresAt: 500 })).toBe(true)
+      w.onChain.chainTime = 600
       // A finished purchase of this page's whose hold on its item stayed.
       const ledger = createLedger(() => w.storage)
       const sale = { buyer: BUYER, chainId: 137, manager: MANAGER, creditId: `0x${'e6'.repeat(32)}`, creditWei: '1', gapWei: '2', target: STORE, selector: '0x12345678' as Hex, callData: '0x' as Hex, hold: { line: THIRD_LINE, attempt: 'over' } }

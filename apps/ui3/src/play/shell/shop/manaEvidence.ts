@@ -48,6 +48,8 @@ export interface ManaExecution {
 /** The chain reads this needs, each through an explicit block where it matters. */
 export interface ManaEvidence {
   finalized(chainId: number): Promise<bigint>
+  /** The finalized block's time (unix seconds): every later block's is past it. */
+  finalizedTime?(chainId: number): Promise<number>
   /** The venue's meta-transaction nonce for `user`, as of `block`. */
   nonceAt(chainId: number, venue: { address: string; metaTx: MetaTxStyle }, user: string, block: bigint): Promise<bigint>
   /** Every MetaTransactionExecuted of `venue` in [from, to], complete or a throw. */
@@ -176,6 +178,7 @@ export function createManaEvidence(opts: { url?: (chainId: ChainId) => string | 
   const hex = (n: bigint): string => `0x${n.toString(16)}`
   return {
     finalized: async (chainId) => BigInt((await rpc<{ number: Hex }>(chainId, 'eth_getBlockByNumber', ['finalized', false])).number),
+    finalizedTime: async (chainId) => Number(BigInt((await rpc<{ timestamp: Hex }>(chainId, 'eth_getBlockByNumber', ['finalized', false])).timestamp)),
     nonceAt: async (chainId, venue, user, block) => {
       // The Shop's own nonce read, asked at the block: the reader's call is redirected through it.
       const atBlock: ChainReader = { ...opts.reader, call: (c, to, data) => rpc<Hex>(c, 'eth_call', [{ to, data }, hex(block)]) }

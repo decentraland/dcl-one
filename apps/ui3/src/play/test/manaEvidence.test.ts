@@ -243,6 +243,17 @@ describe('a MANA sale on chain', () => {
     expect(await evidence.transaction(137, RELAY_HASH)).toBeNull()
   })
 
+  it('reads the finalized block’s time, what proves a credit past its expiry can no longer be spent', async () => {
+    const fetchImpl = async (_url: string, init?: RequestInit) => {
+      const { method, params, id } = JSON.parse(String(init?.body)) as { method: string; params: [string, boolean]; id: number }
+      expect([method, params]).toEqual(['eth_getBlockByNumber', ['finalized', false]])
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id, result: { number: '0x10', timestamp: '0x6553f100' } }))
+    }
+    const reader = { call: async () => '0x' as Hex, receipt: async () => null, balance: async () => 0n, code: async () => '0x' as Hex }
+    const evidence = createManaEvidence({ url: () => 'https://rpc.test', fetchImpl: fetchImpl as unknown as typeof fetch, reader })
+    expect(await evidence.finalizedTime!(137)).toBe(0x6553f100)
+  })
+
   it('lets an error answer’s body go instead of leaving it open', async () => {
     let cancelled = false
     const body = new ReadableStream({ pull: () => new Promise(() => {}), cancel: () => void (cancelled = true) })

@@ -17,7 +17,10 @@ import {
   readSplitHold,
   readSplitHoldRecord,
   noteSplitHoldExpiry,
+  readAccountSplitHolds,
   settleSplitHold,
+  splitCreditOverOnChain,
+  splitsInFlight,
   SPLIT_EXPIRY_CONFIRM_MS,
   SPLIT_HOLD_MS,
   splitHoldKey,
@@ -74,6 +77,65 @@ describe("what a hold is kept under", () => {
     // The key and the lock name lowercase the account, so a checksummed address finds the same hold.
     expect(splitHoldKey(ACCOUNT.toUpperCase().replace("0X", "0x"), LINE)).toBe(splitHoldKey(ACCOUNT, LINE));
     expect(splitHoldLockName(ACCOUNT.toUpperCase().replace("0X", "0x"), LINE)).toBe(splitHoldLockName(ACCOUNT, LINE));
+  });
+});
+
+describe("an account's splits that may still spend its allowance", () => {
+  const OTHER = splitHoldLine(itemAsset(CHAIN.POLYGON, BOOK.collection, "8"));
+
+  it("reads every hold of the account strictly: none to read, or one it can't read or understand, throws", () => {
+    expect(writeSplitHold(ACCOUNT, LINE, hold())).toBe(true);
+    expect(writeSplitHold(`0x${"99".repeat(20)}`, OTHER, hold())).toBe(true);
+    expect(readAccountSplitHolds(ACCOUNT).map((h) => h.line)).toEqual([LINE]);
+    localStorage.setItem(splitHoldKey(ACCOUNT, OTHER), "{not json");
+    expect(() => readAccountSplitHolds(ACCOUNT)).toThrow();
+    localStorage.setItem(splitHoldKey(ACCOUNT, OTHER), JSON.stringify({ not: "a hold" }));
+    expect(() => readAccountSplitHolds(ACCOUNT)).toThrow();
+    localStorage.removeItem(splitHoldKey(ACCOUNT, OTHER));
+    const getItem = Storage.prototype.getItem;
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(function (this: Storage, key: string) {
+      if (key === splitHoldKey(ACCOUNT, LINE)) throw new Error("read failed");
+      return getItem.call(this, key);
+    });
+    expect(() => readAccountSplitHolds(ACCOUNT)).toThrow();
+  });
+
+  it("throws without storage, and skips a key gone between listing and reading", () => {
+    expect(writeSplitHold(ACCOUNT, LINE, hold())).toBe(true);
+    const getItem = Storage.prototype.getItem;
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(function (this: Storage, key: string) {
+      return key === splitHoldKey(ACCOUNT, LINE) ? null : getItem.call(this, key);
+    });
+    expect(readAccountSplitHolds(ACCOUNT)).toEqual([]);
+    vi.restoreAllMocks();
+    vi.stubGlobal("localStorage", undefined);
+    try {
+      expect(() => readAccountSplitHolds(ACCOUNT)).toThrow();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("lists a hold with a credit until `over` proves it can't spend, and a run still preparing while fresh", () => {
+    expect(writeSplitHold(ACCOUNT, LINE, hold({ creditExpiresAt: null }))).toBe(true);
+    expect(writeSplitHold(ACCOUNT, OTHER, hold({ creditId: null, creditExpiresAt: null, sale: null }))).toBe(true);
+    const now = Date.now();
+    expect(splitsInFlight(ACCOUNT, now, () => false).map((h) => h.line).sort()).toEqual([LINE, OTHER].sort());
+    expect(splitsInFlight(ACCOUNT, now, (line) => line === LINE).map((h) => h.line)).toEqual([OTHER]);
+    expect(splitsInFlight(ACCOUNT, now + SPLIT_HOLD_MS, () => false).map((h) => h.line)).toEqual([LINE]);
+  });
+
+  it("proves a credit over only by the chain's finalized time reaching its expiry, asked once the local clock is past it", async () => {
+    const asked: number[] = [];
+    const time = (t: number) => async (chainId: number) => (asked.push(chainId), t);
+    const expiring = hold({ creditExpiresAt: 1_000 });
+    expect(await splitCreditOverOnChain(expiring, time(5_000), 999_000)).toBe(false);
+    expect(asked).toEqual([]);
+    expect(await splitCreditOverOnChain(expiring, time(999), 2_000_000)).toBe(false);
+    expect(await splitCreditOverOnChain(expiring, time(1_000), 2_000_000)).toBe(true);
+    expect(await splitCreditOverOnChain(expiring, async () => Promise.reject(new Error("rpc down")), 2_000_000)).toBe(false);
+    expect(await splitCreditOverOnChain(hold({ creditExpiresAt: null }), time(5_000), 2_000_000)).toBe(false);
+    expect(await splitCreditOverOnChain(hold({ chainId: null, creditExpiresAt: 1_000 }), time(5_000), 2_000_000)).toBe(false);
   });
 });
 
