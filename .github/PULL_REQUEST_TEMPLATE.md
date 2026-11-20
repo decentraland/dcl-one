@@ -1,5 +1,7 @@
 # Pull Request Description
 
+<!-- Follow docs/contributing.md for the PR title and branch name. -->
+
 <!-- Short: problem and behavior first. Tables for before/after or test
 results. -->
 
