@@ -27,9 +27,9 @@
 //! clients stop. With a whole-history walk lagging or paused
 //! ([`chain_walk::is_walked`] false), or the local walk's first pass still to
 //! come, it is a 503 with `Retry-After`; when the cursor cannot be read, a
-//! 500. The age check sees only `updated_at`: an index process back after
-//! more than [`INDEX_ABANDONED_SECS`] down answers the coded 503 until its
-//! first window advances the cursor (one pass, seconds).
+//! 500. The age check reads `updated_at`, which a walk refreshes when its
+//! process starts ([`chain_walk::touch_started`]): an index back after hours
+//! down reads as behind, not abandoned, while its first window lands.
 //! The auth dApp posts cross-origin with signed-fetch headers, so the route
 //! answers the browser's preflight with the events-notifier's CORS ([`CORS`]).
 //! A transfer below the minimum amount, or mined longer than the maximum age
@@ -1724,6 +1724,30 @@ mod tests {
             .map(|v| v.to_str().unwrap().to_string());
         let body = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
         (retry_after, serde_json::from_slice(&body).ok())
+    }
+
+    #[tokio::test]
+    async fn a_walk_restarted_after_hours_down_reads_as_behind() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("tips_restarted").await else {
+            return;
+        };
+        let state = std::sync::Arc::new(crate::market::MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            crate::market::Settings::for_tests(),
+        ));
+        let minute = std::time::Duration::from_secs(60);
+        put_cursor(&db.pool, 10, now_secs() - 5 * 3600, true, "4 hours", false).await;
+        assert_eq!(index_state(&state, minute).await, IndexState::Off);
+        chain_walk::touch_started(&db.pool, INDEXER_MANA, NET)
+            .await
+            .unwrap();
+        assert_eq!(
+            index_state(&state, minute).await,
+            IndexState::Behind,
+            "live again, but still hours behind"
+        );
+        db.drop().await;
     }
 
     #[tokio::test]

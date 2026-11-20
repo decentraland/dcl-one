@@ -310,6 +310,26 @@ where
     .await
 }
 
+/// Marks the cursor of a walk this process just started as advanced now, so
+/// a reader of [`is_walked`] sees it live, not abandoned, until its first
+/// window lands. The block, its time and the history flag are unchanged, so a
+/// cursor far behind still reads as behind, and nothing publishes earlier.
+pub async fn touch_started(pool: &PgPool, indexer: &str, net: ChainNet) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET updated_at = timezone('UTC', now()) \
+         WHERE indexer = $1 AND network = $2",
+    )
+    .bind(indexer)
+    .bind(net.db_name())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// The walks this process has started, touched once each.
+static STARTED_WALKS: std::sync::LazyLock<parking_lot::Mutex<BTreeSet<(String, &'static str)>>> =
+    std::sync::LazyLock::new(Default::default);
+
 /// The row a fresh database starts from (`last_block = start - 1`); an
 /// existing row is left alone, whatever start this process was given.
 pub async fn ensure_cursor(
@@ -781,6 +801,12 @@ pub async fn run_pass(
     let start = settings.start_override(net).unwrap_or(ix.start_block());
     let full_history = start <= ix.start_block();
     let cur = ensure_cursor(pool, name, net, start, full_history).await?;
+    if STARTED_WALKS
+        .lock()
+        .insert((name.to_string(), net.db_name()))
+    {
+        touch_started(pool, name, net).await?;
+    }
     let mut out = PassOutcome {
         network: net.db_name(),
         from_block: cur.last_block + 1,
