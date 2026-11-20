@@ -4316,14 +4316,6 @@
           "kind": "regular"
         },
         {
-          "name": "QuestPinIcon.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "QuestPinIcon.tsx",
-          "kind": "regular"
-        },
-        {
           "name": "RouteLayer.tsx",
           "kind": "regular"
         },
@@ -6338,7 +6330,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/realmTravel.test.tsx",
-      "sha256": "e16dc3f88748d06173160d70b18eb950146d37c292c85b53ecbff0021a295525"
+      "sha256": "f1742b3070446f8c02d8a76925c0b9f05a1dcc4e562eda3d44d70c6c2b1a7d1f"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/recoverSigner.ts",
@@ -6547,7 +6539,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "261d7879cc42d393509704ebeb849fe70f9bccd2332ffd3ae252614aa8451285"
+      "sha256": "dc2daaa789761748173110f2d18f8ca23b42e7c156589a7ee4ef1c414ef1220d"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -6555,7 +6547,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockMap.ts",
-      "sha256": "cd1df709918b5b250275168845cbc86ea45254109f33c239d48ac0ba659eb2a1"
+      "sha256": "ccaf92074ef1a577c8e379b732f5d7529981ad24a8439a540b5698c609ab0324"
     },
     {
       "path": "library/explorer-core/engine/mockSwitches.ts",
@@ -6635,7 +6627,7 @@
     },
     {
       "path": "library/explorer-core/features/chat/chatCommands.ts",
-      "sha256": "1499c6df83095cee7260041f03c2a452cd136979a3e35ff665fd1544d77e2a63"
+      "sha256": "f78f00948c0c4e831313841ccbbc9a211a87a44294bb7432505ef956ef2681e1"
     },
     {
       "path": "library/explorer-core/features/chat/chatParse.ts",
@@ -6799,7 +6791,7 @@
     },
     {
       "path": "library/explorer-core/features/map/mapPins.ts",
-      "sha256": "9509bafed11fe5b15c348f67933642875dc46c97b3c2229968fa9ab2196cf538"
+      "sha256": "45cb1c03cb54410778bff82aea549731622b8d674d2863dcc1df4f58c7172a0d"
     },
     {
       "path": "library/explorer-core/features/map/mapZoom.ts",
@@ -6823,7 +6815,7 @@
     },
     {
       "path": "library/explorer-core/features/minimap/minimapHome.ts",
-      "sha256": "bcc0dff9298b1740491c7d08d2aeba5cece9c399307cb438a8e4e4fb71620936"
+      "sha256": "a98d1305cb655ebcf22d069d57e302d90b64afd4e0d2a5bb37528a65da77fd89"
     },
     {
       "path": "library/explorer-core/features/minimap/minimapLayers.ts",
@@ -7111,7 +7103,7 @@
     },
     {
       "path": "library/explorer-core/test/mapCore.test.ts",
-      "sha256": "604b9a2bb05df7d5753dd2a433ba5700419c3fd7579de4d6cdb51a7c94d69e40"
+      "sha256": "a64a86aae02fc17817c8b6fc67c6cdeb32331835e9c319e12fc39f8e994cd5e7"
     },
     {
       "path": "library/explorer-core/test/mapFixtures.ts",
@@ -7123,7 +7115,7 @@
     },
     {
       "path": "library/explorer-core/test/minimap.test.ts",
-      "sha256": "d895a0e3138fce1ea568b6a1ff028536dc7771d20a4c1a1a553bccd45ca7a100"
+      "sha256": "5cb7f04ca361dc39b8cec794f5b92a5a4937ee84098cb3a486f0b0ff2a0a5f4b"
     },
     {
       "path": "library/explorer-core/test/navmap.test.ts",
@@ -9787,7 +9779,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapCanvas.tsx",
-      "sha256": "ed40ae02dd753fce00e2590f3dd62e54a07848d519f6227b2b5f9e3d59889bc7"
+      "sha256": "1b2d22c67347d00d77249d846c4ec393d5f13fec046b7496a5209820141b2c00"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapChrome.module.css",
@@ -9808,14 +9800,6 @@
     {
       "path": "library/ui/apps/hud/features/map/MapToolbar.tsx",
       "sha256": "1a607389eee71063db4119d76b3855698907a4652fbe5514063fb4ad32d778d4"
-    },
-    {
-      "path": "library/ui/apps/hud/features/map/QuestPinIcon.module.css",
-      "sha256": "3bb5ebce50e4292989f98fe3d4e2719d6927889cc64f6ce1cdb2ff293ca70cee"
-    },
-    {
-      "path": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "sha256": "35d378f5bdc82bba0e5b7f20b6a5c28db93005e1e9f131c45ccd460132e0c6e5"
     },
     {
       "path": "library/ui/apps/hud/features/map/RouteLayer.tsx",
@@ -9899,11 +9883,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.module.css",
-      "sha256": "ef1df51ad3fab930e290a09ea6aefaf1e19132e78d9600b2bbe93d1692e50998"
+      "sha256": "c0e75d8144154f644d6f0dea2d36c4aab8830de663378c70940ccb0961a71f1d"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "sha256": "2b85e279aeca3e8f9ad424797e417092037c8e56c2983db7ddf5a3964ec94482"
+      "sha256": "bd1502d130e2a718b8fd9683c839768a3b3e84b83a68e1b6d458700b88ffcfa8"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.module.css",
@@ -10127,7 +10111,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "4166fcd62fc690aaf459e6aeca445339f39e606a02130be44488c0de7562cbbf"
+      "sha256": "a0cbddd1c93802397d5e5a5353fd9be9986ae2e04f14486446527a28f3aae918"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10735,7 +10719,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
-      "sha256": "45aae9c853fdb699fb47f8353c0ad541c81eb126598a0c3bab4377551525f079"
+      "sha256": "1028250eb2ce7b8982e4a74d31d02820fa04830ae9de51c9af1f9eeefd846f55"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/mapPanel.test.tsx",
@@ -10747,7 +10731,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
-      "sha256": "8a780633ce1575f9bfe8d9c4ea78e61283fa3a96eff10f89a8cc09178c9c3c12"
+      "sha256": "fd7ffc89c2b4576f52e4d05ebbe0d217cd36c0111393a29d80246a0553cb76d7"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nameEdit.test.tsx",
@@ -10931,7 +10915,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/mapPins.test.tsx",
-      "sha256": "589c2ee53f74423b20086a011f1de47526562be7539cf8f7ced7b9dcd1629b04"
+      "sha256": "f202cf95d71538789f66193bccf6739eb42ca4900e166d4cb47524e8bd2e2e92"
     },
     {
       "path": "library/ui/apps/hud/test/menu.clicks.test.tsx",
@@ -27442,21 +27426,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/map/MapCanvas.tsx",
-      "to": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/MapCanvas.tsx",
-      "to": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/MapCanvas.tsx",
-      "to": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/MapCanvas.tsx",
       "to": "library/ui/apps/hud/features/map/mapArt.ts",
       "kind": "native:runtime"
     },
@@ -27932,36 +27901,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/map/MapToolbar.tsx",
-      "to": "library/ui/apps/hud/features/map/mapArt.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "to": "library/ui/apps/hud/features/map/QuestPinIcon.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "to": "library/ui/apps/hud/features/map/QuestPinIcon.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "to": "library/ui/apps/hud/features/map/QuestPinIcon.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "to": "library/ui/apps/hud/features/map/mapArt.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "to": "library/ui/apps/hud/features/map/mapArt.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
       "to": "library/ui/apps/hud/features/map/mapArt.ts",
       "kind": "test:runtime"
     },
@@ -30213,21 +30152,6 @@
     {
       "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
       "to": "library/ui/apps/hud/features/engine/EngineViewport.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "to": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "to": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "to": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
       "kind": "test:runtime"
     },
     {
@@ -41868,6 +41792,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
       "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/ui/apps/hud/features/map/mapArt.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/ui/apps/hud/features/map/mapArt.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/ui/apps/hud/features/map/mapArt.ts",
       "kind": "test:runtime"
     },
     {
@@ -47428,11 +47367,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/map/MapToolbar.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
       "kind": "type"
     },
     {

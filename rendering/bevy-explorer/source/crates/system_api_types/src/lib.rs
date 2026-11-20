@@ -138,8 +138,6 @@ pub struct MapPinInfo {
     pub y: i32,
     /// At most 100 characters.
     pub title: String,
-    /// A file of the scene's content; `None` draws the default pin.
-    pub icon: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, ts_rs::TS)]

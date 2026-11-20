@@ -2898,7 +2898,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           driverRef.current?.send({ kind: 'teleport', x: cmd.x, y: cmd.y })
           break
         case 'genesis':
-          changeRealm(DEFAULT_REALM)
+          travel({ kind: 'teleport', realm: DEFAULT_REALM, x: 0, y: 0 })
           break
         case 'world':
           changeRealm(cmd.realm)
@@ -2920,7 +2920,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           break
       }
     },
-    [pushSystemMessage, changeRealm, reloadScene]
+    [pushSystemMessage, changeRealm, travel, reloadScene]
   )
 
   // Toggle one exclusive panel (closing chat + all others); optionally run onOpen.

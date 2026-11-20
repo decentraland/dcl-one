@@ -630,12 +630,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   switch (on by default, for the session) shows or hides them on the full map and the minimap. A
   pin stands on the centre of its parcel, its position rounded halves to even; it is never
   clustered, its title and description are not drawn, and a click opens the place panel for its
-  parcel. It shows the scene's own icon, a content file of the scene, cut round on a white disc;
-  with no such file (another texture kind, a src that parses as a url, a missing file, or an image
-  that fails to load) it shows the default quest pin, so a scene can't make the HUD request a host
-  of its choosing. The icon resolves again only when its src changes, and a moved pin keeps its
-  icon. The title is cut to 100 characters. unity-explorer loads that icon only under
-  `alfa-map-pins-custom-icons`, and otherwise always shows its default pin. The pin doesn't pulse.
+  parcel. It always shows the default quest pin: the pin's texture is not read, so a scene can't
+  make the HUD request a host of its choosing. unity-explorer loads the scene's own icon only
+  under `alfa-map-pins-custom-icons`, and otherwise always shows its default pin. The title is cut
+  to 100 characters. The pin doesn't pulse.
   This explorer loads no global portable experience at startup: unity-explorer loads the quests'
   one (`globalpx.dcl.eth`) from `alfa-global-portable-experiences`; here it is loaded with the
   launch option (`--portables` or `?portables=`, e.g. `basiccontroller.dcl.eth;globalpx.dcl.eth`).
@@ -650,6 +648,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   no home has no home pin and no Set as Home on, and starts on parcel 0,0 of the default realm.
   Before sign-in the home is the stored sign-in's account's, else the last account's. A home an
   install kept before homes were per account goes to the first account that signs in.
+- **Jump back to Genesis City lands on the home parcel, else on 0,0.** The minimap's button in a
+  World travels to the default realm naming a parcel: the account's home when it is in Genesis
+  City, Genesis Plaza otherwise; `/goto genesis` always names 0,0. A realm change that names no
+  parcel keeps the player's parcel, clamped to the new realm's map, which from a World is a parcel
+  of that World's grid. unity-explorer lands the button on its start parcel, read once at launch
+  (a launch position, the home parcel, or `alfa-genesis-spawn-parcel`); here the home is read when
+  the button is pressed, so a home set during the session counts.
 - **Home is set from the map's place panel, the place detail and the minimap's menu.** The place
   detail, opened from the lobby's cards and the Places page, saves the place's base parcel (a
   World, its name) and offers start and exit navigation for a Genesis City place; a Jump in there
