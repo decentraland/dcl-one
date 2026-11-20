@@ -837,6 +837,7 @@ impl Upstream {
                 context: DeploymentContext::Synced,
                 report: None,
                 retry_state: None,
+                discard_overtaken: false,
             },
         )
         .await;

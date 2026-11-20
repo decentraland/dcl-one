@@ -39,6 +39,11 @@ serving profiles older than a year (except `default*` pointers) on every node,
 and also deletes them when garbage collection is on. A dcl-one node therefore
 serves profiles that a legacy peer no longer serves.
 
+Peer sync still skips profiles older than `SYNC_PROFILE_MAX_AGE_DAYS` (365 by
+default; 0 syncs every profile), so a node never imports such a profile from
+snapshots or the pointer-changes feed. Read-through does not apply that age, so
+an old profile a reader asks for is still fetched.
+
 ### Validation refusals are final, and failed records expire
 
 The retry worker (`services/catalyst/content/src/sync/retry_failed.rs`) treats a
@@ -50,15 +55,20 @@ failed sync deployment according to why it failed:
 | validation undecided (a check could not be decided, such as an unavailable RPC) | with a wait that grows from 15 minutes to a day, without spending retries | becomes a refusal after 7 days undecided |
 | deployment rejected (validation refused it) | never | by the daily prune |
 
-The daily prune deletes every record whose first failure is older than
-`RETRY_FAILED_PRUNE_TTL_DAYS` (7), except undecided records.
+The daily prune deletes every record whose failure time is older than
+`RETRY_FAILED_PRUNE_TTL_DAYS` (7), except undecided records. The failure time is
+that of the latest failure sync, read-through or a failed database write
+recorded, or of the retry worker giving up on an undecided record; a retry that
+fails again keeps it.
 
-A retried entity that a newer active entity has overtaken on any of its
-pointers is discarded: the worker deletes its record and writes no deployment
-row. Pointer succession supersedes an entity as a whole, so such an entity could
-only land as a superseded row, and the prune would remove that row again. The
-worker checks this after it fetches the entity file and before it downloads
-content or validates.
+With history pruning on, a retried entity that a newer active entity of its
+type has overtaken on any of its pointers is discarded: the worker deletes its
+record and writes no deployment row. Pointer succession supersedes an entity as
+a whole, so such an entity could only land as a superseded row, and the prune
+would remove that row again. The worker checks this after it fetches the entity
+file and before it downloads content or validates. It does not discard an entity
+a newer scene of this node's own would supersede, since the prune keeps those
+rows. With pruning off, the entity is deployed as a superseded row.
 
 The legacy catalyst retries every failure kind, refusals included, up to the
 same cap. It has no age-based prune. A refusal caused by a rule or chain-index
@@ -67,9 +77,10 @@ stays undeployed.
 
 ## Reasons
 
-- Peer sync stays correct without history rows. The only check for whether an
-  entity is already known is `is_entity_deployed`, so a pruned entity a peer
-  offers again is downloaded again and lands as a superseded row. Pointer
+- Peer sync stays correct without history rows. Its check for whether an entity
+  is already known reads only deployment rows (`is_entity_deployed`, and
+  `deployed_entity_ids` for a snapshot batch), so a pruned entity a peer offers
+  again is downloaded again and lands as a superseded row. Pointer
   succession never moves a pointer back to an older entity, so a re-offer costs a
   download, never a wrong pointer. The grace period covers what a restart can
   replay from snapshots and the pointer-changes feed.

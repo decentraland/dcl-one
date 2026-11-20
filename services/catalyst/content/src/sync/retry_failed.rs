@@ -44,6 +44,10 @@ pub struct RetryFailedConfig {
     /// Due records per page of a cycle. A cycle keeps paging until the due set it started with
     /// is drained, so this bounds memory and statement size, not the work a cycle does.
     pub retry_batch_size: usize,
+    /// Discard a due entity a newer active entity overtook instead of deploying it as a
+    /// superseded row. Set where the history prune (`CONTENT_HISTORY_PRUNE_ENABLED`) would remove
+    /// that row again; a node that keeps history stores it.
+    pub discard_overtaken: bool,
 }
 
 impl Default for RetryFailedConfig {
@@ -53,6 +57,7 @@ impl Default for RetryFailedConfig {
             max_retries: DEFAULT_MAX_RETRIES,
             retry_concurrency: DEFAULT_RETRY_CONCURRENCY,
             retry_batch_size: DEFAULT_RETRY_BATCH_SIZE,
+            discard_overtaken: false,
         }
     }
 }
@@ -302,7 +307,7 @@ impl RetryFailedDeployments {
                     let content_semaphore = content_semaphore.clone();
                     async move {
                         let attempt = next_attempt(failure);
-                        match deploy_entity_streaming(
+                        let outcome = deploy_entity_streaming(
                             ContentSource {
                                 client: &self.http_client,
                                 storage: self.storage.clone(),
@@ -316,31 +321,36 @@ impl RetryFailedDeployments {
                                 context: DeploymentContext::SyncedFix,
                                 report: None,
                                 retry_state: Some(attempt),
+                                discard_overtaken: self.config.discard_overtaken,
                             },
                         )
-                        .await
-                        {
+                        .await;
+                        // A failed discard is re-reported below like any failed attempt, so the
+                        // record backs off instead of being checked again next cycle.
+                        let outcome = match outcome {
+                            Err(SyncError::Overtaken { .. }) => {
+                                match self.failed_store.discard(&failure.entity_id).await {
+                                    Ok(()) => {
+                                        info!(
+                                            entity_id = %failure.entity_id,
+                                            entity_type = %failure.entity_type,
+                                            "Discarded failed deployment overtaken by newer deployments"
+                                        );
+                                        discarded_ref.fetch_add(1, Ordering::Relaxed);
+                                        return;
+                                    }
+                                    Err(e) => Err(e),
+                                }
+                            }
+                            other => other,
+                        };
+                        match outcome {
                             // Buffered, not yet written: the flush transaction that writes
                             // it deletes the failure record, so a crash or a failed flush
                             // before then leaves the record for the next cycle.
                             Ok(()) => {
                                 info!(entity_id = %failure.entity_id, "Retried failed deployment");
                                 succeeded_ref.fetch_add(1, Ordering::Relaxed);
-                            }
-                            Err(SyncError::Overtaken { .. }) => {
-                                info!(
-                                    entity_id = %failure.entity_id,
-                                    entity_type = %failure.entity_type,
-                                    "Discarding failed deployment overtaken by newer deployments"
-                                );
-                                match self.failed_store.discard(&failure.entity_id).await {
-                                    Ok(()) => {
-                                        discarded_ref.fetch_add(1, Ordering::Relaxed);
-                                    }
-                                    Err(e) => {
-                                        error!(entity_id = %failure.entity_id, error = %e, "Failed to discard overtaken failed deployment");
-                                    }
-                                }
                             }
                             Err(e) => {
                                 debug!(entity_id = %failure.entity_id, error = %e, "Retry still failing");
@@ -441,7 +451,8 @@ impl RetryFailedDeployments {
 pub struct RetryStats {
     pub succeeded: u64,
     pub still_failing: u64,
-    /// Due records dropped because a newer deployment overtook the entity.
+    /// Due records dropped because a newer deployment overtook the entity
+    /// ([`RetryFailedConfig::discard_overtaken`]).
     pub discarded: u64,
     /// Records whose deadline was still ahead when the cycle started.
     pub waiting: u64,

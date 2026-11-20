@@ -654,7 +654,7 @@ async fn flush_batch(pool: &PgPool, entities: &[ParsedEntity]) -> Result<(), Syn
 
     // Every entity of the batch is in content.deployments once this commits, so its failure
     // record goes in the same transaction: the retry worker never drops one earlier.
-    crate::failed_deployments_store::remove_published(&mut tx, &entity_ids).await?;
+    crate::failed_deployments_store::remove_published(&mut *tx, &entity_ids).await?;
 
     if rows.is_empty() {
         tx.commit()
@@ -955,13 +955,41 @@ impl LiveSyncDeployer {
         Ok(())
     }
 
-    /// [`is_overtaken`] over this deployer's pool.
+    /// Whether a newer active entity of the same type holds any pointer of `entity_data`, in the
+    /// order pointer succession uses (`entity_timestamp`, then the lowercased entity id).
+    /// Succession supersedes an entity as a whole, so such an entity can only land as a
+    /// superseded row. An entity a newer deployment of this node's own (`local_entities`) would
+    /// supersede is never overtaken: the history prune keeps the rows such a scene superseded.
     pub async fn is_overtaken(
         &self,
         entity_data: &[u8],
         entity_id: &str,
     ) -> Result<bool, SyncError> {
-        is_overtaken(&self.pool, entity_data, entity_id).await
+        let entity = parse_entity_for_deploy(entity_data, entity_id, &Vec::new())?;
+        if entity.entity_pointers.is_empty() {
+            return Ok(false);
+        }
+        sqlx::query_scalar(
+            "SELECT EXISTS(
+                 SELECT 1 FROM content.active_pointers ap
+                 JOIN content.deployments d ON d.entity_id = ap.entity_id
+                 WHERE ap.pointer = ANY($1) AND ap.entity_type = $4
+                   AND (d.entity_timestamp, lower(d.entity_id))
+                       > (to_timestamp($2 / 1000.0), lower($3)))
+             AND NOT EXISTS(
+                 SELECT 1 FROM content.deployments d
+                 JOIN content.local_entities le ON le.entity_id = d.entity_id
+                 WHERE d.entity_pointers && $1 AND d.entity_type = $4
+                   AND (d.entity_timestamp, lower(d.entity_id))
+                       > (to_timestamp($2 / 1000.0), lower($3)))",
+        )
+        .bind(&entity.entity_pointers)
+        .bind(entity.entity_timestamp)
+        .bind(entity_id)
+        .bind(&entity.entity_type)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| SyncError::Storage(e.to_string()))
     }
 
     /// Flushes the buffer and waits for every in-flight flush to finish.
@@ -979,47 +1007,6 @@ impl LiveSyncDeployer {
             notified.await;
         }
     }
-}
-
-/// Whether a newer active entity holds any pointer of `entity_data`, in the order pointer
-/// succession uses (`entity_timestamp`, then the lowercased entity id). Such an entity can only
-/// land as a superseded row: succession supersedes an entity as a whole. An entity without
-/// pointers or a timestamp is never overtaken.
-pub async fn is_overtaken(
-    pool: &PgPool,
-    entity_data: &[u8],
-    entity_id: &str,
-) -> Result<bool, SyncError> {
-    let entity: Value = serde_json::from_slice(entity_data)?;
-    let Some(timestamp) = entity.get("timestamp").and_then(Value::as_f64) else {
-        return Ok(false);
-    };
-    let pointers: Vec<String> = entity
-        .get("pointers")
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(str::to_lowercase))
-                .collect()
-        })
-        .unwrap_or_default();
-    if pointers.is_empty() {
-        return Ok(false);
-    }
-    sqlx::query_scalar(
-        "SELECT EXISTS(
-             SELECT 1 FROM content.active_pointers ap
-             JOIN content.deployments d ON d.entity_id = ap.entity_id
-             WHERE ap.pointer = ANY($1)
-               AND (d.entity_timestamp, lower(d.entity_id))
-                   > (to_timestamp($2 / 1000.0), lower($3)))",
-    )
-    .bind(&pointers)
-    .bind(timestamp)
-    .bind(entity_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| SyncError::Storage(e.to_string()))
 }
 
 /// Whether `entity_id` is already deployed at `timestamp_ms` or later: the bloom-guarded

@@ -3,7 +3,7 @@
 
 use crate::sync_types::{FailedDeployment, FailureReason, SyncError};
 use serde_json::Value;
-use sqlx::{PgConnection, PgPool};
+use sqlx::PgPool;
 
 fn reason_label(reason: &FailureReason) -> &'static str {
     match reason {
@@ -138,12 +138,7 @@ impl LiveFailedDeploymentsStore {
 
     /// Drops the record of an entity the retry discards (newer entities overtook it).
     pub async fn discard(&self, entity_id: &str) -> Result<(), SyncError> {
-        sqlx::query("DELETE FROM content.failed_deployments WHERE entity_id = $1")
-            .bind(entity_id)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| SyncError::Storage(e.to_string()))?;
-        Ok(())
+        remove_published(&self.pool, &[entity_id.to_string()]).await
     }
 
     /// GREATEST-monotonic on the retry columns: the sync path reports a failure with a fresh
@@ -361,14 +356,15 @@ impl LiveFailedDeploymentsStore {
 /// duration.
 const EXHAUSTED_DELETE_BATCH_SIZE: usize = 1000;
 
-/// Remove published entities' failures in the publication transaction.
-pub(crate) async fn remove_published(
-    tx: &mut PgConnection,
+/// Remove the failures of published entities (in the publication transaction) or of discarded
+/// ones.
+pub(crate) async fn remove_published<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
     entity_ids: &[String],
 ) -> Result<(), SyncError> {
     sqlx::query("DELETE FROM content.failed_deployments WHERE entity_id = ANY($1)")
         .bind(entity_ids)
-        .execute(tx)
+        .execute(executor)
         .await
         .map_err(|e| SyncError::Storage(e.to_string()))?;
     Ok(())
