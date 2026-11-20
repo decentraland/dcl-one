@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+
 use serde_json::Value;
 
 use crate::auth::eip1654::Eip1654Validator;
@@ -120,12 +122,37 @@ pub(super) struct VerifiedChain {
     pub sender: String,
 }
 
-/// Why a chain was refused: invalid (400), or a contract-wallet link no
-/// validator could decide (503).
+/// Why a chain was refused: invalid (400), a contract-wallet link no
+/// validator could decide (503), or one not asked because the network spent
+/// its budget of refused contract-wallet checks (429).
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum ChainRefusal {
     Invalid(String),
     Unavailable,
+    Throttled,
+}
+
+/// Whether `chain` has a contract-wallet link, whose check is an RPC call.
+pub(super) fn needs_contract_check(chain: &AuthChain) -> bool {
+    chain.iter().any(|link| {
+        matches!(
+            link.link_type,
+            AuthLinkType::EcdsaEip1654Ephemeral | AuthLinkType::EcdsaEip1654SignedEntity
+        )
+    })
+}
+
+static NO_VALIDATOR_WARNED: AtomicBool = AtomicBool::new(false);
+static VALIDATION_FAILED_WARNED_AT: AtomicI64 = AtomicI64::new(i64::MIN);
+const VALIDATION_FAILED_WARN_EVERY_SECS: i64 = 60;
+
+/// Whether a warning last given at `last` is due again at `now_secs`; claims it when due.
+fn warn_due(last: &AtomicI64, now_secs: i64, every_secs: i64) -> bool {
+    let prev = last.load(Ordering::Relaxed);
+    now_secs.saturating_sub(prev) >= every_secs
+        && last
+            .compare_exchange(prev, now_secs, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
 }
 
 impl From<String> for ChainRefusal {
@@ -142,13 +169,25 @@ async fn verify_chain(
     match verify_auth_chain_async(chain, final_authority, None, eip1654).await {
         Ok(()) => Ok(()),
         Err(AuthError::Eip1654NotImplemented) => {
-            tracing::warn!(
-                "auth-api: contract-wallet chain refused, no EIP-1654 validator configured"
-            );
+            if !NO_VALIDATOR_WARNED.swap(true, Ordering::Relaxed) {
+                tracing::warn!(
+                    "auth-api: contract-wallet chain refused, no EIP-1654 validator configured"
+                );
+            }
             Err(ChainRefusal::Unavailable)
         }
         Err(AuthError::Eip1654ValidationFailed(detail)) => {
-            tracing::warn!(%detail, "auth-api: contract-wallet chain refused, EIP-1654 validation failed");
+            // Callers can provoke this one; repeats within the interval go to debug.
+            let now = chrono::Utc::now().timestamp();
+            if warn_due(
+                &VALIDATION_FAILED_WARNED_AT,
+                now,
+                VALIDATION_FAILED_WARN_EVERY_SECS,
+            ) {
+                tracing::warn!(%detail, "auth-api: contract-wallet chain refused, EIP-1654 validation failed");
+            } else {
+                tracing::debug!(%detail, "auth-api: contract-wallet chain refused, EIP-1654 validation failed");
+            }
             Err(ChainRefusal::Unavailable)
         }
         Err(e) => Err(ChainRefusal::Invalid(e.to_string())),
@@ -689,6 +728,41 @@ mod tests {
         let (owner, final_authority) = validate_identity_chain(&chain, None).await.unwrap();
         assert_eq!(owner, chain[0].payload);
         assert!(final_authority.eq_ignore_ascii_case(&address_of(EPHEMERAL_KEY)));
+    }
+
+    #[test]
+    fn only_contract_wallet_links_need_a_contract_check() {
+        use super::contract_wallet::{SIGNATURE, chain};
+        let ephemeral = address_of(EPHEMERAL_KEY);
+        assert!(needs_contract_check(&chain(&ephemeral, SIGNATURE)));
+        assert!(!needs_contract_check(&delegated_chain(
+            SIGNER_KEY,
+            EPHEMERAL_KEY,
+            "2100-01-01T00:00:00.000Z"
+        )));
+    }
+
+    #[tokio::test]
+    async fn a_forged_link_after_a_contract_one_is_refused_without_the_rpc() {
+        use super::contract_wallet::{SIGNATURE, chain};
+        let mut forged = chain(&address_of(EPHEMERAL_KEY), SIGNATURE);
+        forged.push(crate::auth::AuthLink {
+            link_type: AuthLinkType::EcdsaSignedEntity,
+            payload: "entity".into(),
+            signature: Some(format!("0x{}", "00".repeat(65))),
+        });
+        assert!(matches!(
+            validate_auth_chain(&forged, Some(&crate::auth::PeerValidated)).await,
+            Err(ChainRefusal::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn a_repeated_warning_is_due_once_per_interval() {
+        let last = AtomicI64::new(i64::MIN);
+        assert!(warn_due(&last, 1_000, 60));
+        assert!(!warn_due(&last, 1_030, 60));
+        assert!(warn_due(&last, 1_060, 60));
     }
 
     #[tokio::test]

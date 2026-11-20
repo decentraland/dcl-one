@@ -12,10 +12,10 @@ use crate::api::internal_error;
 use crate::auth::AuthChain;
 use crate::shared::signed_fetch::{self, PayloadPolicy, Signer};
 
-use super::validation::validate_identity_chain;
+use super::validation::{needs_contract_check, validate_identity_chain};
 use super::{
-    ErrorBody, EvictedBody, admission_lock, bad_request, chain_refused, client_ip, ips_match,
-    is_valid_uuid, naive, normalize_ip, now_micros,
+    ErrorBody, EvictedBody, admission_lock, bad_request, chain_refused, client_ip,
+    contract_checked, ips_match, is_valid_uuid, naive, normalize_ip, now_micros,
 };
 use crate::api::Shared as AppState;
 
@@ -130,11 +130,28 @@ pub(super) async fn create_identity(
     if let Some(err) = identity_shape_error(&body.identity) {
         return bad_request(&format!("Invalid AuthIdentity: {err}"));
     }
-    let (owner, final_authority) =
-        match validate_identity_chain(&parsed.auth_chain, state.eip1654_validator()).await {
-            Ok(authorities) => authorities,
-            Err(refusal) => return chain_refused(refusal),
-        };
+    let source = super::request_source(
+        &headers,
+        peer.map(|axum::Extension(axum::extract::ConnectInfo(p))| p),
+        &state.settings.trusted_proxy_cidrs,
+    );
+    let chain = &parsed.auth_chain;
+    let offline = validate_identity_chain(chain, Some(&crate::auth::PeerValidated)).await;
+    let checked = match offline {
+        Ok(_) if needs_contract_check(chain) => {
+            contract_checked(
+                &state,
+                source.as_deref(),
+                validate_identity_chain(chain, state.eip1654_validator()),
+            )
+            .await
+        }
+        offline => offline,
+    };
+    let (owner, final_authority) = match checked {
+        Ok(authorities) => authorities,
+        Err(refusal) => return chain_refused(refusal),
+    };
     if !parsed
         .ephemeral_identity
         .address
@@ -160,11 +177,6 @@ pub(super) async fn create_identity(
 
     let identity_id = Uuid::new_v4().to_string();
     let now = now_micros();
-    let source = super::request_source(
-        &headers,
-        peer.map(|axum::Extension(axum::extract::ConnectInfo(p))| p),
-        &state.settings.trusted_proxy_cidrs,
-    );
     let expiration = now + Duration::seconds(IDENTITY_TTL_SECONDS);
     let record = IdentityRecord {
         identity_id: identity_id.clone(),

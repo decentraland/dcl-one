@@ -27,12 +27,17 @@ use crate::shared::client_ip::{
     client_ip, is_internal, is_trusted_proxy, normalize_ip, single_real_ip, source_key,
 };
 
+mod contract_checks;
 mod identities;
 mod validation;
 
+pub use contract_checks::ContractChecks;
+
 use identities::{create_identity, get_identity};
 pub use identities::{sweep_expired_identities, sweep_identity_tombstones};
-use validation::{ChainRefusal, validate_auth_chain, validate_request_message};
+use validation::{
+    ChainRefusal, needs_contract_check, validate_auth_chain, validate_request_message,
+};
 
 const REQUEST_TTL_SECONDS: i64 = 300;
 /// An expired request still answers 410 for this long before the sweep drops it.
@@ -740,16 +745,32 @@ async fn create_request(
         peer.map(|Extension(ConnectInfo(p))| p),
         &state.settings.trusted_proxy_cidrs,
     );
-    // Before the chain: a contract-wallet link costs an RPC call.
-    match network_over_cap(&state, source.as_deref(), now).await {
-        Ok(false) => {}
-        Ok(true) => return too_many_from_network(),
-        Err(err) => return internal_error("auth-api: counting the network's requests", err),
-    }
-    let sender = match validate_auth_chain(validated.auth_chain, state.eip1654_validator()).await {
-        Ok(verified) => verified.sender.to_lowercase(),
+    let chain = validated.auth_chain;
+    let offline = match validate_auth_chain(chain, Some(&crate::auth::PeerValidated)).await {
+        Ok(verified) => verified,
         Err(refusal) => return chain_refused(refusal),
     };
+    let sender = if needs_contract_check(chain) {
+        // Before the RPC: a network at its cap costs no contract call.
+        match network_over_cap(&state, source.as_deref(), now).await {
+            Ok(false) => {}
+            Ok(true) => return too_many_from_network(),
+            Err(err) => return internal_error("auth-api: counting the network's requests", err),
+        }
+        match contract_checked(
+            &state,
+            source.as_deref(),
+            validate_auth_chain(chain, state.eip1654_validator()),
+        )
+        .await
+        {
+            Ok(verified) => verified.sender,
+            Err(refusal) => return chain_refused(refusal),
+        }
+    } else {
+        offline.sender
+    }
+    .to_lowercase();
 
     let request_id = Uuid::new_v4().to_string();
     let expiration = now + Duration::seconds(REQUEST_TTL_SECONDS);
@@ -787,9 +808,9 @@ async fn create_request(
         .into_response()
 }
 
-/// Whether `source` is at its cap of pending requests, checked before the
-/// chain and the admission lock: a flood from one network neither reaches the
-/// RPC nor queues on the lock every create takes, holding pool connections.
+/// Whether `source` is at its cap of pending requests, checked before a
+/// contract-wallet chain's RPC call: a flood from one network does not reach
+/// the RPC. Plain chains meet the cap under the admission lock.
 async fn network_over_cap(
     state: &AppState,
     source: Option<&str>,
@@ -816,8 +837,8 @@ async fn admit_request(
     record: &ChallengeRecord,
     now: DateTime<Utc>,
 ) -> sqlx::Result<Option<Response>> {
-    // The caller already refused a network over its cap (`network_over_cap`);
-    // under the lock the count is taken again, exactly.
+    // A contract-wallet chain was refused over its cap already
+    // (`network_over_cap`); under the lock the count is taken exactly.
     let mut tx = state.pool.begin().await?;
     admission_lock(&mut tx, REQUEST_ADMISSION_LOCK).await?;
     if let Some(refusal) = request_capacity_refusal(&mut tx, record.source.as_deref(), now).await? {
@@ -920,18 +941,22 @@ async fn get_request_outcome(State(state): State<AppState>, Path(id): Path<Strin
 
 async fn post_request_outcome(
     state: State<AppState>,
+    peer: Option<Extension<ConnectInfo<std::net::SocketAddr>>>,
+    headers: HeaderMap,
     path: Path<String>,
     body: Json<HttpOutcomeMessage>,
 ) -> Response {
-    submit_outcome(state, path, body).await
+    submit_outcome(state, peer, headers, path, body).await
 }
 
 async fn post_request_outcome_legacy(
     state: State<AppState>,
+    peer: Option<Extension<ConnectInfo<std::net::SocketAddr>>>,
+    headers: HeaderMap,
     path: Path<String>,
     body: Json<HttpOutcomeMessage>,
 ) -> Response {
-    submit_outcome(state, path, body).await
+    submit_outcome(state, peer, headers, path, body).await
 }
 
 fn already_answered(id: &str, status: ChallengeStatus) -> Response {
@@ -946,6 +971,8 @@ fn already_answered(id: &str, status: ChallengeStatus) -> Response {
 
 async fn submit_outcome(
     State(state): State<AppState>,
+    peer: Option<Extension<ConnectInfo<std::net::SocketAddr>>>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Json(body): Json<HttpOutcomeMessage>,
 ) -> Response {
@@ -963,10 +990,26 @@ async fn submit_outcome(
         return already_answered(&id, record.status);
     }
 
-    if let Some(chain) = body.auth_chain.as_ref()
-        && let Err(refusal) = validate_auth_chain(chain, state.eip1654_validator()).await
-    {
-        return chain_refused(refusal);
+    if let Some(chain) = body.auth_chain.as_ref() {
+        if let Err(refusal) = validate_auth_chain(chain, Some(&crate::auth::PeerValidated)).await {
+            return chain_refused(refusal);
+        }
+        if needs_contract_check(chain) {
+            let source = request_source(
+                &headers,
+                peer.map(|Extension(ConnectInfo(p))| p),
+                &state.settings.trusted_proxy_cidrs,
+            );
+            if let Err(refusal) = contract_checked(
+                &state,
+                source.as_deref(),
+                validate_auth_chain(chain, state.eip1654_validator()),
+            )
+            .await
+            {
+                return chain_refused(refusal);
+            }
+        }
     }
 
     let outcome = OutcomeResponseMessage {
@@ -1097,9 +1140,39 @@ fn gone_already_fulfilled(id: &str) -> Response {
         .into_response()
 }
 
+/// `verify`, the contract-wallet check of a chain whose other links passed,
+/// charged to `source`'s budget of refused checks; one that verifies is
+/// given back.
+async fn contract_checked<T>(
+    state: &AppState,
+    source: Option<&str>,
+    verify: impl std::future::Future<Output = Result<T, ChainRefusal>>,
+) -> Result<T, ChainRefusal> {
+    let Some(charge) = state
+        .contract_checks
+        .charge(source, std::time::Instant::now())
+    else {
+        return Err(ChainRefusal::Throttled);
+    };
+    let verified = verify.await;
+    if verified.is_ok() {
+        state.contract_checks.refund(charge);
+    }
+    verified
+}
+
 fn chain_refused(refusal: ChainRefusal) -> Response {
     match refusal {
         ChainRefusal::Invalid(msg) => bad_request(&msg),
+        ChainRefusal::Throttled => (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(ErrorBody {
+                error:
+                    "Too many refused contract wallet signatures from this network, try again later"
+                        .into(),
+            }),
+        )
+            .into_response(),
         ChainRefusal::Unavailable => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(ErrorBody {
@@ -1532,6 +1605,10 @@ mod tests {
         };
         let (status, err) = call(&app, signed().await).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{err}");
+        assert_eq!(
+            err["error"],
+            "Contract wallet signature verification unavailable"
+        );
 
         assert!(state.attach_eip1654(Some(std::sync::Arc::new(Wallet::default()))));
         let (status, err) = call(&app, signed().await).await;
@@ -1543,6 +1620,68 @@ mod tests {
             ),
             "the contract chain verified; the EOA signer does not own it"
         );
+    }
+
+    #[tokio::test]
+    async fn a_network_that_spends_its_refused_contract_checks_reaches_no_validator() {
+        use validation::contract_wallet::{Wallet, chain};
+        let state = crate::api::tests_support::state_without_db().await;
+        let wallet = std::sync::Arc::new(Wallet::default());
+        assert!(state.attach_eip1654(Some(wallet.clone())));
+        let app = Router::new().nest("/auth-api", routes().with_state(state.clone()));
+        let post = |peer: &'static str| async move {
+            let ephemeral = alloy_signer_local::PrivateKeySigner::random();
+            let eph_address = format!("{:#x}", ephemeral.address());
+            let identity = json!({
+                "ephemeralIdentity": { "address": eph_address, "privateKey": format!("0x{}", hex::encode(ephemeral.to_bytes())), "publicKey": "0x04" },
+                "expiration": "2100-01-01T00:00:00.000Z",
+                "authChain": chain(&eph_address, "0xbad0"),
+            });
+            let mut req = from_peer(
+                json_post(
+                    "/auth-api/identities",
+                    serde_json::to_vec(&json!({ "identity": identity })).unwrap(),
+                ),
+                peer,
+            );
+            req.headers_mut().extend(
+                crate::shared::signed_fetch::test_support::signed_headers(
+                    "post",
+                    "/auth-api/identities",
+                    "{}",
+                    true,
+                )
+                .await,
+            );
+            req
+        };
+        for _ in 0..contract_checks::PER_SOURCE {
+            let (status, err) = call(&app, post("203.0.113.5:1").await).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{err}");
+        }
+        let asked = wallet.calls();
+        let (status, err) = call(&app, post("203.0.113.5:2").await).await;
+        assert_eq!(
+            (status, err["error"].as_str()),
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                Some(
+                    "Too many refused contract wallet signatures from this network, try again later"
+                )
+            )
+        );
+        assert_eq!(
+            wallet.calls(),
+            asked,
+            "a spent network reaches no validator"
+        );
+        let (status, _) = call(&app, post("198.51.100.7:1").await).await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "another network is still asked"
+        );
+        assert!(wallet.calls() > asked);
     }
 
     #[tokio::test]
