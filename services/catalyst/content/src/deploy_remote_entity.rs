@@ -500,12 +500,19 @@ pub async fn deploy_entity_streaming(
             "the stored entity file was empty",
         ));
     }
-    let hashes = extract_content_hashes(&entity_data)
-        .map_err(|e| entity_parse_error(entity_id, verification, e))?;
+    let files =
+        entity_files(&entity_data).map_err(|e| entity_parse_error(entity_id, verification, e))?;
+    let snapshot_hashes: HashSet<&str> = files.snapshots.iter().map(|(_, h)| h.as_str()).collect();
 
-    let mut tasks: tokio::task::JoinSet<Result<(), SyncError>> = tokio::task::JoinSet::new();
+    let mut tasks: tokio::task::JoinSet<(String, Result<(), SyncError>)> =
+        tokio::task::JoinSet::new();
 
-    let refs: Vec<&str> = hashes.iter().map(String::as_str).collect();
+    let refs: Vec<&str> = files
+        .content
+        .iter()
+        .map(String::as_str)
+        .chain(snapshot_hashes.iter().copied())
+        .collect();
     let present = storage.exist_multiple(&refs).await?;
     for (hash, exists) in present {
         if exists {
@@ -519,17 +526,35 @@ pub async fn deploy_entity_streaming(
         let budget = budget.clone();
 
         tasks.spawn(async move {
-            let _permit = sem.acquire().await.map_err(|_| SyncError::Stopped)?;
-            download_file_with_retries(&client, storage.as_ref(), &hash, &servers, Some(&budget))
-                .await
+            let Ok(_permit) = sem.acquire().await else {
+                return (hash, Err(SyncError::Stopped));
+            };
+            let result = download_file_with_retries(
+                &client,
+                storage.as_ref(),
+                &hash,
+                &servers,
+                Some(&budget),
+            )
+            .await;
+            (hash, result)
         });
     }
 
     let mut first_error: Option<SyncError> = None;
     while let Some(result) = tasks.join_next().await {
         match result {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => {
+            Ok((_, Ok(()))) => {}
+            // A render named only in metadata is fetched when a peer has it; the entity deploys
+            // without it otherwise, as snapshots-fetcher deploys it. A stop or a store fault
+            // still fails the attempt.
+            Ok((hash, Err(e)))
+                if snapshot_hashes.contains(hash.as_str())
+                    && !matches!(e, SyncError::Stopped | SyncError::Storage(_)) =>
+            {
+                debug!(entity_id, hash, error = %e, "Avatar snapshot not available for download");
+            }
+            Ok((_, Err(e))) => {
                 if first_error.is_none() {
                     first_error = Some(e);
                 }
@@ -546,14 +571,23 @@ pub async fn deploy_entity_streaming(
         return Err(e);
     }
 
+    let snapshot_refs: Vec<&str> = snapshot_hashes.into_iter().collect();
+    let stored = storage.exist_multiple(&snapshot_refs).await?;
+    let snapshots = files
+        .snapshots
+        .into_iter()
+        .filter(|(_, hash)| stored.get(hash).copied().unwrap_or(false))
+        .collect();
+
     deployer
-        .deploy_entity(
+        .deploy_entity_with_files(
             &entity_data,
             entity_id,
             auth_chain,
             context,
             report,
             retry_state,
+            snapshots,
         )
         .await?;
 
@@ -579,57 +613,42 @@ fn entity_parse_error(
     ))
 }
 
-/// The hashes sync downloads for an entity: every content file, a profile's avatar renders
-/// (`face.png`, `face128.png`, `face256.png`, `body.png`) included, as the reference catalyst
-/// stores them, so every hash this node lists in `/deployments`, `/pointer-changes` and its
-/// snapshots is one `/contents/{hash}` serves. An entity other than a profile that carries
-/// avatars (`metadata.avatars` or a top-level `avatars`) also has their snapshot hashes fetched.
-fn extract_content_hashes(entity_data: &[u8]) -> Result<Vec<String>, serde_json::Error> {
-    let entity: serde_json::Value = serde_json::from_slice(entity_data)?;
-    let is_profile = entity.get("type").and_then(|t| t.as_str()) == Some("profile");
-    let mut seen = HashSet::new();
-    let mut hashes = Vec::new();
-
-    if let Some(content) = entity.get("content").and_then(|c| c.as_array()) {
-        for entry in content {
-            if let Some(hash) = entry.get("hash").and_then(|h| h.as_str())
-                && seen.insert(hash.to_string())
-            {
-                hashes.push(hash.to_string());
-            }
-        }
-    }
-
-    let avatars = entity
-        .pointer("/metadata/avatars")
-        .or_else(|| entity.get("avatars"))
-        .and_then(|a| a.as_array());
-
-    if let Some(avatar_list) = avatars.filter(|_| !is_profile) {
-        for avatar_entry in avatar_list {
-            let snapshots = avatar_entry.pointer("/avatar/snapshots");
-            if let Some(obj) = snapshots.and_then(|s| s.as_object()) {
-                for (_key, val) in obj {
-                    if let Some(raw) = val.as_str() {
-                        let hash = extract_hash_from_snapshot_value(raw);
-                        if !hash.is_empty() && seen.insert(hash.to_string()) {
-                            hashes.push(hash.to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(hashes)
+/// The files sync downloads for an entity.
+#[derive(Debug, PartialEq)]
+struct EntityFiles {
+    /// Every `content[]` hash, once: each must be stored before the entity deploys.
+    content: Vec<String>,
+    /// A profile's avatar renders named only in its metadata
+    /// ([`crate::profile_snapshots::snapshot_files`]): fetched when a peer has them, and
+    /// recorded in `content_files` once stored.
+    snapshots: Vec<(String, String)>,
 }
 
-fn extract_hash_from_snapshot_value(s: &str) -> &str {
-    if let Some(idx) = s.rfind("/contents/") {
-        &s[idx + "/contents/".len()..]
+fn entity_files(entity_data: &[u8]) -> Result<EntityFiles, serde_json::Error> {
+    let entity: serde_json::Value = serde_json::from_slice(entity_data)?;
+    let declared: Vec<(String, String)> = entity
+        .get("content")
+        .and_then(|c| c.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let hash = entry.get("hash")?.as_str()?;
+            let file = entry.get("file").and_then(|f| f.as_str()).unwrap_or("");
+            Some((file.to_string(), hash.to_string()))
+        })
+        .collect();
+    let mut seen = HashSet::new();
+    let content = declared
+        .iter()
+        .filter(|(_, hash)| seen.insert(hash.as_str()))
+        .map(|(_, hash)| hash.clone())
+        .collect();
+    let snapshots = if entity.get("type").and_then(|t| t.as_str()) == Some("profile") {
+        crate::profile_snapshots::snapshot_files(entity.pointer("/metadata/avatars"), &declared)
     } else {
-        s
-    }
+        Vec::new()
+    };
+    Ok(EntityFiles { content, snapshots })
 }
 
 /// Redirects a content file download follows (a peer may serve its files elsewhere).
@@ -873,115 +892,55 @@ mod tests {
     use crate::storage::hex_prefix;
     use crate::sync_test_support::{spawn_content_server, temp_storage};
 
+    fn files_of(entity: serde_json::Value) -> EntityFiles {
+        entity_files(&serde_json::to_vec(&entity).unwrap()).unwrap()
+    }
+
     #[test]
-    fn test_extract_content_hashes() {
-        let entity = serde_json::json!({
+    fn content_hashes_are_listed_once_in_order() {
+        let files = files_of(serde_json::json!({
+            "type": "scene",
             "content": [
                 {"file": "scene.json", "hash": "bafabc"},
                 {"file": "model.glb", "hash": "bafdef"},
+                {"file": "copy.glb", "hash": "bafdef"},
             ]
-        });
-        let data = serde_json::to_vec(&entity).unwrap();
-        let hashes = extract_content_hashes(&data).unwrap();
-        assert_eq!(hashes, vec!["bafabc", "bafdef"]);
+        }));
+        assert_eq!(files.content, vec!["bafabc", "bafdef"]);
+        assert!(files.snapshots.is_empty());
     }
 
+    /// As snapshots-fetcher: only a profile's renders missing from `content[]` are added, and
+    /// only to a profile.
     #[test]
-    fn test_extract_content_hashes_deduplicates() {
-        let entity = serde_json::json!({
-            "content": [
-                {"file": "body.png", "hash": "bafbody"},
-            ],
-            "metadata": {
-                "avatars": [{
-                    "avatar": {
-                        "snapshots": {
-                            "face256": "bafface",
-                            "body": "bafbody",
-                        }
-                    }
-                }]
-            }
-        });
-        let data = serde_json::to_vec(&entity).unwrap();
-        let hashes = extract_content_hashes(&data).unwrap();
-        assert_eq!(hashes.len(), 2);
-        assert!(hashes.contains(&"bafbody".to_string()));
-        assert!(hashes.contains(&"bafface".to_string()));
-    }
-
-    #[test]
-    fn test_extract_content_hashes_multi_avatar() {
-        let entity = serde_json::json!({
-            "content": [],
-            "metadata": {
-                "avatars": [
-                    {"avatar": {"snapshots": {"face": "baf1"}}},
-                    {"avatar": {"snapshots": {"face": "baf2"}}},
-                ]
-            }
-        });
-        let data = serde_json::to_vec(&entity).unwrap();
-        let hashes = extract_content_hashes(&data).unwrap();
-        assert_eq!(hashes.len(), 2);
-        assert!(hashes.contains(&"baf1".to_string()));
-        assert!(hashes.contains(&"baf2".to_string()));
-    }
-
-    #[test]
-    fn test_extract_content_hashes_url_snapshots() {
-        let entity = serde_json::json!({
-            "content": [],
-            "metadata": {
-                "avatars": [{
-                    "avatar": {
-                        "snapshots": {
-                            "face": "https://peer.decentraland.org/content/contents/bafurlhash"
-                        }
-                    }
-                }]
-            }
-        });
-        let data = serde_json::to_vec(&entity).unwrap();
-        let hashes = extract_content_hashes(&data).unwrap();
-        assert_eq!(hashes, vec!["bafurlhash"]);
-    }
-
-    #[test]
-    fn profiles_fetch_every_avatar_render() {
-        let entity = serde_json::json!({
-            "type": "profile",
-            "content": [
-                {"file": "body.png", "hash": "bafbody"},
-                {"file": "face256.png", "hash": "bafface256"},
-                {"file": "face.png", "hash": "bafface512"},
-                {"file": "./face128.png", "hash": "bafface128"},
-                {"file": "extra.json", "hash": "bafextra"},
-            ],
-            "metadata": {
-                "avatars": [{
-                    "avatar": {
-                        "snapshots": {
-                            "face": "bafface512",
-                            "face128": "https://peer.decentraland.org/content/contents/bafface128",
-                            "face256": "bafface256",
-                            "body": "bafbody",
-                        }
-                    }
-                }]
-            }
-        });
-        let data = serde_json::to_vec(&entity).unwrap();
+    fn a_profile_adds_the_renders_its_content_does_not_list() {
+        let (face, body, face256) = (
+            hash_bytes_v1(b"face"),
+            hash_bytes_v1(b"body"),
+            hash_bytes_v1(b"face256"),
+        );
+        let entity = |kind: &str| {
+            serde_json::json!({
+                "type": kind,
+                "content": [{"file": "face256.png", "hash": face256}],
+                "metadata": {"avatars": [{"avatar": {"snapshots": {
+                    "face256": face256,
+                    "face": format!("https://peer.example/content/contents/{face}"),
+                    "body": body,
+                }}}]}
+            })
+        };
+        let mut files = files_of(entity("profile"));
+        files.snapshots.sort();
+        assert_eq!(files.content, vec![face256.clone()]);
         assert_eq!(
-            extract_content_hashes(&data).unwrap(),
+            files.snapshots,
             vec![
-                "bafbody",
-                "bafface256",
-                "bafface512",
-                "bafface128",
-                "bafextra"
+                ("body.png".to_string(), body.clone()),
+                ("face.png".to_string(), face.clone()),
             ]
         );
+        assert!(files_of(entity("wearable")).snapshots.is_empty());
     }
 
     const ENTITY_JSON: &[u8] = br#"{"type":"scene","content":[]}"#;
@@ -1083,6 +1042,89 @@ mod tests {
         assert!(
             !crate::sync_deployer::is_buffered(&id),
             "released after the attempt"
+        );
+        server.abort();
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    /// A profile's renders named only in its metadata are fetched and recorded once stored; one
+    /// no peer has leaves the entity deployable, without a row.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_synced_profile_stores_and_records_the_renders_its_content_omits() {
+        let Some(pool) = crate::sync_test_support::test_pool(2).await else {
+            return;
+        };
+        let tag = crate::sync_test_support::unique();
+        let blob = |name: &str| format!("{name} {tag}").into_bytes();
+        let (face256, body, face) = (blob("face256"), blob("body"), blob("face"));
+        let [face256_hash, body_hash, face_hash] =
+            [&face256, &body, &face].map(|b| hash_bytes_v1(b));
+        let pointer = format!("0x{}", &tag[..32]);
+        let entity = serde_json::to_vec(&serde_json::json!({
+            "version": "v3",
+            "type": "profile",
+            "pointers": [pointer],
+            "timestamp": 1_700_000_000_000u64,
+            "content": [{"file": "face256.png", "hash": face256_hash}],
+            "metadata": {"avatars": [{"avatar": {"snapshots": {
+                "face256": face256_hash, "body": body_hash, "face": face_hash,
+            }}}]},
+        }))
+        .unwrap();
+        let id = hash_bytes_v1(&entity);
+        let (url, server) = crate::sync_test_support::blob_peer(HashMap::from([
+            (id.clone(), entity),
+            (face256_hash.clone(), face256),
+            (body_hash.clone(), body),
+        ]))
+        .await;
+        let (storage, tmp) = temp_storage("profile-renders").await;
+        let deployer = LiveSyncDeployer::new(
+            pool.clone(),
+            1,
+            crate::sync_deployer::SyncValidation::AuthChainOnly,
+        );
+        let (client, chain, servers) = (
+            crate::sync::test_sync_client(reqwest::Client::new()),
+            crate::sync_test_support::signed_chain(&id).await,
+            vec![url],
+        );
+        deploy_entity_streaming(
+            ContentSource {
+                client: &client,
+                storage: storage.clone(),
+                servers: &servers,
+                content_semaphore: Arc::new(tokio::sync::Semaphore::new(2)),
+            },
+            &deployer,
+            RemoteDeployment {
+                entity_id: &id,
+                auth_chain: &chain,
+                context: DeploymentContext::Synced,
+                report: None,
+                retry_state: None,
+            },
+        )
+        .await
+        .unwrap();
+        deployer.flush().await.unwrap();
+
+        assert!(storage.exist(&body_hash).await.unwrap());
+        let mut rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT cf.key, cf.content_hash FROM content.content_files cf \
+             JOIN content.deployments d ON d.id = cf.deployment WHERE d.entity_id = $1",
+        )
+        .bind(&id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        rows.sort();
+        assert_eq!(
+            rows,
+            vec![
+                ("body.png".to_string(), body_hash),
+                ("face256.png".to_string(), face256_hash),
+            ]
         );
         server.abort();
         let _ = std::fs::remove_dir_all(tmp);

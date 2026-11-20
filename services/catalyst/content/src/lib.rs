@@ -83,6 +83,10 @@ pub mod read_through;
 // content_files and the blobs nothing else names (CONTENT_HISTORY_PRUNE_*).
 pub mod history_prune;
 
+// Profile avatar renders named only in metadata: their content_files rows, and the one-off
+// repair of profiles stored without them (`catalyst content repair-profile-snapshots`).
+pub mod profile_snapshots;
+
 mod about;
 pub mod about_comms;
 mod active_entities;

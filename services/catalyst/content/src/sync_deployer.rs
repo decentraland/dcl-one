@@ -906,11 +906,38 @@ impl LiveSyncDeployer {
         entity_data: &[u8],
         entity_id: &str,
         auth_chain: &AuthChain,
-        _context: DeploymentContext,
+        context: DeploymentContext,
         report: Option<&Arc<DeploymentReport>>,
         retry_state: Option<(u32, u64)>,
     ) -> Result<(), SyncError> {
+        self.deploy_entity_with_files(
+            entity_data,
+            entity_id,
+            auth_chain,
+            context,
+            report,
+            retry_state,
+            Vec::new(),
+        )
+        .await
+    }
+
+    /// [`Self::deploy_entity`], recording `extra_files` (`(key, hash)`, keys `content[]` does
+    /// not hold) in `content_files` beside `content[]`: the stored avatar renders a profile
+    /// names only in its metadata ([`crate::profile_snapshots::snapshot_files`]).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn deploy_entity_with_files(
+        &self,
+        entity_data: &[u8],
+        entity_id: &str,
+        auth_chain: &AuthChain,
+        _context: DeploymentContext,
+        report: Option<&Arc<DeploymentReport>>,
+        retry_state: Option<(u32, u64)>,
+        extra_files: Vec<(String, String)>,
+    ) -> Result<(), SyncError> {
         let mut parsed = parse_entity_for_deploy(entity_data, entity_id, auth_chain)?;
+        parsed.content.extend(extra_files);
         let verdict = self
             .verify_entity(entity_data, entity_id, auth_chain, SyncedContent::Fetched)
             .await?;

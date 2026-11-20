@@ -146,15 +146,31 @@ pub fn parse_entity_types(raw: &str) -> Result<Option<HashSet<String>>, SyncConf
 pub fn sync_http_client(
     config: &crate::config::Config,
 ) -> anyhow::Result<crate::http::CheckedRedirectClient> {
-    let max_idle = config.content.connections_max_idle;
+    checked_client(config.content.connections_max_idle, trusted_hosts(config)?)
+}
+
+/// [`sync_http_client`] for an operator command that reads `sources` (`SYNC_SOURCE` entries,
+/// trusted as sync trusts them).
+pub fn sources_http_client(
+    sources: &[String],
+) -> anyhow::Result<crate::http::CheckedRedirectClient> {
+    let hosts = sources
+        .iter()
+        .filter_map(|s| url::Url::parse(s).ok()?.host_str().map(str::to_string))
+        .collect();
+    checked_client(1, hosts)
+}
+
+fn checked_client(
+    max_idle: usize,
+    trusted: Vec<String>,
+) -> anyhow::Result<crate::http::CheckedRedirectClient> {
     let client = crate::http::HttpClientCfg {
         max_redirects: None,
         ..crate::http::HttpClientCfg::serve(max_idle)
     }
     .builder()
-    .dns_resolver(crate::http::PublicAddressResolver::trusting(trusted_hosts(
-        config,
-    )?))
+    .dns_resolver(crate::http::PublicAddressResolver::trusting(trusted))
     .no_proxy()
     .build()?;
     Ok(crate::http::CheckedRedirectClient::new(

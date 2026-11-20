@@ -1703,6 +1703,26 @@ withheld on `/contents/{hash}` after its next start; its reel route answers
 404 within the servable memo's minute. The bootstrap defines the table; an
 existing database gains it from the object pass, so no step exists.
 
+## Profile snapshot repair workload
+
+A profile may name avatar renders in `metadata.avatars[].avatar.snapshots`
+that its `content[]` omits. Sync fetches them when a source has them and writes
+a `content.content_files` row for each stored one (`{name}.png`, the reference
+catalyst's key) in the flush that writes the deployment, so the blob collector
+and the history prune keep them; a render no source has leaves no row.
+`catalyst content repair-profile-snapshots` (`content::profile_snapshots::repair`)
+adds those rows to profiles stored without them. Inputs: active profiles
+(`entity_type = 'profile' AND deleter_deployment IS NULL`) read by
+`id` keyset in pages of `--batch` (default 500), and
+their `content_files` rows by `deployment = ANY`. Per page, the renders the
+store lacks are fetched from `SYNC_SOURCE`, at most 8 at once. Writes: per
+page, one transaction that takes the store's shared lock, re-checks the blobs
+and inserts a row for each stored render, guarded on the deployment still being
+active, with `ON CONFLICT (deployment, key) DO NOTHING`. A pass can be
+repeated or interrupted; a render no source served is tried again on the next
+pass. The scan reads every active profile once; it is a one-off cost,
+unmeasured.
+
 ## Badges catalog and progress workload
 
 The catalog (`social.badge_definitions`, `badge_tiers`, `presence_badges`;
