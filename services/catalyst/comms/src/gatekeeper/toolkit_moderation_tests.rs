@@ -1012,7 +1012,7 @@ async fn toolkit_ban_listings_admit_extended_holders() {
                 // Past the gate: the store behind it has no database here.
                 assert_eq!(
                     (status, value),
-                    past_gate_store_fault(method, path, case == "world grantee"),
+                    past_gate_store_fault(method, path, std::ptr::eq(meta, &world)),
                     "{case} {method} {path}"
                 );
             } else if outcome == StatusCode::UNAUTHORIZED {
@@ -1493,6 +1493,8 @@ async fn unban_commits_during_inventory_outage_and_preserves_a_reban_during_meta
 /// The answer of a moderation write whose caller passed the gate and whose
 /// store is closed. Removing an admin looks the target up first, and banning
 /// where the live scene rooms cannot be listed fails there; both answer 503.
+/// The admin 503 only shows "past the gate" because these fixtures' policies
+/// never read `social.scene_admins`; a pooled policy's gate answers the same.
 fn past_gate_store_fault(method: &str, path: &str, rooms_unlisted: bool) -> (StatusCode, Value) {
     match (method, path) {
         ("DELETE", "/scene-admin") => (
