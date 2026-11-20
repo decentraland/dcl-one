@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
+import { NavBar } from "@dcl/one-ui";
 import { createShopClient, type ShopClient } from "@shop/api/shop";
 import { shopCartDrawer } from "../../cart/drawer";
 import { shopCart } from "../../cart/store";
@@ -11,6 +12,7 @@ import { evmAddress } from "@shop/model/address";
 import { marketplaceOn } from "../../market/testing-flags";
 import { catalogTransport, ShopHarness, type SessionKind } from "../fixtures";
 import ShopChrome, { shopTabs } from "./ShopChrome";
+import ShopCreditsChip from "./ShopCreditsChip";
 import { formatCreditsBalance } from "@shop/credits/balance-query";
 
 beforeEach(() => {
@@ -28,10 +30,17 @@ function Where() {
   return <output data-testid="where">{pathname}</output>;
 }
 
-async function chrome(entry: string, session: SessionKind = "signedOut", client?: ShopClient) {
+async function chrome(entry: string, session: SessionKind = "signedOut", client?: ShopClient, withHeader = false) {
   render(
     <ShopHarness path="/shop/*" entry={entry} session={session} client={client}>
-      <ShopChrome footer={false}>
+      <ShopChrome footer={false} topbar={withHeader ? (
+        <NavBar
+          sections={[]}
+          account={{ name: "Bob", address: "0x0000000000000000000000000000000000000b0b" }}
+          balanceAction={<ShopCreditsChip />}
+          notifications={{ onSelect() {} }}
+        />
+      ) : undefined}>
         <Where />
       </ShopChrome>
     </ShopHarness>,
@@ -55,6 +64,15 @@ describe("the Shop frame", () => {
     expect(within(subnav).getByTestId("search")).toBeTruthy();
   });
 
+  it("keeps the Shop tools and skip target when the host supplies its own header", async () => {
+    await chrome("/shop/overview");
+
+    const skip = screen.getByRole("link", { name: "Skip to content" });
+    expect(skip.getAttribute("href")).toBe(`#${screen.getByRole("main").id}`);
+    expect(screen.getByTestId("subnav-tabs")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Go to Decentraland home" })).toBeNull();
+  });
+
   it("navigates between sections through the host's router", async () => {
     await chrome("/shop/overview");
     fireEvent.click(screen.getAllByRole("link", { name: "Collectibles" })[0]!);
@@ -71,7 +89,7 @@ describe("the Shop frame", () => {
     const balance = { credits: [], totalCredits: 0, totals: { expiring: 0, nonExpiring: 0 }, usd: { balanceCents: 123_450, credits: 12_345 } };
     const transport = catalogTransport("ok", { "/v1/users/0x0000000000000000000000000000000000000b0b/credits": balance });
     const signer = { address: "0x0000000000000000000000000000000000000001", sign: async () => ({}) };
-    await chrome("/shop/items", "web2", createShopClient({ base: "http://shop.test", mode: "canonical", transport, signer: async () => signer }));
+    await chrome("/shop/items", "web2", createShopClient({ base: "http://shop.test", mode: "canonical", transport, signer: async () => signer }), true);
     const chip = await screen.findByTestId("navbar-credits");
     expect(chip).toHaveTextContent("12,345");
     expect(chip.getAttribute("aria-label")).toBe("12,345 shop credits");

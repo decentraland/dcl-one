@@ -10,8 +10,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router";
 
-import ChromeShell from "../../../components/ChromeShell";
-import DclTopBar from "../../../web/frames/DclTopBar";
+import ChromeBody from "@dcl/one-ui/components/AppChrome/ChromeBody";
+import SiteLayout from "@dcl/one-ui/components/AppChrome/SiteLayout";
 import { shopCartDrawer } from "../../cart/drawer";
 import { useCart } from "../../cart/store";
 import CartDrawer from "../../checkout/components/CartDrawer";
@@ -26,7 +26,7 @@ import { t } from "@shop/discovery/intl";
 import { localized, toContentfulLocale } from "../lib/contentful";
 import { MarketAnnouncementBar, MarketFooter } from "./MarketChrome";
 import { useMarketplace } from "../../market/access";
-import ShopCreditsChip, { ShopHeldCredits } from "./ShopCreditsChip";
+import { ShopHeldCredits } from "./ShopCreditsChip";
 import ShopFooter from "./ShopFooter";
 import "./shoptheme.css";
 import "./shopchrome.css";
@@ -208,20 +208,20 @@ export default function ShopChrome({ children, topbar, footer }: { children?: Re
   const signedIn = wallet.session.kind !== "signedOut";
 
   return (
-    <ChromeShell
-      className="shop-chrome"
-      ariaLabel="Shop"
-      topbar={topbar ?? <DclTopBar variant="sites" active="shop" signedIn={signedIn} account={wallet.account ?? undefined} onSignIn={wallet.host?.onSignIn} balances={<ShopCreditsChip />} />}
-      subnav={false}
-      right={
-        <>
-          {set === "marketplace" && !iap ? <MarketAnnouncementBar /> : null}
-          <ShopSubnav tabs={tabs} active={sectionFor(pathname, signedIn)} iap={iap} signedIn={signedIn} set={set} />
-        </>
-      }
-      footer={footer === undefined ? set === "marketplace" ? <MarketFooter /> : <ShopFooter /> : footer}
-    >
-      {children}
-    </ChromeShell>
+    <SiteLayout className="ui2" navigation={topbar}>
+      <ChromeBody
+        className="shop-chrome"
+        ariaLabel="Shop"
+        tools={
+          <>
+            {set === "marketplace" && !iap ? <MarketAnnouncementBar /> : null}
+            <ShopSubnav tabs={tabs} active={sectionFor(pathname, signedIn)} iap={iap} signedIn={signedIn} set={set} />
+          </>
+        }
+        footer={footer === undefined ? set === "marketplace" ? <MarketFooter /> : <ShopFooter /> : footer}
+      >
+        {children}
+      </ChromeBody>
+    </SiteLayout>
   );
 }

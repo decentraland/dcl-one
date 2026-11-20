@@ -84,7 +84,8 @@ describe("when Explorer mounts the real native Shop without a Sites document pro
   it("should provide agreed defaults, reuse fresh data and recover after one failed attempt", async () => {
     const { client } = await mountNative();
     expect(screen.queryByText(/No QueryClient set/)).toBeNull();
-    expect(screen.getByRole("navigation", { name: "Main" })).toBeTruthy();
+    expect(screen.getByTestId("subnav-tabs").closest("[data-site-layout]")?.querySelector("[data-site-layout-navigation]")).toBeNull();
+    expect(screen.getByTestId("subnav-tabs")).toBeTruthy();
     expect(client.getDefaultOptions().queries).toMatchObject({
       retry: false,
       staleTime: 30_000,

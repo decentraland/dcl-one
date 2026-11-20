@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ComponentType } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { describe, expect, it } from "vitest";
@@ -53,7 +54,11 @@ function render(pattern: string, url: string, Component: ComponentType<{ loaderD
     ],
     { initialEntries: [url], hydrationData: { loaderData: { page: loaderData } } },
   );
-  return renderToString(<RouterProvider router={router} />);
+  return renderToString(
+    <QueryClientProvider client={new QueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
 }
 
 const byPattern = new Map(Object.entries(MODULES).map(([file, mod]) => [patternOf(file), { file, mod }]));
@@ -81,6 +86,7 @@ describe("the /shop routes are ui3's route table", () => {
       const data: ShopPageData = { page: page.id, seo: defaultShopSeo(page.id), queries: [] };
       const html = render(pattern, urlOf(pattern), mod.default, data);
       expect(html, page.id).toContain("shop-chrome");
+      expect(html, page.id).toContain("data-site-layout-navigation");
     }
   });
 });
