@@ -2074,34 +2074,36 @@ identities (100 per network). No production rate is measured.
   same cap. Pickups take no lock, so concurrent ones can pass the count
   together; the overshoot is at most the pickups in flight.
 
-Caps: once its chain passes the checks that need no RPC, a request create
-counts its network's live requests without any lock and refuses one over the
-per-network cap (429) there, so a flood from one network neither reaches the
-contract-wallet RPC nor queues on the lock. Contract-wallet calls
-(`isValidSignature`, including those of the signed-fetch chain on
-`POST /identities`) are budgeted in process memory (no table), since a forged
-chain stores no row for the caps to count: 20 calls per network per minute, 200
-shared by requests with no network, 200 shared by networks past 4,096 tracked
-ones, and 1,000 per replica; the calls behind a request, outcome or identity
-that is stored are given back. The contract-wallet budget keys an IPv6 caller
-by its /48 (the pending-request cap keeps its /64), so a whole /48 shares one
-20-call budget: on a shared carrier or hosting range one sender can spend it
-and bring everyone in that range a 429. A network past its budget gets a 429
-before the RPC. Forged calls are never given back, so about 50 networks
-together can spend the replica's 1,000 in a window: every contract-wallet
-sign-in on that replica then gets a 429 ("on this node") until the window ends,
-while EOA chains are unaffected; the replica logs a warning once per window
-when that happens. During an RPC outage the refused calls are not given back,
-so after 20 failed calls (about 10 sign-ins) a network sees that 429, not the
-503, for up to a minute. Then a create takes `pg_advisory_xact_lock` on one key
-per table (`hashtextextended('explore_api.auth_requests:admission', 0)` and the
+Caps: once its chain passes the checks that need no RPC, a request create, or
+an identity post whose chains need a contract-wallet call, counts its network's
+live rows without any lock and refuses one over the per-network cap (429)
+there, so a flood from one network neither reaches the contract-wallet RPC nor
+queues on the lock. Then a create takes `pg_advisory_xact_lock` on one key per
+table (`hashtextextended('explore_api.auth_requests:admission', 0)` and the
 identities' twin), counts the live rows and those of its network in one pass
 and inserts in the same transaction, so concurrent creates on every replica
 admit one at a time and never overshoot. A full request table first drops
-requests past their grace, then the oldest delivered ones, just enough to
-admit one more. The count scans the table, bounded by the caps to about
-10,000 rows; sign-in creates are rare enough that serializing them on the
-lock costs nothing measurable.
+requests past their grace, then the oldest delivered ones, just enough to admit
+one more. The count scans the table, bounded by the caps to about 10,000 rows;
+sign-in creates are rare enough that serializing them on the lock costs nothing
+measurable.
+
+Contract-wallet budget: contract-wallet calls (`isValidSignature`, including
+those of the signed-fetch chain on `POST /identities`) are budgeted in process
+memory (no table), since a forged chain stores no row for the caps to count: 20
+calls per network per minute, 200 shared by requests with no network, 200
+shared by networks past 4,096 tracked ones, and 1,000 per replica. The calls
+behind a request, outcome or identity that is stored are given back; failed
+calls are not. A network past its budget gets a 429 before the RPC. The budget
+keys an IPv6 caller by its /48 (the pending-request cap keeps its /64), so a
+whole /48 shares one 20-call budget: on a shared carrier or hosting range one
+sender can spend it and bring everyone in that range a 429. About 50 networks
+of forged calls together can spend the replica's 1,000 in a window: every
+contract-wallet sign-in on that replica then gets a 429 ("on this node") until
+the window ends, while EOA chains are unaffected; the replica logs a warning
+once per window when that happens. During an RPC outage, after 20 failed calls
+(about 10 sign-ins) a network sees that 429 instead of the 503 for up to a
+minute.
 
 Expiry compares the stored instant with the handling replica's clock, so
 replicas need synchronized clocks (NTP); a second of skew moves the 410 by a
