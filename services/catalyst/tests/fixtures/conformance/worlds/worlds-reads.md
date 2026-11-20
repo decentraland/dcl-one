@@ -351,7 +351,7 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
 1. **WR-01 · `/contents`, `/ipfs` · range outcomes, headers and HEAD body.** Status: MATCH, no work.
    - Upstream: `parseRangeHeader` and the header set (`content-file-handler.ts:53-111`); tests
      `test/unit/content-file-handler.spec.ts:12-186,288-345`, `test/integration/get-endpoints.spec.ts:27-229`.
-   - dcl-one: `parse_range_header` and `content_file_headers` (`content/src/formatters.rs:51,95`)
+   - dcl-one: `parse_range_header` and `content_file_headers` (`content/src/formatters.rs:51,97`)
      give the same 200/206/416 outcomes, `ETag`, `Cache-Control`, `Accept-Ranges` and
      `Content-Length` for every tested case; HEAD has no body (`content/src/get_content.rs` `serve`).
    - Severity: none (closed).
@@ -446,7 +446,7 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
 10. **WR-10 · `/contents` · the extra `Access-Control-Expose-Headers` entry and 416 header.** Status: MATCH, no work.
     - Upstream: `ETag, Accept-Ranges, Content-Range`.
     - dcl-one: `ETag, Content-Range, Accept-Ranges, Content-Length`; a 416 also exposes
-      `Content-Range` (`content/src/formatters.rs:95-102`). A superset that exposes nothing
+      `Content-Range` (`content/src/formatters.rs:97-116`). A superset that exposes nothing
       sensitive.
     - Severity: none (closed).
 

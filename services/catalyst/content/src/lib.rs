@@ -575,9 +575,12 @@ pub struct ContentState {
     /// The `/challenge` text: one bare UUID per process, as upstream's
     /// peer cluster keeps it; the console's `challenge/refresh` replaces it.
     challenge: RwLock<String>,
-    /// The sniffed Content-Type per content key, window and mount: a sniff can read up to 16 MiB
-    /// of a file, and content does not change under its key.
-    pub(crate) sniffed: parking_lot::Mutex<hashlink::LruCache<get_content::SniffKey, &'static str>>,
+    /// The worlds mount's sniffed Content-Type per (content key, ranged window): a sniff can read
+    /// up to 10 MiB of a file, and content does not change under its key.
+    pub(crate) worlds_sniffed: parking_lot::Mutex<hashlink::LruCache<(String, bool), &'static str>>,
+    /// The content server's sniffed Content-Type per (content key, window start, window end): a
+    /// sniff can fetch up to 16 MiB of a file, and content does not change under its key.
+    pub(crate) sniffed: parking_lot::Mutex<hashlink::LruCache<(String, u64, u64), &'static str>>,
 }
 
 /// See [`ContentState::attach_parcel_grid`].
@@ -585,7 +588,8 @@ pub type GridReady = Arc<dyn Fn() -> bool + Send + Sync>;
 
 pub type SharedState = Arc<ContentState>;
 
-/// The sniffed Content-Types kept ([`ContentState::sniffed`]).
+/// The sniffed Content-Types each cache keeps ([`ContentState::worlds_sniffed`],
+/// [`ContentState::sniffed`]).
 const SNIFFED_ENTRIES: usize = 16_384;
 
 impl ContentState {
@@ -640,6 +644,7 @@ impl ContentState {
             source_uploads,
             challenge: RwLock::new(challenge_text()),
             content_get_limit,
+            worlds_sniffed: parking_lot::Mutex::new(hashlink::LruCache::new(SNIFFED_ENTRIES)),
             sniffed: parking_lot::Mutex::new(hashlink::LruCache::new(SNIFFED_ENTRIES)),
         }
     }

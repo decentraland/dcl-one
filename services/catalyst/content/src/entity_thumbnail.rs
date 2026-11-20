@@ -753,8 +753,13 @@ mod tests {
     async fn a_blob_keeps_its_sniffed_type_and_is_sandboxed() {
         use crate::tests::support::{TEST_CID, TestNode};
         let node = TestNode::without_db("blob-kept").await;
-        node.store(TEST_CID, Bytes::from_static(b"GIF89a\x01\x00\x01\x00"))
-            .await;
+        // Past `SAMPLE`, so a kept GET serves the head and the rest of the file in one body.
+        let file = |head: &[u8]| {
+            let mut bytes: Vec<u8> = (0..5000).map(|i| (i % 251) as u8).collect();
+            bytes[..head.len()].copy_from_slice(head);
+            Bytes::from(bytes)
+        };
+        node.store(TEST_CID, file(b"GIF89a\x01\x00\x01\x00")).await;
         let mut ranged = HeaderMap::new();
         ranged.insert(header::RANGE, "bytes=0-1".parse().unwrap());
         let serve = |method: Method, headers: HeaderMap| {
@@ -770,7 +775,7 @@ mod tests {
 
         // Other bytes of the same size under the same key (a test can store them; a real key
         // cannot change).
-        let bmp = Bytes::from_static(b"BM\x36\x00\x00\x00\x00\x00\x00\x00");
+        let bmp = file(b"BM\x36\x00\x00\x00");
         node.store(TEST_CID, bmp.clone()).await;
         for (method, headers, mime) in [
             (Method::GET, HeaderMap::new(), "image/gif"),

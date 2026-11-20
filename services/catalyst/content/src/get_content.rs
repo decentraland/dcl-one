@@ -19,18 +19,9 @@ pub struct ContentQuery {
     pub include_mime_type: Option<String>,
 }
 
-/// A sniffed answer's key: the content key, the window's bytes `start..end` (a cut stream can
-/// answer differently from the whole file), and whether the worlds mount's rules answered it.
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub(crate) struct SniffKey {
-    key: String,
-    start: u64,
-    end: u64,
-    worlds: bool,
-}
-
-/// [`sniff`]'s answer for `key`'s `window`, kept per window: content is immutable by key, and a
-/// sniff can fetch up to 16 MiB of the file. A kept answer reads nothing, so the window stays
+/// [`sniff`]'s answer for `key`'s `window`, kept per window (a cut stream can answer differently
+/// from the whole file): content is immutable by key, and a sniff can fetch up to 16 MiB of the
+/// file. A kept answer reads nothing, so the window stays
 /// unread. A storage fault is an error and is not kept.
 pub(crate) async fn content_type(
     state: &ContentState,
@@ -38,12 +29,7 @@ pub(crate) async fn content_type(
     window: &mut Window<'_>,
 ) -> AppResult<&'static str> {
     let (start, end) = window.bounds();
-    let cache_key = SniffKey {
-        key: key.to_string(),
-        start,
-        end,
-        worlds: false,
-    };
+    let cache_key = (key.to_string(), start, end);
     if let Some(mime) = state.sniffed.lock().get(&cache_key).copied() {
         return Ok(mime);
     }
@@ -117,7 +103,8 @@ struct Mount {
     bare_not_found: bool,
 }
 
-/// The worlds mount's Content-Type for `key`'s file cut at `end`, and the head read for it, with the reader positioned after it.
+/// The worlds mount's Content-Type for `key`'s file cut at `end` (`ranged` when that is the
+/// window a ranged GET sniffs), and the head read for it, with the reader positioned after it.
 /// No head means the reader's position is unknown, so a whole GET reads the head again.
 ///
 /// `file-type`'s answer, with two deliberate differences from worlds-content-server
@@ -132,14 +119,10 @@ async fn worlds_content_type(
     key: &str,
     opened: &mut OpenedContent,
     end: u64,
+    ranged: bool,
 ) -> AppResult<(&'static str, Option<Bytes>)> {
-    let cache_key = SniffKey {
-        key: key.to_string(),
-        start: 0,
-        end,
-        worlds: true,
-    };
-    if let Some(mime) = state.sniffed.lock().get(&cache_key).copied() {
+    let cache_key = (key.to_string(), ranged);
+    if let Some(mime) = state.worlds_sniffed.lock().get(&cache_key).copied() {
         return Ok((mime, Some(Bytes::new())));
     }
     let mut window = Window::new(opened, end);
@@ -156,7 +139,7 @@ async fn worlds_content_type(
         None if looks_like_json(&head) => "application/json",
         None => "application/octet-stream",
     };
-    state.sniffed.lock().insert(cache_key, mime);
+    state.worlds_sniffed.lock().insert(cache_key, mime);
     Ok((mime, Some(head)))
 }
 
@@ -279,7 +262,7 @@ async fn serve(
                 // The worlds mount sniffs the file's first `SAMPLE` bytes, as WCS does; the root
                 // the range, as the catalyst sniffs its ranged stream.
                 let mime = if mount.always_sniff {
-                    worlds_content_type(&state, &key, &mut opened, SAMPLE)
+                    worlds_content_type(&state, &key, &mut opened, SAMPLE, true)
                         .await?
                         .0
                 } else {
@@ -318,7 +301,7 @@ async fn serve(
     // worlds mount sniffs every HEAD, as WCS does.
     let head = if sniff || (method == Method::HEAD && mount.always_sniff) {
         let (mime, head) = if mount.always_sniff {
-            worlds_content_type(&state, &key, &mut opened, total).await?
+            worlds_content_type(&state, &key, &mut opened, total, false).await?
         } else {
             let mut window = Window::new(&mut opened, total);
             let mime = content_type(&state, &key, &mut window).await?;
@@ -882,15 +865,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(header(&resp, "content-type").unwrap(), "image/gif");
-        // Other bytes of the same size under the same key (a test can store them; a real key
-        // cannot change).
-        let bmp = Bytes::from_static(b"BM\x36\x00\x00\x00\x00\x00\x00\x00");
-        node.store(TEST_CID, bmp.clone()).await;
+        // Other bytes under the same key (a test can store them; a real key cannot change).
+        node.store(TEST_CID, Bytes::from_static(b"BM\x36\x00\x00\x00"))
+            .await;
         let resp = world_get(&node, TEST_CID, Method::GET, None).await.unwrap();
         assert_eq!(header(&resp, "content-type").unwrap(), "image/gif", "kept");
         assert_eq!(
             body_of(resp).await,
-            bmp,
+            Bytes::from_static(b"BM\x36\x00\x00\x00"),
             "the body is read whole after a kept answer"
         );
     }
@@ -1029,8 +1011,14 @@ mod tests {
     #[tokio::test]
     async fn include_mime_type_keeps_the_sniffed_type_per_window() {
         let node = TestNode::without_db("content-mime-kept").await;
-        let gif = Bytes::from_static(b"GIF89a\x01\x00\x01\x00");
-        let bmp = Bytes::from_static(b"BM\x36\x00\x00\x00\x00\x00\x00\x00");
+        // Past `SAMPLE`, so a kept GET serves the head and the rest of the file in one body.
+        let file = |head: &[u8]| {
+            let mut bytes: Vec<u8> = (0..5000).map(|i| (i % 251) as u8).collect();
+            bytes[..head.len()].copy_from_slice(head);
+            Bytes::from(bytes)
+        };
+        let gif = file(b"GIF89a\x01\x00\x01\x00");
+        let bmp = file(b"BM\x36\x00\x00\x00");
         let type_of = |resp: &Response| header(resp, "content-type").unwrap();
 
         node.store(TEST_CID, gif.clone()).await;
