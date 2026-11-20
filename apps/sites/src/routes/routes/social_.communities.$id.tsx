@@ -5,8 +5,10 @@ import { isRouteErrorResponse, useParams } from "react-router";
 
 import { CommunityErrorView } from "@/features/social/community/CommunityErrorView";
 import { CommunityPage } from "@/features/social/community/CommunityPage";
+import { communityHref } from "@/features/social/community/view";
 
 import { communityLoader } from "../lib/community-loader.server";
+import { absoluteImage, absoluteUrl, notFoundMeta, oneLine, publicBase, socialMeta } from "../lib/social-meta";
 
 import type { Route } from "./+types/social_.communities.$id";
 
@@ -17,15 +19,29 @@ export async function clientLoader() {
   return null;
 }
 
-export function meta({ loaderData, error }: Route.MetaArgs) {
+/**
+ * The community's link-preview card, as decentraland.org's: its description, else who owns it, else
+ * an invitation; the generic communities card when the community could not be read here.
+ */
+export function meta({ loaderData, error, params, matches }: Route.MetaArgs) {
+  if (isRouteErrorResponse(error) && error.status === 404) return notFoundMeta();
+  const base = publicBase(matches);
+  const url = params.id ? absoluteUrl(base, communityHref(params.id)) : undefined;
   if (!loaderData) {
-    const notFound = isRouteErrorResponse(error) && error.status === 404;
-    return [{ title: notFound ? "Community not found | Decentraland" : "Community | Decentraland" }];
+    return socialMeta({
+      title: "Communities in Decentraland | Decentraland",
+      description: "Connect with players, join voice chats, and discover what the Decentraland community is up to.",
+      url,
+    });
   }
-  return [
-    { title: `${loaderData.title} | Decentraland` },
-    ...(loaderData.description ? [{ name: "description", content: loaderData.description }] : []),
-  ];
+  return socialMeta({
+    title: `${loaderData.title} | Decentraland`,
+    description:
+      oneLine(loaderData.description) ??
+      (loaderData.ownerName ? `A Decentraland community by ${loaderData.ownerName}.` : "Join this Decentraland community."),
+    image: absoluteImage(base, loaderData.image),
+    url,
+  });
 }
 
 export function ErrorBoundary() {

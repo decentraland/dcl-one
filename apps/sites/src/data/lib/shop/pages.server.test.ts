@@ -5,7 +5,7 @@ import { REMOTE_FLAG, remoteFlagVariant } from "@ui/shop/discovery/lib/remoteFla
 
 import { resetDappsFlags } from "../feature-flags.server";
 import { serverShopApiMode } from "./mode";
-import { defaultShopSeo, shopMetaDescriptors } from "./pages";
+import { defaultShopSeo } from "./pages";
 import { loadShopPage, readBodyThenWait, serverShopClient, SHOP_SSR_SHARE_MS, SHOP_SSR_STALE_MS } from "./pages.server";
 import { LAND_NETWORKS } from "@shop/land/contracts";
 
@@ -355,12 +355,13 @@ describe("the other pages", () => {
     expect(asked).toEqual([]);
   });
 
-  it("a LAND token's page is the Marketplace's: never indexed, with no canonical", async () => {
+  it("a LAND token's page is the Marketplace's: never indexed, with no canonical, its map a large card", async () => {
     const { client } = node([]);
     const land = Object.values(LAND_NETWORKS)[0]!.land.toLowerCase();
     const res = await loadShopPage("tokenDetail", { request: request(`/shop/token/${land}/1`), params: { contractAddress: land, tokenId: "1" }, client, now, env: {} });
     expect(res.data.seo.noindex).toBe(true);
     expect(res.data.seo.canonical).toBeUndefined();
+    expect(res.data.seo.largeImage).toBe(true);
   });
 
   it("an account page is never indexed and asks the node for nothing", async () => {
@@ -371,8 +372,8 @@ describe("the other pages", () => {
       expect(res.data.queries).toEqual([]);
     }
     expect(asked).toEqual([]);
-    expect(shopMetaDescriptors(defaultShopSeo("cart"))).toContainEqual({ name: "robots", content: "noindex" });
-    expect(shopMetaDescriptors(defaultShopSeo("items", "https://x.test/shop/items"))).toContainEqual({ tagName: "link", rel: "canonical", href: "https://x.test/shop/items" });
+    expect(defaultShopSeo("cart")).toMatchObject({ noindex: true, canonical: undefined });
+    expect(defaultShopSeo("items", "https://x.test/shop/items")).toMatchObject({ noindex: false, canonical: "https://x.test/shop/items" });
   });
 
   it("PUBLIC_CATALYST_URL names the canonical origin", async () => {

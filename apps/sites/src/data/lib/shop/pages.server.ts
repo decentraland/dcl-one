@@ -185,7 +185,15 @@ async function itemPage(ctx: ReadCtx, client: ShopClient, params: ShopLoadInput[
   const land = token && Object.values(LAND_NETWORKS).some((n) => n.land.toLowerCase() === contract || n.estate.toLowerCase() === contract);
   return {
     queries,
-    seo: { ...seo, title: name || seo.title, description, image: image || undefined, noindex: missing || land, canonical: land ? undefined : seo.canonical },
+    seo: {
+      ...seo,
+      title: name || seo.title,
+      description,
+      image: image || undefined,
+      ...(land ? { largeImage: true } : {}),
+      noindex: missing || land,
+      canonical: land ? undefined : seo.canonical,
+    },
     status: missing ? 404 : 200,
   };
 }

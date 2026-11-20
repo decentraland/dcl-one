@@ -147,7 +147,7 @@ function mountDocument(path: string, data: ProfileLoaderData) {
 function serverState(name: string): ProfileLoaderData {
   const server = new QueryClient();
   server.setQueryData(profileKeys.profile(A), mapProfile(avatar(name) as never, A));
-  return { sid: "sid-1", address: A, own: false, dehydratedState: dehydrate(server) };
+  return { sid: "sid-1", address: A, own: false, dehydratedState: dehydrate(server), card: {} };
 }
 
 /**

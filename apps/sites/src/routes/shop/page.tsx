@@ -11,7 +11,9 @@ import { primeRemoteFlags } from "@ui/shop/discovery/lib/remoteFlags";
 import type { ShopPageId } from "@ui/shop/routes";
 
 import { primeDappsFlags } from "@/data/lib/feature-flags.browser";
-import { defaultShopSeo, shopMetaDescriptors, type ShopPageData } from "@/data/lib/shop/pages";
+import { defaultShopSeo, type ShopPageData, type ShopSeo } from "@/data/lib/shop/pages";
+
+import { absoluteUrl, publicBase, socialMeta } from "../lib/social-meta";
 
 const primed = new WeakSet<object>();
 
@@ -44,19 +46,46 @@ export function shopTitle(page: ShopPageId, title: string): string {
   return page === "overview" || title === "Shop" ? SHOP_DEFAULT_TITLE : shopDocumentTitle(title);
 }
 
-/** The head of a Shop page: the loader's when it ran on the server, else the page's defaults. */
+const SHOP_SITE_NAME = "Decentraland Shop";
+
+/** An item's or a token's page is a product card. */
+const PRODUCT: ReadonlySet<ShopPageId> = new Set<ShopPageId>(["itemDetail", "tokenDetail"]);
+
+/** The Shop as a site, on its overview: what upstream Shop's index.html declared for agents and search engines. */
+function shopWebsite(seo: ShopSeo, base: string | undefined): object {
+  const decentraland = { name: "Decentraland", url: absoluteUrl(base, "/") };
+  return {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    name: SHOP_SITE_NAME,
+    url: seo.canonical,
+    description: seo.description,
+    isPartOf: { "@type": "WebSite", ...decentraland },
+    publisher: { "@type": "Organization", ...decentraland },
+  };
+}
+
+/**
+ * The head of a Shop page, the loader's when it ran on the server, else the page's defaults: the
+ * full link-preview card under the Shop's own site name. An item or token with a thumbnail is a
+ * small card, as decentraland.org's; a page without its own image shows the shared one large.
+ */
 export function shopMeta(page: ShopPageId) {
-  return ({ loaderData }: { loaderData?: unknown }) => {
+  return ({ loaderData, matches }: { loaderData?: unknown; matches?: Parameters<typeof publicBase>[0] }) => {
     const seo = (loaderData as ShopPageData | null | undefined)?.seo ?? defaultShopSeo(page);
     const noindex = seo.noindex || NOINDEX.has(page);
-    const title = shopTitle(page, seo.title);
-    const out = shopMetaDescriptors({ ...seo, noindex, canonical: noindex ? undefined : seo.canonical }).map((d) => {
-      if ("title" in d) return { title };
-      if ("property" in d && d.property === "og:title") return { ...d, content: title };
-      if ("property" in d && d.property === "og:site_name") return { ...d, content: "Decentraland Shop" };
-      return d;
+    return socialMeta({
+      title: shopTitle(page, seo.title),
+      description: seo.description,
+      image: seo.image,
+      smallImage: !seo.largeImage,
+      url: noindex ? undefined : seo.canonical,
+      type: PRODUCT.has(page) ? "product" : "website",
+      siteName: SHOP_SITE_NAME,
+      noindex,
+      jsonLd: page === "overview" && !noindex && seo.canonical ? [shopWebsite(seo, publicBase(matches ?? []))] : undefined,
+      extra: [{ property: "og:locale", content: "en_US" }],
     });
-    return out;
   };
 }
 

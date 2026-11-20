@@ -151,6 +151,22 @@ describe("profile loader, required data", () => {
       expect(entry?.queryKey).toEqual(profileKeys.profile(A));
       expect(entry?.state.data).toBeNull();
     });
+
+    it("should leave the link-preview card generic", () => {
+      expect(out.ok && out.data.card).toEqual({});
+    });
+  });
+
+  describe("when the profile has a name and a description", () => {
+    beforeEach(async () => {
+      net.fetchProfile.mockResolvedValue({ ...avatar("Alice"), description: "Builder.\nHost." });
+
+      out = await run(`/profile/${A}/photos`, { address: A, tab: "photos" });
+    });
+
+    it("should give the link-preview card its name and one-line description", () => {
+      expect(out.ok && out.data.card).toEqual({ name: "Alice", description: "Builder. Host." });
+    });
   });
 });
 
