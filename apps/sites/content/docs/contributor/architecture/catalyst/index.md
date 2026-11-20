@@ -147,32 +147,13 @@ All content is content-addressed:
 
 ***
 
-## Archipelago Workers (Comms)
+<span id="archipelago-workers-comms"></span>
 
-Communications infrastructure runs alongside Catalyst:
+## Catalyst communications
 
-### Components
+The primary `catalyst serve` process runs the signed [Realm WebSocket connector](/docs/contributor/communications/archipelago/) and Gatekeeper. Gatekeeper enforces room policy and issues LiveKit credentials. The separate `catalyst pulse` process synchronizes avatars, clusters nearby players, and owns the statistics population. Every `catalyst serve` process exposes the read-only statistics API.
 
-#### WebSocket Connector
-
-* Maintains client connections
-* Protocol handling
-* Connection authentication
-
-**API Reference**: [Archipelago Workers API](/docs/apis/apis/archipelago-workers/)
-
-#### Archipelago Core
-
-* **Island formation** - Groups nearby players
-* **Peer limits** - Enforces max peers per island (typically 100)
-* **Position updates** - Broadcasts player positions
-* **Message routing** - Routes chat and emotes
-
-#### Stats Service
-
-* Active user counts per scene
-* Connection statistics
-* Performance metrics
+See the [Comms statistics and WebSocket API](/docs/apis/apis/archipelago-workers/) reference.
 
 ***
 

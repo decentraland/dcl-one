@@ -4,7 +4,7 @@ This page provides a comprehensive overview of all Decentraland backend services
 
 ## Service Architecture
 
-Decentraland's backend is composed of distributed microservices organized into logical layers:
+The backend exposes the following groups of APIs. In dcl-one, Catalyst serves multiple API areas from a shared process.
 
 * **Decentralized Layer** - Catalyst network and content delivery infrastructure
 * **Real-Time Communications Layer** - Service discovery and peer-to-peer communications
@@ -30,7 +30,7 @@ The Catalyst network forms the foundation of Decentraland's content infrastructu
 **Key Integrations**:
 * Realm Provider - Advertises node availability
 * Asset Bundle Registry - Triggers asset optimization on deployment
-* Archipelago Workers - Provides island/cluster data
+* Pulse - Provides cluster updates and statistics snapshots
 
 **API Reference**: [Catalyst API](/docs/apis/apis/catalyst/)
 
@@ -67,7 +67,7 @@ The Realm Provider is the entry point for all Decentraland clients. It implement
 
 **Key Integrations**:
 * Polls all Catalyst nodes periodically
-* Aggregates Archipelago statistics
+* Reads Catalyst's communications statistics
 * Provides unified view of distributed network
 
 **API Reference**: [Realm Provider API](/docs/apis/apis/realm-provider/)
@@ -92,31 +92,15 @@ The Gatekeeper manages access to LiveKit media servers for voice and video chat:
 
 **API Reference**: [Comms Gatekeeper API](/docs/apis/apis/comms-gatekeeper/)
 
-### Archipelago Workers
+<span id="archipelago-workers"></span>
 
-**Purpose**: Communications clustering and message routing
+### Pulse and Catalyst communications
 
-Archipelago implements the proximity-based clustering protocol that groups nearby players into "islands":
+Pulse runs as `catalyst pulse` and synchronizes avatars over ENet or WebTransport. It clusters nearby players and sends cluster changes and statistics to Catalyst over NATS.
 
-* **WebSocket transport** - Maintains persistent connections with clients
-* **Position tracking** - Monitors player locations in real-time
-* **Island formation** - Dynamically groups players based on distance
-* **Message routing** - Forwards messages only to island members
+The primary `catalyst serve` runs the signed [Realm WebSocket connector](/docs/contributor/communications/archipelago/). Gatekeeper checks room access and sends LiveKit assignments through that connector. Each `catalyst serve` exposes read-only statistics.
 
-**Architecture Components**:
-* **WebSocket Connector** - Handles client connections and authentication
-* **Archipelago Core** - Implements clustering algorithm and island management
-* **Stats Service** - Provides connection metrics and user counts
-* **NATS Integration** - Publishes position updates and routes messages
-
-**Architecture Role**: Optimizes peer-to-peer communications by limiting message fanout. Instead of broadcasting to all users in a realm, messages only reach players within interaction range.
-
-**Key Integrations**:
-* NATS message broker - Distributed message routing
-* Realm Provider - Provides island statistics
-* Places API - User count data for hot scenes
-
-**API Reference**: [Archipelago Workers API](/docs/apis/apis/archipelago-workers/)
+See the [Comms statistics and WebSocket API](/docs/apis/apis/archipelago-workers/) reference.
 
 ***
 
@@ -172,7 +156,7 @@ Aggregates and curates interesting locations across Decentraland:
 
 **Key Integrations**:
 * Catalyst - Scene metadata and deployment info
-* Archipelago Stats - Real-time user counts per scene
+* Catalyst communications statistics - Scene activity and peer counts
 * Comms Gatekeeper - Realm availability and status
 
 **API Reference**: [Places API](/docs/apis/apis/places/)
@@ -262,7 +246,7 @@ Manages social relationships and communities:
 **Key Integrations**:
 * Catalyst Client - Fetches profile data for friends
 * NATS - Publishes friend status updates
-* Archipelago - Queries online status and locations
+* Catalyst communications - Supplies Pulse topology for friends' online status and can supply peer reads for the community online filter
 
 **API Reference**: [Social Service API](/docs/apis/apis/social-service/)
 
@@ -438,7 +422,7 @@ Real-time updates and asynchronous communication flow through NATS:
 
 * **Social Service** - Publishes friend status changes
 * **Worlds** - Broadcasts world configuration updates
-* **Archipelago** - Routes position updates between islands
+* **Pulse and Catalyst** - Exchange cluster updates, room lookups, and statistics over NATS
 * **Events Notifier** - Publishes platform events
 
 NATS enables services to communicate without direct coupling.
@@ -493,13 +477,13 @@ flowchart TB
 | Service               | Core Dependencies              | Provides Data To               |
 | --------------------- | ------------------------------ | ------------------------------ |
 | Catalyst              | None (decentralized)           | All services                   |
-| Realm Provider        | Catalyst, Archipelago Stats    | All clients                    |
+| Realm Provider        | Catalyst APIs                  | All clients                    |
 | Auth Server           | None                           | All protected services         |
-| Archipelago Workers   | NATS, LiveKit                  | Realm Provider, Places         |
+| Pulse                 | NATS, Catalyst room authority  | Explorer, Catalyst             |
 | Comms Gatekeeper      | LiveKit, Worlds API            | Clients (token generation)     |
 | Worlds                | Catalyst, NATS, Blockchain     | Gatekeeper, Clients            |
-| Social Service        | Catalyst, NATS, Archipelago    | Clients                        |
-| Places                | Catalyst, Archipelago, Comms   | Clients                        |
+| Social Service        | Catalyst, NATS                 | Clients                        |
+| Places                | Catalyst content and comms     | Clients                        |
 | Events Notifier       | None                           | Notifications, Badges, Rewards |
 | Asset Bundle Registry | Catalyst, Deployment Queue     | Clients (optimized assets)     |
 | Notifications Workers | Events Notifier, SendGrid      | Clients                        |
