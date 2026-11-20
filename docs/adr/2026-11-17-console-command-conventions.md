@@ -20,7 +20,7 @@ also drives the Unity Explorer through its MCP server. It names arguments and re
 
 The console's automation commands follow these rules. `crates/console/src/line.rs` and
 `crates/console/src/reply.rs` hold the shared pieces. A rule for a kind of command the console
-does not have yet (durations, waits, refusals) is added here with its first command.
+does not have yet (durations, waits, refusals, entity ids) is added here with its first command.
 
 1. **Quoting.** A line is split into words on whitespace (Unicode's White_Space); a double-quoted
    run is part of a word with its quotes removed, and inside it `\"` and `\\` escape. A backslash
@@ -32,15 +32,12 @@ does not have yet (durations, waits, refusals) is added here with its first comm
    every line the engine receives whole: the chat input's and each transport's. Two senders split
    for themselves: a scene's `op_console_command` passes its arguments as a list, and a web page
    command (`/hud_*`, the page's `/click_at`) reads its own line in the page.
-2. **Coordinates.** A command takes and returns normalized screen coordinates, 0 to 1 from the
-   top left, 1 being the window's last pixel. Every reply that carries a screen coordinate or rect
-   carries `screen` `{width, height, scale}`: the window in logical pixels and its device pixel
-   ratio, so a screenshot's pixels are `scale` times as many. The pixel commands (`/click_at`,
-   `/entity_screen_position`) take logical pixels and reply with `screen` and `normalized` beside
-   them; `/click_at --normalized` takes the normalized form.
-3. **Names and ids.** Arguments and reply fields use the shared script's names. SDK entity ids are
-   the only id space: replies report them as `crdtEntityId`, and keep `entity` where a reply
-   already uses it.
+2. **Coordinates.** A reply that carries a screen coordinate or rect also carries it
+   `normalized`, 0 to 1 from the top left, 1 being the window's last pixel, and carries `screen`
+   `{width, height, scale}`: the window in logical pixels and its device pixel ratio, so a
+   screenshot's pixels are `scale` times as many. The pixel commands (`/click_at`,
+   `/entity_screen_position`) take logical pixels; `/click_at --normalized` takes the normalized
+   form.
 
 ## Consequences
 
@@ -51,7 +48,9 @@ does not have yet (durations, waits, refusals) is added here with its first comm
   they send the words unquoted.
 - A command typed in the chat input follows the same rule: a single quote and a backslash outside
   double quotes are ordinary characters, and an unclosed double quote is reported in the System
-  channel and runs nothing.
+  channel and runs nothing. The React HUD's chat sends the typed line whole through
+  `engine_console_command` and shows the reply, so it splits nothing itself; it still keeps its
+  own commands (`/goto`, `/world`, `/help`, bare `/reload`) and refuses the ones it hides.
 - `/click_at` replies JSON: `x`, `y`, `normalized`, `button`, `screen` and, on the web, `input`.
 - A value holding a lone `"` is quoted or escaped on non-JSON commands.
 
