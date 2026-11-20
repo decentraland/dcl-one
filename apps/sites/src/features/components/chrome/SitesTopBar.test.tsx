@@ -11,12 +11,15 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { getAddress } from "viem";
 import DclTopBar from "@ui/web/frames/DclTopBar";
 import SiteLayout from "@ui/web/frames/SiteLayout";
 import { ChromeAuthContext, type ChromeAuth } from "@ui/web/frames/chrome-auth";
 import { ChromeNavContext } from "@ui/web/frames/chrome-nav";
 import { SitesLocaleContext, type SitesLocale } from "@ui/web/frames/sites-locale";
 import { forgetSignIn, recordSignIn } from "@/data/lib/auth/signin-kind";
+import { setIdentity } from "@/data/lib/auth/session";
+import { primeRemoteFlags } from "@ui/shop/discovery/lib/remoteFlags";
 import ChromeNavBridge from "./ChromeNavBridge";
 
 vi.hoisted(() => {
@@ -26,11 +29,6 @@ vi.hoisted(() => {
     $RefreshReg$: () => {},
   });
 });
-
-const marketplace = vi.hoisted(() => ({ eligible: false }));
-vi.mock("@/data/lib/shop/marketplace-access", () => ({
-  useMarketplaceHere: () => marketplace.eligible,
-}));
 
 const { readManaBalanceWei } = vi.hoisted(() => ({ readManaBalanceWei: vi.fn() }));
 vi.mock("@ui/shop/checkout/lib/mana", async (importOriginal) => ({
@@ -73,6 +71,7 @@ function Host({
 }
 import * as React from "react";
 beforeEach(() => {
+  primeRemoteFlags({});
   window.matchMedia = vi.fn().mockImplementation((query) => ({
     matches: false,
     media: query,
@@ -88,13 +87,51 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
-  marketplace.eligible = false;
+  setIdentity(null);
+  primeRemoteFlags(null);
   forgetSignIn();
   readManaBalanceWei.mockReset();
   vi.unstubAllGlobals();
 });
 
 const shopAccount = "0x" + "ab".repeat(20);
+const otherAccount = "0x" + "cd".repeat(20);
+const checksummedAccount = getAddress(shopAccount);
+
+function enableMarketplace(signer = shopAccount) {
+  setIdentity({
+    signer,
+    ephemeral: { address: signer, privateKey: "0x00" },
+    expiration: new Date(Date.now() + 60_000).toISOString(),
+    authChain: [],
+  });
+  recordSignIn(signer, "web3");
+  primeRemoteFlags({ "dapps-shop-marketplace-features": true });
+}
+
+function walletEvents() {
+  type Listener = (...args: unknown[]) => void;
+  const listeners = new Map<string, Set<Listener>>();
+  return {
+    on(event: string, listener: Listener) {
+      const active = listeners.get(event) ?? new Set<Listener>();
+      active.add(listener);
+      listeners.set(event, active);
+    },
+    removeListener(event: string, listener: Listener) {
+      listeners.get(event)?.delete(listener);
+    },
+    emit(event: string, ...args: unknown[]) {
+      for (const listener of [...(listeners.get(event) ?? [])]) listener(...args);
+    },
+  };
+}
+
+function pendingWalletRead() {
+  let resolve!: (accounts: string[]) => void;
+  const promise = new Promise<string[]>((settle) => { resolve = settle; });
+  return { request: () => promise, resolve };
+}
 
 describe("Sites native chrome integration", () => {
   it("renders one banner and keeps signed-out links and dropdown destinations", () => {
@@ -114,11 +151,10 @@ describe("Sites native chrome integration", () => {
     expect(screen.queryByLabelText("Credits")).toBeNull();
   });
   it("selects the Shop item from the router query and shows LAND after the wallet matches", async () => {
-    marketplace.eligible = true;
-    let resolveAccounts!: (accounts: string[]) => void;
-    vi.stubGlobal("ethereum", {
-      request: () => new Promise<string[]>((resolve) => { resolveAccounts = resolve; }),
-    });
+    enableMarketplace();
+    const wallet = walletEvents();
+    const { request, resolve } = pendingWalletRead();
+    vi.stubGlobal("ethereum", { ...wallet, request });
     render(
       <Host
         pathname="/shop/items?category=emote"
@@ -129,7 +165,7 @@ describe("Sites native chrome integration", () => {
     expect(screen.getByRole("link", { name: "Emotes" }).getAttribute("aria-current")).toBe("page");
     expect(screen.getByRole("link", { name: /names/i }).getAttribute("href")).toBe("/shop/names");
     expect(screen.queryByRole("link", { name: "LAND" })).toBeNull();
-    await act(async () => resolveAccounts([shopAccount]));
+    await act(async () => resolve([checksummedAccount]));
     expect((await screen.findByRole("link", { name: "LAND" })).getAttribute("href")).toBe("/shop/lands");
 
     fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
@@ -137,23 +173,52 @@ describe("Sites native chrome integration", () => {
     fireEvent.click(menu.getByRole("button", { name: "Shop" }));
     expect(menu.getByRole("link", { name: "LAND" }).getAttribute("href")).toBe("/shop/lands");
     expect(menu.getByRole("link", { name: "Emotes" }).getAttribute("aria-current")).toBe("page");
+    act(() => wallet.emit("accountsChanged", [otherAccount]));
+    expect(menu.queryByRole("link", { name: "LAND" })).toBeNull();
+    act(() => wallet.emit("accountsChanged", [checksummedAccount]));
+    expect(menu.getByRole("link", { name: "LAND" })).toBeTruthy();
   });
-  it("keeps LAND hidden for a different wallet, an empty list, or a rejected wallet read", async () => {
-    marketplace.eligible = true;
-    for (const accounts of [["0x" + "cd".repeat(20)], [], null]) {
+  it.each([
+    { accounts: [otherAccount], reason: "a different account" },
+    { accounts: [], reason: "an empty list" },
+    { accounts: null, reason: "a rejection" },
+  ])(
+    "keeps LAND hidden when the wallet read settles with $reason",
+    async ({ accounts }) => {
+      enableMarketplace();
       const request = vi.fn(async () => {
         if (accounts === null) throw new Error("Wallet read denied");
         return accounts;
       });
       vi.stubGlobal("ethereum", { request });
-      const view = render(<Host auth={{ ...baseAuth, signedIn: true, account: shopAccount }} />);
-      await act(async () => {});
+      render(<Host auth={{ ...baseAuth, signedIn: true, account: shopAccount }} />);
       expect(request).toHaveBeenCalledWith({ method: "eth_accounts" });
+      await act(async () => { await request.mock.results[0]!.value.catch(() => undefined); });
       fireEvent.click(screen.getByRole("button", { name: "Shop" }));
       expect(screen.getByRole("link", { name: /names/i })).toBeTruthy();
       expect(screen.queryByRole("link", { name: "LAND" })).toBeNull();
-      view.unmount();
-    }
+    },
+  );
+  it("keeps LAND hidden when the chrome account differs from the Sites session", async () => {
+    enableMarketplace(otherAccount);
+    const request = vi.fn().mockResolvedValue([checksummedAccount]);
+    vi.stubGlobal("ethereum", { request });
+    render(<Host auth={{ ...baseAuth, signedIn: true, account: shopAccount }} />);
+    await act(async () => { await request.mock.results[0]?.value; });
+    fireEvent.click(screen.getByRole("button", { name: "Shop" }));
+    expect(screen.queryByRole("link", { name: "LAND" })).toBeNull();
+  });
+  it("keeps LAND hidden when a stale wallet read resolves after an account change", async () => {
+    enableMarketplace();
+    const wallet = walletEvents();
+    const { request, resolve } = pendingWalletRead();
+    vi.stubGlobal("ethereum", { ...wallet, request });
+    render(<Host auth={{ ...baseAuth, signedIn: true, account: shopAccount }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Shop" }));
+
+    act(() => wallet.emit("accountsChanged", [otherAccount]));
+    await act(async () => resolve([checksummedAccount]));
+    expect(screen.queryByRole("link", { name: "LAND" })).toBeNull();
   });
   it("shows the canonical Events destination as selected inside the mobile menu", () => {
     render(
@@ -358,25 +423,18 @@ describe("when the signed-in web visitor opens the profile", () => {
 });
 
 describe("when Nav Profile reads the matching browser wallet", () => {
-  const otherAccount = "0x" + "cd".repeat(20);
   const bodyUrl = "https://example.com/avatar-body.png";
   let request: ReturnType<typeof vi.fn>;
-  let accountsChanged: ((accounts: string[]) => void) | undefined;
+  let wallet: ReturnType<typeof walletEvents>;
 
   beforeEach(() => {
-    accountsChanged = undefined;
+    wallet = walletEvents();
     request = vi.fn(async ({ method }: { method: string }) => {
-      if (method === "eth_accounts") return [shopAccount.toUpperCase().replace("0X", "0x")];
+      if (method === "eth_accounts") return [checksummedAccount];
       if (method === "eth_chainId") return "0x1";
       throw new Error(method);
     });
-    vi.stubGlobal("ethereum", {
-      request,
-      on: (event: string, listener: (accounts: string[]) => void) => {
-        if (event === "accountsChanged" && !accountsChanged) accountsChanged = listener;
-      },
-      removeListener: () => {},
-    });
+    vi.stubGlobal("ethereum", { ...wallet, request });
     recordSignIn(shopAccount, "web3");
     readManaBalanceWei.mockImplementation(async (_account, chain: number) => {
       if (chain === 1) return 0n;
@@ -396,7 +454,7 @@ describe("when Nav Profile reads the matching browser wallet", () => {
     expect(request).toHaveBeenCalledWith({ method: "eth_accounts" });
     expect(readManaBalanceWei).not.toHaveBeenCalled();
 
-    const avatar = screen.getByRole("button", { name: "Account: Ada" });
+    const avatar = screen.getByRole("button", { name: "Cuenta: Ada" });
     fireEvent.click(avatar);
     expect(await screen.findByRole("combobox", { name: "Red de la billetera" })).toBeTruthy();
     const panel = document.getElementById(avatar.getAttribute("aria-controls")!);
@@ -407,21 +465,54 @@ describe("when Nav Profile reads the matching browser wallet", () => {
   });
 
   it("should hide the wallet controls after the connected wallet changes", async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Account: Ada" }));
+    const avatar = screen.getByRole("button", { name: "Cuenta: Ada" });
+    fireEvent.click(avatar);
     await screen.findByRole("combobox", { name: "Red de la billetera" });
-    act(() => accountsChanged?.([otherAccount]));
+    await waitFor(() => expect(readManaBalanceWei).toHaveBeenCalledTimes(2));
+    await act(async () => wallet.emit("accountsChanged", [otherAccount]));
     expect(screen.queryByRole("combobox", { name: "Red de la billetera" })).toBeNull();
     expect(document.querySelector('[data-balance="mana"]')).toBeNull();
-    expect(readManaBalanceWei).not.toHaveBeenCalledWith(otherAccount, expect.anything(), expect.anything());
+    await act(async () => {
+      fireEvent.click(avatar);
+      fireEvent.click(avatar);
+    });
+    expect(readManaBalanceWei).toHaveBeenCalledTimes(2);
+  });
+
+  it("should reserve a balance row while the eligible MANA reads are pending", async () => {
+    let resolveBalance!: (value: bigint) => void;
+    const pending = new Promise<bigint>((resolve) => { resolveBalance = resolve; });
+    readManaBalanceWei.mockReturnValue(pending);
+    await act(async () => { await request.mock.results[0]!.value; });
+    const avatar = screen.getByRole("button", { name: "Cuenta: Ada" });
+    fireEvent.click(avatar);
+    const panel = document.getElementById(avatar.getAttribute("aria-controls")!)!;
+    expect(panel.querySelector('[aria-busy="true"]')).toBeTruthy();
+    expect(panel.querySelector("[data-balance]")).toBeNull();
+
+    await act(async () => resolveBalance(0n));
+    await waitFor(() => expect(panel.querySelector('[aria-busy="true"]')).toBeNull());
+    expect(panel.querySelector('[data-balance="polygonMana"]')?.textContent).toBe("MANA en Polygon: 0");
   });
 
   it("should confirm the address copy in the Sites locale", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
-    fireEvent.click(screen.getByRole("button", { name: "Account: Ada" }));
-    fireEvent.click(screen.getByRole("button", { name: "Copiar ID de usuario" }));
-    expect(await screen.findByText("¡Dirección copiada!")).toBeTruthy();
-    expect(writeText).toHaveBeenCalledWith(shopAccount);
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Cuenta: Ada" }));
+      expect(screen.getByRole("link", { name: "Ver perfil" })).toBeTruthy();
+      expect(screen.getByRole("link", { name: "Mis activos" })).toBeTruthy();
+      expect(screen.getByRole("link", { name: "Configuración de la cuenta" })).toBeTruthy();
+      expect(screen.getByRole("link", { name: "Autorizaciones de la tienda" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Copiar ID de usuario" }));
+      await waitFor(() => expect(screen.getByRole("status").textContent).toBe("ID de usuario copiado"));
+      expect(screen.getAllByText("ID de usuario copiado")).toHaveLength(2);
+      expect(writeText).toHaveBeenCalledExactlyOnceWith(shopAccount);
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
   });
 });
 

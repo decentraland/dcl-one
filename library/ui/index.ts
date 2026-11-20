@@ -17,7 +17,6 @@ export type {
 export {
   decentralandNavigation,
   decentralandNavigationSection,
-  decentralandNavSections,
   decentralandPublicNavSections
 } from './components/NavBar/NavBar.navigation'
 export type {

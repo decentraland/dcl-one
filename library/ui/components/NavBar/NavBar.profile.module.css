@@ -95,8 +95,13 @@
     color: var(--dcl-text-secondary);
   }
 
-  .balances:has(ul) {
+  .balances:has(ul),
+  .balances[aria-busy='true'] {
     margin-top: var(--dcl-space-12);
+  }
+
+  .balances[aria-busy='true'] {
+    min-height: calc(var(--dcl-font-size-body-md-strong) * 1.5);
   }
 
   .balances ul {
