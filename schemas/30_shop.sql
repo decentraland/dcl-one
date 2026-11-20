@@ -79,6 +79,10 @@ CREATE TABLE shop.trade_assets_erc721 (
     asset_id uuid NOT NULL UNIQUE REFERENCES shop.trade_assets(id) ON DELETE CASCADE,
     token_id text NOT NULL
 );
+-- The open listing of one token: /v1/nfts looks up each candidate row's v3
+-- listing by token id (then its contract, signer and trade), instead of
+-- reading every open listing for every row.
+CREATE INDEX trade_assets_erc721_token_idx ON shop.trade_assets_erc721 (token_id);
 
 CREATE TABLE shop.trade_assets_erc20 (
     asset_id uuid NOT NULL UNIQUE REFERENCES shop.trade_assets(id) ON DELETE CASCADE,
@@ -470,6 +474,10 @@ CREATE INDEX nft_owner_idx ON shop.nft (owner) WHERE owner IS NOT NULL;
 -- The copies of an item: WHERE (network, contract_address, item_id) = ...
 -- (the index-served /v1/nfts over a matched item set, ?itemId=).
 CREATE INDEX nft_item_idx ON shop.nft (network, contract_address, item_id) WHERE item_id IS NOT NULL;
+-- The newest-first browse of /v1/nfts: each source's first `first + skip`
+-- held tokens by minted_at DESC, walked per network (an incremental sort
+-- orders the ties by contract and token) instead of sorting every candidate.
+CREATE INDEX nft_mint_order_idx ON shop.nft (network, minted_at DESC) WHERE owner IS NOT NULL;
 
 -- The legacy Marketplace order per token, folded: the latest order event
 -- decides (created = open, successful = sold, cancelled = cancelled); a

@@ -138,18 +138,58 @@ fn a_mirror_refuses_blank_profile_ownership_readers() {
         err.contains("MARKETPLACE_SUBGRAPH_URL is empty: unset it"),
         "{err}"
     );
-    let err = check_of(&[
+    // Blank collections subgraphs are no longer a profile ownership source.
+    check_of(&[
         db,
         (ENV, "mirror"),
         ("ETH_COLLECTIONS_SUBGRAPH_URL", " "),
         ("MATIC_COLLECTIONS_SUBGRAPH_URL", ""),
     ])
+    .unwrap();
+    let err = check_of(&[
+        db,
+        (ENV, "mirror"),
+        ("MARKETPLACE_NFT_INDEX_ENABLED", "false"),
+    ])
     .unwrap_err()
     .to_string();
     assert!(
-        err.contains("ETH_COLLECTIONS_SUBGRAPH_URL, MATIC_COLLECTIONS_SUBGRAPH_URL are empty"),
+        err.contains("MARKETPLACE_NFT_INDEX_ENABLED is off"),
         "{err}"
     );
+    let err = check_of(&[
+        db,
+        (ENV, "mirror"),
+        ("TRADE_RPC_URLS", "1=https://eth.example"),
+    ])
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("names no 137= endpoint"), "{err}");
+    let err = check_of(&[db, (ENV, "mirror"), ("TRADE_RPC_URLS", "")])
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("names no 137= endpoint"), "{err}");
+    check_of(&[
+        db,
+        (ENV, "mirror"),
+        ("TRADE_RPC_URLS", "137=https://polygon.example"),
+    ])
+    .unwrap();
+    // A file is read after the check; the walk refuses a wrong chain.
+    let with_file = [
+        db,
+        (ENV, "mirror"),
+        ("TRADE_RPC_URLS_FILE", "/run/credentials/trade"),
+    ];
+    check(&parsed_with_files(&with_file), &lookup(&env(&with_file))).unwrap();
+    // A testnet mirror serves the items as deployed until its chains are walked.
+    check_of(&[
+        db,
+        (ENV, "mirror"),
+        ("ETH_NETWORK", "sepolia"),
+        ("MARKETPLACE_NFT_INDEX_ENABLED", "false"),
+    ])
+    .unwrap();
     check_of(&[db, (ENV, "island")]).unwrap();
 }
 
@@ -1149,6 +1189,37 @@ fn about_resource_check_is_off_unless_set() {
         assert!(!parsed(&[db, (ENV, posture)]).node.about_resource_check);
         let on = parsed(&[db, (ENV, posture), ("ABOUT_RESOURCE_CHECK", "true")]);
         assert!(on.node.about_resource_check, "{posture}");
+    }
+}
+
+#[test]
+fn a_collections_subgraph_without_the_nft_walk_is_warned_about() {
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    let eth = ("ETH_COLLECTIONS_SUBGRAPH_URL", "https://reader.example/l1");
+    let matic = (
+        "MATIC_COLLECTIONS_SUBGRAPH_URL",
+        "https://reader.example/l2",
+    );
+    let index = ("MARKETPLACE_NFT_INDEX_ENABLED", "true");
+    let sepolia = ("ETH_NETWORK", "sepolia");
+    let run = |pairs: &[(&str, &str)]| unchecked_profile_items(&parsed(pairs));
+
+    for pairs in [
+        &[db, eth][..],
+        &[db, matic][..],
+        &[db, eth, matic, index, sepolia][..],
+    ] {
+        let warning = run(pairs).unwrap_or_else(|| panic!("{pairs:?}"));
+        assert!(warning.contains("served as deployed"), "{warning}");
+        assert!(!warning.contains("reader.example"), "{warning}");
+    }
+    for pairs in [
+        &[db][..],
+        &[db, index][..],
+        &[db, eth, matic, index][..],
+        &[db, ("ETH_COLLECTIONS_SUBGRAPH_URL", " ")][..],
+    ] {
+        assert_eq!(run(pairs), None, "{pairs:?}");
     }
 }
 

@@ -152,6 +152,9 @@ pub async fn serve(
     if let Ok(Some(warning)) = catalyst_config::posture::worlds_names_reader(&config) {
         tracing::warn!("{warning}");
     }
+    if let Some(warning) = catalyst_config::posture::unchecked_profile_items(&config) {
+        tracing::warn!("{warning}");
+    }
     config.resolve_secret_files()?;
     config.content.eth_rpc_url()?;
     let sync_settings = SyncSettings::from_config(&config)?;

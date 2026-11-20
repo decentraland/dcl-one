@@ -1,16 +1,20 @@
 //! `/lambdas/profiles`: the profile entity comes from `content.deployments`
 //! (peer sync), every wearable and emote it names is checked against the
-//! collections subgraphs (token ids included, re-emitted `<urn>:<tokenId>`
-//! as `ENSURE_ERC_721` does), its third-party wearables against their
+//! `nft` index (`owned_items`: token ids included, re-emitted
+//! `<urn>:<tokenId>` as `ENSURE_ERC_721` does, the newest transfer first
+//! when the profile names no token), its third-party wearables against their
 //! mappings and the chain (`third_party::sanitize_third_party_urns`,
 //! appended after the others as the old lambdas did) and `hasClaimedName`
 //! against the marketplace subgraph. The answer is decentraland/lamb2's
-//! `{ timestamp, avatars }`, the timestamp the entity's. With no collections
-//! subgraph the items are served as deployed (a node with no ownership
-//! source, such as an island); a reader that is configured but unreachable
-//! fails the request closed (503) rather than serving cosmetics nobody
-//! proved. The one exception is a linked third-party item whose chain read
-//! failed: only that profile's linked items are left out.
+//! `{ timestamp, avatars }`, the timestamp the entity's. A node that does
+//! not walk the index (`owned_items::walks_here`: an island, a journey, a
+//! testnet) serves the items as deployed. One that walks it reads the
+//! networks the items name once their index is complete
+//! (`owned_items::Rule::Complete`: an index published once since its last
+//! rewind, however long ago); before that the request fails closed (503)
+//! rather than serving cosmetics nobody proved or stripping items their
+//! owners hold. The one exception is a linked third-party item whose chain
+//! read failed: only that profile's linked items are left out.
 //!
 //! `POST /lambdas/profiles/metadata` serves the compact projection of the same
 //! processed profiles, as asset-bundle-registry's `/profiles/metadata`.
@@ -29,6 +33,7 @@ use serde_json::{Value, json};
 use crate::content::queries::{active_entity_docs_by_pointers, retain_non_denylisted};
 
 use super::graph;
+use super::owned_items::{self, Rule};
 use super::third_party;
 use super::{MarketplaceState, SharedState, bad_request, lambdas_internal_error, not_found};
 
@@ -140,7 +145,7 @@ fn collect_ownership_urns(metadata: &Value) -> Vec<String> {
 /// An owned item as `profiles.ts` re-emits it: `<owned urn>:<the named token
 /// id, or the first one held>`; `None` when the URN is not held or the named
 /// token is not among the held ones. The URN must equal the inventory's
-/// exactly, as lamb2's `Map` lookup does: the subgraphs spell L1 `ethereum`,
+/// exactly, as lamb2's `Map` lookup does: the index spells L1 `ethereum`,
 /// so a `mainnet` spelling is not owned.
 fn owned_item(item: &str, owned: &OwnedTokens) -> Option<String> {
     let (urn, token_id) = split_urn_and_token_id(item);
@@ -155,8 +160,8 @@ fn owned_item(item: &str, owned: &OwnedTokens) -> Option<String> {
     })
 }
 
-/// Keeps the base items and the owned ones (`owned: None`, no collections
-/// reader: every item as deployed). An owned emote becomes exactly
+/// Keeps the base items and the owned ones (`owned: None`, no ownership
+/// source: every item as deployed). An owned emote becomes exactly
 /// `{ urn, slot }`. `emotes` is always present, `[]` when not deployed.
 fn filter_avatars_by_ownership(avatars: &mut [Value], owned: Option<&OwnedTokens>) {
     for avatar_val in avatars.iter_mut() {
@@ -410,7 +415,7 @@ pub async fn process_profiles_positional(
     state: &MarketplaceState,
     entities: &[Value],
 ) -> Result<Vec<Option<Value>>, String> {
-    let collections = graph::any_collections_reader(&state.index);
+    let collections = owned_items::walks_here(state);
     state.warm_faces(
         entities
             .iter()
@@ -466,7 +471,9 @@ pub async fn process_profiles_positional(
             let (owned_res, names, third_party) = tokio::join!(
                 async {
                     if collections && !requested.is_empty() {
-                        graph::owned_tokens(&state.index, &requested).await
+                        owned_items::owned_tokens(&state.pool, &requested, Rule::Complete)
+                            .await
+                            .map_err(|e| e.to_string())
                     } else {
                         Ok(HashMap::new())
                     }

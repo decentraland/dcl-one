@@ -1,8 +1,11 @@
 //! `/v1/orders` and `/v1/orders/open-by-items`: the off-chain v3 leg from the
 //! trades mirror (an open `public_nft_order` is one that is effective, not
-//! expired and not in `trade_cancellations`; the old "signer still owns the
-//! nft" guard becomes `graph::owned_urns` on the item URN, so a listing whose
-//! signer no longer holds any copy of the item drops out) merged with the
+//! expired and not in `trade_cancellations`; the "signer still owns the
+//! nft" guard reads the `nft` index in the same statement, so a listing
+//! whose signer no longer holds that exact token drops out, while a token
+//! the index does not hold (LAND, an estate) passes; the leg is empty
+//! while the index is not published and recent, and unguarded on a node
+//! that does not walk the index) merged with the
 //! legacy on-chain `orders` of the collections subgraph reader (first ≤ 100,
 //! 30 s). The two legs are sorted together in memory over the `first + skip`
 //! window, read past the graph's 5,000 skip by keyset up to
@@ -22,7 +25,9 @@ use serde_json::{Value, json};
 use sqlx::Row;
 
 use super::catalog::{ITEM_ID_SHIFT, unified_trades_cte};
+use super::chain_walk::ChainNet;
 use super::graph;
+use super::owned_items::{self, ReadError, Rule};
 use super::readers::{self, GraphPage, Ttl, seconds_to_ms};
 use super::wire::{
     ApiError, ChainId, DataTotalString, InvalidParameterError, Network, Params, clamp_first,
@@ -193,22 +198,29 @@ pub(crate) fn parse_open_by_items(
     Ok((items, per_contract))
 }
 
-/// Open `public_nft_order` trades with the item they sell (when the mirror
-/// has it) and the filters that apply to the leg; `$1` binds `now`.
+/// Open `public_nft_order` trades with the filters that apply to the leg;
+/// `$1` binds `now`. [`OWNER_GUARD`] follows it wherever the nft index is
+/// read.
 const TRADES_LEG_SQL: &str = "SELECT u.id::text AS id, u.trade_contract AS marketplace_address, u.contract_address_sent AS nft_address, u.token_id, \
         u.amount_received::text AS price, u.signer AS owner, u.beneficiary AS payee, \
         (EXTRACT(EPOCH FROM u.created_at) * 1000)::bigint AS created_at, (EXTRACT(EPOCH FROM u.expires_at) * 1000)::bigint AS expires_at, \
-        upper(u.network) AS network, mod(u.token_id::numeric, SHIFT::numeric)::text AS issued_id, u.item_id::text AS item_id, i.urn \
+        upper(u.network) AS network, mod(u.token_id::numeric, SHIFT::numeric)::text AS issued_id, u.item_id::text AS item_id \
  FROM unified_trades u \
- LEFT JOIN shop.items i ON i.contract_address = u.contract_address_sent AND i.item_id = u.item_id AND i.network = lower(u.network) \
  WHERE u.type = 'public_nft_order' AND u.token_id IS NOT NULL";
 
-/// `$1` is now, `$2` the trades floor; `extra` binds from `$3`.
-fn trades_leg_sql(extra: &str) -> String {
+/// The signer still holds the token: drops a listing only when the `nft`
+/// index holds the token and another address (or nobody: burned) owns it.
+const OWNER_GUARD: &str = " AND NOT EXISTS (SELECT 1 FROM shop.nft n WHERE n.network = lower(u.network) AND n.contract_address = u.contract_address_sent \
+                   AND n.token_id = u.token_id::numeric AND n.owner IS DISTINCT FROM u.signer)";
+
+/// `$1` is now, `$2` the trades floor; `extra` binds from `$3`. `guarded`
+/// adds [`OWNER_GUARD`].
+fn trades_leg_sql(extra: &str, guarded: bool) -> String {
     format!(
-        "WITH {} {} {extra} ORDER BY u.created_at DESC, u.id::text ASC LIMIT 1000",
+        "WITH {} {}{} {extra} ORDER BY u.created_at DESC, u.id::text ASC LIMIT 1000",
         unified_trades_cte("$1", "$2"),
-        TRADES_LEG_SQL.replace("SHIFT", ITEM_ID_SHIFT)
+        TRADES_LEG_SQL.replace("SHIFT", ITEM_ID_SHIFT),
+        if guarded { OWNER_GUARD } else { "" }
     )
 }
 
@@ -252,7 +264,7 @@ pub async fn open_trade_orders(
         return Ok(out);
     }
     let sql = format!(
-        "WITH {} SELECT DISTINCT ON (x.network, x.nft_address, x.token_id) x.* FROM ({} \
+        "WITH {} SELECT DISTINCT ON (x.network, x.nft_address, x.token_id) x.* FROM ({}{OWNER_GUARD} \
            AND (lower(u.network), u.contract_address_sent, u.token_id, u.signer) IN \
                (SELECT * FROM unnest($3::text[], $4::text[], $5::text[], $6::text[]))) x \
          ORDER BY x.network, x.nft_address, x.token_id, x.created_at DESC, x.id ASC",
@@ -303,14 +315,34 @@ fn keyed(order: Order, sort_token_id: String) -> Keyed {
     }
 }
 
-/// The open v3 listings matching `f`, with the signer-still-owns guard.
+/// The open v3 listings matching `f`.
+///
+/// A node that walks the nft index applies the signer-still-owns guard on
+/// a snapshot where the index is published and recent; while it is not,
+/// the leg is empty (a listing is never served unguarded there), and the
+/// legacy leg still answers. A node that does not walk the index has no
+/// ownership source and serves the listings unguarded.
 pub async fn trades_leg(
     state: &MarketplaceState,
     f: &OrderFilters,
-) -> Result<Vec<Keyed>, ApiError> {
+) -> Result<Vec<Keyed>, Response> {
     if f.status.as_deref().is_some_and(|s| s != "open") || f.buyer.is_some() {
         return Ok(Vec::new());
     }
+    let nets: &[ChainNet] = match f.network {
+        Some(Network::Ethereum) => &[ChainNet::Ethereum],
+        Some(Network::Matic) => &[ChainNet::Matic],
+        None => &[ChainNet::Ethereum, ChainNet::Matic],
+    };
+    let mut guarded = if owned_items::walks_here(state) {
+        match owned_items::snapshot(&state.pool, nets, Rule::Fresh, false).await {
+            Ok(tx) => Some(tx),
+            Err(ReadError::NotReady(..)) => return Ok(Vec::new()),
+            Err(ReadError::Db(e)) => return Err(ApiError::internal(e.to_string()).into_response()),
+        }
+    } else {
+        None
+    };
     let mut extra = String::new();
     let mut binds: Vec<String> = Vec::new();
     let next = |binds: &mut Vec<String>, v: String| {
@@ -346,40 +378,29 @@ pub async fn trades_leg(
         extra.push_str(&format!(" AND lower(u.network) = {p}"));
     }
     let now = Utc::now().naive_utc();
-    let mut q = sqlx::query(sqlx::AssertSqlSafe(trades_leg_sql(&extra)))
+    let sql = trades_leg_sql(&extra, guarded.is_some());
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(now)
         .bind(super::trades::mirrored_since(&state.settings, now));
     for b in &binds {
         q = q.bind(b);
     }
-    let rows = q.fetch_all(&state.pool).await?;
-    let mut out: Vec<(Keyed, Option<String>)> = rows
+    let rows = match guarded.as_mut() {
+        Some(tx) => q.fetch_all(&mut **tx).await,
+        None => q.fetch_all(&state.pool).await,
+    }
+    .map_err(|e| ApiError::from(e).into_response())?;
+    if let Some(tx) = guarded {
+        tx.rollback().await.ok();
+    }
+    Ok(rows
         .iter()
         .map(|r| {
             let order = trade_row_order(r);
             let token_id = order.token_id.clone().unwrap_or_default();
-            (keyed(order, token_id), r.get::<Option<String>, _>("urn"))
+            keyed(order, token_id)
         })
-        .collect();
-    let requested: HashSet<(String, String)> = out
-        .iter()
-        .filter_map(|(k, urn)| {
-            urn.as_ref()
-                .map(|u| (k.order.owner.clone(), graph::normalize_urn(u)))
-        })
-        .collect();
-    if !requested.is_empty()
-        && graph::any_collections_reader(&state.index)
-        && let Ok(owned) = graph::owned_urns(&state.index, &requested).await
-    {
-        out.retain(|(k, urn)| match urn {
-            Some(u) => owned
-                .get(&k.order.owner)
-                .is_some_and(|set| set.contains(&graph::normalize_urn(u))),
-            None => true,
-        });
-    }
-    Ok(out.into_iter().map(|(k, _)| k).collect())
+        .collect())
 }
 
 const ORDER_FIELDS: &str = "id marketplaceAddress nftAddress tokenId owner buyer price status expiresAt createdAt updatedAt nft { issuedId }";
@@ -554,9 +575,7 @@ pub async fn list_orders(
     readers::require_networks(state, f.network.map(|n| n.graph()))?;
     super::trades::require_ready(state).await?;
     let (mut merged, legacy_total) = legacy_leg(state, f, offset + limit).await?;
-    let trades = trades_leg(state, f)
-        .await
-        .map_err(IntoResponse::into_response)?;
+    let trades = trades_leg(state, f).await?;
     let total = legacy_total + trades.len() as i64;
     merged.extend(trades);
     sort_merged(&mut merged, f.sort_by);
@@ -620,9 +639,7 @@ pub async fn open_orders_by_items(
         };
         let (legacy, _) =
             legacy_leg(state, &f, per_contract.min(graph::THE_GRAPH_PAGE_SIZE)).await?;
-        let trades = trades_leg(state, &f)
-            .await
-            .map_err(IntoResponse::into_response)?;
+        let trades = trades_leg(state, &f).await?;
         let mut rows = legacy;
         rows.extend(trades);
         sort_merged(&mut rows, Some(OrderSortBy::Cheapest));
@@ -786,9 +803,11 @@ mod tests {
         assert_eq!(w["item"], "0xabc-12");
         assert_eq!(w["expiresAt_gt"], "1000");
         assert_eq!(legacy_order_by(f.sort_by), ("price", "asc"));
-        let sql = trades_leg_sql(" AND u.signer = $3");
+        let sql = trades_leg_sql(" AND u.signer = $3", true);
         assert!(
-            sql.contains("u.type = 'public_nft_order'")
+            !trades_leg_sql("", false).contains("shop.nft")
+                && sql.contains("FROM shop.nft n")
+                && sql.contains("u.type = 'public_nft_order'")
                 && sql.contains("trade_cancellations")
                 && sql.contains("LIMIT 1000"),
             "{sql}"

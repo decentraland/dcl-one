@@ -107,23 +107,14 @@ async fn serve_graph(answer: fn(&str) -> Value) -> String {
     .await
 }
 
+/// The collections subgraphs answer nothing: ownership is the nft index's
+/// (`seed_indexes`), and a query for it here is a test failure.
 fn matic_collections(query: &str) -> Value {
-    if query.contains("urn_in") {
-        // The ownership document of the profiles: the owner holds the hat, token 10.
-        json!({ "o0": [{ "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10" }] })
-    } else if query.contains("category: \"wearable\"") {
-        json!({ "nfts": [
-            { "id": "a1", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10", "itemType": "wearable_v2", "transferredAt": "200",
-              "item": { "rarity": "epic", "price": "5" }, "metadata": { "wearable": { "name": "Hat", "category": "hat" } } },
-            { "id": "a2", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "11", "itemType": "wearable_v2", "transferredAt": "300",
-              "item": { "rarity": "epic", "price": "5" }, "metadata": { "wearable": { "name": "Hat", "category": "hat" } } },
-            // An item no deployed entity describes.
-            { "id": "a3", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:9"), "tokenId": "12", "itemType": "wearable_v2", "transferredAt": "100",
-              "item": { "rarity": "common", "price": "1" }, "metadata": { "wearable": { "name": "Orphan", "category": "hat" } } }
-        ] })
-    } else {
-        json!({ "nfts": [] })
-    }
+    assert!(
+        !query.contains("urn_in") && !query.contains("owner:"),
+        "an ownership query reached the collections subgraph: {query}"
+    );
+    json!({ "nfts": [] })
 }
 
 fn eth_collections(_: &str) -> Value {
@@ -470,14 +461,16 @@ async fn seed(pool: &PgPool) {
     .execute(pool)
     .await
     .unwrap();
-    for (item, kind, name, cat, rarity) in [
-        ("1", "wearable_v2", "Hat", "hat", "epic"),
-        ("2", "emote_v1", "Dance", "dance", "rare"),
+    for (item, kind, name, cat, rarity, price) in [
+        ("1", "wearable_v2", "Hat", "hat", "epic", 5),
+        ("2", "emote_v1", "Dance", "dance", "rare", 5),
+        // An item no deployed entity describes.
+        ("9", "wearable_v2", "Orphan", "hat", "common", 1),
     ] {
         sqlx::query(
             "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, \
                  available, price, name, category, created_at, updated_at, reviewed_at, mirrored_at) \
-             VALUES ('matic', $1, $2::numeric, 137, $3, $4, $5, $6, 1, 10, 9, 5, $7, $8, 1, 1, 1, timezone('UTC', now()))",
+             VALUES ('matic', $1, $2::numeric, 137, $3, $4, $5, $6, 1, 10, 9, $9, $7, $8, 1, 1, 1, timezone('UTC', now()))",
         )
         .bind(COFFEE)
         .bind(item)
@@ -487,6 +480,7 @@ async fn seed(pool: &PgPool) {
         .bind(rarity)
         .bind(name)
         .bind(cat)
+        .bind(price)
         .execute(pool)
         .await
         .unwrap();
@@ -593,6 +587,30 @@ async fn seed_indexes(pool: &PgPool) {
     .execute(pool)
     .await
     .unwrap();
+    // The owner's copies: two of the hat (token 11 the newest transfer),
+    // one of the orphan item.
+    for (token, item, block, at) in [(10, 1, 20, 200), (11, 1, 30, 300), (12, 9, 10, 100)] {
+        sqlx::query(
+            "INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+             VALUES ('matic', $1, $2, $3, $4, $2, $5, $6, $5, 0, $6)",
+        )
+        .bind(COFFEE)
+        .bind(token as i64)
+        .bind(OWNER)
+        .bind(item as i64)
+        .bind(block as i64)
+        .bind(at as i64)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    super::owned_items::test_support::publish(
+        pool,
+        &super::chain_walk::ChainNet::ALL,
+        false,
+        std::time::Duration::ZERO,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -614,6 +632,7 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         },
         ..Settings::for_tests()
     };
+    let settings = super::owned_items::test_support::walking(settings);
     let state = Arc::new(MarketplaceState::new(
         db.pool.clone(),
         crate::http::Outbound::for_tests(),
@@ -1081,11 +1100,11 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         body["avatars"][0]["avatar"]["wearables"],
         json!([
             "urn:decentraland:off-chain:base-avatars:eyes_00",
-            format!("{hat}:10"),
+            format!("{hat}:11"),
             TP_URN,
             linked(2)
         ]),
-        "the held token is appended (ENSURE_ERC_721); token 3 is mapped but not held, token 9 is not mapped: {body}"
+        "the newest held token is appended (ENSURE_ERC_721); token 3 is mapped but not held, token 9 is not mapped: {body}"
     );
 
     // An entity a remote list (`DENYLIST_URLS`) names is left out of the
@@ -1240,8 +1259,8 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         .await
         .unwrap();
 
-    // The registry and the collections subgraphs down: lamb2's 502
-    // FetcherError, never an empty list or a 503.
+    // The registry and the collections subgraphs down: the third-party
+    // reads answer lamb2's 502 FetcherError, never an empty list or a 503.
     let mut dark_settings = state.settings.clone();
     dark_settings.third_party_registry_subgraph_url = Some(down.clone());
     dark_settings.eth_collections_subgraph_url = Some(down.clone());
@@ -1263,10 +1282,6 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
             "/lambdas/collections/wearables-by-owner/{OWNER}?collectionId=urn:decentraland:matic:collections-thirdparty:tp"
         ),
         format!("/explorer/{OWNER}/wearables?collectionType=third-party"),
-        format!("/lambdas/users/{OWNER}/wearables"),
-        format!("/lambdas/users/{OWNER}/emotes"),
-        format!("/lambdas/collections/wearables-by-owner/{OWNER}"),
-        format!("/lambdas/collections/emotes-by-owner/{OWNER}"),
     ] {
         let (status, body) = get(&dark_state, &uri).await;
         assert_eq!(
@@ -1274,6 +1289,17 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
             (StatusCode::BAD_GATEWAY, fetcher_error.clone()),
             "{uri}"
         );
+    }
+    // Wearable and emote ownership never asks the collections subgraphs.
+    for uri in [
+        format!("/lambdas/users/{OWNER}/wearables"),
+        format!("/lambdas/users/{OWNER}/emotes"),
+        format!("/lambdas/collections/wearables-by-owner/{OWNER}"),
+        format!("/lambdas/collections/emotes-by-owner/{OWNER}"),
+        format!("/explorer/{OWNER}/wearables?collectionType=on-chain"),
+    ] {
+        let (status, body) = get(&dark_state, &uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
     }
     let (status, body) = get(&dark_state, "/lambdas/third-party-integrations").await;
     assert_eq!(
@@ -1290,7 +1316,7 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         body["avatars"][0]["avatar"]["wearables"],
         json!([
             "urn:decentraland:off-chain:base-avatars:eyes_00",
-            format!("{hat}:10"),
+            format!("{hat}:11"),
             TP_URN
         ]),
         "the v1 item needs no check: {body}"
@@ -2072,5 +2098,305 @@ async fn nft_prices_answer_the_land_index_envelope_when_it_stops_being_ready_aft
     assert_eq!(body["source"], "land-authz-index", "{body}");
     let (status, body) = answer("statement timeout".into()).await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    db.drop().await;
+}
+
+/// A collections subgraph that counts every request: the ownership routes
+/// must never call it.
+async fn serve_counting_graph() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = calls.clone();
+    let url = serve(Router::new().route(
+        "/",
+        axum::routing::post(move || {
+            let counted = counted.clone();
+            async move {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                axum::Json(json!({ "data": { "nfts": [] } }))
+            }
+        }),
+    ))
+    .await;
+    (url, calls)
+}
+
+/// Every ownership route against each state of the nft index: switched off
+/// (profiles and outfits as deployed, the rest the envelope), walked but
+/// incomplete (everything fails closed: a direct profile read 503s and a
+/// Registry batch is an error the batch leaves out), complete but published
+/// an hour ago (profiles serve, the strict routes answer the envelope), only
+/// Polygon published (a Polygon item's profile and the emotes serve, the
+/// wearables need Ethereum too), and published. No route asks the
+/// collections subgraphs.
+#[tokio::test]
+async fn each_ownership_route_follows_the_nft_index_state() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    seed(&db.pool).await;
+    let hat = format!("urn:decentraland:matic:collections-v2:{COFFEE}:1");
+    let dance = format!("urn:decentraland:matic:collections-v2:{COFFEE}:2");
+    deploy(
+        &db.pool,
+        "bafyprofile",
+        "profile",
+        OWNER,
+        json!({ "avatars": [{ "name": "alice", "avatar": { "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseFemale",
+            "wearables": ["urn:decentraland:off-chain:base-avatars:eyes_00", hat],
+            "emotes": [{ "slot": 0, "urn": dance }] } }] }),
+        &[],
+    )
+    .await;
+    for (token, item) in [(10i64, 1i64), (20, 2)] {
+        sqlx::query(
+            "INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+             VALUES ('matic', $1, $2, $3, $4, 1, 5, 5, 5, 0, 5)",
+        )
+        .bind(COFFEE)
+        .bind(token)
+        .bind(OWNER)
+        .bind(item)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    }
+    let (graph, calls) = serve_counting_graph().await;
+    let rpc = serve_rpc().await;
+    let settings = Settings {
+        eth_collections_subgraph_url: Some(graph.clone()),
+        matic_collections_subgraph_url: Some(graph),
+        marketplace_subgraph_url: Some(serve_graph(marketplace_graph).await),
+        third_party_registry_subgraph_url: Some(serve_graph(registry_graph).await),
+        eth_rpc_url: Some(rpc.clone()),
+        polygon_rpc_url: Some(rpc.clone()),
+        market: MarketSettings {
+            trade_rpc_urls: RpcEndpoints::from_env(Some(&format!("137={rpc}"))),
+            ..MarketSettings::default()
+        },
+        ..Settings::for_tests()
+    };
+    let state_of = |settings: Settings| {
+        let state = Arc::new(MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            settings,
+        ));
+        state
+            .test_allow_loopback
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        state
+    };
+    let off = state_of(settings.clone());
+    let walking = state_of(super::owned_items::test_support::walking(settings));
+    let set_cursor = |network: &'static str, published: Option<i64>| {
+        let pool = db.pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history) \
+                 VALUES ('nft', $1, 1, 100, CASE WHEN $2::bigint IS NULL THEN NULL ELSE 100 END, \
+                         timezone('UTC', now()) - make_interval(mins => $2::int), true) \
+                 ON CONFLICT (indexer, network) DO UPDATE SET folded_block = EXCLUDED.folded_block, folded_at = EXCLUDED.folded_at",
+            )
+            .bind(network)
+            .bind(published)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    let entity = || async {
+        super::profiles::active_entities(&walking, &[OWNER.to_string()])
+            .await
+            .unwrap()
+    };
+    struct Expect {
+        profile: Option<Value>,
+        wearables: StatusCode,
+        emotes: StatusCode,
+        outfits: StatusCode,
+        nfts: StatusCode,
+        nfts_matic: StatusCode,
+    }
+    let unavailable = StatusCode::SERVICE_UNAVAILABLE;
+    let ok = StatusCode::OK;
+    let owned_profile = json!([
+        "urn:decentraland:off-chain:base-avatars:eyes_00",
+        format!("{hat}:10")
+    ]);
+    for (label, state, eth, matic, expect) in [
+        (
+            "switched off",
+            &off,
+            None,
+            None,
+            Expect {
+                profile: Some(json!([
+                    "urn:decentraland:off-chain:base-avatars:eyes_00",
+                    hat.clone()
+                ])),
+                wearables: unavailable,
+                emotes: unavailable,
+                outfits: ok,
+                nfts: unavailable,
+                nfts_matic: unavailable,
+            },
+        ),
+        (
+            "incomplete",
+            &walking,
+            Some(None),
+            Some(None),
+            Expect {
+                profile: None,
+                wearables: unavailable,
+                emotes: unavailable,
+                outfits: unavailable,
+                nfts: unavailable,
+                nfts_matic: unavailable,
+            },
+        ),
+        (
+            "complete, published an hour ago",
+            &walking,
+            Some(Some(60)),
+            Some(Some(60)),
+            Expect {
+                profile: Some(owned_profile.clone()),
+                wearables: unavailable,
+                emotes: unavailable,
+                outfits: unavailable,
+                nfts: unavailable,
+                nfts_matic: unavailable,
+            },
+        ),
+        (
+            "only Polygon published",
+            &walking,
+            Some(None),
+            Some(Some(0)),
+            Expect {
+                profile: Some(owned_profile.clone()),
+                wearables: unavailable,
+                emotes: ok,
+                outfits: ok,
+                nfts: unavailable,
+                nfts_matic: ok,
+            },
+        ),
+        (
+            "published",
+            &walking,
+            Some(Some(0)),
+            Some(Some(0)),
+            Expect {
+                profile: Some(owned_profile.clone()),
+                wearables: ok,
+                emotes: ok,
+                outfits: ok,
+                nfts: ok,
+                nfts_matic: ok,
+            },
+        ),
+    ] {
+        for (network, published) in [("ethereum", eth), ("matic", matic)] {
+            if let Some(published) = published {
+                set_cursor(network, published).await;
+            }
+        }
+        state.profile_cache.clear();
+        let (status, body) = get(state, &format!("/lambdas/profiles/{OWNER}")).await;
+        let batch = super::profiles::process_profiles_positional(state, &entity().await).await;
+        match &expect.profile {
+            Some(wearables) => {
+                assert_eq!(status, ok, "{label}: {body}");
+                assert_eq!(
+                    &body["avatars"][0]["avatar"]["wearables"], wearables,
+                    "{label}: {body}"
+                );
+                let batch = batch.unwrap();
+                assert_eq!(
+                    &batch[0].as_ref().unwrap()["avatars"][0]["avatar"]["wearables"],
+                    wearables,
+                    "{label}: the Registry batch"
+                );
+            }
+            None => {
+                assert_eq!(
+                    status, unavailable,
+                    "{label}: a direct read fails closed: {body}"
+                );
+                assert!(
+                    batch.is_err(),
+                    "{label}: the Registry batch leaves the profile out"
+                );
+            }
+        }
+        for (uri, want) in [
+            (
+                format!("/lambdas/users/{OWNER}/wearables"),
+                expect.wearables,
+            ),
+            (
+                format!("/lambdas/collections/wearables-by-owner/{OWNER}"),
+                expect.wearables,
+            ),
+            (
+                format!("/explorer/{OWNER}/wearables?collectionType=on-chain"),
+                expect.wearables,
+            ),
+            (format!("/lambdas/users/{OWNER}/emotes"), expect.emotes),
+            (format!("/lambdas/outfits/{OWNER}"), expect.outfits),
+        ] {
+            let (status, body) = get(state, &uri).await;
+            assert_eq!(status, want, "{label}: {uri}: {body}");
+            if status == unavailable {
+                assert_eq!(body["source"], "nft-index", "{label}: {uri}: {body}");
+            }
+        }
+        for (uri, want) in [
+            (format!("/v1/users/{OWNER}/wearables"), expect.wearables),
+            (
+                format!("/v1/nfts?owner={OWNER}&category=wearable"),
+                expect.nfts,
+            ),
+            (
+                format!("/v1/nfts?owner={OWNER}&category=wearable&network=MATIC"),
+                expect.nfts_matic,
+            ),
+        ] {
+            let (status, body) = get_via(super::market_router(state.clone()), &uri).await;
+            assert_eq!(status, want, "{label}: {uri}: {body}");
+            if status == unavailable {
+                assert_eq!(body["source"], "nft-index", "{label}: {uri}: {body}");
+            }
+        }
+        // The open listings' leg never fails the order book on the index:
+        // it is empty until the networks it reads are published, and
+        // unguarded on a node that does not walk the index.
+        for network in [None, Some(super::wire::Network::Matic)] {
+            let f = super::orders::OrderFilters {
+                status: Some("open".into()),
+                network,
+                ..Default::default()
+            };
+            assert!(
+                super::orders::trades_leg(state, &f).await.is_ok(),
+                "{label}: the orders leg on {network:?}"
+            );
+        }
+    }
+    let (_, body) = get(&walking, &format!("/lambdas/users/{OWNER}/wearables")).await;
+    assert_eq!(body["elements"][0]["urn"], hat, "{body}");
+    let (_, body) = get_via(
+        super::market_router(walking.clone()),
+        &format!("/v1/nfts?owner={OWNER}&category=emote"),
+    )
+    .await;
+    assert_eq!(body["data"][0]["nft"]["urn"], dance, "{body}");
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "an ownership route asked the collections subgraph"
+    );
     db.drop().await;
 }

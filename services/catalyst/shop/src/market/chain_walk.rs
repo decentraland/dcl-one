@@ -14,7 +14,9 @@
 //! measurement window) never publishes, and neither does one held short by
 //! `MARKETPLACE_INDEX_STOP_BLOCK_*`. Readers trust an index through
 //! [`is_ready`]: `folded_block = last_block` and `folded_at` at most
-//! [`READY_WINDOW`] old at the caller's clock.
+//! [`READY_WINDOW`] old at the caller's clock. The `nft` index's readers use
+//! the publish marker alone (`owned_items::Rule`): every pass advances
+//! `last_block` before it folds and publishes.
 
 use std::collections::{BTreeSet, HashMap};
 use std::time::Duration;
@@ -727,7 +729,10 @@ pub trait ChainIndex: Send + Sync {
     /// transaction that rewinds the cursor.
     async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()>;
     /// Folds the keys touched past `since` (`None`: rebuild) up to `upto`;
-    /// whether the result may be published (nothing still owed).
+    /// whether the result may be published (nothing still owed). A fold
+    /// that may not be published clears its cursor's `folded_block` in the
+    /// transaction that commits its rows: the pass clears it only after it
+    /// reads the head again, and that read can fail.
     async fn fold(&self, pool: &PgPool, since: Option<i64>, upto: i64) -> anyhow::Result<bool>;
     /// Work walked before the main range under the same budget (the nft
     /// backfill lane); the requests it spent.

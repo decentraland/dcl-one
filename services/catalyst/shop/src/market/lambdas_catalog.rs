@@ -1190,8 +1190,11 @@ pub async fn outfits(State(state): State<SharedState>, Path(id): Path<String>) -
 /// are lowercased. The upstream walk stops at the first wearable not owned,
 /// and its third-party check then decides alone for the items seen so far:
 /// an outfit `[owned third-party, not owned]` is kept with the first only.
-/// Without a collections subgraph nothing is checked, as profiles do. A
-/// failed ownership read answers the old lambdas' 502 `FetcherError`; a
+/// Ownership is the `nft` index's (`owned_items`, published and recent, the
+/// newest transfer first): a node that does not walk it checks nothing, as
+/// profiles do, and one whose index is not published answers the
+/// unavailable envelope. A failed ownership read answers the old lambdas'
+/// 502 `FetcherError`; a
 /// failed third-party check lamb2's bare 500, as its checker's error is not
 /// one `errorHandler` maps.
 async fn sanitize_outfits(
@@ -1208,7 +1211,7 @@ async fn sanitize_outfits(
     if outfits.is_empty() {
         return Ok(());
     }
-    if !graph::any_collections_reader(&state.index) {
+    if !super::owned_items::walks_here(state) {
         for outfit in outfits.iter_mut() {
             if let Some(wearables) = outfit
                 .pointer_mut("/outfit/wearables")
@@ -1223,16 +1226,35 @@ async fn sanitize_outfits(
         }
         return Ok(());
     }
-    let copies = graph::owned_copies(&state.index, address, "wearable")
-        .await
-        .map_err(|e| super::third_party::fetch_error(address, &e))?;
-    let mut tokens: HashMap<&str, Vec<&str>> = HashMap::new();
-    for c in copies.iter() {
-        tokens
-            .entry(c.urn.as_str())
-            .or_default()
-            .push(c.token_id.as_str());
-    }
+    let owner = address.to_lowercase();
+    let requested: HashSet<(String, String)> = outfits
+        .iter()
+        .filter_map(|outfit| {
+            outfit
+                .pointer("/outfit/wearables")
+                .and_then(Value::as_array)
+        })
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|w| {
+            !w.contains("off-chain")
+                && !w.contains("base-avatars")
+                && !super::third_party::is_third_party_urn(w)
+        })
+        .map(|w| {
+            let (urn, _) = super::profiles::split_urn_and_token_id(w);
+            (owner.clone(), urn.to_string())
+        })
+        .collect();
+    let mut owned =
+        super::owned_items::owned_tokens(&state.pool, &requested, super::owned_items::Rule::Fresh)
+            .await
+            .map_err(|e| e.into_response(|m| super::third_party::fetch_error(address, m)))?;
+    let held = owned.remove(&owner).unwrap_or_default();
+    let tokens: HashMap<&str, Vec<&str>> = held
+        .iter()
+        .map(|(urn, ts)| (urn.as_str(), ts.iter().map(String::as_str).collect()))
+        .collect();
 
     // Per outfit: the wearables kept, the third-party ones among them, and
     // whether every other one was owned.
