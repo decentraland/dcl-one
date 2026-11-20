@@ -216,22 +216,25 @@ pub(super) const ITEM_DRAFT_PROJECTION: &str = "to_jsonb(i) || jsonb_build_objec
 
 const FK_VIOLATION: &str = "23503";
 
-/// How long a blob writer waits for the store lock's shared side behind an unlink batch, as a
-/// local content deploy does.
-const STORE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
-
 /// The store lock's shared side for a blob writer (`gc::lock_store_shared`), waited for at most
-/// [`STORE_LOCK_WAIT`]: past it the request answers 503 instead of holding its connection and
+/// `gc::SHARED_LOCK_WAIT`: past it the request answers 503 instead of holding its connection and
 /// row locks while unlink batches run.
 pub(crate) async fn lock_store_shared(conn: &mut sqlx::PgConnection) -> Result<(), ApiError> {
     use crate::storage::gc;
-    match gc::lock_store_shared_within(conn, STORE_LOCK_WAIT).await {
-        Ok(()) => Ok(()),
-        Err(gc::GcError::LockTimeout) => Err(ApiError::service_unavailable(
-            "The content store is being collected; retry shortly",
-        )),
-        Err(gc::GcError::Database(e)) => Err(e.into()),
-        Err(e) => Err(ApiError::internal(e.to_string())),
+    gc::lock_store_shared_within(conn, gc::SHARED_LOCK_WAIT)
+        .await
+        .map_err(store_lock_refusal)
+}
+
+/// A store-lock failure as builder answers it: 503 for a busy lock.
+pub(crate) fn store_lock_refusal(e: crate::storage::gc::GcError) -> ApiError {
+    use crate::storage::gc::GcError;
+    match e {
+        GcError::LockTimeout => {
+            ApiError::service_unavailable("The content store is being collected; retry shortly")
+        }
+        GcError::Database(e) => e.into(),
+        e => ApiError::internal(e.to_string()),
     }
 }
 

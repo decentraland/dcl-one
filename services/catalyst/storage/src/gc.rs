@@ -47,11 +47,15 @@ pub const GC_RUN_LOCK_KEY: i64 = 0x5354_4f52_455f_5255;
 /// How long an unlink batch waits for in-flight publishes before deferring.
 pub const STORE_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Taken by a local content deploy, the peer-sync flush, a world scene deploy and builder's item
-/// and project file uploads before they check that the keys they name exist: an unlink batch
-/// re-checks references and unlinks under the exclusive lock, so either the writer sees the file
-/// gone or the batch sees the committed reference. The store's other writers do not take it and
-/// rely on the age floor.
+/// How long a request-path writer waits for [`lock_store_shared`] behind an unlink batch before
+/// answering 503, as a local content deploy does.
+pub const SHARED_LOCK_WAIT: Duration = Duration::from_secs(5);
+
+/// Taken by a local content deploy, the peer-sync flush, a world scene deploy and every writer
+/// that commits a row naming a blob it stored or found stored ([`store_for_row`]) before they
+/// check that the keys they name exist: an unlink batch re-checks references and unlinks under
+/// the exclusive lock, so either the writer sees the file gone or the batch sees the committed
+/// reference.
 pub async fn lock_store_shared(conn: &mut sqlx::PgConnection) -> Result<(), sqlx::Error> {
     sqlx::query("SELECT pg_advisory_xact_lock_shared($1)")
         .bind(STORE_LOCK_KEY)
@@ -83,6 +87,25 @@ pub async fn lock_store_shared_within(
         .execute(conn)
         .await?;
     Ok(())
+}
+
+/// Stores `bytes` under `key` for a row the caller then writes and commits on `conn`: takes
+/// [`lock_store_shared`] (at most [`SHARED_LOCK_WAIT`], [`GcError::LockTimeout`] after it) and
+/// stores the bytes unless the key is stored, so an unlink batch either ran before the check or
+/// sees the committed row. Answers whether this call wrote the key. Hash and render before
+/// calling it: the lock holds new unlink batches until the commit.
+pub async fn store_for_row(
+    conn: &mut sqlx::PgConnection,
+    storage: &Storage,
+    key: &str,
+    bytes: bytes::Bytes,
+) -> Result<bool, GcError> {
+    lock_store_shared_within(conn, SHARED_LOCK_WAIT).await?;
+    if storage.exist(key).await? {
+        return Ok(false);
+    }
+    storage.store(key, bytes).await?;
+    Ok(true)
 }
 
 /// The exclusive side of [`lock_store_shared`], held by the returned transaction until it ends.
