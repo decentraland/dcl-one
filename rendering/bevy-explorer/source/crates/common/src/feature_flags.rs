@@ -1,18 +1,19 @@
 //! The Explorer's rollout flags: the Unleash application `explorer` as Decentraland's
-//! feature-flags service publishes it (`https://feature-flags.<base domain>/explorer.json`).
-//! The Unity Explorer reads the same file, and a flag both clients list is one switch for both.
+//! feature-flags service publishes it (`/explorer.json` under [`Service::FeatureFlags`]). Another
+//! client may read the same file, and a flag both list under one name is one switch for both.
 //!
 //! - [`FLAGS`] lists the flags this client reads. Only those are kept; every other key in the
 //!   file is ignored.
-//! - `X-Address-Hash` carries a stable anonymous id so gradual rollouts stick to the player: a
-//!   random one minted on first launch and kept in the config
-//!   ([`AppConfig::feature_flags_id`]). It is not the analytics id, and neither the sign-in
-//!   address nor an id a link carries is sent, so a shared link cannot put its visitors in one
-//!   rollout bucket.
+//! - The service resolves like every other backend ([`base_domain::service`]): its own launch
+//!   option, a gateway or a node's mirror, else `feature-flags.<base domain>`.
+//! - `X-Address-Hash` carries the installation id (`AppConfig::user_id`, the `deviceIdentifier`
+//!   comms sends) so gradual rollouts stick to the player. The sign-in address is never sent, and
+//!   the id goes only to a Decentraland host, the rule comms applies to `deviceIdentifier`.
+//! - The service picks flags by the request's `Referer` hostname. A browser sends its page's;
+//!   natively the request sends `Referer: https://<base domain>/`, again only to a Decentraland
+//!   host.
 //! - The file is read once per session, without holding anything up. A flag is off until the
 //!   answer says `true`, and stays off if the file can't be read.
-//! - Only Decentraland's own service is asked ([`base_domain::DECENTRALAND_DOMAINS`]). Any other
-//!   base domain sends nothing, so the anonymous id never reaches a host a link chose.
 //! - The launch option `ff` (`--ff` / `?ff=`) overrides the answer, for testing and for running a
 //!   reported session again: a comma list of `name` (forced on), `name:variant` (forced on with
 //!   that variant) or `-name` (forced off); `-*` ignores the service entirely (nothing is
@@ -31,18 +32,19 @@ use bevy::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    base_domain,
+    base_domain::{self, Service},
     structs::AppConfig,
     util::{reqwest_client, TaskCompat, TaskExt},
 };
 
 /// Every flag this client reads, by its Unleash name without `explorer-`.
 ///
-/// A name the Unity Explorer also reads is one switch for both clients; `bevy-<name>` is the
-/// convention for a flag only this client reads. To add one, create `explorer-<name>` in Unleash
+/// A name another client also lists is one switch for both; `bevy-<name>` is the convention for
+/// a flag only this client reads. To add one, create `explorer-<name>` in Unleash
 /// and add it here. Unleash cannot rename a flag, so choose its name once. `bevy-test` has no
-/// feature behind it, for checking the read end to end.
-pub const FLAGS: &[&str] = &["bevy-test"];
+/// feature behind it, for checking the read end to end. `alfa-official-wallets` carries the wallets
+/// whose names show the official badge (the avatar crate's nametags).
+pub const FLAGS: &[&str] = &["bevy-test", "alfa-official-wallets"];
 
 /// The application's prefix on every key of the file.
 const APP_PREFIX: &str = "explorer-";
@@ -68,8 +70,6 @@ pub enum FlagsSource {
     Unavailable,
     /// `ff` has `-*`: nothing is read.
     Ignored,
-    /// The base domain has no service to ask: nothing is read.
-    OtherDomain,
 }
 
 impl FlagsSource {
@@ -79,7 +79,6 @@ impl FlagsSource {
             Self::Service => "service",
             Self::Unavailable => "unavailable",
             Self::Ignored => "ignored",
-            Self::OtherDomain => "other-domain",
         }
     }
 }
@@ -182,15 +181,25 @@ fn parse_file(json: &serde_json::Value, known: &[&str]) -> Answer {
     (flags, variants)
 }
 
-/// Why the service is not asked, or None when it is.
-fn skipped(overrides: &Overrides, base_domain: &str) -> Option<FlagsSource> {
-    if overrides.ignore_all {
-        Some(FlagsSource::Ignored)
-    } else if !base_domain::DECENTRALAND_DOMAINS.contains(&base_domain) {
-        Some(FlagsSource::OtherDomain)
-    } else {
-        None
-    }
+/// The file's url: the feature-flags service as the resolver has it.
+fn explorer_url() -> String {
+    base_domain::url(Service::FeatureFlags, "/explorer.json")
+}
+
+/// The Decentraland deployment a resolved url runs on, when it is one that may be given the
+/// installation id: the rule comms applies to `deviceIdentifier` (https, and
+/// [`base_domain::decentraland_domain`]; comms is not a dependency of common). A node, a gateway
+/// or a local service gets none.
+fn trusted_domain(url: &str) -> Option<&'static str> {
+    url.starts_with("https://")
+        .then(|| base_domain::decentraland_domain(url))
+        .flatten()
+}
+
+/// What a native request sends as `Referer`, which a browser sets itself.
+#[cfg(not(target_arch = "wasm32"))]
+fn referer(domain: &str) -> String {
+    format!("https://{domain}/")
 }
 
 /// The session's flags: the service's answer under the `ff` overrides.
@@ -312,36 +321,28 @@ impl Plugin for FeatureFlagsPlugin {
             overrides: parse_overrides(self.overrides.as_deref().unwrap_or(""), FLAGS),
             ..Default::default()
         })
-        .add_systems(Update, read_flags);
+        .add_systems(Update, read_flags.run_if(read_pending));
     }
 }
 
+fn read_pending(flags: Res<FeatureFlags>) -> bool {
+    flags.source == FlagsSource::Pending
+}
+
+/// Runs while the read is pending: first starts it (or settles on `-*`), then waits for it.
 fn read_flags(
     mut flags: ResMut<FeatureFlags>,
-    mut config: ResMut<AppConfig>,
+    config: Res<AppConfig>,
     mut task: Local<Option<Task<Result<serde_json::Value, String>>>>,
     mut started: Local<bool>,
 ) {
-    if flags.source != FlagsSource::Pending {
-        return;
-    }
     if !*started {
         *started = true;
-        if let Some(source) = skipped(&flags.overrides, base_domain::get()) {
-            flags.source = source;
+        if flags.overrides.ignore_all {
+            flags.source = FlagsSource::Ignored;
             return;
         }
-        let id = match &config.feature_flags_id {
-            Some(id) => id.clone(),
-            None => {
-                let id = uuid::Uuid::new_v4().to_string();
-                config.feature_flags_id = Some(id.clone());
-                platform::write_config_file(&*config);
-                id
-            }
-        };
-        let url = format!("https://feature-flags.{}/explorer.json", base_domain::get());
-        *task = Some(IoTaskPool::get().spawn_compat(fetch(url, id)));
+        *task = Some(IoTaskPool::get().spawn_compat(fetch(explorer_url(), config.user_id.clone())));
         return;
     }
     let Some(result) = task.as_mut().and_then(|t| t.complete()) else {
@@ -360,16 +361,23 @@ fn read_flags(
     }
 }
 
-/// One read of the file. `X-Address-Hash` is what Unleash buckets a gradual rollout by.
-async fn fetch(url: String, id: String) -> Result<serde_json::Value, String> {
-    let response = reqwest_client()
-        .get(url)
+/// One read of the file. `X-Address-Hash` is what Unleash buckets a gradual rollout by; it and
+/// the native `Referer` go only where [`trusted_domain`] allows.
+async fn fetch(url: String, machine_id: String) -> Result<serde_json::Value, String> {
+    let mut request = reqwest_client()
+        .get(&url)
         .header("X-Debug", "false")
-        .header("X-Address-Hash", id)
-        .timeout(READ_TIMEOUT)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+        .timeout(READ_TIMEOUT);
+    if let Some(domain) = trusted_domain(&url) {
+        request = request.header("X-Address-Hash", machine_id);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            request = request.header("Referer", referer(domain));
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = domain;
+    }
+    let response = request.send().await.map_err(|e| e.to_string())?;
     if !response.status().is_success() {
         return Err(format!("HTTP {}", response.status()));
     }
@@ -544,19 +552,46 @@ mod tests {
     }
 
     #[test]
-    fn the_domain_gate_asks_only_decentraland() {
-        let none = Overrides::default();
-        assert_eq!(skipped(&none, "decentraland.org"), None);
-        assert_eq!(skipped(&none, "decentraland.zone"), None);
+    fn the_service_resolves_like_every_other_backend() {
+        // the default composition (no test in this crate sets a base domain or a service)
         assert_eq!(
-            skipped(&none, "example.com"),
-            Some(FlagsSource::OtherDomain)
+            explorer_url(),
+            "https://feature-flags.decentraland.org/explorer.json"
         );
-        let star = parse_overrides("-*", KNOWN);
-        assert_eq!(
-            skipped(&star, "decentraland.org"),
-            Some(FlagsSource::Ignored)
-        );
-        assert_eq!(skipped(&star, "example.com"), Some(FlagsSource::Ignored));
+        assert_eq!(trusted_domain(&explorer_url()), Some("decentraland.org"));
+    }
+
+    #[test]
+    fn the_machine_id_goes_only_to_decentraland_hosts() {
+        for (url, domain) in [
+            (
+                "https://feature-flags.decentraland.org/explorer.json",
+                Some("decentraland.org"),
+            ),
+            (
+                "https://feature-flags.decentraland.zone/explorer.json",
+                Some("decentraland.zone"),
+            ),
+            (
+                "https://gateway.example.test/mount/feature-flags/explorer.json",
+                None,
+            ),
+            (
+                "https://feature-flags.decentraland.org.example.test/explorer.json",
+                None,
+            ),
+            ("http://feature-flags.decentraland.org/explorer.json", None),
+            ("http://127.0.0.1:5222/feature-flags/explorer.json", None),
+            ("http://localhost:3000/explorer.json", None),
+        ] {
+            assert_eq!(trusted_domain(url), domain, "{url}");
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_native_referer_names_the_resolved_deployment() {
+        assert_eq!(referer("decentraland.org"), "https://decentraland.org/");
+        assert_eq!(referer("decentraland.zone"), "https://decentraland.zone/");
     }
 }

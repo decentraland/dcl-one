@@ -64,8 +64,10 @@ The engine reads the session's rollout flags (`common::feature_flags`: Unleash's
 under the `--ff` / `?ff=` overrides) and reports them once the read settles as `Feature Flags
 Resolved`: `feature_flags`, the flags that are on as an `ff` value that runs a session with the same
 flags; `feature_flags_override`, the launch option's own; `feature_flags_source`, `service`,
-`unavailable` (the read failed), `ignored` (`ff` has `-*`) or `other-domain` (a base domain other
-than decentraland.org or .zone: nothing is asked). Other events join to it on `session_id`. The
+`unavailable` (the read failed) or `ignored` (`ff` has `-*`). The service resolves like every
+other backend (`--feature-flags`, `--gateway`, a node's mirror, else `feature-flags.<base domain>`);
+the anonymous machine id and, natively, the `Referer` go only to a Decentraland host. Other events
+join to it on `session_id`. The
 web crash report carries `feature_flags` and `feature_flags_override` itself (`crash.rs`).
 `/feature_flags` and the debug panel's "Feature flags" section show the session's flags.
 

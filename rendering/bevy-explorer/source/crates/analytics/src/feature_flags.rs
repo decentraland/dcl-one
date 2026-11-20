@@ -28,11 +28,14 @@ impl Plugin for FeatureFlagsReportPlugin {
                 actions: &[],
                 inputs: &[],
             })
-            .add_systems(Update, report_resolved);
+            .add_systems(
+                Update,
+                report_resolved.run_if(resource_changed::<FeatureFlags>),
+            );
     }
 }
 
-/// Queues the event once, when the read leaves `Pending`.
+/// Queues the event once, when the read leaves `Pending`; runs only when the flags change.
 fn report_resolved(
     flags: Res<FeatureFlags>,
     mut metrics: ResMut<SegmentMetricsEvents>,

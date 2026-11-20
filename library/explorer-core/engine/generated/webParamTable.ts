@@ -171,6 +171,12 @@ export const WEB_PARAMS: WebParam[] = [
     "doc": "Builder api (the newsletter sign-up), used by the HUD; absent = `https://builder-api.<base>`"
   },
   {
+    "name": "featureFlags",
+    "kind": "string",
+    "delivery": "resolved",
+    "doc": "Feature flags (the engine reads `/explorer.json`); absent = `https://feature-flags.<base>`"
+  },
+  {
     "name": "pulseServer",
     "kind": "string",
     "delivery": "resolved",
