@@ -9359,7 +9359,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
-      "sha256": "5e2418101a21642c5989fe4ec1788e4355ee9c261021edf37c630f6a6e5211f7"
+      "sha256": "2479af2808ac93abda3c7d81391d1213e0cd48ec70924b9b601afa25a3e396ad"
     },
     {
       "path": "library/ui/apps/hud/features/communities/InviteToCommunity.tsx",
@@ -10031,7 +10031,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/places/PlaceActions.tsx",
-      "sha256": "54ba1491f1c6d261cc4024fff19b321d71c9bc8d10bb4b01e8b0e9b2c226de6b"
+      "sha256": "ba278332a5b6c911a929b6532a9d534c57835a77dcb5dc934463830c250ae81f"
     },
     {
       "path": "library/ui/apps/hud/features/places/PlaceCard.module.css",
@@ -10627,7 +10627,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.clicks.test.tsx",
-      "sha256": "ac37c433963624c38cdafdb95def6c9fb11d43bf9a871063d3f6aa65d5c65e40"
+      "sha256": "b78d68576c853c53cba4bf14e6c203a45b493e41ce6c330217f666fec4683e61"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.invites.test.tsx",

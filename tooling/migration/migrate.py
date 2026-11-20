@@ -1693,9 +1693,10 @@ def cmd_community_thumbnails(args, sources):
         flush()
         raise MigrationError(f'upstream storage: {e}') from e
     print(f'{SOCIAL}: thumbnails copied {counts["copied"]}, already in the store {counts["present"]},'
-          f' none upstream {counts["missing"]}, not an image {counts["corrupt"]}, read failed {counts["failed"]}'
-          ' (a re-run retries every community still without one)', flush=True)
-    return 1 if counts['failed'] else 0
+          f' none upstream {counts["missing"]}, not an image {counts["corrupt"] + counts["invalid"]},'
+          f' read failed {counts["failed"]} (a re-run retries every community still without one)', flush=True)
+    # most communities have no picture upstream: only a picture that could not be taken fails the run
+    return int(any(counts[k] for k in ('corrupt', 'invalid', 'failed')))
 
 
 def cmd_blobs(args, sources):

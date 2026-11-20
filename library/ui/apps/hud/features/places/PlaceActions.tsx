@@ -73,7 +73,30 @@ export interface PlaceActions {
   setHome: () => void
 }
 
-export function usePlaceActions(place: DetailPlace, { readSigned: read = true }: { readSigned?: boolean } = {}): PlaceActions {
+// A list of cards asks once per World and wallet for a while, not each time it shows again; one
+// per session's reader, so another session asks afresh. A check that failed is not kept.
+const ACCESS_KEPT_MS = 60_000
+type AccessReader = (world: string) => Promise<WorldAccess>
+const keptAccess = new WeakMap<AccessReader, Map<string, { at: number; verdict: Promise<WorldAccess> }>>()
+function sharedAccess(read: AccessReader, world: string, wallet: string | null): Promise<WorldAccess> {
+  let kept = keptAccess.get(read)
+  if (kept == null) keptAccess.set(read, (kept = new Map()))
+  const key = `${wallet ?? ''}|${world.toLowerCase()}`
+  const hit = kept.get(key)
+  if (hit != null && Date.now() - hit.at < ACCESS_KEPT_MS) return hit.verdict
+  const verdict = read(world)
+  const entry = { at: Date.now(), verdict }
+  kept.set(key, entry)
+  void verdict.then((v) => {
+    if (v === 'failed' && kept.get(key) === entry) kept.delete(key)
+  })
+  return verdict
+}
+
+/** `readSigned`: add the player's own votes with a signed read. `sharedAccess`: a World's access
+ *  answered for another card of it a moment ago serves this one (a list of cards); Place Detail
+ *  asks afresh. */
+export function usePlaceActions(place: DetailPlace, { readSigned: read = true, sharedAccess: share = false }: { readSigned?: boolean; sharedAccess?: boolean } = {}): PlaceActions {
   const session = useSession()
   const { readSigned, worldAccess } = session.places
   const wallet = session.profile.data?.address ?? null
@@ -140,13 +163,13 @@ export function usePlaceActions(place: DetailPlace, { readSigned: read = true }:
     if (!world) return
     let live = true
     setAccess('checking')
-    void worldAccess(worldName).then((a) => {
+    void (share ? sharedAccess(worldAccess, worldName, wallet) : worldAccess(worldName)).then((a) => {
       if (live) setAccess(a)
     })
     return () => {
       live = false
     }
-  }, [world, worldName, wallet, worldAccess])
+  }, [world, worldName, wallet, worldAccess, share])
 
   const vote = (next: boolean | null, error: string): void => {
     writes.current.vote = 'sent'

@@ -228,7 +228,8 @@ function PlaceCard({ place, onDelete, deleting = false, onTravelled }: { place: 
   return <ActionablePlaceCard place={place} detail={place.detail} onDelete={onDelete} deleting={deleting} onTravelled={onTravelled} />
 }
 
-function PlaceCardFace({ place, onDelete, deleting, actions, onOpen }: { place: CommunityPlace; onDelete?: () => void; deleting: boolean; actions?: React.ReactNode; onOpen?: () => void }): React.JSX.Element {
+/** `likeRate`: what a vote on the card returned, over the row's. */
+function PlaceCardFace({ place, onDelete, deleting, actions, onOpen, likeRate = place.likeRate }: { place: CommunityPlace; onDelete?: () => void; deleting: boolean; actions?: React.ReactNode; onOpen?: () => void; likeRate?: number | null }): React.JSX.Element {
   return (
     <div className={`${styles.place} ${actions != null ? styles.placeActionable : ''}`.trim()} onClick={onOpen}>
       <div className={styles.placeCover} style={{ background: place.thumbnail ? undefined : nameColor(place.id) }}>
@@ -244,7 +245,7 @@ function PlaceCardFace({ place, onDelete, deleting, actions, onOpen }: { place: 
       </div>
       <span className={styles.placeName} title={place.title}>{place.title}</span>
       <div className={styles.placeMeta}>
-        {place.likeRate != null && <span className={styles.placeLike}>👍 {Math.round(place.likeRate * 100)}%</span>}
+        {likeRate != null && <span className={styles.placeLike}>👍 {Math.round(likeRate * 100)}%</span>}
         {place.positions && <span className={styles.placePos}><PinIcon /> {place.positions}</span>}
       </div>
       {actions}
@@ -255,7 +256,7 @@ function PlaceCardFace({ place, onDelete, deleting, actions, onOpen }: { place: 
 function ActionablePlaceCard({ place, detail, onDelete, deleting, onTravelled }: { place: CommunityPlace; detail: DiscoverPlace; onDelete?: () => void; deleting: boolean; onTravelled: () => void }): React.JSX.Element {
   const session = useSession()
   // the row came from a signed read, so it already carries the user's votes and favourite
-  const actions = usePlaceActions(detail, { readSigned: false })
+  const actions = usePlaceActions(detail, { readSigned: false, sharedAccess: true })
   // as the Places, Map and Gallery pages: a jump that goes ahead closes the Communities page too
   const travel = (to: DiscoverPlace): boolean => {
     const outcome = travelToPlace(to, session.map)
@@ -271,6 +272,7 @@ function ActionablePlaceCard({ place, detail, onDelete, deleting, onTravelled }:
       onDelete={onDelete}
       deleting={deleting}
       onOpen={open}
+      likeRate={actions.counts.likeRate}
       actions={
         <div className={styles.placeActions} onClick={(e) => e.stopPropagation()}>
           <div className={styles.placeButtons}>

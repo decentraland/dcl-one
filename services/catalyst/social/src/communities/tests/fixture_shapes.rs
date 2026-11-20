@@ -68,22 +68,6 @@ fn entity_of(picture: &str) -> String {
         .to_string()
 }
 
-/// A presence source answering `/peers` with `online`.
-/// The Pulse frame that names `online` as the wallets in the world.
-fn topology_frame(online: &[String]) -> Vec<u8> {
-    use crate::comms::protocol::pulse::decentraland::kernel::comms::v3::{
-        IslandData, IslandStatusMessage,
-    };
-    use prost::Message;
-    IslandStatusMessage {
-        data: vec![IslandData {
-            peers: online.to_vec(),
-            ..Default::default()
-        }],
-    }
-    .encode_to_vec()
-}
-
 struct Seed<'a> {
     rig: &'a Rig,
 }
@@ -396,8 +380,8 @@ async fn the_data_bound_social_api_fixtures_replay_against_their_seeded_rows() {
             assert!(!online.contains(&owner), "the owner must be offline here");
             seed.member(COMMUNITY, &owner, "owner", "2025-01-01T00:00:00.000Z")
                 .await;
-            // the frame's receipt is fresh for a few seconds: received right before the read
-            topology.receive(&topology_frame(&online)).unwrap();
+            // held, not received: a frame's receipt could expire on a slow run before the read
+            topology.hold_for_tests(online.iter().map(String::as_str));
         }
         check(&rig, &mut got, &[name]).await;
     }

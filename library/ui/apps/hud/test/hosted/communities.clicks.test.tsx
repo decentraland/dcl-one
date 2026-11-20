@@ -454,6 +454,27 @@ describe('community card place actions', () => {
     expect(setPlaceLike).toHaveBeenLastCalledWith('pl-1', null)
   })
 
+  it('moves the like rate with a vote on the card', async () => {
+    vi.mocked(setPlaceLike).mockResolvedValue({ likes: 3, dislikes: 1, user_like: true, user_dislike: false })
+    renderCard({ id: 'pl-1', title: 'Plaza', positions: '3,4', likeRate: 0.5, detail: detailOf({ user_like: false }) })
+    await openPlaces()
+    expect(screen.getByText('👍 50%')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Like' }))
+    expect(await screen.findByText('👍 75%')).toBeInTheDocument()
+  })
+
+  it("asks a World's access once for a while, not on each return to PLACES", async () => {
+    const session = fakeSession()
+    vi.mocked(session.places.worldAccess).mockResolvedValue('password')
+    renderCard({ id: 'w-1', title: 'Mansion', positions: 'me.dcl.eth', detail: detailOf({ id: 'w-1', title: 'Mansion', world: true, world_name: 'me.dcl.eth' }) }, 'member', session)
+    await openPlaces()
+    expect(await screen.findByRole('button', { name: 'ENTER PASSWORD' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('tab', { name: 'MEMBERS' }))
+    await openPlaces()
+    expect(await screen.findByRole('button', { name: 'ENTER PASSWORD' })).toBeInTheDocument()
+    expect(session.places.worldAccess).toHaveBeenCalledTimes(1)
+  })
+
   it("shows no actions for a place the places service didn't read", async () => {
     renderCard({ id: 'pl-1', title: 'Plaza', positions: '3,4' })
     await openPlaces()

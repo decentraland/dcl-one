@@ -2149,7 +2149,10 @@ async fn communities_read_the_topology_whichever_is_attached_first() {
     let topology = Arc::new(crate::comms::topology::Topology::default());
     state.start_topology(&jobs, topology.clone());
     topology.receive(&frame).unwrap();
-    assert_eq!(attached.online_wallets(), vec![WALLET.to_string()]);
+    assert_eq!(
+        attached.online_wallets().iter().collect::<Vec<_>>(),
+        vec![WALLET]
+    );
 
     // the topology first, then the communities
     let (state, attached) = (rpc(), communities());
@@ -2157,7 +2160,10 @@ async fn communities_read_the_topology_whichever_is_attached_first() {
     state.start_topology(&jobs, topology.clone());
     state.ctx.set_communities(attached.clone());
     topology.receive(&frame).unwrap();
-    assert_eq!(attached.online_wallets(), vec![WALLET.to_string()]);
+    assert_eq!(
+        attached.online_wallets().iter().collect::<Vec<_>>(),
+        vec![WALLET]
+    );
 
     jobs.shutdown(Duration::from_secs(2)).await;
     let _ = std::fs::remove_dir_all(&dir);

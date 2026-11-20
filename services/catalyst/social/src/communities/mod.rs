@@ -392,12 +392,12 @@ impl State {
         let _ = self.topology.set(topology);
     }
 
-    /// The wallets online now, lowercased: the topology's current snapshot,
-    /// none when it is unattached or has expired.
-    pub fn online_wallets(&self) -> Vec<String> {
+    /// The wallets online now, lowercased: the topology's current snapshot
+    /// (shared, not copied), none when it is unattached or has expired.
+    pub fn online_wallets(&self) -> Arc<std::collections::BTreeSet<String>> {
         self.topology
             .get()
-            .map(|t| t.snapshot().wallets.iter().cloned().collect())
+            .map(|t| t.snapshot().wallets)
             .unwrap_or_default()
     }
 
