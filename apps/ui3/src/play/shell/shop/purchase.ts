@@ -253,6 +253,8 @@ export interface ShellShopServices {
   namesMode(): ShopNamesMode | null
   /** Whether the purchase dialog may offer paying in MANA (`shop-mana-in-world`: the host's word, else the flags file). */
   manaInWorld(): boolean
+  /** `dapps-shop-credits-mana-split`, from the flags file only (no host declares it): Credits and MANA together. */
+  creditsManaSplit(): boolean
   /** The buyer's MANA on a chain, in wei. */
   manaBalance(buyer: string, chainId: number): Promise<bigint>
   /** The wallet bound to one confirmed purchase paid in MANA (./manaGuard). */
@@ -391,6 +393,7 @@ const LIVE: ShellShopServices = {
   },
   namesMode: () => namesModeFor(nameBuild(), { settles: settlementChainId(), ethereum: ethereumChainId() }),
   manaInWorld: () => hostOr('manaInWorld', remoteFlag(REMOTE_FLAG.manaInWorld)) === true,
+  creditsManaSplit: () => remoteFlag(REMOTE_FLAG.creditsManaSplit) === true,
   manaBalance: (buyer, chainId) => readManaBalanceWei(buyer, chainId, boundedReader(shopChainReader(), MANA_BALANCE_TIMEOUT_MS)),
   manaGuard: manaGuardedProvider,
   manaEvidence: () => createManaEvidence({ reader: shopChainReader() }),
@@ -1286,7 +1289,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     // balance doesn't cover, and that MANA can pay the rest of.
     const only = partition.groups.length === 1 && partition.groups[0].quotes.length === 1 ? partition.groups[0].quotes[0] : null
     const split =
-      seesSplit({ flag: svc.manaInWorld(), wallet: kind }) && single && !req.cart && req.items[0].quantity === 1 && creditsBuys && balance && priced[0]?.offer.splittable === true && manaQuote?.parts.length === 1 && only?.method === 'credits'
+      seesSplit({ flag: svc.manaInWorld(), split: svc.creditsManaSplit(), wallet: kind }) && single && !req.cart && req.items[0].quantity === 1 && creditsBuys && balance && priced[0]?.offer.splittable === true && manaQuote?.parts.length === 1 && only?.method === 'credits'
         ? splitTerms(only.quoted, balance.balanceCents, manaQuote.price as ManaWei, manaQuote.balance)
         : null
     return {

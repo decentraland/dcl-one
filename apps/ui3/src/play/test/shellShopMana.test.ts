@@ -19,7 +19,6 @@ import { CHAIN } from '@shop/model/chain'
 import type { StoredLogin } from '@explorer-core/features/auth/sso'
 import { SHOP_PROTOCOL, type ShopOperationEvent } from '@dcl/one-ui/apps/shop/shopProtocol'
 import { createShellShop, RETRY_AFTER_MS, splitTerms, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices } from '../shell/shop/purchase'
-import { setSplitInWorld } from '../shell/shop/manaGate'
 import type { ManaEvidence, ManaExecution } from '../shell/shop/manaEvidence'
 
 const BUYER = BOOK.buyer.toLowerCase()
@@ -199,6 +198,8 @@ function page(
     foreign?: boolean
     /** The page's own flag reading (a host's `__SHOP_FLAGS__`, else the flags file), not a stub. */
     liveFlag?: boolean
+    /** `dapps-shop-credits-mana-split` (off unless said). */
+    split?: boolean
     /** Who is signed in now (LOGIN by default). */
     login?: () => StoredLogin | null
   } = {}
@@ -238,6 +239,7 @@ function page(
       now: () => w.clock.now,
       manaEvidence: () => w.evidence,
       ...(opts.liveFlag ? {} : { manaInWorld: () => opts.flag ?? true }),
+      creditsManaSplit: () => opts.split ?? false,
       manaBalance: async (_buyer, chainId) => {
         manaReads.push(chainId)
         if (opts.manaBalance === 'fail') throw new Error('rpc down')
@@ -415,9 +417,10 @@ describe('the in-world purchase with MANA', () => {
   })
 
   describe('Credits and MANA together (one item)', () => {
-    let undo = (): void => {}
-    afterEach(() => undo())
-    const on = () => (undo = setSplitInWorld(true))
+    // `dapps-shop-credits-mana-split` on for the page (its own service); off unless a test turns it on.
+    let splitOn = false
+    afterEach(() => (splitOn = false))
+    const on = () => (splitOn = true)
 
     it('splits whole credits from the balance and MANA for the rest, rounded up, as the web Shop does', () => {
       // 1,000 cents for 100 MANA; 370 cents held: 37 credits (370 cents) pay, and 630 cents' worth, 63 MANA, the rest.
@@ -434,7 +437,7 @@ describe('the in-world purchase with MANA', () => {
     it('offers both together when the Credits are short of one item and MANA pays the rest', async () => {
       on()
       const w = world()
-      const p = page(w, { creditsCents: 50, services: managed })
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
       await p.open()
       const { view } = await p.until('method')
       expect(view).toMatchObject({ step: 'method', credits: { price: 12, balance: 5, pays: false }, mana: { pays: true }, split: { credits: 5 } })
@@ -444,24 +447,24 @@ describe('the in-world purchase with MANA', () => {
 
     it('offers them together even where MANA alone can’t pay, and Insufficient Funds where it can’t pay the rest either', async () => {
       on()
-      const p = page(world(), { creditsCents: 50, manaBalance: (3n * WEI) / 2n })
+      const p = page(world(), { split: splitOn, creditsCents: 50, manaBalance: (3n * WEI) / 2n })
       await p.open()
       const { view } = await p.until('method')
       expect(view).toMatchObject({ credits: { pays: false }, mana: { pays: false }, split: { credits: 5 } })
-      const short = page(world(), { creditsCents: 50, manaBalance: WEI })
+      const short = page(world(), { split: splitOn, creditsCents: 50, manaBalance: WEI })
       await short.open()
       expect((await short.until('insufficient')).view).not.toHaveProperty('split')
     })
 
     it('isn’t offered while the rule is off, for a cart, or for an in-app wallet', async () => {
-      const off = page(world(), { creditsCents: 50 })
+      const off = page(world(), { split: splitOn, creditsCents: 50 })
       await off.open()
       expect((await off.until('method')).view).not.toHaveProperty('split')
       on()
-      const cart = page(world(), { creditsCents: 50 })
+      const cart = page(world(), { split: splitOn, creditsCents: 50 })
       await cart.open(true)
       expect((await cart.until('method')).view).not.toHaveProperty('split')
-      const managed = page(world(), { creditsCents: 50, kind: 'managed' })
+      const managed = page(world(), { split: splitOn, creditsCents: 50, kind: 'managed' })
       await managed.open()
       await managed.until('insufficient')
     })
@@ -497,7 +500,7 @@ describe('the in-world purchase with MANA', () => {
       on()
       const w = world()
       splitShop(w)
-      const p = page(w, { creditsCents: 50, services: managed })
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
       await p.open()
       const method = await p.until('method')
       const gap = (method.view as { split: { mana: bigint } }).split.mana
@@ -521,7 +524,7 @@ describe('the in-world purchase with MANA', () => {
       const w = world()
       splitShop(w)
       w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
-      const p = page(w, { creditsCents: 50, services: managed })
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
       await p.open()
       ;(await p.until('method')).handlers.onPay?.('split')
       await p.until('success')
@@ -533,7 +536,7 @@ describe('the in-world purchase with MANA', () => {
       on()
       const w = world()
       splitShop(w)
-      const p = page(w, { creditsCents: 50, services: managed })
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
       await p.open()
       ;(await p.until('method')).handlers.onPay?.('split')
       ;(await p.until('authorize')).handlers.onClose()
@@ -548,7 +551,7 @@ describe('the in-world purchase with MANA', () => {
       splitShop(w)
       w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
       let price = PRICE
-      const p = page(w, { creditsCents: 50, priceWei: () => price, services: managed })
+      const p = page(w, { split: splitOn, creditsCents: 50, priceWei: () => price, services: managed })
       await p.open()
       const method = await p.until('method')
       price = (BigInt(PRICE) * 2n).toString()
@@ -564,7 +567,7 @@ describe('the in-world purchase with MANA', () => {
       const w = world()
       splitShop(w, (share) => share + 1n)
       w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
-      const p = page(w, { creditsCents: 50, services: managed })
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
       await p.open()
       ;(await p.until('method')).handlers.onPay?.('split')
       await p.until('failed')
@@ -574,7 +577,7 @@ describe('the in-world purchase with MANA', () => {
 
     it('offers no split for an offer the node doesn\'t mark splittable', async () => {
       on()
-      const p = page(world(), { creditsCents: 50, offer: (s) => ({ ...storeMint(s), splittable: false }) })
+      const p = page(world(), { split: splitOn, creditsCents: 50, offer: (s) => ({ ...storeMint(s), splittable: false }) })
       await p.open()
       expect((await p.until('method')).view).not.toHaveProperty('split')
     })
