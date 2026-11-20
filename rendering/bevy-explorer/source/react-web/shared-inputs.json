@@ -370,6 +370,10 @@
           "kind": "regular"
         },
         {
+          "name": "sign.test.ts",
+          "kind": "regular"
+        },
+        {
           "name": "sign.ts",
           "kind": "regular"
         },
@@ -6342,7 +6346,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/editorHostSigning.test.tsx",
-      "sha256": "3b6fbac384934739c105c45fff4080025921043db32c53cabbc43e5972b0a381"
+      "sha256": "84b09b4e0f89c4d30a84b434b8d23c38a7680ee1327eb7c12f7c6516d57072f3"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/editorScene.test.ts",
@@ -6740,11 +6744,15 @@
     },
     {
       "path": "library/explorer-core/features/editorHost/host/host.ts",
-      "sha256": "16d88f89ad87c847f7f16c3f74efac6ee6378149ae9515282c1aee836ad8a22e"
+      "sha256": "518a26c07d818e51c51a2b1a3d738ef434a42c356037a1ed2e3dbe15a88e9723"
+    },
+    {
+      "path": "library/explorer-core/features/editorHost/host/sign.test.ts",
+      "sha256": "f0978c8599d65f29d985fa2f1bebefb55844964168b2a09ee64cea8cc07afa90"
     },
     {
       "path": "library/explorer-core/features/editorHost/host/sign.ts",
-      "sha256": "53adf293a81d06a1a53c15edb4bbfb2924d24890b4ccdda2badff7358a59f42f"
+      "sha256": "54b24738878a4fef016caf5abfec87a9881239d73ecb0f4392380b6bcbf75677"
     },
     {
       "path": "library/explorer-core/features/editorHost/host/signer.ts",
@@ -10708,7 +10716,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/editorHostShellSigning.test.tsx",
-      "sha256": "14fee73fa9917714a440de8d9b1284633c1416b3c95ec2677312913613c48b39"
+      "sha256": "9667f77e1b0babc5775cc3df3287dbb8c38a36dcc3459edac57c42cad42a31de"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/emailSession.test.tsx",
@@ -11886,6 +11894,21 @@
     {
       "from": "library/explorer-core/features/editorHost/host/host.ts",
       "to": "library/explorer-core/lib/shell.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/editorHost/host/sign.test.ts",
+      "to": "library/explorer-core/features/editorHost/host/sign.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/editorHost/host/sign.test.ts",
+      "to": "library/explorer-core/features/editorHost/host/sign.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/editorHost/host/sign.test.ts",
+      "to": "library/explorer-core/features/editorHost/host/sign.ts",
       "kind": "test:runtime"
     },
     {
@@ -45901,6 +45924,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/features/editorHost/host/host.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/features/editorHost/host/sign.test.ts",
       "kind": "type"
     },
     {
