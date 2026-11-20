@@ -420,7 +420,10 @@ pub async fn changed_verdicts(
 /// of one asset only the newest listing does. One that may not reopen keeps
 /// its stored status and reason: a nonce cancellation stays `cancelled`
 /// with `nonce`, still the true cause, so a later rebuild reopens it if the
-/// asset's open listing has closed by then.
+/// asset's open listing has closed by then. A nonce cancellation past its
+/// `expiration` at `now` is not reopened either and gives its place to the
+/// asset's newest unexpired one: the `rental-listing-status` job would
+/// close it again as `expired`.
 ///
 /// A `cancelled` verdict leaves a listing that is already cancelled: the
 /// verdicts were read before this write, and a cancellation the
@@ -473,8 +476,10 @@ pub async fn apply_verdicts(
     Ok(updated + reopen(conn, &opening, now).await?)
 }
 
-/// The reopenings of [`apply_verdicts`]: per asset the newest listing,
-/// and only while no other listing of the asset is open.
+/// The reopenings of [`apply_verdicts`]: per asset the newest listing that
+/// is not a cancellation past its expiration at `now` (the job's expiry
+/// test, `expiration < now`), and only while no other listing of the asset
+/// is open.
 async fn reopen(
     conn: &mut PgConnection,
     opening: &[&Verdict],
@@ -487,7 +492,8 @@ async fn reopen(
     Ok(sqlx::query(
         "UPDATE signatures.rentals r SET status = 'open', cancel_reason = NULL, updated_at = $2 \
          FROM (SELECT DISTINCT ON (x.contract_address, x.token_id) x.id \
-               FROM signatures.rentals x WHERE x.id = ANY($1) \
+               FROM signatures.rentals x \
+               WHERE x.id = ANY($1) AND (x.status <> 'cancelled' OR x.expiration >= $2) \
                ORDER BY x.contract_address, x.token_id, x.created_at DESC, x.id DESC) pick \
          WHERE r.id = pick.id \
            AND NOT EXISTS (SELECT 1 FROM signatures.rentals o \
@@ -1369,6 +1375,81 @@ pub(crate) mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        sqlx::query("DELETE FROM signatures.rental_assets WHERE contract_address = $1")
+            .bind(&land)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// A rebuild that no longer sees the nonce move leaves an expired nonce
+    /// cancellation as it is, and reopens the asset's newest unexpired one.
+    #[tokio::test]
+    async fn a_rebuild_never_reopens_an_expired_nonce_cancellation() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let tag = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        let land = format!("0x{}{}", &tag[..24], "0000000000000000");
+        let lessor = format!("0x{}a1", &tag[..38]);
+        let venue = format!("0x{}", &tag[24..64]);
+        let sig = |n: u8| format!("0x{tag}{tag}{n:02x}");
+        // `alone` is its asset's only listing; `older` and `newer` share one.
+        let mut ids = Vec::new();
+        for (n, token) in [(1u8, "1"), (2, "2"), (3, "2")] {
+            let id = seed_listing(
+                &pool,
+                &land,
+                token,
+                ["0", "0", "0"],
+                &sig(n),
+                &lessor,
+                &venue,
+            )
+            .await;
+            sqlx::query(
+                "UPDATE signatures.rentals SET status = 'cancelled', cancel_reason = 'nonce' WHERE id = $1",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+            ids.push(id);
+        }
+        let [alone, older, newer] = ids[..] else {
+            unreachable!()
+        };
+        sqlx::query(
+            "UPDATE signatures.rentals SET expiration = timezone('UTC', now()) - interval '1 minute' WHERE id = ANY($1)",
+        )
+        .bind([alone, newer])
+        .execute(&pool)
+        .await
+        .unwrap();
+        let state_of = |id: uuid::Uuid| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_as::<_, (String, Option<String>)>(
+                    "SELECT status::text, cancel_reason FROM signatures.rentals WHERE id = $1",
+                )
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+
+        // No event of the venue remains: every verdict is `open`.
+        assert_eq!(fold(&pool, &venue, None, Utc::now()).await.unwrap(), 1);
+        let nonce = ("cancelled".to_string(), Some(CANCEL_NONCE.to_string()));
+        assert_eq!(state_of(alone).await, nonce);
+        assert_eq!(state_of(newer).await, nonce);
+        assert_eq!(state_of(older).await, ("open".into(), None));
+
         sqlx::query("DELETE FROM signatures.rental_assets WHERE contract_address = $1")
             .bind(&land)
             .execute(&pool)

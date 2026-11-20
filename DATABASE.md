@@ -1842,7 +1842,10 @@ Invariants:
   verdicts, reopens only the newest listing of an asset, and only while no
   other listing of that asset is open. A blocked listing keeps its stored
   status and reason.
-- The fold reopens a cancelled listing only when its reason is `nonce`. Any
+- The fold reopens a cancelled listing only when its reason is `nonce` and
+  its `expiration` is not before the fold's clock, the job's expiry test. An
+  expired one keeps `cancelled` with `nonce`, and the asset's newest
+  unexpired nonce cancellation reopens in its place. Any
   reason gives way to a rent of the listing: an incremental fold also
   revisits a cancelled listing whose own `rented` log is past its block, one
   `rental_event_signature_idx` probe per cancelled listing of the venue.
