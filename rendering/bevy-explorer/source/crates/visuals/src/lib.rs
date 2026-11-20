@@ -5,6 +5,7 @@ mod coast;
 mod day_night;
 mod debug_panel;
 mod environment;
+mod lens_flare;
 mod nishita_cloud;
 mod props;
 pub mod shell_texturing;
@@ -104,6 +105,7 @@ impl Plugin for VisualsPlugin {
         .add_plugins(environment::SceneEnvironmentPlugin)
         .add_plugins(SkyEnvmapPlugin)
         .add_plugins(stars::StarsPlugin)
+        .add_plugins(lens_flare::LensFlarePlugin)
         .add_plugins(upscale::UpscalePlugin);
 
         app.add_console_command::<ShadowConsoleCommand, _>(shadow_console_command);

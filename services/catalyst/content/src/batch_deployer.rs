@@ -173,7 +173,7 @@ impl SyncProgress {
 
 pub struct BatchDeployer {
     config: BatchDeployerConfig,
-    http_client: reqwest::Client,
+    http_client: crate::http::CheckedRedirectClient,
     storage: Arc<Storage>,
     pool: sqlx::PgPool,
     deployer: Arc<LiveSyncDeployer>,
@@ -198,7 +198,7 @@ impl BatchDeployer {
     /// the database already holds (`LiveDeploymentRepository::seed_deployed_entity_ids`) or empty.
     pub fn new(
         config: BatchDeployerConfig,
-        http_client: reqwest::Client,
+        http_client: crate::http::CheckedRedirectClient,
         storage: Arc<Storage>,
         pool: sqlx::PgPool,
         deployer: Arc<LiveSyncDeployer>,
@@ -529,7 +529,7 @@ mod tests {
                 ignored_types: HashSet::from(["outfits".to_string()]),
                 ..Default::default()
             },
-            reqwest::Client::new(),
+            crate::sync::test_sync_client(reqwest::Client::new()),
             storage,
             pool.clone(),
             deployer,
@@ -764,7 +764,7 @@ mod tests {
         ));
         let batch = BatchDeployer::new(
             BatchDeployerConfig::default(),
-            reqwest::Client::new(),
+            crate::sync::test_sync_client(reqwest::Client::new()),
             storage,
             pool.clone(),
             deployer,

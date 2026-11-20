@@ -7,7 +7,7 @@ import type { Route } from "./+types/builder.worlds";
 
 const STORY = "creator-integration-redirect-worlds";
 const FROM = "/builder/worlds";
-const TO = "/create/worlds";
+const TO = "/create";
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const session = requestSession(request, context);
@@ -16,7 +16,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const cookies = ownedSessionCookies(request, session);
 
   const query = new URL(request.url).searchParams.toString();
-  const location = query ? `${TO}?${query}` : TO;
 
   track(
     "creator_builder_redirect",
@@ -25,7 +24,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   );
 
   return redirect(
-    location,
+    TO,
     cookies ? { headers: cookies } : undefined,
   );
 }

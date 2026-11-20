@@ -236,6 +236,10 @@ impl MetaTxSender {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    pub fn address(&self) -> Address {
+        self.0.parse().expect("built from an Address")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -607,7 +611,8 @@ impl TransactionComponent {
                 "this relay serves only the test's buyers (CREDITS_TRIAL_MODE)".into(),
             ));
         }
-        self.check_self_relay(&sender)?;
+        check_refused_method(settings, tx)?;
+        self.check_self_relay(&sender).await?;
         self.check_contract_address(contracts, tx).await?;
         check_sale_price(settings, tx)?;
         if self.chain.is_some() {
@@ -622,20 +627,37 @@ impl TransactionComponent {
         Ok(sender)
     }
 
-    /// Refuses a meta-transaction whose `userAddress` is one of this node's
-    /// own relayer EOAs: relaying it would let a caller spend a signature
-    /// this service holds the key for. Only the direct signer's address is
-    /// known locally (the OZ relayer's EOAs live behind its API).
-    fn check_self_relay(&self, sender: &MetaTxSender) -> Result<(), ApiError> {
-        if let Some(signer) = self.signer.as_ref() {
-            let relayer = format!("{:#x}", signer.relayer_address());
-            if sender.as_str().eq_ignore_ascii_case(&relayer) {
-                return Err(ApiError::InvalidTransaction(
-                    "Invalid transaction data.".into(),
-                ));
+    /// Refuses a meta-transaction whose `userAddress` is one of this node's relayer accounts,
+    /// whichever route broadcasts: the direct signer's and every account the OZ relayer's API
+    /// key lists ([`Relayer::accounts`]).
+    async fn check_self_relay(&self, sender: &MetaTxSender) -> Result<(), ApiError> {
+        let user = sender.address();
+        let refused = || ApiError::InvalidTransaction("Invalid transaction data.".into());
+        if self
+            .signer
+            .as_ref()
+            .is_some_and(|s| s.relayer_address() == user)
+        {
+            return Err(refused());
+        }
+        if let Some(relayer) = self.relayer.as_ref() {
+            let accounts = relayer.accounts().await.ok_or_else(|| {
+                ApiError::RelayerUnavailable("The relayer accounts are not read yet.".into())
+            })?;
+            if accounts.contains(&user) {
+                return Err(refused());
             }
         }
         Ok(())
+    }
+
+    /// One pass of the background read of the OZ relayer's accounts ([`Relayer::refresh_accounts`]);
+    /// nothing to do without an OZ relayer.
+    pub async fn refresh_relayer_accounts(&self) -> Result<(), String> {
+        match self.relayer.as_ref() {
+            Some(relayer) => relayer.refresh_accounts().await,
+            None => Ok(()),
+        }
     }
 
     /// Recovers the EIP-712 signature carried in the executeMetaTransaction
@@ -861,16 +883,35 @@ fn check_nested_meta_tx(tx: &TransactionData) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// The registered sale target a meta-transaction is aimed at and its calldata
+/// (empty when not hex); `None` for any other target.
+fn sale_target_call(settings: &Settings, tx: &TransactionData) -> Option<(abi::SaleKind, Vec<u8>)> {
+    let contract = tx.params[0].trim().parse::<Address>().ok()?;
+    let kind = abi::sale_target(settings.collections_chain_id, contract)?;
+    Some((kind, hex_to_bytes(&tx.params[1]).unwrap_or_default()))
+}
+
+/// Refuses a method a registered sale target never relays
+/// (`abi::refused_method`), before any simulation or quota.
+fn check_refused_method(settings: &Settings, tx: &TransactionData) -> Result<(), ApiError> {
+    let Some((kind, full_data)) = sale_target_call(settings, tx) else {
+        return Ok(());
+    };
+    match abi::refused_method(&full_data, kind) {
+        Some(method) => Err(ApiError::InvalidTransaction(format!(
+            "The meta-transaction method {method} is not allowed for contract {}.",
+            tx.params[0]
+        ))),
+        None => Ok(()),
+    }
+}
+
 /// The minimum sale price, on every registered sale target of the relay's
 /// chain (`abi::sale_target`); a target outside them has nothing to price.
 fn check_sale_price(settings: &Settings, tx: &TransactionData) -> Result<(), ApiError> {
-    let Ok(contract_address) = tx.params[0].trim().parse::<Address>() else {
+    let Some((kind, full_data)) = sale_target_call(settings, tx) else {
         return Ok(());
     };
-    let Some(kind) = abi::sale_target(settings.collections_chain_id, contract_address) else {
-        return Ok(());
-    };
-    let full_data = hex_to_bytes(&tx.params[1]).unwrap_or_default();
     let Some(sale_price) = abi::get_sale_price(&full_data, settings.collections_chain_id, kind)
     else {
         return Ok(());

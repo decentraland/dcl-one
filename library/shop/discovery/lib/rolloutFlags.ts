@@ -25,6 +25,12 @@ export const REMOTE_FLAG = {
    * then only they get in (seller/lib/featureFlags.ts).
    */
   myStore: "shop-my-store",
+  /**
+   * Buying with Polygon MANA in the in-world Shop (/play): its purchase dialog lets a self-custody buyer pick Credits
+   * or MANA for one item. Off, the in-world Shop buys with Credits only. Only the /play shell reads it
+   * (play/shell/shop/purchase.ts); a host may declare it (`manaInWorld`).
+   */
+  manaInWorld: "shop-mana-in-world",
 } as const;
 
 export type RemoteFlag = (typeof REMOTE_FLAG)[keyof typeof REMOTE_FLAG];
@@ -79,7 +85,7 @@ export type ShopFlags = {
 };
 
 /** The switches a host may declare itself (the native shop, a journey): a declared one stands over the file. */
-export type HostShopFlags = Partial<ShopFlags> & { marketplaceFeatures?: boolean; myStore?: boolean };
+export type HostShopFlags = Partial<ShopFlags> & { marketplaceFeatures?: boolean; myStore?: boolean; manaInWorld?: boolean };
 
 /** A switch as the host declared it, else as the file answered (`null` while it has not). */
 export function declaredOr(declared: HostShopFlags, key: keyof HostShopFlags, remote: boolean | null): boolean | null {

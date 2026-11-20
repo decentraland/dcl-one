@@ -7,7 +7,9 @@ use bevy::{
     platform::collections::HashSet,
     prelude::*,
 };
-use common::structs::{sun_cascades, AppConfig, PrimaryCameraRes, ShadowSetting, StageLight};
+use common::structs::{
+    sun_cascades, AppConfig, PrimaryCameraRes, ShadowSetting, ShadowlessLight, StageLight,
+};
 
 use super::{AppSetting, EnumAppSetting, IntAppSetting};
 
@@ -30,11 +32,14 @@ impl AppSetting for ShadowSetting {
     type Param = (
         SRes<AppConfig>,
         SRes<PrimaryCameraRes>,
-        SQuery<(
-            Write<DirectionalLight>,
-            Write<CascadeShadowConfig>,
-            Has<StageLight>,
-        )>,
+        SQuery<
+            (
+                Write<DirectionalLight>,
+                Write<CascadeShadowConfig>,
+                Has<StageLight>,
+            ),
+            Without<ShadowlessLight>,
+        >,
     );
 
     fn title() -> String {
@@ -98,15 +103,18 @@ impl AppSetting for ShadowSetting {
 }
 
 // The sun's shadows for a quality and a distance (settings of their own, each applying this). A
-// stage light keeps its own cascades.
+// stage light keeps its own cascades; a shadowless light is not queried.
 fn apply_shadows(
     setting: ShadowSetting,
     distance: f32,
-    lights: &mut Query<(
-        &mut DirectionalLight,
-        &mut CascadeShadowConfig,
-        Has<StageLight>,
-    )>,
+    lights: &mut Query<
+        (
+            &mut DirectionalLight,
+            &mut CascadeShadowConfig,
+            Has<StageLight>,
+        ),
+        Without<ShadowlessLight>,
+    >,
 ) {
     let sun = sun_cascades(setting, distance);
     for (mut light, mut cascades, stage) in lights.iter_mut() {
@@ -141,11 +149,14 @@ impl IntAppSetting for ShadowDistanceSetting {
 impl AppSetting for ShadowDistanceSetting {
     type Param = (
         SRes<AppConfig>,
-        SQuery<(
-            Write<DirectionalLight>,
-            Write<CascadeShadowConfig>,
-            Has<StageLight>,
-        )>,
+        SQuery<
+            (
+                Write<DirectionalLight>,
+                Write<CascadeShadowConfig>,
+                Has<StageLight>,
+            ),
+            Without<ShadowlessLight>,
+        >,
     );
 
     fn apply(
@@ -285,11 +296,14 @@ mod tests {
     fn apply(world: &mut World, setting: ShadowSetting, distance: f32) {
         world
             .run_system_once(
-                move |mut lights: Query<(
-                    &mut DirectionalLight,
-                    &mut CascadeShadowConfig,
-                    Has<StageLight>,
-                )>| apply_shadows(setting, distance, &mut lights),
+                move |mut lights: Query<
+                    (
+                        &mut DirectionalLight,
+                        &mut CascadeShadowConfig,
+                        Has<StageLight>,
+                    ),
+                    Without<ShadowlessLight>,
+                >| apply_shadows(setting, distance, &mut lights),
             )
             .unwrap();
     }
@@ -328,6 +342,27 @@ mod tests {
         assert_eq!(
             world.get::<CascadeShadowConfig>(stage).unwrap().bounds,
             vec![20.0]
+        );
+    }
+
+    #[test]
+    fn a_shadowless_light_stays_without_shadows() {
+        let mut world = World::new();
+        let booth = world
+            .spawn((
+                DirectionalLight::default(),
+                stage_cascades(),
+                StageLight,
+                ShadowlessLight,
+            ))
+            .id();
+
+        apply(&mut world, ShadowSetting::High, 100.0);
+        assert!(
+            !world
+                .get::<DirectionalLight>(booth)
+                .unwrap()
+                .shadows_enabled
         );
     }
 }

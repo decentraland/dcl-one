@@ -434,6 +434,7 @@ pub(super) async fn comms_states(
     room_event_store: Option<Arc<dyn comms::gatekeeper::events::RoomEventStore>>,
     presence: Arc<comms::presence::Presence>,
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
+    content_denylist: Arc<content::Denylist>,
     primary: bool,
     jobs: &Arc<jobs::Jobs>,
 ) -> anyhow::Result<CommsStage> {
@@ -470,6 +471,7 @@ pub(super) async fn comms_states(
     .with_ban_status(ban_status.clone())
     .with_name_owner_reader(Arc::new(super::adapters::ShopNameOwners(market.clone())))
     .with_deny_list_url(config.worlds.deny_list())
+    .with_content_denylist(content_denylist)
     .with_cluster(comms::gatekeeper::admission::cluster::ClusterConfig {
         nats_url: non_empty(&config.worlds.nats_url),
         takeover_retry_delay_ms: config.worlds.cluster_takeover_retry_delay_ms,
@@ -700,6 +702,7 @@ pub(super) fn social_states(
             admin_token: non_empty(&config.social.catalyrst_notifications_admin_token),
             events_base_url: public_url.clone(),
             events_asset_base_url: explore.settings.events_asset_base_url.clone(),
+            events_public_base: explore.settings.configured_public_base.clone(),
             signing_key: non_empty(&config.social.signing_key),
             service_base_url: config.social.notifications_service_base_url.clone(),
             community_cdn_url: communities.settings.cdn_url.clone(),

@@ -1,0 +1,76 @@
+/* Loaded with the creators pages, and left loaded when the visitor moves on: its rules are scoped to them, and its
+   tokens (tokens.css) are custom properties no other page reads.
+   Element rules sit in a layer, so they never beat a component's own. */
+@layer reset, foundations;
+@import "./tokens.css";
+
+/* The creators pages and overlays are marked `data-creators`: the rules below reach nothing else on the site. */
+@layer reset {
+  :where([data-creators]),
+  :where([data-creators]) * {
+    box-sizing: border-box;
+  }
+  :where([data-creators]) a {
+    color: inherit;
+    text-decoration: none;
+  }
+  :where([data-creators]) button {
+    font-family: inherit;
+    cursor: pointer;
+  }
+  :where([data-creators]) :is(h1, h2) {
+    margin: 0;
+  }
+}
+
+/* The overlays sit on <body>, outside the page: they take the page's type. */
+[data-creators="overlays"] {
+  color: var(--dcl-neutrals-snow);
+  font-family: var(--creators-font);
+  -webkit-font-smoothing: antialiased;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+/* Layered so a component's own border-radius/height on the same element wins whatever the stylesheet order. */
+@layer foundations {
+  /* Content-shaped loading placeholder over dark surfaces. */
+  :where([data-creators]) .skeleton {
+    border-radius: 6px;
+    background: linear-gradient(
+      100deg,
+      rgba(255, 255, 255, 0.12) 30%,
+      rgba(255, 255, 255, 0.24) 50%,
+      rgba(255, 255, 255, 0.12) 70%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.4s infinite linear;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :where([data-creators]) .skeleton {
+      animation: none;
+    }
+  }
+
+  :where([data-creators]) .spinner {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.25);
+    border-top-color: #fcfcfc;
+    animation: spin 0.8s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :where([data-creators]) .spinner {
+      animation-duration: 2s;
+    }
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

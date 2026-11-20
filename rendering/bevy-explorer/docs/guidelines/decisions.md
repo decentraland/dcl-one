@@ -10,6 +10,31 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Toon MASK wearables.** Unity alpha-blends after the cutoff, so thin masked lines look
   fine there and fat and black here. Bevy stays glTF-spec-correct (MASK is binary). We don't
   match.
+- **Toon avatars are fogged.** Like everything else; Unity's toon computes a fog factor its
+  fragment never applies.
+- **Toon avatars take only the sun.** No point or spot light reaches them, as in Unity, whose
+  toon additional-light loop is commented out.
+- **The toon ambient floor is the sky envmap's irradiance.** It stands in for Unity's
+  spherical harmonics, read up and down, and without the world's dielectric factor, as Unity reads
+  `ShadeSH9` raw. Avatars in shade sit about 4% above a white world surface; that matches Unity
+  and is not to be removed.
+- **Without the sky envmap, toon avatars take the view's flat ambient.** Such a view (the
+  Backpack preview, a photo booth) has no Trilight ambient. The Backpack is lit flat; a booth
+  carries a one-light-unit key light, or its avatars would sit at the night floor.
+- **Face features are lit by the ambient alone.** As Unity's facial shader: no sun and no bands,
+  so they are brighter than the body at noon and darker at night. A view without the sky envmap
+  takes the noon horizon colour, since its flat ambient would light them twentyfold. They keep
+  the body's outline, which Unity's face shader does not draw.
+- **The toon outline is a screen-space line, not an inverted hull.** It keeps Unity's colour,
+  width falloff and 8 m cutoff. Kept differences: the cutoff is per mesh, not per avatar; an
+  overlap shallower than the edge threshold gets no line, so a curved surface draws none on
+  itself; creases inside the silhouette darken, which the look relies on; and an orthographic
+  view (the Backpack) skips the cutoff, in place of Unity's preview flag.
+- **A hovered avatar glows through the shared highlight pass.** Unity's colour, opacity, width
+  and 0.1 s fade, through the pass scene entities use, so the glow shows through what stands in
+  front and ignores the camera dither and the ghost reveal. Kept differences: every opaque or
+  alpha-tested mesh under the player glows, an emote's props included, where Unity lists the
+  wearables only; an avatar shown with `ShowOnlyWearables` glows like any other.
 - **Day and night (#1467).** An explicit, stopped HUD time beats scene time; restarting the
   clock hands control back to the scene. No HUD lock while a scene controls the sky.
   `transitionMode` in scene.json is ignored. HUD and `/time` skips take the nearest
@@ -737,6 +762,17 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Distance. Bevy has one sea plane, a single opaque quad that casts no shadows, so hiding it would
   save almost nothing, and the water material draws without fog, so nothing would soften it
   appearing and disappearing.
+- **The wave ocean is not ported.** Unity's ocean (a wave grid, foam and an alpha-blended surface)
+  was ported and compared in the same views, and it looked worse than Bevy's current sea, so the
+  sea stays as it is.
+- **The lens flare's rings are procedural, and its random copies use a hash.** Unity draws the
+  rings from URP's sample textures, which are not carried; Bevy draws bands of colour measured
+  from them (radius, width and brightness per channel, and the partial ring's arc). Unity places
+  the copies with its seeded random generator.
+- **The lens flare sees transparent surfaces only through depth of field.** Its occlusion test
+  reads the depth buffer and, where the view has depth of field's transparent focus texture, the
+  transparent coverage in it. A view without that texture (every MSAA view) is hidden only by
+  opaque geometry, not by imposters. The flare is off while a scene hides the sun and moon discs.
 - **Graphics presets set fewer settings than Unity's, and four differently.** Low, Medium and High
   carry Unity's values for the frame rate, VSync, render scale, avatar outline, jiggle bones, sun
   shadow quality, the Low and High shadow distances and scene lights; Medium is the default and
@@ -782,6 +818,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **glTF occlusion textures are ignored.** Scene materials drop a glTF's occlusion texture, so
   baked ambient occlusion does not darken the ambient light. The Unity client's scene shader
   does not sample it either, and content is authored against that look.
+- **Colliders are bounded by the scene's rectangle, meshes by its parcels.** A scene collider is
+  off as a whole while its box reaches outside the rectangle around the scene's parcels or above
+  the scene's height limit; the shaders clip meshes to the parcels themselves. One large collider
+  often covers an irregular scene's whole footprint: Genesis Plaza's ground and building colliders
+  span the notches its road scenes sit in, and a test against the parcels would turn them off as
+  a whole. Unity (`333aa8826979186f1380058cc75f74b9630e4879`) tests the same rectangle, with the
+  same allowance at the edge. The height limit splits the same way: colliders take one limit from
+  the scene's whole parcel count, as Unity does, while the shaders clip each connected group of
+  parcels at its own, so over a scene in several pieces a collider can be solid above the height
+  its mesh is drawn to (two parcels apart: meshes to 20 m, colliders to 31.7 m). The box tested
+  for a mesh collider is the mesh's own box turned with the collider, which can be larger than the
+  mesh: a wall that runs diagonally in its own model can turn off while it is still inside the
+  rectangle. Triggers are not tested in either client. Preview, loopback and editor runs draw
+  out-of-bounds geometry and leave its colliders on too, so a creator can stand on, bump into
+  and select what reaches outside; every other run turns them off.
 - **The map carries over upstream's marker rules as they are**, so the two clients' maps match.
   A place of several parcels is marked on the parcel a walk over them stops at, which depends on
   their order and is not always the middle one; a cluster stands half a parcel south-west of the
@@ -841,10 +892,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   preview, a definitive failure (404 and similar) is remembered for that URL when read by hash.
   A catalyst only activates an entity once it holds all of its files, so the answer is final.
   Other reads and failures keep the 10 s retry. Preview asks again on every read (#727).
-- **A content download that does not match its hash fails the read**, so bytes that are not the
-  file the scene named never reach a loader. It is a failure like a dropped transfer, asked for
-  again after 10 s, not a missing file. A name the check cannot verify is read as before, uncached.
-  Measured first: no correct file of 4574 from live scenes, worlds, wearables and emotes failed it.
+- **A download checked against its content hash fails on a mismatch.** The failure follows
+  the 10 s retry window for dropped transfers. The read that starts the download determines
+  whether to check its bytes. Other reads joining the same URL share its result, which can be
+  unchecked if the first read used a URL key or a name the check cannot verify. A read under an
+  unverifiable content name stays uncached. The content-hash cache serves every origin, so it
+  accepts only verified bytes. All 4574 sampled files from live scenes, worlds,
+  wearables and emotes matched.
 - **Camera layers are identified by entity**, not by an explicit layer number; the cleanup in
   #1320 waits on the protocol change.
 - **`-logFile` with one dash is accepted** (rewritten to `--log-file` before clap, `main.rs`):

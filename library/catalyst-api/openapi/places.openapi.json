@@ -602,6 +602,15 @@
             }
           },
           {
+            "name": "only_excluded_from_ranking",
+            "in": "query",
+            "description": "True to show only entries the automated ranking is not allowed to touch",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "only_favorites",
             "in": "query",
             "required": false,

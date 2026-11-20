@@ -164,7 +164,7 @@ def client(args):
     for path in ["/", "/play", "/play/engine/pkg/webgpu_build_bg.wasm", "/shop",
                  "/places", "/places.data", "/places/place/1,2", "/places/place/1,2.data",
                  "/places/world/sample.dcl.eth", "/places/world/sample.dcl.eth.data", "/_root.data", "/internal/auth-config",
-                 "/internal/thirdweb-sign", "/api/screens/v1/play", "/api/creator-hub/drafts",
+                 "/internal/thirdweb-sign", "/api/screens/v1/play",
                  "/profile/alice", "/cast", "/assets/example.js", "/docs/index.md", "/download", "/download_success"]:
         hit(path, "sites")
     for path in ["/about", "/content/contents/blob", "/lambdas/profiles", "/api/status",

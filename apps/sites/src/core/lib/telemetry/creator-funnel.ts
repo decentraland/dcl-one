@@ -16,18 +16,16 @@ const CREATOR_FUNNEL_EVENTS = [
 
 type CreatorFunnelEvent = (typeof CREATOR_FUNNEL_EVENTS)[number];
 
-export const CREATOR_DASHBOARD_VIEWED = "creator_dashboard_viewed";
-
 function funnelStep(event: CreatorFunnelEvent): number {
   return CREATOR_FUNNEL_EVENTS.indexOf(event);
 }
 
 const SCREEN_TO_FUNNEL: Record<string, CreatorFunnelEvent> = {
-  bd_item_editor_opened: "creator_item_edited",
   bd_item_editor_saved: "creator_item_edited",
   bd_publish_collection_started: "creator_publish_started",
   bd_publish_collection_submitted: "creator_collection_published",
-  bd_curation_decided: "creator_curation_submitted",
+  bd_curation_pushed: "creator_curation_submitted",
+  bd_item_listing_set: "creator_item_listed",
   mk_collection_viewed: "creator_collection_viewed",
   mk_sell_completed: "creator_item_listed",
   mk_buy_completed: "creator_sale_completed",

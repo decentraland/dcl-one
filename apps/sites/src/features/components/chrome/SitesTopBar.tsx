@@ -29,18 +29,20 @@ import { useChromeAuth } from "@ui/web/frames/chrome-auth";
 import ChromeLink from "@ui/web/frames/ChromeLink";
 import { useSiteLayout } from "@ui/web/frames/SiteLayout";
 import {
+  categoryForType,
   notificationBody,
+  notificationImage,
   notificationLink,
   notificationTitle,
   relativeTime,
   unreadCount,
 } from "@ui/data/catalyst/notificationsView";
-import SitesNotificationsDialog from "@dcl/one-ui/apps/sites/chrome/SitesNotificationsDialog";
+import SitesNotificationsDialog, { notificationMedia } from "@dcl/one-ui/apps/sites/chrome/SitesNotificationsDialog";
 import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
 import wordmark from "@dcl/one-ui/apps/sites/assets/dcl_name.svg?url";
 import { SitesLocaleContext } from "@ui/web/frames/sites-locale";
 import { useMarketplaceHere } from "@/data/lib/shop/marketplace-access";
-import { homeCopy } from "../../home/locale";
+import { navProfileCopy } from "./nav-profile-copy";
 import { useChromeNotifications } from "./useChromeNotifications";
 import styles from "./SitesTopBar.module.css";
 
@@ -92,14 +94,14 @@ const SITE_ICONS = {
   ),
 };
 
-function ProfileNetwork({ provider }: { provider: Eip1193Provider }) {
+function ProfileNetwork({ provider, label }: { provider: Eip1193Provider; label: string }) {
   const { chainId, pendingChainId, switchTo } = useWalletChain(provider);
   if (chainId === null) return null;
   const ethereum = ethereumChainId();
   const polygon = settlementChainId();
   return (
     <select
-      aria-label="Wallet network"
+      aria-label={label}
       className={styles.profileNetwork}
       value={pendingChainId ?? chainId}
       disabled={pendingChainId !== null}
@@ -139,9 +141,10 @@ export default function SitesTopBar({
   const auth = useChromeAuth();
   const layout = useSiteLayout();
   const { pathname, search } = useLocation();
-  const marketplaceAvailable = useMarketplaceHere();
   const landing = pathname === "/";
   const locale = useContext(SitesLocaleContext)?.locale ?? "en";
+  const { labels, actions: actionLabels, walletNetwork } = navProfileCopy[locale];
+  const [profileOpen, setProfileOpen] = useState(false);
   const isIn = signedIn ?? auth.signedIn;
   const address = account ?? auth.account;
   const signIn = onSignIn ?? auth.onSignIn;
@@ -152,8 +155,9 @@ export default function SitesTopBar({
     pathname: string;
   } | null>(null);
   const identity = isIn && address ? address.toLowerCase() : null;
+  const marketplaceAvailable = useMarketplaceHere(identity);
   const profileWalletAvailable = identity !== null && web3Usable({ signer: identity });
-  const provider = identity && (marketplaceAvailable || profileWalletAvailable) ? browserProvider() : null;
+  const provider = profileWalletAvailable ? browserProvider() : null;
   const walletAccount = useWalletAccount(provider);
   const matchingWallet = provider !== null && identity !== null && walletAccount === identity;
   const marketplaceEligible = marketplaceAvailable && matchingWallet;
@@ -173,10 +177,11 @@ export default function SitesTopBar({
     landing && auth.notificationsReady !== false,
   );
   const rows = notifications.data;
-  const manaAccount = profileWalletAvailable && matchingWallet ? identity : null;
-  const mana = useManaBalance(manaAccount, ethereumChainId()).data;
-  const polygonMana = useManaBalance(manaAccount, settlementChainId()).data;
-  const menuBalances = manaAccount && (mana !== undefined || polygonMana !== undefined)
+  const profileManaEligible = profileWalletAvailable && matchingWallet;
+  const manaAccount = profileOpen && profileManaEligible ? identity : null;
+  const { data: mana, isPending: manaPending } = useManaBalance(manaAccount, ethereumChainId());
+  const { data: polygonMana, isPending: polygonManaPending } = useManaBalance(manaAccount, settlementChainId());
+  const menuBalances = manaAccount
     ? {
         mana: mana === undefined ? undefined : manaWeiToNumber(mana),
         polygonMana: polygonMana === undefined ? undefined : manaWeiToNumber(polygonMana),
@@ -185,29 +190,29 @@ export default function SitesTopBar({
   const actions = useMemo(
     () => [
       {
-        label: "View Profile",
+        label: actionLabels.viewProfile,
         icon: <GeneralPlayers size={20} aria-hidden="true" />,
         href: `/profile/${encodeURIComponent(address.toLowerCase())}`,
       },
       {
-        label: "My Assets",
+        label: actionLabels.myAssets,
         href: "/shop/my-items",
         icon: <GeneralSecondaryBarWearables size={20} aria-hidden="true" />,
       },
       {
-        label: "Account Settings",
+        label: actionLabels.accountSettings,
         href: "/account",
         icon: <GeneralSecondaryBarSettingsOutline size={20} aria-hidden="true" />,
       },
       {
-        label: "Shop Authorizations",
+        label: actionLabels.shopAuthorizations,
         href: "/shop/settings",
         icon: <GeneralMarketplace size={20} aria-hidden="true" />,
       },
       ...(signOut
         ? [
             {
-              label: "Logout",
+              label: actionLabels.logout,
               onSelect: signOut,
               icon: <MenusLeave size={20} aria-hidden="true" />,
               separated: true,
@@ -216,7 +221,7 @@ export default function SitesTopBar({
         : switchAccount
           ? [
               {
-                label: "Switch account",
+              label: actionLabels.switchAccount,
                 onSelect: switchAccount,
                 icon: <GeneralWallet size={20} aria-hidden="true" />,
                 separated: true,
@@ -224,7 +229,7 @@ export default function SitesTopBar({
             ]
           : []),
     ],
-    [address, switchAccount, signOut],
+    [address, actionLabels, switchAccount, signOut],
   );
   const panel = notificationsOpen ? (
     <SitesNotificationsDialog
@@ -241,6 +246,8 @@ export default function SitesTopBar({
         id: row.id,
         title: notificationTitle(row),
         description: notificationBody(row),
+        category: categoryForType(row.type),
+        ...notificationMedia(row.type, row.metadata, notificationImage(row)),
         href: notificationLink(row) ?? undefined,
         time: relativeTime(row.timestamp, Date.now()),
         unread: !row.read,
@@ -307,8 +314,13 @@ export default function SitesTopBar({
           accountActions={actions}
           accountMenuAppearance="profile"
           accountMenuBalances={menuBalances}
-          accountMenuNetwork={manaAccount && provider ? <ProfileNetwork provider={provider} /> : undefined}
-          labels={landing ? homeCopy[locale].account : undefined}
+          accountMenuBalancesPending={profileManaEligible && (manaPending || polygonManaPending)}
+          accountMenuNetwork={manaAccount && provider ? (
+            <ProfileNetwork provider={provider} label={walletNetwork} />
+          ) : undefined}
+          onAccountMenuOpenChange={setProfileOpen}
+          labels={labels}
+          locale={locale}
           mobileSecondaryNavigation={
             sections ? ({ closeDrawer }) => sections(closeDrawer) : undefined
           }

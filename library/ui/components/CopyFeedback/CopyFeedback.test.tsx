@@ -4,7 +4,11 @@ import { CopyFeedback } from './CopyFeedback'
 
 function renderFeedback() {
   render(
-    <CopyFeedback value="address" successAnnouncement="User ID copied" errorAnnouncement="Copy failed">
+    <CopyFeedback
+      value="address"
+      successAnnouncement="User ID copied"
+      errorAnnouncement="Copy failed"
+    >
       {(copy) => <button onClick={copy}>Copy ID</button>}
     </CopyFeedback>
   )
@@ -19,7 +23,8 @@ describe('when copying with feedback', () => {
     write = vi.fn<(value: string) => Promise<void>>().mockResolvedValue(undefined)
     vi.stubGlobal('navigator', { clipboard: { writeText: write } })
     renderFeedback()
-    copy = () => act(async () => void fireEvent.click(screen.getByRole('button', { name: 'Copy ID' })))
+    copy = () =>
+      act(async () => void fireEvent.click(screen.getByRole('button', { name: 'Copy ID' })))
   })
 
   afterEach(() => {
@@ -71,11 +76,18 @@ describe('when copy feedback replaces an inline value', () => {
     write = vi.fn<(value: string) => Promise<void>>().mockResolvedValue(undefined)
     vi.stubGlobal('navigator', { clipboard: { writeText: write } })
     render(
-      <CopyFeedback value="full address" inlineValue="0x12…34" copiedLabel="Address copied!" successAnnouncement="User ID copied" errorAnnouncement="Copy failed">
+      <CopyFeedback
+        value="full address"
+        inlineValue="0x12…34"
+        copiedLabel="Address copied!"
+        successAnnouncement="User ID copied"
+        errorAnnouncement="Copy failed"
+      >
         {(activate) => <button onClick={activate}>Copy ID</button>}
       </CopyFeedback>
     )
-    copy = () => act(async () => void fireEvent.click(screen.getByRole('button', { name: 'Copy ID' })))
+    copy = () =>
+      act(async () => void fireEvent.click(screen.getByRole('button', { name: 'Copy ID' })))
   })
 
   afterEach(() => {
@@ -102,5 +114,30 @@ describe('when copy feedback replaces an inline value', () => {
     expect(screen.getByText('0x12…34')).toBeVisible()
     expect(screen.queryByText('Address copied!')).toBeNull()
     expect(screen.getByRole('status')).toHaveTextContent('Copy failed')
+  })
+})
+
+describe('when the host sets a custom feedback duration', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } })
+    render(
+      <CopyFeedback value="full address" durationMs={2000} showTooltip={false}>
+        {(activate) => <button onClick={activate}>Copy address</button>}
+      </CopyFeedback>
+    )
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  it('should clear feedback after the configured two seconds', async () => {
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Copy address' })))
+    act(() => vi.advanceTimersByTime(1999))
+    expect(screen.getByRole('status')).toHaveTextContent('Copied')
+    act(() => vi.advanceTimersByTime(1))
+    expect(screen.getByRole('status')).toBeEmptyDOMElement()
   })
 })

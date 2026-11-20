@@ -15,7 +15,7 @@ mod text;
 
 use alloy_core::primitives::Address;
 use bevy::{
-    color::Mix, ecs::system::SystemParam, math::Vec3A, pbr::NotShadowCaster,
+    app::PropagateStop, color::Mix, ecs::system::SystemParam, math::Vec3A, pbr::NotShadowCaster,
     platform::collections::HashSet, prelude::*, render::primitives::Aabb,
 };
 use common::{
@@ -36,6 +36,7 @@ use comms::{
 };
 use console::{AddDebugSection, DoAddConsoleCommand};
 use dcl_component::proto_components::sdk::components::PbAvatarShape;
+use scene_material::highlight::Highlight;
 use scene_runner::{
     initialize_scene::SuperUserScene,
     update_world::{
@@ -636,6 +637,8 @@ fn spawn_tag(
         MeshMaterial3d(assets.material.clone()),
         Aabb::default(),
         NotShadowCaster,
+        // the hover glow is the avatar's
+        PropagateStop::<Highlight>::default(),
     ));
 }
 

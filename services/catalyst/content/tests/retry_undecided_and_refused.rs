@@ -156,7 +156,7 @@ async fn an_undecided_entity_outlives_the_cap_and_a_refused_one_is_never_retried
                 max_retries: MAX_RETRIES,
                 ..Default::default()
             },
-            reqwest::Client::new(),
+            catalyst_content::sync::test_sync_client(reqwest::Client::new()),
             storage.clone(),
             Arc::new(LiveSyncDeployer::new(
                 pool.clone(),

@@ -464,7 +464,7 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     let pool = state.pool.clone();
     let t = tag();
     let (c1, c2, c_nft) = (contract_of(&t, 1), contract_of(&t, 2), contract_of(&t, 3));
-    let v3_minter = listings::offchain_marketplace_v2(137).unwrap().address;
+    let v3_minter = listings::offchain_marketplace_v3(137).unwrap().address;
 
     let mut collections = vec![
         mirrors::collections::fixture(&c1, "First", CREATOR, true),
@@ -1454,6 +1454,45 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         "{body}"
     );
 
+    // A marketplace the collection does not list as a minter cannot mint: every leg drops its order.
+    let set_minter = |minter: &'static str| {
+        let (pool, c1) = (pool.clone(), c1.clone());
+        async move {
+            sqlx::query(
+                "UPDATE shop.collections SET minters = ARRAY[$2] WHERE contract_address = $1",
+            )
+            .bind(&c1)
+            .bind(minter)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    set_minter(listings::offchain_marketplace_v2(137).unwrap().address).await;
+    state.readers.clear();
+    let (status, body) = get(app(), &format!("/v1/items?contractAddress={c1}&itemId=1")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["data"][0]["tradeId"].is_null(), "{}", body["data"][0]);
+    let (status, body) = get(app(), &format!("/v2/catalog?id={c1}-1")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["data"][0]["tradeId"].is_null(), "{}", body["data"][0]);
+    let (status, body) = get(app(), &format!("/v3/catalog/shop?contractAddress={c1}")).await;
+    assert_eq!(
+        (status, body["total"].as_i64()),
+        (StatusCode::OK, Some(0)),
+        "{body}"
+    );
+    set_minter(listings::offchain_marketplace_v3(137).unwrap().address).await;
+    state.readers.clear();
+    let (status, body) = get(app(), &format!("/v1/items?contractAddress={c1}&itemId=1")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["data"][0]["tradeId"].as_str(),
+        Some(primary_id.as_str()),
+        "{}",
+        body["data"][0]
+    );
+
     // The trending rail's memo is filled right before the cancellation below, so the few reads in
     // between are all that separate it from the check that it still answers: its 30 s cannot lapse
     // over the rest of this test on a slow runner.
@@ -1513,7 +1552,15 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     assert!(!state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
     let (status, body) = get(app(), "/v3/catalog/unified?groupBy=item&first=3").await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
+    // The browse read started the directory's read in the background; it may land after the
+    // answer, which waits at most 500 ms for it.
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while !state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the browse read fills the creator directory");
 
     // The feeds carry their creators' profiles per response, never memoized with the page: a
     // profile denylisted after the pages were memoized leaves the very next answer, and every
@@ -1536,6 +1583,10 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         .await
         .unwrap();
     state.readers.clear();
+    // Read the directory first, through the dropdown's own path, which has no 500 ms bound: the
+    // feeds below then find it fresh, start no refresh of their own, and never depend on how
+    // fast a cold read is.
+    super::search::creator_directory(&state).await.unwrap();
     let feeds = [
         "/v3/catalog/unified?groupBy=item&first=12",
         "/v3/catalog/trending?first=10&days=3650",
@@ -1587,6 +1638,32 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         .execute(&pool)
         .await
         .unwrap();
+    // A feed without the creator directory (here, its refresh held by another) answers without
+    // profiles under a brief cache, never the hour these feeds had, so a CDN does not keep an
+    // answer whose cards each ask /lambdas/profiles.
+    // A claim still live from the feeds above could not release this hold either: its release
+    // acts only on its own claim.
+    state.readers.clear();
+    let hold = state
+        .readers
+        .begin_refresh(CREATOR_DIRECTORY_KEY, Duration::ZERO)
+        .expect("a reset frees the directory's refresh");
+    for uri in [
+        "/v3/catalog/trending?first=10&days=3650",
+        "/v3/catalog/creators?days=7",
+    ] {
+        let (body, cache) = get_cached(app(), uri).await;
+        assert!(
+            body["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r.get("creatorProfile").is_none() && r.get("profile").is_none()),
+            "{uri}: {body}"
+        );
+        assert_eq!(cache, "public,max-age=60,s-maxage=60", "{uri}");
+    }
+    state.readers.end_refresh(CREATOR_DIRECTORY_KEY, hold, true);
 
     sqlx::query("DELETE FROM shop.usage_grants WHERE grantee_address = $1")
         .bind(WALLET_A)
@@ -1939,6 +2016,20 @@ async fn seed_item_row(pool: &PgPool, contract: &str, item_id: &str, creator: &s
     .execute(pool)
     .await
     .unwrap();
+    // Its collection lets the v3 marketplace mint, so its item orders are served.
+    sqlx::query(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, \
+             is_approved, is_editable, minters, created_at, updated_at, reviewed_at, mirrored_at) \
+         VALUES ('matic', lower($1), 137, 'Item fixture', lower($2), lower($2), $3, true, true, false, ARRAY[$4], 0, 0, 0, now()) \
+         ON CONFLICT (network, contract_address) DO NOTHING",
+    )
+    .bind(contract)
+    .bind(creator)
+    .bind(format!("urn:decentraland:matic:collections-v2:{contract}"))
+    .bind(listings::offchain_marketplace_v3(137).unwrap().address)
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 /// The `public_item_order` ids the shared `unified_trades` view serves now.
@@ -2079,6 +2170,19 @@ async fn a_signed_item_order_is_stored_once_and_only_behind_the_write_switch() {
     assert_eq!(status, StatusCode::CREATED, "{body}");
     assert_eq!(body["ok"], true);
     let created = body["data"]["id"].as_str().unwrap().to_string();
+    // The 201 carries the stored trade, `received` included, as the read answers it.
+    assert_eq!(
+        body["data"]["received"].as_array().map(Vec::len),
+        Some(1),
+        "{body}"
+    );
+    let (status, read) = get(
+        market_router(state.clone()),
+        &format!("/v1/trades/{created}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(body["data"], read["data"]);
     let (status, body) = call(
         market_router(state.clone()),
         "POST",

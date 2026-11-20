@@ -80,7 +80,13 @@ beforeAll(async () => {
   await session.send('Page.enable')
 }, 300_000)
 afterAll(() => releaseHarness({ session, server, scratch }))
-async function openCase(id: string, width: number, publicNavigation = false, height = 900) {
+async function openCase(
+  id: string,
+  width: number,
+  publicNavigation = false,
+  height = 900,
+  profile: '' | 'balances' | false = false
+) {
   await session.send('Emulation.setDeviceMetricsOverride', {
     width,
     height,
@@ -89,6 +95,7 @@ async function openCase(id: string, width: number, publicNavigation = false, hei
   })
   const params = new URLSearchParams({ case: id })
   if (publicNavigation) params.set('public', '')
+  if (profile !== false) params.set('profile', profile)
   await session.navigate(`${origin}${page}?${params}`)
   await evaluate(
     `new Promise((resolve,reject)=>{const start=Date.now();const poll=()=>{if(!document.querySelector('#native-bounds-root>div>nav'))return Date.now()-start>15000?reject(Error('Native NavBar missing')):setTimeout(poll,25);document.fonts.ready.then(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))};poll()})`
@@ -113,6 +120,7 @@ async function key(value: string, code: number) {
       type,
       key: value,
       code: value,
+      text: value === 'Enter' && type === 'keyDown' ? '\r' : undefined,
       windowsVirtualKeyCode: code
     })
   await evaluate('new Promise(resolve=>requestAnimationFrame(resolve))')
@@ -258,6 +266,137 @@ describe('when the public Sites navigation runs with browser input', () => {
       )
     ).toBe(true)
   }, 60_000)
+
+  it.each([390, 485])(
+    'should keep Nav Profile anchored to the header above the open drawer at %ipx',
+    async (width) => {
+      await openCase('in-solid-3', width, true, 900, '')
+      const trigger = 'button[aria-label="Account: Ada"]'
+      const profileBounds = `(() => {
+        const button = document.querySelector(${JSON.stringify(trigger)})
+        const panel = document.getElementById(button.getAttribute('aria-controls'))
+        const { left, right, top, width } = panel.getBoundingClientRect()
+        const action = panel.querySelector('a[href="/profile"]')
+        const actionBox = action.getBoundingClientRect()
+        const target = document.elementFromPoint(
+          actionBox.x + actionBox.width / 2,
+          actionBox.y + actionBox.height / 2
+        )
+        return { left, right, top, width, actionReachable: action.contains(target) }
+      })()`
+      await click(trigger)
+      const closedDrawer = await evaluate<{ width: number; actionReachable: boolean }>(
+        profileBounds
+      )
+      expect(closedDrawer.width).toBeGreaterThan(300)
+      expect(closedDrawer.actionReachable).toBe(true)
+      await click(trigger)
+
+      await click('button[aria-label="Open menu"]')
+      await click(trigger)
+      expect(await evaluate('!!document.querySelector(\'[role="dialog"]\')')).toBe(true)
+      expect(await evaluate(profileBounds)).toEqual(closedDrawer)
+    }
+  )
+
+  it('should keep keyboard focus on Places while the pointer crosses Shop', async () => {
+    await openCase('out-solid-0', 1440, true)
+    await evaluate(`[...document.querySelectorAll('nav button')]
+      .find(button => button.textContent === 'Discover').focus()`)
+    await key('Enter', 13)
+    await key('Tab', 9)
+    await key('Tab', 9)
+    expect(await evaluate('document.activeElement?.textContent')).toBe('Places')
+    const shop = await evaluate<{ x: number; y: number }>(
+      `(() => {
+        const { x, y, width, height } = [...document.querySelectorAll('nav button')]
+          .find(button => button.textContent === 'Shop').getBoundingClientRect()
+        return { x: x + width / 2, y: y + height / 2 }
+      })()`
+    )
+    await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...shop })
+    expect(await evaluate('document.activeElement?.textContent')).toBe('Places')
+    await key('Escape', 27)
+    expect(await evaluate('document.activeElement?.textContent')).toBe('Discover')
+  })
+
+  it('should show desktop pressed colors while holding the mouse and highlight the current item', async () => {
+    await openCase('out-solid-0', 1440, true)
+    for (const selector of [
+      'nav button[aria-controls]:not([aria-label])',
+      'nav a[href="/events"]'
+    ]) {
+      const point = await evaluate<{ x: number; y: number }>(
+        `(() => {
+          const { x, y, width, height } = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect()
+          return { x: x + width / 2, y: y + height / 2 }
+        })()`
+      )
+      await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
+      await session.send('Input.dispatchMouseEvent', {
+        type: 'mousePressed',
+        button: 'left',
+        clickCount: 1,
+        ...point
+      })
+      const colors = await evaluate<{
+        actual: string
+        pressed: string
+        color: string
+        primary: string
+      }>(
+        `(() => {
+          const element = document.querySelector(${JSON.stringify(selector)})
+          const probe = document.createElement('span')
+          probe.style.backgroundColor = 'var(--dcl-bg-pressed)'
+          probe.style.color = 'var(--dcl-text-primary)'
+          element.closest('nav').append(probe)
+          const expected = getComputedStyle(probe)
+          const actual = getComputedStyle(element)
+          const values = { actual: actual.backgroundColor, pressed: expected.backgroundColor, color: actual.color, primary: expected.color }
+          probe.remove()
+          return values
+        })()`
+      )
+      // A release off the control keeps this test on the fixture.
+      await session.send('Input.dispatchMouseEvent', {
+        type: 'mouseReleased',
+        button: 'left',
+        clickCount: 1,
+        x: 1,
+        y: 1
+      })
+      expect(colors.actual).toBe(colors.pressed)
+      if (selector.includes('href')) expect(colors.color).toBe(colors.primary)
+      // Hover the trigger again if the release dismissed the panel.
+      if (!selector.includes('href')) {
+        await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
+      }
+    }
+  })
+
+  it.each([390, 1440].flatMap((width) => [true, false].map((success) => ({ width, success }))))(
+    'should keep profile actions in place at $width px when MANA requests settle (success=$success)',
+    async ({ width, success }) => {
+      await openCase('in-solid-3', width, true, 900, 'balances')
+      await click('button[aria-label="Account: Ada"]')
+      const actionTop =
+        'document.querySelector(\'nav a[href="/profile"]\').getBoundingClientRect().top'
+      const before = await evaluate<number>(actionTop)
+      await evaluate(`(async () => {
+        window.dispatchEvent(new CustomEvent('fixture:load-profile-balances', {detail: ${JSON.stringify(success ? { mana: 123.45, polygonMana: 67.89 } : {})}}))
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      })()`)
+      expect(
+        await evaluate(`(() => {
+        const account = document.querySelector('[aria-label="Account: Ada"]')
+        const panel = document.getElementById(account.getAttribute('aria-controls'))
+        return !!panel.querySelector('[data-balance="polygonMana"]')
+      })()`)
+      ).toBe(success)
+      expect(await evaluate<number>(actionTop)).toBeCloseTo(before, 0)
+    }
+  )
 
   for (const preference of ['no-preference', 'reduce']) {
     it(`should fill the Pixel viewport below the header and honor ${preference} motion`, async () => {
