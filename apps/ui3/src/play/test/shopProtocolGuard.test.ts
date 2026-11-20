@@ -292,12 +292,10 @@ describe('the purchase wallet', () => {
       await expect(sign(g, manaTyped())).rejects.toMatchObject({ code: 4100 })
     })
 
-    it('sends the approve from the wallet, to MANA, as no hand-off of the sale', async () => {
-      let asked = 0
-      const g = setup({ ...split(), durable: () => (asked++, true) })
-      await expect(g.guarded.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: MANA_TOKEN, data: approve() }] })).resolves.toBeDefined()
-      expect(asked).toBe(0)
-      await expect(g.guarded.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: MANA_TOKEN, data: approve(MANAGER, maxUint256) }] })).rejects.toMatchObject({ code: 4100 })
+    it('never sends the approve from the wallet: only through the relay, even the exact gap while authorizing', async () => {
+      const g = setup(split())
+      await expect(g.guarded.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: MANA_TOKEN, data: approve() }] })).rejects.toMatchObject({ code: 4100 })
+      expect(g.forwarded()).toBe(0)
     })
   })
 

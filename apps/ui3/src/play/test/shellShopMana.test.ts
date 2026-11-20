@@ -3,7 +3,8 @@
 // (shell/shop/manaPurchase). The Shop server, the chain, the relay and the wallet are the checkout's fakes.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, keccak256, maxUint256, parseAbi, type Hex } from 'viem'
-import { createFakeChain, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade } from '../../shop/checkout/fakes'
+import { batchAuthorization, createFakeChain, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade } from '../../shop/checkout/fakes'
+import { CREDITS_MANAGER_ABI, OFFCHAIN_META_TX_ABI } from '@shop/checkout/chain/abi'
 import { ASSET_TYPE, encodeStoreBuy } from '../../shop/checkout/purchase/encoding'
 import { encodeExecuteMetaTransaction } from '../../shop/checkout/chain/metatx'
 import { manaFingerprint } from '../shell/shop/manaPurchase'
@@ -433,7 +434,7 @@ describe('the in-world purchase with MANA', () => {
     it('offers both together when the Credits are short of one item and MANA pays the rest', async () => {
       on()
       const w = world()
-      const p = page(w, { creditsCents: 50 })
+      const p = page(w, { creditsCents: 50, services: managed })
       await p.open()
       const { view } = await p.until('method')
       expect(view).toMatchObject({ step: 'method', credits: { price: 12, balance: 5, pays: false }, mana: { pays: true }, split: { credits: 5 } })
@@ -465,15 +466,117 @@ describe('the in-world purchase with MANA', () => {
       await managed.until('insufficient')
     })
 
-    it('buys nothing on BUY with both until the credits node authorizes part of a price', async () => {
+    // The book's Polygon CreditsManager: the credit names it, and the rails encode for it alone.
+    const MANAGER = '0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5'
+    const managed = { manager: (chainId: number) => ({ chainId, address: MANAGER, name: 'Decentraland Credits', version: '1.0.0' }) } as Partial<ShellShopServices>
+    /** The node signs exactly the share the split asks for: floor(P * part / quote), P the store's price. */
+    const splitShop = (w: World, credit: (share: bigint) => bigint = (x) => x) =>
+      (w.shop = createFakeShop({
+        authorizeCreditBatch: ({ body }) => {
+          const [line] = (body as { items: { usdPriceCents: number; creditsCents?: number }[] }).items
+          const share = (BigInt(PRICE) * BigInt(line.creditsCents ?? 0)) / BigInt(line.usdPriceCents)
+          const value = credit(share).toString()
+          const answer = batchAuthorization([line])
+          return { ...answer, credit: { ...answer.credit, amount: value, availableAmount: value }, maxCreditedValue: value }
+        },
+        cancelCreditAuthorizations: ({ body }) => ({ released: (body as { salts: string[] }).salts.length, retired: 0, spendableAtSeconds: null }),
+        reportCreditSubmission: () => ({ recorded: 1 })
+      }))
+    const useCreditsOf = (body: unknown) => {
+      const data = (body as { transactionData: { params: [string, Hex] } }).transactionData.params[1]
+      const meta = decodeFunctionData({ abi: OFFCHAIN_META_TX_ABI, data })
+      return decodeFunctionData({ abi: CREDITS_MANAGER_ABI, data: meta.args[1] as Hex }).args[0] as { maxCreditedValue: bigint; maxUncreditedValue: bigint }
+    }
+    const approvalOf = (body: unknown) => {
+      const data = (body as { transactionData: { params: [string, Hex] } }).transactionData.params[1]
+      const meta = decodeFunctionData({ abi: parseAbi(['function executeMetaTransaction(address userAddress, bytes functionSignature, bytes32 sigR, bytes32 sigS, uint8 sigV) payable returns (bytes)']), data })
+      return decodeFunctionData({ abi: parseAbi(['function approve(address spender, uint256 amount)']), data: meta.args[1] as Hex }).args
+    }
+
+    it('pays with both: Authorize MANA for exactly the gap to the Credits manager, then one useCredits with the credit and the gap', async () => {
       on()
       const w = world()
-      const p = page(w, { creditsCents: 50 })
+      splitShop(w)
+      const p = page(w, { creditsCents: 50, services: managed })
+      await p.open()
+      const method = await p.until('method')
+      const gap = (method.view as { split: { mana: bigint } }).split.mana
+      method.handlers.onPay?.('split')
+      const auth = await p.until('authorize')
+      expect(auth.view).toMatchObject({ step: 'authorize', venue: 'Decentraland Credits', required: gap })
+      auth.handlers.onAuthorize?.()
+      await p.until('success')
+      expect(relayedTo(w)).toEqual([MANA, MANAGER])
+      const [spender, amount] = approvalOf(w.relay.posts[0])
+      expect([spender.toLowerCase(), amount]).toEqual([MANAGER, gap])
+      const authorized = w.shop.log.find((q) => q.name === 'authorizeCreditBatch')!
+      expect(authorized.body).toMatchObject({ items: [{ creditsCents: 50 }] })
+      expect(useCreditsOf(w.relay.posts[1])).toEqual(expect.objectContaining({ maxCreditedValue: BigInt(PRICE) - gap, maxUncreditedValue: gap }))
+      expect(w.wallet.sent).toHaveLength(0)
+      expect(p.events.at(-1)).toMatchObject({ state: 'succeeded' })
+    })
+
+    it('asks no authorization when the allowance already covers the gap', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      const p = page(w, { creditsCents: 50, services: managed })
       await p.open()
       ;(await p.until('method')).handlers.onPay?.('split')
-      await new Promise((r) => setTimeout(r, 20))
+      await p.until('success')
+      expect(p.shown.some((s) => s.view.step === 'authorize')).toBe(false)
+      expect(relayedTo(w)).toEqual([MANAGER])
+    })
+
+    it('reserves nothing when the buyer cancels Authorize MANA', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      const p = page(w, { creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      ;(await p.until('authorize')).handlers.onClose()
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'cancelled' }))
       expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
-      expect(w.wallet.requests.some((q) => q.method === 'eth_signTypedData_v4' || q.method === 'eth_sendTransaction')).toBe(false)
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('refuses before reserving when the price moved past the MANA the buyer confirmed', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      let price = PRICE
+      const p = page(w, { creditsCents: 50, priceWei: () => price, services: managed })
+      await p.open()
+      const method = await p.until('method')
+      price = (BigInt(PRICE) * 2n).toString()
+      method.handlers.onPay?.('split')
+      const failed = await p.until('failed')
+      expect(failed.view).toMatchObject({ message: expect.stringContaining('price changed') })
+      expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('refuses a credit that isn\'t its share before anything is signed, and releases it', async () => {
+      on()
+      const w = world()
+      splitShop(w, (share) => share + 1n)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      const p = page(w, { creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('failed')
+      expect(w.relay.posts).toHaveLength(0)
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(true)
+    })
+
+    it('offers no split for an offer the node doesn\'t mark splittable', async () => {
+      on()
+      const p = page(world(), { creditsCents: 50, offer: (s) => ({ ...storeMint(s), splittable: false }) })
+      await p.open()
+      expect((await p.until('method')).view).not.toHaveProperty('split')
     })
   })
 

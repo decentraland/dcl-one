@@ -12,8 +12,10 @@
 //    confirmed items for the buyer: each unit once, as many of each as confirmed, nothing else;
 //  - paying with Credits and MANA together (`split`): the same `useCredits`, taking from the wallet exactly the MANA
 //    gap the buyer confirmed (never more, never another figure), and MANA's approve of exactly that gap to the
-//    trusted CreditsManager, as MANA's meta-transaction or sent from the buyer, only while the buyer's own AUTHORIZE
-//    runs it. The approve is not the sale: it needs no record of the purchase kept, and never counts as handed off.
+//    trusted CreditsManager, only as MANA's meta-transaction through the fee-free relay (never sent from the wallet:
+//    a direct approve beside a relayed one whose answer was lost could both land) and only while the buyer's own
+//    AUTHORIZE runs it. The approve is not the sale: it needs no record of the purchase kept, and never counts as
+//    handed off.
 //
 // Before each signature or transaction it reads the wallet's selected account and checks the login is
 // still the one confirmed. Anything else is refused before it reaches the wallet.
@@ -247,19 +249,14 @@ export function checkMetaTransaction(from: unknown, data: unknown, intent: Purch
   return typed
 }
 
-/**
- * The same call sent from the buyer's wallet: to the manager, with no value and no unknown fields; or, for a split, MANA's
- * approve of its gap. Says which it is.
- */
-export function checkTransaction(tx: unknown, intent: PurchaseIntent): 'sale' | 'approve' {
+/** The same call sent from the buyer's wallet: to the manager, with no value and no unknown fields. */
+export function checkTransaction(tx: unknown, intent: PurchaseIntent): 'sale' {
   if (tx == null || typeof tx !== 'object' || Array.isArray(tx) || Object.keys(tx).some((k) => !TX_FIELDS.has(k))) refuse('The Shop only sends its own purchases.')
   const t = tx as { from?: unknown; to?: unknown; data?: unknown; value?: unknown }
   const value = typeof t.value === 'string' || typeof t.value === 'number' || typeof t.value === 'bigint' ? BigInt(t.value) : 0n
   if (lower(t.from) !== intent.buyer || value !== 0n) refuse('The Shop only sends its own purchases.')
-  if (splitMana(intent, t.to)) {
-    checkSplitApprove(t.data, intent)
-    return 'approve'
-  }
+  // A split's approve goes only through the relay, as MANA's meta-transaction: never sent from the wallet.
+  if (splitMana(intent, t.to)) refuse('The Shop approves MANA for this purchase only through its fee-free relay.')
   if (lower(t.to) !== intent.manager.address) refuse('The Shop only sends its own purchases.')
   checkUseCredits(t.data, intent)
   return 'sale'
@@ -325,11 +322,10 @@ export function guardedProvider(provider: Eip1193Provider, intent: PurchaseInten
         }
         case 'eth_sendTransaction':
           if (args.length !== 1) refuse('The Shop only sends its own purchases.')
-          const sends = checkTransaction(args[0], intent)
+          checkTransaction(args[0], intent)
           // A wallet on another network would spend gas there and leave the purchase pending.
           if (lower(await provider.request({ method: 'eth_chainId' })) !== chainHex) refuse('Your wallet is on another network. Switch it to the Shop’s and try again.')
-          await ready(sends === 'sale' ? 'handedOff' : null)
-          if (sends === 'approve' && !intent.split!.mayApprove()) refuse('MANA is approved only when you authorize it, so nothing was sent.')
+          await ready('handedOff')
           return provider.request({ method, params })
         default:
           throw new WalletRefusal(`The Shop doesn't use ${method}.`, 4200)

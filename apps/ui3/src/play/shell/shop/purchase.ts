@@ -22,7 +22,8 @@ import { partitionCart, type CartGroup } from '@shop/cart/partition'
 import type { CartAddInput, CartStore } from '../../../shop/cart/store'
 import { shopChainReader, type ChainReader } from '../../../shop/checkout/chain/rpc'
 import { liveResolvers, reviewCart, type SettlementResolvers } from '../../../shop/checkout/purchase/cart'
-import { releaseAuthorizing, runGroup, watchGroup, type CheckoutDeps, type GroupResult } from '../../../shop/checkout/purchase/executor'
+import { releaseAuthorizing, runGroup, splitPriceOf, watchGroup, type CheckoutDeps, type GroupResult, type SplitPlan } from '../../../shop/checkout/purchase/executor'
+import { ensureAuthorization, getAuthorizationStatus, getManaSpendingAuthorization } from '../../../shop/checkout/lib/authorizations'
 import type { RailContext } from '../../../shop/checkout/purchase/rail'
 import { createSpendGuard } from '@shop/checkout/purchase/spend-guard'
 import { fetchUserPurchases, getUsdBalance, type UsdBalance } from '@shop/credits/credits'
@@ -37,8 +38,8 @@ import { quoteNameCredits } from '@shop/names/api'
 import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
 import { primeRemoteFlags, readRemoteFlags, remoteFlag } from '../../../shop/discovery/lib/remoteFlags'
 import { parseEvmAddress } from '@shop/model/address'
-import { chainLabel } from '@shop/model/chain'
-import { isRejection } from '../../../shop/checkout/lib/errors'
+import { chainLabel, type ChainId } from '@shop/model/chain'
+import { friendlyError, isRejection } from '../../../shop/checkout/lib/errors'
 import { readManaBalanceWei } from '../../../shop/checkout/lib/mana'
 import { REMOTE_FLAG } from '@shop/discovery/lib/rolloutFlags'
 import { requestChainSwitch } from '../../../shop/wallet/chain'
@@ -467,6 +468,13 @@ export function splitTerms(quotedCents: UsdCents, balanceCents: UsdCents, priceW
   const manaWei = rest == null ? null : manaForRemainder(rest, quotedCents, priceWei)
   if (manaWei == null || manaWei <= 0n || manaWei > manaBalance) return null
   return { creditsCents: leg, credits: creditsFloor(leg), manaWei }
+}
+
+/** A split as it runs: the item's line resolved for settlement, the credit asked for, and the MANA gap the buyer pays. */
+interface SplitRun {
+  resolved: Resolved
+  plan: SplitPlan
+  gapWei: bigint
 }
 
 /** What the buyer is shown agreeing to: the session it was read for and the quoted terms. */
@@ -1278,7 +1286,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     // balance doesn't cover, and that MANA can pay the rest of.
     const only = partition.groups.length === 1 && partition.groups[0].quotes.length === 1 ? partition.groups[0].quotes[0] : null
     const split =
-      seesSplit({ flag: svc.manaInWorld(), wallet: kind }) && single && !req.cart && req.items[0].quantity === 1 && creditsBuys && balance && manaQuote?.parts.length === 1 && only?.method === 'credits'
+      seesSplit({ flag: svc.manaInWorld(), wallet: kind }) && single && !req.cart && req.items[0].quantity === 1 && creditsBuys && balance && priced[0]?.offer.splittable === true && manaQuote?.parts.length === 1 && only?.method === 'credits'
         ? splitTerms(only.quoted, balance.balanceCents, manaQuote.price as ManaWei, manaQuote.balance)
         : null
     return {
@@ -1371,18 +1379,17 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   const confirming = new Set<Operation>()
   const settle = async (op: Operation, req: ShopBuyRequest, quote: Quote, method: ShopPaymentMethod = 'credits'): Promise<void> => {
     if (op.state !== 'reviewing' || !slot.holds(op) || running || confirming.has(op)) return
-    // Only a way the terms said pays: the dialog holds BUY otherwise. Credits and MANA together isn't offered here yet.
-    if (method === 'split') return
-    if (method === 'mana' ? !quote.mana?.pays : quote.parts.length === 0 || quote.total > quote.balance || quote.creditsUnread) return
+    // Only a way the terms said pays: the dialog holds BUY otherwise.
+    if (method === 'split' ? !quote.split || quote.parts.length !== 1 || quote.creditsUnread : method === 'mana' ? !quote.mana?.pays : quote.parts.length === 0 || quote.total > quote.balance || quote.creditsUnread) return
     confirming.add(op)
     try {
       if (method === 'mana') await manaFlow.settleMana(op, req, quote)
-      else await settleOnce(op, req, quote)
+      else await settleOnce(op, req, quote, method === 'split')
     } finally {
       confirming.delete(op)
     }
   }
-  const settleOnce = async (op: Operation, req: ShopBuyRequest, quote: Quote): Promise<void> => {
+  const settleOnce = async (op: Operation, req: ShopBuyRequest, quote: Quote, splitting = false): Promise<void> => {
     op.unwatchWallet?.()
     // Every TRY AGAIN offered below follows a checkout that handed nothing off.
     const again = (): void => restart(op, req, 'cancelled')
@@ -1421,6 +1428,21 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       return
     }
     running = true
+    // Credits and MANA together: one item, its credit and its MANA gap fixed before anything is reserved (prepareSplit).
+    let split: SplitRun | undefined
+    if (splitting) {
+      const prepared = await prepareSplit(op, quote, wallet, current)
+      if (prepared === 'stop') {
+        running = false
+        return
+      }
+      if ('why' in prepared) {
+        running = false
+        fail(op, prepared.why, again)
+        return
+      }
+      split = prepared
+    }
     // Several groups show as one checkout; one group is its own operation's dialog, as ever.
     const co: Checkout | undefined = quote.parts.length > 1 ? { ops: [], displays: quote.items, parts: quote.parts.length, cart: req.cart === true, failures: [] } : undefined
     // Several groups are all reviewed before any runs, as the web Shop's checkout does: one that can't be
@@ -1469,7 +1491,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           move(run, 'cancelled')
           break
         }
-        const outcome = await runPart(run, part, quote, wallet, current, reviewed.get(part))
+        const outcome = await runPart(run, part, quote, wallet, current, split?.resolved ?? reviewed.get(part), split)
         if (outcome.kind === 'pending') {
           follow.push(run)
           // A group handed off but not yet mined holds the rest: signed meanwhile, the next could take the same
@@ -1509,6 +1531,123 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
    * A group's lines as the chain and the server read them now (the sale's live terms), or why it can't be
    * bought, and whether TRY AGAIN may read the terms anew.
    */
+  /**
+   * Credits and MANA together, before anything is reserved: the item's sale read again, its MANA price `P` (a mint's, or a
+   * MANA listing's after its coupon), the credit `C = floor(P * part / quote)` the node will sign and the gap `G = P - C`
+   * the buyer pays, never above what they confirmed. Short of an allowance for `G`, AUTHORIZE asks for exactly `G`
+   * (authorizeGap). 'stop': the buyer left it, and nothing more is said.
+   */
+  const prepareSplit = async (op: Operation, quote: Quote, wallet: Eip1193Provider, current: () => boolean): Promise<SplitRun | { why: string } | 'stop'> => {
+    const terms = quote.split!
+    const part = quote.parts[0]!
+    show(op, { step: 'processing', balance: quote.balance, count: quote.items.length }, { onClose: () => {} })
+    let review: Awaited<ReturnType<typeof reviewPart>>
+    try {
+      review = await reviewPart(part, quote)
+    } catch (e) {
+      console.warn('[shell/shop] could not review the purchase', e)
+      return { why: "We couldn't start this purchase. Nothing was charged." }
+    }
+    if (op.state !== 'reviewing' || !slot.holds(op)) return 'stop'
+    if ('why' in review) return { why: review.why }
+    const unit = [...review.resolved.values()][0]
+    const price = unit ? splitPriceOf(unit) : null
+    if (!unit || price === null || unit.quote.method !== 'credits') return { why: "This item can't be paid with Credits and MANA together. Nothing was charged." }
+    const credit = (price * BigInt(terms.creditsCents)) / BigInt(unit.quote.quoted)
+    const gap = price - credit
+    if (credit <= 0n || gap <= 0n || gap > terms.manaWei) return { why: 'The price changed since you confirmed it. Nothing was charged; check it again.' }
+    const chainId = part.group.key.chainId
+    const manager = svc.manager(chainId)
+    if (!manager) return { why: "Buying with Credits isn't available here right now." }
+    const auth = getManaSpendingAuthorization(chainId as ChainId, manager.address)
+    let covered: boolean
+    try {
+      covered = await getAuthorizationStatus(auth, quote.buyer, gap, svc.reader())
+    } catch {
+      return { why: "We couldn't read your MANA allowance. Nothing was charged; try again." }
+    }
+    if (!covered && !(await authorizeGap(op, quote, part, wallet, current, auth, gap))) return 'stop'
+    if (op.state !== 'reviewing' || !slot.holds(op) || !current()) return 'stop'
+    return { resolved: review.resolved, plan: { creditsCents: terms.creditsCents, confirmedWei: terms.manaWei, session: { walletKind: 'web3' } }, gapWei: gap }
+  }
+
+  /**
+   * Authorize MANA for a split: exactly the gap to the Credits manager, from the buyer's click, through the guarded wallet
+   * and the fee-free relay only (the guard admits that approve, of that amount, only while AUTHORIZE runs). True once the
+   * allowance covers the gap; CANCEL (or Escape) closes the purchase with nothing reserved.
+   */
+  const authorizeGap = (op: Operation, quote: Quote, part: QuotePart, wallet: Eip1193Provider, current: () => boolean, auth: ReturnType<typeof getManaSpendingAuthorization>, gap: bigint): Promise<boolean> =>
+    new Promise((resolve) => {
+      let answered = false
+      let approving = false
+      let state: 'ready' | 'waiting' | 'failed' = 'ready'
+      let message: string | undefined
+      const answer = (granted: boolean): void => {
+        if (answered) return
+        answered = true
+        resolve(granted)
+      }
+      const manager = svc.manager(part.group.key.chainId)!
+      const intent: PurchaseIntent = {
+        buyer: quote.buyer,
+        chainId: part.group.key.chainId,
+        manager,
+        units: part.items.flatMap((l) => Array.from({ length: l.quantity }, () => ({ contract: l.contract, itemId: l.itemId }))),
+        sale: { venue: part.group.key.contract.toLowerCase(), call: part.group.key.call.kind as PurchaseIntent['sale']['call'] },
+        current,
+        split: { gapWei: gap, mayApprove: () => approving && !answered }
+      }
+      const draw = (): void => {
+        if (answered) return
+        if (!slot.holds(op)) return answer(false)
+        show(
+          op,
+          { step: 'authorize', venue: 'Decentraland Credits', network: chainLabel(auth.chainId), required: gap, state, ...(message ? { message } : {}) },
+          {
+            onClose: () => {
+              if (answered) return
+              close(op, 'cancelled')
+              answer(false)
+            },
+            onAuthorize: () => void grant()
+          }
+        )
+      }
+      const grant = async (): Promise<void> => {
+        if (state === 'waiting' || answered) return
+        state = 'waiting'
+        message = undefined
+        draw()
+        const rail = svc.rail()
+        approving = true
+        try {
+          await ensureAuthorization({
+            auth,
+            requiredWei: gap,
+            exact: true,
+            provider: svc.guard(prompting(op, wallet, quote.kind), intent),
+            account: quote.buyer,
+            walletKind: quote.kind,
+            reader: svc.reader(),
+            relayerUrl: rail.relayerUrl,
+            ...(rail.fetchImpl ? { fetchImpl: rail.fetchImpl } : {})
+          })
+        } catch (e) {
+          if (answered) return
+          state = 'failed'
+          message = isRejection(e) ? 'You declined the authorization in your wallet.' : friendlyError(e, "The authorization didn't go through. Try again.")
+          draw()
+          return
+        } finally {
+          approving = false
+        }
+        if (answered) return
+        show(op, { step: 'processing', balance: quote.balance, count: quote.items.length }, { onClose: () => {} })
+        answer(true)
+      }
+      draw()
+    })
+
   const reviewPart = async (part: QuotePart, quote: Quote): Promise<{ resolved: Resolved } | { why: string; retry: 'cancelled' | null }> => {
     const single = quote.items.length === 1
     const review = await reviewCart(part.priced, quote.session, quote.buyer, svc.resolvers(quote.client))
@@ -1524,7 +1663,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
    * One group, as its own operation, through the executor: never resubmitted, and followed if handed off.
    * `reviewed`: its lines as the checkout already reviewed them, before any group ran.
    */
-  const runPart = async (op: Operation, part: QuotePart, quote: Quote, wallet: Eip1193Provider, current: () => boolean, reviewed?: Resolved): Promise<PartOutcome> => {
+  const runPart = async (op: Operation, part: QuotePart, quote: Quote, wallet: Eip1193Provider, current: () => boolean, reviewed?: Resolved, split?: SplitRun): Promise<PartOutcome> => {
     const { group } = part
     const chainId = group.key.chainId
     const manager = svc.manager(chainId)
@@ -1542,7 +1681,9 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       units: part.items.flatMap((l) => Array.from({ length: l.quantity }, () => ({ contract: l.contract, itemId: l.itemId }))),
       sale: { venue: group.key.contract.toLowerCase(), call },
       current,
-      durable: (stage) => durable(op, stage)
+      durable: (stage) => durable(op, stage),
+      // The sale of a split takes exactly its gap from the wallet; no approve goes with it (that was AUTHORIZE's).
+      ...(split ? { split: { gapWei: split.gapWei, mayApprove: () => false } } : {})
     }
     op.chainId = chainId
     move(op, 'processing')
@@ -1588,7 +1729,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         {
           ctx: { buyer: quote.buyer, provider: svc.guard(prompting(op, wallet, quote.kind), intent), reader: svc.reader(), client: quote.client, walletKind: quote.kind, ...rail, fetchImpl: relay },
           store,
-          guard: createSpendGuard()
+          guard: createSpendGuard(),
+          ...(split ? { split: split.plan } : {})
         },
         group,
         resolved
