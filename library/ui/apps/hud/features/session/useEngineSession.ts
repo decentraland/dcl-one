@@ -952,9 +952,18 @@ export interface ChatState {
 const MAX_CHAT_LINES = 200
 /** The notifications list keeps at most this many, the size of the bridge's full fetch. */
 export const NOTIFICATIONS_KEPT = 50
-// The least time between two plays of one incoming-line sound: lines of a conversation each sound,
-// and a flood of them does not restart the clip faster than it can be heard.
-const PING_FLOOR_MS = 100
+// The least time between two plays of one repeating sound, an incoming line's or the chat input's:
+// lines of a conversation and typed characters each sound, and a flood of lines or a held key does
+// not restart the clip faster than it can be heard.
+const SOUND_FLOOR_MS = 100
+
+/** Whether `sound` is past the floor since its last play in `playedAt`; a play that is due is noted. */
+function soundDue(playedAt: Map<UiSound, number>, sound: UiSound): boolean {
+  const now = Date.now()
+  if (now - (playedAt.get(sound) ?? -Infinity) < SOUND_FLOOR_MS) return false
+  playedAt.set(sound, now)
+  return true
+}
 
 // Render-settle: after a scene first reports loaded, hold the loader at least this long for the
 // engine to render the first frame (so the world isn't revealed as black models), and at most this
@@ -1691,8 +1700,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // list's toast says what happened); a typed /stop_portable or /smart_wearable command still is.
   const ownConsoleCommands = useRef<string[]>([])
   const chatId = useRef(0)
-  // when each incoming-line sound last played
-  const pingAtRef = useRef<Map<UiSound, number>>(new Map())
+  // when each floored sound last played
+  const soundAtRef = useRef<Map<UiSound, number>>(new Map())
   // the lines appended to a shown tab since its history was last read, by conversation: a read
   // queued before such a line was stored answers without it
   const appendedRef = useRef<Map<string, Set<string>>>(new Map())
@@ -1870,10 +1879,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
             // a line anywhere else sounds the same with or without a mention
             const selected = channelRef.current === channel
             const sound: UiSound = !selected ? 'chatUnfocused' : mentioned ? 'chatMention' : 'chatMessage'
-            const now = Date.now()
-            if (now - (pingAtRef.current.get(sound) ?? -Infinity) < PING_FLOOR_MS) return
-            pingAtRef.current.set(sound, now)
-            driver.send({ kind: 'playUiSound', sound })
+            if (soundDue(soundAtRef.current, sound)) driver.send({ kind: 'playUiSound', sound })
           }
           const communityId = communityIdOf(msg.chat.channel)
           if (communityId != null) {
@@ -2888,6 +2894,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   }, [])
 
   const playUiSound = useCallback((sound: UiSound) => {
+    // a held key repeats faster than the input's clip can be heard
+    if (sound === 'chatInput' && !soundDue(soundAtRef.current, sound)) return
     driverRef.current?.send({ kind: 'playUiSound', sound })
   }, [])
 

@@ -113,6 +113,16 @@ describe('community chat domain', () => {
     clock.advance(100)
     act(() => h.driver.emit({ kind: 'chat', chat: { sender: MOJITO, message: 'after the flood', channel: 'community:c1', messageId: `${MOJITO}:60` } }))
     expect(sounds().slice(before)).toEqual(['chatMessage', 'chatMessage'])
+    // the input's sound has the same floor: a held key sounds once until the floor has passed
+    clock.advance(200)
+    for (let i = 0; i < 5; i++) {
+      clock.advance(10)
+      act(() => h.session().chat.playSound('chatInput'))
+    }
+    expect(sounds().filter((s) => s === 'chatInput')).toHaveLength(1)
+    clock.advance(100)
+    act(() => h.session().chat.playSound('chatInput'))
+    expect(sounds().filter((s) => s === 'chatInput')).toHaveLength(2)
     // sending: any conversation, gated by the default alone
     act(() => h.session().chat.send('hello'))
     expect(sounds().at(-1)).toBe('chatSend')
