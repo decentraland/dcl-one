@@ -1,5 +1,4 @@
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { CommunityCard, type CommunityCardLinkProps } from './CommunityCard'
@@ -117,13 +116,23 @@ describe('CommunityCard', () => {
   })
 
   describe('when the card styles reveal the details', () => {
-    const css = readFileSync(join(process.cwd(), 'components/CommunityCard/CommunityCard.module.css'), 'utf8')
+    const file = './CommunityCard.module.css'
+    const css = readFileSync(new URL(file, import.meta.url), 'utf8')
     const hoverQuery = css.slice(css.indexOf('@media (hover: hover)'))
     const outsideHover = css.slice(0, css.indexOf('@media (hover: hover)'))
+    /** Every rule whose selector ends on the class and is a reveal state (hover or keyboard focus). */
+    const revealRules = (source: string, target: string) =>
+      [...source.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+        .map(([, selector = '', body = '']) => ({ selector: selector.trim(), body }))
+        .filter(({ selector }) => /:hover|:focus-visible/.test(selector) && selector.endsWith(target))
+        .map(({ body }) => body)
+    const declaration = (body: string, property: string) =>
+      new RegExp(`(?:^|[;\\s])${property}:\\s*([^;]+);`).exec(body)?.[1]?.trim()
+    const restRule = (target: string) => new RegExp(`\\n  \\${target} \\{([^}]*)\\}`).exec(css)?.[1] ?? ''
 
     it('reveals them on keyboard focus outside the hover-only query', () => {
-      expect(outsideHover).toMatch(/\.card:has\(:focus-visible\) \.description \{\s*max-height: 4\.5em;\s*opacity: 1;/)
-      expect(outsideHover).toMatch(/\.card:has\(\.description\):has\(:focus-visible\) \.media \{\s*height: 73\.571cqw;/)
+      expect(revealRules(outsideHover, '.description')).toHaveLength(1)
+      expect(revealRules(outsideHover, '.media')).toHaveLength(1)
     })
 
     it('does not reveal them on a pointer focus, which is not focus-visible', () => {
@@ -131,8 +140,32 @@ describe('CommunityCard', () => {
     })
 
     it('keeps the hover animation for devices that hover', () => {
-      expect(hoverQuery).toMatch(/\.card:hover \.description \{\s*max-height: 4\.5em;/)
-      expect(css).toMatch(/transition:\s*max-height 200ms,\s*opacity 200ms;/)
+      expect(revealRules(hoverQuery, '.description')).toHaveLength(1)
+      expect(revealRules(hoverQuery, '.media')).toHaveLength(1)
+      expect(declaration(restRule('.media'), 'transition')).toBe('height 200ms')
+      expect(declaration(restRule('.description'), 'transition')).toMatch(/^height 200ms,\s*opacity 200ms$/)
+    })
+
+    it('keeps the card the same height: the cover gives up exactly the room the description takes', () => {
+      expect(declaration(restRule('.card'), '--reveal')).toBe('19.286cqw')
+      expect(declaration(restRule('.description'), 'height')).toBe('0')
+      const rest = declaration(restRule('.media'), 'height') ?? ''
+      expect(rest).toBe('92.857cqw')
+      for (const body of revealRules(css, '.media')) {
+        expect(declaration(body, 'height')).toBe(`calc(${rest} - var(--reveal))`)
+      }
+      for (const body of revealRules(css, '.description')) {
+        expect(declaration(body, 'height')).toBe('var(--reveal)')
+        expect(declaration(body, 'max-height')).toBeUndefined()
+      }
+    })
+
+    it('changes nothing else in the flow on reveal', () => {
+      for (const target of ['.cta', '.body', '.name', '.owner', '.meta', '.card']) {
+        for (const body of revealRules(css, target)) {
+          expect(body).not.toMatch(/(?:^|[;\s])(?:height|max-height|min-height|padding|margin|gap|font-size|line-height):/)
+        }
+      }
     })
   })
 })

@@ -9,7 +9,10 @@
     width: 100%;
   }
 
+  /* The reveal swaps room between the cover and the description (54 of the 280px card in Figma), so the
+     card's own box keeps its height at rest, on hover and on focus, and its row does not move. */
   .card {
+    --reveal: 19.286cqw;
     position: relative;
     display: flex;
     flex-direction: column;
@@ -27,8 +30,7 @@
     outline-offset: 2px;
   }
 
-  /* Figma animates the cover's height; with the description growing in the same frame, a transform
-     would leave a gap, so the height transitions (200ms, one card at a time). */
+  /* The cover gives up --reveal and the description takes exactly that height, with the same timing. */
   .media {
     position: relative;
     flex: none;
@@ -107,7 +109,8 @@
   .description {
     composes: text626f64792f7873 from '../../foundations/typography/text-styles.module.css';
     display: -webkit-box;
-    max-height: 0;
+    flex: none;
+    height: 0;
     margin: 0;
     overflow: hidden;
     opacity: 0;
@@ -115,7 +118,7 @@
     -webkit-line-clamp: 3;
     line-clamp: 3;
     transition:
-      max-height 200ms,
+      height 200ms,
       opacity 200ms;
   }
 
@@ -137,11 +140,11 @@
      without a description the cover stays. Keyboard focus does the same on any device, so a keyboard on a
      hover-less tablet still reveals the description; pointer hover only where it exists and from 768px. */
   .card:has(.description):has(:focus-visible) .media {
-    height: 73.571cqw;
+    height: calc(92.857cqw - var(--reveal));
   }
 
   .card:has(:focus-visible) .description {
-    max-height: 4.5em;
+    height: var(--reveal);
     opacity: 1;
   }
 
@@ -151,11 +154,11 @@
 
   @media (hover: hover) and (min-width: 768px) {
     .card:has(.description):hover .media {
-      height: 73.571cqw;
+      height: calc(92.857cqw - var(--reveal));
     }
 
     .card:hover .description {
-      max-height: 4.5em;
+      height: var(--reveal);
       opacity: 1;
     }
 
