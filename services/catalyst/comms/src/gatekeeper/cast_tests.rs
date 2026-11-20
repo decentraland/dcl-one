@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use serde_json::{Value, json};
 
 use super::*;
-use crate::access::{Ban, LandOperators};
+use crate::access::Ban;
 use crate::gatekeeper::moderation::test_support::StubBanStatus;
 use crate::gatekeeper::streaming::cast::{
     build_stream_links, is_valid_presenter_identity, shown_name, watcher_wallet,
@@ -2543,13 +2543,13 @@ async fn an_orphaned_reset_becomes_a_revocation_after_an_hour() {
     );
 }
 
-/// Every extended holder of a place (LAND operator, update operator, update
-/// manager, approved-for-all address, lease holder, world grantee) manages
-/// its stream access and Cast presenters and is promoted on join, as
-/// upstream's `isSceneOwnerOrAdmin`; an outsider gets the manager gate's
-/// refusal on every route, as does the lease holder on a place outside its
-/// lease. The stub's grantees ignore parcels, so the world case shows
-/// admission, not grant scoping.
+/// Every extended holder of a place (LAND-document owner, operator, update
+/// operator, update manager or approved-for-all address, lease holder, a
+/// world-wide grantee) manages its stream access and Cast presenters and is
+/// promoted on join, as upstream's `isSceneOwnerOrAdmin`; an outsider gets the
+/// manager gate's refusal on every route, as does the lease holder on a place
+/// outside its lease. The stub's grantees ignore parcels, so the world case
+/// shows admission, not grant scoping.
 #[tokio::test]
 async fn extended_holders_manage_stream_access_and_cast_presenters() {
     use crate::gatekeeper::streaming::NOT_AUTHORIZED_TO_STREAM_MSG;
@@ -2563,15 +2563,9 @@ async fn extended_holders_manage_stream_access_and_cast_presenters() {
     };
     let pool = database.pool.clone();
     let holder = address_of(KEY);
-    let land = |doc: LandOperators| StubPolicy {
-        land: Ok(Some(Arc::new(Some(LandOperators {
-            owner: "0x000000000000000000000000000000000000dead".into(),
-            ..doc
-        })))),
-        ..StubPolicy::default()
-    };
     let lease_scene = genesis_scene();
-    let (lease_url, lease_server) = lease_document(&holder, &lease_scene.parcel).await;
+    let (lease_url, lease_server) =
+        lease_document(&checksummed(&holder), &lease_scene.parcel).await;
 
     let genesis = |scene: &Scene| {
         (
@@ -2598,39 +2592,10 @@ async fn extended_holders_manage_stream_access_and_cast_presenters() {
     });
 
     let mut cases = Vec::new();
-    for (role, doc) in [
-        (
-            "LAND operator",
-            LandOperators {
-                operator: Some(holder.clone()),
-                ..Default::default()
-            },
-        ),
-        (
-            "update operator",
-            LandOperators {
-                update_operator: Some(holder.clone()),
-                ..Default::default()
-            },
-        ),
-        (
-            "update manager",
-            LandOperators {
-                update_managers: vec![holder.clone()],
-                ..Default::default()
-            },
-        ),
-        (
-            "approved for all",
-            LandOperators {
-                approved_for_all: vec![holder.clone()],
-                ..Default::default()
-            },
-        ),
-    ] {
+    for (role, doc) in extended_land_roles(&holder) {
         let scene = genesis_scene();
         seed_genesis_place(&pool, &scene, None).await;
-        cases.push((role, land(doc), genesis(&scene), None));
+        cases.push((role, land_policy(doc), genesis(&scene), None));
     }
     seed_genesis_place(&pool, &lease_scene, None).await;
     cases.push((
@@ -2679,6 +2644,9 @@ async fn extended_holders_manage_stream_access_and_cast_presenters() {
         outsider("POST", access, NOT_AUTHORIZED_TO_STREAM_MSG).await;
         let (status, body) = h.signed(KEY, "POST", access, &metadata, None).await;
         assert_eq!(status, StatusCode::OK, "{role}: {body}");
+        outsider("PUT", access, NOT_AUTHORIZED_TO_STREAM_MSG).await;
+        let (status, body) = h.signed(KEY, "PUT", access, &metadata, None).await;
+        assert_eq!(status, StatusCode::OK, "{role} reset: {body}");
 
         let link = "/cast/generate-stream-link";
         outsider("GET", link, NOT_STREAM_LINK_ADMIN_MSG).await;
@@ -2743,15 +2711,19 @@ async fn extended_holders_manage_stream_access_and_cast_presenters() {
         .await
         .unwrap();
     assert!(unleased_holders.is_empty(), "{unleased_holders:?}");
+    let presenter = format!("/cast/presenters/{}", address_of(&random_key()));
     for (method, path, message) in [
         ("GET", "/scene-stream-access", NOT_AUTHORIZED_TO_STREAM_MSG),
         ("POST", "/scene-stream-access", NOT_AUTHORIZED_TO_STREAM_MSG),
+        ("PUT", "/scene-stream-access", NOT_AUTHORIZED_TO_STREAM_MSG),
         (
             "GET",
             "/cast/generate-stream-link",
             NOT_STREAM_LINK_ADMIN_MSG,
         ),
         ("GET", "/cast/presenters", NOT_PRESENTER_ADMIN_MSG),
+        ("PUT", presenter.as_str(), NOT_PRESENTER_ADMIN_MSG),
+        ("DELETE", presenter.as_str(), NOT_PRESENTER_ADMIN_MSG),
         (
             "DELETE",
             "/scene-stream-access",

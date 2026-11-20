@@ -880,13 +880,13 @@ async fn toolkit_ban_listings_need_the_scene_owner_or_an_admin() {
 
 /// Upstream's `isSceneOwnerOrAdmin` also admits the place's extended
 /// holders to the ban listings: a world deployment or streaming grantee, a
-/// LAND operator, update operator, update manager or approved-for-all
-/// address and a lease holder reach the store, an outsider and a
+/// LAND-document owner, operator, update operator, update manager or
+/// approved-for-all address and a lease holder reach the store, an outsider and a
 /// stale stored owner still get 401, and grants that cannot be read are 503.
 #[tokio::test]
 async fn toolkit_ban_listings_admit_extended_holders() {
     let holder = address_of(KEY);
-    let (lease_url, server) = lease_document(&holder, "42,42").await;
+    let (lease_url, server) = lease_document(&checksummed(&holder), "42,42").await;
     let app = |policy: StubPolicy, lease_url: Option<String>| {
         let settings = Settings {
             lease_authorizations_url: lease_url,
@@ -909,29 +909,6 @@ async fn toolkit_ban_listings_admit_extended_holders() {
         protected: Ok([Address::parse(&holder).unwrap()].into_iter().collect()),
         ..StubPolicy::default()
     };
-    let land = |doc: LandOperators| StubPolicy {
-        land: Ok(Some(Arc::new(Some(LandOperators {
-            owner: "0x000000000000000000000000000000000000dead".into(),
-            ..doc
-        })))),
-        ..StubPolicy::default()
-    };
-    let operator = land(LandOperators {
-        operator: Some(holder.clone()),
-        ..Default::default()
-    });
-    let update_operator = land(LandOperators {
-        update_operator: Some(holder.clone()),
-        ..Default::default()
-    });
-    let update_manager = land(LandOperators {
-        update_managers: vec![holder.clone()],
-        ..Default::default()
-    });
-    let approved_for_all = land(LandOperators {
-        approved_for_all: vec![holder.clone()],
-        ..Default::default()
-    });
     let unreadable = StubPolicy {
         grantees: Err(AuthorityNotEstablished::UndeterminedStoreUnavailable {
             store: "world permissions",
@@ -939,56 +916,35 @@ async fn toolkit_ban_listings_admit_extended_holders() {
         }),
         ..StubPolicy::default()
     };
-    for (case, app, meta, outcome) in [
-        (
-            "world grantee",
-            app(grantee, None),
-            &world,
-            StatusCode::INTERNAL_SERVER_ERROR,
-        ),
-        (
-            "LAND operator",
-            app(operator, None),
-            &genesis,
-            StatusCode::INTERNAL_SERVER_ERROR,
-        ),
-        (
-            "update operator",
-            app(update_operator, None),
-            &genesis,
-            StatusCode::INTERNAL_SERVER_ERROR,
-        ),
-        (
-            "update manager",
-            app(update_manager, None),
-            &genesis,
-            StatusCode::INTERNAL_SERVER_ERROR,
-        ),
-        (
-            "approved for all",
-            app(approved_for_all, None),
-            &genesis,
-            StatusCode::INTERNAL_SERVER_ERROR,
-        ),
+    let ise = StatusCode::INTERNAL_SERVER_ERROR;
+    let mut cases = vec![("world grantee", app(grantee, None), &world, true, ise)];
+    for (role, doc) in extended_land_roles(&holder) {
+        cases.push((role, app(land_policy(doc), None), &genesis, false, ise));
+    }
+    cases.extend([
         (
             "lease holder",
             app(StubPolicy::default(), Some(lease_url.clone())),
             &genesis,
-            StatusCode::INTERNAL_SERVER_ERROR,
+            false,
+            ise,
         ),
         (
             "stale stored owner",
             app(stale_owner, None),
             &world,
+            true,
             StatusCode::UNAUTHORIZED,
         ),
         (
             "unreadable world grants",
             app(unreadable, None),
             &world,
+            true,
             StatusCode::SERVICE_UNAVAILABLE,
         ),
-    ] {
+    ]);
+    for (case, app, meta, in_world, outcome) in cases {
         for path in ["/scene-bans", "/scene-bans/addresses"] {
             let (status, value) = call(&app, "GET", path, meta, Value::Null, KEY).await;
             assert_eq!(status, outcome, "{case} {path}: {value}");
@@ -1012,7 +968,7 @@ async fn toolkit_ban_listings_admit_extended_holders() {
                 // Past the gate: the store behind it has no database here.
                 assert_eq!(
                     (status, value),
-                    past_gate_store_fault(method, path, std::ptr::eq(meta, &world)),
+                    past_gate_store_fault(method, path, in_world),
                     "{case} {method} {path}"
                 );
             } else if outcome == StatusCode::UNAUTHORIZED {

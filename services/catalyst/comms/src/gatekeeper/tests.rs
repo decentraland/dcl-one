@@ -15,6 +15,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;
 
+use crate::access::LandOperators;
 use crate::http::Outbound;
 use crate::interfaces::test_support::{StubPolicy, StubScenes};
 use crate::{Address, CommunityId, PermissionDecision};
@@ -199,6 +200,68 @@ async fn lease_document(holder: &str, plot: &str) -> (String, tokio::task::JoinH
     );
     let server = tokio::spawn(async move { axum::serve(listener, lease).await.unwrap() });
     (url, server)
+}
+
+/// The EIP-55 mixed-case form of `address`, so a test pins the lowercasing.
+fn checksummed(address: &str) -> String {
+    let mixed = Address::parse(address).unwrap().checksummed();
+    assert_ne!(mixed, address, "a mixed-case form");
+    mixed
+}
+
+/// A policy whose LAND document holds `doc`'s roles, owned by an unrelated
+/// address unless `doc` names the owner; `is_admin` refuses.
+fn land_policy(doc: LandOperators) -> StubPolicy {
+    let owner = if doc.owner.is_empty() {
+        "0x000000000000000000000000000000000000dead".into()
+    } else {
+        doc.owner.clone()
+    };
+    StubPolicy {
+        land: Ok(Some(Arc::new(Some(LandOperators { owner, ..doc })))),
+        ..StubPolicy::default()
+    }
+}
+
+/// Every LAND-document role held by `holder`; the operator's is checksummed.
+fn extended_land_roles(holder: &str) -> [(&'static str, LandOperators); 5] {
+    [
+        (
+            "LAND owner",
+            LandOperators {
+                owner: holder.into(),
+                ..Default::default()
+            },
+        ),
+        (
+            "LAND operator",
+            LandOperators {
+                operator: Some(checksummed(holder)),
+                ..Default::default()
+            },
+        ),
+        (
+            "update operator",
+            LandOperators {
+                update_operator: Some(holder.into()),
+                ..Default::default()
+            },
+        ),
+        (
+            "update manager",
+            LandOperators {
+                update_managers: vec![holder.into()],
+                ..Default::default()
+            },
+        ),
+        (
+            "approved for all",
+            LandOperators {
+                approved_for_all: vec![holder.into()],
+                ..Default::default()
+            },
+        ),
+    ]
 }
 
 async fn seed_world_scene(pool: &PgPool, world: &str, entity_id: &str, parcels: &[&str]) {
