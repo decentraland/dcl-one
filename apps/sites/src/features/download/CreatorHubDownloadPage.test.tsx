@@ -12,6 +12,7 @@ import CreatorHubDownloadPage from "./CreatorHubDownloadPage";
 
 vi.hoisted(() => Object.assign(window, { __vite_plugin_react_preamble_installed__: true }));
 vi.mock("@ui/web/frames/SitesChrome", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
+vi.mock("../creators/components/SubNav", () => ({ SubNav: () => null }));
 vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
 vi.mock("@/data/lib/download/mac-chip", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/data/lib/download/mac-chip")>()),
@@ -127,8 +128,30 @@ it("does not move to the install steps once the page was left for another", asyn
   expect(assign).not.toHaveBeenCalled();
 });
 
-it("offers no download on a system without an installer", () => {
+it("offers the creator docs instead of a download on a system without an installer", () => {
   render(<CreatorHubDownloadPage {...onMac} detectedOs="macos" primary={null} secondary={[]} />);
   expect(screen.getByRole("heading", { name: "Decentraland Creator Hub" })).toBeTruthy();
   expect(screen.queryByRole("link", { name: "Download Creator Hub" })).toBeNull();
+  expect(screen.getByRole("link", { name: "Explore the Creator Docs" }).getAttribute("href")).toMatch(/\/docs\/creator\/?$/);
+});
+
+it("hands the page's link to the share sheet, without the query that named this device", async () => {
+  vi.stubGlobal("location", { href: "http://localhost/download/creator-hub?os=ios", origin: "http://localhost", pathname: "/download/creator-hub", assign });
+  const share = vi.fn(() => Promise.resolve());
+  vi.stubGlobal("navigator", { ...navigator, share });
+  render(<CreatorHubDownloadPage {...onMac} primary={null} secondary={[]} />);
+  await user().click(screen.getByRole("button", { name: "Share link" }));
+  expect(share).toHaveBeenCalledWith(expect.objectContaining({ url: "http://localhost/download/creator-hub" }));
+  expect(track).toHaveBeenCalledWith("lp_creatorhub_link_shared", { method: "share" }, expect.anything());
+});
+
+it("copies the page's link where there is no share sheet", async () => {
+  vi.stubGlobal("location", { href: "http://localhost/download/creator-hub", origin: "http://localhost", pathname: "/download/creator-hub", assign });
+  // user-event stands in for the clipboard; jsdom has no share sheet.
+  const clicker = user();
+  render(<CreatorHubDownloadPage {...onMac} primary={null} secondary={[]} />);
+  await clicker.click(screen.getByRole("button", { name: "Share link" }));
+  expect(await navigator.clipboard.readText()).toBe("http://localhost/download/creator-hub");
+  expect(await screen.findByRole("button", { name: "Link copied" })).toBeTruthy();
+  expect(track).toHaveBeenCalledWith("lp_creatorhub_link_shared", { method: "copy" }, expect.anything());
 });

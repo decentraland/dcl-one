@@ -5,7 +5,7 @@ use serde_json::Value;
 use crate::auth::eip1654::Eip1654Validator;
 use crate::auth::{
     AuthChain, AuthError, AuthLinkType, parse_ephemeral_payload, recover_address,
-    verify_auth_chain_async,
+    verify_login_chain_async,
 };
 
 use super::CreateRequestBody;
@@ -167,7 +167,7 @@ async fn verify_chain(
     final_authority: &str,
     eip1654: Option<&dyn Eip1654Validator>,
 ) -> Result<(), ChainRefusal> {
-    match verify_auth_chain_async(chain, final_authority, None, eip1654).await {
+    match verify_login_chain_async(chain, final_authority, None, eip1654).await {
         Ok(()) => Ok(()),
         Err(AuthError::Eip1654NotImplemented) => {
             if !NO_VALIDATOR_WARNED.swap(true, Ordering::Relaxed) {
@@ -694,10 +694,19 @@ mod tests {
     }
 
     fn delegated_chain(signer_key: &str, ephemeral_key: &str, expiration: &str) -> AuthChain {
+        delegated_chain_for("Decentraland Login", signer_key, ephemeral_key, expiration)
+    }
+
+    fn delegated_chain_for(
+        first_line: &str,
+        signer_key: &str,
+        ephemeral_key: &str,
+        expiration: &str,
+    ) -> AuthChain {
         use alloy_signer::SignerSync;
         let signer = wallet(signer_key);
         let message = format!(
-            "Decentraland Login\nEphemeral address: {}\nExpiration: {expiration}",
+            "{first_line}\nEphemeral address: {}\nExpiration: {expiration}",
             address_of(ephemeral_key)
         );
         let signature = format!(
@@ -837,6 +846,26 @@ mod tests {
     async fn identity_chain_refuses_an_expired_delegation() {
         let chain = delegated_chain(SIGNER_KEY, EPHEMERAL_KEY, "2020-01-01T00:00:00.000Z");
         assert!(validate_identity_chain(&chain, None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn requests_and_identities_need_a_login_delegation() {
+        let login = delegated_chain(SIGNER_KEY, EPHEMERAL_KEY, "2100-01-01T00:00:00.000Z");
+        assert!(validate_auth_chain(&login, None).await.is_ok());
+        assert!(validate_identity_chain(&login, None).await.is_ok());
+
+        let other = delegated_chain_for(
+            "Decentraland Storage Delegation",
+            SIGNER_KEY,
+            EPHEMERAL_KEY,
+            "2100-01-01T00:00:00.000Z",
+        );
+        for err in [
+            invalid(validate_auth_chain(&other, None).await.map(|_| ())),
+            invalid(validate_identity_chain(&other, None).await.map(|_| ())),
+        ] {
+            assert!(err.starts_with("Invalid ephemeral payload"), "{err}");
+        }
     }
 
     #[tokio::test]

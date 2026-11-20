@@ -374,7 +374,7 @@ CREATE TABLE shop.chain_cursor (
     reorg_rewinds integer NOT NULL DEFAULT 0,
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     PRIMARY KEY (indexer, network),
-    CONSTRAINT chain_cursor_indexer_known CHECK (indexer IN ('nft', 'trade_events', 'rentals', 'mana_transfers', 'sales')),
+    CONSTRAINT chain_cursor_indexer_known CHECK (indexer IN ('nft', 'trade_events', 'rentals', 'mana_transfers', 'sales', 'committee')),
     CONSTRAINT chain_cursor_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT chain_cursor_fold_within_indexed CHECK (fold_through IS NULL OR fold_through <= last_block),
     CONSTRAINT chain_cursor_folded_within_indexed CHECK (folded_block IS NULL OR folded_block <= last_block),
@@ -16777,6 +16777,23 @@ CREATE TABLE shop.mana_transfer (
 );
 CREATE INDEX mana_transfer_sender ON shop.mana_transfer (network, sender, block_number DESC, log_index DESC);
 CREATE INDEX mana_transfer_recipient ON shop.mana_transfer (network, recipient, block_number DESC, log_index DESC);
+
+-- The curation committee (`committee` index, shop/src/market/committee_index.rs):
+-- the Polygon Committee contracts' MemberSet logs, appended with the cursor
+-- advance and deleted past a reorg rewind. Workload: tens of rows in all.
+-- A wallet is a member when its latest row (chain order, across both
+-- contracts) has is_member; builder reads that set by shared SQL up to the
+-- cursor's published block (DATABASE.md "Curation committee").
+CREATE TABLE shop.committee_event (
+    network text NOT NULL CHECK (network = 'matic'),
+    block_number bigint NOT NULL CHECK (block_number >= 0),
+    log_index integer NOT NULL CHECK (log_index >= 0),
+    block_time bigint NOT NULL CHECK (block_time >= 0),
+    contract_address varchar(42) NOT NULL CHECK (contract_address ~ '^0x[0-9a-f]{40}$'),
+    member varchar(42) NOT NULL CHECK (member ~ '^0x[0-9a-f]{40}$'),
+    is_member boolean NOT NULL,
+    PRIMARY KEY (network, block_number, log_index)
+);
 
 -- Tip forwards (POST /events-notifier/forward-blockchain) waiting for the
 -- MANA transfer index to reach their transaction. Workload: one row per tip,

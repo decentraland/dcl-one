@@ -36,6 +36,12 @@
       "@catalyst-api/*": ["../../library/catalyst-api/*"],
       // The Shop's portable core (model, prices, rules), shared with ui3.
       "@shop/*": ["../../library/shop/*"],
+      // Decentraland's content hashes, imported as source.
+      "@dcl/hashing": ["../../library/hashing/src/index.ts"],
+      // The full three.js declarations, for the code that needs more than the avatar preview's reduced ones
+      // (src/data/lib/creators/three.ts).
+      "three-full": ["./node_modules/@types/three"],
+      "three-full/*": ["./node_modules/@types/three/*"],
       // The Explorer HUD UI /play compiles, and the behaviours /play supplies to it.
       "@hud/*": ["../../library/ui/apps/hud/*"],
       "@explorer-core/*": ["../../library/explorer-core/*"],

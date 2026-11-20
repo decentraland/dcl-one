@@ -19,6 +19,8 @@ pub struct MarketUpstreamsConfig {
     /// L1 marketplace subgraph (names, and LAND before the indexes publish);
     /// `NODE_POSTURE=mirror` sets lamb2's default. Unset, `/lambdas` names
     /// and lands answer the 503 envelope; profiles and outfits claim no name.
+    /// It is also the DCL NAME world owner reader: `WORLDS_WRITES_ENABLED=true`
+    /// refuses to start without it unless `IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true`.
     #[arg(long, env = "MARKETPLACE_SUBGRAPH_URL")]
     pub marketplace_subgraph_url: Option<String>,
 
@@ -140,6 +142,11 @@ pub struct MarketplaceConfig {
     /// Walk the store's primary mints and the ERC721BidV2 bids on Polygon.
     #[arg(long, env = "MARKETPLACE_SALES_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_sales_index_enabled: bool,
+
+    /// Walk the Polygon Committee contracts' MemberSet logs (builder's curation committee)
+    /// over the `TRADE_RPC_URLS` 137 entry, else on mainnet `RPC_ENDPOINT_POLYGON`.
+    #[arg(long, env = "MARKETPLACE_COMMITTEE_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub marketplace_committee_index_enabled: bool,
 
     #[arg(long, env = "MARKETPLACE_INDEX_INTERVAL_SECS", default_value_t = 5)]
     pub marketplace_index_interval_secs: u64,
@@ -673,7 +680,8 @@ mod tests {
         assert!(
             !c.marketplace.marketplace_nft_index_enabled
                 && !c.marketplace.marketplace_trade_events_index_enabled
-                && !c.marketplace.marketplace_sales_index_enabled,
+                && !c.marketplace.marketplace_sales_index_enabled
+                && !c.marketplace.marketplace_committee_index_enabled,
             "the chain indexes are opt-in"
         );
         assert_eq!(
