@@ -20,11 +20,13 @@
 //! [`PREAUTH_PER_MINUTE_PER_48`]; a private or loopback peer (an unlisted
 //! gateway) is not limited before it.
 //! A signed forward the MANA transfer index cannot serve is refused and
-//! nothing is stored: with no `mana_transfers` cursor or one without its whole
-//! history, a 503 with the body code [`TIP_INDEX_UNAVAILABLE`] (its claim
-//! could only expire, so clients stop); with a whole-history walk lagging or
-//! paused ([`chain_walk::is_walked`] false), a 503 with `Retry-After`; when the
-//! cursor cannot be read, a 500.
+//! nothing is stored. With no `mana_transfers` cursor (the local setting off),
+//! one without its whole history, or one not advanced for
+//! [`INDEX_ABANDONED_SECS`], it is a 503 with the body code
+//! [`TIP_INDEX_UNAVAILABLE`]: its claim could only expire, so clients stop.
+//! With a whole-history walk lagging or paused ([`chain_walk::is_walked`]
+//! false), or the local walk not started yet, it is a 503 with `Retry-After`;
+//! when the cursor cannot be read, a 500.
 //! The auth dApp posts cross-origin with signed-fetch headers, so the route
 //! answers the browser's preflight with the events-notifier's CORS ([`CORS`]).
 //! A transfer below the minimum amount, or mined longer than the maximum age
@@ -241,10 +243,10 @@ static SOURCE_LIMITER: LazyLock<ForwardLimiter> =
 static SIGNER_LIMITER: LazyLock<ForwardLimiter> =
     LazyLock::new(|| ForwardLimiter::new(LIMITER_KEYS));
 
-fn retry_later(message: &str, secs: i64) -> Response {
+fn retry_later(status: StatusCode, message: &str, secs: i64) -> Response {
     let secs = secs.max(1);
     (
-        StatusCode::TOO_MANY_REQUESTS,
+        status,
         [(header::RETRY_AFTER, secs.to_string())],
         Json(json!({ "error": message, "retryAfter": secs })),
     )
@@ -298,7 +300,7 @@ async fn forward(
     if let Some(ip) = ip
         && !SOURCE_LIMITER.allow(&source_keys(&ip))
     {
-        return retry_later("rate limit exceeded", 1);
+        return retry_later(StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded", 1);
     }
     let signer = match signed_fetch::require_signer_at(
         &headers,
@@ -322,7 +324,7 @@ async fn forward(
         }
     };
     if !SIGNER_LIMITER.allow(&[(signer.clone(), FORWARDS_PER_MINUTE)]) {
-        return retry_later("rate limit exceeded", 2);
+        return retry_later(StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded", 2);
     }
     let tx = match parse_body(&body) {
         Ok(tx) => tx,
@@ -341,16 +343,11 @@ async fn forward(
                 .into_response();
         }
         IndexState::Behind => {
-            let secs = INDEX_BEHIND_RETRY_SECS;
-            return (
+            return retry_later(
                 StatusCode::SERVICE_UNAVAILABLE,
-                [(header::RETRY_AFTER, secs.to_string())],
-                Json(json!({
-                    "error": "Tip confirmation is behind on this node, retry later",
-                    "retryAfter": secs,
-                })),
-            )
-                .into_response();
+                "Tip confirmation is behind on this node, retry later",
+                INDEX_BEHIND_RETRY_SECS,
+            );
         }
         IndexState::Unknown => {
             return error(
@@ -362,9 +359,11 @@ async fn forward(
     match claim(&state.pool, &state.settings.market.tips, &tx, &signer).await {
         Ok(Outcome::Notified) => StatusCode::NO_CONTENT.into_response(),
         Ok(Outcome::Pending) => (StatusCode::ACCEPTED, Json(json!({}))).into_response(),
-        Ok(Outcome::Busy { retry_after_secs }) => {
-            retry_later("Too many tips waiting for confirmation", retry_after_secs)
-        }
+        Ok(Outcome::Busy { retry_after_secs }) => retry_later(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many tips waiting for confirmation",
+            retry_after_secs,
+        ),
         Ok(Outcome::Rejected(why)) => error(StatusCode::BAD_REQUEST, why.message(&tx)),
         Err(e) => {
             tracing::error!(error = %e, tx, "tip forward failed");
@@ -378,9 +377,12 @@ async fn forward(
 
 /// The 503 body code for a node with no MANA transfer index: a client stops
 /// asking. Any other 503 is worth retrying.
-pub const TIP_INDEX_UNAVAILABLE: &str = "tip-index-unavailable";
+const TIP_INDEX_UNAVAILABLE: &str = "tip-index-unavailable";
 /// The `Retry-After` of a forward refused while the walk is behind.
 const INDEX_BEHIND_RETRY_SECS: i64 = 60;
+/// A whole-history cursor not advanced for this long is one nothing walks (or
+/// one held at `MARKETPLACE_INDEX_STOP_BLOCK_MATIC`): no index, not a lag.
+const INDEX_ABANDONED_SECS: i64 = 3 * CLAIM_TTL_SECS;
 
 /// What the MANA transfer index, walked here or by another process, can do
 /// for a forward now.
@@ -388,27 +390,34 @@ const INDEX_BEHIND_RETRY_SECS: i64 = 60;
 enum IndexState {
     /// A live walk near the head ([`chain_walk::is_walked`] within the claim's hour).
     Serves,
-    /// No cursor, or one without its whole history: no claim can settle.
+    /// No cursor (with the local setting off), one without its whole history,
+    /// or one not advanced for [`INDEX_ABANDONED_SECS`]: no claim can settle.
     Off,
-    /// A whole-history walk lagging or paused: it may serve again soon.
+    /// A whole-history walk lagging or paused, or the local walk not started
+    /// yet: it may serve again soon.
     Behind,
     /// The cursor could not be read.
     Unknown,
 }
 
 async fn index_state(state: &SharedState) -> IndexState {
+    let now = chrono::Utc::now();
     match chain_walk::cursor(&state.pool, INDEXER_MANA, NET).await {
         Ok(Some(c)) if !c.full_history => IndexState::Off,
         Ok(Some(c))
-            if chain_walk::is_walked(
-                &c,
-                chrono::Utc::now(),
-                chrono::Duration::seconds(CLAIM_TTL_SECS),
-            ) =>
+            if chain_walk::is_walked(&c, now, chrono::Duration::seconds(CLAIM_TTL_SECS)) =>
         {
             IndexState::Serves
         }
+        Ok(Some(c))
+            if now.naive_utc().signed_duration_since(c.updated_at)
+                > chrono::Duration::seconds(INDEX_ABANDONED_SECS) =>
+        {
+            IndexState::Off
+        }
         Ok(Some(_)) => IndexState::Behind,
+        // The local walk creates its cursor on its first pass.
+        Ok(None) if state.settings.market.indexes.mana_transfers_enabled => IndexState::Behind,
         Ok(None) => IndexState::Off,
         Err(e) => {
             tracing::error!(error = %e, "cannot read the MANA transfer cursor; refusing the tip forward");
@@ -1567,7 +1576,7 @@ mod tests {
         let w = crate::outfits::testkit::scratch_wallet();
         let index_off = Some(json!({
             "error": "Tip confirmation is unavailable on this node",
-            "code": TIP_INDEX_UNAVAILABLE,
+            "code": "tip-index-unavailable",
         }));
         let behind = Some(json!({
             "error": "Tip confirmation is behind on this node, retry later",
@@ -1579,6 +1588,11 @@ mod tests {
             (None, index_off.clone())
         );
         assert_eq!(claim_count(&db.pool).await, 0, "nothing stored");
+        assert_eq!(
+            refused(forward_tip(&app_with(true), &w).await).await,
+            (Some("60".into()), behind.clone()),
+            "the local walk has not created its cursor yet"
+        );
 
         // An unpublished walk this many minutes behind, last advanced
         // `advanced` ago by the database clock.
@@ -1614,6 +1628,13 @@ mod tests {
                 (Some("60"), behind.clone()),
                 "a catch-up lagging behind the hour",
             ),
+            (
+                true,
+                300,
+                "4 hours",
+                (None, index_off.clone()),
+                "a cursor nothing has walked for hours",
+            ),
         ] {
             walk(full, behind_mins, advanced).await;
             assert_eq!(
@@ -1624,6 +1645,7 @@ mod tests {
         }
 
         let on = app_with(true);
+        walk(true, 120, "0 seconds").await;
         assert_eq!(
             refused(forward_tip(&on, &w).await).await.0.as_deref(),
             Some("60"),
