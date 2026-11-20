@@ -1726,9 +1726,7 @@ pub fn process_scene_lifecycle(
     preview_mode: Res<PreviewMode>,
     mut current_scene_loading_res: ResMut<CurrentSceneLoading>,
     startup_scenes: Option<Res<StartupScenes>>,
-    admission: Res<SceneAdmission>,
-    realm: Res<CurrentRealm>,
-    wallet: Res<wallet::Wallet>,
+    (admission, realm, wallet): (Res<SceneAdmission>, Res<CurrentRealm>, Res<wallet::Wallet>),
     time: Res<Time>,
 ) {
     let mut required_scene_ids: HashMap<(String, Option<String>), bool> = HashMap::new();
