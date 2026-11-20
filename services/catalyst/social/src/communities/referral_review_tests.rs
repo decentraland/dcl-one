@@ -1575,3 +1575,38 @@ async fn an_empty_reward_supply_keeps_a_longer_wait() {
     server.abort();
     database.drop().await;
 }
+
+/// A new grant's empty reply does not push back a row of its tier that is
+/// already waiting, so a steady inflow of grants cannot starve older rows.
+#[tokio::test]
+async fn an_empty_reward_supply_for_a_new_grant_keeps_older_rows_due() {
+    let Some(database) = reward_database().await else {
+        return;
+    };
+    let pool = database.pool.clone();
+    let (rewards, url, server) = reward_stub(json!({"ok": true, "data": []})).await;
+    let settings = Settings {
+        reward_server_url: Some(url),
+        ..Settings::for_tests()
+    };
+    let referral = Referral::new(pool.clone(), Outbound::for_tests(), settings);
+    let older = wallet();
+    sqlx::query("INSERT INTO social.referral_progress(referrer,invited_user,status,tier_granted,reward_tier,reward_retry_at) VALUES($1,$2,'tier_granted',true,5,timezone('UTC', now()) + interval '30 minutes')")
+        .bind(wallet()).bind(&older).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO social.referral_progress(referrer,invited_user,status,tier_granted,reward_tier) VALUES($1,$2,'tier_granted',true,5)")
+        .bind(wallet()).bind(wallet()).execute(&pool).await.unwrap();
+
+    referral.drain_pending_rewards().await.unwrap();
+    assert_eq!(rewards.load(Ordering::SeqCst), 1, "the new grant is asked");
+    let kept: bool = sqlx::query_scalar(
+        "SELECT reward_retry_at < timezone('UTC', now()) + interval '31 minutes' \
+         FROM social.referral_progress WHERE invited_user = $1",
+    )
+    .bind(&older)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(kept, "the older row keeps its time");
+    server.abort();
+    database.drop().await;
+}

@@ -624,16 +624,19 @@ impl Referral {
                 let mut tx = sqlx::Connection::begin(&mut *guard)
                     .await
                     .map_err(database_error)?;
-                // The other rows keep their order and the first is due after
-                // the delay; a longer wait is never shortened. The predicate
+                // The other due rows keep their order and the first is due
+                // after the delay. A row already waiting keeps its time, so a
+                // new grant's reply never pushes older rows back. The predicate
                 // implies referral_progress_reward_due_idx.
                 sqlx::query(
                     "WITH waiting AS (SELECT min(reward_retry_at) AS first FROM social.referral_progress \
-                       WHERE reward_tier=$1 AND reward_requested_at IS NULL AND reward_response IS NULL AND invited_user<>$2) \
-                     UPDATE social.referral_progress SET reward_retry_at=GREATEST(reward_retry_at, \
-                       timezone('UTC',now())+$3::interval+COALESCE(reward_retry_at-waiting.first,interval '0')) \
+                       WHERE reward_tier=$1 AND reward_requested_at IS NULL AND reward_response IS NULL AND invited_user<>$2 \
+                         AND (reward_retry_at IS NULL OR reward_retry_at<=timezone('UTC',now()))) \
+                     UPDATE social.referral_progress SET reward_retry_at= \
+                       timezone('UTC',now())+$3::interval+COALESCE(reward_retry_at-waiting.first,interval '0') \
                      FROM waiting \
-                     WHERE reward_tier=$1 AND reward_requested_at IS NULL AND reward_response IS NULL AND invited_user<>$2",
+                     WHERE reward_tier=$1 AND reward_requested_at IS NULL AND reward_response IS NULL AND invited_user<>$2 \
+                       AND (reward_retry_at IS NULL OR reward_retry_at<=timezone('UTC',now()))",
                 )
                 .bind(total as i32)
                 .bind(invited)

@@ -1240,7 +1240,7 @@ leased worker after login recording commits; they do not delay login acknowledge
 pre-POST `reward_requested_at`, confirmed provider `reward_response` and
 `reward_retry_at`. The expected workload is at most one receipt per milestone,
 with a 64-row due batch every minute; a tier with an empty supply is asked again
-about once an hour; this bound is not a throughput measurement.
+about once an hour, plus once per new grant; this bound is not a throughput measurement.
 The partial due index excludes completed and ambiguous requests. A session
 advisory guard serializes attempts without an open transaction across HTTP; its
 connection closes on cancellation.
@@ -1253,10 +1253,11 @@ supplying a confirmed response. A held claim with no stored response stays
 quarantined until an operator clears `reward_requested_at`. A successful reply
 `{"ok": true, "data": []}` confirms the beneficiary holds no reward under the
 tier's campaign key: the claim is cleared and every unclaimed row of that tier
-without a stored response moves one hour ahead in its current order (a longer
-wait is kept; through the partial due index), with the answered row placed
-last, so about one request per hour covers the tier, each asking the next row,
-until its campaign is restocked. After restocking, operators may clear
+without a stored response that is due or new moves one hour ahead in its
+current order (a row already waiting keeps its time; through the partial due
+index), with the answered row placed last, so about one request per hour covers
+the tier, each asking the next row, until its campaign is restocked. Each new
+grant in an empty tier is also asked once on arrival. After restocking, operators may clear
 `reward_retry_at` on those rows to retry sooner. Additive step `0024_social_referral_reward_receipt`
 imports previously confirmed object-valued `reward_paid` responses, including
 receipts with missing or invalid image metadata, and quarantines uncertain pending
