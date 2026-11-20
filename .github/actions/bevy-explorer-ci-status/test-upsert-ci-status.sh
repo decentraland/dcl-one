@@ -317,6 +317,19 @@ grep -q 'OLD-BUILD' <<< "$BODY" && fail "crlf: stale content still rendered"
 grep -q $'\r' <<< "$BODY" && fail "crlf: body still carries CR"
 pass "CRLF body replaced in place, no duplicate fences"
 
+# --- 11. IF_SECTION_HAS writes only over a section that has the text --------------------------
+reset_store
+(cd "$WORK" && SECTION=build SECTION_BODY=NEW IF_SECTION_HAS=OLD bash "$UPSERT") >/dev/null
+[ "$(count)" = 0 ] || fail "if-has: wrote a comment that was not there"
+run_upsert build "OLD run 1" >/dev/null
+(cd "$WORK" && SECTION=tests SECTION_BODY=NEW IF_SECTION_HAS=OLD bash "$UPSERT") >/dev/null
+grep -q 'NEW' <<< "$(body_of)" && fail "if-has: wrote a section that does not have the text"
+(cd "$WORK" && SECTION=build SECTION_BODY=NEW IF_SECTION_HAS=OLD bash "$UPSERT") >/dev/null
+BODY="$(body_of)"
+grep -q 'NEW' <<< "$BODY" || fail "if-has: did not write a section that has the text"
+grep -q 'OLD' <<< "$BODY" && fail "if-has: the old content stays"
+pass "IF_SECTION_HAS writes only over a section that has the text"
+
 reset_store
 code=0
 (cd "$WORK" && SECTION=build SECTION_BODY=READ-FAILURE GH_FAIL_READ_EXIT=41 bash "$UPSERT") > "$WORK/read-failure.log" 2>&1 || code=$?

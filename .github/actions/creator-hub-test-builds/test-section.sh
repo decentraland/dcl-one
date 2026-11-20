@@ -89,4 +89,47 @@ for bad in "SECTION=build VERSION=1.2.3" "SECTION=desktop VERSION=1.2.3" "SECTIO
 done
 pass "an unknown section or a missing value stops"
 
+# --- status.sh: the state of the run ----------------------------------------------------------
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+cat > "$WORK/upsert.sh" <<'SH'
+printf '%s|%s|%s\n' "$COMMENT/$SECTION" "$IF_SECTION_HAS" "$(tr '\n' ' ' <<< "$SECTION_BODY")" >> "$LOG"
+SH
+export UPSERT="$WORK/upsert.sh" LOG="$WORK/log"
+STATUS_SH="$(dirname "$SECTION_SH")/status.sh"
+IN_PROGRESS='<sub>Run summary: [7](https://github.com/example/repo/actions/runs/7) · Commit: `abcdef1` · In progress</sub>'
+line() { sed -n "${1}p" "$LOG"; }
+
+STATE=pending DESKTOP=true bash "$STATUS_SH"
+has "$(line 1)" 'creator-hub/desktop||[![Desktop app](https://img.shields.io/badge/Desktop%20app-Pending!-yellow?logo=electron' || fail "pending: desktop is not written in any case"
+has "$(line 1)" "$IN_PROGRESS" || fail "pending: desktop footer"
+has "$(line 2)" 'creator-hub/inspector|<sub>Run summary: [|' || fail "pending: inspector is not only over a result"
+has "$(line 2)" 'Inspector-Pending!-yellow' || fail "pending: inspector badge"
+has "$(line 3)" 'creator-hub/asset-packs|<sub>Run summary: [|' || fail "pending: asset packs is not only over a result"
+has "$(line 3)" "$IN_PROGRESS" || fail "pending: asset packs footer"
+rm "$LOG"
+STATE=pending bash "$STATUS_SH"
+has "$(line 1)" 'creator-hub/desktop|<sub>Run summary: [|' || fail "pending without the label: desktop is not only over a result"
+has "$(line 1)" 'Desktop%20app-Not%20built-lightgrey' || fail "pending without the label: desktop badge"
+has "$(line 1)" 'add the `ci:desktop` label' || fail "pending without the label: desktop hint"
+pass "pending shows the run as in progress"
+
+rm "$LOG"
+STATE=ended INSPECTOR_CHANGED=false ASSET_PACKS_CHANGED='' bash "$STATUS_SH"
+[ "$(wc -l < "$LOG")" = 3 ] || fail "ended: not all sections"
+for n in 1 2 3; do
+  has "$(line "$n")" "|$IN_PROGRESS|" || fail "ended: line $n is not only over this run in progress"
+  has "$(line "$n")" 'Not%20built-lightgrey' || fail "ended: line $n badge"
+done
+has "$(line 1)" 'This run stopped before it published the desktop app.' || fail "ended: desktop text"
+has "$(line 2)" '`@dcl/inspector` did not change since its last release.' || fail "ended: unchanged package text"
+has "$(line 3)" 'This run stopped before it published `@dcl/asset-packs`.' || fail "ended: package text"
+has "$(line 3 | cut -d '|' -f 3-)" 'In progress' && fail "ended: still in progress"
+set +e
+STATE=started bash "$STATUS_SH" >/dev/null 2>&1
+RC=$?
+set -e
+[ "$RC" != 0 ] || fail "status: an unknown state passed"
+pass "ended shows the builds that the run did not make"
+
 [ "$FAILED" = 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }
