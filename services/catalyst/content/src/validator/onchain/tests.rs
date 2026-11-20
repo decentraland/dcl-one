@@ -997,6 +997,12 @@ async fn only_a_block_read_that_may_succeed_is_asked_again() {
         (503, "", "503", 3),
         (200, internal, "-32603", 3),
         (200, r#"{"jsonrpc":"2.0","id":1,"res"#, "malformed", 3),
+        (
+            200,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"number":"0x1"}}"#,
+            "block without a hex",
+            1,
+        ),
     ] {
         chain.clear();
         chain.set_block_reply(status, body);
