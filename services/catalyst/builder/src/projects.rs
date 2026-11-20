@@ -913,7 +913,7 @@ pub async fn put_files(
 /// `PUT .../blobs/{hash}`: the raw bytes, accepted when they hash to the
 /// CIDv1 the path names; stored in the ONE store and recorded in
 /// `uploaded_contents` (idempotent), both under the store lock's shared side
-/// ([`crate::drafts::lock_store_shared`], 503 past its wait), so a blob found stored is not unlinked before
+/// (`drafts::lock_store_shared`, 503 past its wait), so a blob found stored is not unlinked before
 /// its row commits. Answers the size.
 pub async fn accept_blob(
     pool: &PgPool,

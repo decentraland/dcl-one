@@ -985,7 +985,8 @@ async fn a_superseded_upload_never_waits_for_the_store_lock() {
     let (status, _, body) = send(&router, &scene, &scene.chain, vec![scene.files[1].clone()]).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert!(
-        started.elapsed() < Duration::from_secs(2),
+        // Under the 5 s a local deploy waits for the shared side.
+        started.elapsed() < Duration::from_secs(4),
         "answered without waiting: {:?}",
         started.elapsed()
     );
@@ -1070,6 +1071,65 @@ async fn a_busy_store_lock_ends_the_cleanup_run() {
         ids.len()
     );
     assert_eq!(pending_among(&pool, &ids).await, 0);
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// A failed reference read (here an unreadable world-scene content list)
+/// ends the run at its first batch instead of repeating the scans for every
+/// batch: every upload stays, the one past the first batch included, and the
+/// run that follows the fix reclaims them all.
+#[tokio::test]
+async fn an_unreadable_content_list_ends_the_cleanup_run() {
+    require_test_db!(Some(pool) = crate::db::scratch::isolated_pool(4).await);
+    let tmp = std::env::temp_dir().join(format!(
+        "catalyst-partial-unreadable-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = Storage::from_config(&tmp).await.unwrap();
+    let tag = uuid::Uuid::new_v4().simple().to_string();
+    let first: Vec<String> = (0..RECLAIM_BATCH)
+        .map(|i| format!("unreadable-{tag}-{i}"))
+        .collect();
+    insert_expired(&pool, &first).await;
+    insert_written(&pool, &storage, &first).await;
+    // Created after the first batch, so it is reclaimed in a later one, with no lock.
+    let later = vec![format!("unreadable-{tag}-later")];
+    insert_expired(&pool, &later).await;
+    let world = format!("unreadable-{tag}.dcl.eth");
+    sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1)")
+        .bind(&world)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size) \
+         VALUES ($1, $2, '[]'::json, $3, '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '{\"0,0\"}', 1)",
+    )
+    .bind(&world)
+    .bind(format!("unreadable-scene-{tag}"))
+    .bind(json!({ "content": "not a list" }))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let error = cleanup_expired(&pool, &storage, &Limits::default())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("content list"), "{error}");
+    assert_eq!(pending_among(&pool, &first).await, first.len() as i64);
+    assert_eq!(pending_among(&pool, &later).await, 1, "the run stopped");
+
+    sqlx::query("DELETE FROM worlds.world_scenes WHERE world_name = $1")
+        .bind(&world)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        cleanup_expired(&pool, &storage, &Limits::default())
+            .await
+            .unwrap(),
+        first.len() + 1
+    );
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
