@@ -787,8 +787,11 @@ pub(crate) async fn ensure_chain(
 /// What one network's pass of an index job came to.
 #[derive(Debug)]
 enum NetPass {
-    /// The pass ran.
+    /// The pass ran, at the head or not.
     Walked(chain_walk::PassOutcome),
+    /// The projection is in quarantine: the pass walked nothing, and an
+    /// operator acts.
+    Quarantined(chain_walk::PassOutcome),
     /// Nothing to walk yet (no endpoint, or the nft walk waiting for the
     /// collections mirror).
     Waiting,
@@ -802,6 +805,7 @@ fn net_pass(
     outcome: anyhow::Result<chain_walk::PassOutcome>,
 ) -> NetPass {
     match outcome {
+        Ok(o) if o.quarantined.is_some() => NetPass::Quarantined(o),
         Ok(o) => NetPass::Walked(o),
         Err(e)
             if e.chain()
@@ -815,7 +819,9 @@ fn net_pass(
 
 /// The index job's result over its networks. Any failure fails it. An
 /// endpoint of another chain fails it only when no network walked: a network
-/// that walked keeps its cadence, while a job with none to walk backs off.
+/// that walked keeps its cadence, while a job with none to walk backs off. A
+/// projection in quarantine walks nothing, so it keeps no cadence; alone, it
+/// fails nothing, since only an operator moves it.
 fn index_job_result(passes: Vec<NetPass>) -> anyhow::Result<()> {
     let walked = passes.iter().any(|p| matches!(p, NetPass::Walked(_)));
     let errors: Vec<String> = passes
@@ -941,7 +947,7 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
                             let outcome = chain_walk::job_pass(&state.pool, &source, ix, settings, holdings, ctx.lease(), Some(&ctx.cancel), &progress).await;
                             let pass = net_pass(*net, outcome);
                             match &pass {
-                                NetPass::Walked(o) => {
+                                NetPass::Walked(o) | NetPass::Quarantined(o) => {
                                     tracing::info!(indexer = name, summary = %o.summary(), "marketplace chain index pass");
                                     ctx.progress(o.summary());
                                 }

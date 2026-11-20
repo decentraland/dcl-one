@@ -4551,9 +4551,10 @@ async fn a_job_pass_refuses_another_chain_and_claims_again_after_a_fence() {
     db.drop().await;
 }
 
-/// An index job over two networks keeps its cadence while one walks and the
-/// other's endpoint serves another chain, and backs off when no network
-/// walks (committee-index walks Polygon only).
+/// An index job over two networks keeps its cadence while one walks (at the
+/// head too) and the other's endpoint serves another chain, and backs off
+/// when no network walks: none configured besides it (committee-index walks
+/// Polygon only), or the other in quarantine.
 #[tokio::test]
 async fn an_index_job_backs_off_only_when_no_network_walked() {
     let Some(db) = ScratchDb::create().await else {
@@ -4593,6 +4594,10 @@ async fn an_index_job_backs_off_only_when_no_network_walked() {
     assert!(matches!(walked, super::NetPass::Walked(_)), "{walked:?}");
     super::index_job_result(vec![walked, wrong])
         .expect("the network that walked keeps the job's cadence");
+    let at_head = pass(&db.pool, &polygon, &settings, &holdings).await;
+    assert!(matches!(at_head, super::NetPass::Walked(_)), "{at_head:?}");
+    let wrong = pass(&db.pool, &amoy, &settings, &holdings).await;
+    super::index_job_result(vec![at_head, wrong]).expect("a network with nothing new still walked");
 
     let wrong = pass(&db.pool, &amoy, &settings, &holdings).await;
     let err = super::index_job_result(vec![wrong, super::NetPass::Waiting])
@@ -4602,6 +4607,22 @@ async fn an_index_job_backs_off_only_when_no_network_walked() {
     let err = super::index_job_result(vec![wrong])
         .expect_err("a one-network job whose endpoint serves another chain backs off");
     assert!(err.to_string().contains("matic"), "{err}");
+
+    sqlx::query("UPDATE shop.chain_cursor SET quarantined_at = timezone('UTC', now()), quarantine_reason = 'test' WHERE indexer = 'mana_transfers' AND network = 'matic'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let quarantined = pass(&db.pool, &polygon, &settings, &holdings).await;
+    assert!(
+        matches!(quarantined, super::NetPass::Quarantined(_)),
+        "{quarantined:?}"
+    );
+    let wrong = pass(&db.pool, &amoy, &settings, &holdings).await;
+    super::index_job_result(vec![quarantined, wrong])
+        .expect_err("a projection in quarantine walks nothing: the job backs off");
+    let quarantined = pass(&db.pool, &polygon, &settings, &holdings).await;
+    super::index_job_result(vec![quarantined])
+        .expect("a quarantine alone waits for an operator, with no error");
     db.drop().await;
 }
 

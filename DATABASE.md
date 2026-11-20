@@ -2113,7 +2113,8 @@ while it still holds the lease.
 source proved it at the claim. The walk checks the source's chain every
 pass. In a job that walks both networks, a source of another chain skips
 that network for the pass and the other one walks on; the job fails, and
-backs off, only when no network walked. A row from before the binding
+backs off, only when no network walked (a projection in quarantine walks
+nothing). A row from before the binding
 (`chain_id` NULL) is adopted at the start of a pass, before any lane,
 rewind, fold or publish, in two cases:
 - it has no history yet;
