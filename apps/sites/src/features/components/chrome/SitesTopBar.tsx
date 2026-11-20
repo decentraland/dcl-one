@@ -29,13 +29,15 @@ import { useChromeAuth } from "@ui/web/frames/chrome-auth";
 import ChromeLink from "@ui/web/frames/ChromeLink";
 import { useSiteLayout } from "@ui/web/frames/SiteLayout";
 import {
+  categoryForType,
   notificationBody,
+  notificationImage,
   notificationLink,
   notificationTitle,
   relativeTime,
   unreadCount,
 } from "@ui/data/catalyst/notificationsView";
-import SitesNotificationsDialog from "@dcl/one-ui/apps/sites/chrome/SitesNotificationsDialog";
+import SitesNotificationsDialog, { notificationMedia } from "@dcl/one-ui/apps/sites/chrome/SitesNotificationsDialog";
 import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
 import wordmark from "@dcl/one-ui/apps/sites/assets/dcl_name.svg?url";
 import { SitesLocaleContext } from "@ui/web/frames/sites-locale";
@@ -244,6 +246,8 @@ export default function SitesTopBar({
         id: row.id,
         title: notificationTitle(row),
         description: notificationBody(row),
+        category: categoryForType(row.type),
+        ...notificationMedia(row.type, row.metadata, notificationImage(row)),
         href: notificationLink(row) ?? undefined,
         time: relativeTime(row.timestamp, Date.now()),
         unread: !row.read,

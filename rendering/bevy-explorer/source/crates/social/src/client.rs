@@ -167,8 +167,6 @@ pub struct SocialClientHandler {
     connectivity_callback: Box<dyn Fn(Address, ConnectivityStatus) + Send + Sync + 'static>,
     block_update_callback: BlockUpdateCallback,
     community_connectivity_callback: CommunityConnectivityCallback,
-    #[allow(dead_code)]
-    chat_event_callback: Box<dyn Fn(DirectChatMessage) + Send + Sync + 'static>,
     voice_callback: VoiceCallback,
 }
 
@@ -179,7 +177,6 @@ impl SocialClientHandler {
         friend_callback: impl Fn(&friendship_update::Update) + Send + Sync + 'static,
         connectivity_callback: impl Fn(Address, ConnectivityStatus) + Send + Sync + 'static,
         block_update_callback: impl Fn(&str, bool) + Send + Sync + 'static,
-        chat_callback: impl Fn(DirectChatMessage) + Send + Sync + 'static,
         community_connectivity_callback: impl Fn(&str, Address, ConnectivityStatus)
             + Send
             + Sync
@@ -217,7 +214,6 @@ impl SocialClientHandler {
             friend_event_callback: Box::new(friend_callback),
             connectivity_callback: Box::new(connectivity_callback),
             block_update_callback: Box::new(block_update_callback),
-            chat_event_callback: Box::new(chat_callback),
             community_connectivity_callback: Box::new(community_connectivity_callback),
             voice_callback: Box::new(voice_callback),
         })

@@ -43,9 +43,11 @@ use bevy_atmosphere::{
     prelude::AtmosphereCamera,
 };
 use bevy_console::ConsoleCommand;
-use common::structs::{AppConfig, SkyReflectionSetting};
+use common::{
+    sky_preset::LIGHT_UNIT_LUX,
+    structs::{AppConfig, SkyReflectionSetting},
+};
 use console::DoAddConsoleCommand;
-use scene_runner::update_world::lights::LIGHT_UNIT_LUX;
 use std::f32::consts::PI;
 
 const SKY_ENVMAP_SHADER_HANDLE: Handle<Shader> =
@@ -459,8 +461,10 @@ fn ambient_console_command(
 struct SkyEnvmapLabel;
 
 mod decl {
-    // temporary for ShaderType macro, remove in future
-    #![allow(dead_code)]
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
 
     use bevy::render::render_resource::ShaderType;
 

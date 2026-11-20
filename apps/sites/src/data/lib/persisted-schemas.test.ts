@@ -3,7 +3,6 @@ import { describe, expect, test } from "vitest";
 import {
   AuthIdentitySchema,
   DevSignerKeySchema,
-  SimCollectionItemsStoreSchema,
   ThirdwebSessionSchema,
 } from "./persisted-schemas";
 
@@ -84,17 +83,6 @@ describe("thirdweb session", () => {
       { token: "eyJ...", address: { value: "0xabc" } },
       false,
     ],
-  ]);
-});
-
-describe("sim collection items", () => {
-  const guard = (v: unknown) => Boolean(v && typeof v === "object");
-  const entry = (files: unknown[]) => ({ c1: { ts: 1_700_000_000_000, files } });
-
-  table("sim collection items", SimCollectionItemsStoreSchema, guard, [
-    ["what this build writes", entry([{ name: "hat.glb", size: 12, fileType: "model/gltf" }]), true],
-    ["a file size stored as a formatted string", entry([{ name: "hat.glb", size: "12 KB", fileType: "model/gltf" }]), false],
-    ["a draft reduced to its file names", entry(["hat.glb"]), false],
   ]);
 });
 

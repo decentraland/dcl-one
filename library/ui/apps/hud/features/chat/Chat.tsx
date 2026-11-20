@@ -16,6 +16,7 @@ import { HeartIcon } from './ChatIcons'
 import { ConversationRail } from './ConversationRail'
 import { CommunityHeader } from './CommunityHeader'
 import { clearPingMode } from './ping'
+import { buttonSoundHandlers } from './buttonSounds'
 import { roleLabel } from '@explorer-core/features/communities/roles'
 import { displaySender, isSystem, memberLabel, senderColor, shortAddr, splitName, usePartner } from './chatIdentity'
 import { EMOJI_BY_CODE, EMOJI_BY_GLYPH, QUICK_REACTIONS, loadRecents, type Emoji } from './emojiData'
@@ -338,7 +339,7 @@ export const ChatBubble = memo(function ChatBubble({
   return (
     <div className={`${styles.entry} ${own ? styles.own : ''} ${arrive ? styles.arrive : ''}`.trim()}>
       {clickable ? (
-        <button type="button" className={styles.avatarBtn} aria-label={`View ${base}`} onClick={openSender} onContextMenu={openSender}>
+        <button type="button" className={styles.avatarBtn} aria-label={`View ${base}`} data-ui-sound="press" onClick={openSender} onContextMenu={openSender}>
           {avatar}
         </button>
       ) : (
@@ -347,7 +348,7 @@ export const ChatBubble = memo(function ChatBubble({
       <div className={`${styles.bubble} ${highlight ? styles.mentionMe : ''}`.trim()}>
         <div className={styles.content}>
           {clickable ? (
-            <button type="button" className={styles.name} style={{ color }} onClick={openSender} onContextMenu={openSender}>
+            <button type="button" className={styles.name} style={{ color }} data-ui-sound="press" onClick={openSender} onContextMenu={openSender}>
               {nameRow}
             </button>
           ) : (
@@ -369,7 +370,7 @@ export const ChatBubble = memo(function ChatBubble({
         <span className={styles.spacer} aria-hidden="true" />
       </div>
       {translatable && onTranslate != null && (translation == null || translation.status === 'failed') && (
-        <button type="button" className={styles.translateBtn} aria-label="Translate" title="Translate" onClick={() => onTranslate(line)}>
+        <button type="button" className={styles.translateBtn} aria-label="Translate" title="Translate" data-ui-sound="press" onClick={() => onTranslate(line)}>
           <Translate size={16} />
         </button>
       )}
@@ -379,6 +380,7 @@ export const ChatBubble = memo(function ChatBubble({
           className={`${styles.reactBtn} ${reacting ? styles.reactBtnOn : ''}`.trim()}
           aria-label="React"
           aria-pressed={reacting}
+          data-ui-sound="soft"
           onClick={(e) => onReact(line, e.currentTarget)}
         />
       )}
@@ -418,6 +420,7 @@ function ReactionBar({
       type="button"
       className={`${styles.barEmoji} ${isMine(emoji) ? styles.barEmojiOn : ''}`.trim()}
       title={EMOJI_BY_GLYPH.get(emoji)?.expression}
+      data-ui-sound="press"
       onClick={() => onPick(emoji)}
     >
       {emoji}
@@ -525,7 +528,7 @@ function MembersOverlay({
           <MaskIcon src={playersIcon} size={16} />
           <span className={styles.countNum}>{members.length}</span> Online
         </span>
-        <ControlButton variant="dark" className={styles.close} aria-label="Close chat" onClick={onClose}>
+        <ControlButton variant="dark" className={styles.close} aria-label="Close chat" onClick={onClose} data-ui-sound="soft">
           <MaskIcon src={closeIcon} size={10} />
         </ControlButton>
       </header>
@@ -1032,6 +1035,7 @@ export function Chat({
     })
   }
   const accept = (s: Suggestions, i: number): void => {
+    chat.playSound('chatEmoji')
     if (s.kind === 'emoji') replaceRange(s.start, s.end, s.items[i].emoji)
     else {
       const m = s.items[i]
@@ -1044,6 +1048,13 @@ export function Chat({
     const end = el?.selectionEnd ?? draft.length
     replaceRange(start, end, glyph)
   }
+
+  // The emoji panel opening sounds; its closing does not.
+  useEffect(() => {
+    if (picker) chat.playSound('chatEmoji')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [picker])
+  const buttonSounds = useMemo(() => buttonSoundHandlers(chat.playSound), [chat.playSound])
 
   const send = (): void => {
     if (!draft.trim()) return
@@ -1107,6 +1118,7 @@ export function Chat({
       ref={setRoot}
       className={`${styles.root} ${open ? styles.open : ''} ${active ? styles.active : ''} ${focused ? styles.focused : ''} ${active && showMembers ? styles.membersOpen : ''} ${hasRail ? styles.withRail : ''}`.trim()}
       onClick={focusFromPanel}
+      {...buttonSounds}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onFocus={syncWithin}
@@ -1211,7 +1223,10 @@ export function Chat({
       {active && picker && (
         <div ref={pickerRef} className={styles.pickerWrap}>
           <EmojiPicker
-            onPick={insertAtCaret}
+            onPick={(glyph) => {
+              chat.playSound('chatEmoji')
+              insertAtCaret(glyph)
+            }}
             onClose={() => {
               setPicker(false)
               inputRef.current?.focus()
@@ -1275,7 +1290,12 @@ export function Chat({
           rows={1}
           className={styles.input}
           value={draft}
-          onChange={(e) => updateDraft(e.target.value, e.target.selectionStart ?? e.target.value.length)}
+          onChange={(e) => {
+            // the user's own edits sound (typing, a paste, a cut); a text change the chat makes
+            // (a send's clearing, an emoji or suggestion dropped in) has that action's sound
+            chat.playSound('chatInput')
+            updateDraft(e.target.value, e.target.selectionStart ?? e.target.value.length)
+          }}
           onSelect={(e) => {
             const el = e.currentTarget
             if (el.selectionStart === el.selectionEnd && sug?.end !== el.selectionStart) suggestAt(el.value, el.selectionStart ?? el.value.length)

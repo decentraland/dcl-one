@@ -54,7 +54,14 @@ impl IpfsIo {
         SharedReader,
         Option<impl ConditionalSendFuture<Output = ()> + 'static>,
     ) {
-        self.share_download_with(key, token, path, remote, scene, FetchPolicy::CONTENT)
+        // a far LOD the client named is a variant: one short attempt, the scene's own meshes
+        // being the fallback
+        let policy = if self.is_named_far_lod(&remote) {
+            crate::bevy_variants::VARIANT_FETCH
+        } else {
+            FetchPolicy::CONTENT
+        };
+        self.share_download_with(key, token, path, remote, scene, policy)
     }
 
     /// [`Self::share_download`] under its own timeouts and attempts. Readers that join an
@@ -374,6 +381,13 @@ impl IpfsIo {
                         .unwrap()
                         .connect_failed += 1;
                 }
+                self.far_lod_fetched(
+                    &remote,
+                    Err(match &e {
+                        platform::FetchError::Status(status, _) => Some(*status),
+                        _ => None,
+                    }),
+                );
                 // a catalyst only activates an entity once it holds all of its files, so a server
                 // that says a content hash's url is wrong says so for the rest of the session;
                 // preview always asks again
@@ -483,6 +497,7 @@ impl IpfsIo {
         }
 
         debug!("[{token:?}]: completed remote url: `{remote}`");
+        self.far_lod_fetched(&remote, Ok(()));
         self.failed_remotes
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

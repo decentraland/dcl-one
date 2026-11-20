@@ -19,6 +19,9 @@ import type { GroupProgress, GroupStatus } from '@shop/model/purchase'
 import { MAX_PURCHASE_UNITS, OPERATION_STATES, parseLines, TERMINAL_STATES, type ShopLine, type ShopOperationState } from '@dcl/one-ui/apps/shop/shopProtocol'
 import { isManaAttempt, type ManaAttemptRecord } from './manaPurchase'
 
+/** What the buyer is told when a write the purchase depends on was refused: nothing goes without its record. */
+export const STORAGE_REFUSED = "This browser can't keep a record of the purchase right now (its storage is full or blocked), so nothing was bought."
+
 /** What a purchase's dialog shows of one item it buys (one per unit: two of an item are two). */
 export interface PurchaseDisplay {
   name: string
