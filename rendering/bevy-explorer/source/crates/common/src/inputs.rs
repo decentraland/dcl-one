@@ -242,9 +242,10 @@ impl serde::Serialize for InputIdentifier {
     where
         S: serde::Serializer,
     {
+        use serde::ser::Error;
         match *self {
             InputIdentifier::Key(ref key) => {
-                let string = serde_json::to_string(key).unwrap();
+                let string = serde_json::to_string(key).map_err(S::Error::custom)?;
                 string
                     .strip_prefix("\"")
                     .unwrap()
@@ -253,7 +254,7 @@ impl serde::Serialize for InputIdentifier {
                     .serialize(serializer)
             }
             InputIdentifier::Mouse(ref button) => {
-                let string = serde_json::to_string(button).unwrap();
+                let string = serde_json::to_string(button).map_err(S::Error::custom)?;
                 format!(
                     "Mouse {}",
                     string
@@ -265,7 +266,7 @@ impl serde::Serialize for InputIdentifier {
                 .serialize(serializer)
             }
             InputIdentifier::Gamepad(ref button) => {
-                let string = serde_json::to_string(button).unwrap();
+                let string = serde_json::to_string(button).map_err(S::Error::custom)?;
                 format!(
                     "Gamepad {}",
                     string
@@ -277,13 +278,13 @@ impl serde::Serialize for InputIdentifier {
                 .serialize(serializer)
             }
             InputIdentifier::Analog(ident, dir) => {
-                let ident = serde_json::to_string(&ident).unwrap();
+                let ident = serde_json::to_string(&ident).map_err(S::Error::custom)?;
                 let ident = ident
                     .strip_prefix("\"")
                     .unwrap()
                     .strip_suffix("\"")
                     .unwrap();
-                let dir = serde_json::to_string(&dir).unwrap();
+                let dir = serde_json::to_string(&dir).map_err(S::Error::custom)?;
                 let dir = dir.strip_prefix("\"").unwrap().strip_suffix("\"").unwrap();
                 format!("{ident} {dir}").serialize(serializer)
             }
@@ -479,7 +480,7 @@ impl Default for InputMap {
                     Action::System(SystemAction::HideNames),
                     vec![InputIdentifier::Key(KeyCode::KeyN)],
                 ),
-                // unbound by default: KeyT/KeyG are used for ChatPanel/Gallery
+                // unbound by default: KeyT/KeyG are used for Microphone/Gallery
                 (Action::System(SystemAction::RollLeft), vec![]),
                 (Action::System(SystemAction::RollRight), vec![]),
                 (
@@ -491,7 +492,7 @@ impl Default for InputMap {
                 ),
                 (
                     Action::System(SystemAction::Microphone),
-                    vec![InputIdentifier::Key(KeyCode::KeyV)],
+                    vec![InputIdentifier::Key(KeyCode::KeyT)],
                 ),
                 (
                     Action::System(SystemAction::Map),
@@ -661,10 +662,8 @@ impl Default for InputMap {
                     Action::System(SystemAction::Friends),
                     vec![InputIdentifier::Key(KeyCode::KeyL)],
                 ),
-                (
-                    Action::System(SystemAction::ChatPanel),
-                    vec![InputIdentifier::Key(KeyCode::KeyT)],
-                ),
+                // unbound by default: KeyT is the microphone, and Enter opens the chat
+                (Action::System(SystemAction::ChatPanel), vec![]),
                 // no pad button: nothing is reserved outside photo mode, so a scene reading the
                 // same button (East is IaSecondary) would open it from its own action
                 (

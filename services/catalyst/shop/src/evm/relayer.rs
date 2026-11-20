@@ -3,9 +3,13 @@
 //! the shared guarded client; the API key travels as a bearer and is never
 //! logged.
 
-use std::time::Duration;
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
+use alloy_primitives::Address;
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 
 use super::errors::ApiError;
 use super::transaction::TransactionData;
@@ -13,6 +17,21 @@ use crate::http::{Outbound, SendError, read_body_capped};
 
 const CANCEL_REQUEST_TIMEOUT: Duration = Duration::from_millis(5000);
 const OZ_BODY_CAP: usize = 256 * 1024;
+const ACCOUNTS_REQUEST_TIMEOUT: Duration = Duration::from_millis(5000);
+/// Bounds one whole read of the relayer accounts, every page included.
+const ACCOUNTS_READ_DEADLINE: Duration = Duration::from_secs(20);
+/// How long a request waits for the first read of the relayer accounts before it is answered
+/// as unavailable.
+pub const ACCOUNTS_FIRST_WAIT: Duration = Duration::from_secs(5);
+/// Relayers asked for per page; a full page stays well under [`OZ_BODY_CAP`].
+const ACCOUNTS_PAGE_SIZE: usize = 50;
+/// Pages read before the list is taken as unreadable.
+const ACCOUNTS_MAX_PAGES: usize = 40;
+/// How long a fetched list of the relayer accounts is reused before it is read again.
+const ACCOUNTS_REFRESH: Duration = Duration::from_secs(60 * 60);
+/// How often the background pass ([`Relayer::refresh_accounts`]) runs; a failed read is tried
+/// again on the next pass.
+pub const ACCOUNTS_RETRY: Duration = Duration::from_secs(30);
 
 const BROADCAST_STATUSES: [&str; 3] = ["submitted", "mined", "confirmed"];
 const FAILED_STATUSES: [&str; 3] = ["canceled", "failed", "expired"];
@@ -55,6 +74,65 @@ fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<Strin
     Option::<String>::deserialize(d).map(Some)
 }
 
+#[derive(Debug, Deserialize)]
+struct OzAccounts {
+    #[serde(default)]
+    data: Option<Vec<OzAccount>>,
+    #[serde(default)]
+    pagination: Option<OzPagination>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OzPagination {
+    total_items: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct OzOneAccount {
+    #[serde(default)]
+    data: Option<OzAccount>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OzAccount {
+    #[serde(default)]
+    address: Option<String>,
+    #[serde(default)]
+    network_type: Option<String>,
+}
+
+impl OzAccount {
+    /// The EVM address, if this is an EVM relayer with one. An address that does not parse is
+    /// logged and left out.
+    fn evm_address(self) -> Option<Address> {
+        if self
+            .network_type
+            .as_deref()
+            .is_some_and(|t| !t.eq_ignore_ascii_case("evm"))
+        {
+            return None;
+        }
+        let raw = self.address?;
+        let raw = raw.trim();
+        if raw.is_empty() {
+            return None;
+        }
+        raw.parse()
+            .inspect_err(|_| tracing::warn!("economy: a relayer account is not an EVM address"))
+            .ok()
+    }
+}
+
+#[derive(Clone)]
+struct StoredAccounts {
+    /// When [`Relayer::refresh_accounts`] reads the list again.
+    until: Instant,
+    /// Whether `accounts` came from a complete list read, not only the configured relayer.
+    listed: bool,
+    /// `None` while neither the list nor the configured relayer's own account was ever read.
+    accounts: Option<Arc<HashSet<Address>>>,
+}
+
 pub struct Relayer {
     http: Outbound,
     base_url: String,
@@ -63,6 +141,12 @@ pub struct Relayer {
     speed: String,
     max_status_checks: u32,
     sleep: Duration,
+    /// The last list of every relayer account the API key sees.
+    accounts: parking_lot::Mutex<Option<StoredAccounts>>,
+    /// Held while the list is read, so concurrent requests wait for one read.
+    accounts_read: tokio::sync::Mutex<()>,
+    /// [`ACCOUNTS_FIRST_WAIT`] unless set with [`Relayer::with_first_wait`].
+    first_wait: Duration,
 }
 
 impl Relayer {
@@ -83,7 +167,166 @@ impl Relayer {
             speed: speed.to_string(),
             max_status_checks,
             sleep,
+            accounts: parking_lot::Mutex::new(None),
+            accounts_read: tokio::sync::Mutex::new(()),
+            first_wait: ACCOUNTS_FIRST_WAIT,
         }
+    }
+
+    /// How long a request waits for the first read of the accounts ([`Relayer::accounts`]).
+    pub fn with_first_wait(mut self, first_wait: Duration) -> Self {
+        self.first_wait = first_wait;
+        self
+    }
+
+    /// Every relayer account (`GET /api/v1/relayers`, all pages). Only the first call, before
+    /// anything is stored, waits for a read; later ones answer the stored list, which
+    /// [`Relayer::refresh_accounts`] keeps current. Concurrent callers share one read. `None` when
+    /// nothing is stored within the first wait ([`Relayer::with_first_wait`]), or when no read of
+    /// the list or of the configured relayer's own account has succeeded yet.
+    pub async fn accounts(&self) -> Option<Arc<HashSet<Address>>> {
+        if let Some(stored) = self.accounts.lock().as_ref() {
+            return stored.accounts.clone();
+        }
+        let _ = tokio::time::timeout(
+            self.first_wait,
+            self.read_accounts_if(|stored| stored.is_none()),
+        )
+        .await;
+        self.accounts
+            .lock()
+            .as_ref()
+            .and_then(|stored| stored.accounts.clone())
+    }
+
+    /// The background pass: reads the list when it is missing, failed last time, or would expire
+    /// before the next pass.
+    pub async fn refresh_accounts(&self) -> Result<(), String> {
+        self.read_accounts_if(|stored| {
+            stored.is_none_or(|s| s.until <= Instant::now() + ACCOUNTS_RETRY)
+        })
+        .await
+    }
+
+    /// Reads the list when `due` says so. A failed read keeps the last list, or, when none was
+    /// read yet, stores only the configured relayer's own account (`GET /api/v1/relayers/{id}`),
+    /// or no accounts when that read fails too, so [`Relayer::accounts`] answers `None` rather
+    /// than an empty set; either way it is due again on the next pass.
+    async fn read_accounts_if(
+        &self,
+        due: impl Fn(Option<&StoredAccounts>) -> bool,
+    ) -> Result<(), String> {
+        let _reading = self.accounts_read.lock().await;
+        if !due(self.accounts.lock().as_ref()) {
+            return Ok(());
+        }
+        let error = match self.fetch_accounts().await {
+            Ok(accounts) => {
+                *self.accounts.lock() = Some(StoredAccounts {
+                    until: Instant::now() + ACCOUNTS_REFRESH,
+                    listed: true,
+                    accounts: Some(Arc::new(accounts)),
+                });
+                return Ok(());
+            }
+            Err(e) => e,
+        };
+        let last = self.accounts.lock().clone();
+        let (listed, accounts) = match last {
+            Some(last) if last.listed => {
+                tracing::warn!(error = %error, "economy: could not read the relayer accounts; the last list stays");
+                (true, last.accounts)
+            }
+            last => {
+                let own = self.fetch_own_account().await;
+                tracing::error!(
+                    error = %error,
+                    own_account_read = own.is_ok(),
+                    "economy: could not read the relayer accounts; only the configured relayer's own account is refused until a read succeeds"
+                );
+                let accounts = match own {
+                    Ok(own) => Some(Arc::new(own.into_iter().collect())),
+                    Err(_) => last.and_then(|l| l.accounts),
+                };
+                (false, accounts)
+            }
+        };
+        *self.accounts.lock() = Some(StoredAccounts {
+            until: Instant::now(),
+            listed,
+            accounts,
+        });
+        Err(error)
+    }
+
+    async fn fetch_accounts(&self) -> Result<HashSet<Address>, String> {
+        tokio::time::timeout(ACCOUNTS_READ_DEADLINE, self.fetch_account_pages())
+            .await
+            .map_err(|_| "the relayer list took too long".to_string())?
+    }
+
+    /// Walks the pages until they cover `total_items`. A page cut short, a full page without a
+    /// count, or a count that changes between pages is a failed read rather than a shorter list.
+    async fn fetch_account_pages(&self) -> Result<HashSet<Address>, String> {
+        let mut accounts = HashSet::new();
+        let mut listed: u64 = 0;
+        let mut first_total = None;
+        for page in 1..=ACCOUNTS_MAX_PAGES {
+            let answer: OzAccounts = self
+                .get_json(format!(
+                    "{}/api/v1/relayers/?page={page}&per_page={ACCOUNTS_PAGE_SIZE}",
+                    self.base_url
+                ))
+                .await?;
+            let entries = answer.data.ok_or("no relayer list in the answer")?;
+            let received = entries.len();
+            listed += received as u64;
+            accounts.extend(entries.into_iter().filter_map(OzAccount::evm_address));
+            let total = match answer.pagination {
+                Some(p) => p.total_items,
+                None if page == 1 && received < ACCOUNTS_PAGE_SIZE => return Ok(accounts),
+                None => return Err("a page of relayers without a count".into()),
+            };
+            if *first_total.get_or_insert(total) != total {
+                return Err("the relayer list changed while it was read".into());
+            }
+            if listed >= total {
+                return Ok(accounts);
+            }
+            if received == 0 {
+                return Err(format!("{listed} of {total} relayers listed"));
+            }
+        }
+        Err(format!("more than {ACCOUNTS_MAX_PAGES} pages of relayers"))
+    }
+
+    async fn fetch_own_account(&self) -> Result<Option<Address>, String> {
+        let answer: OzOneAccount = self
+            .get_json(format!(
+                "{}/api/v1/relayers/{}",
+                self.base_url, self.relayer_id
+            ))
+            .await?;
+        Ok(answer.data.and_then(OzAccount::evm_address))
+    }
+
+    async fn get_json<T: DeserializeOwned>(&self, url: String) -> Result<T, String> {
+        let resp = self
+            .http
+            .get(url)
+            .timeout(ACCOUNTS_REQUEST_TIMEOUT)
+            .header(reqwest::header::AUTHORIZATION, self.bearer())
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(format!("status {}", status.as_u16()));
+        }
+        let body = read_body_capped(resp, OZ_BODY_CAP)
+            .await
+            .map_err(|e| e.to_string())?;
+        serde_json::from_slice(&body).map_err(|e| e.to_string())
     }
 
     fn transactions_url(&self) -> String {
@@ -409,6 +652,348 @@ mod tests {
             3,
             Duration::from_millis(10),
         )
+    }
+
+    /// While the accounts list cannot be read, concurrent and following callers share one read
+    /// instead of each reading it again, and get nothing rather than an empty list while the
+    /// configured relayer's own account cannot be read either; the background pass retries it.
+    #[tokio::test]
+    async fn a_failed_accounts_read_is_shared_and_not_repeated_per_call() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counted = reads.clone();
+        let app = axum::Router::new().route(
+            "/api/v1/relayers/",
+            axum::routing::get(move || {
+                counted.fetch_add(1, Ordering::SeqCst);
+                async {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE
+                }
+            }),
+        );
+        let (url, server) = serve(app).await;
+        let relayer = relayer(&url);
+        let (a, b) = tokio::join!(relayer.accounts(), relayer.accounts());
+        assert!(a.is_none() && b.is_none());
+        assert!(relayer.accounts().await.is_none());
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+        server.abort();
+    }
+
+    fn account(n: u8) -> Address {
+        Address::repeat_byte(n)
+    }
+
+    /// A relayer list that answers `pages[page - 1]` as `data` with `total` as its count (none
+    /// when `total` is `None`), records each `per_page` asked for and counts the reads of page 1.
+    async fn listing(
+        pages: Vec<serde_json::Value>,
+        total: Option<u64>,
+    ) -> (
+        String,
+        tokio::task::JoinHandle<()>,
+        Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counted = reads.clone();
+        let app = axum::Router::new().route(
+            "/api/v1/relayers/",
+            axum::routing::get(
+                move |axum::extract::Query(q): axum::extract::Query<
+                    std::collections::HashMap<String, String>,
+                >| {
+                    let page: usize = q.get("page").and_then(|p| p.parse().ok()).unwrap_or(1);
+                    assert_eq!(q.get("per_page"), Some(&ACCOUNTS_PAGE_SIZE.to_string()));
+                    if page == 1 {
+                        counted.fetch_add(1, Ordering::SeqCst);
+                    }
+                    let data = pages
+                        .get(page - 1)
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!([]));
+                    let mut body = serde_json::json!({ "success": true, "data": data });
+                    if let Some(total) = total {
+                        body["pagination"] = serde_json::json!({
+                            "current_page": page, "per_page": 2, "total_items": total
+                        });
+                    }
+                    async move { axum::Json(body) }
+                },
+            ),
+        );
+        let (url, server) = serve(app).await;
+        (url, server, reads)
+    }
+
+    fn evm(address: Address) -> serde_json::Value {
+        serde_json::json!({ "id": format!("{address:#x}"), "network_type": "evm", "address": format!("{address:#x}") })
+    }
+
+    /// The list is read page by page until the pages cover `total_items`, even when the relayer
+    /// answers fewer entries per page than asked.
+    #[tokio::test]
+    async fn every_page_of_relayer_accounts_is_read() {
+        let (url, server, _) = listing(
+            vec![
+                serde_json::json!([evm(account(1)), evm(account(2))]),
+                serde_json::json!([evm(account(3)), evm(account(4))]),
+                serde_json::json!([evm(account(5))]),
+            ],
+            Some(5),
+        )
+        .await;
+        let accounts = relayer(&url).accounts().await.unwrap();
+        assert_eq!(
+            *accounts,
+            (1..=5).map(account).collect::<HashSet<_>>(),
+            "{accounts:?}"
+        );
+        server.abort();
+    }
+
+    /// Pages that end before `total_items` is covered, or a full page without a count, are a
+    /// failed read, not a shorter list.
+    #[tokio::test]
+    async fn an_incomplete_relayer_list_is_a_failed_read() {
+        let full: Vec<_> = (0..ACCOUNTS_PAGE_SIZE as u8)
+            .map(|n| evm(account(n + 1)))
+            .collect();
+        for (pages, total) in [
+            (vec![serde_json::json!([evm(account(1))])], Some(3)),
+            (vec![serde_json::Value::Array(full)], None),
+        ] {
+            let (url, server, _) = listing(pages, total).await;
+            let relayer = relayer(&url);
+            assert!(relayer.refresh_accounts().await.is_err());
+            assert!(relayer.accounts().await.is_none());
+            server.abort();
+        }
+    }
+
+    /// Addresses are compared as addresses: any letter case, with or without `0x`, while
+    /// non-EVM relayers and unparseable entries are left out.
+    #[tokio::test]
+    async fn relayer_accounts_are_parsed_as_evm_addresses() {
+        let checksummed = account(0xab).to_checksum(None);
+        let bare = format!("{:x}", account(0xcd));
+        let (url, server, _) = listing(
+            vec![serde_json::json!([
+                { "network_type": "evm", "address": checksummed },
+                { "address": format!(" {bare} ") },
+                { "network_type": "solana", "address": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU" },
+                { "network_type": "evm", "address": "not-an-address" },
+                { "network_type": "evm" },
+            ])],
+            Some(5),
+        )
+        .await;
+        let accounts = relayer(&url).accounts().await.unwrap();
+        assert_eq!(
+            *accounts,
+            HashSet::from([account(0xab), account(0xcd)]),
+            "{accounts:?}"
+        );
+        server.abort();
+    }
+
+    /// A list read once answers later callers without another read until the background pass
+    /// finds it due.
+    #[tokio::test]
+    async fn a_read_relayer_list_is_reused() {
+        use std::sync::atomic::Ordering;
+        let (url, server, reads) =
+            listing(vec![serde_json::json!([evm(account(1))])], Some(1)).await;
+        let relayer = relayer(&url);
+        assert!(relayer.accounts().await.unwrap().contains(&account(1)));
+        assert!(relayer.accounts().await.unwrap().contains(&account(1)));
+        relayer.refresh_accounts().await.unwrap();
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+        server.abort();
+    }
+
+    /// Once a list is stored, a caller gets it even after it expired, without waiting for a
+    /// read; the background pass reads again, and a failed read keeps the last list.
+    #[tokio::test]
+    async fn a_failed_read_after_a_good_one_keeps_the_last_list() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        let down = Arc::new(AtomicBool::new(false));
+        let reads = Arc::new(AtomicUsize::new(0));
+        let (failing, counted) = (down.clone(), reads.clone());
+        let app = axum::Router::new().route(
+            "/api/v1/relayers/",
+            axum::routing::get(move || {
+                counted.fetch_add(1, Ordering::SeqCst);
+                let down = failing.load(Ordering::SeqCst);
+                async move {
+                    if down {
+                        Err(axum::http::StatusCode::SERVICE_UNAVAILABLE)
+                    } else {
+                        Ok(axum::Json(serde_json::json!({
+                            "success": true, "data": [evm(account(1))],
+                            "pagination": { "current_page": 1, "per_page": 50, "total_items": 1 }
+                        })))
+                    }
+                }
+            }),
+        );
+        let (url, server) = serve(app).await;
+        let relayer = relayer(&url);
+        assert!(relayer.accounts().await.unwrap().contains(&account(1)));
+        down.store(true, Ordering::SeqCst);
+        if let Some(stored) = relayer.accounts.lock().as_mut() {
+            stored.until = Instant::now();
+        }
+        assert!(relayer.accounts().await.unwrap().contains(&account(1)));
+        assert_eq!(
+            reads.load(Ordering::SeqCst),
+            1,
+            "a caller never waits for a read"
+        );
+        assert!(relayer.refresh_accounts().await.is_err());
+        assert_eq!(reads.load(Ordering::SeqCst), 2);
+        assert!(relayer.accounts().await.unwrap().contains(&account(1)));
+        server.abort();
+    }
+
+    /// When the list was never read, the configured relayer's own account is still refused.
+    #[tokio::test]
+    async fn an_unreadable_list_still_refuses_the_configured_relayer() {
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/relayers/",
+                axum::routing::get(|| async { axum::http::StatusCode::FORBIDDEN }),
+            )
+            .route(
+                "/api/v1/relayers/rid",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({ "success": true, "data": evm(account(7)) }))
+                }),
+            );
+        let (url, server) = serve(app).await;
+        let accounts = relayer(&url).accounts().await.unwrap();
+        assert_eq!(*accounts, HashSet::from([account(7)]), "{accounts:?}");
+        server.abort();
+    }
+
+    /// Until a list is read, each pass reads the configured relayer's own account again, so a
+    /// first failure of that read does not leave it unrefused.
+    #[tokio::test]
+    async fn the_configured_relayer_is_read_again_until_a_list_is_read() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let own_reads = Arc::new(AtomicUsize::new(0));
+        let counted = own_reads.clone();
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/relayers/",
+                axum::routing::get(|| async { axum::http::StatusCode::FORBIDDEN }),
+            )
+            .route(
+                "/api/v1/relayers/rid",
+                axum::routing::get(move || {
+                    let first = counted.fetch_add(1, Ordering::SeqCst) == 0;
+                    async move {
+                        if first {
+                            Err(axum::http::StatusCode::SERVICE_UNAVAILABLE)
+                        } else {
+                            Ok(axum::Json(
+                                serde_json::json!({ "success": true, "data": evm(account(7)) }),
+                            ))
+                        }
+                    }
+                }),
+            );
+        let (url, server) = serve(app).await;
+        let relayer = relayer(&url);
+        assert!(relayer.accounts().await.is_none());
+        assert!(relayer.refresh_accounts().await.is_err());
+        assert_eq!(
+            *relayer.accounts().await.unwrap(),
+            HashSet::from([account(7)])
+        );
+        assert_eq!(own_reads.load(Ordering::SeqCst), 2);
+        server.abort();
+    }
+
+    /// A count that changes between pages is a failed read: a relayer removed mid-read moves
+    /// later entries up a page, which a shrinking count alone would not show. The last list stays.
+    #[tokio::test]
+    async fn a_relayer_list_that_changes_while_read_is_a_failed_read() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let changing = Arc::new(AtomicBool::new(false));
+        let flag = changing.clone();
+        let app = axum::Router::new().route(
+            "/api/v1/relayers/",
+            axum::routing::get(
+                move |axum::extract::Query(q): axum::extract::Query<
+                    std::collections::HashMap<String, String>,
+                >| {
+                    let page = q.get("page").cloned().unwrap_or_default();
+                    let body = match (flag.load(Ordering::SeqCst), page.as_str()) {
+                        (false, _) => serde_json::json!({
+                            "success": true, "data": [evm(account(1))],
+                            "pagination": { "total_items": 1 }
+                        }),
+                        (true, "1") => serde_json::json!({
+                            "success": true, "data": [evm(account(2)), evm(account(3))],
+                            "pagination": { "total_items": 4 }
+                        }),
+                        (true, _) => serde_json::json!({
+                            "success": true, "data": [evm(account(5))],
+                            "pagination": { "total_items": 3 }
+                        }),
+                    };
+                    async move { axum::Json(body) }
+                },
+            ),
+        );
+        let (url, server) = serve(app).await;
+        let relayer = relayer(&url);
+        relayer.refresh_accounts().await.unwrap();
+        changing.store(true, Ordering::SeqCst);
+        if let Some(stored) = relayer.accounts.lock().as_mut() {
+            stored.until = Instant::now();
+        }
+        assert!(relayer.refresh_accounts().await.is_err());
+        assert_eq!(
+            *relayer.accounts().await.unwrap(),
+            HashSet::from([account(1)])
+        );
+        server.abort();
+    }
+
+    /// A caller waits for the first read only up to `first_wait`, and gets nothing rather than an
+    /// empty list; the background pass still reads and stores the list.
+    #[tokio::test]
+    async fn a_caller_stops_waiting_for_a_slow_first_read() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let slow = Arc::new(AtomicBool::new(true));
+        let flag = slow.clone();
+        let app = axum::Router::new().route(
+            "/api/v1/relayers/",
+            axum::routing::get(move || {
+                let slow = flag.load(Ordering::SeqCst);
+                async move {
+                    if slow {
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                    }
+                    axum::Json(serde_json::json!({
+                        "success": true, "data": [evm(account(1))],
+                        "pagination": { "total_items": 1 }
+                    }))
+                }
+            }),
+        );
+        let (url, server) = serve(app).await;
+        let relayer = relayer(&url).with_first_wait(Duration::from_millis(50));
+        let started = Instant::now();
+        assert!(relayer.accounts().await.is_none());
+        assert!(started.elapsed() < Duration::from_secs(1));
+        slow.store(false, Ordering::SeqCst);
+        relayer.refresh_accounts().await.unwrap();
+        assert!(relayer.accounts().await.unwrap().contains(&account(1)));
+        server.abort();
     }
 
     const HASH: &str = "0x00000000000000000000000000000000000000000000000000000000000000ab";

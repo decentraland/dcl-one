@@ -25,7 +25,6 @@ use bevy::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use cache_size::CacheSizeSetting;
-use cel_shading_setting::CelShadingSetting;
 use common::structs::DmPrivacy;
 #[cfg(not(target_arch = "wasm32"))]
 use common::structs::SsaoSetting;
@@ -44,6 +43,7 @@ use language_setting::LanguageSetting;
 use load_distance::{LoadDistanceSetting, UnloadDistanceSetting};
 use max_avatars::MaxAvatarsSetting;
 use max_downloads::MaxDownloadsSetting;
+use max_lods::{MaxFarLodsSetting, MaxNearLodsSetting};
 use oob_setting::OobSetting;
 use player_settings::{JumpSetting, RunSpeedSetting, WalkSpeedSetting};
 use scene_threads::SceneThreadsSetting;
@@ -62,7 +62,6 @@ pub mod avatar_outline_setting;
 pub mod bloom_settings;
 pub mod cache_size;
 pub mod camera_smoothing;
-pub mod cel_shading_setting;
 pub mod chat_bubble_visibility;
 pub mod constrain_ui;
 mod debug_quality;
@@ -72,9 +71,11 @@ pub mod fog_settings;
 pub mod frame_rate;
 pub mod imposter_settings;
 pub mod language_setting;
+pub mod lens_flare_setting;
 pub mod load_distance;
 pub mod max_avatars;
 pub mod max_downloads;
+pub mod max_lods;
 pub mod oob_setting;
 pub mod parcel_grass_settings;
 pub mod player_settings;
@@ -88,6 +89,8 @@ pub mod spring_bones_setting;
 pub mod ssao_setting;
 pub mod video_threads;
 pub mod volume_settings;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod vsync_setting;
 pub mod window_settings;
 
 /// Inserts both prepasses while the avatar outline (edge detection) is on or the camera has SSAO
@@ -196,8 +199,13 @@ impl Plugin for SettingBridgePlugin {
         #[cfg(not(target_arch = "wasm32"))]
         add_enum_setting::<SsaoSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<SkyReflectionSetting>(app, &mut settings, &mut schedule, &config);
+        add_enum_setting::<lens_flare_setting::LensFlareSetting>(
+            app,
+            &mut settings,
+            &mut schedule,
+            &config,
+        );
         add_enum_setting::<OobSetting>(app, &mut settings, &mut schedule, &config);
-        add_enum_setting::<CelShadingSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AvatarOutlineSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AvatarGhostsSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<SpringBonesSetting>(app, &mut settings, &mut schedule, &config);
@@ -210,9 +218,13 @@ impl Plugin for SettingBridgePlugin {
         if !is_preview {
             add_int_setting::<LoadDistanceSetting>(app, &mut settings, &mut schedule, &config);
             add_int_setting::<UnloadDistanceSetting>(app, &mut settings, &mut schedule, &config);
+            add_int_setting::<MaxNearLodsSetting>(app, &mut settings, &mut schedule, &config);
+            add_int_setting::<MaxFarLodsSetting>(app, &mut settings, &mut schedule, &config);
         }
 
         add_enum_setting::<FpsTargetSetting>(app, &mut settings, &mut schedule, &config);
+        #[cfg(not(target_arch = "wasm32"))]
+        add_enum_setting::<vsync_setting::VsyncSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<render_scale_setting::RenderScaleSetting>(
             app,
             &mut settings,

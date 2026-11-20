@@ -28,7 +28,7 @@ import { gaslessEnabled } from "../chain/config";
 import { isGaslessUnavailable, isSignatureDeclined } from "../chain/metatx";
 import { isPendingTxError, isRevertedTxError } from "../chain/wallet";
 import { AuthorizationKind, getAuthorizationStatus, needsApprovalStep, ensureAuthorization, type ShopAuthorization } from "../lib/authorizations";
-import { friendlyError, isRejection } from "../lib/errors";
+import { friendlyError, isRejection, relayLimitText } from "../lib/errors";
 import { isWrongNetworkError } from "../lib/network";
 import { canPayGasItself } from "../lib/wallet-kind";
 import { requireContracts } from "../chain/contracts";
@@ -144,6 +144,10 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
     dispatchSafe(store, keyId, { type: "observed" });
   };
   const chainId = group.key.chainId;
+  // The fee-free way was tried and couldn't run, so the wallet's own transaction is its fallback.
+  let fellBack = false;
+  // Why it couldn't run, when the relay said (its daily limits), for the buyer to read beside the fallback's failure.
+  let feeFreeNote: string | null = null;
   try {
     let settled = false;
     if (ctx.gasless ?? gaslessEnabled()) {
@@ -154,6 +158,8 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
       } catch (e) {
         const canFallBack = isGaslessUnavailable(e) && e.reason !== "relayer-unreachable" && canPayGasItself(ctx.walletKind) && txHash === null;
         if (!canFallBack) throw e;
+        fellBack = true;
+        feeFreeNote = relayLimitText(e);
         if (handedOff) {
           // The relay parsed our request and refused it: provably not broadcast. The direct rail is a new hand-off.
           handedOff = false;
@@ -185,7 +191,14 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
     }
     if (txHash) return { status: "pending", txHash };
     const failure = handedOff ? { ...failureFor(e), kind: "rejected" as const } : failureFor(e);
-    if (isWrongNetworkError(e)) failure.message = friendlyError(e, FALLBACK);
+    if (isWrongNetworkError(e)) {
+      failure.message = friendlyError(e, FALLBACK);
+      failure.switchTo = e.required;
+      if (fellBack) {
+        failure.feeFreeUnavailable = true;
+        if (feeFreeNote) failure.feeFreeNote = feeFreeNote;
+      }
+    }
     dispatchSafe(store, keyId, { type: "failed", failure });
     return { status: "failed", failure, released: await release(deps, [creditId]) };
   }
@@ -292,6 +305,37 @@ export async function runGroup(deps: CheckoutDeps, group: CartGroup, resolved: M
   return group.key.method === "credits" ? runCreditsGroup(deps, group, lines) : runManaGroup(deps, group, lines);
 }
 
+/** Why a group didn't run: another group of the checkout was handed off and isn't confirmed yet. */
+export const AFTER_PENDING = "another part of this checkout is still being confirmed";
+
+/** Whether a group of the checkout was handed off and isn't confirmed yet. */
+function inFlight(store: CartStore): boolean {
+  return (store.getSnapshot().checkout?.groups ?? []).some((g) => g.status === "submitted" || g.status === "pending");
+}
+
+/**
+ * The checkout's groups, one after another, none while another of its groups is in flight. A relayed group signs
+ * against the meta-transaction nonce the chain holds now, which a group handed off but not mined hasn't moved yet,
+ * so a group signed meanwhile could take the same nonce, and one of the two would revert. The groups that wait
+ * stay ready for another confirmation, once the one in flight is settled. `onResult` follows each group's result.
+ */
+export async function runGroups(
+  deps: CheckoutDeps,
+  groups: CartGroup[],
+  resolved: Map<string, ResolvedLine>,
+  onResult?: (group: CartGroup, result: GroupResult) => void,
+): Promise<Record<string, GroupResult>> {
+  const results: Record<string, GroupResult> = {};
+  for (const group of groups) {
+    const status = progressOf(deps.store, group.keyId)?.status;
+    const idle = status === "idle" || status === "failed" || status === "expired";
+    const result: GroupResult = idle && inFlight(deps.store) ? { status: "skipped", reason: AFTER_PENDING } : await runGroup(deps, group, resolved);
+    results[group.keyId] = result;
+    onResult?.(group, result);
+  }
+  return results;
+}
+
 /**
  * Follow a group that may have been broadcast. With a hash: its receipt (a late receipt confirms it).
  * Without one (the relay gave no usable answer): the credit's own record, since the server reconciles
@@ -367,10 +411,14 @@ export async function resumeCheckout(
   const results: Record<string, GroupResult> = {};
   await releaseAuthorizing(deps, state);
   for (const watching of plan.watch) results[watching.keyId] = await watchGroup(deps, watching);
+  // What still runs waits while a watched group is in flight (runGroups).
+  const runnable: CartGroup[] = [];
   for (const run of plan.run) {
     const group = groups.find((g) => g.keyId === run.keyId);
-    results[run.keyId] = group ? await runGroup(deps, group, resolved) : { status: "skipped", reason: "the cart changed; review it again" };
+    if (group) runnable.push(group);
+    else results[run.keyId] = { status: "skipped", reason: "the cart changed; review it again" };
   }
+  Object.assign(results, await runGroups(deps, runnable, resolved));
   for (const done of plan.done) results[done.keyId] = { status: "confirmed", txHash: done.txHash };
   return results;
 }

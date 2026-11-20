@@ -164,7 +164,7 @@ def client(args):
     for path in ["/", "/play", "/play/engine/pkg/webgpu_build_bg.wasm", "/shop",
                  "/places", "/places.data", "/places/place/1,2", "/places/place/1,2.data",
                  "/places/world/sample.dcl.eth", "/places/world/sample.dcl.eth.data", "/_root.data", "/internal/auth-config",
-                 "/internal/thirdweb-sign", "/api/screens/v1/play", "/api/creator-hub/drafts",
+                 "/internal/thirdweb-sign", "/api/screens/v1/play",
                  "/profile/alice", "/cast", "/assets/example.js", "/docs/index.md", "/download", "/download_success"]:
         hit(path, "sites")
     for path in ["/about", "/content/contents/blob", "/lambdas/profiles", "/api/status",
@@ -189,6 +189,8 @@ def client(args):
                  "/METRICS/x.data", "/%6detrics", "/x/../metrics",
                  "/internal/pulse", "/internal/pulse/room-authority/v1", "/internal/pulse/x.data",
                  "/INTERNAL/PULSE/X.data", "//internal//pulse/x.data", "/internal%2fpulse/x.data",
+                 "/internal/message-router", "/internal/message-router/token/v1",
+                 "/INTERNAL/MESSAGE-ROUTER/token/v1", "//internal//message-router/token/v1",
                  "/__protected_storage/0a/blob"]:
         for host in (public, admitted):
             status, body = request(host, path)

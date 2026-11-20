@@ -121,13 +121,16 @@ mod tests {
         );
         let common =
             SegmentEventCommonExplorerFields::new("session".into(), "version".into(), None);
-        serde_json::to_value(build_segment_event_batch_item(
-            "user".into(),
-            &common,
-            &event,
-            chrono::Utc::now(),
-            "message".into(),
-        ))
+        serde_json::to_value(
+            build_segment_event_batch_item(
+                "user".into(),
+                &common,
+                &event,
+                chrono::Utc::now(),
+                "message".into(),
+            )
+            .unwrap(),
+        )
         .unwrap()
     }
 

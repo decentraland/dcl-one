@@ -10,6 +10,31 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Toon MASK wearables.** Unity alpha-blends after the cutoff, so thin masked lines look
   fine there and fat and black here. Bevy stays glTF-spec-correct (MASK is binary). We don't
   match.
+- **Toon avatars are fogged.** Like everything else; Unity's toon computes a fog factor its
+  fragment never applies.
+- **Toon avatars take only the sun.** No point or spot light reaches them, as in Unity, whose
+  toon additional-light loop is commented out.
+- **The toon ambient floor is the sky envmap's irradiance.** It stands in for Unity's
+  spherical harmonics, read up and down, and without the world's dielectric factor, as Unity reads
+  `ShadeSH9` raw. Avatars in shade sit about 4% above a white world surface; that matches Unity
+  and is not to be removed.
+- **Without the sky envmap, toon avatars take the view's flat ambient.** Such a view (the
+  Backpack preview, a photo booth) has no Trilight ambient. The Backpack is lit flat; a booth
+  carries a one-light-unit key light, or its avatars would sit at the night floor.
+- **Face features are lit by the ambient alone.** As Unity's facial shader: no sun and no bands,
+  so they are brighter than the body at noon and darker at night. A view without the sky envmap
+  takes the noon horizon colour, since its flat ambient would light them twentyfold. They keep
+  the body's outline, which Unity's face shader does not draw.
+- **The toon outline is a screen-space line, not an inverted hull.** It keeps Unity's colour,
+  width falloff and 8 m cutoff. Kept differences: the cutoff is per mesh, not per avatar; an
+  overlap shallower than the edge threshold gets no line, so a curved surface draws none on
+  itself; creases inside the silhouette darken, which the look relies on; and an orthographic
+  view (the Backpack) skips the cutoff, in place of Unity's preview flag.
+- **A hovered avatar glows through the shared highlight pass.** Unity's colour, opacity, width
+  and 0.1 s fade, through the pass scene entities use, so the glow shows through what stands in
+  front and ignores the camera dither and the ghost reveal. Kept differences: every opaque or
+  alpha-tested mesh under the player glows, an emote's props included, where Unity lists the
+  wearables only; an avatar shown with `ShowOnlyWearables` glows like any other.
 - **Day and night (#1467).** An explicit, stopped HUD time beats scene time; restarting the
   clock hands control back to the scene. No HUD lock while a scene controls the sky.
   `transitionMode` in scene.json is ignored. HUD and `/time` skips take the nearest
@@ -54,6 +79,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   at full resolution; `/screenshot` captures the window. The primary camera always keeps the
   depth prepass (the jump marker reads it); the normal prepass, and both on texture cameras, only
   while the avatar outline is on or the camera has SSAO (native only).
+- **Render Resolution stops at 100%.** Unity's Resolution Scale moves in the same 10% steps
+  but reaches 120%. The compositor only upscales, so the range is 50–100%. A saved value
+  between steps or outside that range moves to the nearest step in it once, when the saved
+  settings are migrated, so the slider shows what is rendered.
 - **Sun shadows keep bevy's default bias.** Unity's `DepthBias` (1.75 or 1.56 texels, times
   URP's soft kernel radius 2.5) is a depth bias, not a normal bias, and carried over as bevy's
   normal bias it offset each lookup about half a metre on Low at 60 m, dropping thin and contact
@@ -70,9 +99,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   worst-case change between near and far is smaller. Fading to no shadow looked worse about
   half the time.
 - **Low shadows keep hardware 2x2 filtering.** Unity's soft shadows filter every quality. Low is
-  the default preset and the filter applies per view, spot shadows included, so Low keeps
-  bevy's `Hardware2x2` (one PCF sample) instead of `Gaussian` (nine) to stay cheap on weak GPUs
-  and web. High uses `Gaussian`.
+  the Medium preset's shadow quality and the filter applies per view, spot shadows included, so
+  Low keeps bevy's `Hardware2x2` (one PCF sample) instead of `Gaussian` (nine) to stay cheap on
+  weak GPUs and web. High uses `Gaussian`.
 - **Jump marker reads the depth prepass.** Like Unity's projector, the blob (`BlobShadow.mat`)
   is projected onto the surface below, so it follows slopes, steps and ledges; a flat quad
   cut into rising ground. A depth bias does not fix that: it offsets the quad's depth test,
@@ -109,11 +138,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   ([ADR](../../../../docs/adr/2026-11-09-explorer-scene-streaming.md)).
 - **Voice chat (private calls and community streams)** keeps the call statuses and guards, the
   3 × 2000 ms re-dial budget, the 1 s hang-up-before-join delay and the server's 60 s ring.
-  - Don't bind the mic to `T`: it opens the chat. The `Microphone` key (`V`) drives the call mic
-    while a call is connected and the nearby mic otherwise, as Unity's `T` does. Nearby, a press
-    opens the mic and its release closes it. In a call, a press shorter than 0.5 s leaves the mic
-    open and a longer one is push-to-talk. A press while the mic is open closes it on release. A
-    community listener's `V` does nothing, since a listener can't speak.
+  - The `Microphone` key is `T`, Unity's `Talk` key. The chat opens with `Enter`, so the chat
+    panel has no default key. The `Microphone` key drives the call mic while a call is connected
+    and the nearby mic otherwise, as Unity's `T` does. Nearby, a press opens the mic and its
+    release closes it. In a call, a press shorter than 0.5 s leaves the mic open and a longer one
+    is push-to-talk. A press while the mic is open closes it on release. A community listener's
+    `T` does nothing, since a listener can't speak.
   - Don't start a call's mic from a stored setting. It goes up on the call's first connect for
     whoever may speak (both sides of a private call, a stream's speakers). Don't turn it back on
     after a re-dial: what the user chose since then stands.
@@ -417,6 +447,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   what both servers allow for them, and keeps only the latest teleport and the latest emote command
   while that is spent. Overrunning the servers' budget ends the session for good, and a scene that
   repositions the player every frame would do it; unity-explorer has no limiter (`pacing.rs`).
+- **The client never sends what the Pulse server refuses for good.** A one-shot emote longer than
+  60 s goes out without a duration and ends with an explicit stop, and inputs and teleports from
+  outside the parcel grid are not sent (`lib.rs`, `pulse/mod.rs`).
+- **A second device on the same wallet takes over; Pulse tells the old one.** Pulse ends the older
+  session with `DuplicateSession` and the gatekeeper removes it from its island room; on
+  `DuplicateSession` a player ends its island connection for good: the realm's rooms end in the
+  identity-conflict state, which nothing retries, and a realm change starts them again, as it ends
+  Pulse's terminal stop. A removal from the island room on its own stays a transient failure. The
+  archipelago leaves the older socket open and sends it nothing more: it replaces, and tells with
+  `Kicked`, only this device's own stale socket (same session key). `already_connected` is set in
+  both cases, so it is only logged. A newer device that never reaches Pulse tells the older one
+  nothing through Pulse (`archipelago.rs`, `pulse/plugin.rs`).
+- **The scene-room request always signs as the explorer.** The engine's own gatekeeper requests
+  carry `signer: dcl:explorer` and the comms-handshake intent; only fetches a scene makes sign as
+  `decentraland-kernel-scene` (`lib.rs`, `restricted_actions`).
 - **IPv6 when no IPv4 address resolves.** The native driver connects to the first IPv4 address and
   falls back to the first IPv6 one, on an IPv6 socket, only when there is none. unity-explorer
   fails without an IPv4 address, and the servers bind IPv4 by default.
@@ -546,9 +591,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Where Gift is offered.** The profile card of chat names, nametags and the friend row (after
   View Profile), the community member menu (after Call; greyed for a blocked member either way),
   and another player's passport options (before Block; the picker replaces the passport). The
-  voice-stream panel's menu has none, as in unity-explorer. It is not offered to a guest
-  recipient either (unity-explorer doesn't check): a guest's account is a throwaway key on one
-  device, so an item sent there would be lost with it. A picker error is a toast and the
+  voice-stream panel's menu has none, as in unity-explorer. As there, a guest recipient is offered
+  Gift too. A picker error is a toast and the
   picker stays open; unity-explorer closes its picker on SEND before it can show the error.
 - **Gifting's analytics events and popup sounds are not ported.** unity-explorer reports sent,
   successful, failed and cancelled gifts and plays a sound with the sent and received popups; this
@@ -696,8 +740,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   nothing is shown, as there. The profile card offers the jump after View Profile, since its rows
   already follow a different order from unity-explorer's user menu.
 - **INVITE FRIENDS is for a signed-in player only.** unity-explorer's copy runs for any
-  identity it holds. Here a guest gets no button, since a guest's address is never kept and a referral
-  to it could not be credited. As there, it copies the deployment site's `/invite/<address>`
+  identity it holds. Here neither kind of guest gets the button: not the throwaway guest, and not a
+  guest account. As there, it copies the deployment site's `/invite/<address>`
   and says "Link copied!"; the panel stays open.
 - **A new referral tier opens the site's Referral Rewards tab.** unity-explorer opens
   `profile/accounts/<address>/referral`, which this site does not serve; its profile names the
@@ -718,6 +762,43 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Distance. Bevy has one sea plane, a single opaque quad that casts no shadows, so hiding it would
   save almost nothing, and the water material draws without fog, so nothing would soften it
   appearing and disappearing.
+- **The wave ocean is not ported.** Unity's ocean (a wave grid, foam and an alpha-blended surface)
+  was ported and compared in the same views, and it looked worse than Bevy's current sea, so the
+  sea stays as it is.
+- **The lens flare's rings are procedural, and its random copies use a hash.** Unity draws the
+  rings from URP's sample textures, which are not carried; Bevy draws bands of colour measured
+  from them (radius, width and brightness per channel, and the partial ring's arc). Unity places
+  the copies with its seeded random generator.
+- **The lens flare sees transparent surfaces only through depth of field.** Its occlusion test
+  reads the depth buffer and, where the view has depth of field's transparent focus texture, the
+  transparent coverage in it. A view without that texture (every MSAA view) is hidden only by
+  opaque geometry, not by imposters. The flare is off while a scene hides the sun and moon discs.
+- **Graphics presets set fewer settings than Unity's, and four differently.** Low, Medium and High
+  carry Unity's values for the frame rate, VSync, render scale, avatar outline, jiggle bones, sun
+  shadow quality, the Low and High shadow distances and scene lights; Medium is the default and
+  the one every saved config migrates to, except jiggle bones, which stay off by default (see the
+  spring bones ADR). Anti-aliasing and depth of field differ (next entry). Bloom is Low in every
+  preset, closer to Unity's look than High. Medium's sun shadow distance is 20 m, not 60 m: Medium
+  has one cascade on a 4096 map (above), so at 60 m each texel is three times as large and the
+  shadows break up. The presets leave out Unity's scene distance (in parcels, where far scenes
+  load as LODs; here imposters draw them and the load distance stays the player's), the landscape
+  distance (read only at startup; its default is Medium's 1000 m), current-scene streams and HDR
+  (always on). The preset is not stored: the HUD reads it off the settings, and any difference
+  shows as Custom.
+- **Depth of field yields to MSAA.** The fork's transparent focus texture takes the sample count
+  of the resolved main texture, so a multisampled transparent pass with depth of field fails
+  wgpu validation. While MSAA is on, the camera has no depth of field and the stars draw before
+  the transparent pass. Unlike Unity, which has none, the presets keep depth of field on, because
+  it hides the lack of detail in distant imposters, and they use FXAA so it stays on: the yield
+  only applies when a player picks MSAA. SSAO is off in every preset: bevy 0.16's SSAO is not
+  good enough to put in one.
+- **VSync caps the frame rate; it does not set it.** Unity's `vSyncCount` hands the rate to the
+  monitor and ignores the frame limit. Here VSync only removes tearing: the explorer paces to the
+  lower of the Target Frame Rate (or a session override) and the monitor's refresh rate. Medium's
+  60 fps holds on a 120 or 144 Hz monitor, and the debug panel's 30 FPS limit, `/fps` and
+  `--fps` still apply; Max means the monitor's rate. A target that does not divide the refresh rate
+  shows frames for an uneven number of refreshes (60 fps on 144 Hz alternates 2 and 3), so motion
+  can judder slightly; 60 fps on 60 or 120 Hz is even.
 - **No satellite floor.** unity-explorer lays the minimap's satellite images flat at 0.205 m under the
   terrain in Genesis City; here the ground covers that plane everywhere, so the floor would never be
   seen and is not shipped.
@@ -748,6 +829,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **glTF occlusion textures are ignored.** Scene materials drop a glTF's occlusion texture, so
   baked ambient occlusion does not darken the ambient light. The Unity client's scene shader
   does not sample it either, and content is authored against that look.
+- **Colliders are bounded by the scene's rectangle, meshes by its parcels.** A scene collider is
+  off as a whole while its box reaches outside the rectangle around the scene's parcels or above
+  the scene's height limit; the shaders clip meshes to the parcels themselves. One large collider
+  often covers an irregular scene's whole footprint: Genesis Plaza's ground and building colliders
+  span the notches its road scenes sit in, and a test against the parcels would turn them off as
+  a whole. Unity (`333aa8826979186f1380058cc75f74b9630e4879`) tests the same rectangle, with the
+  same allowance at the edge. The height limit splits the same way: colliders take one limit from
+  the scene's whole parcel count, as Unity does, while the shaders clip each connected group of
+  parcels at its own, so over a scene in several pieces a collider can be solid above the height
+  its mesh is drawn to (two parcels apart: meshes to 20 m, colliders to 31.7 m). The box tested
+  for a mesh collider is the mesh's own box turned with the collider, which can be larger than the
+  mesh: a wall that runs diagonally in its own model can turn off while it is still inside the
+  rectangle. Triggers are not tested in either client. Preview, loopback and editor runs draw
+  out-of-bounds geometry and leave its colliders on too, so a creator can stand on, bump into
+  and select what reaches outside; every other run turns them off.
 - **The map carries over upstream's marker rules as they are**, so the two clients' maps match.
   A place of several parcels is marked on the parcel a walk over them stops at, which depends on
   their order and is not always the middle one; a cluster stands half a parcel south-west of the
@@ -807,10 +903,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   preview, a definitive failure (404 and similar) is remembered for that URL when read by hash.
   A catalyst only activates an entity once it holds all of its files, so the answer is final.
   Other reads and failures keep the 10 s retry. Preview asks again on every read (#727).
-- **A content download that does not match its hash fails the read**, so bytes that are not the
-  file the scene named never reach a loader. It is a failure like a dropped transfer, asked for
-  again after 10 s, not a missing file. A name the check cannot verify is read as before, uncached.
-  Measured first: no correct file of 4574 from live scenes, worlds, wearables and emotes failed it.
+- **A download checked against its content hash fails on a mismatch.** The failure follows
+  the 10 s retry window for dropped transfers. The read that starts the download determines
+  whether to check its bytes. Other reads joining the same URL share its result, which can be
+  unchecked if the first read used a URL key or a name the check cannot verify. A read under an
+  unverifiable content name stays uncached. The content-hash cache serves every origin, so it
+  accepts only verified bytes. All 4574 sampled files from live scenes, worlds,
+  wearables and emotes matched.
 - **Camera layers are identified by entity**, not by an explicit layer number; the cleanup in
   #1320 waits on the protocol change.
 - **`-logFile` with one dash is accepted** (rewritten to `--log-file` before clap, `main.rs`):

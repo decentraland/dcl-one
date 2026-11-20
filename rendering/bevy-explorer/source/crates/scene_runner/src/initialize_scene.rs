@@ -7,15 +7,10 @@ use bevy::{
     asset::{io::Reader, AssetLoader, LoadContext},
     diagnostic::FrameCount,
     math::{FloatOrd, Vec3Swizzles},
-    pbr::NotShadowCaster,
     platform::collections::{HashMap, HashSet},
     prelude::*,
     reflect::TypePath,
-    render::{
-        primitives::Aabb,
-        render_resource::{AsBindGroup, ShaderRef},
-        storage::ShaderStorageBuffer,
-    },
+    render::{primitives::Aabb, storage::ShaderStorageBuffer},
 };
 
 use common::{
@@ -42,7 +37,7 @@ use ipfs::{
     ipfs_path::IpfsPath, ActiveEntityTask, EntityDefinition, IpfsAssetServer, RealmInitialLocation,
     SceneIpfsLocation,
 };
-use scene_material::{BoundRegion, SceneBounds};
+use scene_material::{BoundRegion, SceneBounds, FIXED_SCENE_HEIGHT};
 use system_bridge::{LiveSceneInfo, SystemApi, SystemBridge};
 
 use super::{update_world::CrdtExtractors, LoadSceneEvent, PrimaryUser, SceneSets, SceneUpdates};
@@ -101,7 +96,6 @@ impl Plugin for SceneLifecyclePlugin {
         app.init_resource::<PortableScenes>();
         app.init_asset::<SerializedCrdtStore>();
         app.init_asset_loader::<CrdtLoader>();
-        app.add_plugins(MaterialPlugin::<LoadingMaterial>::default());
 
         app.add_systems(
             Update,
@@ -111,7 +105,6 @@ impl Plugin for SceneLifecyclePlugin {
                 load_scene_javascript,
                 initialize_scene,
                 animate_ready_scene,
-                update_loading_quads,
                 handle_live_scene_info,
             )
                 .in_set(SceneSets::Init),
@@ -373,10 +366,7 @@ pub(crate) fn load_scene_javascript(
         let bounds = if portable.is_some() {
             Vec::default()
         } else {
-            scene_regions(parcels.clone().into_iter())
-                .into_iter()
-                .map(|region| BoundRegion::new(region.min, region.max, region.count))
-                .collect::<Vec<_>>()
+            scene_bound_regions(&parcels, &realm)
         };
 
         // get main.crdt
@@ -625,6 +615,24 @@ pub(crate) fn load_scene_javascript(
             },
         ));
     }
+}
+
+/// The regions a scene is clipped and collided to. A city scene has neighbours it must not build
+/// over, so its limit grows with each connected region's parcel count; every other realm (a
+/// World, a preview, an editor) gives its scenes one fixed height limit.
+fn scene_bound_regions(parcels: &HashSet<IVec2>, realm: &CurrentRealm) -> Vec<BoundRegion> {
+    let city = !realm.config.lists_scenes() && !realm.is_local();
+    scene_regions(parcels.iter().copied())
+        .into_iter()
+        .map(|region| {
+            let bound = BoundRegion::new(region.min, region.max, region.count);
+            if city {
+                bound
+            } else {
+                bound.with_height(FIXED_SCENE_HEIGHT)
+            }
+        })
+        .collect()
 }
 
 #[derive(Clone)]
@@ -955,6 +963,12 @@ pub struct ScenePointers {
     // The realm lists its scenes up front (a World) and they have all resolved, so a parcel none
     // of them covers is empty rather than unknown; there is no pointer request to answer for it.
     all_scenes_known: bool,
+    // each named scene's base parcel by hash, from its `scene.json` as the realm listed it: a far
+    // LOD is placed from it without loading the scene's entity definition. Cleared with the
+    // pointers; a hash a redeployment replaced keeps its entry until then
+    bases: HashMap<String, IVec2>,
+    // bumped whenever what `get` answers may have changed
+    generation: u64,
 }
 
 impl Default for ScenePointers {
@@ -966,6 +980,8 @@ impl Default for ScenePointers {
             crcs: Default::default(),
             terrain: Default::default(),
             all_scenes_known: false,
+            bases: Default::default(),
+            generation: 0,
         }
     }
 }
@@ -998,6 +1014,7 @@ impl ScenePointers {
     pub fn set_all_scenes_known(&mut self) {
         if !self.all_scenes_known {
             self.all_scenes_known = true;
+            self.generation += 1;
             // the terrain has been reading those parcels as unknown
             self.terrain.invalidate();
         }
@@ -1011,6 +1028,8 @@ impl ScenePointers {
         self.realm_bounds = (min_bound, max_bound);
         self.all_scenes_known = false;
         self.pointers.clear();
+        self.bases.clear();
+        self.generation += 1;
         self.crcs.clear();
         self.terrain.invalidate();
     }
@@ -1106,7 +1125,26 @@ impl ScenePointers {
         self.terrain
             .mark(parcel, matches!(result, PointerResult::Exists { .. }));
         self.pointers.insert(parcel, result);
+        self.generation += 1;
         res
+    }
+
+    /// Records the base parcel of the scene `hash`, as its `scene.json` names it.
+    pub(crate) fn set_base(&mut self, hash: &str, base: IVec2) {
+        self.bases.insert(hash.to_owned(), base);
+    }
+
+    /// The base parcel of a scene the pointers name, when the realm listed it with its
+    /// `scene.json`.
+    pub(crate) fn base(&self, hash: &str) -> Option<IVec2> {
+        self.bases.get(hash).copied()
+    }
+
+    /// Changes whenever what `get` answers may have changed, so a reader can keep what it worked
+    /// out from the pointers until then. Change detection on the resource cannot tell, since
+    /// `crc` and the terrain take it mutably.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
     }
 
     pub fn min(&self) -> IVec2 {
@@ -1325,13 +1363,7 @@ fn load_active_entities(
             }
         }
         pointers.set_realm(bounds_min, bounds_max);
-        pointers.reset_terrain(
-            current_realm
-                .config
-                .scenes_urn
-                .as_ref()
-                .is_some_and(|urns| !urns.is_empty()),
-        );
+        pointers.reset_terrain(current_realm.config.lists_scenes());
         for mut context in global_crdt.iter_mut() {
             context.set_bounds(bounds_min, bounds_max);
         }
@@ -1351,11 +1383,7 @@ fn load_active_entities(
         }
 
         if !current_realm.about_url.is_empty() && *teleport_target == RealmInitialLocation::Base {
-            let has_scene_urns = !current_realm
-                .config
-                .scenes_urn
-                .as_ref()
-                .is_none_or(Vec::is_empty);
+            let has_scene_urns = current_realm.config.lists_scenes();
 
             if !has_scene_urns {
                 // we want to go to base but there are no specific parcels
@@ -1423,11 +1451,7 @@ fn load_active_entities(
         }
     };
 
-    let has_scene_urns = !current_realm
-        .config
-        .scenes_urn
-        .as_ref()
-        .is_none_or(Vec::is_empty);
+    let has_scene_urns = current_realm.config.lists_scenes();
 
     if pointer_request.is_none()
         && !current_realm.address.is_empty()
@@ -1602,17 +1626,22 @@ fn load_active_entities(
                 }
             }
 
+            let parcel = |pointer: &str| {
+                let (x, y) = pointer.split_once(',')?;
+                let x = x.parse::<i32>().ok()?;
+                let y = y.parse::<i32>().ok()?;
+                Some(IVec2::new(x, y))
+            };
             let parcels = meta
                 .scene
                 .parcels
                 .iter()
-                .filter_map(|pointer| {
-                    let (x, y) = pointer.split_once(',')?;
-                    let x = x.parse::<i32>().ok()?;
-                    let y = y.parse::<i32>().ok()?;
-                    Some(IVec2::new(x, y))
-                })
+                .filter_map(|pointer| parcel(pointer))
                 .collect::<Vec<_>>();
+            // a far LOD's mesh is relative to it (`scene_lod`)
+            if let Some(base) = parcel(&meta.scene.base) {
+                pointers.set_base(&active_entity.id, base);
+            }
 
             // jump to target if we just resolved it
             if teleport_on_resolve
@@ -2018,42 +2047,23 @@ pub fn process_scene_lifecycle(
 )]
 pub struct SceneHash(pub String);
 
-#[derive(Component)]
-pub struct LoadingQuad(bool);
-
+/// Raises a scene from its parking spot below the world once it is ready (its fifth tick, broken
+/// or frozen), and in preview mode lays the grid plane under each of its parcels. Until then a
+/// loading scene shows nothing of its own and its stand-in (the near LOD, else the far LOD, else
+/// the imposter tile of its parcels) covers its parcels. The stand-in stays until the scene's
+/// content is shown (`RendererSceneContext::content_shown`), so the raised scene and its stand-in
+/// overlap in between rather than swapping in one frame.
 fn animate_ready_scene(
-    mut q: Query<(
-        Entity,
-        &mut Transform,
-        Ref<RendererSceneContext>,
-        Option<&Children>,
-    )>,
+    mut q: Query<(Entity, &mut Transform, Ref<RendererSceneContext>)>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut loading_materials: ResMut<Assets<LoadingMaterial>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    loading_quads: Query<(), With<LoadingQuad>>,
     preview: Res<PreviewMode>,
     mut handles: Local<Option<(Handle<Mesh>, Handle<StandardMaterial>)>>,
     asset_server: Res<AssetServer>,
     current_imposter_scene: Res<CurrentImposterScene>,
 ) {
-    if handles.is_none() {
-        *handles = Some((
-            meshes.add(
-                Rectangle::default()
-                    .mesh()
-                    .build()
-                    .scaled_by(Vec3::splat(PARCEL_SIZE)),
-            ),
-            materials.add(StandardMaterial {
-                base_color_texture: Some(asset_server.load("embedded://images/grid.png")),
-                ..Default::default()
-            }),
-        ));
-    }
-
-    for (root, mut transform, ctx, children) in q.iter_mut() {
+    for (root, mut transform, ctx) in q.iter_mut() {
         // skip animating imposters
         if current_imposter_scene
             .0
@@ -2069,21 +2079,28 @@ fn animate_ready_scene(
         // (already-spawned) main.crdt content stuck underground and looks empty until unfrozen.
         let frozen = ctx.blocked.contains(FROZEN_BLOCK);
         if transform.translation.y < 0.0 && (ctx.tick_number >= 5 || ctx.broken() || frozen) {
-            if transform.translation.y == -1000.0 {
-                for child in children.map(|c| c.iter()).unwrap_or_default() {
-                    if loading_quads.get(child).is_ok() {
-                        commands.entity(child).despawn();
-                    }
-                }
-            }
-
-            // transform.translation.y *= 0.75;
-            // if transform.translation.y > -0.01 {
             transform.translation.y = 0.0;
-            // }
         }
 
-        if ctx.is_added() {
+        if ctx.is_added() && preview.is_preview {
+            let (mesh, material) = handles
+                .get_or_insert_with(|| {
+                    (
+                        meshes.add(
+                            Rectangle::default()
+                                .mesh()
+                                .build()
+                                .scaled_by(Vec3::splat(PARCEL_SIZE)),
+                        ),
+                        materials.add(StandardMaterial {
+                            base_color_texture: Some(
+                                asset_server.load("embedded://images/grid.png"),
+                            ),
+                            ..Default::default()
+                        }),
+                    )
+                })
+                .clone();
             let mut children = Vec::new();
             for parcel in ctx.parcels.iter() {
                 let position = ((*parcel - ctx.base) * IVec2::new(1, -1))
@@ -2091,130 +2108,31 @@ fn animate_ready_scene(
                     .extend(0.0)
                     .xzy()
                     * PARCEL_SIZE;
-                let middle = Vec3::new(PARCEL_SIZE * 0.5, 0.0, PARCEL_SIZE * -0.5);
 
-                for (parcel_offset, position_offset, is_x) in [
-                    (-IVec2::X, -Vec3::Z * 0.5, true),
-                    (IVec2::X, -Vec3::Z * 0.5 + Vec3::X, true),
-                    (-IVec2::Y, Vec3::X * 0.5, false),
-                    (IVec2::Y, Vec3::X * 0.5 - Vec3::Z, false),
-                ] {
-                    if !ctx.parcels.contains(&(*parcel + parcel_offset)) {
-                        children.push(
-                            commands
-                                .spawn((
-                                    Mesh3d(handles.as_ref().unwrap().0.clone()),
-                                    MeshMaterial3d(
-                                        loading_materials.add(LoadingMaterial::default()),
-                                    ),
-                                    Transform::from_translation(
-                                        position + position_offset * PARCEL_SIZE + Vec3::Y * 1000.0,
-                                    )
-                                    .looking_at(position + middle + Vec3::Y * 1000.0, Vec3::Y),
-                                    LoadingQuad(is_x),
-                                    NotShadowCaster,
-                                ))
-                                .id(),
-                        );
-                    }
-                }
-
-                if preview.is_preview {
-                    children.push(
-                        commands
-                            .spawn((
-                                PreviewGridPlane,
-                                Aabb::from_min_max(
-                                    Vec3::new(-PARCEL_SIZE / 2., -PARCEL_SIZE / 2., 0.),
-                                    Vec3::new(PARCEL_SIZE / 2., PARCEL_SIZE / 2., 0.),
-                                ),
-                                Mesh3d(handles.as_ref().unwrap().0.clone()),
-                                MeshMaterial3d(handles.as_ref().unwrap().1.clone()),
-                                Transform::from_translation(
-                                    position
-                                        + Vec3::new(PARCEL_SIZE * 0.5, -0.01, PARCEL_SIZE * -0.5),
-                                )
-                                .looking_at(
-                                    position
-                                        + Vec3::new(PARCEL_SIZE * 0.5, -2.0, -PARCEL_SIZE * 0.5),
-                                    Vec3::Z,
-                                ),
-                            ))
-                            .id(),
-                    );
-                }
+                children.push(
+                    commands
+                        .spawn((
+                            PreviewGridPlane,
+                            Aabb::from_min_max(
+                                Vec3::new(-PARCEL_SIZE / 2., -PARCEL_SIZE / 2., 0.),
+                                Vec3::new(PARCEL_SIZE / 2., PARCEL_SIZE / 2., 0.),
+                            ),
+                            Mesh3d(mesh.clone()),
+                            MeshMaterial3d(material.clone()),
+                            Transform::from_translation(
+                                position + Vec3::new(PARCEL_SIZE * 0.5, -0.01, PARCEL_SIZE * -0.5),
+                            )
+                            .looking_at(
+                                position + Vec3::new(PARCEL_SIZE * 0.5, -2.0, -PARCEL_SIZE * 0.5),
+                                Vec3::Z,
+                            ),
+                        ))
+                        .id(),
+                );
             }
 
             commands.entity(root).try_push_children(&children);
         }
-    }
-}
-
-#[derive(Component)]
-pub struct LoadingMaterialHandle(pub Handle<LoadingMaterial>);
-
-fn update_loading_quads(
-    mut q: Query<
-        (
-            &GlobalTransform,
-            &mut Transform,
-            &MeshMaterial3d<LoadingMaterial>,
-            &LoadingQuad,
-        ),
-        Without<PrimaryUser>,
-    >,
-    player: Query<&Transform, With<PrimaryUser>>,
-    mut mats: ResMut<Assets<LoadingMaterial>>,
-    mut local_prev_active: Local<HashSet<AssetId<LoadingMaterial>>>,
-) {
-    let Ok(player_translation) = player.single().map(|p| p.translation) else {
-        return;
-    };
-
-    let prev_active = std::mem::take(&mut *local_prev_active);
-
-    for (gt, mut trans, h_mat, loading) in q.iter_mut() {
-        let nearest_point = player_translation.xz().clamp(
-            gt.translation().xz()
-                - if loading.0 {
-                    Vec2::Y * PARCEL_SIZE * 0.5
-                } else {
-                    Vec2::X * PARCEL_SIZE * 0.5
-                },
-            gt.translation().xz()
-                + if loading.0 {
-                    Vec2::Y * PARCEL_SIZE * 0.5
-                } else {
-                    Vec2::X * PARCEL_SIZE * 0.5
-                },
-        );
-        let active = (nearest_point - player_translation.xz()).length() < 10.0;
-        if prev_active.contains(&h_mat.0.id()) || active {
-            let mat = mats.get_mut(h_mat.0.id()).unwrap();
-            mat.player_pos = player_translation.extend(if active { 1.0 } else { 0.0 })
-        }
-
-        trans.translation.y = player_translation.y + 1000.0;
-
-        if active {
-            local_prev_active.insert(h_mat.0.id());
-        }
-    }
-}
-
-#[derive(Asset, TypePath, Clone, AsBindGroup, Default)]
-pub struct LoadingMaterial {
-    #[uniform(0)]
-    player_pos: Vec4, // xyz = player pos, w = active
-}
-
-impl Material for LoadingMaterial {
-    fn fragment_shader() -> bevy::render::render_resource::ShaderRef {
-        ShaderRef::Path("embedded://shaders/loading.wgsl".into())
-    }
-
-    fn alpha_mode(&self) -> AlphaMode {
-        AlphaMode::Blend
     }
 }
 

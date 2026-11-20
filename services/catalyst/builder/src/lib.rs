@@ -37,7 +37,7 @@
 //! is verified only; v2 never holds a signing key.
 //!
 //! Deviations from the old crate, all deliberate: the signed-fetch window is
-//! the shared verifier's 5 minutes (the old required path allowed 30); the
+//! the shared verifier's 60 seconds (the old required path allowed 30 minutes); the
 //! subgraph readers replace the squid side pool (503 on the address routes
 //! and empty curation listings without a collections subgraph, as the old
 //! node answered without its pool); `BUILDER_CONTENT_BUCKET_URL` is
@@ -73,6 +73,7 @@ pub(crate) use catalyst_storage as storage;
 
 pub mod auth;
 pub mod catalog;
+pub mod committee;
 pub mod drafts;
 pub mod handlers;
 pub mod http;
@@ -109,12 +110,14 @@ use dcl_http::Outbound;
 
 use catalog::{CatalogStore, PullSource};
 use items::{ItemsComponent, NewsletterComponent};
-use onchain::CommitteeMemberOut;
 
 pub const ADMIN_TOKEN_ENV: &str = "CATALYRST_BUILDER_ADMIN_TOKEN";
-const COMMITTEE_MEMO_TTL: Duration = Duration::from_secs(300);
 const EXISTS_TTL: Duration = Duration::from_secs(300);
 const EXISTS_CACHE_MAX: usize = 8192;
+/// How long a published collection's on-chain `creator()` read (or its
+/// failure) is reused, so reads of one collection share one `eth_call`.
+pub(crate) const CREATOR_MEMO_TTL: Duration = Duration::from_secs(30);
+const CREATOR_MEMO_MAX: usize = 8192;
 /// One 20 MiB upload with its framing; also the cap of a project manifest
 /// (the editor's composite) and of a file set (5000 paths).
 const UPLOAD_BODY_LIMIT: usize = 21 * 1024 * 1024;
@@ -266,8 +269,12 @@ pub struct State {
     /// withheld (rejected or deleted photo) is a 404 on `/contents/{hash}`
     /// here too, not only on the content server's routes.
     pub denylist: Arc<crate::content::Denylist>,
-    pub(crate) committee_memo: TtlMap<(), Arc<Vec<CommitteeMemberOut>>>,
     pub(crate) exists_memo: TtlMap<String, bool>,
+    /// A published collection's `creator()` by contract; `None` is a failed
+    /// read, reused for the TTL too.
+    pub(crate) creator_memo: TtlMap<String, Option<String>>,
+    /// Set once `BUILDER_POLYGON_RPC_URL` answered `eth_chainId` 137.
+    pub(crate) polygon_checked: tokio::sync::OnceCell<()>,
 }
 
 pub type SharedState = Arc<State>;
@@ -306,8 +313,9 @@ impl State {
             foundation: linked_publication_review::foundation_client(),
             eip1654,
             denylist,
-            committee_memo: TtlMap::new(COMMITTEE_MEMO_TTL),
             exists_memo: TtlMap::bounded(EXISTS_TTL, EXISTS_CACHE_MAX),
+            creator_memo: TtlMap::bounded(CREATOR_MEMO_TTL, CREATOR_MEMO_MAX),
+            polygon_checked: tokio::sync::OnceCell::new(),
         })
     }
 
@@ -543,8 +551,9 @@ impl State {
             foundation: self.foundation.clone(),
             eip1654: None,
             denylist: self.denylist.clone(),
-            committee_memo: TtlMap::new(COMMITTEE_MEMO_TTL),
             exists_memo: TtlMap::bounded(EXISTS_TTL, EXISTS_CACHE_MAX),
+            creator_memo: TtlMap::bounded(CREATOR_MEMO_TTL, CREATOR_MEMO_MAX),
+            polygon_checked: tokio::sync::OnceCell::new(),
         })
     }
 }

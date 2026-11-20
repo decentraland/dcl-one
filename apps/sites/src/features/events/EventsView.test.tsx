@@ -79,7 +79,12 @@ function setup(path: string, platform: DetectedPlatform = DESKTOP) {
   return { router, user: userEvent.setup(), client };
 }
 
+// Local midday keeps soon(-0.5) and soon(3) on today's column in any TZ; only Date is faked so RTL polling runs.
+const NOW = new Date(2026, 10, 19, 12);
+
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
   auth.identity = null;
   calendar = [soon("cal", "Poker Night")];
   upcoming = [soon("up", "Watch Party", 1)];
@@ -112,6 +117,7 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 const FACE = "https://profile-images.decentraland.org/entities/bafyface/face.png";
@@ -375,6 +381,27 @@ describe("when calendar occupancy is available or unknown", () => {
     expect(within(card).queryByText("26 online")).toBeNull();
     if (expected) expect(within(card).getByText(expected)).toBeTruthy();
     else expect(within(card).queryByText(/online$/)).toBeNull();
+  });
+
+  describe("and live events are in desktop day columns", () => {
+    beforeEach(() => {
+      vi.stubGlobal("innerWidth", 1440);
+      calendar = [
+        { ...soon("parcel", "Live parcel", -0.5), live: true, x: 3, y: 7 },
+        { ...soon("world", "Live world", -0.5), live: true, x: 3, y: 7, world: true, server: "gallery.dcl.eth" },
+      ];
+      setup("/events");
+    });
+
+    it("should link the live parcel to its coordinates", async () => {
+      const jump = await screen.findByRole("link", { name: "Jump in: Live parcel" });
+      expect(jump.getAttribute("href")).toMatch(/\/play\/\?position=3%2C7(&|$)/);
+    });
+
+    it("should link the live World to its named realm", async () => {
+      const jump = await screen.findByRole("link", { name: "Jump in: Live world" });
+      expect(jump.getAttribute("href")).toContain("realm=gallery.dcl.eth");
+    });
   });
 
   it("should give a live event in the phone list its JUMP IN instead of Remind me", async () => {

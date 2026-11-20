@@ -20,7 +20,7 @@ spec.loader.exec_module(guard)
 def cut_shard(rows, shard=None, table="", locale="C"):
     """Runs the shard cut of tooling/catalyst-test.sh over (source, kind, executable) rows and a table."""
     script = (ROOT / "tooling/catalyst-test.sh").read_text()
-    select = script[script.index('shard="${CATALYST_TEST_SHARD:-1/1}"'):script.index('cores=')]
+    select = script[script.index('shard="${CATALYST_TEST_SHARD:-1/1}"'):script.index('if [ "$planned" = true ]; then')]
     with tempfile.TemporaryDirectory() as logs:
         Path(logs, "binaries").write_text("".join("\t".join(row) + "\n" for row in rows))
         Path(logs, "durations").write_text(table)
@@ -414,7 +414,11 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in mandatory.call_args_list], list(required.values()))
         self.assertEqual([call.args[1] for call in mandatory.call_args_list], ["unit", "socket", "config", "auth", "owner", "content", "root", "retry", "engine"])
         self.assertEqual(mandatory.call_args_list[-1].kwargs, {"exact": True})
-        self.assertEqual(build.call_args.args[0], ["cargo", "test", "--locked", *guard.SELECTION.split(), "--no-run", "--message-format=json-render-diagnostics"])
+        expected = ["cargo", "test", "--locked", *guard.SELECTION.split(), "--lib"]
+        for name, kind in sorted(set(required) | {(n, k) for n, k, _ in guard.EXTERNAL}):
+            if kind == "test":
+                expected.extend(["--test", name])
+        self.assertEqual(build.call_args.args[0], [*expected, "--no-run", "--message-format=json-render-diagnostics"])
         for absent, kind in (("content", "lib"), ("root", "lib"), ("retry", "test"), ("engine", "test")):
             incomplete = "\n".join(json.dumps(entry) for entry in artifacts if entry["executable"] != absent)
             with self.subTest(absent=absent), mock.patch.object(guard, "MANDATORY_ARCHIPELAGO", required), \
@@ -795,7 +799,7 @@ class InventoryTests(unittest.TestCase):
 
     def test_the_doc_tests_run_in_exactly_the_named_shard(self):
         script = (ROOT / "tooling/catalyst-test.sh").read_text()
-        select = script[script.index('shard="${CATALYST_TEST_SHARD:-1/1}"'):script.index('cores=')]
+        select = script[script.index('shard="${CATALYST_TEST_SHARD:-1/1}"'):script.index('if [ "$planned" = true ]; then')]
         decide = script[script.index('if [ "$doc" -eq "$index" ]; then'):]
         decide = decide[:decide.index("fi\n") + 3].replace('cargo test --locked "$@" --doc', "echo doc")
 
@@ -888,8 +892,8 @@ class InventoryTests(unittest.TestCase):
         names = [[path.rsplit("/", 1)[1] for path in shard] for shard in shards]
         # Greedy longest first: 4 at once, then the socket binaries; one of each group per shard.
         # The binary without a time keeps its byte-order place (7th of 11: shard 1 of 2) and runs first.
-        self.assertEqual(names, [["new", "a", "node_2", "sockets_2"],
-                                 ["node_1", "b", "c", "d", "sockets_1", "e", "f"]])
+        self.assertEqual(names, [["new", "node_1", "b", "c", "d", "sockets_1", "e", "f"],
+                                 ["a", "node_2", "sockets_2"]])
         self.assertEqual(sorted(sum(names, [])), sorted(path.rsplit("/", 1)[1] for _, _, path in rows))
 
     def test_actual_test_script_rejects_filters_skipped_binaries_and_early_exit(self):

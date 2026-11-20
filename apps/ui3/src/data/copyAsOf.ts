@@ -1,5 +1,4 @@
 import { useSyncExternalStore } from "react";
-import { coarseDuration } from "@shop/discovery/freshness";
 
 export type CopyDomain = "places" | "worlds" | "events" | "communities";
 
@@ -21,11 +20,6 @@ export function olderCopy(a: CopyStamp | null | undefined, b: CopyStamp | null |
   const asOf = Math.min(a.asOf, b.asOf);
   const staleAt = Math.min(a.asOf + a.staleAfterMs, b.asOf + b.staleAfterMs);
   return { asOf, staleAfterMs: staleAt - asOf };
-}
-
-export function staleCopyAge(copy: CopyStamp | null | undefined, now = Date.now()): string | null {
-  if (!copy || now - copy.asOf <= copy.staleAfterMs) return null;
-  return coarseDuration(now - copy.asOf);
 }
 
 const stamps = new Map<CopyDomain, CopyStamp | null>();

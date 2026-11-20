@@ -3,6 +3,7 @@ import { GeneralLeftArrow, GeneralRightArrow } from '../../../foundations/icons'
 import { Button } from '../shared/Button/Button'
 import { DayCard, UpcomingCard } from './cards'
 import type { ExperienceCardProps } from './types'
+import { useEventsCopy } from './locale'
 import styles from './AllEvents.module.css'
 
 type AllEventsDay = {
@@ -38,15 +39,16 @@ type AllEventsProps = {
   onRetry?: () => void
 }
 
-const VIEWS: readonly { id: AllEventsTab; label: string }[] = [
+const VIEWS = [
   { id: 'all', label: 'All Events' },
   { id: 'my', label: 'My Events' }
-]
+] as const
 
 /** All Events and My Events are two pages, so they are links, the current one marked. */
 function Views({ active, hrefs, onFollow }: NonNullable<AllEventsProps['views']>) {
+  const { text } = useEventsCopy()
   return (
-    <nav aria-label="Events views" className={styles.tabs}>
+    <nav aria-label={text('Events views')} className={styles.tabs}>
       {VIEWS.map((view) => (
         <a
           key={view.id}
@@ -55,7 +57,7 @@ function Views({ active, hrefs, onFollow }: NonNullable<AllEventsProps['views']>
           className={styles.tab}
           onClick={onFollow && ((event) => onFollow(view.id, event))}
         >
-          {view.label}
+          {text(view.label)}
         </a>
       ))}
     </nav>
@@ -63,8 +65,9 @@ function Views({ active, hrefs, onFollow }: NonNullable<AllEventsProps['views']>
 }
 
 function DayColumn({ day }: { day: AllEventsDay }) {
+  const { text } = useEventsCopy()
   return (
-    <ul className={styles.column} aria-label={`Events for ${day.fullLabel}`}>
+    <ul className={styles.column} aria-label={text('Events for {day}', { day: day.fullLabel })}>
       {day.cards.length ? (
         day.cards.map((card) => (
           <li key={card.id}>
@@ -72,7 +75,7 @@ function DayColumn({ day }: { day: AllEventsDay }) {
           </li>
         ))
       ) : (
-        <li className={styles.empty}>No events this day.</li>
+        <li className={styles.empty}>{text('No events this day.')}</li>
       )}
       <li className={styles.filler} aria-hidden="true" />
     </ul>
@@ -91,27 +94,28 @@ function AllEvents({
   status = 'ready',
   onRetry
 }: AllEventsProps) {
+  const { text } = useEventsCopy()
   const titleId = useId()
   const list = days.flatMap((day) => day.cards)
   return (
     <section
       className={styles.root}
       aria-labelledby={views ? undefined : titleId}
-      aria-label={views ? 'All Events' : undefined}
+      aria-label={views ? text('All Events') : undefined}
     >
       {views ? (
         <Views {...views} />
       ) : (
         <h2 id={titleId} className={styles.title}>
-          All Events
+          {text('All Events')}
         </h2>
       )}
       <div className={styles.panel}>
-        <nav className={styles.dates} aria-label="Event days">
+        <nav className={styles.dates} aria-label={text('Event days')}>
           <button
             type="button"
             className={styles.dateArrow}
-            aria-label="Navigate to previous dates"
+            aria-label={text('Navigate to previous dates')}
             disabled={!canGoBack}
             onClick={onPrevious}
           >
@@ -132,7 +136,7 @@ function AllEvents({
           <button
             type="button"
             className={styles.dateArrow}
-            aria-label="Navigate to next dates"
+            aria-label={text('Navigate to next dates')}
             disabled={!canGoForward}
             onClick={onNext}
           >
@@ -141,20 +145,22 @@ function AllEvents({
         </nav>
         {status === 'unavailable' ? (
           <div role="alert" className={styles.message}>
-            <p>Events are temporarily unavailable.</p>
+            <p>{text('Events are temporarily unavailable.')}</p>
             {onRetry ? (
               <Button variant="tertiary" size="sm" onClick={onRetry}>
-                Retry
+                {text('Retry')}
               </Button>
             ) : null}
           </div>
         ) : status === 'loading' ? (
-          <p className={styles.message}>Loading events…</p>
+          <p className={styles.message}>{text('Loading events…')}</p>
         ) : layout === 'list' ? (
           list.length ? (
             <ul
               className={styles.list}
-              aria-label={days[0] ? `Events for ${days[0].fullLabel}` : undefined}
+              aria-label={
+                days[0] ? text('Events for {day}', { day: days[0].fullLabel }) : undefined
+              }
             >
               {list.map((card) => (
                 <li key={card.id}>
@@ -163,7 +169,7 @@ function AllEvents({
               ))}
             </ul>
           ) : (
-            <p className={styles.message}>No events this day.</p>
+            <p className={styles.message}>{text('No events this day.')}</p>
           )
         ) : (
           <div className={styles.columns} style={{ '--columns': days.length } as CSSProperties}>

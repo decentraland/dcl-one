@@ -120,6 +120,23 @@ async fn get(router: Router, uri: &str) -> (StatusCode, Value) {
     call(router, "GET", uri, HeaderMap::new(), None).await
 }
 
+/// A GET and its `Cache-Control` (empty when the response sets none).
+async fn get_cached(router: Router, uri: &str) -> (Value, String) {
+    let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
+    let resp = router.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "{uri}");
+    let cache = resp
+        .headers()
+        .get(header::CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (serde_json::from_slice(&bytes).unwrap(), cache)
+}
+
 fn bearer(token: &str) -> HeaderMap {
     let mut h = HeaderMap::new();
     h.insert(
@@ -447,7 +464,7 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     let pool = state.pool.clone();
     let t = tag();
     let (c1, c2, c_nft) = (contract_of(&t, 1), contract_of(&t, 2), contract_of(&t, 3));
-    let v3_minter = listings::offchain_marketplace_v2(137).unwrap().address;
+    let v3_minter = listings::offchain_marketplace_v3(137).unwrap().address;
 
     let mut collections = vec![
         mirrors::collections::fixture(&c1, "First", CREATOR, true),
@@ -1437,6 +1454,51 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         "{body}"
     );
 
+    // A marketplace the collection does not list as a minter cannot mint: every leg drops its order.
+    let set_minter = |minter: &'static str| {
+        let (pool, c1) = (pool.clone(), c1.clone());
+        async move {
+            sqlx::query(
+                "UPDATE shop.collections SET minters = ARRAY[$2] WHERE contract_address = $1",
+            )
+            .bind(&c1)
+            .bind(minter)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    set_minter(listings::offchain_marketplace_v2(137).unwrap().address).await;
+    state.readers.clear();
+    let (status, body) = get(app(), &format!("/v1/items?contractAddress={c1}&itemId=1")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["data"][0]["tradeId"].is_null(), "{}", body["data"][0]);
+    let (status, body) = get(app(), &format!("/v2/catalog?id={c1}-1")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["data"][0]["tradeId"].is_null(), "{}", body["data"][0]);
+    let (status, body) = get(app(), &format!("/v3/catalog/shop?contractAddress={c1}")).await;
+    assert_eq!(
+        (status, body["total"].as_i64()),
+        (StatusCode::OK, Some(0)),
+        "{body}"
+    );
+    set_minter(listings::offchain_marketplace_v3(137).unwrap().address).await;
+    state.readers.clear();
+    let (status, body) = get(app(), &format!("/v1/items?contractAddress={c1}&itemId=1")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["data"][0]["tradeId"].as_str(),
+        Some(primary_id.as_str()),
+        "{}",
+        body["data"][0]
+    );
+
+    // The trending rail's memo is filled right before the cancellation below, so the few reads in
+    // between are all that separate it from the check that it still answers: its 30 s cannot lapse
+    // over the rest of this test on a slow runner.
+    state.readers.clear();
+    let (status, trending) = get(app(), "/v3/catalog/trending?first=3").await;
+    assert_eq!(status, StatusCode::OK, "{trending}");
     // An operator cancellation drops the listing from every leg.
     let (status, body) = call(
         app(),
@@ -1457,6 +1519,151 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     let (status, body) = get(app(), &format!("/v2/catalog?id={c1}-1")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body["data"][0]["tradeId"].is_null(), "{}", body["data"][0]);
+    // An item read stays fresh; the trending rail answers from its 30 s memo until it lapses.
+    let (_, body) = get(
+        app(),
+        &format!("/v3/catalog/unified?groupBy=item&contractAddress={c1}&itemId=1&source=native"),
+    )
+    .await;
+    assert_eq!(unified_total(&body), 0, "{body}");
+    let carries_primary = |body: &Value| {
+        body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["tradeId"] == primary_id.as_str())
+    };
+    assert!(carries_primary(&trending), "{trending}");
+    let (_, body) = get(app(), "/v3/catalog/trending?first=3").await;
+    assert_eq!(body["data"], trending["data"]);
+    state.readers.clear();
+    let (_, body) = get(app(), "/v3/catalog/trending?first=3").await;
+    assert!(!carries_primary(&body), "{body}");
+    // A read that names its item never reads the creator directory; a browse read does.
+    use super::readers::Ttl;
+    use super::search::CREATOR_DIRECTORY_KEY;
+    state.readers.clear();
+    let (status, body) = get(
+        app(),
+        &format!("/v3/catalog/unified?groupBy=item&contractAddress={c1}&itemId=1&source=native"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(!state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
+    let (status, body) = get(app(), "/v3/catalog/unified?groupBy=item&first=3").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // The browse read started the directory's read in the background; it may land after the
+    // answer, which waits at most 500 ms for it.
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while !state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the browse read fills the creator directory");
+
+    // The feeds carry their creators' profiles per response, never memoized with the page: a
+    // profile denylisted after the pages were memoized leaves the very next answer, and every
+    // response that carries a profile is sent no-cache.
+    let profile_entity = format!("bafyprofile{t}");
+    sqlx::query(
+        "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
+         VALUES ($1, 'v3', 'profile', $2, $3::json, now(), ARRAY[$1], now(), '[]'::json)",
+    )
+    .bind(CREATOR)
+    .bind(&profile_entity)
+    .bind(json!({ "v": { "avatars": [{ "name": "Creatorname", "avatar": { "snapshots": { "face256": "bafyface" } } }] } }).to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO content.active_pointers (pointer, entity_id, entity_type) VALUES ($1, $2, 'profile')")
+        .bind(CREATOR)
+        .bind(&profile_entity)
+        .execute(&pool)
+        .await
+        .unwrap();
+    state.readers.clear();
+    // Read the directory first, through the dropdown's own path, which has no 500 ms bound: the
+    // feeds below then find it fresh, start no refresh of their own, and never depend on how
+    // fast a cold read is.
+    super::search::creator_directory(&state).await.unwrap();
+    let feeds = [
+        "/v3/catalog/unified?groupBy=item&first=12",
+        "/v3/catalog/trending?first=10&days=3650",
+        "/v3/catalog/creators?days=7",
+    ];
+    let creator_profile = |body: &Value| {
+        let rows = body["data"].as_array().unwrap();
+        let row = rows
+            .iter()
+            .find(|r| r["creator"] == CREATOR || r["id"] == CREATOR)
+            .unwrap_or_else(|| panic!("a row of the creator: {body}"));
+        row.get("creatorProfile")
+            .or_else(|| row.get("profile"))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    for uri in feeds {
+        let (body, cache) = get_cached(app(), uri).await;
+        assert_eq!(
+            creator_profile(&body)["name"],
+            "Creatorname",
+            "{uri}: {body}"
+        );
+        assert!(
+            creator_profile(&body)["face"].as_str().is_some(),
+            "{uri}: {body}"
+        );
+        assert_eq!(cache, "no-cache", "{uri}");
+    }
+    let listed = "https://registry.example/denylist";
+    state.denylist.set_remote(listed, [profile_entity.clone()]);
+    for uri in feeds {
+        let (body, cache) = get_cached(app(), uri).await;
+        assert_eq!(
+            creator_profile(&body),
+            json!({ "name": "", "face": null, "claimed": false }),
+            "{uri}: {body}"
+        );
+        assert_eq!(cache, "no-cache", "{uri}");
+    }
+    state.denylist.set_remote(listed, Vec::<String>::new());
+    sqlx::query("DELETE FROM content.active_pointers WHERE pointer = $1")
+        .bind(CREATOR)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM content.deployments WHERE entity_id = $1")
+        .bind(&profile_entity)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // A feed without the creator directory (here, its refresh held by another) answers without
+    // profiles under a brief cache, never the hour these feeds had, so a CDN does not keep an
+    // answer whose cards each ask /lambdas/profiles.
+    // A claim still live from the feeds above could not release this hold either: its release
+    // acts only on its own claim.
+    state.readers.clear();
+    let hold = state
+        .readers
+        .begin_refresh(CREATOR_DIRECTORY_KEY, Duration::ZERO)
+        .expect("a reset frees the directory's refresh");
+    for uri in [
+        "/v3/catalog/trending?first=10&days=3650",
+        "/v3/catalog/creators?days=7",
+    ] {
+        let (body, cache) = get_cached(app(), uri).await;
+        assert!(
+            body["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r.get("creatorProfile").is_none() && r.get("profile").is_none()),
+            "{uri}: {body}"
+        );
+        assert_eq!(cache, "public,max-age=60,s-maxage=60", "{uri}");
+    }
+    state.readers.end_refresh(CREATOR_DIRECTORY_KEY, hold, true);
 
     sqlx::query("DELETE FROM shop.usage_grants WHERE grantee_address = $1")
         .bind(WALLET_A)
@@ -1809,6 +2016,20 @@ async fn seed_item_row(pool: &PgPool, contract: &str, item_id: &str, creator: &s
     .execute(pool)
     .await
     .unwrap();
+    // Its collection lets the v3 marketplace mint, so its item orders are served.
+    sqlx::query(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, \
+             is_approved, is_editable, minters, created_at, updated_at, reviewed_at, mirrored_at) \
+         VALUES ('matic', lower($1), 137, 'Item fixture', lower($2), lower($2), $3, true, true, false, ARRAY[$4], 0, 0, 0, now()) \
+         ON CONFLICT (network, contract_address) DO NOTHING",
+    )
+    .bind(contract)
+    .bind(creator)
+    .bind(format!("urn:decentraland:matic:collections-v2:{contract}"))
+    .bind(listings::offchain_marketplace_v3(137).unwrap().address)
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 /// The `public_item_order` ids the shared `unified_trades` view serves now.
@@ -1949,6 +2170,19 @@ async fn a_signed_item_order_is_stored_once_and_only_behind_the_write_switch() {
     assert_eq!(status, StatusCode::CREATED, "{body}");
     assert_eq!(body["ok"], true);
     let created = body["data"]["id"].as_str().unwrap().to_string();
+    // The 201 carries the stored trade, `received` included, as the read answers it.
+    assert_eq!(
+        body["data"]["received"].as_array().map(Vec::len),
+        Some(1),
+        "{body}"
+    );
+    let (status, read) = get(
+        market_router(state.clone()),
+        &format!("/v1/trades/{created}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(body["data"], read["data"]);
     let (status, body) = call(
         market_router(state.clone()),
         "POST",

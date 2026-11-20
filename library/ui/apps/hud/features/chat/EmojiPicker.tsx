@@ -31,7 +31,7 @@ function Grid({ emojis, onPick }: { emojis: Emoji[]; onPick: (e: Emoji) => void 
   return (
     <div className={styles.grid}>
       {emojis.map((e) => (
-        <button key={e.code} type="button" className={styles.emoji} title={e.expression} onClick={() => onPick(e)}>
+        <button key={e.code} type="button" className={styles.emoji} title={e.expression} data-ui-sound="press" onClick={() => onPick(e)}>
           {e.emoji}
         </button>
       ))}
@@ -168,6 +168,7 @@ export function EmojiPicker({ onPick, onClose }: { onPick: (glyph: string) => vo
             className={`${styles.tab} ${t.section === section && !q ? styles.tabActive : ''}`.trim()}
             aria-label={t.label}
             aria-pressed={t.section === section && !q}
+            data-ui-sound="press"
             onClick={() => jump(t.section)}
           >
             <MaskIcon src={t.icon} size={25} />

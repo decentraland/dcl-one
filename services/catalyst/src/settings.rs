@@ -70,6 +70,7 @@ pub(crate) fn market_settings(
             mana_transfers_enabled: config.marketplace.marketplace_mana_transfers_index_enabled,
             trade_events_enabled: config.marketplace.marketplace_trade_events_index_enabled,
             sales_enabled: config.marketplace.marketplace_sales_index_enabled,
+            committee_enabled: config.marketplace.marketplace_committee_index_enabled,
             interval: Duration::from_secs(
                 config.marketplace.marketplace_index_interval_secs.max(1),
             ),
