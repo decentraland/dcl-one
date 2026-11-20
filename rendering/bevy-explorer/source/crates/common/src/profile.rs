@@ -36,18 +36,30 @@ fn integral_slot<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u3
 fn valid_emotes<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<Vec<AvatarEmote>>, D::Error> {
-    Ok(
-        Option::<Vec<serde_json::Value>>::deserialize(deserializer)?.map(|entries| {
-            entries
-                .into_iter()
-                .filter_map(|entry| {
-                    AvatarEmote::deserialize(entry)
-                        .inspect_err(|e| warn!("dropping an emote of a profile: {e}"))
-                        .ok()
+    let Some(entries) = Option::<Vec<serde_json::Value>>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    let total = entries.len();
+    let mut first_error = None;
+    let emotes: Vec<AvatarEmote> = entries
+        .into_iter()
+        .filter_map(|entry| {
+            AvatarEmote::deserialize(entry)
+                .inspect_err(|e| {
+                    first_error.get_or_insert_with(|| e.to_string());
                 })
-                .collect()
-        }),
-    )
+                .ok()
+        })
+        .collect();
+    if let Some(error) = first_error {
+        // serde errors can quote the input, so the reason is cut short.
+        let error: String = error.chars().take(120).collect();
+        warn!(
+            "dropped {} of {total} emotes of a profile, first: {error}",
+            total - emotes.len()
+        );
+    }
+    Ok(Some(emotes))
 }
 
 /// A profile version in any integral JSON number form, bounded to the `u32`
@@ -59,7 +71,11 @@ fn profile_version<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<
             Ok(version as i64)
         }
         _ => {
-            warn!("reading the invalid profile version {value} as 0");
+            let shown = match &value {
+                serde_json::Value::Number(n) => n.to_string(),
+                _ => "that is not a number".to_owned(),
+            };
+            warn!("reading the invalid profile version {shown} as 0");
             Ok(0)
         }
     }
