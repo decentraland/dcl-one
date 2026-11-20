@@ -12,7 +12,8 @@ It reads from the sources (sessions are read-only) and writes only to the
 target. It needs `psql` and libpq 16 or later (`sslrootcert=system`) and Python 3.11 or later
 (`tomllib`), nothing else; `blobs --from-s3` also needs `boto3`.
 
-Out of scope: the Catalyst content servers (`content.*` comes from peer sync),
+Out of scope: the Catalyst content servers (`content.*` comes from peer sync;
+their operator denylist file has its own import, below),
 transactions-server (its relay history has no chain or contract, which
 `economy.transactions` requires), chain-derived tables the node's indexers
 rebuild, and rows the upstream mirrors fill. Each `MAPPING.md` names the
@@ -66,6 +67,43 @@ in-app purchases cannot be clawed back by a later Apple refund
   media need its documented external transfer; Camera uses the offline filename
   copy described in `sources/camera-reel-service/MAPPING.md`. Database
   rows alone are not a complete service migration.
+- **Content denylist file.** An old content server also hides the ids listed
+  in `<STORAGE_ROOT_FOLDER>/<DENYLIST_FILE_NAME>` on its host (`denylist.txt`
+  by default); the node reads only `content.denylist`. Copy that file and
+  import it, with `DATABASE_URL` set, before the node serves content:
+
+  ```sh
+  catalyst content import-denylist --file denylist.txt --added-by 0x<operator wallet>
+  ```
+
+  Each new id becomes a console row added by that wallet, with its
+  `content`/`denylist.add` audit row; an id already listed is left alone, so
+  a re-run imports nothing. A line that is not an id (not UTF-8, longer than
+  512 bytes, or holding whitespace, such as `id # note`) imports nothing and
+  is named by number: fix the copy and run again. The command prints
+  `lines`, `blank`, `comments`, `duplicates`, `distinct`, `imported` and
+  `already_present`. Verify that `distinct` is the file's count of distinct
+  non-blank, non-`#` lines, that `imported + already_present = distinct`, and
+  that no id of the file is missing from the table (GNU sed; for a file with
+  lone `\r` line endings the command's `distinct` is the count to trust):
+
+  ```sh
+  sed -e 's/^\xEF\xBB\xBF//' -e 's/\r$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' denylist.txt \
+    | grep -v -e '^$' -e '^#' | sort -u > denylist.ids
+  wc -l < denylist.ids    # = distinct
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+    -c 'CREATE TEMP TABLE f (id text)' -c '\copy f FROM denylist.ids' \
+    -c 'SELECT count(*) AS missing FROM f WHERE id NOT IN (SELECT id FROM content.denylist)'   # 0
+  ```
+
+  A running `serve` hides the new ids within a minute (its denylist reload),
+  a starting one at boot. The remote lists (`DENYLIST_URLS`) are not
+  imported: the node fetches them itself. Every `content.denylist` row is
+  published on the anonymous Registry `GET /denylist` with `added_by` as its
+  `created_by`, so the file's ids and the importing wallet become public. The
+  node also matches a listed id as a pointer (reads and deploys), where the
+  old server matched entity ids and content hashes only, so check that a
+  pointer-shaped line (`0,0`) is meant to block that parcel.
 - **Same secrets.** Values the upstream encrypted (world env variables) are
   copied as ciphertext; the node must run with the upstream key.
 

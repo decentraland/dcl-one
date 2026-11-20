@@ -39,6 +39,11 @@ enum Command {
         #[command(subcommand)]
         command: BuilderCommand,
     },
+    /// Content server operator commands.
+    Content {
+        #[command(subcommand)]
+        command: ContentCommand,
+    },
     /// Blob store operator commands.
     Storage {
         #[command(subcommand)]
@@ -247,6 +252,30 @@ enum BuilderCommand {
             default_value = "/var/lib/catalyst/content"
         )]
         storage_root_folder: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ContentCommand {
+    /// List every id of the old content server's denylist file
+    /// (`<STORAGE_ROOT_FOLDER>/<DENYLIST_FILE_NAME>` on that server,
+    /// `denylist.txt` by default) in `content.denylist`, as console rows
+    /// added by `--added-by` (`content::denylist::import_file`). One id a
+    /// line; blank lines and lines starting with `#` are skipped. A listed
+    /// id is left alone, so a re-run adds nothing. A malformed line imports
+    /// nothing and names itself. Prints the counts as JSON; a running
+    /// `serve` hides the new ids within a minute. Not behind
+    /// OPS_WRITES_ENABLED: an import is operator data.
+    ImportDenylist {
+        #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        /// The file; `-` reads standard input.
+        #[arg(long)]
+        file: String,
+        /// The operator wallet recorded as each new row's `added_by` (the
+        /// console records the signed-in wallet).
+        #[arg(long)]
+        added_by: String,
     },
 }
 
@@ -633,6 +662,43 @@ async fn run(
             };
             let out =
                 explore::places::interactions::import_upstream_likes(&pool, reader.lines()).await?;
+            println!("{}", serde_json::to_string(&out)?);
+            Ok(())
+        }
+        Command::Content {
+            command:
+                ContentCommand::ImportDenylist {
+                    database_url,
+                    file,
+                    added_by,
+                },
+        } => {
+            use std::io::Read;
+            tracing_subscriber::fmt().with_target(false).init();
+            let added_by = added_by.trim().to_lowercase();
+            anyhow::ensure!(
+                added_by.len() == 42
+                    && added_by.starts_with("0x")
+                    && added_by[2..].bytes().all(|b| b.is_ascii_hexdigit()),
+                "--added-by must be a wallet address (0x and 40 hex digits)"
+            );
+            let mut bytes = Vec::new();
+            if file == "-" {
+                std::io::stdin().read_to_end(&mut bytes)?;
+            } else {
+                bytes = std::fs::read(&file).with_context(|| format!("reading {file}"))?;
+            }
+            let pool = db::connect_pool(
+                &database_url,
+                &db::PoolSettings {
+                    max_connections: 1,
+                    ..Default::default()
+                },
+            )
+            .await
+            .context("connecting to DATABASE_URL")?;
+            db::bootstrap(&pool).await?;
+            let out = content::denylist::import_file(&pool, &bytes, &added_by).await?;
             println!("{}", serde_json::to_string(&out)?);
             Ok(())
         }

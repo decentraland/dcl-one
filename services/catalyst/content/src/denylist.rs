@@ -13,7 +13,9 @@
 //! listed hash, the active-entity reads drop a listed entity id,
 //! `/pointer-changes` drops its deltas. A local deploy is refused when its
 //! entity id, a content hash it declares or one of its pointers is listed
-//! ([`refusal`]).
+//! ([`refusal`]). The old content server's denylist file is imported into
+//! the table once, at cutover ([`import_file`], `catalyst content
+//! import-denylist`).
 //!
 //! An id is any non-blank string of at most 512 bytes without
 //! whitespace or control characters (the old console's rule); entity ids
@@ -127,6 +129,132 @@ pub async fn remove<'e, E: PgExecutor<'e>>(executor: E, id: &str) -> sqlx::Resul
         .await?
         .rows_affected()
         == 1)
+}
+
+/// What [`parse_file`] read from a legacy denylist file.
+#[derive(Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct FileList {
+    pub lines: u64,
+    pub blank: u64,
+    pub comments: u64,
+    /// Valid lines naming an id an earlier line already named.
+    pub duplicates: u64,
+    /// The distinct valid ids, in file order.
+    pub ids: Vec<String>,
+    /// `line N: reason` for each line [`valid_id`] refuses.
+    pub malformed: Vec<String>,
+}
+
+/// Parses the old content server's denylist file
+/// (`<STORAGE_ROOT_FOLDER>/<DENYLIST_FILE_NAME>`, `denylist.txt` by default;
+/// `decentraland/catalyst:src/adapters/denylist/component.ts:36-57`) by its
+/// rules: one id a line (`\n`, `\r\n` or `\r`), trimmed (a byte-order mark
+/// included, as JS `trim` does), a blank line or one starting with `#`
+/// skipped, the rest an id verbatim. Beyond the old server: a line that is
+/// not UTF-8 or that [`valid_id`] refuses is malformed, not guessed at.
+pub fn parse_file(bytes: &[u8]) -> FileList {
+    let mut out = FileList::default();
+    let mut seen = std::collections::HashSet::new();
+    let mut rest = bytes;
+    while !rest.is_empty() {
+        let end = rest
+            .iter()
+            .position(|b| *b == b'\n' || *b == b'\r')
+            .unwrap_or(rest.len());
+        let line = &rest[..end];
+        let skip = match rest.get(end..end + 2) {
+            Some(b"\r\n") => 2,
+            _ if end < rest.len() => 1,
+            _ => 0,
+        };
+        rest = &rest[end + skip..];
+        out.lines += 1;
+        let Ok(line) = std::str::from_utf8(line) else {
+            out.malformed.push(format!("line {}: not UTF-8", out.lines));
+            continue;
+        };
+        let id = line.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+        if id.is_empty() {
+            out.blank += 1;
+        } else if id.starts_with('#') {
+            out.comments += 1;
+        } else if !valid_id(id) {
+            let reason = if id.len() > 512 {
+                "longer than 512 bytes"
+            } else {
+                "holds whitespace or a control character"
+            };
+            out.malformed.push(format!("line {}: {reason}", out.lines));
+        } else if seen.insert(id.to_string()) {
+            out.ids.push(id.to_string());
+        } else {
+            out.duplicates += 1;
+        }
+    }
+    out
+}
+
+/// What [`import_file`] did, beside what the file held.
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+pub struct FileImport {
+    pub lines: u64,
+    pub blank: u64,
+    pub comments: u64,
+    pub duplicates: u64,
+    /// The file's distinct valid ids: `imported + already_present`.
+    pub distinct: u64,
+    pub imported: u64,
+    pub already_present: u64,
+}
+
+/// Lists every id of a legacy denylist file ([`parse_file`]) in one
+/// transaction, each new row as the console writes it: [`add`] with
+/// `added_by` (the operator's wallet) and its `content`/`denylist.add`
+/// audit row. A listed id is left alone and audits nothing, so a re-run adds
+/// nothing. A file with a malformed line, or one that would take the table
+/// past [`MAX_ENTRIES`], writes nothing and is an error.
+pub async fn import_file(
+    pool: &sqlx::PgPool,
+    bytes: &[u8],
+    added_by: &str,
+) -> anyhow::Result<FileImport> {
+    let file = parse_file(bytes);
+    anyhow::ensure!(
+        file.malformed.is_empty(),
+        "the file has {} malformed line(s); nothing was imported:\n{}",
+        file.malformed.len(),
+        file.malformed.join("\n")
+    );
+    let mut tx = pool.begin().await?;
+    let (mut imported, mut already_present) = (0, 0);
+    for id in &file.ids {
+        if add(&mut *tx, id, added_by).await? {
+            imported += 1;
+            let entry = catalyst_shared::audit::Entry::new(added_by, "content", "denylist.add")
+                .target(Some(id))
+                .detail(serde_json::json!({ "id": id, "added": true, "source": "denylist-file" }));
+            catalyst_shared::audit::record(&mut *tx, &entry).await?;
+        } else {
+            already_present += 1;
+        }
+    }
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM content.denylist")
+        .fetch_one(&mut *tx)
+        .await?;
+    anyhow::ensure!(
+        rows <= MAX_ENTRIES,
+        "the import would list {rows} ids, more than {MAX_ENTRIES}; nothing was imported"
+    );
+    tx.commit().await?;
+    Ok(FileImport {
+        lines: file.lines,
+        blank: file.blank,
+        comments: file.comments,
+        duplicates: file.duplicates,
+        distinct: file.ids.len() as u64,
+        imported,
+        already_present,
+    })
 }
 
 /// Why a local deploy of `entity` is refused, one message per kind of
@@ -696,6 +824,183 @@ mod tests {
         assert_eq!((n, errors), (1, Vec::<String>::new()));
         assert_eq!(get(false).await.unwrap().status(), StatusCode::NOT_FOUND);
         assert_eq!(get(true).await.unwrap().status(), StatusCode::NOT_FOUND);
+    }
+
+    /// The old server's file rules: one id a line under any line ending,
+    /// trimmed (a byte-order mark too), blank and `#` lines skipped, an id
+    /// kept verbatim; a repeat counts once and a line no id rule accepts is
+    /// reported by number, not imported.
+    #[test]
+    fn a_legacy_file_parses_by_the_old_servers_rules() {
+        let long = "a".repeat(513);
+        let mut bytes = format!(
+            "\u{feff}bafyfirst\r\n  QmSecond  \n\n# a comment\n   #indented comment\r0,0\r\nbafyfirst\nbad id\n{long}\n"
+        )
+        .into_bytes();
+        bytes.extend_from_slice(b"\xff\xfe\nbafylast");
+        let file = parse_file(&bytes);
+        assert_eq!(
+            file,
+            FileList {
+                lines: 11,
+                blank: 1,
+                comments: 2,
+                duplicates: 1,
+                ids: ["bafyfirst", "QmSecond", "0,0", "bafylast"]
+                    .map(String::from)
+                    .to_vec(),
+                malformed: vec![
+                    "line 8: holds whitespace or a control character".to_string(),
+                    "line 9: longer than 512 bytes".to_string(),
+                    "line 10: not UTF-8".to_string(),
+                ],
+            }
+        );
+        assert_eq!(parse_file(b""), FileList::default());
+        assert_eq!(parse_file(b"\n").blank, 1);
+        assert_eq!(parse_file(b"bafy # note").malformed.len(), 1);
+    }
+
+    /// An import lists the file's ids as console rows with their audit
+    /// rows; a second run adds no row and no audit row; a malformed file
+    /// writes nothing.
+    #[tokio::test]
+    async fn a_file_import_is_idempotent_and_refuses_a_malformed_file() {
+        require_test_db!(Some(pool) = crate::db::scratch::pool(2).await);
+        let tag = uuid::Uuid::new_v4().simple().to_string();
+        let (a, b, c) = (
+            format!("bafy-file-{tag}-a"),
+            format!("bafy-file-{tag}-b"),
+            format!("bafy-file-{tag}-c"),
+        );
+        let actor = "0x00000000000000000000000000000000000000aa";
+        assert!(add(&pool, &c, "0xconsole").await.unwrap());
+        let body = format!("# exported\n{a}\n\n{b}\n{a}\n{c}\n");
+        let audited = |pool: sqlx::PgPool, prefix: String| async move {
+            let n: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM ops.admin_audit WHERE domain = 'content' \
+                 AND action = 'denylist.add' AND target LIKE $1 || '%'",
+            )
+            .bind(prefix)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            n
+        };
+        let prefix = format!("bafy-file-{tag}-");
+
+        let first = import_file(&pool, body.as_bytes(), actor).await.unwrap();
+        assert_eq!(
+            first,
+            FileImport {
+                lines: 6,
+                blank: 1,
+                comments: 1,
+                duplicates: 1,
+                distinct: 3,
+                imported: 2,
+                already_present: 1,
+            }
+        );
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT id, added_by FROM content.denylist WHERE id LIKE $1 || '%' ORDER BY id",
+        )
+        .bind(&prefix)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                (a.clone(), actor.to_string()),
+                (b.clone(), actor.to_string()),
+                (c.clone(), "0xconsole".to_string()),
+            ]
+        );
+        assert_eq!(audited(pool.clone(), prefix.clone()).await, 2);
+
+        let again = import_file(&pool, body.as_bytes(), actor).await.unwrap();
+        assert_eq!((again.imported, again.already_present), (0, 3));
+        assert_eq!(audited(pool.clone(), prefix.clone()).await, 2);
+
+        let d = format!("bafy-file-{tag}-d");
+        let err = import_file(&pool, format!("{d}\nnot valid\n").as_bytes(), actor)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("line 2: holds whitespace"),
+            "{err:#}"
+        );
+        assert!(
+            !load(&pool).await.unwrap().contains(&d),
+            "nothing was written"
+        );
+
+        for id in [&a, &b, &c] {
+            remove(&pool, id).await.unwrap();
+        }
+        pool.close().await;
+    }
+
+    /// An imported id is hidden by the content reads once the projection
+    /// loads the table (boot, or the reload job on a running node).
+    #[tokio::test]
+    async fn an_imported_hash_is_hidden_from_the_content_reads() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        use crate::tests::support::TestNode;
+
+        require_test_db!(Some(node) = TestNode::with_db("content-file-denied").await);
+        let sha256 = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        let cid = crate::auth::raw_cid_v1_from_sha256_hex(&sha256).unwrap();
+        node.store(&cid, bytes::Bytes::from_static(b"x")).await;
+        let available = || async {
+            let resp = node
+                .router()
+                .oneshot(
+                    Request::get(format!("/content/available-content?cid={cid}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap()
+        };
+        assert_eq!(
+            available().await,
+            serde_json::json!([{ "cid": cid, "available": true }])
+        );
+
+        let out = import_file(
+            &node.state.pool,
+            format!("{cid}\n").as_bytes(),
+            "0x00000000000000000000000000000000000000aa",
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.imported, 1);
+        node.state.load_denylist().await.unwrap();
+        assert!(node.state.denylist.contains(&cid));
+        assert_eq!(available().await, serde_json::json!([]));
+        let got = node
+            .router()
+            .oneshot(
+                Request::get(format!("/content/contents/{cid}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(got.status(), axum::http::StatusCode::NOT_FOUND);
+
+        remove(&node.state.pool, &cid).await.unwrap();
     }
 
     /// The table is the authority: an edit lands as a row, a second add is
