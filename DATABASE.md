@@ -2113,11 +2113,11 @@ Caps: once its chain passes the checks that need no RPC, a request create
 counts its network's live rows without any lock and refuses one over the
 per-network cap (429) there; an identity post does the same only when a
 validator is configured and its chains need a contract-wallet call. When a
-contract-wallet call is coming, the network's contract-wallet budget is checked
-first, so a network with none left gets its 429 without the count. A flood from
-one network thus neither reaches the contract-wallet RPC nor queues on the
-lock. Then a create takes `pg_advisory_xact_lock` on one key per table
-(`hashtextextended('explore_api.auth_requests:admission', 0)` and the
+contract-wallet call is coming, the network's and the replica's contract-wallet
+budgets are checked first, so a request with none left gets its 429 without the
+count. A flood from one network thus neither reaches the contract-wallet RPC
+nor queues on the lock. Then a create takes `pg_advisory_xact_lock` on one key
+per table (`hashtextextended('explore_api.auth_requests:admission', 0)` and the
 identities' twin), counts the live rows and those of its network in one pass
 and inserts in the same transaction, so concurrent creates on every replica
 admit one at a time and never overshoot. A full request table first drops
