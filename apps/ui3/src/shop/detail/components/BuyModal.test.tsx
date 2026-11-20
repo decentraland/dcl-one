@@ -515,7 +515,7 @@ describe("Buy now's dialog", () => {
     expect(demo.shop.log.some((r) => r.name === "authorizeCredit")).toBe(false);
   });
 
-  it("an approval that lands after the dialog is gone buys nothing", async () => {
+  it("an approval signed after the dialog is gone is neither recorded nor sent, and nothing is bought", async () => {
     const { demo, unmount } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
     const dialog = await settledDialog();
     const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByRole("button", { name: "Buy" });
@@ -523,10 +523,13 @@ describe("Buy now's dialog", () => {
     await act(async () => fireEvent.click(confirm));
     fireEvent.click(await screen.findByTestId("authorize-step-action", undefined, { timeout: 5000 }));
     unmount();
-    // The approval lands after the dialog is gone: the allowance is granted on chain, and nothing goes on to buy.
-    const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
-    await waitFor(() => expect(demo.chain.allowances.get(`${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${manager}`) ?? 0n).toBeGreaterThan(0n), { timeout: 5000 });
+    // The wallet signs once the dialog is gone: that approval goes no further, and no grant is left to reconcile.
+    await waitFor(() => expect(demo.wallet.requests.some((r) => r.method === "eth_signTypedData_v4")).toBe(true), { timeout: 5000 });
     await act(async () => {});
+    const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
+    expect(demo.relay.posts.map(relayedApproval).filter((a) => a !== null)).toEqual([]);
+    expect(demo.chain.allowances.get(`${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${manager}`) ?? 0n).toBe(0n);
+    expect(Object.keys(localStorage).filter((k) => k.startsWith("dcl-shop-exact-grant:"))).toEqual([]);
     expect(demo.shop.log.some((r) => r.name === "authorizeCredit")).toBe(false);
   });
 

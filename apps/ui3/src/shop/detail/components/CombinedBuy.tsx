@@ -20,7 +20,19 @@ import { invalidateAfterPurchase } from "../../checkout/lib/after-purchase";
 import { isSignatureDeclined } from "../../checkout/chain/metatx";
 import { isPendingTxError, isRevertedTxError } from "../../checkout/chain/wallet";
 import AuthorizeStep from "../../checkout/components/AuthorizeStep";
-import { exactAllowanceReady, ExactGrantUnavailableError, exactGrantLock, getManaSpendingAuthorization, GrantNotRecordedError, isAuthorizationPending, needsApprovalStep, setAuthorization, type ShopAuthorization } from "../../checkout/lib/authorizations";
+import {
+  exactAllowanceReady,
+  ExactGrantUnavailableError,
+  exactGrantLock,
+  getManaSpendingAuthorization,
+  GrantCancelledError,
+  GrantNotInEffectError,
+  GrantNotRecordedError,
+  isAuthorizationPending,
+  needsApprovalStep,
+  setAuthorization,
+  type ShopAuthorization,
+} from "../../checkout/lib/authorizations";
 import { friendlyError, isRejection } from "../../checkout/lib/errors";
 import { webLock } from "../../checkout/lib/web-lock";
 import { isSettlementPending } from "../../checkout/purchase/gasless";
@@ -158,6 +170,8 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       mounted.current = false;
     };
   }, []);
+  /** Whether the purchase agreed on as `agreed` is still this dialog's: open, with those very terms. */
+  const stillAgreed = (agreed: Terms) => () => mounted.current && terms.current === agreed;
   // The hold's key: the item, whatever listing this dialog buys it through (another surface may use another).
   const lineId = splitHoldLine(line.asset, line.listing);
   const [sent, setSent] = useState(() => readSplitHold(wallet.account, lineId));
@@ -299,7 +313,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
         return;
       }
       try {
-        await payHeld({ ...ctx, grantLockHeld: true }, agreedTerms, target, claim.attempt);
+        await payHeld({ ...ctx, grantLockHeld: true, live: stillAgreed(agreedTerms) }, agreedTerms, target, claim.attempt);
       } finally {
         claim.release();
       }
@@ -450,7 +464,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       const message =
         e instanceof SplitNotRecorded
           ? NOT_RECORDED
-          : e instanceof GrantNotRecordedError || e instanceof ExactGrantUnavailableError
+          : e instanceof GrantNotRecordedError || e instanceof ExactGrantUnavailableError || e instanceof GrantCancelledError || e instanceof GrantNotInEffectError
             ? `${e.message} Nothing was bought.`
             : isAuthorizationPending(e) || (stillPending && !dispatched)
               ? "Your MANA approval is still confirming, so nothing was bought. Try again in a moment."
@@ -487,6 +501,8 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
         relayerUrl: ctx.relayerUrl,
         fetchImpl: ctx.fetchImpl,
         locks: ctx.locks,
+        // A dialog closed, or terms changed, while the wallet signs: that approval is recorded and sent no more.
+        live: stillAgreed(agreedTerms),
       });
     },
     approved: () => {

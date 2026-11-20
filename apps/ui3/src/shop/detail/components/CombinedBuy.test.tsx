@@ -714,6 +714,60 @@ describe("a split whose outcome is not known", () => {
     expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toBeNull();
   });
 
+  it("a dialog closed while the wallet signs its approval records and sends nothing: no grant left to reconcile, no POST", async () => {
+    const { demo, unmount } = setup();
+    // The wallet holds its signature until the dialog is gone.
+    let sign!: () => void;
+    const signing = new Promise<void>((resolve) => (sign = resolve));
+    const request = demo.wallet.request.bind(demo.wallet);
+    let asked = 0;
+    demo.wallet.request = (async (args: Parameters<typeof request>[0]) => {
+      if (args.method === "eth_signTypedData_v4") {
+        asked++;
+        await signing;
+      }
+      return request(args);
+    }) as typeof demo.wallet.request;
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    const approve = await screen.findByTestId("authorize-step-action");
+    act(() => {
+      fireEvent.click(approve);
+    });
+    await waitFor(() => expect(asked).toBe(1));
+    unmount();
+    await act(async () => {
+      sign();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(demo.relay.posts).toHaveLength(0);
+    expect(Object.keys(localStorage).filter((k) => k.startsWith("dcl-shop-exact-grant:"))).toEqual([]);
+    expect(authorizations(demo)).toBe(0);
+  });
+
+  it("an approval that went through but didn't take effect (its nonce passed, the allowance short) says to try again, and a retry buys", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    // The approve runs, but another call takes its nonce and the allowance is left short.
+    const short = { on: true };
+    const relayed = demo.services.fetchImpl!;
+    demo.services.fetchImpl = (async (...args: Parameters<typeof fetch>) => {
+      const answer = await relayed(...args);
+      if (short.on) demo.chain.allowances.delete(managerKey());
+      return answer;
+    }) as typeof fetch;
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    expect(await screen.findByText("The approval didn't take effect. Try again.", {}, { timeout: 5000 })).toBeTruthy();
+    expect(screen.queryByText(/still confirming/)).toBeNull();
+    expect(authorizations(demo)).toBe(0);
+    // Trying again signs anew, at the next nonce, and the purchase goes through.
+    short.on = false;
+    await act(async () => fireEvent.click(screen.getByTestId("authorize-step-action")));
+    expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(demo.relay.posts.map(relayedApproval).filter((a) => a !== null)).toHaveLength(2);
+  });
+
   it("an approval another window is running says so: this one asked the wallet nothing, so it was not sent", async () => {
     const { demo } = setup();
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
