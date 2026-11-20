@@ -248,9 +248,9 @@ fn measure(
 /// Picks the avatars to simulate, steps their chains and writes the bones' rotations.
 ///
 /// The player comes first, then other avatars by distance from the camera, leaving out those
-/// behind it, those hidden and those whose animation is paused out of view. An avatar that drops out gets its bones back at rest. Bone poses
-/// are computed here from local transforms: the stored globals predate this frame's movement and
-/// IK.
+/// behind it, those hidden and those whose animation is paused out of view. An avatar that drops
+/// out gets its bones back at rest. Bone poses are computed here from local transforms: the
+/// stored globals predate this frame's movement and IK.
 fn simulate_spring_bones(
     mut commands: Commands,
     config: Res<AppConfig>,
