@@ -1820,8 +1820,9 @@ Workload: mainnet holds thousands of listings, of which hundreds are open
   enumerates them, so no new index is needed.
 - One snapshot select over the open rows of the LAND and Estate registries,
   with one primary-key probe into `land_authz.token_right` per row, one
-  `authz_event_ownership_idx` probe for the latest transfer, and one
-  `estate_land_estate_idx` probe per estate.
+  `authz_event_ownership_idx` probe for the latest transfer, one
+  `estate_land_estate_idx` probe per estate and, while the `rentals` index is
+  published, one `rental_event_asset_idx` probe for the asset's latest rent.
 - One batched `UPDATE` by id, guarded by `status = 'open'`.
 
 Invariants:
@@ -1841,6 +1842,20 @@ Invariants:
 - A cancellation that is not a nonce move is never undone, so an unknown never
   cancels. No published index, no indexed token, or an indexed transfer older
   than the listing all leave the listing open.
+- A token the Rentals contract owns keeps its listing unless an indexed rent
+  shows that the contract holds it for another lessor. The asset's latest
+  `rented` row in `shop.rental_event` counts only when it is no older than
+  the token's arrival in the contract, because an older rent means the
+  `rentals` index has not reached the rent the token arrived under (an
+  accepted offer, for example). The job requires the rent's `block_number` to
+  be at or after that of the latest folded `transfer` in
+  `land_authz.authz_event`: both indexes commit whole blocks of the same
+  chain, and a rent either moves the token in its own transaction or finds
+  it already in the contract. The refresh route has no chain position for the
+  subgraph's asset row, so it requires the rent's `block_time` to be at or
+  after the row's `updatedAt`. When that row was updated again after the
+  rent, the route decides nothing and the job's block comparison decides.
+  While the `rentals` index is not published, neither path reads custody.
 - The signatures-server import keeps a node reason only while upstream also
   says `cancelled`, and clears it otherwise. Its load SQL is
   `tooling/migration/sources/signatures-server/rentals.load.sql`.
