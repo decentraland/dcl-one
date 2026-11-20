@@ -21,6 +21,7 @@ export { NameIcon } from './NameIcon';
 export { NewPlayersIcon } from './NewPlayersIcon';
 export { NotEligibleIcon } from './NotEligibleIcon';
 export { ParcelsIcon } from './ParcelsIcon';
+export { PayoutWalletIcon } from './PayoutWalletIcon';
 export { PlayerActivityIcon } from './PlayerActivityIcon';
 export { PlaytimeIcon } from './PlaytimeIcon';
 export { RetentionIcon } from './RetentionIcon';

@@ -26,6 +26,9 @@ type OpenModal = 'add_wallet' | 'change_wallet' | 'verify_email';
 
 type FocusTarget = 'edit' | 'contact';
 
+/** Opens Add payout wallet once the tab has loaded; `id` tells two requests apart. */
+export type PayoutSetupRequest = { step: 'add_wallet'; id: number };
+
 const FOCUS_AFTER: Record<OpenModal, FocusTarget> = {
   add_wallet: 'edit',
   change_wallet: 'edit',
@@ -37,7 +40,13 @@ const FOCUS_AFTER: Record<OpenModal, FocusTarget> = {
  * step 2, the payout wallet, needs it verified, since every change to it is emailed there. Both
  * need one of the creator's places in the program; a failed read of the places locks neither.
  */
-export function PayoutsTab() {
+export function PayoutsTab({
+  request = null,
+  onRequestHandled,
+}: {
+  request?: PayoutSetupRequest | null;
+  onRequestHandled?: () => void;
+}) {
   const dispatch = useDispatch();
   const cycles = useSelector(state => state.creatorFund.cycles);
   const enrollment = useSelector(state => state.creatorFund.enrollment);
@@ -45,6 +54,7 @@ export function PayoutsTab() {
   const wallet = useSelector(state => state.creatorFund.payoutWallet);
   const hasActivePlace = useSelector(state => state.creatorFund.hasActivePlace);
   const noActivePlace = useSelector(selectors.isPayoutSetupLocked);
+  const setupStep = useSelector(selectors.getPayoutSetupStep);
   const [loaded, setLoaded] = useState(() =>
     [payouts, wallet, enrollment, hasActivePlace].every(
       resource => resource.status === 'succeeded',
@@ -81,6 +91,15 @@ export function PayoutsTab() {
     setFocusTarget(null);
   }, [modal, focusTarget]);
 
+  const failed = [payouts, wallet, enrollment].some(resource => resource.status === 'failed');
+
+  useEffect(() => {
+    if (!request || !loaded) return;
+    onRequestHandled?.();
+    if (failed || setupStep !== request.step) return;
+    setModal(request.step);
+  }, [loaded, request?.id]);
+
   const close = () => setModal(null);
   const done = (message: TranslationPath) => {
     if (modal) setFocusTarget(FOCUS_AFTER[modal]);
@@ -98,7 +117,6 @@ export function PayoutsTab() {
     loadedWhenSettled(requests);
   };
 
-  const failed = [payouts, wallet, enrollment].some(resource => resource.status === 'failed');
   const empty = loaded && !failed && payouts.data?.payouts.length === 0;
   const emailVerified = !!enrollment.data?.email_verified_at;
   let walletLock: WalletLock | null = null;

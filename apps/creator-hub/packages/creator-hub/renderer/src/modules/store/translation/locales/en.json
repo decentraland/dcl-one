@@ -1751,6 +1751,12 @@
       "banner": {
         "region": "Announcement"
       },
+      "setup_banner": {
+        "wallet": {
+          "title": "Set up your payout wallet",
+          "description": "Add a wallet to receive your Creator Fund payouts in USDC."
+        }
+      },
       "filter": {
         "cycle": "Cycle",
         "all_cycles": "All cycles",

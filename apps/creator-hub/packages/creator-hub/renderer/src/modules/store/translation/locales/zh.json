@@ -1751,6 +1751,12 @@
       "banner": {
         "region": "公告"
       },
+      "setup_banner": {
+        "wallet": {
+          "title": "设置你的收款钱包",
+          "description": "添加钱包，以 USDC 接收你的 Creator Fund 收益。"
+        }
+      },
       "filter": {
         "cycle": "周期",
         "all_cycles": "所有周期",
