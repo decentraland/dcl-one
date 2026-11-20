@@ -345,6 +345,121 @@ async fn a_dissolved_estate_answers_its_latest_data_document() {
     db.drop().await;
 }
 
+/// A registry switch keeps the old registry's documents and never reads
+/// them: an estate id the configured registry minted without a document
+/// answers empty strings, not the name the old registry's estate of that id
+/// carried.
+#[tokio::test]
+async fn a_registry_switch_leaves_the_old_registrys_documents_unread() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    const OLD_ESTATE: &str = "0x00000000000000000000000000000000000000bb";
+    let s = START;
+    let chain = FakeChain::new(
+        s + 50,
+        vec![
+            transfer(s + 10, 0, ESTATE, ZERO_ADDR, ALICE, "501"),
+            transfer(s + 11, 0, ESTATE, ZERO_ADDR, ALICE, "502"),
+            create_estate(s + 11, 1, ALICE, "502", "0,\"New\",\"new words\""),
+        ],
+        1_000,
+        1_000_000,
+    );
+    let configured = Settings {
+        rpc_url: Some(serve(chain).await),
+        index_enabled: true,
+        replay_from_block: Some(START),
+        ..Settings::for_tests()
+    };
+    // A published index of other registries, whose estates 501 and 502 are
+    // dissolved and named.
+    let old = Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: OLD_ESTATE.into(),
+        replay_from_block: None,
+        ..configured.clone()
+    };
+    let old_last = (s + 40) as i64;
+    indexer::ensure_cursor(pool, &old).await.unwrap();
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET last_block = $2, folded_block = $2, \
+         folded_at = timezone('UTC', now()), history_timestamps_ready = true, \
+         full_replay_started = true WHERE network = $1",
+    )
+    .bind(NETWORK_MAINNET)
+    .bind(old_last)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.token_right (token_address, token_id, updated_block, updated_log) \
+         VALUES ($1, 501, $2, 0), ($1, 502, $2, 1)",
+    )
+    .bind(OLD_ESTATE)
+    .bind(old_last - 2)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.estate_data_event \
+             (block_number, log_index, token_address, estate_id, name, description) \
+         VALUES ($2, 0, $1, 501, 'Old 501', 'old words'), ($2, 1, $1, 502, 'Old 502', 'old words')",
+    )
+    .bind(OLD_ESTATE)
+    .bind(old_last - 1)
+    .execute(pool)
+    .await
+    .unwrap();
+    let old_state = state_over(pool.clone(), old, None);
+    assert_eq!(
+        old_state.dissolved_estate("501").await,
+        Some(Some(EstateData {
+            name: "Old 501".into(),
+            description: "old words".into(),
+        })),
+        "the old registries' reader answers its own document"
+    );
+
+    let state = state_over(pool.clone(), configured, None);
+    assert_eq!(state.dissolved_estate("501").await, None, "not its cursor");
+    let (_jobs, ctx) = job_ctx().await;
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    let kept: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT token_address, estate_id::text, name FROM land_authz.estate_data_event \
+         ORDER BY block_number, log_index",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        kept,
+        vec![
+            (ESTATE.into(), "502".into(), Some("New".into())),
+            (OLD_ESTATE.into(), "501".into(), Some("Old 501".into())),
+            (OLD_ESTATE.into(), "502".into(), Some("Old 502".into())),
+        ],
+        "the old registry's rows stay"
+    );
+    assert_eq!(
+        state.dissolved_estate("501").await,
+        Some(Some(EstateData::default())),
+        "the old registry's later document names no estate of this one"
+    );
+    assert_eq!(
+        state.dissolved_estate("502").await,
+        Some(Some(EstateData {
+            name: "New".into(),
+            description: "new words".into(),
+        })),
+        "its own document, though the old registry's is later"
+    );
+    assert_eq!(old_state.dissolved_estate("501").await, None);
+    db.drop().await;
+}
+
 async fn job_ctx() -> (Jobs, JobContext) {
     let jobs = Jobs::new();
     let (tx, rx) = tokio::sync::oneshot::channel();
