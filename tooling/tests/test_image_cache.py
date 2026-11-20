@@ -213,6 +213,18 @@ class CompileWorkflowTest(unittest.TestCase):
         self.assertIn("'git+file:.?lfs=1#image-apis'", self.build['Build the APIs and Sites images with our Bevy artifact'])
         self.assertNotIn('--impure', compile_step)  # the export steps compare both evaluations
 
+    def test_only_bevy_ci_runs_the_image_workflows_on_a_main_push(self):
+        root = Path(__file__).parents[2] / '.github/workflows'
+        callers = {path.name for path in root.glob('*.yml')
+                   if re.search(r'uses: \./\.github/workflows/apis-sites-(compile|images)\.yml', path.read_text())}
+        self.assertEqual(callers, {'bevy-explorer-ci.yml'})
+        def triggers(text):
+            return text.split('\non:\n', 1)[1].split('\npermissions:', 1)[0]
+
+        self.assertEqual(triggers(self.workflow).strip(), 'workflow_call:')
+        images = triggers((root / 'apis-sites-images.yml').read_text())
+        self.assertEqual(re.search(r'(?m)^  push:\n((?:    .*\n)*)', images).group(1).strip(), "tags: ['v*']")
+
     def test_the_dependency_caches_the_gate_and_the_saves_are_those_of_the_image_build(self):
         same = {name: name for name in ('Restore Catalyst dependency cache', 'Restore Sites dependency cache',
                                         'Decide which caches a successful build saves',

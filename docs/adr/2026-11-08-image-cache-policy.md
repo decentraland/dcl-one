@@ -45,8 +45,11 @@ scope to match the ref. PR closure removes all entries on its merge ref. Only ID
 in the completed listing are deleted, so a concurrent upload absent from that
 listing survives until a later sweep.
 
-Image uploads require a first attempt. The image build uploads after its smoke
-tests; the compile job uploads after compiling. A main push saves without a ref
+Image uploads require a first attempt. Only main pushes and pull requests save; tag
+pushes and manual dispatches never save (`tooling/image-cache.py` sets `save=false`).
+The image build uploads after its smoke tests; the compile job uploads after
+compiling. Only `Bevy Explorer / CI` calls the compile and image workflows on a main
+push. A main push saves without a ref
 check: `Bevy Explorer / CI` runs main pushes one at a time and never cancels a
 running one, so main entries are created in push order even when main has moved on
 during the build. PRs compare `refs/pull/N/head` with the event's PR head
