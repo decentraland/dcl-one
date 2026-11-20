@@ -1920,12 +1920,14 @@ async fn a_blob_failure_keeps_committed_reservations_resumable() {
         catalyst_storage::upload_spool::SpooledFile {
             name: u.entity_id.clone(),
             hash: u.entity_id.clone(),
+            hash_v0: String::new(),
             len: u.entity_bytes.len(),
             path: manifest.clone(),
         },
         catalyst_storage::upload_spool::SpooledFile {
             name: u.files[0].0.clone(),
             hash: u.files[0].0.clone(),
+            hash_v0: String::new(),
             len: u.files[0].1.len(),
             path: scratch.join("missing-batch-content"),
         },

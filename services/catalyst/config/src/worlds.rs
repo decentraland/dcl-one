@@ -155,7 +155,18 @@ pub struct WorldsConfig {
 
     /// Deploy payload bytes spooled at once across every upload: the worlds
     /// deploys' budget (>= one 350 MiB deploy) and, separately, the content
-    /// `POST /entities` spool's (never below one `MAX_UPLOAD_TOTAL_SIZE` form).
+    /// `POST /entities` spool's (never below one `MAX_UPLOAD_TOTAL_SIZE` form
+    /// with 16 KiB per file). Both spools are on the storage filesystem by
+    /// default (`<STORAGE_ROOT_FOLDER>/tmp`), so in-flight deploys may take
+    /// twice this there at once (8 GiB at the defaults) on top of the stored
+    /// content. A deployed file is hard-linked from its spool, taking no
+    /// second copy; with `UPLOAD_SPOOL_FOLDER` on another filesystem it is
+    /// copied into the store instead, and that disk takes the content
+    /// spool's share. The budgets start empty with each process: spool
+    /// directories a crashed process left stay until a later start finds them
+    /// older than the upload and processing deadlines (at least an hour) and
+    /// removes them, so after a crash the spool disk may hold one more of
+    /// each budget until then.
     #[arg(
         long,
         env = "MAX_IN_FLIGHT_UPLOAD_BYTES",

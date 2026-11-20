@@ -66,10 +66,13 @@ async fn deployment_files_reuse_both_cid_versions_and_deduplicate_references() {
     let uploads = hash_uploads(vec![
         entity_bytes.clone().into(),
         first.clone().into(),
-        Upload {
-            bytes: second.clone(),
-            path: Some(spooled.clone()),
-        },
+        Upload::Spooled(SpooledFile {
+            name: "second".to_string(),
+            hash: hash_bytes_v1(&second),
+            hash_v0: hash_bytes(&second),
+            len: second.len(),
+            path: spooled.clone(),
+        }),
         unreferenced.into(),
     ])
     .await
@@ -91,12 +94,15 @@ async fn deployment_files_reuse_both_cid_versions_and_deduplicate_references() {
     .unwrap();
     let files = deployment_files(&entity, &entity_bytes, &uploads);
     assert_eq!(files.len(), 3);
-    assert_eq!(files[&entity.id], (entity_bytes, None));
-    assert_eq!(files[&uploads[1].v0], (first, None));
+    assert_eq!(files[&entity.id], UploadedFile::Bytes(entity_bytes));
+    assert_eq!(files[&uploads[1].v0], UploadedFile::Bytes(first));
     assert_eq!(
         files[&uploads[2].v1],
-        (second, Some(spooled)),
-        "a spooled file is stored from its spool file"
+        UploadedFile::Spooled {
+            len: second.len() as u64,
+            path: spooled
+        },
+        "a spooled file is stored from its spool file, never read"
     );
     assert!(!files.contains_key(&missing));
     assert!(!files.contains_key(&uploads[3].v1));
@@ -122,7 +128,7 @@ async fn deployment_storage_drains_writes_and_preserves_atomic_files_on_failure(
     files.extend(expected.iter().cloned());
     let files = files
         .into_iter()
-        .map(|(hash, bytes)| (hash, (bytes, None)))
+        .map(|(hash, bytes)| (hash, UploadedFile::Bytes(bytes)))
         .collect();
     let error = store_deployment_files(&deployer.storage, files)
         .await
@@ -412,6 +418,33 @@ async fn a_copy_answered_from_the_in_process_memo_proves_the_replay() {
         42
     );
     drop(held);
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// A spooled entity file the disk cannot give back is this node's failure:
+/// `Unavailable` (503, the spool's text), never a refusal or a crash.
+#[tokio::test]
+async fn an_unreadable_spooled_entity_file_is_unavailable() {
+    let (deployer, tmp) = deployer_over_temp_storage("unreadable-spool").await;
+    let (bytes, id, chain) =
+        signed_scene(&["5,5".to_string()], chrono::Utc::now().timestamp_millis()).await;
+    let gone = Upload::Spooled(SpooledFile {
+        name: id.clone(),
+        hash: id.clone(),
+        hash_v0: hash_bytes(&bytes),
+        len: bytes.len(),
+        path: tmp.join("removed-spool-part"),
+    });
+    match deployer
+        .deploy_entity_anchored(vec![gone], &id, chain, "LOCAL", None)
+        .await
+    {
+        Err(DeployFailure::Unavailable(errors)) => assert_eq!(
+            errors,
+            [crate::create_entity::SPOOL_UNAVAILABLE_MESSAGE.to_string()]
+        ),
+        other => panic!("an unreadable spool must be this node's 503, got {other:?}"),
+    }
     let _ = std::fs::remove_dir_all(&tmp);
 }
 

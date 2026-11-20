@@ -172,7 +172,9 @@ pub struct Settings {
     /// the console's toggle says.
     pub read_only: bool,
     /// `MAX_IN_MEMORY_DEPLOYMENT_BYTES`: what `POST /entities` requests
-    /// buffer at once (their fields and entity files).
+    /// buffer at once (their fields, entity files and the files their
+    /// validation reads), never below one request's most
+    /// ([`create_entity::max_heap_share`]).
     pub max_in_memory_deployment_bytes: u64,
     /// `MAX_IN_FLIGHT_UPLOAD_BYTES` (read by worlds too): the disk the
     /// `POST /entities` spool may take at once, never below one maximal form.
@@ -589,7 +591,8 @@ pub struct ContentState {
     /// Whether the explorer's tile grid is loaded (the minimap draws from it).
     parcel_grid: OnceLock<GridReady>,
     /// The memory `POST /entities` requests may buffer at once: a fixed
-    /// share per request (fields, parsing) plus its entity file.
+    /// share per request (fields, parsing) plus its entity file and the
+    /// largest file its validation reads.
     pub upload_budget: upload_admission::UploadBudget,
     /// The disk the `POST /entities` spool may take at once: each request's
     /// declared payload, grown to its spooled bytes (plus a per-file charge).
@@ -637,7 +640,7 @@ impl ContentState {
         let upload_budget = upload_admission::UploadBudget::new(
             settings
                 .max_in_memory_deployment_bytes
-                .max(upload_admission::MIN_UPLOAD_RESERVATION_BYTES),
+                .max(create_entity::max_heap_share(&settings)),
         );
         let spool_budget = upload_admission::UploadBudget::new(
             settings

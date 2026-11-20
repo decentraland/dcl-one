@@ -1,9 +1,11 @@
 //! A request answered before its body was read: a writes gate's 503, an auth
 //! check's 401, a 404 or a 413. hyper closes a connection whose request body
 //! is dropped before its end, and the kernel answers the bytes the client is
-//! still sending with a reset. nginx buffers an upload and writes it upstream
-//! after the answer is already there, so it fails the write (`Broken pipe`),
-//! retries the next process, answers 502 and counts both down (`max_fails`).
+//! still sending with a reset. nginx is still writing the upload upstream
+//! when the answer is already there (a buffered body after it arrived, a
+//! streamed one, as content deploys are, as it arrives), so it fails the
+//! write (`Broken pipe`), retries the next process, answers 502 and counts
+//! both down (`max_fails`).
 //! [`drain_unread`] hands every body a handler drops early to a task that
 //! reads and discards the rest, as nginx itself does with a body it refuses:
 //! the answer goes out at once, the client finishes sending, and the

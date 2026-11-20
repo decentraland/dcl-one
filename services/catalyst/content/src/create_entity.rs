@@ -34,15 +34,19 @@
 //! the request's directory in `UPLOAD_SPOOL_FOLDER`
 //! (`<STORAGE_ROOT_FOLDER>/tmp/content-uploads` by default), removed when the
 //! request ends, by success, refusal, error or disconnect; a crashed
-//! process's directories go at the next start. The deployer reads them
-//! memory-mapped, through the page cache, never copied onto the heap. Two
-//! budgets admit a request before its body: the spool budget
-//! (`MAX_IN_FLIGHT_UPLOAD_BYTES`, never below one maximal form) takes its
-//! declared payload, none for a chunked body, and grows with what it writes;
-//! the memory budget (`MAX_IN_MEMORY_DEPLOYMENT_BYTES`) takes a fixed 16 MiB
-//! for its fields and parsing, grown by its entity file once the form is
-//! read. A budget that does not fit, or a spool the disk refuses (full,
-//! failing), answers 503 with `Retry-After`.
+//! process's directories go at the next start. The spool hashes each part
+//! (CIDv0 and CIDv1) as it writes it; the entity file is then read onto the
+//! heap, and the deployer reads any other part only when a validation
+//! inspects its bytes (a thumbnail), with ordinary I/O whose failure is the
+//! spool's 503, and stores each one from its spool file. Two budgets admit
+//! a request before its body: the spool budget (`MAX_IN_FLIGHT_UPLOAD_BYTES`,
+//! never below one maximal form) takes its declared payload, none for a
+//! chunked body, and grows with what it writes; the memory budget
+//! (`MAX_IN_MEMORY_DEPLOYMENT_BYTES`, never below [`max_heap_share`]) takes a
+//! fixed 16 MiB for its fields and parsing, grown once the form is read by
+//! its entity file and the largest file its validation reads. A budget that
+//! does not fit, or a spool the disk refuses (full, failing), answers 503
+//! with `Retry-After`.
 //! Before the body is read, in upstream's order: a client address past its
 //! daily quota 429, a body that does not fit the in-memory upload budget
 //! 503, and a client with its uploads or bytes in flight 429
@@ -88,11 +92,11 @@ use serde_json::{Value, json};
 use super::errors::{AppError, AppResult};
 use super::partial_deployments;
 use super::upload_admission::Reservation;
-use super::write_deployer::DeployFailure;
+use super::write_deployer::{DeployFailure, Upload};
 use super::writes;
 use super::{Settings, SharedState};
 use crate::auth::MAX_AUTH_CHAIN_LINKS;
-use crate::storage::upload_spool::UploadSpool;
+use crate::storage::upload_spool::{SpooledFile, UploadSpool};
 
 /// What each spooled file is charged on the spool budget beside its bytes
 /// (upstream `SPOOL_FILE_OVERHEAD_BYTES`), so the budget bounds inodes too.
@@ -119,6 +123,16 @@ pub fn max_spool_footprint(settings: &Settings) -> u64 {
     )
 }
 
+/// The most memory one request's reservation grows to ([`uploads_of`]): the
+/// fixed share for its fields and parsing, its entity file and the largest
+/// file its validation reads, each up to `MAX_UPLOAD_FILE_SIZE`. The memory
+/// budget never sits below it, so a form within the limits always fits a
+/// node with no other deploy in flight.
+pub fn max_heap_share(settings: &Settings) -> u64 {
+    super::upload_admission::MIN_UPLOAD_RESERVATION_BYTES
+        .saturating_add((settings.max_upload_file_bytes as u64).saturating_mul(2))
+}
+
 /// The most framing a part adds (upstream `MULTIPART_PART_FRAMING_BYTES`):
 /// a 16 KiB header block plus a boundary line and CRLFs.
 const MULTIPART_PART_FRAMING_BYTES: usize = 16 * 1024 + 128;
@@ -134,6 +148,26 @@ pub fn max_deployment_body_bytes(settings: &Settings) -> usize {
         settings.max_upload_file_count,
         settings.max_upload_field_count,
     )
+}
+
+/// The gateway's body cap on this route as shipped (`CONTENT_DEPLOY_CAP`,
+/// 2096 MiB, in `infra/gateway/gateway.py`; a gateway test pins the two).
+pub const SHIPPED_GATEWAY_DEPLOY_CAP_BYTES: usize = 2096 * 1024 * 1024;
+
+/// The startup warning for `MAX_UPLOAD_*` values whose route limit
+/// ([`max_deployment_body_bytes`]) is past the shipped gateway cap: a body
+/// between the two meets nginx's HTML 413 instead of this route's JSON one
+/// unless the gateway's cap is raised to match.
+pub fn gateway_cap_warning(settings: &Settings) -> Option<String> {
+    let limit = max_deployment_body_bytes(settings);
+    (limit > SHIPPED_GATEWAY_DEPLOY_CAP_BYTES).then(|| {
+        format!(
+            "MAX_UPLOAD_TOTAL_SIZE, MAX_UPLOAD_FILE_COUNT and MAX_UPLOAD_FIELD_COUNT allow \
+             POST /entities bodies of {limit} bytes, past the shipped gateway cap \
+             (CONTENT_DEPLOY_CAP, {SHIPPED_GATEWAY_DEPLOY_CAP_BYTES} bytes): larger bodies \
+             meet the gateway's HTML 413 unless its cap is raised to match"
+        )
+    })
 }
 
 fn multipart_body_limit(max_total: usize, max_files: usize, max_fields: usize) -> usize {
@@ -307,37 +341,17 @@ fn is_file_part(file_name: Option<&str>, content_type: Option<&str>) -> bool {
         || content_type.is_some_and(|t| !t.trim_start().to_ascii_lowercase().starts_with("text/"))
 }
 
-/// A spooled file part of a read form: its form name, bytes and spool path
-/// (the store hard-links it from there).
-struct Upload {
-    name: String,
-    bytes: Bytes,
-    path: std::path::PathBuf,
-}
-
-/// Parts up to this size, and the entity file, are read onto the heap and
-/// charged to the request's memory reservation; larger ones are
-/// memory-mapped ([`crate::storage::upload_spool::SpooledFile::map`]). So
-/// the mappings live at once stay under the spool budget over this size
-/// (4096 at the 4 GiB default), and the spool's own cap
-/// (`MAX_LIVE_MAPS`, 8192, a 503 past it) keeps them far below the kernel's
-/// per-process map limit (Linux `vm.max_map_count`, 65530 by default)
-/// whatever the budgets are set to.
-pub const MAP_THRESHOLD_BYTES: usize = 1024 * 1024;
-
 /// A form as read, or turned away before or while its files were spooled.
 enum Form {
-    Read(BTreeMap<String, String>, Vec<Upload>),
+    Read(BTreeMap<String, String>, Vec<SpooledFile>),
     Refused(Response),
 }
 
-/// What a request spools into: its directory, its share of the spool
-/// budget, grown as its files arrive, and its memory reservation, grown by
-/// the parts read onto the heap.
-struct Spooling<'a, 'b, 'c> {
+/// What a request spools into: its directory and its share of the spool
+/// budget, grown as its files arrive.
+struct Spooling<'a, 'b> {
     spool: &'a mut UploadSpool,
     disk: &'a mut Reservation<'b>,
-    memory: &'a mut Reservation<'c>,
 }
 
 /// Reads the whole form with upstream's multipart limits and answers
@@ -356,7 +370,7 @@ struct Spooling<'a, 'b, 'c> {
 async fn read_form(
     multipart: &mut Multipart,
     settings: &Settings,
-    spooling: Spooling<'_, '_, '_>,
+    spooling: Spooling<'_, '_>,
     before_files: impl AsyncFnOnce(&BTreeMap<String, String>) -> Option<Response>,
 ) -> AppResult<Form> {
     let max_fields = settings.max_upload_field_count;
@@ -364,13 +378,9 @@ async fn read_form(
     let max_files = settings.max_upload_file_count;
     let max_file_bytes = settings.max_upload_file_bytes;
     let max_total = settings.max_upload_total_bytes;
-    let Spooling {
-        spool,
-        disk,
-        memory,
-    } = spooling;
+    let Spooling { spool, disk } = spooling;
     let mut fields: BTreeMap<String, String> = BTreeMap::new();
-    let mut files: Vec<Upload> = Vec::new();
+    let mut files: Vec<SpooledFile> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     let mut field_count = 0usize;
     let mut total_bytes = 0usize;
@@ -432,29 +442,10 @@ async fn read_form(
                     return Ok(Form::Refused(spool_unavailable(&e)));
                 }
             }
-            let spooled = match part.finish(name.clone()).await {
-                Ok(spooled) => spooled,
+            match part.finish(name).await {
+                Ok(spooled) => files.push(spooled),
                 Err(e) => return Ok(Form::Refused(spool_unavailable(&e))),
-            };
-            let on_heap = spooled.len() <= MAP_THRESHOLD_BYTES
-                || fields.get("entityId") == Some(&spooled.hash);
-            let bytes = if on_heap {
-                if !memory.grow(memory.bytes() + spooled.len() as u64) {
-                    return Ok(Form::Refused(budget_exhausted()));
-                }
-                spooled.read().await.map(Bytes::from)
-            } else {
-                spooled.map().await
-            };
-            let bytes = match bytes {
-                Ok(bytes) => bytes,
-                Err(e) => return Ok(Form::Refused(spool_unavailable(&e))),
-            };
-            files.push(Upload {
-                name,
-                bytes,
-                path: spooled.path,
-            });
+            }
         } else {
             if field_count >= max_fields {
                 return Err(too_large(format!(
@@ -507,19 +498,63 @@ fn budget_exhausted() -> Response {
     )
 }
 
-/// The `type` of the uploaded entity file (the JSON upload hashing to
-/// `entity_id`), for the unsynced copy's per-type gate; the deployer checks
-/// the same file in full.
-fn entity_type_of(files: &[Bytes], entity_id: &str) -> Option<String> {
-    entity_file_of(files, entity_id).and_then(|v| v.get("type")?.as_str().map(str::to_string))
+/// The form's files as the deployer takes them, by field name: the entity
+/// file (the first part hashing to `entityId`) read onto the heap and
+/// returned beside them, every other part from its spool file. Before the
+/// read, `memory` grows by the entity file; once it parses, by the largest
+/// part its validation reads ([`crate::validator::rules::inspected_hashes`]).
+/// A grow that does not fit is the budget's 503, a failed read the spool's.
+async fn uploads_of(
+    fields: &BTreeMap<String, String>,
+    parts: Vec<SpooledFile>,
+    memory: &mut Reservation<'_>,
+) -> Result<(Vec<(String, Upload)>, Option<Bytes>), Response> {
+    let entity_at = fields
+        .get("entityId")
+        .and_then(|id| parts.iter().position(|part| part.names(id)));
+    let mut entity = None;
+    if let Some(at) = entity_at {
+        let part = &parts[at];
+        if !memory.grow(memory.bytes() + part.len() as u64) {
+            return Err(budget_exhausted());
+        }
+        let bytes = Bytes::from(part.read().await.map_err(|e| spool_unavailable(&e))?);
+        let inspected = serde_json::from_slice::<crate::entity::Entity>(&bytes)
+            .map(|parsed| {
+                let hashes = crate::validator::rules::inspected_hashes(&parsed);
+                parts
+                    .iter()
+                    .filter(|part| hashes.iter().any(|hash| part.names(hash)))
+                    .map(|part| part.len() as u64)
+                    .max()
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
+        if !memory.grow(memory.bytes() + inspected) {
+            return Err(budget_exhausted());
+        }
+        entity = Some(bytes);
+    }
+    let uploads = parts
+        .into_iter()
+        .enumerate()
+        .map(|(at, part)| match &entity {
+            Some(bytes) if Some(at) == entity_at => (part.name, Upload::Bytes(bytes.clone())),
+            _ => (part.name.clone(), Upload::Spooled(part)),
+        })
+        .collect();
+    Ok((uploads, entity))
 }
 
-fn entity_file_of(files: &[Bytes], entity_id: &str) -> Option<Value> {
-    files
-        .iter()
-        .filter(|f| f.first() == Some(&b'{'))
-        .find(|f| crate::auth::verify_hash(f, entity_id))
-        .and_then(|f| serde_json::from_slice::<Value>(f).ok())
+/// The `type` of the uploaded entity file, for the unsynced copy's per-type
+/// gate; the deployer checks the same file in full.
+fn entity_type_of(entity: Option<&Bytes>) -> Option<String> {
+    entity_file_of(entity).and_then(|v| v.get("type")?.as_str().map(str::to_string))
+}
+
+/// The entity file ([`uploads_of`]: the part hashing to the id), parsed.
+fn entity_file_of(entity: Option<&Bytes>) -> Option<Value> {
+    entity.and_then(|bytes| serde_json::from_slice::<Value>(bytes).ok())
 }
 
 /// Whether an undecided deploy's quota charge is given back: only when its
@@ -527,8 +562,8 @@ fn entity_file_of(files: &[Bytes], entity_id: &str) -> Option<Value> {
 /// contracts (LAND, estates, the NAME registrar). A larger request, or a
 /// contract the entity names (a collection, a worn item's NFT), can drive the
 /// check past its deadline or into a non-revert failure.
-fn is_refundable(files: &[Bytes], entity_id: &str) -> bool {
-    entity_file_of(files, entity_id).is_some_and(|entity| {
+fn is_refundable(entity: Option<&Bytes>) -> bool {
+    entity_file_of(entity).is_some_and(|entity| {
         !asks_named_contracts(&entity)
             && access_calls_of(&entity) <= crate::validator::onchain::CALLS_PER_BATCH
     })
@@ -788,7 +823,7 @@ pub async fn create_entity(
     }
 
     // Memory: the fixed share every request holds (its fields, parsing),
-    // grown by its entity file once the form is read. Disk: the declared
+    // grown once the form is read ([`uploads_of`]). Disk: the declared
     // payload (none for a chunked body), grown to what the spool holds.
     let Some(mut memory) = state.upload_budget.try_reserve(0) else {
         return Ok(budget_exhausted());
@@ -934,7 +969,7 @@ async fn deploy_form(
 ) -> AppResult<Response> {
     let settings = &state.settings;
     // Removed, with every file in it, when this request ends however it
-    // ends; the mapped bytes stay readable until the deploy drops them.
+    // ends, after the deploy stored what it keeps.
     let mut spool = match UploadSpool::create(&state.spool_root, SPOOL_ROUTE).await {
         Ok(spool) => spool,
         Err(e) => return Ok(spool_unavailable(&e)),
@@ -948,7 +983,6 @@ async fn deploy_form(
         Spooling {
             spool: &mut spool,
             disk,
-            memory,
         },
         async |fields: &BTreeMap<String, String>| {
             if !request.declared_partial && !is_partial(fields) {
@@ -975,12 +1009,15 @@ async fn deploy_form(
             declared_length(request.headers),
         ));
     };
-    let (fields, uploads) = match form? {
-        Form::Read(fields, uploads) => (fields, uploads),
+    let (fields, parts) = match form? {
+        Form::Read(fields, parts) => (fields, parts),
         Form::Refused(response) => return Ok(response),
     };
+    let (files, entity) = match uploads_of(&fields, parts, memory).await {
+        Ok(read) => read,
+        Err(refused) => return Ok(refused),
+    };
     if is_partial(&fields) {
-        let files = uploads.into_iter().map(|u| (u.name, u.bytes)).collect();
         let answer = partial_batch(state, &deployer, request, fields, files).await;
         return Ok(answer.unwrap_or_else(IntoResponse::into_response));
     }
@@ -996,17 +1033,8 @@ async fn deploy_form(
         Ok(charge) => charge,
         Err(retry_after) => return Ok(quota_exceeded_response(retry_after)),
     };
-    let files = uploads
-        .into_iter()
-        .map(|u| {
-            let upload = super::write_deployer::Upload {
-                bytes: u.bytes,
-                path: Some(u.path),
-            };
-            (u.name, upload)
-        })
-        .collect();
-    let deploy = deploy_regular(state, &deployer, request, fields, files);
+    let uploads = files.into_iter().map(|(_, upload)| upload).collect();
+    let deploy = deploy_regular(state, &deployer, request, fields, uploads, entity);
     let Ok(answer) = tokio::time::timeout(settings.deployment_processing_timeout, deploy).await
     else {
         // Counted: the client may have chosen what stalled (its contract
@@ -1031,7 +1059,8 @@ async fn deploy_regular(
     deployer: &super::write_deployer::WriteDeployer,
     request: &Request<'_>,
     fields: BTreeMap<String, String>,
-    files: Vec<(String, super::write_deployer::Upload)>,
+    uploads: Vec<Upload>,
+    entity: Option<Bytes>,
 ) -> AppResult<Answer> {
     let headers = request.headers;
     let request_started = request.started;
@@ -1040,13 +1069,6 @@ async fn deploy_regular(
         .ok_or_else(|| invalid(MISSING_ENTITY_ID_MESSAGE))?
         .clone();
     let auth_chain = auth_chain_of(&fields)?;
-    let named = files
-        .iter()
-        .find(|(name, _)| *name == entity_id)
-        .map(|(_, upload)| upload.bytes.clone());
-    let uploads: Vec<super::write_deployer::Upload> =
-        files.into_iter().map(|(_, upload)| upload).collect();
-    let files: Vec<Bytes> = uploads.iter().map(|u| u.bytes.clone()).collect();
     let failed = |failure: DeployFailure, refundable: bool| {
         tracing::warn!(entity_id = %entity_id, errors = ?failure.errors(), "POST /entities - Deployment failed");
         let undecided = refundable && matches!(failure, DeployFailure::Unavailable(_));
@@ -1066,10 +1088,10 @@ async fn deploy_regular(
     match deployer.deployed_timestamp(&entity_id).await {
         Ok(Some(creation_timestamp)) => {
             if let Err(failure) = deployer
-                .verify_replay(named.as_ref(), &files, &entity_id, &auth_chain)
+                .verify_replay(entity.as_ref(), &uploads, &entity_id, &auth_chain)
                 .await
             {
-                return Ok(failed(failure, is_refundable(&files, &entity_id)));
+                return Ok(failed(failure, is_refundable(entity.as_ref())));
             }
             tracing::info!(entity_id = %entity_id, "POST /entities - Entity already deployed");
             return Ok(Answer::Decided(created_response(creation_timestamp)));
@@ -1080,7 +1102,7 @@ async fn deploy_regular(
         }
     }
     if !state.sync.takes_deploys() {
-        let Some(entity_type) = entity_type_of(&files, &entity_id) else {
+        let Some(entity_type) = entity_type_of(entity.as_ref()) else {
             return Ok(Answer::Decided(deployment_failure_response(
                 DeployFailure::Rejected(
                     crate::write_deployer::RejectionKind::Validation,
@@ -1103,11 +1125,11 @@ async fn deploy_regular(
     tracing::info!(
         entity_id = %entity_id,
         user_agent = %user_agent,
-        file_count = files.len(),
+        file_count = uploads.len(),
         "POST /entities - Deploying entity (multipart)"
     );
 
-    let refundable = is_refundable(&files, &entity_id);
+    let refundable = is_refundable(entity.as_ref());
     let multipart_us = request_started.elapsed().as_micros() as u64;
     let deploy_started = std::time::Instant::now();
     match deployer
@@ -1141,7 +1163,7 @@ async fn partial_batch(
     deployer: &super::write_deployer::WriteDeployer,
     request: &Request<'_>,
     fields: BTreeMap<String, String>,
-    files: Vec<(String, Bytes)>,
+    files: Vec<(String, Upload)>,
 ) -> AppResult<Response> {
     if !state.sync.takes_deploys_of("scene") {
         return Ok(writes::bootstrapping_response());
@@ -1199,6 +1221,26 @@ async fn partial_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn limits_past_the_shipped_gateway_cap_are_warned_about() {
+        let defaults = Settings::for_tests();
+        assert!(max_deployment_body_bytes(&defaults) <= SHIPPED_GATEWAY_DEPLOY_CAP_BYTES);
+        assert_eq!(gateway_cap_warning(&defaults), None);
+        for raised in [
+            Settings {
+                max_upload_total_bytes: defaults.max_upload_total_bytes + 64 * 1024 * 1024,
+                ..Settings::for_tests()
+            },
+            Settings {
+                max_upload_file_count: defaults.max_upload_file_count * 2,
+                ..Settings::for_tests()
+            },
+        ] {
+            let warning = gateway_cap_warning(&raised).expect("past the gateway cap");
+            assert!(warning.contains("CONTENT_DEPLOY_CAP"), "{warning}");
+        }
+    }
 
     fn fields(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs

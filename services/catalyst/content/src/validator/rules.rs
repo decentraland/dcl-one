@@ -63,6 +63,56 @@ fn content_store_unavailable(cause: &str) -> ValidationResponse {
     )
 }
 
+/// An uploaded file this node spooled and could not read back: its own
+/// disk failing, answered as the spool's 503. The cause is logged.
+fn upload_unreadable(error: &std::io::Error) -> ValidationResponse {
+    tracing::error!(%error, "a spooled upload could not be read during deploy validation");
+    ValidationResponse::unavailable(crate::create_entity::SPOOL_UNAVAILABLE_MESSAGE)
+}
+
+/// A wearable's or emote's `metadata.thumbnail` file name and the content
+/// hash it maps to.
+fn item_thumbnail(entity: &Entity) -> (Option<&str>, Option<&str>) {
+    let thumbnail = entity
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("thumbnail"))
+        .and_then(|t| t.as_str());
+    let hash = entity
+        .content
+        .iter()
+        .find(|c| Some(c.file.as_str()) == thumbnail)
+        .map(|c| c.hash.as_str());
+    (thumbnail, hash)
+}
+
+/// An avatar's `snapshots.face256` content hash.
+fn face256_of(avatar: &serde_json::Value) -> Option<&str> {
+    avatar
+        .get("avatar")
+        .and_then(|a| a.get("snapshots"))
+        .and_then(|s| s.get("face256"))
+        .and_then(|h| h.as_str())
+}
+
+/// The uploaded files besides the entity file whose bytes validating
+/// `entity` may read: a wearable's or emote's thumbnail, a profile's face256
+/// snapshots. Each is read whole, one at a time, so the most a validation
+/// holds on top of the entity file is the largest of them.
+pub fn inspected_hashes(entity: &Entity) -> Vec<&str> {
+    match entity.entity_type {
+        EntityType::Wearable | EntityType::Emote => item_thumbnail(entity).1.into_iter().collect(),
+        EntityType::Profile => entity
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("avatars"))
+            .and_then(|a| a.as_array())
+            .map(|avatars| avatars.iter().filter_map(face256_of).collect())
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
 pub struct ContentValidator<'a, E: ExternalCalls, B: BlockchainChecker> {
     pub external_calls: &'a E,
     pub blockchain_checker: &'a B,
@@ -346,7 +396,7 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
                 Err(response) => return response,
             }
         } else {
-            deployment.files.values().map(|f| f.len() as u64).sum()
+            deployment.files.values().map(UploadedFile::len).sum()
         };
 
         // Compares total / pointers > max without truncating the quotient.
@@ -373,7 +423,7 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
 
         for hash in unique_hashes {
             if let Some(uploaded) = deployment.files.get(hash) {
-                total += uploaded.len() as u64;
+                total += uploaded.len();
             } else {
                 match self.external_calls.fetch_content_file_size(hash).await {
                     Ok(Some(size)) => total += size as u64,
@@ -452,20 +502,9 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
             return ValidationResponse::Ok;
         }
 
-        let thumbnail = entity
-            .metadata
-            .as_ref()
-            .and_then(|m| m.get("thumbnail"))
-            .and_then(|t| t.as_str());
-
-        let hash = entity
-            .content
-            .iter()
-            .find(|c| Some(c.file.as_str()) == thumbnail)
-            .map(|c| c.hash.clone());
-
+        let (thumbnail, hash) = item_thumbnail(entity);
         let hash = match hash {
-            Some(h) => h,
+            Some(h) => h.to_string(),
             None => {
                 return ValidationResponse::fail(format!(
                     "Couldn't find hash for thumbnail file with name: {}",
@@ -475,7 +514,12 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         };
 
         match deployment.files.get(&hash) {
-            Some(buffer) => ValidationResponse::from_errors(check_wearable_thumbnail_image(buffer)),
+            Some(file) => match file.read().await {
+                Ok(buffer) => {
+                    ValidationResponse::from_errors(check_wearable_thumbnail_image(&buffer))
+                }
+                Err(e) => upload_unreadable(&e),
+            },
             None => {
                 match self
                     .external_calls
@@ -515,12 +559,7 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
 
         let mut errors: Vec<String> = Vec::new();
         for avatar in avatars {
-            let hash = avatar
-                .get("avatar")
-                .and_then(|a| a.get("snapshots"))
-                .and_then(|s| s.get("face256"))
-                .and_then(|h| h.as_str());
-            let hash = match hash {
+            let hash = match face256_of(avatar) {
                 Some(h) => h.to_string(),
                 None => {
                     return ValidationResponse::fail(
@@ -554,7 +593,10 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
             }
 
             match deployment.files.get(&hash) {
-                Some(buffer) => errors.extend(check_face256_thumbnail_image(buffer)),
+                Some(file) => match file.read().await {
+                    Ok(buffer) => errors.extend(check_face256_thumbnail_image(&buffer)),
+                    Err(e) => return upload_unreadable(&e),
+                },
                 None => {
                     return ValidationResponse::fail(format!(
                         "Couldn't find thumbnail file with hash: {hash}"

@@ -4,7 +4,7 @@ use super::types::*;
 
 pub(super) fn should_validate_face_thumbnail(
     entity: &Entity,
-    files: &HashMap<String, bytes::Bytes>,
+    files: &HashMap<String, UploadedFile>,
 ) -> bool {
     let ts = entity.timestamp;
     if (adr_timestamps::ADR_45..adr_timestamps::ADR_290_OPTIONAL).contains(&ts) {

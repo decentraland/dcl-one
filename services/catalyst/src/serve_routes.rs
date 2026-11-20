@@ -266,12 +266,14 @@ pub(super) fn build_routes(
         .merge(ops::admin::router(ops_admin))
         .merge(shared::writes::status_router(write_switches(config)));
     // A request a gate, an auth check or a handler answers before reading
-    // its body is drained, not reset: nginx writes a buffered upload after
-    // the answer, and a reset fails that write, answers 502 and counts the
-    // process down. Up to the largest body a route admits (a deployment,
+    // its body is drained, not reset: nginx is still writing the upload
+    // after the answer, and a reset fails that write, answers 502 and counts
+    // the process down. Up to the largest body a route admits (a deployment,
     // `MAX_UPLOAD_TOTAL_SIZE` plus framing): the drain discards each chunk
-    // as it arrives, so the bound costs bandwidth nginx already spent
-    // receiving the body, never memory or disk.
+    // as it arrives, so the bound costs bandwidth, never memory or disk. A
+    // content deploy streams through nginx unbuffered, so its drain runs at
+    // the client's pace, bounded by nginx's `client_body_timeout` between
+    // reads, not by a deadline of its own.
     // Forwarding headers name the client only from a loopback or listed proxy.
     let app =
         shared::client_ip::pin_client_headers(app, config.node.http_trusted_proxy_cidrs.clone());

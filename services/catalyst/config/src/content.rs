@@ -187,7 +187,7 @@ pub struct ContentConfig {
     /// `UPLOAD_SPOOL_FOLDER`, so this bounds a deploy's disk, not its memory.
     /// The gateway's body cap on the route (`CONTENT_DEPLOY_CAP` in
     /// `infra/gateway/gateway.py`) is set for the default and must follow a
-    /// change.
+    /// change; a route limit past it is logged at startup.
     #[arg(
         long,
         env = "MAX_UPLOAD_TOTAL_SIZE",
@@ -205,9 +205,13 @@ pub struct ContentConfig {
     pub upload_spool_folder: Option<std::path::PathBuf>,
 
     /// Bytes `POST /entities` requests buffer in memory at once: each holds
-    /// 16 MiB for its fields and parsing, plus its entity file once the form
-    /// is read; the files themselves are spooled to disk. A request that does
-    /// not fit answers 503 (unread when it does not fit on arrival).
+    /// 16 MiB for its fields and parsing, plus, once the form is read, its
+    /// entity file and the largest file its validation reads (an item's
+    /// thumbnail, a profile's face256); the other files stay spooled on disk.
+    /// Never below one request's most (16 MiB plus twice
+    /// `MAX_UPLOAD_FILE_SIZE`), so a form within the limits always fits an
+    /// idle node. A request that does not fit answers 503 (unread when it
+    /// does not fit on arrival).
     #[arg(
         long,
         env = "MAX_IN_MEMORY_DEPLOYMENT_BYTES",

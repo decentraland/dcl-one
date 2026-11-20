@@ -3024,12 +3024,12 @@ async fn a_replay_whose_contract_wallet_cannot_be_checked_is_503_and_counted() {
     db.drop_now().await;
 }
 
-/// A deploy whose files outweigh the memory budget streams through the
-/// spool: the memory reservation holds the fixed share and the entity file,
-/// never the files; once deployed, the blobs are stored, both reservations
-/// are back and the spool is empty.
+/// A form of many sub-MiB parts that together outweigh the memory budget
+/// (at its floor, one request's most) deploys: no part is read onto the
+/// heap, only the entity file; once deployed, the blobs are stored by hard
+/// link, both reservations are back and the spool is empty.
 #[tokio::test]
-async fn a_deploy_larger_than_the_memory_budget_streams_through_the_spool() {
+async fn many_small_parts_outweighing_the_memory_budget_deploy_through_the_spool() {
     require_test_db!(Some(db) = OwnDb::create().await);
     let owner = key(OWNER_KEY);
     let parcels = [(43, -13), (44, -13), (45, -13)];
@@ -3041,10 +3041,9 @@ async fn a_deploy_larger_than_the_memory_budget_streams_through_the_spool() {
         uuid::Uuid::new_v4().simple()
     ));
     let storage = Arc::new(Storage::from_config(&tmp).await.unwrap());
-    let min = super::upload_admission::MIN_UPLOAD_RESERVATION_BYTES;
-    let memory_capacity = min + 1024 * 1024;
     let settings = Settings {
-        max_in_memory_deployment_bytes: memory_capacity,
+        max_in_memory_deployment_bytes: 0,
+        max_upload_file_bytes: 1024 * 1024,
         ..Settings::for_tests()
     };
     let state = Arc::new(ContentState::new(
@@ -3071,18 +3070,18 @@ async fn a_deploy_larger_than_the_memory_budget_streams_through_the_spool() {
 
     let file = |seed: u8| {
         Bytes::from(
-            (0..10 * 1024 * 1024u32)
+            (0..768 * 1024u32)
                 .map(|i| (i % 251) as u8 ^ seed)
                 .collect::<Vec<u8>>(),
         )
     };
-    let blobs = [file(1), file(2), file(3)];
+    let blobs: Vec<Bytes> = (1..=40).map(file).collect();
     let hashes: Vec<String> = blobs.iter().map(|b| hash_bytes_v1(b)).collect();
-    let names = ["bin/index.js", "models/a.bin", "models/b.bin"];
+    let names: Vec<String> = (1..=40).map(|i| format!("models/{i}.bin")).collect();
     let content: Vec<(&str, &str)> = names
         .iter()
         .zip(&hashes)
-        .map(|(n, h)| (*n, h.as_str()))
+        .map(|(n, h)| (n.as_str(), h.as_str()))
         .collect();
     let pointer_refs: Vec<&str> = pointers.iter().map(String::as_str).collect();
     let (entity_bytes, entity_id, chain) =
@@ -3090,13 +3089,18 @@ async fn a_deploy_larger_than_the_memory_budget_streams_through_the_spool() {
     let mut parts: Vec<(&str, &Bytes)> = vec![(entity_id.as_str(), &entity_bytes)];
     parts.extend(hashes.iter().map(String::as_str).zip(blobs.iter()));
     let body_bytes: u64 = blobs.iter().map(|b| b.len() as u64).sum();
+    let memory_capacity = state.upload_budget.capacity();
+    assert_eq!(
+        memory_capacity,
+        super::create_entity::max_heap_share(&state.settings),
+        "the budget sits at its floor"
+    );
     assert!(
         body_bytes > memory_capacity,
         "the files outweigh the memory budget"
     );
 
-    // The memory budget holds one request's share and a 1 MiB entity file
-    // at most: were the files counted there, the deploy would be refused.
+    // Were the parts read onto the heap, the deploy would be refused.
     let copies = crate::storage::store_file_copy_fallbacks();
     let (status, _, body) = call(
         &router,

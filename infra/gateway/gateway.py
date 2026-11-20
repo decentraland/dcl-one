@@ -51,9 +51,10 @@ STORAGE_TOO_LARGE = {"error": "Payload Too Large",
 # budget (reads and trusted callers are not counted): each body is buffered in
 # the gateway's temp space before the service answers.
 STORAGE_UPLOADS_PER_ADDRESS = 10
-# Uploads one address may have in flight on a deploy route: nginx buffers each
-# body before proxying it, and the app's limits only answer after that. Above
-# upstream catalyst's 4 per source, so it stays a coarse guard.
+# Uploads one address may have in flight on a deploy route: each holds a
+# connection to the app (content deploys stream through) or a body in the
+# gateway's temp space (worlds deploys are buffered). Above upstream
+# catalyst's 4 per source, so it stays a coarse guard.
 DEPLOY_CONNECTIONS_PER_ADDRESS = 10
 # The gateway's own answers on a worlds deploy: named location, status,
 # Retry-After seconds (0 for none) and the worlds service's {error, message} body.
@@ -280,16 +281,19 @@ def render(table, cfg, mime):
     # The content deploy zone is only a coarse abuse guard: 200 at once, then
     # 5 r/s per address, above the content server's own per-client burst limit
     # (upstream's 200 per 60 s, answered as JSON with Retry-After), so a
-    # client within that limit never meets nginx's HTML 429. Concurrent
-    # uploads per address are capped on both deploy routes, since each body
-    # is buffered in the gateway's temp space before the app sees it.
+    # client within that limit never meets nginx's HTML 429. Content deploys
+    # are not buffered: the body streams to the app, which spools it to disk
+    # under its own budgets, upload timeout and unread-body drain, so a body
+    # of up to CONTENT_DEPLOY_CAP never lands in the gateway's temp space (a
+    # tmpfs in the documented run). Concurrent uploads per address are
+    # capped on both deploy routes.
     deploy = "|".join(re.escape(path) for path in table["deploy"])
     uploads = f"limit_conn deploy_uploads {DEPLOY_CONNECTIONS_PER_ADDRESS};"
     # Case-insensitive, as nginx would otherwise pass /content/Entities to the
     # /content/ location and its looser limits.
     locations += location(f'~* "^({deploy})/*$"', proxy("apis",
         f"client_max_body_size {CONTENT_DEPLOY_CAP}; client_body_timeout 300s; "
-        f"limit_req zone=deploy burst=200 nodelay; {uploads}"))
+        f"proxy_request_buffering off; limit_req zone=deploy burst=200 nodelay; {uploads}"))
     # Upstream caps the POST /entities/active body at 10 MiB and answers its
     # own 413 (MAX_ACTIVE_ENTITIES_BODY_SIZE); the server-wide 1m would answer
     # nginx's HTML 413 first. The content server's case rewrite routes any

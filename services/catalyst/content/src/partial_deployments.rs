@@ -77,9 +77,10 @@ use sqlx::PgPool;
 use sqlx::pool::PoolConnection;
 
 use super::entity::{Entity, EntityType, is_ipfs_v2};
+use super::validator::types::UploadedFile;
 use super::write_deployer::{
-    DeployFailure, REQUEST_TTL_FORWARDS_MS, RejectionKind, UPLOAD_HASH_JOBS, WriteDeployer,
-    bounded_upload_hash,
+    DeployFailure, REQUEST_TTL_FORWARDS_MS, RejectionKind, UPLOAD_HASH_JOBS, Upload, WriteDeployer,
+    bounded_upload_hash, store_uploaded,
 };
 use crate::auth::{AuthChain, hash_bytes_v1};
 use crate::config::Config;
@@ -250,7 +251,7 @@ pub struct Batch {
     /// The chain as the form spelled it, handed to the deployer at publication.
     pub auth_chain: Value,
     /// Files by their field name, in form order.
-    pub files: Vec<(String, Bytes)>,
+    pub files: Vec<(String, Upload)>,
     /// When the request arrived (ms): a new upload's lifetime starts here.
     pub requested_at_ms: i64,
 }
@@ -659,7 +660,11 @@ async fn stage(
         .iter()
         .rev()
         .find(|(name, _)| name == entity_id)
-        .map(|(_, bytes)| bytes.clone());
+        .and_then(|(_, upload)| match upload {
+            Upload::Bytes(bytes) => Some(bytes.clone()),
+            // `POST /entities` reads the part hashing to the id; this one does not.
+            Upload::Spooled(_) => None,
+        });
     let signed_at = uploaded_entity
         .as_ref()
         .filter(|bytes| bytes.len() <= MAX_ENTITY_FILE_SIZE_BYTES)
@@ -696,7 +701,7 @@ async fn stage(
 struct Prepared {
     entity: Entity,
     entity_bytes: Bytes,
-    files: HashMap<String, Bytes>,
+    files: HashMap<String, UploadedFile>,
     deployer_address: String,
     content_hashes: Vec<String>,
     max_scene_bytes: i64,
@@ -723,13 +728,21 @@ async fn prepare(
     }
 
     // The field names are load-bearing here: every file must hash to its key.
-    let named: Vec<(String, Bytes)> = batch.files.clone();
+    // A spooled part was hashed as it was written; only bytes are hashed here.
+    let named: Vec<(String, Upload)> = batch.files.clone();
     let hashed = bounded_upload_hash(Arc::clone(&UPLOAD_HASH_JOBS), move || {
         named
             .into_iter()
-            .map(|(key, bytes)| {
-                let computed = hash_bytes_v1(&bytes);
-                (key, computed, bytes)
+            .map(|(key, upload)| match upload {
+                Upload::Bytes(bytes) => (key, hash_bytes_v1(&bytes), UploadedFile::Bytes(bytes)),
+                Upload::Spooled(part) => (
+                    key,
+                    part.hash,
+                    UploadedFile::Spooled {
+                        len: part.len as u64,
+                        path: part.path,
+                    },
+                ),
             })
             .collect::<Vec<_>>()
     })
@@ -738,14 +751,14 @@ async fn prepare(
         errors: vec![e],
         retry_after: INTERNAL_ERROR_RETRY_AFTER_SECS,
     })?;
-    let mut files: HashMap<String, Bytes> = HashMap::with_capacity(hashed.len());
-    for (key, computed, bytes) in hashed {
+    let mut files: HashMap<String, UploadedFile> = HashMap::with_capacity(hashed.len());
+    for (key, computed, file) in hashed {
         if key != computed {
             return Err(Refusal::invalid(format!(
                 "The uploaded file '{key}' does not match its content hash (computed {computed})."
             )));
         }
-        files.insert(key, bytes);
+        files.insert(key, file);
     }
 
     let entity_bytes = match uploaded_entity {
@@ -793,22 +806,9 @@ async fn prepare(
     let resume_by_creator = seen
         .as_ref()
         .is_some_and(|p| p.deployer_address == deployer_address);
-    // The staging checks read which files came, not their bytes.
-    let staging_files: HashMap<String, Bytes> = files
-        .keys()
-        .map(|key| {
-            let bytes = if key == entity_id {
-                entity_bytes.clone()
-            } else {
-                Bytes::new()
-            };
-            (key.clone(), bytes)
-        })
-        .chain(std::iter::once((
-            entity_id.to_string(),
-            entity_bytes.clone(),
-        )))
-        .collect();
+    // The staging checks read which files came and the entity file.
+    let mut staging_files = files.clone();
+    staging_files.insert(entity_id.to_string(), entity_bytes.clone().into());
     deployer
         .validate_staging(&entity, &staging_files, auth_chain, !resume_by_creator)
         .await
@@ -1041,9 +1041,9 @@ async fn commit(
     }
     // Every received byte counts toward the rate; stored files are not rewritten.
     let mut incoming_bytes: i64 = 0;
-    let mut to_store: Vec<(String, Bytes)> = Vec::new();
-    for (hash, bytes) in &files {
-        incoming_bytes += bytes.len() as i64;
+    let mut to_store: Vec<(String, UploadedFile)> = Vec::new();
+    for (hash, file) in &files {
+        incoming_bytes += file.len() as i64;
         if already_stored.contains(hash) {
             continue;
         }
@@ -1051,13 +1051,13 @@ async fn commit(
             hash.clone(),
             Receipt {
                 hash: hash.clone(),
-                size: bytes.len() as i64,
+                size: file.len() as i64,
                 stored: false,
                 charged: true,
                 written: true,
             },
         );
-        to_store.push((hash.clone(), bytes.clone()));
+        to_store.push((hash.clone(), file.clone()));
     }
     let known_scene_bytes: i64 = receipts
         .values()
@@ -1213,9 +1213,9 @@ fn store_unreadable(entity_id: &str, e: &dyn std::fmt::Display) -> Refusal {
 }
 
 /// A store failure is logged; the client sees upstream's fixed sentence.
-async fn store_files(storage: &Storage, files: Vec<(String, Bytes)>) -> Result<(), Refusal> {
-    let mut writes = stream::iter(files.into_iter().map(|(hash, bytes)| async move {
-        storage.store(&hash, bytes).await.map_err(|e| {
+async fn store_files(storage: &Storage, files: Vec<(String, UploadedFile)>) -> Result<(), Refusal> {
+    let mut writes = stream::iter(files.into_iter().map(|(hash, file)| async move {
+        store_uploaded(storage, &hash, file).await.map_err(|e| {
             tracing::error!(hash, error = %e, "failed to store a partial upload's content file");
         })
     }))

@@ -305,8 +305,25 @@ class ConfigurationTest(unittest.TestCase):
                        + (default("MAX_UPLOAD_FILE_COUNT") + default("MAX_UPLOAD_FIELD_COUNT") + 1) * eval(framing))
         self.assertEqual(route_limit, 2 * 1024 ** 3 + (3000 + 32 + 1) * (16 * 1024 + 128))
         cap = int(gateway.CONTENT_DEPLOY_CAP.removesuffix("m")) * 1024 * 1024
+        # The app warns at startup when its limits pass the cap it ships with.
+        self.assertEqual(eval(consts["SHIPPED_GATEWAY_DEPLOY_CAP_BYTES"]), cap)
         self.assertGreaterEqual(cap, route_limit)
         self.assertLess(cap - route_limit, 1024 * 1024, "rounded up to the next MiB")
+
+    def test_content_deploys_stream_to_the_app_unbuffered(self):
+        # The app spools the body under its own budgets and timeout; buffered here, a body of up
+        # to CONTENT_DEPLOY_CAP would land in the gateway's temp space (a tmpfs in the documented
+        # run) before the app could answer.
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [],
+                 "deploy": ["/entities", "/content/entities"]}
+        text = gateway.render(table, cfg, "/mime.types")
+        content = re.search(rf'location ~\* "[^"]+" \{{\n([^}}]*client_max_body_size '
+                            rf'{gateway.CONTENT_DEPLOY_CAP};[^}}]*)\}}', text)[1]
+        self.assertIn("proxy_request_buffering off;", content)
+        worlds = re.search(r'location ~ "\^/worlds-content-server/entities/\*\$" \{\n([^}]*)\}', text)[1]
+        self.assertNotIn("proxy_request_buffering", worlds)
+        self.assertEqual(text.count("proxy_request_buffering"), 1)
 
     def test_deploy_routes_cap_concurrent_uploads_per_address(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})

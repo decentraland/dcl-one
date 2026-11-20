@@ -633,7 +633,13 @@ pub async fn serve(
         );
     }
     content.spawn_remote_denylist(&jobs, http_client.clone(), denylist_urls);
-    for warning in config.content.upload_limit_warnings() {
+    let gateway_cap = content::create_entity::gateway_cap_warning(&content.settings);
+    for warning in config
+        .content
+        .upload_limit_warnings()
+        .into_iter()
+        .chain(gateway_cap)
+    {
         tracing::warn!("{warning}");
     }
     if config.writes.content_writes() {

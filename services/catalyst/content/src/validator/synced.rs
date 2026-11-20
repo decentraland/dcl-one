@@ -312,7 +312,7 @@ async fn validate_synced_within(
     }
     let files = HashMap::from([(
         entity_id.to_string(),
-        bytes::Bytes::copy_from_slice(entity_bytes),
+        bytes::Bytes::copy_from_slice(entity_bytes).into(),
     )]);
     let synced = Synced {
         sources,
@@ -439,7 +439,7 @@ mod tests {
             .expect("no thumbnail check on a synced item");
 
         let entity = entity_parser::parse_entity_from_bytes(&bytes, &id).unwrap();
-        let files = HashMap::from([(id.clone(), bytes::Bytes::from(bytes))]);
+        let files = HashMap::from([(id.clone(), bytes::Bytes::from(bytes).into())]);
         let local = super::super::validate(
             &entity,
             &files,

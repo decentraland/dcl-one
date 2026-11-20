@@ -1,6 +1,7 @@
 //! Admission for `POST /entities` before its body is read: two byte budgets
 //! shared by every in-flight deploy, one for the memory a deploy buffers
-//! (its fields and entity file) and one for the disk its spooled files take,
+//! (its fields, its entity file and the largest file its validation reads)
+//! and one for the disk its spooled files take,
 //! each client's share of the bytes in flight ([`SourceUploads`]), a
 //! per-client burst limit (upstream's `POST_ENTITIES_RATE_LIMIT_MAX` per
 //! `POST_ENTITIES_RATE_LIMIT_WINDOW_SECONDS`, every request counted) and a
@@ -104,6 +105,11 @@ impl Reservation<'_> {
 }
 
 impl UploadBudget {
+    /// The bytes it admits at once.
+    pub fn capacity(&self) -> u64 {
+        self.capacity
+    }
+
     /// The bytes reserved now, across every reservation.
     pub fn reserved(&self) -> u64 {
         *self.reserved.lock()
