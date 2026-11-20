@@ -1352,6 +1352,10 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(
+            body["error"],
+            "Outcome must include either a result or an error"
+        );
     }
 
     async fn router() -> Router {
