@@ -1596,9 +1596,9 @@ fn lambdas_url() -> String {
 /// Where compact profiles are read (`POST {source}/profiles/metadata`): the catalyst's lambdas,
 /// except when that catalyst is one of Decentraland's own deployments
 /// ([`common::base_domain::decentraland_domain`]), whose catalysts have no compact route. There
-/// the same deployment's asset-bundle registry serves the tier, as for unity-explorer with
-/// `USE_CENTRALIZED_PROFILES`. The decision follows the resolved catalyst, not the base domain:
-/// a dcl-one page or a `--gateway` launch keeps the default base domain with its own catalyst.
+/// the same deployment's asset-bundle registry serves the tier. A dcl-one page or a `--gateway`
+/// launch keeps the default base domain with its own catalyst, so the resolved catalyst selects
+/// the source.
 ///
 /// Temporary: the registry branch is to be removed once Decentraland's catalysts answer
 /// `POST /lambdas/profiles/metadata` (docs/adr/2026-11-04-explorer-profiles-from-the-catalyst.md,

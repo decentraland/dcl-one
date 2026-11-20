@@ -18,12 +18,13 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
     FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, ListenedCommunity, LiveSceneInfo, LobbyStage,
-    MapPinInfo, OutfitsData, PermanentPermissionItem, PermissionRequestEvent, PhotoModeState,
-    PlatformBanNotice, PortableInfo, ProfileChangedEvent, ProximityEvent, SatelliteView,
-    SceneLoadingUi, SetAvatarData, SetPermanentPermission, SetSinglePermission, SystemApi,
-    TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState,
-    WorldAccessEvent, WorldAccessVerdict,
+    FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest, ItemPurchaseState,
+    ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData, PermanentPermissionItem,
+    PermissionRequestEvent, PhotoModeState, PlatformBanNotice, PortableInfo, ProfileChangedEvent,
+    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetItemPurchaseState,
+    SetPermanentPermission, SetSinglePermission, SystemApi, TextureOptimizationStatus,
+    VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
+    WorldAccessVerdict,
 };
 use tokio::sync::Notify;
 
@@ -836,6 +837,41 @@ pub fn op_set_single_permission(state: Rc<RefCell<impl State>>, id: usize, allow
         .send(SystemApi::SetSinglePermission(SetSinglePermission {
             id,
             allow,
+        }))
+        .unwrap();
+}
+
+pub async fn op_get_item_purchase_request_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetItemPurchaseRequestStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_item_purchase_request_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<ItemPurchaseRequest>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub fn op_set_item_purchase_state(
+    state: Rc<RefCell<impl State>>,
+    id: u32,
+    purchase_state: ItemPurchaseState,
+) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::SetItemPurchaseState(SetItemPurchaseState {
+            id,
+            state: purchase_state,
         }))
         .unwrap();
 }

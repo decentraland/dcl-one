@@ -3,26 +3,23 @@ import { useState } from "react";
 import type { ShopCardCreator } from "@dcl/one-ui";
 import { BackpackUpperBody, GeneralSecondaryBarEmotes } from "@dcl/one-ui/foundations/icons";
 
+import {
+  CollectiblesItem,
+  CollectiblesPanel,
+  useCategoryTabs,
+  useFocusNewRows,
+  ViewAllLink,
+  type CategoryOption,
+  type CollectiblesState,
+} from "@dcl/one-ui/apps/sites/profile/collectibles";
+
 import { accountPage } from "@/core/lib/shop/redirects";
 import { shortAddress } from "@/data/lib/catalyst/format/address";
 import type { CreationsCategory } from "@/data/lib/catalyst/marketplace/profile-collectibles";
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
 import { DEFAULT_CREATIONS_CATEGORY } from "@/data/lib/profile/queries";
 
-import {
-  catalogueTotal,
-  CollectiblesItem,
-  CollectiblesPanel,
-  CreationCard,
-  loadedRows,
-  loadMore,
-  useCategoryTabs,
-  unreadyState,
-  useFocusNewRows,
-  ViewAllLink,
-  type CategoryOption,
-  type CollectiblesState,
-} from "./collectibles";
+import { CollectibleLink, catalogueTotal, CreationCard, loadedRows, loadMore, unreadyState } from "./collectibles";
 import { useProfileCreations } from "./hooks";
 import { ProfileShell, type ProfileShellTab } from "./ProfileShell";
 
@@ -75,7 +72,9 @@ export function ProfileCreationsScreen({ profile, own, tabs, onTab }: ProfileCre
 
   const { filters, panel } = useCategoryTabs("Creations shown", CATEGORY_TABS, category, setCategory);
 
-  const viewAll = <ViewAllLink href={creatorShopHref(profile.address)} label="View all" />;
+  const viewAll = (
+    <ViewAllLink href={creatorShopHref(profile.address)} label="View all" linkComponent={CollectibleLink} />
+  );
 
   const state: CollectiblesState =
     unreadyState(
