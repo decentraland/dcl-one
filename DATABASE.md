@@ -1830,9 +1830,12 @@ Workload: mainnet holds thousands of listings, of which hundreds are open
 Invariants:
 
 - `cancel_reason` is NULL unless the status is `cancelled` (a row `CHECK`).
-- The routes never move `rental_assets.nft_updated_at` backwards. The refresh
-  route skips a reader row older than the stored one, and the create route's
-  upsert keeps the greater time. A reader that answers from an older block
+- The routes never move `rental_assets.nft_updated_at` backwards, and a
+  reader row older than the stored one replaces no asset detail. The refresh
+  route skips such a row. The create route still creates the listing, and
+  its upsert keeps the stored category, search text, distance to plaza, road
+  adjacency, estate size, `fetched_at` and time; a row that is not older
+  replaces them. A reader that answers from an older block
   and then from a less old one therefore cannot pass the refresh route's
   newer-row test. The signatures-server import writes the upstream time as
   it is.

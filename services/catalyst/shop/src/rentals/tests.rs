@@ -908,7 +908,9 @@ async fn a_stale_refresh_keeps_the_stored_asset_row_and_the_listing() {
 }
 
 /// A relisting whose reader row is older than the stored asset row keeps
-/// the stored time: the refresh route's guard compares against it.
+/// the stored time, which the refresh route's guard compares against, and
+/// the stored details; the listing is created all the same. A reader row
+/// that is not older replaces them.
 #[tokio::test]
 async fn a_relisting_never_lowers_the_stored_asset_time() {
     let Some(pool) = crate::db::scratch::pool(4).await else {
@@ -919,10 +921,20 @@ async fn a_relisting_never_lowers_the_stored_asset_time() {
     let first = insert(&db, &token, LESSOR, &format!("0xsig-a-{token}"))
         .await
         .unwrap();
-    let stored_at = || async {
-        sqlx::query_scalar::<_, i64>(
-            "SELECT extract(epoch FROM nft_updated_at)::bigint FROM signatures.rental_assets \
-             WHERE contract_address = $1 AND token_id = $2::numeric",
+    type Stored = (
+        i64,
+        String,
+        String,
+        Option<i16>,
+        Option<bool>,
+        Option<i16>,
+        i64,
+    );
+    let stored = || async {
+        sqlx::query_as::<_, Stored>(
+            "SELECT extract(epoch FROM nft_updated_at)::bigint, category, search_text, distance_to_plaza, \
+                    adjacent_to_road, estate_size, extract(epoch FROM fetched_at)::bigint \
+             FROM signatures.rental_assets WHERE contract_address = $1 AND token_id = $2::numeric",
         )
         .bind(LAND)
         .bind(&token)
@@ -930,26 +942,86 @@ async fn a_relisting_never_lowers_the_stored_asset_time() {
         .await
         .unwrap()
     };
+    let cancel = |id: String| async {
+        sqlx::query("UPDATE signatures.rentals SET status = 'cancelled' WHERE id = $1::uuid")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    };
     let ahead = chrono::Utc::now().timestamp() + 3_600;
+    let newer: Stored = (
+        ahead,
+        "estate".into(),
+        "A newer name".into(),
+        Some(7),
+        Some(false),
+        Some(4),
+        ahead + 60,
+    );
     sqlx::query(
-        "UPDATE signatures.rental_assets SET nft_updated_at = to_timestamp($3) AT TIME ZONE 'UTC' \
+        "UPDATE signatures.rental_assets SET nft_updated_at = to_timestamp($3) AT TIME ZONE 'UTC', \
+                category = $4, search_text = $5, distance_to_plaza = $6, adjacent_to_road = $7, estate_size = $8, \
+                fetched_at = to_timestamp($9) AT TIME ZONE 'UTC' \
          WHERE contract_address = $1 AND token_id = $2::numeric",
     )
     .bind(LAND)
     .bind(&token)
-    .bind(ahead as f64)
+    .bind(newer.0 as f64)
+    .bind(&newer.1)
+    .bind(&newer.2)
+    .bind(newer.3)
+    .bind(newer.4)
+    .bind(newer.5)
+    .bind(newer.6 as f64)
     .execute(&pool)
     .await
     .unwrap();
-    sqlx::query("UPDATE signatures.rentals SET status = 'cancelled' WHERE id = $1::uuid")
-        .bind(&first.id)
-        .execute(&pool)
+    cancel(first.id.clone()).await;
+    let second = insert(&db, &token, LESSOR, &format!("0xsig-b-{token}"))
         .await
         .unwrap();
-    insert(&db, &token, LESSOR, &format!("0xsig-b-{token}"))
+    assert_eq!(stored().await, newer);
+    assert_eq!(
+        (
+            second.status.as_str(),
+            second.category.as_str(),
+            second.search_text.as_str()
+        ),
+        ("open", "estate", "A newer name")
+    );
+    assert_eq!(counts(&pool, &token).await.1, 2);
+
+    sqlx::query(
+        "UPDATE signatures.rental_assets SET nft_updated_at = to_timestamp(1600000000) AT TIME ZONE 'UTC' \
+         WHERE contract_address = $1 AND token_id = $2::numeric",
+    )
+    .bind(LAND)
+    .bind(&token)
+    .execute(&pool)
+    .await
+    .unwrap();
+    cancel(second.id.clone()).await;
+    let before = chrono::Utc::now().timestamp();
+    let third = insert(&db, &token, LESSOR, &format!("0xsig-c-{token}"))
         .await
         .unwrap();
-    assert_eq!(stored_at().await, ahead);
+    let (updated_at, category, search_text, distance, road, size, fetched_at) = stored().await;
+    assert!(updated_at >= before && fetched_at >= before && fetched_at < ahead);
+    assert_eq!(
+        (
+            category.as_str(),
+            search_text.as_str(),
+            distance,
+            road,
+            size
+        ),
+        ("parcel", "-10,20", Some(3), Some(true), None)
+    );
+    assert_eq!(
+        (third.category.as_str(), third.search_text.as_str()),
+        ("parcel", "-10,20")
+    );
     cleanup(&pool, &[token]).await;
 }
 

@@ -151,7 +151,10 @@ impl Database {
 
     /// The asset upsert, the rental, its listing row and its periods in one
     /// statement: a conflict on the one-open-listing index rolls every row
-    /// back. `now` stamps `fetched_at`, `created_at` and `updated_at`.
+    /// back. `now` stamps `fetched_at`, `created_at` and `updated_at`. A
+    /// reader row older than the stored asset row (`nft_updated_at`) creates
+    /// the listing and leaves the asset row as it is, `fetched_at` included;
+    /// the reply then carries the stored category and search text.
     #[allow(clippy::too_many_arguments)]
     pub async fn insert_listing(
         &self,
@@ -514,10 +517,13 @@ WITH a AS ( \
      adjacent_to_road, estate_size, nft_created_at, nft_updated_at, fetched_at) \
   VALUES ($1, $2::numeric, $3, $4, $5, $6, $7, $8::smallint, $9, $10::smallint, $11, $12, $13) \
   ON CONFLICT (contract_address, token_id) DO UPDATE SET \
-    category = EXCLUDED.category, search_text = EXCLUDED.search_text, \
-    distance_to_plaza = EXCLUDED.distance_to_plaza, adjacent_to_road = EXCLUDED.adjacent_to_road, \
-    estate_size = EXCLUDED.estate_size, \
-    nft_updated_at = GREATEST(rental_assets.nft_updated_at, EXCLUDED.nft_updated_at), fetched_at = EXCLUDED.fetched_at \
+    category = CASE WHEN EXCLUDED.nft_updated_at >= rental_assets.nft_updated_at THEN EXCLUDED.category ELSE rental_assets.category END, \
+    search_text = CASE WHEN EXCLUDED.nft_updated_at >= rental_assets.nft_updated_at THEN EXCLUDED.search_text ELSE rental_assets.search_text END, \
+    distance_to_plaza = CASE WHEN EXCLUDED.nft_updated_at >= rental_assets.nft_updated_at THEN EXCLUDED.distance_to_plaza ELSE rental_assets.distance_to_plaza END, \
+    adjacent_to_road = CASE WHEN EXCLUDED.nft_updated_at >= rental_assets.nft_updated_at THEN EXCLUDED.adjacent_to_road ELSE rental_assets.adjacent_to_road END, \
+    estate_size = CASE WHEN EXCLUDED.nft_updated_at >= rental_assets.nft_updated_at THEN EXCLUDED.estate_size ELSE rental_assets.estate_size END, \
+    fetched_at = CASE WHEN EXCLUDED.nft_updated_at >= rental_assets.nft_updated_at THEN EXCLUDED.fetched_at ELSE rental_assets.fetched_at END, \
+    nft_updated_at = GREATEST(rental_assets.nft_updated_at, EXCLUDED.nft_updated_at) \
   RETURNING contract_address, token_id, nft_id, category, search_text, nft_created_at \
 ), r AS ( \
   INSERT INTO signatures.rentals \
