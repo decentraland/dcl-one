@@ -16,7 +16,7 @@ node gallery/scripts/check-build.mjs figma/review/review-dist [--prefix /nested/
 pnpm exec vite build --config gallery/vite.config.ts --mode hosted && node gallery/scripts/check-build.mjs gallery/dist --hosted
 ```
 
-To review a pull request without building it, open the UI gallery link in its comment: `ui-review-preview.yml` builds the gallery alone (`--mode hosted`, into `gallery/dist`, without the Figma reference) and publishes it per branch. The same comment links the full Review artifact, which also has the Figma reference: unzip it into a folder such as `ui-review`, run `python3 -m http.server 8080 --directory ui-review` and open http://localhost:8080/gallery/.
+To review a pull request without building it, download the `ui-review-<sha>` artifact of its Shared UI library run, unzip it into a folder such as `ui-review`, run `python3 -m http.server 8080 --directory ui-review` and open http://localhost:8080/gallery/. `--mode hosted` builds the gallery alone into `gallery/dist`, without the Figma reference, for a hosted preview.
 
 The build writes `figma/review/review-dist/gallery/`, beside the generated Review, and uses relative URLs, so the combined output works at the root or under any prefix. Build the generated Review with `--base ./` (as CI does for the uploaded artifact) to serve the same output anywhere, or with the absolute prefix it is served from.
 

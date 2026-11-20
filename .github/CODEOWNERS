@@ -158,4 +158,3 @@
 
 # ui-library-workflow
 /.github/workflows/ui-library.yml @decentraland/web-applications @decentraland/infra
-/.github/workflows/ui-review-preview.yml @decentraland/web-applications @decentraland/infra

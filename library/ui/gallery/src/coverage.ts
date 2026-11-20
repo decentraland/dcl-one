@@ -3,7 +3,9 @@ import type { Exclusion, GalleryEntry } from './registry'
 const FORWARD_REF = Symbol.for('react.forward_ref')
 const MEMO = Symbol.for('react.memo')
 
-function isComponentValue(value: unknown): boolean {
+/** Whether an export is a React component: a PascalCase function, `forwardRef` or `memo` value. */
+export function isComponentExport(name: string, value: unknown): boolean {
+  if (!/^[A-Z]/.test(name)) return false
   if (typeof value === 'function') return true
   if (typeof value !== 'object' || value === null) return false
   const type = (value as { $$typeof?: unknown }).$$typeof
@@ -11,17 +13,15 @@ function isComponentValue(value: unknown): boolean {
 }
 
 /**
- * The React components a package entry exports: PascalCase function, `forwardRef` or `memo` values. Names the
- * foundations entry also exports (the icons) are foundations, which the gallery shows on its own pages.
+ * The React components a package entry exports (`isComponentExport`). Names the foundations entry also exports (the
+ * icons) are foundations, which the gallery shows on its own pages.
  */
 export function componentExports(
   entry: Readonly<Record<string, unknown>>,
   foundations: Readonly<Record<string, unknown>>
 ): string[] {
   return Object.keys(entry)
-    .filter(
-      (name) => /^[A-Z]/.test(name) && !(name in foundations) && isComponentValue(entry[name])
-    )
+    .filter((name) => !(name in foundations) && isComponentExport(name, entry[name]))
     .sort()
 }
 

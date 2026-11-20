@@ -13,8 +13,8 @@ const generatedComponents = () =>
     ) as { components: { name: string; variants: unknown[] }[] }
   ).components.map(({ name, variants }) => ({ name, variants: variants.length }))
 
-// `--mode hosted` builds the gallery alone into gallery/dist, for the pull request preview: the Figma reference stays
-// out, since it is published only in the Review artifact the privileged key scan checks.
+// `--mode hosted` builds the gallery alone into gallery/dist, for a hosted preview: the Figma reference stays out,
+// since it ships only in the Review artifact the privileged key scan checks.
 export default defineConfig(({ command, mode }) => {
   const hosted = mode === 'hosted'
   return {

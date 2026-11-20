@@ -1,26 +1,19 @@
-import { createElement, type ComponentType } from 'react'
+import { createRef, forwardRef, memo, type ComponentType, type Ref } from 'react'
 import { render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { claimProblems } from '../src/coverage'
+import { claimProblems, componentExports } from '../src/coverage'
 import { entries } from '../src/examples'
 import { foundationPages } from '../src/foundations/FoundationPages'
 import type { GalleryEntry } from '../src/registry'
+import { instrumentComponents } from './instrument'
 
 // Every component the package root exports records its name when it mounts, so a page's `components` claim is
 // checked against what its examples really render through the public entry.
 const instrumentation = vi.hoisted(() => ({ mounted: new Set<string>() }))
 vi.mock('@dcl/one-ui', async (importOriginal) => {
-  const actual = await importOriginal<Record<string, unknown>>()
-  return Object.fromEntries(
-    Object.entries(actual).map(([name, value]) => {
-      if (!/^[A-Z]/.test(name) || typeof value !== 'function') return [name, value]
-      const Original = value as ComponentType<Record<string, unknown>>
-      const Recorded = (props: Record<string, unknown>) => {
-        instrumentation.mounted.add(name)
-        return createElement(Original, props)
-      }
-      return [name, Recorded]
-    })
+  const { instrumentComponents: instrument } = await import('./instrument')
+  return instrument(await importOriginal<Record<string, unknown>>(), (name) =>
+    instrumentation.mounted.add(name)
   )
 })
 
@@ -82,5 +75,40 @@ describe('when a page claims the public exports it shows', () => {
       'EventCard: claims EventCard, but no example mounts it',
       'EventCard: claims EventCardHost, but no example mounts it'
     ])
+  })
+})
+
+describe('when a public export is a memo or forwardRef component', () => {
+  it('should count it as a component and record it when an example mounts it', () => {
+    const mounted = new Set<string>()
+    const helper = () => null
+    const value = { label: 'not a component' }
+    const exports = instrumentComponents(
+      {
+        Memo: memo(function Memo() {
+          return <span>memo</span>
+        }),
+        Forward: forwardRef<HTMLSpanElement>(function Forward(_, ref) {
+          return <span ref={ref}>forward</span>
+        }),
+        helper,
+        Value: value
+      },
+      (name) => mounted.add(name)
+    )
+    const Memo = exports.Memo as ComponentType
+    const Forward = exports.Forward as ComponentType<{ ref?: Ref<HTMLSpanElement> }>
+    const ref = createRef<HTMLSpanElement>()
+    render(
+      <>
+        <Memo />
+        <Forward ref={ref} />
+      </>
+    )
+    expect(componentExports(exports, {})).toEqual(['Forward', 'Memo'])
+    expect(claimProblems({ name: 'Wrapped', components: ['Memo', 'Forward'] }, mounted)).toEqual([])
+    expect(ref.current?.textContent).toBe('forward')
+    expect(exports.helper).toBe(helper)
+    expect(exports.Value).toBe(value)
   })
 })
